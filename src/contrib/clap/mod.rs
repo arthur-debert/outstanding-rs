@@ -1,6 +1,18 @@
-//! Clap integration for Outstanding.
+//! # Outstanding Clap Integration
 //!
-//! This module provides a way to render `clap` help output using `outstanding` templates.
+//! This module provides a drop-in replacement for `clap`'s default help generation, leveraging
+//! `outstanding`'s powerful templating and styling capabilities.
+//!
+//! Instead of relying on `clap`'s internal hardcoded help generation, this module extracts the
+//! structure of your CLI (commands, arguments, groups) and renders it using a customizable
+//! template engine. This allows for:
+//!
+//! - **Complete Visual Control**: Use `minijinja` templates to define exactly how your help looks.
+//! - **Separation of Style and Content**: Define styles (colors, bold, etc.) in a theme, separate from the layout.
+//! - **Future-Proofing**: Positioned to leverage future `outstanding` features like adaptive layouts.
+//!
+//! It is designed to be a "drop-in" helper: you continue defining your `clap::Command` as usual,
+//! and simply call `render_help` when you want to display the help message.
 //!
 //! # Example
 //!
