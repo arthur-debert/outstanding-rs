@@ -1,0 +1,15 @@
+[package]
+name = "outstanding-clap"
+version = "0.1.0"
+edition = "2021"
+description = "Clap integration for Outstanding template engine"
+license = "MIT"
+
+[dependencies]
+outstanding = { path = "../outstanding" }
+clap = { version = "4", features = ["derive", "help"] }
+console = "0.15"
+serde = { version = "1", features = ["derive"] }
+
+[dev-dependencies]
+clap = { version = "4", features = ["derive"] }
