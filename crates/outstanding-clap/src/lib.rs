@@ -74,6 +74,11 @@ impl TopicHelper {
         Self { registry }
     }
 
+    /// Creates a new builder for constructing a TopicHelper.
+    pub fn builder() -> TopicHelperBuilder {
+        TopicHelperBuilder::new()
+    }
+
     /// Prepares the command for topic support.
     /// It disables the default help subcommand so we can capture `help <arg>` manually.
     pub fn augment_command(&self, cmd: Command) -> Command {
@@ -163,6 +168,47 @@ impl TopicHelper {
             format!("The subcommand or topic '{}' wasn't recognized", sub_name)
         );
         TopicHelpResult::Error(err)
+    }
+}
+
+/// Builder for constructing a TopicHelper with topics and directories.
+///
+/// # Example
+/// ```rust
+/// # use outstanding_clap::TopicHelper;
+/// let helper = TopicHelper::builder()
+///     .add_directory("docs/topics")
+///     .build();
+/// ```
+#[derive(Default)]
+pub struct TopicHelperBuilder {
+    registry: TopicRegistry,
+}
+
+impl TopicHelperBuilder {
+    /// Creates a new builder.
+    pub fn new() -> Self {
+        Self {
+            registry: TopicRegistry::new(),
+        }
+    }
+
+    /// Adds a topic to the helper.
+    pub fn add_topic(mut self, topic: Topic) -> Self {
+        self.registry.add_topic(topic);
+        self
+    }
+
+    /// Adds topics from a directory. Only .txt and .md files are processed.
+    /// Silently ignores non-existent directories.
+    pub fn add_directory(mut self, path: impl AsRef<std::path::Path>) -> Self {
+        let _ = self.registry.add_from_directory(path);
+        self
+    }
+
+    /// Builds the TopicHelper with all configured topics.
+    pub fn build(self) -> TopicHelper {
+        TopicHelper::new(self.registry)
     }
 }
 
