@@ -9,7 +9,7 @@ categories = ["command-line-interface"]
 repository = "https://github.com/arthur-debert/outstanding-rs"
 
 [dependencies]
-outstanding = { version = "0.2.2", path = "../outstanding" }
+outstanding = { version = "0.3.2", path = "../outstanding" }
 clap = { version = "4", features = ["derive", "help"] }
 console = "0.15"
 serde = { version = "1", features = ["derive"] }

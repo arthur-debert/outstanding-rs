@@ -1,6 +1,6 @@
 [package]
 name = "outstanding"
-version = "0.2.2"
+version = "0.3.2"
 edition = "2021"
 description = "Styled CLI template rendering with automatic terminal detection"
 license = "MIT"
