@@ -212,7 +212,7 @@ impl TopicHelperBuilder {
     /// Adds topics from a directory. Only .txt and .md files are processed.
     /// Silently ignores non-existent directories.
     pub fn add_directory(mut self, path: impl AsRef<std::path::Path>) -> Self {
-        let _ = self.registry.add_from_directory(path);
+        let _ = self.registry.add_from_directory_if_exists(path);
         self
     }
 

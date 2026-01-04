@@ -84,11 +84,37 @@ impl TopicRegistry {
     /// Adds topics from files in the specified directory.
     /// Only .txt and .md files are processed.
     /// Empty files or files with only one line are ignored.
+    /// Returns an error if the path does not exist or is not a directory.
     pub fn add_from_directory(&mut self, path: impl AsRef<Path>) -> std::io::Result<()> {
+        let path = path.as_ref();
+        if !path.exists() {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::NotFound,
+                format!("Directory not found: {}", path.display()),
+            ));
+        }
+        if !path.is_dir() {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::InvalidInput,
+                format!("Path is not a directory: {}", path.display()),
+            ));
+        }
+        self.load_from_directory(path)
+    }
+
+    /// Adds topics from files in the specified directory if it exists.
+    /// Silently ignores non-existent paths.
+    /// Only .txt and .md files are processed.
+    /// Empty files or files with only one line are ignored.
+    pub fn add_from_directory_if_exists(&mut self, path: impl AsRef<Path>) -> std::io::Result<()> {
         let path = path.as_ref();
         if !path.exists() || !path.is_dir() {
             return Ok(());
         }
+        self.load_from_directory(path)
+    }
+
+    fn load_from_directory(&mut self, path: &Path) -> std::io::Result<()> {
 
         for entry in fs::read_dir(path)? {
             let entry = entry?;
