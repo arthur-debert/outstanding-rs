@@ -115,17 +115,14 @@ impl TopicHelper {
     }
 
     /// Attempts to get matches from the given arguments, intercepting `help` requests.
-    pub fn get_matches_from<I, T>(&self, cmd: Command, itr: I) -> TopicHelpResult 
+    pub fn get_matches_from<I, T>(&self, cmd: Command, itr: I) -> TopicHelpResult
     where
         I: IntoIterator<Item = T>,
         T: Into<std::ffi::OsString> + Clone,
     {
-        let cmd = self.augment_command(cmd);
-        
-        // We clone cmd because we might need it for rendering help
-        let mut app = cmd.clone(); 
-        
-        let matches = match cmd.try_get_matches_from(itr) {
+        let mut cmd = self.augment_command(cmd);
+
+        let matches = match cmd.clone().try_get_matches_from(itr) {
             Ok(m) => m,
             Err(e) => return TopicHelpResult::Error(e),
         };
@@ -135,11 +132,11 @@ impl TopicHelper {
                 if let Some(topic_args) = sub_matches.get_many::<String>("topic") {
                     let keywords: Vec<_> = topic_args.map(|s| s.as_str()).collect();
                      if !keywords.is_empty() {
-                         return self.handle_help_request(&mut app, &keywords);
+                         return self.handle_help_request(&mut cmd, &keywords);
                      }
                 }
                 // If "help" is called without args, return the root help
-                if let Ok(h) = render_help(&app, None) {
+                if let Ok(h) = render_help(&cmd, None) {
                     return TopicHelpResult::Help(h);
                 }
             }
