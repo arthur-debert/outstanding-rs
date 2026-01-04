@@ -126,6 +126,8 @@ use serde::Serialize;
 use std::collections::HashMap;
 use std::sync::Mutex;
 
+pub mod contrib;
+
 /// Default prefix shown when a style name is not found.
 pub const DEFAULT_MISSING_STYLE_INDICATOR: &str = "(!?)";
 
@@ -153,14 +155,14 @@ pub const DEFAULT_MISSING_STYLE_INDICATOR: &str = "(!?)";
 /// let unknown = styles.apply("typo", "Hello");
 /// assert!(unknown.starts_with("(!?)"));
 /// ```
-#[derive(Clone)]
+#[derive(Debug, Clone)]
 pub struct Styles {
     styles: HashMap<String, Style>,
     missing_indicator: String,
 }
 
 /// A named collection of styles used when rendering templates.
-#[derive(Clone)]
+#[derive(Debug, Clone)]
 pub struct Theme {
     styles: Styles,
 }
@@ -197,7 +199,7 @@ impl Default for Theme {
 }
 
 /// A theme that adapts based on the user's display mode.
-#[derive(Clone)]
+#[derive(Debug, Clone)]
 pub struct AdaptiveTheme {
     light: Theme,
     dark: Theme,
@@ -217,6 +219,7 @@ impl AdaptiveTheme {
 }
 
 /// Reference to either a static theme or an adaptive theme.
+#[derive(Debug)]
 pub enum ThemeChoice<'a> {
     Theme(&'a Theme),
     Adaptive(&'a AdaptiveTheme),
