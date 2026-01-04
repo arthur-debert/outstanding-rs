@@ -6,7 +6,7 @@ description = "Styled CLI template rendering with automatic terminal detection"
 license = "MIT"
 keywords = ["cli", "terminal", "colors", "template", "styling"]
 categories = ["command-line-interface", "template-engine"]
-repository = "https://github.com/arthur-debert/outstanding"
+repository = "https://github.com/arthur-debert/outstanding-rs"
 readme = "README.md"
 
 [dependencies]
