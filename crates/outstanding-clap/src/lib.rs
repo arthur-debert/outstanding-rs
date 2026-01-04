@@ -45,7 +45,7 @@
 //! // match helper.get_matches(cmd) { ... }
 //! ```
 
-use outstanding::topics::TopicRegistry;
+use outstanding::topics::{Topic, TopicRegistry};
 use outstanding::{render_with_color, Theme, ThemeChoice};
 use clap::{Command, Arg, ArgAction};
 use console::Style;
@@ -154,9 +154,10 @@ impl TopicHelper {
         
         // 2. Check if it is a topic
         if let Some(topic) = self.registry.get_topic(sub_name) {
-             let out = format!("{}\n{}", topic.title, topic.content);
-             println!("{}", out);
-             return TopicHelpResult::PrintedHelp(out);
+             if let Ok(h) = render_topic(topic, None) {
+                 println!("{}", h);
+                 return TopicHelpResult::PrintedHelp(h);
+             }
         }
         
         // 3. Not found
@@ -211,6 +212,33 @@ pub fn render_help(cmd: &Command, config: Option<Config>) -> Result<String, outs
     let data = extract_help_data(cmd);
 
     render_with_color(template, &data, ThemeChoice::from(&theme), use_color)
+}
+
+/// Renders a topic using outstanding templating.
+pub fn render_topic(topic: &Topic, config: Option<Config>) -> Result<String, outstanding::Error> {
+    let config = config.unwrap_or_default();
+    let template = config
+        .template
+        .as_deref()
+        .unwrap_or(include_str!("topic_template.txt"));
+
+    let theme = config.theme.unwrap_or_else(default_theme);
+    let use_color = config
+        .use_color
+        .unwrap_or_else(|| console::Term::stdout().features().colors_supported());
+
+    let data = TopicData {
+        title: topic.title.clone(),
+        content: topic.content.clone(),
+    };
+
+    render_with_color(template, &data, ThemeChoice::from(&theme), use_color)
+}
+
+#[derive(Serialize)]
+struct TopicData {
+    title: String,
+    content: String,
 }
 
 fn default_theme() -> Theme {
