@@ -14,5 +14,11 @@ jobs:
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
 
-      - name: Publish to crates.io
-        run: cargo publish --token ${{ secrets.CRATES_IO_KEY }} --allow-dirty
+      - name: Publish outstanding
+        run: cargo publish --token ${{ secrets.CRATES_IO_KEY }} -p outstanding
+
+      - name: Wait for crates.io index
+        run: sleep 30
+
+      - name: Publish outstanding-clap
+        run: cargo publish --token ${{ secrets.CRATES_IO_KEY }} -p outstanding-clap

@@ -2,8 +2,11 @@
 name = "outstanding-clap"
 version = "0.1.0"
 edition = "2021"
-description = "Clap integration for Outstanding template engine"
+description = "Clap integration for Outstanding template engine - topics and styled help"
 license = "MIT"
+keywords = ["cli", "clap", "help", "terminal", "styling"]
+categories = ["command-line-interface"]
+repository = "https://github.com/arthur-debert/outstanding-rs"
 
 [dependencies]
 outstanding = { version = "0.2.2", path = "../outstanding" }
