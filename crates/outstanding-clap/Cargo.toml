@@ -8,6 +8,10 @@ keywords = ["cli", "clap", "help", "terminal", "styling"]
 categories = ["command-line-interface"]
 repository = "https://github.com/arthur-debert/outstanding-rs"
 
+[[bin]]
+name = "sample-cli"
+path = "src/bin/sample_cli.rs"
+
 [dependencies]
 outstanding = { version = "0.3.2", path = "../outstanding" }
 clap = { version = "4", features = ["derive", "help"] }
