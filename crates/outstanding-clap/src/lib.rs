@@ -54,6 +54,9 @@ use std::collections::BTreeMap;
 use std::io::Write;
 use std::process::{Command as ProcessCommand, Stdio};
 
+/// Fixed width for the name column in help output (commands, options, topics).
+const NAME_COLUMN_WIDTH: usize = 14;
+
 /// Helper to integrate Clap with Outstanding Topics.
 pub struct TopicHelper {
     registry: TopicRegistry,
@@ -144,8 +147,8 @@ impl TopicHelper {
                          return self.handle_help_request(&mut cmd, &keywords, use_pager);
                      }
                 }
-                // If "help" is called without args, return the root help
-                if let Ok(h) = render_help(&cmd, None) {
+                // If "help" is called without args, return the root help with topics
+                if let Ok(h) = render_help_with_topics(&cmd, &self.registry, None) {
                     return if use_pager {
                         TopicHelpResult::PagedHelp(h)
                     } else {
@@ -161,6 +164,17 @@ impl TopicHelper {
     /// Handles a request for specific help e.g. `help foo`
     fn handle_help_request(&self, cmd: &mut Command, keywords: &[&str], use_pager: bool) -> TopicHelpResult {
         let sub_name = keywords[0];
+
+        // 0. Check for "topics" - list all available topics
+        if sub_name == "topics" {
+            if let Ok(h) = render_topics_list(&self.registry, cmd, None) {
+                return if use_pager {
+                    TopicHelpResult::PagedHelp(h)
+                } else {
+                    TopicHelpResult::Help(h)
+                };
+            }
+        }
 
         // 1. Check if it's a real command
         if find_subcommand(cmd, sub_name).is_some() {
@@ -340,6 +354,24 @@ pub fn render_help(cmd: &Command, config: Option<Config>) -> Result<String, outs
     render_with_color(template, &data, ThemeChoice::from(&theme), use_color)
 }
 
+/// Renders the help for a clap command with topics in a "Learn More" section.
+pub fn render_help_with_topics(cmd: &Command, registry: &TopicRegistry, config: Option<Config>) -> Result<String, outstanding::Error> {
+    let config = config.unwrap_or_default();
+    let template = config
+        .template
+        .as_deref()
+        .unwrap_or(include_str!("help_template.txt"));
+
+    let theme = config.theme.unwrap_or_else(default_theme);
+    let use_color = config
+        .use_color
+        .unwrap_or_else(|| console::Term::stdout().features().colors_supported());
+
+    let data = extract_help_data_with_topics(cmd, registry);
+
+    render_with_color(template, &data, ThemeChoice::from(&theme), use_color)
+}
+
 /// Renders a topic using outstanding templating.
 pub fn render_topic(topic: &Topic, config: Option<Config>) -> Result<String, outstanding::Error> {
     let config = config.unwrap_or_default();
@@ -367,17 +399,64 @@ struct TopicData {
     content: String,
 }
 
+/// Renders a list of all available topics.
+pub fn render_topics_list(registry: &TopicRegistry, cmd: &Command, config: Option<Config>) -> Result<String, outstanding::Error> {
+    let config = config.unwrap_or_default();
+    let template = config
+        .template
+        .as_deref()
+        .unwrap_or(include_str!("topics_list_template.txt"));
+
+    let theme = config.theme.unwrap_or_else(default_theme);
+    let use_color = config
+        .use_color
+        .unwrap_or_else(|| console::Term::stdout().features().colors_supported());
+
+    let topics = registry.list_topics();
+
+    let topic_items: Vec<TopicListItem> = topics
+        .iter()
+        .map(|t| {
+            // +1 accounts for the colon added in the template
+            let pad = NAME_COLUMN_WIDTH.saturating_sub(t.name.len() + 1);
+            TopicListItem {
+                name: t.name.clone(),
+                title: t.title.clone(),
+                padding: " ".repeat(pad),
+            }
+        })
+        .collect();
+
+    let data = TopicsListData {
+        usage: format!("{} help <topic>", cmd.get_name()),
+        topics: topic_items,
+    };
+
+    render_with_color(template, &data, ThemeChoice::from(&theme), use_color)
+}
+
+#[derive(Serialize)]
+struct TopicsListData {
+    usage: String,
+    topics: Vec<TopicListItem>,
+}
+
+#[derive(Serialize)]
+struct TopicListItem {
+    name: String,
+    title: String,
+    padding: String,
+}
+
 fn default_theme() -> Theme {
-    // In a real implementation we might parse the YAML, but for now we construct it
-    // to match help_theme.yaml effectively.
     Theme::new()
         .add("header", Style::new().bold())
-        .add("section_title", Style::new().bold().yellow())
-        .add("item", Style::new().green())
-        .add("desc", Style::new().dim())
-        .add("usage", Style::new().cyan())
-        .add("example", Style::new().dim().italic())
-        .add("about", Style::new().bold())
+        .add("section_title", Style::new().bold())
+        .add("item", Style::new().bold())
+        .add("desc", Style::new())
+        .add("usage", Style::new())
+        .add("example", Style::new())
+        .add("about", Style::new())
 }
 
 #[derive(Serialize)]
@@ -388,6 +467,7 @@ struct HelpData {
     subcommands: Vec<Group<Subcommand>>,
     options: Vec<Group<OptionData>>,
     examples: String,
+    learn_more: Vec<TopicListItem>,
 }
 
 #[derive(Serialize)]
@@ -416,11 +496,14 @@ struct OptionData {
 fn extract_help_data(cmd: &Command) -> HelpData {
     let name = cmd.get_name().to_string();
     let about = cmd.get_about().map(|s| s.to_string()).unwrap_or_default();
-    let usage = cmd.clone().render_usage().to_string();
+    // render_usage() returns "Usage: <cmd> [OPTIONS]..." - strip the "Usage: " prefix
+    let usage = cmd.clone().render_usage().to_string()
+        .strip_prefix("Usage: ")
+        .unwrap_or(&cmd.clone().render_usage().to_string())
+        .to_string();
 
     // Group Subcommands
     let mut sub_cmds = Vec::new();
-    let mut max_width = 0;
 
     let mut subs: Vec<_> = cmd.get_subcommands().filter(|s| !s.is_hide_set()).collect();
     // Stable sort by display_order only - preserves declaration order for equal display_orders
@@ -428,14 +511,13 @@ fn extract_help_data(cmd: &Command) -> HelpData {
 
     for sub in subs {
         let name = sub.get_name().to_string();
-        if name.len() > max_width {
-            max_width = name.len();
-        }
+        // +1 accounts for the colon added in the template
+        let pad = NAME_COLUMN_WIDTH.saturating_sub(name.len() + 1);
 
         let sub_data = Subcommand {
             name,
             about: sub.get_about().map(|s| s.to_string()).unwrap_or_default(),
-            padding: String::new(), // Calculated later
+            padding: " ".repeat(pad),
         };
         sub_cmds.push(sub_data);
     }
@@ -443,10 +525,6 @@ fn extract_help_data(cmd: &Command) -> HelpData {
     let subcommands = if sub_cmds.is_empty() {
         vec![]
     } else {
-        for cmd in &mut sub_cmds {
-            let pad = max_width.saturating_sub(cmd.name.len()) + 2;
-            cmd.padding = " ".repeat(pad);
-        }
         vec![Group {
             title: Some("Commands".to_string()),
             commands: sub_cmds,
@@ -456,7 +534,6 @@ fn extract_help_data(cmd: &Command) -> HelpData {
 
     // Group Options
     let mut opt_groups: BTreeMap<Option<String>, Vec<OptionData>> = BTreeMap::new();
-    let mut opt_max_width = 0;
 
     // Clap args are also not sorted by display order by default in iterator
     let mut args: Vec<_> = cmd.get_arguments().filter(|a| !a.is_hide_set()).collect();
@@ -478,15 +555,12 @@ fn extract_help_data(cmd: &Command) -> HelpData {
             name = arg.get_id().to_string(); // Positional
         }
 
-        if name.len() > opt_max_width {
-            opt_max_width = name.len();
-        }
-
+        let pad = NAME_COLUMN_WIDTH.saturating_sub(name.len());
         let heading = arg.get_help_heading().map(|s| s.to_string());
         let opt_data = OptionData {
             name,
             help: arg.get_help().map(|s| s.to_string()).unwrap_or_default(),
-            padding: String::new(),
+            padding: " ".repeat(pad),
             short: arg.get_short(),
             long: arg.get_long().map(|s| s.to_string()),
         };
@@ -494,18 +568,9 @@ fn extract_help_data(cmd: &Command) -> HelpData {
         opt_groups.entry(heading).or_default().push(opt_data);
     }
 
-    // Sort groups? Clap usually puts 'Arguments'/Generic groups last?
-    // BTreeMap sorts by key (Option<String>). None is first.
-    // Clap puts "Options" (None heading?) or custom headings.
-    // We'll leave BTreeMap order for now (None first, then alphabetical headings).
-
     let options = opt_groups
         .into_iter()
-        .map(|(title, mut opts)| {
-            for opt in &mut opts {
-                let pad = opt_max_width.saturating_sub(opt.name.len()) + 2;
-                opt.padding = " ".repeat(pad);
-            }
+        .map(|(title, opts)| {
             Group {
                 title,
                 commands: vec![],
@@ -521,7 +586,30 @@ fn extract_help_data(cmd: &Command) -> HelpData {
         subcommands,
         options,
         examples: String::new(), // Clap extraction of examples is tricky via public API
+        learn_more: vec![],
     }
+}
+
+fn extract_help_data_with_topics(cmd: &Command, registry: &TopicRegistry) -> HelpData {
+    let mut data = extract_help_data(cmd);
+
+    let topics = registry.list_topics();
+    if !topics.is_empty() {
+        data.learn_more = topics
+            .iter()
+            .map(|t| {
+                // +1 accounts for the colon added in the template
+                let pad = NAME_COLUMN_WIDTH.saturating_sub(t.name.len() + 1);
+                TopicListItem {
+                    name: t.name.clone(),
+                    title: t.title.clone(),
+                    padding: " ".repeat(pad),
+                }
+            })
+            .collect();
+    }
+
+    data
 }
 
 #[cfg(test)]
