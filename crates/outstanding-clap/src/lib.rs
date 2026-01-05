@@ -497,7 +497,11 @@ struct OptionData {
 fn extract_help_data(cmd: &Command) -> HelpData {
     let name = cmd.get_name().to_string();
     let about = cmd.get_about().map(|s| s.to_string()).unwrap_or_default();
-    let usage = cmd.clone().render_usage().to_string();
+    // render_usage() returns "Usage: <cmd> [OPTIONS]..." - strip the "Usage: " prefix
+    let usage = cmd.clone().render_usage().to_string()
+        .strip_prefix("Usage: ")
+        .unwrap_or(&cmd.clone().render_usage().to_string())
+        .to_string();
 
     // Group Subcommands
     let mut sub_cmds = Vec::new();
