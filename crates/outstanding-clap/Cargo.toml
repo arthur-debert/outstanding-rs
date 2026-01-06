@@ -1,6 +1,6 @@
 [package]
 name = "outstanding-clap"
-version = "0.3.4"
+version = "0.3.5"
 edition = "2021"
 description = "Clap integration for Outstanding template engine - topics and styled help"
 license = "MIT"
@@ -13,7 +13,7 @@ name = "sample-cli"
 path = "src/bin/sample_cli.rs"
 
 [dependencies]
-outstanding = { version = "0.3.4", path = "../outstanding" }
+outstanding = { version = "0.3.5", path = "../outstanding" }
 clap = { version = "4", features = ["derive", "help"] }
 console = "0.15"
 serde = { version = "1", features = ["derive"] }
