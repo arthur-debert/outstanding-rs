@@ -20,6 +20,7 @@ let matches = Outstanding::run(Command::new("my-app"));
 ```
 
 That's it. Your CLI now has:
+
 - Styled help output
 - `--output=<auto|term|text|term-debug>` flag on all commands
 - `help` subcommand with topic support
@@ -70,12 +71,14 @@ let matches = Outstanding::builder()
 ## What This Crate Does
 
 The `outstanding` crate provides the core framework:
+
 - Template rendering with MiniJinja
 - Themes and styles
 - Output mode control
 - Topic system (data structures, rendering, pager)
 
 This crate provides the **clap integration**:
+
 - Intercepts `help`, `help <topic>`, `help topics` subcommands
 - Injects `--output` flag to all commands
 - Renders clap command help using outstanding templates
@@ -106,7 +109,7 @@ let matches = Outstanding::builder()
 Builder for configuring Outstanding:
 
 | Method | Description |
-|--------|-------------|
+| -------- | ------------- |
 | `topics_dir(path)` | Load topics from a directory |
 | `add_topic(topic)` | Add a single topic |
 | `theme(theme)` | Set custom theme |
@@ -120,7 +123,7 @@ Builder for configuring Outstanding:
 Result of `get_matches()`:
 
 | Variant | Description |
-|---------|-------------|
+   | --------- | ------------- |
 | `Matches(ArgMatches)` | Normal command execution |
 | `Help(String)` | Help content to print |
 | `PagedHelp(String)` | Help content for pager |
@@ -129,6 +132,7 @@ Result of `get_matches()`:
 ## Defaults
 
 By default:
+
 - `--output` flag is **enabled** (use `no_output_flag()` to disable)
 - Help topics are **enabled** but empty (add with `topics_dir()` or `add_topic()`)
 - Pager support via `help --page <topic>`
