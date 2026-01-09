@@ -9,8 +9,8 @@ categories = ["command-line-interface"]
 repository = "https://github.com/arthur-debert/outstanding-rs"
 
 [[bin]]
-name = "sample-cli"
-path = "src/bin/sample_cli.rs"
+name = "test-notes-app"
+path = "src/bin/test_notes_app.rs"
 
 [dependencies]
 outstanding = { version = "0.3.5", path = "../outstanding" }

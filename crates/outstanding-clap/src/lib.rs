@@ -37,6 +37,8 @@ const NAME_COLUMN_WIDTH: usize = 14;
 /// Helper to integrate Clap with Outstanding Topics.
 pub struct TopicHelper {
     registry: TopicRegistry,
+    output_flag: Option<String>,
+    output_mode: OutputMode,
 }
 
 /// Result of the topic help interception.
@@ -55,7 +57,11 @@ pub enum TopicHelpResult {
 
 impl TopicHelper {
     pub fn new(registry: TopicRegistry) -> Self {
-        Self { registry }
+        Self {
+            registry,
+            output_flag: None,
+            output_mode: OutputMode::Auto,
+        }
     }
 
     /// Creates a new builder for constructing a TopicHelper.
@@ -73,10 +79,16 @@ impl TopicHelper {
         &mut self.registry
     }
 
+    /// Returns the current output mode.
+    pub fn output_mode(&self) -> OutputMode {
+        self.output_mode
+    }
+
     /// Prepares the command for topic support.
     /// It disables the default help subcommand so we can capture `help <arg>` manually.
+    /// If an output flag is configured, it's added as a global argument.
     pub fn augment_command(&self, cmd: Command) -> Command {
-        cmd.disable_help_subcommand(true)
+        let mut cmd = cmd.disable_help_subcommand(true)
             .subcommand(
                 Command::new("help")
                     .about("Print this message or the help of the given subcommand(s)")
@@ -92,7 +104,25 @@ impl TopicHelper {
                             .action(ArgAction::SetTrue)
                             .help("Display help through a pager"),
                     )
-            )
+            );
+
+        // Add output flag if configured
+        if let Some(ref flag_name) = self.output_flag {
+            // Leak the string to get a 'static reference required by clap
+            // This is safe since the command is built once per program run
+            let flag: &'static str = Box::leak(flag_name.clone().into_boxed_str());
+            cmd = cmd.arg(
+                Arg::new("_output_mode")
+                    .long(flag)
+                    .value_name("MODE")
+                    .global(true)
+                    .value_parser(["auto", "term", "text"])
+                    .default_value("auto")
+                    .help("Output mode: auto (detect), term (always styled), text (plain)")
+            );
+        }
+
+        cmd
     }
 
     /// Runs the CLI, handling help display automatically.
@@ -161,6 +191,22 @@ impl TopicHelper {
             Err(e) => return TopicHelpResult::Error(e),
         };
 
+        // Extract output mode if the flag was configured
+        let output_mode = if self.output_flag.is_some() {
+            match matches.get_one::<String>("_output_mode").map(|s| s.as_str()) {
+                Some("term") => OutputMode::Term,
+                Some("text") => OutputMode::Text,
+                _ => OutputMode::Auto,
+            }
+        } else {
+            OutputMode::Auto
+        };
+
+        let config = Config {
+            output_mode: Some(output_mode),
+            ..Default::default()
+        };
+
         if let Some((name, sub_matches)) = matches.subcommand() {
             if name == "help" {
                 let use_pager = sub_matches.get_flag("page");
@@ -168,11 +214,11 @@ impl TopicHelper {
                 if let Some(topic_args) = sub_matches.get_many::<String>("topic") {
                     let keywords: Vec<_> = topic_args.map(|s| s.as_str()).collect();
                      if !keywords.is_empty() {
-                         return self.handle_help_request(&mut cmd, &keywords, use_pager);
+                         return self.handle_help_request(&mut cmd, &keywords, use_pager, Some(config));
                      }
                 }
                 // If "help" is called without args, return the root help with topics
-                if let Ok(h) = render_help_with_topics(&cmd, &self.registry, None) {
+                if let Ok(h) = render_help_with_topics(&cmd, &self.registry, Some(config)) {
                     return if use_pager {
                         TopicHelpResult::PagedHelp(h)
                     } else {
@@ -186,12 +232,12 @@ impl TopicHelper {
     }
 
     /// Handles a request for specific help e.g. `help foo`
-    fn handle_help_request(&self, cmd: &mut Command, keywords: &[&str], use_pager: bool) -> TopicHelpResult {
+    fn handle_help_request(&self, cmd: &mut Command, keywords: &[&str], use_pager: bool, config: Option<Config>) -> TopicHelpResult {
         let sub_name = keywords[0];
 
         // 0. Check for "topics" - list all available topics
         if sub_name == "topics" {
-            if let Ok(h) = render_topics_list(&self.registry, cmd, None) {
+            if let Ok(h) = render_topics_list(&self.registry, cmd, config.clone()) {
                 return if use_pager {
                     TopicHelpResult::PagedHelp(h)
                 } else {
@@ -203,7 +249,7 @@ impl TopicHelper {
         // 1. Check if it's a real command
         if find_subcommand(cmd, sub_name).is_some() {
              if let Some(target) = find_subcommand_recursive(cmd, keywords) {
-                 if let Ok(h) = render_help(target, None) {
+                 if let Ok(h) = render_help(target, config.clone()) {
                      return if use_pager {
                          TopicHelpResult::PagedHelp(h)
                      } else {
@@ -215,7 +261,7 @@ impl TopicHelper {
 
         // 2. Check if it is a topic
         if let Some(topic) = self.registry.get_topic(sub_name) {
-             if let Ok(h) = render_topic(topic, None) {
+             if let Ok(h) = render_topic(topic, config) {
                  return if use_pager {
                      TopicHelpResult::PagedHelp(h)
                  } else {
@@ -304,6 +350,7 @@ fn try_pager(pager: &str, content: &str) -> std::io::Result<()> {
 #[derive(Default)]
 pub struct TopicHelperBuilder {
     registry: TopicRegistry,
+    output_flag: Option<String>,
 }
 
 impl TopicHelperBuilder {
@@ -311,6 +358,7 @@ impl TopicHelperBuilder {
     pub fn new() -> Self {
         Self {
             registry: TopicRegistry::new(),
+            output_flag: None,
         }
     }
 
@@ -327,9 +375,39 @@ impl TopicHelperBuilder {
         self
     }
 
+    /// Configures the name of the output flag to add to the CLI.
+    ///
+    /// When set, an `--<flag>=<auto|term|text>` option is automatically
+    /// added to the command. The output mode is then used for all renders.
+    ///
+    /// Default flag name is "output" if this method is called with None.
+    /// If this method is never called, no output flag is added.
+    ///
+    /// # Example
+    /// ```rust
+    /// # use outstanding_clap::TopicHelper;
+    /// // Add --output flag (default name)
+    /// let helper = TopicHelper::builder()
+    ///     .output_flag(None)
+    ///     .build();
+    ///
+    /// // Add --format flag (custom name)
+    /// let helper = TopicHelper::builder()
+    ///     .output_flag(Some("format"))
+    ///     .build();
+    /// ```
+    pub fn output_flag(mut self, name: Option<&str>) -> Self {
+        self.output_flag = Some(name.unwrap_or("output").to_string());
+        self
+    }
+
     /// Builds the TopicHelper with all configured topics.
     pub fn build(self) -> TopicHelper {
-        TopicHelper::new(self.registry)
+        TopicHelper {
+            registry: self.registry,
+            output_flag: self.output_flag,
+            output_mode: OutputMode::Auto,
+        }
     }
 }
 
