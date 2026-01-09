@@ -23,7 +23,7 @@
 //! Help display, pager support, and errors are handled automatically.
 
 use outstanding::topics::{Topic, TopicRegistry};
-use outstanding::{render_with_color, Theme, ThemeChoice};
+use outstanding::{render_with_output, Theme, ThemeChoice, OutputMode};
 use clap::{Command, Arg, ArgAction};
 use console::Style;
 use serde::Serialize;
@@ -386,8 +386,8 @@ pub struct Config {
     pub template: Option<String>,
     /// Custom theme. If None, uses the default theme.
     pub theme: Option<Theme>,
-    /// Whether to force color output. If None, auto-detects.
-    pub use_color: Option<bool>,
+    /// Output mode. If None, uses Auto (auto-detects).
+    pub output_mode: Option<OutputMode>,
 }
 
 /// Renders the help for a clap command using outstanding.
@@ -399,13 +399,11 @@ pub fn render_help(cmd: &Command, config: Option<Config>) -> Result<String, outs
         .unwrap_or(include_str!("help_template.txt"));
 
     let theme = config.theme.unwrap_or_else(default_theme);
-    let use_color = config
-        .use_color
-        .unwrap_or_else(|| console::Term::stdout().features().colors_supported());
+    let mode = config.output_mode.unwrap_or(OutputMode::Auto);
 
     let data = extract_help_data(cmd);
 
-    render_with_color(template, &data, ThemeChoice::from(&theme), use_color)
+    render_with_output(template, &data, ThemeChoice::from(&theme), mode)
 }
 
 /// Renders the help for a clap command with topics in a "Learn More" section.
@@ -417,13 +415,11 @@ pub fn render_help_with_topics(cmd: &Command, registry: &TopicRegistry, config: 
         .unwrap_or(include_str!("help_template.txt"));
 
     let theme = config.theme.unwrap_or_else(default_theme);
-    let use_color = config
-        .use_color
-        .unwrap_or_else(|| console::Term::stdout().features().colors_supported());
+    let mode = config.output_mode.unwrap_or(OutputMode::Auto);
 
     let data = extract_help_data_with_topics(cmd, registry);
 
-    render_with_color(template, &data, ThemeChoice::from(&theme), use_color)
+    render_with_output(template, &data, ThemeChoice::from(&theme), mode)
 }
 
 /// Renders a topic using outstanding templating.
@@ -435,16 +431,14 @@ pub fn render_topic(topic: &Topic, config: Option<Config>) -> Result<String, out
         .unwrap_or(include_str!("topic_template.txt"));
 
     let theme = config.theme.unwrap_or_else(default_theme);
-    let use_color = config
-        .use_color
-        .unwrap_or_else(|| console::Term::stdout().features().colors_supported());
+    let mode = config.output_mode.unwrap_or(OutputMode::Auto);
 
     let data = TopicData {
         title: topic.title.clone(),
         content: topic.content.clone(),
     };
 
-    render_with_color(template, &data, ThemeChoice::from(&theme), use_color)
+    render_with_output(template, &data, ThemeChoice::from(&theme), mode)
 }
 
 #[derive(Serialize)]
@@ -462,9 +456,7 @@ pub fn render_topics_list(registry: &TopicRegistry, cmd: &Command, config: Optio
         .unwrap_or(include_str!("topics_list_template.txt"));
 
     let theme = config.theme.unwrap_or_else(default_theme);
-    let use_color = config
-        .use_color
-        .unwrap_or_else(|| console::Term::stdout().features().colors_supported());
+    let mode = config.output_mode.unwrap_or(OutputMode::Auto);
 
     let topics = registry.list_topics();
 
@@ -486,7 +478,7 @@ pub fn render_topics_list(registry: &TopicRegistry, cmd: &Command, config: Optio
         topics: topic_items,
     };
 
-    render_with_color(template, &data, ThemeChoice::from(&theme), use_color)
+    render_with_output(template, &data, ThemeChoice::from(&theme), mode)
 }
 
 #[derive(Serialize)]

@@ -19,7 +19,7 @@
 
 use clap::{Arg, ArgAction, Command};
 use outstanding::topics::{Topic, TopicType};
-use outstanding::{render, Theme, ThemeChoice};
+use outstanding::{render_with_output, Theme, ThemeChoice, OutputMode};
 use outstanding_clap::{display_with_pager, TopicHelper, TopicHelpResult};
 use serde::Serialize;
 use std::process::ExitCode;
@@ -285,7 +285,7 @@ The title is extracted from the first non-empty line.
 
 fn echo_command(data: EchoData) {
     let theme = sample_theme();
-    match render(ECHO_TEMPLATE, &data, ThemeChoice::from(&theme)) {
+    match render_with_output(ECHO_TEMPLATE, &data, ThemeChoice::from(&theme), OutputMode::Auto) {
         Ok(output) => print!("{}", output),
         Err(e) => eprintln!("Render error: {}", e),
     }

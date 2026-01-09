@@ -7,7 +7,7 @@
 
 use clap::{Parser, Subcommand, Args, CommandFactory};
 use console::Style;
-use outstanding::{render_with_color, Theme, ThemeChoice};
+use outstanding::{render_with_output, Theme, ThemeChoice, OutputMode};
 use outstanding::topics::{Topic, TopicType};
 use outstanding_clap::TopicHelper;
 use serde::Serialize;
@@ -49,8 +49,7 @@ struct OptionPair {
 }
 
 fn echo_command(data: &EchoData) {
-    let use_color = console::Term::stdout().features().colors_supported();
-    match render_with_color(ECHO_TEMPLATE, data, ThemeChoice::from(&echo_theme()), use_color) {
+    match render_with_output(ECHO_TEMPLATE, data, ThemeChoice::from(&echo_theme()), OutputMode::Auto) {
         Ok(output) => print!("{}", output),
         Err(e) => eprintln!("Template error: {}", e),
     }
