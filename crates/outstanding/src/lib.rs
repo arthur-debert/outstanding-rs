@@ -54,7 +54,7 @@
 //! ## Adaptive Themes (Light & Dark)
 //!
 //! ```rust
-//! use outstanding::{AdaptiveTheme, Theme, ThemeChoice};
+//! use outstanding::{AdaptiveTheme, Theme, ThemeChoice, OutputMode};
 //! use console::Style;
 //!
 //! let light = Theme::new().add("tone", Style::new().green());
@@ -62,11 +62,11 @@
 //! let adaptive = AdaptiveTheme::new(light, dark);
 //!
 //! // Automatically renders with the user's OS theme (via the `dark-light` crate)
-//! let banner = outstanding::render_with_color(
+//! let banner = outstanding::render_with_output(
 //!     r#"Mode: {{ "active" | style("tone") }}"#,
 //!     &serde_json::json!({}),
 //!     ThemeChoice::Adaptive(&adaptive),
-//!     true,
+//!     OutputMode::Term,
 //! ).unwrap();
 //! ```
 //!
@@ -102,19 +102,25 @@
 //!
 //! ```rust,ignore
 //! use clap::Parser;
+//! use outstanding::OutputMode;
 //!
 //! #[derive(Parser)]
 //! struct Cli {
-//!     #[arg(long)]
-//!     no_color: bool,
+//!     #[arg(long, default_value = "auto")]
+//!     output: String,
 //! }
 //!
 //! let cli = Cli::parse();
-//! let output = outstanding::render_with_color(
+//! let mode = match cli.output.as_str() {
+//!     "term" => OutputMode::Term,
+//!     "text" => OutputMode::Text,
+//!     _ => OutputMode::Auto,
+//! };
+//! let output = outstanding::render_with_output(
 //!     template,
 //!     &data,
 //!     ThemeChoice::from(&theme),
-//!     !cli.no_color,
+//!     mode,
 //! ).unwrap();
 //! ```
 
@@ -253,6 +259,91 @@ pub enum ColorMode {
     Dark,
 }
 
+/// Controls how output is rendered.
+///
+/// This determines whether ANSI escape codes are included in the output.
+///
+/// # Variants
+///
+/// - `Auto` - Detect terminal capabilities automatically (default behavior)
+/// - `Term` - Always include ANSI escape codes (for terminal output)
+/// - `Text` - Never include ANSI escape codes (plain text)
+/// - `TermDebug` - Render style names as bracket tags for debugging
+///
+/// # Example
+///
+/// ```rust
+/// use outstanding::{render_with_output, Theme, ThemeChoice, OutputMode};
+/// use console::Style;
+/// use serde::Serialize;
+///
+/// #[derive(Serialize)]
+/// struct Data { message: String }
+///
+/// let theme = Theme::new().add("ok", Style::new().green());
+/// let data = Data { message: "Hello".into() };
+///
+/// // Auto-detect (default)
+/// let auto = render_with_output(
+///     r#"{{ message | style("ok") }}"#,
+///     &data,
+///     ThemeChoice::from(&theme),
+///     OutputMode::Auto,
+/// ).unwrap();
+///
+/// // Force plain text
+/// let plain = render_with_output(
+///     r#"{{ message | style("ok") }}"#,
+///     &data,
+///     ThemeChoice::from(&theme),
+///     OutputMode::Text,
+/// ).unwrap();
+/// assert_eq!(plain, "Hello");
+///
+/// // Debug mode - renders bracket tags
+/// let debug = render_with_output(
+///     r#"{{ message | style("ok") }}"#,
+///     &data,
+///     ThemeChoice::from(&theme),
+///     OutputMode::TermDebug,
+/// ).unwrap();
+/// assert_eq!(debug, "[ok]Hello[/ok]");
+/// ```
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum OutputMode {
+    /// Auto-detect terminal capabilities
+    #[default]
+    Auto,
+    /// Always use ANSI escape codes (terminal output)
+    Term,
+    /// Never use ANSI escape codes (plain text)
+    Text,
+    /// Debug mode: render style names as bracket tags `[name]text[/name]`
+    TermDebug,
+}
+
+impl OutputMode {
+    /// Resolves the output mode to a concrete decision about whether to use color.
+    ///
+    /// - `Auto` checks terminal capabilities
+    /// - `Term` always returns `true`
+    /// - `Text` always returns `false`
+    /// - `TermDebug` returns `false` (handled specially by apply methods)
+    pub fn should_use_color(&self) -> bool {
+        match self {
+            OutputMode::Auto => Term::stdout().features().colors_supported(),
+            OutputMode::Term => true,
+            OutputMode::Text => false,
+            OutputMode::TermDebug => false, // Handled specially
+        }
+    }
+
+    /// Returns true if this is debug mode (bracket tags instead of ANSI).
+    pub fn is_debug(&self) -> bool {
+        matches!(self, OutputMode::TermDebug)
+    }
+}
+
 type ThemeDetector = fn() -> ColorMode;
 
 static THEME_DETECTOR: Lazy<Mutex<ThemeDetector>> = Lazy::new(|| Mutex::new(os_theme_detector));
@@ -345,6 +436,51 @@ impl Styles {
         }
     }
 
+    /// Applies a style based on the output mode.
+    ///
+    /// - `Term` - Applies ANSI styling
+    /// - `Text` - Returns plain text (no ANSI codes)
+    /// - `Auto` - Should be resolved before calling this method
+    ///
+    /// Note: For `Auto` mode, call `OutputMode::should_use_color()` first
+    /// to determine whether to use `Term` or `Text`.
+    pub fn apply_with_mode(&self, name: &str, text: &str, use_color: bool) -> String {
+        if use_color {
+            self.apply(name, text)
+        } else {
+            self.apply_plain(name, text)
+        }
+    }
+
+    /// Applies a style in debug mode, rendering as bracket tags.
+    ///
+    /// Returns `[name]text[/name]` for known styles, or applies the missing
+    /// indicator for unknown styles.
+    ///
+    /// # Example
+    ///
+    /// ```rust
+    /// use outstanding::Styles;
+    /// use console::Style;
+    ///
+    /// let styles = Styles::new().add("bold", Style::new().bold());
+    ///
+    /// // Known style renders as bracket tags
+    /// assert_eq!(styles.apply_debug("bold", "hello"), "[bold]hello[/bold]");
+    ///
+    /// // Unknown style shows indicator
+    /// assert_eq!(styles.apply_debug("unknown", "hello"), "(!?) hello");
+    /// ```
+    pub fn apply_debug(&self, name: &str, text: &str) -> String {
+        if self.styles.contains_key(name) {
+            format!("[{}]{}[/{}]", name, text, name)
+        } else if self.missing_indicator.is_empty() {
+            text.to_string()
+        } else {
+            format!("{} {}", self.missing_indicator, text)
+        }
+    }
+
     /// Returns true if a style with the given name exists.
     pub fn has(&self, name: &str) -> bool {
         self.styles.contains_key(name)
@@ -394,26 +530,25 @@ pub fn render<T: Serialize>(
     data: &T,
     theme: ThemeChoice<'_>,
 ) -> Result<String, Error> {
-    let use_color = Term::stdout().features().colors_supported();
-    render_with_color(template, data, theme, use_color)
+    render_with_output(template, data, theme, OutputMode::Auto)
 }
 
-/// Renders a template with explicit color control.
+/// Renders a template with explicit output mode control.
 ///
 /// Use this when you need to override automatic terminal detection,
-/// for example when honoring a `--no-color` CLI flag.
+/// for example when honoring a `--output=text` CLI flag.
 ///
 /// # Arguments
 ///
 /// * `template` - A minijinja template string
 /// * `data` - Any serializable data to pass to the template
-/// * `styles` - Style definitions to use for the `style` filter
-/// * `use_color` - Whether to apply ANSI styling (false = plain text)
+/// * `theme` - Theme definitions to use for the `style` filter
+/// * `mode` - Output mode: `Auto`, `Term`, or `Text`
 ///
 /// # Example
 ///
 /// ```rust
-/// use outstanding::{render_with_color, Theme, ThemeChoice};
+/// use outstanding::{render_with_output, Theme, ThemeChoice, OutputMode};
 /// use console::Style;
 /// use serde::Serialize;
 ///
@@ -422,24 +557,33 @@ pub fn render<T: Serialize>(
 ///
 /// let theme = Theme::new().add("ok", Style::new().green());
 ///
-/// // Force no color (e.g., --no-color flag)
-/// let plain = render_with_color(
+/// // Force plain text output
+/// let plain = render_with_output(
 ///     r#"{{ status | style("ok") }}"#,
 ///     &Data { status: "done".into() },
 ///     ThemeChoice::from(&theme),
-///     false,
+///     OutputMode::Text,
 /// ).unwrap();
 /// assert_eq!(plain, "done"); // No ANSI codes
+///
+/// // Force terminal output (with ANSI codes)
+/// let term = render_with_output(
+///     r#"{{ status | style("ok") }}"#,
+///     &Data { status: "done".into() },
+///     ThemeChoice::from(&theme),
+///     OutputMode::Term,
+/// ).unwrap();
+/// // Contains ANSI codes for green
 /// ```
-pub fn render_with_color<T: Serialize>(
+pub fn render_with_output<T: Serialize>(
     template: &str,
     data: &T,
     theme: ThemeChoice<'_>,
-    use_color: bool,
+    mode: OutputMode,
 ) -> Result<String, Error> {
     let theme = theme.resolve();
     let mut env = Environment::new();
-    register_filters(&mut env, theme, use_color);
+    register_filters(&mut env, theme, mode);
 
     env.add_template_owned("_inline".to_string(), template.to_string())?;
     let tmpl = env.get_template("_inline")?;
@@ -482,14 +626,13 @@ pub struct Renderer {
 impl Renderer {
     /// Creates a new renderer with automatic color detection.
     pub fn new(theme: Theme) -> Self {
-        let use_color = Term::stdout().features().colors_supported();
-        Self::with_color(theme, use_color)
+        Self::with_output(theme, OutputMode::Auto)
     }
 
-    /// Creates a new renderer with explicit color control.
-    pub fn with_color(theme: Theme, use_color: bool) -> Self {
+    /// Creates a new renderer with explicit output mode.
+    pub fn with_output(theme: Theme, mode: OutputMode) -> Self {
         let mut env = Environment::new();
-        register_filters(&mut env, theme, use_color);
+        register_filters(&mut env, theme, mode);
         Self { env }
     }
 
@@ -513,15 +656,16 @@ impl Renderer {
 }
 
 /// Registers all built-in filters on a minijinja environment.
-fn register_filters(env: &mut Environment<'static>, theme: Theme, use_color: bool) {
+fn register_filters(env: &mut Environment<'static>, theme: Theme, mode: OutputMode) {
     let styles = theme.styles.clone();
+    let is_debug = mode.is_debug();
+    let use_color = mode.should_use_color();
     env.add_filter("style", move |value: Value, name: String| -> String {
         let text = value.to_string();
-        if use_color {
-            styles.apply(&name, &text)
+        if is_debug {
+            styles.apply_debug(&name, &text)
         } else {
-            // Still check for missing styles even when colors are disabled
-            styles.apply_plain(&name, &text)
+            styles.apply_with_mode(&name, &text, use_color)
         }
     });
 
@@ -681,18 +825,18 @@ mod tests {
     }
 
     #[test]
-    fn test_render_with_color_false_no_ansi() {
+    fn test_render_with_output_text_no_ansi() {
         let styles = Styles::new().add("red", Style::new().red());
         let theme = Theme::from_styles(styles);
         let data = SimpleData {
             message: "test".into(),
         };
 
-        let output = render_with_color(
+        let output = render_with_output(
             r#"{{ message | style("red") }}"#,
             &data,
             ThemeChoice::from(&theme),
-            false,
+            OutputMode::Text,
         )
         .unwrap();
 
@@ -701,7 +845,7 @@ mod tests {
     }
 
     #[test]
-    fn test_render_with_color_true_has_ansi() {
+    fn test_render_with_output_term_has_ansi() {
         // Use force_styling to ensure ANSI codes are emitted even in test environment
         let styles = Styles::new().add("green", Style::new().green().force_styling(true));
         let theme = Theme::from_styles(styles);
@@ -709,11 +853,11 @@ mod tests {
             message: "success".into(),
         };
 
-        let output = render_with_color(
+        let output = render_with_output(
             r#"{{ message | style("green") }}"#,
             &data,
             ThemeChoice::from(&theme),
-            true,
+            OutputMode::Term,
         )
         .unwrap();
 
@@ -729,11 +873,11 @@ mod tests {
             message: "hello".into(),
         };
 
-        let output = render_with_color(
+        let output = render_with_output(
             r#"{{ message | style("unknown") }}"#,
             &data,
             ThemeChoice::from(&theme),
-            true,
+            OutputMode::Term,
         )
         .unwrap();
 
@@ -749,11 +893,11 @@ mod tests {
         };
 
         // Even with colors disabled, missing indicator should appear
-        let output = render_with_color(
+        let output = render_with_output(
             r#"{{ message | style("unknown") }}"#,
             &data,
             ThemeChoice::from(&theme),
-            false,
+            OutputMode::Text,
         )
         .unwrap();
 
@@ -768,11 +912,11 @@ mod tests {
             message: "hello".into(),
         };
 
-        let output = render_with_color(
+        let output = render_with_output(
             r#"{{ message | style("unknown") }}"#,
             &data,
             ThemeChoice::from(&theme),
-            true,
+            OutputMode::Term,
         )
         .unwrap();
 
@@ -791,7 +935,7 @@ mod tests {
         let template = r#"{% for item in items %}{{ item | style("item") }}
 {% endfor %}"#;
 
-        let output = render_with_color(template, &data, ThemeChoice::from(&theme), false).unwrap();
+        let output = render_with_output(template, &data, ThemeChoice::from(&theme), OutputMode::Text).unwrap();
         assert_eq!(output, "one\ntwo\n");
     }
 
@@ -805,7 +949,7 @@ mod tests {
         };
 
         let template = r#"Total: {{ count | style("count") }} items"#;
-        let output = render_with_color(template, &data, ThemeChoice::from(&theme), false).unwrap();
+        let output = render_with_output(template, &data, ThemeChoice::from(&theme), OutputMode::Text).unwrap();
 
         assert_eq!(output, "Total: 42 items");
     }
@@ -818,11 +962,11 @@ mod tests {
         #[derive(Serialize)]
         struct Empty {}
 
-        let output = render_with_color(
+        let output = render_with_output(
             r#"{{ "Header" | style("header") }}"#,
             &Empty {},
             ThemeChoice::from(&theme),
-            false,
+            OutputMode::Text,
         )
         .unwrap();
 
@@ -832,7 +976,7 @@ mod tests {
     #[test]
     fn test_renderer_add_and_render() {
         let theme = Theme::new().add("ok", Style::new().green());
-        let mut renderer = Renderer::with_color(theme, false);
+        let mut renderer = Renderer::with_output(theme, OutputMode::Text);
 
         renderer
             .add_template("test", r#"{{ message | style("ok") }}"#)
@@ -852,7 +996,7 @@ mod tests {
     #[test]
     fn test_renderer_unknown_template_error() {
         let theme = Theme::new();
-        let renderer = Renderer::with_color(theme, false);
+        let renderer = Renderer::with_output(theme, OutputMode::Text);
 
         let result = renderer.render(
             "nonexistent",
@@ -869,7 +1013,7 @@ mod tests {
             .add("a", Style::new().red())
             .add("b", Style::new().blue());
 
-        let mut renderer = Renderer::with_color(theme, false);
+        let mut renderer = Renderer::with_output(theme, OutputMode::Text);
         renderer
             .add_template("tmpl_a", r#"A: {{ message | style("a") }}"#)
             .unwrap();
@@ -916,7 +1060,7 @@ mod tests {
         let template = r#"{% for item in items %}{{ item.name | style("name") }}={{ item.value }}
 {% endfor %}"#;
 
-        let output = render_with_color(template, &data, ThemeChoice::from(&theme), false).unwrap();
+        let output = render_with_output(template, &data, ThemeChoice::from(&theme), OutputMode::Text).unwrap();
         assert_eq!(output, "foo=1\nbar=2\n");
     }
 
@@ -939,7 +1083,7 @@ mod tests {
         #[derive(Serialize)]
         struct Empty {}
 
-        let output = render_with_color("", &Empty {}, ThemeChoice::from(&theme), false).unwrap();
+        let output = render_with_output("", &Empty {}, ThemeChoice::from(&theme), OutputMode::Text).unwrap();
         assert_eq!(output, "");
     }
 
@@ -951,7 +1095,7 @@ mod tests {
         #[derive(Serialize)]
         struct Empty {}
 
-        let result = render_with_color("{{ unclosed", &Empty {}, ThemeChoice::from(&theme), false);
+        let result = render_with_output("{{ unclosed", &Empty {}, ThemeChoice::from(&theme), OutputMode::Text);
         assert!(result.is_err());
     }
 
@@ -981,21 +1125,21 @@ mod tests {
         };
 
         set_theme_detector(|| ColorMode::Dark);
-        let dark_output = render_with_color(
+        let dark_output = render_with_output(
             r#"{{ message | style("tone") }}"#,
             &data,
             ThemeChoice::Adaptive(&adaptive),
-            true,
+            OutputMode::Term,
         )
         .unwrap();
         assert!(dark_output.contains("\x1b[31"));
 
         set_theme_detector(|| ColorMode::Light);
-        let light_output = render_with_color(
+        let light_output = render_with_output(
             r#"{{ message | style("tone") }}"#,
             &data,
             ThemeChoice::Adaptive(&adaptive),
-            true,
+            OutputMode::Term,
         )
         .unwrap();
         assert!(light_output.contains("\x1b[32"));
@@ -1039,5 +1183,149 @@ mod tests {
     #[test]
     fn test_truncate_to_width_one_width() {
         assert_eq!(truncate_to_width("Hello", 1), "…");
+    }
+
+    #[test]
+    fn test_output_mode_term_should_use_color() {
+        assert!(OutputMode::Term.should_use_color());
+    }
+
+    #[test]
+    fn test_output_mode_text_should_not_use_color() {
+        assert!(!OutputMode::Text.should_use_color());
+    }
+
+    #[test]
+    fn test_output_mode_default_is_auto() {
+        assert_eq!(OutputMode::default(), OutputMode::Auto);
+    }
+
+    #[test]
+    fn test_styles_apply_with_mode_color() {
+        let styles = Styles::new().add("bold", Style::new().bold().force_styling(true));
+        let result = styles.apply_with_mode("bold", "hello", true);
+        // Should contain ANSI codes
+        assert!(result.contains("\x1b[1m"));
+        assert!(result.contains("hello"));
+    }
+
+    #[test]
+    fn test_styles_apply_with_mode_no_color() {
+        let styles = Styles::new().add("bold", Style::new().bold());
+        let result = styles.apply_with_mode("bold", "hello", false);
+        // Should not contain ANSI codes
+        assert_eq!(result, "hello");
+    }
+
+    #[test]
+    fn test_styles_apply_with_mode_missing_style() {
+        let styles = Styles::new();
+        // With color
+        let result = styles.apply_with_mode("nonexistent", "hello", true);
+        assert_eq!(result, "(!?) hello");
+        // Without color
+        let result = styles.apply_with_mode("nonexistent", "hello", false);
+        assert_eq!(result, "(!?) hello");
+    }
+
+    #[test]
+    fn test_output_mode_term_debug_is_debug() {
+        assert!(OutputMode::TermDebug.is_debug());
+        assert!(!OutputMode::Auto.is_debug());
+        assert!(!OutputMode::Term.is_debug());
+        assert!(!OutputMode::Text.is_debug());
+    }
+
+    #[test]
+    fn test_output_mode_term_debug_should_not_use_color() {
+        // TermDebug returns false for should_use_color because it's handled specially
+        assert!(!OutputMode::TermDebug.should_use_color());
+    }
+
+    #[test]
+    fn test_styles_apply_debug_known_style() {
+        let styles = Styles::new().add("bold", Style::new().bold());
+        let result = styles.apply_debug("bold", "hello");
+        assert_eq!(result, "[bold]hello[/bold]");
+    }
+
+    #[test]
+    fn test_styles_apply_debug_unknown_style() {
+        let styles = Styles::new();
+        let result = styles.apply_debug("unknown", "hello");
+        assert_eq!(result, "(!?) hello");
+    }
+
+    #[test]
+    fn test_styles_apply_debug_unknown_empty_indicator() {
+        let styles = Styles::new().missing_indicator("");
+        let result = styles.apply_debug("unknown", "hello");
+        assert_eq!(result, "hello");
+    }
+
+    #[test]
+    fn test_render_with_output_term_debug() {
+        let styles = Styles::new()
+            .add("title", Style::new().bold())
+            .add("count", Style::new().cyan());
+        let theme = Theme::from_styles(styles);
+
+        #[derive(Serialize)]
+        struct Data {
+            name: String,
+            value: usize,
+        }
+
+        let data = Data {
+            name: "Test".into(),
+            value: 42,
+        };
+
+        let output = render_with_output(
+            r#"{{ name | style("title") }}: {{ value | style("count") }}"#,
+            &data,
+            ThemeChoice::from(&theme),
+            OutputMode::TermDebug,
+        )
+        .unwrap();
+
+        assert_eq!(output, "[title]Test[/title]: [count]42[/count]");
+    }
+
+    #[test]
+    fn test_render_with_output_term_debug_missing_style() {
+        let styles = Styles::new().add("known", Style::new().bold());
+        let theme = Theme::from_styles(styles);
+
+        #[derive(Serialize)]
+        struct Data {
+            message: String,
+        }
+
+        let data = Data {
+            message: "hello".into(),
+        };
+
+        // Unknown style shows indicator
+        let output = render_with_output(
+            r#"{{ message | style("unknown") }}"#,
+            &data,
+            ThemeChoice::from(&theme),
+            OutputMode::TermDebug,
+        )
+        .unwrap();
+
+        assert_eq!(output, "(!?) hello");
+
+        // Known style renders as bracket tags
+        let output = render_with_output(
+            r#"{{ message | style("known") }}"#,
+            &data,
+            ThemeChoice::from(&theme),
+            OutputMode::TermDebug,
+        )
+        .unwrap();
+
+        assert_eq!(output, "[known]hello[/known]");
     }
 }
