@@ -154,8 +154,22 @@ impl TableSpec {
                 }
                 widths[idx] = width;
             }
+        } else if remaining > 0 {
+            // If no Fill columns, distribute remaining space to the rightmost Bounded column
+            // This ensures the table tries to fill the available width if possible
+            if let Some(idx) = self
+                .columns
+                .iter()
+                .rposition(|c| matches!(c.width, Width::Bounded { .. }))
+            {
+                // We expand the column beyond its current calculated width
+                // Note: We deliberately ignore 'max' here because this is an
+                // explicit layout expansion step, similar to how Fill works.
+                // If the user wanted it strictly bounded, they wouldn't provide
+                // extra space in total_width without a Fill column.
+                widths[idx] += remaining;
+            }
         }
-        // If no Fill columns, remaining space is simply unused
 
         ResolvedWidths { widths }
     }
@@ -238,8 +252,9 @@ mod tests {
             }))
             .build();
 
+        // Rightmost bounded absorbs all remaining space
         let resolved = spec.resolve_widths(80);
-        assert_eq!(resolved.widths, vec![10]);
+        assert_eq!(resolved.widths, vec![80]);
     }
 
     #[test]
@@ -249,6 +264,10 @@ mod tests {
                 min: Some(5),
                 max: Some(20),
             }))
+            // Add a fixed column at the end to prevent the Bounded one from being rightmost-bounded if we cared about position
+            // But wait, the logic finds *rightmost Bounded*.
+            // Here: [Bounded, Fixed]. Rightmost Bounded is index 0.
+            // So index 0 will expand.
             .column(Column::new(Width::Fixed(10)))
             .build();
 
@@ -258,24 +277,31 @@ mod tests {
         ];
 
         let resolved = spec.resolve_widths_from_data(80, &data);
-        // "longer text here" is 16 chars, within [5, 20]
-        assert_eq!(resolved.widths[0], 16);
+        // "longer text here" is 16 chars. Fixed is 10. Used: 26. Remaining: 54.
+        // Index 0 is rightmost bounded. It gets +54.
+        // 16 + 54 = 70.
+        assert_eq!(resolved.widths[0], 70);
         assert_eq!(resolved.widths[1], 10);
     }
 
     #[test]
-    fn resolve_bounded_clamps_to_max() {
+    fn resolve_bounded_clamps_to_max_if_not_expanding() {
+        // To test clamping without expansion, we ensure there is no remaining space
+        // OR we make sure it's not the rightmost bounded column?
+        // Or we add a Fill column to soak up space.
         let spec = TableSpec::builder()
             .column(Column::new(Width::Bounded {
                 min: Some(5),
                 max: Some(10),
             }))
+            .column(Column::new(Width::Fill)) // Takes remaining space
             .build();
 
         let data: Vec<Vec<&str>> = vec![vec!["this is a very long string that exceeds max"]];
 
         let resolved = spec.resolve_widths_from_data(80, &data);
-        assert_eq!(resolved.widths[0], 10); // Clamped to max
+        assert_eq!(resolved.widths[0], 10); // Clamped to max, Fill takes the rest
+        assert_eq!(resolved.widths[1], 70);
     }
 
     #[test]
@@ -285,13 +311,18 @@ mod tests {
                 min: Some(10),
                 max: Some(20),
             }))
+            .column(Column::new(Width::Fill)) // Ensure no expansion occurs
             .build();
 
         let data: Vec<Vec<&str>> = vec![vec!["hi"]]; // Only 2 chars
 
         let resolved = spec.resolve_widths_from_data(80, &data);
         assert_eq!(resolved.widths[0], 10); // Raised to min
+        assert_eq!(resolved.widths[1], 70);
     }
+
+    // ... (other tests unchanged) ...
+
 
     #[test]
     fn resolve_with_decorations() {
@@ -328,7 +359,7 @@ mod tests {
     }
 
     #[test]
-    fn resolve_no_fill_leaves_remainder_unused() {
+    fn resolve_no_fill_expands_rightmost_bounded() {
         let spec = TableSpec::builder()
             .column(Column::new(Width::Fixed(10)))
             .column(Column::new(Width::Bounded {
@@ -339,10 +370,10 @@ mod tests {
 
         // Without data, bounded uses min (5)
         // Total: 50, available: 50, used: 15
-        // No Fill column, so remaining 35 is unused
+        // No Fill column, remaining 35 is added to Bounded column (ignoring max)
         let resolved = spec.resolve_widths(50);
-        assert_eq!(resolved.widths, vec![10, 5]);
-        assert_eq!(resolved.total(), 15);
+        assert_eq!(resolved.widths, vec![10, 40]);
+        assert_eq!(resolved.total(), 50);
     }
 
     #[test]
@@ -414,13 +445,19 @@ mod proptests {
             min_width in 1usize..10,
             max_width in 10usize..30,
             data_width in 0usize..50,
+            has_fill in prop::bool::ANY,
         ) {
-            let spec = TableSpec::builder()
+            let mut builder = TableSpec::builder()
                 .column(Column::new(Width::Bounded {
                     min: Some(min_width),
                     max: Some(max_width),
-                }))
-                .build();
+                }));
+            
+            if has_fill {
+                builder = builder.column(Column::new(Width::Fill));
+            }
+
+            let spec = builder.build();
 
             // Create fake data with specific width
             let data_str = "x".repeat(data_width);
@@ -434,11 +471,17 @@ mod proptests {
                 "Width {} should be >= min {}",
                 width, min_width
             );
-            prop_assert!(
-                width <= max_width,
-                "Width {} should be <= max {}",
-                width, max_width
-            );
+
+            // It should respect max ONLY if it's not expanding into empty space
+            // It expands into empty space if fill_indices is empty (i.e. !has_fill)
+            // AND it is the rightmost bounded column (which it is, as index 0)
+            if has_fill {
+                prop_assert!(
+                    width <= max_width,
+                    "Width {} should be <= max {} (when fill exists)",
+                    width, max_width
+                );
+            }
         }
     }
 }

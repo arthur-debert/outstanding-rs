@@ -29,10 +29,36 @@ use super::util::{
 /// ```
 pub fn register_table_filters(env: &mut Environment<'static>) {
     // col filter: {{ value | col(width) }} or {{ value | col(width, align="right", truncate="middle") }}
+    // "fill" support (Option B): {{ value | col("fill", width=80) }}
     env.add_filter(
         "col",
-        |value: Value, width: usize, kwargs: minijinja::value::Kwargs| -> Result<String, minijinja::Error> {
+        |value: Value, width_val: Value, kwargs: minijinja::value::Kwargs| -> Result<String, minijinja::Error> {
             let text = value.to_string();
+            
+            // Resolve width: can be number or "fill" (requiring 'width' kwarg)
+            let width = if let Some(w) = width_val.as_i64() {
+                w as usize
+            } else if let Some(s) = width_val.as_str() {
+                if s == "fill" {
+                    kwargs.get::<usize>("width").map_err(|_| {
+                        minijinja::Error::new(
+                            minijinja::ErrorKind::InvalidOperation,
+                            "Using col('fill') requires explicit 'width' argument (e.g. width=80)",
+                        )
+                    })?
+                } else {
+                    return Err(minijinja::Error::new(
+                        minijinja::ErrorKind::InvalidOperation,
+                        format!("Invalid width string: '{}'. Use number or 'fill'", s),
+                    ));
+                }
+            } else {
+                return Err(minijinja::Error::new(
+                    minijinja::ErrorKind::InvalidOperation,
+                    "Width valid must be an integer or 'fill'",
+                ));
+            };
+
             let align = kwargs.get::<Option<String>>("align")?.unwrap_or_default();
             let truncate = kwargs.get::<Option<String>>("truncate")?.unwrap_or_default();
             let ellipsis = kwargs
@@ -268,6 +294,25 @@ mod tests {
     struct Item {
         name: &'static str,
         value: &'static str,
+    }
+
+    #[test]
+    fn filter_col_fill_option_b() {
+        let mut env = setup_env();
+        env.add_template("test", "{{ value | col('fill', width=10) }}").unwrap();
+        let result = env.get_template("test").unwrap()
+            .render(context!(value => "hello"))
+            .unwrap();
+        assert_eq!(result, "hello     ");
+    }
+
+    #[test]
+    fn filter_col_fill_missing_width_fails() {
+        let mut env = setup_env();
+        env.add_template("test", "{{ value | col('fill') }}").unwrap();
+        let result = env.get_template("test").unwrap()
+            .render(context!(value => "hello"));
+        assert!(result.is_err());
     }
 
     #[test]

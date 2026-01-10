@@ -35,23 +35,58 @@ pub enum TruncateAt {
 }
 
 /// Specifies how a column determines its width.
+/// Specifies how a column determines its width.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(untagged)]
+#[serde(try_from = "WidthRaw", into = "WidthRaw")]
 pub enum Width {
     /// Fixed width in display columns.
     Fixed(usize),
     /// Width calculated from content, constrained by optional min/max bounds.
     Bounded {
         /// Minimum width (defaults to 0 if not specified).
-        #[serde(default)]
         min: Option<usize>,
         /// Maximum width (unlimited if not specified).
-        #[serde(default)]
         max: Option<usize>,
     },
     /// Expand to fill all remaining space.
     /// Only one column per table should use this.
     Fill,
+}
+
+#[derive(Serialize, Deserialize)]
+#[serde(untagged)]
+enum WidthRaw {
+    Fixed(usize),
+    Bounded {
+        #[serde(default)]
+        min: Option<usize>,
+        #[serde(default)]
+        max: Option<usize>,
+    },
+    FillStr(String),
+}
+
+impl From<Width> for WidthRaw {
+    fn from(width: Width) -> Self {
+        match width {
+            Width::Fixed(w) => WidthRaw::Fixed(w),
+            Width::Bounded { min, max } => WidthRaw::Bounded { min, max },
+            Width::Fill => WidthRaw::FillStr("fill".to_string()),
+        }
+    }
+}
+
+impl TryFrom<WidthRaw> for Width {
+    type Error = String;
+
+    fn try_from(raw: WidthRaw) -> Result<Self, Self::Error> {
+        match raw {
+            WidthRaw::Fixed(w) => Ok(Width::Fixed(w)),
+            WidthRaw::Bounded { min, max } => Ok(Width::Bounded { min, max }),
+            WidthRaw::FillStr(s) if s == "fill" => Ok(Width::Fill),
+            WidthRaw::FillStr(s) => Err(format!("Invalid width string: '{}'. Expected 'fill'.", s)),
+        }
+    }
 }
 
 impl Default for Width {
@@ -467,6 +502,8 @@ mod tests {
         assert_eq!(parsed, width);
     }
 
+
+
     #[test]
     fn width_serde_bounded() {
         let width = Width::Bounded {
@@ -475,6 +512,17 @@ mod tests {
         };
         let json = serde_json::to_string(&width).unwrap();
         let parsed: Width = serde_json::from_str(&json).unwrap();
+        assert_eq!(parsed, width);
+    }
+
+    #[test]
+    fn width_serde_fill() {
+        let width = Width::Fill;
+        let json = serde_json::to_string(&width).unwrap();
+        // Now serializes to "fill"
+        assert_eq!(json, "\"fill\"");
+
+        let parsed: Width = serde_json::from_str("\"fill\"").unwrap();
         assert_eq!(parsed, width);
     }
 
