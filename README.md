@@ -114,6 +114,11 @@ let matches = Outstanding::builder()
 
 See the [outstanding-clap README](crates/outstanding-clap/README.md) for more details.
 
+## Documentation
+
+- [Styling Guide](docs/styling.md) - Themes, style aliasing, adaptive themes, output modes
+- [Templates Guide](docs/templates.md) - MiniJinja syntax, filters, data structures
+
 ## License
 
 MIT

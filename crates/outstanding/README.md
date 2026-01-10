@@ -58,7 +58,7 @@ println!("{}", output);
 ## Adaptive Themes (Light & Dark)
 
 ```rust
-use outstanding::{AdaptiveTheme, Theme, ThemeChoice};
+use outstanding::{AdaptiveTheme, Theme, ThemeChoice, OutputMode};
 use console::Style;
 
 let light = Theme::new().add("tone", Style::new().green());
@@ -66,11 +66,11 @@ let dark  = Theme::new().add("tone", Style::new().yellow().italic());
 let adaptive = AdaptiveTheme::new(light, dark);
 
 // Automatically renders with the user's OS theme
-let banner = outstanding::render_with_color(
+let banner = outstanding::render_with_output(
     r#"Mode: {{ "active" | style("tone") }}"#,
     &serde_json::json!({}),
     ThemeChoice::Adaptive(&adaptive),
-    true,
+    OutputMode::Term,
 ).unwrap();
 ```
 
@@ -88,7 +88,7 @@ let theme = Theme::new()
     .add("label", Style::new().bold())
     .add("value", Style::new().green());
 
-let mut renderer = Renderer::new(theme);
+let mut renderer = Renderer::new(theme).unwrap();
 renderer.add_template("row", r#"{{ label | style("label") }}: {{ value | style("value") }}"#).unwrap();
 
 let rendered = renderer.render("row", &Entry { label: "Count".into(), value: 42 }).unwrap();
@@ -98,7 +98,7 @@ let rendered = renderer.render("row", &Entry { label: "Count".into(), value: 42 
 
 ```rust
 use clap::Parser;
-use outstanding::{render_with_color, Theme, ThemeChoice};
+use outstanding::{render_with_output, Theme, ThemeChoice, OutputMode};
 
 #[derive(Parser)]
 struct Cli {
@@ -107,13 +107,20 @@ struct Cli {
 }
 
 let cli = Cli::parse();
-let output = render_with_color(
+let mode = if cli.no_color { OutputMode::Text } else { OutputMode::Auto };
+let output = render_with_output(
     template,
     &data,
     ThemeChoice::from(&theme),
-    !cli.no_color,  // explicit color control
+    mode,
 ).unwrap();
 ```
+
+## Documentation
+
+For detailed guides, see:
+- [Styling Guide](../../docs/styling.md) - Themes, style aliasing, adaptive themes, output modes
+- [Templates Guide](../../docs/templates.md) - MiniJinja syntax, filters, data structures
 
 ## License
 
