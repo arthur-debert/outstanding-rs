@@ -387,7 +387,8 @@ pub enum ColorMode {
 
 /// Controls how output is rendered.
 ///
-/// This determines whether ANSI escape codes are included in the output.
+/// This determines whether ANSI escape codes are included in the output,
+/// or whether to output structured data formats like JSON.
 ///
 /// # Variants
 ///
@@ -395,6 +396,7 @@ pub enum ColorMode {
 /// - `Term` - Always include ANSI escape codes (for terminal output)
 /// - `Text` - Never include ANSI escape codes (plain text)
 /// - `TermDebug` - Render style names as bracket tags for debugging
+/// - `Json` - Serialize data as JSON (skips template rendering)
 ///
 /// # Example
 ///
@@ -446,6 +448,8 @@ pub enum OutputMode {
     Text,
     /// Debug mode: render style names as bracket tags `[name]text[/name]`
     TermDebug,
+    /// Structured output: serialize data as JSON (skips template rendering)
+    Json,
 }
 
 impl OutputMode {
@@ -455,18 +459,27 @@ impl OutputMode {
     /// - `Term` always returns `true`
     /// - `Text` always returns `false`
     /// - `TermDebug` returns `false` (handled specially by apply methods)
+    /// - `Json` returns `false` (structured output, no ANSI codes)
     pub fn should_use_color(&self) -> bool {
         match self {
             OutputMode::Auto => Term::stdout().features().colors_supported(),
             OutputMode::Term => true,
             OutputMode::Text => false,
             OutputMode::TermDebug => false, // Handled specially
+            OutputMode::Json => false,      // Structured output
         }
     }
 
     /// Returns true if this is debug mode (bracket tags instead of ANSI).
     pub fn is_debug(&self) -> bool {
         matches!(self, OutputMode::TermDebug)
+    }
+
+    /// Returns true if this is a structured output mode (JSON, etc.).
+    ///
+    /// Structured modes serialize data directly instead of rendering templates.
+    pub fn is_structured(&self) -> bool {
+        matches!(self, OutputMode::Json)
     }
 }
 
@@ -1493,12 +1506,36 @@ mod tests {
         assert!(!OutputMode::Auto.is_debug());
         assert!(!OutputMode::Term.is_debug());
         assert!(!OutputMode::Text.is_debug());
+        assert!(!OutputMode::Json.is_debug());
     }
 
     #[test]
     fn test_output_mode_term_debug_should_not_use_color() {
         // TermDebug returns false for should_use_color because it's handled specially
         assert!(!OutputMode::TermDebug.should_use_color());
+    }
+
+    #[test]
+    fn test_output_mode_json_should_not_use_color() {
+        assert!(!OutputMode::Json.should_use_color());
+    }
+
+    #[test]
+    fn test_output_mode_json_is_structured() {
+        assert!(OutputMode::Json.is_structured());
+    }
+
+    #[test]
+    fn test_output_mode_non_json_not_structured() {
+        assert!(!OutputMode::Auto.is_structured());
+        assert!(!OutputMode::Term.is_structured());
+        assert!(!OutputMode::Text.is_structured());
+        assert!(!OutputMode::TermDebug.is_structured());
+    }
+
+    #[test]
+    fn test_output_mode_json_not_debug() {
+        assert!(!OutputMode::Json.is_debug());
     }
 
     #[test]
