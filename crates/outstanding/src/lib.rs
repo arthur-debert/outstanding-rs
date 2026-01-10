@@ -96,7 +96,7 @@
 //!     .add("label", Style::new().bold())
 //!     .add("value", Style::new().green());
 //!
-//! let mut renderer = Renderer::new(theme);
+//! let mut renderer = Renderer::new(theme).unwrap();
 //! renderer.add_template("row", "{{ label | style(\"label\") }}: {{ value | style(\"value\") }}").unwrap();
 //! let rendered = renderer.render("row", &Entry { label: "Count".into(), value: 42 }).unwrap();
 //! assert_eq!(rendered, "Count: 42");
@@ -157,9 +157,82 @@ use std::sync::Mutex;
 /// Default prefix shown when a style name is not found.
 pub const DEFAULT_MISSING_STYLE_INDICATOR: &str = "(!?)";
 
+/// A style value that can be either a concrete style or an alias to another style.
+///
+/// This enables layered styling where semantic styles can reference presentation
+/// styles, which in turn reference visual styles with concrete formatting.
+///
+/// # Example
+///
+/// ```rust
+/// use outstanding::{Theme, StyleValue};
+/// use console::Style;
+///
+/// let theme = Theme::new()
+///     // Visual layer - concrete styles
+///     .add("muted", Style::new().dim())
+///     .add("accent", Style::new().cyan().bold())
+///     // Presentation layer - aliases to visual
+///     .add("disabled", "muted")
+///     // Semantic layer - aliases to presentation
+///     .add("timestamp", "disabled");
+/// ```
+#[derive(Debug, Clone)]
+pub enum StyleValue {
+    /// A concrete style with actual formatting (colors, bold, etc.)
+    Concrete(Style),
+    /// An alias referencing another style by name
+    Alias(String),
+}
+
+impl From<Style> for StyleValue {
+    fn from(style: Style) -> Self {
+        StyleValue::Concrete(style)
+    }
+}
+
+impl From<&str> for StyleValue {
+    fn from(name: &str) -> Self {
+        StyleValue::Alias(name.to_string())
+    }
+}
+
+impl From<String> for StyleValue {
+    fn from(name: String) -> Self {
+        StyleValue::Alias(name)
+    }
+}
+
+/// Error returned when style validation fails.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum StyleValidationError {
+    /// An alias references a style that doesn't exist
+    UnresolvedAlias { from: String, to: String },
+    /// A cycle was detected in alias resolution
+    CycleDetected { path: Vec<String> },
+}
+
+impl std::fmt::Display for StyleValidationError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            StyleValidationError::UnresolvedAlias { from, to } => {
+                write!(f, "style '{}' aliases non-existent style '{}'", from, to)
+            }
+            StyleValidationError::CycleDetected { path } => {
+                write!(f, "cycle detected in style aliases: {}", path.join(" -> "))
+            }
+        }
+    }
+}
+
+impl std::error::Error for StyleValidationError {}
+
 /// A collection of named styles.
 ///
 /// Styles are registered by name and applied via the `style` filter in templates.
+/// Styles can be concrete (with actual formatting) or aliases to other styles,
+/// enabling layered styling (semantic -> presentation -> visual).
+///
 /// When a style name is not found, a configurable indicator is prepended to the text
 /// to help catch typos in templates (defaults to `(!?)`).
 ///
@@ -170,12 +243,18 @@ pub const DEFAULT_MISSING_STYLE_INDICATOR: &str = "(!?)";
 /// use console::Style;
 ///
 /// let styles = Styles::new()
+///     // Concrete styles
 ///     .add("error", Style::new().bold().red())
 ///     .add("warning", Style::new().yellow())
-///     .add("dim", Style::new().dim());
+///     .add("dim", Style::new().dim())
+///     // Alias styles
+///     .add("muted", "dim");
 ///
 /// // Apply a style (returns styled string)
 /// let styled = styles.apply("error", "Something went wrong");
+///
+/// // Aliases resolve to their target
+/// let muted = styles.apply("muted", "Quiet");  // Uses "dim" style
 ///
 /// // Unknown style shows indicator
 /// let unknown = styles.apply("typo", "Hello");
@@ -183,7 +262,7 @@ pub const DEFAULT_MISSING_STYLE_INDICATOR: &str = "(!?)";
 /// ```
 #[derive(Debug, Clone)]
 pub struct Styles {
-    styles: HashMap<String, Style>,
+    styles: HashMap<String, StyleValue>,
     missing_indicator: String,
 }
 
@@ -207,14 +286,42 @@ impl Theme {
     }
 
     /// Adds a named style, returning an updated theme for chaining.
-    pub fn add(mut self, name: &str, style: Style) -> Self {
-        self.styles = self.styles.add(name, style);
+    ///
+    /// The value can be either a concrete `Style` or a `&str`/`String` alias
+    /// to another style name, enabling layered styling.
+    ///
+    /// # Example
+    ///
+    /// ```rust
+    /// use outstanding::Theme;
+    /// use console::Style;
+    ///
+    /// let theme = Theme::new()
+    ///     // Visual layer - concrete styles
+    ///     .add("muted", Style::new().dim())
+    ///     .add("accent", Style::new().cyan().bold())
+    ///     // Presentation layer - aliases
+    ///     .add("disabled", "muted")
+    ///     .add("highlighted", "accent")
+    ///     // Semantic layer - aliases to presentation
+    ///     .add("timestamp", "disabled");
+    /// ```
+    pub fn add<V: Into<StyleValue>>(mut self, name: &str, value: V) -> Self {
+        self.styles = self.styles.add(name, value);
         self
     }
 
     /// Returns the underlying styles.
     pub fn styles(&self) -> &Styles {
         &self.styles
+    }
+
+    /// Validates that all style aliases in this theme resolve correctly.
+    ///
+    /// This is called automatically at render time, but can be called
+    /// explicitly for early error detection.
+    pub fn validate(&self) -> Result<(), StyleValidationError> {
+        self.styles.validate()
     }
 }
 
@@ -425,18 +532,127 @@ impl Styles {
 
     /// Adds a named style. Returns self for chaining.
     ///
+    /// The value can be either a concrete `Style` or a `&str`/`String` alias
+    /// to another style name.
+    ///
+    /// # Example
+    ///
+    /// ```rust
+    /// use outstanding::Styles;
+    /// use console::Style;
+    ///
+    /// let styles = Styles::new()
+    ///     .add("dim", Style::new().dim())      // Concrete style
+    ///     .add("muted", "dim");                 // Alias to "dim"
+    /// ```
+    ///
     /// If a style with the same name exists, it is replaced.
-    pub fn add(mut self, name: &str, style: Style) -> Self {
-        self.styles.insert(name.to_string(), style);
+    pub fn add<V: Into<StyleValue>>(mut self, name: &str, value: V) -> Self {
+        self.styles.insert(name.to_string(), value.into());
         self
+    }
+
+    /// Resolves a style name to a concrete `Style`, following alias chains.
+    ///
+    /// Returns `None` if the style doesn't exist or if a cycle is detected.
+    /// For detailed error information, use `validate()` instead.
+    fn resolve(&self, name: &str) -> Option<&Style> {
+        let mut current = name;
+        let mut visited = std::collections::HashSet::new();
+
+        loop {
+            if !visited.insert(current) {
+                return None; // Cycle detected
+            }
+            match self.styles.get(current)? {
+                StyleValue::Concrete(style) => return Some(style),
+                StyleValue::Alias(next) => current = next,
+            }
+        }
+    }
+
+    /// Checks if a style name can be resolved (exists and has no cycles).
+    fn can_resolve(&self, name: &str) -> bool {
+        self.resolve(name).is_some()
+    }
+
+    /// Validates that all style aliases resolve correctly.
+    ///
+    /// Returns `Ok(())` if all aliases point to existing styles with no cycles.
+    /// Returns an error describing the first problem found.
+    ///
+    /// # Example
+    ///
+    /// ```rust
+    /// use outstanding::{Styles, StyleValidationError};
+    /// use console::Style;
+    ///
+    /// // Valid: alias chain resolves
+    /// let valid = Styles::new()
+    ///     .add("dim", Style::new().dim())
+    ///     .add("muted", "dim");
+    /// assert!(valid.validate().is_ok());
+    ///
+    /// // Invalid: dangling alias
+    /// let dangling = Styles::new()
+    ///     .add("orphan", "nonexistent");
+    /// assert!(matches!(
+    ///     dangling.validate(),
+    ///     Err(StyleValidationError::UnresolvedAlias { .. })
+    /// ));
+    ///
+    /// // Invalid: cycle
+    /// let cycle = Styles::new()
+    ///     .add("a", "b")
+    ///     .add("b", "a");
+    /// assert!(matches!(
+    ///     cycle.validate(),
+    ///     Err(StyleValidationError::CycleDetected { .. })
+    /// ));
+    /// ```
+    pub fn validate(&self) -> Result<(), StyleValidationError> {
+        for (name, value) in &self.styles {
+            if let StyleValue::Alias(target) = value {
+                self.validate_alias_chain(name, target)?;
+            }
+        }
+        Ok(())
+    }
+
+    /// Validates a single alias chain starting from `name` -> `target`.
+    fn validate_alias_chain(&self, name: &str, target: &str) -> Result<(), StyleValidationError> {
+        let mut current = target;
+        let mut path = vec![name.to_string()];
+
+        loop {
+            // Check if target exists
+            let value = self.styles.get(current).ok_or_else(|| {
+                StyleValidationError::UnresolvedAlias {
+                    from: path.last().unwrap().clone(),
+                    to: current.to_string(),
+                }
+            })?;
+
+            path.push(current.to_string());
+
+            // Check for cycle (if we've seen this name before in our path)
+            if path[..path.len() - 1].contains(&current.to_string()) {
+                return Err(StyleValidationError::CycleDetected { path });
+            }
+
+            match value {
+                StyleValue::Concrete(_) => return Ok(()),
+                StyleValue::Alias(next) => current = next,
+            }
+        }
     }
 
     /// Applies a named style to text.
     ///
-    /// If the style exists, returns the styled string (with ANSI codes).
-    /// If not found, prepends the missing indicator (unless it's empty).
+    /// Resolves aliases to find the concrete style, then applies it.
+    /// If the style doesn't exist or can't be resolved, prepends the missing indicator.
     pub fn apply(&self, name: &str, text: &str) -> String {
-        match self.styles.get(name) {
+        match self.resolve(name) {
             Some(style) => style.apply_to(text).to_string(),
             None if self.missing_indicator.is_empty() => text.to_string(),
             None => format!("{} {}", self.missing_indicator, text),
@@ -445,10 +661,10 @@ impl Styles {
 
     /// Applies style checking without ANSI codes (plain text mode).
     ///
-    /// If the style exists, returns the text unchanged.
-    /// If not found, prepends the missing indicator (unless it's empty).
+    /// If the style exists and resolves, returns the text unchanged.
+    /// If not found or unresolvable, prepends the missing indicator (unless it's empty).
     pub fn apply_plain(&self, name: &str, text: &str) -> String {
-        if self.styles.contains_key(name) || self.missing_indicator.is_empty() {
+        if self.can_resolve(name) || self.missing_indicator.is_empty() {
             text.to_string()
         } else {
             format!("{} {}", self.missing_indicator, text)
@@ -473,8 +689,8 @@ impl Styles {
 
     /// Applies a style in debug mode, rendering as bracket tags.
     ///
-    /// Returns `[name]text[/name]` for known styles, or applies the missing
-    /// indicator for unknown styles.
+    /// Returns `[name]text[/name]` for styles that resolve correctly,
+    /// or applies the missing indicator for unknown/unresolvable styles.
     ///
     /// # Example
     ///
@@ -482,16 +698,21 @@ impl Styles {
     /// use outstanding::Styles;
     /// use console::Style;
     ///
-    /// let styles = Styles::new().add("bold", Style::new().bold());
+    /// let styles = Styles::new()
+    ///     .add("bold", Style::new().bold())
+    ///     .add("emphasis", "bold");  // Alias
     ///
-    /// // Known style renders as bracket tags
+    /// // Direct style renders as bracket tags
     /// assert_eq!(styles.apply_debug("bold", "hello"), "[bold]hello[/bold]");
+    ///
+    /// // Alias also renders with its own name (not the target)
+    /// assert_eq!(styles.apply_debug("emphasis", "hello"), "[emphasis]hello[/emphasis]");
     ///
     /// // Unknown style shows indicator
     /// assert_eq!(styles.apply_debug("unknown", "hello"), "(!?) hello");
     /// ```
     pub fn apply_debug(&self, name: &str, text: &str) -> String {
-        if self.styles.contains_key(name) {
+        if self.can_resolve(name) {
             format!("[{}]{}[/{}]", name, text, name)
         } else if self.missing_indicator.is_empty() {
             text.to_string()
@@ -500,12 +721,12 @@ impl Styles {
         }
     }
 
-    /// Returns true if a style with the given name exists.
+    /// Returns true if a style with the given name exists (concrete or alias).
     pub fn has(&self, name: &str) -> bool {
         self.styles.contains_key(name)
     }
 
-    /// Returns the number of registered styles.
+    /// Returns the number of registered styles (both concrete and aliases).
     pub fn len(&self) -> usize {
         self.styles.len()
     }
@@ -601,6 +822,12 @@ pub fn render_with_output<T: Serialize>(
     mode: OutputMode,
 ) -> Result<String, Error> {
     let theme = theme.resolve();
+
+    // Validate style aliases before rendering
+    theme.validate().map_err(|e| {
+        Error::new(minijinja::ErrorKind::InvalidOperation, e.to_string())
+    })?;
+
     let mut env = Environment::new();
     register_filters(&mut env, theme, mode);
 
@@ -625,7 +852,7 @@ pub fn render_with_output<T: Serialize>(
 ///     .add("title", Style::new().bold())
 ///     .add("count", Style::new().cyan());
 ///
-/// let mut renderer = Renderer::new(theme);
+/// let mut renderer = Renderer::new(theme).unwrap();
 /// renderer.add_template("header", r#"{{ title | style("title") }}"#).unwrap();
 /// renderer.add_template("stats", r#"Count: {{ n | style("count") }}"#).unwrap();
 ///
@@ -644,15 +871,28 @@ pub struct Renderer {
 
 impl Renderer {
     /// Creates a new renderer with automatic color detection.
-    pub fn new(theme: Theme) -> Self {
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if any style aliases are invalid (dangling or cyclic).
+    pub fn new(theme: Theme) -> Result<Self, Error> {
         Self::with_output(theme, OutputMode::Auto)
     }
 
     /// Creates a new renderer with explicit output mode.
-    pub fn with_output(theme: Theme, mode: OutputMode) -> Self {
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if any style aliases are invalid (dangling or cyclic).
+    pub fn with_output(theme: Theme, mode: OutputMode) -> Result<Self, Error> {
+        // Validate style aliases before creating the renderer
+        theme.validate().map_err(|e| {
+            Error::new(minijinja::ErrorKind::InvalidOperation, e.to_string())
+        })?;
+
         let mut env = Environment::new();
         register_filters(&mut env, theme, mode);
-        Self { env }
+        Ok(Self { env })
     }
 
     /// Registers a named template.
@@ -995,7 +1235,7 @@ mod tests {
     #[test]
     fn test_renderer_add_and_render() {
         let theme = Theme::new().add("ok", Style::new().green());
-        let mut renderer = Renderer::with_output(theme, OutputMode::Text);
+        let mut renderer = Renderer::with_output(theme, OutputMode::Text).unwrap();
 
         renderer
             .add_template("test", r#"{{ message | style("ok") }}"#)
@@ -1015,7 +1255,7 @@ mod tests {
     #[test]
     fn test_renderer_unknown_template_error() {
         let theme = Theme::new();
-        let renderer = Renderer::with_output(theme, OutputMode::Text);
+        let renderer = Renderer::with_output(theme, OutputMode::Text).unwrap();
 
         let result = renderer.render(
             "nonexistent",
@@ -1032,7 +1272,7 @@ mod tests {
             .add("a", Style::new().red())
             .add("b", Style::new().blue());
 
-        let mut renderer = Renderer::with_output(theme, OutputMode::Text);
+        let mut renderer = Renderer::with_output(theme, OutputMode::Text).unwrap();
         renderer
             .add_template("tmpl_a", r#"A: {{ message | style("a") }}"#)
             .unwrap();
@@ -1346,5 +1586,519 @@ mod tests {
         .unwrap();
 
         assert_eq!(output, "[known]hello[/known]");
+    }
+
+    // ==================== Style Aliasing Tests ====================
+
+    mod style_aliasing {
+        use super::*;
+
+        // --- Resolution Tests ---
+
+        #[test]
+        fn test_resolve_concrete_style() {
+            let styles = Styles::new().add("bold", Style::new().bold());
+            assert!(styles.resolve("bold").is_some());
+        }
+
+        #[test]
+        fn test_resolve_nonexistent_style() {
+            let styles = Styles::new();
+            assert!(styles.resolve("nonexistent").is_none());
+        }
+
+        #[test]
+        fn test_resolve_single_alias() {
+            let styles = Styles::new()
+                .add("base", Style::new().dim())
+                .add("alias", "base");
+
+            assert!(styles.resolve("alias").is_some());
+            assert!(styles.resolve("base").is_some());
+        }
+
+        #[test]
+        fn test_resolve_chained_aliases() {
+            let styles = Styles::new()
+                .add("visual", Style::new().cyan())
+                .add("presentation", "visual")
+                .add("semantic", "presentation");
+
+            // All should resolve to the same concrete style
+            assert!(styles.resolve("visual").is_some());
+            assert!(styles.resolve("presentation").is_some());
+            assert!(styles.resolve("semantic").is_some());
+        }
+
+        #[test]
+        fn test_resolve_deep_alias_chain() {
+            let styles = Styles::new()
+                .add("level0", Style::new().bold())
+                .add("level1", "level0")
+                .add("level2", "level1")
+                .add("level3", "level2")
+                .add("level4", "level3");
+
+            assert!(styles.resolve("level4").is_some());
+        }
+
+        #[test]
+        fn test_resolve_dangling_alias_returns_none() {
+            let styles = Styles::new().add("orphan", "nonexistent");
+            assert!(styles.resolve("orphan").is_none());
+        }
+
+        #[test]
+        fn test_resolve_cycle_returns_none() {
+            let styles = Styles::new()
+                .add("a", "b")
+                .add("b", "a");
+
+            assert!(styles.resolve("a").is_none());
+            assert!(styles.resolve("b").is_none());
+        }
+
+        #[test]
+        fn test_resolve_self_referential_returns_none() {
+            let styles = Styles::new().add("self", "self");
+            assert!(styles.resolve("self").is_none());
+        }
+
+        #[test]
+        fn test_resolve_three_way_cycle() {
+            let styles = Styles::new()
+                .add("a", "b")
+                .add("b", "c")
+                .add("c", "a");
+
+            assert!(styles.resolve("a").is_none());
+            assert!(styles.resolve("b").is_none());
+            assert!(styles.resolve("c").is_none());
+        }
+
+        // --- Validation Tests ---
+
+        #[test]
+        fn test_validate_empty_styles() {
+            let styles = Styles::new();
+            assert!(styles.validate().is_ok());
+        }
+
+        #[test]
+        fn test_validate_only_concrete_styles() {
+            let styles = Styles::new()
+                .add("a", Style::new().bold())
+                .add("b", Style::new().dim())
+                .add("c", Style::new().red());
+
+            assert!(styles.validate().is_ok());
+        }
+
+        #[test]
+        fn test_validate_valid_alias() {
+            let styles = Styles::new()
+                .add("base", Style::new().dim())
+                .add("alias", "base");
+
+            assert!(styles.validate().is_ok());
+        }
+
+        #[test]
+        fn test_validate_valid_alias_chain() {
+            let styles = Styles::new()
+                .add("visual", Style::new().cyan())
+                .add("presentation", "visual")
+                .add("semantic", "presentation");
+
+            assert!(styles.validate().is_ok());
+        }
+
+        #[test]
+        fn test_validate_dangling_alias_error() {
+            let styles = Styles::new().add("orphan", "nonexistent");
+
+            let result = styles.validate();
+            assert!(result.is_err());
+
+            match result.unwrap_err() {
+                StyleValidationError::UnresolvedAlias { from, to } => {
+                    assert_eq!(from, "orphan");
+                    assert_eq!(to, "nonexistent");
+                }
+                _ => panic!("Expected UnresolvedAlias error"),
+            }
+        }
+
+        #[test]
+        fn test_validate_dangling_in_chain() {
+            let styles = Styles::new()
+                .add("level1", "level2")
+                .add("level2", "missing");
+
+            let result = styles.validate();
+            assert!(result.is_err());
+
+            match result.unwrap_err() {
+                StyleValidationError::UnresolvedAlias { from: _, to } => {
+                    assert_eq!(to, "missing");
+                    // from could be level1 or level2 depending on iteration order
+                }
+                _ => panic!("Expected UnresolvedAlias error"),
+            }
+        }
+
+        #[test]
+        fn test_validate_cycle_error() {
+            let styles = Styles::new()
+                .add("a", "b")
+                .add("b", "a");
+
+            let result = styles.validate();
+            assert!(result.is_err());
+
+            match result.unwrap_err() {
+                StyleValidationError::CycleDetected { path } => {
+                    // Path should contain both a and b
+                    assert!(path.contains(&"a".to_string()));
+                    assert!(path.contains(&"b".to_string()));
+                }
+                _ => panic!("Expected CycleDetected error"),
+            }
+        }
+
+        #[test]
+        fn test_validate_self_referential_cycle() {
+            let styles = Styles::new().add("self", "self");
+
+            let result = styles.validate();
+            assert!(result.is_err());
+
+            match result.unwrap_err() {
+                StyleValidationError::CycleDetected { path } => {
+                    assert!(path.contains(&"self".to_string()));
+                }
+                _ => panic!("Expected CycleDetected error"),
+            }
+        }
+
+        #[test]
+        fn test_validate_three_way_cycle() {
+            let styles = Styles::new()
+                .add("a", "b")
+                .add("b", "c")
+                .add("c", "a");
+
+            let result = styles.validate();
+            assert!(result.is_err());
+
+            match result.unwrap_err() {
+                StyleValidationError::CycleDetected { path } => {
+                    assert!(path.len() >= 3);
+                }
+                _ => panic!("Expected CycleDetected error"),
+            }
+        }
+
+        #[test]
+        fn test_validate_mixed_valid_and_invalid() {
+            // Some valid styles, one dangling alias
+            let styles = Styles::new()
+                .add("valid1", Style::new().bold())
+                .add("valid2", "valid1")
+                .add("invalid", "missing");
+
+            assert!(styles.validate().is_err());
+        }
+
+        // --- Apply with Aliases Tests ---
+
+        #[test]
+        fn test_apply_through_alias() {
+            let styles = Styles::new()
+                .add("base", Style::new().bold().force_styling(true))
+                .add("alias", "base");
+
+            let result = styles.apply("alias", "text");
+            // Should contain ANSI bold codes
+            assert!(result.contains("\x1b[1m"));
+            assert!(result.contains("text"));
+        }
+
+        #[test]
+        fn test_apply_through_chain() {
+            let styles = Styles::new()
+                .add("visual", Style::new().red().force_styling(true))
+                .add("presentation", "visual")
+                .add("semantic", "presentation");
+
+            let result = styles.apply("semantic", "error");
+            // Should contain ANSI red codes
+            assert!(result.contains("\x1b[31m"));
+            assert!(result.contains("error"));
+        }
+
+        #[test]
+        fn test_apply_dangling_alias_shows_indicator() {
+            let styles = Styles::new().add("orphan", "missing");
+            let result = styles.apply("orphan", "text");
+            assert_eq!(result, "(!?) text");
+        }
+
+        #[test]
+        fn test_apply_cycle_shows_indicator() {
+            let styles = Styles::new()
+                .add("a", "b")
+                .add("b", "a");
+
+            let result = styles.apply("a", "text");
+            assert_eq!(result, "(!?) text");
+        }
+
+        #[test]
+        fn test_apply_plain_through_alias() {
+            let styles = Styles::new()
+                .add("base", Style::new().bold())
+                .add("alias", "base");
+
+            let result = styles.apply_plain("alias", "text");
+            assert_eq!(result, "text");
+        }
+
+        #[test]
+        fn test_apply_debug_through_alias() {
+            let styles = Styles::new()
+                .add("base", Style::new().bold())
+                .add("alias", "base");
+
+            // Debug mode should use the requested name, not the resolved target
+            let result = styles.apply_debug("alias", "text");
+            assert_eq!(result, "[alias]text[/alias]");
+        }
+
+        #[test]
+        fn test_apply_debug_dangling_alias() {
+            let styles = Styles::new().add("orphan", "missing");
+            let result = styles.apply_debug("orphan", "text");
+            assert_eq!(result, "(!?) text");
+        }
+
+        // --- Theme with Aliases Tests ---
+
+        #[test]
+        fn test_theme_add_concrete() {
+            let theme = Theme::new().add("bold", Style::new().bold());
+            assert!(theme.styles().has("bold"));
+        }
+
+        #[test]
+        fn test_theme_add_alias_str() {
+            let theme = Theme::new()
+                .add("base", Style::new().dim())
+                .add("alias", "base");
+
+            assert!(theme.styles().has("base"));
+            assert!(theme.styles().has("alias"));
+        }
+
+        #[test]
+        fn test_theme_add_alias_string() {
+            let target = String::from("base");
+            let theme = Theme::new()
+                .add("base", Style::new().dim())
+                .add("alias", target);
+
+            assert!(theme.styles().has("alias"));
+        }
+
+        #[test]
+        fn test_theme_validate_valid() {
+            let theme = Theme::new()
+                .add("visual", Style::new().cyan())
+                .add("semantic", "visual");
+
+            assert!(theme.validate().is_ok());
+        }
+
+        #[test]
+        fn test_theme_validate_invalid() {
+            let theme = Theme::new().add("orphan", "missing");
+            assert!(theme.validate().is_err());
+        }
+
+        // --- Render with Aliases Tests ---
+
+        #[test]
+        fn test_render_with_alias() {
+            let theme = Theme::new()
+                .add("base", Style::new().bold())
+                .add("alias", "base");
+
+            let output = render_with_output(
+                r#"{{ "text" | style("alias") }}"#,
+                &serde_json::json!({}),
+                ThemeChoice::from(&theme),
+                OutputMode::Text,
+            )
+            .unwrap();
+
+            assert_eq!(output, "text");
+        }
+
+        #[test]
+        fn test_render_with_alias_chain() {
+            let theme = Theme::new()
+                .add("muted", Style::new().dim())
+                .add("disabled", "muted")
+                .add("timestamp", "disabled");
+
+            let output = render_with_output(
+                r#"{{ "12:00" | style("timestamp") }}"#,
+                &serde_json::json!({}),
+                ThemeChoice::from(&theme),
+                OutputMode::Text,
+            )
+            .unwrap();
+
+            assert_eq!(output, "12:00");
+        }
+
+        #[test]
+        fn test_render_fails_with_dangling_alias() {
+            let theme = Theme::new().add("orphan", "missing");
+
+            let result = render_with_output(
+                r#"{{ "text" | style("orphan") }}"#,
+                &serde_json::json!({}),
+                ThemeChoice::from(&theme),
+                OutputMode::Text,
+            );
+
+            assert!(result.is_err());
+            let err = result.unwrap_err();
+            assert!(err.to_string().contains("orphan"));
+            assert!(err.to_string().contains("missing"));
+        }
+
+        #[test]
+        fn test_render_fails_with_cycle() {
+            let theme = Theme::new()
+                .add("a", "b")
+                .add("b", "a");
+
+            let result = render_with_output(
+                r#"{{ "text" | style("a") }}"#,
+                &serde_json::json!({}),
+                ThemeChoice::from(&theme),
+                OutputMode::Text,
+            );
+
+            assert!(result.is_err());
+            assert!(result.unwrap_err().to_string().contains("cycle"));
+        }
+
+        #[test]
+        fn test_renderer_fails_with_invalid_theme() {
+            let theme = Theme::new().add("orphan", "missing");
+            let result = Renderer::new(theme);
+            assert!(result.is_err());
+        }
+
+        #[test]
+        fn test_renderer_succeeds_with_valid_aliases() {
+            let theme = Theme::new()
+                .add("base", Style::new().bold())
+                .add("alias", "base");
+
+            let result = Renderer::new(theme);
+            assert!(result.is_ok());
+        }
+
+        // --- StyleValue Tests ---
+
+        #[test]
+        fn test_style_value_from_style() {
+            let value: StyleValue = Style::new().bold().into();
+            assert!(matches!(value, StyleValue::Concrete(_)));
+        }
+
+        #[test]
+        fn test_style_value_from_str() {
+            let value: StyleValue = "target".into();
+            match value {
+                StyleValue::Alias(s) => assert_eq!(s, "target"),
+                _ => panic!("Expected Alias"),
+            }
+        }
+
+        #[test]
+        fn test_style_value_from_string() {
+            let value: StyleValue = String::from("target").into();
+            match value {
+                StyleValue::Alias(s) => assert_eq!(s, "target"),
+                _ => panic!("Expected Alias"),
+            }
+        }
+
+        // --- Error Display Tests ---
+
+        #[test]
+        fn test_unresolved_alias_error_display() {
+            let err = StyleValidationError::UnresolvedAlias {
+                from: "orphan".to_string(),
+                to: "missing".to_string(),
+            };
+            let msg = err.to_string();
+            assert!(msg.contains("orphan"));
+            assert!(msg.contains("missing"));
+        }
+
+        #[test]
+        fn test_cycle_detected_error_display() {
+            let err = StyleValidationError::CycleDetected {
+                path: vec!["a".to_string(), "b".to_string(), "a".to_string()],
+            };
+            let msg = err.to_string();
+            assert!(msg.contains("cycle"));
+            assert!(msg.contains("a -> b -> a"));
+        }
+
+        // --- Three-Layer Pattern Test ---
+
+        #[test]
+        fn test_three_layer_styling_pattern() {
+            // This test demonstrates the full three-layer pattern from the user's docs
+            let theme = Theme::new()
+                // Visual layer - actual colors and decorations
+                .add("dim_style", Style::new().dim())
+                .add("cyan_bold", Style::new().cyan().bold())
+                .add("yellow_bg", Style::new().on_yellow())
+                // Presentation layer - consistent cross-app concepts
+                .add("muted", "dim_style")
+                .add("accent", "cyan_bold")
+                .add("highlighted", "yellow_bg")
+                // Semantic layer - data-specific names
+                .add("timestamp", "muted")
+                .add("title", "accent")
+                .add("selected_item", "highlighted");
+
+            // Validation should pass
+            assert!(theme.validate().is_ok());
+
+            // All semantic styles should resolve
+            assert!(theme.styles().resolve("timestamp").is_some());
+            assert!(theme.styles().resolve("title").is_some());
+            assert!(theme.styles().resolve("selected_item").is_some());
+
+            // Render should work
+            let output = render_with_output(
+                r#"{{ time | style("timestamp") }} - {{ name | style("title") }}"#,
+                &serde_json::json!({"time": "12:00", "name": "Report"}),
+                ThemeChoice::from(&theme),
+                OutputMode::Text,
+            )
+            .unwrap();
+
+            assert_eq!(output, "12:00 - Report");
+        }
     }
 }
