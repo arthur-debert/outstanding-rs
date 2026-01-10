@@ -31,10 +31,12 @@
 //!     .build();
 //! ```
 
+mod resolve;
 mod types;
 mod util;
 
 // Re-export types
+pub use resolve::ResolvedWidths;
 pub use types::{
     Align, Column, ColumnBuilder, Decorations, TableSpec, TableSpecBuilder, TruncateAt, Width,
 };
