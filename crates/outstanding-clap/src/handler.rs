@@ -284,10 +284,8 @@ mod tests {
 
     #[test]
     fn test_command_result_archive() {
-        let result: CommandResult<String> = CommandResult::Archive(
-            vec![0x25, 0x50, 0x44, 0x46],
-            "report.pdf".into(),
-        );
+        let result: CommandResult<String> =
+            CommandResult::Archive(vec![0x25, 0x50, 0x44, 0x46], "report.pdf".into());
         assert!(!result.is_ok());
         assert!(!result.is_err());
         assert!(!result.is_silent());

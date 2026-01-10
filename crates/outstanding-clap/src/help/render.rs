@@ -8,7 +8,10 @@ use super::config::{default_help_theme, HelpConfig};
 use super::data::{extract_help_data, extract_help_data_with_topics};
 
 /// Renders the help for a clap command using outstanding.
-pub fn render_help(cmd: &Command, config: Option<HelpConfig>) -> Result<String, outstanding::Error> {
+pub fn render_help(
+    cmd: &Command,
+    config: Option<HelpConfig>,
+) -> Result<String, outstanding::Error> {
     let config = config.unwrap_or_default();
     let template = config
         .template
@@ -24,7 +27,11 @@ pub fn render_help(cmd: &Command, config: Option<HelpConfig>) -> Result<String, 
 }
 
 /// Renders the help for a clap command with topics in a "Learn More" section.
-pub fn render_help_with_topics(cmd: &Command, registry: &TopicRegistry, config: Option<HelpConfig>) -> Result<String, outstanding::Error> {
+pub fn render_help_with_topics(
+    cmd: &Command,
+    registry: &TopicRegistry,
+    config: Option<HelpConfig>,
+) -> Result<String, outstanding::Error> {
     let config = config.unwrap_or_default();
     let template = config
         .template

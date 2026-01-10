@@ -20,7 +20,8 @@ pub(crate) enum DispatchOutput {
 /// Type-erased dispatch function.
 ///
 /// Takes ArgMatches and CommandContext, returns the dispatch output or an error.
-pub(crate) type DispatchFn = Arc<dyn Fn(&ArgMatches, &CommandContext) -> Result<DispatchOutput, String> + Send + Sync>;
+pub(crate) type DispatchFn =
+    Arc<dyn Fn(&ArgMatches, &CommandContext) -> Result<DispatchOutput, String> + Send + Sync>;
 
 /// Extracts the command path from ArgMatches by following subcommand chain.
 pub(crate) fn extract_command_path(matches: &ArgMatches) -> Vec<String> {
@@ -60,11 +61,8 @@ mod tests {
 
     #[test]
     fn test_extract_command_path() {
-        let cmd = Command::new("app")
-            .subcommand(
-                Command::new("config")
-                    .subcommand(Command::new("get"))
-            );
+        let cmd =
+            Command::new("app").subcommand(Command::new("config").subcommand(Command::new("get")));
 
         let matches = cmd.try_get_matches_from(["app", "config", "get"]).unwrap();
         let path = extract_command_path(&matches);
@@ -74,8 +72,7 @@ mod tests {
 
     #[test]
     fn test_extract_command_path_single() {
-        let cmd = Command::new("app")
-            .subcommand(Command::new("list"));
+        let cmd = Command::new("app").subcommand(Command::new("list"));
 
         let matches = cmd.try_get_matches_from(["app", "list"]).unwrap();
         let path = extract_command_path(&matches);

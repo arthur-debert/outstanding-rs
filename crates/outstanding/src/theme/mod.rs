@@ -12,6 +12,7 @@
 
 mod adaptive;
 mod choice;
+#[allow(clippy::module_inception)]
 mod theme;
 
 pub use adaptive::{set_theme_detector, AdaptiveTheme, ColorMode};

@@ -32,9 +32,12 @@ pub fn register_table_filters(env: &mut Environment<'static>) {
     // "fill" support (Option B): {{ value | col("fill", width=80) }}
     env.add_filter(
         "col",
-        |value: Value, width_val: Value, kwargs: minijinja::value::Kwargs| -> Result<String, minijinja::Error> {
+        |value: Value,
+         width_val: Value,
+         kwargs: minijinja::value::Kwargs|
+         -> Result<String, minijinja::Error> {
             let text = value.to_string();
-            
+
             // Resolve width: can be number or "fill" (requiring 'width' kwarg)
             let width = if let Some(w) = width_val.as_i64() {
                 w as usize
@@ -60,7 +63,9 @@ pub fn register_table_filters(env: &mut Environment<'static>) {
             };
 
             let align = kwargs.get::<Option<String>>("align")?.unwrap_or_default();
-            let truncate = kwargs.get::<Option<String>>("truncate")?.unwrap_or_default();
+            let truncate = kwargs
+                .get::<Option<String>>("truncate")?
+                .unwrap_or_default();
             let ellipsis = kwargs
                 .get::<Option<String>>("ellipsis")?
                 .unwrap_or_else(|| "…".to_string());
@@ -89,7 +94,11 @@ pub fn register_table_filters(env: &mut Environment<'static>) {
     // truncate_at filter: {{ value | truncate_at(width, "middle") }}
     env.add_filter(
         "truncate_at",
-        |value: Value, width: usize, position: Option<String>, ellipsis: Option<String>| -> String {
+        |value: Value,
+         width: usize,
+         position: Option<String>,
+         ellipsis: Option<String>|
+         -> String {
             let text = value.to_string();
             let pos = position.as_deref().unwrap_or("end");
             let ell = ellipsis.as_deref().unwrap_or("…");
@@ -151,7 +160,9 @@ mod tests {
     fn filter_col_basic() {
         let mut env = setup_env();
         env.add_template("test", "{{ value | col(10) }}").unwrap();
-        let result = env.get_template("test").unwrap()
+        let result = env
+            .get_template("test")
+            .unwrap()
             .render(context!(value => "hello"))
             .unwrap();
         assert_eq!(result, "hello     ");
@@ -161,7 +172,9 @@ mod tests {
     fn filter_col_truncate() {
         let mut env = setup_env();
         env.add_template("test", "{{ value | col(8) }}").unwrap();
-        let result = env.get_template("test").unwrap()
+        let result = env
+            .get_template("test")
+            .unwrap()
             .render(context!(value => "hello world"))
             .unwrap();
         assert_eq!(result, "hello w…");
@@ -170,8 +183,11 @@ mod tests {
     #[test]
     fn filter_col_right_align() {
         let mut env = setup_env();
-        env.add_template("test", "{{ value | col(10, align='right') }}").unwrap();
-        let result = env.get_template("test").unwrap()
+        env.add_template("test", "{{ value | col(10, align='right') }}")
+            .unwrap();
+        let result = env
+            .get_template("test")
+            .unwrap()
             .render(context!(value => "42"))
             .unwrap();
         assert_eq!(result, "        42");
@@ -180,8 +196,11 @@ mod tests {
     #[test]
     fn filter_col_center_align() {
         let mut env = setup_env();
-        env.add_template("test", "{{ value | col(10, align='center') }}").unwrap();
-        let result = env.get_template("test").unwrap()
+        env.add_template("test", "{{ value | col(10, align='center') }}")
+            .unwrap();
+        let result = env
+            .get_template("test")
+            .unwrap()
             .render(context!(value => "hi"))
             .unwrap();
         assert_eq!(result, "    hi    ");
@@ -190,8 +209,11 @@ mod tests {
     #[test]
     fn filter_col_truncate_middle() {
         let mut env = setup_env();
-        env.add_template("test", "{{ value | col(10, truncate='middle') }}").unwrap();
-        let result = env.get_template("test").unwrap()
+        env.add_template("test", "{{ value | col(10, truncate='middle') }}")
+            .unwrap();
+        let result = env
+            .get_template("test")
+            .unwrap()
             .render(context!(value => "abcdefghijklmno"))
             .unwrap();
         assert_eq!(display_width(&result), 10);
@@ -201,8 +223,11 @@ mod tests {
     #[test]
     fn filter_col_custom_ellipsis() {
         let mut env = setup_env();
-        env.add_template("test", "{{ value | col(10, ellipsis='...') }}").unwrap();
-        let result = env.get_template("test").unwrap()
+        env.add_template("test", "{{ value | col(10, ellipsis='...') }}")
+            .unwrap();
+        let result = env
+            .get_template("test")
+            .unwrap()
             .render(context!(value => "hello world"))
             .unwrap();
         assert!(result.contains("..."));
@@ -211,8 +236,11 @@ mod tests {
     #[test]
     fn filter_pad_left() {
         let mut env = setup_env();
-        env.add_template("test", "{{ value | pad_left(8) }}").unwrap();
-        let result = env.get_template("test").unwrap()
+        env.add_template("test", "{{ value | pad_left(8) }}")
+            .unwrap();
+        let result = env
+            .get_template("test")
+            .unwrap()
             .render(context!(value => "42"))
             .unwrap();
         assert_eq!(result, "      42");
@@ -221,8 +249,11 @@ mod tests {
     #[test]
     fn filter_pad_right() {
         let mut env = setup_env();
-        env.add_template("test", "{{ value | pad_right(8) }}").unwrap();
-        let result = env.get_template("test").unwrap()
+        env.add_template("test", "{{ value | pad_right(8) }}")
+            .unwrap();
+        let result = env
+            .get_template("test")
+            .unwrap()
             .render(context!(value => "hi"))
             .unwrap();
         assert_eq!(result, "hi      ");
@@ -231,8 +262,11 @@ mod tests {
     #[test]
     fn filter_pad_center() {
         let mut env = setup_env();
-        env.add_template("test", "{{ value | pad_center(8) }}").unwrap();
-        let result = env.get_template("test").unwrap()
+        env.add_template("test", "{{ value | pad_center(8) }}")
+            .unwrap();
+        let result = env
+            .get_template("test")
+            .unwrap()
             .render(context!(value => "hi"))
             .unwrap();
         assert_eq!(result, "   hi   ");
@@ -241,8 +275,11 @@ mod tests {
     #[test]
     fn filter_truncate_at_end() {
         let mut env = setup_env();
-        env.add_template("test", "{{ value | truncate_at(8) }}").unwrap();
-        let result = env.get_template("test").unwrap()
+        env.add_template("test", "{{ value | truncate_at(8) }}")
+            .unwrap();
+        let result = env
+            .get_template("test")
+            .unwrap()
             .render(context!(value => "hello world"))
             .unwrap();
         assert_eq!(result, "hello w…");
@@ -251,8 +288,11 @@ mod tests {
     #[test]
     fn filter_truncate_at_start() {
         let mut env = setup_env();
-        env.add_template("test", "{{ value | truncate_at(8, 'start') }}").unwrap();
-        let result = env.get_template("test").unwrap()
+        env.add_template("test", "{{ value | truncate_at(8, 'start') }}")
+            .unwrap();
+        let result = env
+            .get_template("test")
+            .unwrap()
             .render(context!(value => "hello world"))
             .unwrap();
         assert!(result.starts_with("…"));
@@ -262,8 +302,11 @@ mod tests {
     #[test]
     fn filter_truncate_at_middle() {
         let mut env = setup_env();
-        env.add_template("test", "{{ value | truncate_at(8, 'middle') }}").unwrap();
-        let result = env.get_template("test").unwrap()
+        env.add_template("test", "{{ value | truncate_at(8, 'middle') }}")
+            .unwrap();
+        let result = env
+            .get_template("test")
+            .unwrap()
             .render(context!(value => "hello world"))
             .unwrap();
         assert!(result.contains("…"));
@@ -273,8 +316,11 @@ mod tests {
     #[test]
     fn filter_truncate_at_custom_ellipsis() {
         let mut env = setup_env();
-        env.add_template("test", "{{ value | truncate_at(10, 'end', '...') }}").unwrap();
-        let result = env.get_template("test").unwrap()
+        env.add_template("test", "{{ value | truncate_at(10, 'end', '...') }}")
+            .unwrap();
+        let result = env
+            .get_template("test")
+            .unwrap()
             .render(context!(value => "hello world"))
             .unwrap();
         assert!(result.contains("..."));
@@ -283,8 +329,11 @@ mod tests {
     #[test]
     fn filter_display_width() {
         let mut env = setup_env();
-        env.add_template("test", "{{ value | display_width }}").unwrap();
-        let result = env.get_template("test").unwrap()
+        env.add_template("test", "{{ value | display_width }}")
+            .unwrap();
+        let result = env
+            .get_template("test")
+            .unwrap()
             .render(context!(value => "hello"))
             .unwrap();
         assert_eq!(result, "5");
@@ -299,8 +348,11 @@ mod tests {
     #[test]
     fn filter_col_fill_option_b() {
         let mut env = setup_env();
-        env.add_template("test", "{{ value | col('fill', width=10) }}").unwrap();
-        let result = env.get_template("test").unwrap()
+        env.add_template("test", "{{ value | col('fill', width=10) }}")
+            .unwrap();
+        let result = env
+            .get_template("test")
+            .unwrap()
             .render(context!(value => "hello"))
             .unwrap();
         assert_eq!(result, "hello     ");
@@ -309,8 +361,11 @@ mod tests {
     #[test]
     fn filter_col_fill_missing_width_fails() {
         let mut env = setup_env();
-        env.add_template("test", "{{ value | col('fill') }}").unwrap();
-        let result = env.get_template("test").unwrap()
+        env.add_template("test", "{{ value | col('fill') }}")
+            .unwrap();
+        let result = env
+            .get_template("test")
+            .unwrap()
             .render(context!(value => "hello"));
         assert!(result.is_err());
     }
@@ -322,12 +377,23 @@ mod tests {
 {% endfor %}"#).unwrap();
 
         let items = vec![
-            Item { name: "foo", value: "1" },
-            Item { name: "bar", value: "22" },
-            Item { name: "bazqux", value: "333" },
+            Item {
+                name: "foo",
+                value: "1",
+            },
+            Item {
+                name: "bar",
+                value: "22",
+            },
+            Item {
+                name: "bazqux",
+                value: "333",
+            },
         ];
 
-        let result = env.get_template("test").unwrap()
+        let result = env
+            .get_template("test")
+            .unwrap()
             .render(context!(items => items))
             .unwrap();
 

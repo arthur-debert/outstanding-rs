@@ -94,9 +94,9 @@ pub fn render_with_output<T: Serialize>(
     let theme = theme.resolve();
 
     // Validate style aliases before rendering
-    theme.validate().map_err(|e| {
-        Error::new(minijinja::ErrorKind::InvalidOperation, e.to_string())
-    })?;
+    theme
+        .validate()
+        .map_err(|e| Error::new(minijinja::ErrorKind::InvalidOperation, e.to_string()))?;
 
     let mut env = Environment::new();
     register_filters(&mut env, theme, mode);
@@ -296,7 +296,9 @@ mod tests {
         let template = r#"{% for item in items %}{{ item | style("item") }}
 {% endfor %}"#;
 
-        let output = render_with_output(template, &data, ThemeChoice::from(&theme), OutputMode::Text).unwrap();
+        let output =
+            render_with_output(template, &data, ThemeChoice::from(&theme), OutputMode::Text)
+                .unwrap();
         assert_eq!(output, "one\ntwo\n");
     }
 
@@ -310,7 +312,9 @@ mod tests {
         };
 
         let template = r#"Total: {{ count | style("count") }} items"#;
-        let output = render_with_output(template, &data, ThemeChoice::from(&theme), OutputMode::Text).unwrap();
+        let output =
+            render_with_output(template, &data, ThemeChoice::from(&theme), OutputMode::Text)
+                .unwrap();
 
         assert_eq!(output, "Total: 42 items");
     }
@@ -342,7 +346,8 @@ mod tests {
         #[derive(Serialize)]
         struct Empty {}
 
-        let output = render_with_output("", &Empty {}, ThemeChoice::from(&theme), OutputMode::Text).unwrap();
+        let output =
+            render_with_output("", &Empty {}, ThemeChoice::from(&theme), OutputMode::Text).unwrap();
         assert_eq!(output, "");
     }
 
@@ -354,7 +359,12 @@ mod tests {
         #[derive(Serialize)]
         struct Empty {}
 
-        let result = render_with_output("{{ unclosed", &Empty {}, ThemeChoice::from(&theme), OutputMode::Text);
+        let result = render_with_output(
+            "{{ unclosed",
+            &Empty {},
+            ThemeChoice::from(&theme),
+            OutputMode::Text,
+        );
         assert!(result.is_err());
     }
 
@@ -389,7 +399,9 @@ mod tests {
         let template = r#"{% for item in items %}{{ item.name | style("name") }}={{ item.value }}
 {% endfor %}"#;
 
-        let output = render_with_output(template, &data, ThemeChoice::from(&theme), OutputMode::Text).unwrap();
+        let output =
+            render_with_output(template, &data, ThemeChoice::from(&theme), OutputMode::Text)
+                .unwrap();
         assert_eq!(output, "foo=1\nbar=2\n");
     }
 
@@ -527,13 +539,9 @@ mod tests {
             items: vec!["one".into(), "two".into()],
         };
 
-        let output = render_or_serialize(
-            "unused",
-            &data,
-            ThemeChoice::from(&theme),
-            OutputMode::Json,
-        )
-        .unwrap();
+        let output =
+            render_or_serialize("unused", &data, ThemeChoice::from(&theme), OutputMode::Json)
+                .unwrap();
 
         assert!(output.contains("\"title\": \"Summary\""));
         assert!(output.contains("\"items\""));
@@ -594,9 +602,7 @@ mod tests {
 
     #[test]
     fn test_render_fails_with_cycle() {
-        let theme = Theme::new()
-            .add("a", "b")
-            .add("b", "a");
+        let theme = Theme::new().add("a", "b").add("b", "a");
 
         let result = render_with_output(
             r#"{{ "text" | style("a") }}"#,

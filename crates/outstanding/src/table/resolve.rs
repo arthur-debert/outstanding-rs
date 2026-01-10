@@ -271,10 +271,7 @@ mod tests {
             .column(Column::new(Width::Fixed(10)))
             .build();
 
-        let data: Vec<Vec<&str>> = vec![
-            vec!["short", "value"],
-            vec!["longer text here", "x"],
-        ];
+        let data: Vec<Vec<&str>> = vec![vec!["short", "value"], vec!["longer text here", "x"]];
 
         let resolved = spec.resolve_widths_from_data(80, &data);
         // "longer text here" is 16 chars. Fixed is 10. Used: 26. Remaining: 54.
@@ -323,15 +320,14 @@ mod tests {
 
     // ... (other tests unchanged) ...
 
-
     #[test]
     fn resolve_with_decorations() {
         let spec = TableSpec::builder()
             .column(Column::new(Width::Fixed(10)))
             .column(Column::new(Width::Fill))
             .separator(" | ") // 3 chars
-            .prefix("│ ")    // 2 chars
-            .suffix(" │")    // 2 chars
+            .prefix("│ ") // 2 chars
+            .suffix(" │") // 2 chars
             .build();
 
         // Total: 50
@@ -452,7 +448,7 @@ mod proptests {
                     min: Some(min_width),
                     max: Some(max_width),
                 }));
-            
+
             if has_fill {
                 builder = builder.column(Column::new(Width::Fill));
             }

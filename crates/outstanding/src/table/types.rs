@@ -502,8 +502,6 @@ mod tests {
         assert_eq!(parsed, width);
     }
 
-
-
     #[test]
     fn width_serde_bounded() {
         let width = Width::Bounded {
@@ -531,7 +529,13 @@ mod tests {
     #[test]
     fn column_defaults() {
         let col = Column::default();
-        assert!(matches!(col.width, Width::Bounded { min: None, max: None }));
+        assert!(matches!(
+            col.width,
+            Width::Bounded {
+                min: None,
+                max: None
+            }
+        ));
         assert_eq!(col.align, Align::Left);
         assert_eq!(col.truncate, TruncateAt::End);
         assert_eq!(col.ellipsis, "…");

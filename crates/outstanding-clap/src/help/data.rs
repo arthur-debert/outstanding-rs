@@ -52,7 +52,10 @@ pub(crate) struct TopicListItem {
 pub(crate) fn extract_help_data(cmd: &Command) -> HelpData {
     let name = cmd.get_name().to_string();
     let about = cmd.get_about().map(|s| s.to_string()).unwrap_or_default();
-    let usage = cmd.clone().render_usage().to_string()
+    let usage = cmd
+        .clone()
+        .render_usage()
+        .to_string()
         .strip_prefix("Usage: ")
         .unwrap_or(&cmd.clone().render_usage().to_string())
         .to_string();
@@ -119,12 +122,10 @@ pub(crate) fn extract_help_data(cmd: &Command) -> HelpData {
 
     let options = opt_groups
         .into_iter()
-        .map(|(title, opts)| {
-            Group {
-                title,
-                commands: vec![],
-                options: opts,
-            }
+        .map(|(title, opts)| Group {
+            title,
+            commands: vec![],
+            options: opts,
         })
         .collect();
 

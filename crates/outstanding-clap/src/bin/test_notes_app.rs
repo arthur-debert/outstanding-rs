@@ -10,10 +10,10 @@
 //!
 //! Run with: cargo run --bin test-notes-app -- <command>
 
-use clap::{Parser, Subcommand, Args, CommandFactory};
+use clap::{Args, CommandFactory, Parser, Subcommand};
 use console::Style;
-use outstanding::{render_with_output, Theme, ThemeChoice, OutputMode};
 use outstanding::topics::{Topic, TopicType};
+use outstanding::{render_with_output, OutputMode, Theme, ThemeChoice};
 use outstanding_clap::Outstanding;
 use serde::Serialize;
 
@@ -355,7 +355,10 @@ fn main() {
 }
 
 fn get_output_mode(matches: &clap::ArgMatches) -> OutputMode {
-    match matches.get_one::<String>("_output_mode").map(|s| s.as_str()) {
+    match matches
+        .get_one::<String>("_output_mode")
+        .map(|s| s.as_str())
+    {
         Some("term") => OutputMode::Term,
         Some("text") => OutputMode::Text,
         Some("term-debug") => OutputMode::TermDebug,
@@ -370,227 +373,386 @@ fn handle_matches(matches: &clap::ArgMatches) {
 
     let mut base_options = vec![];
     if verbose {
-        base_options.push(OptionPair { name: "verbose".to_string(), value: "true".to_string() });
+        base_options.push(OptionPair {
+            name: "verbose".to_string(),
+            value: "true".to_string(),
+        });
     }
     if global {
-        base_options.push(OptionPair { name: "global".to_string(), value: "true".to_string() });
+        base_options.push(OptionPair {
+            name: "global".to_string(),
+            value: "true".to_string(),
+        });
     }
 
     match matches.subcommand() {
         Some(("create", sub)) => {
-            let title: Vec<_> = sub.get_many::<String>("title").map(|v| v.cloned().collect()).unwrap_or_default();
+            let title: Vec<_> = sub
+                .get_many::<String>("title")
+                .map(|v| v.cloned().collect())
+                .unwrap_or_default();
             let no_editor = sub.get_flag("no_editor");
             let mut options = base_options;
-            if no_editor { options.push(OptionPair { name: "no-editor".to_string(), value: "true".to_string() }); }
-            echo_command(&EchoData {
-                command: "test-notes-app".to_string(),
-                subcommand: Some("create".to_string()),
-                args: if title.is_empty() { None } else { Some(title.join(" ")) },
-                options,
-            }, mode);
+            if no_editor {
+                options.push(OptionPair {
+                    name: "no-editor".to_string(),
+                    value: "true".to_string(),
+                });
+            }
+            echo_command(
+                &EchoData {
+                    command: "test-notes-app".to_string(),
+                    subcommand: Some("create".to_string()),
+                    args: if title.is_empty() {
+                        None
+                    } else {
+                        Some(title.join(" "))
+                    },
+                    options,
+                },
+                mode,
+            );
         }
         Some(("list", sub)) => {
             let tag = sub.get_one::<String>("tag").cloned();
             let limit = sub.get_one::<usize>("limit").copied().unwrap_or(10);
             let mut options = base_options;
-            if let Some(t) = tag { options.push(OptionPair { name: "tag".to_string(), value: t }); }
-            options.push(OptionPair { name: "limit".to_string(), value: limit.to_string() });
-            echo_command(&EchoData {
-                command: "test-notes-app".to_string(),
-                subcommand: Some("list".to_string()),
-                args: None,
-                options,
-            }, mode);
+            if let Some(t) = tag {
+                options.push(OptionPair {
+                    name: "tag".to_string(),
+                    value: t,
+                });
+            }
+            options.push(OptionPair {
+                name: "limit".to_string(),
+                value: limit.to_string(),
+            });
+            echo_command(
+                &EchoData {
+                    command: "test-notes-app".to_string(),
+                    subcommand: Some("list".to_string()),
+                    args: None,
+                    options,
+                },
+                mode,
+            );
         }
         Some(("search", sub)) => {
             let query = sub.get_one::<String>("query").cloned().unwrap_or_default();
             let case_sensitive = sub.get_flag("case_sensitive");
             let mut options = base_options;
-            if case_sensitive { options.push(OptionPair { name: "case-sensitive".to_string(), value: "true".to_string() }); }
-            echo_command(&EchoData {
-                command: "test-notes-app".to_string(),
-                subcommand: Some("search".to_string()),
-                args: Some(query),
-                options,
-            }, mode);
+            if case_sensitive {
+                options.push(OptionPair {
+                    name: "case-sensitive".to_string(),
+                    value: "true".to_string(),
+                });
+            }
+            echo_command(
+                &EchoData {
+                    command: "test-notes-app".to_string(),
+                    subcommand: Some("search".to_string()),
+                    args: Some(query),
+                    options,
+                },
+                mode,
+            );
         }
         Some(("view", sub)) => {
-            let indexes: Vec<_> = sub.get_many::<String>("indexes").map(|v| v.cloned().collect()).unwrap_or_default();
+            let indexes: Vec<_> = sub
+                .get_many::<String>("indexes")
+                .map(|v| v.cloned().collect())
+                .unwrap_or_default();
             let raw = sub.get_flag("raw");
             let mut options = base_options;
-            if raw { options.push(OptionPair { name: "raw".to_string(), value: "true".to_string() }); }
-            echo_command(&EchoData {
-                command: "test-notes-app".to_string(),
-                subcommand: Some("view".to_string()),
-                args: Some(indexes.join(" ")),
-                options,
-            }, mode);
+            if raw {
+                options.push(OptionPair {
+                    name: "raw".to_string(),
+                    value: "true".to_string(),
+                });
+            }
+            echo_command(
+                &EchoData {
+                    command: "test-notes-app".to_string(),
+                    subcommand: Some("view".to_string()),
+                    args: Some(indexes.join(" ")),
+                    options,
+                },
+                mode,
+            );
         }
         Some(("edit", sub)) => {
             let index = sub.get_one::<String>("index").cloned().unwrap_or_default();
             let editor = sub.get_one::<String>("editor").cloned();
             let mut options = base_options;
-            if let Some(e) = editor { options.push(OptionPair { name: "editor".to_string(), value: e }); }
-            echo_command(&EchoData {
-                command: "test-notes-app".to_string(),
-                subcommand: Some("edit".to_string()),
-                args: Some(index),
-                options,
-            }, mode);
+            if let Some(e) = editor {
+                options.push(OptionPair {
+                    name: "editor".to_string(),
+                    value: e,
+                });
+            }
+            echo_command(
+                &EchoData {
+                    command: "test-notes-app".to_string(),
+                    subcommand: Some("edit".to_string()),
+                    args: Some(index),
+                    options,
+                },
+                mode,
+            );
         }
         Some(("open", sub)) => {
             let index = sub.get_one::<String>("index").cloned().unwrap_or_default();
-            echo_command(&EchoData {
-                command: "test-notes-app".to_string(),
-                subcommand: Some("open".to_string()),
-                args: Some(index),
-                options: base_options,
-            }, mode);
+            echo_command(
+                &EchoData {
+                    command: "test-notes-app".to_string(),
+                    subcommand: Some("open".to_string()),
+                    args: Some(index),
+                    options: base_options,
+                },
+                mode,
+            );
         }
         Some(("delete", sub)) => {
-            let indexes: Vec<_> = sub.get_many::<String>("indexes").map(|v| v.cloned().collect()).unwrap_or_default();
+            let indexes: Vec<_> = sub
+                .get_many::<String>("indexes")
+                .map(|v| v.cloned().collect())
+                .unwrap_or_default();
             let force = sub.get_flag("force");
             let mut options = base_options;
-            if force { options.push(OptionPair { name: "force".to_string(), value: "true".to_string() }); }
-            echo_command(&EchoData {
-                command: "test-notes-app".to_string(),
-                subcommand: Some("delete".to_string()),
-                args: Some(indexes.join(" ")),
-                options,
-            }, mode);
+            if force {
+                options.push(OptionPair {
+                    name: "force".to_string(),
+                    value: "true".to_string(),
+                });
+            }
+            echo_command(
+                &EchoData {
+                    command: "test-notes-app".to_string(),
+                    subcommand: Some("delete".to_string()),
+                    args: Some(indexes.join(" ")),
+                    options,
+                },
+                mode,
+            );
         }
         Some(("restore", sub)) => {
-            let indexes: Vec<_> = sub.get_many::<String>("indexes").map(|v| v.cloned().collect()).unwrap_or_default();
-            echo_command(&EchoData {
-                command: "test-notes-app".to_string(),
-                subcommand: Some("restore".to_string()),
-                args: Some(indexes.join(" ")),
-                options: base_options,
-            }, mode);
+            let indexes: Vec<_> = sub
+                .get_many::<String>("indexes")
+                .map(|v| v.cloned().collect())
+                .unwrap_or_default();
+            echo_command(
+                &EchoData {
+                    command: "test-notes-app".to_string(),
+                    subcommand: Some("restore".to_string()),
+                    args: Some(indexes.join(" ")),
+                    options: base_options,
+                },
+                mode,
+            );
         }
         Some(("pin", sub)) => {
-            let indexes: Vec<_> = sub.get_many::<String>("indexes").map(|v| v.cloned().collect()).unwrap_or_default();
-            echo_command(&EchoData {
-                command: "test-notes-app".to_string(),
-                subcommand: Some("pin".to_string()),
-                args: Some(indexes.join(" ")),
-                options: base_options,
-            }, mode);
+            let indexes: Vec<_> = sub
+                .get_many::<String>("indexes")
+                .map(|v| v.cloned().collect())
+                .unwrap_or_default();
+            echo_command(
+                &EchoData {
+                    command: "test-notes-app".to_string(),
+                    subcommand: Some("pin".to_string()),
+                    args: Some(indexes.join(" ")),
+                    options: base_options,
+                },
+                mode,
+            );
         }
         Some(("unpin", sub)) => {
-            let indexes: Vec<_> = sub.get_many::<String>("indexes").map(|v| v.cloned().collect()).unwrap_or_default();
-            echo_command(&EchoData {
-                command: "test-notes-app".to_string(),
-                subcommand: Some("unpin".to_string()),
-                args: Some(indexes.join(" ")),
-                options: base_options,
-            }, mode);
+            let indexes: Vec<_> = sub
+                .get_many::<String>("indexes")
+                .map(|v| v.cloned().collect())
+                .unwrap_or_default();
+            echo_command(
+                &EchoData {
+                    command: "test-notes-app".to_string(),
+                    subcommand: Some("unpin".to_string()),
+                    args: Some(indexes.join(" ")),
+                    options: base_options,
+                },
+                mode,
+            );
         }
         Some(("path", sub)) => {
-            let indexes: Vec<_> = sub.get_many::<String>("indexes").map(|v| v.cloned().collect()).unwrap_or_default();
-            echo_command(&EchoData {
-                command: "test-notes-app".to_string(),
-                subcommand: Some("path".to_string()),
-                args: Some(indexes.join(" ")),
-                options: base_options,
-            }, mode);
+            let indexes: Vec<_> = sub
+                .get_many::<String>("indexes")
+                .map(|v| v.cloned().collect())
+                .unwrap_or_default();
+            echo_command(
+                &EchoData {
+                    command: "test-notes-app".to_string(),
+                    subcommand: Some("path".to_string()),
+                    args: Some(indexes.join(" ")),
+                    options: base_options,
+                },
+                mode,
+            );
         }
         Some(("purge", sub)) => {
-            let indexes: Vec<_> = sub.get_many::<String>("indexes").map(|v| v.cloned().collect()).unwrap_or_default();
+            let indexes: Vec<_> = sub
+                .get_many::<String>("indexes")
+                .map(|v| v.cloned().collect())
+                .unwrap_or_default();
             let all = sub.get_flag("all");
             let mut options = base_options;
-            if all { options.push(OptionPair { name: "all".to_string(), value: "true".to_string() }); }
-            echo_command(&EchoData {
-                command: "test-notes-app".to_string(),
-                subcommand: Some("purge".to_string()),
-                args: if indexes.is_empty() { None } else { Some(indexes.join(" ")) },
-                options,
-            }, mode);
+            if all {
+                options.push(OptionPair {
+                    name: "all".to_string(),
+                    value: "true".to_string(),
+                });
+            }
+            echo_command(
+                &EchoData {
+                    command: "test-notes-app".to_string(),
+                    subcommand: Some("purge".to_string()),
+                    args: if indexes.is_empty() {
+                        None
+                    } else {
+                        Some(indexes.join(" "))
+                    },
+                    options,
+                },
+                mode,
+            );
         }
         Some(("export", sub)) => {
             let output = sub.get_one::<String>("output").cloned();
             let single_file = sub.get_flag("single_file");
             let mut options = base_options;
-            if let Some(o) = output { options.push(OptionPair { name: "output".to_string(), value: o }); }
-            if single_file { options.push(OptionPair { name: "single-file".to_string(), value: "true".to_string() }); }
-            echo_command(&EchoData {
-                command: "test-notes-app".to_string(),
-                subcommand: Some("export".to_string()),
-                args: None,
-                options,
-            }, mode);
+            if let Some(o) = output {
+                options.push(OptionPair {
+                    name: "output".to_string(),
+                    value: o,
+                });
+            }
+            if single_file {
+                options.push(OptionPair {
+                    name: "single-file".to_string(),
+                    value: "true".to_string(),
+                });
+            }
+            echo_command(
+                &EchoData {
+                    command: "test-notes-app".to_string(),
+                    subcommand: Some("export".to_string()),
+                    args: None,
+                    options,
+                },
+                mode,
+            );
         }
         Some(("import", sub)) => {
-            let files: Vec<_> = sub.get_many::<String>("files").map(|v| v.cloned().collect()).unwrap_or_default();
-            echo_command(&EchoData {
-                command: "test-notes-app".to_string(),
-                subcommand: Some("import".to_string()),
-                args: Some(files.join(" ")),
-                options: base_options,
-            }, mode);
+            let files: Vec<_> = sub
+                .get_many::<String>("files")
+                .map(|v| v.cloned().collect())
+                .unwrap_or_default();
+            echo_command(
+                &EchoData {
+                    command: "test-notes-app".to_string(),
+                    subcommand: Some("import".to_string()),
+                    args: Some(files.join(" ")),
+                    options: base_options,
+                },
+                mode,
+            );
         }
         Some(("doctor", _)) => {
-            echo_command(&EchoData {
-                command: "test-notes-app".to_string(),
-                subcommand: Some("doctor".to_string()),
-                args: None,
-                options: base_options,
-            }, mode);
+            echo_command(
+                &EchoData {
+                    command: "test-notes-app".to_string(),
+                    subcommand: Some("doctor".to_string()),
+                    args: None,
+                    options: base_options,
+                },
+                mode,
+            );
         }
-        Some(("config", sub)) => {
-            match sub.subcommand() {
-                Some(("get", get_sub)) => {
-                    let key = get_sub.get_one::<String>("key").cloned().unwrap_or_default();
-                    echo_command(&EchoData {
+        Some(("config", sub)) => match sub.subcommand() {
+            Some(("get", get_sub)) => {
+                let key = get_sub
+                    .get_one::<String>("key")
+                    .cloned()
+                    .unwrap_or_default();
+                echo_command(
+                    &EchoData {
                         command: "test-notes-app".to_string(),
                         subcommand: Some("config get".to_string()),
                         args: Some(key),
                         options: base_options,
-                    }, mode);
-                }
-                Some(("set", set_sub)) => {
-                    let key = set_sub.get_one::<String>("key").cloned().unwrap_or_default();
-                    let value = set_sub.get_one::<String>("value").cloned().unwrap_or_default();
-                    echo_command(&EchoData {
+                    },
+                    mode,
+                );
+            }
+            Some(("set", set_sub)) => {
+                let key = set_sub
+                    .get_one::<String>("key")
+                    .cloned()
+                    .unwrap_or_default();
+                let value = set_sub
+                    .get_one::<String>("value")
+                    .cloned()
+                    .unwrap_or_default();
+                echo_command(
+                    &EchoData {
                         command: "test-notes-app".to_string(),
                         subcommand: Some("config set".to_string()),
                         args: Some(format!("{} = {}", key, value)),
                         options: base_options,
-                    }, mode);
-                }
-                Some(("list", _)) => {
-                    echo_command(&EchoData {
+                    },
+                    mode,
+                );
+            }
+            Some(("list", _)) => {
+                echo_command(
+                    &EchoData {
                         command: "test-notes-app".to_string(),
                         subcommand: Some("config list".to_string()),
                         args: None,
                         options: base_options,
-                    }, mode);
-                }
-                _ => {
-                    echo_command(&EchoData {
+                    },
+                    mode,
+                );
+            }
+            _ => {
+                echo_command(
+                    &EchoData {
                         command: "test-notes-app".to_string(),
                         subcommand: Some("config".to_string()),
                         args: None,
                         options: base_options,
-                    }, mode);
-                }
+                    },
+                    mode,
+                );
             }
-        }
+        },
         Some(("init", _)) => {
-            echo_command(&EchoData {
-                command: "test-notes-app".to_string(),
-                subcommand: Some("init".to_string()),
-                args: None,
-                options: base_options,
-            }, mode);
+            echo_command(
+                &EchoData {
+                    command: "test-notes-app".to_string(),
+                    subcommand: Some("init".to_string()),
+                    args: None,
+                    options: base_options,
+                },
+                mode,
+            );
         }
         Some((name, _)) => {
-            echo_command(&EchoData {
-                command: "test-notes-app".to_string(),
-                subcommand: Some(name.to_string()),
-                args: None,
-                options: base_options,
-            }, mode);
+            echo_command(
+                &EchoData {
+                    command: "test-notes-app".to_string(),
+                    subcommand: Some(name.to_string()),
+                    args: None,
+                    options: base_options,
+                },
+                mode,
+            );
         }
         None => {
             println!("Test Notes App - Sample CLI for testing outstanding-clap");

@@ -81,9 +81,54 @@
 //!     .run_and_print(cmd, std::env::args());
 //! ```
 //!
+//! ## Handler Hooks
+//!
+//! Hooks allow running custom code before and after command handlers execute.
+//! Use cases include logging, clipboard operations, output transformation, and validation.
+//!
+//! ```rust,ignore
+//! use outstanding_clap::{Outstanding, Hooks, Output, HookError};
+//!
+//! Outstanding::builder()
+//!     .command("export", handler, template)
+//!     .hooks("export", Hooks::new()
+//!         .pre_dispatch(|ctx| {
+//!             println!("Running: {:?}", ctx.command_path);
+//!             Ok(())
+//!         })
+//!         .post_output(|_ctx, output| {
+//!             // Copy text output to clipboard
+//!             if let Output::Text(ref text) = output {
+//!                 // clipboard::copy(text)?;
+//!             }
+//!             Ok(output)
+//!         }))
+//!     .run_and_print(cmd, args);
+//! ```
+//!
+//! Hooks are per-command and support chaining (multiple hooks at the same phase
+//! run in order, with post-output hooks able to transform output).
+//!
+//! For the regular API (manual dispatch), use `Outstanding::run_command()`:
+//!
+//! ```rust,ignore
+//! let outstanding = Outstanding::builder()
+//!     .hooks("list", Hooks::new().post_output(copy_to_clipboard))
+//!     .build();
+//!
+//! let matches = outstanding.run_with(cmd);
+//! if let Some(("list", sub_m)) = matches.subcommand() {
+//!     let output = outstanding.run_command("list", sub_m, handler, template)?;
+//!     println!("{}", output);
+//! }
+//! ```
+//!
+//! See the [`hooks`] module for full documentation.
+//!
 //! ## Module Structure
 //!
 //! - [`handler`]: Command handler types (`CommandContext`, `CommandResult`, `Handler`)
+//! - [`hooks`]: Hook system for pre/post command execution
 //! - [`help`]: Help rendering functions and configuration
 //! - Internal: `dispatch`, `result`, `outstanding` modules
 
@@ -95,6 +140,7 @@ mod result;
 // Public modules
 pub mod handler;
 pub mod help;
+pub mod hooks;
 
 // Re-export main types from outstanding module
 pub use outstanding::{Outstanding, OutstandingBuilder};
@@ -108,11 +154,14 @@ pub use help::{default_help_theme, render_help, render_help_with_topics, HelpCon
 // Re-export handler types
 pub use handler::{CommandContext, CommandResult, FnHandler, Handler, RunResult};
 
+// Re-export hook types
+pub use hooks::{HookError, HookPhase, Hooks, Output};
+
 // Re-export core types from outstanding crate for convenience
 pub use ::outstanding::topics::{
     display_with_pager, render_topic as render_topic_core,
-    render_topics_list as render_topics_list_core, Topic as TopicDef, TopicRegistry as TopicRegistryDef,
-    TopicType,
+    render_topics_list as render_topics_list_core, Topic as TopicDef,
+    TopicRegistry as TopicRegistryDef, TopicType,
 };
 
 // ============================================================================

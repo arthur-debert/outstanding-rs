@@ -106,6 +106,37 @@ my-app help topics     # List all topics
 my-app help <topic>    # View specific topic
 ```
 
+## Handler Hooks
+
+Run custom code before and after command execution:
+
+```rust
+use outstanding_clap::{Outstanding, Hooks, Output};
+
+Outstanding::builder()
+    .command("export", handler, template)
+    .hooks("export", Hooks::new()
+        .pre_dispatch(|ctx| {
+            println!("Running: {:?}", ctx.command_path);
+            Ok(())
+        })
+        .post_output(|_ctx, output| {
+            // Copy to clipboard, log, transform, etc.
+            if let Output::Text(ref text) = output {
+                // clipboard::copy(text)?;
+            }
+            Ok(output)
+        }))
+    .run_and_print(cmd, args);
+```
+
+- **Pre-dispatch**: Run before handler, can abort execution
+- **Post-output**: Run after rendering, can transform output
+- **Per-command**: Different hooks for different commands
+- **Chainable**: Multiple hooks at the same phase run in order
+
+See [docs/hooks.md](docs/hooks.md) for full documentation.
+
 ## Documentation
 
 For comprehensive documentation, see:
@@ -117,6 +148,12 @@ For comprehensive documentation, see:
   - Help topics configuration
   - Best practices
 
+- **[Handler Hooks](docs/hooks.md)** - Pre/post command execution hooks for:
+  - Logging and metrics
+  - Clipboard operations
+  - Output transformation
+  - Validation and access control
+
 - **[Architecture & Design](../../docs/proposals/fullapi-consolidated.md)** - Technical deep dive for contributors
 
 ## API Overview
@@ -127,6 +164,7 @@ For comprehensive documentation, see:
 |--------|-------------|
 | `.command(path, handler, template)` | Register command with closure |
 | `.command_handler(path, handler, template)` | Register command with struct handler |
+| `.hooks(path, hooks)` | Register hooks for a command |
 | `.topics_dir(path)` | Load help topics from directory |
 | `.theme(theme)` | Set custom theme |
 | `.output_flag(Some("format"))` | Rename `--output` flag |
@@ -139,6 +177,7 @@ For comprehensive documentation, see:
 | `.run_and_print(cmd, args)` | `bool` | Complete flow: parse, dispatch, print |
 | `.dispatch_from(cmd, args)` | `RunResult` | Parse and dispatch, you handle output |
 | `.dispatch(matches, mode)` | `RunResult` | You provide parsed matches |
+| `.run_command(path, matches, handler, template)` | `Result<Output, HookError>` | Regular API with hooks |
 
 ### CommandResult Variants
 
