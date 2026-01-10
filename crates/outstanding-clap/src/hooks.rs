@@ -219,7 +219,7 @@ impl Hooks {
     /// use outstanding_clap::{Hooks, HookError};
     ///
     /// let hooks = Hooks::new()
-    ///     .pre_dispatch(|ctx| {
+    ///     .pre_dispatch(|_m, ctx| {
     ///         if ctx.command_path.contains(&"dangerous".to_string()) {
     ///             return Err(HookError::pre_dispatch("dangerous commands disabled"));
     ///         }
@@ -249,14 +249,14 @@ impl Hooks {
     /// use outstanding_clap::{Hooks, HookError, Output};
     ///
     /// let hooks = Hooks::new()
-    ///     .post_output(|_ctx, output| {
+    ///     .post_output(|_m, _ctx, output| {
     ///         // Copy text to clipboard (pseudo-code)
     ///         if let Output::Text(ref text) = output {
     ///             // clipboard::copy(text)?;
     ///         }
     ///         Ok(output) // Pass through unchanged
     ///     })
-    ///     .post_output(|_ctx, output| {
+    ///     .post_output(|_m, _ctx, output| {
     ///         // Add newline to text output
     ///         if let Output::Text(text) = output {
     ///             Ok(Output::Text(format!("{}\n", text)))
