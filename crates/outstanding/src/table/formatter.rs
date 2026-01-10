@@ -139,10 +139,7 @@ impl TableFormatter {
             }
 
             let width = self.widths.get(i).copied().unwrap_or(0);
-            let value = values
-                .get(i)
-                .map(|s| s.as_ref())
-                .unwrap_or(&col.null_repr);
+            let value = values.get(i).map(|s| s.as_ref()).unwrap_or(&col.null_repr);
 
             let formatted = format_cell(value, width, col);
             result.push_str(&formatted);
@@ -313,11 +310,7 @@ mod tests {
     #[test]
     fn format_multiple_rows() {
         let formatter = TableFormatter::new(&simple_spec(), 80);
-        let rows = vec![
-            vec!["a", "1"],
-            vec!["b", "2"],
-            vec!["c", "3"],
-        ];
+        let rows = vec![vec!["a", "1"], vec!["b", "2"], vec!["c", "3"]];
 
         let output = formatter.format_rows(&rows);
         assert_eq!(output.len(), 3);
@@ -334,7 +327,7 @@ mod tests {
 
         // Total: 30, overhead: 4 (2 separators), fixed: 10, fill: 16
         let formatter = TableFormatter::new(&spec, 30);
-        let output = formatter.format_row(&["abc", "middle", "xyz"]);
+        let _output = formatter.format_row(&["abc", "middle", "xyz"]);
 
         // Check that widths are as expected
         assert_eq!(formatter.widths(), &[5, 16, 5]);
@@ -380,12 +373,8 @@ mod tests {
 
     #[test]
     fn format_with_explicit_widths() {
-        let columns = vec![
-            Column::new(Width::Fixed(5)),
-            Column::new(Width::Fixed(10)),
-        ];
-        let formatter = TableFormatter::with_widths(columns, vec![5, 10])
-            .separator(" - ");
+        let columns = vec![Column::new(Width::Fixed(5)), Column::new(Width::Fixed(10))];
+        let formatter = TableFormatter::with_widths(columns, vec![5, 10]).separator(" - ");
 
         let output = formatter.format_row(&["hi", "there"]);
         assert_eq!(output, "hi    - there     ");
