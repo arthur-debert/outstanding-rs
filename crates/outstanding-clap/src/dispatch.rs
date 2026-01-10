@@ -6,6 +6,7 @@ use clap::ArgMatches;
 use std::sync::Arc;
 
 use crate::handler::CommandContext;
+use crate::hooks::Hooks;
 
 /// Internal result type for dispatch functions.
 pub(crate) enum DispatchOutput {
@@ -19,9 +20,13 @@ pub(crate) enum DispatchOutput {
 
 /// Type-erased dispatch function.
 ///
-/// Takes ArgMatches and CommandContext, returns the dispatch output or an error.
-pub(crate) type DispatchFn =
-    Arc<dyn Fn(&ArgMatches, &CommandContext) -> Result<DispatchOutput, String> + Send + Sync>;
+/// Takes ArgMatches, CommandContext, and optional Hooks. The hooks parameter
+/// allows post-dispatch hooks to run between handler execution and rendering.
+pub(crate) type DispatchFn = Arc<
+    dyn Fn(&ArgMatches, &CommandContext, Option<&Hooks>) -> Result<DispatchOutput, String>
+        + Send
+        + Sync,
+>;
 
 /// Extracts the command path from ArgMatches by following subcommand chain.
 pub(crate) fn extract_command_path(matches: &ArgMatches) -> Vec<String> {

@@ -6,28 +6,37 @@
 //! # Hook Points
 //!
 //! - **Pre-dispatch**: Runs before the command handler. Can abort execution.
+//! - **Post-dispatch**: Runs after the handler but before rendering. Receives the raw
+//!   handler data as `serde_json::Value`. Can inspect, modify, or replace the data.
 //! - **Post-output**: Runs after output is generated. Can transform output or abort.
 //!
 //! # Example
 //!
 //! ```rust,ignore
 //! use outstanding_clap::{Outstanding, Hooks, Output};
-//!
-//! fn copy_to_clipboard(_ctx: &CommandContext, output: Output) -> Result<Output, HookError> {
-//!     if let Output::Text(ref text) = output {
-//!         // clipboard::copy(text)?;
-//!     }
-//!     Ok(output)
-//! }
+//! use serde_json::json;
 //!
 //! Outstanding::builder()
 //!     .command("list", handler, template)
 //!     .hooks("list", Hooks::new()
-//!         .pre_dispatch(|ctx| {
+//!         .pre_dispatch(|_m, ctx| {
 //!             println!("Running: {}", ctx.command_path.join(" "));
 //!             Ok(())
 //!         })
-//!         .post_output(copy_to_clipboard))
+//!         .post_dispatch(|_m, _ctx, mut data| {
+//!             // Add metadata before rendering
+//!             if let Some(obj) = data.as_object_mut() {
+//!                 obj.insert("timestamp".into(), json!(chrono::Utc::now().to_rfc3339()));
+//!             }
+//!             Ok(data)
+//!         })
+//!         .post_output(|_m, _ctx, output| {
+//!             // Copy to clipboard (pseudo-code)
+//!             if let Output::Text(ref text) = output {
+//!                 // clipboard::copy(text)?;
+//!             }
+//!             Ok(output)
+//!         }))
 //!     .run_and_print(cmd, args);
 //! ```
 
@@ -89,6 +98,8 @@ impl Output {
 pub enum HookPhase {
     /// Error occurred during pre-dispatch phase
     PreDispatch,
+    /// Error occurred during post-dispatch phase (after handler, before rendering)
+    PostDispatch,
     /// Error occurred during post-output phase
     PostOutput,
 }
@@ -97,6 +108,7 @@ impl fmt::Display for HookPhase {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             HookPhase::PreDispatch => write!(f, "pre-dispatch"),
+            HookPhase::PostDispatch => write!(f, "post-dispatch"),
             HookPhase::PostOutput => write!(f, "post-output"),
         }
     }
@@ -123,6 +135,15 @@ impl HookError {
         Self {
             message: message.into(),
             phase: HookPhase::PreDispatch,
+            source: None,
+        }
+    }
+
+    /// Creates a new hook error for the post-dispatch phase.
+    pub fn post_dispatch(message: impl Into<String>) -> Self {
+        Self {
+            message: message.into(),
+            phase: HookPhase::PostDispatch,
             source: None,
         }
     }
@@ -155,6 +176,17 @@ use clap::ArgMatches;
 pub type PreDispatchFn =
     Arc<dyn Fn(&ArgMatches, &CommandContext) -> Result<(), HookError> + Send + Sync>;
 
+/// Type alias for post-dispatch hook functions.
+///
+/// Post-dispatch hooks receive the command context, arguments, and the raw handler
+/// result as a `serde_json::Value`. They can inspect, modify, or replace the data
+/// before it is rendered. Returning an error aborts execution.
+pub type PostDispatchFn = Arc<
+    dyn Fn(&ArgMatches, &CommandContext, serde_json::Value) -> Result<serde_json::Value, HookError>
+        + Send
+        + Sync,
+>;
+
 /// Type alias for post-output hook functions.
 ///
 /// Post-output hooks receive the command context, arguments, and output, and can
@@ -167,17 +199,26 @@ pub type PostOutputFn =
 /// Hooks are registered per-command path and executed in order.
 /// Multiple hooks at the same phase are chained:
 /// - Pre-dispatch hooks run sequentially, aborting on first error
-/// - Post-output hooks chain transformations, aborting on first error
+/// - Post-dispatch hooks chain data transformations, aborting on first error
+/// - Post-output hooks chain output transformations, aborting on first error
 ///
 /// # Example
 ///
 /// ```rust
 /// use outstanding_clap::{Hooks, HookError, Output, CommandContext};
+/// use serde_json::json;
 ///
 /// let hooks = Hooks::new()
 ///     .pre_dispatch(|_m, ctx| {
 ///         println!("About to run: {:?}", ctx.command_path);
 ///         Ok(())
+///     })
+///     .post_dispatch(|_m, _ctx, mut data| {
+///         // Modify raw data before rendering
+///         if let Some(obj) = data.as_object_mut() {
+///             obj.insert("hook_processed".into(), json!(true));
+///         }
+///         Ok(data)
 ///     })
 ///     .post_output(|_m, ctx, output| {
 ///         // Transform: add a prefix to text output
@@ -191,6 +232,7 @@ pub type PostOutputFn =
 #[derive(Clone, Default)]
 pub struct Hooks {
     pre_dispatch: Vec<PreDispatchFn>,
+    post_dispatch: Vec<PostDispatchFn>,
     post_output: Vec<PostOutputFn>,
 }
 
@@ -202,7 +244,7 @@ impl Hooks {
 
     /// Returns true if no hooks are registered.
     pub fn is_empty(&self) -> bool {
-        self.pre_dispatch.is_empty() && self.post_output.is_empty()
+        self.pre_dispatch.is_empty() && self.post_dispatch.is_empty() && self.post_output.is_empty()
     }
 
     /// Adds a pre-dispatch hook.
@@ -232,6 +274,53 @@ impl Hooks {
         F: Fn(&ArgMatches, &CommandContext) -> Result<(), HookError> + Send + Sync + 'static,
     {
         self.pre_dispatch.push(Arc::new(f));
+        self
+    }
+
+    /// Adds a post-dispatch hook.
+    ///
+    /// Post-dispatch hooks run after the command handler has executed but before
+    /// the output is rendered. They receive the raw handler result as a
+    /// `serde_json::Value`, allowing inspection and transformation of the data.
+    ///
+    /// Multiple post-dispatch hooks chain transformations: each hook receives
+    /// the data from the previous hook. If any hook returns an error,
+    /// subsequent hooks are not run.
+    ///
+    /// # Example
+    ///
+    /// ```rust
+    /// use outstanding_clap::{Hooks, HookError};
+    /// use serde_json::json;
+    ///
+    /// let hooks = Hooks::new()
+    ///     .post_dispatch(|_m, _ctx, mut data| {
+    ///         // Add metadata to the result before rendering
+    ///         if let Some(obj) = data.as_object_mut() {
+    ///             obj.insert("processed".into(), json!(true));
+    ///         }
+    ///         Ok(data)
+    ///     })
+    ///     .post_dispatch(|_m, _ctx, data| {
+    ///         // Validate data before rendering
+    ///         if data.get("items").map(|v| v.as_array().map(|a| a.is_empty())).flatten() == Some(true) {
+    ///             return Err(HookError::post_dispatch("no items to display"));
+    ///         }
+    ///         Ok(data)
+    ///     });
+    /// ```
+    pub fn post_dispatch<F>(mut self, f: F) -> Self
+    where
+        F: Fn(
+                &ArgMatches,
+                &CommandContext,
+                serde_json::Value,
+            ) -> Result<serde_json::Value, HookError>
+            + Send
+            + Sync
+            + 'static,
+    {
+        self.post_dispatch.push(Arc::new(f));
         self
     }
 
@@ -293,6 +382,24 @@ impl Hooks {
         Ok(())
     }
 
+    /// Runs all post-dispatch hooks, chaining transformations.
+    ///
+    /// Each hook receives the data from the previous hook (or the original
+    /// handler result for the first hook). If any hook returns an error,
+    /// execution stops and the error is returned.
+    pub(crate) fn run_post_dispatch(
+        &self,
+        matches: &ArgMatches,
+        ctx: &CommandContext,
+        data: serde_json::Value,
+    ) -> Result<serde_json::Value, HookError> {
+        let mut current = data;
+        for hook in &self.post_dispatch {
+            current = hook(matches, ctx, current)?;
+        }
+        Ok(current)
+    }
+
     /// Runs all post-output hooks, chaining transformations.
     ///
     /// Each hook receives the output from the previous hook (or the original
@@ -316,6 +423,7 @@ impl fmt::Debug for Hooks {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("Hooks")
             .field("pre_dispatch_count", &self.pre_dispatch.len())
+            .field("post_dispatch_count", &self.post_dispatch.len())
             .field("post_output_count", &self.post_output.len())
             .finish()
     }
@@ -368,6 +476,10 @@ mod tests {
         assert_eq!(pre_err.phase, HookPhase::PreDispatch);
         assert_eq!(pre_err.message, "pre error");
 
+        let post_dispatch_err = HookError::post_dispatch("post dispatch error");
+        assert_eq!(post_dispatch_err.phase, HookPhase::PostDispatch);
+        assert_eq!(post_dispatch_err.message, "post dispatch error");
+
         let post_err = HookError::post_output("post error");
         assert_eq!(post_err.phase, HookPhase::PostOutput);
         assert_eq!(post_err.message, "post error");
@@ -391,6 +503,9 @@ mod tests {
     #[test]
     fn test_hooks_not_empty_after_adding() {
         let hooks = Hooks::new().pre_dispatch(|_, _| Ok(()));
+        assert!(!hooks.is_empty());
+
+        let hooks = Hooks::new().post_dispatch(|_, _, d| Ok(d));
         assert!(!hooks.is_empty());
 
         let hooks = Hooks::new().post_output(|_, _, o| Ok(o));
@@ -594,10 +709,151 @@ mod tests {
         let hooks = Hooks::new()
             .pre_dispatch(|_, _| Ok(()))
             .pre_dispatch(|_, _| Ok(()))
+            .post_dispatch(|_, _, d| Ok(d))
             .post_output(|_, _, o| Ok(o));
 
         let debug = format!("{:?}", hooks);
         assert!(debug.contains("pre_dispatch_count: 2"));
+        assert!(debug.contains("post_dispatch_count: 1"));
         assert!(debug.contains("post_output_count: 1"));
+    }
+
+    // ============================================================================
+    // Post-dispatch hook tests
+    // ============================================================================
+
+    #[test]
+    fn test_post_dispatch_passthrough() {
+        use serde_json::json;
+
+        let hooks = Hooks::new().post_dispatch(|_, _, data| Ok(data));
+
+        let ctx = test_context();
+        let matches = test_matches();
+        let data = json!({"value": 42});
+        let result = hooks.run_post_dispatch(&matches, &ctx, data);
+
+        assert!(result.is_ok());
+        assert_eq!(result.unwrap()["value"], 42);
+    }
+
+    #[test]
+    fn test_post_dispatch_transformation() {
+        use serde_json::json;
+
+        let hooks = Hooks::new().post_dispatch(|_, _, mut data| {
+            if let Some(obj) = data.as_object_mut() {
+                obj.insert("modified".into(), json!(true));
+            }
+            Ok(data)
+        });
+
+        let ctx = test_context();
+        let matches = test_matches();
+        let data = json!({"value": 42});
+        let result = hooks.run_post_dispatch(&matches, &ctx, data);
+
+        assert!(result.is_ok());
+        let output = result.unwrap();
+        assert_eq!(output["value"], 42);
+        assert_eq!(output["modified"], true);
+    }
+
+    #[test]
+    fn test_post_dispatch_chained_transformations() {
+        use serde_json::json;
+
+        let hooks = Hooks::new()
+            .post_dispatch(|_, _, mut data| {
+                if let Some(obj) = data.as_object_mut() {
+                    obj.insert("step1".into(), json!(true));
+                }
+                Ok(data)
+            })
+            .post_dispatch(|_, _, mut data| {
+                if let Some(obj) = data.as_object_mut() {
+                    obj.insert("step2".into(), json!(true));
+                }
+                Ok(data)
+            });
+
+        let ctx = test_context();
+        let matches = test_matches();
+        let data = json!({"original": "data"});
+        let result = hooks.run_post_dispatch(&matches, &ctx, data);
+
+        assert!(result.is_ok());
+        let output = result.unwrap();
+        assert_eq!(output["original"], "data");
+        assert_eq!(output["step1"], true);
+        assert_eq!(output["step2"], true);
+    }
+
+    #[test]
+    fn test_post_dispatch_error_aborts() {
+        use serde_json::json;
+
+        let hooks = Hooks::new()
+            .post_dispatch(|_, _, _| Err(HookError::post_dispatch("validation failed")))
+            .post_dispatch(|_, _, _| panic!("should not be called"));
+
+        let ctx = test_context();
+        let matches = test_matches();
+        let data = json!({"value": 42});
+        let result = hooks.run_post_dispatch(&matches, &ctx, data);
+
+        assert!(result.is_err());
+        let err = result.unwrap_err();
+        assert_eq!(err.message, "validation failed");
+        assert_eq!(err.phase, HookPhase::PostDispatch);
+    }
+
+    #[test]
+    fn test_post_dispatch_error_display() {
+        let err = HookError::post_dispatch("data validation failed");
+        assert_eq!(
+            err.to_string(),
+            "hook error (post-dispatch): data validation failed"
+        );
+    }
+
+    #[test]
+    fn test_post_dispatch_receives_context() {
+        use serde_json::json;
+
+        let hooks = Hooks::new().post_dispatch(|_, ctx, data| {
+            assert_eq!(ctx.command_path, vec!["config", "get"]);
+            Ok(data)
+        });
+
+        let ctx = CommandContext {
+            output_mode: OutputMode::Json,
+            command_path: vec!["config".into(), "get".into()],
+        };
+        let matches = test_matches();
+        let data = json!({"key": "value"});
+
+        assert!(hooks.run_post_dispatch(&matches, &ctx, data).is_ok());
+    }
+
+    #[test]
+    fn test_post_dispatch_can_replace_data() {
+        use serde_json::json;
+
+        let hooks = Hooks::new().post_dispatch(|_, _, _| {
+            // Completely replace the data
+            Ok(json!({"replaced": true, "new_data": [1, 2, 3]}))
+        });
+
+        let ctx = test_context();
+        let matches = test_matches();
+        let data = json!({"original": "data"});
+        let result = hooks.run_post_dispatch(&matches, &ctx, data);
+
+        assert!(result.is_ok());
+        let output = result.unwrap();
+        assert!(output.get("original").is_none());
+        assert_eq!(output["replaced"], true);
+        assert_eq!(output["new_data"], json!([1, 2, 3]));
     }
 }

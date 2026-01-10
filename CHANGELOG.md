@@ -7,6 +7,44 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **Post-dispatch hooks** - New hook phase that runs after handler execution but before rendering
+  - `post_dispatch` hooks receive raw handler data as `serde_json::Value`
+  - Can inspect, modify, or replace data before it's rendered
+  - Useful for data enrichment, validation, filtering, and normalization
+  - Full access to `ArgMatches` and `CommandContext` in hook functions
+- `HookError::post_dispatch()` factory method for creating post-dispatch errors
+- `HookPhase::PostDispatch` variant for error phase tracking
+- `serde_json` dependency added to `outstanding-clap` (previously dev-only)
+
+### Example
+
+```rust
+use outstanding_clap::{Outstanding, Hooks, HookError};
+use serde_json::json;
+
+Outstanding::builder()
+    .command("list", handler, template)
+    .hooks("list", Hooks::new()
+        .pre_dispatch(|_m, ctx| {
+            println!("Running: {}", ctx.command_path.join(" "));
+            Ok(())
+        })
+        .post_dispatch(|_m, _ctx, mut data| {
+            // Add metadata before rendering
+            if let Some(obj) = data.as_object_mut() {
+                obj.insert("timestamp".into(), json!(chrono::Utc::now().to_rfc3339()));
+            }
+            Ok(data)
+        })
+        .post_output(|_m, _ctx, output| {
+            // Transform or inspect output
+            Ok(output)
+        }))
+    .run_and_print(cmd, args);
+```
+
 ## [0.7.1] - 2026-01-10
 
 ## [0.7.0] - 2026-01-10

@@ -147,8 +147,10 @@ impl Outstanding {
             command_path: path.split('.').map(String::from).collect(),
         };
 
+        let hooks = self.command_hooks.get(path);
+
         // Run pre-dispatch hooks
-        if let Some(hooks) = self.command_hooks.get(path) {
+        if let Some(hooks) = hooks {
             hooks.run_pre_dispatch(matches, &ctx)?;
         }
 
@@ -158,10 +160,20 @@ impl Outstanding {
         // Convert result to Output
         let output = match result {
             CommandResult::Ok(data) => {
+                // Convert to serde_json::Value for post-dispatch hooks
+                let mut json_data = serde_json::to_value(&data)
+                    .map_err(|e| HookError::post_dispatch("Serialization error").with_source(e))?;
+
+                // Run post-dispatch hooks if present
+                if let Some(hooks) = hooks {
+                    json_data = hooks.run_post_dispatch(matches, &ctx, json_data)?;
+                }
+
+                // Render the (potentially modified) data
                 let theme = self.theme.clone().unwrap_or_default();
                 match render_or_serialize(
                     template,
-                    &data,
+                    &json_data,
                     ThemeChoice::from(&theme),
                     self.output_mode,
                 ) {
@@ -177,7 +189,7 @@ impl Outstanding {
         };
 
         // Run post-output hooks
-        if let Some(hooks) = self.command_hooks.get(path) {
+        if let Some(hooks) = hooks {
             hooks.run_post_output(matches, &ctx, output)
         } else {
             Ok(output)
@@ -559,29 +571,42 @@ impl OutstandingBuilder {
         let template = template.to_string();
         let handler = Arc::new(handler);
 
-        let dispatch: DispatchFn = Arc::new(move |matches: &ArgMatches, ctx: &CommandContext| {
-            let result = handler.handle(matches, ctx);
+        let dispatch: DispatchFn = Arc::new(
+            move |matches: &ArgMatches, ctx: &CommandContext, hooks: Option<&Hooks>| {
+                let result = handler.handle(matches, ctx);
 
-            match result {
-                CommandResult::Ok(data) => {
-                    // Use a default theme for now - will be enhanced later
-                    let theme = Theme::new();
-                    let output = render_or_serialize(
-                        &template,
-                        &data,
-                        ThemeChoice::from(&theme),
-                        ctx.output_mode,
-                    )
-                    .map_err(|e| e.to_string())?;
-                    Ok(DispatchOutput::Text(output))
+                match result {
+                    CommandResult::Ok(data) => {
+                        // Convert to serde_json::Value for post-dispatch hooks
+                        let mut json_data = serde_json::to_value(&data)
+                            .map_err(|e| format!("Failed to serialize handler result: {}", e))?;
+
+                        // Run post-dispatch hooks if present
+                        if let Some(hooks) = hooks {
+                            json_data = hooks
+                                .run_post_dispatch(matches, ctx, json_data)
+                                .map_err(|e| format!("Hook error: {}", e))?;
+                        }
+
+                        // Render the (potentially modified) data
+                        let theme = Theme::new();
+                        let output = render_or_serialize(
+                            &template,
+                            &json_data,
+                            ThemeChoice::from(&theme),
+                            ctx.output_mode,
+                        )
+                        .map_err(|e| e.to_string())?;
+                        Ok(DispatchOutput::Text(output))
+                    }
+                    CommandResult::Err(e) => Err(format!("Error: {}", e)),
+                    CommandResult::Silent => Ok(DispatchOutput::Silent),
+                    CommandResult::Archive(bytes, filename) => {
+                        Ok(DispatchOutput::Binary(bytes, filename))
+                    }
                 }
-                CommandResult::Err(e) => Err(format!("Error: {}", e)),
-                CommandResult::Silent => Ok(DispatchOutput::Silent),
-                CommandResult::Archive(bytes, filename) => {
-                    Ok(DispatchOutput::Binary(bytes, filename))
-                }
-            }
-        });
+            },
+        );
 
         self.commands.insert(path.to_string(), dispatch);
         self
@@ -591,6 +616,7 @@ impl OutstandingBuilder {
     ///
     /// Hooks are executed around the command handler:
     /// - Pre-dispatch hooks run before the handler
+    /// - Post-dispatch hooks run after the handler, before rendering (receives raw data)
     /// - Post-output hooks run after rendering, can transform output
     ///
     /// Multiple hooks at the same phase are chained in registration order.
@@ -605,15 +631,23 @@ impl OutstandingBuilder {
     ///
     /// ```rust,ignore
     /// use outstanding_clap::{Outstanding, Hooks, Output, HookError};
+    /// use serde_json::json;
     ///
     /// Outstanding::builder()
     ///     .command("list", handler, template)
     ///     .hooks("list", Hooks::new()
-    ///         .pre_dispatch(|ctx| {
+    ///         .pre_dispatch(|_m, ctx| {
     ///             println!("Running: {:?}", ctx.command_path);
     ///             Ok(())
     ///         })
-    ///         .post_output(|_ctx, output| {
+    ///         .post_dispatch(|_m, _ctx, mut data| {
+    ///             // Modify raw data before rendering
+    ///             if let Some(obj) = data.as_object_mut() {
+    ///                 obj.insert("processed".into(), json!(true));
+    ///             }
+    ///             Ok(data)
+    ///         })
+    ///         .post_output(|_m, _ctx, output| {
     ///             if let Output::Text(ref text) = output {
     ///                 // Copy to clipboard, log, etc.
     ///             }
@@ -633,6 +667,7 @@ impl OutstandingBuilder {
     ///
     /// If hooks are registered for the command, they are executed:
     /// - Pre-dispatch hooks run before the handler
+    /// - Post-dispatch hooks run after the handler but before rendering
     /// - Post-output hooks run after rendering
     ///
     /// Hook errors abort execution and return the error as handled output.
@@ -648,8 +683,11 @@ impl OutstandingBuilder {
                 command_path: path,
             };
 
+            // Get hooks for this command (used for pre-dispatch, post-dispatch, and post-output)
+            let hooks = self.command_hooks.get(&path_str);
+
             // Run pre-dispatch hooks if registered
-            if let Some(hooks) = self.command_hooks.get(&path_str) {
+            if let Some(hooks) = hooks {
                 if let Err(e) = hooks.run_pre_dispatch(&matches, &ctx) {
                     return RunResult::Handled(format!("Hook error: {}", e));
                 }
@@ -658,13 +696,13 @@ impl OutstandingBuilder {
             // Get the subcommand matches for the deepest command
             let sub_matches = get_deepest_matches(&matches);
 
-            // Run the handler
-            let dispatch_output = match dispatch(sub_matches, &ctx) {
+            // Run the handler (post-dispatch hooks are run inside dispatch function)
+            let dispatch_output = match dispatch(sub_matches, &ctx, hooks) {
                 Ok(output) => output,
                 Err(e) => return RunResult::Handled(e),
             };
 
-            // Convert to Output enum for hooks
+            // Convert to Output enum for post-output hooks
             let output = match dispatch_output {
                 DispatchOutput::Text(s) => Output::Text(s),
                 DispatchOutput::Binary(b, f) => Output::Binary(b, f),
@@ -672,7 +710,7 @@ impl OutstandingBuilder {
             };
 
             // Run post-output hooks if registered
-            let final_output = if let Some(hooks) = self.command_hooks.get(&path_str) {
+            let final_output = if let Some(hooks) = hooks {
                 match hooks.run_post_output(&matches, &ctx, output) {
                     Ok(o) => o,
                     Err(e) => return RunResult::Handled(format!("Hook error: {}", e)),
@@ -1504,5 +1542,241 @@ mod tests {
         let (bytes, filename) = output.as_binary().unwrap();
         assert_eq!(bytes, &[0xDE, 0xAD]);
         assert_eq!(filename, "data.bin");
+    }
+
+    // ============================================================================
+    // Post-dispatch Hook Integration Tests
+    // ============================================================================
+
+    #[test]
+    fn test_dispatch_with_post_dispatch_hook() {
+        use crate::hooks::Hooks;
+        use serde_json::json;
+
+        let builder = Outstanding::builder()
+            .command(
+                "list",
+                |_m, _ctx| CommandResult::Ok(json!({"count": 5})),
+                "Count: {{ count }}, Modified: {{ modified }}",
+            )
+            .hooks(
+                "list",
+                Hooks::new().post_dispatch(|_, _ctx, mut data| {
+                    if let Some(obj) = data.as_object_mut() {
+                        obj.insert("modified".into(), json!(true));
+                    }
+                    Ok(data)
+                }),
+            );
+
+        let cmd = Command::new("app").subcommand(Command::new("list"));
+
+        let matches = cmd.try_get_matches_from(["app", "list"]).unwrap();
+        let result = builder.dispatch(matches, OutputMode::Text);
+
+        assert!(result.is_handled());
+        let output = result.output().unwrap();
+        assert!(output.contains("Count: 5"));
+        assert!(output.contains("Modified: true"));
+    }
+
+    #[test]
+    fn test_dispatch_post_dispatch_hook_abort() {
+        use crate::hooks::{HookError, Hooks};
+        use serde_json::json;
+
+        let builder = Outstanding::builder()
+            .command(
+                "list",
+                |_m, _ctx| CommandResult::Ok(json!({"items": []})),
+                "{{ items }}",
+            )
+            .hooks(
+                "list",
+                Hooks::new().post_dispatch(|_, _ctx, data| {
+                    // Abort if no items
+                    if data
+                        .get("items")
+                        .and_then(|v| v.as_array())
+                        .map(|a| a.is_empty())
+                        == Some(true)
+                    {
+                        return Err(HookError::post_dispatch("no items to display"));
+                    }
+                    Ok(data)
+                }),
+            );
+
+        let cmd = Command::new("app").subcommand(Command::new("list"));
+
+        let matches = cmd.try_get_matches_from(["app", "list"]).unwrap();
+        let result = builder.dispatch(matches, OutputMode::Text);
+
+        assert!(result.is_handled());
+        let output = result.output().unwrap();
+        assert!(output.contains("Hook error"));
+        assert!(output.contains("no items to display"));
+    }
+
+    #[test]
+    fn test_dispatch_post_dispatch_chain() {
+        use crate::hooks::Hooks;
+        use serde_json::json;
+
+        let builder = Outstanding::builder()
+            .command(
+                "list",
+                |_m, _ctx| CommandResult::Ok(json!({"value": 1})),
+                "{{ value }}",
+            )
+            .hooks(
+                "list",
+                Hooks::new()
+                    .post_dispatch(|_, _ctx, mut data| {
+                        // First hook: multiply by 2
+                        if let Some(v) = data.get_mut("value") {
+                            *v = json!(v.as_i64().unwrap_or(0) * 2);
+                        }
+                        Ok(data)
+                    })
+                    .post_dispatch(|_, _ctx, mut data| {
+                        // Second hook: add 10
+                        if let Some(v) = data.get_mut("value") {
+                            *v = json!(v.as_i64().unwrap_or(0) + 10);
+                        }
+                        Ok(data)
+                    }),
+            );
+
+        let cmd = Command::new("app").subcommand(Command::new("list"));
+
+        let matches = cmd.try_get_matches_from(["app", "list"]).unwrap();
+        let result = builder.dispatch(matches, OutputMode::Text);
+
+        assert!(result.is_handled());
+        // 1 * 2 = 2, 2 + 10 = 12
+        assert_eq!(result.output(), Some("12"));
+    }
+
+    #[test]
+    fn test_dispatch_all_three_hooks() {
+        use crate::hooks::Hooks;
+        use serde_json::json;
+        use std::sync::atomic::{AtomicUsize, Ordering};
+        use std::sync::Arc;
+
+        let call_order = Arc::new(AtomicUsize::new(0));
+        let pre_order = call_order.clone();
+        let post_dispatch_order = call_order.clone();
+        let post_output_order = call_order.clone();
+
+        let builder = Outstanding::builder()
+            .command(
+                "list",
+                |_m, _ctx| CommandResult::Ok(json!({"msg": "hello"})),
+                "{{ msg }}",
+            )
+            .hooks(
+                "list",
+                Hooks::new()
+                    .pre_dispatch(move |_, _ctx| {
+                        assert_eq!(pre_order.fetch_add(1, Ordering::SeqCst), 0);
+                        Ok(())
+                    })
+                    .post_dispatch(move |_, _ctx, data| {
+                        assert_eq!(post_dispatch_order.fetch_add(1, Ordering::SeqCst), 1);
+                        Ok(data)
+                    })
+                    .post_output(move |_, _ctx, output| {
+                        assert_eq!(post_output_order.fetch_add(1, Ordering::SeqCst), 2);
+                        Ok(output)
+                    }),
+            );
+
+        let cmd = Command::new("app").subcommand(Command::new("list"));
+
+        let matches = cmd.try_get_matches_from(["app", "list"]).unwrap();
+        let result = builder.dispatch(matches, OutputMode::Text);
+
+        assert!(result.is_handled());
+        assert_eq!(call_order.load(Ordering::SeqCst), 3);
+    }
+
+    #[test]
+    fn test_run_command_with_post_dispatch_hook() {
+        use crate::hooks::Hooks;
+        use serde::Serialize;
+        use serde_json::json;
+
+        #[derive(Serialize)]
+        struct Data {
+            value: i32,
+        }
+
+        let outstanding = Outstanding::builder()
+            .hooks(
+                "test",
+                Hooks::new().post_dispatch(|_, _ctx, mut data| {
+                    if let Some(obj) = data.as_object_mut() {
+                        obj.insert("added_by_hook".into(), json!("yes"));
+                    }
+                    Ok(data)
+                }),
+            )
+            .build();
+
+        let cmd = Command::new("app").subcommand(Command::new("test"));
+        let matches = cmd.try_get_matches_from(["app", "test"]).unwrap();
+        let sub_matches = matches.subcommand_matches("test").unwrap();
+
+        let result = outstanding.run_command(
+            "test",
+            sub_matches,
+            |_m, _ctx| CommandResult::Ok(Data { value: 42 }),
+            "value={{ value }}, added={{ added_by_hook }}",
+        );
+
+        assert!(result.is_ok());
+        let output = result.unwrap();
+        assert_eq!(output.as_text(), Some("value=42, added=yes"));
+    }
+
+    #[test]
+    fn test_run_command_post_dispatch_abort() {
+        use crate::hooks::{HookError, Hooks};
+        use serde::Serialize;
+
+        #[derive(Serialize)]
+        struct Data {
+            valid: bool,
+        }
+
+        let outstanding = Outstanding::builder()
+            .hooks(
+                "test",
+                Hooks::new().post_dispatch(|_, _ctx, data| {
+                    if data.get("valid") == Some(&serde_json::json!(false)) {
+                        return Err(HookError::post_dispatch("invalid data"));
+                    }
+                    Ok(data)
+                }),
+            )
+            .build();
+
+        let cmd = Command::new("app").subcommand(Command::new("test"));
+        let matches = cmd.try_get_matches_from(["app", "test"]).unwrap();
+        let sub_matches = matches.subcommand_matches("test").unwrap();
+
+        let result = outstanding.run_command(
+            "test",
+            sub_matches,
+            |_m, _ctx| CommandResult::Ok(Data { valid: false }),
+            "{{ valid }}",
+        );
+
+        assert!(result.is_err());
+        let err = result.unwrap_err();
+        assert_eq!(err.message, "invalid data");
+        assert_eq!(err.phase, crate::hooks::HookPhase::PostDispatch);
     }
 }

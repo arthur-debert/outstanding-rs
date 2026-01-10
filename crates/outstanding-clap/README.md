@@ -112,15 +112,23 @@ Run custom code before and after command execution:
 
 ```rust
 use outstanding_clap::{Outstanding, Hooks, Output};
+use serde_json::json;
 
 Outstanding::builder()
     .command("export", handler, template)
     .hooks("export", Hooks::new()
-        .pre_dispatch(|ctx| {
+        .pre_dispatch(|_m, ctx| {
             println!("Running: {:?}", ctx.command_path);
             Ok(())
         })
-        .post_output(|_ctx, output| {
+        .post_dispatch(|_m, _ctx, mut data| {
+            // Modify data before rendering
+            if let Some(obj) = data.as_object_mut() {
+                obj.insert("processed".into(), json!(true));
+            }
+            Ok(data)
+        })
+        .post_output(|_m, _ctx, output| {
             // Copy to clipboard, log, transform, etc.
             if let Output::Text(ref text) = output {
                 // clipboard::copy(text)?;
@@ -131,6 +139,7 @@ Outstanding::builder()
 ```
 
 - **Pre-dispatch**: Run before handler, can abort execution
+- **Post-dispatch**: Run after handler but before rendering, can modify data
 - **Post-output**: Run after rendering, can transform output
 - **Per-command**: Different hooks for different commands
 - **Chainable**: Multiple hooks at the same phase run in order
