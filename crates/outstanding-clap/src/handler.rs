@@ -40,7 +40,7 @@ pub struct CommandContext {
 
 /// Result of a command handler.
 ///
-/// Handlers return this enum to indicate success, failure, or silent exit.
+/// Handlers return this enum to indicate success, failure, silent exit, or binary output.
 ///
 /// # Example
 ///
@@ -58,6 +58,12 @@ pub struct CommandContext {
 ///         items: vec!["one".into(), "two".into()],
 ///     })
 /// }
+///
+/// // For binary file exports:
+/// fn export_handler() -> CommandResult<()> {
+///     let pdf_bytes = vec![0x25, 0x50, 0x44, 0x46]; // PDF magic bytes
+///     CommandResult::Archive(pdf_bytes, "report.pdf".into())
+/// }
 /// ```
 #[derive(Debug)]
 pub enum CommandResult<T: Serialize> {
@@ -67,6 +73,8 @@ pub enum CommandResult<T: Serialize> {
     Err(anyhow::Error),
     /// Silent exit (no output produced)
     Silent,
+    /// Binary output for file exports (bytes, suggested filename)
+    Archive(Vec<u8>, String),
 }
 
 impl<T: Serialize> CommandResult<T> {
@@ -83,6 +91,11 @@ impl<T: Serialize> CommandResult<T> {
     /// Returns true if this is a silent result.
     pub fn is_silent(&self) -> bool {
         matches!(self, CommandResult::Silent)
+    }
+
+    /// Returns true if this is an archive (binary) result.
+    pub fn is_archive(&self) -> bool {
+        matches!(self, CommandResult::Archive(_, _))
     }
 }
 
@@ -102,6 +115,9 @@ impl<T: Serialize> CommandResult<T> {
 ///
 /// match result {
 ///     RunResult::Handled(output) => println!("{}", output),
+///     RunResult::Binary(bytes, filename) => {
+///         std::fs::write(&filename, bytes).unwrap();
+///     }
 ///     RunResult::Unhandled(matches) => {
 ///         // Handle manually
 ///     }
@@ -111,29 +127,44 @@ impl<T: Serialize> CommandResult<T> {
 pub enum RunResult {
     /// A handler processed the command; contains the rendered output
     Handled(String),
+    /// A handler produced binary output (bytes, suggested filename)
+    Binary(Vec<u8>, String),
     /// No handler matched; contains the ArgMatches for manual handling
     Unhandled(ArgMatches),
 }
 
 impl RunResult {
-    /// Returns true if a handler processed the command.
+    /// Returns true if a handler processed the command (text output).
     pub fn is_handled(&self) -> bool {
         matches!(self, RunResult::Handled(_))
     }
 
-    /// Returns the output if handled, or None if unhandled.
+    /// Returns true if the result is binary output.
+    pub fn is_binary(&self) -> bool {
+        matches!(self, RunResult::Binary(_, _))
+    }
+
+    /// Returns the output if handled, or None otherwise.
     pub fn output(&self) -> Option<&str> {
         match self {
             RunResult::Handled(s) => Some(s),
-            RunResult::Unhandled(_) => None,
+            _ => None,
+        }
+    }
+
+    /// Returns the binary data and filename if binary, or None otherwise.
+    pub fn binary(&self) -> Option<(&[u8], &str)> {
+        match self {
+            RunResult::Binary(bytes, filename) => Some((bytes, filename)),
+            _ => None,
         }
     }
 
     /// Returns the matches if unhandled, or None if handled.
     pub fn matches(&self) -> Option<&ArgMatches> {
         match self {
-            RunResult::Handled(_) => None,
             RunResult::Unhandled(m) => Some(m),
+            _ => None,
         }
     }
 }
@@ -248,6 +279,19 @@ mod tests {
         assert!(!result.is_ok());
         assert!(!result.is_err());
         assert!(result.is_silent());
+        assert!(!result.is_archive());
+    }
+
+    #[test]
+    fn test_command_result_archive() {
+        let result: CommandResult<String> = CommandResult::Archive(
+            vec![0x25, 0x50, 0x44, 0x46],
+            "report.pdf".into(),
+        );
+        assert!(!result.is_ok());
+        assert!(!result.is_err());
+        assert!(!result.is_silent());
+        assert!(result.is_archive());
     }
 
     #[test]
@@ -263,8 +307,24 @@ mod tests {
         let matches = clap::Command::new("test").get_matches_from(vec!["test"]);
         let result = RunResult::Unhandled(matches);
         assert!(!result.is_handled());
+        assert!(!result.is_binary());
         assert!(result.output().is_none());
+        assert!(result.binary().is_none());
         assert!(result.matches().is_some());
+    }
+
+    #[test]
+    fn test_run_result_binary() {
+        let bytes = vec![0x25, 0x50, 0x44, 0x46]; // PDF magic
+        let result = RunResult::Binary(bytes.clone(), "report.pdf".into());
+        assert!(!result.is_handled());
+        assert!(result.is_binary());
+        assert!(result.output().is_none());
+        assert!(result.matches().is_none());
+
+        let (data, filename) = result.binary().unwrap();
+        assert_eq!(data, &bytes);
+        assert_eq!(filename, "report.pdf");
     }
 
     #[test]

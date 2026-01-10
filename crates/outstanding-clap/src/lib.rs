@@ -78,11 +78,20 @@ use serde::Serialize;
 use std::collections::{BTreeMap, HashMap};
 use std::sync::Arc;
 
+/// Internal result type for dispatch functions.
+enum DispatchOutput {
+    /// Text output (rendered template or JSON)
+    Text(String),
+    /// Binary output (bytes, filename)
+    Binary(Vec<u8>, String),
+    /// No output (silent)
+    Silent,
+}
+
 /// Type-erased dispatch function.
 ///
-/// Takes ArgMatches and CommandContext, returns either the rendered output
-/// or an error message.
-type DispatchFn = Arc<dyn Fn(&ArgMatches, &CommandContext) -> Result<Option<String>, String> + Send + Sync>;
+/// Takes ArgMatches and CommandContext, returns the dispatch output or an error.
+type DispatchFn = Arc<dyn Fn(&ArgMatches, &CommandContext) -> Result<DispatchOutput, String> + Send + Sync>;
 
 /// Fixed width for the name column in help output (commands, options, topics).
 const NAME_COLUMN_WIDTH: usize = 14;
@@ -523,7 +532,7 @@ impl OutstandingBuilder {
 
             match result {
                 CommandResult::Ok(data) => {
-                    // Use a default theme for now - will be enhanced in Phase 6
+                    // Use a default theme for now - will be enhanced later
                     let theme = Theme::new();
                     let output = render_or_serialize(
                         &template,
@@ -532,10 +541,11 @@ impl OutstandingBuilder {
                         ctx.output_mode,
                     )
                     .map_err(|e| e.to_string())?;
-                    Ok(Some(output))
+                    Ok(DispatchOutput::Text(output))
                 }
                 CommandResult::Err(e) => Err(format!("Error: {}", e)),
-                CommandResult::Silent => Ok(None),
+                CommandResult::Silent => Ok(DispatchOutput::Silent),
+                CommandResult::Archive(bytes, filename) => Ok(DispatchOutput::Binary(bytes, filename)),
             }
         });
 
@@ -563,8 +573,9 @@ impl OutstandingBuilder {
             let sub_matches = get_deepest_matches(&matches);
 
             match dispatch(sub_matches, &ctx) {
-                Ok(Some(output)) => RunResult::Handled(output),
-                Ok(None) => RunResult::Handled(String::new()), // Silent
+                Ok(DispatchOutput::Text(output)) => RunResult::Handled(output),
+                Ok(DispatchOutput::Binary(bytes, filename)) => RunResult::Binary(bytes, filename),
+                Ok(DispatchOutput::Silent) => RunResult::Handled(String::new()),
                 Err(e) => RunResult::Handled(e), // Error message as output
             }
         } else {
@@ -631,6 +642,56 @@ impl OutstandingBuilder {
 
         // Dispatch to handler
         self.dispatch(matches, output_mode)
+    }
+
+    /// Parses arguments, dispatches to handlers, and prints output.
+    ///
+    /// This is the simplest entry point for the command handler system.
+    /// It handles everything: parsing, dispatch, and output.
+    ///
+    /// # Returns
+    ///
+    /// - `Ok(true)` if a handler processed and printed output
+    /// - `Ok(false)` if no handler matched (caller should handle manually)
+    /// - `Err(matches)` if no handler matched, with the parsed ArgMatches
+    ///
+    /// # Example
+    ///
+    /// ```rust,ignore
+    /// use outstanding_clap::{Outstanding, CommandResult};
+    ///
+    /// let handled = Outstanding::builder()
+    ///     .command("list", |_m, _ctx| CommandResult::Ok(vec!["a", "b"]), "{{ . }}")
+    ///     .run_and_print(cmd, std::env::args());
+    ///
+    /// if !handled {
+    ///     // Handle unregistered commands manually
+    /// }
+    /// ```
+    pub fn run_and_print<I, T>(&self, cmd: Command, args: I) -> bool
+    where
+        I: IntoIterator<Item = T>,
+        T: Into<std::ffi::OsString> + Clone,
+    {
+        match self.dispatch_from(cmd, args) {
+            RunResult::Handled(output) => {
+                if !output.is_empty() {
+                    println!("{}", output);
+                }
+                true
+            }
+            RunResult::Binary(bytes, filename) => {
+                // For binary output, write to stdout or the suggested file
+                // By default, we write to the suggested filename
+                if let Err(e) = std::fs::write(&filename, &bytes) {
+                    eprintln!("Error writing {}: {}", filename, e);
+                } else {
+                    eprintln!("Wrote {} bytes to {}", bytes.len(), filename);
+                }
+                true
+            }
+            RunResult::Unhandled(_) => false,
+        }
     }
 
     /// Augments a command for dispatch (adds --output flag without help subcommand).
