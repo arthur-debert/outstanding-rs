@@ -152,7 +152,8 @@ use clap::ArgMatches;
 ///
 /// Pre-dispatch hooks receive the command context and arguments, and can abort execution
 /// by returning an error.
-pub type PreDispatchFn = Arc<dyn Fn(&ArgMatches, &CommandContext) -> Result<(), HookError> + Send + Sync>;
+pub type PreDispatchFn =
+    Arc<dyn Fn(&ArgMatches, &CommandContext) -> Result<(), HookError> + Send + Sync>;
 
 /// Type alias for post-output hook functions.
 ///
@@ -228,7 +229,8 @@ impl Hooks {
     /// ```
     pub fn pre_dispatch<F>(mut self, f: F) -> Self
     where
-        F: Fn(&ArgMatches, &CommandContext) -> Result<(), HookError> + Send + Sync + 'static,    {
+        F: Fn(&ArgMatches, &CommandContext) -> Result<(), HookError> + Send + Sync + 'static,
+    {
         self.pre_dispatch.push(Arc::new(f));
         self
     }
@@ -267,7 +269,11 @@ impl Hooks {
     /// ```
     pub fn post_output<F>(mut self, f: F) -> Self
     where
-        F: Fn(&ArgMatches, &CommandContext, Output) -> Result<Output, HookError> + Send + Sync + 'static,    {
+        F: Fn(&ArgMatches, &CommandContext, Output) -> Result<Output, HookError>
+            + Send
+            + Sync
+            + 'static,
+    {
         self.post_output.push(Arc::new(f));
         self
     }
@@ -276,7 +282,11 @@ impl Hooks {
     ///
     /// Hooks are executed in registration order. If any hook returns an error,
     /// execution stops and the error is returned.
-    pub(crate) fn run_pre_dispatch(&self, matches: &ArgMatches, ctx: &CommandContext) -> Result<(), HookError> {
+    pub(crate) fn run_pre_dispatch(
+        &self,
+        matches: &ArgMatches,
+        ctx: &CommandContext,
+    ) -> Result<(), HookError> {
         for hook in &self.pre_dispatch {
             hook(matches, ctx)?;
         }
@@ -526,7 +536,11 @@ mod tests {
 
         let ctx = test_context();
         let matches = test_matches();
-        let result = hooks.run_post_output(&matches, &ctx, Output::Binary(vec![1, 2], "test.bin".into()));
+        let result = hooks.run_post_output(
+            &matches,
+            &ctx,
+            Output::Binary(vec![1, 2], "test.bin".into()),
+        );
 
         assert!(result.is_ok());
         let output = result.unwrap();
@@ -570,7 +584,9 @@ mod tests {
         let matches = test_matches();
 
         assert!(hooks.run_pre_dispatch(&matches, &ctx).is_ok());
-        assert!(hooks.run_post_output(&matches, &ctx, Output::Silent).is_ok());
+        assert!(hooks
+            .run_post_output(&matches, &ctx, Output::Silent)
+            .is_ok());
     }
 
     #[test]

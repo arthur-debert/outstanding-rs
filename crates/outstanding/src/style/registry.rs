@@ -181,12 +181,13 @@ impl Styles {
 
         loop {
             // Check if target exists
-            let value = self.styles.get(current).ok_or_else(|| {
-                StyleValidationError::UnresolvedAlias {
-                    from: path.last().unwrap().clone(),
-                    to: current.to_string(),
-                }
-            })?;
+            let value =
+                self.styles
+                    .get(current)
+                    .ok_or_else(|| StyleValidationError::UnresolvedAlias {
+                        from: path.last().unwrap().clone(),
+                        to: current.to_string(),
+                    })?;
 
             path.push(current.to_string());
 
@@ -478,9 +479,7 @@ mod tests {
 
     #[test]
     fn test_resolve_cycle_returns_none() {
-        let styles = Styles::new()
-            .add("a", "b")
-            .add("b", "a");
+        let styles = Styles::new().add("a", "b").add("b", "a");
 
         assert!(styles.resolve("a").is_none());
         assert!(styles.resolve("b").is_none());
@@ -494,10 +493,7 @@ mod tests {
 
     #[test]
     fn test_resolve_three_way_cycle() {
-        let styles = Styles::new()
-            .add("a", "b")
-            .add("b", "c")
-            .add("c", "a");
+        let styles = Styles::new().add("a", "b").add("b", "c").add("c", "a");
 
         assert!(styles.resolve("a").is_none());
         assert!(styles.resolve("b").is_none());
@@ -576,9 +572,7 @@ mod tests {
 
     #[test]
     fn test_validate_cycle_error() {
-        let styles = Styles::new()
-            .add("a", "b")
-            .add("b", "a");
+        let styles = Styles::new().add("a", "b").add("b", "a");
 
         let result = styles.validate();
         assert!(result.is_err());
@@ -609,10 +603,7 @@ mod tests {
 
     #[test]
     fn test_validate_three_way_cycle() {
-        let styles = Styles::new()
-            .add("a", "b")
-            .add("b", "c")
-            .add("c", "a");
+        let styles = Styles::new().add("a", "b").add("b", "c").add("c", "a");
 
         let result = styles.validate();
         assert!(result.is_err());
@@ -669,9 +660,7 @@ mod tests {
 
     #[test]
     fn test_apply_cycle_shows_indicator() {
-        let styles = Styles::new()
-            .add("a", "b")
-            .add("b", "a");
+        let styles = Styles::new().add("a", "b").add("b", "a");
 
         let result = styles.apply("a", "text");
         assert_eq!(result, "(!?) text");

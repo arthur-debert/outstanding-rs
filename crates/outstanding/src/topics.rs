@@ -1,14 +1,14 @@
 use deunicode::deunicode;
 use std::collections::HashMap;
+use std::fs;
 use std::io::Write;
 use std::path::Path;
 use std::process::{Command as ProcessCommand, Stdio};
-use std::fs;
 
 use console::Style;
 use serde::Serialize;
 
-use crate::{render_with_output, Theme, ThemeChoice, OutputMode, Error};
+use crate::{render_with_output, Error, OutputMode, Theme, ThemeChoice};
 
 /// Fixed width for the name column in topic listings.
 const NAME_COLUMN_WIDTH: usize = 14;
@@ -37,10 +37,15 @@ pub struct Topic {
 impl Topic {
     /// Creates a new topic.
     /// If name is None, it is generated from the title.
-    pub fn new(title: impl Into<String>, content: impl Into<String>, topic_type: TopicType, name: Option<String>) -> Self {
+    pub fn new(
+        title: impl Into<String>,
+        content: impl Into<String>,
+        topic_type: TopicType,
+        name: Option<String>,
+    ) -> Self {
         let title = title.into();
         let name = name.unwrap_or_else(|| Self::generate_slug(&title));
-        
+
         Self {
             title,
             content: content.into(),
@@ -81,7 +86,10 @@ impl TopicRegistry {
     /// Panics if a topic with the same name already exists.
     pub fn add_topic(&mut self, topic: Topic) {
         if self.topics.contains_key(&topic.name) {
-            panic!("Topic collision: A topic with the name '{}' already exists.", topic.name);
+            panic!(
+                "Topic collision: A topic with the name '{}' already exists.",
+                topic.name
+            );
         }
         self.topics.insert(topic.name.clone(), topic);
     }
@@ -130,7 +138,6 @@ impl TopicRegistry {
     }
 
     fn load_from_directory(&mut self, path: &Path) -> std::io::Result<()> {
-
         for entry in fs::read_dir(path)? {
             let entry = entry?;
             let path = entry.path();
@@ -166,13 +173,17 @@ impl TopicRegistry {
                     .position(|l| !l.trim().is_empty())
                     .unwrap_or(content_lines.len());
 
-                let body = content_lines[content_start..].join("\n").trim_end().to_string();
+                let body = content_lines[content_start..]
+                    .join("\n")
+                    .trim_end()
+                    .to_string();
                 if body.is_empty() {
                     continue;
                 }
 
                 // Name is filename sans extension
-                let name = path.file_stem()
+                let name = path
+                    .file_stem()
                     .and_then(|s| s.to_str())
                     .map(|s| s.to_string());
 
@@ -375,9 +386,7 @@ fn get_pager_candidates() -> Vec<String> {
 
 /// Attempts to run content through a specific pager.
 fn try_pager(pager: &str, content: &str) -> std::io::Result<()> {
-    let mut child = ProcessCommand::new(pager)
-        .stdin(Stdio::piped())
-        .spawn()?;
+    let mut child = ProcessCommand::new(pager).stdin(Stdio::piped()).spawn()?;
 
     if let Some(mut stdin) = child.stdin.take() {
         stdin.write_all(content.as_bytes())?;
@@ -387,10 +396,7 @@ fn try_pager(pager: &str, content: &str) -> std::io::Result<()> {
     if status.success() {
         Ok(())
     } else {
-        Err(std::io::Error::new(
-            std::io::ErrorKind::Other,
-            "pager exited with error",
-        ))
+        Err(std::io::Error::other("pager exited with error"))
     }
 }
 
@@ -422,9 +428,19 @@ mod tests {
     #[should_panic(expected = "Topic collision")]
     fn test_collision_panic() {
         let mut registry = TopicRegistry::new();
-        let t1 = Topic::new("Same", "Content 1", TopicType::Text, Some("same".to_string()));
-        let t2 = Topic::new("Same", "Content 2", TopicType::Text, Some("same".to_string()));
-        
+        let t1 = Topic::new(
+            "Same",
+            "Content 1",
+            TopicType::Text,
+            Some("same".to_string()),
+        );
+        let t2 = Topic::new(
+            "Same",
+            "Content 2",
+            TopicType::Text,
+            Some("same".to_string()),
+        );
+
         registry.add_topic(t1);
         registry.add_topic(t2);
     }
@@ -432,7 +448,7 @@ mod tests {
     #[test]
     fn test_load_from_dir() {
         let dir = tempdir().unwrap();
-        
+
         // Good file
         let p1 = dir.path().join("intro.txt");
         let mut f1 = File::create(&p1).unwrap();
@@ -458,10 +474,16 @@ mod tests {
 
         assert!(registry.get_topic("intro").is_some());
         assert_eq!(registry.get_topic("intro").unwrap().title, "Introduction");
-        assert_eq!(registry.get_topic("intro").unwrap().content, "This is the content.");
+        assert_eq!(
+            registry.get_topic("intro").unwrap().content,
+            "This is the content."
+        );
 
         assert!(registry.get_topic("guide").is_some());
-        assert_eq!(registry.get_topic("guide").unwrap().topic_type, TopicType::Markdown);
+        assert_eq!(
+            registry.get_topic("guide").unwrap().topic_type,
+            TopicType::Markdown
+        );
 
         assert!(registry.get_topic("short").is_none());
         assert!(registry.get_topic("empty_body").is_none());
@@ -526,8 +548,18 @@ mod tests {
     #[test]
     fn test_render_topics_list_basic() {
         let mut registry = TopicRegistry::new();
-        registry.add_topic(Topic::new("Storage", "Where data lives", TopicType::Text, None));
-        registry.add_topic(Topic::new("Syntax", "Format reference", TopicType::Text, None));
+        registry.add_topic(Topic::new(
+            "Storage",
+            "Where data lives",
+            TopicType::Text,
+            None,
+        ));
+        registry.add_topic(Topic::new(
+            "Syntax",
+            "Format reference",
+            TopicType::Text,
+            None,
+        ));
 
         let config = TopicRenderConfig {
             output_mode: Some(crate::OutputMode::Text),

@@ -57,9 +57,9 @@ impl Renderer {
     /// Returns an error if any style aliases are invalid (dangling or cyclic).
     pub fn with_output(theme: Theme, mode: OutputMode) -> Result<Self, Error> {
         // Validate style aliases before creating the renderer
-        theme.validate().map_err(|e| {
-            Error::new(minijinja::ErrorKind::InvalidOperation, e.to_string())
-        })?;
+        theme
+            .validate()
+            .map_err(|e| Error::new(minijinja::ErrorKind::InvalidOperation, e.to_string()))?;
 
         let mut env = Environment::new();
         register_filters(&mut env, theme, mode);

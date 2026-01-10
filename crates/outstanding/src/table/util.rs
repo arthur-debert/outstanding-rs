@@ -139,7 +139,7 @@ pub fn truncate_middle(s: &str, max_width: usize, ellipsis: &str) -> String {
     }
 
     let available = max_width - ellipsis_width;
-    let right_width = (available + 1) / 2; // Bias toward end (more useful info usually)
+    let right_width = available.div_ceil(2); // Bias toward end (more useful info usually)
     let left_width = available - right_width;
 
     let left = truncate_to_display_width(s, left_width);
@@ -215,10 +215,10 @@ fn truncate_to_display_width(s: &str, max_width: usize) -> String {
     // printable width and ANSI escape sequences
     let mut result = String::new();
     let mut current_width = 0;
-    let mut chars = s.chars().peekable();
+    let chars = s.chars().peekable();
     let mut in_escape = false;
 
-    while let Some(c) = chars.next() {
+    for c in chars {
         if c == '\x1b' {
             // Start of ANSI escape sequence - include it all
             result.push(c);

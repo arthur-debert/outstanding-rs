@@ -1074,7 +1074,8 @@ mod tests {
     fn test_hooks_registration() {
         use crate::hooks::Hooks;
 
-        let builder = Outstanding::builder().hooks("list", Hooks::new().pre_dispatch(|_, _| Ok(())));
+        let builder =
+            Outstanding::builder().hooks("list", Hooks::new().pre_dispatch(|_, _| Ok(())));
 
         assert!(builder.command_hooks.contains_key("list"));
     }
@@ -1127,7 +1128,8 @@ mod tests {
             )
             .hooks(
                 "list",
-                Hooks::new().pre_dispatch(|_, _ctx| Err(HookError::pre_dispatch("blocked by hook"))),
+                Hooks::new()
+                    .pre_dispatch(|_, _ctx| Err(HookError::pre_dispatch("blocked by hook"))),
             );
 
         let cmd = Command::new("app").subcommand(Command::new("list"));
