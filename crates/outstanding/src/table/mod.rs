@@ -31,6 +31,7 @@
 //!     .build();
 //! ```
 
+pub mod filters;
 mod formatter;
 mod resolve;
 mod types;

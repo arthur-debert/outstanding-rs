@@ -1008,6 +1008,9 @@ fn register_filters(env: &mut Environment<'static>, theme: Theme, mode: OutputMo
     // Usage: {{ content | nl }} outputs content followed by \n
     //        {{ "" | nl }} outputs just \n (a blank line)
     env.add_filter("nl", |value: Value| -> String { format!("{}\n", value) });
+
+    // Register table formatting filters (col, pad_left, pad_right, truncate_at, etc.)
+    table::filters::register_table_filters(env);
 }
 
 /// Converts an RGB triplet to the nearest ANSI 256-color palette index.
