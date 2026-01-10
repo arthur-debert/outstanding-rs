@@ -1,0 +1,32 @@
+# cargo-release configuration for outstanding workspace
+# See: https://github.com/crate-ci/cargo-release/blob/master/docs/reference.md
+
+# Keep both crates on the same version
+shared-version = true
+
+# Automatically update outstanding-clap's dependency on outstanding when releasing
+dependent-version = "upgrade"
+
+# Use a single commit for all version bumps
+consolidate-commits = true
+
+# Pre-release commit message
+pre-release-commit-message = "Bump version to v{{version}}"
+
+# Tag configuration
+tag = true
+tag-name = "v{{version}}"
+tag-message = "Release v{{version}}"
+
+# Git operations
+push = true
+push-remote = "origin"
+
+# Publish to crates.io
+publish = true
+
+# Verify before release
+verify = true
+
+# Allow releasing from main branch only
+allow-branch = ["main"]
