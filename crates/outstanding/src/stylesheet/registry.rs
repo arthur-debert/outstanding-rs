@@ -60,7 +60,7 @@
 use std::collections::HashMap;
 use std::path::Path;
 
-use crate::file_loader::{FileRegistry, FileRegistryConfig, LoadError};
+use crate::file_loader::{build_embedded_registry, FileRegistry, FileRegistryConfig, LoadError};
 use crate::theme::Theme;
 
 use super::error::StylesheetError;
@@ -289,27 +289,11 @@ impl StylesheetRegistry {
     pub fn from_embedded_entries(entries: &[(&str, &str)]) -> Result<Self, StylesheetError> {
         let mut registry = Self::new();
 
-        // Sort by extension priority so higher-priority extensions are processed first
-        let mut sorted: Vec<_> = entries.iter().collect();
-        sorted.sort_by_key(|(name, _)| extension_priority(name, STYLESHEET_EXTENSIONS));
-
-        let mut seen_base_names = std::collections::HashSet::new();
-
-        for (name_with_ext, yaml_content) in sorted {
-            let theme = Theme::from_yaml(yaml_content)?;
-            let base_name = strip_extension(name_with_ext, STYLESHEET_EXTENSIONS);
-
-            // Register under full name with extension
-            registry
-                .inline
-                .insert((*name_with_ext).to_string(), theme.clone());
-
-            // Register under base name only if not already registered
-            // (higher priority extension was already processed)
-            if seen_base_names.insert(base_name.clone()) {
-                registry.inline.insert(base_name, theme);
-            }
-        }
+        // Use shared helper with YAML parsing transform
+        registry.inline =
+            build_embedded_registry(entries, STYLESHEET_EXTENSIONS, |yaml_content| {
+                Theme::from_yaml(yaml_content)
+            })?;
 
         Ok(registry)
     }
@@ -391,31 +375,6 @@ impl StylesheetRegistry {
             message: e.to_string(),
         })
     }
-}
-
-/// Returns the extension priority for a filename (lower = higher priority).
-///
-/// Returns `usize::MAX` if the extension is not recognized.
-fn extension_priority(name: &str, extensions: &[&str]) -> usize {
-    for (i, ext) in extensions.iter().enumerate() {
-        if name.ends_with(ext) {
-            return i;
-        }
-    }
-    usize::MAX
-}
-
-/// Strips a recognized extension from a filename.
-///
-/// Returns the base name without extension if a recognized extension is found,
-/// otherwise returns the original name.
-fn strip_extension(name: &str, extensions: &[&str]) -> String {
-    for ext in extensions {
-        if let Some(base) = name.strip_suffix(ext) {
-            return base.to_string();
-        }
-    }
-    name.to_string()
 }
 
 #[cfg(test)]

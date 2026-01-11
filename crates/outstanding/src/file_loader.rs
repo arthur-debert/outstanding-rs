@@ -176,13 +176,134 @@ impl LoadedFile {
     /// Lower values indicate higher priority. Returns `usize::MAX` if the file's
     /// extension is not in the list.
     pub fn extension_priority(&self, extensions: &[&str]) -> usize {
-        for (i, ext) in extensions.iter().enumerate() {
-            if self.name_with_ext.ends_with(ext) {
-                return i;
-            }
-        }
-        usize::MAX
+        extension_priority(&self.name_with_ext, extensions)
     }
+}
+
+// =============================================================================
+// Shared helper functions for extension handling
+// =============================================================================
+
+/// Returns the extension priority for a filename (lower = higher priority).
+///
+/// Extensions are matched in order against the provided list. The index of the
+/// first matching extension is returned. If no extension matches, returns `usize::MAX`.
+///
+/// # Example
+///
+/// ```rust
+/// use outstanding::file_loader::extension_priority;
+///
+/// let extensions = &[".yaml", ".yml"];
+/// assert_eq!(extension_priority("config.yaml", extensions), 0);
+/// assert_eq!(extension_priority("config.yml", extensions), 1);
+/// assert_eq!(extension_priority("config.txt", extensions), usize::MAX);
+/// ```
+pub fn extension_priority(name: &str, extensions: &[&str]) -> usize {
+    for (i, ext) in extensions.iter().enumerate() {
+        if name.ends_with(ext) {
+            return i;
+        }
+    }
+    usize::MAX
+}
+
+/// Strips a recognized extension from a filename.
+///
+/// Returns the base name without extension if a recognized extension is found,
+/// otherwise returns the original name.
+///
+/// # Example
+///
+/// ```rust
+/// use outstanding::file_loader::strip_extension;
+///
+/// let extensions = &[".yaml", ".yml"];
+/// assert_eq!(strip_extension("config.yaml", extensions), "config");
+/// assert_eq!(strip_extension("themes/dark.yml", extensions), "themes/dark");
+/// assert_eq!(strip_extension("readme.txt", extensions), "readme.txt");
+/// ```
+pub fn strip_extension(name: &str, extensions: &[&str]) -> String {
+    for ext in extensions {
+        if let Some(base) = name.strip_suffix(ext) {
+            return base.to_string();
+        }
+    }
+    name.to_string()
+}
+
+/// Builds a registry map from embedded entries with extension priority handling.
+///
+/// This is the core logic for creating registries from compile-time embedded resources.
+/// It handles:
+///
+/// 1. **Extension priority**: Entries are sorted so higher-priority extensions are processed first
+/// 2. **Dual registration**: Each entry is accessible by both base name and full name with extension
+/// 3. **Transform**: Each entry's content is transformed via the provided function
+///
+/// # Arguments
+///
+/// * `entries` - Slice of `(name_with_ext, content)` pairs
+/// * `extensions` - Extension list in priority order (first = highest)
+/// * `transform` - Function to transform content into target type
+///
+/// # Returns
+///
+/// A `HashMap<String, T>` where each entry is accessible by both its base name
+/// (without extension) and its full name (with extension).
+///
+/// # Example
+///
+/// ```rust,ignore
+/// use outstanding::file_loader::build_embedded_registry;
+///
+/// let entries = &[
+///     ("config.yaml", "key: value"),
+///     ("config.yml", "other: data"),
+///     ("themes/dark.yaml", "bg: black"),
+/// ];
+///
+/// let registry = build_embedded_registry(
+///     entries,
+///     &[".yaml", ".yml"],
+///     |content| Ok(content.to_string()),
+/// )?;
+///
+/// // "config" resolves to config.yaml (higher priority)
+/// // Both "config.yaml" and "config.yml" are accessible explicitly
+/// ```
+pub fn build_embedded_registry<T, E, F>(
+    entries: &[(&str, &str)],
+    extensions: &[&str],
+    transform: F,
+) -> Result<HashMap<String, T>, E>
+where
+    T: Clone,
+    F: Fn(&str) -> Result<T, E>,
+{
+    let mut registry = HashMap::new();
+
+    // Sort by extension priority so higher-priority extensions are processed first
+    let mut sorted: Vec<_> = entries.iter().collect();
+    sorted.sort_by_key(|(name, _)| extension_priority(name, extensions));
+
+    let mut seen_base_names = std::collections::HashSet::new();
+
+    for (name_with_ext, content) in sorted {
+        let value = transform(content)?;
+        let base_name = strip_extension(name_with_ext, extensions);
+
+        // Register under full name with extension
+        registry.insert((*name_with_ext).to_string(), value.clone());
+
+        // Register under base name only if not already registered
+        // (higher priority extension was already processed)
+        if seen_base_names.insert(base_name.clone()) {
+            registry.insert(base_name, value);
+        }
+    }
+
+    Ok(registry)
 }
 
 /// How a resource is stored—file path (dev) or content (release).
