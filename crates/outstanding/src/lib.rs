@@ -189,6 +189,7 @@ mod theme;
 mod util;
 
 // Public submodules
+pub mod context;
 pub mod table;
 pub mod topics;
 
@@ -208,6 +209,8 @@ pub use output::OutputMode;
 pub use render::{
     render,
     render_or_serialize,
+    render_or_serialize_with_context,
+    render_with_context,
     render_with_output,
     // Template registry
     walk_template_dir,

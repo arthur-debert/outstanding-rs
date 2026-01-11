@@ -4,10 +4,12 @@
 //! outstanding with clap-based CLIs.
 
 use clap::{Arg, ArgAction, ArgMatches, Command};
+use minijinja::Value;
+use outstanding::context::{ContextProvider, ContextRegistry, RenderContext};
 use outstanding::topics::{
     display_with_pager, render_topic, render_topics_list, Topic, TopicRegistry, TopicRenderConfig,
 };
-use outstanding::{render_or_serialize, OutputMode, Theme};
+use outstanding::{render_or_serialize, render_or_serialize_with_context, OutputMode, Theme};
 use serde::Serialize;
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -17,6 +19,11 @@ use crate::handler::{CommandContext, CommandResult, FnHandler, Handler, RunResul
 use crate::help::{render_help, render_help_with_topics, HelpConfig};
 use crate::hooks::{HookError, Hooks, Output};
 use crate::result::HelpResult;
+
+/// Gets the current terminal width, or None if not available.
+fn get_terminal_width() -> Option<usize> {
+    terminal_size::terminal_size().map(|(w, _)| w.0 as usize)
+}
 
 /// Main entry point for outstanding-clap integration.
 ///
@@ -426,12 +433,38 @@ impl Default for Outstanding {
 ///     .output_flag(Some("format"))
 ///     .build();
 /// ```
+///
+/// # Context Injection
+///
+/// You can inject additional context objects into templates using `.context()` for
+/// static values and `.context_fn()` for dynamic values computed at render time:
+///
+/// ```rust,ignore
+/// use outstanding_clap::Outstanding;
+/// use outstanding::context::RenderContext;
+/// use minijinja::Value;
+///
+/// Outstanding::builder()
+///     // Static context
+///     .context("app_version", Value::from("1.0.0"))
+///
+///     // Dynamic context (computed at render time)
+///     .context_fn("terminal", |ctx: &RenderContext| {
+///         Value::from_iter([
+///             ("width", Value::from(ctx.terminal_width.unwrap_or(80))),
+///             ("is_tty", Value::from(ctx.output_mode == outstanding::OutputMode::Term)),
+///         ])
+///     })
+///     .command("list", handler, "Width: {{ terminal.width }}")
+///     .run_and_print(cmd, args);
+/// ```
 pub struct OutstandingBuilder {
     registry: TopicRegistry,
     output_flag: Option<String>,
     theme: Option<Theme>,
     commands: HashMap<String, DispatchFn>,
     command_hooks: HashMap<String, Hooks>,
+    context_registry: ContextRegistry,
 }
 
 impl Default for OutstandingBuilder {
@@ -451,7 +484,81 @@ impl OutstandingBuilder {
             theme: None,
             commands: HashMap::new(),
             command_hooks: HashMap::new(),
+            context_registry: ContextRegistry::new(),
         }
+    }
+
+    /// Adds a static context value available to all templates.
+    ///
+    /// Static context values are created once and reused for all renders.
+    /// Use this for values that don't change between renders (app version,
+    /// configuration, etc.).
+    ///
+    /// # Arguments
+    ///
+    /// * `name` - The name to use in templates (e.g., "app" for `{{ app.version }}`)
+    /// * `value` - The value to inject (must be convertible to minijinja::Value)
+    ///
+    /// # Example
+    ///
+    /// ```rust,ignore
+    /// use outstanding_clap::Outstanding;
+    /// use minijinja::Value;
+    ///
+    /// Outstanding::builder()
+    ///     .context("app_version", Value::from("1.0.0"))
+    ///     .context("config", Value::from_iter([
+    ///         ("debug", Value::from(true)),
+    ///         ("max_items", Value::from(100)),
+    ///     ]))
+    ///     .command("info", handler, "Version: {{ app_version }}, Debug: {{ config.debug }}")
+    /// ```
+    pub fn context(mut self, name: impl Into<String>, value: Value) -> Self {
+        self.context_registry.add_static(name, value);
+        self
+    }
+
+    /// Adds a dynamic context provider that computes values at render time.
+    ///
+    /// Dynamic providers receive a [`RenderContext`] with information about the
+    /// current render environment (terminal width, output mode, theme, handler data).
+    /// Use this for values that depend on runtime conditions.
+    ///
+    /// # Arguments
+    ///
+    /// * `name` - The name to use in templates
+    /// * `provider` - A closure that receives `&RenderContext` and returns a `Value`
+    ///
+    /// # Example
+    ///
+    /// ```rust,ignore
+    /// use outstanding_clap::Outstanding;
+    /// use outstanding::context::RenderContext;
+    /// use minijinja::Value;
+    ///
+    /// Outstanding::builder()
+    ///     // Provide terminal info
+    ///     .context_fn("terminal", |ctx: &RenderContext| {
+    ///         Value::from_iter([
+    ///             ("width", Value::from(ctx.terminal_width.unwrap_or(80))),
+    ///             ("is_tty", Value::from(ctx.output_mode == outstanding::OutputMode::Term)),
+    ///         ])
+    ///     })
+    ///
+    ///     // Provide a table formatter with resolved width
+    ///     .context_fn("table", |ctx: &RenderContext| {
+    ///         let formatter = TableFormatter::new(&spec, ctx.terminal_width.unwrap_or(80));
+    ///         Value::from_object(formatter)
+    ///     })
+    ///
+    ///     .command("list", handler, "{% for item in items %}{{ table.row([item.name, item.value]) }}\n{% endfor %}")
+    /// ```
+    pub fn context_fn<P>(mut self, name: impl Into<String>, provider: P) -> Self
+    where
+        P: ContextProvider + 'static,
+    {
+        self.context_registry.add_provider(name, provider);
+        self
     }
 
     /// Adds a topic to the registry.
@@ -565,6 +672,7 @@ impl OutstandingBuilder {
     {
         let template = template.to_string();
         let handler = Arc::new(handler);
+        let context_registry = self.context_registry.clone();
 
         let dispatch: DispatchFn = Arc::new(
             move |matches: &ArgMatches, ctx: &CommandContext, hooks: Option<&Hooks>| {
@@ -583,11 +691,25 @@ impl OutstandingBuilder {
                                 .map_err(|e| format!("Hook error: {}", e))?;
                         }
 
-                        // Render the (potentially modified) data
+                        // Build render context for context providers
                         let theme = Theme::new();
-                        let output =
-                            render_or_serialize(&template, &json_data, &theme, ctx.output_mode)
-                                .map_err(|e| e.to_string())?;
+                        let render_ctx = RenderContext::new(
+                            ctx.output_mode,
+                            get_terminal_width(),
+                            &theme,
+                            &json_data,
+                        );
+
+                        // Render the (potentially modified) data with context
+                        let output = render_or_serialize_with_context(
+                            &template,
+                            &json_data,
+                            &theme,
+                            ctx.output_mode,
+                            &context_registry,
+                            &render_ctx,
+                        )
+                        .map_err(|e| e.to_string())?;
                         Ok(DispatchOutput::Text(output))
                     }
                     CommandResult::Err(e) => Err(format!("Error: {}", e)),
@@ -1769,5 +1891,247 @@ mod tests {
         let err = result.unwrap_err();
         assert_eq!(err.message, "invalid data");
         assert_eq!(err.phase, crate::hooks::HookPhase::PostDispatch);
+    }
+
+    // ============================================================================
+    // Context Injection Tests
+    // ============================================================================
+
+    #[test]
+    fn test_context_static_value() {
+        use serde_json::json;
+
+        let builder = Outstanding::builder()
+            .context("version", Value::from("1.0.0"))
+            .command(
+                "info",
+                |_m, _ctx| CommandResult::Ok(json!({"name": "app"})),
+                "{{ name }} v{{ version }}",
+            );
+
+        let cmd = Command::new("app").subcommand(Command::new("info"));
+        let matches = cmd.try_get_matches_from(["app", "info"]).unwrap();
+        let result = builder.dispatch(matches, OutputMode::Text);
+
+        assert!(result.is_handled());
+        assert_eq!(result.output(), Some("app v1.0.0"));
+    }
+
+    #[test]
+    fn test_context_multiple_static_values() {
+        use serde_json::json;
+
+        let builder = Outstanding::builder()
+            .context("author", Value::from("Alice"))
+            .context("year", Value::from(2024))
+            .command(
+                "info",
+                |_m, _ctx| CommandResult::Ok(json!({"title": "Report"})),
+                "{{ title }} by {{ author }} ({{ year }})",
+            );
+
+        let cmd = Command::new("app").subcommand(Command::new("info"));
+        let matches = cmd.try_get_matches_from(["app", "info"]).unwrap();
+        let result = builder.dispatch(matches, OutputMode::Text);
+
+        assert!(result.is_handled());
+        assert_eq!(result.output(), Some("Report by Alice (2024)"));
+    }
+
+    #[test]
+    fn test_context_fn_terminal_width() {
+        use serde_json::json;
+
+        let builder = Outstanding::builder()
+            .context_fn("terminal_width", |ctx: &RenderContext| {
+                Value::from(ctx.terminal_width.unwrap_or(80))
+            })
+            .command(
+                "info",
+                |_m, _ctx| CommandResult::Ok(json!({})),
+                "Width: {{ terminal_width }}",
+            );
+
+        let cmd = Command::new("app").subcommand(Command::new("info"));
+        let matches = cmd.try_get_matches_from(["app", "info"]).unwrap();
+        let result = builder.dispatch(matches, OutputMode::Text);
+
+        assert!(result.is_handled());
+        // The width will be actual terminal width or 80 in tests
+        let output = result.output().unwrap();
+        assert!(output.starts_with("Width: "));
+    }
+
+    #[test]
+    fn test_context_fn_output_mode() {
+        use serde_json::json;
+
+        let builder = Outstanding::builder()
+            .context_fn("mode", |ctx: &RenderContext| {
+                Value::from(format!("{:?}", ctx.output_mode))
+            })
+            .command(
+                "info",
+                |_m, _ctx| CommandResult::Ok(json!({})),
+                "Mode: {{ mode }}",
+            );
+
+        let cmd = Command::new("app").subcommand(Command::new("info"));
+        let matches = cmd.try_get_matches_from(["app", "info"]).unwrap();
+        let result = builder.dispatch(matches, OutputMode::Text);
+
+        assert!(result.is_handled());
+        assert_eq!(result.output(), Some("Mode: Text"));
+    }
+
+    #[test]
+    fn test_context_data_takes_precedence() {
+        use serde_json::json;
+
+        // Context has "value" but handler data also has "value"
+        // Handler data should take precedence
+        let builder = Outstanding::builder()
+            .context("value", Value::from("from_context"))
+            .command(
+                "test",
+                |_m, _ctx| CommandResult::Ok(json!({"value": "from_data"})),
+                "{{ value }}",
+            );
+
+        let cmd = Command::new("app").subcommand(Command::new("test"));
+        let matches = cmd.try_get_matches_from(["app", "test"]).unwrap();
+        let result = builder.dispatch(matches, OutputMode::Text);
+
+        assert!(result.is_handled());
+        assert_eq!(result.output(), Some("from_data"));
+    }
+
+    #[test]
+    fn test_context_shared_across_commands() {
+        use serde_json::json;
+
+        let builder = Outstanding::builder()
+            .context("app_name", Value::from("MyApp"))
+            .command(
+                "list",
+                |_m, _ctx| CommandResult::Ok(json!({})),
+                "{{ app_name }}: list",
+            )
+            .command(
+                "info",
+                |_m, _ctx| CommandResult::Ok(json!({})),
+                "{{ app_name }}: info",
+            );
+
+        let cmd = Command::new("app")
+            .subcommand(Command::new("list"))
+            .subcommand(Command::new("info"));
+
+        // Test "list" command
+        let matches = cmd.clone().try_get_matches_from(["app", "list"]).unwrap();
+        let result = builder.dispatch(matches, OutputMode::Text);
+        assert_eq!(result.output(), Some("MyApp: list"));
+
+        // Test "info" command
+        let matches = cmd.try_get_matches_from(["app", "info"]).unwrap();
+        let result = builder.dispatch(matches, OutputMode::Text);
+        assert_eq!(result.output(), Some("MyApp: info"));
+    }
+
+    #[test]
+    fn test_context_fn_uses_handler_data() {
+        use serde_json::json;
+
+        let builder = Outstanding::builder()
+            .context_fn("doubled_count", |ctx: &RenderContext| {
+                let count = ctx.data.get("count").and_then(|v| v.as_i64()).unwrap_or(0);
+                Value::from(count * 2)
+            })
+            .command(
+                "test",
+                |_m, _ctx| CommandResult::Ok(json!({"count": 21})),
+                "Count: {{ count }}, Doubled: {{ doubled_count }}",
+            );
+
+        let cmd = Command::new("app").subcommand(Command::new("test"));
+        let matches = cmd.try_get_matches_from(["app", "test"]).unwrap();
+        let result = builder.dispatch(matches, OutputMode::Text);
+
+        assert!(result.is_handled());
+        assert_eq!(result.output(), Some("Count: 21, Doubled: 42"));
+    }
+
+    #[test]
+    fn test_context_with_nested_object() {
+        use serde_json::json;
+
+        let builder = Outstanding::builder()
+            .context(
+                "config",
+                Value::from_iter([
+                    ("debug", Value::from(true)),
+                    ("max_items", Value::from(100)),
+                ]),
+            )
+            .command(
+                "test",
+                |_m, _ctx| CommandResult::Ok(json!({})),
+                "Debug: {{ config.debug }}, Max: {{ config.max_items }}",
+            );
+
+        let cmd = Command::new("app").subcommand(Command::new("test"));
+        let matches = cmd.try_get_matches_from(["app", "test"]).unwrap();
+        let result = builder.dispatch(matches, OutputMode::Text);
+
+        assert!(result.is_handled());
+        assert_eq!(result.output(), Some("Debug: true, Max: 100"));
+    }
+
+    #[test]
+    fn test_context_in_loop() {
+        use serde_json::json;
+
+        let builder = Outstanding::builder()
+            .context("separator", Value::from(" | "))
+            .command(
+                "list",
+                |_m, _ctx| {
+                    CommandResult::Ok(json!({
+                        "items": ["a", "b", "c"]
+                    }))
+                },
+                "{% for item in items %}{{ item }}{% if not loop.last %}{{ separator }}{% endif %}{% endfor %}",
+            );
+
+        let cmd = Command::new("app").subcommand(Command::new("list"));
+        let matches = cmd.try_get_matches_from(["app", "list"]).unwrap();
+        let result = builder.dispatch(matches, OutputMode::Text);
+
+        assert!(result.is_handled());
+        assert_eq!(result.output(), Some("a | b | c"));
+    }
+
+    #[test]
+    fn test_context_json_output_ignores_context() {
+        use serde_json::json;
+
+        let builder = Outstanding::builder()
+            .context("extra", Value::from("should_not_appear"))
+            .command(
+                "test",
+                |_m, _ctx| CommandResult::Ok(json!({"data": "value"})),
+                "{{ data }} + {{ extra }}",
+            );
+
+        let cmd = Command::new("app").subcommand(Command::new("test"));
+        let matches = cmd.try_get_matches_from(["app", "test"]).unwrap();
+        let result = builder.dispatch(matches, OutputMode::Json);
+
+        assert!(result.is_handled());
+        let output = result.output().unwrap();
+        // JSON output should only contain handler data, not context
+        assert!(output.contains("\"data\": \"value\""));
+        assert!(!output.contains("extra"));
+        assert!(!output.contains("should_not_appear"));
     }
 }

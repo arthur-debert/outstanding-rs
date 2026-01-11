@@ -2,6 +2,43 @@
 //!
 //! This module provides the `TableFormatter` type that formats data rows
 //! according to a table specification, producing aligned output.
+//!
+//! # Template Integration
+//!
+//! `TableFormatter` implements `minijinja::value::Object`, allowing it to be
+//! used in templates when injected via context:
+//!
+//! ```jinja
+//! {% for item in items %}
+//! {{ table.row([item.name, item.value, item.status]) }}
+//! {% endfor %}
+//! ```
+//!
+//! Available methods in templates:
+//! - `row(values)`: Format a row with the given values (array)
+//! - `num_columns`: Get the number of columns
+//!
+//! # Example with Context Injection
+//!
+//! ```rust,ignore
+//! use outstanding::table::{TableSpec, Column, Width, TableFormatter};
+//! use outstanding::context::ContextRegistry;
+//!
+//! let spec = TableSpec::builder()
+//!     .column(Column::new(Width::Fixed(10)))
+//!     .column(Column::new(Width::Fill))
+//!     .separator("  ")
+//!     .build();
+//!
+//! let mut registry = ContextRegistry::new();
+//! registry.add_provider("table", |ctx| {
+//!     let formatter = TableFormatter::new(&spec, ctx.terminal_width.unwrap_or(80));
+//!     minijinja::Value::from_object(formatter)
+//! });
+//! ```
+
+use minijinja::value::{Enumerator, Object, Value};
+use std::sync::Arc;
 
 use super::resolve::ResolvedWidths;
 use super::types::{Align, Column, TableSpec, TruncateAt};
@@ -169,6 +206,86 @@ impl TableFormatter {
     /// Get the number of columns.
     pub fn num_columns(&self) -> usize {
         self.columns.len()
+    }
+}
+
+// ============================================================================
+// MiniJinja Object Implementation
+// ============================================================================
+
+impl Object for TableFormatter {
+    fn get_value(self: &Arc<Self>, key: &Value) -> Option<Value> {
+        match key.as_str()? {
+            "num_columns" => Some(Value::from(self.num_columns())),
+            "widths" => {
+                let widths: Vec<Value> = self.widths.iter().map(|&w| Value::from(w)).collect();
+                Some(Value::from(widths))
+            }
+            "separator" => Some(Value::from(self.separator.clone())),
+            _ => None,
+        }
+    }
+
+    fn enumerate(self: &Arc<Self>) -> Enumerator {
+        Enumerator::Str(&["num_columns", "widths", "separator"])
+    }
+
+    fn call_method(
+        self: &Arc<Self>,
+        _state: &minijinja::State,
+        name: &str,
+        args: &[Value],
+    ) -> Result<Value, minijinja::Error> {
+        match name {
+            "row" => {
+                // row([value1, value2, ...]) - format a row
+                if args.is_empty() {
+                    return Err(minijinja::Error::new(
+                        minijinja::ErrorKind::MissingArgument,
+                        "row() requires an array of values",
+                    ));
+                }
+
+                let values_arg = &args[0];
+
+                // Handle both array and non-array arguments
+                let values: Vec<String> = match values_arg.try_iter() {
+                    Ok(iter) => iter.map(|v| v.to_string()).collect(),
+                    Err(_) => {
+                        // Single value - wrap in vec
+                        vec![values_arg.to_string()]
+                    }
+                };
+
+                let formatted = self.format_row(&values);
+                Ok(Value::from(formatted))
+            }
+            "column_width" => {
+                // column_width(index) - get width of a specific column
+                if args.is_empty() {
+                    return Err(minijinja::Error::new(
+                        minijinja::ErrorKind::MissingArgument,
+                        "column_width() requires an index argument",
+                    ));
+                }
+
+                let index = args[0].as_usize().ok_or_else(|| {
+                    minijinja::Error::new(
+                        minijinja::ErrorKind::InvalidOperation,
+                        "column_width() index must be a number",
+                    )
+                })?;
+
+                match self.column_width(index) {
+                    Some(w) => Ok(Value::from(w)),
+                    None => Ok(Value::from(())),
+                }
+            }
+            _ => Err(minijinja::Error::new(
+                minijinja::ErrorKind::UnknownMethod,
+                format!("TableFormatter has no method '{}'", name),
+            )),
+        }
     }
 }
 
@@ -378,5 +495,157 @@ mod tests {
 
         let output = formatter.format_row(&["hi", "there"]);
         assert_eq!(output, "hi    - there     ");
+    }
+
+    // ============================================================================
+    // Object Trait Tests
+    // ============================================================================
+
+    #[test]
+    fn object_get_num_columns() {
+        let formatter = Arc::new(TableFormatter::new(&simple_spec(), 80));
+        let value = formatter.get_value(&Value::from("num_columns"));
+        assert_eq!(value, Some(Value::from(2)));
+    }
+
+    #[test]
+    fn object_get_widths() {
+        let spec = TableSpec::builder()
+            .column(Column::new(Width::Fixed(10)))
+            .column(Column::new(Width::Fixed(8)))
+            .build();
+        let formatter = Arc::new(TableFormatter::new(&spec, 80));
+
+        let value = formatter.get_value(&Value::from("widths"));
+        assert!(value.is_some());
+        let widths = value.unwrap();
+        // Check we can iterate over the widths
+        assert!(widths.try_iter().is_ok());
+    }
+
+    #[test]
+    fn object_get_separator() {
+        let spec = TableSpec::builder()
+            .column(Column::new(Width::Fixed(10)))
+            .separator(" | ")
+            .build();
+        let formatter = Arc::new(TableFormatter::new(&spec, 80));
+
+        let value = formatter.get_value(&Value::from("separator"));
+        assert_eq!(value, Some(Value::from(" | ")));
+    }
+
+    #[test]
+    fn object_get_unknown_returns_none() {
+        let formatter = Arc::new(TableFormatter::new(&simple_spec(), 80));
+        let value = formatter.get_value(&Value::from("unknown"));
+        assert_eq!(value, None);
+    }
+
+    #[test]
+    fn object_row_method_via_template() {
+        use minijinja::Environment;
+
+        let spec = TableSpec::builder()
+            .column(Column::new(Width::Fixed(10)))
+            .column(Column::new(Width::Fixed(8)))
+            .separator(" | ")
+            .build();
+        let formatter = TableFormatter::new(&spec, 80);
+
+        let mut env = Environment::new();
+        env.add_template("test", "{{ table.row(['Hello', 'World']) }}")
+            .unwrap();
+
+        let tmpl = env.get_template("test").unwrap();
+        let output = tmpl
+            .render(minijinja::context! { table => Value::from_object(formatter) })
+            .unwrap();
+
+        assert_eq!(output, "Hello      | World   ");
+    }
+
+    #[test]
+    fn object_row_method_in_loop() {
+        use minijinja::Environment;
+
+        let spec = TableSpec::builder()
+            .column(Column::new(Width::Fixed(8)))
+            .column(Column::new(Width::Fixed(6)))
+            .separator("  ")
+            .build();
+        let formatter = TableFormatter::new(&spec, 80);
+
+        let mut env = Environment::new();
+        env.add_template(
+            "test",
+            "{% for item in items %}{{ table.row([item.name, item.value]) }}\n{% endfor %}",
+        )
+        .unwrap();
+
+        let tmpl = env.get_template("test").unwrap();
+        let output = tmpl
+            .render(minijinja::context! {
+                table => Value::from_object(formatter),
+                items => vec![
+                    minijinja::context! { name => "Alice", value => "100" },
+                    minijinja::context! { name => "Bob", value => "200" },
+                ]
+            })
+            .unwrap();
+
+        assert!(output.contains("Alice"));
+        assert!(output.contains("Bob"));
+    }
+
+    #[test]
+    fn object_column_width_method_via_template() {
+        use minijinja::Environment;
+
+        let spec = TableSpec::builder()
+            .column(Column::new(Width::Fixed(10)))
+            .column(Column::new(Width::Fixed(8)))
+            .build();
+        let formatter = TableFormatter::new(&spec, 80);
+
+        let mut env = Environment::new();
+        env.add_template(
+            "test",
+            "{{ table.column_width(0) }}-{{ table.column_width(1) }}",
+        )
+        .unwrap();
+
+        let tmpl = env.get_template("test").unwrap();
+        let output = tmpl
+            .render(minijinja::context! { table => Value::from_object(formatter) })
+            .unwrap();
+
+        assert_eq!(output, "10-8");
+    }
+
+    #[test]
+    fn object_attribute_access_via_template() {
+        use minijinja::Environment;
+
+        let spec = TableSpec::builder()
+            .column(Column::new(Width::Fixed(10)))
+            .column(Column::new(Width::Fixed(8)))
+            .separator(" | ")
+            .build();
+        let formatter = TableFormatter::new(&spec, 80);
+
+        let mut env = Environment::new();
+        env.add_template(
+            "test",
+            "cols={{ table.num_columns }}, sep='{{ table.separator }}'",
+        )
+        .unwrap();
+
+        let tmpl = env.get_template("test").unwrap();
+        let output = tmpl
+            .render(minijinja::context! { table => Value::from_object(formatter) })
+            .unwrap();
+
+        assert_eq!(output, "cols=2, sep=' | '");
     }
 }

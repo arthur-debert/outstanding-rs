@@ -1,11 +1,20 @@
 //! Core rendering functions.
+//!
+//! This module provides the main rendering entry points:
+//!
+//! - [`render`]: Simple rendering with automatic color detection
+//! - [`render_with_output`]: Rendering with explicit output mode
+//! - [`render_with_context`]: Rendering with injected context objects
+//! - [`render_or_serialize`]: Render or serialize to JSON based on mode
 
-use minijinja::{Environment, Error};
+use minijinja::{Environment, Error, Value};
 use serde::Serialize;
+use std::collections::HashMap;
 
 use super::filters::register_filters;
+use crate::context::{ContextRegistry, RenderContext};
 use crate::output::OutputMode;
-use crate::theme::Theme;
+use crate::theme::{detect_color_mode, Theme};
 
 /// Renders a template with automatic terminal color detection.
 ///
@@ -165,6 +174,250 @@ pub fn render_or_serialize<T: Serialize>(
         }
     } else {
         render_with_output(template, data, theme, mode)
+    }
+}
+
+/// Renders a template with additional context objects injected.
+///
+/// This is the most flexible rendering function, allowing you to inject
+/// additional objects into the template context beyond the serialized data.
+/// Use this when templates need access to utilities, formatters, or runtime
+/// values that cannot be represented as JSON.
+///
+/// # Arguments
+///
+/// * `template` - A minijinja template string
+/// * `data` - Any serializable data to pass to the template
+/// * `theme` - Theme definitions for the `style` filter
+/// * `mode` - Output mode: `Auto`, `Term`, `Text`, etc.
+/// * `context_registry` - Additional context objects to inject
+/// * `render_context` - Information about the render environment
+///
+/// # Context Resolution
+///
+/// Context objects are resolved from the registry using the provided
+/// `RenderContext`. Each registered provider is called to produce a value,
+/// which is then merged into the template context.
+///
+/// If a context key conflicts with a data field, the **data field wins**.
+/// Context is supplementary to the handler's data, not a replacement.
+///
+/// # Example
+///
+/// ```rust
+/// use outstanding::{render_with_context, Theme, OutputMode};
+/// use outstanding::context::{RenderContext, ContextRegistry};
+/// use minijinja::Value;
+/// use serde::Serialize;
+///
+/// #[derive(Serialize)]
+/// struct Data { name: String }
+///
+/// let theme = Theme::new();
+/// let data = Data { name: "Alice".into() };
+///
+/// // Create context with a static value
+/// let mut registry = ContextRegistry::new();
+/// registry.add_static("version", Value::from("1.0.0"));
+///
+/// // Create render context
+/// let json_data = serde_json::to_value(&data).unwrap();
+/// let render_ctx = RenderContext::new(
+///     OutputMode::Text,
+///     Some(80),
+///     &theme,
+///     &json_data,
+/// );
+///
+/// let output = render_with_context(
+///     "{{ name }} (v{{ version }})",
+///     &data,
+///     &theme,
+///     OutputMode::Text,
+///     &registry,
+///     &render_ctx,
+/// ).unwrap();
+///
+/// assert_eq!(output, "Alice (v1.0.0)");
+/// ```
+pub fn render_with_context<T: Serialize>(
+    template: &str,
+    data: &T,
+    theme: &Theme,
+    mode: OutputMode,
+    context_registry: &ContextRegistry,
+    render_context: &RenderContext,
+) -> Result<String, Error> {
+    let color_mode = detect_color_mode();
+    let theme = theme.resolve_styles(Some(color_mode));
+
+    // Validate style aliases before rendering
+    theme
+        .validate()
+        .map_err(|e| Error::new(minijinja::ErrorKind::InvalidOperation, e.to_string()))?;
+
+    let mut env = Environment::new();
+    register_filters(&mut env, theme, mode);
+
+    env.add_template_owned("_inline".to_string(), template.to_string())?;
+    let tmpl = env.get_template("_inline")?;
+
+    // Build the combined context: data + injected context
+    // Data fields take precedence over context fields
+    let combined = build_combined_context(data, context_registry, render_context)?;
+
+    tmpl.render(&combined)
+}
+
+/// Renders with context, or serializes directly for structured output modes.
+///
+/// This combines `render_with_context` with JSON serialization support.
+/// For structured modes like `Json`, the data is serialized directly,
+/// skipping template rendering (and context injection).
+///
+/// # Arguments
+///
+/// * `template` - A minijinja template string (ignored for structured modes)
+/// * `data` - Any serializable data to render or serialize
+/// * `theme` - Theme definitions for the `style` filter
+/// * `mode` - Output mode determining the output format
+/// * `context_registry` - Additional context objects to inject
+/// * `render_context` - Information about the render environment
+///
+/// # Example
+///
+/// ```rust
+/// use outstanding::{render_or_serialize_with_context, Theme, OutputMode};
+/// use outstanding::context::{RenderContext, ContextRegistry};
+/// use minijinja::Value;
+/// use serde::Serialize;
+///
+/// #[derive(Serialize)]
+/// struct Report { title: String, count: usize }
+///
+/// let theme = Theme::new();
+/// let data = Report { title: "Summary".into(), count: 42 };
+///
+/// let mut registry = ContextRegistry::new();
+/// registry.add_provider("terminal_width", |ctx: &RenderContext| {
+///     Value::from(ctx.terminal_width.unwrap_or(80))
+/// });
+///
+/// let json_data = serde_json::to_value(&data).unwrap();
+/// let render_ctx = RenderContext::new(
+///     OutputMode::Text,
+///     Some(120),
+///     &theme,
+///     &json_data,
+/// );
+///
+/// // Text mode uses the template with context
+/// let text = render_or_serialize_with_context(
+///     "{{ title }} (width={{ terminal_width }}): {{ count }}",
+///     &data,
+///     &theme,
+///     OutputMode::Text,
+///     &registry,
+///     &render_ctx,
+/// ).unwrap();
+/// assert_eq!(text, "Summary (width=120): 42");
+///
+/// // JSON mode ignores template and context, serializes data directly
+/// let json = render_or_serialize_with_context(
+///     "unused",
+///     &data,
+///     &theme,
+///     OutputMode::Json,
+///     &registry,
+///     &render_ctx,
+/// ).unwrap();
+/// assert!(json.contains("\"title\": \"Summary\""));
+/// ```
+pub fn render_or_serialize_with_context<T: Serialize>(
+    template: &str,
+    data: &T,
+    theme: &Theme,
+    mode: OutputMode,
+    context_registry: &ContextRegistry,
+    render_context: &RenderContext,
+) -> Result<String, Error> {
+    if mode.is_structured() {
+        match mode {
+            OutputMode::Json => serde_json::to_string_pretty(data)
+                .map_err(|e| Error::new(minijinja::ErrorKind::InvalidOperation, e.to_string())),
+            _ => unreachable!("is_structured() returned true for non-structured mode"),
+        }
+    } else {
+        render_with_context(
+            template,
+            data,
+            theme,
+            mode,
+            context_registry,
+            render_context,
+        )
+    }
+}
+
+/// Builds a combined context from data and injected context.
+///
+/// Data fields take precedence over context fields.
+fn build_combined_context<T: Serialize>(
+    data: &T,
+    context_registry: &ContextRegistry,
+    render_context: &RenderContext,
+) -> Result<HashMap<String, Value>, Error> {
+    // First, resolve all context providers
+    let context_values = context_registry.resolve(render_context);
+
+    // Convert data to a map of values
+    let data_value = serde_json::to_value(data)
+        .map_err(|e| Error::new(minijinja::ErrorKind::InvalidOperation, e.to_string()))?;
+
+    let mut combined: HashMap<String, Value> = HashMap::new();
+
+    // Add context values first (lower priority)
+    for (key, value) in context_values {
+        combined.insert(key, value);
+    }
+
+    // Add data values (higher priority - overwrites context)
+    if let Some(obj) = data_value.as_object() {
+        for (key, value) in obj {
+            let minijinja_value = json_to_minijinja(value);
+            combined.insert(key.clone(), minijinja_value);
+        }
+    }
+
+    Ok(combined)
+}
+
+/// Converts a serde_json::Value to a minijinja::Value.
+fn json_to_minijinja(json: &serde_json::Value) -> Value {
+    match json {
+        serde_json::Value::Null => Value::from(()),
+        serde_json::Value::Bool(b) => Value::from(*b),
+        serde_json::Value::Number(n) => {
+            if let Some(i) = n.as_i64() {
+                Value::from(i)
+            } else if let Some(f) = n.as_f64() {
+                Value::from(f)
+            } else {
+                Value::from(n.to_string())
+            }
+        }
+        serde_json::Value::String(s) => Value::from(s.clone()),
+        serde_json::Value::Array(arr) => {
+            let items: Vec<Value> = arr.iter().map(json_to_minijinja).collect();
+            Value::from(items)
+        }
+        serde_json::Value::Object(obj) => {
+            let map: HashMap<String, Value> = obj
+                .iter()
+                .map(|(k, v)| (k.clone(), json_to_minijinja(v)))
+                .collect();
+            Value::from_iter(map)
+        }
     }
 }
 
@@ -583,5 +836,275 @@ mod tests {
         .unwrap();
 
         assert_eq!(output, "12:00 - Report");
+    }
+
+    // ============================================================================
+    // Context Injection Tests
+    // ============================================================================
+
+    #[test]
+    fn test_render_with_context_basic() {
+        use crate::context::{ContextRegistry, RenderContext};
+
+        #[derive(Serialize)]
+        struct Data {
+            name: String,
+        }
+
+        let theme = Theme::new();
+        let data = Data {
+            name: "Alice".into(),
+        };
+        let json_data = serde_json::to_value(&data).unwrap();
+
+        let mut registry = ContextRegistry::new();
+        registry.add_static("version", Value::from("1.0.0"));
+
+        let render_ctx = RenderContext::new(OutputMode::Text, Some(80), &theme, &json_data);
+
+        let output = render_with_context(
+            "{{ name }} (v{{ version }})",
+            &data,
+            &theme,
+            OutputMode::Text,
+            &registry,
+            &render_ctx,
+        )
+        .unwrap();
+
+        assert_eq!(output, "Alice (v1.0.0)");
+    }
+
+    #[test]
+    fn test_render_with_context_dynamic_provider() {
+        use crate::context::{ContextRegistry, RenderContext};
+
+        #[derive(Serialize)]
+        struct Data {
+            message: String,
+        }
+
+        let theme = Theme::new();
+        let data = Data {
+            message: "Hello".into(),
+        };
+        let json_data = serde_json::to_value(&data).unwrap();
+
+        let mut registry = ContextRegistry::new();
+        registry.add_provider("terminal_width", |ctx: &RenderContext| {
+            Value::from(ctx.terminal_width.unwrap_or(80))
+        });
+
+        let render_ctx = RenderContext::new(OutputMode::Text, Some(120), &theme, &json_data);
+
+        let output = render_with_context(
+            "{{ message }} (width={{ terminal_width }})",
+            &data,
+            &theme,
+            OutputMode::Text,
+            &registry,
+            &render_ctx,
+        )
+        .unwrap();
+
+        assert_eq!(output, "Hello (width=120)");
+    }
+
+    #[test]
+    fn test_render_with_context_data_takes_precedence() {
+        use crate::context::{ContextRegistry, RenderContext};
+
+        #[derive(Serialize)]
+        struct Data {
+            value: String,
+        }
+
+        let theme = Theme::new();
+        let data = Data {
+            value: "from_data".into(),
+        };
+        let json_data = serde_json::to_value(&data).unwrap();
+
+        let mut registry = ContextRegistry::new();
+        // Context also has "value" - data should win
+        registry.add_static("value", Value::from("from_context"));
+
+        let render_ctx = RenderContext::new(OutputMode::Text, None, &theme, &json_data);
+
+        let output = render_with_context(
+            "{{ value }}",
+            &data,
+            &theme,
+            OutputMode::Text,
+            &registry,
+            &render_ctx,
+        )
+        .unwrap();
+
+        assert_eq!(output, "from_data");
+    }
+
+    #[test]
+    fn test_render_with_context_empty_registry() {
+        use crate::context::{ContextRegistry, RenderContext};
+
+        #[derive(Serialize)]
+        struct Data {
+            name: String,
+        }
+
+        let theme = Theme::new();
+        let data = Data {
+            name: "Test".into(),
+        };
+        let json_data = serde_json::to_value(&data).unwrap();
+
+        let registry = ContextRegistry::new();
+        let render_ctx = RenderContext::new(OutputMode::Text, None, &theme, &json_data);
+
+        let output = render_with_context(
+            "{{ name }}",
+            &data,
+            &theme,
+            OutputMode::Text,
+            &registry,
+            &render_ctx,
+        )
+        .unwrap();
+
+        assert_eq!(output, "Test");
+    }
+
+    #[test]
+    fn test_render_or_serialize_with_context_json_mode() {
+        use crate::context::{ContextRegistry, RenderContext};
+
+        #[derive(Serialize)]
+        struct Data {
+            count: usize,
+        }
+
+        let theme = Theme::new();
+        let data = Data { count: 42 };
+        let json_data = serde_json::to_value(&data).unwrap();
+
+        let mut registry = ContextRegistry::new();
+        registry.add_static("extra", Value::from("ignored"));
+
+        let render_ctx = RenderContext::new(OutputMode::Json, None, &theme, &json_data);
+
+        // JSON mode should serialize data directly, ignoring context
+        let output = render_or_serialize_with_context(
+            "unused template {{ extra }}",
+            &data,
+            &theme,
+            OutputMode::Json,
+            &registry,
+            &render_ctx,
+        )
+        .unwrap();
+
+        assert!(output.contains("\"count\": 42"));
+        assert!(!output.contains("ignored"));
+    }
+
+    #[test]
+    fn test_render_or_serialize_with_context_text_mode() {
+        use crate::context::{ContextRegistry, RenderContext};
+
+        #[derive(Serialize)]
+        struct Data {
+            count: usize,
+        }
+
+        let theme = Theme::new();
+        let data = Data { count: 42 };
+        let json_data = serde_json::to_value(&data).unwrap();
+
+        let mut registry = ContextRegistry::new();
+        registry.add_static("label", Value::from("Items"));
+
+        let render_ctx = RenderContext::new(OutputMode::Text, None, &theme, &json_data);
+
+        let output = render_or_serialize_with_context(
+            "{{ label }}: {{ count }}",
+            &data,
+            &theme,
+            OutputMode::Text,
+            &registry,
+            &render_ctx,
+        )
+        .unwrap();
+
+        assert_eq!(output, "Items: 42");
+    }
+
+    #[test]
+    fn test_render_with_context_provider_uses_output_mode() {
+        use crate::context::{ContextRegistry, RenderContext};
+
+        #[derive(Serialize)]
+        struct Data {}
+
+        let theme = Theme::new();
+        let data = Data {};
+        let json_data = serde_json::to_value(&data).unwrap();
+
+        let mut registry = ContextRegistry::new();
+        registry.add_provider("mode", |ctx: &RenderContext| {
+            Value::from(format!("{:?}", ctx.output_mode))
+        });
+
+        let render_ctx = RenderContext::new(OutputMode::Term, None, &theme, &json_data);
+
+        let output = render_with_context(
+            "Mode: {{ mode }}",
+            &data,
+            &theme,
+            OutputMode::Term,
+            &registry,
+            &render_ctx,
+        )
+        .unwrap();
+
+        assert_eq!(output, "Mode: Term");
+    }
+
+    #[test]
+    fn test_render_with_context_nested_data() {
+        use crate::context::{ContextRegistry, RenderContext};
+
+        #[derive(Serialize)]
+        struct Item {
+            name: String,
+        }
+
+        #[derive(Serialize)]
+        struct Data {
+            items: Vec<Item>,
+        }
+
+        let theme = Theme::new();
+        let data = Data {
+            items: vec![Item { name: "one".into() }, Item { name: "two".into() }],
+        };
+        let json_data = serde_json::to_value(&data).unwrap();
+
+        let mut registry = ContextRegistry::new();
+        registry.add_static("prefix", Value::from("- "));
+
+        let render_ctx = RenderContext::new(OutputMode::Text, None, &theme, &json_data);
+
+        let output = render_with_context(
+            "{% for item in items %}{{ prefix }}{{ item.name }}\n{% endfor %}",
+            &data,
+            &theme,
+            OutputMode::Text,
+            &registry,
+            &render_ctx,
+        )
+        .unwrap();
+
+        assert_eq!(output, "- one\n- two\n");
     }
 }
