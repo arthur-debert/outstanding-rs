@@ -7,9 +7,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-## [0.9.0] - 2026-01-10
+### Added
 
-## [0.8.0] - 2026-01-10
+- **File-based template loading** - Load templates from `.txt` or `.jinja` files at runtime
+  - `TemplateRegistry` for managing file-based templates
+  - Hot reload support in debug mode for rapid iteration
+  - Template caching in release mode for performance
+- **Multiple output format support**:
+  - **YAML output** - Serialize data to YAML format
+  - **XML output** - Serialize data to XML format
+  - **CSV output** - Automatic flattening of nested data structures for tabular export
+- **Generic file loader infrastructure** - Reusable file loading utilities for templates, stylesheets, and other resources
+
+### Changed
+
+- Template caching is now enabled by default in release builds
+
+## [0.9.0] - 2026-01-10
 
 ## [0.7.2] - 2026-01-10
 
@@ -113,8 +127,7 @@ Outstanding::builder()
 - Archive variant support in clap integration
 
 [Unreleased]: https://github.com/arthur-debert/outstanding-rs/compare/v0.9.0...HEAD
-[0.9.0]: https://github.com/arthur-debert/outstanding-rs/compare/v0.8.0...v0.9.0
-[0.8.0]: https://github.com/arthur-debert/outstanding-rs/compare/v0.7.2...v0.8.0
+[0.9.0]: https://github.com/arthur-debert/outstanding-rs/compare/v0.7.2...v0.9.0
 [0.7.2]: https://github.com/arthur-debert/outstanding-rs/compare/v0.7.1...v0.7.2
 [0.7.1]: https://github.com/arthur-debert/outstanding-rs/compare/v0.7.0...v0.7.1
 [0.7.0]: https://github.com/arthur-debert/outstanding-rs/compare/v0.6.2...v0.7.0
