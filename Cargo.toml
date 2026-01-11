@@ -3,4 +3,5 @@ resolver = "2"
 members = [
     "crates/outstanding",
     "crates/outstanding-clap",
+    "crates/outstanding-macros",
 ]

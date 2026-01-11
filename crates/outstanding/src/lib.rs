@@ -221,3 +221,7 @@ pub use render::{
 
 // Utility exports
 pub use util::{rgb_to_ansi256, rgb_to_truecolor, truncate_to_width};
+
+// Macro re-exports (when `macros` feature is enabled)
+#[cfg(feature = "macros")]
+pub use outstanding_macros::{embed_styles, embed_templates};

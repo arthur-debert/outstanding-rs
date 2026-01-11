@@ -1,0 +1,5 @@
+header:
+  fg: white
+  bold: true
+panel:
+  fg: gray
