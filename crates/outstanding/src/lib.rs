@@ -167,7 +167,19 @@ pub use theme::{set_theme_detector, AdaptiveTheme, ColorMode, Theme, ThemeChoice
 pub use output::OutputMode;
 
 // Render module exports
-pub use render::{render, render_or_serialize, render_with_output, Renderer};
+pub use render::{
+    render,
+    render_or_serialize,
+    render_with_output,
+    // Template registry
+    walk_template_dir,
+    RegistryError,
+    Renderer,
+    ResolvedTemplate,
+    TemplateFile,
+    TemplateRegistry,
+    TEMPLATE_EXTENSIONS,
+};
 
 // Utility exports
 pub use util::{rgb_to_ansi256, rgb_to_truecolor, truncate_to_width};
