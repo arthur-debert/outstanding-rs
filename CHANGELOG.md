@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.10.1] - 2026-01-11
+
 ### Added
 
 - **File-based template loading** - Load templates from `.txt` or `.jinja` files at runtime
@@ -126,7 +128,8 @@ Outstanding::builder()
 - Command handler system with `dispatch_from` convenience method
 - Archive variant support in clap integration
 
-[Unreleased]: https://github.com/arthur-debert/outstanding-rs/compare/v0.9.0...HEAD
+[Unreleased]: https://github.com/arthur-debert/outstanding-rs/compare/v0.10.1...HEAD
+[0.10.1]: https://github.com/arthur-debert/outstanding-rs/compare/v0.9.0...v0.10.1
 [0.9.0]: https://github.com/arthur-debert/outstanding-rs/compare/v0.7.2...v0.9.0
 [0.7.2]: https://github.com/arthur-debert/outstanding-rs/compare/v0.7.1...v0.7.2
 [0.7.1]: https://github.com/arthur-debert/outstanding-rs/compare/v0.7.0...v0.7.1
