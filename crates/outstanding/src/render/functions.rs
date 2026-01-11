@@ -161,6 +161,8 @@ pub fn render_or_serialize<T: Serialize>(
         match mode {
             OutputMode::Json => serde_json::to_string_pretty(data)
                 .map_err(|e| Error::new(minijinja::ErrorKind::InvalidOperation, e.to_string())),
+            OutputMode::Yaml => serde_yaml::to_string(data)
+                .map_err(|e| Error::new(minijinja::ErrorKind::InvalidOperation, e.to_string())),
             _ => unreachable!("is_structured() returned true for non-structured mode"),
         }
     } else {
@@ -639,5 +641,24 @@ mod tests {
         .unwrap();
 
         assert_eq!(output, "12:00 - Report");
+    }
+
+    #[test]
+    fn test_render_or_serialize_yaml_mode() {
+        use serde_json::json;
+
+        let theme = Theme::new();
+        let data = json!({"name": "test", "count": 42});
+
+        let output = render_or_serialize(
+            "unused template",
+            &data,
+            ThemeChoice::from(&theme),
+            OutputMode::Yaml,
+        )
+        .unwrap();
+
+        assert!(output.contains("name: test"));
+        assert!(output.contains("count: 42"));
     }
 }
