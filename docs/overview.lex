@@ -56,12 +56,6 @@ Outstanding Applications
 
             The core logic function is any function that takes structured command input (subcommands, arguments, flags) and resturn structured output data as Results.  This is what the application actually does, the rest being supporting characters, and outstanding job's it to let you focus on it.
 
-            :: notes ::
-                - Do double check if there us a type expectation for results and what that is.
-                - In the future, we want to formalize a shared core of retsult primitives : ```python
-                    - Distinguish between listing and detail results.
-                    - Offer a rich Message enum that can represent different types of messages (info, warning, error, success, etc), and can be interwoven in results..
-                
         1.2. Output Rendering
 
             Rich apps tend to benefit from various outputs formats. Outsanding supports mutliple formats, with two groups of output: 
@@ -92,10 +86,6 @@ Outstanding Applications
         2.1 Templates
 
             Templates are minijinja templates, with some custom extensions and filters to make shell output easier.  They can be file based, or inline strings. During development, file based templates wil be releaded on each render, making fof a faster dev cycle.
-
-            :: note :: 
-                - Verify if runtime file based loadng is supported . The advantage ir faster dev cycles.
-                - This is likely not the case, 
 
             Templates are vanilla minijinga,  with the widely known syntax from jinja2 as most fetatures, including a library of helper filters and functions from oustanding and use supplied ones when needed. Templates support includes , meaning that even complex structures can be broken doewn into smaller, more manageable and reusable pieces.  
 
