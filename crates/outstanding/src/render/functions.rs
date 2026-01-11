@@ -165,6 +165,27 @@ pub fn render_or_serialize<T: Serialize>(
                 .map_err(|e| Error::new(minijinja::ErrorKind::InvalidOperation, e.to_string())),
             OutputMode::Xml => quick_xml::se::to_string(data)
                 .map_err(|e| Error::new(minijinja::ErrorKind::InvalidOperation, e.to_string())),
+            OutputMode::Csv => {
+                let value = serde_json::to_value(data).map_err(|e| {
+                    Error::new(minijinja::ErrorKind::InvalidOperation, e.to_string())
+                })?;
+                let (headers, rows) = crate::util::flatten_json_for_csv(&value);
+
+                let mut wtr = csv::Writer::from_writer(Vec::new());
+                wtr.write_record(&headers).map_err(|e| {
+                    Error::new(minijinja::ErrorKind::InvalidOperation, e.to_string())
+                })?;
+                for row in rows {
+                    wtr.write_record(&row).map_err(|e| {
+                        Error::new(minijinja::ErrorKind::InvalidOperation, e.to_string())
+                    })?;
+                }
+                let bytes = wtr.into_inner().map_err(|e| {
+                    Error::new(minijinja::ErrorKind::InvalidOperation, e.to_string())
+                })?;
+                String::from_utf8(bytes)
+                    .map_err(|e| Error::new(minijinja::ErrorKind::InvalidOperation, e.to_string()))
+            }
             _ => unreachable!("is_structured() returned true for non-structured mode"),
         }
     } else {
@@ -666,8 +687,6 @@ mod tests {
 
     #[test]
     fn test_render_or_serialize_xml_mode() {
-        
-
         let theme = Theme::new();
         // XML requires a root element? quick-xml handles simple types?
         // Let's use a struct to ensure better XML structure or wrapper.
@@ -697,5 +716,27 @@ mod tests {
 
         assert!(output.contains("<root>"));
         assert!(output.contains("<name>test</name>"));
+    }
+
+    #[test]
+    fn test_render_or_serialize_csv_mode_auto_flatten() {
+        use serde_json::json;
+
+        let theme = Theme::new();
+        let data = json!([
+            {"name": "Alice", "stats": {"score": 10}},
+            {"name": "Bob", "stats": {"score": 20}}
+        ]);
+
+        let output =
+            render_or_serialize("unused", &data, ThemeChoice::from(&theme), OutputMode::Csv)
+                .unwrap();
+
+        // CSV output can be non-deterministic in column order if using BTreeSet keys vs HashMap?
+        // Wait, BTreeSet keys are sorted. So order is deterministic.
+        // headers: name, stats.score
+        assert!(output.contains("name,stats.score"));
+        assert!(output.contains("Alice,10"));
+        assert!(output.contains("Bob,20"));
     }
 }

@@ -1,5 +1,8 @@
 //! Utility functions for text processing and color conversion.
 
+use serde_json::Value;
+use std::collections::{BTreeMap, BTreeSet};
+
 /// Converts an RGB triplet to the nearest ANSI 256-color palette index.
 ///
 /// # Example
@@ -81,6 +84,94 @@ pub fn truncate_to_width(s: &str, max_width: usize) -> String {
     }
 
     result
+}
+
+/// Flattens a JSON Value into a list of records for CSV export.
+///
+/// Returns a tuple of `(headers, rows)`, where rows are vectors of strings corresponding to headers.
+///
+/// - If `value` is an Array, each element becomes a row.
+/// - If `value` is an Object, it becomes a single row.
+/// - Nested objects are flattened with dot notation.
+/// - Arrays inside objects are serialized as JSON strings.
+pub fn flatten_json_for_csv(value: &Value) -> (Vec<String>, Vec<Vec<String>>) {
+    let mut rows: Vec<BTreeMap<String, String>> = Vec::new();
+
+    match value {
+        Value::Array(arr) => {
+            for item in arr {
+                rows.push(flatten_single_item(item));
+            }
+        }
+        _ => {
+            rows.push(flatten_single_item(value));
+        }
+    }
+
+    // Collect all unique keys
+    let mut headers_set = BTreeSet::new();
+    for row in &rows {
+        for key in row.keys() {
+            headers_set.insert(key.clone());
+        }
+    }
+    let headers: Vec<String> = headers_set.into_iter().collect();
+
+    // Map rows to value lists based on headers
+    let mut data = Vec::new();
+    for row in rows {
+        let mut row_data = Vec::new();
+        for header in &headers {
+            row_data.push(row.get(header).cloned().unwrap_or_default());
+        }
+        data.push(row_data);
+    }
+
+    (headers, data)
+}
+
+fn flatten_single_item(value: &Value) -> BTreeMap<String, String> {
+    let mut acc = BTreeMap::new();
+    flatten_recursive(value, "", &mut acc);
+    acc
+}
+
+fn flatten_recursive(value: &Value, prefix: &str, acc: &mut BTreeMap<String, String>) {
+    match value {
+        Value::Null => {}
+        Value::Bool(b) => {
+            let key = if prefix.is_empty() { "value" } else { prefix };
+            acc.insert(key.to_string(), b.to_string());
+        }
+        Value::Number(n) => {
+            let key = if prefix.is_empty() { "value" } else { prefix };
+            acc.insert(key.to_string(), n.to_string());
+        }
+        Value::String(s) => {
+            let key = if prefix.is_empty() { "value" } else { prefix };
+            acc.insert(key.to_string(), s.clone());
+        }
+        Value::Array(_) => {
+            // Serialize array as JSON string
+            let key = if prefix.is_empty() { "value" } else { prefix };
+            acc.insert(key.to_string(), value.to_string());
+        }
+        Value::Object(map) => {
+            if map.is_empty() {
+                let key = if prefix.is_empty() { "value" } else { prefix };
+                acc.insert(key.to_string(), "{}".to_string());
+            } else {
+                for (k, v) in map {
+                    let new_key = if prefix.is_empty() {
+                        k.clone()
+                    } else {
+                        format!("{}.{}", prefix, k)
+                    };
+                    flatten_recursive(v, &new_key, acc);
+                }
+            }
+        }
+    }
 }
 
 #[cfg(test)]
