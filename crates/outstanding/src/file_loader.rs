@@ -1,82 +1,116 @@
-//! Generic file loading infrastructure for file-based resources.
+//! File-based resource loading for templates and stylesheets.
 //!
-//! This module provides [`FileRegistry<T>`], a generic registry for loading and managing
-//! file-based resources with consistent behavior across different resource types.
+//! Outstanding supports file-based configuration for templates and stylesheets,
+//! enabling a web-app-like development workflow for CLI applications.
 //!
-//! # Design
+//! # Problem
 //!
-//! The file loader infrastructure is designed to be shared across Outstanding features
-//! that require file-based resources (templates, stylesheets, configs, etc.). It encapsulates:
+//! CLI applications need to manage templates and stylesheets. Developers want:
 //!
-//! - **Directory registration**: Multiple root directories, searched in order
-//! - **Name derivation**: Relative path from root, sans extension → resource name
-//! - **Extension priority**: When multiple extensions exist, higher priority wins
-//! - **Collision detection**: Same name from different directories → panic
-//! - **Dev mode**: Re-read from disk on each access (hot reload)
-//! - **Release mode**: Embed content at compile time (no filesystem dependency)
+//! - **Separation of concerns** - Keep templates and styles in files, not Rust code
+//! - **Accessible to non-developers** - Designers can edit YAML/Jinja without Rust
+//! - **Rapid iteration** - Changes visible immediately without recompilation
+//! - **Single-binary distribution** - Released apps should be self-contained
 //!
-//! # Extension Priority
+//! These requirements create tension: development wants external files for flexibility,
+//! while release wants everything embedded for distribution.
 //!
-//! Extensions are specified in priority order when configuring a registry. When multiple
-//! files exist with the same base name but different extensions, the extension appearing
-//! earlier in the list takes precedence for extensionless lookups.
+//! # Solution
 //!
-//! For example, with extensions `[".tmpl", ".jinja2", ".j2"]`:
-//! - If both `config.tmpl` and `config.j2` exist, `"config"` resolves to `config.tmpl`
-//! - Explicit access (`"config.j2"`) still works for the lower-priority file
+//! The file loader provides a unified system that:
 //!
-//! # Collision Detection
+//! - **Development mode**: Reads files from disk with hot reload on each access
+//! - **Release mode**: Embeds all files into the binary at compile time via proc macros
 //!
-//! Cross-directory collisions (same name from different directories) are treated as
-//! **hard errors** and cause a panic with detailed diagnostics. This strict behavior:
+//! ## Directory Structure
 //!
-//! - Catches configuration mistakes early rather than silently picking a winner
-//! - Prevents subtle bugs from ambiguous resolution
-//! - Forces explicit organization of file-based resources
+//! Organize resources in dedicated directories:
 //!
-//! Same-directory, different-extension scenarios are handled by extension priority
-//! and are not considered collisions.
+//! ```text
+//! my-app/
+//! ├── templates/
+//! │   ├── list.jinja
+//! │   └── report/
+//! │       └── summary.jinja
+//! └── styles/
+//!     ├── default.yaml
+//!     └── themes/
+//!         └── dark.yaml
+//! ```
 //!
-//! # Dev vs Release Mode
+//! ## Name Resolution
 //!
-//! The registry supports two storage strategies via [`LoadedEntry<T>`]:
+//! Files are referenced by their relative path from the root, without extension:
 //!
-//! - **`LoadedEntry::File`**: Stores the file path; content is read on each access.
-//!   This enables hot reloading during development—edit files without recompiling.
+//! | File Path | Resolution Name |
+//! |-----------|-----------------|
+//! | `templates/list.jinja` | `"list"` |
+//! | `templates/report/summary.jinja` | `"report/summary"` |
+//! | `styles/themes/dark.yaml` | `"themes/dark"` |
 //!
-//! - **`LoadedEntry::Embedded`**: Stores pre-loaded content directly in memory.
-//!   Use this for release builds where filesystem access is undesirable.
+//! ## Development Usage
 //!
-//! # Example
+//! Register directories and access resources by name:
 //!
 //! ```rust,ignore
-//! use outstanding::file_loader::{FileRegistry, FileRegistryConfig, LoadError};
+//! use outstanding::file_loader::{FileRegistry, FileRegistryConfig};
 //!
-//! // Configure for template files
 //! let config = FileRegistryConfig {
-//!     extensions: &[".tmpl", ".jinja2", ".j2"],
+//!     extensions: &[".yaml", ".yml"],
 //!     transform: |content| Ok(content.to_string()),
 //! };
 //!
 //! let mut registry = FileRegistry::new(config);
-//! registry.add_dir("./templates")?;
+//! registry.add_dir("./styles")?;
 //!
-//! // In dev mode, this re-reads from disk on each call
-//! let content = registry.get("config")?;
+//! // Re-reads from disk each call - edits are immediately visible
+//! let content = registry.get("themes/dark")?;
 //! ```
 //!
-//! # Parameterization
+//! ## Release Embedding
 //!
-//! The registry is generic over the content type `T`:
+//! For release builds, use the embedding macros to bake files into the binary:
 //!
-//! | Use Case | Type | Transform |
-//! |----------|------|-----------|
-//! | Templates | `String` | Identity (pass-through) |
-//! | Stylesheets | `StyleDefinitions` | YAML parsing |
-//! | Configs | `Config` | Format-specific parsing |
+//! ```rust,ignore
+//! // At compile time, walks directory and embeds all files
+//! let styles = outstanding::embed_styles!("./styles");
 //!
-//! This enables consistent file loading behavior across all resource types while
-//! allowing type-specific parsing via the transform function.
+//! // Same API - resources accessed by name
+//! let theme = styles.get("themes/dark")?;
+//! ```
+//!
+//! The macros walk the directory at compile time, read each file, and generate
+//! code that registers all resources with their derived names.
+//!
+//! # Extension Priority
+//!
+//! Extensions are specified in priority order. When multiple files share the same
+//! base name, the extension appearing earlier wins for extensionless lookups:
+//!
+//! ```rust,ignore
+//! // With extensions: [".yaml", ".yml"]
+//! // If both default.yaml and default.yml exist:
+//! registry.get("default")     // → default.yaml (higher priority)
+//! registry.get("default.yml") // → default.yml (explicit)
+//! ```
+//!
+//! # Collision Detection
+//!
+//! Cross-directory collisions (same name from different directories) cause a panic
+//! with detailed diagnostics. This catches configuration mistakes early.
+//!
+//! Same-directory, different-extension scenarios are resolved by priority (not errors).
+//!
+//! # Supported Resource Types
+//!
+//! | Resource | Extensions | Transform |
+//! |----------|------------|-----------|
+//! | Templates | `.jinja`, `.jinja2`, `.j2`, `.txt` | Identity |
+//! | Stylesheets | `.yaml`, `.yml` | YAML parsing |
+//! | Custom | User-defined | User-defined |
+//!
+//! The registry is generic over content type `T`, enabling consistent behavior
+//! across all resource types with type-specific parsing via the transform function.
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
