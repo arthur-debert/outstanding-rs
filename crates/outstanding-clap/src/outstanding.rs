@@ -227,9 +227,9 @@ impl Outstanding {
                     .long(flag)
                     .value_name("MODE")
                     .global(true)
-                    .value_parser(["auto", "term", "text", "term-debug", "json", "yaml"])
+                    .value_parser(["auto", "term", "text", "term-debug", "json", "yaml", "xml"])
                     .default_value("auto")
-                    .help("Output mode: auto, term, text, term-debug, json, or yaml"),
+                    .help("Output mode: auto, term, text, term-debug, json, yaml, or xml"),
             );
         }
 
@@ -305,6 +305,7 @@ impl Outstanding {
                 Some("term-debug") => OutputMode::TermDebug,
                 Some("json") => OutputMode::Json,
                 Some("yaml") => OutputMode::Yaml,
+                Some("xml") => OutputMode::Xml,
                 _ => OutputMode::Auto,
             }
         } else {
@@ -786,6 +787,7 @@ impl OutstandingBuilder {
                 Some("term-debug") => OutputMode::TermDebug,
                 Some("json") => OutputMode::Json,
                 Some("yaml") => OutputMode::Yaml,
+                Some("xml") => OutputMode::Xml,
                 _ => OutputMode::Auto,
             }
         } else {

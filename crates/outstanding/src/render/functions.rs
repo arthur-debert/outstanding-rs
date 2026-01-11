@@ -163,6 +163,8 @@ pub fn render_or_serialize<T: Serialize>(
                 .map_err(|e| Error::new(minijinja::ErrorKind::InvalidOperation, e.to_string())),
             OutputMode::Yaml => serde_yaml::to_string(data)
                 .map_err(|e| Error::new(minijinja::ErrorKind::InvalidOperation, e.to_string())),
+            OutputMode::Xml => quick_xml::se::to_string(data)
+                .map_err(|e| Error::new(minijinja::ErrorKind::InvalidOperation, e.to_string())),
             _ => unreachable!("is_structured() returned true for non-structured mode"),
         }
     } else {
@@ -660,5 +662,40 @@ mod tests {
 
         assert!(output.contains("name: test"));
         assert!(output.contains("count: 42"));
+    }
+
+    #[test]
+    fn test_render_or_serialize_xml_mode() {
+        
+
+        let theme = Theme::new();
+        // XML requires a root element? quick-xml handles simple types?
+        // Let's use a struct to ensure better XML structure or wrapper.
+        // But render_or_serialize takes generic T.
+        // quick-xml default serialization might fail for nameless root if data is not a struct with name?
+        // Actually quick-xml usually works fine for structs.
+
+        #[derive(Serialize)]
+        #[serde(rename = "root")]
+        struct Data {
+            name: String,
+            count: usize,
+        }
+
+        let data = Data {
+            name: "test".into(),
+            count: 42,
+        };
+
+        let output = render_or_serialize(
+            "unused template",
+            &data,
+            ThemeChoice::from(&theme),
+            OutputMode::Xml,
+        )
+        .unwrap();
+
+        assert!(output.contains("<root>"));
+        assert!(output.contains("<name>test</name>"));
     }
 }
