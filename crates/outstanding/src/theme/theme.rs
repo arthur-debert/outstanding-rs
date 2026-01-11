@@ -57,6 +57,7 @@
 //! for a specific color mode. This is typically called during rendering.
 
 use std::collections::HashMap;
+use std::path::{Path, PathBuf};
 
 use console::Style;
 
@@ -109,6 +110,10 @@ use super::adaptive::ColorMode;
 /// ```
 #[derive(Debug, Clone)]
 pub struct Theme {
+    /// Theme name (optional, typically derived from filename).
+    name: Option<String>,
+    /// Source file path (for refresh support).
+    source_path: Option<PathBuf>,
     /// Base styles (always populated).
     base: HashMap<String, Style>,
     /// Light mode style overrides.
@@ -120,14 +125,67 @@ pub struct Theme {
 }
 
 impl Theme {
-    /// Creates an empty theme.
+    /// Creates an empty, unnamed theme.
     pub fn new() -> Self {
         Self {
+            name: None,
+            source_path: None,
             base: HashMap::new(),
             light: HashMap::new(),
             dark: HashMap::new(),
             aliases: HashMap::new(),
         }
+    }
+
+    /// Creates an empty theme with the given name.
+    pub fn named(name: impl Into<String>) -> Self {
+        Self {
+            name: Some(name.into()),
+            source_path: None,
+            base: HashMap::new(),
+            light: HashMap::new(),
+            dark: HashMap::new(),
+            aliases: HashMap::new(),
+        }
+    }
+
+    /// Loads a theme from a YAML file.
+    ///
+    /// The theme name is derived from the filename (without extension).
+    /// The source path is stored for [`refresh`](Theme::refresh) support.
+    ///
+    /// # Errors
+    ///
+    /// Returns a [`StylesheetError`] if the file cannot be read or parsed.
+    ///
+    /// # Example
+    ///
+    /// ```rust,ignore
+    /// use outstanding::Theme;
+    ///
+    /// let theme = Theme::from_file("./themes/darcula.yaml")?;
+    /// assert_eq!(theme.name(), Some("darcula"));
+    /// ```
+    pub fn from_file<P: AsRef<Path>>(path: P) -> Result<Self, StylesheetError> {
+        let path = path.as_ref();
+        let content = std::fs::read_to_string(path).map_err(|e| StylesheetError::Load {
+            message: format!("Failed to read {}: {}", path.display(), e),
+        })?;
+
+        let name = path
+            .file_stem()
+            .and_then(|s| s.to_str())
+            .map(|s| s.to_string());
+
+        let variants = parse_stylesheet(&content)?;
+        Ok(Self {
+            name,
+            source_path: Some(path.to_path_buf()),
+            base: variants.base().clone(),
+            light: variants.light().clone(),
+            dark: variants.dark().clone(),
+            aliases: variants.aliases().clone(),
+        })
     }
 
     /// Creates a theme from YAML content.
@@ -168,11 +226,66 @@ impl Theme {
     /// Creates a theme from pre-parsed theme variants.
     pub fn from_variants(variants: ThemeVariants) -> Self {
         Self {
+            name: None,
+            source_path: None,
             base: variants.base().clone(),
             light: variants.light().clone(),
             dark: variants.dark().clone(),
             aliases: variants.aliases().clone(),
         }
+    }
+
+    /// Returns the theme name, if set.
+    ///
+    /// The name is typically derived from the source filename when using
+    /// [`from_file`](Theme::from_file), or set explicitly with [`named`](Theme::named).
+    pub fn name(&self) -> Option<&str> {
+        self.name.as_deref()
+    }
+
+    /// Returns the source file path, if this theme was loaded from a file.
+    pub fn source_path(&self) -> Option<&Path> {
+        self.source_path.as_deref()
+    }
+
+    /// Reloads the theme from its source file.
+    ///
+    /// This is useful for hot-reloading during development. If the theme
+    /// was not loaded from a file, this method returns an error.
+    ///
+    /// # Errors
+    ///
+    /// Returns a [`StylesheetError`] if:
+    /// - The theme has no source file (wasn't loaded with [`from_file`](Theme::from_file))
+    /// - The file cannot be read or parsed
+    ///
+    /// # Example
+    ///
+    /// ```rust,ignore
+    /// let mut theme = Theme::from_file("./themes/darcula.yaml")?;
+    ///
+    /// // After editing the file...
+    /// theme.refresh()?;
+    /// ```
+    pub fn refresh(&mut self) -> Result<(), StylesheetError> {
+        let path = self
+            .source_path
+            .as_ref()
+            .ok_or_else(|| StylesheetError::Load {
+                message: "Cannot refresh: theme has no source file".to_string(),
+            })?;
+
+        let content = std::fs::read_to_string(path).map_err(|e| StylesheetError::Load {
+            message: format!("Failed to read {}: {}", path.display(), e),
+        })?;
+
+        let variants = parse_stylesheet(&content)?;
+        self.base = variants.base().clone();
+        self.light = variants.light().clone();
+        self.dark = variants.dark().clone();
+        self.aliases = variants.aliases().clone();
+
+        Ok(())
     }
 
     /// Adds a named style, returning an updated theme for chaining.
@@ -610,5 +723,97 @@ mod tests {
         // background is adaptive
         assert_eq!(theme.light_override_count(), 1);
         assert_eq!(theme.dark_override_count(), 1);
+    }
+
+    // =========================================================================
+    // Name and source path tests
+    // =========================================================================
+
+    #[test]
+    fn test_theme_named() {
+        let theme = Theme::named("darcula");
+        assert_eq!(theme.name(), Some("darcula"));
+        assert!(theme.is_empty());
+    }
+
+    #[test]
+    fn test_theme_new_has_no_name() {
+        let theme = Theme::new();
+        assert_eq!(theme.name(), None);
+        assert_eq!(theme.source_path(), None);
+    }
+
+    #[test]
+    fn test_theme_from_file() {
+        use std::fs;
+        use tempfile::TempDir;
+
+        let temp_dir = TempDir::new().unwrap();
+        let theme_path = temp_dir.path().join("darcula.yaml");
+        fs::write(
+            &theme_path,
+            r#"
+            header:
+                fg: cyan
+                bold: true
+            muted:
+                dim: true
+            "#,
+        )
+        .unwrap();
+
+        let theme = Theme::from_file(&theme_path).unwrap();
+        assert_eq!(theme.name(), Some("darcula"));
+        assert_eq!(theme.source_path(), Some(theme_path.as_path()));
+        assert_eq!(theme.len(), 2);
+    }
+
+    #[test]
+    fn test_theme_from_file_not_found() {
+        let result = Theme::from_file("/nonexistent/path/theme.yaml");
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_theme_refresh() {
+        use std::fs;
+        use tempfile::TempDir;
+
+        let temp_dir = TempDir::new().unwrap();
+        let theme_path = temp_dir.path().join("dynamic.yaml");
+        fs::write(
+            &theme_path,
+            r#"
+            header:
+                fg: red
+            "#,
+        )
+        .unwrap();
+
+        let mut theme = Theme::from_file(&theme_path).unwrap();
+        assert_eq!(theme.len(), 1);
+
+        // Update the file
+        fs::write(
+            &theme_path,
+            r#"
+            header:
+                fg: blue
+            footer:
+                dim: true
+            "#,
+        )
+        .unwrap();
+
+        // Refresh
+        theme.refresh().unwrap();
+        assert_eq!(theme.len(), 2);
+    }
+
+    #[test]
+    fn test_theme_refresh_without_source() {
+        let mut theme = Theme::new();
+        let result = theme.refresh();
+        assert!(result.is_err());
     }
 }

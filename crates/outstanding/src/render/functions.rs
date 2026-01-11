@@ -4,6 +4,7 @@
 //!
 //! - [`render`]: Simple rendering with automatic color detection
 //! - [`render_with_output`]: Rendering with explicit output mode
+//! - [`render_with_mode`]: Rendering with explicit output mode and color mode
 //! - [`render_with_context`]: Rendering with injected context objects
 //! - [`render_or_serialize`]: Render or serialize to JSON based on mode
 
@@ -15,7 +16,7 @@ use super::filters::register_filters;
 use crate::context::{ContextRegistry, RenderContext};
 use crate::output::OutputMode;
 use crate::table::FlatDataSpec;
-use crate::theme::{detect_color_mode, Theme};
+use crate::theme::{detect_color_mode, ColorMode, Theme};
 
 /// Renders a template with automatic terminal color detection.
 ///
@@ -99,17 +100,77 @@ pub fn render_with_output<T: Serialize>(
     theme: &Theme,
     mode: OutputMode,
 ) -> Result<String, Error> {
+    // Detect color mode and render with explicit mode
+    let color_mode = detect_color_mode();
+    render_with_mode(template, data, theme, mode, color_mode)
+}
+
+/// Renders a template with explicit output mode and color mode control.
+///
+/// Use this when you need to force a specific color mode (light/dark),
+/// for example in tests or when honoring user preferences.
+///
+/// # Arguments
+///
+/// * `template` - A minijinja template string
+/// * `data` - Any serializable data to pass to the template
+/// * `theme` - Theme definitions to use for the `style` filter
+/// * `output_mode` - Output mode: `Auto`, `Term`, `Text`, etc.
+/// * `color_mode` - Color mode: `Light` or `Dark`
+///
+/// # Example
+///
+/// ```rust
+/// use outstanding::{render_with_mode, Theme, OutputMode, ColorMode};
+/// use console::Style;
+/// use serde::Serialize;
+///
+/// #[derive(Serialize)]
+/// struct Data { status: String }
+///
+/// let theme = Theme::new()
+///     .add_adaptive(
+///         "panel",
+///         Style::new(),
+///         Some(Style::new().black()),  // Light mode
+///         Some(Style::new().white()),  // Dark mode
+///     );
+///
+/// // Force dark mode rendering
+/// let dark = render_with_mode(
+///     r#"{{ status | style("panel") }}"#,
+///     &Data { status: "test".into() },
+///     &theme,
+///     OutputMode::Term,
+///     ColorMode::Dark,
+/// ).unwrap();
+///
+/// // Force light mode rendering
+/// let light = render_with_mode(
+///     r#"{{ status | style("panel") }}"#,
+///     &Data { status: "test".into() },
+///     &theme,
+///     OutputMode::Term,
+///     ColorMode::Light,
+/// ).unwrap();
+/// ```
+pub fn render_with_mode<T: Serialize>(
+    template: &str,
+    data: &T,
+    theme: &Theme,
+    output_mode: OutputMode,
+    color_mode: ColorMode,
+) -> Result<String, Error> {
     // Validate style aliases before rendering
     theme
         .validate()
         .map_err(|e| Error::new(minijinja::ErrorKind::InvalidOperation, e.to_string()))?;
 
-    // Detect color mode and resolve styles for that mode
-    let color_mode = crate::theme::detect_color_mode();
+    // Resolve styles for the specified color mode
     let styles = theme.resolve_styles(Some(color_mode));
 
     let mut env = Environment::new();
-    register_filters(&mut env, styles, mode);
+    register_filters(&mut env, styles, output_mode);
 
     env.add_template_owned("_inline".to_string(), template.to_string())?;
     let tmpl = env.get_template("_inline")?;
@@ -1288,5 +1349,63 @@ mod tests {
         .unwrap();
 
         assert_eq!(output, "- one\n- two\n");
+    }
+
+    #[test]
+    fn test_render_with_mode_forces_color_mode() {
+        use console::Style;
+
+        #[derive(Serialize)]
+        struct Data {
+            status: String,
+        }
+
+        // Create an adaptive theme with different colors for light/dark
+        // Note: force_styling(true) is needed in tests since there's no TTY
+        let theme = Theme::new().add_adaptive(
+            "status",
+            Style::new(),                                   // Base
+            Some(Style::new().black().force_styling(true)), // Light mode
+            Some(Style::new().white().force_styling(true)), // Dark mode
+        );
+
+        let data = Data {
+            status: "test".into(),
+        };
+
+        // Force dark mode
+        let dark_output = render_with_mode(
+            r#"{{ status | style("status") }}"#,
+            &data,
+            &theme,
+            OutputMode::Term,
+            ColorMode::Dark,
+        )
+        .unwrap();
+
+        // Force light mode
+        let light_output = render_with_mode(
+            r#"{{ status | style("status") }}"#,
+            &data,
+            &theme,
+            OutputMode::Term,
+            ColorMode::Light,
+        )
+        .unwrap();
+
+        // They should be different (different colors applied)
+        assert_ne!(dark_output, light_output);
+
+        // Dark mode should use white (ANSI 37)
+        assert!(
+            dark_output.contains("\x1b[37"),
+            "Expected white (37) in dark mode"
+        );
+
+        // Light mode should use black (ANSI 30)
+        assert!(
+            light_output.contains("\x1b[30"),
+            "Expected black (30) in light mode"
+        );
     }
 }

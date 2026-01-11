@@ -212,6 +212,7 @@ pub use render::{
     render_or_serialize_with_context,
     render_or_serialize_with_spec,
     render_with_context,
+    render_with_mode,
     render_with_output,
     // Template registry
     walk_template_dir,
