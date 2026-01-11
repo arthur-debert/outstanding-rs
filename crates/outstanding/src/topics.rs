@@ -8,7 +8,7 @@ use std::process::{Command as ProcessCommand, Stdio};
 use console::Style;
 use serde::Serialize;
 
-use crate::{render_with_output, Error, OutputMode, Theme, ThemeChoice};
+use crate::{render_with_output, Error, OutputMode, Theme};
 
 /// Fixed width for the name column in topic listings.
 const NAME_COLUMN_WIDTH: usize = 14;
@@ -273,7 +273,7 @@ pub fn render_topic(topic: &Topic, config: Option<TopicRenderConfig>) -> Result<
         content: topic.content.clone(),
     };
 
-    render_with_output(template, &data, ThemeChoice::from(&theme), mode)
+    render_with_output(template, &data, &theme, mode)
 }
 
 /// Renders a list of all available topics.
@@ -330,7 +330,7 @@ pub fn render_topics_list(
         topics: topic_items,
     };
 
-    render_with_output(template, &data, ThemeChoice::from(&theme), mode)
+    render_with_output(template, &data, &theme, mode)
 }
 
 // ============================================================================

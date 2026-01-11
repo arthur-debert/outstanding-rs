@@ -21,7 +21,7 @@ use console::Term;
 /// # Example
 ///
 /// ```rust
-/// use outstanding::{render_with_output, Theme, ThemeChoice, OutputMode};
+/// use outstanding::{render_with_output, Theme, OutputMode};
 /// use console::Style;
 /// use serde::Serialize;
 ///
@@ -35,7 +35,7 @@ use console::Term;
 /// let auto = render_with_output(
 ///     r#"{{ message | style("ok") }}"#,
 ///     &data,
-///     ThemeChoice::from(&theme),
+///     &theme,
 ///     OutputMode::Auto,
 /// ).unwrap();
 ///
@@ -43,7 +43,7 @@ use console::Term;
 /// let plain = render_with_output(
 ///     r#"{{ message | style("ok") }}"#,
 ///     &data,
-///     ThemeChoice::from(&theme),
+///     &theme,
 ///     OutputMode::Text,
 /// ).unwrap();
 /// assert_eq!(plain, "Hello");
@@ -52,7 +52,7 @@ use console::Term;
 /// let debug = render_with_output(
 ///     r#"{{ message | style("ok") }}"#,
 ///     &data,
-///     ThemeChoice::from(&theme),
+///     &theme,
 ///     OutputMode::TermDebug,
 /// ).unwrap();
 /// assert_eq!(debug, "[ok]Hello[/ok]");

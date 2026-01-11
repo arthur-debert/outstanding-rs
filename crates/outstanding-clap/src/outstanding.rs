@@ -9,9 +9,7 @@ use outstanding::context::{ContextProvider, ContextRegistry, RenderContext};
 use outstanding::topics::{
     display_with_pager, render_topic, render_topics_list, Topic, TopicRegistry, TopicRenderConfig,
 };
-use outstanding::{
-    render_or_serialize, render_or_serialize_with_context, OutputMode, Theme, ThemeChoice,
-};
+use outstanding::{render_or_serialize, render_or_serialize_with_context, OutputMode, Theme};
 use serde::Serialize;
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -180,12 +178,7 @@ impl Outstanding {
 
                 // Render the (potentially modified) data
                 let theme = self.theme.clone().unwrap_or_default();
-                match render_or_serialize(
-                    template,
-                    &json_data,
-                    ThemeChoice::from(&theme),
-                    self.output_mode,
-                ) {
+                match render_or_serialize(template, &json_data, &theme, self.output_mode) {
                     Ok(rendered) => Output::Text(rendered),
                     Err(e) => return Err(HookError::post_output("Render error").with_source(e)),
                 }
@@ -711,7 +704,7 @@ impl OutstandingBuilder {
                         let output = render_or_serialize_with_context(
                             &template,
                             &json_data,
-                            ThemeChoice::from(&theme),
+                            &theme,
                             ctx.output_mode,
                             &context_registry,
                             &render_ctx,

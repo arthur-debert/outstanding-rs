@@ -14,23 +14,24 @@ use std::collections::HashMap;
 use super::filters::register_filters;
 use crate::context::{ContextRegistry, RenderContext};
 use crate::output::OutputMode;
-use crate::theme::ThemeChoice;
+use crate::theme::{detect_color_mode, Theme};
 
 /// Renders a template with automatic terminal color detection.
 ///
 /// This is the simplest way to render styled output. It automatically detects
-/// whether stdout supports colors and applies styles accordingly.
+/// whether stdout supports colors and applies styles accordingly. Color mode
+/// (light/dark) is detected from OS settings.
 ///
 /// # Arguments
 ///
 /// * `template` - A minijinja template string
 /// * `data` - Any serializable data to pass to the template
-/// * `theme` - Theme definitions (or adaptive theme) to use for the `style` filter
+/// * `theme` - Theme definitions to use for the `style` filter
 ///
 /// # Example
 ///
 /// ```rust
-/// use outstanding::{render, Theme, ThemeChoice};
+/// use outstanding::{render, Theme};
 /// use console::Style;
 /// use serde::Serialize;
 ///
@@ -41,21 +42,18 @@ use crate::theme::ThemeChoice;
 /// let output = render(
 ///     r#"{{ message | style("ok") }}"#,
 ///     &Data { message: "Success!".into() },
-///     ThemeChoice::from(&theme),
+///     &theme,
 /// ).unwrap();
 /// ```
-pub fn render<T: Serialize>(
-    template: &str,
-    data: &T,
-    theme: ThemeChoice<'_>,
-) -> Result<String, Error> {
+pub fn render<T: Serialize>(template: &str, data: &T, theme: &Theme) -> Result<String, Error> {
     render_with_output(template, data, theme, OutputMode::Auto)
 }
 
 /// Renders a template with explicit output mode control.
 ///
 /// Use this when you need to override automatic terminal detection,
-/// for example when honoring a `--output=text` CLI flag.
+/// for example when honoring a `--output=text` CLI flag. Color mode
+/// (light/dark) is detected from OS settings.
 ///
 /// # Arguments
 ///
@@ -67,7 +65,7 @@ pub fn render<T: Serialize>(
 /// # Example
 ///
 /// ```rust
-/// use outstanding::{render_with_output, Theme, ThemeChoice, OutputMode};
+/// use outstanding::{render_with_output, Theme, OutputMode};
 /// use console::Style;
 /// use serde::Serialize;
 ///
@@ -80,7 +78,7 @@ pub fn render<T: Serialize>(
 /// let plain = render_with_output(
 ///     r#"{{ status | style("ok") }}"#,
 ///     &Data { status: "done".into() },
-///     ThemeChoice::from(&theme),
+///     &theme,
 ///     OutputMode::Text,
 /// ).unwrap();
 /// assert_eq!(plain, "done"); // No ANSI codes
@@ -89,7 +87,7 @@ pub fn render<T: Serialize>(
 /// let term = render_with_output(
 ///     r#"{{ status | style("ok") }}"#,
 ///     &Data { status: "done".into() },
-///     ThemeChoice::from(&theme),
+///     &theme,
 ///     OutputMode::Term,
 /// ).unwrap();
 /// // Contains ANSI codes for green
@@ -97,18 +95,20 @@ pub fn render<T: Serialize>(
 pub fn render_with_output<T: Serialize>(
     template: &str,
     data: &T,
-    theme: ThemeChoice<'_>,
+    theme: &Theme,
     mode: OutputMode,
 ) -> Result<String, Error> {
-    let theme = theme.resolve();
-
     // Validate style aliases before rendering
     theme
         .validate()
         .map_err(|e| Error::new(minijinja::ErrorKind::InvalidOperation, e.to_string()))?;
 
+    // Detect color mode and resolve styles for that mode
+    let color_mode = crate::theme::detect_color_mode();
+    let styles = theme.resolve_styles(Some(color_mode));
+
     let mut env = Environment::new();
-    register_filters(&mut env, theme, mode);
+    register_filters(&mut env, styles, mode);
 
     env.add_template_owned("_inline".to_string(), template.to_string())?;
     let tmpl = env.get_template("_inline")?;
@@ -131,7 +131,7 @@ pub fn render_with_output<T: Serialize>(
 /// # Example
 ///
 /// ```rust
-/// use outstanding::{render_or_serialize, Theme, ThemeChoice, OutputMode};
+/// use outstanding::{render_or_serialize, Theme, OutputMode};
 /// use console::Style;
 /// use serde::Serialize;
 ///
@@ -145,7 +145,7 @@ pub fn render_with_output<T: Serialize>(
 /// let term = render_or_serialize(
 ///     r#"{{ title | style("title") }}: {{ count }}"#,
 ///     &data,
-///     ThemeChoice::from(&theme),
+///     &theme,
 ///     OutputMode::Text,
 /// ).unwrap();
 /// assert_eq!(term, "Summary: 42");
@@ -154,7 +154,7 @@ pub fn render_with_output<T: Serialize>(
 /// let json = render_or_serialize(
 ///     r#"{{ title | style("title") }}: {{ count }}"#,
 ///     &data,
-///     ThemeChoice::from(&theme),
+///     &theme,
 ///     OutputMode::Json,
 /// ).unwrap();
 /// assert!(json.contains("\"title\": \"Summary\""));
@@ -163,7 +163,7 @@ pub fn render_with_output<T: Serialize>(
 pub fn render_or_serialize<T: Serialize>(
     template: &str,
     data: &T,
-    theme: ThemeChoice<'_>,
+    theme: &Theme,
     mode: OutputMode,
 ) -> Result<String, Error> {
     if mode.is_structured() {
@@ -205,7 +205,7 @@ pub fn render_or_serialize<T: Serialize>(
 /// # Example
 ///
 /// ```rust
-/// use outstanding::{render_with_context, Theme, ThemeChoice, OutputMode};
+/// use outstanding::{render_with_context, Theme, OutputMode};
 /// use outstanding::context::{RenderContext, ContextRegistry};
 /// use minijinja::Value;
 /// use serde::Serialize;
@@ -232,7 +232,7 @@ pub fn render_or_serialize<T: Serialize>(
 /// let output = render_with_context(
 ///     "{{ name }} (v{{ version }})",
 ///     &data,
-///     ThemeChoice::from(&theme),
+///     &theme,
 ///     OutputMode::Text,
 ///     &registry,
 ///     &render_ctx,
@@ -243,12 +243,13 @@ pub fn render_or_serialize<T: Serialize>(
 pub fn render_with_context<T: Serialize>(
     template: &str,
     data: &T,
-    theme: ThemeChoice<'_>,
+    theme: &Theme,
     mode: OutputMode,
     context_registry: &ContextRegistry,
     render_context: &RenderContext,
 ) -> Result<String, Error> {
-    let theme = theme.resolve();
+    let color_mode = detect_color_mode();
+    let theme = theme.resolve_styles(Some(color_mode));
 
     // Validate style aliases before rendering
     theme
@@ -286,7 +287,7 @@ pub fn render_with_context<T: Serialize>(
 /// # Example
 ///
 /// ```rust
-/// use outstanding::{render_or_serialize_with_context, Theme, ThemeChoice, OutputMode};
+/// use outstanding::{render_or_serialize_with_context, Theme, OutputMode};
 /// use outstanding::context::{RenderContext, ContextRegistry};
 /// use minijinja::Value;
 /// use serde::Serialize;
@@ -314,7 +315,7 @@ pub fn render_with_context<T: Serialize>(
 /// let text = render_or_serialize_with_context(
 ///     "{{ title }} (width={{ terminal_width }}): {{ count }}",
 ///     &data,
-///     ThemeChoice::from(&theme),
+///     &theme,
 ///     OutputMode::Text,
 ///     &registry,
 ///     &render_ctx,
@@ -325,7 +326,7 @@ pub fn render_with_context<T: Serialize>(
 /// let json = render_or_serialize_with_context(
 ///     "unused",
 ///     &data,
-///     ThemeChoice::from(&theme),
+///     &theme,
 ///     OutputMode::Json,
 ///     &registry,
 ///     &render_ctx,
@@ -335,7 +336,7 @@ pub fn render_with_context<T: Serialize>(
 pub fn render_or_serialize_with_context<T: Serialize>(
     template: &str,
     data: &T,
-    theme: ThemeChoice<'_>,
+    theme: &Theme,
     mode: OutputMode,
     context_registry: &ContextRegistry,
     render_context: &RenderContext,
@@ -423,7 +424,6 @@ fn json_to_minijinja(json: &serde_json::Value) -> Value {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::style::Styles;
     use crate::theme::Theme;
     use console::Style;
     use serde::Serialize;
@@ -441,8 +441,7 @@ mod tests {
 
     #[test]
     fn test_render_with_output_text_no_ansi() {
-        let styles = Styles::new().add("red", Style::new().red());
-        let theme = Theme::from_styles(styles);
+        let theme = Theme::new().add("red", Style::new().red());
         let data = SimpleData {
             message: "test".into(),
         };
@@ -450,7 +449,7 @@ mod tests {
         let output = render_with_output(
             r#"{{ message | style("red") }}"#,
             &data,
-            ThemeChoice::from(&theme),
+            &theme,
             OutputMode::Text,
         )
         .unwrap();
@@ -461,8 +460,7 @@ mod tests {
 
     #[test]
     fn test_render_with_output_term_has_ansi() {
-        let styles = Styles::new().add("green", Style::new().green().force_styling(true));
-        let theme = Theme::from_styles(styles);
+        let theme = Theme::new().add("green", Style::new().green().force_styling(true));
         let data = SimpleData {
             message: "success".into(),
         };
@@ -470,7 +468,7 @@ mod tests {
         let output = render_with_output(
             r#"{{ message | style("green") }}"#,
             &data,
-            ThemeChoice::from(&theme),
+            &theme,
             OutputMode::Term,
         )
         .unwrap();
@@ -481,8 +479,7 @@ mod tests {
 
     #[test]
     fn test_render_unknown_style_shows_indicator() {
-        let styles = Styles::new();
-        let theme = Theme::from_styles(styles);
+        let theme = Theme::new();
         let data = SimpleData {
             message: "hello".into(),
         };
@@ -490,7 +487,7 @@ mod tests {
         let output = render_with_output(
             r#"{{ message | style("unknown") }}"#,
             &data,
-            ThemeChoice::from(&theme),
+            &theme,
             OutputMode::Term,
         )
         .unwrap();
@@ -500,8 +497,7 @@ mod tests {
 
     #[test]
     fn test_render_unknown_style_shows_indicator_no_color() {
-        let styles = Styles::new();
-        let theme = Theme::from_styles(styles);
+        let theme = Theme::new();
         let data = SimpleData {
             message: "hello".into(),
         };
@@ -509,7 +505,7 @@ mod tests {
         let output = render_with_output(
             r#"{{ message | style("unknown") }}"#,
             &data,
-            ThemeChoice::from(&theme),
+            &theme,
             OutputMode::Text,
         )
         .unwrap();
@@ -518,28 +514,8 @@ mod tests {
     }
 
     #[test]
-    fn test_render_unknown_style_silent_with_empty_indicator() {
-        let styles = Styles::new().missing_indicator("");
-        let theme = Theme::from_styles(styles);
-        let data = SimpleData {
-            message: "hello".into(),
-        };
-
-        let output = render_with_output(
-            r#"{{ message | style("unknown") }}"#,
-            &data,
-            ThemeChoice::from(&theme),
-            OutputMode::Term,
-        )
-        .unwrap();
-
-        assert_eq!(output, "hello");
-    }
-
-    #[test]
     fn test_render_template_with_loop() {
-        let styles = Styles::new().add("item", Style::new().cyan());
-        let theme = Theme::from_styles(styles);
+        let theme = Theme::new().add("item", Style::new().cyan());
         let data = ListData {
             items: vec!["one".into(), "two".into()],
             count: 2,
@@ -548,33 +524,27 @@ mod tests {
         let template = r#"{% for item in items %}{{ item | style("item") }}
 {% endfor %}"#;
 
-        let output =
-            render_with_output(template, &data, ThemeChoice::from(&theme), OutputMode::Text)
-                .unwrap();
+        let output = render_with_output(template, &data, &theme, OutputMode::Text).unwrap();
         assert_eq!(output, "one\ntwo\n");
     }
 
     #[test]
     fn test_render_mixed_styled_and_plain() {
-        let styles = Styles::new().add("count", Style::new().bold());
-        let theme = Theme::from_styles(styles);
+        let theme = Theme::new().add("count", Style::new().bold());
         let data = ListData {
             items: vec![],
             count: 42,
         };
 
         let template = r#"Total: {{ count | style("count") }} items"#;
-        let output =
-            render_with_output(template, &data, ThemeChoice::from(&theme), OutputMode::Text)
-                .unwrap();
+        let output = render_with_output(template, &data, &theme, OutputMode::Text).unwrap();
 
         assert_eq!(output, "Total: 42 items");
     }
 
     #[test]
     fn test_render_literal_string_styled() {
-        let styles = Styles::new().add("header", Style::new().bold());
-        let theme = Theme::from_styles(styles);
+        let theme = Theme::new().add("header", Style::new().bold());
 
         #[derive(Serialize)]
         struct Empty {}
@@ -582,7 +552,7 @@ mod tests {
         let output = render_with_output(
             r#"{{ "Header" | style("header") }}"#,
             &Empty {},
-            ThemeChoice::from(&theme),
+            &theme,
             OutputMode::Text,
         )
         .unwrap();
@@ -592,31 +562,23 @@ mod tests {
 
     #[test]
     fn test_empty_template() {
-        let styles = Styles::new();
-        let theme = Theme::from_styles(styles);
+        let theme = Theme::new();
 
         #[derive(Serialize)]
         struct Empty {}
 
-        let output =
-            render_with_output("", &Empty {}, ThemeChoice::from(&theme), OutputMode::Text).unwrap();
+        let output = render_with_output("", &Empty {}, &theme, OutputMode::Text).unwrap();
         assert_eq!(output, "");
     }
 
     #[test]
     fn test_template_syntax_error() {
-        let styles = Styles::new();
-        let theme = Theme::from_styles(styles);
+        let theme = Theme::new();
 
         #[derive(Serialize)]
         struct Empty {}
 
-        let result = render_with_output(
-            "{{ unclosed",
-            &Empty {},
-            ThemeChoice::from(&theme),
-            OutputMode::Text,
-        );
+        let result = render_with_output("{{ unclosed", &Empty {}, &theme, OutputMode::Text);
         assert!(result.is_err());
     }
 
@@ -633,8 +595,7 @@ mod tests {
             items: Vec<Item>,
         }
 
-        let styles = Styles::new().add("name", Style::new().bold());
-        let theme = Theme::from_styles(styles);
+        let theme = Theme::new().add("name", Style::new().bold());
         let data = Container {
             items: vec![
                 Item {
@@ -651,18 +612,15 @@ mod tests {
         let template = r#"{% for item in items %}{{ item.name | style("name") }}={{ item.value }}
 {% endfor %}"#;
 
-        let output =
-            render_with_output(template, &data, ThemeChoice::from(&theme), OutputMode::Text)
-                .unwrap();
+        let output = render_with_output(template, &data, &theme, OutputMode::Text).unwrap();
         assert_eq!(output, "foo=1\nbar=2\n");
     }
 
     #[test]
     fn test_render_with_output_term_debug() {
-        let styles = Styles::new()
+        let theme = Theme::new()
             .add("title", Style::new().bold())
             .add("count", Style::new().cyan());
-        let theme = Theme::from_styles(styles);
 
         #[derive(Serialize)]
         struct Data {
@@ -678,7 +636,7 @@ mod tests {
         let output = render_with_output(
             r#"{{ name | style("title") }}: {{ value | style("count") }}"#,
             &data,
-            ThemeChoice::from(&theme),
+            &theme,
             OutputMode::TermDebug,
         )
         .unwrap();
@@ -688,8 +646,7 @@ mod tests {
 
     #[test]
     fn test_render_with_output_term_debug_missing_style() {
-        let styles = Styles::new().add("known", Style::new().bold());
-        let theme = Theme::from_styles(styles);
+        let theme = Theme::new().add("known", Style::new().bold());
 
         #[derive(Serialize)]
         struct Data {
@@ -703,7 +660,7 @@ mod tests {
         let output = render_with_output(
             r#"{{ message | style("unknown") }}"#,
             &data,
-            ThemeChoice::from(&theme),
+            &theme,
             OutputMode::TermDebug,
         )
         .unwrap();
@@ -713,7 +670,7 @@ mod tests {
         let output = render_with_output(
             r#"{{ message | style("known") }}"#,
             &data,
-            ThemeChoice::from(&theme),
+            &theme,
             OutputMode::TermDebug,
         )
         .unwrap();
@@ -728,13 +685,8 @@ mod tests {
         let theme = Theme::new();
         let data = json!({"name": "test", "count": 42});
 
-        let output = render_or_serialize(
-            "unused template",
-            &data,
-            ThemeChoice::from(&theme),
-            OutputMode::Json,
-        )
-        .unwrap();
+        let output =
+            render_or_serialize("unused template", &data, &theme, OutputMode::Json).unwrap();
 
         assert!(output.contains("\"name\": \"test\""));
         assert!(output.contains("\"count\": 42"));
@@ -747,13 +699,8 @@ mod tests {
         let theme = Theme::new();
         let data = json!({"name": "test"});
 
-        let output = render_or_serialize(
-            "Name: {{ name }}",
-            &data,
-            ThemeChoice::from(&theme),
-            OutputMode::Text,
-        )
-        .unwrap();
+        let output =
+            render_or_serialize("Name: {{ name }}", &data, &theme, OutputMode::Text).unwrap();
 
         assert_eq!(output, "Name: test");
     }
@@ -768,7 +715,7 @@ mod tests {
         let output = render_or_serialize(
             r#"{{ name | style("bold") }}"#,
             &data,
-            ThemeChoice::from(&theme),
+            &theme,
             OutputMode::Term,
         )
         .unwrap();
@@ -791,9 +738,7 @@ mod tests {
             items: vec!["one".into(), "two".into()],
         };
 
-        let output =
-            render_or_serialize("unused", &data, ThemeChoice::from(&theme), OutputMode::Json)
-                .unwrap();
+        let output = render_or_serialize("unused", &data, &theme, OutputMode::Json).unwrap();
 
         assert!(output.contains("\"title\": \"Summary\""));
         assert!(output.contains("\"items\""));
@@ -809,7 +754,7 @@ mod tests {
         let output = render_with_output(
             r#"{{ "text" | style("alias") }}"#,
             &serde_json::json!({}),
-            ThemeChoice::from(&theme),
+            &theme,
             OutputMode::Text,
         )
         .unwrap();
@@ -827,7 +772,7 @@ mod tests {
         let output = render_with_output(
             r#"{{ "12:00" | style("timestamp") }}"#,
             &serde_json::json!({}),
-            ThemeChoice::from(&theme),
+            &theme,
             OutputMode::Text,
         )
         .unwrap();
@@ -842,7 +787,7 @@ mod tests {
         let result = render_with_output(
             r#"{{ "text" | style("orphan") }}"#,
             &serde_json::json!({}),
-            ThemeChoice::from(&theme),
+            &theme,
             OutputMode::Text,
         );
 
@@ -859,7 +804,7 @@ mod tests {
         let result = render_with_output(
             r#"{{ "text" | style("a") }}"#,
             &serde_json::json!({}),
-            ThemeChoice::from(&theme),
+            &theme,
             OutputMode::Text,
         );
 
@@ -885,7 +830,7 @@ mod tests {
         let output = render_with_output(
             r#"{{ time | style("timestamp") }} - {{ name | style("title") }}"#,
             &serde_json::json!({"time": "12:00", "name": "Report"}),
-            ThemeChoice::from(&theme),
+            &theme,
             OutputMode::Text,
         )
         .unwrap();
@@ -920,7 +865,7 @@ mod tests {
         let output = render_with_context(
             "{{ name }} (v{{ version }})",
             &data,
-            ThemeChoice::from(&theme),
+            &theme,
             OutputMode::Text,
             &registry,
             &render_ctx,
@@ -955,7 +900,7 @@ mod tests {
         let output = render_with_context(
             "{{ message }} (width={{ terminal_width }})",
             &data,
-            ThemeChoice::from(&theme),
+            &theme,
             OutputMode::Text,
             &registry,
             &render_ctx,
@@ -989,7 +934,7 @@ mod tests {
         let output = render_with_context(
             "{{ value }}",
             &data,
-            ThemeChoice::from(&theme),
+            &theme,
             OutputMode::Text,
             &registry,
             &render_ctx,
@@ -1020,7 +965,7 @@ mod tests {
         let output = render_with_context(
             "{{ name }}",
             &data,
-            ThemeChoice::from(&theme),
+            &theme,
             OutputMode::Text,
             &registry,
             &render_ctx,
@@ -1052,7 +997,7 @@ mod tests {
         let output = render_or_serialize_with_context(
             "unused template {{ extra }}",
             &data,
-            ThemeChoice::from(&theme),
+            &theme,
             OutputMode::Json,
             &registry,
             &render_ctx,
@@ -1084,7 +1029,7 @@ mod tests {
         let output = render_or_serialize_with_context(
             "{{ label }}: {{ count }}",
             &data,
-            ThemeChoice::from(&theme),
+            &theme,
             OutputMode::Text,
             &registry,
             &render_ctx,
@@ -1115,7 +1060,7 @@ mod tests {
         let output = render_with_context(
             "Mode: {{ mode }}",
             &data,
-            ThemeChoice::from(&theme),
+            &theme,
             OutputMode::Term,
             &registry,
             &render_ctx,
@@ -1153,7 +1098,7 @@ mod tests {
         let output = render_with_context(
             "{% for item in items %}{{ prefix }}{{ item.name }}\n{% endfor %}",
             &data,
-            ThemeChoice::from(&theme),
+            &theme,
             OutputMode::Text,
             &registry,
             &render_ctx,

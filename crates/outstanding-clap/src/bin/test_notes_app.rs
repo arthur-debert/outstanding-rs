@@ -13,7 +13,7 @@
 use clap::{Args, CommandFactory, Parser, Subcommand};
 use console::Style;
 use outstanding::topics::{Topic, TopicType};
-use outstanding::{render_with_output, OutputMode, Theme, ThemeChoice};
+use outstanding::{render_with_output, OutputMode, Theme};
 use outstanding_clap::Outstanding;
 use serde::Serialize;
 
@@ -54,7 +54,7 @@ struct OptionPair {
 }
 
 fn echo_command(data: &EchoData, mode: OutputMode) {
-    match render_with_output(ECHO_TEMPLATE, data, ThemeChoice::from(&echo_theme()), mode) {
+    match render_with_output(ECHO_TEMPLATE, data, &echo_theme(), mode) {
         Ok(output) => print!("{}", output),
         Err(e) => eprintln!("Template error: {}", e),
     }

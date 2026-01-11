@@ -1,0 +1,154 @@
+ Outstanding: Documentation vs. Codebase Divergence Report
+
+  Summary
+
+  The docs/overview.lex describes the vision and roadmap for Outstanding. Several features are accurately documented, but others are aspirational and not yet implemented. Below is a detailed analysis.
+
+  ---
+  Divergences
+
+  1. Structured Output Formats (YAML, CSV, XML)
+
+  Document Claims (lines 73-79):
+  Structured Data Outputs: Automatically Generated... JSON, YAML, CSV, XML
+
+  Actual Implementation:
+  - OutputMode enum in crates/outstanding/src/output.rs:61-73 only supports: Auto, Term, Text, TermDebug, Json
+  - No YAML, CSV, or XML support exists
+
+  Effort Estimate: Medium
+  - YAML: Add OutputMode::Yaml variant, use serde_yaml (~2-4 hours)
+  - CSV: Add OutputMode::Csv, requires flattening logic for nested data (~4-8 hours)
+  - XML: Add OutputMode::Xml, use serde-xml-rs (~2-4 hours)
+  - Total: ~1-2 days for all three
+
+  ---
+  2. File-Based Templates with Hot Reloading
+
+  Document Claims (lines 94-98):
+  Templates can be file based, or inline strings. During development, file based templates will be reloaded on each render.
+
+  Actual Implementation:
+  - Templates are inline strings only
+  - Renderer::add_template(name, source) accepts string source, not file paths
+  - No file watching or hot reloading mechanism exists
+  - The document itself notes uncertainty: "Verify if runtime file based loading is supported... This is likely not the case"
+
+  Effort Estimate: Medium-High
+  - File-based loading: Add add_template_file(name, path) method (~2-4 hours)
+  - Hot reloading: Implement file watcher (e.g., notify crate), dev-mode flag, template cache invalidation (~1-2 days)
+  - Total: ~2-3 days
+
+  ---
+  3. Theme/Stylesheet YAML Files with Hot Reloading
+
+  Document Claims (lines 114):
+  Themes can be defined in code or via yaml files... During development, just like templates are hot reloaded, so are themes.
+
+  Actual Implementation:
+  - Themes are defined purely in Rust code via Theme::new().add(name, style) builder API
+  - No YAML file loading exists
+  - No hot reloading for themes
+  - Grep for .yaml/.yml in crates returns zero matches in code
+
+  Effort Estimate: Medium-High
+  - YAML schema design and parsing (~4-8 hours)
+  - Color/style string parsing (e.g., "green bold" → Style) (~4-8 hours)
+  - Hot reloading (shares infrastructure with template reloading) (~8 hours if done standalone)
+  - Total: ~2-3 days
+
+  ---
+  4. File Outputs with Predefined Flags
+
+  Document Claims (lines 83-85):
+  Commands can be configured to write to the file system directly and can do so by using predefined flags, requiring no code from the application layer.
+
+  Actual Implementation:
+  - Binary output via CommandResult::Archive(Vec<u8>, String) exists
+  - The print logic in outstanding.rs:833 writes to the suggested filename
+  - However, there's no automatic --output-file flag injection like there is for --output format
+  - Application code must manually handle file writing or return Archive
+
+  Effort Estimate: Low-Medium
+  - Add optional --output-file flag alongside --output format flag (~4-8 hours)
+  - Integrate with existing RunResult::Binary path
+  - Total: ~0.5-1 day
+
+  ---
+  5. Naming: "Plain" vs "Text"
+
+  Document Claims (line 70):
+  Plain: plain text output, suitable for piping and redirection.
+
+  Actual Implementation:
+  - The mode is called OutputMode::Text, not "Plain"
+  - Functionally equivalent
+
+  Effort Estimate: None (documentation terminology issue only, or trivial alias)
+
+  ---
+  Aligned Features (Already Implemented)
+  ┌───────────────────────────────────┬────────────────────┬─────────────────────────────────────────────────┐
+  │              Feature              │ Document Reference │              Implementation Status              │
+  ├───────────────────────────────────┼────────────────────┼─────────────────────────────────────────────────┤
+  │ Pre-dispatch hooks                │ Line 47            │ ✅ hooks.rs - runs before handler               │
+  ├───────────────────────────────────┼────────────────────┼─────────────────────────────────────────────────┤
+  │ Post-dispatch hooks               │ Line 49            │ ✅ hooks.rs - modifies data before render       │
+  ├───────────────────────────────────┼────────────────────┼─────────────────────────────────────────────────┤
+  │ Post-output hooks                 │ Line 51            │ ✅ hooks.rs - transforms final output           │
+  ├───────────────────────────────────┼────────────────────┼─────────────────────────────────────────────────┤
+  │ Term/Auto output modes            │ Lines 69-71        │ ✅ OutputMode::Term, Auto                       │
+  ├───────────────────────────────────┼────────────────────┼─────────────────────────────────────────────────┤
+  │ JSON output                       │ Line 75            │ ✅ OutputMode::Json                             │
+  ├───────────────────────────────────┼────────────────────┼─────────────────────────────────────────────────┤
+  │ Binary outputs                    │ Line 81            │ ✅ CommandResult::Archive                       │
+  ├───────────────────────────────────┼────────────────────┼─────────────────────────────────────────────────┤
+  │ MiniJinja templates               │ Lines 94, 100      │ ✅ Full MiniJinja with filters                  │
+  ├───────────────────────────────────┼────────────────────┼─────────────────────────────────────────────────┤
+  │ Template includes                 │ Line 100           │ ✅ MiniJinja native support                     │
+  ├───────────────────────────────────┼────────────────────┼─────────────────────────────────────────────────┤
+  │ style() filter                    │ Line 106           │ ✅ style filter injected                        │
+  ├───────────────────────────────────┼────────────────────┼─────────────────────────────────────────────────┤
+  │ Style aliases/composition         │ Lines 106-108      │ ✅ StyleValue::Alias with validation            │
+  ├───────────────────────────────────┼────────────────────┼─────────────────────────────────────────────────┤
+  │ Adaptive themes (light/dark)      │ Lines 112-113      │ ✅ AdaptiveTheme + dark-light crate             │
+  ├───────────────────────────────────┼────────────────────┼─────────────────────────────────────────────────┤
+  │ console::Style integration        │ Line 110           │ ✅ Uses console::Style throughout               │
+  ├───────────────────────────────────┼────────────────────┼─────────────────────────────────────────────────┤
+  │ Table formatter                   │ Lines 120-122      │ ✅ Full TableSpec/TableFormatter                │
+  ├───────────────────────────────────┼────────────────────┼─────────────────────────────────────────────────┤
+  │ Column widths, padding, alignment │ Line 122           │ ✅ Width::Fixed/Bounded/Fill, Align, TruncateAt │
+  ├───────────────────────────────────┼────────────────────┼─────────────────────────────────────────────────┤
+  │ Clap integration crate            │ Line 134           │ ✅ outstanding-clap crate                       │
+  ├───────────────────────────────────┼────────────────────┼─────────────────────────────────────────────────┤
+  │ Incremental adoption              │ Lines 136-138      │ ✅ Modular design allows partial use            │
+  └───────────────────────────────────┴────────────────────┴─────────────────────────────────────────────────┘
+  ---
+  Effort Summary
+  ┌─────────────────────────────┬────────────┐
+  │       Missing Feature       │   Effort   │
+  ├─────────────────────────────┼────────────┤
+  │ YAML output format          │ 2-4 hours  │
+  ├─────────────────────────────┼────────────┤
+  │ CSV output format           │ 4-8 hours  │
+  ├─────────────────────────────┼────────────┤
+  │ XML output format           │ 2-4 hours  │
+  ├─────────────────────────────┼────────────┤
+  │ File-based template loading │ 2-4 hours  │
+  ├─────────────────────────────┼────────────┤
+  │ Template hot reloading      │ 1-2 days   │
+  ├─────────────────────────────┼────────────┤
+  │ YAML theme files            │ 8-16 hours │
+  ├─────────────────────────────┼────────────┤
+  │ Theme hot reloading         │ 8 hours    │
+  ├─────────────────────────────┼────────────┤
+  │ --output-file flag          │ 4-8 hours  │
+  └─────────────────────────────┴────────────┘
+  Total estimated effort for full parity: ~4-6 days of focused work
+
+  ---
+  Recommendations
+
+  1. Quick wins: YAML/CSV/XML output formats are straightforward serde additions
+  2. High value: File-based templates would significantly improve developer experience
+  3. Bundle together: Template and theme hot reloading share infrastructure; implement together

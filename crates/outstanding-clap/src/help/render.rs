@@ -2,7 +2,7 @@
 
 use clap::Command;
 use outstanding::topics::TopicRegistry;
-use outstanding::{render_with_output, OutputMode, ThemeChoice};
+use outstanding::{render_with_output, OutputMode};
 
 use super::config::{default_help_theme, HelpConfig};
 use super::data::{extract_help_data, extract_help_data_with_topics};
@@ -23,7 +23,7 @@ pub fn render_help(
 
     let data = extract_help_data(cmd);
 
-    render_with_output(template, &data, ThemeChoice::from(&theme), mode)
+    render_with_output(template, &data, &theme, mode)
 }
 
 /// Renders the help for a clap command with topics in a "Learn More" section.
@@ -43,5 +43,5 @@ pub fn render_help_with_topics(
 
     let data = extract_help_data_with_topics(cmd, registry);
 
-    render_with_output(template, &data, ThemeChoice::from(&theme), mode)
+    render_with_output(template, &data, &theme, mode)
 }

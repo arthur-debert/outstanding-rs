@@ -4,7 +4,7 @@
 //! terminal presentation. It provides:
 //!
 //! - **Template rendering** with MiniJinja + styled output
-//! - **Themes** for named style definitions (colors, bold, etc.)
+//! - **Adaptive themes** for named style definitions with light/dark mode support
 //! - **Automatic terminal capability detection** (TTY, CLICOLOR, etc.)
 //! - **Output mode control** (Auto/Term/Text/TermDebug)
 //! - **Help topics system** for extended documentation
@@ -15,8 +15,8 @@
 //!
 //! ## Core Concepts
 //!
-//! - [`Theme`]: Named collection of `console::Style` values (e.g., `"header"` → bold cyan)
-//! - [`AdaptiveTheme`]: Light/dark theme pair with OS detection
+//! - [`Theme`]: Named collection of adaptive styles that respond to light/dark mode
+//! - [`ColorMode`]: Light or dark color mode enum
 //! - [`OutputMode`]: Control output formatting (Auto/Term/Text/TermDebug)
 //! - [`topics`]: Help topics system for extended documentation
 //! - `style` filter: `{{ value | style("name") }}` applies registered styles in templates
@@ -25,7 +25,7 @@
 //! ## Quick Start
 //!
 //! ```rust
-//! use outstanding::{render, Theme, ThemeChoice};
+//! use outstanding::{render, Theme};
 //! use console::Style;
 //! use serde::Serialize;
 //!
@@ -48,33 +48,69 @@
 //! let output = render(
 //!     template,
 //!     &Summary { title: "Report".into(), total: 3 },
-//!     ThemeChoice::from(&theme),
+//!     &theme,
 //! ).unwrap();
 //! println!("{}", output);
 //! ```
 //!
 //! ## Adaptive Themes (Light & Dark)
 //!
+//! Themes are inherently adaptive. Individual styles can define mode-specific
+//! variations that are automatically selected based on the user's OS color mode.
+//!
 //! ```rust
-//! use outstanding::{AdaptiveTheme, Theme, ThemeChoice, OutputMode};
+//! use outstanding::Theme;
 //! use console::Style;
 //!
-//! let light = Theme::new().add("tone", Style::new().green());
-//! let dark  = Theme::new().add("tone", Style::new().yellow().italic());
-//! let adaptive = AdaptiveTheme::new(light, dark);
+//! let theme = Theme::new()
+//!     // Non-adaptive style (same in all modes)
+//!     .add("header", Style::new().bold().cyan())
+//!     // Adaptive style with light/dark variants
+//!     .add_adaptive(
+//!         "panel",
+//!         Style::new(),                                  // Base
+//!         Some(Style::new().fg(console::Color::Black)), // Light mode
+//!         Some(Style::new().fg(console::Color::White)), // Dark mode
+//!     );
 //!
-//! // Automatically renders with the user's OS theme (via the `dark-light` crate)
-//! let banner = outstanding::render_with_output(
-//!     r#"Mode: {{ "active" | style("tone") }}"#,
+//! // Rendering automatically detects OS color mode
+//! let output = outstanding::render(
+//!     r#"{{ "active" | style("panel") }}"#,
 //!     &serde_json::json!({}),
-//!     ThemeChoice::Adaptive(&adaptive),
-//!     OutputMode::Term,
+//!     &theme,
 //! ).unwrap();
+//! ```
+//!
+//! ## YAML-Based Themes
+//!
+//! Themes can also be loaded from YAML files, which is convenient for
+//! UI designers who may not be Rust programmers.
+//!
+//! ```rust,ignore
+//! use outstanding::Theme;
+//!
+//! let theme = Theme::from_yaml(r#"
+//! # Non-adaptive styles
+//! header:
+//!   fg: cyan
+//!   bold: true
+//!
+//! # Adaptive style with light/dark overrides
+//! panel:
+//!   fg: gray
+//!   light:
+//!     fg: black
+//!   dark:
+//!     fg: white
+//!
+//! # Aliases
+//! title: header
+//! "#)?;
 //! ```
 //!
 //! ## Rendering Strategy
 //!
-//! 1. Build a [`Theme`] (or [`AdaptiveTheme`]) using the fluent `console::Style` API.
+//! 1. Build a [`Theme`] using the fluent builder API or YAML.
 //! 2. Load/define templates using regular MiniJinja syntax (`{{ value }}`, `{% for %}`, etc.).
 //! 3. Call [`render`] for ad-hoc rendering or create a [`Renderer`] if you have many templates.
 //! 4. Outstanding injects the `style` filter, auto-detects colors, and returns the final string.
@@ -144,9 +180,11 @@
 //! ```
 
 // Internal modules
+pub mod file_loader;
 mod output;
 mod render;
 mod style;
+pub mod stylesheet;
 mod theme;
 mod util;
 
@@ -162,15 +200,26 @@ pub use minijinja::Error;
 pub use style::{StyleValidationError, StyleValue, Styles, DEFAULT_MISSING_STYLE_INDICATOR};
 
 // Theme module exports
-pub use theme::{set_theme_detector, AdaptiveTheme, ColorMode, Theme, ThemeChoice};
+pub use theme::{detect_color_mode, set_theme_detector, ColorMode, Theme};
 
 // Output module exports
 pub use output::OutputMode;
 
 // Render module exports
 pub use render::{
-    render, render_or_serialize, render_or_serialize_with_context, render_with_context,
-    render_with_output, Renderer,
+    render,
+    render_or_serialize,
+    render_or_serialize_with_context,
+    render_with_context,
+    render_with_output,
+    // Template registry
+    walk_template_dir,
+    RegistryError,
+    Renderer,
+    ResolvedTemplate,
+    TemplateFile,
+    TemplateRegistry,
+    TEMPLATE_EXTENSIONS,
 };
 
 // Utility exports
