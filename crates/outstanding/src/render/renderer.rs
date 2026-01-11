@@ -127,6 +127,9 @@ pub struct Renderer {
 impl Renderer {
     /// Creates a new renderer with automatic color detection.
     ///
+    /// Color mode is detected automatically from the OS settings.
+    /// Styles are resolved for the detected mode.
+    ///
     /// # Errors
     ///
     /// Returns an error if any style aliases are invalid (dangling or cyclic).
@@ -135,6 +138,9 @@ impl Renderer {
     }
 
     /// Creates a new renderer with explicit output mode.
+    ///
+    /// Color mode is detected automatically from the OS settings.
+    /// Styles are resolved for the detected mode.
     ///
     /// # Errors
     ///
@@ -145,8 +151,12 @@ impl Renderer {
             .validate()
             .map_err(|e| Error::new(minijinja::ErrorKind::InvalidOperation, e.to_string()))?;
 
+        // Detect color mode and resolve styles for that mode
+        let color_mode = crate::theme::detect_color_mode();
+        let styles = theme.resolve_styles(Some(color_mode));
+
         let mut env = Environment::new();
-        register_filters(&mut env, theme, mode);
+        register_filters(&mut env, styles, mode);
         Ok(Self {
             env,
             registry: TemplateRegistry::new(),

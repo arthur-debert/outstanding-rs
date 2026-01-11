@@ -125,11 +125,40 @@
 //!
 //! See the [`hooks`] module for full documentation.
 //!
+//! ## Context Injection
+//!
+//! Inject additional values into templates beyond handler data. Useful for terminal info,
+//! app configuration, table formatters, and other utilities:
+//!
+//! ```rust,ignore
+//! use outstanding_clap::{Outstanding, CommandResult, RenderContext};
+//! use minijinja::Value;
+//!
+//! Outstanding::builder()
+//!     // Static context (same for all renders)
+//!     .context("app_version", Value::from("1.0.0"))
+//!
+//!     // Dynamic context (computed at render time)
+//!     .context_fn("terminal", |ctx: &RenderContext| {
+//!         Value::from_iter([
+//!             ("width", Value::from(ctx.terminal_width.unwrap_or(80))),
+//!             ("is_tty", Value::from(ctx.output_mode == outstanding::OutputMode::Term)),
+//!         ])
+//!     })
+//!
+//!     .command("info", handler, "v{{ app_version }}, width={{ terminal.width }}")
+//!     .run_and_print(cmd, args);
+//! ```
+//!
+//! Context values are available in templates alongside handler data. When a context key
+//! conflicts with a data field, the **data field wins**.
+//!
 //! ## Module Structure
 //!
 //! - [`handler`]: Command handler types (`CommandContext`, `CommandResult`, `Handler`)
 //! - [`hooks`]: Hook system for pre/post command execution
 //! - [`help`]: Help rendering functions and configuration
+//! - Context types: [`RenderContext`], [`ContextProvider`], [`ContextRegistry`]
 //! - Internal: `dispatch`, `result`, `outstanding` modules
 
 // Internal modules
@@ -163,6 +192,9 @@ pub use ::outstanding::topics::{
     render_topics_list as render_topics_list_core, Topic as TopicDef,
     TopicRegistry as TopicRegistryDef, TopicType,
 };
+
+// Re-export context types for context injection
+pub use ::outstanding::context::{ContextProvider, ContextRegistry, RenderContext};
 
 // ============================================================================
 // BACKWARDS COMPATIBILITY (deprecated)

@@ -12,6 +12,7 @@ This guide covers how to integrate Outstanding into your clap-based CLI applicat
 - [Themes and Styling](#themes-and-styling)
 - [Help Topics](#help-topics)
 - [Templates](#templates)
+- [Context Injection](#context-injection)
 
 ---
 
@@ -511,6 +512,9 @@ Built-in MiniJinja filters plus:
 | `.theme(theme)` | Set custom theme |
 | `.output_flag(Some("format"))` | Rename output flag |
 | `.no_output_flag()` | Disable output flag |
+| `.context(name, value)` | Add static context value |
+| `.context_fn(name, provider)` | Add dynamic context provider |
+| `.hooks(path, hooks)` | Register hooks for command |
 
 ### Dispatch Methods
 
@@ -531,6 +535,126 @@ Built-in MiniJinja filters plus:
 
 ---
 
+## Context Injection
+
+Beyond handler data, you can inject additional values into templates. This is useful for:
+- Terminal information (width, TTY detection)
+- App configuration
+- Table formatters
+- User preferences
+
+### Static Context
+
+Values that don't change between renders:
+
+```rust
+use outstanding_clap::Outstanding;
+use minijinja::Value;
+
+Outstanding::builder()
+    .context("app_version", Value::from("1.0.0"))
+    .context("config", Value::from_iter([
+        ("debug", Value::from(true)),
+        ("max_items", Value::from(100)),
+    ]))
+    .command("info", handler, "v{{ app_version }}, debug={{ config.debug }}")
+```
+
+### Dynamic Context
+
+Values computed at render time using [`RenderContext`]:
+
+```rust
+use outstanding_clap::{Outstanding, RenderContext};
+use minijinja::Value;
+
+Outstanding::builder()
+    .context_fn("terminal", |ctx: &RenderContext| {
+        Value::from_iter([
+            ("width", Value::from(ctx.terminal_width.unwrap_or(80))),
+            ("is_tty", Value::from(ctx.output_mode == outstanding::OutputMode::Term)),
+        ])
+    })
+    .command("info", handler, "Terminal width: {{ terminal.width }}")
+```
+
+### RenderContext Fields
+
+Dynamic providers receive a `RenderContext` with:
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `output_mode` | `OutputMode` | Current output mode (Term, Text, Json, etc.) |
+| `terminal_width` | `Option<usize>` | Terminal width in columns, if available |
+| `theme` | `&Theme` | Theme being used for rendering |
+| `data` | `&serde_json::Value` | Handler's output data |
+| `extras` | `HashMap<String, String>` | Additional metadata |
+
+### Table Formatters with Context
+
+A common use case is injecting table formatters with resolved terminal width:
+
+```rust
+use outstanding_clap::{Outstanding, RenderContext};
+use outstanding::table::{TableSpec, Column, Width, TableFormatter};
+use minijinja::Value;
+
+// Define table spec once
+let log_spec = TableSpec::builder()
+    .column(Column::new(Width::Fixed(7)))
+    .column(Column::new(Width::Fill))
+    .column(Column::new(Width::Fixed(10)))
+    .separator("  ")
+    .build();
+
+Outstanding::builder()
+    .context_fn("log_table", move |ctx: &RenderContext| {
+        let formatter = TableFormatter::new(&log_spec, ctx.terminal_width.unwrap_or(80));
+        Value::from_object(formatter)
+    })
+    .command("log", handler, r#"
+{% for entry in entries %}
+{{ log_table.row([entry.hash, entry.message, entry.date]) }}
+{% endfor %}
+    "#)
+```
+
+The `TableFormatter` implements `minijinja::value::Object`, providing:
+- `row([values])`: Format a row with the given values
+- `num_columns`: Get the number of columns
+- `column_width(index)`: Get width of a specific column
+
+### Context vs Data Precedence
+
+When a context key conflicts with a data field, **data wins**:
+
+```rust
+// Context provides "version"
+.context("version", Value::from("1.0"))
+
+// Handler also returns "version"
+|_m, _ctx| CommandResult::Ok(json!({"version": "2.0"}))
+
+// Template sees "2.0" (data wins)
+"Version: {{ version }}"
+```
+
+### JSON Mode and Context
+
+When using `--output=json`, context is **not** included in the output.
+Only handler data is serialized:
+
+```bash
+# Context has "extra_field" but it won't appear in JSON output
+$ my-app info --output=json
+{
+  "name": "app",
+  "version": "1.0"
+}
+```
+
+---
+
 ## Best Practices
 
 1. **Design data first**: Define your output structs before templates
@@ -538,3 +662,4 @@ Built-in MiniJinja filters plus:
 3. **Use semantic styles**: Name styles by meaning, not appearance
 4. **Test with JSON mode**: Ensures your data is well-structured
 5. **Gradual adoption**: Start with one command, expand as needed
+6. **Use context for utilities**: Terminal info, formatters, configuration

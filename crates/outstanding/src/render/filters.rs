@@ -3,11 +3,16 @@
 use minijinja::{Environment, Value};
 
 use crate::output::OutputMode;
-use crate::theme::Theme;
+use crate::style::Styles;
 
 /// Registers all built-in filters on a minijinja environment.
-pub(crate) fn register_filters(env: &mut Environment<'static>, theme: Theme, mode: OutputMode) {
-    let styles = theme.styles.clone();
+///
+/// # Arguments
+///
+/// * `env` - The MiniJinja environment to register filters on
+/// * `styles` - Pre-resolved styles for the current color mode
+/// * `mode` - Output mode (determines whether to apply ANSI styling)
+pub(crate) fn register_filters(env: &mut Environment<'static>, styles: Styles, mode: OutputMode) {
     let is_debug = mode.is_debug();
     let use_color = mode.should_use_color();
 

@@ -35,7 +35,8 @@ pub mod registry;
 mod renderer;
 
 pub use functions::{
-    render, render_or_serialize, render_or_serialize_with_spec, render_with_output,
+    render, render_or_serialize, render_or_serialize_with_context, render_or_serialize_with_spec,
+    render_with_context, render_with_output,
 };
 pub use registry::{
     walk_template_dir, RegistryError, ResolvedTemplate, TemplateFile, TemplateRegistry,
