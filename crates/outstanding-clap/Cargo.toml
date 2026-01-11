@@ -25,3 +25,4 @@ thiserror = "2.0.17"
 
 [dev-dependencies]
 clap = { version = "4", features = ["derive"] }
+tempfile = "3"

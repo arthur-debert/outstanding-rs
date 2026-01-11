@@ -9,9 +9,13 @@ use outstanding::context::{ContextProvider, ContextRegistry, RenderContext};
 use outstanding::topics::{
     display_with_pager, render_topic, render_topics_list, Topic, TopicRegistry, TopicRenderConfig,
 };
-use outstanding::{render_or_serialize, render_or_serialize_with_context, OutputMode, Theme};
+use outstanding::{
+    render_or_serialize, render_or_serialize_with_context, write_binary_output, write_output,
+    OutputDestination, OutputMode, Theme,
+};
 use serde::Serialize;
 use std::collections::HashMap;
+use std::path::PathBuf;
 use std::sync::Arc;
 
 use crate::dispatch::{extract_command_path, get_deepest_matches, DispatchFn, DispatchOutput};
@@ -31,6 +35,7 @@ fn get_terminal_width() -> Option<usize> {
 pub struct Outstanding {
     pub(crate) registry: TopicRegistry,
     pub(crate) output_flag: Option<String>,
+    pub(crate) output_file_flag: Option<String>,
     pub(crate) output_mode: OutputMode,
     pub(crate) theme: Option<Theme>,
     pub(crate) command_hooks: HashMap<String, Hooks>,
@@ -48,6 +53,7 @@ impl Outstanding {
         Self {
             registry: TopicRegistry::new(),
             output_flag: Some("output".to_string()), // Enabled by default
+            output_file_flag: Some("output-file-path".to_string()),
             output_mode: OutputMode::Auto,
             theme: None,
             command_hooks: HashMap::new(),
@@ -59,6 +65,7 @@ impl Outstanding {
         Self {
             registry,
             output_flag: Some("output".to_string()),
+            output_file_flag: Some("output-file-path".to_string()),
             output_mode: OutputMode::Auto,
             theme: None,
             command_hooks: HashMap::new(),
@@ -241,6 +248,19 @@ impl Outstanding {
                     ])
                     .default_value("auto")
                     .help("Output mode: auto, term, text, term-debug, json, yaml, xml, or csv"),
+            );
+        }
+
+        // Add output file flag if enabled
+        if let Some(ref flag_name) = self.output_file_flag {
+            let flag: &'static str = Box::leak(flag_name.clone().into_boxed_str());
+            cmd = cmd.arg(
+                Arg::new("_output_file_path")
+                    .long(flag)
+                    .value_name("PATH")
+                    .global(true)
+                    .action(ArgAction::Set)
+                    .help("Write output to file instead of stdout"),
             );
         }
 
@@ -473,6 +493,7 @@ impl Default for Outstanding {
 pub struct OutstandingBuilder {
     registry: TopicRegistry,
     output_flag: Option<String>,
+    output_file_flag: Option<String>,
     theme: Option<Theme>,
     commands: HashMap<String, DispatchFn>,
     command_hooks: HashMap<String, Hooks>,
@@ -493,6 +514,7 @@ impl OutstandingBuilder {
         Self {
             registry: TopicRegistry::new(),
             output_flag: Some("output".to_string()), // Enabled by default
+            output_file_flag: Some("output-file-path".to_string()),
             theme: None,
             commands: HashMap::new(),
             command_hooks: HashMap::new(),
@@ -610,6 +632,24 @@ impl OutstandingBuilder {
     /// By default, `--output` is added to all commands. Call this to disable it.
     pub fn no_output_flag(mut self) -> Self {
         self.output_flag = None;
+        self
+    }
+
+    /// Configures the name of the output file path flag.
+    ///
+    /// When set, an `--<flag>=<PATH>` option is added to all commands.
+    ///
+    /// Default flag name is "output-file-path".
+    ///
+    /// To disable the output file flag entirely, use `no_output_file_flag()`.
+    pub fn output_file_flag(mut self, name: Option<&str>) -> Self {
+        self.output_file_flag = Some(name.unwrap_or("output-file-path").to_string());
+        self
+    }
+
+    /// Disables the output file flag entirely.
+    pub fn no_output_file_flag(mut self) -> Self {
+        self.output_file_flag = None;
         self
     }
 
@@ -835,7 +875,7 @@ impl OutstandingBuilder {
             };
 
             // Run post-output hooks if registered
-            let final_output = if let Some(hooks) = hooks {
+            let mut final_output = if let Some(hooks) = hooks {
                 match hooks.run_post_output(&matches, &ctx, output) {
                     Ok(o) => o,
                     Err(e) => return RunResult::Handled(format!("Hook error: {}", e)),
@@ -843,6 +883,34 @@ impl OutstandingBuilder {
             } else {
                 output
             };
+
+            // Handle file output if configured
+            if self.output_file_flag.is_some() {
+                if let Some(path_str) = matches
+                    .try_get_one::<String>("_output_file_path")
+                    .unwrap_or(None)
+                {
+                    let path = PathBuf::from(path_str);
+                    let dest = OutputDestination::File(path);
+
+                    match &final_output {
+                        Output::Text(s) => {
+                            if let Err(e) = write_output(s, &dest) {
+                                return RunResult::Handled(format!("Error writing output: {}", e));
+                            }
+                            // Suppress further output
+                            final_output = Output::Silent;
+                        }
+                        Output::Binary(b, _) => {
+                            if let Err(e) = write_binary_output(b, &dest) {
+                                return RunResult::Handled(format!("Error writing output: {}", e));
+                            }
+                            final_output = Output::Silent;
+                        }
+                        Output::Silent => {}
+                    }
+                }
+            }
 
             // Convert back to RunResult
             match final_output {
@@ -986,6 +1054,20 @@ impl OutstandingBuilder {
                     .help("Output mode: auto, term, text, term-debug, or json"),
             );
         }
+
+        // Add output file flag if enabled
+        if let Some(ref flag_name) = self.output_file_flag {
+            let flag: &'static str = Box::leak(flag_name.clone().into_boxed_str());
+            cmd = cmd.arg(
+                Arg::new("_output_file_path")
+                    .long(flag)
+                    .value_name("PATH")
+                    .global(true)
+                    .action(ArgAction::Set)
+                    .help("Write output to file instead of stdout"),
+            );
+        }
+
         cmd
     }
 
@@ -996,6 +1078,7 @@ impl OutstandingBuilder {
         Outstanding {
             registry: self.registry,
             output_flag: self.output_flag,
+            output_file_flag: self.output_file_flag,
             output_mode: OutputMode::Auto,
             theme: self.theme,
             command_hooks: self.command_hooks,
@@ -2148,5 +2231,57 @@ mod tests {
         assert!(output.contains("\"data\": \"value\""));
         assert!(!output.contains("extra"));
         assert!(!output.contains("should_not_appear"));
+    }
+
+    #[test]
+    fn test_dispatch_with_output_file_flag() {
+        use serde_json::json;
+        let temp_dir = tempfile::tempdir().unwrap();
+        let file_path = temp_dir.path().join("output.txt");
+        let path_str = file_path.to_str().unwrap();
+
+        let builder = Outstanding::builder().command(
+            "list",
+            |_m, _ctx| CommandResult::Ok(json!({"count": 42})),
+            "Count: {{ count }}",
+        );
+
+        let cmd = Command::new("app").subcommand(Command::new("list"));
+
+        let result = builder.dispatch_from(cmd, ["app", "--output-file-path", path_str, "list"]);
+
+        assert!(result.is_handled());
+        // Verify output is suppressed (silent)
+        assert_eq!(result.output(), Some(""));
+
+        // Verify file content
+        let content = std::fs::read_to_string(file_path).unwrap();
+        assert_eq!(content, "Count: 42");
+    }
+
+    #[test]
+    fn test_dispatch_with_custom_output_file_flag() {
+        use serde_json::json;
+        let temp_dir = tempfile::tempdir().unwrap();
+        let file_path = temp_dir.path().join("out.txt");
+        let path_str = file_path.to_str().unwrap();
+
+        let builder = Outstanding::builder()
+            .output_file_flag(Some("save-to"))
+            .command(
+                "list",
+                |_m, _ctx| CommandResult::Ok(json!({"count": 99})),
+                "{{ count }}",
+            );
+
+        let cmd = Command::new("app").subcommand(Command::new("list"));
+
+        let result = builder.dispatch_from(cmd, ["app", "--save-to", path_str, "list"]);
+
+        assert!(result.is_handled());
+        assert_eq!(result.output(), Some(""));
+
+        let content = std::fs::read_to_string(file_path).unwrap();
+        assert_eq!(content, "99");
     }
 }

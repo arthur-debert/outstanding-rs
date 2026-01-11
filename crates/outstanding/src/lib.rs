@@ -203,7 +203,7 @@ pub use style::{StyleValidationError, StyleValue, Styles, DEFAULT_MISSING_STYLE_
 pub use theme::{detect_color_mode, set_theme_detector, ColorMode, Theme};
 
 // Output module exports
-pub use output::OutputMode;
+pub use output::{write_binary_output, write_output, OutputDestination, OutputMode};
 
 // Render module exports
 pub use render::{

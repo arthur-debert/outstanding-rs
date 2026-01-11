@@ -4,6 +4,70 @@
 //! whether to include ANSI codes, render debug tags, or serialize as JSON.
 
 use console::Term;
+use std::io::Write;
+
+/// Destination for rendered output.
+///
+/// Determines where the output should be written.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum OutputDestination {
+    /// Write to standard output
+    Stdout,
+    /// Write to a specific file
+    File(std::path::PathBuf),
+}
+
+/// Validates that a file path is safe to write to.
+///
+/// Returns an error if the parent directory doesn't exist.
+fn validate_path(path: &std::path::Path) -> std::io::Result<()> {
+    if let Some(parent) = path.parent() {
+        if !parent.as_os_str().is_empty() && !parent.exists() {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::NotFound,
+                format!("Parent directory does not exist: {}", parent.display()),
+            ));
+        }
+    }
+    Ok(())
+}
+
+/// Writes text content to the specified destination.
+///
+/// - `Stdout`: Writes to stdout with a newline
+/// - `File`: Writes to the file (overwriting)
+pub fn write_output(content: &str, dest: &OutputDestination) -> std::io::Result<()> {
+    match dest {
+        OutputDestination::Stdout => {
+            // Use println! logic (writeln to stdout)
+            let stdout = std::io::stdout();
+            let mut handle = stdout.lock();
+            writeln!(handle, "{}", content)
+        }
+        OutputDestination::File(path) => {
+            validate_path(path)?;
+            std::fs::write(path, content)
+        }
+    }
+}
+
+/// Writes binary content to the specified destination.
+///
+/// - `Stdout`: Writes raw bytes to stdout
+/// - `File`: Writes to the file (overwriting)
+pub fn write_binary_output(content: &[u8], dest: &OutputDestination) -> std::io::Result<()> {
+    match dest {
+        OutputDestination::Stdout => {
+            let stdout = std::io::stdout();
+            let mut handle = stdout.lock();
+            handle.write_all(content)
+        }
+        OutputDestination::File(path) => {
+            validate_path(path)?;
+            std::fs::write(path, content)
+        }
+    }
+}
 
 /// Controls how output is rendered.
 ///
@@ -169,5 +233,52 @@ mod tests {
     #[test]
     fn test_output_mode_json_not_debug() {
         assert!(!OutputMode::Json.is_debug());
+    }
+
+    #[test]
+    fn test_write_output_file() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let file_path = temp_dir.path().join("output.txt");
+        let dest = OutputDestination::File(file_path.clone());
+
+        write_output("hello", &dest).unwrap();
+
+        let content = std::fs::read_to_string(file_path).unwrap();
+        assert_eq!(content, "hello");
+    }
+
+    #[test]
+    fn test_write_output_file_overwrite() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let file_path = temp_dir.path().join("output.txt");
+        std::fs::write(&file_path, "initial").unwrap();
+
+        let dest = OutputDestination::File(file_path.clone());
+        write_output("new", &dest).unwrap();
+
+        let content = std::fs::read_to_string(file_path).unwrap();
+        assert_eq!(content, "new");
+    }
+
+    #[test]
+    fn test_write_output_binary_file() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let file_path = temp_dir.path().join("output.bin");
+        let dest = OutputDestination::File(file_path.clone());
+
+        write_binary_output(&[1, 2, 3], &dest).unwrap();
+
+        let content = std::fs::read(&file_path).unwrap();
+        assert_eq!(content, vec![1, 2, 3]);
+    }
+
+    #[test]
+    fn test_write_output_invalid_path() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let file_path = temp_dir.path().join("missing").join("output.txt");
+        let dest = OutputDestination::File(file_path);
+
+        let result = write_output("hello", &dest);
+        assert!(result.is_err());
     }
 }
