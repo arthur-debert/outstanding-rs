@@ -18,29 +18,77 @@ This guide covers how to integrate Outstanding into your clap-based CLI applicat
 
 ## Quick Start
 
-The simplest integration adds styled help and an `--output` flag to your CLI:
+The simplest way to build a CLI with Outstanding is the `dispatch!` macro:
 
 ```rust
 use clap::Command;
-use outstanding_clap::Outstanding;
+use outstanding_clap::{dispatch, Outstanding, CommandResult};
+use serde_json::json;
 
 fn main() {
-    let matches = Outstanding::run(Command::new("my-app")
-        .about("My awesome CLI")
-        .subcommand(Command::new("list").about("List items")));
+    let cmd = Command::new("my-app")
+        .subcommand(Command::new("list").about("List items"))
+        .subcommand(Command::new("count").about("Count items"));
 
-    // Handle your commands normally
-    if let Some(_) = matches.subcommand_matches("list") {
-        println!("Listing items...");
-    }
+    Outstanding::builder()
+        .commands(dispatch! {
+            list => |_m, _ctx| CommandResult::Ok(json!({"items": ["apple", "banana"]})),
+            count => |_m, _ctx| CommandResult::Ok(json!({"count": 42})),
+        })
+        .run_and_print(cmd, std::env::args());
 }
 ```
 
-Your CLI now has:
+That's it! Your CLI now has:
 
-- `--output=<auto|term|text|term-debug|json|yaml|xml|csv>` flag on all commands
+- Automatic dispatch from command names to handlers
+- `--output=<json|yaml|text|...>` flag on all commands
 - `help` subcommand with topic support
 - Styled help output
+
+For nested commands, use groups:
+
+```rust
+Outstanding::builder()
+    .commands(dispatch! {
+        db: {
+            migrate => db::migrate,
+            backup => db::backup,
+        },
+        app: {
+            start => app::start,
+            stop => app::stop,
+        },
+        version => |_m, _ctx| CommandResult::Ok(json!({"v": "1.0"})),
+    })
+    .run_and_print(cmd, std::env::args());
+```
+
+### With Templates
+
+Add templates for human-readable output (JSON mode works automatically):
+
+```rust
+Outstanding::builder()
+    .template_dir("templates")  // templates/list.j2, templates/db/migrate.j2, etc.
+    .commands(dispatch! {
+        list => |_m, _ctx| CommandResult::Ok(json!({"items": ["apple", "banana"]})),
+    })
+    .run_and_print(cmd, std::env::args());
+```
+
+Or inline templates:
+
+```rust
+Outstanding::builder()
+    .commands(dispatch! {
+        list => {
+            handler: |_m, _ctx| CommandResult::Ok(json!({"items": ["apple", "banana"]})),
+            template: "Items:\n{% for item in items %}- {{ item }}\n{% endfor %}",
+        },
+    })
+    .run_and_print(cmd, std::env::args());
+```
 
 ---
 
@@ -524,8 +572,13 @@ Built-in MiniJinja filters plus:
 
 | Method | Description |
 |--------|-------------|
+| `.commands(dispatch! { ... })` | Register commands with declarative macro |
+| `.group(name, \|g\| g.command(...))` | Register nested command group |
 | `.command(path, handler, template)` | Register closure handler |
+| `.command_with(path, handler, \|cfg\| cfg...)` | Register handler with inline config |
 | `.command_handler(path, handler, template)` | Register struct handler |
+| `.template_dir(path)` | Set base directory for convention-based templates |
+| `.template_ext(ext)` | Set template extension (default: `.j2`) |
 | `.topics_dir(path)` | Load topics from directory |
 | `.add_topic(topic)` | Add single topic |
 | `.theme(theme)` | Set custom theme |
