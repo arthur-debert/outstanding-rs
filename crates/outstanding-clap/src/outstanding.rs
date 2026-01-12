@@ -19,13 +19,14 @@ use std::path::PathBuf;
 use std::sync::Arc;
 
 use crate::dispatch::{extract_command_path, get_deepest_matches, DispatchFn, DispatchOutput};
+use crate::group::{CommandConfig, GroupBuilder, GroupEntry};
 use crate::handler::{CommandContext, CommandResult, FnHandler, Handler, RunResult};
 use crate::help::{render_help, render_help_with_topics, HelpConfig};
 use crate::hooks::{HookError, Hooks, Output};
 use crate::result::HelpResult;
 
 /// Gets the current terminal width, or None if not available.
-fn get_terminal_width() -> Option<usize> {
+pub(crate) fn get_terminal_width() -> Option<usize> {
     terminal_size::terminal_size().map(|(w, _)| w.0 as usize)
 }
 
@@ -500,6 +501,8 @@ pub struct OutstandingBuilder {
     commands: HashMap<String, DispatchFn>,
     command_hooks: HashMap<String, Hooks>,
     context_registry: ContextRegistry,
+    template_dir: Option<PathBuf>,
+    template_ext: String,
 }
 
 impl Default for OutstandingBuilder {
@@ -523,6 +526,8 @@ impl OutstandingBuilder {
             commands: HashMap::new(),
             command_hooks: HashMap::new(),
             context_registry: ContextRegistry::new(),
+            template_dir: None,
+            template_ext: ".j2".to_string(),
         }
     }
 
@@ -654,6 +659,248 @@ impl OutstandingBuilder {
     pub fn default_theme(mut self, name: &str) -> Self {
         self.default_theme_name = Some(name.to_string());
         self
+    }
+
+    /// Sets the base directory for convention-based template resolution.
+    ///
+    /// When a command is registered without an explicit template, the template
+    /// path is derived from the command path:
+    /// - Command `db.migrate` → `{template_dir}/db/migrate{template_ext}`
+    ///
+    /// # Example
+    ///
+    /// ```rust,ignore
+    /// Outstanding::builder()
+    ///     .template_dir("templates")
+    ///     .group("db", |g| g
+    ///         .command("migrate", handler))  // uses "templates/db/migrate.j2"
+    /// ```
+    pub fn template_dir(mut self, path: impl Into<PathBuf>) -> Self {
+        self.template_dir = Some(path.into());
+        self
+    }
+
+    /// Sets the file extension for convention-based template resolution.
+    ///
+    /// Default is `.j2`.
+    ///
+    /// # Example
+    ///
+    /// ```rust,ignore
+    /// Outstanding::builder()
+    ///     .template_dir("templates")
+    ///     .template_ext(".jinja2")
+    ///     .group("db", |g| g
+    ///         .command("migrate", handler))  // uses "templates/db/migrate.jinja2"
+    /// ```
+    pub fn template_ext(mut self, ext: impl Into<String>) -> Self {
+        self.template_ext = ext.into();
+        self
+    }
+
+    /// Registers commands from a dispatch closure (used by the `dispatch!` macro).
+    ///
+    /// This method accepts a closure that configures a [`GroupBuilder`] with commands
+    /// and nested groups. It's typically used with the [`dispatch!`] macro:
+    ///
+    /// ```rust,ignore
+    /// use outstanding_clap::{dispatch, Outstanding};
+    ///
+    /// Outstanding::builder()
+    ///     .template_dir("templates")
+    ///     .commands(dispatch! {
+    ///         db: {
+    ///             migrate => db::migrate,
+    ///             backup => db::backup,
+    ///         },
+    ///         version => version,
+    ///     })
+    ///     .build()
+    /// ```
+    ///
+    /// The closure receives an empty [`GroupBuilder`] and should return it with
+    /// commands added. Each top-level entry becomes a command or group.
+    pub fn commands<F>(mut self, configure: F) -> Self
+    where
+        F: FnOnce(GroupBuilder) -> GroupBuilder,
+    {
+        let builder = configure(GroupBuilder::new());
+
+        // Register all entries from the group builder
+        for (name, entry) in builder.entries {
+            match entry {
+                GroupEntry::Command { mut handler } => {
+                    let template = handler
+                        .template()
+                        .map(String::from)
+                        .unwrap_or_else(|| self.resolve_template(&name));
+
+                    if let Some(hooks) = handler.take_hooks() {
+                        self.command_hooks.insert(name.clone(), hooks);
+                    }
+
+                    let dispatch = handler.register(&name, template, self.context_registry.clone());
+                    self.commands.insert(name, dispatch);
+                }
+                GroupEntry::Group { builder: nested } => {
+                    self.register_group(&name, nested);
+                }
+            }
+        }
+
+        self
+    }
+
+    /// Creates a command group for organizing related commands.
+    ///
+    /// Groups allow nested command hierarchies with a fluent API:
+    ///
+    /// ```rust,ignore
+    /// Outstanding::builder()
+    ///     .template_dir("templates")
+    ///     .group("db", |g| g
+    ///         .command("migrate", db::migrate)
+    ///         .command("backup", db::backup))
+    ///     .group("app", |g| g
+    ///         .command("start", app::start)
+    ///         .group("config", |g| g
+    ///             .command("get", app::config_get)
+    ///             .command("set", app::config_set)))
+    ///     .build()
+    /// ```
+    ///
+    /// Commands within groups use dot notation for paths:
+    /// - `db.migrate`, `db.backup`
+    /// - `app.start`, `app.config.get`, `app.config.set`
+    pub fn group<F>(mut self, name: &str, configure: F) -> Self
+    where
+        F: FnOnce(GroupBuilder) -> GroupBuilder,
+    {
+        let builder = configure(GroupBuilder::new());
+        self.register_group(name, builder);
+        self
+    }
+
+    /// Registers a command handler with inline configuration.
+    ///
+    /// Use this to set explicit template or hooks without using `.hooks()` separately:
+    ///
+    /// ```rust,ignore
+    /// Outstanding::builder()
+    ///     .command_with("list", handler, |cfg| cfg
+    ///         .template("custom/list.j2")
+    ///         .pre_dispatch(validate_auth)
+    ///         .post_output(copy_to_clipboard))
+    ///     .build()
+    /// ```
+    pub fn command_with<F, T, C>(mut self, path: &str, handler: F, configure: C) -> Self
+    where
+        F: Fn(&ArgMatches, &CommandContext) -> CommandResult<T> + Send + Sync + 'static,
+        T: Serialize + Send + Sync + 'static,
+        C: FnOnce(CommandConfig<FnHandler<F, T>>) -> CommandConfig<FnHandler<F, T>>,
+    {
+        let config = CommandConfig::new(FnHandler::new(handler));
+        let config = configure(config);
+
+        // Resolve template
+        let template = config
+            .template
+            .clone()
+            .unwrap_or_else(|| self.resolve_template(path));
+
+        // Register hooks if present
+        if let Some(hooks) = config.hooks {
+            self.command_hooks.insert(path.to_string(), hooks);
+        }
+
+        // Register the command
+        let context_registry = self.context_registry.clone();
+        let dispatch: DispatchFn = Arc::new(
+            move |matches: &ArgMatches, ctx: &CommandContext, hooks: Option<&Hooks>| {
+                let result = config.handler.handle(matches, ctx);
+
+                match result {
+                    CommandResult::Ok(data) => {
+                        let mut json_data = serde_json::to_value(&data)
+                            .map_err(|e| format!("Failed to serialize handler result: {}", e))?;
+
+                        if let Some(hooks) = hooks {
+                            json_data = hooks
+                                .run_post_dispatch(matches, ctx, json_data)
+                                .map_err(|e| format!("Hook error: {}", e))?;
+                        }
+
+                        let theme = Theme::new();
+                        let render_ctx = RenderContext::new(
+                            ctx.output_mode,
+                            get_terminal_width(),
+                            &theme,
+                            &json_data,
+                        );
+
+                        let output = render_or_serialize_with_context(
+                            &template,
+                            &json_data,
+                            &theme,
+                            ctx.output_mode,
+                            &context_registry,
+                            &render_ctx,
+                        )
+                        .map_err(|e| e.to_string())?;
+                        Ok(DispatchOutput::Text(output))
+                    }
+                    CommandResult::Err(e) => Err(format!("Error: {}", e)),
+                    CommandResult::Silent => Ok(DispatchOutput::Silent),
+                    CommandResult::Archive(bytes, filename) => {
+                        Ok(DispatchOutput::Binary(bytes, filename))
+                    }
+                }
+            },
+        );
+
+        self.commands.insert(path.to_string(), dispatch);
+        self
+    }
+
+    /// Helper to register a group's commands recursively.
+    fn register_group(&mut self, prefix: &str, builder: GroupBuilder) {
+        for (name, entry) in builder.entries {
+            let path = format!("{}.{}", prefix, name);
+
+            match entry {
+                GroupEntry::Command { mut handler } => {
+                    // Resolve template
+                    let template = handler
+                        .template()
+                        .map(String::from)
+                        .unwrap_or_else(|| self.resolve_template(&path));
+
+                    // Extract and register hooks
+                    if let Some(hooks) = handler.take_hooks() {
+                        self.command_hooks.insert(path.clone(), hooks);
+                    }
+
+                    // Register the dispatch function
+                    let dispatch = handler.register(&path, template, self.context_registry.clone());
+                    self.commands.insert(path, dispatch);
+                }
+                GroupEntry::Group { builder: nested } => {
+                    self.register_group(&path, nested);
+                }
+            }
+        }
+    }
+
+    /// Resolves a template path from a command path using conventions.
+    fn resolve_template(&self, command_path: &str) -> String {
+        if let Some(ref dir) = self.template_dir {
+            let file_path = command_path.replace('.', "/");
+            format!("{}/{}{}", dir.display(), file_path, self.template_ext)
+        } else {
+            // No template_dir configured, return empty template
+            // (will use JSON serialization in structured modes)
+            String::new()
+        }
     }
 
     /// Configures the name of the output flag.
@@ -2337,5 +2584,337 @@ mod tests {
 
         let content = std::fs::read_to_string(file_path).unwrap();
         assert_eq!(content, "99");
+    }
+
+    // ============================================================================
+    // Nested Builder (Group) Tests
+    // ============================================================================
+
+    #[test]
+    fn test_group_basic() {
+        use serde_json::json;
+
+        let builder = Outstanding::builder().group("db", |g| {
+            g.command("migrate", |_m, _ctx| {
+                CommandResult::Ok(json!({"status": "migrated"}))
+            })
+            .command("backup", |_m, _ctx| {
+                CommandResult::Ok(json!({"status": "backed_up"}))
+            })
+        });
+
+        let cmd =
+            Command::new("app").subcommand(Command::new("db").subcommand(Command::new("migrate")));
+
+        let matches = cmd.try_get_matches_from(["app", "db", "migrate"]).unwrap();
+        let result = builder.dispatch(matches, OutputMode::Json);
+
+        assert!(result.is_handled());
+        let output = result.output().unwrap();
+        assert!(output.contains("migrated"));
+    }
+
+    #[test]
+    fn test_group_nested() {
+        use serde_json::json;
+
+        let builder = Outstanding::builder().group("app", |g| {
+            g.command("start", |_m, _ctx| {
+                CommandResult::Ok(json!({"action": "start"}))
+            })
+            .group("config", |g| {
+                g.command("get", |_m, _ctx| {
+                    CommandResult::Ok(json!({"value": "test_value"}))
+                })
+                .command("set", |_m, _ctx| CommandResult::Ok(json!({"ok": true})))
+            })
+        });
+
+        // Test nested command: app.config.get
+        let cmd = Command::new("cli").subcommand(
+            Command::new("app")
+                .subcommand(Command::new("start"))
+                .subcommand(
+                    Command::new("config")
+                        .subcommand(Command::new("get"))
+                        .subcommand(Command::new("set")),
+                ),
+        );
+
+        let matches = cmd
+            .try_get_matches_from(["cli", "app", "config", "get"])
+            .unwrap();
+        let result = builder.dispatch(matches, OutputMode::Json);
+
+        assert!(result.is_handled());
+        let output = result.output().unwrap();
+        assert!(output.contains("test_value"));
+    }
+
+    #[test]
+    fn test_group_with_template() {
+        use serde_json::json;
+
+        let builder = Outstanding::builder().group("db", |g| {
+            g.command_with(
+                "migrate",
+                |_m, _ctx| CommandResult::Ok(json!({"count": 5})),
+                |cfg| cfg.template("Migrated {{ count }} tables"),
+            )
+        });
+
+        let cmd =
+            Command::new("app").subcommand(Command::new("db").subcommand(Command::new("migrate")));
+
+        let matches = cmd.try_get_matches_from(["app", "db", "migrate"]).unwrap();
+        let result = builder.dispatch(matches, OutputMode::Text);
+
+        assert!(result.is_handled());
+        assert_eq!(result.output(), Some("Migrated 5 tables"));
+    }
+
+    #[test]
+    fn test_group_with_hooks() {
+        use serde_json::json;
+        use std::sync::atomic::{AtomicBool, Ordering};
+        use std::sync::Arc;
+
+        let hook_called = Arc::new(AtomicBool::new(false));
+        let hook_called_clone = hook_called.clone();
+
+        let builder = Outstanding::builder().group("db", |g| {
+            g.command_with(
+                "migrate",
+                |_m, _ctx| CommandResult::Ok(json!({"done": true})),
+                move |cfg| {
+                    cfg.template("{{ done }}").pre_dispatch(move |_, _| {
+                        hook_called_clone.store(true, Ordering::SeqCst);
+                        Ok(())
+                    })
+                },
+            )
+        });
+
+        let cmd =
+            Command::new("app").subcommand(Command::new("db").subcommand(Command::new("migrate")));
+
+        let matches = cmd.try_get_matches_from(["app", "db", "migrate"]).unwrap();
+        let result = builder.dispatch(matches, OutputMode::Text);
+
+        assert!(result.is_handled());
+        assert!(hook_called.load(Ordering::SeqCst));
+    }
+
+    #[test]
+    fn test_command_with_inline_config() {
+        use serde_json::json;
+        use std::sync::atomic::{AtomicUsize, Ordering};
+        use std::sync::Arc;
+
+        let counter = Arc::new(AtomicUsize::new(0));
+        let counter_clone = counter.clone();
+
+        let builder = Outstanding::builder().command_with(
+            "list",
+            |_m, _ctx| CommandResult::Ok(json!({"items": ["a", "b"]})),
+            move |cfg| {
+                cfg.template("Items: {{ items | length }}")
+                    .pre_dispatch(move |_, _| {
+                        counter_clone.fetch_add(1, Ordering::SeqCst);
+                        Ok(())
+                    })
+            },
+        );
+
+        let cmd = Command::new("app").subcommand(Command::new("list"));
+
+        let matches = cmd.try_get_matches_from(["app", "list"]).unwrap();
+        let result = builder.dispatch(matches, OutputMode::Text);
+
+        assert!(result.is_handled());
+        assert_eq!(result.output(), Some("Items: 2"));
+        assert_eq!(counter.load(Ordering::SeqCst), 1);
+    }
+
+    #[test]
+    fn test_template_dir_convention() {
+        use serde_json::json;
+
+        let builder = Outstanding::builder()
+            .template_dir("templates")
+            .template_ext(".jinja2")
+            .group("db", |g| {
+                // No explicit template - should resolve to "templates/db/migrate.jinja2"
+                g.command("migrate", |_m, _ctx| CommandResult::Ok(json!({"ok": true})))
+            });
+
+        // Verify the builder has the commands registered
+        assert!(builder.commands.contains_key("db.migrate"));
+    }
+
+    #[test]
+    fn test_multiple_groups() {
+        use serde_json::json;
+
+        let builder = Outstanding::builder()
+            .group("db", |g| {
+                g.command("migrate", |_m, _ctx| {
+                    CommandResult::Ok(json!({"type": "db"}))
+                })
+            })
+            .group("cache", |g| {
+                g.command("clear", |_m, _ctx| {
+                    CommandResult::Ok(json!({"type": "cache"}))
+                })
+            });
+
+        assert!(builder.commands.contains_key("db.migrate"));
+        assert!(builder.commands.contains_key("cache.clear"));
+    }
+
+    #[test]
+    fn test_group_mixed_with_regular_commands() {
+        use serde_json::json;
+
+        let builder = Outstanding::builder()
+            .command(
+                "version",
+                |_m, _ctx| CommandResult::Ok(json!({"v": "1.0.0"})),
+                "{{ v }}",
+            )
+            .group("db", |g| {
+                g.command("migrate", |_m, _ctx| CommandResult::Ok(json!({"ok": true})))
+            });
+
+        assert!(builder.commands.contains_key("version"));
+        assert!(builder.commands.contains_key("db.migrate"));
+    }
+
+    // ============================================================================
+    // Dispatch Macro Integration Tests
+    // ============================================================================
+
+    #[test]
+    fn test_dispatch_macro_simple() {
+        use crate::dispatch;
+        use serde_json::json;
+
+        let builder = Outstanding::builder().commands(dispatch! {
+            list => |_m, _ctx| CommandResult::Ok(json!({"items": ["a", "b"]}))
+        });
+
+        assert!(builder.commands.contains_key("list"));
+
+        let cmd = Command::new("app").subcommand(Command::new("list"));
+        let matches = cmd.try_get_matches_from(["app", "list"]).unwrap();
+        let result = builder.dispatch(matches, OutputMode::Json);
+
+        assert!(result.is_handled());
+        let output = result.output().unwrap();
+        assert!(output.contains("items"));
+    }
+
+    #[test]
+    fn test_dispatch_macro_with_groups() {
+        use crate::dispatch;
+        use serde_json::json;
+
+        let builder = Outstanding::builder().commands(dispatch! {
+            db: {
+                migrate => |_m, _ctx| CommandResult::Ok(json!({"migrated": true})),
+                backup => |_m, _ctx| CommandResult::Ok(json!({"backed_up": true})),
+            },
+            version => |_m, _ctx| CommandResult::Ok(json!({"v": "1.0"})),
+        });
+
+        assert!(builder.commands.contains_key("db.migrate"));
+        assert!(builder.commands.contains_key("db.backup"));
+        assert!(builder.commands.contains_key("version"));
+
+        // Test dispatch to nested command
+        let cmd = Command::new("app")
+            .subcommand(
+                Command::new("db")
+                    .subcommand(Command::new("migrate"))
+                    .subcommand(Command::new("backup")),
+            )
+            .subcommand(Command::new("version"));
+
+        let matches = cmd
+            .clone()
+            .try_get_matches_from(["app", "db", "migrate"])
+            .unwrap();
+        let result = builder.dispatch(matches, OutputMode::Json);
+        assert!(result.is_handled());
+        assert!(result.output().unwrap().contains("migrated"));
+    }
+
+    #[test]
+    fn test_dispatch_macro_with_template() {
+        use crate::dispatch;
+        use serde_json::json;
+
+        let builder = Outstanding::builder().commands(dispatch! {
+            list => {
+                handler: |_m, _ctx| CommandResult::Ok(json!({"count": 42})),
+                template: "Count: {{ count }}",
+            }
+        });
+
+        let cmd = Command::new("app").subcommand(Command::new("list"));
+        let matches = cmd.try_get_matches_from(["app", "list"]).unwrap();
+        let result = builder.dispatch(matches, OutputMode::Text);
+
+        assert!(result.is_handled());
+        assert_eq!(result.output(), Some("Count: 42"));
+    }
+
+    #[test]
+    fn test_dispatch_macro_with_hooks() {
+        use crate::dispatch;
+        use serde_json::json;
+        use std::sync::atomic::{AtomicBool, Ordering};
+        use std::sync::Arc;
+
+        let hook_called = Arc::new(AtomicBool::new(false));
+        let hook_called_clone = hook_called.clone();
+
+        let builder = Outstanding::builder().commands(dispatch! {
+            list => {
+                handler: |_m, _ctx| CommandResult::Ok(json!({"ok": true})),
+                template: "{{ ok }}",
+                pre_dispatch: move |_, _| {
+                    hook_called_clone.store(true, Ordering::SeqCst);
+                    Ok(())
+                },
+            }
+        });
+
+        let cmd = Command::new("app").subcommand(Command::new("list"));
+        let matches = cmd.try_get_matches_from(["app", "list"]).unwrap();
+        let result = builder.dispatch(matches, OutputMode::Text);
+
+        assert!(result.is_handled());
+        assert!(hook_called.load(Ordering::SeqCst));
+    }
+
+    #[test]
+    fn test_dispatch_macro_deeply_nested() {
+        use crate::dispatch;
+        use serde_json::json;
+
+        let builder = Outstanding::builder().commands(dispatch! {
+            app: {
+                config: {
+                    get => |_m, _ctx| CommandResult::Ok(json!({"key": "value"})),
+                    set => |_m, _ctx| CommandResult::Ok(json!({"ok": true})),
+                },
+                start => |_m, _ctx| CommandResult::Ok(json!({"started": true})),
+            },
+        });
+
+        assert!(builder.commands.contains_key("app.config.get"));
+        assert!(builder.commands.contains_key("app.config.set"));
+        assert!(builder.commands.contains_key("app.start"));
     }
 }

@@ -7,6 +7,51 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+- **Added**:
+  - **Declarative command dispatch** - New `dispatch!` macro for defining command hierarchies with clean, Python-dict-like syntax
+    - Simple command syntax: `name => handler`
+    - Config block syntax: `name => { handler: ..., template: ..., pre_dispatch: ... }`
+    - Nested groups: `group_name: { ... }`
+    - Hook support inline: `pre_dispatch`, `post_dispatch`, `post_output`
+  - **Nested builder API** - `.group()` method for programmatic command organization
+    - `GroupBuilder` for building nested command groups
+    - `CommandConfig` for inline handler configuration
+    - `.command_with()` for inline template and hook configuration
+  - **Convention-based template resolution** - Templates resolved automatically from command path
+    - `.template_dir("templates")` sets base directory
+    - `.template_ext(".j2")` sets extension (default: `.j2`)
+    - Command `db.migrate` resolves to `templates/db/migrate.j2`
+  - **`.commands()` method** - Accepts closure from `dispatch!` macro for bulk command registration
+
+- **Example**:
+
+  ```rust
+  use outstanding_clap::{dispatch, Outstanding, CommandResult};
+  use serde_json::json;
+
+  Outstanding::builder()
+      .template_dir("templates")
+      .commands(dispatch! {
+          db: {
+              migrate => db::migrate,
+              backup => {
+                  handler: db::backup,
+                  template: "backup.j2",
+                  pre_dispatch: validate_auth,
+              },
+          },
+          app: {
+              start => app::start,
+              config: {
+                  get => config::get,
+                  set => config::set,
+              },
+          },
+          version => |_m, _ctx| CommandResult::Ok(json!({"v": "1.0"})),
+      })
+      .run_and_print(cmd, args);
+  ```
+
 ## [0.13.0] - 2026-01-12
 
 ## [0.12.0] - 2026-01-12

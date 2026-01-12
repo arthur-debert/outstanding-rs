@@ -63,9 +63,59 @@
 //! For non-clap applications, use `outstanding` directly and write your own
 //! argument parsing glue.
 //!
-//! ## Command Handler System
+//! ## Declarative Command Dispatch
 //!
-//! For declarative command handling, use the builder's `command()` method:
+//! The [`dispatch!`] macro provides a clean, declarative syntax for defining
+//! command hierarchies:
+//!
+//! ```rust,ignore
+//! use outstanding_clap::{dispatch, Outstanding, CommandResult};
+//! use serde_json::json;
+//!
+//! Outstanding::builder()
+//!     .template_dir("templates")
+//!     .commands(dispatch! {
+//!         db: {
+//!             migrate => db::migrate,
+//!             backup => {
+//!                 handler: db::backup,
+//!                 template: "backup.j2",
+//!                 pre_dispatch: validate_auth,
+//!             },
+//!         },
+//!         app: {
+//!             start => app::start,
+//!             config: {
+//!                 get => config::get,
+//!                 set => config::set,
+//!             },
+//!         },
+//!         version => |_m, _ctx| CommandResult::Ok(json!({"v": "1.0"})),
+//!     })
+//!     .run_and_print(cmd, std::env::args());
+//! ```
+//!
+//! Templates are resolved by convention: command path `db.migrate` maps to
+//! `{template_dir}/db/migrate{template_ext}` (default extension: `.j2`).
+//!
+//! ## Nested Builder API
+//!
+//! For programmatic command registration, use the builder's `.group()` method:
+//!
+//! ```rust,ignore
+//! Outstanding::builder()
+//!     .template_dir("templates")
+//!     .group("db", |g| g
+//!         .command("migrate", db::migrate)
+//!         .command_with("backup", db::backup, |cfg| cfg
+//!             .template("custom.j2")
+//!             .pre_dispatch(validate)))
+//!     .build()
+//! ```
+//!
+//! ## Simple Command Registration
+//!
+//! For individual commands, use the builder's `command()` method:
 //!
 //! ```rust,ignore
 //! use outstanding_clap::{Outstanding, CommandResult};
@@ -155,8 +205,10 @@
 //!
 //! ## Module Structure
 //!
+//! - [`group`]: Nested builder types ([`GroupBuilder`], [`CommandConfig`])
 //! - [`handler`]: Command handler types (`CommandContext`, `CommandResult`, `Handler`)
 //! - [`hooks`]: Hook system for pre/post command execution
+//! - [`macros`]: The [`dispatch!`] macro for declarative command definition
 //! - [`help`]: Help rendering functions and configuration
 //! - Context types: [`RenderContext`], [`ContextProvider`], [`ContextRegistry`]
 //! - Internal: `dispatch`, `result`, `outstanding` modules
@@ -167,12 +219,18 @@ mod outstanding;
 mod result;
 
 // Public modules
+pub mod group;
 pub mod handler;
 pub mod help;
 pub mod hooks;
+#[macro_use]
+pub mod macros;
 
 // Re-export main types from outstanding module
 pub use outstanding::{Outstanding, OutstandingBuilder};
+
+// Re-export group types for declarative dispatch
+pub use group::{CommandConfig, GroupBuilder};
 
 // Re-export result type
 pub use result::HelpResult;
