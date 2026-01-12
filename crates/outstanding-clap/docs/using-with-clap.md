@@ -37,6 +37,7 @@ fn main() {
 ```
 
 Your CLI now has:
+
 - `--output=<auto|term|text|term-debug|json|yaml|xml|csv>` flag on all commands
 - `help` subcommand with topic support
 - Styled help output
@@ -78,6 +79,7 @@ Controls how output appears:
 | `csv` | Machine-readable CSV (for tabular data) |
 
 Users control this via `--output`:
+
 ```bash
 my-app list --output=json
 my-app list --output=yaml
@@ -126,6 +128,7 @@ fn main() {
 ```
 
 **Benefits:**
+
 - Clean separation of logic and presentation
 - Automatic `--output=json` support
 - Consistent error handling
@@ -166,6 +169,7 @@ fn main() {
 ```
 
 **Benefits:**
+
 - Gradual migration path
 - Keep working code working
 - Adopt Outstanding incrementally
@@ -230,6 +234,7 @@ fn main() {
 ```
 
 **Benefits:**
+
 - Maximum flexibility
 - No changes to existing command structure
 - Use Outstanding's rendering engine directly
@@ -300,6 +305,7 @@ Outstanding::builder()
 ```
 
 Matches:
+
 - `my-app config get`
 - `my-app config set`
 - `my-app config list`
@@ -425,6 +431,7 @@ Outstanding::builder()
 ```
 
 Topic file format:
+
 ```text
 Storage Guide
 =============
@@ -500,6 +507,7 @@ Apply theme styles:
 ### Filters
 
 Built-in MiniJinja filters plus:
+
 - `style(name)`: Apply a named style
 - `nl`: Append newline
 
@@ -549,6 +557,7 @@ Built-in MiniJinja filters plus:
 ## Context Injection
 
 Beyond handler data, you can inject additional values into templates. This is useful for:
+
 - Terminal information (width, TTY detection)
 - App configuration
 - Table formatters
@@ -631,6 +640,7 @@ Outstanding::builder()
 ```
 
 The `TableFormatter` implements `minijinja::value::Object`, providing:
+
 - `row([values])`: Format a row with the given values
 - `num_columns`: Get the number of columns
 - `column_width(index)`: Get width of a specific column

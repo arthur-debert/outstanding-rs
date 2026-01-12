@@ -196,6 +196,11 @@ pub use ::outstanding::topics::{
 // Re-export context types for context injection
 pub use ::outstanding::context::{ContextProvider, ContextRegistry, RenderContext};
 
+// Re-export embedded source types and RenderSetup for simpler setup
+pub use ::outstanding::{
+    EmbeddedSource, EmbeddedStyles, EmbeddedTemplates, OutstandingApp, RenderSetup, SetupError,
+};
+
 // ============================================================================
 // BACKWARDS COMPATIBILITY (deprecated)
 // ============================================================================

@@ -44,16 +44,18 @@ pub const TEMPLATE_EXTENSIONS: &[&str] = &[".jinja", ".jinja2", ".j2", ".txt"];
 /// Stylesheet file extensions (must match outstanding::stylesheet::STYLESHEET_EXTENSIONS).
 pub const STYLESHEET_EXTENSIONS: &[&str] = &[".yaml", ".yml"];
 
-/// Generates code to create a TemplateRegistry with embedded templates.
+/// Generates code to create an EmbeddedTemplates source.
 ///
 /// This function:
 /// 1. Walks the directory at compile time
 /// 2. Collects all files matching template extensions
-/// 3. Generates code that calls `TemplateRegistry::from_embedded_entries()`
+/// 3. Generates an `EmbeddedSource<TemplateResource>` with entries and source path
 ///
-/// The registry handles extension priority and name normalization.
+/// The returned `EmbeddedSource` can be passed to `RenderSetup` or converted
+/// to a `TemplateRegistry` via `into()`.
 pub fn embed_templates_impl(input: LitStr) -> TokenStream {
-    let dir_path = resolve_path(&input.value());
+    let source_path = input.value();
+    let dir_path = resolve_path(&source_path);
 
     let files = match collect_files(&dir_path, TEMPLATE_EXTENSIONS) {
         Ok(files) => files,
@@ -62,6 +64,9 @@ pub fn embed_templates_impl(input: LitStr) -> TokenStream {
         }
     };
 
+    // Store the absolute path for runtime hot-reload to work correctly
+    let absolute_path = dir_path.to_string_lossy().to_string();
+
     // Generate array of (name_with_ext, content) tuples
     let entries: Vec<_> = files
         .iter()
@@ -72,24 +77,29 @@ pub fn embed_templates_impl(input: LitStr) -> TokenStream {
 
     quote! {
         {
-            let entries: &[(&str, &str)] = &[
+            static ENTRIES: &[(&str, &str)] = &[
                 #(#entries),*
             ];
-            ::outstanding::TemplateRegistry::from_embedded_entries(entries)
+            ::outstanding::EmbeddedSource::<::outstanding::TemplateResource>::new(
+                ENTRIES,
+                #absolute_path,
+            )
         }
     }
 }
 
-/// Generates code to create a StylesheetRegistry with embedded stylesheets.
+/// Generates code to create an EmbeddedStyles source.
 ///
 /// This function:
 /// 1. Walks the directory at compile time
 /// 2. Collects all files matching stylesheet extensions
-/// 3. Generates code that calls `StylesheetRegistry::from_embedded_entries()`
+/// 3. Generates an `EmbeddedSource<StylesheetResource>` with entries and source path
 ///
-/// The registry handles extension priority, name normalization, and YAML parsing.
+/// The returned `EmbeddedSource` can be passed to `RenderSetup` or converted
+/// to a `StylesheetRegistry` via `into()`.
 pub fn embed_styles_impl(input: LitStr) -> TokenStream {
-    let dir_path = resolve_path(&input.value());
+    let source_path = input.value();
+    let dir_path = resolve_path(&source_path);
 
     let files = match collect_files(&dir_path, STYLESHEET_EXTENSIONS) {
         Ok(files) => files,
@@ -98,6 +108,9 @@ pub fn embed_styles_impl(input: LitStr) -> TokenStream {
         }
     };
 
+    // Store the absolute path for runtime hot-reload to work correctly
+    let absolute_path = dir_path.to_string_lossy().to_string();
+
     // Generate array of (name_with_ext, content) tuples
     let entries: Vec<_> = files
         .iter()
@@ -108,11 +121,13 @@ pub fn embed_styles_impl(input: LitStr) -> TokenStream {
 
     quote! {
         {
-            let entries: &[(&str, &str)] = &[
+            static ENTRIES: &[(&str, &str)] = &[
                 #(#entries),*
             ];
-            ::outstanding::stylesheet::StylesheetRegistry::from_embedded_entries(entries)
-                .expect("embedded stylesheets should parse")
+            ::outstanding::EmbeddedSource::<::outstanding::StylesheetResource>::new(
+                ENTRIES,
+                #absolute_path,
+            )
         }
     }
 }

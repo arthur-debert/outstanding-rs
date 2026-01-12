@@ -29,7 +29,7 @@
 //! See the [`registry`] module for detailed documentation on template resolution,
 //! extension priority, and collision handling.
 
-mod filters;
+pub(crate) mod filters;
 mod functions;
 pub mod registry;
 mod renderer;

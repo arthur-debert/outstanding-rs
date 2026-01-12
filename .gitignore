@@ -6,3 +6,4 @@ Cargo.lock
 tmp/
 .history/
 .padz/
+local

@@ -175,9 +175,11 @@
 //! ```
 
 // Internal modules
+mod embedded;
 pub mod file_loader;
 mod output;
 mod render;
+mod setup;
 mod style;
 pub mod stylesheet;
 mod theme;
@@ -221,6 +223,14 @@ pub use render::{
 
 // Utility exports
 pub use util::{rgb_to_ansi256, rgb_to_truecolor, truncate_to_width};
+
+// Embedded source types (for macros)
+pub use embedded::{
+    EmbeddedSource, EmbeddedStyles, EmbeddedTemplates, StylesheetResource, TemplateResource,
+};
+
+// Setup builder (unified API)
+pub use setup::{OutstandingApp, RenderSetup, SetupError};
 
 // Macro re-exports (when `macros` feature is enabled)
 #[cfg(feature = "macros")]

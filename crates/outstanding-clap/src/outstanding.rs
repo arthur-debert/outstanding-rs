@@ -11,7 +11,7 @@ use outstanding::topics::{
 };
 use outstanding::{
     render_or_serialize, render_or_serialize_with_context, write_binary_output, write_output,
-    OutputDestination, OutputMode, Theme,
+    EmbeddedStyles, OutputDestination, OutputMode, Theme,
 };
 use serde::Serialize;
 use std::collections::HashMap;
@@ -495,6 +495,8 @@ pub struct OutstandingBuilder {
     output_flag: Option<String>,
     output_file_flag: Option<String>,
     theme: Option<Theme>,
+    embedded_styles: Option<EmbeddedStyles>,
+    default_theme_name: Option<String>,
     commands: HashMap<String, DispatchFn>,
     command_hooks: HashMap<String, Hooks>,
     context_registry: ContextRegistry,
@@ -516,6 +518,8 @@ impl OutstandingBuilder {
             output_flag: Some("output".to_string()), // Enabled by default
             output_file_flag: Some("output-file-path".to_string()),
             theme: None,
+            embedded_styles: None,
+            default_theme_name: None,
             commands: HashMap::new(),
             command_hooks: HashMap::new(),
             context_registry: ContextRegistry::new(),
@@ -611,6 +615,44 @@ impl OutstandingBuilder {
     /// Sets a custom theme for help rendering.
     pub fn theme(mut self, theme: Theme) -> Self {
         self.theme = Some(theme);
+        self
+    }
+
+    /// Sets embedded styles from `embed_styles!` macro.
+    ///
+    /// Use this to load themes from embedded YAML stylesheets. Combined with
+    /// `default_theme()` to select which theme to use.
+    ///
+    /// # Example
+    ///
+    /// ```rust,ignore
+    /// use outstanding::{embed_styles};
+    /// use outstanding_clap::Outstanding;
+    ///
+    /// Outstanding::builder()
+    ///     .styles(embed_styles!("src/styles"))
+    ///     .default_theme("dark")
+    ///     .command("list", handler, template)
+    ///     .run_and_print(cmd, args);
+    /// ```
+    pub fn styles(mut self, styles: EmbeddedStyles) -> Self {
+        self.embedded_styles = Some(styles);
+        self
+    }
+
+    /// Sets the default theme name when using embedded styles.
+    ///
+    /// If not specified, "default" is used.
+    ///
+    /// # Example
+    ///
+    /// ```rust,ignore
+    /// Outstanding::builder()
+    ///     .styles(embed_styles!("src/styles"))
+    ///     .default_theme("dark")
+    /// ```
+    pub fn default_theme(mut self, name: &str) -> Self {
+        self.default_theme_name = Some(name.to_string());
         self
     }
 
@@ -1075,12 +1117,24 @@ impl OutstandingBuilder {
     ///
     /// The built instance includes registered hooks for use with `run_command()`.
     pub fn build(self) -> Outstanding {
+        // Resolve theme: explicit theme takes precedence, then embedded styles
+        let theme = if let Some(theme) = self.theme {
+            Some(theme)
+        } else if let Some(embedded) = self.embedded_styles {
+            // Convert embedded styles to stylesheet registry
+            let mut registry: outstanding::stylesheet::StylesheetRegistry = embedded.into();
+            let theme_name = self.default_theme_name.as_deref().unwrap_or("default");
+            registry.get(theme_name).ok()
+        } else {
+            None
+        };
+
         Outstanding {
             registry: self.registry,
             output_flag: self.output_flag,
             output_file_flag: self.output_file_flag,
             output_mode: OutputMode::Auto,
-            theme: self.theme,
+            theme,
             command_hooks: self.command_hooks,
         }
     }

@@ -15,6 +15,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     - `embed_styles!("./styles")` - Walks directory and embeds all stylesheet files
     - Same resolution API as runtime loading (access by base name or with extension)
     - Extension priority preserved (e.g., `.jinja` > `.jinja2` > `.j2` > `.txt`)
+  - **EmbeddedSource with debug hot-reload** - Macros return `EmbeddedSource<R>` type that supports automatic hot-reload
+    - In debug mode: if source path exists, files are read from disk (hot-reload)
+    - In release mode: embedded content is used (zero file I/O)
+    - `EmbeddedTemplates` and `EmbeddedStyles` type aliases for convenience
+    - `From` implementations for converting to `TemplateRegistry` and `StylesheetRegistry`
+  - **RenderSetup builder** - Unified setup API for templates, styles, and themes
+    - `RenderSetup::new().templates(...).styles(...).default_theme(...).build()`
+    - `OutstandingApp` for ready-to-use rendering with pre-loaded templates
+  - **outstanding-clap integration** - `.styles()` and `.default_theme()` methods on `OutstandingBuilder`
 
 - **Changed**:
   - **Simplified embed macro architecture** - Macros are now "dumb" collectors that only walk directories
@@ -27,6 +36,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     - `build_embedded_registry()` - Generic helper for building registries from embedded entries
   - **Updated template extensions** - Changed from `.tmpl` to `.jinja` as primary extension
     - New priority order: `.jinja`, `.jinja2`, `.j2`, `.txt`
+
+- **Fixed**:
+  - **Hot-reload mode now works correctly with `names()` iteration** - Previously, converting `EmbeddedSource` to registries in debug mode used lazy loading, causing `names()` to return empty. Now uses immediate loading for both templates and stylesheets.
 
 ## [0.11.1] - 2026-01-11
 
