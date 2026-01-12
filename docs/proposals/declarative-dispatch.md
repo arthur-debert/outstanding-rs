@@ -330,13 +330,33 @@ impl OutstandingBuilder {
         F: Fn(A) -> R + Send + Sync + 'static,
         R: IntoCommandResult<T>,
         T: Serialize + 'static;
-
-    /// Register handler with no arguments
-    pub fn handler_no_args<F, R, T>(self, path: &str, handler: F) -> Self
+    /// Register a handler function.
+    ///
+    /// The handler function's arguments are automatically extracted from the
+    /// command context using the `FromContext` trait. Its return type is
+    /// converted to `CommandResult` using `IntoCommandResult`.
+    ///
+    /// This method supports various handler signatures, including:
+    /// - `fn(Args) -> Result<T, E>`
+    /// - `fn(Args, CommandContext) -> Result<T, E>`
+    /// - `fn() -> Result<T, E>`
+    /// - `fn(&ArgMatches) -> Result<T, E>` (escape hatch)
+    ///
+    /// Where `Args` implements `clap::FromArgMatches` and `E` implements `Into<anyhow::Error>`.
+    pub fn handler<H, T>(self, path: &str, handler: H) -> Self
     where
-        F: Fn() -> R + Send + Sync + 'static,
-        R: IntoCommandResult<T>,
-        T: Serialize + 'static;
+        H: IntoHandler<T> + Send + Sync + 'static,
+        T: 'static, // Placeholder for the tuple of extractors
+    {
+        // ... internal implementation using IntoHandler ...
+        unimplemented!()
+    }
+
+    // Shape C with Result (auto-converts to CommandResult)
+    // fn(Args) -> Result<T, E>  where E: Into<anyhow::Error>
+
+    // Shape D with Result
+    // fn() -> Result<T, E>
 }
 ```
 
@@ -344,18 +364,17 @@ impl OutstandingBuilder {
 
 ## Macro Syntax Enhancement
 
-The `dispatch!` macro extends to support typed handlers:
+The `dispatch!` macro extends to support typed handlers with full inference:
 
 ```rust
 dispatch! {
     db: {
-        // Explicit type annotation
-        migrate => migrate::<MigrateArgs>,
+        // Fully inferred! (Arg type deduced from function signature)
+        migrate => migrate,
 
-        // Or with config block
+        // With config block
         backup => {
             handler: backup,
-            args: BackupArgs,       // Explicit Args type
             template: "backup.j2",
             pre_dispatch: validate_auth,
         },
@@ -366,16 +385,16 @@ dispatch! {
 }
 ```
 
-The macro expands to builder method calls:
+The macro expands to builder method calls using the `IntoHandler` trait:
 
 ```rust
 |builder: GroupBuilder| {
     builder
-        .handler::<MigrateArgs, _, _, _>("migrate", migrate)
-        .handler_with_config::<BackupArgs, _, _, _>("backup", backup, |cfg| {
+        .handler("migrate", migrate)
+        .handler_with_config("backup", backup, |cfg| {
             cfg.template("backup.j2").pre_dispatch(validate_auth)
         })
-        .handler_no_args("version", version)
+        .handler("version", version)
 }
 ```
 
@@ -423,15 +442,16 @@ fn main() {
 }
 ```
 
-### After (Layer 1 - Typed Args)
+### After (Proposed Design)
 
 ```rust
 use clap::{Args, Parser, Subcommand};
-use outstanding_clap::{Outstanding, dispatch};
+use outstanding_clap::{Outstanding, dispatch, CommandContext};
 use serde::Serialize;
+use anyhow::Result; // Standard error handling!
 
 // Clap handles extraction - type-safe and self-documenting
-#[derive(Args, Clone)]
+#[derive(Args)]  // No Clone needed!
 struct MigrateArgs {
     /// Database name
     database: String,
@@ -452,7 +472,9 @@ struct MigrateOutput {
 }
 
 // Clean handler - pure business logic!
-fn migrate(args: MigrateArgs) -> Result<MigrateOutput, anyhow::Error> {
+// Return standard Result (handled by IntoCommandResult)
+// Context is optional - only requested if needed
+fn migrate(args: MigrateArgs, _ctx: CommandContext) -> Result<MigrateOutput> {
     if args.dry_run {
         return Ok(MigrateOutput { success: true, tables: 0 });
     }
@@ -464,27 +486,61 @@ fn migrate(args: MigrateArgs) -> Result<MigrateOutput, anyhow::Error> {
 fn main() {
     Outstanding::builder()
         .template_dir("templates")
-        .handler::<MigrateArgs, _, _, _>("db.migrate", migrate)
+        .commands(dispatch! {
+            db: {
+                // Type inference handles the rest
+                migrate => migrate,
+            },
+        })
         .run_and_print(cmd, std::env::args());
 }
 ```
 
-### With Dispatch Macro
+---
+
+## Architecture: The Extractor Pattern
+
+Instead of hardcoded handler shapes, we use an **Extractor Pattern** (similar to Axum). This allows for infinite extensibility.
+
+### The `FromContext` Trait
 
 ```rust
-Outstanding::builder()
-    .template_dir("templates")
-    .commands(dispatch! {
-        db: {
-            migrate => migrate::<MigrateArgs>,
-        },
-    })
-    .run_and_print(cmd, std::env::args());
+pub trait FromContext: Sized {
+    type Error: Into<anyhow::Error>;
+    fn from_context(matches: &ArgMatches, ctx: &CommandContext) -> Result<Self, Self::Error>;
+}
+```
+
+### Supported Extractors
+
+1.  **`T` (Typed Args)**: Any type implementing `clap::FromArgMatches`.
+2.  **`CommandContext`**: The framework context.
+3.  **`&ArgMatches`**: Raw escape hatch.
+4.  **`Option<T>`**: Optional extractors.
+
+This architecture allows future extensions, such as injecting database connections or user sessions, simply by implementing `FromContext`.
+
+### The `IntoHandler` Trait
+
+```rust
+pub trait IntoHandler<Args>: Send + Sync + 'static {
+    type Output: Serialize;
+    fn call(&self, matches: &ArgMatches, ctx: &CommandContext) -> CommandResult<Self::Output>;
+}
+
+// Blanket impl for any function (A, B) -> R where A, B are Extractors
+impl<F, A, B, R> IntoHandler<(A, B)> for F
+where
+    F: Fn(A, B) -> R + Send + Sync + 'static,
+    A: FromContext,
+    B: FromContext,
+    R: IntoCommandResult,
+{ /* ... */ }
 ```
 
 ---
 
-## Layer 2: Derive Macro Integration (Future)
+## Evolution: Derive Macros (Layer 2)
 
 For users who use clap's derive pattern with enum-based subcommands:
 
@@ -516,105 +572,27 @@ enum DbCommands {
 }
 ```
 
-The derive macro generates a `dispatch()` method that routes to handlers:
-
-```rust
-impl Commands {
-    pub fn dispatch(
-        &self,
-        renderer: &Outstanding,
-    ) -> Result<RunResult, DispatchError> {
-        match self {
-            Commands::Db(sub) => sub.dispatch(renderer),
-        }
-    }
-}
-```
-
----
-
-## Layer 3: Attribute Macro on Handlers (Future)
-
-Maximum convenience - generates Args struct from function signature:
-
-```rust
-#[outstanding::handler(command = "db.migrate")]
-fn migrate(
-    database: String,              // Positional arg
-    #[opt] host: String,           // --host (Option inferred)
-    #[opt(short = 'd')] dry_run: bool,  // -d / --dry-run
-) -> Result<MigrateOutput, Error> {
-    // Pure business logic
-}
-```
-
-Generates:
-
-```rust
-#[derive(clap::Args, Clone)]
-pub struct MigrateArgs {
-    database: String,
-    #[arg(long)]
-    host: Option<String>,
-    #[arg(short = 'd', long)]
-    dry_run: Option<bool>,
-}
-
-fn migrate(args: MigrateArgs) -> Result<MigrateOutput, Error> {
-    let database = args.database;
-    let host = args.host.unwrap_or_else(|| "localhost".into());
-    let dry_run = args.dry_run.unwrap_or(false);
-    // User's original function body
-}
-```
-
 ---
 
 ## Implementation Plan
 
 ### Phase 1: Core Traits (Foundation)
 
-1. Add `ExtractError` type to `extract.rs`
-2. Add `IntoCommandResult` trait to `handler.rs`
-3. Add `IntoHandler` trait with shape markers to `extract.rs`
-4. Add builder methods: `.handler()`, `.handler_with_context()`, `.handler_no_args()`
-5. Comprehensive tests for all handler shapes
-6. Update documentation
+1.  **Define `FromContext` Trait**: The core extractor interface.
+2.  **Implement Extractors**: For `FromArgMatches`, `CommandContext`.
+3.  **Define `IntoCommandResult`**: Support `Result<T, E>` and raw `T`.
+4.  **Refactor `Handler`**: Move to the generic `IntoHandler` based on extractors.
+5.  **Update Builder**: Make `handler()` methods generic over `IntoHandler`.
 
-### Phase 2: Macro Integration
+### Phase 2: Macro Updates
 
-1. Extend `dispatch!` macro to support `handler::<Args>` syntax
-2. Add `args:` option to config blocks in macro
-3. Update `GroupBuilder` to use new handler methods internally
+1.  **Simplify `dispatch!`**: Remove need for explicit generic annotations (rely on inference).
+2.  **Update Groups**: Ensure group builder supports the new generic handlers.
 
-### Phase 3: Derive Macro (Separate Crate)
+### Phase 3: Derived Dispatch (Future)
 
-1. Create `outstanding-macros` proc-macro crate
-2. Implement `#[derive(Dispatch)]` for clap enums
-3. Implement `#[handler]` attribute macro (optional)
-
----
-
-## File Structure
-
-```
-crates/outstanding-clap/src/
-├── lib.rs              # Re-exports
-├── handler.rs          # CommandResult, Handler, IntoCommandResult
-├── extract.rs          # NEW: ExtractError, IntoHandler, handler_shape
-├── dispatch.rs         # Internal dispatch types
-├── group.rs            # GroupBuilder with typed handler support
-├── macros.rs           # dispatch! macro with args syntax
-├── hooks.rs            # Hook system
-└── outstanding.rs      # Builder with new handler methods
-
-crates/outstanding-macros/    # Future: proc-macro crate
-├── Cargo.toml
-└── src/
-    ├── lib.rs
-    ├── dispatch.rs     # #[derive(Dispatch)]
-    └── handler.rs      # #[handler] attribute
-```
+1.  Create `outstanding-macros` crate.
+2.  Implement `#[derive(Dispatch)]`.
 
 ---
 
@@ -622,25 +600,23 @@ crates/outstanding-macros/    # Future: proc-macro crate
 
 | Decision | Choice | Rationale |
 |----------|--------|-----------|
-| Handler shapes | 4 shapes (Raw, ArgsCtx, ArgsOnly, NoArgs) | Cover all use cases from escape hatch to simplest |
-| Context parameter | Optional | Most handlers don't need it; keep signatures clean |
-| Return type | `CommandResult<T>` or `Result<T, E>` | Flexibility via `IntoCommandResult` trait |
-| Error handling | `ExtractError` with command context | Clear, actionable error messages |
-| Implementation order | Layer 1 (traits/builder) first | Macros build on solid foundation |
-| Builder API | Explicit methods | Clear error messages; inference can be added later |
+| **Handler Architecture** | **Extractor Pattern** | Infinite extensibility (inject DB, Config, etc.) vs fixed shapes. |
+| **Argument Types** | `FromArgMatches` | No `Clone` needed. Efficient zero-copy where possible. |
+| **Return Type** | `IntoCommandResult` | Support `anyhow::Result`, raw output, or `CommandResult`. |
+| **Registration API** | Generic Inference | `migrate => migrate` is cleaner than `migrate => migrate::<Args>`. |
+| **Context** | Optional (Extractor) | Only pay for what you use. |
 
 ---
 
 ## Open Questions
 
-1. **Should `IntoCommandResult` accept raw `T`?** - Enables `fn() -> Output` but may be too magical
-2. **Naming**: `handler()` vs `command_handler()` vs `register()`?
-3. **Clone requirement on Args**: Required for type erasure; acceptable tradeoff?
+1.  **Async Support?**: Currently synchronous. If handlers need to be async in the future, `IntoHandler` will need to return `Future`. (Deferred for now).
+2.  **Naming**: `handler()` is simple and clear.
 
 ---
 
 ## References
 
-- [Clap Derive Tutorial](https://docs.rs/clap/latest/clap/_derive/)
-- [Axum Handler Trait](https://docs.rs/axum/latest/axum/handler/trait.Handler.html)
-- [Current outstanding-clap implementation](../crates/outstanding-clap/src/)
+-   [Axum Extractors](https://docs.rs/axum/latest/axum/extract/index.html)
+-   [Clap Derive Tutorial](https://docs.rs/clap/latest/clap/_derive/)
+```
