@@ -7,6 +7,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **Compile-time resource embedding macros** - Embed templates and stylesheets into binaries at compile time
+  - `embed_templates!("./templates")` - Walks directory and embeds all template files
+  - `embed_styles!("./styles")` - Walks directory and embeds all stylesheet files
+  - Same resolution API as runtime loading (access by base name or with extension)
+  - Extension priority preserved (e.g., `.jinja` > `.jinja2` > `.j2` > `.txt`)
+
+### Changed
+
+- **Simplified embed macro architecture** - Macros are now "dumb" collectors that only walk directories
+  - All smart logic (extension priority, name stripping, collision detection) moved to `from_embedded_entries()` methods
+  - `TemplateRegistry::from_embedded_entries()` for compile-time template embedding
+  - `StylesheetRegistry::from_embedded_entries()` for compile-time stylesheet embedding
+- **Consolidated file loader helpers** - Shared functions in `file_loader` module
+  - `extension_priority()` - Returns priority index for filename extension
+  - `strip_extension()` - Removes recognized extension from filename
+  - `build_embedded_registry()` - Generic helper for building registries from embedded entries
+- **Updated template extensions** - Changed from `.tmpl` to `.jinja` as primary extension
+  - New priority order: `.jinja`, `.jinja2`, `.j2`, `.txt`
+
 ## [0.11.1] - 2026-01-11
 
 ### Added
