@@ -1,18 +1,12 @@
 # outstanding-clap
 
-Batteries-included integration of `outstanding` with `clap`. This crate provides a complete solution for CLI output management:
-
-- **Command handlers** - Map commands to handlers with automatic rendering
-- **Styled help** - Beautiful help output using outstanding templates
-- **Output modes** - `--output=<auto|term|text|json|yaml|xml|csv>` flag on all commands
-- **Help topics** - Extended documentation system (`help <topic>`, `help topics`)
-- **Pager support** - Automatic paging for long content
+Batteries-included integration of `outstanding` with `clap`. This crate provides styled CLI output with minimal setup.
 
 ## Installation
 
 ```toml
 [dependencies]
-outstanding-clap = "0.11"
+outstanding-clap = "0.12"
 clap = "4"
 serde = { version = "1", features = ["derive"] }
 ```
@@ -62,131 +56,90 @@ my-app list              # Rendered template output
 my-app list --output=json # JSON output
 ```
 
-## Adoption Models
+### With Embedded Styles
 
-Outstanding supports three adoption levels:
+Use YAML stylesheets with the `macros` feature:
 
-### Full Adoption
-Register all commands with handlers. Outstanding manages rendering.
+```toml
+[dependencies]
+outstanding-clap = { version = "0.12", features = ["macros"] }
+```
 
-### Partial Adoption
-Register some commands, handle others manually:
+Create a stylesheet in `styles/default.yaml`:
+```yaml
+item:
+  fg: cyan
+header:
+  fg: white
+  bold: true
+```
+
+Then use it:
 
 ```rust
-match builder.dispatch_from(cmd, args) {
-    RunResult::Handled(output) => println!("{}", output),
-    RunResult::Unhandled(matches) => {
-        // Handle legacy commands manually
-    }
+use clap::Command;
+use outstanding_clap::{Outstanding, CommandResult, embed_styles};
+use serde::Serialize;
+
+#[derive(Serialize)]
+struct ListOutput { items: Vec<String> }
+
+fn main() {
+    let cmd = Command::new("my-app")
+        .subcommand(Command::new("list"));
+
+    Outstanding::builder()
+        .styles(embed_styles!("styles"))
+        .default_theme("default")
+        .command("list", |_m, _ctx| {
+            CommandResult::Ok(ListOutput {
+                items: vec!["apple".into(), "banana".into()],
+            })
+        }, "{% for item in items %}- {{ item | style(\"item\") }}\n{% endfor %}")
+        .run_and_print(cmd, std::env::args());
 }
 ```
 
-### Output-Only
-Use Outstanding just for rendering in your existing code:
+### With Help Topics
 
-```rust
-use outstanding::{render_or_serialize, OutputMode};
-
-let output = render_or_serialize(template, &data, theme, mode)?;
-```
-
-## Help Topics
-
-Add extended documentation:
+Add extended documentation from markdown or text files:
 
 ```rust
 Outstanding::builder()
-    .topics_dir("docs/topics")  // Load .txt and .md files
+    .topics_dir("docs/topics")
     .run(cmd);
 ```
 
 Users access via:
 ```bash
-my-app help topics     # List all topics
-my-app help <topic>    # View specific topic
+my-app help topics           # List all topics
+my-app help getting-started  # View specific topic
 ```
 
-## Handler Hooks
+## Output Modes
 
-Run custom code before and after command execution:
+Users control output format via `--output`:
+
+```bash
+my-app list                  # Rendered template (default)
+my-app list --output=json    # JSON serialization
+my-app list --output=yaml    # YAML serialization
+my-app list --output=text    # Plain text (no ANSI codes)
+```
+
+## Command Handlers
+
+Register handlers that return serializable data:
 
 ```rust
-use outstanding_clap::{Outstanding, Hooks, Output};
-use serde_json::json;
+.command("list", |matches, ctx| {
+    // matches: &ArgMatches - parsed arguments
+    // ctx: &CommandContext - command path, output mode, etc.
 
-Outstanding::builder()
-    .command("export", handler, template)
-    .hooks("export", Hooks::new()
-        .pre_dispatch(|_m, ctx| {
-            println!("Running: {:?}", ctx.command_path);
-            Ok(())
-        })
-        .post_dispatch(|_m, _ctx, mut data| {
-            // Modify data before rendering
-            if let Some(obj) = data.as_object_mut() {
-                obj.insert("processed".into(), json!(true));
-            }
-            Ok(data)
-        })
-        .post_output(|_m, _ctx, output| {
-            // Copy to clipboard, log, transform, etc.
-            if let Output::Text(ref text) = output {
-                // clipboard::copy(text)?;
-            }
-            Ok(output)
-        }))
-    .run_and_print(cmd, args);
+    let items = fetch_items();
+    CommandResult::Ok(ListOutput { items })
+}, "{% for item in items %}{{ item }}\n{% endfor %}")
 ```
-
-- **Pre-dispatch**: Run before handler, can abort execution
-- **Post-dispatch**: Run after handler but before rendering, can modify data
-- **Post-output**: Run after rendering, can transform output
-- **Per-command**: Different hooks for different commands
-- **Chainable**: Multiple hooks at the same phase run in order
-
-See [docs/hooks.md](docs/hooks.md) for full documentation.
-
-## Documentation
-
-For comprehensive documentation, see:
-
-- **[Using Outstanding with Clap](docs/using-with-clap.md)** - Complete guide covering:
-  - All adoption models with examples
-  - Command handlers and templates
-  - Output modes and themes
-  - Help topics configuration
-  - Best practices
-
-- **[Handler Hooks](docs/hooks.md)** - Pre/post command execution hooks for:
-  - Logging and metrics
-  - Clipboard operations
-  - Output transformation
-  - Validation and access control
-
-- **[Architecture & Design](../../docs/proposals/fullapi-consolidated.md)** - Technical deep dive for contributors
-
-## API Overview
-
-### OutstandingBuilder
-
-| Method | Description |
-|--------|-------------|
-| `.command(path, handler, template)` | Register command with closure |
-| `.command_handler(path, handler, template)` | Register command with struct handler |
-| `.hooks(path, hooks)` | Register hooks for a command |
-| `.topics_dir(path)` | Load help topics from directory |
-| `.theme(theme)` | Set custom theme |
-| `.output_flag(Some("format"))` | Rename `--output` flag |
-| `.no_output_flag()` | Disable output flag |
-
-### Dispatch Methods
-
-| Method | Returns | Use Case |
-|--------|---------|----------|
-| `.run_and_print(cmd, args)` | `bool` | Complete flow: parse, dispatch, print |
-| `.dispatch_from(cmd, args)` | `RunResult` | Parse and dispatch, you handle output |
-| `.dispatch(matches, mode)` | `RunResult` | You provide parsed matches |
-| `.run_command(path, matches, handler, template)` | `Result<Output, HookError>` | Regular API with hooks |
 
 ### CommandResult Variants
 
@@ -196,6 +149,46 @@ For comprehensive documentation, see:
 | `Err(error)` | Error to display |
 | `Silent` | No output |
 | `Archive(bytes, filename)` | Binary file output |
+
+## Hooks
+
+Run custom code before/after command execution:
+
+```rust
+use outstanding_clap::Hooks;
+
+Outstanding::builder()
+    .command("export", handler, template)
+    .hooks("export", Hooks::new()
+        .pre_dispatch(|_m, ctx| {
+            println!("Running: {:?}", ctx.command_path);
+            Ok(())
+        })
+        .post_output(|_m, _ctx, output| {
+            // Transform output, copy to clipboard, etc.
+            Ok(output)
+        }))
+    .run_and_print(cmd, args);
+```
+
+## Embed Macros
+
+The `embed_styles!` macro embeds stylesheets at compile time with debug hot-reload:
+
+- **At compile time**: Walk directory and embed all `.yaml`/`.yml` files
+- **In debug mode**: If source directory exists, read from disk (hot-reload)
+- **In release mode**: Use embedded content (zero file I/O)
+
+```rust
+// Embeds all .yaml, .yml files from styles/
+.styles(embed_styles!("styles"))
+.default_theme("default")  // Use styles/default.yaml
+```
+
+## Documentation
+
+- **[Using Outstanding with Clap](docs/using-with-clap.md)** - Complete guide
+- **[Handler Hooks](docs/hooks.md)** - Pre/post execution hooks
 
 ## License
 
