@@ -4,7 +4,7 @@ Batteries-included integration of `outstanding` with `clap`. This crate provides
 
 - **Command handlers** - Map commands to handlers with automatic rendering
 - **Styled help** - Beautiful help output using outstanding templates
-- **Output modes** - `--output=<auto|term|text|json>` flag on all commands
+- **Output modes** - `--output=<auto|term|text|json|yaml|xml|csv>` flag on all commands
 - **Help topics** - Extended documentation system (`help <topic>`, `help topics`)
 - **Pager support** - Automatic paging for long content
 
@@ -12,7 +12,7 @@ Batteries-included integration of `outstanding` with `clap`. This crate provides
 
 ```toml
 [dependencies]
-outstanding-clap = "0.5"
+outstanding-clap = "0.11"
 clap = "4"
 serde = { version = "1", features = ["derive"] }
 ```

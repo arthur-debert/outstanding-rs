@@ -37,7 +37,7 @@ fn main() {
 ```
 
 Your CLI now has:
-- `--output=<auto|term|text|term-debug|json>` flag on all commands
+- `--output=<auto|term|text|term-debug|json|yaml|xml|csv>` flag on all commands
 - `help` subcommand with topic support
 - Styled help output
 
@@ -73,10 +73,14 @@ Controls how output appears:
 | `text` | Plain text, no colors |
 | `term-debug` | Bracket tags: `[style]text[/style]` |
 | `json` | Machine-readable JSON |
+| `yaml` | Machine-readable YAML |
+| `xml` | Machine-readable XML |
+| `csv` | Machine-readable CSV (for tabular data) |
 
 Users control this via `--output`:
 ```bash
 my-app list --output=json
+my-app list --output=yaml
 my-app list --output=text
 ```
 
@@ -190,6 +194,9 @@ fn main() {
     // Determine output mode from flag
     let mode = match matches.get_one::<String>("output").map(|s| s.as_str()) {
         Some("json") => OutputMode::Json,
+        Some("yaml") => OutputMode::Yaml,
+        Some("xml") => OutputMode::Xml,
+        Some("csv") => OutputMode::Csv,
         Some("text") => OutputMode::Text,
         Some("term") => OutputMode::Term,
         _ => OutputMode::Auto,
@@ -314,9 +321,9 @@ fn export_handler(matches: &ArgMatches, ctx: &CommandContext)
 
 ## Output Modes
 
-### Automatic JSON Support
+### Automatic Structured Output
 
-When a handler is registered, `--output=json` automatically serializes the data:
+When a handler is registered, structured output modes (`json`, `yaml`, `xml`, `csv`) automatically serialize the data:
 
 ```rust
 #[derive(Serialize)]
@@ -335,6 +342,10 @@ $ my-app stats --output=json
   "count": 42,
   "average": 3.14
 }
+
+$ my-app stats --output=yaml
+count: 42
+average: 3.14
 ```
 
 ### Debug Mode
