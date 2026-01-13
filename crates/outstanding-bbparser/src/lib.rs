@@ -122,6 +122,7 @@ impl BBParser {
     /// The transformed string with tags processed according to the transform mode.
     pub fn parse(&self, input: &str) -> String {
         let tokens = Tokenizer::new(input).collect::<Vec<_>>();
+        let valid_opens = self.compute_valid_tags(&tokens);
         let mut output = String::with_capacity(input.len());
         let mut stack: Vec<&str> = Vec::new();
 
@@ -132,8 +133,8 @@ impl BBParser {
                     output.push_str(text);
                 }
                 Token::OpenTag(tag) => {
-                    // Look ahead for matching close tag
-                    if self.has_matching_close(&tokens[i + 1..], tag) {
+                    // Check precomputed validity
+                    if valid_opens.contains(&i) {
                         stack.push(tag);
                         self.emit_open_tag(&mut output, tag);
                     } else {
@@ -178,22 +179,30 @@ impl BBParser {
         output
     }
 
-    /// Checks if there's a matching close tag in the remaining tokens.
-    fn has_matching_close(&self, tokens: &[Token], tag: &str) -> bool {
-        let mut depth = 1;
-        for token in tokens {
+    /// Pre-computes which OpenTag tokens have a valid matching CloseTag.
+    /// This is O(N) instead of O(N^2).
+    fn compute_valid_tags(&self, tokens: &[Token]) -> std::collections::HashSet<usize> {
+        use std::collections::{HashMap, HashSet};
+        let mut valid_indices = HashSet::new();
+        let mut open_indices_by_tag: HashMap<&str, Vec<usize>> = HashMap::new();
+
+        for (i, token) in tokens.iter().enumerate() {
             match token {
-                Token::OpenTag(t) if *t == tag => depth += 1,
-                Token::CloseTag(t) if *t == tag => {
-                    depth -= 1;
-                    if depth == 0 {
-                        return true;
+                Token::OpenTag(tag) => {
+                    open_indices_by_tag.entry(tag).or_default().push(i);
+                }
+                Token::CloseTag(tag) => {
+                    if let Some(indices) = open_indices_by_tag.get_mut(tag) {
+                        if let Some(open_idx) = indices.pop() {
+                            valid_indices.insert(open_idx);
+                        }
                     }
                 }
                 _ => {}
             }
         }
-        false
+
+        valid_indices
     }
 
     /// Emits the opening tag transformation.
