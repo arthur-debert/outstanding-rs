@@ -179,19 +179,14 @@ One template handles all commands. It shows the message (if any) then lists todo
 
 ## The Theme
 
-```rust
-// src/theme.rs
-use console::Style;
-use outstanding::Theme;
+**theme.yaml:**
 
-pub fn theme() -> Theme {
-    Theme::new()
-        .add("success", Style::new().green())
-        .add("id", Style::new().yellow().bold())
-        .add("muted", Style::new().dim())
-        .add("pending", Style::new().white())
-        .add("done", Style::new().dim().strikethrough())
-}
+```yaml
+success: green
+id: yellow bold
+muted: dim
+pending: white
+done: dim strikethrough
 ```
 
 ---
@@ -204,21 +199,22 @@ mod cli;
 mod data;
 mod handlers;
 mod storage;
-mod theme;
 
-use clap::{CommandFactory, Parser};
+use clap::CommandFactory;
+use outstanding::Theme;
 use outstanding_clap::{dispatch, Outstanding};
 
 use crate::cli::Cli;
 
 fn main() {
+    let theme = Theme::from_yaml(include_str!("../theme.yaml")).unwrap();
+
     Outstanding::builder()
-        .theme(theme::theme())
+        .theme(theme)
         .commands(dispatch! {
             add => handlers::add,
             list => handlers::list,
             complete => handlers::complete,
-            delete => handlers::delete,
         })
         .run_and_print(Cli::command(), std::env::args());
 }
