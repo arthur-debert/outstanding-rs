@@ -211,6 +211,7 @@ pub use render::{
     render_with_context,
     render_with_mode,
     render_with_output,
+    validate_template,
     // Template registry
     walk_template_dir,
     RegistryError,
@@ -220,6 +221,9 @@ pub use render::{
     TemplateRegistry,
     TEMPLATE_EXTENSIONS,
 };
+
+// Re-export BBParser types for template validation
+pub use outstanding_bbparser::{UnknownTagError, UnknownTagErrors, UnknownTagKind};
 
 // Utility exports
 pub use util::{rgb_to_ansi256, rgb_to_truecolor, truncate_to_width};

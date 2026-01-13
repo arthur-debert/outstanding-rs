@@ -65,6 +65,83 @@ fn apply_style_tags(output: &str, styles: &Styles, mode: OutputMode) -> String {
     parser.parse(output)
 }
 
+/// Validates a template for unknown style tags.
+///
+/// This function renders the template (performing variable substitution) and then
+/// checks for any style tags that are not defined in the theme. Use this during
+/// development or CI to catch typos in templates.
+///
+/// # Arguments
+///
+/// * `template` - A minijinja template string
+/// * `data` - Any serializable data to pass to the template
+/// * `theme` - Theme definitions that define valid style names
+///
+/// # Returns
+///
+/// Returns `Ok(())` if all style tags in the template are defined in the theme.
+/// Returns `Err` with the list of unknown tags if any are found.
+///
+/// # Example
+///
+/// ```rust
+/// use outstanding::{validate_template, Theme};
+/// use console::Style;
+/// use serde::Serialize;
+///
+/// #[derive(Serialize)]
+/// struct Data { name: String }
+///
+/// let theme = Theme::new().add("title", Style::new().bold());
+///
+/// // Valid template passes
+/// let result = validate_template(
+///     "[title]{{ name }}[/title]",
+///     &Data { name: "Hello".into() },
+///     &theme,
+/// );
+/// assert!(result.is_ok());
+///
+/// // Unknown tag fails validation
+/// let result = validate_template(
+///     "[unknown]{{ name }}[/unknown]",
+///     &Data { name: "Hello".into() },
+///     &theme,
+/// );
+/// assert!(result.is_err());
+/// ```
+pub fn validate_template<T: Serialize>(
+    template: &str,
+    data: &T,
+    theme: &Theme,
+) -> Result<(), outstanding_bbparser::UnknownTagErrors> {
+    let color_mode = detect_color_mode();
+    let styles = theme.resolve_styles(Some(color_mode));
+
+    // First render with MiniJinja to get the final output
+    let mut env = Environment::new();
+    register_filters(&mut env, styles.clone(), OutputMode::Text);
+
+    if env
+        .add_template_owned("_inline".to_string(), template.to_string())
+        .is_err()
+    {
+        // Template syntax error - not our concern for tag validation
+        return Ok(());
+    }
+
+    if let Ok(tmpl) = env.get_template("_inline") {
+        if let Ok(minijinja_output) = tmpl.render(data) {
+            // Now validate the style tags
+            let resolved_styles = styles.to_resolved_map();
+            let parser = BBParser::new(resolved_styles, TagTransform::Remove);
+            return parser.validate(&minijinja_output);
+        }
+    }
+
+    Ok(())
+}
+
 /// Renders a template with automatic terminal color detection.
 ///
 /// This is the simplest way to render styled output. It automatically detects
@@ -1680,5 +1757,117 @@ mod tests {
 
         // Non-tag brackets preserved
         assert_eq!(output, "Array: [1, 2, 3] and done");
+    }
+
+    // ============================================================================
+    // Template Validation Tests
+    // ============================================================================
+
+    #[test]
+    fn test_validate_template_all_known_tags() {
+        let theme = Theme::new()
+            .add("title", Style::new().bold())
+            .add("count", Style::new().cyan());
+
+        #[derive(Serialize)]
+        struct Data {
+            name: String,
+        }
+
+        let result = validate_template(
+            "[title]{{ name }}[/title]",
+            &Data {
+                name: "Hello".into(),
+            },
+            &theme,
+        );
+
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_validate_template_unknown_tag_fails() {
+        let theme = Theme::new().add("known", Style::new().bold());
+
+        #[derive(Serialize)]
+        struct Data {
+            name: String,
+        }
+
+        let result = validate_template(
+            "[unknown]{{ name }}[/unknown]",
+            &Data {
+                name: "Hello".into(),
+            },
+            &theme,
+        );
+
+        assert!(result.is_err());
+        let errors = result.unwrap_err();
+        assert_eq!(errors.len(), 2); // open and close tags
+    }
+
+    #[test]
+    fn test_validate_template_multiple_unknown_tags() {
+        let theme = Theme::new().add("known", Style::new().bold());
+
+        #[derive(Serialize)]
+        struct Data {
+            a: String,
+            b: String,
+        }
+
+        let result = validate_template(
+            "[foo]{{ a }}[/foo] and [bar]{{ b }}[/bar]",
+            &Data {
+                a: "x".into(),
+                b: "y".into(),
+            },
+            &theme,
+        );
+
+        assert!(result.is_err());
+        let errors = result.unwrap_err();
+        assert_eq!(errors.len(), 4); // foo open/close + bar open/close
+    }
+
+    #[test]
+    fn test_validate_template_plain_text_passes() {
+        let theme = Theme::new();
+
+        #[derive(Serialize)]
+        struct Data {
+            msg: String,
+        }
+
+        let result = validate_template("Just plain {{ msg }}", &Data { msg: "hi".into() }, &theme);
+
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_validate_template_mixed_known_and_unknown() {
+        let theme = Theme::new().add("known", Style::new().bold());
+
+        #[derive(Serialize)]
+        struct Data {
+            a: String,
+            b: String,
+        }
+
+        let result = validate_template(
+            "[known]{{ a }}[/known] [unknown]{{ b }}[/unknown]",
+            &Data {
+                a: "x".into(),
+                b: "y".into(),
+            },
+            &theme,
+        );
+
+        assert!(result.is_err());
+        let errors = result.unwrap_err();
+        // Only unknown tags should be reported
+        assert_eq!(errors.len(), 2);
+        assert!(errors.errors.iter().any(|e| e.tag == "unknown"));
     }
 }
