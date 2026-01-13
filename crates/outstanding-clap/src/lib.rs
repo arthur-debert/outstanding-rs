@@ -98,6 +98,44 @@
 //! Templates are resolved by convention: command path `db.migrate` maps to
 //! `{template_dir}/db/migrate{template_ext}` (default extension: `.j2`).
 //!
+//! ## Derive-Based Dispatch
+//!
+//! For even less boilerplate, use `#[derive(Dispatch)]` on your clap `Subcommand` enum:
+//!
+//! ```rust,ignore
+//! use clap::{Parser, Subcommand};
+//! use outstanding_clap::{Dispatch, Outstanding};
+//!
+//! #[derive(Parser)]
+//! struct Cli {
+//!     #[command(subcommand)]
+//!     command: Commands,
+//! }
+//!
+//! #[derive(Subcommand, Dispatch)]
+//! #[dispatch(handlers = handlers)]
+//! enum Commands {
+//!     Add(AddArgs),      // → handlers::add
+//!     List(ListArgs),    // → handlers::list
+//!     Complete(Args),    // → handlers::complete
+//! }
+//!
+//! Outstanding::builder()
+//!     .commands(Commands::dispatch_config())
+//!     .run_and_print(Cli::command(), std::env::args());
+//! ```
+//!
+//! Override conventions with variant attributes:
+//!
+//! ```rust,ignore
+//! #[derive(Subcommand, Dispatch)]
+//! #[dispatch(handlers = handlers)]
+//! enum Commands {
+//!     #[dispatch(template = "custom.j2", pre_dispatch = validate)]
+//!     Add(AddArgs),
+//! }
+//! ```
+//!
 //! ## Nested Builder API
 //!
 //! For programmatic command registration, use the builder's `.group()` method:
@@ -258,6 +296,9 @@ pub use ::outstanding::context::{ContextProvider, ContextRegistry, RenderContext
 pub use ::outstanding::{
     EmbeddedSource, EmbeddedStyles, EmbeddedTemplates, OutstandingApp, RenderSetup, SetupError,
 };
+
+// Re-export derive macros
+pub use outstanding_macros::Dispatch;
 
 // ============================================================================
 // BACKWARDS COMPATIBILITY (deprecated)

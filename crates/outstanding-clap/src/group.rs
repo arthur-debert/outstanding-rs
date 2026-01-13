@@ -149,6 +149,21 @@ impl GroupBuilder {
         Self::default()
     }
 
+    /// Returns true if a command or group with the given name is registered.
+    pub fn contains(&self, name: &str) -> bool {
+        self.entries.contains_key(name)
+    }
+
+    /// Returns the number of registered entries.
+    pub fn len(&self) -> usize {
+        self.entries.len()
+    }
+
+    /// Returns true if no entries are registered.
+    pub fn is_empty(&self) -> bool {
+        self.entries.is_empty()
+    }
+
     /// Registers a command handler (closure) in this group.
     ///
     /// The template will be derived from the command path if not explicitly set.
