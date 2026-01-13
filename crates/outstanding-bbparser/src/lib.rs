@@ -111,72 +111,144 @@ impl BBParser {
         self
     }
 
-    /// Parses the input string and transforms tags according to the configured mode.
-    ///
-    /// # Arguments
-    ///
-    /// * `input` - The input string containing `[tag]...[/tag]` markup
-    ///
-    /// # Returns
-    ///
-    /// The transformed string with tags processed according to the transform mode.
-    pub fn parse(&self, input: &str) -> String {
+    /// Parse input into a sequence of events.
+    fn parse_to_events<'a>(&self, input: &'a str) -> Vec<ParseEvent<'a>> {
         let tokens = Tokenizer::new(input).collect::<Vec<_>>();
         let valid_opens = self.compute_valid_tags(&tokens);
-        let mut output = String::with_capacity(input.len());
+        let mut events = Vec::new();
         let mut stack: Vec<&str> = Vec::new();
 
         let mut i = 0;
         while i < tokens.len() {
             match &tokens[i] {
                 Token::Text(text) => {
-                    output.push_str(text);
+                    events.push(ParseEvent::Literal(std::borrow::Cow::Borrowed(text)));
                 }
                 Token::OpenTag(tag) => {
-                    // Check precomputed validity
                     if valid_opens.contains(&i) {
                         stack.push(tag);
-                        self.emit_open_tag(&mut output, tag);
+                        self.emit_open_tag_event(&mut events, tag);
                     } else {
-                        // No matching close tag - treat as literal text
-                        output.push('[');
-                        output.push_str(tag);
-                        output.push(']');
+                        events.push(ParseEvent::Literal(std::borrow::Cow::Owned(format!(
+                            "[{}]",
+                            tag
+                        ))));
                     }
                 }
                 Token::CloseTag(tag) => {
                     if stack.last().copied() == Some(*tag) {
                         stack.pop();
-                        self.emit_close_tag(&mut output, tag);
+                        self.emit_close_tag_event(&mut events, tag);
                     } else if stack.contains(tag) {
-                        // Mismatched nesting - close all tags up to and including this one
                         while let Some(open) = stack.pop() {
-                            self.emit_close_tag(&mut output, open);
+                            self.emit_close_tag_event(&mut events, open);
                             if open == *tag {
                                 break;
                             }
                         }
                     } else {
-                        // Orphan close tag - treat as literal text
-                        output.push_str("[/");
-                        output.push_str(tag);
-                        output.push(']');
+                        events.push(ParseEvent::Literal(std::borrow::Cow::Owned(format!(
+                            "[/{}]",
+                            tag
+                        ))));
                     }
                 }
                 Token::InvalidTag(text) => {
-                    // Invalid tag syntax - pass through as literal text
-                    output.push_str(text);
+                    events.push(ParseEvent::Literal(std::borrow::Cow::Borrowed(text)));
                 }
             }
             i += 1;
         }
 
-        // Close any remaining unclosed tags
         while let Some(tag) = stack.pop() {
-            self.emit_close_tag(&mut output, tag);
+            self.emit_close_tag_event(&mut events, tag);
         }
 
-        output
+        events
+    }
+
+    fn emit_open_tag_event<'a>(&self, events: &mut Vec<ParseEvent<'a>>, tag: &'a str) {
+        match self.transform {
+            TagTransform::Keep => {
+                events.push(ParseEvent::Literal(std::borrow::Cow::Owned(format!(
+                    "[{}]",
+                    tag
+                ))));
+            }
+            TagTransform::Remove => {
+                if !self.styles.contains_key(tag) {
+                    self.emit_unknown_prefix_event(events);
+                }
+            }
+            TagTransform::Apply => {
+                if self.styles.contains_key(tag) {
+                    events.push(ParseEvent::StyleStart(tag));
+                } else {
+                    self.emit_unknown_prefix_event(events);
+                }
+            }
+        }
+    }
+
+    fn emit_close_tag_event<'a>(&self, events: &mut Vec<ParseEvent<'a>>, tag: &'a str) {
+        match self.transform {
+            TagTransform::Keep => {
+                events.push(ParseEvent::Literal(std::borrow::Cow::Owned(format!(
+                    "[/{}]",
+                    tag
+                ))));
+            }
+            TagTransform::Remove => {
+                // do nothing
+            }
+            TagTransform::Apply => {
+                if self.styles.contains_key(tag) {
+                    events.push(ParseEvent::StyleEnd(tag));
+                }
+            }
+        }
+    }
+
+    fn emit_unknown_prefix_event<'a>(&self, events: &mut Vec<ParseEvent<'a>>) {
+        if let UnknownTagBehavior::Indicate(ref indicator) = self.unknown_behavior {
+            events.push(ParseEvent::Literal(std::borrow::Cow::Owned(format!(
+                "{} ",
+                indicator
+            ))));
+        }
+    }
+
+    /// Renders events to a string.
+    fn render(&self, events: Vec<ParseEvent>) -> String {
+        let mut result = String::new();
+        let mut style_stack: Vec<&Style> = Vec::new();
+
+        for event in events {
+            match event {
+                ParseEvent::Literal(text) => {
+                    self.append_styled(&mut result, &text, &style_stack);
+                }
+                ParseEvent::StyleStart(tag) => {
+                    if let Some(style) = self.styles.get(tag) {
+                        style_stack.push(style);
+                    }
+                }
+                ParseEvent::StyleEnd(tag) => {
+                    if self.styles.contains_key(tag) {
+                        // Robust popping: only pop if we have styles.
+                        // We assume the parser emitted balanced events for valid tags.
+                        style_stack.pop();
+                    }
+                }
+            }
+        }
+        result
+    }
+
+    /// Parses and transforms input.
+    pub fn parse(&self, input: &str) -> String {
+        let events = self.parse_to_events(input);
+        self.render(events)
     }
 
     /// Pre-computes which OpenTag tokens have a valid matching CloseTag.
@@ -205,119 +277,6 @@ impl BBParser {
         valid_indices
     }
 
-    /// Emits the opening tag transformation.
-    fn emit_open_tag(&self, output: &mut String, tag: &str) {
-        match self.transform {
-            TagTransform::Keep => {
-                output.push('[');
-                output.push_str(tag);
-                output.push(']');
-            }
-            TagTransform::Remove => {
-                // Output nothing for the tag itself
-                if !self.styles.contains_key(tag) {
-                    self.emit_unknown_prefix(output);
-                }
-            }
-            TagTransform::Apply => {
-                if self.styles.contains_key(tag) {
-                    // Start the style - we need to apply it to the content
-                    // console::Style applies to a specific string, so we'll handle this
-                    // differently - we mark the start position
-                    output.push_str(&format!("\x00STYLE_START:{}\x00", tag));
-                } else {
-                    self.emit_unknown_prefix(output);
-                }
-            }
-        }
-    }
-
-    /// Emits the closing tag transformation.
-    fn emit_close_tag(&self, output: &mut String, tag: &str) {
-        match self.transform {
-            TagTransform::Keep => {
-                output.push_str("[/");
-                output.push_str(tag);
-                output.push(']');
-            }
-            TagTransform::Remove => {
-                // Output nothing
-            }
-            TagTransform::Apply => {
-                if self.styles.contains_key(tag) {
-                    output.push_str(&format!("\x00STYLE_END:{}\x00", tag));
-                }
-            }
-        }
-    }
-
-    /// Emits the unknown tag indicator prefix.
-    fn emit_unknown_prefix(&self, output: &mut String) {
-        if let UnknownTagBehavior::Indicate(ref indicator) = self.unknown_behavior {
-            output.push_str(indicator);
-            output.push(' ');
-        }
-    }
-
-    /// Post-processes the output to apply styles (for TagTransform::Apply mode).
-    fn apply_styles(&self, intermediate: &str) -> String {
-        let mut result = String::with_capacity(intermediate.len());
-        let mut style_stack: Vec<&Style> = Vec::new();
-
-        // We use split_inclusive to keep the markers in the iteration if possible,
-        // or just manual scanning. Manual scanning is safer given the specific marker format.
-        // Format is: \x00STYLE_START:tag\x00 or \x00STYLE_END:tag\x00
-
-        let mut last_pos = 0;
-
-        while let Some(start_idx) = intermediate[last_pos..].find('\x00') {
-            let abs_start = last_pos + start_idx;
-
-            // 1. Append content before the marker
-            if abs_start > last_pos {
-                let text = &intermediate[last_pos..abs_start];
-                self.append_styled(&mut result, text, &style_stack);
-            }
-
-            // 2. Find end of marker
-            if let Some(end_offset) = intermediate[abs_start + 1..].find('\x00') {
-                let abs_end = abs_start + 1 + end_offset; // index of closing \x00
-                let marker_content = &intermediate[abs_start + 1..abs_end];
-
-                if let Some(tag) = marker_content.strip_prefix("STYLE_START:") {
-                    if let Some(style) = self.styles.get(tag) {
-                        style_stack.push(style);
-                    }
-                } else if let Some(tag) = marker_content.strip_prefix("STYLE_END:") {
-                    // We only pop if the stack top matches (or verify integrity).
-                    // This implementation assumes well-matched pairs from parse(),
-                    // but for robustness we check if we should pop specifically.
-                    // The old implementation just popped if the tag existed in styles.
-                    if self.styles.contains_key(tag) {
-                        style_stack.pop();
-                    }
-                }
-
-                last_pos = abs_end + 1;
-            } else {
-                // Malformed marker (unclosed null byte) - treat rest as text
-                // This shouldn't happen with our generator but good for safety
-                let text = &intermediate[abs_start..];
-                self.append_styled(&mut result, text, &style_stack);
-                last_pos = intermediate.len();
-                break;
-            }
-        }
-
-        // Append remaining text
-        if last_pos < intermediate.len() {
-            let text = &intermediate[last_pos..];
-            self.append_styled(&mut result, text, &style_stack);
-        }
-
-        result
-    }
-
     /// Helper to append styled text.
     fn append_styled(&self, output: &mut String, text: &str, style_stack: &[&Style]) {
         if text.is_empty() {
@@ -341,18 +300,16 @@ impl BBParser {
 
 // Better approach: process in one pass with style application
 impl BBParser {
-    /// Parses and transforms input, applying styles directly.
-    ///
-    /// This is the main entry point for parsing styled content.
+    /// Legacy alias for `parse`.
     pub fn process(&self, input: &str) -> String {
-        match self.transform {
-            TagTransform::Keep | TagTransform::Remove => self.parse(input),
-            TagTransform::Apply => {
-                let intermediate = self.parse(input);
-                self.apply_styles(&intermediate)
-            }
-        }
+        self.parse(input)
     }
+}
+
+enum ParseEvent<'a> {
+    Literal(std::borrow::Cow<'a, str>),
+    StyleStart(&'a str),
+    StyleEnd(&'a str),
 }
 
 /// Token types produced by the tokenizer.
