@@ -7,6 +7,43 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+- **Added**:
+  - **`#[derive(Dispatch)]` macro** - Convention-based command dispatch for clap `Subcommand` enums
+    - Generates `dispatch_config()` method that maps variants to handlers automatically
+    - PascalCase variants map to snake_case handlers (e.g., `AddTask` → `handlers::add_task`)
+    - Container attribute: `#[dispatch(handlers = path)]` specifies handler module
+    - Variant attributes for customization:
+      - `#[dispatch(handler = custom_fn)]` - Override handler for specific variant
+      - `#[dispatch(template = "path.j2")]` - Set template for variant
+      - `#[dispatch(nested)]` - Delegate to nested subcommand's `dispatch_config()`
+      - `#[dispatch(skip)]` - Skip variant (no handler registration)
+    - Hook support: `pre_dispatch`, `post_dispatch`, `post_output` per variant
+  - Re-exported `Dispatch` from `outstanding-clap` for ergonomic imports
+
+- **Example**:
+
+  ```rust
+  use clap::Subcommand;
+  use outstanding_clap::{Dispatch, Outstanding};
+
+  #[derive(Subcommand, Dispatch)]
+  #[dispatch(handlers = handlers)]
+  enum Commands {
+      Add { text: String },      // → handlers::add
+      List,                      // → handlers::list
+
+      #[dispatch(handler = custom::complete_task)]
+      Complete { id: u32 },      // → custom::complete_task
+
+      #[dispatch(nested)]
+      Admin(AdminCommands),      // → delegates to AdminCommands::dispatch_config()
+  }
+
+  Outstanding::builder()
+      .commands(Commands::dispatch_config())
+      .run_and_print(cmd, args);
+  ```
+
 ## [0.14.0] - 2026-01-12
 
 - **Added**:
