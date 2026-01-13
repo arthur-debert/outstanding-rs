@@ -115,9 +115,11 @@
 //! #[derive(Subcommand, Dispatch)]
 //! #[dispatch(handlers = handlers)]
 //! enum Commands {
-//!     Add(AddArgs),      // → handlers::add
+//!     Add(AddArgs),      // → handlers::add (Standard command with args)
 //!     List(ListArgs),    // → handlers::list
-//!     Complete(Args),    // → handlers::complete
+//!
+//!     #[dispatch(nested)]
+//!     Admin(AdminCmds),  // → Delegates to AdminCmds::dispatch_config()
 //! }
 //!
 //! Outstanding::builder()

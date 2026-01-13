@@ -222,6 +222,7 @@ pub fn embed_styles(input: TokenStream) -> TokenStream {
 /// | `pre_dispatch = fn` | Pre-dispatch hook | None |
 /// | `post_dispatch = fn` | Post-dispatch hook | None |
 /// | `post_output = fn` | Post-output hook | None |
+/// | `nested` | Treat as nested subcommand | false |
 /// | `skip` | Skip this variant | false |
 ///
 /// # Generated Code
@@ -237,12 +238,13 @@ pub fn embed_styles(input: TokenStream) -> TokenStream {
 ///
 /// # Nested Subcommands
 ///
-/// Nested enums are handled recursively:
+/// Nested enums are handled recursively, but must use `#[dispatch(nested)]`:
 ///
 /// ```rust,ignore
 /// #[derive(Subcommand, Dispatch)]
 /// #[dispatch(handlers = handlers)]
 /// enum Commands {
+///     #[dispatch(nested)]
 ///     Db(DbCommands),  // Delegates to DbCommands::dispatch_config()
 /// }
 ///

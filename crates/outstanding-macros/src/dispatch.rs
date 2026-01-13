@@ -65,12 +65,13 @@
 //!
 //! ## Nested Subcommands
 //!
-//! Nested enums are handled recursively:
+//! Nested enums are handled recursively, but **must** be explicitly marked with `#[dispatch(nested)]`:
 //!
 //! ```rust,ignore
 //! #[derive(Subcommand, Dispatch)]
 //! #[dispatch(handlers = handlers)]
 //! enum Commands {
+//!     #[dispatch(nested)]
 //!     Db(DbCommands),  // Delegates to nested enum's dispatch_config
 //! }
 //!
@@ -101,6 +102,7 @@
 //! | `pre_dispatch = fn` | Pre-dispatch hook | None |
 //! | `post_dispatch = fn` | Post-dispatch hook | None |
 //! | `post_output = fn` | Post-output hook | None |
+//! | `nested` | Treat variant as nested subcommand | false |
 //! | `skip` | Skip this variant | false |
 //!
 //! # Generated Code
@@ -150,6 +152,7 @@ struct VariantAttrs {
     pre_dispatch: Option<Path>,
     post_dispatch: Option<Path>,
     post_output: Option<Path>,
+    nested: bool,
     skip: bool,
 }
 
@@ -236,13 +239,16 @@ impl Parse for VariantAttrs {
                         return Err(Error::new(nv.value.span(), "expected path"));
                     }
                 }
+                Meta::Path(p) if p.is_ident("nested") => {
+                    attrs.nested = true;
+                }
                 Meta::Path(p) if p.is_ident("skip") => {
                     attrs.skip = true;
                 }
                 _ => {
                     return Err(Error::new(
                         meta.span(),
-                        "unknown attribute, expected one of: handler, template, pre_dispatch, post_dispatch, post_output, skip",
+                        "unknown attribute, expected one of: handler, template, pre_dispatch, post_dispatch, post_output, nested, skip",
                     ));
                 }
             }
@@ -342,13 +348,26 @@ pub fn dispatch_derive_impl(input: DeriveInput) -> Result<TokenStream> {
         }
 
         let snake_name = to_snake_case(&variant.ident.to_string());
-        let nested_type = is_nested_subcommand(&variant.fields);
+        let nested_type_candidate = is_nested_subcommand(&variant.fields);
+
+        // Determine is_nested:
+        // 1. If explicit #[dispatch(nested)], it MUST be nested (and must have a valid nested type).
+        // 2. If NO explicit nested, it is a leaf command (default), even if it looks like a nested one.
+        //    This fixes the bug where Command(String) was treated as nested.
+        let is_nested = attrs.nested;
+
+        if is_nested && nested_type_candidate.is_none() {
+            return Err(Error::new(
+                variant.span(),
+                "#[dispatch(nested)] requires a tuple variant with a single field (the nested subcommand enum)",
+            ));
+        }
 
         variants.push(VariantInfo {
             snake_name,
             attrs,
-            is_nested: nested_type.is_some(),
-            nested_type,
+            is_nested,
+            nested_type: nested_type_candidate,
         });
     }
 
