@@ -1,6 +1,6 @@
 [package]
 name = "outstanding-clap"
-version = "0.14.0"
+version = "0.15.0"
 edition = "2021"
 description = "Clap integration for Outstanding template engine - topics and styled help"
 license = "MIT"
@@ -13,8 +13,8 @@ name = "test-notes-app"
 path = "src/bin/test_notes_app.rs"
 
 [dependencies]
-outstanding = { version = "0.14.0", path = "../outstanding" }
-outstanding-macros = { version = "0.14.0", path = "../outstanding-macros" }
+outstanding = { version = "0.15.0", path = "../outstanding" }
+outstanding-macros = { version = "0.15.0", path = "../outstanding-macros" }
 anyhow = "1"
 clap = { version = "4", features = ["derive", "help"] }
 console = "0.15"
