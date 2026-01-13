@@ -46,6 +46,10 @@ mod handlers {
             CommandResult::Ok(json!({"action": "db_backup"}))
         }
     }
+
+    pub fn with_arg(_m: &ArgMatches, _ctx: &CommandContext) -> CommandResult<serde_json::Value> {
+        CommandResult::Ok(json!({"action": "with_arg"}))
+    }
 }
 
 mod custom {
@@ -228,4 +232,50 @@ fn test_nested_db_commands() {
 
     assert!(builder.contains("migrate"));
     assert!(builder.contains("backup"));
+}
+
+// ============================================================================
+// Tuple variant test (Regression test for incorrect nesting)
+// ============================================================================
+
+#[derive(clap::Args)]
+struct TupleArgs {
+    arg: String,
+}
+
+#[derive(Subcommand, Dispatch)]
+#[dispatch(handlers = handlers)]
+enum TupleVariantCommands {
+    /// Should be treated as a leaf command, not nested
+    WithArg(TupleArgs),
+}
+
+#[test]
+fn test_tuple_variant_regression() {
+    let config = TupleVariantCommands::dispatch_config();
+    let builder = config(GroupBuilder::new());
+
+    // Should be registered as "with_arg" using handlers::with_arg convention
+    // But since handlers::with_arg doesn't exist in the shared module, let's use explicit handler
+    // Actually, let's just use "add" handler via override to verify registration works
+
+    // RETHINK: To test default convention, I need handlers::with_arg.
+    // The shared handlers module doesn't have it.
+    // So I will use explicit handler to avoid compilation error on the handler side,
+    // while verifying the macro doesn't try to recurse into TupleArgs.
+    assert!(builder.contains("with_arg"));
+}
+
+#[derive(Subcommand, Dispatch)]
+#[dispatch(handlers = handlers)]
+enum TupleVariantExplicit {
+    #[dispatch(handler = handlers::add)]
+    WithArg(TupleArgs),
+}
+
+#[test]
+fn test_tuple_variant_explicit() {
+    let config = TupleVariantExplicit::dispatch_config();
+    let builder = config(GroupBuilder::new());
+    assert!(builder.contains("with_arg"));
 }
