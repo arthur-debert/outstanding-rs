@@ -23,18 +23,13 @@ Command Logic → Structured Data → Template + Theme → Terminal Output
 
 ```toml
 [dependencies]
-outstanding = "0.5"
-```
-
-For clap integration, also add:
-```toml
-outstanding-clap = "0.5"
+outstanding = "1.0"
 ```
 
 ## Quick Start
 
 ```rust
-use outstanding::{render, Theme, ThemeChoice};
+use outstanding::{render, Theme};
 use console::Style;
 use serde::Serialize;
 
@@ -57,7 +52,7 @@ Total items: [count]{{ total }}[/count]
 let output = render(
     template,
     &Summary { title: "Report".into(), total: 3 },
-    ThemeChoice::from(&theme),
+    &theme,
 ).unwrap();
 println!("{}", output);
 ```
@@ -69,22 +64,22 @@ println!("{}", output);
 Control how output is rendered:
 
 ```rust
-use outstanding::{render_with_output, OutputMode};
+use outstanding::{render_with_output, render_auto, OutputMode};
 
 // Auto-detect terminal capabilities (default)
-render_with_output(template, &data, theme, OutputMode::Auto)?;
+render_with_output(template, &data, &theme, OutputMode::Auto)?;
 
 // Force ANSI colors
-render_with_output(template, &data, theme, OutputMode::Term)?;
+render_with_output(template, &data, &theme, OutputMode::Term)?;
 
 // Plain text, no colors
-render_with_output(template, &data, theme, OutputMode::Text)?;
+render_with_output(template, &data, &theme, OutputMode::Text)?;
 
 // Debug mode: [style]text[/style]
-render_with_output(template, &data, theme, OutputMode::TermDebug)?;
+render_with_output(template, &data, &theme, OutputMode::TermDebug)?;
 
 // JSON output (skips template, serializes data directly)
-render_auto(template, &data, theme, OutputMode::Json)?;
+render_auto(template, &data, &theme, OutputMode::Json)?;
 ```
 
 ### Adaptive Themes
@@ -92,13 +87,21 @@ render_auto(template, &data, theme, OutputMode::Json)?;
 Support light and dark terminals with automatic OS detection:
 
 ```rust
-use outstanding::{Theme, AdaptiveTheme, ThemeChoice};
+use outstanding::Theme;
+use console::Style;
 
-let light = Theme::new().add("accent", Style::new().blue());
-let dark = Theme::new().add("accent", Style::new().cyan());
-let adaptive = AdaptiveTheme::new(light, dark);
+// Styles can have different values for light/dark modes
+let theme = Theme::new()
+    .add("header", Style::new().bold())
+    .add_adaptive(
+        "accent",
+        Style::new(),                   // Base style
+        Some(Style::new().blue()),      // Light mode
+        Some(Style::new().cyan()),      // Dark mode
+    );
 
-render(template, &data, ThemeChoice::Adaptive(&adaptive))?;
+// Color mode is detected automatically from OS settings
+render(template, &data, &theme)?;
 ```
 
 ### Style Aliasing
@@ -133,7 +136,7 @@ for entry in entries {
 
 ## Integration with Clap
 
-For clap-based CLIs, the `outstanding-clap` crate provides:
+The `cli` module provides full clap integration:
 
 - Command handler registration with templates
 - Automatic `--output` flag injection
@@ -141,16 +144,16 @@ For clap-based CLIs, the `outstanding-clap` crate provides:
 - Pager support
 
 ```rust
-use outstanding_clap::{Outstanding, CommandResult};
+use outstanding::cli::{App, Output, HandlerResult};
+use serde_json::json;
 
-Outstanding::builder()
-    .command("list", |_m, _ctx| {
-        CommandResult::Ok(serde_json::json!({"items": ["a", "b"]}))
+App::builder()
+    .command("list", |_m, _ctx| -> HandlerResult<_> {
+        Ok(Output::Render(json!({"items": ["a", "b"]})))
     }, "{{ items | join(', ') }}")
-    .run_and_print(cmd, std::env::args());
+    .build()?
+    .run(cmd, std::env::args());
 ```
-
-See the [outstanding-clap documentation](../outstanding-clap/docs/using-with-clap.md) for details.
 
 ## Documentation
 

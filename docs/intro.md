@@ -34,13 +34,13 @@ This means that that you can still use only the rendering layer, template regist
 Input Parsing (clap) -> Dispatcher -> Logic Handler -> Rendering
 ```
 
-The flow is responsible from taking the cli input, parsing it with clap, dispatching to the correct logic handler, running the logic handler, and rendering the result. calling any hooks along the way.  This is a significant amount of boiler plate saved. 
+The flow is responsible from taking the cli input, parsing it with clap, dispatching to the correct logic handler, running the logic handler, and rendering the result. calling any hooks along the way.  This is a significant amount of boiler plate saved.
 
 With workflow, once you have the clap definition, all you need is point to the logic handlers and write the output templates.
 
 ### 2\. The Rendering Layer
 
-The rendering layer is design to offer best-in-class developer workflow, with content, styling and code separation and hot releading during development. 
+The rendering layer is design to offer best-in-class developer workflow, with content, styling and code separation and hot releading during development.
 
 #### 1\. Templates
 
@@ -54,17 +54,17 @@ The combination offers a robust and easy to adopt syntax, with the ergonomics of
 
 #### 2\. Styles
 
-##### Styles can be defined in yaml files.  At their core, , they are represented as console::Style structs, but have two additional features: aliasing and adaptative attributes.
+##### Styles can be defined in yaml files.  At their core, , they are represented as console::Style structs, but have two additional features: aliasing and adaptative attributes
 
 ###### 2.1 Aliasing
 
 Aliasing allows for styles that simply refer to other sytles.  This allwos application writers to define semantic styles in code and templates, letting the presentation layer indirectly handle it, while keeping consistent styling between application components, views and so on.
 
-For example you may have a title and commit-message styles, that both refer to the same actual values, but this allows you to alter each or both at your leisure without changing the code or templates. 
+For example you may have a title and commit-message styles, that both refer to the same actual values, but this allows you to alter each or both at your leisure without changing the code or templates.
 
 ###### 2.2 Adaptative Attributes
 
-Adaptative attributes allow styles to hold different values depending on light and dark modes. 
+Adaptative attributes allow styles to hold different values depending on light and dark modes.
 
 **What it looks like**:
 
@@ -77,52 +77,62 @@ Adaptative attributes allow styles to hold different values depending on light a
                     commit-message: title 
 
 ```
+
 ## Example Todo List Command
 
-On this example, our task management app.
+In this example, our task management app.
 
 ```rust
-    // The Data Model:
-    // This is your application level data strictured, already annotated for clap and outstanding:
-            #[derive(Serialize, Clone)]
-            #[serde(rename_all = "lowercase")]
-            pub enum Status {
-            }
-            
-            #[derive(Serialize, Clone)]
-            pub struct Todo {
-            }
-            
-            #[derive(Serialize)]
-            pub struct TodoResult {
-            }
-    //The application logic for list:
-            #[dispatch()
-            pub fn list(_matches: &ArgMatches, _ctx: &CommandContext) -> CommandResult<TodoResult> {
-                    let todos = storage::list()?;
-            
-                    CommandResult::Ok(TodoResult {:
-                    message: None,
-                    todos,
-                    })
-            }
-    //Your file system:
-        // src/
-        //     main.rs
-        //     ...
-        //     templates/
-        //         list.jinja
-        //         add.jinja # each command has it's own template , by default named matched.
-        //     styles/
-        //         default.yml
-    //Now configure oustanding by setting templates and styles paths, the command config :
-            // Setup and configure ouststanding: 
-            Outstanding::builder()
-                .templates(embed_templates!("src/templates"))  // Embeds all .jinja/.j2/.txt files
-                .styles(embed_styles!("src/styles"))           // Embeds all .yaml/.yml files
-                .default_theme("default")                      // Now the default theme is available
-                .commands(Commands::dispatch_config())          // Generated auto dispatch.
-            .build()?;
-    // Once your app is configured , auto dispatch will handle the cli input
-              .run(Cli::command(), std::env::args());     :
+// The Data Model:
+// Your application level data structures, annotated for serialization:
+#[derive(Serialize, Clone)]
+#[serde(rename_all = "lowercase")]
+pub enum Status {
+    Pending,
+    Done,
+}
+
+#[derive(Serialize, Clone)]
+pub struct Todo {
+    pub title: String,
+    pub status: Status,
+}
+
+#[derive(Serialize)]
+pub struct TodoResult {
+    pub message: Option<String>,
+    pub todos: Vec<Todo>,
+}
+
+// The application logic for list:
+#[dispatch]
+pub fn list(_matches: &ArgMatches, _ctx: &CommandContext) -> HandlerResult<TodoResult> {
+    let todos = storage::list()?;
+
+    Ok(Output::Render(TodoResult {
+        message: None,
+        todos,
+    }))
+}
+
+// Your file system:
+// src/
+//     main.rs
+//     ...
+//     templates/
+//         list.jinja
+//         add.jinja  # each command has its own template, by default name-matched
+//     styles/
+//         default.yml
+
+// Setup and configure outstanding:
+let app = App::builder()
+    .templates(embed_templates!("src/templates"))  // Embeds all .jinja/.j2/.txt files
+    .styles(embed_styles!("src/styles"))           // Embeds all .yaml/.yml files
+    .default_theme("default")                      // Set the default theme
+    .commands(Commands::dispatch_config())         // Generated auto dispatch
+    .build()?;
+
+// Once configured, auto dispatch handles the cli input
+app.run(Cli::command(), std::env::args());
 ```

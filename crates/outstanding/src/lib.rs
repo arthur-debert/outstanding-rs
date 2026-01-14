@@ -10,8 +10,8 @@
 //! - **Help topics system** for extended documentation
 //! - **Pager support** for long content
 //!
-//! This crate is **CLI-agnostic** - it doesn't care how you parse arguments.
-//! For easy integration with clap, see the `outstanding-clap` crate.
+//! This crate is **CLI-agnostic** at its core - it doesn't care how you parse arguments.
+//! For clap integration, see the [`cli`] module which provides command dispatch and styled help.
 //!
 //! ## Core Concepts
 //!
@@ -194,17 +194,26 @@
 //!
 //! ## Integration with Clap
 //!
-//! For clap-based CLIs, use the `outstanding-clap` crate which handles:
+//! The [`cli`] module provides full clap integration with:
+//! - Command dispatch with automatic template rendering
 //! - Help command interception (`help`, `help <topic>`, `help topics`)
-//! - Output flag injection (`--output=auto|term|text`)
+//! - Output flag injection (`--output=auto|term|text|json`)
 //! - Styled help rendering
 //!
 //! ```rust,ignore
 //! use clap::Command;
-//! use outstanding::cli::App;
+//! use outstanding::cli::{App, HandlerResult, Output};
 //!
-//! // Simplest usage - all features enabled by default
+//! // Simple parsing with styled help
 //! let matches = App::parse(Command::new("my-app"));
+//!
+//! // Full application with command dispatch
+//! App::builder()
+//!     .command("list", |_m, _ctx| {
+//!         Ok(Output::Render(json!({"items": ["a", "b"]})))
+//!     }, "{% for item in items %}{{ item }}\n{% endfor %}")
+//!     .build()?
+//!     .run(cmd, std::env::args());
 //! ```
 
 // Internal modules
