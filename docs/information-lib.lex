@@ -31,7 +31,8 @@ Information Lib
         call your legacy loop.
 
       p.s.: How is the autodispatch api? I see : 
-        .run(Cli::command(), std::env::args());
+        let cmd = clap::Command::new("myapp");
+        app.run(cmd, std::env::args());
       :: rust ::
 
       Which  looks alright, but not sure if a cleaner rust api would be to app.match(cli::command(), std::env::args()) -> return a Option ,
@@ -1503,6 +1504,10 @@ THEME: Partial Adoption
 
 		match app.run_to_string(cmd, args) {
 		    RunResult::Handled(s) => println!("{}", s),
+		    RunResult::Binary(bytes, filename) => {
+		        std::fs::write(&filename, bytes)?;
+		        eprintln!("Wrote {} bytes to {}", bytes.len(), filename);
+		    }
 		    RunResult::NoMatch(m) => my_dispatch(m),
 		}
 	:: rust ::
@@ -1536,6 +1541,10 @@ THEME: Partial Adoption
 		    match app.dispatch(matches.clone(), OutputMode::Auto) {
 		        RunResult::Handled(output) => {
 		            println!("{}", output);
+		            return;
+		        }
+		        RunResult::Binary(bytes, filename) => {
+		            std::fs::write(&filename, bytes).ok();
 		            return;
 		        }
 		        RunResult::NoMatch(_) => {
@@ -1573,8 +1582,12 @@ THEME: Partial Adoption
 
 		    // Outstanding handles "new-feature" and others
 		    let app = build_outstanding_app();
-		    if let RunResult::Handled(output) = app.dispatch(matches, OutputMode::Auto) {
-		        println!("{}", output);
+		    match app.dispatch(matches, OutputMode::Auto) {
+		        RunResult::Handled(output) => println!("{}", output),
+		        RunResult::Binary(bytes, filename) => {
+		             std::fs::write(filename, bytes).ok();
+		        }
+		        _ => {} // Handle Silent or NoMatch if needed
 		    }
 		}
 	:: rust ::
