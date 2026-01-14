@@ -115,7 +115,7 @@ mod tests {
         // Test dark mode
         set_theme_detector(|| ColorMode::Dark);
         let dark_output = render_with_output(
-            r#"{{ message | style("tone") }}"#,
+            r#"[tone]{{ message }}[/tone]"#,
             &data,
             &theme,
             OutputMode::Term,
@@ -130,7 +130,7 @@ mod tests {
         // Test light mode
         set_theme_detector(|| ColorMode::Light);
         let light_output = render_with_output(
-            r#"{{ message | style("tone") }}"#,
+            r#"[tone]{{ message }}[/tone]"#,
             &data,
             &theme,
             OutputMode::Term,

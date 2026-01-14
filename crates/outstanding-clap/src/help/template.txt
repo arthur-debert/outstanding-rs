@@ -1,33 +1,34 @@
-{{ about | style("about") }}
+[about]{{ about }}[/about]
 
-{{ "USAGE" | style("header") | nl }}  {{ usage | style("usage") }}
+[header]USAGE[/header]
+  [usage]{{ usage }}[/usage]
 {%- if subcommands %}
 
-{{ "COMMANDS" | style("header") }}
+[header]COMMANDS[/header]
 {%- for group in subcommands %}
 {%- for cmd in group.commands %}
-  {{ cmd.name | style("item") }}:{{ cmd.padding }}{{ cmd.about | style("desc") }}
+  [item]{{ cmd.name }}[/item]:{{ cmd.padding }}[desc]{{ cmd.about }}[/desc]
 {%- endfor %}
 {%- endfor %}
 {%- endif %}
 {%- if options %}
 
-{{ "OPTIONS" | style("header") }}
+[header]OPTIONS[/header]
 {%- for group in options %}
 {%- for opt in group.options %}
-  {{ opt.name | style("item") }}{{ opt.padding }}{{ opt.help | style("desc") }}
+  [item]{{ opt.name }}[/item]{{ opt.padding }}[desc]{{ opt.help }}[/desc]
 {%- endfor %}
 {%- endfor %}
 {%- endif %}
 {%- if examples %}
 
-{{ "EXAMPLES" | style("header") }}
-{{ examples | style("example") }}
+[header]EXAMPLES[/header]
+[example]{{ examples }}[/example]
 {%- endif %}
 {%- if learn_more %}
 
-{{ "LEARN MORE" | style("header") }}
+[header]LEARN MORE[/header]
 {%- for topic in learn_more %}
-  {{ topic.name | style("item") }}:{{ topic.padding }}{{ topic.title | style("desc") }}
+  [item]{{ topic.name }}[/item]:{{ topic.padding }}[desc]{{ topic.title }}[/desc]
 {%- endfor %}
 {%- endif %}

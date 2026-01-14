@@ -30,23 +30,23 @@ use std::process::ExitCode;
 
 /// Template for echoing back command execution details
 const ECHO_TEMPLATE: &str = r#"
-{{ "SAMPLE APP - Command Echo" | style("header") | nl }}
-{{ "(This is a test app that echoes what you called)" | style("muted") | nl }}
+[header]SAMPLE APP - Command Echo[/header]
+[muted](This is a test app that echoes what you called)[/muted]
 
-{{ "Command:" | style("label") }} {{ command | style("value") }}
+[label]Command:[/label] [value]{{ command }}[/value]
 {%- if subcommand %}
-{{ "Subcommand:" | style("label") }} {{ subcommand | style("value") }}
+[label]Subcommand:[/label] [value]{{ subcommand }}[/value]
 {%- endif %}
 {%- if args %}
-{{ "Arguments:" | style("label") }}
+[label]Arguments:[/label]
 {%- for arg in args %}
-  {{ arg.name | style("arg_name") }}: {{ arg.value | style("arg_value") }}
+  [arg_name]{{ arg.name }}[/arg_name]: [arg_value]{{ arg.value }}[/arg_value]
 {%- endfor %}
 {%- endif %}
 {%- if options %}
-{{ "Options:" | style("label") }}
+[label]Options:[/label]
 {%- for opt in options %}
-  {{ opt.name | style("opt_name") }}: {{ opt.value | style("opt_value") }}
+  [opt_name]{{ opt.name }}[/opt_name]: [opt_value]{{ opt.value }}[/opt_value]
 {%- endfor %}
 {%- endif %}
 "#;

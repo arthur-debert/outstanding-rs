@@ -7,16 +7,132 @@
 //! - [`render_with_mode`]: Rendering with explicit output mode and color mode
 //! - [`render_with_context`]: Rendering with injected context objects
 //! - [`render_or_serialize`]: Render or serialize to JSON based on mode
+//!
+//! # Two-Pass Rendering
+//!
+//! Templates use tag-based syntax for styling: `[name]content[/name]`
+//!
+//! The rendering process works in two passes:
+//! 1. **MiniJinja pass**: Variable substitution and template logic
+//! 2. **BBParser pass**: Style tag processing (`[tag]...[/tag]`)
+//!
+//! This allows templates like:
+//! ```text
+//! [title]{{ data.title }}[/title]: [count]{{ items | length }}[/count] items
+//! ```
 
 use minijinja::{Environment, Error, Value};
+use outstanding_bbparser::{BBParser, TagTransform, UnknownTagBehavior};
 use serde::Serialize;
 use std::collections::HashMap;
 
 use super::filters::register_filters;
 use crate::context::{ContextRegistry, RenderContext};
 use crate::output::OutputMode;
+use crate::style::Styles;
 use crate::table::FlatDataSpec;
 use crate::theme::{detect_color_mode, ColorMode, Theme};
+
+/// Maps OutputMode to BBParser's TagTransform.
+fn output_mode_to_transform(mode: OutputMode) -> TagTransform {
+    match mode {
+        OutputMode::Auto => {
+            if mode.should_use_color() {
+                TagTransform::Apply
+            } else {
+                TagTransform::Remove
+            }
+        }
+        OutputMode::Term => TagTransform::Apply,
+        OutputMode::Text => TagTransform::Remove,
+        OutputMode::TermDebug => TagTransform::Keep,
+        // Structured modes shouldn't reach here (filtered out before)
+        OutputMode::Json | OutputMode::Yaml | OutputMode::Xml | OutputMode::Csv => {
+            TagTransform::Remove
+        }
+    }
+}
+
+/// Post-processes rendered output with BBParser to apply style tags.
+///
+/// This is the second pass of the two-pass rendering system.
+fn apply_style_tags(output: &str, styles: &Styles, mode: OutputMode) -> String {
+    let transform = output_mode_to_transform(mode);
+    let resolved_styles = styles.to_resolved_map();
+    let parser =
+        BBParser::new(resolved_styles, transform).unknown_behavior(UnknownTagBehavior::Passthrough);
+    parser.parse(output)
+}
+
+/// Validates a template for unknown style tags.
+///
+/// This function renders the template (performing variable substitution) and then
+/// checks for any style tags that are not defined in the theme. Use this during
+/// development or CI to catch typos in templates.
+///
+/// # Arguments
+///
+/// * `template` - A minijinja template string
+/// * `data` - Any serializable data to pass to the template
+/// * `theme` - Theme definitions that define valid style names
+///
+/// # Returns
+///
+/// Returns `Ok(())` if all style tags in the template are defined in the theme.
+/// Returns `Err` with the list of unknown tags if any are found.
+///
+/// # Example
+///
+/// ```rust
+/// use outstanding::{validate_template, Theme};
+/// use console::Style;
+/// use serde::Serialize;
+///
+/// #[derive(Serialize)]
+/// struct Data { name: String }
+///
+/// let theme = Theme::new().add("title", Style::new().bold());
+///
+/// // Valid template passes
+/// let result = validate_template(
+///     "[title]{{ name }}[/title]",
+///     &Data { name: "Hello".into() },
+///     &theme,
+/// );
+/// assert!(result.is_ok());
+///
+/// // Unknown tag fails validation
+/// let result = validate_template(
+///     "[unknown]{{ name }}[/unknown]",
+///     &Data { name: "Hello".into() },
+///     &theme,
+/// );
+/// assert!(result.is_err());
+/// ```
+pub fn validate_template<T: Serialize>(
+    template: &str,
+    data: &T,
+    theme: &Theme,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let color_mode = detect_color_mode();
+    let styles = theme.resolve_styles(Some(color_mode));
+
+    // First render with MiniJinja to get the final output
+    let mut env = Environment::new();
+    register_filters(&mut env);
+
+    env.add_template_owned("_inline".to_string(), template.to_string())?;
+
+    let tmpl = env.get_template("_inline")?;
+    let minijinja_output = tmpl.render(data)?;
+
+    // Now validate the style tags
+    let resolved_styles = styles.to_resolved_map();
+    let parser = BBParser::new(resolved_styles, TagTransform::Remove);
+    parser.validate(&minijinja_output)?;
+
+    Ok(())
+}
 
 /// Renders a template with automatic terminal color detection.
 ///
@@ -42,7 +158,7 @@ use crate::theme::{detect_color_mode, ColorMode, Theme};
 ///
 /// let theme = Theme::new().add("ok", Style::new().green());
 /// let output = render(
-///     r#"{{ message | style("ok") }}"#,
+///     r#"[ok]{{ message }}[/ok]"#,
 ///     &Data { message: "Success!".into() },
 ///     &theme,
 /// ).unwrap();
@@ -61,7 +177,7 @@ pub fn render<T: Serialize>(template: &str, data: &T, theme: &Theme) -> Result<S
 ///
 /// * `template` - A minijinja template string
 /// * `data` - Any serializable data to pass to the template
-/// * `theme` - Theme definitions to use for the `style` filter
+/// * `theme` - Theme definitions to use for styling
 /// * `mode` - Output mode: `Auto`, `Term`, or `Text`
 ///
 /// # Example
@@ -78,7 +194,7 @@ pub fn render<T: Serialize>(template: &str, data: &T, theme: &Theme) -> Result<S
 ///
 /// // Force plain text output
 /// let plain = render_with_output(
-///     r#"{{ status | style("ok") }}"#,
+///     r#"[ok]{{ status }}[/ok]"#,
 ///     &Data { status: "done".into() },
 ///     &theme,
 ///     OutputMode::Text,
@@ -87,7 +203,7 @@ pub fn render<T: Serialize>(template: &str, data: &T, theme: &Theme) -> Result<S
 ///
 /// // Force terminal output (with ANSI codes)
 /// let term = render_with_output(
-///     r#"{{ status | style("ok") }}"#,
+///     r#"[ok]{{ status }}[/ok]"#,
 ///     &Data { status: "done".into() },
 ///     &theme,
 ///     OutputMode::Term,
@@ -138,7 +254,7 @@ pub fn render_with_output<T: Serialize>(
 ///
 /// // Force dark mode rendering
 /// let dark = render_with_mode(
-///     r#"{{ status | style("panel") }}"#,
+///     r#"[panel]{{ status }}[/panel]"#,
 ///     &Data { status: "test".into() },
 ///     &theme,
 ///     OutputMode::Term,
@@ -147,7 +263,7 @@ pub fn render_with_output<T: Serialize>(
 ///
 /// // Force light mode rendering
 /// let light = render_with_mode(
-///     r#"{{ status | style("panel") }}"#,
+///     r#"[panel]{{ status }}[/panel]"#,
 ///     &Data { status: "test".into() },
 ///     &theme,
 ///     OutputMode::Term,
@@ -170,11 +286,18 @@ pub fn render_with_mode<T: Serialize>(
     let styles = theme.resolve_styles(Some(color_mode));
 
     let mut env = Environment::new();
-    register_filters(&mut env, styles, output_mode);
+    register_filters(&mut env);
 
     env.add_template_owned("_inline".to_string(), template.to_string())?;
     let tmpl = env.get_template("_inline")?;
-    tmpl.render(data)
+
+    // Pass 1: MiniJinja template rendering
+    let minijinja_output = tmpl.render(data)?;
+
+    // Pass 2: BBParser style tag processing
+    let final_output = apply_style_tags(&minijinja_output, &styles, output_mode);
+
+    Ok(final_output)
 }
 
 /// Renders data using a template, or serializes directly for structured output modes.
@@ -205,7 +328,7 @@ pub fn render_with_mode<T: Serialize>(
 ///
 /// // Terminal output uses the template
 /// let term = render_or_serialize(
-///     r#"{{ title | style("title") }}: {{ count }}"#,
+///     r#"[title]{{ title }}[/title]: {{ count }}"#,
 ///     &data,
 ///     &theme,
 ///     OutputMode::Text,
@@ -214,7 +337,7 @@ pub fn render_with_mode<T: Serialize>(
 ///
 /// // JSON output serializes directly
 /// let json = render_or_serialize(
-///     r#"{{ title | style("title") }}: {{ count }}"#,
+///     r#"[title]{{ title }}[/title]: {{ count }}"#,
 ///     &data,
 ///     &theme,
 ///     OutputMode::Json,
@@ -406,15 +529,15 @@ pub fn render_with_context<T: Serialize>(
     render_context: &RenderContext,
 ) -> Result<String, Error> {
     let color_mode = detect_color_mode();
-    let theme = theme.resolve_styles(Some(color_mode));
+    let styles = theme.resolve_styles(Some(color_mode));
 
     // Validate style aliases before rendering
-    theme
+    styles
         .validate()
         .map_err(|e| Error::new(minijinja::ErrorKind::InvalidOperation, e.to_string()))?;
 
     let mut env = Environment::new();
-    register_filters(&mut env, theme, mode);
+    register_filters(&mut env);
 
     env.add_template_owned("_inline".to_string(), template.to_string())?;
     let tmpl = env.get_template("_inline")?;
@@ -423,7 +546,13 @@ pub fn render_with_context<T: Serialize>(
     // Data fields take precedence over context fields
     let combined = build_combined_context(data, context_registry, render_context)?;
 
-    tmpl.render(&combined)
+    // Pass 1: MiniJinja template rendering
+    let minijinja_output = tmpl.render(&combined)?;
+
+    // Pass 2: BBParser style tag processing
+    let final_output = apply_style_tags(&minijinja_output, &styles, mode);
+
+    Ok(final_output)
 }
 
 /// Renders with context, or serializes directly for structured output modes.
@@ -606,7 +735,7 @@ mod tests {
         };
 
         let output = render_with_output(
-            r#"{{ message | style("red") }}"#,
+            r#"[red]{{ message }}[/red]"#,
             &data,
             &theme,
             OutputMode::Text,
@@ -625,7 +754,7 @@ mod tests {
         };
 
         let output = render_with_output(
-            r#"{{ message | style("green") }}"#,
+            r#"[green]{{ message }}[/green]"#,
             &data,
             &theme,
             OutputMode::Term,
@@ -644,32 +773,34 @@ mod tests {
         };
 
         let output = render_with_output(
-            r#"{{ message | style("unknown") }}"#,
+            r#"[unknown]{{ message }}[/unknown]"#,
             &data,
             &theme,
             OutputMode::Term,
         )
         .unwrap();
 
-        assert_eq!(output, "(!?) hello");
+        // Unknown tags in passthrough mode get ? marker on both open and close tags
+        assert_eq!(output, "[unknown?]hello[/unknown?]");
     }
 
     #[test]
-    fn test_render_unknown_style_shows_indicator_no_color() {
+    fn test_render_unknown_style_stripped_in_text_mode() {
         let theme = Theme::new();
         let data = SimpleData {
             message: "hello".into(),
         };
 
         let output = render_with_output(
-            r#"{{ message | style("unknown") }}"#,
+            r#"[unknown]{{ message }}[/unknown]"#,
             &data,
             &theme,
             OutputMode::Text,
         )
         .unwrap();
 
-        assert_eq!(output, "(!?) hello");
+        // In text mode (Remove), unknown tags are stripped like known tags
+        assert_eq!(output, "hello");
     }
 
     #[test]
@@ -680,7 +811,7 @@ mod tests {
             count: 2,
         };
 
-        let template = r#"{% for item in items %}{{ item | style("item") }}
+        let template = r#"{% for item in items %}[item]{{ item }}[/item]
 {% endfor %}"#;
 
         let output = render_with_output(template, &data, &theme, OutputMode::Text).unwrap();
@@ -695,7 +826,7 @@ mod tests {
             count: 42,
         };
 
-        let template = r#"Total: {{ count | style("count") }} items"#;
+        let template = r#"Total: [count]{{ count }}[/count] items"#;
         let output = render_with_output(template, &data, &theme, OutputMode::Text).unwrap();
 
         assert_eq!(output, "Total: 42 items");
@@ -709,7 +840,7 @@ mod tests {
         struct Empty {}
 
         let output = render_with_output(
-            r#"{{ "Header" | style("header") }}"#,
+            r#"[header]Header[/header]"#,
             &Empty {},
             &theme,
             OutputMode::Text,
@@ -742,7 +873,7 @@ mod tests {
     }
 
     #[test]
-    fn test_style_filter_with_nested_data() {
+    fn test_style_tag_with_nested_data() {
         #[derive(Serialize)]
         struct Item {
             name: String,
@@ -768,7 +899,7 @@ mod tests {
             ],
         };
 
-        let template = r#"{% for item in items %}{{ item.name | style("name") }}={{ item.value }}
+        let template = r#"{% for item in items %}[name]{{ item.name }}[/name]={{ item.value }}
 {% endfor %}"#;
 
         let output = render_with_output(template, &data, &theme, OutputMode::Text).unwrap();
@@ -793,7 +924,7 @@ mod tests {
         };
 
         let output = render_with_output(
-            r#"{{ name | style("title") }}: {{ value | style("count") }}"#,
+            r#"[title]{{ name }}[/title]: [count]{{ value }}[/count]"#,
             &data,
             &theme,
             OutputMode::TermDebug,
@@ -804,7 +935,7 @@ mod tests {
     }
 
     #[test]
-    fn test_render_with_output_term_debug_missing_style() {
+    fn test_render_with_output_term_debug_preserves_tags() {
         let theme = Theme::new().add("known", Style::new().bold());
 
         #[derive(Serialize)]
@@ -816,18 +947,20 @@ mod tests {
             message: "hello".into(),
         };
 
+        // In TermDebug (Keep mode), unknown tags are preserved as-is
         let output = render_with_output(
-            r#"{{ message | style("unknown") }}"#,
+            r#"[unknown]{{ message }}[/unknown]"#,
             &data,
             &theme,
             OutputMode::TermDebug,
         )
         .unwrap();
 
-        assert_eq!(output, "(!?) hello");
+        assert_eq!(output, "[unknown]hello[/unknown]");
 
+        // Known tags are also preserved as-is in debug mode
         let output = render_with_output(
-            r#"{{ message | style("known") }}"#,
+            r#"[known]{{ message }}[/known]"#,
             &data,
             &theme,
             OutputMode::TermDebug,
@@ -872,7 +1005,7 @@ mod tests {
         let data = json!({"name": "test"});
 
         let output = render_or_serialize(
-            r#"{{ name | style("bold") }}"#,
+            r#"[bold]{{ name }}[/bold]"#,
             &data,
             &theme,
             OutputMode::Term,
@@ -911,7 +1044,7 @@ mod tests {
             .add("alias", "base");
 
         let output = render_with_output(
-            r#"{{ "text" | style("alias") }}"#,
+            r#"[alias]text[/alias]"#,
             &serde_json::json!({}),
             &theme,
             OutputMode::Text,
@@ -929,7 +1062,7 @@ mod tests {
             .add("timestamp", "disabled");
 
         let output = render_with_output(
-            r#"{{ "12:00" | style("timestamp") }}"#,
+            r#"[timestamp]12:00[/timestamp]"#,
             &serde_json::json!({}),
             &theme,
             OutputMode::Text,
@@ -944,7 +1077,7 @@ mod tests {
         let theme = Theme::new().add("orphan", "missing");
 
         let result = render_with_output(
-            r#"{{ "text" | style("orphan") }}"#,
+            r#"[orphan]text[/orphan]"#,
             &serde_json::json!({}),
             &theme,
             OutputMode::Text,
@@ -961,7 +1094,7 @@ mod tests {
         let theme = Theme::new().add("a", "b").add("b", "a");
 
         let result = render_with_output(
-            r#"{{ "text" | style("a") }}"#,
+            r#"[a]text[/a]"#,
             &serde_json::json!({}),
             &theme,
             OutputMode::Text,
@@ -987,7 +1120,7 @@ mod tests {
         assert!(theme.validate().is_ok());
 
         let output = render_with_output(
-            r#"{{ time | style("timestamp") }} - {{ name | style("title") }}"#,
+            r#"[timestamp]{{ time }}[/timestamp] - [title]{{ name }}[/title]"#,
             &serde_json::json!({"time": "12:00", "name": "Report"}),
             &theme,
             OutputMode::Text,
@@ -1375,7 +1508,7 @@ mod tests {
 
         // Force dark mode
         let dark_output = render_with_mode(
-            r#"{{ status | style("status") }}"#,
+            r#"[status]{{ status }}[/status]"#,
             &data,
             &theme,
             OutputMode::Term,
@@ -1385,7 +1518,7 @@ mod tests {
 
         // Force light mode
         let light_output = render_with_mode(
-            r#"{{ status | style("status") }}"#,
+            r#"[status]{{ status }}[/status]"#,
             &data,
             &theme,
             OutputMode::Term,
@@ -1406,6 +1539,363 @@ mod tests {
         assert!(
             light_output.contains("\x1b[30"),
             "Expected black (30) in light mode"
+        );
+    }
+
+    // ============================================================================
+    // BBParser Tag Syntax Tests
+    // ============================================================================
+
+    #[test]
+    fn test_tag_syntax_text_mode() {
+        let theme = Theme::new().add("title", Style::new().bold());
+
+        #[derive(Serialize)]
+        struct Data {
+            name: String,
+        }
+
+        let output = render_with_output(
+            "[title]{{ name }}[/title]",
+            &Data {
+                name: "Hello".into(),
+            },
+            &theme,
+            OutputMode::Text,
+        )
+        .unwrap();
+
+        // Tags should be stripped in text mode
+        assert_eq!(output, "Hello");
+    }
+
+    #[test]
+    fn test_tag_syntax_term_mode() {
+        let theme = Theme::new().add("bold", Style::new().bold().force_styling(true));
+
+        #[derive(Serialize)]
+        struct Data {
+            name: String,
+        }
+
+        let output = render_with_output(
+            "[bold]{{ name }}[/bold]",
+            &Data {
+                name: "Hello".into(),
+            },
+            &theme,
+            OutputMode::Term,
+        )
+        .unwrap();
+
+        // Should contain ANSI bold codes
+        assert!(output.contains("\x1b[1m"));
+        assert!(output.contains("Hello"));
+    }
+
+    #[test]
+    fn test_tag_syntax_debug_mode() {
+        let theme = Theme::new().add("title", Style::new().bold());
+
+        #[derive(Serialize)]
+        struct Data {
+            name: String,
+        }
+
+        let output = render_with_output(
+            "[title]{{ name }}[/title]",
+            &Data {
+                name: "Hello".into(),
+            },
+            &theme,
+            OutputMode::TermDebug,
+        )
+        .unwrap();
+
+        // Tags should be preserved in debug mode
+        assert_eq!(output, "[title]Hello[/title]");
+    }
+
+    #[test]
+    fn test_tag_syntax_unknown_tag_passthrough() {
+        // Passthrough with ? marker only applies in Apply mode (Term)
+        let theme = Theme::new().add("known", Style::new().bold());
+
+        #[derive(Serialize)]
+        struct Data {
+            name: String,
+        }
+
+        // In Term mode, unknown tags get ? marker
+        let output = render_with_output(
+            "[unknown]{{ name }}[/unknown]",
+            &Data {
+                name: "Hello".into(),
+            },
+            &theme,
+            OutputMode::Term,
+        )
+        .unwrap();
+
+        // Unknown tags get ? marker in passthrough mode
+        assert!(output.contains("[unknown?]"));
+        assert!(output.contains("[/unknown?]"));
+        assert!(output.contains("Hello"));
+
+        // In Text mode, all tags are stripped (Remove transform)
+        let text_output = render_with_output(
+            "[unknown]{{ name }}[/unknown]",
+            &Data {
+                name: "Hello".into(),
+            },
+            &theme,
+            OutputMode::Text,
+        )
+        .unwrap();
+
+        // Text mode strips all tags
+        assert_eq!(text_output, "Hello");
+    }
+
+    #[test]
+    fn test_tag_syntax_nested() {
+        let theme = Theme::new()
+            .add("bold", Style::new().bold().force_styling(true))
+            .add("red", Style::new().red().force_styling(true));
+
+        #[derive(Serialize)]
+        struct Data {
+            word: String,
+        }
+
+        let output = render_with_output(
+            "[bold][red]{{ word }}[/red][/bold]",
+            &Data {
+                word: "test".into(),
+            },
+            &theme,
+            OutputMode::Term,
+        )
+        .unwrap();
+
+        // Should contain both bold and red ANSI codes
+        assert!(output.contains("\x1b[1m")); // Bold
+        assert!(output.contains("\x1b[31m")); // Red
+        assert!(output.contains("test"));
+    }
+
+    #[test]
+    fn test_tag_syntax_multiple_styles() {
+        let theme = Theme::new()
+            .add("title", Style::new().bold())
+            .add("count", Style::new().cyan());
+
+        #[derive(Serialize)]
+        struct Data {
+            name: String,
+            num: usize,
+        }
+
+        let output = render_with_output(
+            r#"[title]{{ name }}[/title]: [count]{{ num }}[/count]"#,
+            &Data {
+                name: "Items".into(),
+                num: 42,
+            },
+            &theme,
+            OutputMode::Text,
+        )
+        .unwrap();
+
+        assert_eq!(output, "Items: 42");
+    }
+
+    #[test]
+    fn test_tag_syntax_in_loop() {
+        let theme = Theme::new().add("item", Style::new().cyan());
+
+        #[derive(Serialize)]
+        struct Data {
+            items: Vec<String>,
+        }
+
+        let output = render_with_output(
+            "{% for item in items %}[item]{{ item }}[/item]\n{% endfor %}",
+            &Data {
+                items: vec!["one".into(), "two".into()],
+            },
+            &theme,
+            OutputMode::Text,
+        )
+        .unwrap();
+
+        assert_eq!(output, "one\ntwo\n");
+    }
+
+    #[test]
+    fn test_tag_syntax_literal_brackets() {
+        // Tags that don't match our pattern should pass through
+        let theme = Theme::new();
+
+        #[derive(Serialize)]
+        struct Data {
+            msg: String,
+        }
+
+        let output = render_with_output(
+            "Array: [1, 2, 3] and {{ msg }}",
+            &Data { msg: "done".into() },
+            &theme,
+            OutputMode::Text,
+        )
+        .unwrap();
+
+        // Non-tag brackets preserved
+        assert_eq!(output, "Array: [1, 2, 3] and done");
+    }
+
+    // ============================================================================
+    // Template Validation Tests
+    // ============================================================================
+
+    #[test]
+    fn test_validate_template_all_known_tags() {
+        let theme = Theme::new()
+            .add("title", Style::new().bold())
+            .add("count", Style::new().cyan());
+
+        #[derive(Serialize)]
+        struct Data {
+            name: String,
+        }
+
+        let result = validate_template(
+            "[title]{{ name }}[/title]",
+            &Data {
+                name: "Hello".into(),
+            },
+            &theme,
+        );
+
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_validate_template_unknown_tag_fails() {
+        let theme = Theme::new().add("known", Style::new().bold());
+
+        #[derive(Serialize)]
+        struct Data {
+            name: String,
+        }
+
+        let result = validate_template(
+            "[unknown]{{ name }}[/unknown]",
+            &Data {
+                name: "Hello".into(),
+            },
+            &theme,
+        );
+
+        assert!(result.is_err());
+        let err = result.unwrap_err();
+        let errors = err
+            .downcast_ref::<outstanding_bbparser::UnknownTagErrors>()
+            .expect("Expected UnknownTagErrors");
+        assert_eq!(errors.len(), 2); // open and close tags
+    }
+
+    #[test]
+    fn test_validate_template_multiple_unknown_tags() {
+        let theme = Theme::new().add("known", Style::new().bold());
+
+        #[derive(Serialize)]
+        struct Data {
+            a: String,
+            b: String,
+        }
+
+        let result = validate_template(
+            "[foo]{{ a }}[/foo] and [bar]{{ b }}[/bar]",
+            &Data {
+                a: "x".into(),
+                b: "y".into(),
+            },
+            &theme,
+        );
+
+        assert!(result.is_err());
+        let err = result.unwrap_err();
+        let errors = err
+            .downcast_ref::<outstanding_bbparser::UnknownTagErrors>()
+            .expect("Expected UnknownTagErrors");
+        assert_eq!(errors.len(), 4); // foo open/close + bar open/close
+    }
+
+    #[test]
+    fn test_validate_template_plain_text_passes() {
+        let theme = Theme::new();
+
+        #[derive(Serialize)]
+        struct Data {
+            msg: String,
+        }
+
+        let result = validate_template("Just plain {{ msg }}", &Data { msg: "hi".into() }, &theme);
+
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_validate_template_mixed_known_and_unknown() {
+        let theme = Theme::new().add("known", Style::new().bold());
+
+        #[derive(Serialize)]
+        struct Data {
+            a: String,
+            b: String,
+        }
+
+        let result = validate_template(
+            "[known]{{ a }}[/known] [unknown]{{ b }}[/unknown]",
+            &Data {
+                a: "x".into(),
+                b: "y".into(),
+            },
+            &theme,
+        );
+
+        assert!(result.is_err());
+        let err = result.unwrap_err();
+        let errors = err
+            .downcast_ref::<outstanding_bbparser::UnknownTagErrors>()
+            .expect("Expected UnknownTagErrors");
+        // Only unknown tags should be reported
+        assert_eq!(errors.len(), 2);
+        assert!(errors.errors.iter().any(|e| e.tag == "unknown"));
+    }
+
+    #[test]
+    fn test_validate_template_syntax_error_fails() {
+        let theme = Theme::new();
+        #[derive(Serialize)]
+        struct Data {}
+
+        // Missing closing braces
+        let result = validate_template("{{ unclosed", &Data {}, &theme);
+        assert!(result.is_err());
+
+        let err = result.unwrap_err();
+        // Should NOT be UnknownTagErrors
+        assert!(err
+            .downcast_ref::<outstanding_bbparser::UnknownTagErrors>()
+            .is_none());
+        // Should be a minijinja error
+        let msg = err.to_string();
+        assert!(
+            msg.contains("syntax error") || msg.contains("unexpected"),
+            "Got: {}",
+            msg
         );
     }
 }

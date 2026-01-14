@@ -25,23 +25,33 @@ Templates support expressions:
 
 ## Styling
 
-Apply named styles using the `style` filter:
+Use tag syntax to apply named styles:
 
 ```
-{{ title | style("heading") }}
-{{ error_message | style("error") }}
+[heading]{{ title }}[/heading]
+[error]Error:[/error] {{ message }}
+[title]Report[/title]: [count]{{ count }}[/count] items
+```
+
+### Unknown Tags
+
+Unknown style tags show a `?` marker in terminal output: `[typo?]text[/typo?]`.
+This helps catch typos during development.
+
+Use `validate_template()` in your build or tests to catch unknown tags:
+
+```rust
+use outstanding::validate_template;
+
+let result = validate_template(template, &data, &theme);
+if let Err(errors) = result {
+    for error in &errors {
+        eprintln!("Unknown style: {} at position {}", error.tag, error.start);
+    }
+}
 ```
 
 Styles are defined in your theme. See [Styling](styling.md) for details.
-
-### Styling Literals
-
-You can style literal strings too:
-
-```
-{{ "Error:" | style("error") }} {{ message }}
-{{ ">" | style("prompt") }}
-```
 
 ## Control Structures
 
@@ -59,7 +69,7 @@ No items found.
 
 ```
 {% for item in items %}
-- {{ item.name | style("item") }}: {{ item.value }}
+- [item]{{ item.name }}[/item]: {{ item.value }}
 {% endfor %}
 ```
 
@@ -104,16 +114,15 @@ Outstanding adds these filters:
 
 | Filter | Description | Example |
 |--------|-------------|---------|
-| `style` | Apply named style | `{{ text \| style("heading") }}` |
 | `nl` | Append newline | `{{ text \| nl }}` |
 
 ### Filter Chaining
 
-Filters can be chained:
+Filters can be chained with MiniJinja's built-in filters:
 
 ```
-{{ title | upper | style("heading") }}
-{{ items | join(", ") | style("list") }}
+{{ title | upper }}
+{{ items | join(", ") }}
 ```
 
 ## Whitespace Control
@@ -134,7 +143,7 @@ Header
 The `nl` filter explicitly adds newlines:
 
 ```
-{{ title | style("heading") | nl }}
+[heading]{{ title }}[/heading]{{ "" | nl }}
 {{ "" | nl }}  {# Blank line #}
 {{ content }}
 ```
@@ -174,7 +183,7 @@ Use dot notation:
 
 ```
 {% for item in items %}
-{{ item.name | style("item_name") }}:{{ item.padding }}{{ item.desc | style("item_desc") }}
+[item_name]{{ item.name }}[/item_name]:{{ item.padding }}[item_desc]{{ item.desc }}[/item_desc]
 {% endfor %}
 ```
 
@@ -182,29 +191,29 @@ Use dot notation:
 
 ```
 {% if status == "error" %}
-{{ message | style("error") }}
+[error]{{ message }}[/error]
 {% elif status == "warning" %}
-{{ message | style("warning") }}
+[warning]{{ message }}[/warning]
 {% else %}
-{{ message | style("info") }}
+[info]{{ message }}[/info]
 {% endif %}
 ```
 
 ### Table-like Output
 
 ```
-{{ "Name" | style("header") }}    {{ "Value" | style("header") }}
+[header]Name[/header]    [header]Value[/header]
 {% for row in rows %}
-{{ row.name }}    {{ row.value | style("value") }}
+{{ row.name }}    [value]{{ row.value }}[/value]
 {% endfor %}
 ```
 
 ### Summary with Counts
 
 ```
-{{ title | upper | style("title") | nl }}
-{{ "-" * 40 | nl }}
-Found {{ count | style("count") }} item{% if count != 1 %}s{% endif %}.
+[title]{{ title | upper }}[/title]
+{{ "-" * 40 }}
+Found [count]{{ count }}[/count] item{% if count != 1 %}s{% endif %}.
 ```
 
 ## Rendering

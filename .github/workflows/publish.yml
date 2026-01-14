@@ -14,6 +14,12 @@ jobs:
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
 
+      - name: Publish outstanding-bbparser
+        run: cargo publish --token ${{ secrets.CRATES_IO_KEY }} -p outstanding-bbparser
+
+      - name: Wait for crates.io index
+        run: sleep 30
+
       - name: Publish outstanding
         run: cargo publish --token ${{ secrets.CRATES_IO_KEY }} -p outstanding
 

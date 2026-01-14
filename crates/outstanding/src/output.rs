@@ -97,7 +97,7 @@ pub fn write_binary_output(content: &[u8], dest: &OutputDestination) -> std::io:
 ///
 /// // Auto-detect (default)
 /// let auto = render_with_output(
-///     r#"{{ message | style("ok") }}"#,
+///     r#"[ok]{{ message }}[/ok]"#,
 ///     &data,
 ///     &theme,
 ///     OutputMode::Auto,
@@ -105,7 +105,7 @@ pub fn write_binary_output(content: &[u8], dest: &OutputDestination) -> std::io:
 ///
 /// // Force plain text
 /// let plain = render_with_output(
-///     r#"{{ message | style("ok") }}"#,
+///     r#"[ok]{{ message }}[/ok]"#,
 ///     &data,
 ///     &theme,
 ///     OutputMode::Text,
@@ -114,7 +114,7 @@ pub fn write_binary_output(content: &[u8], dest: &OutputDestination) -> std::io:
 ///
 /// // Debug mode - renders bracket tags
 /// let debug = render_with_output(
-///     r#"{{ message | style("ok") }}"#,
+///     r#"[ok]{{ message }}[/ok]"#,
 ///     &data,
 ///     &theme,
 ///     OutputMode::TermDebug,

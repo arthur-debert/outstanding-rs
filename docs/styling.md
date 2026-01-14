@@ -20,11 +20,12 @@ let theme = Theme::new()
 
 ### Using Styles in Templates
 
-Styles are applied in templates using the `style` filter:
+Styles are applied in templates using tag syntax:
 
 ```
-{{ title | style("title") }}
-{{ message | style("error") }}
+[title]{{ title }}[/title]
+[error]Error:[/error] {{ message }}
+[heading]Report[/heading]
 ```
 
 See [Templates](templates.md) for complete template syntax.

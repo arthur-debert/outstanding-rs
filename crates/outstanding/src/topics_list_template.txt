@@ -1,8 +1,9 @@
-{{ "Available Topics" | style("about") }}
+[about]Available Topics[/about]
 
-{{ "USAGE" | style("header") | nl }}  {{ usage | style("usage") }}
+[header]USAGE[/header]
+  [usage]{{ usage }}[/usage]
 
-{{ "TOPICS" | style("header") }}
+[header]TOPICS[/header]
 {%- for topic in topics %}
-  {{ topic.name | style("item") }}:{{ topic.padding }}{{ topic.title | style("desc") }}
+  [item]{{ topic.name }}[/item]:{{ topic.padding }}[desc]{{ topic.title }}[/desc]
 {%- endfor %}

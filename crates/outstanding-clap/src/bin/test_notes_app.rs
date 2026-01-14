@@ -17,16 +17,17 @@ use outstanding::{render_with_output, OutputMode, Theme};
 use outstanding_clap::Outstanding;
 use serde::Serialize;
 
-const ECHO_TEMPLATE: &str = r#"{{ "TEST NOTES APP - Command Echo" | style("header") | nl }}
-{{ "(This is a sample app for testing outstanding-clap)" | style("muted") | nl }}
-{{ "==================================================" | nl }}
+const ECHO_TEMPLATE: &str = r#"[header]TEST NOTES APP - Command Echo[/header]
+[muted](This is a sample app for testing outstanding-clap)[/muted]
+==================================================
 
-{% if command %}{{ "Command:" | style("label") }}       {{ command | style("value") | nl }}{% endif %}
-{% if subcommand %}{{ "Subcommand:" | style("label") }}    {{ subcommand | style("value") | nl }}{% endif %}
-{% if args %}{{ "Arguments:" | style("label") }}    {{ args | style("value") | nl }}{% endif %}
-{% if options %}{{ "Options:" | style("label") | nl }}{% for opt in options %}  {{ opt.name | style("opt_name") }}: {{ opt.value | style("opt_value") | nl }}{% endfor %}{% endif %}
-
-{{ "--------------------------------------------------" | nl }}
+{% if command %}[label]Command:[/label]       [value]{{ command }}[/value]
+{% endif %}{% if subcommand %}[label]Subcommand:[/label]    [value]{{ subcommand }}[/value]
+{% endif %}{% if args %}[label]Arguments:[/label]    [value]{{ args }}[/value]
+{% endif %}{% if options %}[label]Options:[/label]
+{% for opt in options %}  [opt_name]{{ opt.name }}[/opt_name]: [opt_value]{{ opt.value }}[/opt_value]
+{% endfor %}{% endif %}
+--------------------------------------------------
 "#;
 
 fn echo_theme() -> Theme {

@@ -291,6 +291,37 @@ impl Styles {
     pub fn is_empty(&self) -> bool {
         self.styles.is_empty()
     }
+
+    /// Returns a map of all style names to their resolved concrete styles.
+    ///
+    /// This is useful for passing styles to external processors like BBParser.
+    /// Aliases are resolved to their target concrete styles, and styles that
+    /// cannot be resolved (cycles, dangling aliases) are omitted.
+    ///
+    /// # Example
+    ///
+    /// ```rust
+    /// use outstanding::Styles;
+    /// use console::Style;
+    ///
+    /// let styles = Styles::new()
+    ///     .add("bold", Style::new().bold())
+    ///     .add("emphasis", "bold");  // Alias
+    ///
+    /// let resolved = styles.to_resolved_map();
+    /// assert!(resolved.contains_key("bold"));
+    /// assert!(resolved.contains_key("emphasis"));
+    /// assert_eq!(resolved.len(), 2);
+    /// ```
+    pub fn to_resolved_map(&self) -> HashMap<String, Style> {
+        let mut result = HashMap::new();
+        for name in self.styles.keys() {
+            if let Some(style) = self.resolve(name) {
+                result.insert(name.clone(), style.clone());
+            }
+        }
+        result
+    }
 }
 
 #[cfg(test)]

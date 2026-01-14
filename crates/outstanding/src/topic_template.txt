@@ -1,2 +1,2 @@
-{{ title | upper | style("header") | nl }}
+[header]{{ title | upper }}[/header]
 {{ content }}

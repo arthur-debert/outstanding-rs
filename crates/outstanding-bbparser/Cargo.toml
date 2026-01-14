@@ -1,0 +1,15 @@
+[package]
+name = "outstanding-bbparser"
+version = "0.15.0"
+edition = "2021"
+description = "BBCode-style tag parser for terminal styling"
+license = "MIT"
+keywords = ["cli", "terminal", "bbcode", "parser", "styling"]
+categories = ["command-line-interface", "parser-implementations"]
+repository = "https://github.com/arthur-debert/outstanding-rs"
+
+[dependencies]
+console = "0.15"
+
+[dev-dependencies]
+proptest = "1"

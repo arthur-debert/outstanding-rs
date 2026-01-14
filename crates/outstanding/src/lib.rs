@@ -19,8 +19,9 @@
 //! - [`ColorMode`]: Light or dark color mode enum
 //! - [`OutputMode`]: Control output formatting (Auto/Term/Text/TermDebug)
 //! - [`topics`]: Help topics system for extended documentation
-//! - `style` filter: `{{ value | style("name") }}` applies registered styles in templates
+//! - **Style syntax**: Tag-based styling `[name]content[/name]`
 //! - [`Renderer`]: Pre-compile templates for repeated rendering
+//! - [`validate_template`]: Check templates for unknown style tags
 //!
 //! ## Quick Start
 //!
@@ -40,9 +41,9 @@
 //!     .add("count", Style::new().cyan());
 //!
 //! let template = r#"
-//! {{ title | style("title") }}
+//! [title]{{ title }}[/title]
 //! ---------------------------
-//! Total items: {{ total | style("count") }}
+//! Total items: [count]{{ total }}[/count]
 //! "#;
 //!
 //! let output = render(
@@ -52,6 +53,37 @@
 //! ).unwrap();
 //! println!("{}", output);
 //! ```
+//!
+//! ## Tag-Based Styling
+//!
+//! Use tag syntax `[name]content[/name]` for styling both static and dynamic content:
+//!
+//! ```rust
+//! use outstanding::{render_with_output, Theme, OutputMode};
+//! use console::Style;
+//! use serde::Serialize;
+//!
+//! #[derive(Serialize)]
+//! struct Data { name: String, count: usize }
+//!
+//! let theme = Theme::new()
+//!     .add("title", Style::new().bold())
+//!     .add("count", Style::new().cyan());
+//!
+//! let template = r#"[title]Report[/title]: [count]{{ count }}[/count] items by {{ name }}"#;
+//!
+//! let output = render_with_output(
+//!     template,
+//!     &Data { name: "Alice".into(), count: 42 },
+//!     &theme,
+//!     OutputMode::Text,
+//! ).unwrap();
+//!
+//! assert_eq!(output, "Report: 42 items by Alice");
+//! ```
+//!
+//! Unknown tags show a `?` marker in terminal output: `[unknown?]text[/unknown?]`.
+//! Use [`validate_template`] to catch typos during development.
 //!
 //! ## Adaptive Themes (Light & Dark)
 //!
@@ -75,7 +107,7 @@
 //!
 //! // Rendering automatically detects OS color mode
 //! let output = outstanding::render(
-//!     r#"{{ "active" | style("panel") }}"#,
+//!     r#"[panel]active[/panel]"#,
 //!     &serde_json::json!({}),
 //!     &theme,
 //! ).unwrap();
@@ -106,9 +138,10 @@
 //! ## Rendering Strategy
 //!
 //! 1. Build a [`Theme`] using the fluent builder API or YAML.
-//! 2. Load/define templates using regular MiniJinja syntax (`{{ value }}`, `{% for %}`, etc.).
+//! 2. Load/define templates using regular MiniJinja syntax (`{{ value }}`, `{% for %}`, etc.)
+//!    with tag-based styling (`[name]content[/name]`).
 //! 3. Call [`render`] for ad-hoc rendering or create a [`Renderer`] if you have many templates.
-//! 4. Outstanding injects the `style` filter, auto-detects colors, and returns the final string.
+//! 4. Outstanding processes style tags, auto-detects colors, and returns the final string.
 //!
 //! Everything from the theme inward is pure Rust data: no code outside Outstanding needs
 //! to touch stdout/stderr or ANSI escape sequences directly.
@@ -128,7 +161,7 @@
 //!     .add("value", Style::new().green());
 //!
 //! let mut renderer = Renderer::new(theme).unwrap();
-//! renderer.add_template("row", "{{ label | style(\"label\") }}: {{ value | style(\"value\") }}").unwrap();
+//! renderer.add_template("row", "[label]{{ label }}[/label]: [value]{{ value }}[/value]").unwrap();
 //! let rendered = renderer.render("row", &Entry { label: "Count".into(), value: 42 }).unwrap();
 //! assert_eq!(rendered, "Count: 42");
 //! ```
@@ -211,6 +244,7 @@ pub use render::{
     render_with_context,
     render_with_mode,
     render_with_output,
+    validate_template,
     // Template registry
     walk_template_dir,
     RegistryError,
@@ -220,6 +254,9 @@ pub use render::{
     TemplateRegistry,
     TEMPLATE_EXTENSIONS,
 };
+
+// Re-export BBParser types for template validation
+pub use outstanding_bbparser::{UnknownTagError, UnknownTagErrors, UnknownTagKind};
 
 // Utility exports
 pub use util::{rgb_to_ansi256, rgb_to_truecolor, truncate_to_width};

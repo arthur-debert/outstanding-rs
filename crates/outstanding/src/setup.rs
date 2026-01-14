@@ -44,7 +44,7 @@ use crate::output::OutputMode;
 use crate::render::filters::register_filters;
 use crate::render::TemplateRegistry;
 use crate::stylesheet::StylesheetRegistry;
-use crate::theme::{detect_color_mode, Theme};
+use crate::theme::Theme;
 
 /// Error type for setup operations.
 #[derive(Debug)]
@@ -329,12 +329,8 @@ impl OutstandingApp {
         }
 
         // For text modes, render through MiniJinja
-        // Note: We need to create a new environment with the correct mode
-        // because filters depend on the output mode
         let mut env = Environment::new();
-        let color_mode = detect_color_mode();
-        let styles = self.theme.resolve_styles(Some(color_mode));
-        register_filters(&mut env, styles, mode);
+        register_filters(&mut env);
 
         for (name, content) in &self.templates {
             env.add_template_owned(name.clone(), content.clone())

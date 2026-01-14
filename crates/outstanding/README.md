@@ -49,9 +49,9 @@ let theme = Theme::new()
     .add("count", Style::new().cyan());
 
 let template = r#"
-{{ title | style("title") }}
+[title]{{ title }}[/title]
 ---------------------------
-Total items: {{ total | style("count") }}
+Total items: [count]{{ total }}[/count]
 "#;
 
 let output = render(
