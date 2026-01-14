@@ -2,7 +2,7 @@
 
 /// Result of the help interception.
 ///
-/// After processing a command, Outstanding returns this enum to indicate
+/// After processing a command, the CLI returns this enum to indicate
 /// what action should be taken.
 #[derive(Debug)]
 pub enum HelpResult {

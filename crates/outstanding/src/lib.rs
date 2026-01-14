@@ -201,10 +201,10 @@
 //!
 //! ```rust,ignore
 //! use clap::Command;
-//! use outstanding_clap::Outstanding;
+//! use outstanding::cli::App;
 //!
 //! // Simplest usage - all features enabled by default
-//! let matches = Outstanding::run(Command::new("my-app"));
+//! let matches = App::parse(Command::new("my-app"));
 //! ```
 
 // Internal modules

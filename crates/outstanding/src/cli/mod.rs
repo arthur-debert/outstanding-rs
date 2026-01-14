@@ -12,22 +12,22 @@
 //!
 //! ```rust,ignore
 //! use clap::Command;
-//! use outstanding::cli::Outstanding;
+//! use outstanding::cli::App;
 //!
 //! // Simplest usage - styled help with --output flag
-//! let matches = Outstanding::parse(Command::new("my-app"));
+//! let matches = App::parse(Command::new("my-app"));
 //! ```
 //!
 //! # With Command Handlers
 //!
 //! ```rust,ignore
-//! use outstanding::cli::{Outstanding, CommandResult};
+//! use outstanding::cli::{App, CommandResult};
 //! use serde::Serialize;
 //!
 //! #[derive(Serialize)]
 //! struct ListOutput { items: Vec<String> }
 //!
-//! Outstanding::builder()
+//! App::builder()
 //!     .command("list", |_m, _ctx| {
 //!         CommandResult::Ok(ListOutput { items: vec!["one".into()] })
 //!     }, "{% for item in items %}{{ item }}\n{% endfor %}")
@@ -49,7 +49,7 @@ pub mod hooks;
 pub mod macros;
 
 // Re-export main types from outstanding module
-pub use outstanding::{Outstanding, OutstandingBuilder};
+pub use outstanding::{App, AppBuilder};
 
 // Re-export group types for declarative dispatch
 pub use group::{CommandConfig, GroupBuilder};
@@ -76,7 +76,7 @@ pub use crate::setup::SetupError;
 ///
 /// This is the simplest entry point for basic CLIs without topics.
 pub fn parse(cmd: clap::Command) -> clap::ArgMatches {
-    Outstanding::parse(cmd)
+    App::parse(cmd)
 }
 
 /// Like `parse`, but takes arguments from an iterator.
@@ -85,5 +85,5 @@ where
     I: IntoIterator<Item = T>,
     T: Into<std::ffi::OsString> + Clone,
 {
-    Outstanding::new().parse_from(cmd, itr)
+    App::new().parse_from(cmd, itr)
 }

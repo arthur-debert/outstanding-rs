@@ -127,7 +127,7 @@ pub(crate) trait ErasedCommandConfig {
 /// Groups allow organizing commands hierarchically:
 ///
 /// ```rust,ignore
-/// Outstanding::builder()
+/// App::builder()
 ///     .group("db", |g| g
 ///         .command("migrate", db::migrate)
 ///         .command("backup", db::backup))

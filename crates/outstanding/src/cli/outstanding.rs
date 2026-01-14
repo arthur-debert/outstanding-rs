@@ -1,6 +1,6 @@
-//! Main entry point types for outstanding-clap integration.
+//! Main entry point types for CLI integration.
 //!
-//! This module provides [`Outstanding`] and [`OutstandingBuilder`] for integrating
+//! This module provides [`App`] and [`AppBuilder`] for integrating
 //! outstanding with clap-based CLIs.
 
 use crate::context::{ContextProvider, ContextRegistry, RenderContext};
@@ -39,21 +39,21 @@ pub(crate) fn get_terminal_width() -> Option<usize> {
 ///
 /// # Rendering Templates
 ///
-/// When configured with templates and styles, `Outstanding` can render templates
+/// When configured with templates and styles, `App` can render templates
 /// directly:
 ///
 /// ```rust,ignore
-/// use outstanding::cli::Outstanding;
+/// use outstanding::cli::App;
 /// use outstanding::OutputMode;
 ///
-/// let app = Outstanding::builder()
+/// let app = App::builder()
 ///     .templates(embed_templates!("src/templates"))
 ///     .styles(embed_styles!("src/styles"))
 ///     .build()?;
 ///
 /// let output = app.render("list", &data, OutputMode::Term)?;
 /// ```
-pub struct Outstanding {
+pub struct App {
     pub(crate) registry: TopicRegistry,
     pub(crate) output_flag: Option<String>,
     pub(crate) output_file_flag: Option<String>,
@@ -66,8 +66,8 @@ pub struct Outstanding {
     pub(crate) stylesheet_registry: Option<crate::stylesheet::StylesheetRegistry>,
 }
 
-impl Outstanding {
-    /// Creates a new Outstanding instance with default settings.
+impl App {
+    /// Creates a new App instance with default settings.
     ///
     /// By default:
     /// - `--output` flag is enabled
@@ -87,7 +87,7 @@ impl Outstanding {
         }
     }
 
-    /// Creates a new Outstanding instance with a pre-configured topic registry.
+    /// Creates a new App instance with a pre-configured topic registry.
     pub fn with_registry(registry: TopicRegistry) -> Self {
         Self {
             registry,
@@ -101,9 +101,9 @@ impl Outstanding {
         }
     }
 
-    /// Creates a new builder for constructing an Outstanding instance.
-    pub fn builder() -> OutstandingBuilder {
-        OutstandingBuilder::new()
+    /// Creates a new builder for constructing an App instance.
+    pub fn builder() -> AppBuilder {
+        AppBuilder::new()
     }
 
     /// Returns a reference to the topic registry.
@@ -287,9 +287,9 @@ impl Outstanding {
     /// # Example
     ///
     /// ```rust,ignore
-    /// use outstanding::cli::{Outstanding, Hooks, CommandResult, Output};
+    /// use outstanding::cli::{App, Hooks, CommandResult, Output};
     ///
-    /// let outstanding = Outstanding::builder()
+    /// let outstanding = App::builder()
     ///     .hooks("list", Hooks::new()
     ///         .post_output(|_ctx, output| {
     ///             // Copy to clipboard
@@ -448,7 +448,7 @@ impl Outstanding {
         Self::new().parse_with(cmd)
     }
 
-    /// Parses CLI arguments with this configured Outstanding instance.
+    /// Parses CLI arguments with this configured App instance.
     pub fn parse_with(&self, cmd: Command) -> clap::ArgMatches {
         self.parse_from(cmd, std::env::args())
     }
@@ -617,20 +617,20 @@ impl Outstanding {
     }
 }
 
-impl Default for Outstanding {
+impl Default for App {
     fn default() -> Self {
         Self::new()
     }
 }
 
-/// Builder for constructing an Outstanding instance.
+/// Builder for constructing an App instance.
 ///
 /// # Example
 ///
 /// ```rust
-/// use outstanding::cli::Outstanding;
+/// use outstanding::cli::App;
 ///
-/// let outstanding = Outstanding::builder()
+/// let outstanding = App::builder()
 ///     .topics_dir("docs/topics")
 ///     .output_flag(Some("format"))
 ///     .build();
@@ -642,11 +642,11 @@ impl Default for Outstanding {
 /// static values and `.context_fn()` for dynamic values computed at render time:
 ///
 /// ```rust,ignore
-/// use outstanding::cli::Outstanding;
+/// use outstanding::cli::App;
 /// use crate::context::RenderContext;
 /// use minijinja::Value;
 ///
-/// Outstanding::builder()
+/// App::builder()
 ///     // Static context
 ///     .context("app_version", Value::from("1.0.0"))
 ///
@@ -661,7 +661,7 @@ impl Default for Outstanding {
 ///     .build()?
 ///     .run(cmd, args);
 /// ```
-pub struct OutstandingBuilder {
+pub struct AppBuilder {
     registry: TopicRegistry,
     output_flag: Option<String>,
     output_file_flag: Option<String>,
@@ -678,13 +678,13 @@ pub struct OutstandingBuilder {
     template_ext: String,
 }
 
-impl Default for OutstandingBuilder {
+impl Default for AppBuilder {
     fn default() -> Self {
         Self::new()
     }
 }
 
-impl OutstandingBuilder {
+impl AppBuilder {
     /// Creates a new builder with default settings.
     ///
     /// By default, the `--output` flag is enabled and no hooks are registered.
@@ -719,10 +719,10 @@ impl OutstandingBuilder {
     /// # Example
     ///
     /// ```rust,ignore
-    /// use outstanding::cli::Outstanding;
+    /// use outstanding::cli::App;
     /// use minijinja::Value;
     ///
-    /// Outstanding::builder()
+    /// App::builder()
     ///     .context("app_version", Value::from("1.0.0"))
     ///     .context("config", Value::from_iter([
     ///         ("debug", Value::from(true)),
@@ -749,11 +749,11 @@ impl OutstandingBuilder {
     /// # Example
     ///
     /// ```rust,ignore
-    /// use outstanding::cli::Outstanding;
+    /// use outstanding::cli::App;
     /// use crate::context::RenderContext;
     /// use minijinja::Value;
     ///
-    /// Outstanding::builder()
+    /// App::builder()
     ///     // Provide terminal info
     ///     .context_fn("terminal", |ctx: &RenderContext| {
     ///         Value::from_iter([
@@ -810,9 +810,9 @@ impl OutstandingBuilder {
     /// # Example
     ///
     /// ```rust,ignore
-    /// use outstanding::{embed_templates, cli::Outstanding};
+    /// use outstanding::{embed_templates, cli::App};
     ///
-    /// Outstanding::builder()
+    /// App::builder()
     ///     .templates(embed_templates!("src/templates"))
     ///     .styles(embed_styles!("src/styles"))
     ///     .default_theme("default")
@@ -834,9 +834,9 @@ impl OutstandingBuilder {
     ///
     /// ```rust,ignore
     /// use crate::{embed_styles};
-    /// use outstanding::cli::Outstanding;
+    /// use outstanding::cli::App;
     ///
-    /// Outstanding::builder()
+    /// App::builder()
     ///     .styles(embed_styles!("src/styles"))
     ///     .default_theme("dark")
     ///     .command("list", handler, template)
@@ -857,7 +857,7 @@ impl OutstandingBuilder {
     /// # Example
     ///
     /// ```rust,ignore
-    /// Outstanding::builder()
+    /// App::builder()
     ///     .styles(embed_styles!("src/styles"))
     ///     .styles_dir("~/.myapp/themes")  // User overrides
     /// ```
@@ -876,7 +876,7 @@ impl OutstandingBuilder {
     /// # Example
     ///
     /// ```rust,ignore
-    /// Outstanding::builder()
+    /// App::builder()
     ///     .styles(embed_styles!("src/styles"))
     ///     .default_theme("dark")
     /// ```
@@ -897,7 +897,7 @@ impl OutstandingBuilder {
     /// # Example
     ///
     /// ```rust,ignore
-    /// Outstanding::builder()
+    /// App::builder()
     ///     .template_dir("templates")
     ///     .group("db", |g| g
     ///         .command("migrate", handler))  // uses "templates/db/migrate.j2"
@@ -916,7 +916,7 @@ impl OutstandingBuilder {
     /// # Example
     ///
     /// ```rust,ignore
-    /// Outstanding::builder()
+    /// App::builder()
     ///     .templates(embed_templates!("src/templates"))
     ///     .templates_dir("~/.myapp/templates")  // User overrides
     /// ```
@@ -935,7 +935,7 @@ impl OutstandingBuilder {
     /// # Example
     ///
     /// ```rust,ignore
-    /// Outstanding::builder()
+    /// App::builder()
     ///     .template_dir("templates")
     ///     .template_ext(".jinja2")
     ///     .group("db", |g| g
@@ -952,9 +952,9 @@ impl OutstandingBuilder {
     /// and nested groups. It's typically used with the [`dispatch!`] macro:
     ///
     /// ```rust,ignore
-    /// use outstanding::cli::{dispatch, Outstanding};
+    /// use outstanding::cli::{dispatch, App};
     ///
-    /// Outstanding::builder()
+    /// App::builder()
     ///     .template_dir("templates")
     ///     .commands(dispatch! {
     ///         db: {
@@ -1004,7 +1004,7 @@ impl OutstandingBuilder {
     /// Groups allow nested command hierarchies with a fluent API:
     ///
     /// ```rust,ignore
-    /// Outstanding::builder()
+    /// App::builder()
     ///     .template_dir("templates")
     ///     .group("db", |g| g
     ///         .command("migrate", db::migrate)
@@ -1034,7 +1034,7 @@ impl OutstandingBuilder {
     /// Use this to set explicit template or hooks without using `.hooks()` separately:
     ///
     /// ```rust,ignore
-    /// Outstanding::builder()
+    /// App::builder()
     ///     .command_with("list", handler, |cfg| cfg
     ///         .template("custom/list.j2")
     ///         .pre_dispatch(validate_auth)
@@ -1218,13 +1218,13 @@ impl OutstandingBuilder {
     /// # Example
     ///
     /// ```rust,ignore
-    /// use outstanding::cli::{Outstanding, CommandResult};
+    /// use outstanding::cli::{App, CommandResult};
     /// use serde::Serialize;
     ///
     /// #[derive(Serialize)]
     /// struct ListOutput { items: Vec<String> }
     ///
-    /// Outstanding::builder()
+    /// App::builder()
     ///     .command("list", |_m, _ctx| {
     ///         CommandResult::Ok(ListOutput { items: vec!["one".into()] })
     ///     }, "{% for item in items %}{{ item }}\n{% endfor %}")
@@ -1251,7 +1251,7 @@ impl OutstandingBuilder {
     /// # Example
     ///
     /// ```rust,ignore
-    /// use outstanding::cli::{Outstanding, Handler, CommandResult, CommandContext};
+    /// use outstanding::cli::{App, Handler, CommandResult, CommandContext};
     /// use clap::ArgMatches;
     /// use serde::Serialize;
     ///
@@ -1264,7 +1264,7 @@ impl OutstandingBuilder {
     ///     }
     /// }
     ///
-    /// Outstanding::builder()
+    /// App::builder()
     ///     .command_handler("list", ListHandler { db }, "{% for item in items %}...")
     ///     .parse(cmd);
     /// ```
@@ -1346,10 +1346,10 @@ impl OutstandingBuilder {
     /// # Example
     ///
     /// ```rust,ignore
-    /// use outstanding::cli::{Outstanding, Hooks, Output, HookError};
+    /// use outstanding::cli::{App, Hooks, Output, HookError};
     /// use serde_json::json;
     ///
-    /// Outstanding::builder()
+    /// App::builder()
     ///     .command("list", handler, template)
     ///     .hooks("list", Hooks::new()
     ///         .pre_dispatch(|_m, ctx| {
@@ -1380,7 +1380,7 @@ impl OutstandingBuilder {
     /// Dispatches to a registered handler if one matches the command path.
     ///
     /// Returns `RunResult::Handled(output)` if a handler was found and executed,
-    /// or `RunResult::Unhandled(matches)` if no handler matched.
+    /// or `RunResult::NoMatch(matches)` if no handler matched.
     ///
     /// If hooks are registered for the command, they are executed:
     /// - Pre-dispatch hooks run before the handler
@@ -1471,7 +1471,7 @@ impl OutstandingBuilder {
                 Output::Silent => RunResult::Handled(String::new()),
             }
         } else {
-            RunResult::Unhandled(matches)
+            RunResult::NoMatch(matches)
         }
     }
 
@@ -1484,20 +1484,20 @@ impl OutstandingBuilder {
     /// # Returns
     ///
     /// - `RunResult::Handled(output)` if a registered handler processed the command
-    /// - `RunResult::Unhandled(matches)` if no handler matched (for manual handling)
+    /// - `RunResult::NoMatch(matches)` if no handler matched (for manual handling)
     ///
     /// # Example
     ///
     /// ```rust,ignore
-    /// use outstanding::cli::{Outstanding, CommandResult, RunResult};
+    /// use outstanding::cli::{App, CommandResult, RunResult};
     ///
-    /// let result = Outstanding::builder()
+    /// let result = App::builder()
     ///     .command("list", |_m, _ctx| CommandResult::Ok(vec!["a", "b"]), "{{ . }}")
     ///     .dispatch_from(cmd, std::env::args());
     ///
     /// match result {
     ///     RunResult::Handled(output) => println!("{}", output),
-    ///     RunResult::Unhandled(matches) => {
+    ///     RunResult::NoMatch(matches) => {
     ///         // Handle manually
     ///     }
     /// }
@@ -1555,9 +1555,9 @@ impl OutstandingBuilder {
     /// # Example
     ///
     /// ```rust,ignore
-    /// use outstanding::cli::{Outstanding, CommandResult};
+    /// use outstanding::cli::{App, CommandResult};
     ///
-    /// let handled = Outstanding::builder()
+    /// let handled = App::builder()
     ///     .command("list", |_m, _ctx| CommandResult::Ok(vec!["a", "b"]), "{{ . }}")
     ///     .build()?
     ///     .run(cmd, std::env::args());
@@ -1588,7 +1588,7 @@ impl OutstandingBuilder {
                 }
                 true
             }
-            RunResult::Unhandled(_) => false,
+            RunResult::NoMatch(_) => false,
         }
     }
 
@@ -1601,14 +1601,14 @@ impl OutstandingBuilder {
     ///
     /// - `RunResult::Handled(output)` - Handler executed, output is the rendered string
     /// - `RunResult::Binary(bytes, filename)` - Handler produced binary output
-    /// - `RunResult::Unhandled(matches)` - No handler matched
+    /// - `RunResult::NoMatch(matches)` - No handler matched
     ///
     /// # Example
     ///
     /// ```rust,ignore
-    /// use outstanding::cli::{Outstanding, CommandResult, RunResult};
+    /// use outstanding::cli::{App, CommandResult, RunResult};
     ///
-    /// let result = Outstanding::builder()
+    /// let result = App::builder()
     ///     .command("list", |_m, _ctx| CommandResult::Ok(vec!["a", "b"]), "{{ . }}")
     ///     .build()?
     ///     .run_to_string(cmd, std::env::args());
@@ -1616,7 +1616,7 @@ impl OutstandingBuilder {
     /// match result {
     ///     RunResult::Handled(output) => println!("{}", output),
     ///     RunResult::Binary(bytes, filename) => std::fs::write(filename, bytes)?,
-    ///     RunResult::Unhandled(matches) => { /* handle manually */ }
+    ///     RunResult::NoMatch(matches) => { /* handle manually */ }
     /// }
     /// ```
     pub fn run_to_string<I, T>(&self, cmd: Command, args: I) -> RunResult
@@ -1658,7 +1658,7 @@ impl OutstandingBuilder {
         cmd
     }
 
-    /// Builds the Outstanding instance.
+    /// Builds the App instance.
     ///
     /// # Errors
     ///
@@ -1668,12 +1668,12 @@ impl OutstandingBuilder {
     /// # Example
     ///
     /// ```rust,ignore
-    /// let outstanding = Outstanding::builder()
+    /// let outstanding = App::builder()
     ///     .styles(embed_styles!("src/styles"))
     ///     .default_theme("dark")
     ///     .build()?;
     /// ```
-    pub fn build(mut self) -> Result<Outstanding, SetupError> {
+    pub fn build(mut self) -> Result<App, SetupError> {
         // Resolve theme: explicit theme takes precedence, then stylesheet registry
         let theme = if let Some(theme) = self.theme {
             Some(theme)
@@ -1687,7 +1687,7 @@ impl OutstandingBuilder {
             None
         };
 
-        Ok(Outstanding {
+        Ok(App {
             registry: self.registry,
             output_flag: self.output_flag,
             output_file_flag: self.output_file_flag,
@@ -1706,9 +1706,7 @@ impl OutstandingBuilder {
     /// Panics if building fails (e.g., theme not found). For proper error handling,
     /// use `build()` followed by `parse_with()` instead.
     pub fn parse(self, cmd: Command) -> clap::ArgMatches {
-        self.build()
-            .expect("Failed to build Outstanding")
-            .parse_with(cmd)
+        self.build().expect("Failed to build App").parse_with(cmd)
     }
 }
 
@@ -1735,30 +1733,27 @@ mod tests {
 
     #[test]
     fn test_output_flag_enabled_by_default() {
-        let outstanding = Outstanding::new();
+        let outstanding = App::new();
         assert!(outstanding.output_flag.is_some());
         assert_eq!(outstanding.output_flag.as_deref(), Some("output"));
     }
 
     #[test]
     fn test_builder_output_flag_enabled_by_default() {
-        let outstanding = Outstanding::builder().build().unwrap();
+        let outstanding = App::builder().build().unwrap();
         assert!(outstanding.output_flag.is_some());
         assert_eq!(outstanding.output_flag.as_deref(), Some("output"));
     }
 
     #[test]
     fn test_no_output_flag() {
-        let outstanding = Outstanding::builder().no_output_flag().build().unwrap();
+        let outstanding = App::builder().no_output_flag().build().unwrap();
         assert!(outstanding.output_flag.is_none());
     }
 
     #[test]
     fn test_custom_output_flag_name() {
-        let outstanding = Outstanding::builder()
-            .output_flag(Some("format"))
-            .build()
-            .unwrap();
+        let outstanding = App::builder().output_flag(Some("format")).build().unwrap();
         assert_eq!(outstanding.output_flag.as_deref(), Some("format"));
     }
 
@@ -1766,7 +1761,7 @@ mod tests {
     fn test_command_registration() {
         use serde_json::json;
 
-        let builder = Outstanding::builder().command(
+        let builder = App::builder().command(
             "list",
             |_m, _ctx| CommandResult::Ok(json!({"items": ["a", "b"]})),
             "Items: {{ items }}",
@@ -1779,7 +1774,7 @@ mod tests {
     fn test_dispatch_to_handler() {
         use serde_json::json;
 
-        let builder = Outstanding::builder().command(
+        let builder = App::builder().command(
             "list",
             |_m, _ctx| CommandResult::Ok(json!({"count": 42})),
             "Count: {{ count }}",
@@ -1798,8 +1793,7 @@ mod tests {
     fn test_dispatch_unhandled_fallthrough() {
         use serde_json::json;
 
-        let builder =
-            Outstanding::builder().command("list", |_m, _ctx| CommandResult::Ok(json!({})), "");
+        let builder = App::builder().command("list", |_m, _ctx| CommandResult::Ok(json!({})), "");
 
         let cmd = Command::new("app")
             .subcommand(Command::new("list"))
@@ -1816,7 +1810,7 @@ mod tests {
     fn test_dispatch_json_output() {
         use serde_json::json;
 
-        let builder = Outstanding::builder().command(
+        let builder = App::builder().command(
             "list",
             |_m, _ctx| CommandResult::Ok(json!({"name": "test", "value": 123})),
             "{{ name }}: {{ value }}",
@@ -1837,7 +1831,7 @@ mod tests {
     fn test_dispatch_nested_command() {
         use serde_json::json;
 
-        let builder = Outstanding::builder().command(
+        let builder = App::builder().command(
             "config.get",
             |_m, _ctx| CommandResult::Ok(json!({"key": "value"})),
             "{{ key }}",
@@ -1855,8 +1849,7 @@ mod tests {
 
     #[test]
     fn test_dispatch_silent_result() {
-        let builder =
-            Outstanding::builder().command("quiet", |_m, _ctx| CommandResult::<()>::Silent, "");
+        let builder = App::builder().command("quiet", |_m, _ctx| CommandResult::<()>::Silent, "");
 
         let cmd = Command::new("app").subcommand(Command::new("quiet"));
 
@@ -1869,7 +1862,7 @@ mod tests {
 
     #[test]
     fn test_dispatch_error_result() {
-        let builder = Outstanding::builder().command(
+        let builder = App::builder().command(
             "fail",
             |_m, _ctx| CommandResult::<()>::Err(anyhow::anyhow!("something went wrong")),
             "",
@@ -1890,7 +1883,7 @@ mod tests {
     fn test_dispatch_from_basic() {
         use serde_json::json;
 
-        let builder = Outstanding::builder().command(
+        let builder = App::builder().command(
             "list",
             |_m, _ctx| CommandResult::Ok(json!({"items": ["a", "b"]})),
             "Items: {{ items }}",
@@ -1908,7 +1901,7 @@ mod tests {
     fn test_dispatch_from_with_json_flag() {
         use serde_json::json;
 
-        let builder = Outstanding::builder().command(
+        let builder = App::builder().command(
             "list",
             |_m, _ctx| CommandResult::Ok(json!({"count": 5})),
             "Count: {{ count }}",
@@ -1927,8 +1920,7 @@ mod tests {
     fn test_dispatch_from_unhandled() {
         use serde_json::json;
 
-        let builder =
-            Outstanding::builder().command("list", |_m, _ctx| CommandResult::Ok(json!({})), "");
+        let builder = App::builder().command("list", |_m, _ctx| CommandResult::Ok(json!({})), "");
 
         let cmd = Command::new("app")
             .subcommand(Command::new("list"))
@@ -1947,8 +1939,7 @@ mod tests {
     fn test_hooks_registration() {
         use crate::cli::hooks::Hooks;
 
-        let builder =
-            Outstanding::builder().hooks("list", Hooks::new().pre_dispatch(|_, _| Ok(())));
+        let builder = App::builder().hooks("list", Hooks::new().pre_dispatch(|_, _| Ok(())));
 
         assert!(builder.command_hooks.contains_key("list"));
     }
@@ -1963,7 +1954,7 @@ mod tests {
         let hook_called = Arc::new(AtomicBool::new(false));
         let hook_called_clone = hook_called.clone();
 
-        let builder = Outstanding::builder()
+        let builder = App::builder()
             .command(
                 "list",
                 |_m, _ctx| CommandResult::Ok(json!({"count": 1})),
@@ -1991,7 +1982,7 @@ mod tests {
     fn test_dispatch_pre_dispatch_hook_abort() {
         use crate::cli::hooks::{HookError, Hooks};
 
-        let builder = Outstanding::builder()
+        let builder = App::builder()
             .command(
                 "list",
                 |_m, _ctx| -> CommandResult<()> {
@@ -2021,7 +2012,7 @@ mod tests {
         use crate::cli::hooks::{Hooks, Output};
         use serde_json::json;
 
-        let builder = Outstanding::builder()
+        let builder = App::builder()
             .command(
                 "list",
                 |_m, _ctx| CommandResult::Ok(json!({"msg": "hello"})),
@@ -2052,7 +2043,7 @@ mod tests {
         use crate::cli::hooks::{Hooks, Output};
         use serde_json::json;
 
-        let builder = Outstanding::builder()
+        let builder = App::builder()
             .command(
                 "list",
                 |_m, _ctx| CommandResult::Ok(json!({"msg": "test"})),
@@ -2091,7 +2082,7 @@ mod tests {
         use crate::cli::hooks::{HookError, Hooks};
         use serde_json::json;
 
-        let builder = Outstanding::builder()
+        let builder = App::builder()
             .command(
                 "list",
                 |_m, _ctx| CommandResult::Ok(json!({"msg": "hello"})),
@@ -2120,7 +2111,7 @@ mod tests {
         use crate::cli::hooks::{Hooks, Output};
         use serde_json::json;
 
-        let builder = Outstanding::builder()
+        let builder = App::builder()
             .command(
                 "config.get",
                 |_m, _ctx| CommandResult::Ok(json!({"value": "secret"})),
@@ -2153,7 +2144,7 @@ mod tests {
         use serde_json::json;
 
         // Register hooks for "list" but dispatch "other"
-        let builder = Outstanding::builder()
+        let builder = App::builder()
             .command(
                 "list",
                 |_m, _ctx| CommandResult::Ok(json!({"msg": "list"})),
@@ -2186,7 +2177,7 @@ mod tests {
     fn test_dispatch_binary_output_with_hook() {
         use crate::cli::hooks::{Hooks, Output};
 
-        let builder = Outstanding::builder()
+        let builder = App::builder()
             .command(
                 "export",
                 |_m, _ctx| -> CommandResult<()> {
@@ -2221,7 +2212,7 @@ mod tests {
     fn test_hooks_passed_to_built_outstanding() {
         use crate::cli::hooks::Hooks;
 
-        let outstanding = Outstanding::builder()
+        let outstanding = App::builder()
             .hooks("list", Hooks::new().pre_dispatch(|_, _| Ok(())))
             .build()
             .unwrap();
@@ -2240,7 +2231,7 @@ mod tests {
             value: i32,
         }
 
-        let outstanding = Outstanding::builder()
+        let outstanding = App::builder()
             .hooks(
                 "test",
                 Hooks::new().post_output(|_, _ctx, output| {
@@ -2274,7 +2265,7 @@ mod tests {
     fn test_run_command_pre_dispatch_abort() {
         use crate::cli::hooks::{HookError, Hooks};
 
-        let outstanding = Outstanding::builder()
+        let outstanding = App::builder()
             .hooks(
                 "test",
                 Hooks::new().pre_dispatch(|_, _ctx| Err(HookError::pre_dispatch("access denied"))),
@@ -2308,7 +2299,7 @@ mod tests {
             msg: String,
         }
 
-        let outstanding = Outstanding::builder().build().unwrap();
+        let outstanding = App::builder().build().unwrap();
 
         let cmd = Command::new("app").subcommand(Command::new("test"));
         let matches = cmd.try_get_matches_from(["app", "test"]).unwrap();
@@ -2331,7 +2322,7 @@ mod tests {
 
     #[test]
     fn test_run_command_silent() {
-        let outstanding = Outstanding::builder().build().unwrap();
+        let outstanding = App::builder().build().unwrap();
 
         let cmd = Command::new("app").subcommand(Command::new("test"));
         let matches = cmd.try_get_matches_from(["app", "test"]).unwrap();
@@ -2352,7 +2343,7 @@ mod tests {
     fn test_run_command_binary() {
         use crate::cli::hooks::Hooks;
 
-        let outstanding = Outstanding::builder()
+        let outstanding = App::builder()
             .hooks(
                 "export",
                 Hooks::new().post_output(|_, _ctx, output| {
@@ -2392,7 +2383,7 @@ mod tests {
         use crate::cli::hooks::Hooks;
         use serde_json::json;
 
-        let builder = Outstanding::builder()
+        let builder = App::builder()
             .command(
                 "list",
                 |_m, _ctx| CommandResult::Ok(json!({"count": 5})),
@@ -2424,7 +2415,7 @@ mod tests {
         use crate::cli::hooks::{HookError, Hooks};
         use serde_json::json;
 
-        let builder = Outstanding::builder()
+        let builder = App::builder()
             .command(
                 "list",
                 |_m, _ctx| CommandResult::Ok(json!({"items": []})),
@@ -2462,7 +2453,7 @@ mod tests {
         use crate::cli::hooks::Hooks;
         use serde_json::json;
 
-        let builder = Outstanding::builder()
+        let builder = App::builder()
             .command(
                 "list",
                 |_m, _ctx| CommandResult::Ok(json!({"value": 1})),
@@ -2509,7 +2500,7 @@ mod tests {
         let post_dispatch_order = call_order.clone();
         let post_output_order = call_order.clone();
 
-        let builder = Outstanding::builder()
+        let builder = App::builder()
             .command(
                 "list",
                 |_m, _ctx| CommandResult::Ok(json!({"msg": "hello"})),
@@ -2552,7 +2543,7 @@ mod tests {
             value: i32,
         }
 
-        let outstanding = Outstanding::builder()
+        let outstanding = App::builder()
             .hooks(
                 "test",
                 Hooks::new().post_dispatch(|_, _ctx, mut data| {
@@ -2591,7 +2582,7 @@ mod tests {
             valid: bool,
         }
 
-        let outstanding = Outstanding::builder()
+        let outstanding = App::builder()
             .hooks(
                 "test",
                 Hooks::new().post_dispatch(|_, _ctx, data| {
@@ -2629,7 +2620,7 @@ mod tests {
     fn test_context_static_value() {
         use serde_json::json;
 
-        let builder = Outstanding::builder()
+        let builder = App::builder()
             .context("version", Value::from("1.0.0"))
             .command(
                 "info",
@@ -2649,7 +2640,7 @@ mod tests {
     fn test_context_multiple_static_values() {
         use serde_json::json;
 
-        let builder = Outstanding::builder()
+        let builder = App::builder()
             .context("author", Value::from("Alice"))
             .context("year", Value::from(2024))
             .command(
@@ -2670,7 +2661,7 @@ mod tests {
     fn test_context_fn_terminal_width() {
         use serde_json::json;
 
-        let builder = Outstanding::builder()
+        let builder = App::builder()
             .context_fn("terminal_width", |ctx: &RenderContext| {
                 Value::from(ctx.terminal_width.unwrap_or(80))
             })
@@ -2694,7 +2685,7 @@ mod tests {
     fn test_context_fn_output_mode() {
         use serde_json::json;
 
-        let builder = Outstanding::builder()
+        let builder = App::builder()
             .context_fn("mode", |ctx: &RenderContext| {
                 Value::from(format!("{:?}", ctx.output_mode))
             })
@@ -2718,7 +2709,7 @@ mod tests {
 
         // Context has "value" but handler data also has "value"
         // Handler data should take precedence
-        let builder = Outstanding::builder()
+        let builder = App::builder()
             .context("value", Value::from("from_context"))
             .command(
                 "test",
@@ -2738,7 +2729,7 @@ mod tests {
     fn test_context_shared_across_commands() {
         use serde_json::json;
 
-        let builder = Outstanding::builder()
+        let builder = App::builder()
             .context("app_name", Value::from("MyApp"))
             .command(
                 "list",
@@ -2770,7 +2761,7 @@ mod tests {
     fn test_context_fn_uses_handler_data() {
         use serde_json::json;
 
-        let builder = Outstanding::builder()
+        let builder = App::builder()
             .context_fn("doubled_count", |ctx: &RenderContext| {
                 let count = ctx.data.get("count").and_then(|v| v.as_i64()).unwrap_or(0);
                 Value::from(count * 2)
@@ -2793,7 +2784,7 @@ mod tests {
     fn test_context_with_nested_object() {
         use serde_json::json;
 
-        let builder = Outstanding::builder()
+        let builder = App::builder()
             .context(
                 "config",
                 Value::from_iter([
@@ -2819,7 +2810,7 @@ mod tests {
     fn test_context_in_loop() {
         use serde_json::json;
 
-        let builder = Outstanding::builder()
+        let builder = App::builder()
             .context("separator", Value::from(" | "))
             .command(
                 "list",
@@ -2843,7 +2834,7 @@ mod tests {
     fn test_context_json_output_ignores_context() {
         use serde_json::json;
 
-        let builder = Outstanding::builder()
+        let builder = App::builder()
             .context("extra", Value::from("should_not_appear"))
             .command(
                 "test",
@@ -2870,7 +2861,7 @@ mod tests {
         let file_path = temp_dir.path().join("output.txt");
         let path_str = file_path.to_str().unwrap();
 
-        let builder = Outstanding::builder().command(
+        let builder = App::builder().command(
             "list",
             |_m, _ctx| CommandResult::Ok(json!({"count": 42})),
             "Count: {{ count }}",
@@ -2896,13 +2887,11 @@ mod tests {
         let file_path = temp_dir.path().join("out.txt");
         let path_str = file_path.to_str().unwrap();
 
-        let builder = Outstanding::builder()
-            .output_file_flag(Some("save-to"))
-            .command(
-                "list",
-                |_m, _ctx| CommandResult::Ok(json!({"count": 99})),
-                "{{ count }}",
-            );
+        let builder = App::builder().output_file_flag(Some("save-to")).command(
+            "list",
+            |_m, _ctx| CommandResult::Ok(json!({"count": 99})),
+            "{{ count }}",
+        );
 
         let cmd = Command::new("app").subcommand(Command::new("list"));
 
@@ -2923,7 +2912,7 @@ mod tests {
     fn test_group_basic() {
         use serde_json::json;
 
-        let builder = Outstanding::builder().group("db", |g| {
+        let builder = App::builder().group("db", |g| {
             g.command("migrate", |_m, _ctx| {
                 CommandResult::Ok(json!({"status": "migrated"}))
             })
@@ -2947,7 +2936,7 @@ mod tests {
     fn test_group_nested() {
         use serde_json::json;
 
-        let builder = Outstanding::builder().group("app", |g| {
+        let builder = App::builder().group("app", |g| {
             g.command("start", |_m, _ctx| {
                 CommandResult::Ok(json!({"action": "start"}))
             })
@@ -2984,7 +2973,7 @@ mod tests {
     fn test_group_with_template() {
         use serde_json::json;
 
-        let builder = Outstanding::builder().group("db", |g| {
+        let builder = App::builder().group("db", |g| {
             g.command_with(
                 "migrate",
                 |_m, _ctx| CommandResult::Ok(json!({"count": 5})),
@@ -3011,7 +3000,7 @@ mod tests {
         let hook_called = Arc::new(AtomicBool::new(false));
         let hook_called_clone = hook_called.clone();
 
-        let builder = Outstanding::builder().group("db", |g| {
+        let builder = App::builder().group("db", |g| {
             g.command_with(
                 "migrate",
                 |_m, _ctx| CommandResult::Ok(json!({"done": true})),
@@ -3043,7 +3032,7 @@ mod tests {
         let counter = Arc::new(AtomicUsize::new(0));
         let counter_clone = counter.clone();
 
-        let builder = Outstanding::builder().command_with(
+        let builder = App::builder().command_with(
             "list",
             |_m, _ctx| CommandResult::Ok(json!({"items": ["a", "b"]})),
             move |cfg| {
@@ -3069,7 +3058,7 @@ mod tests {
     fn test_template_dir_convention() {
         use serde_json::json;
 
-        let builder = Outstanding::builder()
+        let builder = App::builder()
             .template_dir("templates")
             .template_ext(".jinja2")
             .group("db", |g| {
@@ -3085,7 +3074,7 @@ mod tests {
     fn test_multiple_groups() {
         use serde_json::json;
 
-        let builder = Outstanding::builder()
+        let builder = App::builder()
             .group("db", |g| {
                 g.command("migrate", |_m, _ctx| {
                     CommandResult::Ok(json!({"type": "db"}))
@@ -3105,7 +3094,7 @@ mod tests {
     fn test_group_mixed_with_regular_commands() {
         use serde_json::json;
 
-        let builder = Outstanding::builder()
+        let builder = App::builder()
             .command(
                 "version",
                 |_m, _ctx| CommandResult::Ok(json!({"v": "1.0.0"})),
@@ -3128,7 +3117,7 @@ mod tests {
         use crate::dispatch;
         use serde_json::json;
 
-        let builder = Outstanding::builder().commands(dispatch! {
+        let builder = App::builder().commands(dispatch! {
             list => |_m, _ctx| CommandResult::Ok(json!({"items": ["a", "b"]}))
         });
 
@@ -3148,7 +3137,7 @@ mod tests {
         use crate::dispatch;
         use serde_json::json;
 
-        let builder = Outstanding::builder().commands(dispatch! {
+        let builder = App::builder().commands(dispatch! {
             db: {
                 migrate => |_m, _ctx| CommandResult::Ok(json!({"migrated": true})),
                 backup => |_m, _ctx| CommandResult::Ok(json!({"backed_up": true})),
@@ -3183,7 +3172,7 @@ mod tests {
         use crate::dispatch;
         use serde_json::json;
 
-        let builder = Outstanding::builder().commands(dispatch! {
+        let builder = App::builder().commands(dispatch! {
             list => {
                 handler: |_m, _ctx| CommandResult::Ok(json!({"count": 42})),
                 template: "Count: {{ count }}",
@@ -3208,7 +3197,7 @@ mod tests {
         let hook_called = Arc::new(AtomicBool::new(false));
         let hook_called_clone = hook_called.clone();
 
-        let builder = Outstanding::builder().commands(dispatch! {
+        let builder = App::builder().commands(dispatch! {
             list => {
                 handler: |_m, _ctx| CommandResult::Ok(json!({"ok": true})),
                 template: "{{ ok }}",
@@ -3232,7 +3221,7 @@ mod tests {
         use crate::dispatch;
         use serde_json::json;
 
-        let builder = Outstanding::builder().commands(dispatch! {
+        let builder = App::builder().commands(dispatch! {
             app: {
                 config: {
                     get => |_m, _ctx| CommandResult::Ok(json!({"key": "value"})),

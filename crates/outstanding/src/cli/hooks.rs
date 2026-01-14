@@ -13,10 +13,10 @@
 //! # Example
 //!
 //! ```rust,ignore
-//! use outstanding::cli::{Outstanding, Hooks, Output};
+//! use outstanding::cli::{App, Hooks, Output};
 //! use serde_json::json;
 //!
-//! Outstanding::builder()
+//! App::builder()
 //!     .command("list", handler, template)
 //!     .hooks("list", Hooks::new()
 //!         .pre_dispatch(|_m, ctx| {

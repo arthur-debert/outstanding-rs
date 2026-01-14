@@ -107,9 +107,9 @@ impl<T: Serialize> CommandResult<T> {
 /// # Example
 ///
 /// ```rust,ignore
-/// use outstanding::cli::{Outstanding, RunResult};
+/// use outstanding::cli::{App, RunResult};
 ///
-/// let result = Outstanding::builder()
+/// let result = App::builder()
 ///     .command("list", list_handler, "{{ items }}")
 ///     .dispatch(cmd, args);
 ///
@@ -118,7 +118,7 @@ impl<T: Serialize> CommandResult<T> {
 ///     RunResult::Binary(bytes, filename) => {
 ///         std::fs::write(&filename, bytes).unwrap();
 ///     }
-///     RunResult::Unhandled(matches) => {
+///     RunResult::NoMatch(matches) => {
 ///         // Handle manually
 ///     }
 /// }
@@ -130,7 +130,7 @@ pub enum RunResult {
     /// A handler produced binary output (bytes, suggested filename)
     Binary(Vec<u8>, String),
     /// No handler matched; contains the ArgMatches for manual handling
-    Unhandled(ArgMatches),
+    NoMatch(ArgMatches),
 }
 
 impl RunResult {
@@ -163,7 +163,7 @@ impl RunResult {
     /// Returns the matches if unhandled, or None if handled.
     pub fn matches(&self) -> Option<&ArgMatches> {
         match self {
-            RunResult::Unhandled(m) => Some(m),
+            RunResult::NoMatch(m) => Some(m),
             _ => None,
         }
     }
@@ -303,7 +303,7 @@ mod tests {
     #[test]
     fn test_run_result_unhandled() {
         let matches = clap::Command::new("test").get_matches_from(vec!["test"]);
-        let result = RunResult::Unhandled(matches);
+        let result = RunResult::NoMatch(matches);
         assert!(!result.is_handled());
         assert!(!result.is_binary());
         assert!(result.output().is_none());

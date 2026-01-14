@@ -2,7 +2,7 @@
 //!
 //! This module provides types that hold both embedded content (for release builds)
 //! and source paths (for debug hot-reload). The macros `embed_templates!` and
-//! `embed_styles!` return these types, and `Outstanding::builder()` consumes them.
+//! `embed_styles!` return these types, and `App::builder()` consumes them.
 //!
 //! # Design
 //!
@@ -17,9 +17,9 @@
 //!
 //! ```rust,ignore
 //! use outstanding::{embed_templates, embed_styles};
-//! use outstanding::cli::Outstanding;
+//! use outstanding::cli::App;
 //!
-//! let app = Outstanding::builder()
+//! let app = App::builder()
 //!     .templates(embed_templates!("src/templates"))
 //!     .styles(embed_styles!("src/styles"))
 //!     .build()?;

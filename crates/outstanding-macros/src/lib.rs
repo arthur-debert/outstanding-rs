@@ -228,10 +228,10 @@ pub fn embed_styles(input: TokenStream) -> TokenStream {
 /// # Generated Code
 ///
 /// Generates a `dispatch_config()` method returning a closure for
-/// `Outstanding::builder().commands()`:
+/// `App::builder().commands()`:
 ///
 /// ```rust,ignore
-/// Outstanding::builder()
+/// App::builder()
 ///     .commands(Commands::dispatch_config())
 ///     .build()?
 ///     .run(Cli::command(), std::env::args());

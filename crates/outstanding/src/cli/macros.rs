@@ -6,9 +6,9 @@
 //! # Basic Usage
 //!
 //! ```rust,ignore
-//! use outstanding::cli::{dispatch, Outstanding};
+//! use outstanding::cli::{dispatch, App};
 //!
-//! let builder = Outstanding::builder()
+//! let builder = App::builder()
 //!     .template_dir("templates")
 //!     .commands(dispatch! {
 //!         db: {
@@ -68,7 +68,7 @@
 /// # Example
 ///
 /// ```rust,ignore
-/// use outstanding::cli::{dispatch, Outstanding, CommandResult};
+/// use outstanding::cli::{dispatch, App, CommandResult};
 /// use serde_json::json;
 ///
 /// fn migrate_handler(_m: &clap::ArgMatches, _ctx: &CommandContext) -> CommandResult<serde_json::Value> {
@@ -79,7 +79,7 @@
 ///     CommandResult::Ok(json!({"backed_up": true}))
 /// }
 ///
-/// let builder = Outstanding::builder()
+/// let builder = App::builder()
 ///     .template_dir("templates")
 ///     .commands(dispatch! {
 ///         db: {
