@@ -61,7 +61,7 @@ use std::collections::HashMap;
 use std::path::Path;
 
 use crate::file_loader::{build_embedded_registry, FileRegistry, FileRegistryConfig, LoadError};
-use crate::theme::Theme;
+use super::super::theme::Theme;
 
 use super::error::StylesheetError;
 

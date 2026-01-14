@@ -33,9 +33,9 @@ use std::marker::PhantomData;
 use std::path::Path;
 
 use crate::file_loader::{build_embedded_registry, walk_dir};
-use crate::render::{walk_template_dir, TemplateRegistry};
-use crate::stylesheet::{StylesheetRegistry, STYLESHEET_EXTENSIONS};
-use crate::Theme;
+use crate::rendering::stylesheet::{StylesheetRegistry, STYLESHEET_EXTENSIONS};
+use crate::rendering::template::{walk_template_dir, TemplateRegistry};
+use crate::rendering::theme::Theme;
 
 /// Marker type for template resources.
 #[derive(Debug, Clone, Copy)]

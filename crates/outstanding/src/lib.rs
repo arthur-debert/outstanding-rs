@@ -219,33 +219,34 @@
 // Internal modules
 mod embedded;
 pub mod file_loader;
-mod output;
-mod render;
+mod rendering;
 mod setup;
-mod style;
-pub mod stylesheet;
-mod theme;
 mod util;
 
 // Public submodules
-pub mod context;
-pub mod table;
 pub mod topics;
+
+// Re-export rendering submodules as public
+pub use rendering::context;
+pub use rendering::stylesheet;
+pub use rendering::table;
 
 // Re-export minijinja::Error for convenience
 pub use minijinja::Error;
 
 // Style module exports
-pub use style::{StyleValidationError, StyleValue, Styles, DEFAULT_MISSING_STYLE_INDICATOR};
+pub use rendering::style::{
+    StyleValidationError, StyleValue, Styles, DEFAULT_MISSING_STYLE_INDICATOR,
+};
 
 // Theme module exports
-pub use theme::{detect_color_mode, set_theme_detector, ColorMode, Theme};
+pub use rendering::theme::{detect_color_mode, set_theme_detector, ColorMode, Theme};
 
 // Output module exports
-pub use output::{write_binary_output, write_output, OutputDestination, OutputMode};
+pub use rendering::output::{write_binary_output, write_output, OutputDestination, OutputMode};
 
 // Render module exports
-pub use render::{
+pub use rendering::template::{
     render,
     render_auto,
     render_auto_with_context,

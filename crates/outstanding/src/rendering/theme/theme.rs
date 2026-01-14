@@ -64,8 +64,8 @@ use std::path::{Path, PathBuf};
 
 use console::Style;
 
-use crate::style::{StyleValidationError, StyleValue, Styles};
-use crate::stylesheet::{parse_stylesheet, StylesheetError, ThemeVariants};
+use super::super::style::{StyleValidationError, StyleValue, Styles};
+use super::super::stylesheet::{parse_stylesheet, StylesheetError, ThemeVariants};
 
 use super::adaptive::ColorMode;
 

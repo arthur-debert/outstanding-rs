@@ -46,7 +46,7 @@ pub enum StylesheetError {
     /// Alias validation error (dangling reference or cycle).
     AliasError {
         /// The underlying validation error.
-        source: crate::style::StyleValidationError,
+        source: super::super::style::StyleValidationError,
     },
 
     /// Invalid style definition structure.

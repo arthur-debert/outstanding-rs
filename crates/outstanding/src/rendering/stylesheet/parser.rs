@@ -30,8 +30,8 @@ use console::Style;
 
 use super::definition::StyleDefinition;
 use super::error::StylesheetError;
-use crate::style::StyleValue;
-use crate::theme::ColorMode;
+use super::super::style::StyleValue;
+use super::super::theme::ColorMode;
 
 /// Theme variants containing styles for base, light, and dark modes.
 ///

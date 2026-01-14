@@ -51,11 +51,11 @@ use serde::Serialize;
 use std::collections::HashMap;
 
 use super::filters::register_filters;
-use crate::context::{ContextRegistry, RenderContext};
-use crate::output::OutputMode;
-use crate::style::Styles;
-use crate::table::FlatDataSpec;
-use crate::theme::{detect_color_mode, ColorMode, Theme};
+use super::super::context::{ContextRegistry, RenderContext};
+use super::super::output::OutputMode;
+use super::super::style::Styles;
+use super::super::table::FlatDataSpec;
+use super::super::theme::{detect_color_mode, ColorMode, Theme};
 
 /// Maps OutputMode to BBParser's TagTransform.
 fn output_mode_to_transform(mode: OutputMode) -> TagTransform {
@@ -736,7 +736,7 @@ fn json_to_minijinja(json: &serde_json::Value) -> Value {
 mod tests {
     use super::*;
     use crate::table::{Column, FlatDataSpec, Width};
-    use crate::theme::Theme;
+    use crate::Theme;
     use console::Style;
     use serde::Serialize;
     use serde_json::json;

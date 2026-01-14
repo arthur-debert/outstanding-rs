@@ -51,8 +51,8 @@
 //! };
 //! ```
 
-use crate::output::OutputMode;
-use crate::theme::Theme;
+use super::output::OutputMode;
+use super::theme::Theme;
 use minijinja::Value;
 use std::collections::HashMap;
 use std::fmt::Debug;
