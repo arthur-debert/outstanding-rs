@@ -1,7 +1,40 @@
-//! Output mode control for rendering.
+//! Output mode control: ANSI, plain text, or structured data.
 //!
-//! The [`OutputMode`] enum determines how output is rendered:
-//! whether to include ANSI codes, render debug tags, or serialize as JSON.
+//! [`OutputMode`] controls how rendering behaves, from terminal colors to
+//! JSON serialization. This is the mechanism behind the `--output` CLI flag.
+//!
+//! ## Output Mode Categories
+//!
+//! | Category | Modes | Template? | ANSI? |
+//! |----------|-------|-----------|-------|
+//! | **Templated** | Auto, Term, Text | Yes | Varies |
+//! | **Debug** | TermDebug | Yes | Tags kept as `[name]...[/name]` |
+//! | **Structured** | Json, Yaml, Xml, Csv | No — serializes directly | No |
+//!
+//! ## How Modes Are Selected
+//!
+//! 1. **Default**: `Auto` — detects terminal capabilities at render time
+//! 2. **CLI flag**: `--output=json` overrides to structured mode
+//! 3. **Programmatic**: Pass explicit mode to render functions
+//!
+//! ## Auto Mode Resolution
+//!
+//! `Auto` queries terminal capabilities via the `console` crate:
+//! - TTY with color support → behaves like `Term` (ANSI codes applied)
+//! - Piped output or no color support → behaves like `Text` (tags stripped)
+//!
+//! This detection happens at render time, not startup.
+//!
+//! ## Structured Modes
+//!
+//! JSON, YAML, XML, and CSV modes skip template rendering entirely.
+//! Handler data is serialized directly, which means:
+//! - Template content is ignored
+//! - Style tags never apply
+//! - Context injection is skipped
+//!
+//! Use [`render_auto`](crate::render_auto) to automatically dispatch between
+//! templated and structured rendering based on output mode.
 
 use console::Term;
 use std::io::Write;

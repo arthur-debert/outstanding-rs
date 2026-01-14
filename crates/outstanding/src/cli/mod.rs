@@ -1,39 +1,87 @@
-//! CLI integration for clap-based applications.
+//! CLI dispatch and integration for clap-based applications.
 //!
-//! This module provides batteries-included integration with clap:
+//! This module bridges Outstanding's rendering engine with clap's argument parsing,
+//! letting you focus on command logic while Outstanding handles output formatting,
+//! help rendering, and structured output modes (JSON, YAML, etc.).
 //!
-//! - Styled help output using outstanding templates
-//! - Help topics system (`help <topic>`, `help topics`)
-//! - `--output` flag for user output control
-//! - Pager support for long help content
-//! - Command dispatch with hooks
+//! ## When to Use This Module
 //!
-//! # Quick Start
+//! - You have a clap-based CLI and want rich, testable output
+//! - You need `--output=json` support without manual serialization
+//! - You want styled help with topic pages
+//! - You're adopting Outstanding incrementally (one command at a time)
 //!
-//! ```rust,ignore
-//! use clap::Command;
-//! use outstanding::cli::App;
+//! If you only need template rendering without CLI integration, use the
+//! [`render`](crate::render) functions directly.
 //!
-//! // Simplest usage - styled help with --output flag
-//! let matches = App::parse(Command::new("my-app"));
+//! ## Execution Flow
+//!
+//! Outstanding follows a linear pipeline from CLI input to rendered output:
+//!
+//! ```text
+//! Clap Parsing → Dispatch → Handler → Hooks → Rendering → Output
 //! ```
 //!
-//! # With Command Handlers
+//! 1. **Parsing**: Your clap Command is augmented with Outstanding's flags
+//!    (`--output`, `--output-file-path`) and parsed normally.
+//!
+//! 2. **Dispatch**: Outstanding extracts the command path from ArgMatches,
+//!    navigating through subcommands to find the registered handler.
+//!
+//! 3. **Handler**: Your logic executes, returning [`Output`] (data to render,
+//!    silent, or binary). Errors propagate via `?`.
+//!
+//! 4. **Hooks**: Optional hooks run at three points: pre-dispatch (validation),
+//!    post-dispatch (data transformation), post-output (output transformation).
+//!
+//! 5. **Rendering**: Data flows through the template engine, applying styles.
+//!    Structured modes (JSON, YAML) skip templating and serialize directly.
+//!
+//! ## Quick Start
 //!
 //! ```rust,ignore
 //! use outstanding::cli::{App, Output, HandlerResult};
-//! use serde::Serialize;
-//!
-//! #[derive(Serialize)]
-//! struct ListOutput { items: Vec<String> }
 //!
 //! App::builder()
-//!     .command("list", |_m, _ctx| -> HandlerResult<ListOutput> {
-//!         Ok(Output::Render(ListOutput { items: vec!["one".into()] }))
-//!     }, "{% for item in items %}{{ item }}\n{% endfor %}")
+//!     .command("list", |matches, ctx| {
+//!         let items = load_items()?;
+//!         Ok(Output::Render(items))
+//!     })
+//!     .template("list", "{% for item in items %}{{ item }}\n{% endfor %}")
 //!     .build()?
 //!     .run(cmd, std::env::args());
 //! ```
+//!
+//! ## Partial Adoption
+//!
+//! Outstanding doesn't require all-or-nothing adoption. Register only the
+//! commands you want Outstanding to handle; unmatched commands return
+//! [`RunResult::NoMatch`] with the ArgMatches for your own dispatch:
+//!
+//! ```rust,ignore
+//! match app.run_to_string(cmd, args) {
+//!     RunResult::Handled(output) => println!("{}", output),
+//!     RunResult::NoMatch(matches) => legacy_dispatch(matches),
+//!     RunResult::Binary(bytes, filename) => std::fs::write(filename, bytes)?,
+//! }
+//! ```
+//!
+//! ## Key Types
+//!
+//! - [`App`] / [`AppBuilder`]: Main entry point and configuration
+//! - [`Handler`]: Trait for command handlers (closures work via [`FnHandler`])
+//! - [`Output`]: What handlers produce (render data, silent, binary)
+//! - [`HandlerResult`]: `Result<Output<T>, Error>` — enables `?` for error handling
+//! - [`RunResult`]: Dispatch outcome (handled, binary, or no match)
+//! - [`Hooks`]: Pre/post execution hooks for validation and transformation
+//! - [`CommandContext`]: Runtime info passed to handlers (output mode, command path)
+//!
+//! ## See Also
+//!
+//! - [`crate::render`]: Direct rendering without CLI integration
+//! - [`handler`]: Handler types and the Handler trait
+//! - [`hooks`]: Hook system for intercepting execution
+//! - [`help`]: Help rendering and topic system
 
 // Internal modules
 mod dispatch;

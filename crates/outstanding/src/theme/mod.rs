@@ -1,50 +1,79 @@
-//! Theme system for organizing and selecting style collections.
+//! Adaptive themes with automatic light/dark mode support.
 //!
-//! This module provides:
+//! Themes are named collections of styles that automatically adapt to the user's
+//! OS color scheme. Unlike systems with separate "light theme" and "dark theme"
+//! files, Outstanding's themes define mode-specific variations at the style level,
+//! eliminating duplication for styles that don't change between modes.
 //!
-//! - [`Theme`]: A named collection of adaptive styles with fluent builder API
-//! - [`ColorMode`]: Light or dark color mode enum
-//! - [`detect_color_mode`]: Detect the user's preferred color mode from OS
-//! - [`set_theme_detector`]: Override color mode detection for testing
+//! ## Design Decision: Style-Level Adaptation
 //!
-//! # Adaptive Themes
+//! Most styles (bold, italic, semantic colors) look fine in both modes. Only a
+//! handful need adjustment — typically foreground colors for contrast. By making
+//! adaptation per-style rather than per-theme, you define shared styles once and
+//! override only what differs:
 //!
-//! Themes in Outstanding are inherently adaptive. Individual styles can define
-//! mode-specific variations that are automatically selected based on the user's
-//! OS color mode (light/dark).
+//! ```yaml
+//! # Shared across all modes
+//! header:
+//!   fg: cyan
+//!   bold: true
 //!
-//! ## Programmatic Construction
+//! # Mode-specific overrides
+//! panel:
+//!   fg: gray          # Base (fallback)
+//!   light:
+//!     fg: black       # Override for light mode
+//!   dark:
+//!     fg: white       # Override for dark mode
+//! ```
 //!
+//! ## How Merging Works
+//!
+//! When resolving a style in Dark mode:
+//! 1. Start with base attributes (`fg: gray`)
+//! 2. Merge dark overrides — each attribute in `dark:` replaces the base
+//! 3. Result: `fg: white` (from dark), other attributes preserved from base
+//!
+//! This is additive: `Some` values in overrides replace, missing values preserve base.
+//!
+//! ## Color Mode Detection
+//!
+//! [`detect_color_mode`] queries the OS for the user's preferred scheme. Override
+//! it for testing with [`set_theme_detector`]:
+//!
+//! ```rust,ignore
+//! outstanding::set_theme_detector(|| ColorMode::Dark);
+//! ```
+//!
+//! ## Construction
+//!
+//! **Programmatic** (for compile-time themes):
 //! ```rust
-//! use outstanding::{Theme, ColorMode};
+//! use outstanding::Theme;
 //! use console::Style;
 //!
 //! let theme = Theme::new()
-//!     // Non-adaptive style (same in all modes)
-//!     .add("muted", Style::new().dim())
-//!     // Adaptive style with light/dark variants
-//!     .add_adaptive(
-//!         "panel",
-//!         Style::new(),                          // Base
-//!         Some(Style::new().fg(console::Color::Black)), // Light mode
-//!         Some(Style::new().fg(console::Color::White)), // Dark mode
-//!     );
+//!     .add("header", Style::new().bold().cyan())
+//!     .add_adaptive("panel", Style::new(),
+//!         Some(Style::new().fg(console::Color::Black)),
+//!         Some(Style::new().fg(console::Color::White)));
 //! ```
 //!
-//! ## From YAML
-//!
+//! **YAML** (for user-customizable themes):
 //! ```rust
-//! use outstanding::Theme;
-//!
-//! let theme = Theme::from_yaml(r#"
+//! let theme = outstanding::Theme::from_yaml(r#"
+//! header: { fg: cyan, bold: true }
 //! panel:
 //!   fg: gray
-//!   light:
-//!     fg: black
-//!   dark:
-//!     fg: white
+//!   light: { fg: black }
+//!   dark: { fg: white }
 //! "#).unwrap();
 //! ```
+//!
+//! ## See Also
+//!
+//! - [`crate::stylesheet`]: YAML parsing details and color format reference
+//! - [`crate::style`]: Low-level style primitives and aliasing
 
 mod adaptive;
 #[allow(clippy::module_inception)]

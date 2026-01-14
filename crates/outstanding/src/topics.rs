@@ -1,3 +1,55 @@
+//! Help topics system for extended CLI documentation.
+//!
+//! Topics provide documentation beyond `--help` — longer guides, tutorials,
+//! and reference material accessible via `myapp help <topic>`.
+//!
+//! ## When to Use Topics
+//!
+//! - Explaining concepts that don't fit in `--help` output
+//! - Providing tutorials, configuration guides, or format references
+//! - Shipping documentation with your binary (no external files needed)
+//!
+//! ## Quick Start
+//!
+//! ```rust
+//! use outstanding::topics::{Topic, TopicRegistry, TopicType, render_topic};
+//!
+//! let mut registry = TopicRegistry::new();
+//! registry.add_topic(Topic::new(
+//!     "Storage",
+//!     "Notes are stored in ~/.notes/\n\nEach note is a separate file.",
+//!     TopicType::Text,
+//!     Some("storage".to_string()),
+//! ));
+//!
+//! // In your help handler:
+//! if let Some(topic) = registry.get_topic("storage") {
+//!     let output = render_topic(topic, None).unwrap();
+//!     println!("{}", output);
+//! }
+//! ```
+//!
+//! ## Loading Topics from Files
+//!
+//! Topics can be loaded from a directory of `.txt` or `.md` files:
+//!
+//! ```rust,ignore
+//! registry.add_from_directory("docs/topics")?;
+//! // Or silently skip if directory doesn't exist:
+//! registry.add_from_directory_if_exists("~/.myapp/topics")?;
+//! ```
+//!
+//! File format: first non-blank line is the title, rest is content.
+//! Filename (minus extension) becomes the topic name.
+//!
+//! ## Key Types
+//!
+//! - [`Topic`]: A single help topic with title, content, and name
+//! - [`TopicRegistry`]: Collection of topics with lookup by name
+//! - [`TopicType`]: Text or Markdown (affects rendering)
+//! - [`render_topic`] / [`render_topics_list`]: Rendering functions
+//! - [`display_with_pager`]: Show long content through less/more
+
 use deunicode::deunicode;
 use std::collections::HashMap;
 use std::fs;
