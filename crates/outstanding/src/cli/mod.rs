@@ -15,7 +15,7 @@
 //! use outstanding::cli::Outstanding;
 //!
 //! // Simplest usage - styled help with --output flag
-//! let matches = Outstanding::run(Command::new("my-app"));
+//! let matches = Outstanding::parse(Command::new("my-app"));
 //! ```
 //!
 //! # With Command Handlers
@@ -31,7 +31,8 @@
 //!     .command("list", |_m, _ctx| {
 //!         CommandResult::Ok(ListOutput { items: vec!["one".into()] })
 //!     }, "{% for item in items %}{{ item }}\n{% endfor %}")
-//!     .run_and_print(cmd, std::env::args());
+//!     .build()?
+//!     .run(cmd, std::env::args());
 //! ```
 
 // Internal modules
@@ -71,18 +72,18 @@ pub use outstanding_macros::Dispatch;
 // Re-export error types
 pub use crate::setup::SetupError;
 
-/// Runs a clap command with styled help output.
+/// Parses a clap command with styled help output.
 ///
 /// This is the simplest entry point for basic CLIs without topics.
-pub fn run(cmd: clap::Command) -> clap::ArgMatches {
-    Outstanding::run(cmd)
+pub fn parse(cmd: clap::Command) -> clap::ArgMatches {
+    Outstanding::parse(cmd)
 }
 
-/// Like `run`, but takes arguments from an iterator.
-pub fn run_from<I, T>(cmd: clap::Command, itr: I) -> clap::ArgMatches
+/// Like `parse`, but takes arguments from an iterator.
+pub fn parse_from<I, T>(cmd: clap::Command, itr: I) -> clap::ArgMatches
 where
     I: IntoIterator<Item = T>,
     T: Into<std::ffi::OsString> + Clone,
 {
-    Outstanding::new().run_from(cmd, itr)
+    Outstanding::new().parse_from(cmd, itr)
 }

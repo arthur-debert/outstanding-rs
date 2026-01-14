@@ -37,7 +37,8 @@
 //!             }
 //!             Ok(output)
 //!         }))
-//!     .run_and_print(cmd, args);
+//!     .build()?
+//!     .run(cmd, args);
 //! ```
 
 use std::fmt;

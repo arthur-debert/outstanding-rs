@@ -233,7 +233,8 @@ pub fn embed_styles(input: TokenStream) -> TokenStream {
 /// ```rust,ignore
 /// Outstanding::builder()
 ///     .commands(Commands::dispatch_config())
-///     .run_and_print(Cli::command(), std::env::args());
+///     .build()?
+///     .run(Cli::command(), std::env::args());
 /// ```
 ///
 /// # Nested Subcommands

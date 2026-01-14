@@ -297,7 +297,7 @@ impl Outstanding {
     ///         }))
     ///     .build();
     ///
-    /// let matches = outstanding.run_with(cmd);
+    /// let matches = outstanding.parse_with(cmd);
     ///
     /// match matches.subcommand() {
     ///     Some(("list", sub_m)) => {
@@ -435,24 +435,26 @@ impl Outstanding {
         cmd
     }
 
-    /// Runs the CLI, handling help display automatically.
+    /// Parses CLI arguments and returns matches.
     ///
-    /// This is the recommended entry point. It:
+    /// This is the recommended entry point for parsing only. It:
     /// - Intercepts `help` subcommand and displays styled help
     /// - Handles pager display when `--page` is used
     /// - Exits on errors
     /// - Returns `ArgMatches` only for actual commands
-    pub fn run(cmd: Command) -> clap::ArgMatches {
-        Self::new().run_with(cmd)
+    ///
+    /// For executing command handlers and printing output, use `run()` instead.
+    pub fn parse(cmd: Command) -> clap::ArgMatches {
+        Self::new().parse_with(cmd)
     }
 
-    /// Runs the CLI with this configured Outstanding instance.
-    pub fn run_with(&self, cmd: Command) -> clap::ArgMatches {
-        self.run_from(cmd, std::env::args())
+    /// Parses CLI arguments with this configured Outstanding instance.
+    pub fn parse_with(&self, cmd: Command) -> clap::ArgMatches {
+        self.parse_from(cmd, std::env::args())
     }
 
-    /// Like `run_with`, but takes arguments from an iterator.
-    pub fn run_from<I, T>(&self, cmd: Command, itr: I) -> clap::ArgMatches
+    /// Like `parse_with`, but takes arguments from an iterator.
+    pub fn parse_from<I, T>(&self, cmd: Command, itr: I) -> clap::ArgMatches
     where
         I: IntoIterator<Item = T>,
         T: Into<std::ffi::OsString> + Clone,
@@ -475,7 +477,7 @@ impl Outstanding {
 
     /// Attempts to get matches, intercepting `help` requests.
     ///
-    /// For most use cases, prefer `run()` which handles help display automatically.
+    /// For most use cases, prefer `parse()` which handles help display automatically.
     pub fn get_matches(&self, cmd: Command) -> HelpResult {
         self.get_matches_from(cmd, std::env::args())
     }
@@ -656,7 +658,8 @@ impl Default for Outstanding {
 ///         ])
 ///     })
 ///     .command("list", handler, "Width: {{ terminal.width }}")
-///     .run_and_print(cmd, args);
+///     .build()?
+///     .run(cmd, args);
 /// ```
 pub struct OutstandingBuilder {
     registry: TopicRegistry,
@@ -814,7 +817,8 @@ impl OutstandingBuilder {
     ///     .styles(embed_styles!("src/styles"))
     ///     .default_theme("default")
     ///     .commands(Commands::dispatch_config())
-    ///     .run_and_print(cmd, args);
+    ///     .build()?
+    ///     .run(cmd, args);
     /// ```
     pub fn templates(mut self, templates: EmbeddedTemplates) -> Self {
         self.template_registry = Some(TemplateRegistry::from(templates));
@@ -836,7 +840,8 @@ impl OutstandingBuilder {
     ///     .styles(embed_styles!("src/styles"))
     ///     .default_theme("dark")
     ///     .command("list", handler, template)
-    ///     .run_and_print(cmd, args);
+    ///     .build()?
+    ///     .run(cmd, args);
     /// ```
     pub fn styles(mut self, styles: EmbeddedStyles) -> Self {
         self.stylesheet_registry = Some(crate::stylesheet::StylesheetRegistry::from(styles));
@@ -1223,7 +1228,7 @@ impl OutstandingBuilder {
     ///     .command("list", |_m, _ctx| {
     ///         CommandResult::Ok(ListOutput { items: vec!["one".into()] })
     ///     }, "{% for item in items %}{{ item }}\n{% endfor %}")
-    ///     .run(cmd);
+    ///     .parse(cmd);
     /// ```
     pub fn command<F, T>(self, path: &str, handler: F, template: &str) -> Self
     where
@@ -1261,7 +1266,7 @@ impl OutstandingBuilder {
     ///
     /// Outstanding::builder()
     ///     .command_handler("list", ListHandler { db }, "{% for item in items %}...")
-    ///     .run(cmd);
+    ///     .parse(cmd);
     /// ```
     pub fn command_handler<H, T>(mut self, path: &str, handler: H, template: &str) -> Self
     where
@@ -1364,7 +1369,8 @@ impl OutstandingBuilder {
     ///             }
     ///             Ok(output)
     ///         }))
-    ///     .run_and_print(cmd, args);
+    ///     .build()?
+    ///     .run(cmd, args);
     /// ```
     pub fn hooks(mut self, path: &str, hooks: Hooks) -> Self {
         self.command_hooks.insert(path.to_string(), hooks);
@@ -1536,16 +1542,15 @@ impl OutstandingBuilder {
         self.dispatch(matches, output_mode)
     }
 
-    /// Parses arguments, dispatches to handlers, and prints output.
+    /// Runs the CLI: parses arguments, dispatches to handlers, and prints output.
     ///
-    /// This is the simplest entry point for the command handler system.
-    /// It handles everything: parsing, dispatch, and output.
+    /// This is the main entry point for command execution. It handles everything:
+    /// parsing, dispatch, rendering, and output.
     ///
     /// # Returns
     ///
-    /// - `Ok(true)` if a handler processed and printed output
-    /// - `Ok(false)` if no handler matched (caller should handle manually)
-    /// - `Err(matches)` if no handler matched, with the parsed ArgMatches
+    /// - `true` if a handler processed and printed output
+    /// - `false` if no handler matched (caller should handle manually)
     ///
     /// # Example
     ///
@@ -1554,13 +1559,14 @@ impl OutstandingBuilder {
     ///
     /// let handled = Outstanding::builder()
     ///     .command("list", |_m, _ctx| CommandResult::Ok(vec!["a", "b"]), "{{ . }}")
-    ///     .run_and_print(cmd, std::env::args());
+    ///     .build()?
+    ///     .run(cmd, std::env::args());
     ///
     /// if !handled {
     ///     // Handle unregistered commands manually
     /// }
     /// ```
-    pub fn run_and_print<I, T>(&self, cmd: Command, args: I) -> bool
+    pub fn run<I, T>(&self, cmd: Command, args: I) -> bool
     where
         I: IntoIterator<Item = T>,
         T: Into<std::ffi::OsString> + Clone,
@@ -1584,6 +1590,41 @@ impl OutstandingBuilder {
             }
             RunResult::Unhandled(_) => false,
         }
+    }
+
+    /// Runs the CLI and returns the rendered output as a string.
+    ///
+    /// Similar to `run()`, but returns the output instead of printing it.
+    /// Useful for testing or when you need to capture and process the output.
+    ///
+    /// # Returns
+    ///
+    /// - `RunResult::Handled(output)` - Handler executed, output is the rendered string
+    /// - `RunResult::Binary(bytes, filename)` - Handler produced binary output
+    /// - `RunResult::Unhandled(matches)` - No handler matched
+    ///
+    /// # Example
+    ///
+    /// ```rust,ignore
+    /// use outstanding::cli::{Outstanding, CommandResult, RunResult};
+    ///
+    /// let result = Outstanding::builder()
+    ///     .command("list", |_m, _ctx| CommandResult::Ok(vec!["a", "b"]), "{{ . }}")
+    ///     .build()?
+    ///     .run_to_string(cmd, std::env::args());
+    ///
+    /// match result {
+    ///     RunResult::Handled(output) => println!("{}", output),
+    ///     RunResult::Binary(bytes, filename) => std::fs::write(filename, bytes)?,
+    ///     RunResult::Unhandled(matches) => { /* handle manually */ }
+    /// }
+    /// ```
+    pub fn run_to_string<I, T>(&self, cmd: Command, args: I) -> RunResult
+    where
+        I: IntoIterator<Item = T>,
+        T: Into<std::ffi::OsString> + Clone,
+    {
+        self.dispatch_from(cmd, args)
     }
 
     /// Augments a command for dispatch (adds --output flag without help subcommand).
@@ -1658,16 +1699,16 @@ impl OutstandingBuilder {
         })
     }
 
-    /// Builds and runs the CLI in one step.
+    /// Builds and parses CLI arguments in one step.
     ///
     /// # Panics
     ///
     /// Panics if building fails (e.g., theme not found). For proper error handling,
-    /// use `build()` followed by `run_with()` instead.
-    pub fn run(self, cmd: Command) -> clap::ArgMatches {
+    /// use `build()` followed by `parse_with()` instead.
+    pub fn parse(self, cmd: Command) -> clap::ArgMatches {
         self.build()
             .expect("Failed to build Outstanding")
-            .run_with(cmd)
+            .parse_with(cmd)
     }
 }
 

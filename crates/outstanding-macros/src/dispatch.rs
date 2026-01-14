@@ -126,7 +126,8 @@
 //! ```rust,ignore
 //! Outstanding::builder()
 //!     .commands(Commands::dispatch_config())
-//!     .run_and_print(Cli::command(), std::env::args());
+//!     .build()?
+//!     .run(Cli::command(), std::env::args());
 //! ```
 
 use proc_macro2::TokenStream;
