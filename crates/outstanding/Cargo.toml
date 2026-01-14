@@ -25,14 +25,15 @@ outstanding-bbparser = { version = "1.0.0", path = "../outstanding-bbparser" }
 outstanding-macros = { version = "1.0.0", path = "../outstanding-macros", optional = true }
 
 # Optional dependencies for clap integration (feature = "clap")
-clap = { version = "4", optional = true }
+clap = { version = "4", features = ["derive", "help"], optional = true }
 anyhow = { version = "1", optional = true }
 terminal_size = { version = "0.4", optional = true }
+thiserror = { version = "2", optional = true }
 
 [features]
 default = []
 macros = ["outstanding-macros"]
-clap = ["dep:clap", "dep:anyhow", "dep:terminal_size"]
+clap = ["dep:clap", "dep:anyhow", "dep:terminal_size", "dep:thiserror", "outstanding-macros"]
 
 [dev-dependencies]
 proptest = "1"
