@@ -93,6 +93,10 @@ pub enum UnknownTagKind {
     Open,
     /// A closing tag: `[/foo]`
     Close,
+    /// An unbalanced opening tag: `[foo]...` (no matching close)
+    Unbalanced,
+    /// An unexpected closing tag: `...[/foo]` (no matching open)
+    UnexpectedClose,
 }
 
 /// An error representing an unknown tag in the input.
@@ -111,12 +115,14 @@ pub struct UnknownTagError {
 impl std::fmt::Display for UnknownTagError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         let kind = match self.kind {
-            UnknownTagKind::Open => "opening",
-            UnknownTagKind::Close => "closing",
+            UnknownTagKind::Open => "unknown opening",
+            UnknownTagKind::Close => "unknown closing",
+            UnknownTagKind::Unbalanced => "unbalanced",
+            UnknownTagKind::UnexpectedClose => "unexpected closing",
         };
         write!(
             f,
-            "unknown {} tag '{}' at position {}..{}",
+            "{} tag '{}' at position {}..{}",
             kind, self.tag, self.start, self.end
         )
     }
@@ -300,6 +306,8 @@ impl BBParser {
         let mut errors = UnknownTagErrors::new();
         let mut stack: Vec<&str> = Vec::new();
 
+        // ...
+        // ...
         let mut i = 0;
         while i < tokens.len() {
             match &tokens[i] {
@@ -311,10 +319,30 @@ impl BBParser {
                         stack.push(name);
                         self.emit_open_tag_event(&mut events, &mut errors, name, *start, *end);
                     } else {
-                        events.push(ParseEvent::Literal(std::borrow::Cow::Owned(format!(
-                            "[{}]",
-                            name
-                        ))));
+                        // Check if this looks like a valid tag name but was just unclosed/unbalanced
+                        let is_valid_name = Tokenizer::is_valid_tag_name(name);
+                        if is_valid_name {
+                            // Strictly error on unbalanced tags
+                            errors.push(UnknownTagError {
+                                tag: name.to_string(),
+                                kind: UnknownTagKind::Unbalanced, // NEW VARIANT
+                                start: *start,
+                                end: *end,
+                            });
+                            // Also treat as literal to not break output entirely?
+                            // Or just error? Issue says "Unbalanced tags must error".
+                            // We record error. Output depends on transform.
+                            // We'll output literal text for visual feedback?
+                            events.push(ParseEvent::Literal(std::borrow::Cow::Owned(format!(
+                                "[{}]",
+                                name
+                            ))));
+                        } else {
+                            events.push(ParseEvent::Literal(std::borrow::Cow::Owned(format!(
+                                "[{}]",
+                                name
+                            ))));
+                        }
                     }
                 }
                 Token::CloseTag { name, start, end } => {
@@ -323,13 +351,22 @@ impl BBParser {
                         self.emit_close_tag_event(&mut events, &mut errors, name, *start, *end);
                     } else if stack.contains(name) {
                         while let Some(open) = stack.pop() {
-                            // For auto-closed tags, we don't have position info
                             self.emit_close_tag_event(&mut events, &mut errors, open, 0, 0);
                             if open == *name {
                                 break;
                             }
                         }
                     } else {
+                        // Unexpected close tag
+                        let is_valid_name = Tokenizer::is_valid_tag_name(name);
+                        if is_valid_name {
+                            errors.push(UnknownTagError {
+                                tag: name.to_string(),
+                                kind: UnknownTagKind::UnexpectedClose, // NEW VARIANT
+                                start: *start,
+                                end: *end,
+                            });
+                        }
                         events.push(ParseEvent::Literal(std::borrow::Cow::Owned(format!(
                             "[/{}]",
                             name
@@ -511,7 +548,13 @@ impl BBParser {
             output.push_str(text);
         } else {
             let mut current = text.to_string();
-            for style in style_stack {
+            // Apply styles from innermost (top of stack) to outermost (bottom).
+            // This ensures that inner styles override outer styles (ANSI rules: last code wins).
+            // Also optimizes by stripping nested resets.
+            for style in style_stack.iter().rev() {
+                if current.ends_with("\x1b[0m") {
+                    current.truncate(current.len() - 4);
+                }
                 current = style.apply_to(current).to_string();
             }
             output.push_str(&current);
