@@ -8,6 +8,36 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 - **Added**:
+  - **Tag-based style syntax** - More ergonomic `[name]content[/name]` syntax for applying styles in templates
+    - Two-pass rendering: MiniJinja first, then BBParser style tag processing
+    - Works alongside existing filter syntax: `{{ value | style("name") }}`
+    - Output mode support: tags become ANSI codes (Term), stripped (Text), or preserved (TermDebug)
+    - Unknown tags show `[tag?]` marker for easy debugging
+  - **Template validation** - `validate_template()` function to catch unknown style tags
+    - Returns detailed error info with tag name and position
+    - Re-exported `UnknownTagError`, `UnknownTagErrors`, `UnknownTagKind` types
+  - **New `outstanding-bbparser` crate** - Standalone BBCode-style tag parser for terminal styling
+    - `BBParser` with configurable `TagTransform` (Apply/Remove/Keep)
+    - `UnknownTagBehavior` (Passthrough with `?` marker, or Strip)
+    - Position tracking for error reporting
+    - CSS identifier rules for tag names
+
+- **Example**:
+
+  ```rust
+  use outstanding::{render_with_output, Theme, OutputMode};
+
+  let theme = Theme::new()
+      .add("title", Style::new().bold())
+      .add("count", Style::new().cyan());
+
+  // Tag syntax for static text, filter for dynamic values
+  let template = r#"[title]Report[/title]: {{ count | style("count") }} items"#;
+
+  let output = render_with_output(template, &data, &theme, OutputMode::Term)?;
+  ```
+
+- **Added**:
   - **`#[derive(Dispatch)]` macro** - Convention-based command dispatch for clap `Subcommand` enums
     - Generates `dispatch_config()` method that maps variants to handlers automatically
     - PascalCase variants map to snake_case handlers (e.g., `AddTask` → `handlers::add_task`)
