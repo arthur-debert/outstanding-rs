@@ -50,12 +50,12 @@ use outstanding_bbparser::{BBParser, TagTransform, UnknownTagBehavior};
 use serde::Serialize;
 use std::collections::HashMap;
 
-use super::filters::register_filters;
 use super::super::context::{ContextRegistry, RenderContext};
 use super::super::output::OutputMode;
 use super::super::style::Styles;
 use super::super::table::FlatDataSpec;
 use super::super::theme::{detect_color_mode, ColorMode, Theme};
+use super::filters::register_filters;
 
 /// Maps OutputMode to BBParser's TagTransform.
 fn output_mode_to_transform(mode: OutputMode) -> TagTransform {
@@ -320,6 +320,101 @@ pub fn render_with_mode<T: Serialize>(
 
     // Pass 2: BBParser style tag processing
     let final_output = apply_style_tags(&minijinja_output, &styles, output_mode);
+
+    Ok(final_output)
+}
+
+/// Renders a template with additional variables injected into the context.
+///
+/// This is a convenience function for adding simple key-value pairs to the template
+/// context without the complexity of the full [`ContextRegistry`] system. The data
+/// fields take precedence over the injected variables.
+///
+/// # Arguments
+///
+/// * `template` - A minijinja template string
+/// * `data` - The primary serializable data to render
+/// * `theme` - Theme definitions for style tag processing
+/// * `vars` - Additional variables to inject into the template context
+///
+/// # Example
+///
+/// ```rust
+/// use outstanding::{render_with_vars, Theme, OutputMode};
+/// use serde::Serialize;
+/// use std::collections::HashMap;
+///
+/// #[derive(Serialize)]
+/// struct User { name: String }
+///
+/// let theme = Theme::new();
+/// let user = User { name: "Alice".into() };
+///
+/// let mut vars = HashMap::new();
+/// vars.insert("version", "1.0.0");
+/// vars.insert("app_name", "MyApp");
+///
+/// let output = render_with_vars(
+///     "{{ name }} - {{ app_name }} v{{ version }}",
+///     &user,
+///     &theme,
+///     OutputMode::Text,
+///     vars,
+/// ).unwrap();
+///
+/// assert_eq!(output, "Alice - MyApp v1.0.0");
+/// ```
+pub fn render_with_vars<T, K, V, I>(
+    template: &str,
+    data: &T,
+    theme: &Theme,
+    mode: OutputMode,
+    vars: I,
+) -> Result<String, Error>
+where
+    T: Serialize,
+    K: AsRef<str>,
+    V: Into<Value>,
+    I: IntoIterator<Item = (K, V)>,
+{
+    let color_mode = detect_color_mode();
+    let styles = theme.resolve_styles(Some(color_mode));
+
+    // Validate style aliases before rendering
+    styles
+        .validate()
+        .map_err(|e| Error::new(minijinja::ErrorKind::InvalidOperation, e.to_string()))?;
+
+    let mut env = Environment::new();
+    register_filters(&mut env);
+
+    env.add_template_owned("_inline".to_string(), template.to_string())?;
+    let tmpl = env.get_template("_inline")?;
+
+    // Convert data to JSON value for merging
+    let data_json = serde_json::to_value(data)
+        .map_err(|e| Error::new(minijinja::ErrorKind::InvalidOperation, e.to_string()))?;
+
+    // Build combined context: vars first, then data (data wins on conflict)
+    let mut context: HashMap<String, Value> = HashMap::new();
+
+    // Add injected vars
+    for (key, value) in vars {
+        context.insert(key.as_ref().to_string(), value.into());
+    }
+
+    // Add data fields (overwriting any conflicting vars)
+    if let serde_json::Value::Object(map) = data_json {
+        for (key, value) in map {
+            context.insert(key, Value::from_serialize(&value));
+        }
+    }
+
+    // Pass 1: MiniJinja template rendering
+    let minijinja_output = tmpl.render(&context)?;
+
+    // Pass 2: BBParser style tag processing
+    let final_output = apply_style_tags(&minijinja_output, &styles, mode);
 
     Ok(final_output)
 }

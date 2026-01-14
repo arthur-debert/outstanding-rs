@@ -228,15 +228,17 @@ pub mod topics;
 
 // Re-export rendering submodules as public
 pub use rendering::context;
-pub use rendering::stylesheet;
+pub use rendering::style;
 pub use rendering::table;
 
 // Re-export minijinja::Error for convenience
 pub use minijinja::Error;
 
-// Style module exports
+// Style module exports (including former stylesheet exports)
 pub use rendering::style::{
-    StyleValidationError, StyleValue, Styles, DEFAULT_MISSING_STYLE_INDICATOR,
+    parse_stylesheet, ColorDef, StyleAttributes, StyleDefinition, StyleValidationError, StyleValue,
+    Styles, StylesheetError, StylesheetRegistry, ThemeVariants, DEFAULT_MISSING_STYLE_INDICATOR,
+    STYLESHEET_EXTENSIONS,
 };
 
 // Theme module exports
@@ -254,6 +256,7 @@ pub use rendering::template::{
     render_with_context,
     render_with_mode,
     render_with_output,
+    render_with_vars,
     validate_template,
     // Template registry
     walk_template_dir,

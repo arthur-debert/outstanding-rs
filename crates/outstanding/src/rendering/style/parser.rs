@@ -28,10 +28,10 @@ use std::collections::HashMap;
 
 use console::Style;
 
+use super::super::theme::ColorMode;
 use super::definition::StyleDefinition;
 use super::error::StylesheetError;
-use super::super::style::StyleValue;
-use super::super::theme::ColorMode;
+use super::value::StyleValue;
 
 /// Theme variants containing styles for base, light, and dark modes.
 ///
@@ -168,7 +168,7 @@ impl Default for ThemeVariants {
 /// # Example
 ///
 /// ```rust
-/// use outstanding::stylesheet::parse_stylesheet;
+/// use outstanding::style::parse_stylesheet;
 ///
 /// let yaml = r#"
 /// header:

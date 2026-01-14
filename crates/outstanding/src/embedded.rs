@@ -33,7 +33,7 @@ use std::marker::PhantomData;
 use std::path::Path;
 
 use crate::file_loader::{build_embedded_registry, walk_dir};
-use crate::rendering::stylesheet::{StylesheetRegistry, STYLESHEET_EXTENSIONS};
+use crate::rendering::style::{StylesheetRegistry, STYLESHEET_EXTENSIONS};
 use crate::rendering::template::{walk_template_dir, TemplateRegistry};
 use crate::rendering::theme::Theme;
 

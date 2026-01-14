@@ -6,8 +6,7 @@
 //! - **Template processing** ([`template`]): MiniJinja-based template rendering
 //!   with style tag processing
 //! - **Theming** ([`theme`]): Adaptive themes with automatic light/dark mode support
-//! - **Styles** ([`style`]): Style primitives and registries
-//! - **Stylesheets** ([`stylesheet`]): YAML-based style definitions
+//! - **Styles** ([`style`]): Style primitives, YAML parsing, and registries
 //! - **Tables** ([`table`]): Unicode-aware column formatting
 //! - **Output modes** ([`output`]): Terminal, text, JSON, YAML, etc.
 //! - **Context injection** ([`context`]): Add values to template context
@@ -33,8 +32,8 @@
 
 pub mod context;
 pub mod output;
+pub mod prelude;
 pub mod style;
-pub mod stylesheet;
 pub mod table;
 pub mod template;
 pub mod theme;

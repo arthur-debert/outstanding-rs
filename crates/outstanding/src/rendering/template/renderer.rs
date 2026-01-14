@@ -37,11 +37,11 @@ use minijinja::{Environment, Error};
 use outstanding_bbparser::{BBParser, TagTransform, UnknownTagBehavior};
 use serde::Serialize;
 
-use super::filters::register_filters;
-use super::registry::{walk_template_dir, ResolvedTemplate, TemplateRegistry};
 use super::super::output::OutputMode;
 use super::super::style::Styles;
 use super::super::theme::Theme;
+use super::filters::register_filters;
+use super::registry::{walk_template_dir, ResolvedTemplate, TemplateRegistry};
 
 /// A renderer with pre-registered templates.
 ///
