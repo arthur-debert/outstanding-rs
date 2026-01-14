@@ -25,18 +25,64 @@ Templates support expressions:
 
 ## Styling
 
-Apply named styles using the `style` filter:
+There are two ways to apply named styles in templates:
+
+### Filter Syntax
+
+Use the `style` filter for dynamic values:
 
 ```
 {{ title | style("heading") }}
 {{ error_message | style("error") }}
 ```
 
+### Tag Syntax
+
+Use BBCode-style tags for static text (often more readable):
+
+```
+[heading]Report Summary[/heading]
+[error]Error:[/error] {{ message }}
+```
+
+Both syntaxes can be mixed in the same template:
+
+```
+[title]{{ name }}[/title]: {{ count | style("count") }} items
+```
+
+### Choosing Between Syntaxes
+
+| Use Case | Recommended Syntax |
+|----------|-------------------|
+| Styling variable output | Filter: `{{ value \| style("name") }}` |
+| Styling static labels | Tag: `[name]Label[/name]` |
+| Complex expressions | Filter (can chain with other filters) |
+| Readability in markup | Tag (cleaner for surrounding text) |
+
+### Unknown Tags
+
+Unknown style tags show a `?` marker in terminal output: `[typo?]text[/typo?]`.
+This helps catch typos during development.
+
+Use `validate_template()` in your build or tests to catch unknown tags:
+
+```rust
+use outstanding::validate_template;
+
+let result = validate_template(template, &data, &theme);
+if let Err(errors) = result {
+    for error in &errors {
+        eprintln!("Unknown style: {} at position {}", error.tag, error.start);
+    }
+}
+```
+
 Styles are defined in your theme. See [Styling](styling.md) for details.
 
-### Styling Literals
+### Styling Literals with Filters
 
-You can style literal strings too:
+You can style literal strings with the filter syntax too:
 
 ```
 {{ "Error:" | style("error") }} {{ message }}

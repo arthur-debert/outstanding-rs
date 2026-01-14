@@ -19,8 +19,11 @@
 //! - [`ColorMode`]: Light or dark color mode enum
 //! - [`OutputMode`]: Control output formatting (Auto/Term/Text/TermDebug)
 //! - [`topics`]: Help topics system for extended documentation
-//! - `style` filter: `{{ value | style("name") }}` applies registered styles in templates
+//! - **Style syntax**: Two ways to apply styles in templates:
+//!   - Filter: `{{ value | style("name") }}` for dynamic values
+//!   - Tags: `[name]content[/name]` for static text (more readable)
 //! - [`Renderer`]: Pre-compile templates for repeated rendering
+//! - [`validate_template`]: Check templates for unknown style tags
 //!
 //! ## Quick Start
 //!
@@ -52,6 +55,39 @@
 //! ).unwrap();
 //! println!("{}", output);
 //! ```
+//!
+//! ## Tag-Based Styling
+//!
+//! For static text, the tag syntax `[name]content[/name]` is often more readable
+//! than the filter syntax. Both can be used in the same template:
+//!
+//! ```rust
+//! use outstanding::{render_with_output, Theme, OutputMode};
+//! use console::Style;
+//! use serde::Serialize;
+//!
+//! #[derive(Serialize)]
+//! struct Data { name: String, count: usize }
+//!
+//! let theme = Theme::new()
+//!     .add("title", Style::new().bold())
+//!     .add("count", Style::new().cyan());
+//!
+//! // Mix tag and filter syntax
+//! let template = r#"[title]Report[/title]: {{ count | style("count") }} items by {{ name }}"#;
+//!
+//! let output = render_with_output(
+//!     template,
+//!     &Data { name: "Alice".into(), count: 42 },
+//!     &theme,
+//!     OutputMode::Text,
+//! ).unwrap();
+//!
+//! assert_eq!(output, "Report: 42 items by Alice");
+//! ```
+//!
+//! Unknown tags show a `?` marker in terminal output: `[unknown?]text[/unknown?]`.
+//! Use [`validate_template`] to catch typos during development.
 //!
 //! ## Adaptive Themes (Light & Dark)
 //!
