@@ -82,6 +82,22 @@ Adaptative attributes allow styles to hold different values depending on light a
 
 In this example, our task management app.
 
+This is the filesystem layout:
+
+```text
+Your file system:
+src/
+    main.rs
+    ...
+    templates/
+        list.jinja
+        add.jinja  # each command has its own template, by default name-matched
+    styles/
+        default.yml
+```
+
+And your application:
+
 ```rust
 // The Data Model:
 // Your application level data structures, annotated for serialization:
@@ -115,15 +131,6 @@ pub fn list(_matches: &ArgMatches, _ctx: &CommandContext) -> HandlerResult<TodoR
     }))
 }
 
-// Your file system:
-// src/
-//     main.rs
-//     ...
-//     templates/
-//         list.jinja
-//         add.jinja  # each command has its own template, by default name-matched
-//     styles/
-//         default.yml
 
 // Setup and configure outstanding:
 let app = App::builder()
@@ -135,4 +142,14 @@ let app = App::builder()
 
 // Once configured, auto dispatch handles the cli input
 app.run(Cli::command(), std::env::args());
+```
+
+Additional commands can be  added by annotatting the functions.
+
+## Partial Adoption
+
+You can adopt oustanding on a per-command basis, and have it working side by side with other clap commands.
+You can have it two ways: either update your current clap main handler to call the auto dispatching. Aternatively, you can run the auto dispatch and call your legacy clap handler when no command is found:
+
+```rust
 ```
