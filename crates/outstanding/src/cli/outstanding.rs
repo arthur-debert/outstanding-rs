@@ -10,8 +10,8 @@ use crate::topics::{
     display_with_pager, render_topic, render_topics_list, Topic, TopicRegistry, TopicRenderConfig,
 };
 use crate::{
-    render_or_serialize, render_or_serialize_with_context, write_binary_output, write_output,
-    EmbeddedStyles, EmbeddedTemplates, OutputDestination, OutputMode, Theme,
+    render_auto, render_auto_with_context, write_binary_output, write_output, EmbeddedStyles,
+    EmbeddedTemplates, OutputDestination, OutputMode, Theme,
 };
 use clap::{Arg, ArgAction, ArgMatches, Command};
 use minijinja::Value;
@@ -355,7 +355,7 @@ impl App {
 
                 // Render the (potentially modified) data
                 let theme = self.theme.clone().unwrap_or_default();
-                match render_or_serialize(template, &json_data, &theme, self.output_mode) {
+                match render_auto(template, &json_data, &theme, self.output_mode) {
                     Ok(rendered) => RenderedOutput::Text(rendered),
                     Err(e) => return Err(HookError::post_output("Render error").with_source(e)),
                 }
@@ -1088,7 +1088,7 @@ impl AppBuilder {
                             &json_data,
                         );
 
-                        let output = render_or_serialize_with_context(
+                        let output = render_auto_with_context(
                             &template,
                             &json_data,
                             &theme,
@@ -1306,7 +1306,7 @@ impl AppBuilder {
                         );
 
                         // Render the (potentially modified) data with context
-                        let output = render_or_serialize_with_context(
+                        let output = render_auto_with_context(
                             &template,
                             &json_data,
                             &theme,

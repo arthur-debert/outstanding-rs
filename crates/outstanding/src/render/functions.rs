@@ -12,16 +12,16 @@
 //! | [`render_with_output`] | Explicit | Auto-detect | Honoring `--output` CLI flag |
 //! | [`render_with_mode`] | Explicit | Explicit | Tests, or forcing light/dark mode |
 //!
-//! ## Render OR Serialize (auto-dispatch based on mode)
+//! ## Auto-Dispatch (render or serialize based on mode)
 //!
 //! For structured modes (Json, Yaml, Csv, Xml), these skip templating and
 //! serialize data directly. For text modes, they render the template.
 //!
 //! | Function | Extra Features |
 //! |----------|----------------|
-//! | [`render_or_serialize`] | Basic auto-dispatch |
-//! | [`render_or_serialize_with_spec`] | CSV column specification |
-//! | [`render_or_serialize_with_context`] | Context injection |
+//! | [`render_auto`] | Basic auto-dispatch |
+//! | [`render_auto_with_spec`] | CSV column specification |
+//! | [`render_auto_with_context`] | Context injection |
 //!
 //! ## With Context Injection
 //!
@@ -30,7 +30,7 @@
 //! | Function | Structured Output |
 //! |----------|-------------------|
 //! | [`render_with_context`] | No (template only) |
-//! | [`render_or_serialize_with_context`] | Yes (auto-dispatch) |
+//! | [`render_auto_with_context`] | Yes (auto-dispatch) |
 //!
 //! # Two-Pass Rendering
 //!
@@ -324,11 +324,12 @@ pub fn render_with_mode<T: Serialize>(
     Ok(final_output)
 }
 
-/// Renders data using a template, or serializes directly for structured output modes.
+/// Auto-dispatches between template rendering and direct serialization.
 ///
 /// This is the recommended function when you want to support both human-readable
-/// output (terminal, text) and machine-readable output (JSON). For structured modes
-/// like `Json`, the data is serialized directly, skipping template rendering entirely.
+/// output (terminal, text) and machine-readable output (JSON, YAML, etc.). For
+/// structured modes like `Json`, the data is serialized directly, skipping
+/// template rendering entirely.
 ///
 /// # Arguments
 ///
@@ -340,7 +341,7 @@ pub fn render_with_mode<T: Serialize>(
 /// # Example
 ///
 /// ```rust
-/// use outstanding::{render_or_serialize, Theme, OutputMode};
+/// use outstanding::{render_auto, Theme, OutputMode};
 /// use console::Style;
 /// use serde::Serialize;
 ///
@@ -351,7 +352,7 @@ pub fn render_with_mode<T: Serialize>(
 /// let data = Report { title: "Summary".into(), count: 42 };
 ///
 /// // Terminal output uses the template
-/// let term = render_or_serialize(
+/// let term = render_auto(
 ///     r#"[title]{{ title }}[/title]: {{ count }}"#,
 ///     &data,
 ///     &theme,
@@ -360,7 +361,7 @@ pub fn render_with_mode<T: Serialize>(
 /// assert_eq!(term, "Summary: 42");
 ///
 /// // JSON output serializes directly
-/// let json = render_or_serialize(
+/// let json = render_auto(
 ///     r#"[title]{{ title }}[/title]: {{ count }}"#,
 ///     &data,
 ///     &theme,
@@ -369,7 +370,7 @@ pub fn render_with_mode<T: Serialize>(
 /// assert!(json.contains("\"title\": \"Summary\""));
 /// assert!(json.contains("\"count\": 42"));
 /// ```
-pub fn render_or_serialize<T: Serialize>(
+pub fn render_auto<T: Serialize>(
     template: &str,
     data: &T,
     theme: &Theme,
@@ -411,9 +412,9 @@ pub fn render_or_serialize<T: Serialize>(
     }
 }
 
-/// Renders data using a template, or serializes with granular control.
+/// Auto-dispatches with granular control over structured output.
 ///
-/// Similar to `render_or_serialize`, but allows passing an optional `FlatDataSpec`.
+/// Similar to `render_auto`, but allows passing an optional `FlatDataSpec`.
 /// This is particularly useful for controlling CSV output structure (columns, headers)
 /// instead of relying on automatic JSON flattening.
 ///
@@ -424,7 +425,7 @@ pub fn render_or_serialize<T: Serialize>(
 /// * `theme` - Theme definitions for the `style` filter
 /// * `mode` - Output mode determining the output format
 /// * `spec` - Optional `FlatDataSpec` for defining CSV/Table structure
-pub fn render_or_serialize_with_spec<T: Serialize>(
+pub fn render_auto_with_spec<T: Serialize>(
     template: &str,
     data: &T,
     theme: &Theme,
@@ -579,7 +580,7 @@ pub fn render_with_context<T: Serialize>(
     Ok(final_output)
 }
 
-/// Renders with context, or serializes directly for structured output modes.
+/// Auto-dispatches with context injection support.
 ///
 /// This combines `render_with_context` with JSON serialization support.
 /// For structured modes like `Json`, the data is serialized directly,
@@ -597,7 +598,7 @@ pub fn render_with_context<T: Serialize>(
 /// # Example
 ///
 /// ```rust
-/// use outstanding::{render_or_serialize_with_context, Theme, OutputMode};
+/// use outstanding::{render_auto_with_context, Theme, OutputMode};
 /// use outstanding::context::{RenderContext, ContextRegistry};
 /// use minijinja::Value;
 /// use serde::Serialize;
@@ -622,7 +623,7 @@ pub fn render_with_context<T: Serialize>(
 /// );
 ///
 /// // Text mode uses the template with context
-/// let text = render_or_serialize_with_context(
+/// let text = render_auto_with_context(
 ///     "{{ title }} (width={{ terminal_width }}): {{ count }}",
 ///     &data,
 ///     &theme,
@@ -633,7 +634,7 @@ pub fn render_with_context<T: Serialize>(
 /// assert_eq!(text, "Summary (width=120): 42");
 ///
 /// // JSON mode ignores template and context, serializes data directly
-/// let json = render_or_serialize_with_context(
+/// let json = render_auto_with_context(
 ///     "unused",
 ///     &data,
 ///     &theme,
@@ -643,7 +644,7 @@ pub fn render_with_context<T: Serialize>(
 /// ).unwrap();
 /// assert!(json.contains("\"title\": \"Summary\""));
 /// ```
-pub fn render_or_serialize_with_context<T: Serialize>(
+pub fn render_auto_with_context<T: Serialize>(
     template: &str,
     data: &T,
     theme: &Theme,
@@ -995,40 +996,38 @@ mod tests {
     }
 
     #[test]
-    fn test_render_or_serialize_json_mode() {
+    fn test_render_auto_json_mode() {
         use serde_json::json;
 
         let theme = Theme::new();
         let data = json!({"name": "test", "count": 42});
 
-        let output =
-            render_or_serialize("unused template", &data, &theme, OutputMode::Json).unwrap();
+        let output = render_auto("unused template", &data, &theme, OutputMode::Json).unwrap();
 
         assert!(output.contains("\"name\": \"test\""));
         assert!(output.contains("\"count\": 42"));
     }
 
     #[test]
-    fn test_render_or_serialize_text_mode_uses_template() {
+    fn test_render_auto_text_mode_uses_template() {
         use serde_json::json;
 
         let theme = Theme::new();
         let data = json!({"name": "test"});
 
-        let output =
-            render_or_serialize("Name: {{ name }}", &data, &theme, OutputMode::Text).unwrap();
+        let output = render_auto("Name: {{ name }}", &data, &theme, OutputMode::Text).unwrap();
 
         assert_eq!(output, "Name: test");
     }
 
     #[test]
-    fn test_render_or_serialize_term_mode_uses_template() {
+    fn test_render_auto_term_mode_uses_template() {
         use serde_json::json;
 
         let theme = Theme::new().add("bold", Style::new().bold().force_styling(true));
         let data = json!({"name": "test"});
 
-        let output = render_or_serialize(
+        let output = render_auto(
             r#"[bold]{{ name }}[/bold]"#,
             &data,
             &theme,
@@ -1041,7 +1040,7 @@ mod tests {
     }
 
     #[test]
-    fn test_render_or_serialize_json_with_struct() {
+    fn test_render_auto_json_with_struct() {
         #[derive(Serialize)]
         struct Report {
             title: String,
@@ -1054,7 +1053,7 @@ mod tests {
             items: vec!["one".into(), "two".into()],
         };
 
-        let output = render_or_serialize("unused", &data, &theme, OutputMode::Json).unwrap();
+        let output = render_auto("unused", &data, &theme, OutputMode::Json).unwrap();
 
         assert!(output.contains("\"title\": \"Summary\""));
         assert!(output.contains("\"items\""));
@@ -1159,21 +1158,20 @@ mod tests {
     // ============================================================================
 
     #[test]
-    fn test_render_or_serialize_yaml_mode() {
+    fn test_render_auto_yaml_mode() {
         use serde_json::json;
 
         let theme = Theme::new();
         let data = json!({"name": "test", "count": 42});
 
-        let output =
-            render_or_serialize("unused template", &data, &theme, OutputMode::Yaml).unwrap();
+        let output = render_auto("unused template", &data, &theme, OutputMode::Yaml).unwrap();
 
         assert!(output.contains("name: test"));
         assert!(output.contains("count: 42"));
     }
 
     #[test]
-    fn test_render_or_serialize_xml_mode() {
+    fn test_render_auto_xml_mode() {
         let theme = Theme::new();
 
         #[derive(Serialize)]
@@ -1188,15 +1186,14 @@ mod tests {
             count: 42,
         };
 
-        let output =
-            render_or_serialize("unused template", &data, &theme, OutputMode::Xml).unwrap();
+        let output = render_auto("unused template", &data, &theme, OutputMode::Xml).unwrap();
 
         assert!(output.contains("<root>"));
         assert!(output.contains("<name>test</name>"));
     }
 
     #[test]
-    fn test_render_or_serialize_csv_mode_auto_flatten() {
+    fn test_render_auto_csv_mode_auto_flatten() {
         use serde_json::json;
 
         let theme = Theme::new();
@@ -1205,7 +1202,7 @@ mod tests {
             {"name": "Bob", "stats": {"score": 20}}
         ]);
 
-        let output = render_or_serialize("unused", &data, &theme, OutputMode::Csv).unwrap();
+        let output = render_auto("unused", &data, &theme, OutputMode::Csv).unwrap();
 
         assert!(output.contains("name,stats.score"));
         assert!(output.contains("Alice,10"));
@@ -1213,7 +1210,7 @@ mod tests {
     }
 
     #[test]
-    fn test_render_or_serialize_csv_mode_with_spec() {
+    fn test_render_auto_csv_mode_with_spec() {
         let theme = Theme::new();
         let data = json!([
             {"name": "Alice", "meta": {"age": 30, "role": "admin"}},
@@ -1230,8 +1227,7 @@ mod tests {
             .build();
 
         let output =
-            render_or_serialize_with_spec("unused", &data, &theme, OutputMode::Csv, Some(&spec))
-                .unwrap();
+            render_auto_with_spec("unused", &data, &theme, OutputMode::Csv, Some(&spec)).unwrap();
 
         let lines: Vec<&str> = output.lines().collect();
         assert_eq!(lines[0], "name,Role");
@@ -1377,7 +1373,7 @@ mod tests {
     }
 
     #[test]
-    fn test_render_or_serialize_with_context_json_mode() {
+    fn test_render_auto_with_context_json_mode() {
         use crate::context::{ContextRegistry, RenderContext};
 
         #[derive(Serialize)]
@@ -1394,7 +1390,7 @@ mod tests {
 
         let render_ctx = RenderContext::new(OutputMode::Json, None, &theme, &json_data);
 
-        let output = render_or_serialize_with_context(
+        let output = render_auto_with_context(
             "unused template {{ extra }}",
             &data,
             &theme,
@@ -1409,7 +1405,7 @@ mod tests {
     }
 
     #[test]
-    fn test_render_or_serialize_with_context_text_mode() {
+    fn test_render_auto_with_context_text_mode() {
         use crate::context::{ContextRegistry, RenderContext};
 
         #[derive(Serialize)]
@@ -1426,7 +1422,7 @@ mod tests {
 
         let render_ctx = RenderContext::new(OutputMode::Text, None, &theme, &json_data);
 
-        let output = render_or_serialize_with_context(
+        let output = render_auto_with_context(
             "{{ label }}: {{ count }}",
             &data,
             &theme,

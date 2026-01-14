@@ -4,7 +4,7 @@
 //! with a fluent API, and [`CommandConfig`] for inline command configuration.
 
 use crate::context::{ContextRegistry, RenderContext};
-use crate::{render_or_serialize_with_context, Theme};
+use crate::{render_auto_with_context, Theme};
 use clap::ArgMatches;
 use serde::Serialize;
 use std::collections::HashMap;
@@ -328,7 +328,7 @@ where
                             &json_data,
                         );
 
-                        let output = render_or_serialize_with_context(
+                        let output = render_auto_with_context(
                             &template,
                             &json_data,
                             &theme,
@@ -410,7 +410,7 @@ where
                             &json_data,
                         );
 
-                        let output = render_or_serialize_with_context(
+                        let output = render_auto_with_context(
                             &template,
                             &json_data,
                             &theme,

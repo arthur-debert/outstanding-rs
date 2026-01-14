@@ -84,7 +84,7 @@ render_with_output(template, &data, theme, OutputMode::Text)?;
 render_with_output(template, &data, theme, OutputMode::TermDebug)?;
 
 // JSON output (skips template, serializes data directly)
-render_or_serialize(template, &data, theme, OutputMode::Json)?;
+render_auto(template, &data, theme, OutputMode::Json)?;
 ```
 
 ### Adaptive Themes

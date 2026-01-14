@@ -4,7 +4,7 @@
 //!
 //! - [`render`]: Simple rendering with automatic color detection
 //! - [`render_with_output`]: Rendering with explicit output mode control
-//! - [`render_or_serialize`]: Render templates or serialize to JSON
+//! - [`render_auto`]: Auto-dispatch: render templates or serialize to JSON/YAML/etc.
 //! - [`Renderer`]: Pre-compiled template renderer for repeated use
 //! - [`TemplateRegistry`]: Template resolution from files and inline sources
 //!
@@ -35,8 +35,8 @@ pub mod registry;
 mod renderer;
 
 pub use functions::{
-    render, render_or_serialize, render_or_serialize_with_context, render_or_serialize_with_spec,
-    render_with_context, render_with_mode, render_with_output, validate_template,
+    render, render_auto, render_auto_with_context, render_auto_with_spec, render_with_context,
+    render_with_mode, render_with_output, validate_template,
 };
 pub use registry::{
     walk_template_dir, RegistryError, ResolvedTemplate, TemplateFile, TemplateRegistry,

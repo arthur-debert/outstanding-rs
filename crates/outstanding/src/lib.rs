@@ -238,9 +238,9 @@ pub use output::{write_binary_output, write_output, OutputDestination, OutputMod
 // Render module exports
 pub use render::{
     render,
-    render_or_serialize,
-    render_or_serialize_with_context,
-    render_or_serialize_with_spec,
+    render_auto,
+    render_auto_with_context,
+    render_auto_with_spec,
     render_with_context,
     render_with_mode,
     render_with_output,
