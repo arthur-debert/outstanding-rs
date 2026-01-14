@@ -246,7 +246,7 @@ impl StylesheetRegistry {
     /// Creates a registry from embedded stylesheet entries.
     ///
     /// This is the primary entry point for compile-time embedded stylesheets,
-    /// typically called by the [`embed_styles!`](outstanding_macros::embed_styles) macro.
+    /// typically called by the `embed_styles!` macro.
     ///
     /// # Arguments
     ///

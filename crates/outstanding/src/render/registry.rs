@@ -500,7 +500,7 @@ impl TemplateRegistry {
     /// Creates a registry from embedded template entries.
     ///
     /// This is the primary entry point for compile-time embedded templates,
-    /// typically called by the [`embed_templates!`](outstanding_macros::embed_templates) macro.
+    /// typically called by the `embed_templates!` macro.
     ///
     /// # Arguments
     ///

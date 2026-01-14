@@ -89,11 +89,11 @@
 //!
 //! # Module Structure
 //!
-//! - [`color`]: Color value parsing (named, hex, RGB, 256-palette)
-//! - [`attributes`]: Style attribute types and merging
-//! - [`definition`]: Style definition enum (alias, shorthand, full)
-//! - [`parser`]: Main parsing entry point and theme building
-//! - [`error`]: Error types for parse failures
+//! - `color`: Color value parsing (named, hex, RGB, 256-palette)
+//! - `attributes`: Style attribute types and merging
+//! - `definition`: Style definition enum (alias, shorthand, full)
+//! - `parser`: Main parsing entry point and theme building
+//! - `error`: Error types for parse failures
 //!
 //! # Example Usage
 //!

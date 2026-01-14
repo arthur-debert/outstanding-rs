@@ -11,7 +11,7 @@
 //! - **Pager support** for long content
 //!
 //! This crate is **CLI-agnostic** at its core - it doesn't care how you parse arguments.
-//! For clap integration, see the [`cli`] module which provides command dispatch and styled help.
+//! For clap integration, enable the `clap` feature and see the `cli` module.
 //!
 //! ## Core Concepts
 //!
@@ -194,7 +194,7 @@
 //!
 //! ## Integration with Clap
 //!
-//! The [`cli`] module provides full clap integration with:
+//! The `cli` module (requires `clap` feature) provides full clap integration with:
 //! - Command dispatch with automatic template rendering
 //! - Help command interception (`help`, `help <topic>`, `help topics`)
 //! - Output flag injection (`--output=auto|term|text|json`)
