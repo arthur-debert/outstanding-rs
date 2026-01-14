@@ -24,8 +24,10 @@ use super::dispatch::{extract_command_path, get_deepest_matches, DispatchFn, Dis
 use super::group::{CommandConfig, GroupBuilder, GroupEntry};
 use super::help::{render_help, render_help_with_topics, HelpConfig};
 use super::result::HelpResult;
-use crate::cli::handler::{CommandContext, CommandResult, FnHandler, Handler, RunResult};
-use crate::cli::hooks::{HookError, Hooks, Output};
+use crate::cli::handler::{
+    CommandContext, FnHandler, Handler, HandlerResult, Output as HandlerOutput, RunResult,
+};
+use crate::cli::hooks::{HookError, Hooks, RenderedOutput};
 
 /// Gets the current terminal width, or None if not available.
 pub(crate) fn get_terminal_width() -> Option<usize> {
@@ -287,7 +289,7 @@ impl App {
     /// # Example
     ///
     /// ```rust,ignore
-    /// use outstanding::cli::{App, Hooks, CommandResult, Output};
+    /// use outstanding::cli::{App, Hooks, HandlerResult, Output, RenderedOutput};
     ///
     /// let outstanding = App::builder()
     ///     .hooks("list", Hooks::new()
@@ -304,7 +306,7 @@ impl App {
     ///         // Hooks are applied automatically
     ///         match outstanding.run_command("list", sub_m, |m, ctx| {
     ///             let items = fetch_items();
-    ///             CommandResult::Ok(ListOutput { items })
+    ///             Ok(HandlerOutput::Render(ListOutput { items })
     ///         }, "{% for item in items %}{{ item }}\n{% endfor %}") {
     ///             Ok(output) => print!("{}", output),
     ///             Err(e) => eprintln!("Error: {}", e),
@@ -319,9 +321,9 @@ impl App {
         matches: &ArgMatches,
         handler: F,
         template: &str,
-    ) -> Result<Output, HookError>
+    ) -> Result<RenderedOutput, HookError>
     where
-        F: FnOnce(&ArgMatches, &CommandContext) -> CommandResult<T>,
+        F: FnOnce(&ArgMatches, &CommandContext) -> HandlerResult<T>,
         T: Serialize,
     {
         let ctx = CommandContext {
@@ -339,9 +341,9 @@ impl App {
         // Run handler
         let result = handler(matches, &ctx);
 
-        // Convert result to Output
+        // Convert result to RenderedOutput
         let output = match result {
-            CommandResult::Ok(data) => {
+            Ok(HandlerOutput::Render(data)) => {
                 // Convert to serde_json::Value for post-dispatch hooks
                 let mut json_data = serde_json::to_value(&data)
                     .map_err(|e| HookError::post_dispatch("Serialization error").with_source(e))?;
@@ -354,15 +356,15 @@ impl App {
                 // Render the (potentially modified) data
                 let theme = self.theme.clone().unwrap_or_default();
                 match render_or_serialize(template, &json_data, &theme, self.output_mode) {
-                    Ok(rendered) => Output::Text(rendered),
+                    Ok(rendered) => RenderedOutput::Text(rendered),
                     Err(e) => return Err(HookError::post_output("Render error").with_source(e)),
                 }
             }
-            CommandResult::Err(e) => {
+            Err(e) => {
                 return Err(HookError::post_output("Handler error").with_source(e));
             }
-            CommandResult::Silent => Output::Silent,
-            CommandResult::Archive(bytes, filename) => Output::Binary(bytes, filename),
+            Ok(HandlerOutput::Silent) => RenderedOutput::Silent,
+            Ok(HandlerOutput::Binary { data, filename }) => RenderedOutput::Binary(data, filename),
         };
 
         // Run post-output hooks
@@ -1043,7 +1045,7 @@ impl AppBuilder {
     /// ```
     pub fn command_with<F, T, C>(mut self, path: &str, handler: F, configure: C) -> Self
     where
-        F: Fn(&ArgMatches, &CommandContext) -> CommandResult<T> + Send + Sync + 'static,
+        F: Fn(&ArgMatches, &CommandContext) -> HandlerResult<T> + Send + Sync + 'static,
         T: Serialize + Send + Sync + 'static,
         C: FnOnce(CommandConfig<FnHandler<F, T>>) -> CommandConfig<FnHandler<F, T>>,
     {
@@ -1068,7 +1070,7 @@ impl AppBuilder {
                 let result = config.handler.handle(matches, ctx);
 
                 match result {
-                    CommandResult::Ok(data) => {
+                    Ok(HandlerOutput::Render(data)) => {
                         let mut json_data = serde_json::to_value(&data)
                             .map_err(|e| format!("Failed to serialize handler result: {}", e))?;
 
@@ -1097,10 +1099,10 @@ impl AppBuilder {
                         .map_err(|e| e.to_string())?;
                         Ok(DispatchOutput::Text(output))
                     }
-                    CommandResult::Err(e) => Err(format!("Error: {}", e)),
-                    CommandResult::Silent => Ok(DispatchOutput::Silent),
-                    CommandResult::Archive(bytes, filename) => {
-                        Ok(DispatchOutput::Binary(bytes, filename))
+                    Err(e) => Err(format!("Error: {}", e)),
+                    Ok(HandlerOutput::Silent) => Ok(DispatchOutput::Silent),
+                    Ok(HandlerOutput::Binary { data, filename }) => {
+                        Ok(DispatchOutput::Binary(data, filename))
                     }
                 }
             },
@@ -1218,21 +1220,21 @@ impl AppBuilder {
     /// # Example
     ///
     /// ```rust,ignore
-    /// use outstanding::cli::{App, CommandResult};
+    /// use outstanding::cli::{App, Output, HandlerResult};
     /// use serde::Serialize;
     ///
     /// #[derive(Serialize)]
     /// struct ListOutput { items: Vec<String> }
     ///
     /// App::builder()
-    ///     .command("list", |_m, _ctx| {
-    ///         CommandResult::Ok(ListOutput { items: vec!["one".into()] })
+    ///     .command("list", |_m, _ctx| -> HandlerResult<ListOutput> {
+    ///         Ok(Output::Render(ListOutput { items: vec!["one".into()] }))
     ///     }, "{% for item in items %}{{ item }}\n{% endfor %}")
     ///     .parse(cmd);
     /// ```
     pub fn command<F, T>(self, path: &str, handler: F, template: &str) -> Self
     where
-        F: Fn(&ArgMatches, &CommandContext) -> CommandResult<T> + Send + Sync + 'static,
+        F: Fn(&ArgMatches, &CommandContext) -> HandlerResult<T> + Send + Sync + 'static,
         T: Serialize + Send + Sync + 'static,
     {
         self.command_handler(path, FnHandler::new(handler), template)
@@ -1251,7 +1253,7 @@ impl AppBuilder {
     /// # Example
     ///
     /// ```rust,ignore
-    /// use outstanding::cli::{App, Handler, CommandResult, CommandContext};
+    /// use outstanding::cli::{App, Handler, HandlerResult, Output, CommandContext};
     /// use clap::ArgMatches;
     /// use serde::Serialize;
     ///
@@ -1259,8 +1261,8 @@ impl AppBuilder {
     ///
     /// impl Handler for ListHandler {
     ///     type Output = Vec<Item>;
-    ///     fn handle(&self, _m: &ArgMatches, _ctx: &CommandContext) -> CommandResult<Self::Output> {
-    ///         CommandResult::Ok(self.db.list())
+    ///     fn handle(&self, _m: &ArgMatches, _ctx: &CommandContext) -> HandlerResult<Self::Output> {
+    ///         Ok(Output::Render(self.db.list()?))
     ///     }
     /// }
     ///
@@ -1282,7 +1284,7 @@ impl AppBuilder {
                 let result = handler.handle(matches, ctx);
 
                 match result {
-                    CommandResult::Ok(data) => {
+                    Ok(HandlerOutput::Render(data)) => {
                         // Convert to serde_json::Value for post-dispatch hooks
                         let mut json_data = serde_json::to_value(&data)
                             .map_err(|e| format!("Failed to serialize handler result: {}", e))?;
@@ -1315,10 +1317,10 @@ impl AppBuilder {
                         .map_err(|e| e.to_string())?;
                         Ok(DispatchOutput::Text(output))
                     }
-                    CommandResult::Err(e) => Err(format!("Error: {}", e)),
-                    CommandResult::Silent => Ok(DispatchOutput::Silent),
-                    CommandResult::Archive(bytes, filename) => {
-                        Ok(DispatchOutput::Binary(bytes, filename))
+                    Err(e) => Err(format!("Error: {}", e)),
+                    Ok(HandlerOutput::Silent) => Ok(DispatchOutput::Silent),
+                    Ok(HandlerOutput::Binary { data, filename }) => {
+                        Ok(DispatchOutput::Binary(data, filename))
                     }
                 }
             },
@@ -1364,7 +1366,7 @@ impl AppBuilder {
     ///             Ok(data)
     ///         })
     ///         .post_output(|_m, _ctx, output| {
-    ///             if let Output::Text(ref text) = output {
+    ///             if let RenderedOutput::Text(ref text) = output {
     ///                 // Copy to clipboard, log, etc.
     ///             }
     ///             Ok(output)
@@ -1421,9 +1423,9 @@ impl AppBuilder {
 
             // Convert to Output enum for post-output hooks
             let output = match dispatch_output {
-                DispatchOutput::Text(s) => Output::Text(s),
-                DispatchOutput::Binary(b, f) => Output::Binary(b, f),
-                DispatchOutput::Silent => Output::Silent,
+                DispatchRenderedOutput::Text(s) => RenderedOutput::Text(s),
+                DispatchRenderedOutput::Binary(b, f) => RenderedOutput::Binary(b, f),
+                DispatchRenderedOutput::Silent => RenderedOutput::Silent,
             };
 
             // Run post-output hooks if registered
@@ -1446,29 +1448,29 @@ impl AppBuilder {
                     let dest = OutputDestination::File(path);
 
                     match &final_output {
-                        Output::Text(s) => {
+                        RenderedOutput::Text(s) => {
                             if let Err(e) = write_output(s, &dest) {
                                 return RunResult::Handled(format!("Error writing output: {}", e));
                             }
                             // Suppress further output
-                            final_output = Output::Silent;
+                            final_output = RenderedOutput::Silent;
                         }
-                        Output::Binary(b, _) => {
+                        RenderedOutput::Binary(b, _) => {
                             if let Err(e) = write_binary_output(b, &dest) {
                                 return RunResult::Handled(format!("Error writing output: {}", e));
                             }
-                            final_output = Output::Silent;
+                            final_output = RenderedOutput::Silent;
                         }
-                        Output::Silent => {}
+                        RenderedOutput::Silent => {}
                     }
                 }
             }
 
             // Convert back to RunResult
             match final_output {
-                Output::Text(s) => RunResult::Handled(s),
-                Output::Binary(b, f) => RunResult::Binary(b, f),
-                Output::Silent => RunResult::Handled(String::new()),
+                RenderedOutput::Text(s) => RunResult::Handled(s),
+                RenderedOutput::Binary(b, f) => RunResult::Binary(b, f),
+                RenderedOutput::Silent => RunResult::Handled(String::new()),
             }
         } else {
             RunResult::NoMatch(matches)
@@ -1489,10 +1491,10 @@ impl AppBuilder {
     /// # Example
     ///
     /// ```rust,ignore
-    /// use outstanding::cli::{App, CommandResult, RunResult};
+    /// use outstanding::cli::{App, HandlerResult, Output, RunResult};
     ///
     /// let result = App::builder()
-    ///     .command("list", |_m, _ctx| CommandResult::Ok(vec!["a", "b"]), "{{ . }}")
+    ///     .command("list", |_m, _ctx| Ok(HandlerOutput::Render(vec!["a", "b"]), "{{ . }}")
     ///     .dispatch_from(cmd, std::env::args());
     ///
     /// match result {
@@ -1555,10 +1557,10 @@ impl AppBuilder {
     /// # Example
     ///
     /// ```rust,ignore
-    /// use outstanding::cli::{App, CommandResult};
+    /// use outstanding::cli::{App, HandlerResult, Output};
     ///
     /// let handled = App::builder()
-    ///     .command("list", |_m, _ctx| CommandResult::Ok(vec!["a", "b"]), "{{ . }}")
+    ///     .command("list", |_m, _ctx| Ok(HandlerOutput::Render(vec!["a", "b"]), "{{ . }}")
     ///     .build()?
     ///     .run(cmd, std::env::args());
     ///
@@ -1606,10 +1608,10 @@ impl AppBuilder {
     /// # Example
     ///
     /// ```rust,ignore
-    /// use outstanding::cli::{App, CommandResult, RunResult};
+    /// use outstanding::cli::{App, HandlerResult, Output, RunResult};
     ///
     /// let result = App::builder()
-    ///     .command("list", |_m, _ctx| CommandResult::Ok(vec!["a", "b"]), "{{ . }}")
+    ///     .command("list", |_m, _ctx| Ok(HandlerOutput::Render(vec!["a", "b"]), "{{ . }}")
     ///     .build()?
     ///     .run_to_string(cmd, std::env::args());
     ///
@@ -1763,7 +1765,7 @@ mod tests {
 
         let builder = App::builder().command(
             "list",
-            |_m, _ctx| CommandResult::Ok(json!({"items": ["a", "b"]})),
+            |_m, _ctx| Ok(HandlerOutput::Render(json!({"items": ["a", "b"]}))),
             "Items: {{ items }}",
         );
 
@@ -1776,7 +1778,7 @@ mod tests {
 
         let builder = App::builder().command(
             "list",
-            |_m, _ctx| CommandResult::Ok(json!({"count": 42})),
+            |_m, _ctx| Ok(HandlerOutput::Render(json!({"count": 42}))),
             "Count: {{ count }}",
         );
 
@@ -1793,7 +1795,8 @@ mod tests {
     fn test_dispatch_unhandled_fallthrough() {
         use serde_json::json;
 
-        let builder = App::builder().command("list", |_m, _ctx| CommandResult::Ok(json!({})), "");
+        let builder =
+            App::builder().command("list", |_m, _ctx| Ok(HandlerOutput::Render(json!({}))), "");
 
         let cmd = Command::new("app")
             .subcommand(Command::new("list"))
@@ -1812,7 +1815,7 @@ mod tests {
 
         let builder = App::builder().command(
             "list",
-            |_m, _ctx| CommandResult::Ok(json!({"name": "test", "value": 123})),
+            |_m, _ctx| Ok(HandlerOutput::Render(json!({"name": "test", "value": 123}))),
             "{{ name }}: {{ value }}",
         );
 
@@ -1833,7 +1836,7 @@ mod tests {
 
         let builder = App::builder().command(
             "config.get",
-            |_m, _ctx| CommandResult::Ok(json!({"key": "value"})),
+            |_m, _ctx| Ok(HandlerOutput::Render(json!({"key": "value"}))),
             "{{ key }}",
         );
 
@@ -1849,7 +1852,7 @@ mod tests {
 
     #[test]
     fn test_dispatch_silent_result() {
-        let builder = App::builder().command("quiet", |_m, _ctx| CommandResult::<()>::Silent, "");
+        let builder = App::builder().command("quiet", |_m, _ctx| Ok(HandlerOutput::Silent), "");
 
         let cmd = Command::new("app").subcommand(Command::new("quiet"));
 
@@ -1864,7 +1867,7 @@ mod tests {
     fn test_dispatch_error_result() {
         let builder = App::builder().command(
             "fail",
-            |_m, _ctx| CommandResult::<()>::Err(anyhow::anyhow!("something went wrong")),
+            |_m, _ctx| Err(anyhow::anyhow!("something went wrong")),
             "",
         );
 
@@ -1885,7 +1888,7 @@ mod tests {
 
         let builder = App::builder().command(
             "list",
-            |_m, _ctx| CommandResult::Ok(json!({"items": ["a", "b"]})),
+            |_m, _ctx| Ok(HandlerOutput::Render(json!({"items": ["a", "b"]}))),
             "Items: {{ items }}",
         );
 
@@ -1903,7 +1906,7 @@ mod tests {
 
         let builder = App::builder().command(
             "list",
-            |_m, _ctx| CommandResult::Ok(json!({"count": 5})),
+            |_m, _ctx| Ok(HandlerOutput::Render(json!({"count": 5}))),
             "Count: {{ count }}",
         );
 
@@ -1920,7 +1923,8 @@ mod tests {
     fn test_dispatch_from_unhandled() {
         use serde_json::json;
 
-        let builder = App::builder().command("list", |_m, _ctx| CommandResult::Ok(json!({})), "");
+        let builder =
+            App::builder().command("list", |_m, _ctx| Ok(HandlerOutput::Render(json!({}))), "");
 
         let cmd = Command::new("app")
             .subcommand(Command::new("list"))
@@ -1957,7 +1961,7 @@ mod tests {
         let builder = App::builder()
             .command(
                 "list",
-                |_m, _ctx| CommandResult::Ok(json!({"count": 1})),
+                |_m, _ctx| Ok(HandlerOutput::Render(json!({"count": 1}))),
                 "{{ count }}",
             )
             .hooks(
@@ -1985,7 +1989,7 @@ mod tests {
         let builder = App::builder()
             .command(
                 "list",
-                |_m, _ctx| -> CommandResult<()> {
+                |_m, _ctx| -> HandlerResult<()> {
                     panic!("Handler should not be called");
                 },
                 "",
@@ -2015,14 +2019,14 @@ mod tests {
         let builder = App::builder()
             .command(
                 "list",
-                |_m, _ctx| CommandResult::Ok(json!({"msg": "hello"})),
+                |_m, _ctx| Ok(HandlerOutput::Render(json!({"msg": "hello"}))),
                 "{{ msg }}",
             )
             .hooks(
                 "list",
                 Hooks::new().post_output(|_, _ctx, output| {
-                    if let Output::Text(text) = output {
-                        Ok(Output::Text(text.to_uppercase()))
+                    if let RenderedOutput::Text(text) = output {
+                        Ok(RenderedOutput::Text(text.to_uppercase()))
                     } else {
                         Ok(output)
                     }
@@ -2046,22 +2050,22 @@ mod tests {
         let builder = App::builder()
             .command(
                 "list",
-                |_m, _ctx| CommandResult::Ok(json!({"msg": "test"})),
+                |_m, _ctx| Ok(HandlerOutput::Render(json!({"msg": "test"}))),
                 "{{ msg }}",
             )
             .hooks(
                 "list",
                 Hooks::new()
                     .post_output(|_, _ctx, output| {
-                        if let Output::Text(text) = output {
-                            Ok(Output::Text(format!("[{}]", text)))
+                        if let RenderedOutput::Text(text) = output {
+                            Ok(RenderedOutput::Text(format!("[{}]", text)))
                         } else {
                             Ok(output)
                         }
                     })
                     .post_output(|_, _ctx, output| {
-                        if let Output::Text(text) = output {
-                            Ok(Output::Text(text.to_uppercase()))
+                        if let RenderedOutput::Text(text) = output {
+                            Ok(RenderedOutput::Text(text.to_uppercase()))
                         } else {
                             Ok(output)
                         }
@@ -2085,7 +2089,7 @@ mod tests {
         let builder = App::builder()
             .command(
                 "list",
-                |_m, _ctx| CommandResult::Ok(json!({"msg": "hello"})),
+                |_m, _ctx| Ok(HandlerOutput::Render(json!({"msg": "hello"}))),
                 "{{ msg }}",
             )
             .hooks(
@@ -2114,14 +2118,14 @@ mod tests {
         let builder = App::builder()
             .command(
                 "config.get",
-                |_m, _ctx| CommandResult::Ok(json!({"value": "secret"})),
+                |_m, _ctx| Ok(HandlerOutput::Render(json!({"value": "secret"}))),
                 "{{ value }}",
             )
             .hooks(
                 "config.get",
                 Hooks::new().post_output(|_, _ctx, output| {
-                    if let Output::Text(_) = output {
-                        Ok(Output::Text("***".into()))
+                    if let RenderedOutput::Text(_) = output {
+                        Ok(RenderedOutput::Text("***".into()))
                     } else {
                         Ok(output)
                     }
@@ -2147,12 +2151,12 @@ mod tests {
         let builder = App::builder()
             .command(
                 "list",
-                |_m, _ctx| CommandResult::Ok(json!({"msg": "list"})),
+                |_m, _ctx| Ok(HandlerOutput::Render(json!({"msg": "list"}))),
                 "{{ msg }}",
             )
             .command(
                 "other",
-                |_m, _ctx| CommandResult::Ok(json!({"msg": "other"})),
+                |_m, _ctx| Ok(HandlerOutput::Render(json!({"msg": "other"}))),
                 "{{ msg }}",
             )
             .hooks(
@@ -2180,17 +2184,20 @@ mod tests {
         let builder = App::builder()
             .command(
                 "export",
-                |_m, _ctx| -> CommandResult<()> {
-                    CommandResult::Archive(vec![1, 2, 3], "out.bin".into())
+                |_m, _ctx| -> HandlerResult<()> {
+                    Ok(HandlerOutput::Binary {
+                        data: vec![1, 2, 3],
+                        filename: "out.bin".into(),
+                    })
                 },
                 "",
             )
             .hooks(
                 "export",
                 Hooks::new().post_output(|_, _ctx, output| {
-                    if let Output::Binary(mut bytes, filename) = output {
+                    if let RenderedOutput::Binary(mut bytes, filename) = output {
                         bytes.push(4);
-                        Ok(Output::Binary(bytes, filename))
+                        Ok(RenderedOutput::Binary(bytes, filename))
                     } else {
                         Ok(output)
                     }
@@ -2235,8 +2242,8 @@ mod tests {
             .hooks(
                 "test",
                 Hooks::new().post_output(|_, _ctx, output| {
-                    if let Output::Text(text) = output {
-                        Ok(Output::Text(format!("wrapped: {}", text)))
+                    if let RenderedOutput::Text(text) = output {
+                        Ok(RenderedOutput::Text(format!("wrapped: {}", text)))
                     } else {
                         Ok(output)
                     }
@@ -2252,7 +2259,7 @@ mod tests {
         let result = outstanding.run_command(
             "test",
             sub_matches,
-            |_m, _ctx| CommandResult::Ok(Data { value: 42 }),
+            |_m, _ctx| Ok(HandlerOutput::Render(Data { value: 42 })),
             "{{ value }}",
         );
 
@@ -2309,9 +2316,9 @@ mod tests {
             "test",
             sub_matches,
             |_m, _ctx| {
-                CommandResult::Ok(Data {
+                Ok(HandlerOutput::Render(Data {
                     msg: "hello".into(),
-                })
+                }))
             },
             "{{ msg }}",
         );
@@ -2331,7 +2338,7 @@ mod tests {
         let result = outstanding.run_command::<_, ()>(
             "test",
             sub_matches,
-            |_m, _ctx| CommandResult::Silent,
+            |_m, _ctx| Ok(HandlerOutput::Silent),
             "",
         );
 
@@ -2362,7 +2369,12 @@ mod tests {
         let result = outstanding.run_command::<_, ()>(
             "export",
             sub_matches,
-            |_m, _ctx| CommandResult::Archive(vec![0xDE, 0xAD], "data.bin".into()),
+            |_m, _ctx| {
+                Ok(HandlerOutput::Binary {
+                    data: vec![0xDE, 0xAD],
+                    filename: "data.bin".into(),
+                })
+            },
             "",
         );
 
@@ -2386,7 +2398,7 @@ mod tests {
         let builder = App::builder()
             .command(
                 "list",
-                |_m, _ctx| CommandResult::Ok(json!({"count": 5})),
+                |_m, _ctx| Ok(HandlerOutput::Render(json!({"count": 5}))),
                 "Count: {{ count }}, Modified: {{ modified }}",
             )
             .hooks(
@@ -2418,7 +2430,7 @@ mod tests {
         let builder = App::builder()
             .command(
                 "list",
-                |_m, _ctx| CommandResult::Ok(json!({"items": []})),
+                |_m, _ctx| Ok(HandlerOutput::Render(json!({"items": []}))),
                 "{{ items }}",
             )
             .hooks(
@@ -2456,7 +2468,7 @@ mod tests {
         let builder = App::builder()
             .command(
                 "list",
-                |_m, _ctx| CommandResult::Ok(json!({"value": 1})),
+                |_m, _ctx| Ok(HandlerOutput::Render(json!({"value": 1}))),
                 "{{ value }}",
             )
             .hooks(
@@ -2503,7 +2515,7 @@ mod tests {
         let builder = App::builder()
             .command(
                 "list",
-                |_m, _ctx| CommandResult::Ok(json!({"msg": "hello"})),
+                |_m, _ctx| Ok(HandlerOutput::Render(json!({"msg": "hello"}))),
                 "{{ msg }}",
             )
             .hooks(
@@ -2563,7 +2575,7 @@ mod tests {
         let result = outstanding.run_command(
             "test",
             sub_matches,
-            |_m, _ctx| CommandResult::Ok(Data { value: 42 }),
+            |_m, _ctx| Ok(HandlerOutput::Render(Data { value: 42 })),
             "value={{ value }}, added={{ added_by_hook }}",
         );
 
@@ -2602,7 +2614,7 @@ mod tests {
         let result = outstanding.run_command(
             "test",
             sub_matches,
-            |_m, _ctx| CommandResult::Ok(Data { valid: false }),
+            |_m, _ctx| Ok(HandlerOutput::Render(Data { valid: false })),
             "{{ valid }}",
         );
 
@@ -2624,7 +2636,7 @@ mod tests {
             .context("version", Value::from("1.0.0"))
             .command(
                 "info",
-                |_m, _ctx| CommandResult::Ok(json!({"name": "app"})),
+                |_m, _ctx| Ok(HandlerOutput::Render(json!({"name": "app"}))),
                 "{{ name }} v{{ version }}",
             );
 
@@ -2645,7 +2657,7 @@ mod tests {
             .context("year", Value::from(2024))
             .command(
                 "info",
-                |_m, _ctx| CommandResult::Ok(json!({"title": "Report"})),
+                |_m, _ctx| Ok(HandlerOutput::Render(json!({"title": "Report"}))),
                 "{{ title }} by {{ author }} ({{ year }})",
             );
 
@@ -2667,7 +2679,7 @@ mod tests {
             })
             .command(
                 "info",
-                |_m, _ctx| CommandResult::Ok(json!({})),
+                |_m, _ctx| Ok(HandlerOutput::Render(json!({}))),
                 "Width: {{ terminal_width }}",
             );
 
@@ -2691,7 +2703,7 @@ mod tests {
             })
             .command(
                 "info",
-                |_m, _ctx| CommandResult::Ok(json!({})),
+                |_m, _ctx| Ok(HandlerOutput::Render(json!({}))),
                 "Mode: {{ mode }}",
             );
 
@@ -2713,7 +2725,7 @@ mod tests {
             .context("value", Value::from("from_context"))
             .command(
                 "test",
-                |_m, _ctx| CommandResult::Ok(json!({"value": "from_data"})),
+                |_m, _ctx| Ok(HandlerOutput::Render(json!({"value": "from_data"}))),
                 "{{ value }}",
             );
 
@@ -2733,12 +2745,12 @@ mod tests {
             .context("app_name", Value::from("MyApp"))
             .command(
                 "list",
-                |_m, _ctx| CommandResult::Ok(json!({})),
+                |_m, _ctx| Ok(HandlerOutput::Render(json!({}))),
                 "{{ app_name }}: list",
             )
             .command(
                 "info",
-                |_m, _ctx| CommandResult::Ok(json!({})),
+                |_m, _ctx| Ok(HandlerOutput::Render(json!({}))),
                 "{{ app_name }}: info",
             );
 
@@ -2768,7 +2780,7 @@ mod tests {
             })
             .command(
                 "test",
-                |_m, _ctx| CommandResult::Ok(json!({"count": 21})),
+                |_m, _ctx| Ok(HandlerOutput::Render(json!({"count": 21}))),
                 "Count: {{ count }}, Doubled: {{ doubled_count }}",
             );
 
@@ -2794,7 +2806,7 @@ mod tests {
             )
             .command(
                 "test",
-                |_m, _ctx| CommandResult::Ok(json!({})),
+                |_m, _ctx| Ok(HandlerOutput::Render(json!({}))),
                 "Debug: {{ config.debug }}, Max: {{ config.max_items }}",
             );
 
@@ -2815,9 +2827,9 @@ mod tests {
             .command(
                 "list",
                 |_m, _ctx| {
-                    CommandResult::Ok(json!({
+                    Ok(HandlerOutput::Render(json!({
                         "items": ["a", "b", "c"]
-                    }))
+                    })))
                 },
                 "{% for item in items %}{{ item }}{% if not loop.last %}{{ separator }}{% endif %}{% endfor %}",
             );
@@ -2838,7 +2850,7 @@ mod tests {
             .context("extra", Value::from("should_not_appear"))
             .command(
                 "test",
-                |_m, _ctx| CommandResult::Ok(json!({"data": "value"})),
+                |_m, _ctx| Ok(HandlerOutput::Render(json!({"data": "value"}))),
                 "{{ data }} + {{ extra }}",
             );
 
@@ -2863,7 +2875,7 @@ mod tests {
 
         let builder = App::builder().command(
             "list",
-            |_m, _ctx| CommandResult::Ok(json!({"count": 42})),
+            |_m, _ctx| Ok(HandlerOutput::Render(json!({"count": 42}))),
             "Count: {{ count }}",
         );
 
@@ -2889,7 +2901,7 @@ mod tests {
 
         let builder = App::builder().output_file_flag(Some("save-to")).command(
             "list",
-            |_m, _ctx| CommandResult::Ok(json!({"count": 99})),
+            |_m, _ctx| Ok(HandlerOutput::Render(json!({"count": 99}))),
             "{{ count }}",
         );
 
@@ -2914,10 +2926,10 @@ mod tests {
 
         let builder = App::builder().group("db", |g| {
             g.command("migrate", |_m, _ctx| {
-                CommandResult::Ok(json!({"status": "migrated"}))
+                Ok(HandlerOutput::Render(json!({"status": "migrated"})))
             })
             .command("backup", |_m, _ctx| {
-                CommandResult::Ok(json!({"status": "backed_up"}))
+                Ok(HandlerOutput::Render(json!({"status": "backed_up"})))
             })
         });
 
@@ -2938,13 +2950,15 @@ mod tests {
 
         let builder = App::builder().group("app", |g| {
             g.command("start", |_m, _ctx| {
-                CommandResult::Ok(json!({"action": "start"}))
+                Ok(HandlerOutput::Render(json!({"action": "start"})))
             })
             .group("config", |g| {
                 g.command("get", |_m, _ctx| {
-                    CommandResult::Ok(json!({"value": "test_value"}))
+                    Ok(HandlerOutput::Render(json!({"value": "test_value"})))
                 })
-                .command("set", |_m, _ctx| CommandResult::Ok(json!({"ok": true})))
+                .command("set", |_m, _ctx| {
+                    Ok(HandlerOutput::Render(json!({"ok": true})))
+                })
             })
         });
 
@@ -2976,7 +2990,7 @@ mod tests {
         let builder = App::builder().group("db", |g| {
             g.command_with(
                 "migrate",
-                |_m, _ctx| CommandResult::Ok(json!({"count": 5})),
+                |_m, _ctx| Ok(HandlerOutput::Render(json!({"count": 5}))),
                 |cfg| cfg.template("Migrated {{ count }} tables"),
             )
         });
@@ -3003,7 +3017,7 @@ mod tests {
         let builder = App::builder().group("db", |g| {
             g.command_with(
                 "migrate",
-                |_m, _ctx| CommandResult::Ok(json!({"done": true})),
+                |_m, _ctx| Ok(HandlerOutput::Render(json!({"done": true}))),
                 move |cfg| {
                     cfg.template("{{ done }}").pre_dispatch(move |_, _| {
                         hook_called_clone.store(true, Ordering::SeqCst);
@@ -3034,7 +3048,7 @@ mod tests {
 
         let builder = App::builder().command_with(
             "list",
-            |_m, _ctx| CommandResult::Ok(json!({"items": ["a", "b"]})),
+            |_m, _ctx| Ok(HandlerOutput::Render(json!({"items": ["a", "b"]}))),
             move |cfg| {
                 cfg.template("Items: {{ items | length }}")
                     .pre_dispatch(move |_, _| {
@@ -3063,7 +3077,9 @@ mod tests {
             .template_ext(".jinja2")
             .group("db", |g| {
                 // No explicit template - should resolve to "templates/db/migrate.jinja2"
-                g.command("migrate", |_m, _ctx| CommandResult::Ok(json!({"ok": true})))
+                g.command("migrate", |_m, _ctx| {
+                    Ok(HandlerOutput::Render(json!({"ok": true})))
+                })
             });
 
         // Verify the builder has the commands registered
@@ -3077,12 +3093,12 @@ mod tests {
         let builder = App::builder()
             .group("db", |g| {
                 g.command("migrate", |_m, _ctx| {
-                    CommandResult::Ok(json!({"type": "db"}))
+                    Ok(HandlerOutput::Render(json!({"type": "db"})))
                 })
             })
             .group("cache", |g| {
                 g.command("clear", |_m, _ctx| {
-                    CommandResult::Ok(json!({"type": "cache"}))
+                    Ok(HandlerOutput::Render(json!({"type": "cache"})))
                 })
             });
 
@@ -3097,11 +3113,13 @@ mod tests {
         let builder = App::builder()
             .command(
                 "version",
-                |_m, _ctx| CommandResult::Ok(json!({"v": "1.0.0"})),
+                |_m, _ctx| Ok(HandlerOutput::Render(json!({"v": "1.0.0"}))),
                 "{{ v }}",
             )
             .group("db", |g| {
-                g.command("migrate", |_m, _ctx| CommandResult::Ok(json!({"ok": true})))
+                g.command("migrate", |_m, _ctx| {
+                    Ok(HandlerOutput::Render(json!({"ok": true})))
+                })
             });
 
         assert!(builder.commands.contains_key("version"));
@@ -3118,7 +3136,7 @@ mod tests {
         use serde_json::json;
 
         let builder = App::builder().commands(dispatch! {
-            list => |_m, _ctx| CommandResult::Ok(json!({"items": ["a", "b"]}))
+            list => |_m, _ctx| Ok(HandlerOutput::Render(json!({"items": ["a", "b"]})))
         });
 
         assert!(builder.commands.contains_key("list"));
@@ -3139,10 +3157,10 @@ mod tests {
 
         let builder = App::builder().commands(dispatch! {
             db: {
-                migrate => |_m, _ctx| CommandResult::Ok(json!({"migrated": true})),
-                backup => |_m, _ctx| CommandResult::Ok(json!({"backed_up": true})),
+                migrate => |_m, _ctx| Ok(HandlerOutput::Render(json!({"migrated": true}))),
+                backup => |_m, _ctx| Ok(HandlerOutput::Render(json!({"backed_up": true}))),
             },
-            version => |_m, _ctx| CommandResult::Ok(json!({"v": "1.0"})),
+            version => |_m, _ctx| Ok(HandlerOutput::Render(json!({"v": "1.0"}))),
         });
 
         assert!(builder.commands.contains_key("db.migrate"));
@@ -3174,7 +3192,7 @@ mod tests {
 
         let builder = App::builder().commands(dispatch! {
             list => {
-                handler: |_m, _ctx| CommandResult::Ok(json!({"count": 42})),
+                handler: |_m, _ctx| Ok(HandlerOutput::Render(json!({"count": 42}))),
                 template: "Count: {{ count }}",
             }
         });
@@ -3199,7 +3217,7 @@ mod tests {
 
         let builder = App::builder().commands(dispatch! {
             list => {
-                handler: |_m, _ctx| CommandResult::Ok(json!({"ok": true})),
+                handler: |_m, _ctx| Ok(HandlerOutput::Render(json!({"ok": true}))),
                 template: "{{ ok }}",
                 pre_dispatch: move |_, _| {
                     hook_called_clone.store(true, Ordering::SeqCst);
@@ -3224,10 +3242,10 @@ mod tests {
         let builder = App::builder().commands(dispatch! {
             app: {
                 config: {
-                    get => |_m, _ctx| CommandResult::Ok(json!({"key": "value"})),
-                    set => |_m, _ctx| CommandResult::Ok(json!({"ok": true})),
+                    get => |_m, _ctx| Ok(HandlerOutput::Render(json!({"key": "value"}))),
+                    set => |_m, _ctx| Ok(HandlerOutput::Render(json!({"ok": true}))),
                 },
-                start => |_m, _ctx| CommandResult::Ok(json!({"started": true})),
+                start => |_m, _ctx| Ok(HandlerOutput::Render(json!({"started": true}))),
             },
         });
 

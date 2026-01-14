@@ -12,7 +12,9 @@ use std::sync::Arc;
 
 use super::dispatch::{DispatchFn, DispatchOutput};
 use super::outstanding::get_terminal_width;
-use crate::cli::handler::{CommandContext, CommandResult, FnHandler, Handler};
+use crate::cli::handler::{
+    CommandContext, FnHandler, Handler, HandlerResult, Output as HandlerOutput,
+};
 use crate::cli::hooks::Hooks;
 
 /// Configuration for a single command.
@@ -173,12 +175,12 @@ impl GroupBuilder {
     /// ```rust,ignore
     /// .group("db", |g| g
     ///     .command("migrate", |_m, _ctx| {
-    ///         CommandResult::Ok(json!({"status": "done"}))
+    ///         Ok(HandlerOutput::Render(json!({"status": "done"})))
     ///     }))
     /// ```
     pub fn command<F, T>(self, name: &str, handler: F) -> Self
     where
-        F: Fn(&ArgMatches, &CommandContext) -> CommandResult<T> + Send + Sync + 'static,
+        F: Fn(&ArgMatches, &CommandContext) -> HandlerResult<T> + Send + Sync + 'static,
         T: Serialize + Send + Sync + 'static,
     {
         self.command_with(name, handler, |cfg| cfg)
@@ -196,7 +198,7 @@ impl GroupBuilder {
     /// ```
     pub fn command_with<F, T, C>(mut self, name: &str, handler: F, configure: C) -> Self
     where
-        F: Fn(&ArgMatches, &CommandContext) -> CommandResult<T> + Send + Sync + 'static,
+        F: Fn(&ArgMatches, &CommandContext) -> HandlerResult<T> + Send + Sync + 'static,
         T: Serialize + Send + Sync + 'static,
         C: FnOnce(CommandConfig<FnHandler<F, T>>) -> CommandConfig<FnHandler<F, T>>,
     {
@@ -270,7 +272,7 @@ impl GroupBuilder {
 /// Internal: closure-based command config that implements ErasedCommandConfig
 struct ClosureCommandConfig<F, T>
 where
-    F: Fn(&ArgMatches, &CommandContext) -> CommandResult<T> + Send + Sync + 'static,
+    F: Fn(&ArgMatches, &CommandContext) -> HandlerResult<T> + Send + Sync + 'static,
     T: Serialize + Send + Sync + 'static,
 {
     handler: FnHandler<F, T>,
@@ -280,7 +282,7 @@ where
 
 impl<F, T> ErasedCommandConfig for ClosureCommandConfig<F, T>
 where
-    F: Fn(&ArgMatches, &CommandContext) -> CommandResult<T> + Send + Sync + 'static,
+    F: Fn(&ArgMatches, &CommandContext) -> HandlerResult<T> + Send + Sync + 'static,
     T: Serialize + Send + Sync + 'static,
 {
     fn template(&self) -> Option<&str> {
@@ -308,7 +310,7 @@ where
                 let result = handler.handle(matches, ctx);
 
                 match result {
-                    CommandResult::Ok(data) => {
+                    Ok(HandlerOutput::Render(data)) => {
                         let mut json_data = serde_json::to_value(&data)
                             .map_err(|e| format!("Failed to serialize handler result: {}", e))?;
 
@@ -337,11 +339,12 @@ where
                         .map_err(|e| e.to_string())?;
                         Ok(DispatchOutput::Text(output))
                     }
-                    CommandResult::Err(e) => Err(format!("Error: {}", e)),
-                    CommandResult::Silent => Ok(DispatchOutput::Silent),
-                    CommandResult::Archive(bytes, filename) => {
-                        Ok(DispatchOutput::Binary(bytes, filename))
-                    }
+                    Err(e) => Err(format!("Error: {}", e)),
+                    Ok(HandlerOutput::Silent) => Ok(DispatchOutput::Silent),
+                    Ok(HandlerOutput::Binary {
+                        data: bytes,
+                        filename,
+                    }) => Ok(DispatchOutput::Binary(bytes, filename)),
                 }
             },
         )
@@ -389,7 +392,7 @@ where
                 let result = handler.handle(matches, ctx);
 
                 match result {
-                    CommandResult::Ok(data) => {
+                    Ok(HandlerOutput::Render(data)) => {
                         let mut json_data = serde_json::to_value(&data)
                             .map_err(|e| format!("Failed to serialize handler result: {}", e))?;
 
@@ -418,11 +421,12 @@ where
                         .map_err(|e| e.to_string())?;
                         Ok(DispatchOutput::Text(output))
                     }
-                    CommandResult::Err(e) => Err(format!("Error: {}", e)),
-                    CommandResult::Silent => Ok(DispatchOutput::Silent),
-                    CommandResult::Archive(bytes, filename) => {
-                        Ok(DispatchOutput::Binary(bytes, filename))
-                    }
+                    Err(e) => Err(format!("Error: {}", e)),
+                    Ok(HandlerOutput::Silent) => Ok(DispatchOutput::Silent),
+                    Ok(HandlerOutput::Binary {
+                        data: bytes,
+                        filename,
+                    }) => Ok(DispatchOutput::Binary(bytes, filename)),
                 }
             },
         )
@@ -442,8 +446,9 @@ mod tests {
 
     #[test]
     fn test_group_builder_command() {
-        let group =
-            GroupBuilder::new().command("test", |_m, _ctx| CommandResult::Ok(json!({"ok": true})));
+        let group = GroupBuilder::new().command("test", |_m, _ctx| {
+            Ok(HandlerOutput::Render(json!({"ok": true})))
+        });
 
         assert!(group.entries.contains_key("test"));
     }
@@ -451,9 +456,9 @@ mod tests {
     #[test]
     fn test_group_builder_nested() {
         let group = GroupBuilder::new()
-            .command("top", |_m, _ctx| CommandResult::Ok(json!({})))
+            .command("top", |_m, _ctx| Ok(HandlerOutput::Render(json!({}))))
             .group("nested", |g| {
-                g.command("inner", |_m, _ctx| CommandResult::Ok(json!({})))
+                g.command("inner", |_m, _ctx| Ok(HandlerOutput::Render(json!({}))))
             });
 
         assert!(group.entries.contains_key("top"));
@@ -464,7 +469,7 @@ mod tests {
     fn test_command_config_template() {
         let config =
             CommandConfig::new(FnHandler::new(|_m: &ArgMatches, _ctx: &CommandContext| {
-                CommandResult::Ok(json!({}))
+                Ok(HandlerOutput::Render(json!({})))
             }))
             .template("custom.j2");
 
@@ -475,7 +480,7 @@ mod tests {
     fn test_command_config_hooks() {
         let config =
             CommandConfig::new(FnHandler::new(|_m: &ArgMatches, _ctx: &CommandContext| {
-                CommandResult::Ok(json!({}))
+                Ok(HandlerOutput::Render(json!({})))
             }))
             .pre_dispatch(|_, _| Ok(()));
 

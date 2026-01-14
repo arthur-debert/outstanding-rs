@@ -21,15 +21,15 @@
 //! # With Command Handlers
 //!
 //! ```rust,ignore
-//! use outstanding::cli::{App, CommandResult};
+//! use outstanding::cli::{App, Output, HandlerResult};
 //! use serde::Serialize;
 //!
 //! #[derive(Serialize)]
 //! struct ListOutput { items: Vec<String> }
 //!
 //! App::builder()
-//!     .command("list", |_m, _ctx| {
-//!         CommandResult::Ok(ListOutput { items: vec!["one".into()] })
+//!     .command("list", |_m, _ctx| -> HandlerResult<ListOutput> {
+//!         Ok(Output::Render(ListOutput { items: vec!["one".into()] }))
 //!     }, "{% for item in items %}{{ item }}\n{% endfor %}")
 //!     .build()?
 //!     .run(cmd, std::env::args());
@@ -61,10 +61,10 @@ pub use result::HelpResult;
 pub use help::{default_help_theme, render_help, render_help_with_topics, HelpConfig};
 
 // Re-export handler types
-pub use handler::{CommandContext, CommandResult, FnHandler, Handler, RunResult};
+pub use handler::{CommandContext, FnHandler, Handler, HandlerResult, Output, RunResult};
 
 // Re-export hook types
-pub use hooks::{HookError, HookPhase, Hooks, Output};
+pub use hooks::{HookError, HookPhase, Hooks, RenderedOutput};
 
 // Re-export derive macros from outstanding-macros
 pub use outstanding_macros::Dispatch;

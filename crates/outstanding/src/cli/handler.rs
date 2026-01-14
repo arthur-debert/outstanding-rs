@@ -3,7 +3,8 @@
 //! This module provides the core types for building command handlers:
 //!
 //! - [`CommandContext`]: Environment information passed to handlers
-//! - [`CommandResult`]: The result of executing a command handler
+//! - [`Output`]: What a handler produces (render data, silent, or binary)
+//! - [`HandlerResult`]: The result type for handlers (`Result<Output<T>, Error>`)
 //! - [`RunResult`]: The result of running the CLI dispatcher
 //! - [`Handler`]: Trait for command handlers (with closure support)
 
@@ -38,14 +39,15 @@ pub struct CommandContext {
     pub command_path: Vec<String>,
 }
 
-/// Result of a command handler.
+/// What a handler produces.
 ///
-/// Handlers return this enum to indicate success, failure, silent exit, or binary output.
+/// This enum represents the different types of output a command handler can produce.
+/// Use with `HandlerResult<T>` which wraps this in a `Result` for error handling.
 ///
 /// # Example
 ///
 /// ```rust
-/// use outstanding::cli::CommandResult;
+/// use outstanding::cli::{Output, HandlerResult};
 /// use serde::Serialize;
 ///
 /// #[derive(Serialize)]
@@ -53,51 +55,89 @@ pub struct CommandContext {
 ///     items: Vec<String>,
 /// }
 ///
-/// fn list_handler() -> CommandResult<ListOutput> {
-///     CommandResult::Ok(ListOutput {
+/// fn list_handler() -> HandlerResult<ListOutput> {
+///     Ok(Output::Render(ListOutput {
 ///         items: vec!["one".into(), "two".into()],
-///     })
+///     }))
 /// }
 ///
 /// // For binary file exports:
-/// fn export_handler() -> CommandResult<()> {
+/// fn export_handler() -> HandlerResult<()> {
 ///     let pdf_bytes = vec![0x25, 0x50, 0x44, 0x46]; // PDF magic bytes
-///     CommandResult::Archive(pdf_bytes, "report.pdf".into())
+///     Ok(Output::Binary {
+///         data: pdf_bytes,
+///         filename: "report.pdf".into(),
+///     })
+/// }
+///
+/// // For silent operations:
+/// fn quiet_handler() -> HandlerResult<()> {
+///     // Do work...
+///     Ok(Output::Silent)
+/// }
+///
+/// // Errors use standard ? operator:
+/// fn fallible_handler() -> HandlerResult<String> {
+///     let data = std::fs::read_to_string("config.json")?;
+///     Ok(Output::Render(data))
 /// }
 /// ```
 #[derive(Debug)]
-pub enum CommandResult<T: Serialize> {
-    /// Success with data to render or serialize
-    Ok(T),
-    /// Error with context (will be displayed to user)
-    Err(anyhow::Error),
+pub enum Output<T: Serialize> {
+    /// Data to render with a template or serialize to JSON/YAML/etc.
+    Render(T),
     /// Silent exit (no output produced)
     Silent,
-    /// Binary output for file exports (bytes, suggested filename)
-    Archive(Vec<u8>, String),
+    /// Binary output for file exports
+    Binary {
+        /// The binary data
+        data: Vec<u8>,
+        /// Suggested filename for the output
+        filename: String,
+    },
 }
 
-impl<T: Serialize> CommandResult<T> {
-    /// Returns true if this is a success result.
-    pub fn is_ok(&self) -> bool {
-        matches!(self, CommandResult::Ok(_))
-    }
-
-    /// Returns true if this is an error result.
-    pub fn is_err(&self) -> bool {
-        matches!(self, CommandResult::Err(_))
+impl<T: Serialize> Output<T> {
+    /// Returns true if this is a render result.
+    pub fn is_render(&self) -> bool {
+        matches!(self, Output::Render(_))
     }
 
     /// Returns true if this is a silent result.
     pub fn is_silent(&self) -> bool {
-        matches!(self, CommandResult::Silent)
+        matches!(self, Output::Silent)
     }
 
-    /// Returns true if this is an archive (binary) result.
-    pub fn is_archive(&self) -> bool {
-        matches!(self, CommandResult::Archive(_, _))
+    /// Returns true if this is a binary result.
+    pub fn is_binary(&self) -> bool {
+        matches!(self, Output::Binary { .. })
     }
 }
+
+/// The result type for command handlers.
+///
+/// This is the standard return type for handlers, allowing use of the `?` operator
+/// for error propagation.
+///
+/// # Example
+///
+/// ```rust
+/// use outstanding::cli::{Output, HandlerResult, CommandContext};
+/// use clap::ArgMatches;
+///
+/// fn my_handler(_m: &ArgMatches, _ctx: &CommandContext) -> HandlerResult<String> {
+///     // Fallible operations can use ?
+///     let config = load_config()?;
+///     Ok(Output::Render(config.name))
+/// }
+///
+/// fn load_config() -> anyhow::Result<Config> {
+///     // ...
+/// #   Ok(Config { name: "test".into() })
+/// }
+/// # struct Config { name: String }
+/// ```
+pub type HandlerResult<T> = Result<Output<T>, anyhow::Error>;
 
 /// Result of running the CLI dispatcher.
 ///
@@ -172,7 +212,8 @@ impl RunResult {
 /// Trait for command handlers.
 ///
 /// Handlers receive the clap `ArgMatches` and a `CommandContext`, and return
-/// a `CommandResult` with serializable data.
+/// a `HandlerResult` with serializable data. The `Result` type enables standard
+/// error handling with the `?` operator.
 ///
 /// # Struct Handlers
 ///
@@ -180,7 +221,7 @@ impl RunResult {
 /// the trait on a struct:
 ///
 /// ```rust,ignore
-/// use outstanding::cli::{Handler, CommandResult, CommandContext};
+/// use outstanding::cli::{Handler, HandlerResult, Output, CommandContext};
 /// use clap::ArgMatches;
 ///
 /// struct ListHandler {
@@ -190,9 +231,9 @@ impl RunResult {
 /// impl Handler for ListHandler {
 ///     type Output = Vec<Item>;
 ///
-///     fn handle(&self, matches: &ArgMatches, ctx: &CommandContext) -> CommandResult<Self::Output> {
-///         let items = self.db.list_all();
-///         CommandResult::Ok(items)
+///     fn handle(&self, matches: &ArgMatches, ctx: &CommandContext) -> HandlerResult<Self::Output> {
+///         let items = self.db.list_all()?; // Can use ? for error propagation
+///         Ok(Output::Render(items))
 ///     }
 /// }
 /// ```
@@ -201,15 +242,15 @@ pub trait Handler: Send + Sync {
     type Output: Serialize;
 
     /// Execute the handler with the given matches and context.
-    fn handle(&self, matches: &ArgMatches, ctx: &CommandContext) -> CommandResult<Self::Output>;
+    fn handle(&self, matches: &ArgMatches, ctx: &CommandContext) -> HandlerResult<Self::Output>;
 }
 
 /// A wrapper that implements Handler for closures.
 ///
-/// This is used internally by `OutstandingBuilder::command()` to wrap closures.
+/// This is used internally by `AppBuilder::command()` to wrap closures.
 pub struct FnHandler<F, T>
 where
-    F: Fn(&ArgMatches, &CommandContext) -> CommandResult<T> + Send + Sync,
+    F: Fn(&ArgMatches, &CommandContext) -> HandlerResult<T> + Send + Sync,
     T: Serialize + Send + Sync,
 {
     f: F,
@@ -218,7 +259,7 @@ where
 
 impl<F, T> FnHandler<F, T>
 where
-    F: Fn(&ArgMatches, &CommandContext) -> CommandResult<T> + Send + Sync,
+    F: Fn(&ArgMatches, &CommandContext) -> HandlerResult<T> + Send + Sync,
     T: Serialize + Send + Sync,
 {
     /// Creates a new FnHandler wrapping the given closure.
@@ -232,12 +273,12 @@ where
 
 impl<F, T> Handler for FnHandler<F, T>
 where
-    F: Fn(&ArgMatches, &CommandContext) -> CommandResult<T> + Send + Sync,
+    F: Fn(&ArgMatches, &CommandContext) -> HandlerResult<T> + Send + Sync,
     T: Serialize + Send + Sync,
 {
     type Output = T;
 
-    fn handle(&self, matches: &ArgMatches, ctx: &CommandContext) -> CommandResult<T> {
+    fn handle(&self, matches: &ArgMatches, ctx: &CommandContext) -> HandlerResult<T> {
         (self.f)(matches, ctx)
     }
 }
@@ -258,38 +299,42 @@ mod tests {
     }
 
     #[test]
-    fn test_command_result_ok() {
-        let result: CommandResult<String> = CommandResult::Ok("success".into());
+    fn test_output_render() {
+        let output: Output<String> = Output::Render("success".into());
+        assert!(output.is_render());
+        assert!(!output.is_silent());
+        assert!(!output.is_binary());
+    }
+
+    #[test]
+    fn test_output_silent() {
+        let output: Output<String> = Output::Silent;
+        assert!(!output.is_render());
+        assert!(output.is_silent());
+        assert!(!output.is_binary());
+    }
+
+    #[test]
+    fn test_output_binary() {
+        let output: Output<String> = Output::Binary {
+            data: vec![0x25, 0x50, 0x44, 0x46],
+            filename: "report.pdf".into(),
+        };
+        assert!(!output.is_render());
+        assert!(!output.is_silent());
+        assert!(output.is_binary());
+    }
+
+    #[test]
+    fn test_handler_result_ok() {
+        let result: HandlerResult<String> = Ok(Output::Render("success".into()));
         assert!(result.is_ok());
-        assert!(!result.is_err());
-        assert!(!result.is_silent());
     }
 
     #[test]
-    fn test_command_result_err() {
-        let result: CommandResult<String> = CommandResult::Err(anyhow::anyhow!("failed"));
-        assert!(!result.is_ok());
+    fn test_handler_result_err() {
+        let result: HandlerResult<String> = Err(anyhow::anyhow!("failed"));
         assert!(result.is_err());
-        assert!(!result.is_silent());
-    }
-
-    #[test]
-    fn test_command_result_silent() {
-        let result: CommandResult<String> = CommandResult::Silent;
-        assert!(!result.is_ok());
-        assert!(!result.is_err());
-        assert!(result.is_silent());
-        assert!(!result.is_archive());
-    }
-
-    #[test]
-    fn test_command_result_archive() {
-        let result: CommandResult<String> =
-            CommandResult::Archive(vec![0x25, 0x50, 0x44, 0x46], "report.pdf".into());
-        assert!(!result.is_ok());
-        assert!(!result.is_err());
-        assert!(!result.is_silent());
-        assert!(result.is_archive());
     }
 
     #[test]
@@ -328,7 +373,7 @@ mod tests {
     #[test]
     fn test_fn_handler() {
         let handler = FnHandler::new(|_m: &ArgMatches, _ctx: &CommandContext| {
-            CommandResult::Ok(json!({"status": "ok"}))
+            Ok(Output::Render(json!({"status": "ok"})))
         });
 
         let ctx = CommandContext {
@@ -350,8 +395,8 @@ mod tests {
         impl Handler for TestHandler {
             type Output = String;
 
-            fn handle(&self, _m: &ArgMatches, _ctx: &CommandContext) -> CommandResult<String> {
-                CommandResult::Ok(format!("{}: done", self.prefix))
+            fn handle(&self, _m: &ArgMatches, _ctx: &CommandContext) -> HandlerResult<String> {
+                Ok(Output::Render(format!("{}: done", self.prefix)))
             }
         }
 

@@ -13,7 +13,7 @@
 //! # Example
 //!
 //! ```rust,ignore
-//! use outstanding::cli::{App, Hooks, Output};
+//! use outstanding::cli::{App, Hooks, RenderedOutput};
 //! use serde_json::json;
 //!
 //! App::builder()
@@ -32,7 +32,7 @@
 //!         })
 //!         .post_output(|_m, _ctx, output| {
 //!             // Copy to clipboard (pseudo-code)
-//!             if let Output::Text(ref text) = output {
+//!             if let RenderedOutput::Text(ref text) = output {
 //!                 // clipboard::copy(text)?;
 //!             }
 //!             Ok(output)
@@ -52,7 +52,7 @@ use crate::cli::handler::CommandContext;
 /// This represents the final output from a command handler after rendering.
 /// Hooks can inspect and transform this output before it's returned to the caller.
 #[derive(Debug, Clone)]
-pub enum Output {
+pub enum RenderedOutput {
     /// Text output (rendered template or error message)
     Text(String),
     /// Binary output with suggested filename (e.g., PDF export)
@@ -61,26 +61,26 @@ pub enum Output {
     Silent,
 }
 
-impl Output {
+impl RenderedOutput {
     /// Returns true if this is text output.
     pub fn is_text(&self) -> bool {
-        matches!(self, Output::Text(_))
+        matches!(self, RenderedOutput::Text(_))
     }
 
     /// Returns true if this is binary output.
     pub fn is_binary(&self) -> bool {
-        matches!(self, Output::Binary(_, _))
+        matches!(self, RenderedOutput::Binary(_, _))
     }
 
     /// Returns true if this is silent (no output).
     pub fn is_silent(&self) -> bool {
-        matches!(self, Output::Silent)
+        matches!(self, RenderedOutput::Silent)
     }
 
     /// Returns the text content if this is text output.
     pub fn as_text(&self) -> Option<&str> {
         match self {
-            Output::Text(s) => Some(s),
+            RenderedOutput::Text(s) => Some(s),
             _ => None,
         }
     }
@@ -88,7 +88,7 @@ impl Output {
     /// Returns the binary content and filename if this is binary output.
     pub fn as_binary(&self) -> Option<(&[u8], &str)> {
         match self {
-            Output::Binary(bytes, filename) => Some((bytes, filename)),
+            RenderedOutput::Binary(bytes, filename) => Some((bytes, filename)),
             _ => None,
         }
     }
@@ -192,8 +192,11 @@ pub type PostDispatchFn = Arc<
 ///
 /// Post-output hooks receive the command context, arguments, and output, and can
 /// transform the output or abort execution by returning an error.
-pub type PostOutputFn =
-    Arc<dyn Fn(&ArgMatches, &CommandContext, Output) -> Result<Output, HookError> + Send + Sync>;
+pub type PostOutputFn = Arc<
+    dyn Fn(&ArgMatches, &CommandContext, RenderedOutput) -> Result<RenderedOutput, HookError>
+        + Send
+        + Sync,
+>;
 
 /// Per-command hook configuration.
 ///
@@ -206,7 +209,7 @@ pub type PostOutputFn =
 /// # Example
 ///
 /// ```rust
-/// use outstanding::cli::{Hooks, HookError, Output, CommandContext};
+/// use outstanding::cli::{Hooks, HookError, RenderedOutput, CommandContext};
 /// use serde_json::json;
 ///
 /// let hooks = Hooks::new()
@@ -223,8 +226,8 @@ pub type PostOutputFn =
 ///     })
 ///     .post_output(|_m, ctx, output| {
 ///         // Transform: add a prefix to text output
-///         if let Output::Text(text) = output {
-///             Ok(Output::Text(format!("[{}] {}", ctx.command_path.join("."), text)))
+///         if let RenderedOutput::Text(text) = output {
+///             Ok(RenderedOutput::Text(format!("[{}] {}", ctx.command_path.join("."), text)))
 ///         } else {
 ///             Ok(output)
 ///         }
@@ -329,7 +332,7 @@ impl Hooks {
     ///
     /// Post-output hooks run after the command handler has executed and
     /// output has been rendered. They receive the `CommandContext` and
-    /// `Output`, and can transform the output or abort execution.
+    /// `RenderedOutput`, and can transform the output or abort execution.
     ///
     /// Multiple post-output hooks chain transformations: each hook receives
     /// the output from the previous hook. If any hook returns an error,
@@ -338,20 +341,20 @@ impl Hooks {
     /// # Example
     ///
     /// ```rust
-    /// use outstanding::cli::{Hooks, HookError, Output};
+    /// use outstanding::cli::{Hooks, HookError, RenderedOutput};
     ///
     /// let hooks = Hooks::new()
     ///     .post_output(|_m, _ctx, output| {
     ///         // Copy text to clipboard (pseudo-code)
-    ///         if let Output::Text(ref text) = output {
+    ///         if let RenderedOutput::Text(ref text) = output {
     ///             // clipboard::copy(text)?;
     ///         }
     ///         Ok(output) // Pass through unchanged
     ///     })
     ///     .post_output(|_m, _ctx, output| {
     ///         // Add newline to text output
-    ///         if let Output::Text(text) = output {
-    ///             Ok(Output::Text(format!("{}\n", text)))
+    ///         if let RenderedOutput::Text(text) = output {
+    ///             Ok(RenderedOutput::Text(format!("{}\n", text)))
     ///         } else {
     ///             Ok(output)
     ///         }
@@ -359,7 +362,7 @@ impl Hooks {
     /// ```
     pub fn post_output<F>(mut self, f: F) -> Self
     where
-        F: Fn(&ArgMatches, &CommandContext, Output) -> Result<Output, HookError>
+        F: Fn(&ArgMatches, &CommandContext, RenderedOutput) -> Result<RenderedOutput, HookError>
             + Send
             + Sync
             + 'static,
@@ -410,8 +413,8 @@ impl Hooks {
         &self,
         matches: &ArgMatches,
         ctx: &CommandContext,
-        output: Output,
-    ) -> Result<Output, HookError> {
+        output: RenderedOutput,
+    ) -> Result<RenderedOutput, HookError> {
         let mut current = output;
         for hook in &self.post_output {
             current = hook(matches, ctx, current)?;
@@ -451,21 +454,21 @@ mod tests {
 
     #[test]
     fn test_output_variants() {
-        let text = Output::Text("hello".into());
+        let text = RenderedOutput::Text("hello".into());
         assert!(text.is_text());
         assert!(!text.is_binary());
         assert!(!text.is_silent());
         assert_eq!(text.as_text(), Some("hello"));
         assert!(text.as_binary().is_none());
 
-        let binary = Output::Binary(vec![1, 2, 3], "file.bin".into());
+        let binary = RenderedOutput::Binary(vec![1, 2, 3], "file.bin".into());
         assert!(!binary.is_text());
         assert!(binary.is_binary());
         assert!(!binary.is_silent());
         assert!(binary.as_text().is_none());
         assert_eq!(binary.as_binary(), Some((&[1u8, 2, 3][..], "file.bin")));
 
-        let silent = Output::Silent;
+        let silent = RenderedOutput::Silent;
         assert!(!silent.is_text());
         assert!(!silent.is_binary());
         assert!(silent.is_silent());
@@ -575,7 +578,7 @@ mod tests {
 
         let ctx = test_context();
         let matches = test_matches();
-        let result = hooks.run_post_output(&matches, &ctx, Output::Text("hello".into()));
+        let result = hooks.run_post_output(&matches, &ctx, RenderedOutput::Text("hello".into()));
 
         assert!(result.is_ok());
         assert_eq!(result.unwrap().as_text(), Some("hello"));
@@ -584,8 +587,8 @@ mod tests {
     #[test]
     fn test_post_output_transformation() {
         let hooks = Hooks::new().post_output(|_, _, output| {
-            if let Output::Text(text) = output {
-                Ok(Output::Text(text.to_uppercase()))
+            if let RenderedOutput::Text(text) = output {
+                Ok(RenderedOutput::Text(text.to_uppercase()))
             } else {
                 Ok(output)
             }
@@ -593,7 +596,7 @@ mod tests {
 
         let ctx = test_context();
         let matches = test_matches();
-        let result = hooks.run_post_output(&matches, &ctx, Output::Text("hello".into()));
+        let result = hooks.run_post_output(&matches, &ctx, RenderedOutput::Text("hello".into()));
 
         assert!(result.is_ok());
         assert_eq!(result.unwrap().as_text(), Some("HELLO"));
@@ -603,15 +606,15 @@ mod tests {
     fn test_post_output_chained_transformations() {
         let hooks = Hooks::new()
             .post_output(|_, _, output| {
-                if let Output::Text(text) = output {
-                    Ok(Output::Text(format!("[{}]", text)))
+                if let RenderedOutput::Text(text) = output {
+                    Ok(RenderedOutput::Text(format!("[{}]", text)))
                 } else {
                     Ok(output)
                 }
             })
             .post_output(|_, _, output| {
-                if let Output::Text(text) = output {
-                    Ok(Output::Text(text.to_uppercase()))
+                if let RenderedOutput::Text(text) = output {
+                    Ok(RenderedOutput::Text(text.to_uppercase()))
                 } else {
                     Ok(output)
                 }
@@ -619,7 +622,7 @@ mod tests {
 
         let ctx = test_context();
         let matches = test_matches();
-        let result = hooks.run_post_output(&matches, &ctx, Output::Text("hello".into()));
+        let result = hooks.run_post_output(&matches, &ctx, RenderedOutput::Text("hello".into()));
 
         assert!(result.is_ok());
         assert_eq!(result.unwrap().as_text(), Some("[HELLO]"));
@@ -633,7 +636,7 @@ mod tests {
 
         let ctx = test_context();
         let matches = test_matches();
-        let result = hooks.run_post_output(&matches, &ctx, Output::Text("hello".into()));
+        let result = hooks.run_post_output(&matches, &ctx, RenderedOutput::Text("hello".into()));
 
         assert!(result.is_err());
         assert_eq!(result.unwrap_err().message, "transform failed");
@@ -642,9 +645,9 @@ mod tests {
     #[test]
     fn test_post_output_binary() {
         let hooks = Hooks::new().post_output(|_, _, output| {
-            if let Output::Binary(mut bytes, filename) = output {
+            if let RenderedOutput::Binary(mut bytes, filename) = output {
                 bytes.push(0xFF);
-                Ok(Output::Binary(bytes, filename))
+                Ok(RenderedOutput::Binary(bytes, filename))
             } else {
                 Ok(output)
             }
@@ -655,7 +658,7 @@ mod tests {
         let result = hooks.run_post_output(
             &matches,
             &ctx,
-            Output::Binary(vec![1, 2], "test.bin".into()),
+            RenderedOutput::Binary(vec![1, 2], "test.bin".into()),
         );
 
         assert!(result.is_ok());
@@ -675,7 +678,7 @@ mod tests {
 
         let ctx = test_context();
         let matches = test_matches();
-        let result = hooks.run_post_output(&matches, &ctx, Output::Silent);
+        let result = hooks.run_post_output(&matches, &ctx, RenderedOutput::Silent);
 
         assert!(result.is_ok());
         assert!(result.unwrap().is_silent());
@@ -701,7 +704,7 @@ mod tests {
 
         assert!(hooks.run_pre_dispatch(&matches, &ctx).is_ok());
         assert!(hooks
-            .run_post_output(&matches, &ctx, Output::Silent)
+            .run_post_output(&matches, &ctx, RenderedOutput::Silent)
             .is_ok());
     }
 

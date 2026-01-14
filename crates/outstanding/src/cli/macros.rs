@@ -68,15 +68,15 @@
 /// # Example
 ///
 /// ```rust,ignore
-/// use outstanding::cli::{dispatch, App, CommandResult};
+/// use outstanding::cli::{dispatch, App, HandlerResult, Output};
 /// use serde_json::json;
 ///
-/// fn migrate_handler(_m: &clap::ArgMatches, _ctx: &CommandContext) -> CommandResult<serde_json::Value> {
-///     CommandResult::Ok(json!({"migrated": true}))
+/// fn migrate_handler(_m: &clap::ArgMatches, _ctx: &CommandContext) -> HandlerResult<serde_json::Value> {
+///     Ok(Output::Render(json!({"migrated": true})))
 /// }
 ///
-/// fn backup_handler(_m: &clap::ArgMatches, _ctx: &CommandContext) -> CommandResult<serde_json::Value> {
-///     CommandResult::Ok(json!({"backed_up": true}))
+/// fn backup_handler(_m: &clap::ArgMatches, _ctx: &CommandContext) -> HandlerResult<serde_json::Value> {
+///     Ok(Output::Render(json!({"backed_up": true})))
 /// }
 ///
 /// let builder = App::builder()
@@ -89,7 +89,7 @@
 ///                 template: "db/backup_custom.j2",
 ///             },
 ///         },
-///         version => |_m, _ctx| CommandResult::Ok(json!({"version": "1.0.0"})),
+///         version => |_m, _ctx| Ok(Output::Render(json!({"version": "1.0.0"}))),
 ///     });
 /// ```
 #[macro_export]
@@ -224,7 +224,7 @@ macro_rules! dispatch_apply_config {
 
 #[cfg(test)]
 mod tests {
-    use crate::cli::handler::{CommandContext, CommandResult};
+    use crate::cli::handler::{CommandContext, HandlerResult, Output};
     use crate::cli::GroupBuilder;
     use clap::ArgMatches;
     use serde_json::json;
@@ -232,7 +232,7 @@ mod tests {
     #[test]
     fn test_dispatch_simple_command() {
         let configure = dispatch! {
-            list => |_m: &ArgMatches, _ctx: &CommandContext| CommandResult::Ok(json!({"ok": true}))
+            list => |_m: &ArgMatches, _ctx: &CommandContext| Ok(Output::Render(json!({"ok": true})))
         };
 
         let builder = configure(GroupBuilder::new());
@@ -242,8 +242,8 @@ mod tests {
     #[test]
     fn test_dispatch_multiple_commands() {
         let configure = dispatch! {
-            list => |_m: &ArgMatches, _ctx: &CommandContext| CommandResult::Ok(json!({})),
-            show => |_m: &ArgMatches, _ctx: &CommandContext| CommandResult::Ok(json!({})),
+            list => |_m: &ArgMatches, _ctx: &CommandContext| Ok(Output::Render(json!({}))),
+            show => |_m: &ArgMatches, _ctx: &CommandContext| Ok(Output::Render(json!({}))),
         };
 
         let builder = configure(GroupBuilder::new());
@@ -255,7 +255,7 @@ mod tests {
     fn test_dispatch_nested_group() {
         let configure = dispatch! {
             db: {
-                migrate => |_m: &ArgMatches, _ctx: &CommandContext| CommandResult::Ok(json!({})),
+                migrate => |_m: &ArgMatches, _ctx: &CommandContext| Ok(Output::Render(json!({}))),
             },
         };
 
@@ -267,7 +267,7 @@ mod tests {
     fn test_dispatch_command_with_template() {
         let configure = dispatch! {
             list => {
-                handler: |_m: &ArgMatches, _ctx: &CommandContext| CommandResult::Ok(json!({})),
+                handler: |_m: &ArgMatches, _ctx: &CommandContext| Ok(Output::Render(json!({}))),
                 template: "custom.j2",
             },
         };
@@ -279,16 +279,16 @@ mod tests {
     #[test]
     fn test_dispatch_mixed() {
         let configure = dispatch! {
-            version => |_m: &ArgMatches, _ctx: &CommandContext| CommandResult::Ok(json!({"v": "1.0"})),
+            version => |_m: &ArgMatches, _ctx: &CommandContext| Ok(Output::Render(json!({"v": "1.0"}))),
             db: {
-                migrate => |_m: &ArgMatches, _ctx: &CommandContext| CommandResult::Ok(json!({})),
+                migrate => |_m: &ArgMatches, _ctx: &CommandContext| Ok(Output::Render(json!({}))),
                 backup => {
-                    handler: |_m: &ArgMatches, _ctx: &CommandContext| CommandResult::Ok(json!({})),
+                    handler: |_m: &ArgMatches, _ctx: &CommandContext| Ok(Output::Render(json!({}))),
                     template: "backup.j2",
                 },
             },
             cache: {
-                clear => |_m: &ArgMatches, _ctx: &CommandContext| CommandResult::Ok(json!({})),
+                clear => |_m: &ArgMatches, _ctx: &CommandContext| Ok(Output::Render(json!({}))),
             },
         };
 
@@ -303,8 +303,8 @@ mod tests {
         let configure = dispatch! {
             app: {
                 config: {
-                    get => |_m: &ArgMatches, _ctx: &CommandContext| CommandResult::Ok(json!({})),
-                    set => |_m: &ArgMatches, _ctx: &CommandContext| CommandResult::Ok(json!({})),
+                    get => |_m: &ArgMatches, _ctx: &CommandContext| Ok(Output::Render(json!({}))),
+                    set => |_m: &ArgMatches, _ctx: &CommandContext| Ok(Output::Render(json!({}))),
                 },
             },
         };
