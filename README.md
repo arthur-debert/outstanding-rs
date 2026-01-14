@@ -1,138 +1,118 @@
-## Create Oustanding Shell Applications for free
+# Outstanding
 
-Outstanding is a rust library for building finely crafted non-interactive command line applications.
+**Create Outstanding Shell Applications in Rust.**
 
-## The Use Case
+Outstanding is a library for building finely crafted, non-interactive command line applications. It enforces a clean separation between your application logic and its presentation, ensuring your CLI remains testable and maintainable as it grows.
 
-If you're building your cli in Rust, chances are the core logic is not the regular small time string replacements of shell scripts, but rather a significan anount of logic or processing.
+## The Problem
 
-Your time should be spent on building the core logic, not on pampering the shell interface. You're likely using clap or another arg parsing library, which is great . From that onwards, you're responsible for the glue code between logic and output formatting. Rich and complex applications benefit from equally rich outputs, that present information dense results in a clear and consise manner.
+If you're building a CLI in Rust, your time should be spent on core logic, not fiddling with `print!` statements and ANSI escape codes.
 
-While simple, with time, print statements creep in , and before you know it, your application can't be unit tested, and you're either ignoriing tests, or integration testings while reverse engineering the output formatting. Likewise formatted term output is hard to write and iterate on, hence you're likely delivering subpar user experiences.
+As applications grow, mixing logic with output formatting leads to:
+- **Untestable Code**: You can't unit test logic that writes directly to stdout.
+- **Fragile Integration Tests**: Parsing text output to verify correctness is brittle.
+- **Inconsistent UX**: Styling inconsistencies creep in over time.
 
-## Oustanding Apps
+## The Solution
 
-Oustanding is a framework that takes on from a clap defined cli definition, and handles all the boiler plate for you: - Effectively enforcing logic and presentation seperation, keeping your code testable and maintanable. - Dispatching cli input from declaratively defined logic handlers and their command names. - Running your application logic , a pure rust function, with rich rust data types and regular rust restult data types . - Rendering the results of the command through outstanding expressive rendering layer: - Rich Term Support:
+Outstanding handles the boilerplate between your `clap` definition and your terminal output.
 
-In short, oustanding gives you a set of primitives so you can focus on your app, while still easily offering a finely crafter user experience, helping your codebase to remanin well structured, leading to easier to write and maiain, both the application's core logic and it's user interface.
+1.  **Define Logic**: Write pure functions that receive arguments and return data.
+2.  **Define Presentation**: Use templates (MiniJinja) and styles (YAML) to control appearance.
+3.  **Let Framework Handle the Rest**: Outstanding runs the pipeline, applying themes, formatting tables, or serializing to JSON/YAML based on flags.
 
-It's job is to ask: tell me where you logic is,  want it  outputs(templates), how it should look (styles), and I'll take care of the rest. By giving you optimal tools for rich term output , templates and styles, in a few lines of code and you're done.
+## Features
 
-## How Oustanding Works
+- **Application Life Cicle**:
+    -   **Formal Logic/Presentation Split**: Decouples your Rust code from terminal formatting.
+    - **End to end handling**: from clap arg parsing, to running the logic handlers and finally rendering it's results with rich output.
+    - **Declarative API** for annotating your functions.
+    - **Auto Dispatch** from cli input to the execution life cicle
+- **Rendering Layer**:
+    -   **File-Based Templates**: Uses [MiniJinja](https://github.com/mitsuhiko/minijinja) for powerful templating, including partials for reuse. See [Rendering System](docs/guides/rendering-system.md).
+    -   **Rich Styling**: Integrates stylesheets with semantic tagging (e.g., `[title]{{ post.title }}[/title]`) for maintainable designs.
+    -   **Adaptive Themes**: Supports [light/dark modes](docs/guides/rendering-system.md#adaptive-styles) and switchable themes automatically.
+    -   **Live Reloading**: Edit templates and styles while your app runs [during development](docs/guides/rendering-system.md#hot-reloading) for rapid iteration.
+    -   **Smart Output**: Delivers [rich terminal output](docs/guides/output-modes.md) that gracefully degrades to plain text based on capabilities.
+    -   **Automatic Structured Data**: Get JSON, CSV, and YAML output for free by leveraging your pure data structures. See [Structured Modes](docs/guides/output-modes.md#structured-modes).
 
-Conceptually, oustanding core has the low level primitives that support the functionality.  The clap integration let's you leverage your existing clap definition, and map commands to rust functions.
+## Quick Start
 
-While a significant part of the value comes from the integration and convinence in leveraging the default oustanding model, low level parts are exposed,  so you can use only the template rendered, or the template file based registry, or the auto dispatching layer. The higher livel features, like auto dispatch, is written as syntatic sugar on top of the lowel level ones., so you can pick and choose what parts you want to use.
-
-This means that that you can still use only the rendering layer, template registry and so forth.
-
-## The General Picture
-
-### 1\. The Execution Flow
-
-``` text
-Input Parsing (clap) -> Dispatcher -> Logic Handler -> Rendering
-```
-
-The flow is responsible from taking the cli input, parsing it with clap, dispatching to the correct logic handler, running the logic handler, and rendering the result. calling any hooks along the way.  This is a significant amount of boiler plate saved.
-
-With workflow, once you have the clap definition, all you need is point to the logic handlers and write the output templates.
-
-### 2\. The Rendering Layer
-
-The rendering layer is design to offer best-in-class developer workflow, with content, styling and code separation and hot releading during development.
-
-#### 1\. Templates
-
-The templating use minijijnja, which sports the familiar jinja sytax, a rich feature set which includes partials  and customizable filters and macros.
-
-``` bbcode
-[title]{{post.title}}[/title]
-```
-
-The combination offers a robust and easy to adopt syntax, with the ergonomics of style markup .
-
-#### 2\. Styles
-
-##### Styles can be defined in yaml files.  At their core, , they are represented as console::Style structs, but have two additional features: aliasing and adaptative attributes
-
-###### 2.1 Aliasing
-
-Aliasing allows for styles that simply refer to other sytles.  This allwos application writers to define semantic styles in code and templates, letting the presentation layer indirectly handle it, while keeping consistent styling between application components, views and so on.
-
-For example you may have a title and commit-message styles, that both refer to the same actual values, but this allows you to alter each or both at your leisure without changing the code or templates.
-
-###### 2.2 Adaptative Attributes
-
-Adaptative attributes allow styles to hold different values depending on light and dark modes.
-
-**What it looks like**:
-
-```yaml
-                    title:
-                        fg: 
-                            light: "black"
-                            dark: "white"
-                        bg: "white"
-                    commit-message: title 
-
-```
-
-## Example Todo List Command
-
-In this example, our task management app.
+### 1. The Logic
+Write a handler that takes `ArgMatches` and returns serializable data.
 
 ```rust
-// The Data Model:
-// Your application level data structures, annotated for serialization:
-#[derive(Serialize, Clone)]
-#[serde(rename_all = "lowercase")]
-pub enum Status {
-    Pending,
-    Done,
-}
-
-#[derive(Serialize, Clone)]
-pub struct Todo {
-    pub title: String,
-    pub status: Status,
-}
-
 #[derive(Serialize)]
-pub struct TodoResult {
-    pub message: Option<String>,
-    pub todos: Vec<Todo>,
+struct TodoResult {
+    todos: Vec<Todo>,
 }
 
-// The application logic for list:
-#[dispatch]
-pub fn list(_matches: &ArgMatches, _ctx: &CommandContext) -> HandlerResult<TodoResult> {
+fn list_handler(_m: &ArgMatches, _ctx: &CommandContext) -> HandlerResult<TodoResult> {
     let todos = storage::list()?;
-
-    Ok(Output::Render(TodoResult {
-        message: None,
-        todos,
-    }))
+    Ok(Output::Render(TodoResult { todos }))
 }
-
-// Your file system:
-// src/
-//     main.rs
-//     ...
-//     templates/
-//         list.jinja
-//         add.jinja  # each command has its own template, by default name-matched
-//     styles/
-//         default.yml
-
-// Setup and configure outstanding:
-let app = App::builder()
-    .templates(embed_templates!("src/templates"))  // Embeds all .jinja/.j2/.txt files
-    .styles(embed_styles!("src/styles"))           // Embeds all .yaml/.yml files
-    .default_theme("default")                      // Set the default theme
-    .commands(Commands::dispatch_config())         // Generated auto dispatch
-    .build()?;
-
-// Once configured, auto dispatch handles the cli input
-app.run(Cli::command(), std::env::args());
 ```
+
+### 2. The Presentation
+Write a template (`list.jinja`) with semantic style tags.
+
+```jinja
+[title]My Todos[/title]
+{% for todo in todos %}
+  - {{ todo.title }} ([status]{{ todo.status }}[/status])
+{% endfor %}
+```
+
+### 3. The Setup
+Wire it up in your `main.rs`.
+
+```rust
+fn main() -> Result<(), Box<dyn std::error::Error>> {
+    let app = App::builder()
+        .command("list", list_handler, "list.jinja")
+        .templates(embed_templates!("src/templates"))
+        .styles(embed_styles!("src/styles"))
+        .build()?;
+
+    app.run(Cli::command(), std::env::args());
+    Ok(())
+}
+```
+
+## Installation
+
+Add `outstanding` to your `Cargo.toml`:
+
+```bash
+cargo add outstanding
+```
+
+Ensure you have `outstanding-macros` if you want to use the embedding features.
+
+## Documentation
+
+Learn more about building with Outstanding:
+
+-   **Guides**
+    -   [App Configuration](docs/guides/app-configuration.md)
+    -   [Execution Model](docs/guides/execution-model.md)
+    -   [Handler Contract](docs/guides/handler-contract.md)
+    -   [Rendering System](docs/guides/rendering-system.md)
+    -   [Output Modes](docs/guides/output-modes.md)
+    -   [Topics System](docs/guides/topics-system.md)
+
+-   **How-Tos**
+    -   [Partial Adoption](docs/howtos/partial-adoption.md)
+    -   [Format Tables](docs/howtos/tables.md)
+    -   [Render Only](docs/howtos/render-only.md)
+
+## Contributing
+
+Contributions are very welcome , be it a feature request, a question and even feedback.
+Use the issue tracker to report bugs and feature requests.
+
+For code contributions, the standar practices apply : tests for changed code, passing test suite, Pull Request with code and motivation.
+
+## License
+
+MIT 
