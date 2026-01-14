@@ -3,6 +3,5 @@ resolver = "2"
 members = [
     "crates/outstanding",
     "crates/outstanding-bbparser",
-    "crates/outstanding-clap",
     "crates/outstanding-macros",
 ]
