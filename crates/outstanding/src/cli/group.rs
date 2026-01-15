@@ -17,6 +17,321 @@ use crate::cli::handler::{
 };
 use crate::cli::hooks::Hooks;
 
+// ============================================================================
+// CommandRecipe - Deferred dispatch closure creation
+// ============================================================================
+
+/// A recipe for creating a dispatch closure.
+///
+/// Unlike `ErasedCommandConfig::register` which consumes self, this trait
+/// allows creating dispatch closures on demand without consuming the recipe.
+/// This enables deferred closure creation where the theme and context_registry
+/// are captured at dispatch time rather than at registration time.
+pub(crate) trait CommandRecipe: Send + Sync {
+    /// Returns the template for this command, if explicitly set.
+    #[allow(dead_code)]
+    fn template(&self) -> Option<&str>;
+
+    /// Returns hooks for this command, if set.
+    #[allow(dead_code)]
+    fn hooks(&self) -> Option<&Hooks>;
+
+    /// Takes ownership of hooks (for registration with AppBuilder).
+    #[allow(dead_code)]
+    fn take_hooks(&mut self) -> Option<Hooks>;
+
+    /// Creates a dispatch closure with the given configuration.
+    ///
+    /// This can be called multiple times (unlike ErasedCommandConfig::register).
+    fn create_dispatch(
+        &self,
+        template: &str,
+        context_registry: &ContextRegistry,
+        theme: &Theme,
+    ) -> DispatchFn;
+}
+
+/// Recipe for closure-based command handlers.
+pub(crate) struct ClosureRecipe<F, T>
+where
+    F: Fn(&ArgMatches, &CommandContext) -> HandlerResult<T> + Send + Sync + 'static,
+    T: Serialize + Send + Sync + 'static,
+{
+    handler: Arc<FnHandler<F, T>>,
+    template: Option<String>,
+    hooks: Option<Hooks>,
+}
+
+impl<F, T> ClosureRecipe<F, T>
+where
+    F: Fn(&ArgMatches, &CommandContext) -> HandlerResult<T> + Send + Sync + 'static,
+    T: Serialize + Send + Sync + 'static,
+{
+    pub fn new(handler: FnHandler<F, T>) -> Self {
+        Self {
+            handler: Arc::new(handler),
+            template: None,
+            hooks: None,
+        }
+    }
+
+    #[allow(dead_code)]
+    pub fn with_template(mut self, template: String) -> Self {
+        self.template = Some(template);
+        self
+    }
+
+    #[allow(dead_code)]
+    pub fn with_hooks(mut self, hooks: Hooks) -> Self {
+        self.hooks = Some(hooks);
+        self
+    }
+}
+
+impl<F, T> CommandRecipe for ClosureRecipe<F, T>
+where
+    F: Fn(&ArgMatches, &CommandContext) -> HandlerResult<T> + Send + Sync + 'static,
+    T: Serialize + Send + Sync + 'static,
+{
+    fn template(&self) -> Option<&str> {
+        self.template.as_deref()
+    }
+
+    fn hooks(&self) -> Option<&Hooks> {
+        self.hooks.as_ref()
+    }
+
+    fn take_hooks(&mut self) -> Option<Hooks> {
+        self.hooks.take()
+    }
+
+    fn create_dispatch(
+        &self,
+        template: &str,
+        context_registry: &ContextRegistry,
+        theme: &Theme,
+    ) -> DispatchFn {
+        let handler = self.handler.clone();
+        let template = template.to_string();
+        let context_registry = context_registry.clone();
+        let theme = theme.clone();
+
+        Arc::new(
+            move |matches: &ArgMatches, ctx: &CommandContext, hooks: Option<&Hooks>| {
+                let result = handler.handle(matches, ctx);
+
+                match result {
+                    Ok(HandlerOutput::Render(data)) => {
+                        let mut json_data = serde_json::to_value(&data)
+                            .map_err(|e| format!("Failed to serialize handler result: {}", e))?;
+
+                        if let Some(hooks) = hooks {
+                            json_data = hooks
+                                .run_post_dispatch(matches, ctx, json_data)
+                                .map_err(|e| format!("Hook error: {}", e))?;
+                        }
+
+                        let render_ctx = RenderContext::new(
+                            ctx.output_mode,
+                            get_terminal_width(),
+                            &theme,
+                            &json_data,
+                        );
+
+                        let output = render_auto_with_context(
+                            &template,
+                            &json_data,
+                            &theme,
+                            ctx.output_mode,
+                            &context_registry,
+                            &render_ctx,
+                        )
+                        .map_err(|e| e.to_string())?;
+                        Ok(DispatchOutput::Text(output))
+                    }
+                    Err(e) => Err(format!("Error: {}", e)),
+                    Ok(HandlerOutput::Silent) => Ok(DispatchOutput::Silent),
+                    Ok(HandlerOutput::Binary { data, filename }) => {
+                        Ok(DispatchOutput::Binary(data, filename))
+                    }
+                }
+            },
+        )
+    }
+}
+
+/// Recipe for struct-based command handlers.
+pub(crate) struct StructRecipe<H, T>
+where
+    H: Handler<Output = T> + Send + Sync + 'static,
+    T: Serialize + Send + Sync + 'static,
+{
+    handler: Arc<H>,
+    #[allow(dead_code)]
+    template: Option<String>,
+    hooks: Option<Hooks>,
+    _phantom: std::marker::PhantomData<T>,
+}
+
+impl<H, T> StructRecipe<H, T>
+where
+    H: Handler<Output = T> + Send + Sync + 'static,
+    T: Serialize + Send + Sync + 'static,
+{
+    pub fn new(handler: H) -> Self {
+        Self {
+            handler: Arc::new(handler),
+            template: None,
+            hooks: None,
+            _phantom: std::marker::PhantomData,
+        }
+    }
+
+    #[allow(dead_code)]
+    pub fn with_template(mut self, template: String) -> Self {
+        self.template = Some(template);
+        self
+    }
+
+    #[allow(dead_code)]
+    pub fn with_hooks(mut self, hooks: Hooks) -> Self {
+        self.hooks = Some(hooks);
+        self
+    }
+}
+
+impl<H, T> CommandRecipe for StructRecipe<H, T>
+where
+    H: Handler<Output = T> + Send + Sync + 'static,
+    T: Serialize + Send + Sync + 'static,
+{
+    fn template(&self) -> Option<&str> {
+        self.template.as_deref()
+    }
+
+    fn hooks(&self) -> Option<&Hooks> {
+        self.hooks.as_ref()
+    }
+
+    fn take_hooks(&mut self) -> Option<Hooks> {
+        self.hooks.take()
+    }
+
+    fn create_dispatch(
+        &self,
+        template: &str,
+        context_registry: &ContextRegistry,
+        theme: &Theme,
+    ) -> DispatchFn {
+        let handler = self.handler.clone();
+        let template = template.to_string();
+        let context_registry = context_registry.clone();
+        let theme = theme.clone();
+
+        Arc::new(
+            move |matches: &ArgMatches, ctx: &CommandContext, hooks: Option<&Hooks>| {
+                let result = handler.handle(matches, ctx);
+
+                match result {
+                    Ok(HandlerOutput::Render(data)) => {
+                        let mut json_data = serde_json::to_value(&data)
+                            .map_err(|e| format!("Failed to serialize handler result: {}", e))?;
+
+                        if let Some(hooks) = hooks {
+                            json_data = hooks
+                                .run_post_dispatch(matches, ctx, json_data)
+                                .map_err(|e| format!("Hook error: {}", e))?;
+                        }
+
+                        let render_ctx = RenderContext::new(
+                            ctx.output_mode,
+                            get_terminal_width(),
+                            &theme,
+                            &json_data,
+                        );
+
+                        let output = render_auto_with_context(
+                            &template,
+                            &json_data,
+                            &theme,
+                            ctx.output_mode,
+                            &context_registry,
+                            &render_ctx,
+                        )
+                        .map_err(|e| e.to_string())?;
+                        Ok(DispatchOutput::Text(output))
+                    }
+                    Err(e) => Err(format!("Error: {}", e)),
+                    Ok(HandlerOutput::Silent) => Ok(DispatchOutput::Silent),
+                    Ok(HandlerOutput::Binary { data, filename }) => {
+                        Ok(DispatchOutput::Binary(data, filename))
+                    }
+                }
+            },
+        )
+    }
+}
+
+/// Wrapper around ErasedCommandConfig that implements CommandRecipe.
+///
+/// This allows group-registered commands to use the deferred closure pattern.
+/// The inner config is wrapped in a Mutex to allow interior mutability.
+pub(crate) struct ErasedConfigRecipe {
+    config: std::sync::Mutex<Option<Box<dyn ErasedCommandConfig + Send>>>,
+    #[allow(dead_code)]
+    template: Option<String>,
+    #[allow(dead_code)]
+    hooks: std::sync::Mutex<Option<Hooks>>,
+}
+
+impl ErasedConfigRecipe {
+    /// Creates a new recipe from an existing boxed handler (for group registration).
+    pub fn from_handler(mut handler: Box<dyn ErasedCommandConfig + Send>) -> Self {
+        let template = handler.template().map(String::from);
+        let hooks = handler.take_hooks();
+        Self {
+            config: std::sync::Mutex::new(Some(handler)),
+            template,
+            hooks: std::sync::Mutex::new(hooks),
+        }
+    }
+}
+
+impl CommandRecipe for ErasedConfigRecipe {
+    fn template(&self) -> Option<&str> {
+        self.template.as_deref()
+    }
+
+    fn hooks(&self) -> Option<&Hooks> {
+        // Can't return reference through mutex, but hooks are extracted during construction
+        None
+    }
+
+    fn take_hooks(&mut self) -> Option<Hooks> {
+        self.hooks.lock().unwrap().take()
+    }
+
+    fn create_dispatch(
+        &self,
+        template: &str,
+        context_registry: &ContextRegistry,
+        theme: &Theme,
+    ) -> DispatchFn {
+        let config = self
+            .config
+            .lock()
+            .unwrap()
+            .take()
+            .expect("ErasedConfigRecipe::create_dispatch called more than once");
+        config.register(
+            "",
+            template.to_string(),
+            context_registry.clone(),
+            theme.clone(),
+        )
+    }
+}
+
 /// Configuration for a single command.
 ///
 /// Used internally to collect handler, template, and hooks before
@@ -122,6 +437,7 @@ pub(crate) trait ErasedCommandConfig {
         path: &str,
         template: String,
         context_registry: ContextRegistry,
+        theme: Theme,
     ) -> DispatchFn;
 }
 
@@ -339,6 +655,7 @@ where
         _path: &str,
         template: String,
         context_registry: ContextRegistry,
+        theme: Theme,
     ) -> DispatchFn {
         let handler = Arc::new(self.handler);
 
@@ -357,7 +674,6 @@ where
                                 .map_err(|e| format!("Hook error: {}", e))?;
                         }
 
-                        let theme = Theme::new();
                         let render_ctx = RenderContext::new(
                             ctx.output_mode,
                             get_terminal_width(),
@@ -421,6 +737,7 @@ where
         _path: &str,
         template: String,
         context_registry: ContextRegistry,
+        theme: Theme,
     ) -> DispatchFn {
         let handler = Arc::new(self.handler);
 
@@ -439,7 +756,6 @@ where
                                 .map_err(|e| format!("Hook error: {}", e))?;
                         }
 
-                        let theme = Theme::new();
                         let render_ctx = RenderContext::new(
                             ctx.output_mode,
                             get_terminal_width(),

@@ -17,12 +17,20 @@ use crate::setup::SetupError;
 use crate::topics::TopicRegistry;
 use crate::TemplateRegistry;
 use crate::{OutputMode, Theme};
+use std::cell::RefCell;
 use std::collections::HashMap;
 use std::path::PathBuf;
 
 use super::app::App;
 use super::dispatch::DispatchFn;
+use super::group::CommandRecipe;
 use super::hooks::Hooks;
+
+/// Stores a pending command recipe along with its resolved template.
+struct PendingCommand {
+    recipe: Box<dyn CommandRecipe>,
+    template: String,
+}
 
 /// Builder for constructing an App instance.
 ///
@@ -72,7 +80,10 @@ pub struct AppBuilder {
     /// Template registry (built from embedded templates)
     pub(crate) template_registry: Option<TemplateRegistry>,
     pub(crate) default_theme_name: Option<String>,
-    pub(crate) commands: HashMap<String, DispatchFn>,
+    /// Pending commands - closures are created lazily at dispatch time
+    pending_commands: RefCell<HashMap<String, PendingCommand>>,
+    /// Finalized dispatch functions (lazily created from pending_commands)
+    finalized_commands: RefCell<Option<HashMap<String, DispatchFn>>>,
     pub(crate) command_hooks: HashMap<String, Hooks>,
     pub(crate) context_registry: ContextRegistry,
     pub(crate) template_dir: Option<PathBuf>,
@@ -100,13 +111,58 @@ impl AppBuilder {
             stylesheet_registry: None,
             template_registry: None,
             default_theme_name: None,
-            commands: HashMap::new(),
+            pending_commands: RefCell::new(HashMap::new()),
+            finalized_commands: RefCell::new(None),
             command_hooks: HashMap::new(),
             context_registry: ContextRegistry::new(),
             template_dir: None,
             template_ext: ".j2".to_string(),
             default_command: None,
         }
+    }
+
+    /// Ensures all pending commands have been finalized into dispatch functions.
+    ///
+    /// This method is called lazily on first dispatch. It creates the actual
+    /// dispatch closures from the stored recipes, capturing the current theme
+    /// and context registry. This deferred creation allows `.theme()` to be
+    /// called after `.command()` without affecting the result.
+    fn ensure_commands_finalized(&self) {
+        // Already finalized?
+        if self.finalized_commands.borrow().is_some() {
+            return;
+        }
+
+        // Get the theme (use default if not set)
+        let theme = self.theme.clone().unwrap_or_default();
+        let context_registry = &self.context_registry;
+
+        // Build dispatch functions from recipes
+        let mut commands = HashMap::new();
+        for (path, pending) in self.pending_commands.borrow().iter() {
+            let dispatch =
+                pending
+                    .recipe
+                    .create_dispatch(&pending.template, context_registry, &theme);
+            commands.insert(path.clone(), dispatch);
+        }
+
+        *self.finalized_commands.borrow_mut() = Some(commands);
+    }
+
+    /// Returns the finalized commands map, creating it if necessary.
+    fn get_commands(&self) -> std::cell::Ref<'_, HashMap<String, DispatchFn>> {
+        self.ensure_commands_finalized();
+        std::cell::Ref::map(self.finalized_commands.borrow(), |opt| {
+            opt.as_ref()
+                .expect("finalized_commands should be Some after ensure_commands_finalized")
+        })
+    }
+
+    /// Test helper: Check if a command path is registered.
+    #[cfg(test)]
+    pub(crate) fn has_command(&self, path: &str) -> bool {
+        self.pending_commands.borrow().contains_key(path)
     }
 
     /// Builds the App instance.

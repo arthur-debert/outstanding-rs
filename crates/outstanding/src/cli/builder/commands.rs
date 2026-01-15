@@ -6,19 +6,14 @@
 //! - Command groups for nested hierarchies
 //! - Hook registration
 
-use crate::context::RenderContext;
-use crate::{render_auto_with_context, Theme};
 use clap::ArgMatches;
 use serde::Serialize;
-use std::sync::Arc;
 
-use super::AppBuilder;
-use crate::cli::app::get_terminal_width;
-use crate::cli::dispatch::{DispatchFn, DispatchOutput};
-use crate::cli::group::{CommandConfig, GroupBuilder, GroupEntry};
-use crate::cli::handler::{
-    CommandContext, FnHandler, Handler, HandlerResult, Output as HandlerOutput,
+use super::{AppBuilder, PendingCommand};
+use crate::cli::group::{
+    ClosureRecipe, CommandConfig, ErasedConfigRecipe, GroupBuilder, GroupEntry, StructRecipe,
 };
+use crate::cli::handler::{CommandContext, FnHandler, Handler, HandlerResult};
 use crate::cli::hooks::Hooks;
 
 impl AppBuilder {
@@ -71,7 +66,7 @@ impl AppBuilder {
         C: FnOnce(CommandConfig<FnHandler<F, T>>) -> CommandConfig<FnHandler<F, T>>,
     {
         let config = CommandConfig::new(FnHandler::new(handler));
-        let config = configure(config);
+        let mut config = configure(config);
 
         // Resolve template
         let template = config
@@ -80,56 +75,22 @@ impl AppBuilder {
             .unwrap_or_else(|| self.resolve_template(path));
 
         // Register hooks if present
-        if let Some(hooks) = config.hooks {
+        if let Some(hooks) = config.hooks.take() {
             self.command_hooks.insert(path.to_string(), hooks);
         }
 
-        // Register the command
-        let context_registry = self.context_registry.clone();
-        let dispatch: DispatchFn = Arc::new(
-            move |matches: &ArgMatches, ctx: &CommandContext, hooks: Option<&Hooks>| {
-                let result = config.handler.handle(matches, ctx);
+        // Create a recipe for deferred closure creation using the handler
+        let recipe = ClosureRecipe::new(config.handler);
 
-                match result {
-                    Ok(HandlerOutput::Render(data)) => {
-                        let mut json_data = serde_json::to_value(&data)
-                            .map_err(|e| format!("Failed to serialize handler result: {}", e))?;
-
-                        if let Some(hooks) = hooks {
-                            json_data = hooks
-                                .run_post_dispatch(matches, ctx, json_data)
-                                .map_err(|e| format!("Hook error: {}", e))?;
-                        }
-
-                        let theme = Theme::new();
-                        let render_ctx = RenderContext::new(
-                            ctx.output_mode,
-                            get_terminal_width(),
-                            &theme,
-                            &json_data,
-                        );
-
-                        let output = render_auto_with_context(
-                            &template,
-                            &json_data,
-                            &theme,
-                            ctx.output_mode,
-                            &context_registry,
-                            &render_ctx,
-                        )
-                        .map_err(|e| e.to_string())?;
-                        Ok(DispatchOutput::Text(output))
-                    }
-                    Err(e) => Err(format!("Error: {}", e)),
-                    Ok(HandlerOutput::Silent) => Ok(DispatchOutput::Silent),
-                    Ok(HandlerOutput::Binary { data, filename }) => {
-                        Ok(DispatchOutput::Binary(data, filename))
-                    }
-                }
+        // Store pending command - closure will be created at dispatch time
+        self.pending_commands.borrow_mut().insert(
+            path.to_string(),
+            PendingCommand {
+                recipe: Box::new(recipe),
+                template,
             },
         );
 
-        self.commands.insert(path.to_string(), dispatch);
         self
     }
 
@@ -151,9 +112,17 @@ impl AppBuilder {
                         self.command_hooks.insert(path.clone(), hooks);
                     }
 
-                    // Register the dispatch function
-                    let dispatch = handler.register(&path, template, self.context_registry.clone());
-                    self.commands.insert(path, dispatch);
+                    // Create a recipe for deferred closure creation
+                    let recipe = ErasedConfigRecipe::from_handler(handler);
+
+                    // Store pending command
+                    self.pending_commands.borrow_mut().insert(
+                        path,
+                        PendingCommand {
+                            recipe: Box::new(recipe),
+                            template,
+                        },
+                    );
                 }
                 GroupEntry::Group { builder: nested } => {
                     self.register_group(&path, nested);
@@ -252,63 +221,25 @@ impl AppBuilder {
     ///     .command_handler("list", ListHandler { db }, "{% for item in items %}...")
     ///     .parse(cmd);
     /// ```
-    pub fn command_handler<H, T>(mut self, path: &str, handler: H, template: &str) -> Self
+    pub fn command_handler<H, T>(self, path: &str, handler: H, template: &str) -> Self
     where
-        H: Handler<Output = T> + 'static,
-        T: Serialize + 'static,
+        H: Handler<Output = T> + Send + Sync + 'static,
+        T: Serialize + Send + Sync + 'static,
     {
         let template = template.to_string();
-        let handler = Arc::new(handler);
-        let context_registry = self.context_registry.clone();
 
-        let dispatch: DispatchFn = Arc::new(
-            move |matches: &ArgMatches, ctx: &CommandContext, hooks: Option<&Hooks>| {
-                let result = handler.handle(matches, ctx);
+        // Create a recipe for deferred closure creation
+        let recipe = StructRecipe::new(handler);
 
-                match result {
-                    Ok(HandlerOutput::Render(data)) => {
-                        // Convert to serde_json::Value for post-dispatch hooks
-                        let mut json_data = serde_json::to_value(&data)
-                            .map_err(|e| format!("Failed to serialize handler result: {}", e))?;
-
-                        // Run post-dispatch hooks if present
-                        if let Some(hooks) = hooks {
-                            json_data = hooks
-                                .run_post_dispatch(matches, ctx, json_data)
-                                .map_err(|e| format!("Hook error: {}", e))?;
-                        }
-
-                        // Build render context for context providers
-                        let theme = Theme::new();
-                        let render_ctx = RenderContext::new(
-                            ctx.output_mode,
-                            get_terminal_width(),
-                            &theme,
-                            &json_data,
-                        );
-
-                        // Render the (potentially modified) data with context
-                        let output = render_auto_with_context(
-                            &template,
-                            &json_data,
-                            &theme,
-                            ctx.output_mode,
-                            &context_registry,
-                            &render_ctx,
-                        )
-                        .map_err(|e| e.to_string())?;
-                        Ok(DispatchOutput::Text(output))
-                    }
-                    Err(e) => Err(format!("Error: {}", e)),
-                    Ok(HandlerOutput::Silent) => Ok(DispatchOutput::Silent),
-                    Ok(HandlerOutput::Binary { data, filename }) => {
-                        Ok(DispatchOutput::Binary(data, filename))
-                    }
-                }
+        // Store pending command - closure will be created at dispatch time
+        self.pending_commands.borrow_mut().insert(
+            path.to_string(),
+            PendingCommand {
+                recipe: Box::new(recipe),
+                template,
             },
         );
 
-        self.commands.insert(path.to_string(), dispatch);
         self
     }
 
@@ -379,7 +310,7 @@ mod tests {
             "Items: {{ items }}",
         );
 
-        assert!(builder.commands.contains_key("list"));
+        assert!(builder.has_command("list"));
     }
 
     #[test]
@@ -559,8 +490,8 @@ mod tests {
                 })
             });
 
-        assert!(builder.commands.contains_key("db.migrate"));
-        assert!(builder.commands.contains_key("cache.clear"));
+        assert!(builder.has_command("db.migrate"));
+        assert!(builder.has_command("cache.clear"));
     }
 
     #[test]
@@ -579,7 +510,7 @@ mod tests {
                 })
             });
 
-        assert!(builder.commands.contains_key("version"));
-        assert!(builder.commands.contains_key("db.migrate"));
+        assert!(builder.has_command("version"));
+        assert!(builder.has_command("db.migrate"));
     }
 }

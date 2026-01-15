@@ -11,12 +11,12 @@ use crate::{write_binary_output, write_output, OutputDestination, OutputMode};
 use clap::{Arg, ArgAction, ArgMatches, Command};
 use std::path::PathBuf;
 
-use super::AppBuilder;
+use super::{AppBuilder, PendingCommand};
 use crate::cli::dispatch::{
     extract_command_path, get_deepest_matches, has_subcommand, insert_default_command,
     DispatchOutput,
 };
-use crate::cli::group::{GroupBuilder, GroupEntry};
+use crate::cli::group::{ErasedConfigRecipe, GroupBuilder, GroupEntry};
 use crate::cli::handler::{CommandContext, RunResult};
 use crate::cli::hooks::RenderedOutput;
 
@@ -54,7 +54,7 @@ impl AppBuilder {
             self.default_command = Some(default_cmd.clone());
         }
 
-        // Register all entries from the group builder
+        // Register all entries from the group builder with deferred closure creation
         for (name, entry) in builder.entries {
             match entry {
                 GroupEntry::Command { mut handler } => {
@@ -67,8 +67,17 @@ impl AppBuilder {
                         self.command_hooks.insert(name.clone(), hooks);
                     }
 
-                    let dispatch = handler.register(&name, template, self.context_registry.clone());
-                    self.commands.insert(name, dispatch);
+                    // Create a recipe for deferred closure creation
+                    let recipe = ErasedConfigRecipe::from_handler(handler);
+
+                    // Store pending command
+                    self.pending_commands.borrow_mut().insert(
+                        name,
+                        PendingCommand {
+                            recipe: Box::new(recipe),
+                            template,
+                        },
+                    );
                 }
                 GroupEntry::Group { builder: nested } => {
                     self.register_group(&name, nested);
@@ -91,12 +100,16 @@ impl AppBuilder {
     ///
     /// Hook errors abort execution and return the error as handled output.
     pub fn dispatch(&self, matches: ArgMatches, output_mode: OutputMode) -> RunResult {
+        // Ensure commands are finalized (creates dispatch closures with current theme)
+        self.ensure_commands_finalized();
+
         // Build command path from matches
         let path = extract_command_path(&matches);
         let path_str = path.join(".");
 
         // Look up handler
-        if let Some(dispatch) = self.commands.get(&path_str) {
+        let commands = self.get_commands();
+        if let Some(dispatch) = commands.get(&path_str) {
             let ctx = CommandContext {
                 output_mode,
                 command_path: path,
@@ -402,7 +415,7 @@ mod tests {
             list => |_m, _ctx| Ok(HandlerOutput::Render(json!({"items": ["a", "b"]})))
         });
 
-        assert!(builder.commands.contains_key("list"));
+        assert!(builder.has_command("list"));
 
         let cmd = Command::new("app").subcommand(Command::new("list"));
         let matches = cmd.try_get_matches_from(["app", "list"]).unwrap();
@@ -426,9 +439,9 @@ mod tests {
             version => |_m, _ctx| Ok(HandlerOutput::Render(json!({"v": "1.0"}))),
         });
 
-        assert!(builder.commands.contains_key("db.migrate"));
-        assert!(builder.commands.contains_key("db.backup"));
-        assert!(builder.commands.contains_key("version"));
+        assert!(builder.has_command("db.migrate"));
+        assert!(builder.has_command("db.backup"));
+        assert!(builder.has_command("version"));
 
         // Test dispatch to nested command
         let cmd = Command::new("app")
@@ -512,9 +525,9 @@ mod tests {
             },
         });
 
-        assert!(builder.commands.contains_key("app.config.get"));
-        assert!(builder.commands.contains_key("app.config.set"));
-        assert!(builder.commands.contains_key("app.start"));
+        assert!(builder.has_command("app.config.get"));
+        assert!(builder.has_command("app.config.set"));
+        assert!(builder.has_command("app.start"));
     }
 
     // ============================================================================
@@ -1496,5 +1509,74 @@ mod tests {
 
         let content = std::fs::read_to_string(file_path).unwrap();
         assert_eq!(content, "99");
+    }
+
+    // ============================================================================
+    // Theme Ordering Tests (issue #31 fix)
+    // ============================================================================
+
+    #[test]
+    fn test_theme_ordering_command_before_theme() {
+        use crate::Theme;
+        use console::Style;
+        use serde_json::json;
+
+        // Create a theme with a custom "late" style
+        let theme = Theme::new().add("late", Style::new().bold());
+
+        // BUG TEST: Register command BEFORE setting theme
+        // This tests if the closure captures the theme at registration time
+        let builder = AppBuilder::new()
+            .command(
+                "list",
+                |_m, _ctx| Ok(HandlerOutput::Render(json!({"name": "test"}))),
+                "[late]{{ name }}[/late]",
+            )
+            .theme(theme); // Theme set AFTER command registration
+
+        let cmd = Command::new("app").subcommand(Command::new("list"));
+        let result = builder.dispatch_from(cmd, ["app", "--output=term", "list"]);
+
+        assert!(result.is_handled());
+        let output = result.output().unwrap();
+
+        // This will FAIL if closures capture theme at registration time
+        // (because theme was None when .command() was called)
+        assert!(
+            !output.contains("[late?]"),
+            "ORDERING BUG: Theme set after .command() was not applied - output: {}",
+            output
+        );
+    }
+
+    #[test]
+    fn test_theme_passed_to_dispatch_closure() {
+        use crate::Theme;
+        use console::Style;
+        use serde_json::json;
+
+        // Create a theme with a "test_style" tag
+        let theme = Theme::new().add("test_style", Style::new().bold());
+
+        // Build with theme set BEFORE command registration
+        let builder = AppBuilder::new().theme(theme).command(
+            "list",
+            |_m, _ctx| Ok(HandlerOutput::Render(json!({"name": "test"}))),
+            "[test_style]{{ name }}[/test_style]",
+        );
+
+        let cmd = Command::new("app").subcommand(Command::new("list"));
+        let result = builder.dispatch_from(cmd, ["app", "--output=term", "list"]);
+
+        assert!(result.is_handled());
+        let output = result.output().unwrap();
+
+        // If theme was passed correctly, there should be NO "[test_style?]" in output
+        // (unknown style indicators appear when style is not found)
+        assert!(
+            !output.contains("[test_style?]"),
+            "Theme was not passed to dispatch - output: {}",
+            output
+        );
     }
 }

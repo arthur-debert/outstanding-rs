@@ -587,6 +587,6 @@ mod tests {
             });
 
         // Verify the builder has the commands registered
-        assert!(builder.commands.contains_key("db.migrate"));
+        assert!(builder.has_command("db.migrate"));
     }
 }
