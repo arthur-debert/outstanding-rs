@@ -224,7 +224,7 @@ macro_rules! dispatch_apply_config {
 
 #[cfg(test)]
 mod tests {
-    use crate::cli::handler::{CommandContext, HandlerResult, Output};
+    use crate::cli::handler::{CommandContext, Output};
     use crate::cli::GroupBuilder;
     use clap::ArgMatches;
     use serde_json::json;

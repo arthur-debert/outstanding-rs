@@ -29,8 +29,23 @@ jobs:
           key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
           restore-keys: ${{ runner.os }}-cargo-
 
-      - name: Run tests
+      - name: Run tests (default features)
         run: cargo test --all
+
+      - name: Run tests (macros feature)
+        run: cargo test -p outstanding --features macros
+
+      - name: Run tests (clap feature)
+        run: cargo test -p outstanding --features clap
+
+      - name: Run tests (all features)
+        run: cargo test -p outstanding --all-features
 
       - name: Run doctests
         run: cargo test --doc
+
+      - name: Check formatting
+        run: cargo fmt --all -- --check
+
+      - name: Clippy (all features)
+        run: cargo clippy --all --all-features -- -D warnings

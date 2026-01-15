@@ -88,8 +88,9 @@ impl<H> CommandConfig<H> {
         F: Fn(
                 &ArgMatches,
                 &CommandContext,
-                crate::cli::hooks::Output,
-            ) -> Result<crate::cli::hooks::Output, crate::cli::hooks::HookError>
+                crate::cli::hooks::RenderedOutput,
+            )
+                -> Result<crate::cli::hooks::RenderedOutput, crate::cli::hooks::HookError>
             + Send
             + Sync
             + 'static,

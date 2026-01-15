@@ -7,6 +7,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **Fixed broken `clap` feature** - The `clap` feature was completely broken due to incorrect internal imports introduced during the rendering module reorganization:
+  - `crate::render::TemplateRegistry` → `crate::TemplateRegistry`
+  - `crate::stylesheet::StylesheetRegistry` → `crate::StylesheetRegistry`
+  - `crate::render::filters::register_filters` → `crate::rendering::template::filters::register_filters`
+  - `DispatchRenderedOutput` → `DispatchOutput`
+  - `crate::cli::hooks::Output` → `crate::cli::hooks::RenderedOutput`
+
+### Added
+
+- **Pre-commit hook for feature validation** - Added `.githooks/pre-commit` to check all feature combinations compile before commit
+- **CI feature matrix testing** - CI now tests all feature combinations (`default`, `macros`, `clap`, `all-features`) plus formatting and clippy checks
+
 ## [2.1.0] - 2026-01-15
 
 ### Changed

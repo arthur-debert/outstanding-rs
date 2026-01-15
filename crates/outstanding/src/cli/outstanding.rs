@@ -4,11 +4,11 @@
 //! outstanding with clap-based CLIs.
 
 use crate::context::{ContextProvider, ContextRegistry, RenderContext};
-use crate::render::TemplateRegistry;
 use crate::setup::SetupError;
 use crate::topics::{
     display_with_pager, render_topic, render_topics_list, Topic, TopicRegistry, TopicRenderConfig,
 };
+use crate::TemplateRegistry;
 use crate::{
     render_auto, render_auto_with_context, write_binary_output, write_output, EmbeddedStyles,
     EmbeddedTemplates, OutputDestination, OutputMode, Theme,
@@ -65,7 +65,7 @@ pub struct App {
     /// Template registry for embedded templates (None means use file-based resolution)
     pub(crate) template_registry: Option<TemplateRegistry>,
     /// Stylesheet registry for accessing themes
-    pub(crate) stylesheet_registry: Option<crate::stylesheet::StylesheetRegistry>,
+    pub(crate) stylesheet_registry: Option<crate::StylesheetRegistry>,
 }
 
 impl App {
@@ -211,7 +211,7 @@ impl App {
 
         // Build MiniJinja environment with all templates
         let mut env = minijinja::Environment::new();
-        crate::render::filters::register_filters(&mut env);
+        crate::rendering::template::filters::register_filters(&mut env);
 
         for name in registry.names() {
             if let Ok(content) = registry.get_content(name) {
@@ -669,7 +669,7 @@ pub struct AppBuilder {
     output_file_flag: Option<String>,
     theme: Option<Theme>,
     /// Stylesheet registry (built from embedded styles)
-    stylesheet_registry: Option<crate::stylesheet::StylesheetRegistry>,
+    stylesheet_registry: Option<crate::StylesheetRegistry>,
     /// Template registry (built from embedded templates)
     template_registry: Option<TemplateRegistry>,
     default_theme_name: Option<String>,
@@ -846,7 +846,7 @@ impl AppBuilder {
     ///     .run(cmd, args);
     /// ```
     pub fn styles(mut self, styles: EmbeddedStyles) -> Self {
-        self.stylesheet_registry = Some(crate::stylesheet::StylesheetRegistry::from(styles));
+        self.stylesheet_registry = Some(crate::StylesheetRegistry::from(styles));
         self
     }
 
@@ -866,7 +866,7 @@ impl AppBuilder {
     pub fn styles_dir<P: AsRef<std::path::Path>>(mut self, path: P) -> Self {
         let registry = self
             .stylesheet_registry
-            .get_or_insert_with(crate::stylesheet::StylesheetRegistry::new);
+            .get_or_insert_with(crate::StylesheetRegistry::new);
         let _ = registry.add_dir(path);
         self
     }
@@ -1423,9 +1423,9 @@ impl AppBuilder {
 
             // Convert to Output enum for post-output hooks
             let output = match dispatch_output {
-                DispatchRenderedOutput::Text(s) => RenderedOutput::Text(s),
-                DispatchRenderedOutput::Binary(b, f) => RenderedOutput::Binary(b, f),
-                DispatchRenderedOutput::Silent => RenderedOutput::Silent,
+                DispatchOutput::Text(s) => RenderedOutput::Text(s),
+                DispatchOutput::Binary(b, f) => RenderedOutput::Binary(b, f),
+                DispatchOutput::Silent => RenderedOutput::Silent,
             };
 
             // Run post-output hooks if registered
@@ -1852,7 +1852,8 @@ mod tests {
 
     #[test]
     fn test_dispatch_silent_result() {
-        let builder = App::builder().command("quiet", |_m, _ctx| Ok(HandlerOutput::Silent), "");
+        let builder =
+            App::builder().command("quiet", |_m, _ctx| Ok(HandlerOutput::<()>::Silent), "");
 
         let cmd = Command::new("app").subcommand(Command::new("quiet"));
 
@@ -1867,7 +1868,7 @@ mod tests {
     fn test_dispatch_error_result() {
         let builder = App::builder().command(
             "fail",
-            |_m, _ctx| Err(anyhow::anyhow!("something went wrong")),
+            |_m, _ctx| Err::<HandlerOutput<()>, _>(anyhow::anyhow!("something went wrong")),
             "",
         );
 
@@ -2013,7 +2014,7 @@ mod tests {
 
     #[test]
     fn test_dispatch_with_post_output_hook() {
-        use crate::cli::hooks::{Hooks, Output};
+        use crate::cli::hooks::{Hooks, RenderedOutput};
         use serde_json::json;
 
         let builder = App::builder()
@@ -2044,7 +2045,7 @@ mod tests {
 
     #[test]
     fn test_dispatch_post_output_hook_chain() {
-        use crate::cli::hooks::{Hooks, Output};
+        use crate::cli::hooks::{Hooks, RenderedOutput};
         use serde_json::json;
 
         let builder = App::builder()
@@ -2112,7 +2113,7 @@ mod tests {
 
     #[test]
     fn test_dispatch_hooks_for_nested_command() {
-        use crate::cli::hooks::{Hooks, Output};
+        use crate::cli::hooks::{Hooks, RenderedOutput};
         use serde_json::json;
 
         let builder = App::builder()
@@ -2179,7 +2180,7 @@ mod tests {
 
     #[test]
     fn test_dispatch_binary_output_with_hook() {
-        use crate::cli::hooks::{Hooks, Output};
+        use crate::cli::hooks::{Hooks, RenderedOutput};
 
         let builder = App::builder()
             .command(
@@ -2230,7 +2231,7 @@ mod tests {
 
     #[test]
     fn test_run_command_with_hooks() {
-        use crate::cli::hooks::{Hooks, Output};
+        use crate::cli::hooks::{Hooks, RenderedOutput};
         use serde::Serialize;
 
         #[derive(Serialize)]
