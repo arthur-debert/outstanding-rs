@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.1.0] - 2026-01-15
+
 ### Changed
 
 - **BREAKING: Reorganized rendering modules into `src/rendering/`** - All rendering-related code is now consolidated under the `rendering` module for clearer organization and potential future extraction to a standalone crate.
@@ -314,7 +316,8 @@ let output = render_with_output(template, &data, &theme, OutputMode::Term)?;
   - Command handler system with `dispatch_from` convenience method
   - Archive variant support in clap integration
 
-[Unreleased]: https://github.com/arthur-debert/outstanding-rs/compare/v2.0.0...HEAD
+[Unreleased]: https://github.com/arthur-debert/outstanding-rs/compare/v2.1.0...HEAD
+[2.1.0]: https://github.com/arthur-debert/outstanding-rs/compare/v2.0.0...v2.1.0
 [2.0.0]: https://github.com/arthur-debert/outstanding-rs/compare/v1.0.0...v2.0.0
 [1.0.0]: https://github.com/arthur-debert/outstanding-rs/compare/v0.15.0...v1.0.0
 [1.0.0]: https://github.com/arthur-debert/outstanding-rs/compare/v0.14.0...v1.0.0
