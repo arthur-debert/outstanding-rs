@@ -39,6 +39,7 @@
 //! | `post_output = fn` | Post-output hook | None |
 //! | `nested` | Treat variant as nested subcommand | false |
 //! | `skip` | Skip this variant | false |
+//! | `default` | Use as default command when no subcommand specified | false |
 //!
 //! # Generated Code
 //!
@@ -70,6 +71,7 @@ struct VariantAttrs {
     post_output: Option<Path>,
     nested: bool,
     skip: bool,
+    default: bool,
 }
 
 /// Information extracted from a single enum variant
@@ -161,10 +163,13 @@ impl Parse for VariantAttrs {
                 Meta::Path(p) if p.is_ident("skip") => {
                     attrs.skip = true;
                 }
+                Meta::Path(p) if p.is_ident("default") => {
+                    attrs.default = true;
+                }
                 _ => {
                     return Err(Error::new(
                         meta.span(),
-                        "unknown attribute, expected one of: handler, template, pre_dispatch, post_dispatch, post_output, nested, skip",
+                        "unknown attribute, expected one of: handler, template, pre_dispatch, post_dispatch, post_output, nested, skip, default",
                     ));
                 }
             }
@@ -287,6 +292,26 @@ pub fn dispatch_derive_impl(input: DeriveInput) -> Result<TokenStream> {
         });
     }
 
+    // Find the default command (if any)
+    let default_command: Option<&str> = {
+        let defaults: Vec<_> = variants.iter().filter(|v| v.attrs.default).collect();
+
+        if defaults.len() > 1 {
+            // This will be caught at runtime by GroupBuilder::default_command panic,
+            // but we can provide a better error at compile time
+            let names: Vec<_> = defaults.iter().map(|v| v.snake_name.as_str()).collect();
+            return Err(Error::new(
+                input.span(),
+                format!(
+                    "Only one command can be marked as default. Found multiple: {}",
+                    names.join(", ")
+                ),
+            ));
+        }
+
+        defaults.first().map(|v| v.snake_name.as_str())
+    };
+
     // Generate the command registration calls
     let command_registrations: Vec<TokenStream> = variants
         .iter()
@@ -350,6 +375,13 @@ pub fn dispatch_derive_impl(input: DeriveInput) -> Result<TokenStream> {
         })
         .collect();
 
+    // Generate default command registration if one was marked
+    let default_command_registration = default_command.map(|name| {
+        quote! {
+            let __builder = __builder.default_command(#name);
+        }
+    });
+
     let expanded = quote! {
         impl #enum_name {
             /// Returns a dispatch configuration closure for use with `App::builder().commands()`.
@@ -358,6 +390,7 @@ pub fn dispatch_derive_impl(input: DeriveInput) -> Result<TokenStream> {
             pub fn dispatch_config() -> impl FnOnce(::outstanding::cli::GroupBuilder) -> ::outstanding::cli::GroupBuilder {
                 |__builder: ::outstanding::cli::GroupBuilder| {
                     #(#command_registrations)*
+                    #default_command_registration
                     __builder
                 }
             }

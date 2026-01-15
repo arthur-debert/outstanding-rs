@@ -678,6 +678,8 @@ pub struct AppBuilder {
     context_registry: ContextRegistry,
     template_dir: Option<PathBuf>,
     template_ext: String,
+    /// Default command to use when no subcommand is specified
+    default_command: Option<String>,
 }
 
 impl Default for AppBuilder {
@@ -704,6 +706,7 @@ impl AppBuilder {
             context_registry: ContextRegistry::new(),
             template_dir: None,
             template_ext: ".j2".to_string(),
+            default_command: None,
         }
     }
 
@@ -976,6 +979,11 @@ impl AppBuilder {
     {
         let builder = configure(GroupBuilder::new());
 
+        // Extract default command if set in the builder
+        if let Some(ref default_cmd) = builder.default_command {
+            self.default_command = Some(default_cmd.clone());
+        }
+
         // Register all entries from the group builder
         for (name, entry) in builder.entries {
             match entry {
@@ -1203,6 +1211,33 @@ impl AppBuilder {
     /// Disables the output file flag entirely.
     pub fn no_output_file_flag(mut self) -> Self {
         self.output_file_flag = None;
+        self
+    }
+
+    /// Sets a default command to use when no subcommand is specified.
+    ///
+    /// When the CLI is invoked without a subcommand (a "naked" invocation),
+    /// the default command is automatically inserted and the arguments are reparsed.
+    ///
+    /// # Example
+    ///
+    /// ```rust,ignore
+    /// use outstanding::cli::App;
+    ///
+    /// // With this configuration:
+    /// // - `myapp` becomes `myapp list`
+    /// // - `myapp --verbose` becomes `myapp list --verbose`
+    /// // - `myapp add foo` stays as `myapp add foo`
+    ///
+    /// App::builder()
+    ///     .default_command("list")
+    ///     .command("list", list_handler, "...")
+    ///     .command("add", add_handler, "...")
+    ///     .build()?
+    ///     .run(cmd, args);
+    /// ```
+    pub fn default_command(mut self, name: &str) -> Self {
+        self.default_command = Some(name.to_string());
         self
     }
 
@@ -1509,16 +1544,39 @@ impl AppBuilder {
         I: IntoIterator<Item = T>,
         T: Into<std::ffi::OsString> + Clone,
     {
+        use super::dispatch::{has_subcommand, insert_default_command};
+
+        // Collect args to Vec<String> so we can potentially reparse with default command
+        let args: Vec<String> = args
+            .into_iter()
+            .map(|a| a.into().to_string_lossy().into_owned())
+            .collect();
+
         // Augment command with --output flag
-        let cmd = self.augment_command_for_dispatch(cmd);
+        let augmented_cmd = self.augment_command_for_dispatch(cmd.clone());
 
         // Parse arguments
-        let matches = match cmd.try_get_matches_from(args) {
+        let matches = match augmented_cmd.try_get_matches_from(&args) {
             Ok(m) => m,
             Err(e) => {
                 // Return error as handled output
                 return RunResult::Handled(e.to_string());
             }
+        };
+
+        // Check if we need to insert default command
+        let matches = if !has_subcommand(&matches) && self.default_command.is_some() {
+            let default_cmd = self.default_command.as_ref().unwrap();
+            let new_args = insert_default_command(args, default_cmd);
+
+            // Reparse with default command inserted
+            let augmented_cmd = self.augment_command_for_dispatch(cmd);
+            match augmented_cmd.try_get_matches_from(&new_args) {
+                Ok(m) => m,
+                Err(e) => return RunResult::Handled(e.to_string()),
+            }
+        } else {
+            matches
         };
 
         // Extract output mode
@@ -3253,5 +3311,106 @@ mod tests {
         assert!(builder.commands.contains_key("app.config.get"));
         assert!(builder.commands.contains_key("app.config.set"));
         assert!(builder.commands.contains_key("app.start"));
+    }
+
+    // ============================================================================
+    // Default Command Tests
+    // ============================================================================
+
+    #[test]
+    fn test_default_command_builder() {
+        let builder = App::builder().default_command("list");
+
+        assert_eq!(builder.default_command, Some("list".to_string()));
+    }
+
+    #[test]
+    fn test_default_command_naked_invocation() {
+        use serde_json::json;
+
+        let builder = App::builder()
+            .default_command("list")
+            .command(
+                "list",
+                |_m, _ctx| Ok(HandlerOutput::Render(json!({"items": ["a", "b"]}))),
+                "Items: {{ items }}",
+            )
+            .command(
+                "add",
+                |_m, _ctx| Ok(HandlerOutput::Render(json!({"added": true}))),
+                "Added: {{ added }}",
+            );
+
+        let cmd = Command::new("app")
+            .subcommand(Command::new("list"))
+            .subcommand(Command::new("add"));
+
+        // Naked invocation should dispatch to default command
+        let result = builder.dispatch_from(cmd, ["app"]);
+        assert!(result.is_handled());
+        assert_eq!(result.output(), Some("Items: [\"a\", \"b\"]"));
+    }
+
+    #[test]
+    fn test_default_command_with_options() {
+        use serde_json::json;
+
+        let builder = App::builder().default_command("list").command(
+            "list",
+            |_m, _ctx| Ok(HandlerOutput::Render(json!({"count": 42}))),
+            "Count: {{ count }}",
+        );
+
+        let cmd = Command::new("app").subcommand(Command::new("list"));
+
+        // Naked invocation with --output flag should work
+        let result = builder.dispatch_from(cmd, ["app", "--output=json"]);
+        assert!(result.is_handled());
+        let output = result.output().unwrap();
+        assert!(output.contains("\"count\": 42"));
+    }
+
+    #[test]
+    fn test_default_command_explicit_command_overrides() {
+        use serde_json::json;
+
+        let builder = App::builder()
+            .default_command("list")
+            .command(
+                "list",
+                |_m, _ctx| Ok(HandlerOutput::Render(json!({"cmd": "list"}))),
+                "{{ cmd }}",
+            )
+            .command(
+                "add",
+                |_m, _ctx| Ok(HandlerOutput::Render(json!({"cmd": "add"}))),
+                "{{ cmd }}",
+            );
+
+        let cmd = Command::new("app")
+            .subcommand(Command::new("list"))
+            .subcommand(Command::new("add"));
+
+        // Explicit command should override default
+        let result = builder.dispatch_from(cmd, ["app", "add"]);
+        assert!(result.is_handled());
+        assert_eq!(result.output(), Some("add"));
+    }
+
+    #[test]
+    fn test_default_command_no_default_set() {
+        use serde_json::json;
+
+        let builder = App::builder().command(
+            "list",
+            |_m, _ctx| Ok(HandlerOutput::Render(json!({"items": []}))),
+            "Items: {{ items }}",
+        );
+
+        let cmd = Command::new("app").subcommand(Command::new("list"));
+
+        // Without default command, naked invocation should return NoMatch
+        let result = builder.dispatch_from(cmd, ["app"]);
+        assert!(!result.is_handled());
     }
 }

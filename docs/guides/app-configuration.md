@@ -170,6 +170,41 @@ App::builder()
 
 The macro generates registration for all variants.
 
+## Default Command
+
+When a CLI is invoked without a subcommand (a "naked" invocation like `myapp` or `myapp --verbose`), you can specify a default command to run:
+
+```rust
+App::builder()
+    .default_command("list")
+    .command("list", list_handler, "list.j2")
+    .command("add", add_handler, "add.j2")
+```
+
+With this configuration:
+- `myapp` becomes `myapp list`
+- `myapp --output=json` becomes `myapp list --output=json`
+- `myapp add foo` stays as `myapp add foo` (explicit command takes precedence)
+
+### With Dispatch Macro
+
+Use the `#[dispatch(default)]` attribute to mark a variant as the default:
+
+```rust
+#[derive(Dispatch)]
+#[dispatch(handlers = handlers)]
+enum Commands {
+    #[dispatch(default)]
+    List,
+    Add,
+}
+
+App::builder()
+    .commands(Commands::dispatch_config())
+```
+
+Only one command can be marked as default. Multiple `#[dispatch(default)]` attributes will cause a compile error.
+
 ## Hooks
 
 Attach hooks to specific command paths:

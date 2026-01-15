@@ -24,7 +24,7 @@ fi
 
 # Run clippy with auto-fix on the whole project (allow warnings during fix phase)
 echo "📎 Running cargo clippy --fix..."
-cargo clippy --fix --allow-dirty --allow-staged --all-targets 2>&1 || true
+cargo clippy --fix --allow-dirty --allow-staged --all-targets --all-features 2>&1 || true
 
 # Re-stage any files that clippy fixed
 if [ -n "$STAGED_RS_FILES" ]; then
@@ -36,9 +36,9 @@ if [ -n "$STAGED_RS_FILES" ]; then
     echo "✓ Clippy fixes applied and re-staged"
 fi
 
-# Run clippy and fail on any warnings
+# Run clippy and fail on any warnings (must match CI: --all-features)
 echo "📎 Running clippy check..."
-cargo clippy --all-targets -- -D warnings
+cargo clippy --all-targets --all-features -- -D warnings
 
 # Ensure the code compiles
 echo "🔍 Running cargo check..."
