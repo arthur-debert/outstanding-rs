@@ -10,8 +10,8 @@ use serde::Serialize;
 use std::collections::HashMap;
 use std::sync::Arc;
 
+use super::app::get_terminal_width;
 use super::dispatch::{DispatchFn, DispatchOutput};
-use super::outstanding::get_terminal_width;
 use crate::cli::handler::{
     CommandContext, FnHandler, Handler, HandlerResult, Output as HandlerOutput,
 };

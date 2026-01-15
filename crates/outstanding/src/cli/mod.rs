@@ -85,8 +85,11 @@
 
 // Internal modules
 mod dispatch;
-mod outstanding;
 mod result;
+
+// Split from former outstanding module
+mod app;
+mod builder;
 
 // Public modules
 pub mod group;
@@ -96,8 +99,9 @@ pub mod hooks;
 #[macro_use]
 pub mod macros;
 
-// Re-export main types from outstanding module
-pub use outstanding::{App, AppBuilder};
+// Re-export main types from app and builder modules
+pub use app::App;
+pub use builder::AppBuilder;
 
 // Re-export group types for declarative dispatch
 pub use group::{CommandConfig, GroupBuilder};
