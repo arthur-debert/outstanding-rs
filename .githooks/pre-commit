@@ -1,18 +1,2 @@
 #!/bin/bash
-set -e
-
-echo "Pre-commit: checking all feature combinations..."
-
-echo "  [1/4] default features"
-cargo check --all --quiet
-
-echo "  [2/4] macros feature"
-cargo check -p outstanding --features macros --quiet
-
-echo "  [3/4] clap feature"
-cargo check -p outstanding --features clap --quiet
-
-echo "  [4/4] all features"
-cargo check -p outstanding --all-features --quiet
-
-echo "All feature combinations compile."
+exec "$(git rev-parse --show-toplevel)/scripts/ci.sh"
