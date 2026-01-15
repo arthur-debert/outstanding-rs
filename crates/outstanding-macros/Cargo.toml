@@ -1,6 +1,6 @@
 [package]
 name = "outstanding-macros"
-version = "2.1.2"
+version = "2.2.0"
 edition = "2021"
 description = "Proc macros for compile-time resource embedding in Outstanding"
 license = "MIT"
