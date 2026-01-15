@@ -3,25 +3,28 @@
 //! This module provides [`App`] and [`AppBuilder`] for integrating
 //! outstanding with clap-based CLIs.
 
-use crate::context::{ContextProvider, ContextRegistry, RenderContext};
+use crate::context::{ContextProvider, ContextRegistry};
 use crate::setup::SetupError;
 use crate::topics::{
     display_with_pager, render_topic, render_topics_list, Topic, TopicRegistry, TopicRenderConfig,
 };
 use crate::TemplateRegistry;
 use crate::{
-    render_auto, render_auto_with_context, write_binary_output, write_output, EmbeddedStyles,
-    EmbeddedTemplates, OutputDestination, OutputMode, Theme,
+    render_auto, write_binary_output, write_output, EmbeddedStyles, EmbeddedTemplates,
+    OutputDestination, OutputMode, Theme,
 };
 use clap::{Arg, ArgAction, ArgMatches, Command};
 use minijinja::Value;
 use serde::Serialize;
+use std::cell::RefCell;
 use std::collections::HashMap;
 use std::path::PathBuf;
-use std::sync::Arc;
 
 use super::dispatch::{extract_command_path, get_deepest_matches, DispatchFn, DispatchOutput};
-use super::group::{CommandConfig, GroupBuilder, GroupEntry};
+use super::group::{
+    ClosureRecipe, CommandConfig, CommandRecipe, ErasedConfigRecipe, GroupBuilder, GroupEntry,
+    StructRecipe,
+};
 use super::help::{render_help, render_help_with_topics, HelpConfig};
 use super::result::HelpResult;
 use crate::cli::handler::{
@@ -663,6 +666,12 @@ impl Default for App {
 ///     .build()?
 ///     .run(cmd, args);
 /// ```
+/// Stores a pending command recipe along with its resolved template.
+struct PendingCommand {
+    recipe: Box<dyn CommandRecipe>,
+    template: String,
+}
+
 pub struct AppBuilder {
     registry: TopicRegistry,
     output_flag: Option<String>,
@@ -673,7 +682,10 @@ pub struct AppBuilder {
     /// Template registry (built from embedded templates)
     template_registry: Option<TemplateRegistry>,
     default_theme_name: Option<String>,
-    commands: HashMap<String, DispatchFn>,
+    /// Pending commands - closures are created lazily at dispatch time
+    pending_commands: RefCell<HashMap<String, PendingCommand>>,
+    /// Finalized dispatch functions (lazily created from pending_commands)
+    finalized_commands: RefCell<Option<HashMap<String, DispatchFn>>>,
     command_hooks: HashMap<String, Hooks>,
     context_registry: ContextRegistry,
     template_dir: Option<PathBuf>,
@@ -701,7 +713,8 @@ impl AppBuilder {
             stylesheet_registry: None,
             template_registry: None,
             default_theme_name: None,
-            commands: HashMap::new(),
+            pending_commands: RefCell::new(HashMap::new()),
+            finalized_commands: RefCell::new(None),
             command_hooks: HashMap::new(),
             context_registry: ContextRegistry::new(),
             template_dir: None,
@@ -984,33 +997,8 @@ impl AppBuilder {
             self.default_command = Some(default_cmd.clone());
         }
 
-        // Register all entries from the group builder
-        let theme = self.theme.clone().unwrap_or_default();
-        for (name, entry) in builder.entries {
-            match entry {
-                GroupEntry::Command { mut handler } => {
-                    let template = handler
-                        .template()
-                        .map(String::from)
-                        .unwrap_or_else(|| self.resolve_template(&name));
-
-                    if let Some(hooks) = handler.take_hooks() {
-                        self.command_hooks.insert(name.clone(), hooks);
-                    }
-
-                    let dispatch = handler.register(
-                        &name,
-                        template,
-                        self.context_registry.clone(),
-                        theme.clone(),
-                    );
-                    self.commands.insert(name, dispatch);
-                }
-                GroupEntry::Group { builder: nested } => {
-                    self.register_group(&name, nested);
-                }
-            }
-        }
+        // Store all entries from the group builder as pending commands
+        self.store_group_entries("", builder);
 
         self
     }
@@ -1041,7 +1029,7 @@ impl AppBuilder {
         F: FnOnce(GroupBuilder) -> GroupBuilder,
     {
         let builder = configure(GroupBuilder::new());
-        self.register_group(name, builder);
+        self.store_group_entries(name, builder);
         self
     }
 
@@ -1077,85 +1065,57 @@ impl AppBuilder {
             self.command_hooks.insert(path.to_string(), hooks);
         }
 
-        // Register the command
-        let context_registry = self.context_registry.clone();
-        let theme = self.theme.clone().unwrap_or_default();
-        let dispatch: DispatchFn = Arc::new(
-            move |matches: &ArgMatches, ctx: &CommandContext, hooks: Option<&Hooks>| {
-                let result = config.handler.handle(matches, ctx);
+        // Create a recipe for deferred closure creation
+        let recipe = ClosureRecipe::new(config.handler);
 
-                match result {
-                    Ok(HandlerOutput::Render(data)) => {
-                        let mut json_data = serde_json::to_value(&data)
-                            .map_err(|e| format!("Failed to serialize handler result: {}", e))?;
-
-                        if let Some(hooks) = hooks {
-                            json_data = hooks
-                                .run_post_dispatch(matches, ctx, json_data)
-                                .map_err(|e| format!("Hook error: {}", e))?;
-                        }
-
-                        let render_ctx = RenderContext::new(
-                            ctx.output_mode,
-                            get_terminal_width(),
-                            &theme,
-                            &json_data,
-                        );
-
-                        let output = render_auto_with_context(
-                            &template,
-                            &json_data,
-                            &theme,
-                            ctx.output_mode,
-                            &context_registry,
-                            &render_ctx,
-                        )
-                        .map_err(|e| e.to_string())?;
-                        Ok(DispatchOutput::Text(output))
-                    }
-                    Err(e) => Err(format!("Error: {}", e)),
-                    Ok(HandlerOutput::Silent) => Ok(DispatchOutput::Silent),
-                    Ok(HandlerOutput::Binary { data, filename }) => {
-                        Ok(DispatchOutput::Binary(data, filename))
-                    }
-                }
+        // Store pending command - closure will be created at dispatch time
+        self.pending_commands.borrow_mut().insert(
+            path.to_string(),
+            PendingCommand {
+                recipe: Box::new(recipe),
+                template,
             },
         );
 
-        self.commands.insert(path.to_string(), dispatch);
         self
     }
 
-    /// Helper to register a group's commands recursively.
-    fn register_group(&mut self, prefix: &str, builder: GroupBuilder) {
-        let theme = self.theme.clone().unwrap_or_default();
+    /// Stores group entries as pending commands for deferred closure creation.
+    fn store_group_entries(&mut self, prefix: &str, builder: GroupBuilder) {
         for (name, entry) in builder.entries {
-            let path = format!("{}.{}", prefix, name);
+            let path = if prefix.is_empty() {
+                name.clone()
+            } else {
+                format!("{}.{}", prefix, name)
+            };
 
             match entry {
-                GroupEntry::Command { mut handler } => {
+                GroupEntry::Command { handler } => {
+                    // Create a recipe wrapper for the erased config
+                    let mut recipe = ErasedConfigRecipe::new(handler);
+
                     // Resolve template
-                    let template = handler
+                    let template = recipe
                         .template()
                         .map(String::from)
                         .unwrap_or_else(|| self.resolve_template(&path));
 
                     // Extract and register hooks
-                    if let Some(hooks) = handler.take_hooks() {
+                    if let Some(hooks) = recipe.take_hooks() {
                         self.command_hooks.insert(path.clone(), hooks);
                     }
 
-                    // Register the dispatch function
-                    let dispatch = handler.register(
-                        &path,
-                        template,
-                        self.context_registry.clone(),
-                        theme.clone(),
+                    // Store pending command
+                    self.pending_commands.borrow_mut().insert(
+                        path,
+                        PendingCommand {
+                            recipe: Box::new(recipe),
+                            template,
+                        },
                     );
-                    self.commands.insert(path, dispatch);
                 }
                 GroupEntry::Group { builder: nested } => {
-                    self.register_group(&path, nested);
+                    self.store_group_entries(&path, nested);
                 }
             }
         }
@@ -1317,63 +1277,25 @@ impl AppBuilder {
     ///     .command_handler("list", ListHandler { db }, "{% for item in items %}...")
     ///     .parse(cmd);
     /// ```
-    pub fn command_handler<H, T>(mut self, path: &str, handler: H, template: &str) -> Self
+    pub fn command_handler<H, T>(self, path: &str, handler: H, template: &str) -> Self
     where
-        H: Handler<Output = T> + 'static,
-        T: Serialize + 'static,
+        H: Handler<Output = T> + Send + Sync + 'static,
+        T: Serialize + Send + Sync + 'static,
     {
         let template = template.to_string();
-        let handler = Arc::new(handler);
-        let context_registry = self.context_registry.clone();
-        let theme = self.theme.clone().unwrap_or_default();
 
-        let dispatch: DispatchFn = Arc::new(
-            move |matches: &ArgMatches, ctx: &CommandContext, hooks: Option<&Hooks>| {
-                let result = handler.handle(matches, ctx);
+        // Create a recipe for deferred closure creation
+        let recipe = StructRecipe::new(handler).with_template(template.clone());
 
-                match result {
-                    Ok(HandlerOutput::Render(data)) => {
-                        // Convert to serde_json::Value for post-dispatch hooks
-                        let mut json_data = serde_json::to_value(&data)
-                            .map_err(|e| format!("Failed to serialize handler result: {}", e))?;
-
-                        // Run post-dispatch hooks if present
-                        if let Some(hooks) = hooks {
-                            json_data = hooks
-                                .run_post_dispatch(matches, ctx, json_data)
-                                .map_err(|e| format!("Hook error: {}", e))?;
-                        }
-
-                        // Build render context for context providers
-                        let render_ctx = RenderContext::new(
-                            ctx.output_mode,
-                            get_terminal_width(),
-                            &theme,
-                            &json_data,
-                        );
-
-                        // Render the (potentially modified) data with context
-                        let output = render_auto_with_context(
-                            &template,
-                            &json_data,
-                            &theme,
-                            ctx.output_mode,
-                            &context_registry,
-                            &render_ctx,
-                        )
-                        .map_err(|e| e.to_string())?;
-                        Ok(DispatchOutput::Text(output))
-                    }
-                    Err(e) => Err(format!("Error: {}", e)),
-                    Ok(HandlerOutput::Silent) => Ok(DispatchOutput::Silent),
-                    Ok(HandlerOutput::Binary { data, filename }) => {
-                        Ok(DispatchOutput::Binary(data, filename))
-                    }
-                }
+        // Store pending command - closure will be created at dispatch time
+        self.pending_commands.borrow_mut().insert(
+            path.to_string(),
+            PendingCommand {
+                recipe: Box::new(recipe),
+                template,
             },
         );
 
-        self.commands.insert(path.to_string(), dispatch);
         self
     }
 
@@ -1426,6 +1348,45 @@ impl AppBuilder {
         self
     }
 
+    /// Returns true if a command is registered at the given path.
+    ///
+    /// This checks pending commands (not yet finalized into dispatch closures).
+    #[cfg(test)]
+    fn has_command(&self, path: &str) -> bool {
+        self.pending_commands.borrow().contains_key(path)
+    }
+
+    /// Ensures all pending commands are finalized into dispatch closures.
+    ///
+    /// This is called lazily on first dispatch. It creates dispatch closures
+    /// from all pending command recipes using the current theme and context_registry.
+    /// This allows builder methods to be called in any order - the theme set via
+    /// `.theme()` will be used regardless of whether it was called before or after
+    /// `.command()`.
+    fn ensure_commands_finalized(&self) {
+        // Check if already finalized
+        if self.finalized_commands.borrow().is_some() {
+            return;
+        }
+
+        // Get current theme and context registry
+        let theme = self.theme.clone().unwrap_or_default();
+        let context_registry = &self.context_registry;
+
+        // Create dispatch closures from all pending commands
+        let mut commands = HashMap::new();
+        for (path, pending) in self.pending_commands.borrow().iter() {
+            let dispatch =
+                pending
+                    .recipe
+                    .create_dispatch(&pending.template, context_registry, &theme);
+            commands.insert(path.clone(), dispatch);
+        }
+
+        // Store finalized commands
+        *self.finalized_commands.borrow_mut() = Some(commands);
+    }
+
     /// Dispatches to a registered handler if one matches the command path.
     ///
     /// Returns `RunResult::Handled(output)` if a handler was found and executed,
@@ -1438,12 +1399,17 @@ impl AppBuilder {
     ///
     /// Hook errors abort execution and return the error as handled output.
     pub fn dispatch(&self, matches: ArgMatches, output_mode: OutputMode) -> RunResult {
+        // Ensure commands are finalized with current theme/context
+        self.ensure_commands_finalized();
+
         // Build command path from matches
         let path = extract_command_path(&matches);
         let path_str = path.join(".");
 
-        // Look up handler
-        if let Some(dispatch) = self.commands.get(&path_str) {
+        // Look up handler from finalized commands
+        let finalized = self.finalized_commands.borrow();
+        let commands = finalized.as_ref().unwrap();
+        if let Some(dispatch) = commands.get(&path_str) {
             let ctx = CommandContext {
                 output_mode,
                 command_path: path,
@@ -1802,6 +1768,7 @@ fn find_subcommand<'a>(cmd: &'a Command, name: &str) -> Option<&'a Command> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::context::RenderContext;
 
     #[test]
     fn test_output_flag_enabled_by_default() {
@@ -1839,7 +1806,7 @@ mod tests {
             "Items: {{ items }}",
         );
 
-        assert!(builder.commands.contains_key("list"));
+        assert!(builder.has_command("list"));
     }
 
     #[test]
@@ -3154,7 +3121,7 @@ mod tests {
             });
 
         // Verify the builder has the commands registered
-        assert!(builder.commands.contains_key("db.migrate"));
+        assert!(builder.has_command("db.migrate"));
     }
 
     #[test]
@@ -3173,8 +3140,8 @@ mod tests {
                 })
             });
 
-        assert!(builder.commands.contains_key("db.migrate"));
-        assert!(builder.commands.contains_key("cache.clear"));
+        assert!(builder.has_command("db.migrate"));
+        assert!(builder.has_command("cache.clear"));
     }
 
     #[test]
@@ -3193,8 +3160,8 @@ mod tests {
                 })
             });
 
-        assert!(builder.commands.contains_key("version"));
-        assert!(builder.commands.contains_key("db.migrate"));
+        assert!(builder.has_command("version"));
+        assert!(builder.has_command("db.migrate"));
     }
 
     // ============================================================================
@@ -3210,7 +3177,7 @@ mod tests {
             list => |_m, _ctx| Ok(HandlerOutput::Render(json!({"items": ["a", "b"]})))
         });
 
-        assert!(builder.commands.contains_key("list"));
+        assert!(builder.has_command("list"));
 
         let cmd = Command::new("app").subcommand(Command::new("list"));
         let matches = cmd.try_get_matches_from(["app", "list"]).unwrap();
@@ -3234,9 +3201,9 @@ mod tests {
             version => |_m, _ctx| Ok(HandlerOutput::Render(json!({"v": "1.0"}))),
         });
 
-        assert!(builder.commands.contains_key("db.migrate"));
-        assert!(builder.commands.contains_key("db.backup"));
-        assert!(builder.commands.contains_key("version"));
+        assert!(builder.has_command("db.migrate"));
+        assert!(builder.has_command("db.backup"));
+        assert!(builder.has_command("version"));
 
         // Test dispatch to nested command
         let cmd = Command::new("app")
@@ -3320,9 +3287,9 @@ mod tests {
             },
         });
 
-        assert!(builder.commands.contains_key("app.config.get"));
-        assert!(builder.commands.contains_key("app.config.set"));
-        assert!(builder.commands.contains_key("app.start"));
+        assert!(builder.has_command("app.config.get"));
+        assert!(builder.has_command("app.config.set"));
+        assert!(builder.has_command("app.start"));
     }
 
     // ============================================================================
@@ -3521,6 +3488,39 @@ mod tests {
         assert!(
             !output.contains("[emphasis?]"),
             "Theme was not passed to group dispatch - output: {}",
+            output
+        );
+    }
+
+    #[test]
+    fn test_theme_ordering_command_before_theme() {
+        use console::Style;
+        use serde_json::json;
+
+        // Create a theme with a custom "category" style
+        let theme = Theme::new().add("late", Style::new().bold());
+
+        // BUG TEST: Register command BEFORE setting theme
+        // This tests if the closure captures the theme at registration time
+        let builder = App::builder()
+            .command(
+                "list",
+                |_m, _ctx| Ok(HandlerOutput::Render(json!({"name": "test"}))),
+                "[late]{{ name }}[/late]",
+            )
+            .theme(theme); // Theme set AFTER command registration
+
+        let cmd = Command::new("app").subcommand(Command::new("list"));
+        let result = builder.dispatch_from(cmd, ["app", "--output=term", "list"]);
+
+        assert!(result.is_handled());
+        let output = result.output().unwrap();
+
+        // This will FAIL if closures capture theme at registration time
+        // (because theme was None when .command() was called)
+        assert!(
+            !output.contains("[late?]"),
+            "ORDERING BUG: Theme set after .command() was not applied - output: {}",
             output
         );
     }
