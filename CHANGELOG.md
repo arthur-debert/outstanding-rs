@@ -7,6 +7,31 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **Default command support** - Configure a command to run when no subcommand is specified
+  - `AppBuilder::default_command("name")` - Set the default command imperatively
+  - `#[dispatch(default)]` variant attribute - Mark a command as default in `#[derive(Dispatch)]`
+  - When CLI is invoked without a subcommand (e.g., `myapp` or `myapp --verbose`), the default command is automatically used
+  - Only one command can be marked as default per dispatch group
+
+  ```rust
+  // Imperative API
+  App::builder()
+      .default_command("list")
+      .command("list", list_handler, "list.j2")
+      .command("add", add_handler, "add.j2")
+
+  // Macro API
+  #[derive(Dispatch)]
+  #[dispatch(handlers = handlers)]
+  enum Commands {
+      #[dispatch(default)]
+      List,
+      Add,
+  }
+  ```
+
 ## [2.1.1] - 2026-01-15
 
 ### Fixed

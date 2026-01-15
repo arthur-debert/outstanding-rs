@@ -112,3 +112,34 @@ enum SkipCommands {
 fn test_skip_attribute_compiles() {
     let _ = SkipCommands::dispatch_config();
 }
+
+// =============================================================================
+// Default command tests
+// =============================================================================
+
+#[derive(Subcommand, Dispatch)]
+#[dispatch(handlers = handlers)]
+enum DefaultCommands {
+    #[dispatch(default)]
+    List,
+    Add,
+}
+
+#[test]
+fn test_default_command_compiles() {
+    let _ = DefaultCommands::dispatch_config();
+}
+
+#[test]
+fn test_default_command_sets_default() {
+    let builder = DefaultCommands::dispatch_config()(GroupBuilder::new());
+    assert_eq!(builder.get_default_command(), Some("list"));
+}
+
+#[test]
+fn test_default_command_registers_commands() {
+    let builder = DefaultCommands::dispatch_config()(GroupBuilder::new());
+    // Both commands should be registered
+    assert!(builder.contains("list"));
+    assert!(builder.contains("add"));
+}

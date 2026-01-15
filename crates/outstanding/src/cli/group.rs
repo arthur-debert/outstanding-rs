@@ -144,6 +144,8 @@ pub(crate) trait ErasedCommandConfig {
 #[derive(Default)]
 pub struct GroupBuilder {
     pub(crate) entries: HashMap<String, GroupEntry>,
+    /// The default command to use when no subcommand is specified
+    pub(crate) default_command: Option<String>,
 }
 
 impl GroupBuilder {
@@ -165,6 +167,11 @@ impl GroupBuilder {
     /// Returns true if no entries are registered.
     pub fn is_empty(&self) -> bool {
         self.entries.is_empty()
+    }
+
+    /// Returns the default command name, if one is set.
+    pub fn get_default_command(&self) -> Option<&str> {
+        self.default_command.as_deref()
     }
 
     /// Registers a command handler (closure) in this group.
@@ -266,6 +273,35 @@ impl GroupBuilder {
         let builder = configure(GroupBuilder::new());
         self.entries
             .insert(name.to_string(), GroupEntry::Group { builder });
+        self
+    }
+
+    /// Sets a command as the default command for this group.
+    ///
+    /// When the CLI is invoked without a subcommand (a "naked" invocation),
+    /// the default command is automatically used.
+    ///
+    /// # Panics
+    ///
+    /// Panics if a default command has already been set, as only one
+    /// default command can be defined.
+    ///
+    /// # Example
+    ///
+    /// ```rust,ignore
+    /// .group("app", |g| g
+    ///     .command("list", list_handler)
+    ///     .command("add", add_handler)
+    ///     .default_command("list"))  // "list" is used when no command specified
+    /// ```
+    pub fn default_command(mut self, name: &str) -> Self {
+        if self.default_command.is_some() {
+            panic!(
+                "Only one default command can be defined. '{}' is already set as default.",
+                self.default_command.as_ref().unwrap()
+            );
+        }
+        self.default_command = Some(name.to_string());
         self
     }
 }
@@ -486,5 +522,25 @@ mod tests {
             .pre_dispatch(|_, _| Ok(()));
 
         assert!(config.hooks.is_some());
+    }
+
+    #[test]
+    fn test_group_builder_default_command() {
+        let group = GroupBuilder::new()
+            .command("list", |_m, _ctx| Ok(HandlerOutput::Render(json!({}))))
+            .command("add", |_m, _ctx| Ok(HandlerOutput::Render(json!({}))))
+            .default_command("list");
+
+        assert_eq!(group.default_command, Some("list".to_string()));
+    }
+
+    #[test]
+    #[should_panic(expected = "Only one default command can be defined")]
+    fn test_group_builder_duplicate_default_command_panics() {
+        let _ = GroupBuilder::new()
+            .command("list", |_m, _ctx| Ok(HandlerOutput::Render(json!({}))))
+            .command("add", |_m, _ctx| Ok(HandlerOutput::Render(json!({}))))
+            .default_command("list")
+            .default_command("add");
     }
 }

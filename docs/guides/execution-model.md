@@ -164,9 +164,21 @@ When `app.run()` executes:
 
 1. Clap parses the arguments
 2. Outstanding traverses the `ArgMatches` subcommand chain to find the deepest match
-3. It extracts the command path (e.g., `["db", "migrate"]`)
-4. It looks up the handler for that path
-5. It executes the handler with the appropriate `ArgMatches` slice
+3. **If no subcommand was specified and a default command is configured**, Outstanding inserts the default command and reparses
+4. It extracts the command path (e.g., `["db", "migrate"]`)
+5. It looks up the handler for that path
+6. It executes the handler with the appropriate `ArgMatches` slice
+
+### Default Command Behavior
+
+When you configure a default command:
+
+```rust
+App::builder()
+    .default_command("list")
+```
+
+A "naked" invocation like `myapp` or `myapp --verbose` will automatically dispatch to the `list` command. The arguments are modified internally to insert the command name, then reparsed. This ensures all clap validation and parsing rules apply correctly to the default command.
 
 If no handler matches, `run()` returns `RunResult::NoMatch(matches)`, letting you fall back to manual dispatch:
 
