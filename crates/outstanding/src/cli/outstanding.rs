@@ -66,8 +66,6 @@ pub struct App {
     pub(crate) template_registry: Option<TemplateRegistry>,
     /// Stylesheet registry for accessing themes
     pub(crate) stylesheet_registry: Option<crate::StylesheetRegistry>,
-    /// Default command to use when no subcommand is specified
-    pub(crate) default_command: Option<String>,
 }
 
 impl App {
@@ -88,7 +86,6 @@ impl App {
             command_hooks: HashMap::new(),
             template_registry: None,
             stylesheet_registry: None,
-            default_command: None,
         }
     }
 
@@ -103,7 +100,6 @@ impl App {
             command_hooks: HashMap::new(),
             template_registry: None,
             stylesheet_registry: None,
-            default_command: None,
         }
     }
 
@@ -1760,7 +1756,6 @@ impl AppBuilder {
             command_hooks: self.command_hooks,
             template_registry: self.template_registry,
             stylesheet_registry: self.stylesheet_registry,
-            default_command: self.default_command,
         })
     }
 
