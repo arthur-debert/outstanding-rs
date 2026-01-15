@@ -78,9 +78,10 @@ mod error;
 mod registry;
 mod value;
 
-// YAML stylesheet parsing
+// Stylesheet parsing (YAML and CSS)
 mod attributes;
 mod color;
+mod css_parser;
 mod definition;
 mod file_registry;
 mod parser;
@@ -93,6 +94,7 @@ pub use value::StyleValue;
 // Stylesheet parsing exports
 pub use attributes::StyleAttributes;
 pub use color::ColorDef;
+pub use css_parser::parse_css;
 pub use definition::StyleDefinition;
 pub use file_registry::{StylesheetRegistry, STYLESHEET_EXTENSIONS};
 pub use parser::{parse_stylesheet, ThemeVariants};

@@ -30,7 +30,7 @@ Outstanding handles the boilerplate between your `clap` definition and your term
     - **Auto Dispatch** from cli input to the execution life cicle
 - **Rendering Layer**:
     -   **File-Based Templates**: Uses [MiniJinja](https://github.com/mitsuhiko/minijinja) for powerful templating, including partials for reuse. See [Rendering System](docs/guides/rendering-system.md).
-    -   **Rich Styling**: Integrates stylesheets with semantic tagging (e.g., `[title]{{ post.title }}[/title]`) for maintainable designs.
+    -   **Rich Styling**: Integrates stylesheets with semantic tagging (e.g., `[title]{{ post.title }}[/title]`). Define styles using **YAML** or standard **CSS** syntax.
     -   **Adaptive Themes**: Supports [light/dark modes](docs/guides/rendering-system.md#adaptive-styles) and switchable themes automatically.
     -   **Live Reloading**: Edit templates and styles while your app runs [during development](docs/guides/rendering-system.md#hot-reloading) for rapid iteration.
     -   **Smart Output**: Delivers [rich terminal output](docs/guides/output-modes.md) that gracefully degrades to plain text based on capabilities.

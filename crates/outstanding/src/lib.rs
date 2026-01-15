@@ -236,9 +236,9 @@ pub use minijinja::Error;
 
 // Style module exports (including former stylesheet exports)
 pub use rendering::style::{
-    parse_stylesheet, ColorDef, StyleAttributes, StyleDefinition, StyleValidationError, StyleValue,
-    Styles, StylesheetError, StylesheetRegistry, ThemeVariants, DEFAULT_MISSING_STYLE_INDICATOR,
-    STYLESHEET_EXTENSIONS,
+    parse_css, parse_stylesheet, ColorDef, StyleAttributes, StyleDefinition, StyleValidationError,
+    StyleValue, Styles, StylesheetError, StylesheetRegistry, ThemeVariants,
+    DEFAULT_MISSING_STYLE_INDICATOR, STYLESHEET_EXTENSIONS,
 };
 
 // Theme module exports

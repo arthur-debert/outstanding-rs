@@ -116,6 +116,33 @@ panel:
     fg: white
 ```
 
+### CSS Stylesheets
+
+If you prefer standard CSS syntax over YAML, Outstanding supports a subset of CSS Level 3 tailored for terminals:
+
+```css
+/* Selectors map to style names */
+.panel {
+  color: gray;
+  font-weight: bold;
+}
+
+/* Shortcuts work as expected */
+.error { color: red; font-weight: bold; }
+
+/* Adaptive styles via media queries */
+@media (prefers-color-scheme: light) {
+  .panel { color: black; }
+}
+
+@media (prefers-color-scheme: dark) {
+  .panel { color: white; }
+}
+```
+
+This is ideal for developers who want to leverage existing knowledge and tooling (syntax highlighting, linters) for their CLI themes.
+
+
 ### Supported Attributes
 
 Colors: `fg`, `bg`

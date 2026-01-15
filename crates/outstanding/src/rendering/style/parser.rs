@@ -221,7 +221,7 @@ pub fn parse_stylesheet(yaml: &str) -> Result<ThemeVariants, StylesheetError> {
 }
 
 /// Builds theme variants from parsed style definitions.
-fn build_variants(
+pub(crate) fn build_variants(
     definitions: &HashMap<String, StyleDefinition>,
 ) -> Result<ThemeVariants, StylesheetError> {
     let mut variants = ThemeVariants::new();
