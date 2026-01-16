@@ -313,7 +313,7 @@ border="rounded"  {# ╭──┬──╮  Rounded corners #}
 
 ### Row Separators
 
-Add lines between data rows (planned feature):
+Add lines between data rows:
 
 ```jinja
 {% set t = table(columns, border="light", row_separator=true) %}
@@ -328,8 +328,6 @@ Add lines between data rows (planned feature):
 │ def456   │ Bob                  │
 └──────────┴──────────────────────┘
 ```
-
-> **Note**: `row_separator` is not yet implemented.
 
 ### Simple Table Rendering
 

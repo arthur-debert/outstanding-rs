@@ -209,6 +209,9 @@ fn register_table_functions(env: &mut Environment<'static>) {
             let border = kwargs.get::<Option<String>>("border")?.unwrap_or_default();
             let header = kwargs.get::<Option<Value>>("header")?;
             let header_style = kwargs.get::<Option<String>>("header_style")?;
+            let row_separator = kwargs
+                .get::<Option<bool>>("row_separator")?
+                .unwrap_or(false);
             let width = kwargs.get::<Option<usize>>("width")?.unwrap_or(80);
             kwargs.assert_all_used()?;
 
@@ -241,6 +244,11 @@ fn register_table_functions(env: &mut Environment<'static>) {
             // Set header style if provided
             if let Some(style) = header_style {
                 table = table.header_style(style);
+            }
+
+            // Set row separator if enabled
+            if row_separator {
+                table = table.row_separator(true);
             }
 
             Ok(Value::from_object(table))
@@ -1266,5 +1274,26 @@ mod tests {
             .unwrap();
         assert!(result.contains("Alice"));
         assert!(result.contains("active"));
+    }
+
+    #[test]
+    fn function_table_with_row_separator() {
+        let mut env = setup_env();
+        env.add_template(
+            "test",
+            r#"{% set tbl = table([{"width": 10}, {"width": 8}], border="light", row_separator=true) %}{{ tbl.render_all([["A", "1"], ["B", "2"]]) }}"#,
+        )
+        .unwrap();
+        let result = env
+            .get_template("test")
+            .unwrap()
+            .render(context!())
+            .unwrap();
+
+        let lines: Vec<&str> = result.lines().collect();
+        // Should have: top, row A, separator, row B, bottom
+        // Count separator lines (├...┤)
+        let sep_count = lines.iter().filter(|l| l.starts_with('├')).count();
+        assert!(sep_count >= 1, "Expected at least 1 separator between rows");
     }
 }

@@ -179,6 +179,8 @@ pub struct Table {
     border: BorderStyle,
     /// Header style name (for styling header cells).
     header_style: Option<String>,
+    /// Whether to add separators between data rows.
+    row_separator: bool,
 }
 
 impl Table {
@@ -190,6 +192,7 @@ impl Table {
             headers: None,
             border: BorderStyle::None,
             header_style: None,
+            row_separator: false,
         }
     }
 
@@ -201,6 +204,7 @@ impl Table {
             headers: None,
             border: BorderStyle::None,
             header_style: None,
+            row_separator: false,
         }
     }
 
@@ -219,6 +223,12 @@ impl Table {
     /// Set the header style name.
     pub fn header_style(mut self, style: impl Into<String>) -> Self {
         self.header_style = Some(style.into());
+        self
+    }
+
+    /// Enable row separators between data rows.
+    pub fn row_separator(mut self, enable: bool) -> Self {
+        self.row_separator = enable;
         self
     }
 
@@ -392,8 +402,24 @@ impl Table {
             }
         }
 
-        // Data rows
-        for row in rows {
+        // Data rows (with optional separators between them)
+        let separator = if self.row_separator {
+            let sep = self.separator_row();
+            if sep.is_empty() {
+                None
+            } else {
+                Some(sep)
+            }
+        } else {
+            None
+        };
+
+        for (i, row) in rows.iter().enumerate() {
+            if i > 0 {
+                if let Some(ref sep) = separator {
+                    output.push(sep.clone());
+                }
+            }
             output.push(self.row(row));
         }
 
@@ -750,5 +776,44 @@ mod tests {
         assert!(row.ends_with('│'));
         assert!(row.contains("42"));
         assert!(row.contains("test"));
+    }
+
+    #[test]
+    fn table_row_separator_option() {
+        let spec = TabularSpec::builder()
+            .column(Col::fixed(10))
+            .column(Col::fixed(8))
+            .build();
+
+        let table = Table::new(spec, 80)
+            .border(BorderStyle::Light)
+            .row_separator(true);
+
+        let data = vec![vec!["A", "1"], vec!["B", "2"], vec!["C", "3"]];
+        let output = table.render(&data);
+        let lines: Vec<&str> = output.lines().collect();
+
+        // Should have: top, A, sep, B, sep, C, bottom = 7 lines
+        // Count separator lines between data rows
+        let sep_count = lines.iter().filter(|l| l.starts_with('├')).count();
+        assert_eq!(sep_count, 2, "Expected 2 separators between 3 rows");
+    }
+
+    #[test]
+    fn table_row_separator_disabled_by_default() {
+        let spec = TabularSpec::builder()
+            .column(Col::fixed(10))
+            .column(Col::fixed(8))
+            .build();
+
+        let table = Table::new(spec, 80).border(BorderStyle::Light);
+
+        let data = vec![vec!["A", "1"], vec!["B", "2"]];
+        let output = table.render(&data);
+        let lines: Vec<&str> = output.lines().collect();
+
+        // No separators between data rows (only after header if present)
+        // Lines: top, A, B, bottom = 4 lines
+        assert_eq!(lines.len(), 4);
     }
 }
