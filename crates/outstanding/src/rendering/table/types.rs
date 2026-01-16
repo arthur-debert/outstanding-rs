@@ -240,6 +240,8 @@ pub struct Column {
     pub null_repr: String,
     /// Optional style name (resolved via theme).
     pub style: Option<String>,
+    /// When true, use the cell value as the style name.
+    pub style_from_value: bool,
     /// Optional key for data extraction (supports dot notation for nested fields).
     pub key: Option<String>,
     /// Optional header title (for table headers and CSV export).
@@ -256,6 +258,7 @@ impl Default for Column {
             overflow: Overflow::default(),
             null_repr: "-".to_string(),
             style: None,
+            style_from_value: false,
             key: None,
             header: None,
         }
@@ -373,6 +376,15 @@ impl Column {
         self
     }
 
+    /// Use the cell value as the style name.
+    ///
+    /// When enabled, the cell content becomes the style tag.
+    /// For example, cell value "error" renders as `[error]error[/error]`.
+    pub fn style_from_value(mut self) -> Self {
+        self.style_from_value = true;
+        self
+    }
+
     /// Set the data key for this column (e.g. "author.name").
     pub fn key(mut self, key: impl Into<String>) -> Self {
         self.key = Some(key.into());
@@ -396,6 +408,7 @@ pub struct ColumnBuilder {
     overflow: Option<Overflow>,
     null_repr: Option<String>,
     style: Option<String>,
+    style_from_value: bool,
     key: Option<String>,
     header: Option<String>,
 }
@@ -513,6 +526,12 @@ impl ColumnBuilder {
         self
     }
 
+    /// Use cell value as the style name.
+    pub fn style_from_value(mut self) -> Self {
+        self.style_from_value = true;
+        self
+    }
+
     /// Set the data key.
     pub fn key(mut self, key: impl Into<String>) -> Self {
         self.key = Some(key.into());
@@ -536,6 +555,7 @@ impl ColumnBuilder {
             overflow: self.overflow.unwrap_or(default.overflow),
             null_repr: self.null_repr.unwrap_or(default.null_repr),
             style: self.style,
+            style_from_value: self.style_from_value,
             key: self.key,
             header: self.header,
         }

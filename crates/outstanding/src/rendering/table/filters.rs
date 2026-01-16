@@ -115,6 +115,16 @@ pub fn register_table_filters(env: &mut Environment<'static>) {
     env.add_filter("display_width", |value: Value| -> usize {
         display_width(&value.to_string())
     });
+
+    // style_as filter: {{ value | style_as("error") }} => [error]value[/error]
+    env.add_filter("style_as", |value: Value, style: String| -> String {
+        let text = value.to_string();
+        if style.is_empty() {
+            text
+        } else {
+            format!("[{}]{}[/{}]", style, text, style)
+        }
+    });
 }
 
 /// Format a value for a column with specified width, alignment, and truncation.
@@ -401,5 +411,44 @@ mod tests {
         assert_eq!(lines.len(), 3);
         assert!(lines[0].starts_with("foo       "));
         assert!(lines[1].starts_with("bar       "));
+    }
+
+    #[test]
+    fn filter_style_as() {
+        let mut env = setup_env();
+        env.add_template("test", "{{ value | style_as('error') }}")
+            .unwrap();
+        let result = env
+            .get_template("test")
+            .unwrap()
+            .render(context!(value => "Error message"))
+            .unwrap();
+        assert_eq!(result, "[error]Error message[/error]");
+    }
+
+    #[test]
+    fn filter_style_as_empty() {
+        let mut env = setup_env();
+        env.add_template("test", "{{ value | style_as('') }}")
+            .unwrap();
+        let result = env
+            .get_template("test")
+            .unwrap()
+            .render(context!(value => "text"))
+            .unwrap();
+        assert_eq!(result, "text");
+    }
+
+    #[test]
+    fn filter_style_as_combined_with_col() {
+        let mut env = setup_env();
+        env.add_template("test", "{{ value | col(10) | style_as('header') }}")
+            .unwrap();
+        let result = env
+            .get_template("test")
+            .unwrap()
+            .render(context!(value => "Name"))
+            .unwrap();
+        assert_eq!(result, "[header]Name      [/header]");
     }
 }

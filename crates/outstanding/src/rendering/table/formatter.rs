@@ -559,6 +559,25 @@ impl Object for TableFormatter {
 
 /// Format a single cell value according to column spec.
 fn format_cell(value: &str, width: usize, col: &Column) -> String {
+    // If style_from_value is set, use the value as the style
+    let style_override = if col.style_from_value {
+        Some(value)
+    } else {
+        None
+    };
+    format_cell_styled(value, width, col, style_override)
+}
+
+/// Format a single cell with optional style override.
+///
+/// If `style_override` is Some, it takes precedence over column's style.
+/// This is useful for dynamic styling based on cell content.
+fn format_cell_styled(
+    value: &str,
+    width: usize,
+    col: &Column,
+    style_override: Option<&str>,
+) -> String {
     if width == 0 {
         return String::new();
     }
@@ -592,7 +611,7 @@ fn format_cell(value: &str, width: usize, col: &Column) -> String {
     };
 
     // Pad to width (skip if Expand mode overflowed)
-    if matches!(col.overflow, Overflow::Expand) && current_width > width {
+    let padded = if matches!(col.overflow, Overflow::Expand) && current_width > width {
         processed
     } else {
         match col.align {
@@ -600,6 +619,13 @@ fn format_cell(value: &str, width: usize, col: &Column) -> String {
             Align::Right => pad_left(&processed, width),
             Align::Center => pad_center(&processed, width),
         }
+    };
+
+    // Apply style wrapping
+    let style = style_override.or(col.style.as_deref());
+    match style {
+        Some(s) if !s.is_empty() => format!("[{}]{}[/{}]", s, padded, s),
+        _ => padded,
     }
 }
 
@@ -654,6 +680,14 @@ impl CellOutput {
     }
 }
 
+/// Wrap content with style tags if a style is specified.
+fn apply_style(content: &str, style: Option<&str>) -> String {
+    match style {
+        Some(s) if !s.is_empty() => format!("[{}]{}[/{}]", s, content, s),
+        _ => content.to_string(),
+    }
+}
+
 /// Format a cell with potential multi-line output (for Wrap mode).
 fn format_cell_lines(value: &str, width: usize, col: &Column) -> CellOutput {
     if width == 0 {
@@ -661,6 +695,13 @@ fn format_cell_lines(value: &str, width: usize, col: &Column) -> CellOutput {
     }
 
     let current_width = display_width(value);
+
+    // Determine style: style_from_value takes precedence
+    let style = if col.style_from_value {
+        Some(value)
+    } else {
+        col.style.as_deref()
+    };
 
     match &col.overflow {
         Overflow::Wrap { indent } => {
@@ -671,16 +712,19 @@ fn format_cell_lines(value: &str, width: usize, col: &Column) -> CellOutput {
                     Align::Right => pad_left(value, width),
                     Align::Center => pad_center(value, width),
                 };
-                CellOutput::Single(padded)
+                CellOutput::Single(apply_style(&padded, style))
             } else {
                 // Wrap to multiple lines
                 let wrapped = wrap_indent(value, width, *indent);
                 let padded: Vec<String> = wrapped
                     .into_iter()
-                    .map(|line| match col.align {
-                        Align::Left => pad_right(&line, width),
-                        Align::Right => pad_left(&line, width),
-                        Align::Center => pad_center(&line, width),
+                    .map(|line| {
+                        let padded_line = match col.align {
+                            Align::Left => pad_right(&line, width),
+                            Align::Right => pad_left(&line, width),
+                            Align::Center => pad_center(&line, width),
+                        };
+                        apply_style(&padded_line, style)
                     })
                     .collect();
                 if padded.len() == 1 {
@@ -1582,5 +1626,96 @@ mod tests {
         let lines = formatter.row_lines_from(&record);
         // Should have multiple lines due to wrapping
         assert!(!lines.is_empty());
+    }
+
+    // ============================================================================
+    // Style Tests (Phase 7)
+    // ============================================================================
+
+    #[test]
+    fn format_cell_with_style() {
+        let spec = FlatDataSpec::builder()
+            .column(Column::new(Width::Fixed(10)).style("header"))
+            .build();
+        let formatter = TableFormatter::new(&spec, 80);
+
+        let output = formatter.format_row(&["Hello"]);
+        // Should wrap in style tags
+        assert!(output.starts_with("[header]"));
+        assert!(output.ends_with("[/header]"));
+        assert!(output.contains("Hello"));
+    }
+
+    #[test]
+    fn format_cell_style_from_value() {
+        let spec = FlatDataSpec::builder()
+            .column(Column::new(Width::Fixed(10)).style_from_value())
+            .build();
+        let formatter = TableFormatter::new(&spec, 80);
+
+        let output = formatter.format_row(&["error"]);
+        // Value "error" becomes the style
+        assert!(output.contains("[error]"));
+        assert!(output.contains("[/error]"));
+    }
+
+    #[test]
+    fn format_cell_no_style() {
+        let spec = FlatDataSpec::builder()
+            .column(Column::new(Width::Fixed(10)))
+            .build();
+        let formatter = TableFormatter::new(&spec, 80);
+
+        let output = formatter.format_row(&["Hello"]);
+        // No style tags
+        assert!(!output.contains("["));
+        assert!(!output.contains("]"));
+        assert!(output.contains("Hello"));
+    }
+
+    #[test]
+    fn format_cell_style_overrides_style_from_value() {
+        // When both style and style_from_value are set, style_from_value wins
+        let mut col = Column::new(Width::Fixed(10));
+        col.style = Some("default".to_string());
+        col.style_from_value = true;
+
+        let spec = FlatDataSpec::builder().column(col).build();
+        let formatter = TableFormatter::new(&spec, 80);
+
+        let output = formatter.format_row(&["custom"]);
+        // style_from_value takes precedence
+        assert!(output.contains("[custom]"));
+        assert!(output.contains("[/custom]"));
+    }
+
+    #[test]
+    fn format_row_multiple_styled_columns() {
+        let spec = FlatDataSpec::builder()
+            .column(Column::new(Width::Fixed(8)).style("name"))
+            .column(Column::new(Width::Fixed(8)).style("status"))
+            .separator("  ")
+            .build();
+        let formatter = TableFormatter::new(&spec, 80);
+
+        let output = formatter.format_row(&["Alice", "Active"]);
+        assert!(output.contains("[name]"));
+        assert!(output.contains("[status]"));
+    }
+
+    #[test]
+    fn format_cell_lines_with_style() {
+        let spec = FlatDataSpec::builder()
+            .column(Column::new(Width::Fixed(10)).wrap().style("text"))
+            .build();
+        let formatter = TableFormatter::new(&spec, 80);
+
+        let lines = formatter.format_row_lines(&["This is a long text that wraps"]);
+
+        // Each line should have style tags
+        for line in &lines {
+            assert!(line.contains("[text]"));
+            assert!(line.contains("[/text]"));
+        }
     }
 }
