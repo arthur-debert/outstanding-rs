@@ -356,6 +356,29 @@ impl TableFormatter {
         self.columns.len()
     }
 
+    /// Extract headers from column specifications.
+    ///
+    /// For each column, uses (in order of preference):
+    /// 1. The `header` field if set
+    /// 2. The `key` field if set
+    /// 3. The `name` field if set
+    /// 4. Empty string
+    ///
+    /// This is useful for `Table::header_from_columns()`.
+    pub fn extract_headers(&self) -> Vec<String> {
+        self.columns
+            .iter()
+            .map(|col| {
+                col.header
+                    .as_deref()
+                    .or(col.key.as_deref())
+                    .or(col.name.as_deref())
+                    .unwrap_or("")
+                    .to_string()
+            })
+            .collect()
+    }
+
     /// Format a row by extracting values from a serializable struct.
     ///
     /// This method extracts field values from the struct based on each column's
@@ -1717,5 +1740,78 @@ mod tests {
             assert!(line.contains("[text]"));
             assert!(line.contains("[/text]"));
         }
+    }
+
+    // ============================================================================
+    // Extract Headers Tests
+    // ============================================================================
+
+    #[test]
+    fn extract_headers_from_header_field() {
+        let spec = FlatDataSpec::builder()
+            .column(Column::new(Width::Fixed(10)).header("Name"))
+            .column(Column::new(Width::Fixed(8)).header("Status"))
+            .build();
+        let formatter = TableFormatter::new(&spec, 80);
+
+        let headers = formatter.extract_headers();
+        assert_eq!(headers, vec!["Name", "Status"]);
+    }
+
+    #[test]
+    fn extract_headers_fallback_to_key() {
+        let spec = FlatDataSpec::builder()
+            .column(Column::new(Width::Fixed(10)).key("user_name"))
+            .column(Column::new(Width::Fixed(8)).key("status"))
+            .build();
+        let formatter = TableFormatter::new(&spec, 80);
+
+        let headers = formatter.extract_headers();
+        assert_eq!(headers, vec!["user_name", "status"]);
+    }
+
+    #[test]
+    fn extract_headers_fallback_to_name() {
+        let spec = FlatDataSpec::builder()
+            .column(Column::new(Width::Fixed(10)).named("col1"))
+            .column(Column::new(Width::Fixed(8)).named("col2"))
+            .build();
+        let formatter = TableFormatter::new(&spec, 80);
+
+        let headers = formatter.extract_headers();
+        assert_eq!(headers, vec!["col1", "col2"]);
+    }
+
+    #[test]
+    fn extract_headers_priority_order() {
+        // header > key > name > ""
+        let spec = FlatDataSpec::builder()
+            .column(
+                Column::new(Width::Fixed(10))
+                    .header("Header")
+                    .key("key")
+                    .named("name"),
+            )
+            .column(
+                Column::new(Width::Fixed(10))
+                    .key("key_only")
+                    .named("name_only"),
+            )
+            .column(Column::new(Width::Fixed(10)).named("name_only"))
+            .column(Column::new(Width::Fixed(10))) // No header, key, or name
+            .build();
+        let formatter = TableFormatter::new(&spec, 80);
+
+        let headers = formatter.extract_headers();
+        assert_eq!(headers, vec!["Header", "key_only", "name_only", ""]);
+    }
+
+    #[test]
+    fn extract_headers_empty_spec() {
+        let spec = FlatDataSpec::builder().build();
+        let formatter = TableFormatter::new(&spec, 80);
+
+        let headers = formatter.extract_headers();
+        assert!(headers.is_empty());
     }
 }

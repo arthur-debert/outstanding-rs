@@ -220,6 +220,32 @@ impl Table {
         self
     }
 
+    /// Set headers automatically from column specifications.
+    ///
+    /// For each column, uses (in order of preference):
+    /// 1. The `header` field if set
+    /// 2. The `key` field if set
+    /// 3. The `name` field if set
+    /// 4. Empty string
+    ///
+    /// # Example
+    ///
+    /// ```rust,ignore
+    /// let spec = TabularSpec::builder()
+    ///     .column(Col::fixed(8).header("ID"))
+    ///     .column(Col::min(10).key("author").header("Author"))
+    ///     .column(Col::fill().named("message"))  // Uses name as fallback
+    ///     .build();
+    ///
+    /// let table = Table::new(spec, 80)
+    ///     .header_from_columns()  // Headers: ["ID", "Author", "message"]
+    ///     .border(BorderStyle::Light);
+    /// ```
+    pub fn header_from_columns(mut self) -> Self {
+        self.headers = Some(self.formatter.extract_headers());
+        self
+    }
+
     /// Set the header style name.
     pub fn header_style(mut self, style: impl Into<String>) -> Self {
         self.header_style = Some(style.into());
@@ -815,5 +841,92 @@ mod tests {
         // No separators between data rows (only after header if present)
         // Lines: top, A, B, bottom = 4 lines
         assert_eq!(lines.len(), 4);
+    }
+
+    #[test]
+    fn table_header_from_columns_with_header_field() {
+        let spec = TabularSpec::builder()
+            .column(Col::fixed(10).header("Name"))
+            .column(Col::fixed(8).header("Status"))
+            .separator("  ")
+            .build();
+
+        let table = Table::new(spec, 80)
+            .header_from_columns()
+            .border(BorderStyle::Light);
+
+        let header = table.header_row();
+        assert!(header.contains("Name"));
+        assert!(header.contains("Status"));
+    }
+
+    #[test]
+    fn table_header_from_columns_fallback_to_key() {
+        let spec = TabularSpec::builder()
+            .column(Col::fixed(10).key("user_name"))
+            .column(Col::fixed(8).key("status"))
+            .separator("  ")
+            .build();
+
+        let table = Table::new(spec, 80).header_from_columns();
+
+        let header = table.header_row();
+        assert!(header.contains("user_name"));
+        assert!(header.contains("status"));
+    }
+
+    #[test]
+    fn table_header_from_columns_fallback_to_name() {
+        let spec = TabularSpec::builder()
+            .column(Col::fixed(10).named("column1"))
+            .column(Col::fixed(8).named("column2"))
+            .separator("  ")
+            .build();
+
+        let table = Table::new(spec, 80).header_from_columns();
+
+        let header = table.header_row();
+        assert!(header.contains("column1"));
+        assert!(header.contains("column2"));
+    }
+
+    #[test]
+    fn table_header_from_columns_priority_order() {
+        // header > key > name
+        let spec = TabularSpec::builder()
+            .column(Col::fixed(10).header("Header").key("key").named("name"))
+            .column(Col::fixed(10).key("key_only").named("name_only"))
+            .column(Col::fixed(10).named("name_only2"))
+            .separator("  ")
+            .build();
+
+        let table = Table::new(spec, 80).header_from_columns();
+
+        let header = table.header_row();
+        assert!(header.contains("Header")); // header takes precedence
+        assert!(header.contains("key_only")); // key is fallback when no header
+        assert!(header.contains("name_only2")); // name is fallback when no key
+    }
+
+    #[test]
+    fn table_header_from_columns_in_render() {
+        let spec = TabularSpec::builder()
+            .column(Col::fixed(10).header("Name"))
+            .column(Col::fixed(8).header("Value"))
+            .separator("  ")
+            .build();
+
+        let table = Table::new(spec, 80)
+            .header_from_columns()
+            .border(BorderStyle::Light);
+
+        let data = vec![vec!["Alice", "100"]];
+        let output = table.render(&data);
+
+        // Should have header row with proper values
+        assert!(output.contains("Name"));
+        assert!(output.contains("Value"));
+        assert!(output.contains("Alice"));
+        assert!(output.contains("100"));
     }
 }
