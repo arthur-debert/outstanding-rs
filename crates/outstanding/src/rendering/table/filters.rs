@@ -411,23 +411,43 @@ fn parse_width(value: &Value) -> Result<Width, minijinja::Error> {
         };
     }
 
-    // Object with min/max -> Bounded
-    if let (Ok(min), Ok(max)) = (value.get_attr("min"), value.get_attr("max")) {
-        let min_val = min.as_usize().ok_or_else(|| {
-            minijinja::Error::new(
-                minijinja::ErrorKind::InvalidOperation,
-                "min must be a number",
-            )
-        })?;
-        let max_val = max.as_usize().ok_or_else(|| {
-            minijinja::Error::new(
-                minijinja::ErrorKind::InvalidOperation,
-                "max must be a number",
-            )
-        })?;
+    // Object with min and/or max -> Bounded
+    let min_result = value.get_attr("min");
+    let max_result = value.get_attr("max");
+
+    let has_min = min_result.is_ok()
+        && !min_result.as_ref().unwrap().is_none()
+        && !min_result.as_ref().unwrap().is_undefined();
+    let has_max = max_result.is_ok()
+        && !max_result.as_ref().unwrap().is_none()
+        && !max_result.as_ref().unwrap().is_undefined();
+
+    if has_min || has_max {
+        let min_val = if has_min {
+            Some(min_result.unwrap().as_usize().ok_or_else(|| {
+                minijinja::Error::new(
+                    minijinja::ErrorKind::InvalidOperation,
+                    "min must be a number",
+                )
+            })?)
+        } else {
+            None
+        };
+
+        let max_val = if has_max {
+            Some(max_result.unwrap().as_usize().ok_or_else(|| {
+                minijinja::Error::new(
+                    minijinja::ErrorKind::InvalidOperation,
+                    "max must be a number",
+                )
+            })?)
+        } else {
+            None
+        };
+
         return Ok(Width::Bounded {
-            min: Some(min_val),
-            max: Some(max_val),
+            min: min_val,
+            max: max_val,
         });
     }
 
@@ -1117,5 +1137,59 @@ mod tests {
             .unwrap();
         // Content fits, so just padded
         assert_eq!(display_width(&result), 10);
+    }
+
+    #[test]
+    fn function_tabular_width_min_only() {
+        let mut env = setup_env();
+        // Two columns: fixed + min-only bounded
+        env.add_template(
+            "test",
+            r#"{% set fmt = tabular([{"width": 10}, {"width": {"min": 15}}], separator="  ", width=50) %}{{ fmt.row(["A", "B"]) }}"#,
+        )
+        .unwrap();
+        let result = env
+            .get_template("test")
+            .unwrap()
+            .render(context!())
+            .unwrap();
+        // Total 50, first col 10, sep 2, bounded gets rest (38) which is >= min 15
+        assert_eq!(display_width(&result), 50);
+    }
+
+    #[test]
+    fn function_tabular_width_max_only() {
+        let mut env = setup_env();
+        // Test that max-only bounded column works (capped by max when competing with fill)
+        env.add_template(
+            "test",
+            r#"{% set fmt = tabular([{"width": {"max": 10}}, {"width": "fill"}], separator="  ", width=50) %}{{ fmt.row(["Hello World Test", "B"]) }}"#,
+        )
+        .unwrap();
+        let result = env
+            .get_template("test")
+            .unwrap()
+            .render(context!())
+            .unwrap();
+        // Total 50, max-only bounded capped at 10, fill takes rest
+        assert_eq!(display_width(&result), 50);
+    }
+
+    #[test]
+    fn function_tabular_width_min_max() {
+        let mut env = setup_env();
+        // Bounded column with both min and max, competing with fill
+        env.add_template(
+            "test",
+            r#"{% set fmt = tabular([{"width": {"min": 10, "max": 20}}, {"width": "fill"}], separator="  ", width=50) %}{{ fmt.row(["Hello", "World"]) }}"#,
+        )
+        .unwrap();
+        let result = env
+            .get_template("test")
+            .unwrap()
+            .render(context!())
+            .unwrap();
+        // Total 50, bounded fits content "Hello" (5) but uses min 10, fill takes rest
+        assert_eq!(display_width(&result), 50);
     }
 }
