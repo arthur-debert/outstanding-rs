@@ -68,12 +68,16 @@
 //! ## Utility Functions
 //!
 //! ```rust
-//! use outstanding::table::{display_width, truncate_end, pad_right};
+//! use outstanding::table::{display_width, truncate_end, pad_right, wrap};
 //!
 //! let text = "Hello World";
 //! let truncated = truncate_end(text, 8, "…");  // "Hello W…"
 //! let padded = pad_right(&truncated, 10);      // "Hello W…  "
 //! assert_eq!(display_width(&padded), 10);
+//!
+//! // Word-wrap long text
+//! let lines = wrap("hello world foo bar", 11);
+//! assert_eq!(lines, vec!["hello world", "foo bar"]);
 //! ```
 //!
 //! # Column Width Strategies
@@ -116,4 +120,5 @@ pub use types::{
 // Re-export utility functions
 pub use util::{
     display_width, pad_center, pad_left, pad_right, truncate_end, truncate_middle, truncate_start,
+    wrap, wrap_indent,
 };

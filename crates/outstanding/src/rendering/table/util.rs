@@ -197,6 +197,225 @@ pub fn pad_center(s: &str, width: usize) -> String {
     pad_str(s, width, Alignment::Center, None).into_owned()
 }
 
+/// Wraps text to fit within a maximum display width, breaking at word boundaries.
+///
+/// Returns a vector of lines, each fitting within the specified width.
+/// Words longer than the width are force-broken to fit.
+///
+/// ANSI escape codes are preserved and don't count toward width calculations.
+///
+/// # Arguments
+///
+/// * `s` - The string to wrap
+/// * `width` - Maximum display width for each line
+///
+/// # Example
+///
+/// ```rust
+/// use outstanding::table::wrap;
+///
+/// let lines = wrap("hello world foo", 11);
+/// assert_eq!(lines, vec!["hello world", "foo"]);
+///
+/// let lines = wrap("short", 20);
+/// assert_eq!(lines, vec!["short"]);
+///
+/// // Long words are force-broken with ellipsis markers
+/// let lines = wrap("supercalifragilistic", 10);
+/// assert!(lines.len() >= 2);
+/// for line in &lines {
+///     assert!(outstanding::table::display_width(line) <= 10);
+/// }
+/// ```
+pub fn wrap(s: &str, width: usize) -> Vec<String> {
+    wrap_indent(s, width, 0)
+}
+
+/// Wraps text with a continuation indent on subsequent lines.
+///
+/// The first line uses the full width. Subsequent lines are indented by the
+/// specified amount, reducing their effective width.
+///
+/// ANSI escape codes are preserved and don't count toward width calculations.
+///
+/// # Arguments
+///
+/// * `s` - The string to wrap
+/// * `width` - Maximum display width for each line
+/// * `indent` - Number of spaces to indent continuation lines
+///
+/// # Example
+///
+/// ```rust
+/// use outstanding::table::wrap_indent;
+///
+/// let lines = wrap_indent("hello world foo bar", 12, 2);
+/// assert_eq!(lines, vec!["hello world", "  foo bar"]);
+/// ```
+pub fn wrap_indent(s: &str, width: usize, indent: usize) -> Vec<String> {
+    if width == 0 {
+        return vec![];
+    }
+
+    let s = s.trim();
+    if s.is_empty() {
+        return vec![];
+    }
+
+    // If the whole string fits, return it directly
+    if measure_text_width(s) <= width {
+        return vec![s.to_string()];
+    }
+
+    let mut lines = Vec::new();
+    let mut current_line = String::new();
+    let mut current_width = 0;
+    let mut is_first_line = true;
+
+    // Split on whitespace, preserving the structure
+    for word in s.split_whitespace() {
+        let word_width = measure_text_width(word);
+        let effective_width = if is_first_line {
+            width
+        } else {
+            width.saturating_sub(indent)
+        };
+
+        // Handle words longer than available width
+        if word_width > effective_width {
+            // Finish current line if it has content
+            if !current_line.is_empty() {
+                lines.push(current_line);
+                current_line = String::new();
+                current_width = 0;
+                is_first_line = false;
+            }
+
+            // Force-break the long word
+            let broken = break_long_word(word, effective_width, indent, is_first_line);
+            let broken_len = broken.len();
+            for (i, part) in broken.into_iter().enumerate() {
+                if i == 0 && is_first_line {
+                    lines.push(part);
+                    is_first_line = false;
+                } else if i < broken_len - 1 {
+                    // Not the last part - push as complete line
+                    lines.push(part);
+                } else {
+                    // Last part - becomes the start of the next line
+                    current_line = part;
+                    current_width = measure_text_width(&current_line);
+                }
+            }
+            continue;
+        }
+
+        // Check if word fits on current line
+        let needed_width = if current_line.is_empty() {
+            word_width
+        } else {
+            current_width + 1 + word_width // +1 for space
+        };
+
+        if needed_width <= effective_width {
+            // Word fits - add to current line
+            if !current_line.is_empty() {
+                current_line.push(' ');
+                current_width += 1;
+            }
+            current_line.push_str(word);
+            current_width += word_width;
+        } else {
+            // Word doesn't fit - start new line
+            if !current_line.is_empty() {
+                lines.push(current_line);
+            }
+            is_first_line = false;
+
+            // Start new line with indent
+            let indent_str: String = " ".repeat(indent);
+            current_line = format!("{}{}", indent_str, word);
+            current_width = indent + word_width;
+        }
+    }
+
+    // Don't forget the last line
+    if !current_line.is_empty() {
+        lines.push(current_line);
+    }
+
+    // Handle edge case where we produced no lines (shouldn't happen with non-empty input)
+    if lines.is_empty() && !s.is_empty() {
+        lines.push(truncate_to_display_width(s, width));
+    }
+
+    lines
+}
+
+/// Break a word that's longer than the available width into multiple parts.
+fn break_long_word(word: &str, width: usize, indent: usize, is_first: bool) -> Vec<String> {
+    let mut parts = Vec::new();
+    let mut remaining = word;
+    let mut first_part = is_first;
+
+    while !remaining.is_empty() {
+        let effective_width = if first_part {
+            width
+        } else {
+            width.saturating_sub(indent)
+        };
+
+        if effective_width == 0 {
+            // Can't fit anything - just return what we have
+            break;
+        }
+
+        let remaining_width = measure_text_width(remaining);
+        if remaining_width <= effective_width {
+            // Rest fits
+            let prefix = if first_part {
+                String::new()
+            } else {
+                " ".repeat(indent)
+            };
+            parts.push(format!("{}{}", prefix, remaining));
+            break;
+        }
+
+        // Need to break - leave room for ellipsis to indicate continuation
+        let break_width = effective_width.saturating_sub(1); // -1 for "…"
+        if break_width == 0 {
+            // Not enough room even for one char + ellipsis
+            let prefix = if first_part {
+                String::new()
+            } else {
+                " ".repeat(indent)
+            };
+            parts.push(format!("{}…", prefix));
+            break;
+        }
+
+        let prefix = if first_part {
+            String::new()
+        } else {
+            " ".repeat(indent)
+        };
+        let truncated = truncate_to_display_width(remaining, break_width);
+        parts.push(format!("{}{}…", prefix, truncated));
+
+        // Find where we actually cut in the original string
+        let truncated_len = truncated.chars().count();
+        remaining = &remaining[remaining
+            .char_indices()
+            .nth(truncated_len)
+            .map(|(i, _)| i)
+            .unwrap_or(remaining.len())..];
+        first_part = false;
+    }
+
+    parts
+}
+
 // --- Internal helpers ---
 
 /// Truncate string to fit display width, keeping characters from the start.
@@ -502,6 +721,124 @@ mod tests {
         assert_eq!(truncate_start("hello", 0, "…"), "");
         assert_eq!(truncate_middle("hello", 0, "…"), "");
     }
+
+    // --- wrap tests ---
+
+    #[test]
+    fn wrap_single_line_fits() {
+        assert_eq!(wrap("hello world", 20), vec!["hello world"]);
+        assert_eq!(wrap("short", 10), vec!["short"]);
+    }
+
+    #[test]
+    fn wrap_basic_multiline() {
+        assert_eq!(wrap("hello world foo", 11), vec!["hello world", "foo"]);
+        assert_eq!(
+            wrap("one two three four", 10),
+            vec!["one two", "three four"]
+        );
+    }
+
+    #[test]
+    fn wrap_exact_fit() {
+        assert_eq!(wrap("hello", 5), vec!["hello"]);
+        assert_eq!(wrap("hello world", 11), vec!["hello world"]);
+    }
+
+    #[test]
+    fn wrap_empty_string() {
+        let result: Vec<String> = wrap("", 10);
+        assert!(result.is_empty());
+    }
+
+    #[test]
+    fn wrap_whitespace_only() {
+        let result: Vec<String> = wrap("   ", 10);
+        assert!(result.is_empty());
+    }
+
+    #[test]
+    fn wrap_zero_width() {
+        let result: Vec<String> = wrap("hello", 0);
+        assert!(result.is_empty());
+    }
+
+    #[test]
+    fn wrap_single_word_per_line() {
+        assert_eq!(wrap("a b c d", 1), vec!["a", "b", "c", "d"]);
+    }
+
+    #[test]
+    fn wrap_long_word_force_break() {
+        // "supercalifragilistic" is 20 chars, width 10
+        // With ellipsis breaks: "supercali…" (10), "fragilis…" (10), "tic" (3)
+        let result = wrap("supercalifragilistic", 10);
+        assert!(result.len() >= 2, "should produce multiple lines");
+        for line in &result {
+            assert!(display_width(line) <= 10, "line '{}' exceeds width", line);
+        }
+    }
+
+    #[test]
+    fn wrap_preserves_word_boundaries() {
+        let result = wrap("hello world test", 10);
+        // Should not break "hello" or "world" in the middle
+        assert_eq!(result[0], "hello");
+        assert_eq!(result[1], "world test");
+    }
+
+    #[test]
+    fn wrap_multiple_spaces_normalized_when_wrapping() {
+        // When wrapping occurs, multiple spaces between words get normalized
+        // because we split_whitespace and rejoin with single spaces
+        let result = wrap("hello    world    foo", 12);
+        // "hello world" (11) fits, "foo" goes to next line
+        assert_eq!(result, vec!["hello world", "foo"]);
+    }
+
+    // --- wrap_indent tests ---
+
+    #[test]
+    fn wrap_indent_basic() {
+        let result = wrap_indent("hello world foo bar", 12, 2);
+        assert_eq!(result.len(), 2);
+        assert_eq!(result[0], "hello world");
+        assert!(result[1].starts_with("  ")); // 2-space indent
+    }
+
+    #[test]
+    fn wrap_indent_no_wrap_needed() {
+        assert_eq!(wrap_indent("short", 20, 4), vec!["short"]);
+    }
+
+    #[test]
+    fn wrap_indent_multiple_lines() {
+        let result = wrap_indent("one two three four five six", 10, 2);
+        // First line: no indent, up to 10 chars
+        // Subsequent: 2-char indent, effective width 8
+        assert!(!result[0].starts_with(' '));
+        for line in result.iter().skip(1) {
+            assert!(line.starts_with("  "), "continuation should be indented");
+        }
+    }
+
+    #[test]
+    fn wrap_indent_zero_indent() {
+        // Same as regular wrap
+        let result = wrap_indent("hello world foo", 11, 0);
+        assert_eq!(result, vec!["hello world", "foo"]);
+    }
+
+    #[test]
+    fn wrap_cjk_characters() {
+        // CJK characters are 2 columns each
+        // "日本語" is 6 columns
+        let result = wrap("日本語 テスト", 8);
+        assert_eq!(result.len(), 2);
+        for line in &result {
+            assert!(display_width(line) <= 8);
+        }
+    }
 }
 
 #[cfg(test)]
@@ -632,6 +969,73 @@ mod proptests {
                     "truncated string should contain ellipsis"
                 );
             }
+        }
+
+        #[test]
+        fn wrap_all_lines_respect_width(
+            s in "[a-zA-Z]{1,10}( [a-zA-Z]{1,10}){0,10}",
+            width in 5usize..30,
+        ) {
+            let lines = wrap(&s, width);
+            for line in &lines {
+                let line_width = display_width(line);
+                prop_assert!(
+                    line_width <= width,
+                    "wrap produced line '{}' with width {}, max was {}",
+                    line, line_width, width
+                );
+            }
+        }
+
+        #[test]
+        fn wrap_preserves_all_words(
+            words in prop::collection::vec("[a-zA-Z]{1,8}", 1..10),
+            width in 10usize..40,
+        ) {
+            let input = words.join(" ");
+            let lines = wrap(&input, width);
+            let rejoined = lines.join(" ");
+
+            // All original words should appear in the output
+            for word in &words {
+                prop_assert!(
+                    rejoined.contains(word),
+                    "word '{}' missing from wrapped output",
+                    word
+                );
+            }
+        }
+
+        #[test]
+        fn wrap_indent_continuation_lines_are_indented(
+            s in "[a-zA-Z]{1,5}( [a-zA-Z]{1,5}){3,8}",
+            width in 10usize..20,
+            indent in 1usize..4,
+        ) {
+            let lines = wrap_indent(&s, width, indent);
+            if lines.len() > 1 {
+                let indent_str: String = " ".repeat(indent);
+                for line in lines.iter().skip(1) {
+                    prop_assert!(
+                        line.starts_with(&indent_str),
+                        "continuation line '{}' should start with {} spaces",
+                        line, indent
+                    );
+                }
+            }
+        }
+
+        #[test]
+        fn wrap_nonempty_input_produces_nonempty_output(
+            s in "[a-zA-Z]{1,20}",
+            width in 1usize..30,
+        ) {
+            let lines = wrap(&s, width);
+            prop_assert!(
+                !lines.is_empty(),
+                "non-empty input '{}' should produce non-empty output",
+                s
+            );
         }
     }
 }
