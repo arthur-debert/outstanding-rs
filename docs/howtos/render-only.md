@@ -136,13 +136,24 @@ let theme = Theme::new()
     .add("disabled", "muted")
     .add("inactive", "muted")
 
-    // Adaptive (light/dark mode)
     .add_adaptive(
         "panel",
         Style::new().bold(),
         Some(Style::new().fg(Color::Black)),  // Light mode
         Some(Style::new().fg(Color::White)),  // Dark mode
     );
+```
+
+### Theme Merging
+
+You can layer themes using `merge`. This is useful for user overrides:
+
+```rust
+let base_theme = Theme::from_file("base.yaml")?;
+let user_overrides = Theme::from_file("user-config.yaml")?;
+
+// User styles overwrite base styles
+let final_theme = base_theme.merge(user_overrides);
 ```
 
 ## Pre-Compiled Renderer

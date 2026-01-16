@@ -498,11 +498,8 @@ Create `src/styles/default.css`:
 Or if you prefer YAML (`src/styles/default.yaml`):
 
 ```yaml
-done:
-  strikethrough: true
-  fg: gray
-index:
-  fg: yellow
+done: strikethrough, gray
+index: yellow
 pending:
   bold: true
   fg: white
@@ -510,8 +507,7 @@ pending:
     fg: black
   dark:
     fg: white
-message:
-  fg: cyan
+message: cyan
 ```
 
 > **Verify:** The file exists at `src/styles/default.css` or `src/styles/default.yaml`.

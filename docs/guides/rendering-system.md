@@ -98,10 +98,11 @@ header:
   fg: cyan
   bold: true
 
-# Shorthand
+# Shorthand (space or comma separated)
 accent: cyan
 emphasis: bold
 warning: "yellow bold"
+error: bold, red, italic
 
 # Alias (references another style)
 disabled: muted

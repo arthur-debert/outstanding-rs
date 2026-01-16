@@ -23,11 +23,11 @@ Outstanding handles the boilerplate between your `clap` definition and your term
 
 ## Features
 
-- **Application Life Cicle**:
+- **Application Life Cycle**:
     -   **Formal Logic/Presentation Split**: Decouples your Rust code from terminal formatting.
     - **End to end handling**: from clap arg parsing, to running the logic handlers and finally rendering it's results with rich output.
     - **Declarative API** for annotating your functions.
-    - **Auto Dispatch** from cli input to the execution life cicle
+    - **Auto Dispatch** from cli input to the execution life cycle
 - **Rendering Layer**:
     -   **File-Based Templates**: Uses [MiniJinja](https://github.com/mitsuhiko/minijinja) for powerful templating, including partials for reuse. See [Rendering System](docs/guides/rendering-system.md).
     -   **Rich Styling**: Integrates stylesheets with semantic tagging (e.g., `[title]{{ post.title }}[/title]`) for maintainable designs.
@@ -113,7 +113,7 @@ Learn more about building with Outstanding:
 Contributions are very welcome , be it a feature request, a question and even feedback.
 Use the issue tracker to report bugs and feature requests.
 
-For code contributions, the standar practices apply : tests for changed code, passing test suite, Pull Request with code and motivation.
+For code contributions, the standard practices apply : tests for changed code, passing test suite, Pull Request with code and motivation.
 
 ## License
 

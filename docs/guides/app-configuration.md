@@ -95,12 +95,18 @@ Local directories take precedence. This enables user customization without recom
 ### From Stylesheet Registry
 
 ```rust
-App::builder()
     .styles(embed_styles!("src/styles"))
-    .default_theme("dark")  // Loads dark.yaml from styles
+    // Optional: set explicit default name
+    // If omitted, tries "default", "theme", then "base"
+    .default_theme("dark")
 ```
 
-If the theme isn't found, `build()` returns `SetupError::ThemeNotFound`.
+If `.default_theme()` is not called, `AppBuilder` attempts to load a theme from the registry in this order:
+1. `default`
+2. `theme`
+3. `base`
+
+This allows you to provide a standard `base.yaml` or `theme.yaml` without requiring explicit configuration code. If the explicit theme isn't found, `build()` returns `SetupError::ThemeNotFound`.
 
 ### Explicit Theme
 
