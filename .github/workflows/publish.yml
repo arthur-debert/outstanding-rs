@@ -3,7 +3,7 @@ name: Publish to crates.io
 on:
   push:
     tags:
-      - 'v[0-9]+.[0-9]+.[0-9]+'
+      - 'standout-v[0-9]+.[0-9]+.[0-9]+'
 
 jobs:
   publish:
@@ -14,17 +14,17 @@ jobs:
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
 
-      - name: Publish outstanding-bbparser
-        run: cargo publish --token ${{ secrets.CRATES_IO_KEY }} -p outstanding-bbparser
+      - name: Publish standout-bbparser
+        run: cargo publish --token ${{ secrets.CRATES_IO_KEY }} -p standout-bbparser
 
       - name: Wait for crates.io index
         run: sleep 30
 
-      - name: Publish outstanding
-        run: cargo publish --token ${{ secrets.CRATES_IO_KEY }} -p outstanding
+      - name: Publish standout-macros
+        run: cargo publish --token ${{ secrets.CRATES_IO_KEY }} -p standout-macros
 
       - name: Wait for crates.io index
         run: sleep 30
 
-      - name: Publish outstanding-clap
-        run: cargo publish --token ${{ secrets.CRATES_IO_KEY }} -p outstanding-clap
+      - name: Publish standout
+        run: cargo publish --token ${{ secrets.CRATES_IO_KEY }} -p standout

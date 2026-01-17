@@ -1,22 +1,22 @@
-# cargo-release configuration for outstanding workspace
+# cargo-release configuration for standout workspace
 # See: https://github.com/crate-ci/cargo-release/blob/master/docs/reference.md
 
 # Keep both crates on the same version
 shared-version = true
 
-# Automatically update outstanding-clap's dependency on outstanding when releasing
+# Automatically update dependent crate versions when releasing
 dependent-version = "upgrade"
 
 # Use a single commit for all version bumps
 consolidate-commits = true
 
 # Pre-release commit message
-pre-release-commit-message = "Bump version to v{{version}}"
+pre-release-commit-message = "Bump version to standout-v{{version}}"
 
 # Tag configuration
 tag = true
-tag-name = "v{{version}}"
-tag-message = "Release v{{version}}"
+tag-name = "standout-v{{version}}"
+tag-message = "Release standout-v{{version}}"
 
 # Git operations
 push = true
@@ -31,5 +31,5 @@ verify = true
 # Allow releasing from main branch only
 allow-branch = ["main"]
 
-# NOTE: CHANGELOG.md replacements are in crates/outstanding/release.toml
+# NOTE: CHANGELOG.md replacements are in crates/standout/release.toml
 # to ensure they only run once (not once per crate)

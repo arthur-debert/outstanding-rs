@@ -9,7 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
-- **Comprehensive tabular layout system** - New `outstanding::tabular` module for creating aligned, column-based terminal output with full Unicode support.
+- **Comprehensive tabular layout system** - New `standout::tabular` module for creating aligned, column-based terminal output with full Unicode support.
 
   **Template filters:**
   - `col(width, align=?, truncate=?, ellipsis=?)` - Format value to fit column width
@@ -41,8 +41,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
-- **BREAKING: Renamed `table` module to `tabular`** - The module is now accessed as `outstanding::tabular` instead of `outstanding::table`. This better reflects its purpose of providing tabular layout functionality.
-  - `use outstanding::table::*` → `use outstanding::tabular::*`
+- **BREAKING: Renamed `table` module to `tabular`** - The module is now accessed as `standout::tabular` instead of `standout::table`. This better reflects its purpose of providing tabular layout functionality.
+  - `use standout::table::*` → `use standout::tabular::*`
 
 - **BREAKING: Renamed types for consistency:**
   - `TableFormatter` → `TabularFormatter`
@@ -108,7 +108,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - `context.rs` → `rendering/context.rs`
 
 - **BREAKING: Merged `stylesheet` module into `style`** - The `stylesheet` module has been absorbed into `style`. All YAML parsing functionality is now accessed through the `style` module.
-  - `use outstanding::stylesheet::*` → `use outstanding::style::*`
+  - `use standout::stylesheet::*` → `use standout::style::*`
   - Types like `StylesheetRegistry`, `parse_stylesheet`, `ThemeVariants` are now in `style`
 
 ### Added
@@ -116,7 +116,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **`rendering::prelude` module** - Convenient imports for standalone rendering:
 
   ```rust
-  use outstanding::rendering::prelude::*;
+  use standout::rendering::prelude::*;
   ```
 
   Includes: `render`, `render_auto`, `render_with_output`, `render_with_mode`, `render_with_vars`, `Theme`, `ColorMode`, `OutputMode`, `Renderer`, `Style`
@@ -137,7 +137,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### 🚀 First Stable Release
 
-Outstanding reaches 1.0 with a cleaner, more ergonomic template syntax.
+Standout reaches 1.0 with a cleaner, more ergonomic template syntax.
 
 ### ⚠️ BREAKING CHANGE: Tag-Based Styling
 
@@ -162,7 +162,7 @@ Outstanding reaches 1.0 with a cleaner, more ergonomic template syntax.
 - **Template validation** - `validate_template()` function to catch unknown style tags
   - Returns detailed error info with tag name and position
   - Re-exported `UnknownTagError`, `UnknownTagErrors`, `UnknownTagKind` types
-- **New `outstanding-bbparser` crate** - Standalone BBCode-style tag parser for terminal styling
+- **New `standout-bbparser` crate** - Standalone BBCode-style tag parser for terminal styling
   - `BBParser` with configurable `TagTransform` (Apply/Remove/Keep)
   - `UnknownTagBehavior` (Passthrough with `?` marker, or Strip)
   - Strict validation for unbalanced/unexpected close tags
@@ -182,7 +182,7 @@ Outstanding reaches 1.0 with a cleaner, more ergonomic template syntax.
 ### Example
 
 ```rust
-use outstanding::{render_with_output, Theme, OutputMode};
+use standout::{render_with_output, Theme, OutputMode};
 use console::Style;
 
 let theme = Theme::new()
@@ -216,10 +216,10 @@ let output = render_with_output(template, &data, &theme, OutputMode::Term)?;
 - **Example**:
 
   ```rust
-  use outstanding_clap::{dispatch, Outstanding, CommandResult};
+  use standout_clap::{dispatch, Standout, CommandResult};
   use serde_json::json;
 
-  Outstanding::builder()
+  Standout::builder()
       .template_dir("templates")
       .commands(dispatch! {
           db: {
@@ -259,8 +259,8 @@ let output = render_with_output(template, &data, &theme, OutputMode::Term)?;
     - `From` implementations for converting to `TemplateRegistry` and `StylesheetRegistry`
   - **RenderSetup builder** - Unified setup API for templates, styles, and themes
     - `RenderSetup::new().templates(...).styles(...).default_theme(...).build()`
-    - `OutstandingApp` for ready-to-use rendering with pre-loaded templates
-  - **outstanding-clap integration** - `.styles()` and `.default_theme()` methods on `OutstandingBuilder`
+    - `StandoutApp` for ready-to-use rendering with pre-loaded templates
+  - **standout-clap integration** - `.styles()` and `.default_theme()` methods on `StandoutBuilder`
 
 - **Changed**:
   - **Simplified embed macro architecture** - Macros are now "dumb" collectors that only walk directories
@@ -320,15 +320,15 @@ let output = render_with_output(template, &data, &theme, OutputMode::Term)?;
     - Full access to `ArgMatches` and `CommandContext` in hook functions
   - `HookError::post_dispatch()` factory method for creating post-dispatch errors
   - `HookPhase::PostDispatch` variant for error phase tracking
-  - `serde_json` dependency added to `outstanding-clap` (previously dev-only)
+  - `serde_json` dependency added to `standout-clap` (previously dev-only)
 
 - **Example**:
 
   ```rust
-  use outstanding_clap::{Outstanding, Hooks, HookError};
+  use standout_clap::{Standout, Hooks, HookError};
   use serde_json::json;
 
-  Outstanding::builder()
+  Standout::builder()
       .command("list", handler, template)
       .hooks("list", Hooks::new()
           .pre_dispatch(|_m, ctx| {
@@ -369,9 +369,9 @@ let output = render_with_output(template, &data, &theme, OutputMode::Term)?;
 - **Example**:
 
   ```rust
-  use outstanding_clap::{Outstanding, Hooks, Output, HookError};
+  use standout_clap::{Standout, Hooks, Output, HookError};
 
-  Outstanding::builder()
+  Standout::builder()
       .command("list", handler, template)
       .hooks("list", Hooks::new()
           .pre_dispatch(|matches, ctx| {
@@ -388,7 +388,7 @@ let output = render_with_output(template, &data, &theme, OutputMode::Term)?;
 ## [0.6.2] - 2025-01-10
 
 - **Changed**:
-  - Code reorganization: split `lib.rs` into focused modules for both `outstanding` and `outstanding-clap` crates
+  - Code reorganization: split `lib.rs` into focused modules for both `standout` and `standout-clap` crates
 
 ## [0.6.1] - 2025-01-09
 
@@ -406,22 +406,22 @@ let output = render_with_output(template, &data, &theme, OutputMode::Term)?;
   - Command handler system with `dispatch_from` convenience method
   - Archive variant support in clap integration
 
-[Unreleased]: https://github.com/arthur-debert/outstanding-rs/compare/v2.2.0...HEAD
-[2.2.0]: https://github.com/arthur-debert/outstanding-rs/compare/v2.1.2...v2.2.0
-[2.1.2]: https://github.com/arthur-debert/outstanding-rs/compare/v2.1.1...v2.1.2
-[2.1.1]: https://github.com/arthur-debert/outstanding-rs/compare/v2.1.0...v2.1.1
-[2.1.0]: https://github.com/arthur-debert/outstanding-rs/compare/v2.0.0...v2.1.0
-[2.0.0]: https://github.com/arthur-debert/outstanding-rs/compare/v1.0.0...v2.0.0
-[1.0.0]: https://github.com/arthur-debert/outstanding-rs/compare/v0.15.0...v1.0.0
-[0.14.0]: https://github.com/arthur-debert/outstanding-rs/compare/v0.13.0...v0.14.0
-[0.13.0]: https://github.com/arthur-debert/outstanding-rs/compare/v0.12.0...v0.13.0
-[0.12.0]: https://github.com/arthur-debert/outstanding-rs/compare/v0.11.1...v0.12.0
-[0.11.1]: https://github.com/arthur-debert/outstanding-rs/compare/v0.10.1...v0.11.1
-[0.10.1]: https://github.com/arthur-debert/outstanding-rs/compare/v0.9.0...v0.10.1
-[0.9.0]: https://github.com/arthur-debert/outstanding-rs/compare/v0.7.2...v0.9.0
-[0.7.2]: https://github.com/arthur-debert/outstanding-rs/compare/v0.7.1...v0.7.2
-[0.7.1]: https://github.com/arthur-debert/outstanding-rs/compare/v0.7.0...v0.7.1
-[0.7.0]: https://github.com/arthur-debert/outstanding-rs/compare/v0.6.2...v0.7.0
-[0.6.2]: https://github.com/arthur-debert/outstanding-rs/compare/v0.6.1...v0.6.2
-[0.6.1]: https://github.com/arthur-debert/outstanding-rs/compare/v0.6.0...v0.6.1
-[0.6.0]: https://github.com/arthur-debert/outstanding-rs/releases/tag/v0.6.0
+[Unreleased]: https://github.com/arthur-debert/standout/compare/v2.2.0...HEAD
+[2.2.0]: https://github.com/arthur-debert/standout/compare/v2.1.2...v2.2.0
+[2.1.2]: https://github.com/arthur-debert/standout/compare/v2.1.1...v2.1.2
+[2.1.1]: https://github.com/arthur-debert/standout/compare/v2.1.0...v2.1.1
+[2.1.0]: https://github.com/arthur-debert/standout/compare/v2.0.0...v2.1.0
+[2.0.0]: https://github.com/arthur-debert/standout/compare/v1.0.0...v2.0.0
+[1.0.0]: https://github.com/arthur-debert/standout/compare/v0.15.0...v1.0.0
+[0.14.0]: https://github.com/arthur-debert/standout/compare/v0.13.0...v0.14.0
+[0.13.0]: https://github.com/arthur-debert/standout/compare/v0.12.0...v0.13.0
+[0.12.0]: https://github.com/arthur-debert/standout/compare/v0.11.1...v0.12.0
+[0.11.1]: https://github.com/arthur-debert/standout/compare/v0.10.1...v0.11.1
+[0.10.1]: https://github.com/arthur-debert/standout/compare/v0.9.0...v0.10.1
+[0.9.0]: https://github.com/arthur-debert/standout/compare/v0.7.2...v0.9.0
+[0.7.2]: https://github.com/arthur-debert/standout/compare/v0.7.1...v0.7.2
+[0.7.1]: https://github.com/arthur-debert/standout/compare/v0.7.0...v0.7.1
+[0.7.0]: https://github.com/arthur-debert/standout/compare/v0.6.2...v0.7.0
+[0.6.2]: https://github.com/arthur-debert/standout/compare/v0.6.1...v0.6.2
+[0.6.1]: https://github.com/arthur-debert/standout/compare/v0.6.0...v0.6.1
+[0.6.0]: https://github.com/arthur-debert/standout/releases/tag/v0.6.0

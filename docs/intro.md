@@ -1,6 +1,6 @@
 ## Create Oustanding Shell Applications for free
 
-Outstanding is a rust library for building finely crafted non-interactive command line applications.
+Standout is a rust library for building finely crafted non-interactive command line applications.
 
 ## The Use Case
 
@@ -12,7 +12,7 @@ While simple, with time, print statements creep in , and before you know it, you
 
 ## Oustanding Apps
 
-Oustanding is a framework that takes on from a clap defined cli definition, and handles all the boiler plate for you: - Effectively enforcing logic and presentation seperation, keeping your code testable and maintanable. - Dispatching cli input from declaratively defined logic handlers and their command names. - Running your application logic , a pure rust function, with rich rust data types and regular rust restult data types . - Rendering the results of the command through outstanding expressive rendering layer: - Rich Term Support:
+Oustanding is a framework that takes on from a clap defined cli definition, and handles all the boiler plate for you: - Effectively enforcing logic and presentation seperation, keeping your code testable and maintanable. - Dispatching cli input from declaratively defined logic handlers and their command names. - Running your application logic , a pure rust function, with rich rust data types and regular rust restult data types . - Rendering the results of the command through standout expressive rendering layer: - Rich Term Support:
 
 In short, oustanding gives you a set of primitives so you can focus on your app, while still easily offering a finely crafter user experience, helping your codebase to remanin well structured, leading to easier to write and maiain, both the application's core logic and it's user interface.
 
@@ -132,7 +132,7 @@ pub fn list(_matches: &ArgMatches, _ctx: &CommandContext) -> HandlerResult<TodoR
 }
 
 
-// Setup and configure outstanding:
+// Setup and configure standout:
 let app = App::builder()
     .templates(embed_templates!("src/templates"))  // Embeds all .jinja/.j2/.txt files
     .styles(embed_styles!("src/styles"))           // Embeds all .yaml/.yml files

@@ -1,6 +1,6 @@
 # The Rendering System
 
-Outstanding's rendering layer separates presentation from logic by using a two-pass architecture. This allows you to use standard tools (MiniJinja) for structure while keeping styling strictly separated and easy to debug.
+Standout's rendering layer separates presentation from logic by using a two-pass architecture. This allows you to use standard tools (MiniJinja) for structure while keeping styling strictly separated and easy to debug.
 
 Instead of mixing ANSI codes into your logic or templates, you define *what* something is (semantic tags like `[error]`) and let the theme decide *how* it looks.
 
@@ -51,7 +51,7 @@ The tag syntax was chosen over Jinja filters because it reads naturally and does
 
 ### Unknown Style Tags
 
-When a tag references a style not in the theme, Outstanding prioritizes developer visibility without crashing production apps.
+When a tag references a style not in the theme, Standout prioritizes developer visibility without crashing production apps.
 
 - **Term mode**: Unknown tags get a `?` marker: `[unknown?]text[/unknown?]`
 
@@ -115,7 +115,7 @@ panel:
 
 ### CSS Stylesheets
 
-If you prefer standard CSS syntax over YAML, Outstanding supports a subset of CSS Level 3 tailored for terminals:
+If you prefer standard CSS syntax over YAML, Standout supports a subset of CSS Level 3 tailored for terminals:
 
 ```css
 /* Selectors map to style names */
@@ -201,7 +201,7 @@ panel:
 
 The base provides shared attributes. Mode-specific overrides merge with base—`Some` replaces, `None` preserves.
 
-Outstanding auto-detects the OS color scheme. Override for testing:
+Standout auto-detects the OS color scheme. Override for testing:
 
 ```rust
 set_theme_detector(|| ColorMode::Dark);
@@ -209,7 +209,7 @@ set_theme_detector(|| ColorMode::Dark);
 
 ## Template Filters
 
-Beyond MiniJinja's built-ins, Outstanding adds formatting filters:
+Beyond MiniJinja's built-ins, Standout adds formatting filters:
 
 ### Column Formatting
 
@@ -308,7 +308,7 @@ For using the rendering layer without CLI integration:
 ### Basic Rendering
 
 ```rust
-use outstanding::{render, Theme};
+use standout::{render, Theme};
 
 let theme = Theme::new().add("ok", Style::new().green());
 
@@ -322,7 +322,7 @@ let output = render(
 ### With Output Mode
 
 ```rust
-use outstanding::{render_with_output, OutputMode};
+use standout::{render_with_output, OutputMode};
 
 // Honor --output flag value
 let output = render_with_output(template, &data, &theme, OutputMode::Text)?;
@@ -331,7 +331,7 @@ let output = render_with_output(template, &data, &theme, OutputMode::Text)?;
 ### With Extra Variables
 
 ```rust
-use outstanding::{render_with_vars, OutputMode};
+use standout::{render_with_vars, OutputMode};
 use std::collections::HashMap;
 
 // Inject simple key-value pairs into the template context
@@ -347,7 +347,7 @@ let output = render_with_vars(
 ### Auto-Dispatch (Template vs Serialize)
 
 ```rust
-use outstanding::render_auto;
+use standout::render_auto;
 
 // For Term/Text: renders template
 // For Json/Yaml/etc: serializes data directly
@@ -357,7 +357,7 @@ let output = render_auto(template, &data, &theme, OutputMode::Json)?;
 ### Full Control
 
 ```rust
-use outstanding::{render_with_mode, ColorMode};
+use standout::{render_with_mode, ColorMode};
 
 // Explicit output mode AND color mode (for tests)
 let output = render_with_mode(
@@ -372,7 +372,7 @@ let output = render_with_mode(
 For convenient imports when using the rendering layer standalone:
 
 ```rust
-use outstanding::rendering::prelude::*;
+use standout::rendering::prelude::*;
 
 let theme = Theme::new()
     .add("title", Style::new().bold());

@@ -1,13 +1,13 @@
-# Outstanding API Unification Proposal
+# Standout API Unification Proposal
 
 ## Overview
 
-This document outlines the reorganization of Outstanding's public API to create a coherent,
+This document outlines the reorganization of Standout's public API to create a coherent,
 user-friendly interface that matches the design vision in `docs/intro.lex`.
 
-## Key Decision: Merge `outstanding-clap` into `outstanding`
+## Key Decision: Merge `standout-clap` into `standout`
 
-The `outstanding-clap` crate will be folded into `outstanding` core, with clap-specific
+The `standout-clap` crate will be folded into `standout` core, with clap-specific
 functionality behind a `clap` feature flag.
 
 **Rationale:**
@@ -19,7 +19,7 @@ functionality behind a `clap` feature flag.
 
 **New structure:**
 ```
-outstanding/
+standout/
 ├── src/
 │   ├── lib.rs           # Core exports
 │   ├── render/          # Template rendering
@@ -44,7 +44,7 @@ outstanding/
 
 **Current (confusing):**
 ```rust
-Outstanding::run(cmd)           // Returns ArgMatches, doesn't execute
+Standout::run(cmd)           // Returns ArgMatches, doesn't execute
 builder.run_and_print(cmd, args) // Actually runs and prints
 builder.dispatch_from(cmd, args) // Runs, returns result
 ```
@@ -62,12 +62,12 @@ app.dispatch(matches)           // Execute handler for matches, return Output
 
 ### 2. Unified Builder
 
-**Problem:** Two incompatible builders (`RenderSetup` vs `OutstandingBuilder`).
+**Problem:** Two incompatible builders (`RenderSetup` vs `StandoutBuilder`).
 
-**Proposed:** Single `Outstanding::builder()` that supports all use cases:
+**Proposed:** Single `Standout::builder()` that supports all use cases:
 
 ```rust
-let app = Outstanding::builder()
+let app = Standout::builder()
     // Templates - embedded or directory-based
     .templates(embed_templates!("src/templates"))
     .templates_dir("~/.myapp/templates")  // Optional override
@@ -131,9 +131,9 @@ Renderer::new(theme)
 
 | Current | Proposed | Rationale |
 |---------|----------|-----------|
-| `Outstanding` (clap) | `App` | Shorter, clearer |
-| `OutstandingApp` (core) | `RenderEngine` | Distinguishes from App |
-| `OutstandingBuilder` | `AppBuilder` | Follows App rename |
+| `Standout` (clap) | `App` | Shorter, clearer |
+| `StandoutApp` (core) | `RenderEngine` | Distinguishes from App |
+| `StandoutBuilder` | `AppBuilder` | Follows App rename |
 | `RenderSetup` | Merged into `AppBuilder` | Single builder |
 | `RunResult::Unhandled` | `RunResult::NoMatch` | Clearer semantics |
 | `CommandResult<T>` | `HandlerResult<T>` | More specific |
@@ -168,7 +168,7 @@ This allows `?` operator and standard error handling.
 
 ### 6. Gradual Adoption API
 
-**For adding Outstanding to one command in existing clap app:**
+**For adding Standout to one command in existing clap app:**
 
 ```rust
 // In your existing main.rs with manual dispatch:
@@ -176,8 +176,8 @@ let matches = cli.get_matches();
 
 match matches.subcommand() {
     Some(("new-feature", sub_m)) => {
-        // Use Outstanding for just this command
-        let output = outstanding::render_command(
+        // Use Standout for just this command
+        let output = standout::render_command(
             sub_m,
             new_feature_handler,
             "templates/new_feature.j2",
@@ -194,7 +194,7 @@ match matches.subcommand() {
 **For fallback from auto-dispatch:**
 
 ```rust
-let app = Outstanding::builder()
+let app = Standout::builder()
     .command("new", new_handler)
     .build()?;
 
@@ -220,7 +220,7 @@ Per project guidelines (no backwards compatibility), remove:
 ## Module Structure After Merge
 
 ```
-outstanding/
+standout/
 ├── Cargo.toml
 └── src/
     ├── lib.rs                    # Public API exports
@@ -244,7 +244,7 @@ outstanding/
     │
     ├── cli/                      # feature = "clap"
     │   ├── mod.rs
-    │   ├── app.rs                # App (was Outstanding)
+    │   ├── app.rs                # App (was Standout)
     │   ├── builder.rs            # AppBuilder (unified)
     │   ├── handler.rs            # Handler trait, HandlerResult
     │   ├── dispatch.rs           # Dispatch logic
@@ -271,7 +271,7 @@ outstanding/
 [features]
 default = ["clap", "macros"]
 clap = ["dep:clap"]              # CLI integration
-macros = ["dep:outstanding-macros"]  # embed_*! macros
+macros = ["dep:standout-macros"]  # embed_*! macros
 ```
 
 ---
@@ -296,7 +296,7 @@ pub use cli::{
 
 // Macros (feature = "macros")
 #[cfg(feature = "macros")]
-pub use outstanding_macros::{embed_templates, embed_styles, Dispatch};
+pub use standout_macros::{embed_templates, embed_styles, Dispatch};
 ```
 
 ---
@@ -305,10 +305,10 @@ pub use outstanding_macros::{embed_templates, embed_styles, Dispatch};
 
 ### Before (current API)
 ```rust
-use outstanding::{render_or_serialize, Theme, OutputMode};
-use outstanding_clap::{Outstanding, CommandResult, CommandContext};
+use standout::{render_or_serialize, Theme, OutputMode};
+use standout_clap::{Standout, CommandResult, CommandContext};
 
-let matches = Outstanding::builder()
+let matches = Standout::builder()
     .command("list", |m, ctx| {
         CommandResult::Ok(list_items())
     }, "{% for item in items %}{{ item }}\n{% endfor %}")
@@ -318,7 +318,7 @@ let matches = Outstanding::builder()
 
 ### After (new API)
 ```rust
-use outstanding::{App, Theme, OutputMode, HandlerResult, Output};
+use standout::{App, Theme, OutputMode, HandlerResult, Output};
 
 App::builder()
     .command("list", |m, ctx| {
@@ -351,8 +351,8 @@ the codebase in a working state with passing tests.
 - Add deprecation notes in code comments for functions to be merged later
 - ~1 hr
 
-**1.3 Add feature flag structure to outstanding**
-- Add `[features]` section to `outstanding/Cargo.toml`
+**1.3 Add feature flag structure to standout**
+- Add `[features]` section to `standout/Cargo.toml`
 - Create empty `src/cli/mod.rs` behind `clap` feature
 - Ensure existing API unchanged
 - ~30 min
@@ -361,15 +361,15 @@ the codebase in a working state with passing tests.
 
 ### Phase 2: Crate Merge (Structural)
 
-**2.1 Copy outstanding-clap source into outstanding/src/cli/**
+**2.1 Copy standout-clap source into standout/src/cli/**
 - Move all source files
 - Update internal `use` statements to reference sibling modules
-- Keep `outstanding-clap` crate temporarily (will delete later)
+- Keep `standout-clap` crate temporarily (will delete later)
 - ~2 hr
 
-**2.2 Update outstanding/Cargo.toml dependencies**
+**2.2 Update standout/Cargo.toml dependencies**
 - Add clap dependency behind feature flag
-- Add other outstanding-clap dependencies (anyhow, etc.)
+- Add other standout-clap dependencies (anyhow, etc.)
 - ~30 min
 
 **2.3 Wire up cli module exports**
@@ -377,13 +377,13 @@ the codebase in a working state with passing tests.
 - Export types from `lib.rs`
 - ~1 hr
 
-**2.4 Create outstanding-clap as thin re-export crate**
-- Replace outstanding-clap/src/lib.rs with `pub use outstanding::cli::*;`
+**2.4 Create standout-clap as thin re-export crate**
+- Replace standout-clap/src/lib.rs with `pub use standout::cli::*;`
 - Add deprecation notice to crate docs
 - Ensures existing users still compile
 - ~30 min
 
-**2.5 Delete outstanding-clap crate**
+**2.5 Delete standout-clap crate**
 - Remove from workspace
 - Delete crate directory
 - Update workspace Cargo.toml
@@ -405,7 +405,7 @@ the codebase in a working state with passing tests.
 - ~2 hr
 
 **3.3 Make builder.build() return Result**
-- Change signature from `fn build(self) -> Outstanding` to `fn build(self) -> Result<App, SetupError>`
+- Change signature from `fn build(self) -> Standout` to `fn build(self) -> Result<App, SetupError>`
 - Update all call sites
 - ~1 hr
 
@@ -414,9 +414,9 @@ the codebase in a working state with passing tests.
 ### Phase 4: Run Semantics Fix
 
 **4.1 Rename current run methods (preparation)**
-- `Outstanding::run()` → `Outstanding::parse()` (internal rename, keep old as deprecated alias)
-- `Outstanding::run_with()` → `Outstanding::parse_with()`
-- `Outstanding::run_from()` → `Outstanding::parse_from()`
+- `Standout::run()` → `Standout::parse()` (internal rename, keep old as deprecated alias)
+- `Standout::run_with()` → `Standout::parse_with()`
+- `Standout::run_from()` → `Standout::parse_from()`
 - ~1 hr
 
 **4.2 Implement new run() that executes and prints**
@@ -438,17 +438,17 @@ the codebase in a working state with passing tests.
 
 ### Phase 5: Type Renames
 
-**5.1 Rename Outstanding → App**
+**5.1 Rename Standout → App**
 - Rename struct and impl blocks
 - Update all references
 - ~1 hr
 
-**5.2 Rename OutstandingBuilder → AppBuilder**
+**5.2 Rename StandoutBuilder → AppBuilder**
 - Rename struct
 - Update builder() method
 - ~30 min
 
-**5.3 Rename OutstandingApp → RenderEngine**
+**5.3 Rename StandoutApp → RenderEngine**
 - Or merge into Renderer
 - Evaluate if this type is still needed
 - ~1 hr
@@ -531,9 +531,9 @@ Ref: docs/proposals/new-api.md
 ```
 
 ```
-feat: merge outstanding-clap into outstanding core (Phase 2.1-2.3)
+feat: merge standout-clap into standout core (Phase 2.1-2.3)
 
-Move CLI integration code into outstanding crate behind "clap" feature.
+Move CLI integration code into standout crate behind "clap" feature.
 This is a structural change - API remains unchanged.
 
 Ref: docs/proposals/new-api.md
@@ -549,7 +549,7 @@ Ref: docs/proposals/new-api.md
 - Consider temporary CI job that tests both old and new import paths
 
 **Rollback points:**
-- After Phase 2.4, old outstanding-clap still works (re-exports)
+- After Phase 2.4, old standout-clap still works (re-exports)
 - After Phase 3, builder unification complete but types unchanged
 - After Phase 4, run semantics fixed but types unchanged
 

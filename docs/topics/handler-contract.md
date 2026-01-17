@@ -1,6 +1,6 @@
 # The Handler Contract
 
-Handlers are where your application logic lives. Outstanding's handler contract is designed to be **explicit** rather than permissive. By enforcing `Send + Sync` and serializable return types, the framework guarantees that your code remains testable, parallel-safe, and decoupled from output formatting.
+Handlers are where your application logic lives. Standout's handler contract is designed to be **explicit** rather than permissive. By enforcing `Send + Sync` and serializable return types, the framework guarantees that your code remains testable, parallel-safe, and decoupled from output formatting.
 
 Instead of fighting with generic `Any` types or global state, you work with a clear contract: inputs are immutable references, output is a `Result`.
 
@@ -45,7 +45,7 @@ fn(&ArgMatches, &CommandContext) -> HandlerResult<T>
 where T: Serialize + Send + Sync
 ```
 
-Closures must be `Fn` (not `FnMut` or `FnOnce`) because Outstanding may call them multiple times in certain scenarios.
+Closures must be `Fn` (not `FnMut` or `FnOnce`) because Standout may call them multiple times in certain scenarios.
 
 ## HandlerResult
 
@@ -65,7 +65,7 @@ fn list_handler(matches: &ArgMatches, ctx: &CommandContext) -> HandlerResult<Ite
 }
 ```
 
-Errors become the command output—Outstanding formats and displays them appropriately.
+Errors become the command output—Standout formats and displays them appropriately.
 
 ## The Output Enum
 
@@ -137,7 +137,7 @@ fn export_handler(matches: &ArgMatches, _ctx: &CommandContext) -> HandlerResult<
 }
 ```
 
-The filename is used as a literal file path. Outstanding writes the bytes using `std::fs::write()` and prints a confirmation to stderr. The filename can be:
+The filename is used as a literal file path. Standout writes the bytes using `std::fs::write()` and prints a confirmation to stderr. The filename can be:
 
 - Relative: `"output/report.pdf"`
 - Absolute: `"/tmp/report.pdf"`
@@ -215,7 +215,7 @@ fn handler(matches: &ArgMatches, _ctx: &CommandContext) -> HandlerResult<Data> {
 }
 ```
 
-For subcommands, you receive the `ArgMatches` for your specific command, not the root. Outstanding navigates to the deepest match before calling your handler.
+For subcommands, you receive the `ArgMatches` for your specific command, not the root. Standout navigates to the deepest match before calling your handler.
 
 ## The #[dispatch] Macro
 

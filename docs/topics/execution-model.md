@@ -1,6 +1,6 @@
 # Execution Model
 
-Outstanding manages a strict linear pipeline from CLI input to rendered output. This explicitly separated flow ensures that logic (Handlers) remains decoupled from presentation (Templates) and side-effects (Hooks).
+Standout manages a strict linear pipeline from CLI input to rendered output. This explicitly separated flow ensures that logic (Handlers) remains decoupled from presentation (Templates) and side-effects (Hooks).
 
 Understanding this model allows you to extend the framework predictably—knowing exactly where to intercept execution, what data is available, and how to test each stage in isolation.
 
@@ -12,9 +12,9 @@ Clap Parsing → Dispatch → Handler → Hooks → Rendering → Output
 
 Each stage has a clear responsibility:
 
-**Clap Parsing**: Your `clap::Command` definition is augmented with Outstanding's flags (`--output`, custom help) and parsed normally. Outstanding doesn't replace clap—it builds on top of it.
+**Clap Parsing**: Your `clap::Command` definition is augmented with Standout's flags (`--output`, custom help) and parsed normally. Standout doesn't replace clap—it builds on top of it.
 
-**Dispatch**: Outstanding extracts the *command path* from the parsed `ArgMatches`, navigating through subcommands to find the deepest match. It then looks up the registered handler for that path.
+**Dispatch**: Standout extracts the *command path* from the parsed `ArgMatches`, navigating through subcommands to find the deepest match. It then looks up the registered handler for that path.
 
 **Handler**: Your logic function executes. It receives the `ArgMatches` and a `CommandContext`, returning a `HandlerResult<T>`—either data to render, a silent marker, or binary content.
 
@@ -24,7 +24,7 @@ Each stage has a clear responsibility:
 
 **Output**: The result is written to stdout or a file.
 
-This pipeline is what Outstanding manages for you—the glue code between "I have a clap definition" and "I want rich, testable output."
+This pipeline is what Standout manages for you—the glue code between "I have a clap definition" and "I want rich, testable output."
 
 - See [Handler Contract](handler-contract.md) for handler details.
 - See [Rendering System](rendering-system.md) for the render phase.
@@ -50,7 +50,7 @@ App::builder()
     .build()?
 ```
 
-Outstanding builds an internal registry mapping paths to handlers:
+Standout builds an internal registry mapping paths to handlers:
 
 - `["list"]` → `list_handler`
 - `["db", "migrate"]` → `migrate_handler`
@@ -161,8 +161,8 @@ HookError::pre_dispatch("database connection failed")
 When `app.run()` executes:
 
 1. Clap parses the arguments
-2. Outstanding traverses the `ArgMatches` subcommand chain to find the deepest match
-3. **If no subcommand was specified and a default command is configured**, Outstanding inserts the default command and reparses
+2. Standout traverses the `ArgMatches` subcommand chain to find the deepest match
+3. **If no subcommand was specified and a default command is configured**, Standout inserts the default command and reparses
 4. It extracts the command path (e.g., `["db", "migrate"]`)
 5. It looks up the handler for that path
 6. It executes the handler with the appropriate `ArgMatches` slice
@@ -182,7 +182,7 @@ If no handler matches, `run()` returns `Some(matches)`, letting you fall back to
 
 ```rust
 if let Some(matches) = app.run(cmd, args) {
-    // Outstanding didn't handle this command, fall back to legacy
+    // Standout didn't handle this command, fall back to legacy
     match matches.subcommand() {
         Some(("legacy", sub)) => legacy_handler(sub),
         _ => {}
@@ -190,11 +190,11 @@ if let Some(matches) = app.run(cmd, args) {
 }
 ```
 
-This enables gradual adoption—Outstanding handles some commands while others use your existing code.
+This enables gradual adoption—Standout handles some commands while others use your existing code.
 
-## What Outstanding Adds to Your Command
+## What Standout Adds to Your Command
 
-When you call `app.run()`, Outstanding augments your `clap::Command` with:
+When you call `app.run()`, Standout augments your `clap::Command` with:
 
 **Custom help subcommand**:
 

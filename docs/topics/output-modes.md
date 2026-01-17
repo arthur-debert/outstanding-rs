@@ -1,6 +1,6 @@
 # Output Modes
 
-Outstanding supports multiple output formats through a single handler because modern CLI tools serve two masters: human operators and machine automation.
+Standout supports multiple output formats through a single handler because modern CLI tools serve two masters: human operators and machine automation.
 
 The same handler logic produces styled terminal output for eyes, plain text for logs, or structured JSON for `jq` pipelines—controlled entirely by the user's `--output` flag. This frees you from writing separate "API" and "CLI" logic.
 
@@ -47,7 +47,7 @@ myapp list | less       # No colors (pipe)
 
 ## The --output Flag
 
-Outstanding adds a global `--output` flag accepting these values:
+Standout adds a global `--output` flag accepting these values:
 
 ```bash
 myapp list --output=auto        # Default
@@ -213,7 +213,7 @@ ctx.output_mode.is_debug()          // True for TermDebug
 For standalone rendering with explicit mode:
 
 ```rust
-use outstanding::{render_auto, OutputMode};
+use standout::{render_auto, OutputMode};
 
 // Renders template for Term/Text, serializes for Json/Yaml
 let output = render_auto(template, &data, &theme, OutputMode::Json)?;
@@ -224,7 +224,7 @@ The "auto" in `render_auto` refers to template-vs-serialize dispatch, not color 
 For full control over both output mode and color mode:
 
 ```rust
-use outstanding::{render_with_mode, ColorMode};
+use standout::{render_with_mode, ColorMode};
 
 let output = render_with_mode(
     template,

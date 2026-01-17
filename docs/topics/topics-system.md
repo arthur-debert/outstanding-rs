@@ -1,6 +1,6 @@
 # The Topics System
 
-Outstanding provides a dedicated help topics system because command help (`--help`) is a poor place for conceptual documentation.
+Standout provides a dedicated help topics system because command help (`--help`) is a poor place for conceptual documentation.
 
 Arguments and flags describe *mechanics*, but complex applications need longer-form guides for *concepts*—configuration formats, authentication flows, or troubleshooting. The Topics system integrates these directly into your CLI, accessible via `myapp help <topic>`, keeping users in the terminal.
 
@@ -47,7 +47,7 @@ The `name` is a URL-safe slug used in `help <name>`. If not provided, it's auto-
 ### Programmatically
 
 ```rust
-use outstanding::topics::{Topic, TopicType};
+use standout::topics::{Topic, TopicType};
 
 let topic = Topic::new(
     "Configuration Format",
@@ -69,7 +69,7 @@ App::builder()
     .build()?
 ```
 
-Outstanding scans the directory for `.txt` and `.md` files. File format:
+Standout scans the directory for `.txt` and `.md` files. File format:
 
 ```text
 Configuration Format
@@ -146,7 +146,7 @@ For long topics, the `--page` flag displays content through a pager:
 myapp help getting-started --page
 ```
 
-Outstanding tries pagers in order:
+Standout tries pagers in order:
 
 1. `$PAGER` environment variable
 2. `less`
@@ -158,7 +158,7 @@ Outstanding tries pagers in order:
 For custom topic rendering outside the help system:
 
 ```rust
-use outstanding::topics::{render_topic, render_topics_list, TopicRenderConfig};
+use standout::topics::{render_topic, render_topics_list, TopicRenderConfig};
 
 // Render single topic
 let output = render_topic(&topic, None)?;
@@ -213,7 +213,7 @@ let config = TopicRenderConfig {
 
 ## Markdown Topics
 
-Topics with `.md` extension or `TopicType::Markdown` can contain Markdown formatting. Outstanding renders Markdown appropriately for the terminal when displaying.
+Topics with `.md` extension or `TopicType::Markdown` can contain Markdown formatting. Standout renders Markdown appropriately for the terminal when displaying.
 
 ```markdown
 # Getting Started

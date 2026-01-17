@@ -14,20 +14,20 @@ Information Lib
         println!("hi mom"); 
       :: rust::
 
-    1. How To Adopt Outstanding Dispatch alongside vanilla Clap Loops
+    1. How To Adopt Standout Dispatch alongside vanilla Clap Loops
 
       This allows for partial adoption, a likely user path, testing in a 
       command or two before taking the plunge.
 
       More than an adoption pathway, this is useful for large and old apps
-      where there is value in migrating to outstanding for a few of the more
+      where there is value in migrating to standout for a few of the more
       complex commands, but not much to migrate the boiler plate commands.
 
       We want to show two different solution: 
 
-        - Call outstanding auto-dispatch inside your clap main handler, for 
+        - Call standout auto-dispatch inside your clap main handler, for 
         the unmatched commands.
-        - Use the outstanding auto dispatch, and check if no command is found. If that is the case, 
+        - Use the standout auto dispatch, and check if no command is found. If that is the case, 
         call your legacy loop.
 
       p.s.: How is the autodispatch api? I see : 
@@ -46,14 +46,14 @@ THEME: Architecture & Flow
 
 2. What is the execution flow?
 
-	Outstanding follows a linear pipeline from CLI input to rendered output:
+	Standout follows a linear pipeline from CLI input to rendered output:
 
 		Clap Parsing → Dispatch → Handler → Hooks → Rendering → Output
 
 	Clap Parsing: Your existing clap Command definition is augmented with
-	Outstanding's flags (--output, help integration) and parsed normally.
+	Standout's flags (--output, help integration) and parsed normally.
 
-	Dispatch: Outstanding extracts the command path from the parsed ArgMatches,
+	Dispatch: Standout extracts the command path from the parsed ArgMatches,
 	navigating through subcommands to find the deepest match. It then looks up
 	the registered handler for that path.
 
@@ -72,7 +72,7 @@ THEME: Architecture & Flow
 
 	Output: The result is written to stdout or a file.
 
-	This pipeline is what Outstanding manages for you - the glue code between
+	This pipeline is what Standout manages for you - the glue code between
 	"I have a clap definition" and "I want rich, testable output."
 
 
@@ -127,21 +127,21 @@ THEME: Architecture & Flow
 		    .build()?
 	:: rust ::
 
-	Outstanding builds an internal registry mapping command paths to handlers:
+	Standout builds an internal registry mapping command paths to handlers:
 	  - ["list"] → list_handler
 	  - ["db", "migrate"] → migrate_handler
 	  - ["db", "status"] → status_handler
 
 	When app.run() executes:
 	  1. Clap parses the arguments
-	  2. Outstanding traverses the ArgMatches subcommand chain to find the
+	  2. Standout traverses the ArgMatches subcommand chain to find the
 	     deepest match
 	  3. It extracts the command path (e.g., ["db", "migrate"])
 	  4. It looks up the handler for that path
 	  5. It executes the handler with the appropriate ArgMatches slice
 
 	If no handler matches, run() returns RunResult::NoMatch(matches), letting
-	you fall back to manual dispatch for commands Outstanding doesn't manage.
+	you fall back to manual dispatch for commands Standout doesn't manage.
 
 
 5. What is a command path?
@@ -178,7 +178,7 @@ THEME: Handlers
 6. What is the Handler trait?
 
 	The Handler trait defines the interface for command logic. It lives in
-	[./crates/outstanding/src/cli/handler.rs].
+	[./crates/standout/src/cli/handler.rs].
 
 	The trait definition:
 		pub trait Handler: Send + Sync {
@@ -207,7 +207,7 @@ THEME: Handlers
 		where T: Serialize + Send + Sync
 	:: rust ::
 
-	The closure must be Fn (not FnMut or FnOnce) because Outstanding may
+	The closure must be Fn (not FnMut or FnOnce) because Standout may
 	need to call it multiple times in certain scenarios.
 
 	Registering a closure handler:
@@ -234,13 +234,13 @@ THEME: Handlers
 		}
 	:: rust ::
 
-	Errors become the command output - Outstanding formats and displays them.
+	Errors become the command output - Standout formats and displays them.
 
 
 9. What is the Output enum?
 
 	Output<T> represents what a handler produces. Defined in
-	[./crates/outstanding/src/cli/handler.rs]:
+	[./crates/standout/src/cli/handler.rs]:
 		pub enum Output<T: Serialize> {
 		    Render(T),
 		    Silent,
@@ -307,7 +307,7 @@ THEME: Handlers
 	:: rust ::
 
 	For subcommands, you receive the ArgMatches for your specific command,
-	not the root. Outstanding navigates to the deepest match before calling.
+	not the root. Standout navigates to the deepest match before calling.
 
 
 12. How do I return no output (Silent)?
@@ -344,7 +344,7 @@ THEME: Handlers
 		}
 	:: rust ::
 
-	The filename is used as a literal file path. Outstanding writes the bytes
+	The filename is used as a literal file path. Standout writes the bytes
 	using std::fs::write() and prints a confirmation to stderr. The filename
 	can be:
 	  - Relative: "output/report.pdf" (relative to current directory)
@@ -357,7 +357,7 @@ THEME: Handlers
 14. What does the #[dispatch] attribute do?
 
 	The #[dispatch] attribute macro generates command registration from an
-	enum. It lives in the outstanding-macros crate.
+	enum. It lives in the standout-macros crate.
 
 	Basic usage:
 		#[derive(Dispatch)]
@@ -595,12 +595,12 @@ THEME: Rendering
 
 23. What are the render functions and how do they differ?
 
-	Outstanding provides several render functions with increasing control.
-	All live in [./crates/outstanding/src/render/functions.rs].
+	Standout provides several render functions with increasing control.
+	All live in [./crates/standout/src/render/functions.rs].
 
 	render(template, data, theme) -> Result<String>
 	  - Simplest form. Auto-detects terminal capabilities AND color mode.
-	  - Use when you want Outstanding to decide everything.
+	  - Use when you want Standout to decide everything.
 
 	render_with_output(template, data, theme, mode) -> Result<String>
 	  - Explicit output mode (Term, Text, Auto), but auto-detects color mode.
@@ -701,7 +701,7 @@ THEME: Rendering
 
 28. What template filters are available?
 
-	Beyond MiniJinja's built-in filters, Outstanding adds:
+	Beyond MiniJinja's built-in filters, Standout adds:
 
 	nl - Appends a newline:
 		{{ value | nl }}
@@ -825,7 +825,7 @@ THEME: Themes & Styles
 33. What is a Theme?
 
 	A Theme is a named collection of styles that maps style names to
-	console formatting. Defined in [./crates/outstanding/src/theme/theme.rs].
+	console formatting. Defined in [./crates/standout/src/theme/theme.rs].
 
 	Internally, Theme holds three HashMaps:
 		struct Theme {
@@ -1002,7 +1002,7 @@ THEME: Themes & Styles
 
 41. How does ColorMode detection work?
 
-	Outstanding auto-detects the OS color scheme using the dark-light crate:
+	Standout auto-detects the OS color scheme using the dark-light crate:
 		pub fn detect_color_mode() -> ColorMode
 	:: rust ::
 
@@ -1135,7 +1135,7 @@ THEME: Output Modes
 		--output=csv         -> OutputMode::Csv
 	:: text ::
 
-	The flag is global - it applies to all subcommands. Outstanding adds
+	The flag is global - it applies to all subcommands. Standout adds
 	it automatically via augment_command().
 
 
@@ -1222,7 +1222,7 @@ THEME: App Configuration
 
 52. What is the App struct?
 
-	App is the runtime container for Outstanding configuration. It holds:
+	App is the runtime container for Standout configuration. It holds:
 		pub struct App {
 		    registry: TopicRegistry,              // Help topics
 		    output_flag: Option<String>,          // --output flag name
@@ -1241,7 +1241,7 @@ THEME: App Configuration
 
 53. What is AppBuilder and what methods does it have?
 
-	AppBuilder configures Outstanding before creating the App. Key methods:
+	AppBuilder configures Standout before creating the App. Key methods:
 
 	Resource embedding:
 	  .templates(embed_templates!("path"))  - Embed templates at compile time
@@ -1345,7 +1345,7 @@ THEME: App Configuration
 
 57. What does augment_command() add?
 
-	Outstanding adds these to your clap Command:
+	Standout adds these to your clap Command:
 
 	1. Custom help subcommand:
 		myapp help           # Show main help
@@ -1454,13 +1454,13 @@ THEME: Partial Adoption
 		}
 	:: rust ::
 
-	This allows gradual migration: add Outstanding handlers one at a time.
+	This allows gradual migration: add Standout handlers one at a time.
 
 
-62. How do I use Outstanding for just rendering (no CLI)?
+62. How do I use Standout for just rendering (no CLI)?
 
 	The rendering layer is fully decoupled from CLI integration:
-		use outstanding::{render, render_auto, Theme};
+		use standout::{render, render_auto, Theme};
 		use console::Style;
 
 		let theme = Theme::new()
@@ -1486,9 +1486,9 @@ THEME: Partial Adoption
 	No App, no CLI integration - just templates, data, and themes.
 
 
-63. How do I add Outstanding to just one command?
+63. How do I add Standout to just one command?
 
-	Register only the commands you want Outstanding to handle:
+	Register only the commands you want Standout to handle:
 		let app = App::builder()
 		    .templates(embed_templates!("templates"))
 		    .styles(embed_styles!("styles"))
@@ -1498,7 +1498,7 @@ THEME: Partial Adoption
 		    .build()?;
 
 		let cmd = Command::new("myapp")
-		    .subcommand(Command::new("list"))    // Outstanding handles
+		    .subcommand(Command::new("list"))    // Standout handles
 		    .subcommand(Command::new("status"))  // You handle
 		    .subcommand(Command::new("config")); // You handle
 
@@ -1513,7 +1513,7 @@ THEME: Partial Adoption
 	:: rust ::
 
 
-64. What's the minimal Outstanding setup?
+64. What's the minimal Standout setup?
 
 	Absolute minimum for one command with inline template:
 		let app = App::builder()
@@ -1529,14 +1529,14 @@ THEME: Partial Adoption
 	Style tags without a theme will show the ? marker but still render.
 
 
-65. How do I use Outstanding dispatch inside existing clap dispatch?
+65. How do I use Standout dispatch inside existing clap dispatch?
 
-	Call Outstanding first, fall through on NoMatch:
+	Call Standout first, fall through on NoMatch:
 		fn main() {
 		    let cmd = build_cli();  // Your clap Command
-		    let app = build_outstanding_app();  // Outstanding App
+		    let app = build_standout_app();  // Standout App
 
-		    // Try Outstanding first
+		    // Try Standout first
 		    let matches = cmd.clone().get_matches();
 		    match app.dispatch(matches.clone(), OutputMode::Auto) {
 		        RunResult::Handled(output) => {
@@ -1561,9 +1561,9 @@ THEME: Partial Adoption
 	:: rust ::
 
 
-66. How do I use existing clap dispatch with Outstanding fallback?
+66. How do I use existing clap dispatch with Standout fallback?
 
-	The reverse: try your dispatch first, use Outstanding for specific commands:
+	The reverse: try your dispatch first, use Standout for specific commands:
 		fn main() {
 		    let cmd = build_cli();
 		    let matches = cmd.get_matches();
@@ -1575,13 +1575,13 @@ THEME: Partial Adoption
 		            return;
 		        }
 		        Some(("new-feature", _)) => {
-		            // Use Outstanding for this one
+		            // Use Standout for this one
 		        }
 		        _ => {}
 		    }
 
-		    // Outstanding handles "new-feature" and others
-		    let app = build_outstanding_app();
+		    // Standout handles "new-feature" and others
+		    let app = build_standout_app();
 		    match app.dispatch(matches, OutputMode::Auto) {
 		        RunResult::Handled(output) => println!("{}", output),
 		        RunResult::Binary(bytes, filename) => {
@@ -1600,9 +1600,9 @@ THEME: Tables
 
 67. What is the table formatting system?
 
-	Outstanding provides utilities for formatting columnar output, handling
+	Standout provides utilities for formatting columnar output, handling
 	Unicode widths, and extracting data for CSV export. The system lives in
-	[./crates/outstanding/src/table/].
+	[./crates/standout/src/table/].
 
 	Core components:
 	  - Column: defines width, alignment, truncation for one column

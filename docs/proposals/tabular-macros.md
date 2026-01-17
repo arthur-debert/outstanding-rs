@@ -32,7 +32,7 @@ The `row_from<T: Serialize>()` method works by serializing to JSON and extractin
 ### Usage
 
 ```rust
-use outstanding::tabular::{Tabular, TabularSpec};
+use standout::tabular::{Tabular, TabularSpec};
 
 #[derive(Serialize, Tabular)]
 #[tabular(separator = " │ ")]
@@ -101,7 +101,7 @@ impl Tabular for Task {
 ### Usage
 
 ```rust
-use outstanding::tabular::TabularRow;
+use standout::tabular::TabularRow;
 
 #[derive(TabularRow)]
 struct Task {
@@ -153,7 +153,7 @@ Create the macro module structure and attribute parsing utilities.
 
 **Deliverables:**
 
-1. Create `crates/outstanding-macros/src/tabular/` module
+1. Create `crates/standout-macros/src/tabular/` module
 2. Implement attribute parsing:
    - `ColAttr` struct for field attributes
    - `TabularAttr` struct for container attributes
@@ -163,8 +163,8 @@ Create the macro module structure and attribute parsing utilities.
 3. Error reporting with `syn::Error`
 
 **Files:**
-- `crates/outstanding-macros/src/tabular/mod.rs`
-- `crates/outstanding-macros/src/tabular/attrs.rs`
+- `crates/standout-macros/src/tabular/mod.rs`
+- `crates/standout-macros/src/tabular/attrs.rs`
 
 **Tests:** Unit tests for attribute parsing
 
@@ -184,9 +184,9 @@ Implement the spec generation macro.
 4. Handle container `#[tabular(...)]` attributes
 
 **Files:**
-- `crates/outstanding-macros/src/tabular/derive_tabular.rs`
-- `crates/outstanding-macros/src/lib.rs` (register macro)
-- `crates/outstanding/src/rendering/tabular/traits.rs` (Tabular trait)
+- `crates/standout-macros/src/tabular/derive_tabular.rs`
+- `crates/standout-macros/src/lib.rs` (register macro)
+- `crates/standout/src/rendering/tabular/traits.rs` (Tabular trait)
 
 **Tests:**
 - Simple struct with fixed widths
@@ -206,14 +206,14 @@ Implement the row extraction macro.
 
 **Deliverables:**
 
-1. Define `TabularRow` trait in `outstanding` crate
+1. Define `TabularRow` trait in `standout` crate
 2. Implement `#[proc_macro_derive(TabularRow, attributes(col))]`
 3. Generate `to_row()` with direct field access
 4. Handle `#[col(skip)]` attribute
 
 **Files:**
-- `crates/outstanding/src/rendering/tabular/traits.rs` (TabularRow trait)
-- `crates/outstanding-macros/src/tabular/derive_row.rs`
+- `crates/standout/src/rendering/tabular/traits.rs` (TabularRow trait)
+- `crates/standout-macros/src/tabular/derive_row.rs`
 
 **Tests:**
 - String fields
@@ -238,8 +238,8 @@ Integrate macros with existing formatter.
 4. Benchmark trait-based vs serde-based extraction
 
 **Files:**
-- `crates/outstanding/src/rendering/tabular/formatter.rs`
-- `crates/outstanding/src/rendering/tabular/decorator.rs`
+- `crates/standout/src/rendering/tabular/formatter.rs`
+- `crates/standout/src/rendering/tabular/decorator.rs`
 
 **Tests:**
 - End-to-end: derive → format → output
@@ -261,7 +261,7 @@ Enable macro-derived specs in templates.
 3. Example templates
 
 **Files:**
-- `crates/outstanding/src/rendering/tabular/filters.rs`
+- `crates/standout/src/rendering/tabular/filters.rs`
 - Examples in `examples/`
 
 ---

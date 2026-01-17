@@ -10,10 +10,10 @@ echo "[2/6] cargo test (default features)"
 cargo test --all --quiet
 
 echo "[3/6] cargo test (macros feature)"
-cargo test -p outstanding --features macros --quiet
+cargo test -p standout --features macros --quiet
 
 echo "[4/6] cargo test (clap feature)"
-cargo test -p outstanding --features clap --quiet
+cargo test -p standout --features clap --quiet
 
 echo "[5/6] cargo fmt --check"
 cargo fmt --all -- --check

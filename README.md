@@ -1,8 +1,8 @@
-# Outstanding
+# Standout
 
 **Test your data. Render your view.**
 
-Outstanding is a CLI framework for Rust that enforces separation between logic and presentation. Your handlers return structs, not strings—making CLI logic as testable as any other code.
+Standout is a CLI framework for Rust that enforces separation between logic and presentation. Your handlers return structs, not strings—making CLI logic as testable as any other code.
 
 ## The Problem
 
@@ -25,7 +25,7 @@ The only way to test this is regex on captured stdout. That's fragile, verbose, 
 
 ## The Solution
 
-With Outstanding, handlers return data. The framework handles rendering:
+With Standout, handlers return data. The framework handles rendering:
 
 ```rust
 // This is unit-testable—it's a pure function that returns data
@@ -50,11 +50,11 @@ Because your logic returns a struct, you test the struct. No stdout capture, no 
 
 ## Standing Out
 
-What Outstanding provides:
+What Standout provides:
 
 - Enforced architecture splitting data and presentation
 - Logic is testable as any Rust code
-- Boilerplateless: declaratively link your handlers to command names and templates, Outstanding handles the rest
+- Boilerplateless: declaratively link your handlers to command names and templates, Standout handles the rest
 - Autodispatch: save keystrokes with auto dispatch from the known command tree
 - Free [output handling](docs/topics/output-modes.md): rich terminal with graceful degradation, plus structured data (JSON, YAML, CSV)
 - Finely crafted output:
@@ -71,7 +71,7 @@ What Outstanding provides:
 Use the `Dispatch` derive macro to connect commands to handlers. Handlers receive parsed arguments and return serializable data.
 
 ```rust
-use outstanding::cli::{Dispatch, CommandContext, HandlerResult, Output};
+use standout::cli::{Dispatch, CommandContext, HandlerResult, Output};
 use clap::{ArgMatches, Subcommand};
 use serde::Serialize;
 
@@ -90,7 +90,7 @@ struct TodoResult {
 mod handlers {
     use super::*;
 
-    // HandlerResult<T> wraps your data; Output::Render tells Outstanding to render it
+    // HandlerResult<T> wraps your data; Output::Render tells Standout to render it
     pub fn list(_m: &ArgMatches, _ctx: &CommandContext) -> HandlerResult<TodoResult> {
         let todos = storage::list()?;
         Ok(Output::Render(TodoResult { todos }))
@@ -125,8 +125,8 @@ Templates use MiniJinja with semantic style tags. Styles are defined separately 
 ### 3. Wire It Up
 
 ```rust
-use outstanding::cli::App;
-use outstanding::{embed_templates, embed_styles};
+use standout::cli::App;
+use standout::{embed_templates, embed_styles};
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let app = App::builder()
@@ -178,16 +178,16 @@ myapp list --output text    # Plain text, no ANSI codes
 ## Installation
 
 ```bash
-cargo add outstanding
+cargo add standout
 ```
 
 ## Migrating an Existing CLI
 
-Already have a CLI? Outstanding supports incremental adoption. Outstanding handles matched commands automatically; unmatched commands return `ArgMatches` for your existing dispatch:
+Already have a CLI? Standout supports incremental adoption. Standout handles matched commands automatically; unmatched commands return `ArgMatches` for your existing dispatch:
 
 ```rust
 if let Some(matches) = app.run(Cli::command(), std::env::args()) {
-    // Outstanding didn't handle this command, fall back to legacy
+    // Standout didn't handle this command, fall back to legacy
     your_existing_dispatch(matches);
 }
 ```
@@ -200,10 +200,10 @@ See the [Partial Adoption Guide](docs/topics/partial-adoption.md) for the full m
 
 Step-by-step walkthroughs covering principles, rationale, and features.
 
-- **[Introduction to Outstanding](docs/guides/intro-to-outstanding.md)** — Adopting Outstanding in a working CLI. Start here.
+- **[Introduction to Standout](docs/guides/intro-to-standout.md)** — Adopting Standout in a working CLI. Start here.
 - [Introduction to Rendering](docs/guides/intro-to-rendering.md) — Creating polished terminal output
 - [Introduction to Tabular](docs/guides/intro-to-tabular.md) — Building aligned, readable tabular layouts
-- [TLDR: Quick Start](docs/guides/tldr-intro-to-outstanding.md) — Fast-paced intro for experienced developers
+- [TLDR: Quick Start](docs/guides/tldr-intro-to-standout.md) — Fast-paced intro for experienced developers
 
 ### Topics
 

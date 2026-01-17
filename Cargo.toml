@@ -1,7 +1,7 @@
 [workspace]
 resolver = "2"
 members = [
-    "crates/outstanding",
-    "crates/outstanding-bbparser",
-    "crates/outstanding-macros",
+    "crates/standout",
+    "crates/standout-bbparser",
+    "crates/standout-macros",
 ]

@@ -1,41 +1,41 @@
-# How To: Adopt Outstanding Alongside Existing Clap Code
+# How To: Adopt Standout Alongside Existing Clap Code
 
-Adopting a new framework shouldn't require rewriting your entire application. Outstanding is designed for **gradual adoption**, allowing you to migrate one command at a time without breaking existing functionality.
+Adopting a new framework shouldn't require rewriting your entire application. Standout is designed for **gradual adoption**, allowing you to migrate one command at a time without breaking existing functionality.
 
-This guide shows how to run Outstanding alongside your existing manual dispatch or Clap loop.
+This guide shows how to run Standout alongside your existing manual dispatch or Clap loop.
 
 ## The Core Pattern
 
-When Outstanding handles a command, it prints output and returns `None`. When no handler matches, it returns `Some(ArgMatches)` for your fallback:
+When Standout handles a command, it prints output and returns `None`. When no handler matches, it returns `Some(ArgMatches)` for your fallback:
 
 ```rust
 if let Some(matches) = app.run(cli, std::env::args()) {
-    // Outstanding didn't handle this command, fall back to legacy
+    // Standout didn't handle this command, fall back to legacy
     your_existing_dispatch(matches);
 }
 ```
 
-## Pattern 1: Outstanding First, Fallback Second
+## Pattern 1: Standout First, Fallback Second
 
-Try Outstanding dispatch first. If no match, use your existing code:
+Try Standout dispatch first. If no match, use your existing code:
 
 ```rust
-use outstanding::cli::App;
+use standout::cli::App;
 use clap::Command;
 
 fn main() {
     let cli = Command::new("myapp")
-        .subcommand(Command::new("list"))     // Outstanding handles
+        .subcommand(Command::new("list"))     // Standout handles
         .subcommand(Command::new("status"))   // Your existing code
         .subcommand(Command::new("config"));  // Your existing code
 
-    // Build Outstanding for just the commands you want
+    // Build Standout for just the commands you want
     let app = App::builder()
         .command("list", list_handler, "list.j2")
         .build()
         .expect("Failed to build app");
 
-    // Try Outstanding first
+    // Try Standout first
     if let Some(matches) = app.run(cli, std::env::args()) {
         // Fall back to your existing dispatch
         match matches.subcommand() {
@@ -47,9 +47,9 @@ fn main() {
 }
 ```
 
-## Pattern 2: Existing Code First, Outstanding Fallback
+## Pattern 2: Existing Code First, Standout Fallback
 
-Your dispatch handles known commands, Outstanding handles new ones:
+Your dispatch handles known commands, Standout handles new ones:
 
 ```rust
 fn main() {
@@ -71,15 +71,15 @@ fn main() {
         }
     }
 
-    // Outstanding handles everything else
-    let app = build_outstanding_app();
+    // Standout handles everything else
+    let app = build_standout_app();
     app.run(cli, std::env::args());
 }
 ```
 
-## Pattern 3: Outstanding Inside Your Match
+## Pattern 3: Standout Inside Your Match
 
-Call Outstanding for specific commands within your existing match:
+Call Standout for specific commands within your existing match:
 
 ```rust
 fn main() {
@@ -90,9 +90,9 @@ fn main() {
         Some(("status", sub)) => handle_status(sub),
         Some(("config", sub)) => handle_config(sub),
 
-        // Use Outstanding just for these
+        // Use Standout just for these
         Some(("list", _)) | Some(("show", _)) => {
-            let app = build_outstanding_app();
+            let app = build_standout_app();
             app.run(cli, std::env::args());
         }
 
@@ -101,7 +101,7 @@ fn main() {
 }
 ```
 
-## Adding Outstanding to One Command
+## Adding Standout to One Command
 
 Minimal setup for a single command:
 
@@ -118,7 +118,7 @@ No embedded files required. The template is inline. No theme means style tags sh
 
 ## Sharing Clap Command Definition
 
-Outstanding augments your `clap::Command` with `--output` and help. You can share the definition:
+Standout augments your `clap::Command` with `--output` and help. You can share the definition:
 
 ```rust
 fn build_cli() -> Command {
@@ -134,7 +134,7 @@ fn main() {
         .command("list", list_handler, "list.j2")
         .build()?;
 
-    // Outstanding augments the command, then dispatches
+    // Standout augments the command, then dispatches
     if let Some(matches) = app.run(cli, std::env::args()) {
         // matches from the augmented command (has --output, etc.)
         match matches.subcommand() {
@@ -147,7 +147,7 @@ fn main() {
 
 ## Gradual Migration Strategy
 
-1. **Start with one command**: Pick a command with complex output. Add Outstanding for just that command.
+1. **Start with one command**: Pick a command with complex output. Add Standout for just that command.
 
 2. **Keep existing tests passing**: Your dispatch logic stays the same for unhandled commands.
 
@@ -163,7 +163,7 @@ fn main() {
 
 ```rust
 if let Some(matches) = app.run(cli, args) {
-    // Outstanding didn't handle, use matches for fallback
+    // Standout didn't handle, use matches for fallback
     legacy_dispatch(matches);
 }
 ```
@@ -188,11 +188,11 @@ For normal partial adoption, `run()` is simpler and preferred.
 
 ## Accessing the --output Flag in Fallback
 
-Outstanding adds `--output` globally. In fallback code, you can still access it:
+Standout adds `--output` globally. In fallback code, you can still access it:
 
 ```rust
 if let Some(matches) = app.run(cli, std::env::args()) {
-    // Get the output mode Outstanding parsed
+    // Get the output mode Standout parsed
     let mode = matches.get_one::<String>("_output_mode")
         .map(|s| s.as_str())
         .unwrap_or("auto");
@@ -210,7 +210,7 @@ if let Some(matches) = app.run(cli, std::env::args()) {
 }
 ```
 
-## Disabling Outstanding's Flags
+## Disabling Standout's Flags
 
 If `--output` conflicts with your existing flags:
 
@@ -224,10 +224,10 @@ App::builder()
 
 ## Example: Hybrid Application
 
-Complete example with both Outstanding and manual handlers:
+Complete example with both Standout and manual handlers:
 
 ```rust
-use outstanding::cli::{App, HandlerResult, Output, CommandContext};
+use standout::cli::{App, HandlerResult, Output, CommandContext};
 use clap::{Command, ArgMatches};
 use serde::Serialize;
 
@@ -246,7 +246,7 @@ fn handle_status(_matches: &ArgMatches) {
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let cli = Command::new("myapp")
-        .subcommand(Command::new("list").about("List items (Outstanding)"))
+        .subcommand(Command::new("list").about("List items (Standout)"))
         .subcommand(Command::new("status").about("Show status (legacy)"));
 
     let app = App::builder()
@@ -267,7 +267,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 Run it:
 
 ```bash
-myapp list              # Outstanding handles, renders template
-myapp list --output=json # Outstanding handles, JSON output
+myapp list              # Standout handles, renders template
+myapp list --output=json # Standout handles, JSON output
 myapp status            # Fallback to handle_status()
 ```

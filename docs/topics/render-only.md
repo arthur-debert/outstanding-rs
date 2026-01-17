@@ -1,6 +1,6 @@
 # How To: Use Only the Rendering Layer
 
-Outstanding's rendering layer is fully decoupled from its CLI integration (App, Clap, Dispatch). This means you can use the template engine, theme system, and structured output logic in any context—servers, TUI apps, or even other CLI frameworks.
+Standout's rendering layer is fully decoupled from its CLI integration (App, Clap, Dispatch). This means you can use the template engine, theme system, and structured output logic in any context—servers, TUI apps, or even other CLI frameworks.
 
 This decoupling allows you to maintain consistent styling and logic across different parts of your ecosystem.
 
@@ -16,7 +16,7 @@ This decoupling allows you to maintain consistent styling and logic across diffe
 The simplest approach—auto-detect terminal capabilities:
 
 ```rust
-use outstanding::{render, Theme};
+use standout::{render, Theme};
 use console::Style;
 use serde::Serialize;
 
@@ -55,7 +55,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 Control ANSI code generation:
 
 ```rust
-use outstanding::{render_with_output, OutputMode};
+use standout::{render_with_output, OutputMode};
 
 // Force ANSI codes (even when piping)
 let colored = render_with_output(template, &data, &theme, OutputMode::Term)?;
@@ -72,7 +72,7 @@ let debug = render_with_output(template, &data, &theme, OutputMode::TermDebug)?;
 `render_auto` chooses between template rendering and direct serialization:
 
 ```rust
-use outstanding::render_auto;
+use standout::render_auto;
 
 fn format_output(data: &Report, mode: OutputMode) -> Result<String, Error> {
     render_auto(template, data, &theme, mode)
@@ -92,7 +92,7 @@ Same function, same data—output format determined by mode.
 For tests or when forcing specific behavior:
 
 ```rust
-use outstanding::{render_with_mode, ColorMode};
+use standout::{render_with_mode, ColorMode};
 
 // Force dark mode styling
 let dark = render_with_mode(
@@ -118,7 +118,7 @@ let light = render_with_mode(
 No YAML files needed:
 
 ```rust
-use outstanding::Theme;
+use standout::Theme;
 use console::{Style, Color};
 
 let theme = Theme::new()
@@ -160,7 +160,7 @@ let final_theme = base_theme.merge(user_overrides);
 For repeated rendering with the same templates:
 
 ```rust
-use outstanding::Renderer;
+use standout::Renderer;
 
 let theme = Theme::new()
     .add("title", Style::new().bold());
@@ -202,7 +202,7 @@ In debug builds, file-based templates are re-read on each render (hot reload).
 Catch style tag errors without producing output:
 
 ```rust
-use outstanding::validate_template;
+use standout::validate_template;
 
 let result = validate_template(template, &sample_data, &theme);
 match result {
@@ -223,7 +223,7 @@ Use at startup or in tests to fail fast on typos.
 For adding simple key-value pairs to the template context:
 
 ```rust
-use outstanding::{render_with_vars, Theme, OutputMode};
+use standout::{render_with_vars, Theme, OutputMode};
 use std::collections::HashMap;
 
 let theme = Theme::new();
@@ -248,8 +248,8 @@ This is the recommended approach for most use cases.
 For dynamic context computed at render time:
 
 ```rust
-use outstanding::{render_with_context, Theme, OutputMode};
-use outstanding::context::{ContextRegistry, RenderContext};
+use standout::{render_with_context, Theme, OutputMode};
+use standout::context::{ContextRegistry, RenderContext};
 use minijinja::Value;
 
 let mut context = ContextRegistry::new();
@@ -280,7 +280,7 @@ let output = render_with_context(
 For JSON/YAML output, templates are bypassed:
 
 ```rust
-use outstanding::render_auto;
+use standout::render_auto;
 
 #[derive(Serialize)]
 struct ApiResponse {
@@ -305,7 +305,7 @@ The template parameter is ignored for structured modes.
 Absolute minimum for styled output:
 
 ```rust
-use outstanding::{render, Theme};
+use standout::{render, Theme};
 use console::Style;
 
 let theme = Theme::new().add("ok", Style::new().green());

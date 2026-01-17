@@ -6,9 +6,9 @@ The development reality explains why such output remains rare. From a primitive 
 
 In the past few years, we've made rapid progress. Interactive TUIs have a rich and advanced ecosystem. For non-interactive, textual outputs, we've certainly come far with good crates and tools, but it's still sub-par.
 
-Outstanding's rendering layer is designed to make crafting polished outputs a breeze by leveraging ideas, tools, and workflows from web applications—a domain in which rich interface authoring has evolved into the best model we've got. (But none of the JavaScript ecosystem chaos, rest assured.)
+Standout's rendering layer is designed to make crafting polished outputs a breeze by leveraging ideas, tools, and workflows from web applications—a domain in which rich interface authoring has evolved into the best model we've got. (But none of the JavaScript ecosystem chaos, rest assured.)
 
-In this guide, we'll explore what makes great outputs and how Outstanding helps you get there.
+In this guide, we'll explore what makes great outputs and how Standout helps you get there.
 
 **See Also:**
 
@@ -58,7 +58,7 @@ Our goal: transform this raw data into polished, readable output that adapts to 
 
 ## The Separation Principle
 
-Outstanding is designed around a strict separation of logic and presentation. This isn't just architectural nicety—it unlocks a fundamentally better workflow.
+Standout is designed around a strict separation of logic and presentation. This isn't just architectural nicety—it unlocks a fundamentally better workflow.
 
 ### Without Separation
 
@@ -145,7 +145,7 @@ Now:
 
 ## Quick Iteration and Workflow
 
-The separation principle enables a radically better workflow. Here's what Outstanding provides:
+The separation principle enables a radically better workflow. Here's what Standout provides:
 
 ### 1. File-Based Flow
 
@@ -182,7 +182,7 @@ See [Rendering System](rendering-system.md#hot-reloading) for details on how hot
 
 ### Templates: MiniJinja
 
-Outstanding uses MiniJinja templates—a Rust implementation of Jinja, a de facto standard for rich and powerful templating. The simple syntax and powerful features let you map template text to actual output much easier than `println!` spreads.
+Standout uses MiniJinja templates—a Rust implementation of Jinja, a de facto standard for rich and powerful templating. The simple syntax and powerful features let you map template text to actual output much easier than `println!` spreads.
 
 ```jinja
 {% if message %}[accent]{{ message }}[/accent]{% endif %}
@@ -255,7 +255,7 @@ Style tags:
 
 ### Graceful Degradation
 
-**Single template for rich and plain text.** Outstanding degrades gracefully based on terminal capabilities:
+**Single template for rich and plain text.** Standout degrades gracefully based on terminal capabilities:
 
 ```bash
 myapp list              # Rich colors (if terminal supports)
@@ -321,7 +321,7 @@ See [Introduction to Tabular](intro-to-tabular.md) for a comprehensive walkthrou
 
 ## Output Control
 
-Outstanding supports various output formats at runtime with the `--output` option:
+Standout supports various output formats at runtime with the `--output` option:
 
 ```bash
 myapp list                    # Auto: rich or plain based on terminal
@@ -352,7 +352,7 @@ Here's a complete example of a polished todo list command:
 **Handler (`src/handlers.rs`):**
 
 ```rust
-use outstanding::cli::{CommandContext, HandlerResult, Output};
+use standout::cli::{CommandContext, HandlerResult, Output};
 use clap::ArgMatches;
 use serde::Serialize;
 
@@ -464,7 +464,7 @@ Same handler. No additional code.
 
 ## Summary
 
-Outstanding's rendering layer transforms CLI output from a chore into a pleasure:
+Standout's rendering layer transforms CLI output from a chore into a pleasure:
 
 1. **Separation of concerns**: Logic returns data. Templates define structure. Styles control appearance.
 

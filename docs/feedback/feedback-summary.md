@@ -1,6 +1,6 @@
 # Documentation Feedback Summary
 
-Consolidated feedback from external reviews of Outstanding's documentation and positioning.
+Consolidated feedback from external reviews of Standout's documentation and positioning.
 
 ---
 
@@ -10,14 +10,14 @@ Consolidated feedback from external reviews of Outstanding's documentation and p
 
 **The Problem:**
 
-- The README positions Outstanding as handling "boilerplate between clap and terminal output"
+- The README positions Standout as handling "boilerplate between clap and terminal output"
 - This undersells what's actually ambitious: enforcing an architectural pattern with testability benefits
 - The testability angle is mentioned but buried; the "rich output" features dominate
 
 **Recommended Fix:**
 
 - Pivot the pitch: *"Stop testing Regex on stdout. Test your Data, render your View."*
-- Rewrite the opening to emphasize: "Outstanding enforces a clean separation that makes your CLI logic unit-testable as plain functions, while giving you rich terminal output, JSON/YAML modes, and hot-reloadable templates for free."
+- Rewrite the opening to emphasize: "Standout enforces a clean separation that makes your CLI logic unit-testable as plain functions, while giving you rich terminal output, JSON/YAML modes, and hot-reloadable templates for free."
 - The hook is **testing**, not **rendering**—many libs do pretty output, but few let you unit test CLI logic because it returns a `Struct`, not a `String`
 
 ---
@@ -32,7 +32,7 @@ Consolidated feedback from external reviews of Outstanding's documentation and p
 **Recommended Fix:**
 
 - Add brief inline comments or a sentence explaining the handler contract before the code
-- Consider a one-liner: "Handlers receive parsed args and return data; Outstanding handles rendering"
+- Consider a one-liner: "Handlers receive parsed args and return data; Standout handles rendering"
 
 ---
 
@@ -48,7 +48,7 @@ Consolidated feedback from external reviews of Outstanding's documentation and p
 - Add **screenshots or GIFs** (using `vhs` or `asciinema`) immediately visible in the README
 - Use a "Before vs. After" visual:
   - Left: Messy `println!` loop with hardcoded ANSI codes
-  - Right: Clean Outstanding template + struct → beautiful output
+  - Right: Clean Standout template + struct → beautiful output
 - Show actual terminal output for the tabular examples
 
 ---
@@ -59,11 +59,11 @@ Consolidated feedback from external reviews of Outstanding's documentation and p
 
 **The Problem:**
 
-- Outstanding occupies a unique niche but doesn't explain why existing tools don't solve the problem
+- Standout occupies a unique niche but doesn't explain why existing tools don't solve the problem
 - Users may confuse it with tools they already know
 
 **Recommended Fix:**
-Add a "Why Outstanding?" or "Why not just use X?" section:
+Add a "Why Standout?" or "Why not just use X?" section:
 
 | Tool Category | Examples | What they do | What's missing |
 |---------------|----------|--------------|----------------|
@@ -72,7 +72,7 @@ Add a "Why Outstanding?" or "Why not just use X?" section:
 | Rich text | termimad | Markdown-to-terminal | No clap integration, no structured output |
 | Full TUI | ratatui | Interactive dashboards | Overkill for linear output, takes over screen |
 
-**Key differentiator to emphasize:** Outstanding is a **framework**, not a widget. It handles the header, the table, the footer, and the error message with a unified theme.
+**Key differentiator to emphasize:** Standout is a **framework**, not a widget. It handles the header, the table, the footer, and the error message with a unified theme.
 
 ---
 
@@ -112,7 +112,7 @@ Create a short guide showing:
 **The Problem:**
 
 - Rust developers love compile-time safety
-- Outstanding relies on runtime templates (MiniJinja)
+- Standout relies on runtime templates (MiniJinja)
 - Users may fear template typos will crash their CLI at runtime
 
 **Recommended Fix:**
@@ -124,7 +124,7 @@ Create a short guide showing:
 
 ---
 
-## 8. Clarify Scope: What Outstanding Does NOT Do
+## 8. Clarify Scope: What Standout Does NOT Do
 
 **The Problem:**
 
@@ -161,7 +161,7 @@ Create a short guide showing:
 **The Idea:**
 
 - Most Rust CLIs use clap; the default help screen is functional but boring
-- If `outstanding-clap` can make `--help` beautiful and themed with zero configuration, market that as the entry point
+- If `standout-clap` can make `--help` beautiful and themed with zero configuration, market that as the entry point
 
 **Recommendation:**
 
@@ -176,7 +176,7 @@ Create a short guide showing:
 
 1. **Reposition** - Lead with testability/architecture, not just rendering
 2. **Add visuals** - Screenshots/GIFs in README showing before/after
-3. **Add comparison table** - Why Outstanding vs. comfy-table + termimad + manual dispatch
+3. **Add comparison table** - Why Standout vs. comfy-table + termimad + manual dispatch
 
 ### Medium Priority
 

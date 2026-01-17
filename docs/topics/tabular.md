@@ -1,6 +1,6 @@
 # Tabular Layout
 
-Outstanding helps you create aligned, readable output for lists, logs, and tabular data.
+Standout helps you create aligned, readable output for lists, logs, and tabular data.
 
 **Choose your path:**
 
@@ -226,7 +226,7 @@ This applies `[pending]pending[/pending]` or `[done]done[/done]` based on the ac
 For reusable layouts or when you need full control:
 
 ```rust
-use outstanding::tabular::{TabularSpec, Col};
+use standout::tabular::{TabularSpec, Col};
 
 let spec = TabularSpec::builder()
     .column(Col::fixed(8).named("id"))
@@ -345,7 +345,7 @@ For simple cases, render everything in one call using `render_all()`:
 ## In Rust: Full Table API
 
 ```rust
-use outstanding::tabular::{Table, TabularSpec, Col, BorderStyle};
+use standout::tabular::{Table, TabularSpec, Col, BorderStyle};
 
 let spec = TabularSpec::builder()
     .column(Col::fixed(8).header("ID"))
@@ -379,7 +379,7 @@ println!("{}", table.bottom_border());
 
 ## Terminal Width
 
-By default, Outstanding auto-detects terminal width. Override for testing or fixed-width output:
+By default, Standout auto-detects terminal width. Override for testing or fixed-width output:
 
 ```jinja
 {% set t = tabular(columns, width=80) %}  {# Fixed 80 columns #}

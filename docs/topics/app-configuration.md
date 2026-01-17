@@ -1,6 +1,6 @@
 # App Configuration
 
-`AppBuilder` is the unified entry point for configuring your application. Instead of scattering configuration across multiple structs (`Outstanding`, `RenderSetup`, `Theme`), everything from command registration to theme selection happens in one fluent interface.
+`AppBuilder` is the unified entry point for configuring your application. Instead of scattering configuration across multiple structs (`Standout`, `RenderSetup`, `Theme`), everything from command registration to theme selection happens in one fluent interface.
 
 This design ensures that your application defines its entire environment—commands, styles, templates, and hooks—before the runtime starts, preventing configuration race conditions and simplifying testing.
 
@@ -14,8 +14,8 @@ See also:
 ## Basic Setup
 
 ```rust
-use outstanding::cli::App;
-use outstanding_macros::{embed_templates, embed_styles};
+use standout::cli::App;
+use standout_macros::{embed_templates, embed_styles};
 
 let app = App::builder()
     .templates(embed_templates!("src/templates"))
@@ -316,7 +316,7 @@ pub struct App {
 
 ```rust
 if let Some(matches) = app.run(Cli::command(), std::env::args()) {
-    // Outstanding didn't handle this command, fall back to legacy
+    // Standout didn't handle this command, fall back to legacy
     legacy_dispatch(matches);
 }
 ```
@@ -344,7 +344,7 @@ let matches = app.parse_with(cmd);
 // Use matches for manual dispatch
 ```
 
-Parses with Outstanding's augmented command but doesn't dispatch.
+Parses with Standout's augmented command but doesn't dispatch.
 
 ## Build Validation
 
@@ -362,8 +362,8 @@ What's NOT validated at build time:
 ## Complete Example
 
 ```rust
-use outstanding::cli::{App, HandlerResult, Output};
-use outstanding_macros::{embed_templates, embed_styles};
+use standout::cli::{App, HandlerResult, Output};
+use standout_macros::{embed_templates, embed_styles};
 use clap::{Command, Arg};
 use serde::Serialize;
 

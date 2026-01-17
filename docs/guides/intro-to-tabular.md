@@ -257,7 +257,7 @@ Then use the `style_as` filter to apply styles based on the value itself:
 {% endfor %}
 ```
 
-The `style_as` filter wraps the value in style tags: `[done]done[/done]`. Outstanding's rendering system then applies the green color.
+The `style_as` filter wraps the value in style tags: `[done]done[/done]`. Standout's rendering system then applies the green color.
 
 Output (with colors):
 
@@ -424,7 +424,7 @@ Features in use:
 Everything shown in templates is also available in Rust:
 
 ```rust
-use outstanding::tabular::{TabularSpec, Col, Table, BorderStyle};
+use standout::tabular::{TabularSpec, Col, Table, BorderStyle};
 
 let spec = TabularSpec::builder()
     .column(Col::fixed(4).header("#").style("muted"))
@@ -461,7 +461,7 @@ Instead of manually building `TabularSpec` instances, you can use derive macros 
 Add `#[col(...)]` attributes to your struct fields to define column properties:
 
 ```rust
-use outstanding::tabular::{Tabular, TabularRow, Table, BorderStyle};
+use standout::tabular::{Tabular, TabularRow, Table, BorderStyle};
 use serde::Serialize;
 
 #[derive(Clone, Serialize)]
@@ -523,7 +523,7 @@ for todo in &todos {
 The derived spec can be injected into templates using helper functions:
 
 ```rust
-use outstanding::tabular::filters::{table_from_type, register_tabular_filters};
+use standout::tabular::filters::{table_from_type, register_tabular_filters};
 use minijinja::{context, Environment};
 
 let mut env = Environment::new();
