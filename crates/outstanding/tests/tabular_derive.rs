@@ -868,3 +868,33 @@ fn test_row_extraction_matches_derived_demo_task() {
     assert_eq!(row[1], "Test");
     assert_eq!(row[2], "pending");
 }
+
+// =============================================================================
+// Option field tests (Regression test for TabularRow derive)
+// =============================================================================
+
+#[derive(DeriveTabularRow)]
+struct OptionRow {
+    id: String,
+
+    // This should work (None -> empty string, Some(s) -> s)
+    description: Option<String>,
+
+    // This should also work with non-string options
+    score: Option<i32>,
+}
+
+#[test]
+fn test_tabular_row_option() {
+    let row = OptionRow {
+        id: "TSK-001".to_string(),
+        description: Some("desc".to_string()),
+        score: None,
+    };
+    let values = row.to_row();
+    assert_eq!(values.len(), 3);
+    assert_eq!(values[0], "TSK-001");
+    assert_eq!(values[1], "desc");
+    // Default behavior for None is empty string
+    assert_eq!(values[2], "");
+}

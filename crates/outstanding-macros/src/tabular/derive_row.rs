@@ -51,7 +51,7 @@ pub fn tabular_row_derive_impl(input: DeriveInput) -> Result<TokenStream> {
         // Generate the field conversion
         // We use ToString trait which is implemented for all Display types
         field_conversions.push(quote! {
-            self.#field_name.to_string()
+            self.#field_name.to_tabular_cell()
         });
     }
 
@@ -59,6 +59,7 @@ pub fn tabular_row_derive_impl(input: DeriveInput) -> Result<TokenStream> {
     let expanded = quote! {
         impl ::outstanding::tabular::TabularRow for #struct_name {
             fn to_row(&self) -> Vec<String> {
+                use ::outstanding::tabular::{TabularFieldDisplay, TabularFieldOption}; // Import helper traits
                 vec![
                     #(#field_conversions),*
                 ]

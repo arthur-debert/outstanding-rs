@@ -115,7 +115,7 @@ mod util;
 pub use decorator::{BorderStyle, Table};
 pub use formatter::{CellOutput, TabularFormatter};
 pub use resolve::ResolvedWidths;
-pub use traits::{Tabular, TabularRow};
+pub use traits::{Tabular, TabularFieldDisplay, TabularFieldOption, TabularRow};
 
 // Re-export the derive macros from outstanding-macros when available
 // The derive macro and trait share the same name but are in different namespaces
