@@ -202,11 +202,9 @@ Benefits:
 
 See [Rendering System](rendering-system.md) for template filters and context injection.
 
-### Styles: CSS or YAML Themes
+### Styles: CSS Themes
 
-The styling layer offers styles in familiar formats:
-
-**CSS syntax** (what you already know):
+The styling layer uses CSS files with the familiar syntax you already know, but with simpler semantics tailored for terminals:
 
 ```css
 .title {
@@ -228,25 +226,6 @@ The styling layer offers styles in familiar formats:
 }
 ```
 
-**YAML syntax** (compact alternative):
-
-```yaml
-title:
-  fg: cyan
-  bold: true
-
-done: green
-blocked: red
-pending: yellow
-
-panel:
-  bold: true
-  light:
-    fg: black
-  dark:
-    fg: white
-```
-
 Features:
 
 - **Adaptive attributes**: a style can render different values for light and dark modes
@@ -254,7 +233,7 @@ Features:
 - **True color**: RGB values for precise colors (`#ff6b35` or `[255, 107, 53]`)
 - **Aliases**: semantic names resolve to visual styles (`commit-message: title`)
 
-See [Rendering System](rendering-system.md#themes-and-styles) for complete style options.
+YAML syntax is also supported as an alternative. See [Rendering System](rendering-system.md#themes-and-styles) for complete style options.
 
 ---
 
