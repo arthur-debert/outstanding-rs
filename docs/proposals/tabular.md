@@ -1,7 +1,7 @@
 # Tabular Layout System - Technical Specification
 
-**Status:** Draft
-**Author:** Outstanding Team
+**Status:** Draft  
+**Author:** Outstanding Team  
 **Created:** 2025-01-16
 
 ## 1. Motivation
@@ -11,6 +11,7 @@ Outstanding excels at formatting (colors, styles, weight) but layout support is 
 This isn't about TUIs with scrolling, selection, or interaction. It's about making log entries, file listings, and status displays visually coherent.
 
 Two manifestations:
+
 1. **Tabular output**: Aligned columns without visual borders (the common case)
 2. **Tables**: Explicit headers, separators, and borders (the decorated case)
 
@@ -25,7 +26,7 @@ Both share a core engine. This spec defines that engine and the decoration layer
 
 ## 3. Architecture
 
-```
+```text
 ┌─────────────────────────────────────────────────────────────┐
 │                      User Interface                         │
 │  ┌──────────────────┐  ┌──────────────────────────────────┐│
@@ -49,8 +50,8 @@ Both share a core engine. This spec defines that engine and the decoration layer
 │  │  - Borders                                            │  │
 │  └──────────────────────────────────────────────────────┘  │
 └─────────────────────────────────────────────────────────────┘
-                            │
-                            ▼
+                             │
+                             ▼
 ┌─────────────────────────────────────────────────────────────┐
 │                    Text Utilities                           │
 │  display_width(), truncate_*(), pad_*(), wrap()            │
@@ -84,6 +85,7 @@ pub enum Width {
 ```
 
 **Resolution algorithm:**
+
 1. Calculate overhead (separators, borders)
 2. Allocate `Fixed` columns their exact width
 3. Allocate `Bounded` columns: content width clamped to min/max
@@ -119,7 +121,8 @@ pub enum Anchor {
 ```
 
 Example with anchor:
-```
+
+```text
 | left1 | left2 |          gap          | right1 |
 ```
 
@@ -185,6 +188,7 @@ pub struct Column {
 ```
 
 Builder API:
+
 ```rust
 Column::new("name")
     .width(Width::Fixed(20))
@@ -232,6 +236,7 @@ pub enum TotalWidth {
 ```
 
 Builder API:
+
 ```rust
 TabularSpec::builder()
     .column(Col::fixed(8).named("id"))
@@ -304,6 +309,7 @@ pub enum BorderStyle {
 ```
 
 Usage:
+
 ```rust
 let table = Table::from(spec)
     .header_from_columns()
@@ -336,6 +342,7 @@ This is unchanged from current behavior - it's the quick path.
 For complex layouts, inject a formatter into the template context:
 
 **In Rust:**
+
 ```rust
 let spec = TabularSpec::builder()
     .column(Col::fixed(8).named("id"))
@@ -350,6 +357,7 @@ context.insert("table", formatter);
 ```
 
 **In template:**
+
 ```jinja
 {% for entry in entries %}
 {{ table.row([entry.id, entry.name, entry.desc, entry.status]) }}
@@ -374,6 +382,7 @@ Define spec inline in templates using a global function:
 ```
 
 The `tabular()` function:
+
 - Takes a list of column definitions (as dicts/objects)
 - Takes optional `separator`, `width` parameters
 - Returns a TabularFormatter object
@@ -427,7 +436,7 @@ Or as a single call for simple cases:
 
 ### 6.1 Algorithm
 
-```
+```text
 Input: TabularSpec, available_width
 
 1. overhead = (num_columns - 1) * separator_width + border_width
@@ -463,7 +472,7 @@ Output: Vec<usize> of resolved widths
 
 Right-anchored columns are positioned after all left-anchored columns:
 
-```
+```text
 Input: columns with anchors, widths
 
 1. left_columns = [c for c if c.anchor == Left]
@@ -517,6 +526,7 @@ pub fn wrap_indent(s: &str, width: usize, indent: usize) -> Vec<String>;
 ```
 
 Simple algorithm:
+
 1. Split on whitespace
 2. Accumulate words until line exceeds width
 3. Start new line
@@ -526,7 +536,7 @@ Simple algorithm:
 
 When cells wrap to multiple lines:
 
-```
+```text
 ┌──────────┬──────────────────────┬────────┐
 │ ID       │ Description          │ Status │
 ├──────────┼──────────────────────┼────────┤
@@ -539,7 +549,8 @@ When cells wrap to multiple lines:
 ```
 
 Implementation:
-1. Format each cell, getting Vec<String> of lines
+
+1. Format each cell, getting a vector of string lines
 2. Find max lines in row
 3. Pad shorter cells with empty lines (align top)
 4. Zip lines across cells
@@ -597,6 +608,7 @@ Or with a helper:
 ```
 
 Where `style_as` filter wraps in style tags:
+
 ```jinja
 {{ "active" | style_as("status") }}  →  [status]active[/status]
 {{ "pending" | style_as("pending") }}  →  [pending]pending[/pending]
@@ -611,6 +623,7 @@ Column::new("status").style_from_value()
 ```
 
 Equivalent to:
+
 ```jinja
 [{{ cell_value }}]{{ cell_value }}[/{{ cell_value }}]
 ```
@@ -678,7 +691,7 @@ tabular:
 ## 12. Migration from Current API
 
 | Current | New | Notes |
-|---------|-----|-------|
+| ------- | --- | ----- |
 | `FlatDataSpec` | `TabularSpec` | Rename |
 | `TableSpec` | `TabularSpec` | Remove alias |
 | `TableFormatter` | `TabularFormatter` | Rename, add features |
@@ -695,23 +708,27 @@ tabular:
 ## 13. Implementation Phases
 
 ### Phase 1: Core Refactoring
+
 - Rename types (FlatDataSpec → TabularSpec, etc.)
 - Add shorthand constructors (Col::fixed, etc.)
 - Add Overflow::Wrap with simple word-wrap
 - Add Anchor support
 
 ### Phase 2: Template Integration
+
 - Implement `tabular()` global function
 - Implement `row_from()` for struct extraction
 - Add `style_as` filter
 
 ### Phase 3: Table Decorator
+
 - Implement Table struct
 - Header generation
 - Border styles
 - Row separators
 
 ### Phase 4: Advanced Features
+
 - Width::Fraction
 - YAML/JSON spec loading
 - Data-driven width resolution improvements

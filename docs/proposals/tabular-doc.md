@@ -5,11 +5,12 @@
 
 ---
 
-# How To: Align Columns and Format Tables
+## How To: Align Columns and Format Tables
 
 Outstanding helps you create aligned, readable output for lists, logs, and tabular data.
 
 **Choose your path:**
+
 - [Quick Start](#quick-start-the-col-filter): Simple alignment with template filters
 - [Structured Layout](#structured-layout): Multi-column specs for complex output
 - [Full Tables](#tables-headers-and-borders): Headers, borders, and separators
@@ -25,13 +26,15 @@ For simple alignment, use the `col` filter directly in templates:
 ```
 
 Output:
-```
+
+```text
 abc123    Alice Johnson         active
 def456    Bob Smith             pending
 ghi789    Carol Williams        done
 ```
 
 The `col` filter:
+
 - Pads short values to the specified width
 - Truncates long values with `…`
 - Handles Unicode correctly (CJK characters count as 2 columns)
@@ -44,7 +47,7 @@ The `col` filter:
 {{ value | col(10, align="center") }} {# Centered #}
 ```
 
-```
+```text
 left......
 ....right.
 ..center..
@@ -93,7 +96,8 @@ Use the `tabular()` function to create a formatter:
 ```
 
 Output:
-```
+
+```text
 a1b2c3d4  Alice Johnson         Add new login feature             2024-01-15
 e5f6g7h8  Bob Smith             Fix authentication bug            2024-01-14
 i9j0k1l2  Carol Williams        Update dependencies               2024-01-13
@@ -102,7 +106,7 @@ i9j0k1l2  Carol Williams        Update dependencies               2024-01-13
 ### Width Options
 
 | Width | Meaning | Example |
-|-------|---------|---------|
+| ----- | ------- | ------- |
 | `8` | Exactly 8 columns | IDs, short codes |
 | `{"min": 10}` | At least 10, grows to fit | Names, titles |
 | `{"min": 10, "max": 30}` | Between 10 and 30 | Bounded growth |
@@ -130,7 +134,8 @@ Put columns at the right edge:
 ```
 
 Output:
-```
+
+```text
 document.txt          /home/user/docs/                    1.2 MB
 image.png             /home/user/photos/vacation/         4.5 MB
 ```
@@ -160,7 +165,7 @@ Choose what happens when content exceeds the column width:
 
 Content wraps to multiple lines:
 
-```
+```text
 abc123  This is a very long       active
         description that wraps
         to multiple lines
@@ -290,7 +295,8 @@ For output with explicit headers, separators, and borders:
 ```
 
 Output:
-```
+
+```text
 ╭──────────┬──────────────────────┬────────────────────────────────╮
 │ ID       │ Author               │ Message                        │
 ├──────────┼──────────────────────┼────────────────────────────────┤
@@ -300,7 +306,7 @@ Output:
 ╰──────────┴──────────────────────┴────────────────────────────────╯
 ```
 
-### Border Styles
+### Table Border Styles
 
 ```jinja
 border="none"     {# No borders #}
@@ -319,7 +325,7 @@ Add lines between data rows:
 {% set t = table(columns, border="light", row_separator=true) %}
 ```
 
-```
+```text
 ┌──────────┬──────────────────────┐
 │ ID       │ Name                 │
 ├──────────┼──────────────────────┤
@@ -481,14 +487,16 @@ A git log-style output:
 ```
 
 Output (80 columns):
-```
+
+```text
 a1b2c3d4 │ Alice Johnson   │ Add new login feature with OAuth    │ 2024-01-15
 e5f6g7h8 │ Bob Smith       │ Fix authentication bug              │ 2024-01-14
 i9j0k1l2 │ Carol Williams  │ Update dependencies and refactor    │ 2024-01-13
 ```
 
 With styling (in terminal):
-```
+
+```text
 [muted]a1b2c3d4[/muted] │ [author]Alice Johnson[/author]   │ Add new login feature with OAuth    │ [date]2024-01-15[/date]
 ```
 
@@ -497,7 +505,7 @@ With styling (in terminal):
 ## Summary
 
 | Need | Solution |
-|------|----------|
+| ---- | -------- |
 | Simple column alignment | `{{ value \| col(width) }}` |
 | Multiple columns, same widths | `tabular([...])` with `t.row([...])` |
 | Auto field extraction | `t.row_from(object)` |
@@ -512,12 +520,12 @@ With styling (in terminal):
 
 ### `col` Filter
 
-```
+```text
 {{ value | col(width, align=?, truncate=?, ellipsis=?) }}
 ```
 
 | Param | Values | Default |
-|-------|--------|---------|
+| ----- | ------ | ------- |
 | `width` | integer | required |
 | `align` | "left", "right", "center" | "left" |
 | `truncate` | "end", "start", "middle" | "end" |
@@ -558,10 +566,10 @@ With styling (in terminal):
 {{ t.render_all(rows) }}
 ```
 
-### Border Styles
+### Reference Border Styles
 
 | Value | Example |
-|-------|---------|
+| ----- | ------- |
 | `"none"` | No borders |
 | `"ascii"` | `+--+--+` |
 | `"light"` | `┌──┬──┐` |

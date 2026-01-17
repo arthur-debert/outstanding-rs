@@ -72,12 +72,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 
 - **`rendering::prelude` module** - Convenient imports for standalone rendering:
+
   ```rust
   use outstanding::rendering::prelude::*;
   ```
+
   Includes: `render`, `render_auto`, `render_with_output`, `render_with_mode`, `render_with_vars`, `Theme`, `ColorMode`, `OutputMode`, `Renderer`, `Style`
 
 - **`render_with_vars()` function** - Simplified context injection for adding key-value pairs to templates without the full `ContextRegistry` system:
+
   ```rust
   let mut vars = HashMap::new();
   vars.insert("version", "1.0.0");
@@ -368,7 +371,6 @@ let output = render_with_output(template, &data, &theme, OutputMode::Term)?;
 [2.1.0]: https://github.com/arthur-debert/outstanding-rs/compare/v2.0.0...v2.1.0
 [2.0.0]: https://github.com/arthur-debert/outstanding-rs/compare/v1.0.0...v2.0.0
 [1.0.0]: https://github.com/arthur-debert/outstanding-rs/compare/v0.15.0...v1.0.0
-[1.0.0]: https://github.com/arthur-debert/outstanding-rs/compare/v0.14.0...v1.0.0
 [0.14.0]: https://github.com/arthur-debert/outstanding-rs/compare/v0.13.0...v0.14.0
 [0.13.0]: https://github.com/arthur-debert/outstanding-rs/compare/v0.12.0...v0.13.0
 [0.12.0]: https://github.com/arthur-debert/outstanding-rs/compare/v0.11.1...v0.12.0
