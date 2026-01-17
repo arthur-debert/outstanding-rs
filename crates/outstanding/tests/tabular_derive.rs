@@ -689,3 +689,182 @@ fn test_full_table_workflow_with_macros() {
     assert!(rendered.contains("pending"));
     assert!(rendered.contains("done"));
 }
+
+// =============================================================================
+// Template integration tests
+// =============================================================================
+
+use minijinja::{context, Environment};
+use outstanding::tabular::filters::{
+    formatter_from_type, register_tabular_filters, table_from_type,
+};
+
+// Define a struct for template tests
+#[derive(Serialize, DeriveTabular, DeriveTabularRow)]
+#[tabular(separator = "  ")]
+struct DemoTask {
+    #[col(width = 10, header = "Task ID")]
+    id: String,
+
+    #[col(width = "fill", header = "Title")]
+    title: String,
+
+    #[col(width = 8, align = "right", header = "Status")]
+    status: String,
+}
+
+fn setup_template_env() -> Environment<'static> {
+    let mut env = Environment::new();
+    register_tabular_filters(&mut env);
+    env
+}
+
+#[test]
+fn test_helper_formatter_from_type() {
+    // Create a formatter from the derived spec
+    let formatter = formatter_from_type::<DemoTask>(60);
+
+    // Use it in a template
+    let mut env = setup_template_env();
+    env.add_template(
+        "test",
+        r#"{{ fmt.row(["TSK-001", "Implement feature", "pending"]) }}"#,
+    )
+    .unwrap();
+
+    let result = env
+        .get_template("test")
+        .unwrap()
+        .render(context!(fmt => formatter))
+        .unwrap();
+
+    assert!(result.contains("TSK-001"));
+    assert!(result.contains("Implement feature"));
+    assert!(result.contains("pending"));
+}
+
+#[test]
+fn test_helper_table_from_type_with_border() {
+    // Create a table from the derived spec with border
+    let table = table_from_type::<DemoTask>(80, BorderStyle::Light, true);
+
+    // Use it in a template
+    let mut env = setup_template_env();
+    env.add_template(
+        "test",
+        r#"{{ tbl.header_row() }}
+{{ tbl.separator_row() }}
+{{ tbl.row(["TSK-001", "Test task", "done"]) }}"#,
+    )
+    .unwrap();
+
+    let result = env
+        .get_template("test")
+        .unwrap()
+        .render(context!(tbl => table))
+        .unwrap();
+
+    // Should have header with our custom names
+    assert!(result.contains("Task ID"));
+    assert!(result.contains("Title"));
+    assert!(result.contains("Status"));
+
+    // Should have border characters
+    assert!(result.contains("│"));
+    assert!(result.contains("─"));
+
+    // Should have our data
+    assert!(result.contains("TSK-001"));
+}
+
+#[test]
+fn test_helper_table_from_type_without_headers() {
+    // Create a table without headers
+    let table = table_from_type::<DemoTask>(80, BorderStyle::None, false);
+
+    let mut env = setup_template_env();
+    env.add_template("test", r#"{{ tbl.header_row() }}"#)
+        .unwrap();
+
+    let result = env
+        .get_template("test")
+        .unwrap()
+        .render(context!(tbl => table))
+        .unwrap();
+
+    // Header should be empty when not requested
+    assert!(result.is_empty());
+}
+
+#[test]
+fn test_helper_full_template_workflow() {
+    // Demonstrate the complete workflow with derived macros and templates
+    let table = table_from_type::<DemoTask>(80, BorderStyle::Light, true);
+
+    let mut env = setup_template_env();
+    env.add_template(
+        "tasks_list",
+        r#"{{ tbl.top_border() }}
+{{ tbl.header_row() }}
+{{ tbl.separator_row() }}
+{% for task in tasks %}{{ tbl.row([task.id, task.title, task.status]) }}
+{% endfor %}{{ tbl.bottom_border() }}"#,
+    )
+    .unwrap();
+
+    let tasks = vec![
+        context!(id => "TSK-001", title => "First task", status => "pending"),
+        context!(id => "TSK-002", title => "Second task", status => "done"),
+    ];
+
+    let result = env
+        .get_template("tasks_list")
+        .unwrap()
+        .render(context!(tbl => table, tasks => tasks))
+        .unwrap();
+
+    // Verify complete table structure
+    let lines: Vec<&str> = result.lines().collect();
+    assert!(lines.len() >= 6); // top, header, sep, 2 rows, bottom
+
+    // Top border
+    assert!(lines[0].starts_with('┌'));
+    // Header row
+    assert!(lines[1].contains("Task ID"));
+    // Separator
+    assert!(lines[2].starts_with('├'));
+    // Data rows
+    assert!(lines[3].contains("TSK-001"));
+    assert!(lines[4].contains("TSK-002"));
+    // Bottom border
+    assert!(lines[5].starts_with('└'));
+}
+
+#[test]
+fn test_spec_columns_match_derived_demo_task() {
+    // Verify the derived spec has correct column configuration
+    let spec = DemoTask::tabular_spec();
+
+    assert_eq!(spec.columns.len(), 3);
+    assert_eq!(spec.columns[0].width, Width::Fixed(10));
+    assert_eq!(spec.columns[0].header.as_deref(), Some("Task ID"));
+    assert_eq!(spec.columns[1].width, Width::Fill);
+    assert_eq!(spec.columns[1].header.as_deref(), Some("Title"));
+    assert_eq!(spec.columns[2].header.as_deref(), Some("Status"));
+}
+
+#[test]
+fn test_row_extraction_matches_derived_demo_task() {
+    // Verify TabularRow generates correct values
+    let task = DemoTask {
+        id: "TSK-001".to_string(),
+        title: "Test".to_string(),
+        status: "pending".to_string(),
+    };
+
+    let row = task.to_row();
+    assert_eq!(row.len(), 3);
+    assert_eq!(row[0], "TSK-001");
+    assert_eq!(row[1], "Test");
+    assert_eq!(row[2], "pending");
+}

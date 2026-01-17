@@ -45,6 +45,7 @@ use minijinja::{Environment, Value};
 
 use super::decorator::{BorderStyle, Table};
 use super::formatter::TabularFormatter;
+use super::traits::Tabular;
 use super::types::{Align, Column, Overflow, TabularSpec, TruncateAt, Width};
 use super::util::{
     display_width, pad_center, pad_left, pad_right, truncate_end, truncate_middle, truncate_start,
@@ -512,6 +513,72 @@ fn parse_border_style(s: &str) -> BorderStyle {
         "rounded" => BorderStyle::Rounded,
         _ => BorderStyle::None,
     }
+}
+
+/// Create a MiniJinja Value from a type that implements `Tabular`.
+///
+/// This is a convenience function for creating a `TabularFormatter` from a
+/// derive macro-generated spec and wrapping it as a template value.
+///
+/// # Example
+///
+/// ```rust,ignore
+/// use outstanding::tabular::{Tabular, filters::formatter_from_type};
+/// use minijinja::context;
+///
+/// #[derive(Tabular)]
+/// struct Task {
+///     #[col(width = 8)]
+///     id: String,
+///     #[col(width = "fill")]
+///     title: String,
+/// }
+///
+/// let formatter = formatter_from_type::<Task>(80);
+///
+/// let ctx = context! {
+///     table => formatter,
+///     tasks => tasks_data,
+/// };
+/// ```
+pub fn formatter_from_type<T: Tabular>(width: usize) -> Value {
+    let formatter = TabularFormatter::from_type::<T>(width);
+    Value::from_object(formatter)
+}
+
+/// Create a MiniJinja Value from a type that implements `Tabular`, as a decorated Table.
+///
+/// This is a convenience function for creating a `Table` from a derive macro-generated
+/// spec and wrapping it as a template value.
+///
+/// # Example
+///
+/// ```rust,ignore
+/// use outstanding::tabular::{Tabular, BorderStyle, filters::table_from_type};
+/// use minijinja::context;
+///
+/// #[derive(Tabular)]
+/// #[tabular(separator = " │ ")]
+/// struct Task {
+///     #[col(width = 8, header = "ID")]
+///     id: String,
+///     #[col(width = "fill", header = "Title")]
+///     title: String,
+/// }
+///
+/// let table = table_from_type::<Task>(80, BorderStyle::Light, true);
+///
+/// let ctx = context! {
+///     table => table,
+///     tasks => tasks_data,
+/// };
+/// ```
+pub fn table_from_type<T: Tabular>(width: usize, border: BorderStyle, use_headers: bool) -> Value {
+    let mut table = Table::from_type::<T>(width).border(border);
+    if use_headers {
+        table = table.header_from_columns();
+    }
+    Value::from_object(table)
 }
 
 /// Format a value for a column with specified width, alignment, and truncation.
