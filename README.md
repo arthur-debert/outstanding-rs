@@ -1,5 +1,9 @@
 # Standout
 
+[![Crates.io](https://img.shields.io/crates/v/standout.svg)](https://crates.io/crates/standout)
+[![Documentation](https://img.shields.io/badge/docs-book-blue)](https://arthur-debert.github.io/standout/)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
+
 **Test your data. Render your view.**
 
 Standout is a CLI framework for Rust that enforces separation between logic and presentation. Your handlers return structs, not strings—making CLI logic as testable as any other code.
@@ -9,7 +13,6 @@ Standout is a CLI framework for Rust that enforces separation between logic and 
 CLI code that mixes logic with `println!` statements is impossible to unit test:
 
 ```rust
-// You can't unit test this—it writes directly to stdout
 fn list_command(show_all: bool) {
     let todos = storage::list().unwrap();
     println!("Your Todos:");
@@ -21,14 +24,11 @@ fn list_command(show_all: bool) {
 }
 ```
 
-The only way to test this is regex on captured stdout. That's fragile, verbose, and couples your tests to presentation details.
-
 ## The Solution
 
 With Standout, handlers return data. The framework handles rendering:
 
 ```rust
-// This is unit-testable—it's a pure function that returns data
 fn list_handler(matches: &ArgMatches, _ctx: &CommandContext) -> HandlerResult<TodoResult> {
     let show_all = matches.get_flag("all");
     let todos = storage::list()?
@@ -40,7 +40,6 @@ fn list_handler(matches: &ArgMatches, _ctx: &CommandContext) -> HandlerResult<To
 
 #[test]
 fn test_list_filters_completed() {
-    let matches = /* mock ArgMatches with all=false */;
     let result = list_handler(&matches, &ctx).unwrap();
     assert!(result.todos.iter().all(|t| t.status == Status::Pending));
 }
@@ -48,132 +47,15 @@ fn test_list_filters_completed() {
 
 Because your logic returns a struct, you test the struct. No stdout capture, no regex, no brittleness.
 
-## Standing Out
-
-What Standout provides:
-
-- Enforced architecture splitting data and presentation
-- Logic is testable as any Rust code
-- Boilerplateless: declaratively link your handlers to command names and templates, Standout handles the rest
-- Autodispatch: save keystrokes with auto dispatch from the known command tree
-- Free [output handling](docs/topics/output-modes.md): rich terminal with graceful degradation, plus structured data (JSON, YAML, CSV)
-- Finely crafted output:
-  - File-based [templates](docs/topics/rendering-system.md) for content and CSS for styling
-  - Rich styling with [adaptive properties](docs/topics/rendering-system.md#adaptive-styles) (light/dark modes), inheritance, and full theming
-  - Powerful templating through [MiniJinja](https://github.com/mitsuhiko/minijinja), including partials (reusable, smaller templates for models displayed in multiple places)
-  - [Hot reload](docs/topics/rendering-system.md#hot-reloading): changes to templates and styles don't require compiling
-  - Declarative layout support for [tabular data](docs/topics/tabular.md)
-
-## Quick Start
-
-### 1. Define Your Commands and Handlers
-
-Use the `Dispatch` derive macro to connect commands to handlers. Handlers receive parsed arguments and return serializable data.
-
-```rust
-use standout::cli::{Dispatch, CommandContext, HandlerResult, Output};
-use clap::{ArgMatches, Subcommand};
-use serde::Serialize;
-
-#[derive(Subcommand, Dispatch)]
-#[dispatch(handlers = handlers)]  // handlers are in the `handlers` module
-pub enum Commands {
-    List,
-    Add { title: String },
-}
-
-#[derive(Serialize)]
-struct TodoResult {
-    todos: Vec<Todo>,
-}
-
-mod handlers {
-    use super::*;
-
-    // HandlerResult<T> wraps your data; Output::Render tells Standout to render it
-    pub fn list(_m: &ArgMatches, _ctx: &CommandContext) -> HandlerResult<TodoResult> {
-        let todos = storage::list()?;
-        Ok(Output::Render(TodoResult { todos }))
-    }
-
-    pub fn add(m: &ArgMatches, _ctx: &CommandContext) -> HandlerResult<TodoResult> {
-        let title: &String = m.get_one("title").unwrap();
-        let todo = storage::add(title)?;
-        Ok(Output::Render(TodoResult { todos: vec![todo] }))
-    }
-}
-```
-
-### 2. Define Your Presentation
-
-Templates use MiniJinja with semantic style tags. Styles are defined separately in CSS or YAML.
-
-```jinja
-{# list.jinja #}
-[title]My Todos[/title]
-{% for todo in todos %}
-  - {{ todo.title }} ([status]{{ todo.status }}[/status])
-{% endfor %}
-```
-
-```css
-/* styles/default.css */
-.title { color: cyan; font-weight: bold; }
-.status { color: yellow; }
-```
-
-### 3. Wire It Up
-
-```rust
-use standout::cli::App;
-use standout::{embed_templates, embed_styles};
-
-fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let app = App::builder()
-        .commands(Commands::dispatch_config())  // Register handlers from derive macro
-        .templates(embed_templates!("src/templates"))
-        .styles(embed_styles!("src/styles"))
-        .build()?;
-
-    app.run(Cli::command(), std::env::args());
-    Ok(())
-}
-```
-
-Run it:
-
-```bash
-myapp list              # Rich terminal output with colors
-myapp list --output json    # JSON for scripting
-myapp list --output yaml    # YAML for config files
-myapp list --output text    # Plain text, no ANSI codes
-```
-
 ## Features
 
-### Architecture
-
-- Logic/presentation separation enforced by design
-- Handlers return data; framework handles rendering
-- Unit-testable CLI logic without stdout capture
-
-### Output Modes
-
-- Rich terminal output with colors and styles
-- Automatic JSON, YAML, CSV serialization from the same handler
-- Graceful degradation when terminal lacks capabilities
-
-### Rendering
-
-- [MiniJinja](https://github.com/mitsuhiko/minijinja) templates with semantic style tags
-- CSS or YAML stylesheets with light/dark mode support
-- Hot reload during development—edit templates without recompiling
-- Tabular layouts with alignment, truncation, and Unicode support
-
-### Integration
-
-- Clap integration with automatic dispatch
-- Declarative command registration via derive macros
+- **Testable by design** — Handlers return data; framework handles rendering
+- **Multiple output modes** — Rich terminal, JSON, YAML, CSV from the same handler
+- **MiniJinja templates** — Familiar syntax with partials, filters, and hot reload
+- **CSS/YAML styling** — Semantic styles with light/dark mode support
+- **Tabular layouts** — Declarative columns with alignment, truncation, wrapping
+- **Clap integration** — Automatic dispatch via derive macros
+- **Incremental adoption** — Migrate one command at a time
 
 ## Installation
 
@@ -181,48 +63,44 @@ myapp list --output text    # Plain text, no ANSI codes
 cargo add standout
 ```
 
-## Migrating an Existing CLI
-
-Already have a CLI? Standout supports incremental adoption. Standout handles matched commands automatically; unmatched commands return `ArgMatches` for your existing dispatch:
+## Quick Example
 
 ```rust
-if let Some(matches) = app.run(Cli::command(), std::env::args()) {
-    // Standout didn't handle this command, fall back to legacy
-    your_existing_dispatch(matches);
+use standout::cli::{App, Dispatch, CommandContext, HandlerResult, Output};
+use standout::{embed_templates, embed_styles};
+
+#[derive(Subcommand, Dispatch)]
+#[dispatch(handlers = handlers)]
+pub enum Commands {
+    List,
 }
+
+let app = App::builder()
+    .commands(Commands::dispatch_config())
+    .templates(embed_templates!("src/templates"))
+    .styles(embed_styles!("src/styles"))
+    .build()?;
+
+app.run(Cli::command(), std::env::args());
 ```
 
-See the [Partial Adoption Guide](docs/topics/partial-adoption.md) for the full migration path.
+```bash
+myapp list                  # Rich terminal output
+myapp list --output json    # JSON for scripting
+```
 
 ## Documentation
 
-### Guides
+You can find comprehensive documentation in our book: **[arthur-debert.github.io/standout](https://arthur-debert.github.io/standout/)**
 
-Step-by-step walkthroughs covering principles, rationale, and features.
-
-- **[Introduction to Standout](docs/guides/intro-to-standout.md)** — Adopting Standout in a working CLI. Start here.
-- [Introduction to Rendering](docs/guides/intro-to-rendering.md) — Creating polished terminal output
-- [Introduction to Tabular](docs/guides/intro-to-tabular.md) — Building aligned, readable tabular layouts
-- [TLDR: Quick Start](docs/guides/tldr-intro-to-standout.md) — Fast-paced intro for experienced developers
-
-### Topics
-
-In-depth documentation for specific systems and use cases. See [all topics](docs/topics/index.md).
-
-- [Handler Contract](docs/topics/handler-contract.md) — The handler API in detail
-- [Rendering System](docs/topics/rendering-system.md) — Templates, styles, and themes
-- [Output Modes](docs/topics/output-modes.md) — Terminal, JSON, YAML, CSV
-- [Tabular Layout](docs/topics/tabular.md) — Tables, columns, and alignment
-- [App Configuration](docs/topics/app-configuration.md) — Builder options
-- [Execution Model](docs/topics/execution-model.md) — Request lifecycle
-- [Partial Adoption](docs/topics/partial-adoption.md) — Migrate incrementally
-- [Render Only](docs/topics/render-only.md) — Use the renderer without the framework
+- [Introduction to Standout](https://arthur-debert.github.io/standout/guides/intro-to-standout.html) — Start here
+- [Rendering System](https://arthur-debert.github.io/standout/topics/rendering-system.html) — Templates and styles
+- [Tabular Layouts](https://arthur-debert.github.io/standout/topics/tabular.html) — Tables and alignment
+- [All Topics](https://arthur-debert.github.io/standout/topics/index.html) — Complete reference
 
 ## Contributing
 
-Contributions welcome—features, questions, and feedback.
-
-Use the issue tracker for bugs and feature requests. For code contributions: tests for changed code, passing test suite, PR with code and motivation.
+Contributions welcome. Use the [issue tracker](https://github.com/arthur-debert/standout/issues) for bugs and feature requests.
 
 ## License
 
