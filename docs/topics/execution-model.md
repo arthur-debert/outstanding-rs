@@ -4,12 +4,10 @@ Outstanding manages a strict linear pipeline from CLI input to rendered output. 
 
 Understanding this model allows you to extend the framework predictably—knowing exactly where to intercept execution, what data is available, and how to test each stage in isolation.
 
-
 ## The Pipeline
 
-```
+```text
 Clap Parsing → Dispatch → Handler → Hooks → Rendering → Output
-{{ ... }}
 ```
 
 Each stage has a clear responsibility:
@@ -31,12 +29,11 @@ This pipeline is what Outstanding manages for you—the glue code between "I hav
 - See [Handler Contract](handler-contract.md) for handler details.
 - See [Rendering System](rendering-system.md) for the render phase.
 
-
 ## Command Paths
 
 A command path is a vector of strings representing the subcommand chain:
 
-```
+```bash
 myapp db migrate --steps 5
 ```
 
@@ -54,6 +51,7 @@ App::builder()
 ```
 
 Outstanding builds an internal registry mapping paths to handlers:
+
 - `["list"]` → `list_handler`
 - `["db", "migrate"]` → `migrate_handler`
 - `["db", "status"]` → `status_handler`
@@ -141,10 +139,10 @@ App::builder()
 
 See [App Configuration](app-configuration.md) for more on registration.
 
-
 ### Error Handling
 
 When a hook returns `Err(HookError)`:
+
 - Execution stops immediately
 - Remaining hooks in that phase don't run
 - For pre-dispatch: the handler never executes
@@ -199,14 +197,16 @@ This enables gradual adoption—Outstanding handles some commands while others u
 When you call `app.run()`, Outstanding augments your `clap::Command` with:
 
 **Custom help subcommand**:
-```
+
+```bash
 myapp help              # Main help
 myapp help topic-name   # Specific topic
 myapp help --page       # Use pager for long content
 ```
 
 **Global `--output` flag**:
-```
+
+```bash
 myapp list --output=json
 myapp db status --output=yaml
 ```
@@ -214,7 +214,8 @@ myapp db status --output=yaml
 Values: `auto`, `term`, `text`, `term-debug`, `json`, `yaml`, `xml`, `csv`
 
 **Global `--output-file-path` flag**:
-```
+
+```bash
 myapp list --output-file-path=results.txt
 ```
 

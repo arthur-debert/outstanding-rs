@@ -4,10 +4,10 @@ Outstanding provides a dedicated help topics system because command help (`--hel
 
 Arguments and flags describe *mechanics*, but complex applications need longer-form guides for *concepts*—configuration formats, authentication flows, or troubleshooting. The Topics system integrates these directly into your CLI, accessible via `myapp help <topic>`, keeping users in the terminal.
 
-
 ## What Topics Are For
 
 Command help describes flags and arguments. Topics explain broader concepts:
+
 - Configuration file format
 - Authentication setup
 - Workflow guides
@@ -38,6 +38,7 @@ pub enum TopicType {
 ```
 
 The `name` is a URL-safe slug used in `help <name>`. If not provided, it's auto-generated from the title:
+
 - "Hello World" → `hello-world`
 - "Café Setup" → `cafe-setup`
 
@@ -70,7 +71,7 @@ App::builder()
 
 Outstanding scans the directory for `.txt` and `.md` files. File format:
 
-```
+```text
 Configuration Format
 
 The config file uses YAML format.
@@ -84,7 +85,8 @@ Supported keys:
 First non-blank line becomes the title. Everything after becomes content. The filename (without extension) becomes the topic name.
 
 Directory structure:
-```
+
+```text
 docs/topics/
   config-format.txt      # Topic name: config-format
   authentication.md      # Topic name: authentication
@@ -117,7 +119,7 @@ Duplicate topic names cause a panic—each name must be unique.
 
 Topics automatically appear in help output:
 
-```
+```text
 myapp help
 
 USAGE
@@ -145,6 +147,7 @@ myapp help getting-started --page
 ```
 
 Outstanding tries pagers in order:
+
 1. `$PAGER` environment variable
 2. `less`
 3. `more`
@@ -177,14 +180,16 @@ let output = render_topic(&topic, Some(config))?;
 Topics are rendered through templates with style tags:
 
 **Single topic template:**
-```
+
+```jinja
 [header]{{ title | upper }}[/header]
 
 {{ content }}
 ```
 
 **Topic list template:**
-```
+
+```jinja
 [about]Available Topics[/about]
 
 [header]USAGE[/header]
@@ -210,14 +215,12 @@ let config = TopicRenderConfig {
 
 Topics with `.md` extension or `TopicType::Markdown` can contain Markdown formatting. Outstanding renders Markdown appropriately for the terminal when displaying.
 
-```
+```markdown
 # Getting Started
 
 Install the application:
 
-```bash
-cargo install myapp
-```
+    cargo install myapp
 
 Then create a configuration file...
 ```

@@ -4,7 +4,6 @@ Outstanding's rendering layer is fully decoupled from its CLI integration (App, 
 
 This decoupling allows you to maintain consistent styling and logic across different parts of your ecosystem.
 
-
 ## When to Use This
 
 - Adding styled output to an existing application

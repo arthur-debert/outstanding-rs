@@ -7,9 +7,9 @@ This design ensures that your application defines its entire environment—comma
 This guide covers the full setup: embedding resources, registering commands, configuring themes, and customizing behavior.
 
 See also:
+
 - [Rendering System](rendering-system.md) for details on templates and styles.
 - [Topics System](topics-system.md) for help topics.
-
 
 ## Basic Setup
 
@@ -40,7 +40,8 @@ app.run(Cli::command(), std::env::args());
 Collects files matching: `.jinja`, `.jinja2`, `.j2`, `.txt` (in priority order).
 
 Directory structure:
-```
+
+```text
 src/templates/
   list.j2
   add.j2
@@ -61,7 +62,7 @@ Templates are referenced by path without extension: `"list"`, `"db/migrate"`.
 
 Collects files matching: `.yaml`, `.yml`.
 
-```
+```text
 src/styles/
   default.yaml
   dark.yaml
@@ -102,6 +103,7 @@ Local directories take precedence. This enables user customization without recom
 ```
 
 If `.default_theme()` is not called, `AppBuilder` attempts to load a theme from the registry in this order:
+
 1. `default`
 2. `theme`
 3. `base`
@@ -188,6 +190,7 @@ App::builder()
 ```
 
 With this configuration:
+
 - `myapp` becomes `myapp list`
 - `myapp --output=json` becomes `myapp list --output=json`
 - `myapp add foo` stays as `myapp add foo` (explicit command takes precedence)
@@ -346,10 +349,12 @@ Parses with Outstanding's augmented command but doesn't dispatch.
 ## Build Validation
 
 `build()` validates:
+
 - Theme exists if `.default_theme()` was called
 - Returns `SetupError::ThemeNotFound` if not found
 
 What's NOT validated at build time:
+
 - Templates (resolved lazily at render time)
 - Command handlers
 - Hook signatures (verified at registration)
@@ -391,6 +396,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 ```
 
 Template `src/templates/list.j2`:
+
 ```jinja
 [header]Items[/header] ({{ items | length }} total)
 {% for item in items %}
@@ -401,6 +407,7 @@ Template `src/templates/list.j2`:
 ```
 
 Style `src/styles/default.yaml`:
+
 ```yaml
 header:
   fg: cyan

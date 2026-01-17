@@ -8,10 +8,10 @@ For explanation's sake, we will show a hypothetical list command for tdoo, a tod
 
 **See Also:**
 
-- [Handler Contract](handler-contract.md) - detailed handler API
-- [Rendering System](rendering-system.md) - templates and styles in depth
-- [Output Modes](output-modes.md) - all output format options
-- [Partial Adoption](../howtos/partial-adoption.md) - migrating incrementally
+- [Handler Contract](../topics/handler-contract.md) - detailed handler API
+- [Rendering System](../topics/rendering-system.md) - templates and styles in depth
+- [Output Modes](../topics/output-modes.md) - all output format options
+- [Partial Adoption](../topics/partial-adoption.md) - migrating incrementally
 
 ## 1. Start: The Argument Parsing
 
@@ -573,10 +573,10 @@ src/
 For brevity's sake, we've ignored a bunch of finer and relevant points:
 
 - The derive macros can set name mapping explicitly: `#[dispatch(handler = custom_fn, template = "custom.jinja")]`
-- There are pre-dispatch, post-dispatch and post-render hooks (see [Execution Model](execution-model.md))
-- Outstanding exposes its primitives as libraries for custom usage (see [Render Only](../howtos/render-only.md))
-- Powerful tabular layouts via the `col` filter (see [Tables](../howtos/tables.md))
-- A help topics system for rich documentation (see [Topics System](topics-system.md))
+- There are pre-dispatch, post-dispatch and post-render hooks (see [Execution Model](../topics/execution-model.md))
+- Outstanding exposes its primitives as libraries for custom usage (see [Render Only](../topics/render-only.md))
+- Powerful tabular layouts via the `col` filter (see [Tabular Layout](../topics/tabular.md))
+- A help topics system for rich documentation (see [Topics System](../topics/topics-system.md))
 
 Aside from exposing the library primitives, Outstanding leverages best-in-breed crates like MiniJinja and console::Style under the hood. The lock-in is really negligible: you can use Outstanding's BB parser or swap it, manually dispatch handlers, and use the renderers directly in your clap dispatch.
 

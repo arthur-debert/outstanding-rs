@@ -4,7 +4,6 @@ Outstanding's rendering layer separates presentation from logic by using a two-p
 
 Instead of mixing ANSI codes into your logic or templates, you define *what* something is (semantic tags like `[error]`) and let the theme decide *how* it looks.
 
-
 ## Two-Pass Rendering
 
 Templates are processed in two distinct passes:
@@ -13,7 +12,7 @@ Templates are processed in two distinct passes:
 
 **Pass 2 - BBParser**: Style tag processing. Bracket-notation tags are converted to ANSI escape codes (or stripped, depending on output mode).
 
-```
+```text
 Template:     [title]{{ name }}[/title] has {{ count }} items
 Data:         { name: "Report", count: 42 }
 
@@ -22,6 +21,7 @@ After Pass 2: \x1b[1;32mReport\x1b[0m has 42 items
 ```
 
 This separation means:
+
 - Template logic (loops, conditionals) is handled by MiniJinja—a mature, well-documented engine
 - Style application is a simple, predictable transformation
 - You can debug each pass independently
@@ -30,11 +30,12 @@ This separation means:
 
 Style tags use BBCode-like bracket notation:
 
-```
+```text
 [style-name]content to style[/style-name]
 ```
 
 The style-name must match a style defined in the theme. Tags can:
+
 - Nest: `[outer][inner]text[/inner][/outer]`
 - Span multiple lines
 - Contain template logic: `[title]{% if x %}{{ x }}{% endif %}[/title]`
@@ -47,8 +48,6 @@ The tag syntax was chosen over Jinja filters because it reads naturally and does
 - **Text**: Tags stripped, plain text remains
 - **TermDebug**: Tags kept as literals (`[name]...[/name]`) for debugging
 - **Structured** (JSON, etc.): Template not used—data serializes directly
-
-### Unknown Style Tags
 
 ### Unknown Style Tags
 
@@ -71,12 +70,9 @@ if let Err(e) = result {
 
 ## Themes and Styles
 
-## Themes and Styles
-
 A `Theme` is a named collection of styles mapping style names to console formatting.
 
 See [App Configuration](app-configuration.md) for how to embed and load themes.
-
 
 ### Programmatic Themes
 
@@ -143,7 +139,6 @@ If you prefer standard CSS syntax over YAML, Outstanding supports a subset of CS
 
 This is ideal for developers who want to leverage existing knowledge and tooling (syntax highlighting, linters) for their CLI themes.
 
-
 ### Supported Attributes
 
 Colors: `fg`, `bg`
@@ -173,6 +168,7 @@ section-header: title    # Another alias
 ```
 
 Benefits:
+
 - Templates use meaningful names (`[commit-message]`)
 - Change one definition, update all aliases
 - Styling stays flexible without template changes
@@ -289,7 +285,7 @@ When handler data and context have the same key, **handler data wins**. Context 
 
 Structured modes (Json, Yaml, Xml, Csv) bypass template rendering entirely:
 
-```
+```text
 OutputMode::Json  → serde_json::to_string_pretty(data)
 OutputMode::Yaml  → serde_yaml::to_string(data)
 OutputMode::Xml   → quick_xml::se::to_string(data)
@@ -297,6 +293,7 @@ OutputMode::Csv   → flatten and format as CSV
 ```
 
 This means:
+
 - Template content is ignored
 - Style tags never apply
 - Context injection is skipped
@@ -404,6 +401,7 @@ Templates are resolved by name with priority:
 Supported extensions (in priority order): `.jinja`, `.jinja2`, `.j2`, `.txt`
 
 When you request `"config"`, the registry checks:
+
 - Inline template named `"config"`
 - `config.jinja` in registered directories
 - `config.jinja2`, `config.j2`, `config.txt` (lower priority)

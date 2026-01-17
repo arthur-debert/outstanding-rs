@@ -5,8 +5,8 @@ Handlers are where your application logic lives. Outstanding's handler contract 
 Instead of fighting with generic `Any` types or global state, you work with a clear contract: inputs are immutable references, output is a `Result`.
 
 See also:
-- [Output Modes](output-modes.md) for how the output enum interacts with formats.
 
+- [Output Modes](output-modes.md) for how the output enum interacts with formats.
 
 ## The Handler Trait
 
@@ -114,6 +114,7 @@ fn delete_handler(matches: &ArgMatches, _ctx: &CommandContext) -> HandlerResult<
 ```
 
 Silent behavior in the pipeline:
+
 - Post-output hooks still receive `RenderedOutput::Silent` (they can transform it)
 - If `--output-file` is set, nothing is written
 - Nothing prints to stdout
@@ -137,6 +138,7 @@ fn export_handler(matches: &ArgMatches, _ctx: &CommandContext) -> HandlerResult<
 ```
 
 The filename is used as a literal file path. Outstanding writes the bytes using `std::fs::write()` and prints a confirmation to stderr. The filename can be:
+
 - Relative: `"output/report.pdf"`
 - Absolute: `"/tmp/report.pdf"`
 - Dynamic: `format!("report-{}.pdf", timestamp)`
@@ -229,6 +231,7 @@ enum Commands {
 ```
 
 This generates a `dispatch_config()` method that registers handlers. Variant names are converted to snake_case command names:
+
 - `List` → `"list"`
 - `ListAll` → `"list_all"`
 

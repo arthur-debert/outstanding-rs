@@ -4,7 +4,6 @@ Outstanding supports multiple output formats through a single handler because mo
 
 The same handler logic produces styled terminal output for eyes, plain text for logs, or structured JSON for `jq` pipelines—controlled entirely by the user's `--output` flag. This frees you from writing separate "API" and "CLI" logic.
 
-
 ## The OutputMode Enum
 
 ```rust
@@ -85,12 +84,13 @@ Useful for clean output regardless of terminal capabilities, or when processing 
 
 TermDebug preserves style tags instead of converting them:
 
-```
+```text
 Template: [title]Hello[/title]
 Output:   [title]Hello[/title]
 ```
 
 Use cases:
+
 - Debugging template issues
 - Verifying style tag placement
 - Automated testing of template output
@@ -125,6 +125,7 @@ myapp list --output=json
 ```
 
 Same handler, same types—different output format. This enables:
+
 - Machine-readable output for scripts
 - Integration with other tools (`jq`, etc.)
 - API-like behavior from CLI apps
@@ -133,7 +134,7 @@ Same handler, same types—different output format. This enables:
 
 CSV mode flattens nested JSON automatically. For more control, use `FlatDataSpec`.
 
-See [Tables and Columns](../howtos/tables.md) for detailed CSV configuration.
+See [Tabular Layout](tabular.md) for detailed CSV configuration.
 
 ```rust
 let spec = FlatDataSpec::builder()
@@ -156,6 +157,7 @@ myapp list --output=json --output-file-path=data.json
 ```
 
 Behavior:
+
 - Text output: written to file, nothing printed to stdout
 - Binary output: written to file (same as without flag)
 - Silent output: no-op
