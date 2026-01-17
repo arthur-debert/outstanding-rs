@@ -90,6 +90,7 @@ mod tests {
     use crate::{render_with_output, OutputMode, Theme};
     use console::Style;
     use serde::Serialize;
+    use serial_test::serial;
 
     #[derive(Serialize)]
     struct SimpleData {
@@ -97,6 +98,7 @@ mod tests {
     }
 
     #[test]
+    #[serial]
     fn test_adaptive_theme_uses_detector() {
         console::set_colors_enabled(true);
 
@@ -147,6 +149,7 @@ mod tests {
     }
 
     #[test]
+    #[serial]
     fn test_detect_color_mode_uses_override() {
         set_theme_detector(|| ColorMode::Dark);
         assert_eq!(detect_color_mode(), ColorMode::Dark);
