@@ -53,7 +53,7 @@ use std::collections::HashMap;
 use super::super::context::{ContextRegistry, RenderContext};
 use super::super::output::OutputMode;
 use super::super::style::Styles;
-use super::super::table::FlatDataSpec;
+use super::super::tabular::FlatDataSpec;
 use super::super::theme::{detect_color_mode, ColorMode, Theme};
 use super::filters::register_filters;
 
@@ -855,7 +855,7 @@ fn json_to_minijinja(json: &serde_json::Value) -> Value {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::table::{Column, FlatDataSpec, Width};
+    use crate::tabular::{Column, FlatDataSpec, Width};
     use crate::Theme;
     use console::Style;
     use serde::Serialize;

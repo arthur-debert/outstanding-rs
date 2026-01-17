@@ -17,6 +17,6 @@ pub(crate) fn register_filters(env: &mut Environment<'static>) {
     //        {{ "" | nl }} outputs just \n (a blank line)
     env.add_filter("nl", |value: Value| -> String { format!("{}\n", value) });
 
-    // Register table formatting filters (col, pad_left, pad_right, truncate_at, etc.)
-    crate::table::filters::register_table_filters(env);
+    // Register tabular formatting filters (col, pad_left, pad_right, truncate_at, etc.)
+    crate::tabular::filters::register_tabular_filters(env);
 }

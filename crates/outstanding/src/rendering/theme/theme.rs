@@ -150,6 +150,15 @@ impl Theme {
         }
     }
 
+    /// Sets the name on this theme, returning `self` for chaining.
+    ///
+    /// This is useful when loading themes from content where the name
+    /// is known separately (e.g., from a filename).
+    pub fn with_name(mut self, name: impl Into<String>) -> Self {
+        self.name = Some(name.into());
+        self
+    }
+
     /// Loads a theme from a YAML file.
     ///
     /// The theme name is derived from the filename (without extension).

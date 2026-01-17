@@ -63,7 +63,7 @@ impl FlatDataSpec {
     /// # Example
     ///
     /// ```rust
-    /// use outstanding::table::{FlatDataSpec, Column, Width};
+    /// use outstanding::tabular::{FlatDataSpec, Column, Width};
     ///
     /// let spec = FlatDataSpec::builder()
     ///     .column(Column::new(Width::Bounded { min: Some(5), max: Some(20) }))
@@ -111,10 +111,10 @@ impl FlatDataSpec {
         let available = total_width.saturating_sub(overhead);
 
         let mut widths: Vec<usize> = Vec::with_capacity(self.columns.len());
-        let mut fill_indices: Vec<usize> = Vec::new();
+        let mut flex_indices: Vec<(usize, usize)> = Vec::new(); // (index, weight) for Fill/Fraction
         let mut used_width: usize = 0;
 
-        // First pass: resolve Fixed and Bounded columns
+        // First pass: resolve Fixed and Bounded columns, collect flex columns
         for (i, col) in self.columns.iter().enumerate() {
             match &col.width {
                 Width::Fixed(w) => {
@@ -134,25 +134,34 @@ impl FlatDataSpec {
                 }
                 Width::Fill => {
                     widths.push(0); // Placeholder, will be filled later
-                    fill_indices.push(i);
+                    flex_indices.push((i, 1)); // Fill has weight 1
+                }
+                Width::Fraction(n) => {
+                    widths.push(0); // Placeholder, will be filled later
+                    flex_indices.push((i, *n)); // Fraction has weight n
                 }
             }
         }
 
-        // Second pass: allocate remaining space to Fill columns only
+        // Second pass: allocate remaining space to Fill/Fraction columns proportionally
         let remaining = available.saturating_sub(used_width);
 
-        if !fill_indices.is_empty() {
-            let per_fill = remaining / fill_indices.len();
-            let mut extra = remaining % fill_indices.len();
+        if !flex_indices.is_empty() {
+            let total_weight: usize = flex_indices.iter().map(|(_, w)| w).sum();
+            if total_weight > 0 {
+                let mut remaining_space = remaining;
 
-            for &idx in &fill_indices {
-                let mut width = per_fill;
-                if extra > 0 {
-                    width += 1;
-                    extra -= 1;
+                for (i, (idx, weight)) in flex_indices.iter().enumerate() {
+                    // Last flex column gets all remaining space to avoid rounding errors
+                    let width = if i == flex_indices.len() - 1 {
+                        remaining_space
+                    } else {
+                        let share = (remaining * weight) / total_weight;
+                        remaining_space = remaining_space.saturating_sub(share);
+                        share
+                    };
+                    widths[*idx] = width;
                 }
-                widths[idx] = width;
             }
         } else if remaining > 0 {
             // If no Fill columns, distribute remaining space to the rightmost Bounded column
@@ -178,7 +187,7 @@ impl FlatDataSpec {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::table::{Column, Width};
+    use crate::tabular::{Column, Width};
 
     #[test]
     fn resolve_empty_spec() {
@@ -237,9 +246,9 @@ mod tests {
             .column(Column::new(Width::Fill))
             .build();
 
-        // Total: 10, no overhead, split 3 ways: 4, 3, 3
+        // Total: 10, no overhead, split 3 ways: 3, 3, 4 (last gets remainder)
         let resolved = spec.resolve_widths(10);
-        assert_eq!(resolved.widths, vec![4, 3, 3]);
+        assert_eq!(resolved.widths, vec![3, 3, 4]);
         assert_eq!(resolved.total(), 10);
     }
 
@@ -386,12 +395,83 @@ mod tests {
         assert_eq!(resolved.len(), 3);
         assert!(!resolved.is_empty());
     }
+
+    #[test]
+    fn resolve_fraction_columns() {
+        let spec = FlatDataSpec::builder()
+            .column(Column::new(Width::Fraction(1)))
+            .column(Column::new(Width::Fraction(2)))
+            .column(Column::new(Width::Fraction(1)))
+            .build();
+
+        // Total: 100, no overhead
+        // Weights: 1 + 2 + 1 = 4
+        // Column 1: 100/4 * 1 = 25
+        // Column 2: 100/4 * 2 = 50
+        // Column 3: 25 (remaining)
+        let resolved = spec.resolve_widths(100);
+        assert_eq!(resolved.widths, vec![25, 50, 25]);
+        assert_eq!(resolved.total(), 100);
+    }
+
+    #[test]
+    fn resolve_fraction_uneven_split() {
+        let spec = FlatDataSpec::builder()
+            .column(Column::new(Width::Fraction(1)))
+            .column(Column::new(Width::Fraction(1)))
+            .column(Column::new(Width::Fraction(1)))
+            .build();
+
+        // Total: 10, no overhead
+        // Weights: 1 + 1 + 1 = 3
+        // Column 1: 10/3 = 3
+        // Column 2: 10/3 = 3
+        // Column 3: 4 (remaining)
+        let resolved = spec.resolve_widths(10);
+        assert_eq!(resolved.widths, vec![3, 3, 4]);
+        assert_eq!(resolved.total(), 10);
+    }
+
+    #[test]
+    fn resolve_mixed_fill_and_fraction() {
+        let spec = FlatDataSpec::builder()
+            .column(Column::new(Width::Fill)) // Weight 1
+            .column(Column::new(Width::Fraction(2))) // Weight 2
+            .column(Column::new(Width::Fill)) // Weight 1
+            .build();
+
+        // Total: 100, no overhead
+        // Weights: 1 + 2 + 1 = 4
+        // Column 1: 100/4 * 1 = 25
+        // Column 2: 100/4 * 2 = 50
+        // Column 3: 25 (remaining)
+        let resolved = spec.resolve_widths(100);
+        assert_eq!(resolved.widths, vec![25, 50, 25]);
+        assert_eq!(resolved.total(), 100);
+    }
+
+    #[test]
+    fn resolve_fraction_with_fixed() {
+        let spec = FlatDataSpec::builder()
+            .column(Column::new(Width::Fixed(20)))
+            .column(Column::new(Width::Fraction(1)))
+            .column(Column::new(Width::Fraction(3)))
+            .build();
+
+        // Total: 100, no overhead, fixed: 20, remaining: 80
+        // Weights: 1 + 3 = 4
+        // Fraction 1: 80/4 * 1 = 20
+        // Fraction 3: 60 (remaining)
+        let resolved = spec.resolve_widths(100);
+        assert_eq!(resolved.widths, vec![20, 20, 60]);
+        assert_eq!(resolved.total(), 100);
+    }
 }
 
 #[cfg(test)]
 mod proptests {
     use super::*;
-    use crate::table::{Column, Width};
+    use crate::tabular::{Column, Width};
     use proptest::prelude::*;
 
     proptest! {
@@ -478,6 +558,67 @@ mod proptests {
                     width, max_width
                 );
             }
+        }
+
+        #[test]
+        fn fraction_columns_proportional(
+            fractions in proptest::collection::vec(1usize..5, 1..5),
+            total_width in 50usize..200,
+        ) {
+            let mut builder = FlatDataSpec::builder();
+            for f in &fractions {
+                builder = builder.column(Column::new(Width::Fraction(*f)));
+            }
+            let spec = builder.build();
+
+            let resolved = spec.resolve_widths(total_width);
+
+            // Total should equal available width
+            prop_assert_eq!(
+                resolved.total(),
+                total_width,
+                "Fraction columns should fill entire width"
+            );
+
+            // Verify proportions approximately hold
+            let total_weight: usize = fractions.iter().sum();
+            for (i, &fraction) in fractions.iter().enumerate() {
+                let expected = (total_width * fraction) / total_weight;
+                let actual = resolved.widths[i];
+                // Allow +-1 for rounding
+                prop_assert!(
+                    actual >= expected.saturating_sub(1) && actual <= expected + fractions.len(),
+                    "Column {} with weight {} should be ~{}, got {}",
+                    i, fraction, expected, actual
+                );
+            }
+        }
+
+        #[test]
+        fn mixed_fraction_and_fill_fills_space(
+            num_fill in 1usize..3,
+            num_fraction in 1usize..3,
+            fraction_weight in 1usize..5,
+            total_width in 50usize..200,
+        ) {
+            let mut builder = FlatDataSpec::builder();
+
+            for _ in 0..num_fill {
+                builder = builder.column(Column::new(Width::Fill));
+            }
+            for _ in 0..num_fraction {
+                builder = builder.column(Column::new(Width::Fraction(fraction_weight)));
+            }
+
+            let spec = builder.build();
+            let resolved = spec.resolve_widths(total_width);
+
+            // Should fill entire width
+            prop_assert_eq!(
+                resolved.total(),
+                total_width,
+                "Mixed Fill/Fraction should fill entire width"
+            );
         }
     }
 }

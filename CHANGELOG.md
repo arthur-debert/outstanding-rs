@@ -7,6 +7,48 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **Comprehensive tabular layout system** - New `outstanding::tabular` module for creating aligned, column-based terminal output with full Unicode support.
+
+  **Template filters:**
+  - `col(width, align=?, truncate=?, ellipsis=?)` - Format value to fit column width
+  - `pad_left(width)`, `pad_right(width)`, `pad_center(width)` - Padding helpers
+  - `truncate_at(width, position?, ellipsis?)` - Truncation with start/middle/end positions
+  - `display_width` - Get visual width of Unicode strings
+  - `style_as(style)` - Wrap value in style tags
+
+  **Template functions:**
+  - `tabular(columns, separator=?, width=?)` - Create a TabularFormatter for row-by-row output
+  - `table(columns, border=?, header=?, header_style=?, row_separator=?, width=?)` - Create decorated tables with borders
+
+  **Rust API:**
+  - `TabularSpec` - Column layout specification with builder pattern
+  - `TabularFormatter` - Row formatter with field extraction support
+  - `Table` - Decorated table with borders, headers, and separators
+  - `Col` - Shorthand column constructors (`Col::fixed()`, `Col::fill()`, `Col::min()`, etc.)
+
+  **Features:**
+  - Multiple width strategies: fixed, bounded (min/max), fill, fractional
+  - Column anchoring (left/right edge positioning)
+  - Overflow handling: truncate (start/middle/end), wrap, clip, expand
+  - Automatic field extraction from structs via `row_from()`
+  - Column styles with `style_from_value` for dynamic styling
+  - Six border styles: none, ascii, light, heavy, double, rounded
+  - Row separators between data rows
+  - Headers from column specs via `header_from_columns()`
+  - Full Unicode support (CJK characters, combining marks, ANSI codes)
+
+### Changed
+
+- **BREAKING: Renamed `table` module to `tabular`** - The module is now accessed as `outstanding::tabular` instead of `outstanding::table`. This better reflects its purpose of providing tabular layout functionality.
+  - `use outstanding::table::*` → `use outstanding::tabular::*`
+
+- **BREAKING: Renamed types for consistency:**
+  - `TableFormatter` → `TabularFormatter`
+  - `register_table_filters()` → `register_tabular_filters()`
+  - Removed backward compatibility aliases (`TableSpec`, `TableSpecBuilder`)
+
 ## [2.2.0] - 2026-01-15
 
 ## [2.1.2] - 2026-01-15
@@ -72,12 +114,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 
 - **`rendering::prelude` module** - Convenient imports for standalone rendering:
+
   ```rust
   use outstanding::rendering::prelude::*;
   ```
+
   Includes: `render`, `render_auto`, `render_with_output`, `render_with_mode`, `render_with_vars`, `Theme`, `ColorMode`, `OutputMode`, `Renderer`, `Style`
 
 - **`render_with_vars()` function** - Simplified context injection for adding key-value pairs to templates without the full `ContextRegistry` system:
+
   ```rust
   let mut vars = HashMap::new();
   vars.insert("version", "1.0.0");
@@ -368,7 +413,6 @@ let output = render_with_output(template, &data, &theme, OutputMode::Term)?;
 [2.1.0]: https://github.com/arthur-debert/outstanding-rs/compare/v2.0.0...v2.1.0
 [2.0.0]: https://github.com/arthur-debert/outstanding-rs/compare/v1.0.0...v2.0.0
 [1.0.0]: https://github.com/arthur-debert/outstanding-rs/compare/v0.15.0...v1.0.0
-[1.0.0]: https://github.com/arthur-debert/outstanding-rs/compare/v0.14.0...v1.0.0
 [0.14.0]: https://github.com/arthur-debert/outstanding-rs/compare/v0.13.0...v0.14.0
 [0.13.0]: https://github.com/arthur-debert/outstanding-rs/compare/v0.12.0...v0.13.0
 [0.12.0]: https://github.com/arthur-debert/outstanding-rs/compare/v0.11.1...v0.12.0

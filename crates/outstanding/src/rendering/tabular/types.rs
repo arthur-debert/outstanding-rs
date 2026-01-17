@@ -35,7 +35,75 @@ pub enum TruncateAt {
     Middle,
 }
 
-/// Specifies how a column determines its width.
+/// How a column handles content that exceeds its width.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum Overflow {
+    /// Truncate content with an ellipsis marker.
+    Truncate {
+        /// Where to truncate (start, middle, or end).
+        at: TruncateAt,
+        /// The marker to show when truncation occurs (default: "…").
+        marker: String,
+    },
+    /// Wrap content to multiple lines at word boundaries.
+    Wrap {
+        /// Number of spaces to indent continuation lines (default: 0).
+        indent: usize,
+    },
+    /// Hard cut without any marker.
+    Clip,
+    /// Allow content to overflow (ignore width limit).
+    Expand,
+}
+
+impl Default for Overflow {
+    fn default() -> Self {
+        Overflow::Truncate {
+            at: TruncateAt::End,
+            marker: "…".to_string(),
+        }
+    }
+}
+
+impl Overflow {
+    /// Create a truncate overflow with default marker.
+    pub fn truncate(at: TruncateAt) -> Self {
+        Overflow::Truncate {
+            at,
+            marker: "…".to_string(),
+        }
+    }
+
+    /// Create a truncate overflow with custom marker.
+    pub fn truncate_with_marker(at: TruncateAt, marker: impl Into<String>) -> Self {
+        Overflow::Truncate {
+            at,
+            marker: marker.into(),
+        }
+    }
+
+    /// Create a wrap overflow with no indent.
+    pub fn wrap() -> Self {
+        Overflow::Wrap { indent: 0 }
+    }
+
+    /// Create a wrap overflow with continuation indent.
+    pub fn wrap_with_indent(indent: usize) -> Self {
+        Overflow::Wrap { indent }
+    }
+}
+
+/// Column position anchor on the row.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum Anchor {
+    /// Column flows left-to-right from the start (default).
+    #[default]
+    Left,
+    /// Column is positioned at the right edge.
+    Right,
+}
+
 /// Specifies how a column determines its width.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(try_from = "WidthRaw", into = "WidthRaw")]
@@ -50,8 +118,11 @@ pub enum Width {
         max: Option<usize>,
     },
     /// Expand to fill all remaining space.
-    /// Only one column per table should use this.
+    /// Multiple Fill columns share remaining space equally.
     Fill,
+    /// Proportional: takes n parts of the remaining space.
+    /// `Fraction(2)` gets twice the space of `Fraction(1)` or `Fill`.
+    Fraction(usize),
 }
 
 #[derive(Serialize, Deserialize)]
@@ -64,7 +135,7 @@ enum WidthRaw {
         #[serde(default)]
         max: Option<usize>,
     },
-    FillStr(String),
+    StringVariant(String),
 }
 
 impl From<Width> for WidthRaw {
@@ -72,7 +143,8 @@ impl From<Width> for WidthRaw {
         match width {
             Width::Fixed(w) => WidthRaw::Fixed(w),
             Width::Bounded { min, max } => WidthRaw::Bounded { min, max },
-            Width::Fill => WidthRaw::FillStr("fill".to_string()),
+            Width::Fill => WidthRaw::StringVariant("fill".to_string()),
+            Width::Fraction(n) => WidthRaw::StringVariant(format!("{}fr", n)),
         }
     }
 }
@@ -84,8 +156,18 @@ impl TryFrom<WidthRaw> for Width {
         match raw {
             WidthRaw::Fixed(w) => Ok(Width::Fixed(w)),
             WidthRaw::Bounded { min, max } => Ok(Width::Bounded { min, max }),
-            WidthRaw::FillStr(s) if s == "fill" => Ok(Width::Fill),
-            WidthRaw::FillStr(s) => Err(format!("Invalid width string: '{}'. Expected 'fill'.", s)),
+            WidthRaw::StringVariant(s) if s == "fill" => Ok(Width::Fill),
+            WidthRaw::StringVariant(s) if s.ends_with("fr") => {
+                let num_str = s.trim_end_matches("fr");
+                num_str
+                    .parse::<usize>()
+                    .map(Width::Fraction)
+                    .map_err(|_| format!("Invalid fraction: '{}'. Expected format like '2fr'.", s))
+            }
+            WidthRaw::StringVariant(s) => Err(format!(
+                "Invalid width string: '{}'. Expected 'fill' or '<n>fr'.",
+                s
+            )),
         }
     }
 }
@@ -133,39 +215,50 @@ impl Width {
     pub fn fill() -> Self {
         Width::Fill
     }
+
+    /// Create a fractional width column.
+    /// `Fraction(2)` gets twice the space of `Fraction(1)` or `Fill`.
+    pub fn fraction(n: usize) -> Self {
+        Width::Fraction(n)
+    }
 }
 
 /// Configuration for a single column in a table.
 #[derive(Clone, Debug)]
 pub struct Column {
+    /// Optional column name/identifier.
+    pub name: Option<String>,
     /// How the column determines its width.
     pub width: Width,
     /// Text alignment within the column.
     pub align: Align,
-    /// Where to truncate when content exceeds width.
-    pub truncate: TruncateAt,
-    /// String to show when truncation occurs.
-    pub ellipsis: String,
+    /// Column position anchor (left or right edge).
+    pub anchor: Anchor,
+    /// How to handle content that exceeds width.
+    pub overflow: Overflow,
     /// Representation for null/empty values.
     pub null_repr: String,
     /// Optional style name (resolved via theme).
     pub style: Option<String>,
-    /// Optional key for data extraction (used in CSV export).
-    /// Supports dot notation for nested fields.
+    /// When true, use the cell value as the style name.
+    pub style_from_value: bool,
+    /// Optional key for data extraction (supports dot notation for nested fields).
     pub key: Option<String>,
-    /// Optional header title (used in CSV header).
+    /// Optional header title (for table headers and CSV export).
     pub header: Option<String>,
 }
 
 impl Default for Column {
     fn default() -> Self {
         Column {
+            name: None,
             width: Width::default(),
             align: Align::default(),
-            truncate: TruncateAt::default(),
-            ellipsis: "…".to_string(),
+            anchor: Anchor::default(),
+            overflow: Overflow::default(),
             null_repr: "-".to_string(),
             style: None,
+            style_from_value: false,
             key: None,
             header: None,
         }
@@ -186,21 +279,88 @@ impl Column {
         ColumnBuilder::default()
     }
 
+    /// Set the column name/identifier.
+    pub fn named(mut self, name: impl Into<String>) -> Self {
+        self.name = Some(name.into());
+        self
+    }
+
     /// Set the text alignment.
     pub fn align(mut self, align: Align) -> Self {
         self.align = align;
         self
     }
 
-    /// Set the truncation position.
-    pub fn truncate(mut self, truncate: TruncateAt) -> Self {
-        self.truncate = truncate;
+    /// Set alignment to right (shorthand for `.align(Align::Right)`).
+    pub fn right(self) -> Self {
+        self.align(Align::Right)
+    }
+
+    /// Set alignment to center (shorthand for `.align(Align::Center)`).
+    pub fn center(self) -> Self {
+        self.align(Align::Center)
+    }
+
+    /// Set the column anchor position.
+    pub fn anchor(mut self, anchor: Anchor) -> Self {
+        self.anchor = anchor;
         self
     }
 
-    /// Set the ellipsis string.
+    /// Anchor column to the right edge (shorthand for `.anchor(Anchor::Right)`).
+    pub fn anchor_right(self) -> Self {
+        self.anchor(Anchor::Right)
+    }
+
+    /// Set the overflow behavior.
+    pub fn overflow(mut self, overflow: Overflow) -> Self {
+        self.overflow = overflow;
+        self
+    }
+
+    /// Set overflow to wrap (shorthand for `.overflow(Overflow::wrap())`).
+    pub fn wrap(self) -> Self {
+        self.overflow(Overflow::wrap())
+    }
+
+    /// Set overflow to wrap with indent.
+    pub fn wrap_indent(self, indent: usize) -> Self {
+        self.overflow(Overflow::wrap_with_indent(indent))
+    }
+
+    /// Set overflow to clip (shorthand for `.overflow(Overflow::Clip)`).
+    pub fn clip(self) -> Self {
+        self.overflow(Overflow::Clip)
+    }
+
+    /// Set truncation position (configures Overflow::Truncate).
+    pub fn truncate(mut self, at: TruncateAt) -> Self {
+        self.overflow = match self.overflow {
+            Overflow::Truncate { marker, .. } => Overflow::Truncate { at, marker },
+            _ => Overflow::truncate(at),
+        };
+        self
+    }
+
+    /// Set truncation to middle (shorthand for `.truncate(TruncateAt::Middle)`).
+    pub fn truncate_middle(self) -> Self {
+        self.truncate(TruncateAt::Middle)
+    }
+
+    /// Set truncation to start (shorthand for `.truncate(TruncateAt::Start)`).
+    pub fn truncate_start(self) -> Self {
+        self.truncate(TruncateAt::Start)
+    }
+
+    /// Set the ellipsis/marker for truncation.
     pub fn ellipsis(mut self, ellipsis: impl Into<String>) -> Self {
-        self.ellipsis = ellipsis.into();
+        self.overflow = match self.overflow {
+            Overflow::Truncate { at, .. } => Overflow::Truncate {
+                at,
+                marker: ellipsis.into(),
+            },
+            _ => Overflow::truncate_with_marker(TruncateAt::End, ellipsis),
+        };
         self
     }
 
@@ -213,6 +373,15 @@ impl Column {
     /// Set the style name for this column.
     pub fn style(mut self, style: impl Into<String>) -> Self {
         self.style = Some(style.into());
+        self
+    }
+
+    /// Use the cell value as the style name.
+    ///
+    /// When enabled, the cell content becomes the style tag.
+    /// For example, cell value "error" renders as `[error]error[/error]`.
+    pub fn style_from_value(mut self) -> Self {
+        self.style_from_value = true;
         self
     }
 
@@ -232,17 +401,25 @@ impl Column {
 /// Builder for constructing `Column` instances.
 #[derive(Clone, Debug, Default)]
 pub struct ColumnBuilder {
+    name: Option<String>,
     width: Option<Width>,
     align: Option<Align>,
-    truncate: Option<TruncateAt>,
-    ellipsis: Option<String>,
+    anchor: Option<Anchor>,
+    overflow: Option<Overflow>,
     null_repr: Option<String>,
     style: Option<String>,
+    style_from_value: bool,
     key: Option<String>,
     header: Option<String>,
 }
 
 impl ColumnBuilder {
+    /// Set the column name/identifier.
+    pub fn named(mut self, name: impl Into<String>) -> Self {
+        self.name = Some(name.into());
+        self
+    }
+
     /// Set the width strategy.
     pub fn width(mut self, width: Width) -> Self {
         self.width = Some(width);
@@ -267,21 +444,73 @@ impl ColumnBuilder {
         self
     }
 
+    /// Set fractional width.
+    pub fn fraction(mut self, n: usize) -> Self {
+        self.width = Some(Width::Fraction(n));
+        self
+    }
+
     /// Set the text alignment.
     pub fn align(mut self, align: Align) -> Self {
         self.align = Some(align);
         self
     }
 
-    /// Set the truncation position.
-    pub fn truncate(mut self, truncate: TruncateAt) -> Self {
-        self.truncate = Some(truncate);
+    /// Set alignment to right.
+    pub fn right(self) -> Self {
+        self.align(Align::Right)
+    }
+
+    /// Set alignment to center.
+    pub fn center(self) -> Self {
+        self.align(Align::Center)
+    }
+
+    /// Set the column anchor position.
+    pub fn anchor(mut self, anchor: Anchor) -> Self {
+        self.anchor = Some(anchor);
         self
     }
 
-    /// Set the ellipsis string.
+    /// Anchor column to the right edge.
+    pub fn anchor_right(self) -> Self {
+        self.anchor(Anchor::Right)
+    }
+
+    /// Set the overflow behavior.
+    pub fn overflow(mut self, overflow: Overflow) -> Self {
+        self.overflow = Some(overflow);
+        self
+    }
+
+    /// Set overflow to wrap.
+    pub fn wrap(self) -> Self {
+        self.overflow(Overflow::wrap())
+    }
+
+    /// Set overflow to clip.
+    pub fn clip(self) -> Self {
+        self.overflow(Overflow::Clip)
+    }
+
+    /// Set the truncation position (configures Overflow::Truncate).
+    pub fn truncate(mut self, at: TruncateAt) -> Self {
+        self.overflow = Some(match self.overflow {
+            Some(Overflow::Truncate { marker, .. }) => Overflow::Truncate { at, marker },
+            _ => Overflow::truncate(at),
+        });
+        self
+    }
+
+    /// Set the ellipsis string for truncation.
     pub fn ellipsis(mut self, ellipsis: impl Into<String>) -> Self {
-        self.ellipsis = Some(ellipsis.into());
+        self.overflow = Some(match self.overflow {
+            Some(Overflow::Truncate { at, .. }) => Overflow::Truncate {
+                at,
+                marker: ellipsis.into(),
+            },
+            _ => Overflow::truncate_with_marker(TruncateAt::End, ellipsis),
+        });
         self
     }
 
@@ -297,19 +526,90 @@ impl ColumnBuilder {
         self
     }
 
+    /// Use cell value as the style name.
+    pub fn style_from_value(mut self) -> Self {
+        self.style_from_value = true;
+        self
+    }
+
+    /// Set the data key.
+    pub fn key(mut self, key: impl Into<String>) -> Self {
+        self.key = Some(key.into());
+        self
+    }
+
+    /// Set the header title.
+    pub fn header(mut self, header: impl Into<String>) -> Self {
+        self.header = Some(header.into());
+        self
+    }
+
     /// Build the `Column` instance.
     pub fn build(self) -> Column {
         let default = Column::default();
         Column {
+            name: self.name,
             width: self.width.unwrap_or(default.width),
             align: self.align.unwrap_or(default.align),
-            truncate: self.truncate.unwrap_or(default.truncate),
-            ellipsis: self.ellipsis.unwrap_or(default.ellipsis),
+            anchor: self.anchor.unwrap_or(default.anchor),
+            overflow: self.overflow.unwrap_or(default.overflow),
             null_repr: self.null_repr.unwrap_or(default.null_repr),
             style: self.style,
+            style_from_value: self.style_from_value,
             key: self.key,
             header: self.header,
         }
+    }
+}
+
+/// Shorthand constructors for creating columns.
+///
+/// Provides a concise API for common column configurations:
+///
+/// ```rust
+/// use outstanding::tabular::Col;
+///
+/// let col = Col::fixed(10);           // Fixed width 10
+/// let col = Col::min(5);              // At least 5, grows to fit
+/// let col = Col::bounded(5, 20);      // Between 5 and 20
+/// let col = Col::fill();              // Fill remaining space
+/// let col = Col::fraction(2);         // 2 parts of remaining space
+///
+/// // Chain with fluent methods
+/// let col = Col::fixed(10).right().style("header");
+/// ```
+pub struct Col;
+
+impl Col {
+    /// Create a fixed-width column.
+    pub fn fixed(width: usize) -> Column {
+        Column::new(Width::Fixed(width))
+    }
+
+    /// Create a column with minimum width that grows to fit content.
+    pub fn min(min: usize) -> Column {
+        Column::new(Width::min(min))
+    }
+
+    /// Create a column with maximum width that shrinks to fit content.
+    pub fn max(max: usize) -> Column {
+        Column::new(Width::max(max))
+    }
+
+    /// Create a bounded-width column (between min and max).
+    pub fn bounded(min: usize, max: usize) -> Column {
+        Column::new(Width::bounded(min, max))
+    }
+
+    /// Create a fill column that expands to remaining space.
+    pub fn fill() -> Column {
+        Column::new(Width::Fill)
+    }
+
+    /// Create a fractional width column.
+    /// `Col::fraction(2)` gets twice the space of `Col::fraction(1)` or `Col::fill()`.
+    pub fn fraction(n: usize) -> Column {
+        Column::new(Width::Fraction(n))
     }
 }
 
@@ -354,7 +654,7 @@ impl Decorations {
 
     /// Calculate the total overhead (prefix + suffix + separators between n columns).
     pub fn overhead(&self, num_columns: usize) -> usize {
-        use crate::table::display_width;
+        use crate::tabular::display_width;
         let prefix_width = display_width(&self.row_prefix);
         let suffix_width = display_width(&self.row_suffix);
         let sep_width = display_width(&self.column_sep);
@@ -505,10 +805,10 @@ impl FlatDataSpecBuilder {
     }
 }
 
-/// Backward compatibility alias
-pub type TableSpec = FlatDataSpec;
-/// Backward compatibility alias
-pub type TableSpecBuilder = FlatDataSpecBuilder;
+/// Type alias: TabularSpec is the preferred name for FlatDataSpec.
+pub type TabularSpec = FlatDataSpec;
+/// Type alias for the builder.
+pub type TabularSpecBuilder = FlatDataSpecBuilder;
 
 #[cfg(test)]
 mod tests {
@@ -608,6 +908,145 @@ mod tests {
         assert_eq!(parsed, width);
     }
 
+    #[test]
+    fn width_serde_fraction() {
+        let width = Width::Fraction(2);
+        let json = serde_json::to_string(&width).unwrap();
+        assert_eq!(json, "\"2fr\"");
+
+        let parsed: Width = serde_json::from_str("\"2fr\"").unwrap();
+        assert_eq!(parsed, width);
+
+        // Also test 1fr
+        let parsed_1: Width = serde_json::from_str("\"1fr\"").unwrap();
+        assert_eq!(parsed_1, Width::Fraction(1));
+    }
+
+    #[test]
+    fn width_fraction_constructor() {
+        assert_eq!(Width::fraction(3), Width::Fraction(3));
+    }
+
+    // --- Overflow tests ---
+
+    #[test]
+    fn overflow_default() {
+        let overflow = Overflow::default();
+        assert!(matches!(
+            overflow,
+            Overflow::Truncate {
+                at: TruncateAt::End,
+                ..
+            }
+        ));
+    }
+
+    #[test]
+    fn overflow_constructors() {
+        let truncate = Overflow::truncate(TruncateAt::Middle);
+        assert!(matches!(
+            truncate,
+            Overflow::Truncate {
+                at: TruncateAt::Middle,
+                ref marker
+            } if marker == "…"
+        ));
+
+        let truncate_custom = Overflow::truncate_with_marker(TruncateAt::Start, "...");
+        assert!(matches!(
+            truncate_custom,
+            Overflow::Truncate {
+                at: TruncateAt::Start,
+                ref marker
+            } if marker == "..."
+        ));
+
+        let wrap = Overflow::wrap();
+        assert!(matches!(wrap, Overflow::Wrap { indent: 0 }));
+
+        let wrap_indent = Overflow::wrap_with_indent(4);
+        assert!(matches!(wrap_indent, Overflow::Wrap { indent: 4 }));
+    }
+
+    // --- Anchor tests ---
+
+    #[test]
+    fn anchor_default() {
+        assert_eq!(Anchor::default(), Anchor::Left);
+    }
+
+    #[test]
+    fn anchor_serde_roundtrip() {
+        let values = [Anchor::Left, Anchor::Right];
+        for anchor in values {
+            let json = serde_json::to_string(&anchor).unwrap();
+            let parsed: Anchor = serde_json::from_str(&json).unwrap();
+            assert_eq!(parsed, anchor);
+        }
+    }
+
+    // --- Col shorthand tests ---
+
+    #[test]
+    fn col_shorthand_constructors() {
+        let fixed = Col::fixed(10);
+        assert_eq!(fixed.width, Width::Fixed(10));
+
+        let min = Col::min(5);
+        assert_eq!(
+            min.width,
+            Width::Bounded {
+                min: Some(5),
+                max: None
+            }
+        );
+
+        let bounded = Col::bounded(5, 20);
+        assert_eq!(
+            bounded.width,
+            Width::Bounded {
+                min: Some(5),
+                max: Some(20)
+            }
+        );
+
+        let fill = Col::fill();
+        assert_eq!(fill.width, Width::Fill);
+
+        let fraction = Col::fraction(3);
+        assert_eq!(fraction.width, Width::Fraction(3));
+    }
+
+    #[test]
+    fn col_shorthand_chaining() {
+        let col = Col::fixed(10).right().anchor_right().style("header");
+        assert_eq!(col.width, Width::Fixed(10));
+        assert_eq!(col.align, Align::Right);
+        assert_eq!(col.anchor, Anchor::Right);
+        assert_eq!(col.style, Some("header".to_string()));
+    }
+
+    #[test]
+    fn column_wrap_shorthand() {
+        let col = Col::fill().wrap();
+        assert!(matches!(col.overflow, Overflow::Wrap { indent: 0 }));
+
+        let col_indent = Col::fill().wrap_indent(2);
+        assert!(matches!(col_indent.overflow, Overflow::Wrap { indent: 2 }));
+    }
+
+    #[test]
+    fn column_clip_shorthand() {
+        let col = Col::fixed(10).clip();
+        assert!(matches!(col.overflow, Overflow::Clip));
+    }
+
+    #[test]
+    fn column_named() {
+        let col = Col::fixed(10).named("author");
+        assert_eq!(col.name, Some("author".to_string()));
+    }
+
     // --- Column tests ---
 
     #[test]
@@ -621,8 +1060,14 @@ mod tests {
             }
         ));
         assert_eq!(col.align, Align::Left);
-        assert_eq!(col.truncate, TruncateAt::End);
-        assert_eq!(col.ellipsis, "…");
+        assert_eq!(col.anchor, Anchor::Left);
+        assert!(matches!(
+            col.overflow,
+            Overflow::Truncate {
+                at: TruncateAt::End,
+                ..
+            }
+        ));
         assert_eq!(col.null_repr, "-");
         assert!(col.style.is_none());
     }
@@ -638,8 +1083,13 @@ mod tests {
 
         assert_eq!(col.width, Width::Fixed(10));
         assert_eq!(col.align, Align::Right);
-        assert_eq!(col.truncate, TruncateAt::Middle);
-        assert_eq!(col.ellipsis, "...");
+        assert!(matches!(
+            col.overflow,
+            Overflow::Truncate {
+                at: TruncateAt::Middle,
+                ref marker
+            } if marker == "..."
+        ));
         assert_eq!(col.null_repr, "N/A");
         assert_eq!(col.style, Some("header".to_string()));
     }
@@ -654,7 +1104,13 @@ mod tests {
 
         assert_eq!(col.width, Width::Fixed(15));
         assert_eq!(col.align, Align::Center);
-        assert_eq!(col.truncate, TruncateAt::Start);
+        assert!(matches!(
+            col.overflow,
+            Overflow::Truncate {
+                at: TruncateAt::Start,
+                ..
+            }
+        ));
     }
 
     #[test]
@@ -712,7 +1168,7 @@ mod tests {
 
     #[test]
     fn table_spec_no_fill() {
-        let spec = TableSpec::builder()
+        let spec = TabularSpec::builder()
             .column(Column::new(Width::Fixed(8)))
             .column(Column::new(Width::Fixed(10)))
             .build();

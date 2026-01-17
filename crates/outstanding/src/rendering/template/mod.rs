@@ -71,7 +71,7 @@
 //! ## See Also
 //!
 //! - [`crate::theme`]: Theme and style definitions
-//! - [`crate::table`]: Column formatting utilities and template filters
+//! - [`crate::tabular`]: Column formatting utilities and template filters
 //! - [`crate::context`]: Context injection for templates
 
 pub(crate) mod filters;

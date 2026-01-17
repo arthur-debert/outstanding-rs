@@ -323,9 +323,13 @@ impl StylesheetRegistry {
         }
 
         // Try file-based
-        self.inner.get(name).map_err(|e| StylesheetError::Load {
+        let theme = self.inner.get(name).map_err(|e| StylesheetError::Load {
             message: e.to_string(),
-        })
+        })?;
+
+        // Set the theme name from the lookup key (strip extension if present)
+        let base_name = crate::file_loader::strip_extension(name, STYLESHEET_EXTENSIONS);
+        Ok(theme.with_name(base_name))
     }
 
     /// Checks if a theme exists in the registry.

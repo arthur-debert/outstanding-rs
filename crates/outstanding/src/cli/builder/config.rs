@@ -77,7 +77,7 @@ impl AppBuilder {
     ///
     ///     // Provide a table formatter with resolved width
     ///     .context_fn("table", |ctx: &RenderContext| {
-    ///         let formatter = TableFormatter::new(&spec, ctx.terminal_width.unwrap_or(80));
+    ///         let formatter = TabularFormatter::new(&spec, ctx.terminal_width.unwrap_or(80));
     ///         Value::from_object(formatter)
     ///     })
     ///

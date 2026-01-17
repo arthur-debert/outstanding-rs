@@ -9,6 +9,7 @@ Outstanding is a library for building finely crafted, non-interactive command li
 If you're building a CLI in Rust, your time should be spent on core logic, not fiddling with `print!` statements and ANSI escape codes.
 
 As applications grow, mixing logic with output formatting leads to:
+
 - **Untestable Code**: You can't unit test logic that writes directly to stdout.
 - **Fragile Integration Tests**: Parsing text output to verify correctness is brittle.
 - **Inconsistent UX**: Styling inconsistencies creep in over time.
@@ -17,9 +18,9 @@ As applications grow, mixing logic with output formatting leads to:
 
 Outstanding handles the boilerplate between your `clap` definition and your terminal output.
 
-1.  **Define Logic**: Write pure functions that receive arguments and return data.
-2.  **Define Presentation**: Use templates (MiniJinja) and styles (YAML) to control appearance.
-3.  **Let Framework Handle the Rest**: Outstanding runs the pipeline, applying themes, formatting tables, or serializing to JSON/YAML based on flags.
+1. **Define Logic**: Write pure functions that receive arguments and return data.
+2. **Define Presentation**: Use templates (MiniJinja) and styles (YAML) to control appearance.
+3. **Let Framework Handle the Rest**: Outstanding runs the pipeline, applying themes, formatting tables, or serializing to JSON/YAML based on flags.
 
 ## Features
 
@@ -29,16 +30,17 @@ Outstanding handles the boilerplate between your `clap` definition and your term
     - **Declarative API** for annotating your functions.
     - **Auto Dispatch** from cli input to the execution life cycle
 - **Rendering Layer**:
-    -   **File-Based Templates**: Uses [MiniJinja](https://github.com/mitsuhiko/minijinja) for powerful templating, including partials for reuse. See [Rendering System](docs/guides/rendering-system.md).
-    -   **Rich Styling**: Integrates stylesheets with semantic tagging (e.g., `[title]{{ post.title }}[/title]`) for maintainable designs.
-    -   **Adaptive Themes**: Supports [light/dark modes](docs/guides/rendering-system.md#adaptive-styles) and switchable themes automatically.
-    -   **Live Reloading**: Edit templates and styles while your app runs [during development](docs/guides/rendering-system.md#hot-reloading) for rapid iteration.
-    -   **Smart Output**: Delivers [rich terminal output](docs/guides/output-modes.md) that gracefully degrades to plain text based on capabilities.
-    -   **Automatic Structured Data**: Get JSON, CSV, and YAML output for free by leveraging your pure data structures. See [Structured Modes](docs/guides/output-modes.md#structured-modes).
+  - **File-Based Templates**: Uses [MiniJinja](https://github.com/mitsuhiko/minijinja) for powerful templating, including partials for reuse. See [Rendering System](docs/guides/rendering-system.md).
+  - **Rich Styling**: Integrates stylesheets with semantic tagging (e.g., `[title]{{ post.title }}[/title]`) for maintainable designs.
+  - **Adaptive Themes**: Supports [light/dark modes](docs/guides/rendering-system.md#adaptive-styles) and switchable themes automatically.
+  - **Live Reloading**: Edit templates and styles while your app runs [during development](docs/guides/rendering-system.md#hot-reloading) for rapid iteration.
+  - **Smart Output**: Delivers [rich terminal output](docs/guides/output-modes.md) that gracefully degrades to plain text based on capabilities.
+  - **Automatic Structured Data**: Get JSON, CSV, and YAML output for free by leveraging your pure data structures. See [Structured Modes](docs/guides/output-modes.md#structured-modes).
 
 ## Quick Start
 
 ### 1. The Logic
+
 Write a handler that takes `ArgMatches` and returns serializable data.
 
 ```rust
@@ -54,6 +56,7 @@ fn list_handler(_m: &ArgMatches, _ctx: &CommandContext) -> HandlerResult<TodoRes
 ```
 
 ### 2. The Presentation
+
 Write a template (`list.jinja`) with semantic style tags.
 
 ```jinja
@@ -64,6 +67,7 @@ Write a template (`list.jinja`) with semantic style tags.
 ```
 
 ### 3. The Setup
+
 Wire it up in your `main.rs`.
 
 ```rust
@@ -93,20 +97,20 @@ Ensure you have `outstanding-macros` if you want to use the embedding features.
 
 Learn more about building with Outstanding:
 
--   **[Full Tutorial](docs/guides/full-tutorial.md)** - Step-by-step guide to adopting Outstanding in your CLI application. Start here if you're new.
+- **[Full Tutorial](docs/guides/full-tutorial.md)** - Step-by-step guide to adopting Outstanding in your CLI application. Start here if you're new.
 
--   **Guides**
-    -   [App Configuration](docs/guides/app-configuration.md)
-    -   [Execution Model](docs/guides/execution-model.md)
-    -   [Handler Contract](docs/guides/handler-contract.md)
-    -   [Rendering System](docs/guides/rendering-system.md)
-    -   [Output Modes](docs/guides/output-modes.md)
-    -   [Topics System](docs/guides/topics-system.md)
+- **Guides**
+  - [App Configuration](docs/guides/app-configuration.md)
+  - [Execution Model](docs/guides/execution-model.md)
+  - [Handler Contract](docs/guides/handler-contract.md)
+  - [Rendering System](docs/guides/rendering-system.md)
+  - [Output Modes](docs/guides/output-modes.md)
+  - [Topics System](docs/guides/topics-system.md)
 
--   **How-Tos**
-    -   [Partial Adoption](docs/howtos/partial-adoption.md)
-    -   [Format Tables](docs/howtos/tables.md)
-    -   [Render Only](docs/howtos/render-only.md)
+- **How-Tos**
+  - [Partial Adoption](docs/howtos/partial-adoption.md)
+  - [Format Tables](docs/howtos/tables.md)
+  - [Render Only](docs/howtos/render-only.md)
 
 ## Contributing
 
@@ -117,4 +121,4 @@ For code contributions, the standard practices apply : tests for changed code, p
 
 ## License
 
-MIT 
+MIT

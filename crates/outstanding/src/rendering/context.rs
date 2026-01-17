@@ -15,7 +15,7 @@
 //!
 //! # Use Cases
 //!
-//! - **Table formatters**: Inject `TableFormatter` instances with resolved terminal width
+//! - **Table formatters**: Inject `TabularFormatter` instances with resolved terminal width
 //! - **Terminal info**: Provide `terminal.width`, `terminal.is_tty` to templates
 //! - **Environment**: Expose environment variables or paths
 //! - **User preferences**: Date formats, timezone, locale

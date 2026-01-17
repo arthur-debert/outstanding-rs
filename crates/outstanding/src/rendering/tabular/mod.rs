@@ -4,16 +4,16 @@
 //! that correctly handles Unicode (CJK characters count as 2 columns) and
 //! preserves ANSI escape codes without counting them toward width.
 //!
-//! ## TableFormatter vs Template Filters
+//! ## TabularFormatter vs Template Filters
 //!
 //! Two approaches, choose based on your needs:
 //!
 //! | Approach | Use When |
 //! |----------|----------|
 //! | **Template filters** (`col`, `pad_left`) | Simple tables, column widths known at template time |
-//! | **TableFormatter** | Dynamic widths, CSV export, complex specs with data extraction |
+//! | **TabularFormatter** | Dynamic widths, CSV export, complex specs with data extraction |
 //!
-//! Template filters are simpler for most cases. Use TableFormatter when you
+//! Template filters are simpler for most cases. Use TabularFormatter when you
 //! need width resolution from actual data or structured CSV export.
 //!
 //! ## Template Filters (Declarative)
@@ -35,12 +35,12 @@
 //! | `truncate_at` | `{{ value \| truncate_at(10, 'middle', '...') }}` |
 //! | `display_width` | `{{ value \| display_width }}` |
 //!
-//! ## TableFormatter (Imperative)
+//! ## TabularFormatter (Imperative)
 //!
 //! For programmatic control and CSV export:
 //!
 //! ```rust
-//! use outstanding::table::{FlatDataSpec, Column, Width, Align, TableFormatter};
+//! use outstanding::tabular::{FlatDataSpec, Column, Width, Align, TabularFormatter};
 //!
 //! let spec = FlatDataSpec::builder()
 //!     .column(Column::new(Width::Fixed(8)))
@@ -49,7 +49,7 @@
 //!     .separator("  ")
 //!     .build();
 //!
-//! let formatter = TableFormatter::new(&spec, 80);
+//! let formatter = TabularFormatter::new(&spec, 80);
 //! let row = formatter.format_row(&["abc123", "path/to/file.rs", "pending"]);
 //! ```
 //!
@@ -68,12 +68,16 @@
 //! ## Utility Functions
 //!
 //! ```rust
-//! use outstanding::table::{display_width, truncate_end, pad_right};
+//! use outstanding::tabular::{display_width, truncate_end, pad_right, wrap};
 //!
 //! let text = "Hello World";
 //! let truncated = truncate_end(text, 8, "…");  // "Hello W…"
 //! let padded = pad_right(&truncated, 10);      // "Hello W…  "
 //! assert_eq!(display_width(&padded), 10);
+//!
+//! // Word-wrap long text
+//! let lines = wrap("hello world foo bar", 11);
+//! assert_eq!(lines, vec!["hello world", "foo bar"]);
 //! ```
 //!
 //! # Column Width Strategies
@@ -99,6 +103,7 @@
 //! | `truncate_at` | `{{ value \| truncate_at(10, 'middle', '...') }}` |
 //! | `display_width` | `{{ value \| display_width }}` |
 
+mod decorator;
 pub mod filters;
 mod formatter;
 mod resolve;
@@ -106,14 +111,16 @@ mod types;
 mod util;
 
 // Re-export types
-pub use formatter::TableFormatter;
+pub use decorator::{BorderStyle, Table};
+pub use formatter::{CellOutput, TabularFormatter};
 pub use resolve::ResolvedWidths;
 pub use types::{
-    Align, Column, ColumnBuilder, Decorations, FlatDataSpec, FlatDataSpecBuilder, TableSpec,
-    TableSpecBuilder, TruncateAt, Width,
+    Align, Anchor, Col, Column, ColumnBuilder, Decorations, FlatDataSpec, FlatDataSpecBuilder,
+    Overflow, TabularSpec, TabularSpecBuilder, TruncateAt, Width,
 };
 
 // Re-export utility functions
 pub use util::{
     display_width, pad_center, pad_left, pad_right, truncate_end, truncate_middle, truncate_start,
+    wrap, wrap_indent,
 };

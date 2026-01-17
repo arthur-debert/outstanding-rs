@@ -229,7 +229,7 @@ pub mod topics;
 // Re-export rendering submodules as public
 pub use rendering::context;
 pub use rendering::style;
-pub use rendering::table;
+pub use rendering::tabular;
 
 // Re-export minijinja::Error for convenience
 pub use minijinja::Error;
