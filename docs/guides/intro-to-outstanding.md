@@ -588,42 +588,23 @@ Aside from exposing the library primitives, Outstanding leverages best-in-breed 
 
 ## Appendix: Common Errors and Troubleshooting
 
-### Template not found
-
-**Error:** `template 'list' not found`
-
-**Cause:** The template path in `embed_templates!` doesn't match your file structure.
-
-**Fix:** Ensure the path is relative to your `Cargo.toml`, e.g., `embed_templates!("src/templates")` and that the file is named `list.jinja`, `list.j2`, or `list.txt`.
-
-### Style not applied
-
-**Symptom:** Text appears but without colors/formatting.
-
-**Cause:** Style name in template doesn't match stylesheet.
-
-**Fix:** Check that `[mystyle]` in your template matches `.mystyle` in CSS or `mystyle:` in YAML. Run with `--output term-debug` to see style tag names.
-
-### Handler not called
-
-**Symptom:** Command runs but nothing happens or wrong handler runs.
-
-**Cause:** Command name mismatch between clap enum variant and handler function.
-
-**Fix:** Ensure enum variant `List` maps to function `handlers::list` (snake_case conversion). Or use explicit mapping: `#[dispatch(handler = my_custom_handler)]`
-
-### JSON output is empty or wrong
-
-**Symptom:** `--output json` produces unexpected results.
-
-**Cause:** `Serialize` derive is missing or field names don't match template expectations.
-
-**Fix:** Ensure all types in your result implement `Serialize`. Use `#[serde(rename_all = "lowercase")]` for consistent naming.
-
-### Styles not loading
-
-**Error:** `theme not found: default`
-
-**Cause:** Stylesheet file missing or wrong path.
-
-**Fix:** Ensure `src/styles/default.css` or `default.yaml` exists. Check `embed_styles!` path matches your file structure.
+- Template not found
+  - **Error:** `template 'list' not found`
+  - **Cause:** The template path in `embed_templates!` doesn't match your file structure.
+  - **Fix:** Ensure the path is relative to your `Cargo.toml`, e.g., `embed_templates!("src/templates")` and that the file is named `list.jinja`, `list.j2`, or `list.txt`.
+- Style not applied
+  - **Symptom:** Text appears but without colors/formatting.
+  - **Cause:** Style name in template doesn't match stylesheet.
+  - **Fix:** Check that `[mystyle]` in your template matches `.mystyle` in CSS or `mystyle:` in YAML. Run with `--output term-debug` to see style tag names.
+- Handler not called
+  - **Symptom:** Command runs but nothing happens or wrong handler runs.
+  - **Cause:** Command name mismatch between clap enum variant and handler function.
+  - **Fix:** Ensure enum variant `List` maps to function `handlers::list` (snake_case conversion). Or use explicit mapping: `#[dispatch(handler = my_custom_handler)]`
+- JSON output is empty or wrong
+  - **Symptom:** `--output json` produces unexpected results.
+  - **Cause:** `Serialize` derive is missing or field names don't match template expectations.
+  - **Fix:** Ensure all types in your result implement `Serialize`. Use `#[serde(rename_all = "lowercase")]` for consistent naming.
+- Styles not loading
+  - **Error:** `theme not found: default`
+  - **Cause:** Stylesheet file missing or wrong path.
+  - **Fix:** Ensure `src/styles/default.css` or `default.yaml` exists. Check `embed_styles!` path matches your file structure.
