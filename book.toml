@@ -1,0 +1,15 @@
+[book]
+title = "Standout"
+description = "A CLI framework for Rust that enforces separation between logic and presentation"
+authors = ["Arthur Debert"]
+language = "en"
+src = "docs"
+
+[build]
+build-dir = "book"
+
+[output.html]
+default-theme = "rust"
+preferred-dark-theme = "coal"
+git-repository-url = "https://github.com/arthur-debert/standout"
+edit-url-template = "https://github.com/arthur-debert/standout/edit/main/docs/{path}"
