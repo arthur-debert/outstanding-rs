@@ -1,4 +1,3 @@
-#![cfg(feature = "clap")]
 use clap::Command;
 use console::Style;
 use standout::cli::{LocalApp, Output};

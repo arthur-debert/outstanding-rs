@@ -87,4 +87,4 @@ When proposing changes, evaluate against this checklist:
 1.  **Plan**: Draft an `implementation_plan.md` using the Design Guidelines.
 2.  **Safety First**: Implement types and builders before logic.
 3.  **Test**: Add property tests if changing core dispatch.
-4.  **Verify**: Run `cargo test --features clap` and check snapshots.
+4.  **Verify**: Run `cargo test` and check snapshots.

@@ -1,5 +1,3 @@
-#![cfg(feature = "clap")]
-
 use clap::Command;
 use insta::{assert_json_snapshot, assert_snapshot};
 use serde_json::json;

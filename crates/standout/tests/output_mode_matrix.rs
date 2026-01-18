@@ -3,8 +3,6 @@
 //! These tests ensure that all output modes work correctly with both
 //! App (thread-safe) and LocalApp (single-threaded) handler modes.
 
-#![cfg(feature = "clap")]
-
 use clap::ArgMatches;
 use serde::Serialize;
 use standout::cli::handler::{CommandContext, Output};

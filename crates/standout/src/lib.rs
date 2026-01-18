@@ -11,7 +11,7 @@
 //! - **Pager support** for long content
 //!
 //! This crate is **CLI-agnostic** at its core - it doesn't care how you parse arguments.
-//! For clap integration, enable the `clap` feature and see the `cli` module.
+//! For clap integration, see the [`cli`] module.
 //!
 //! ## Core Concepts
 //!
@@ -194,7 +194,7 @@
 //!
 //! ## Integration with Clap
 //!
-//! The `cli` module (requires `clap` feature) provides full clap integration with:
+//! The [`cli`] module provides full clap integration with:
 //! - Command dispatch with automatic template rendering
 //! - Help command interception (`help`, `help <topic>`, `help topics`)
 //! - Output flag injection (`--output=auto|term|text|json`)
@@ -288,14 +288,11 @@ pub use standout_render::{
 // Setup error type (standout-specific)
 pub use setup::SetupError;
 
-// Macro re-exports (when `macros` feature is enabled)
-#[cfg(feature = "macros")]
+// Macro re-exports
 pub use standout_macros::{embed_styles, embed_templates};
 
-// Tabular derive macros (when `macros` feature is enabled)
-#[cfg(feature = "macros")]
+// Tabular derive macros
 pub use standout_macros::{Tabular, TabularRow};
 
-// CLI integration (when `clap` feature is enabled)
-#[cfg(feature = "clap")]
+// CLI integration
 pub mod cli;

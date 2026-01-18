@@ -1,5 +1,3 @@
-#![cfg(feature = "clap")]
-
 use clap::Command;
 use console::Style;
 use proptest::prelude::*;

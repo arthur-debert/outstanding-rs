@@ -319,7 +319,7 @@ And now the Standout-specific bits finally show up.
 
 ```toml
 [dependencies]
-standout = { version = "2", features = ["clap", "macros"] }
+standout = "2"
 ```
 
 > **Verify:** Run `cargo build` - dependencies should download and compile.

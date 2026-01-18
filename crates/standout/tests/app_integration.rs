@@ -1,4 +1,3 @@
-#![cfg(feature = "clap")]
 use clap::Command;
 use serde_json::json;
 use standout::cli::{App, HandlerResult, LocalApp, Output};

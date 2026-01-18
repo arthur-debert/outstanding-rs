@@ -3,8 +3,6 @@
 //! These tests verify that the `#[derive(Dispatch)]` macro generates correct
 //! dispatch configuration for clap Subcommand enums.
 
-#![cfg(feature = "clap")]
-
 use clap::Subcommand;
 use standout::cli::{CommandContext, Dispatch, GroupBuilder, HandlerResult, Output};
 

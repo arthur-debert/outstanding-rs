@@ -7,6 +7,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- **BREAKING: Removed `clap` feature flag** - The `cli` module and clap integration are now always available. The `clap` feature has been removed.
+
+  ```diff
+  [dependencies]
+  - standout = { version = "2", features = ["clap", "macros"] }
+  + standout = "2"
+  ```
+
+  **Migration:** Remove `features = ["clap"]` from your `Cargo.toml`. If you only used `features = ["macros"]`, note that macros are also now always available.
+
+- **`macros` feature is now a no-op** - The `macros` feature still exists for backwards compatibility but does nothing. All macros (`embed_templates!`, `embed_styles!`, `Dispatch`, `Tabular`, `TabularRow`) are now always available.
+
+## [2.1.0] - 2026-01-18
+
 ### Added
 
 - **New `standout-render` crate** - Extracted the rendering layer into a standalone crate for users who need rich terminal output without CLI framework features.
@@ -513,7 +529,8 @@ let output = render_with_output(template, &data, &theme, OutputMode::Term)?;
   - Command handler system with `dispatch_from` convenience method
   - Archive variant support in clap integration
 
-[Unreleased]: https://github.com/arthur-debert/standout/compare/standout-v1.1.0...HEAD
+[Unreleased]: https://github.com/arthur-debert/standout/compare/standout-v2.1.0...HEAD
+[2.1.0]: https://github.com/arthur-debert/standout/compare/standout-v2.0.0...standout-v2.1.0
 [1.1.0]: https://github.com/arthur-debert/standout/compare/standout-v1.0.0...standout-v1.1.0
 [2.2.0]: https://github.com/arthur-debert/standout/compare/v2.1.2...v2.2.0
 [2.1.2]: https://github.com/arthur-debert/standout/compare/v2.1.1...v2.1.2

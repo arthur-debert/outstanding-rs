@@ -1,6 +1,6 @@
 [package]
 name = "standout-render"
-version = "2.0.0"
+version = "2.1.0"
 edition = "2021"
 description = "Styled terminal rendering with templates, themes, and adaptive color support"
 license = "MIT"
@@ -22,7 +22,7 @@ quick-xml = { version = "0.36", features = ["serialize"] }
 csv = "1.3"
 unicode-width = "0.2"
 cssparser = "0.31"
-standout-bbparser = { version = "2.0.0", path = "../standout-bbparser" }
+standout-bbparser = { version = "2.1.0", path = "../standout-bbparser" }
 
 [dev-dependencies]
 tempfile = "3.24.0"
