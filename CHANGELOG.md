@@ -9,6 +9,41 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **LocalApp for mutable handlers** - New `LocalApp` and `LocalAppBuilder` types for CLI applications that need `FnMut` handlers with `&mut self` access to state, without requiring `Send + Sync` bounds or interior mutability wrappers.
+
+  **When to use:**
+  - Your handlers need `&mut self` access to state
+  - You want to avoid `Arc<Mutex<_>>` wrappers
+  - Your CLI is single-threaded (the common case)
+
+  **New types:**
+  - `LocalApp` - Single-threaded CLI application with mutable dispatch
+  - `LocalAppBuilder` - Builder accepting `FnMut` handlers
+  - `LocalHandler` trait - For struct-based handlers with `&mut self`
+
+  **Example:**
+  ```rust
+  use standout::cli::{LocalApp, Output};
+
+  let mut counter = 0u32;
+
+  LocalApp::builder()
+      .command("increment", |_m, _ctx| {
+          counter += 1;  // FnMut allows direct mutation!
+          Ok(Output::Render(json!({"count": counter})))
+      }, "Count: {{ count }}")
+      .build()?
+      .run(cmd, args);
+  ```
+
+  **Comparison with App:**
+  | Aspect | `App` | `LocalApp` |
+  |--------|-------|------------|
+  | Handler type | `Fn + Send + Sync` | `FnMut` |
+  | State mutation | Via `Arc<Mutex<_>>` | Direct |
+  | Thread safety | Yes | No |
+  | Use case | Libraries, async | Simple CLIs |
+
 - **Comprehensive tabular layout system** - New `standout::tabular` module for creating aligned, column-based terminal output with full Unicode support.
 
   **Template filters:**
