@@ -1,6 +1,7 @@
 #![cfg(feature = "clap")]
 
 use clap::Command;
+use console::Style;
 use proptest::prelude::*;
 use serde_json::{json, Value};
 use serde_yaml;
@@ -22,12 +23,18 @@ fn output_mode_strategy() -> impl Strategy<Value = OutputMode> {
     ]
 }
 
-// Strategy for generating arbitrary Themes (None vs Some)
+// Strategy for generating arbitrary Themes
+// Tests: no theme, empty theme, and populated theme with styles
 fn theme_strategy() -> impl Strategy<Value = Option<Theme>> {
     prop_oneof![
         Just(None),
         Just(Some(Theme::new())),
-        // Could add populated themes later
+        Just(Some(
+            Theme::new()
+                .add("title", Style::new().bold())
+                .add("highlight", Style::new().cyan())
+                .add("error", Style::new().red().bold())
+        )),
     ]
 }
 
