@@ -1,6 +1,6 @@
 use console::Style;
-use standout::{OutputMode, Renderer, Theme};
 use serde::Serialize;
+use standout::{OutputMode, Renderer, Theme};
 
 #[derive(Serialize)]
 struct Empty {}

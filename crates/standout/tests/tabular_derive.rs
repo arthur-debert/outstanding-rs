@@ -5,9 +5,9 @@
 
 #![cfg(feature = "macros")]
 
+use serde::Serialize;
 use standout::tabular::{Align, Anchor, Overflow, Tabular, TabularRow, TruncateAt, Width};
 use standout_macros::Tabular as DeriveTabular;
-use serde::Serialize;
 
 // =============================================================================
 // Basic derive tests
@@ -695,9 +695,7 @@ fn test_full_table_workflow_with_macros() {
 // =============================================================================
 
 use minijinja::{context, Environment};
-use standout::tabular::filters::{
-    formatter_from_type, register_tabular_filters, table_from_type,
-};
+use standout::tabular::filters::{formatter_from_type, register_tabular_filters, table_from_type};
 
 // Define a struct for template tests
 #[derive(Serialize, DeriveTabular, DeriveTabularRow)]

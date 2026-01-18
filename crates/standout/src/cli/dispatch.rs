@@ -1,8 +1,15 @@
 //! Command dispatch logic.
 //!
 //! Internal types and functions for dispatching commands to handlers.
+//!
+//! This module provides dispatch function types for both handler modes:
+//!
+//! - [`DispatchFn`]: Thread-safe dispatch using `Arc<dyn Fn + Send + Sync>`
+//! - [`LocalDispatchFn`]: Local dispatch using `Rc<RefCell<dyn FnMut>>`
 
 use clap::ArgMatches;
+use std::cell::RefCell;
+use std::rc::Rc;
 use std::sync::Arc;
 
 use crate::cli::handler::CommandContext;
@@ -18,14 +25,30 @@ pub(crate) enum DispatchOutput {
     Silent,
 }
 
-/// Type-erased dispatch function.
+/// Type-erased dispatch function for thread-safe handlers.
 ///
 /// Takes ArgMatches, CommandContext, and optional Hooks. The hooks parameter
 /// allows post-dispatch hooks to run between handler execution and rendering.
+///
+/// Used with [`App`](super::App) and [`Handler`](super::handler::Handler).
 pub(crate) type DispatchFn = Arc<
     dyn Fn(&ArgMatches, &CommandContext, Option<&Hooks>) -> Result<DispatchOutput, String>
         + Send
         + Sync,
+>;
+
+/// Type-erased dispatch function for local (single-threaded) handlers.
+///
+/// Unlike [`DispatchFn`], this:
+/// - Uses `Rc<RefCell<_>>` instead of `Arc` (no thread-safety overhead)
+/// - Uses `FnMut` instead of `Fn` (allows mutable state)
+/// - Does NOT require `Send + Sync`
+///
+/// Used with [`LocalApp`](super::LocalApp) and [`LocalHandler`](super::handler::LocalHandler).
+pub(crate) type LocalDispatchFn = Rc<
+    RefCell<
+        dyn FnMut(&ArgMatches, &CommandContext, Option<&Hooks>) -> Result<DispatchOutput, String>,
+    >,
 >;
 
 /// Extracts the command path from ArgMatches by following subcommand chain.

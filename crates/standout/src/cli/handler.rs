@@ -6,7 +6,72 @@
 //! - [`Output`]: What a handler produces (render data, silent, or binary)
 //! - [`HandlerResult`]: The result type for handlers (`Result<Output<T>, Error>`)
 //! - [`RunResult`]: The result of running the CLI dispatcher
-//! - [`Handler`]: Trait for command handlers (with closure support)
+//! - [`Handler`]: Trait for thread-safe command handlers (`Send + Sync`, `&self`)
+//! - [`LocalHandler`]: Trait for local command handlers (no `Send + Sync`, `&mut self`)
+//!
+//! # Handler Modes
+//!
+//! Standout supports two handler modes:
+//!
+//! ## Thread-safe handlers (default)
+//!
+//! Use [`Handler`] and [`FnHandler`] for the default `App`. These require
+//! `Send + Sync` and immutable `&self`:
+//!
+//! ```rust,ignore
+//! use standout::cli::{App, Handler, Output, HandlerResult, CommandContext};
+//!
+//! // Closure handler (most common)
+//! App::builder()
+//!     .command("list", |matches, ctx| {
+//!         Ok(Output::Render(get_items()?))
+//!     }, "{{ items }}")
+//!
+//! // Struct handler with interior mutability
+//! struct CachedHandler {
+//!     cache: Arc<Mutex<HashMap<String, Data>>>,
+//! }
+//!
+//! impl Handler for CachedHandler {
+//!     type Output = Data;
+//!     fn handle(&self, m: &ArgMatches, ctx: &CommandContext) -> HandlerResult<Data> {
+//!         let mut cache = self.cache.lock().unwrap();
+//!         // ...
+//!     }
+//! }
+//! ```
+//!
+//! ## Local handlers (mutable state)
+//!
+//! Use [`LocalHandler`] and [`LocalFnHandler`] with `LocalApp`. These allow
+//! `&mut self` without `Send + Sync`:
+//!
+//! ```rust,ignore
+//! use standout::cli::{LocalApp, LocalHandler, Output, HandlerResult, CommandContext};
+//!
+//! struct MyDatabase {
+//!     connection: Connection,
+//! }
+//!
+//! impl MyDatabase {
+//!     fn query_mut(&mut self) -> Vec<Row> { ... }
+//! }
+//!
+//! // LocalHandler allows &mut self
+//! impl LocalHandler for MyDatabase {
+//!     type Output = Vec<Row>;
+//!     fn handle(&mut self, m: &ArgMatches, ctx: &CommandContext) -> HandlerResult<Vec<Row>> {
+//!         Ok(Output::Render(self.query_mut()))
+//!     }
+//! }
+//!
+//! // Or use FnMut closures
+//! let mut db = MyDatabase::connect()?;
+//! LocalApp::builder()
+//!     .command("query", move |m, ctx| {
+//!         Ok(Output::Render(db.query_mut()))
+//!     }, "{{ rows }}")
+//! ```
 
 use crate::OutputMode;
 use clap::ArgMatches;
@@ -283,6 +348,119 @@ where
     }
 }
 
+// ============================================================================
+// Local Handler Types (for LocalApp - single-threaded, mutable handlers)
+// ============================================================================
+
+/// Trait for local (single-threaded) command handlers.
+///
+/// Unlike [`Handler`], this trait:
+/// - Does NOT require `Send + Sync`
+/// - Takes `&mut self` instead of `&self`
+/// - Allows handlers to mutate their internal state directly
+///
+/// Use this with [`LocalApp`](super::LocalApp) when you need mutable access
+/// to state without interior mutability wrappers.
+///
+/// # When to Use LocalHandler
+///
+/// - Your handler struct has `&mut self` methods
+/// - You want to avoid `Arc<Mutex<_>>` or `RefCell` wrappers
+/// - Your CLI is single-threaded (the common case)
+///
+/// # Example
+///
+/// ```rust,ignore
+/// use standout::cli::{LocalHandler, HandlerResult, Output, CommandContext};
+/// use clap::ArgMatches;
+///
+/// struct Counter {
+///     count: u32,
+/// }
+///
+/// impl LocalHandler for Counter {
+///     type Output = u32;
+///
+///     fn handle(&mut self, _m: &ArgMatches, _ctx: &CommandContext) -> HandlerResult<u32> {
+///         self.count += 1;  // Can mutate directly!
+///         Ok(Output::Render(self.count))
+///     }
+/// }
+/// ```
+///
+/// # Comparison with Handler
+///
+/// | Aspect | `Handler` | `LocalHandler` |
+/// |--------|-----------|----------------|
+/// | Self reference | `&self` | `&mut self` |
+/// | Thread bounds | `Send + Sync` | None |
+/// | State mutation | Via interior mutability | Direct |
+/// | Use with | `App` | `LocalApp` |
+pub trait LocalHandler {
+    /// The output type produced by this handler (must be serializable)
+    type Output: Serialize;
+
+    /// Execute the handler with the given matches and context.
+    ///
+    /// Unlike [`Handler::handle`], this takes `&mut self`, allowing
+    /// direct mutation of handler state.
+    fn handle(&mut self, matches: &ArgMatches, ctx: &CommandContext)
+        -> HandlerResult<Self::Output>;
+}
+
+/// A wrapper that implements LocalHandler for FnMut closures.
+///
+/// This is used internally by `LocalAppBuilder::command()` to wrap closures.
+/// Unlike [`FnHandler`], this accepts `FnMut` closures that can capture
+/// mutable state.
+///
+/// # Example
+///
+/// ```rust,ignore
+/// use standout::cli::{LocalFnHandler, LocalHandler, Output, CommandContext};
+///
+/// let mut counter = 0u32;
+///
+/// let handler = LocalFnHandler::new(move |_m, _ctx| {
+///     counter += 1;  // FnMut allows mutation
+///     Ok(Output::Render(counter))
+/// });
+/// ```
+pub struct LocalFnHandler<F, T>
+where
+    F: FnMut(&ArgMatches, &CommandContext) -> HandlerResult<T>,
+    T: Serialize,
+{
+    f: F,
+    _phantom: std::marker::PhantomData<fn() -> T>,
+}
+
+impl<F, T> LocalFnHandler<F, T>
+where
+    F: FnMut(&ArgMatches, &CommandContext) -> HandlerResult<T>,
+    T: Serialize,
+{
+    /// Creates a new LocalFnHandler wrapping the given FnMut closure.
+    pub fn new(f: F) -> Self {
+        Self {
+            f,
+            _phantom: std::marker::PhantomData,
+        }
+    }
+}
+
+impl<F, T> LocalHandler for LocalFnHandler<F, T>
+where
+    F: FnMut(&ArgMatches, &CommandContext) -> HandlerResult<T>,
+    T: Serialize,
+{
+    type Output = T;
+
+    fn handle(&mut self, matches: &ArgMatches, ctx: &CommandContext) -> HandlerResult<T> {
+        (self.f)(matches, ctx)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -411,5 +589,114 @@ mod tests {
 
         let result = handler.handle(&matches, &ctx);
         assert!(result.is_ok());
+    }
+
+    // ============================================================================
+    // LocalHandler Tests
+    // ============================================================================
+
+    #[test]
+    fn test_local_fn_handler() {
+        let mut counter = 0u32;
+
+        let mut handler = LocalFnHandler::new(|_m: &ArgMatches, _ctx: &CommandContext| {
+            counter += 1;
+            Ok(Output::Render(counter))
+        });
+
+        let ctx = CommandContext {
+            output_mode: OutputMode::Auto,
+            command_path: vec![],
+        };
+        let matches = clap::Command::new("test").get_matches_from(vec!["test"]);
+
+        // First call
+        let result = handler.handle(&matches, &ctx);
+        assert!(result.is_ok());
+        if let Ok(Output::Render(count)) = result {
+            assert_eq!(count, 1);
+        }
+
+        // Second call - counter should increment
+        let result = handler.handle(&matches, &ctx);
+        assert!(result.is_ok());
+        if let Ok(Output::Render(count)) = result {
+            assert_eq!(count, 2);
+        }
+    }
+
+    #[test]
+    fn test_local_struct_handler() {
+        struct MutableCounter {
+            count: u32,
+        }
+
+        impl LocalHandler for MutableCounter {
+            type Output = u32;
+
+            fn handle(&mut self, _m: &ArgMatches, _ctx: &CommandContext) -> HandlerResult<u32> {
+                self.count += 1;
+                Ok(Output::Render(self.count))
+            }
+        }
+
+        let mut handler = MutableCounter { count: 0 };
+        let ctx = CommandContext {
+            output_mode: OutputMode::Auto,
+            command_path: vec![],
+        };
+        let matches = clap::Command::new("test").get_matches_from(vec!["test"]);
+
+        // Call multiple times - state should accumulate
+        let _ = handler.handle(&matches, &ctx);
+        let _ = handler.handle(&matches, &ctx);
+        let result = handler.handle(&matches, &ctx);
+
+        assert!(result.is_ok());
+        if let Ok(Output::Render(count)) = result {
+            assert_eq!(count, 3);
+        }
+    }
+
+    #[test]
+    fn test_local_handler_with_captured_mut_ref() {
+        // This is the key use case: a mutable reference captured in a closure
+        struct Database {
+            records: Vec<String>,
+        }
+
+        impl Database {
+            fn add_record(&mut self, record: &str) {
+                self.records.push(record.to_string());
+            }
+
+            fn count(&self) -> usize {
+                self.records.len()
+            }
+        }
+
+        let mut db = Database { records: vec![] };
+
+        // Simulate the pattern: closure captures &mut db
+        let mut handler = LocalFnHandler::new(|_m: &ArgMatches, _ctx: &CommandContext| {
+            db.add_record("new_record");
+            Ok(Output::Render(db.count()))
+        });
+
+        let ctx = CommandContext {
+            output_mode: OutputMode::Auto,
+            command_path: vec![],
+        };
+        let matches = clap::Command::new("test").get_matches_from(vec!["test"]);
+
+        // Each call should add a record
+        let _ = handler.handle(&matches, &ctx);
+        let _ = handler.handle(&matches, &ctx);
+        let result = handler.handle(&matches, &ctx);
+
+        assert!(result.is_ok());
+        if let Ok(Output::Render(count)) = result {
+            assert_eq!(count, 3);
+        }
     }
 }

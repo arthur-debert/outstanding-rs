@@ -1,0 +1,616 @@
+//! Local (single-threaded) app builder for mutable handlers.
+//!
+//! This module provides [`LocalAppBuilder`] for building CLI applications
+//! that use `FnMut` handlers with `&mut self` access to state.
+//!
+//! # When to Use
+//!
+//! Use `LocalAppBuilder` when your handlers need mutable access to state
+//! without interior mutability wrappers (`Arc<Mutex<_>>`).
+//!
+//! # Example
+//!
+//! ```rust,ignore
+//! use standout::cli::{LocalApp, Output, HandlerResult};
+//!
+//! struct Database {
+//!     records: Vec<Record>,
+//! }
+//!
+//! impl Database {
+//!     fn add(&mut self, r: Record) { self.records.push(r); }
+//!     fn list(&self) -> &[Record] { &self.records }
+//! }
+//!
+//! let mut db = Database { records: vec![] };
+//!
+//! LocalApp::builder()
+//!     .command("add", |m, ctx| {
+//!         let name = m.get_one::<String>("name").unwrap();
+//!         db.add(Record { name: name.clone() });
+//!         Ok(Output::Silent)
+//!     }, "")
+//!     .command("list", |m, ctx| {
+//!         Ok(Output::Render(db.list().to_vec()))
+//!     }, "{{ records }}")
+//!     .build()
+//!     .run(cmd, args);
+//! ```
+
+use std::cell::RefCell;
+use std::collections::HashMap;
+use std::rc::Rc;
+
+use clap::ArgMatches;
+use serde::Serialize;
+
+use crate::context::{ContextRegistry, RenderContext};
+
+use crate::TemplateRegistry;
+use crate::{render_auto_with_context, OutputMode, Theme};
+
+use super::app::get_terminal_width;
+
+use super::dispatch::{DispatchOutput, LocalDispatchFn};
+use super::handler::{CommandContext, HandlerResult, LocalFnHandler, LocalHandler, Output};
+use super::hooks::Hooks;
+use super::local_app::LocalApp;
+use crate::setup::SetupError;
+
+/// Recipe for creating local dispatch closures.
+trait LocalCommandRecipe {
+    fn create_dispatch(
+        self: Box<Self>,
+        template: &str,
+        context_registry: &ContextRegistry,
+        theme: &Theme,
+    ) -> LocalDispatchFn;
+}
+
+/// Recipe for closure-based local handlers.
+struct LocalClosureRecipe<F, T>
+where
+    F: FnMut(&ArgMatches, &CommandContext) -> HandlerResult<T> + 'static,
+    T: Serialize + 'static,
+{
+    handler: F,
+    _phantom: std::marker::PhantomData<T>,
+}
+
+impl<F, T> LocalClosureRecipe<F, T>
+where
+    F: FnMut(&ArgMatches, &CommandContext) -> HandlerResult<T> + 'static,
+    T: Serialize + 'static,
+{
+    fn new(handler: F) -> Self {
+        Self {
+            handler,
+            _phantom: std::marker::PhantomData,
+        }
+    }
+}
+
+impl<F, T> LocalCommandRecipe for LocalClosureRecipe<F, T>
+where
+    F: FnMut(&ArgMatches, &CommandContext) -> HandlerResult<T> + 'static,
+    T: Serialize + 'static,
+{
+    fn create_dispatch(
+        self: Box<Self>,
+        template: &str,
+        context_registry: &ContextRegistry,
+        theme: &Theme,
+    ) -> LocalDispatchFn {
+        let mut handler = LocalFnHandler::new(self.handler);
+        let template = template.to_string();
+        let context_registry = context_registry.clone();
+        let theme = theme.clone();
+
+        Rc::new(RefCell::new(
+            move |matches: &ArgMatches, ctx: &CommandContext, hooks: Option<&Hooks>| {
+                let result = handler.handle(matches, ctx);
+
+                match result {
+                    Ok(Output::Render(data)) => {
+                        let mut json_data = serde_json::to_value(&data)
+                            .map_err(|e| format!("Failed to serialize handler result: {}", e))?;
+
+                        if let Some(hooks) = hooks {
+                            json_data = hooks
+                                .run_post_dispatch(matches, ctx, json_data)
+                                .map_err(|e| format!("Hook error: {}", e))?;
+                        }
+
+                        let render_ctx = RenderContext::new(
+                            ctx.output_mode,
+                            get_terminal_width(),
+                            &theme,
+                            &json_data,
+                        );
+
+                        let output = render_auto_with_context(
+                            &template,
+                            &json_data,
+                            &theme,
+                            ctx.output_mode,
+                            &context_registry,
+                            &render_ctx,
+                        )
+                        .map_err(|e| e.to_string())?;
+                        Ok(DispatchOutput::Text(output))
+                    }
+                    Err(e) => Err(format!("Error: {}", e)),
+                    Ok(Output::Silent) => Ok(DispatchOutput::Silent),
+                    Ok(Output::Binary { data, filename }) => {
+                        Ok(DispatchOutput::Binary(data, filename))
+                    }
+                }
+            },
+        ))
+    }
+}
+
+/// Recipe for struct-based local handlers.
+struct LocalStructRecipe<H, T>
+where
+    H: LocalHandler<Output = T> + 'static,
+    T: Serialize + 'static,
+{
+    handler: H,
+    _phantom: std::marker::PhantomData<T>,
+}
+
+impl<H, T> LocalStructRecipe<H, T>
+where
+    H: LocalHandler<Output = T> + 'static,
+    T: Serialize + 'static,
+{
+    fn new(handler: H) -> Self {
+        Self {
+            handler,
+            _phantom: std::marker::PhantomData,
+        }
+    }
+}
+
+impl<H, T> LocalCommandRecipe for LocalStructRecipe<H, T>
+where
+    H: LocalHandler<Output = T> + 'static,
+    T: Serialize + 'static,
+{
+    fn create_dispatch(
+        mut self: Box<Self>,
+        template: &str,
+        context_registry: &ContextRegistry,
+        theme: &Theme,
+    ) -> LocalDispatchFn {
+        let template = template.to_string();
+        let context_registry = context_registry.clone();
+        let theme = theme.clone();
+
+        Rc::new(RefCell::new(
+            move |matches: &ArgMatches, ctx: &CommandContext, hooks: Option<&Hooks>| {
+                let result = self.handler.handle(matches, ctx);
+
+                match result {
+                    Ok(Output::Render(data)) => {
+                        let mut json_data = serde_json::to_value(&data)
+                            .map_err(|e| format!("Failed to serialize handler result: {}", e))?;
+
+                        if let Some(hooks) = hooks {
+                            json_data = hooks
+                                .run_post_dispatch(matches, ctx, json_data)
+                                .map_err(|e| format!("Hook error: {}", e))?;
+                        }
+
+                        let render_ctx = RenderContext::new(
+                            ctx.output_mode,
+                            get_terminal_width(),
+                            &theme,
+                            &json_data,
+                        );
+
+                        let output = render_auto_with_context(
+                            &template,
+                            &json_data,
+                            &theme,
+                            ctx.output_mode,
+                            &context_registry,
+                            &render_ctx,
+                        )
+                        .map_err(|e| e.to_string())?;
+                        Ok(DispatchOutput::Text(output))
+                    }
+                    Err(e) => Err(format!("Error: {}", e)),
+                    Ok(Output::Silent) => Ok(DispatchOutput::Silent),
+                    Ok(Output::Binary { data, filename }) => {
+                        Ok(DispatchOutput::Binary(data, filename))
+                    }
+                }
+            },
+        ))
+    }
+}
+
+/// Pending command for deferred dispatch creation.
+struct PendingLocalCommand {
+    recipe: Box<dyn LocalCommandRecipe>,
+    template: String,
+}
+
+/// Builder for local (single-threaded) CLI applications.
+///
+/// Unlike [`AppBuilder`](super::AppBuilder), this builder accepts `FnMut` handlers
+/// that can capture mutable state without requiring `Send + Sync`.
+///
+/// # Example
+///
+/// ```rust,ignore
+/// use standout::cli::{LocalApp, Output};
+///
+/// let mut counter = 0u32;
+///
+/// LocalApp::builder()
+///     .command("increment", |m, ctx| {
+///         counter += 1;  // FnMut allows mutation!
+///         Ok(Output::Render(counter))
+///     }, "{{ count }}")
+///     .build()?
+///     .run(cmd, args);
+/// ```
+///
+/// # Differences from AppBuilder
+///
+/// | Aspect | `AppBuilder` | `LocalAppBuilder` |
+/// |--------|--------------|-------------------|
+/// | Handler type | `Fn` | `FnMut` |
+/// | Thread bounds | `Send + Sync` | None |
+/// | State mutation | Interior mutability | Direct |
+/// | Storage | `Arc<dyn Fn>` | `Rc<RefCell<dyn FnMut>>` |
+pub struct LocalAppBuilder {
+    // pub(crate) registry: TopicRegistry, // Unused
+    pub(crate) output_flag: Option<String>,
+    pub(crate) output_file_flag: Option<String>,
+    pub(crate) theme: Option<Theme>,
+    pub(crate) stylesheet_registry: Option<crate::StylesheetRegistry>,
+    pub(crate) template_registry: Option<TemplateRegistry>,
+    pub(crate) default_theme_name: Option<String>,
+    pending_commands: RefCell<HashMap<String, PendingLocalCommand>>,
+    finalized_commands: RefCell<Option<HashMap<String, LocalDispatchFn>>>,
+    pub(crate) command_hooks: HashMap<String, Hooks>,
+    pub(crate) context_registry: ContextRegistry,
+    pub(crate) template_dir: Option<std::path::PathBuf>,
+    pub(crate) template_ext: String,
+    pub(crate) default_command: Option<String>,
+}
+
+impl Default for LocalAppBuilder {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl LocalAppBuilder {
+    /// Creates a new builder with default settings.
+    pub fn new() -> Self {
+        Self {
+            // registry: TopicRegistry::new(),
+            output_flag: Some("output".to_string()),
+            output_file_flag: Some("output-file-path".to_string()),
+            theme: None,
+            stylesheet_registry: None,
+            template_registry: None,
+            default_theme_name: None,
+            pending_commands: RefCell::new(HashMap::new()),
+            finalized_commands: RefCell::new(None),
+            command_hooks: HashMap::new(),
+            context_registry: ContextRegistry::new(),
+            template_dir: None,
+            template_ext: ".j2".to_string(),
+            default_command: None,
+        }
+    }
+
+    // ============================================================================
+    // Command Registration
+    // ============================================================================
+
+    /// Registers a command handler (FnMut closure) with a template.
+    ///
+    /// Unlike [`AppBuilder::command`](super::AppBuilder::command), this accepts
+    /// `FnMut` closures that can capture mutable state.
+    ///
+    /// # Example
+    ///
+    /// ```rust,ignore
+    /// let mut data = Vec::new();
+    ///
+    /// LocalApp::builder()
+    ///     .command("add", |m, ctx| {
+    ///         data.push(m.get_one::<String>("item").unwrap().clone());
+    ///         Ok(Output::Render(data.len()))
+    ///     }, "Added. Total: {{ count }}")
+    /// ```
+    pub fn command<F, T>(self, path: &str, handler: F, template: &str) -> Self
+    where
+        F: FnMut(&ArgMatches, &CommandContext) -> HandlerResult<T> + 'static,
+        T: Serialize + 'static,
+    {
+        let template_str = if template.is_empty() {
+            self.resolve_template(path)
+        } else {
+            template.to_string()
+        };
+
+        let recipe = LocalClosureRecipe::new(handler);
+
+        self.pending_commands.borrow_mut().insert(
+            path.to_string(),
+            PendingLocalCommand {
+                recipe: Box::new(recipe),
+                template: template_str,
+            },
+        );
+
+        self
+    }
+
+    /// Registers a struct handler implementing [`LocalHandler`].
+    ///
+    /// Use this when your handler needs `&mut self` access.
+    ///
+    /// # Example
+    ///
+    /// ```rust,ignore
+    /// struct Counter { count: u32 }
+    ///
+    /// impl LocalHandler for Counter {
+    ///     type Output = u32;
+    ///     fn handle(&mut self, _m: &ArgMatches, _ctx: &CommandContext) -> HandlerResult<u32> {
+    ///         self.count += 1;
+    ///         Ok(Output::Render(self.count))
+    ///     }
+    /// }
+    ///
+    /// LocalApp::builder()
+    ///     .command_handler("count", Counter { count: 0 }, "{{ count }}")
+    /// ```
+    pub fn command_handler<H, T>(self, path: &str, handler: H, template: &str) -> Self
+    where
+        H: LocalHandler<Output = T> + 'static,
+        T: Serialize + 'static,
+    {
+        let template_str = if template.is_empty() {
+            self.resolve_template(path)
+        } else {
+            template.to_string()
+        };
+
+        let recipe = LocalStructRecipe::new(handler);
+
+        self.pending_commands.borrow_mut().insert(
+            path.to_string(),
+            PendingLocalCommand {
+                recipe: Box::new(recipe),
+                template: template_str,
+            },
+        );
+
+        self
+    }
+
+    /// Registers hooks for a specific command path.
+    pub fn hooks(mut self, path: &str, hooks: Hooks) -> Self {
+        self.command_hooks.insert(path.to_string(), hooks);
+        self
+    }
+
+    // ============================================================================
+    // Configuration (mirrors AppBuilder)
+    // ============================================================================
+
+    /// Sets a custom theme for rendering.
+    pub fn theme(mut self, theme: Theme) -> Self {
+        self.theme = Some(theme);
+        self
+    }
+
+    /// Sets embedded templates.
+    pub fn templates(mut self, templates: crate::EmbeddedTemplates) -> Self {
+        self.template_registry = Some(TemplateRegistry::from(templates));
+        self
+    }
+
+    /// Sets embedded styles.
+    pub fn styles(mut self, styles: crate::EmbeddedStyles) -> Self {
+        self.stylesheet_registry = Some(crate::StylesheetRegistry::from(styles));
+        self
+    }
+
+    /// Sets the default theme name.
+    pub fn default_theme(mut self, name: &str) -> Self {
+        self.default_theme_name = Some(name.to_string());
+        self
+    }
+
+    /// Sets the output flag name.
+    pub fn output_flag(mut self, name: Option<&str>) -> Self {
+        self.output_flag = Some(name.unwrap_or("output").to_string());
+        self
+    }
+
+    /// Disables the output flag.
+    pub fn no_output_flag(mut self) -> Self {
+        self.output_flag = None;
+        self
+    }
+
+    /// Sets a default command.
+    pub fn default_command(mut self, name: &str) -> Self {
+        self.default_command = Some(name.to_string());
+        self
+    }
+
+    // ============================================================================
+    // Build and Dispatch
+    // ============================================================================
+
+    fn resolve_template(&self, command_path: &str) -> String {
+        let file_path = command_path.replace('.', "/");
+        let template_name = format!("{}{}", file_path, self.template_ext);
+
+        if let Some(ref registry) = self.template_registry {
+            if let Ok(content) = registry.get_content(&template_name) {
+                return content;
+            }
+        }
+
+        if let Some(ref dir) = self.template_dir {
+            return format!("{}/{}", dir.display(), template_name);
+        }
+
+        String::new()
+    }
+
+    fn ensure_commands_finalized(&self, theme: &Theme) {
+        if self.finalized_commands.borrow().is_some() {
+            return;
+        }
+
+        let context_registry = &self.context_registry;
+
+        let mut commands = HashMap::new();
+        let mut pending = self.pending_commands.borrow_mut();
+
+        // Drain the pending commands (take ownership)
+        for (path, pending_cmd) in pending.drain() {
+            let dispatch =
+                pending_cmd
+                    .recipe
+                    .create_dispatch(&pending_cmd.template, context_registry, theme);
+            commands.insert(path, dispatch);
+        }
+
+        *self.finalized_commands.borrow_mut() = Some(commands);
+    }
+
+    /// Builds the LocalApp instance.
+    pub fn build(mut self) -> Result<LocalApp, SetupError> {
+        // Resolve theme
+        let theme = if let Some(theme) = self.theme.take() {
+            Some(theme)
+        } else if let Some(ref mut registry) = self.stylesheet_registry {
+            if let Some(name) = &self.default_theme_name {
+                let theme = registry
+                    .get(name)
+                    .map_err(|_| SetupError::ThemeNotFound(name.to_string()))?;
+                Some(theme)
+            } else {
+                registry
+                    .get("default")
+                    .or_else(|_| registry.get("theme"))
+                    .or_else(|_| registry.get("base"))
+                    .ok()
+            }
+        } else {
+            None
+        };
+
+        // Finalize commands before building
+        // Use the resolved theme (failed previously because self.theme was taken)
+        let effective_theme = theme.clone().unwrap_or_default();
+        self.ensure_commands_finalized(&effective_theme);
+
+        Ok(LocalApp {
+            // registry: self.registry,
+            output_flag: self.output_flag,
+            output_file_flag: self.output_file_flag,
+            output_mode: OutputMode::Auto,
+            theme,
+            command_hooks: self.command_hooks,
+            commands: self.finalized_commands.take().unwrap_or_default(),
+            default_command: self.default_command,
+        })
+    }
+
+    /// Test helper: Check if a command path is registered.
+    #[cfg(test)]
+    pub(crate) fn has_command(&self, path: &str) -> bool {
+        self.pending_commands.borrow().contains_key(path)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    #[test]
+    fn test_local_builder_command() {
+        let mut counter = 0u32;
+
+        let builder = LocalAppBuilder::new().command(
+            "increment",
+            move |_m, _ctx| {
+                counter += 1;
+                Ok(Output::Render(json!({"count": counter})))
+            },
+            "{{ count }}",
+        );
+
+        assert!(builder.has_command("increment"));
+    }
+
+    #[test]
+    fn test_local_builder_struct_handler() {
+        struct Counter {
+            count: u32,
+        }
+
+        impl LocalHandler for Counter {
+            type Output = u32;
+
+            fn handle(&mut self, _m: &ArgMatches, _ctx: &CommandContext) -> HandlerResult<u32> {
+                self.count += 1;
+                Ok(Output::Render(self.count))
+            }
+        }
+
+        let builder =
+            LocalAppBuilder::new().command_handler("count", Counter { count: 0 }, "{{ . }}");
+
+        assert!(builder.has_command("count"));
+    }
+
+    #[test]
+    fn test_local_builder_multiple_commands() {
+        use std::cell::RefCell;
+        use std::rc::Rc;
+
+        let state = Rc::new(RefCell::new(Vec::new()));
+        let state_add = state.clone();
+        let state_list = state.clone();
+
+        let builder = LocalAppBuilder::new()
+            .command(
+                "add",
+                move |_m, _ctx| {
+                    state_add.borrow_mut().push("item");
+                    Ok(Output::Render(json!({"count": state_add.borrow().len()})))
+                },
+                "",
+            )
+            .command(
+                "list",
+                move |_m, _ctx| {
+                    Ok(Output::Render(
+                        json!({"items": state_list.borrow().clone()}),
+                    ))
+                },
+                "",
+            );
+
+        assert!(builder.has_command("add"));
+        assert!(builder.has_command("list"));
+    }
+}

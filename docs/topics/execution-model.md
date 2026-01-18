@@ -16,7 +16,7 @@ Each stage has a clear responsibility:
 
 **Dispatch**: Standout extracts the *command path* from the parsed `ArgMatches`, navigating through subcommands to find the deepest match. It then looks up the registered handler for that path.
 
-**Handler**: Your logic function executes. It receives the `ArgMatches` and a `CommandContext`, returning a `HandlerResult<T>`—either data to render, a silent marker, or binary content.
+**Handler**: Your logic function executes. It receives the `ArgMatches` and a `CommandContext`, returning a `HandlerResult<T>`—either data to render, a silent marker, or binary content. With `App`, handlers use `&self`; with `LocalApp`, handlers use `&mut self` (see [Handler Contract](handler-contract.md)).
 
 **Hooks**: If registered, hooks run at three points around the handler. They can validate, transform, or intercept without modifying handler logic.
 
@@ -226,3 +226,16 @@ App::builder()
     .output_flag(Some("format"))       // Rename to --format
     .no_output_file_flag()             // Disable file output
 ```
+
+## App vs LocalApp Dispatch
+
+Both `App` and `LocalApp` follow the same pipeline, with one key difference:
+
+| Aspect | `App` | `LocalApp` |
+|--------|-------|------------|
+| Handler storage | `Arc<dyn Fn + Send + Sync>` | `Rc<RefCell<dyn FnMut>>` |
+| Handler call | `handler.handle(...)` with `&self` | `handler.handle(...)` with `&mut self` |
+| Run method | `app.run(cmd, args)` with `&self` | `app.run(cmd, args)` with `&mut self` |
+| Thread safety | Yes | No |
+
+Choose `LocalApp` when your handlers need mutable access to captured state without interior mutability wrappers. See [Handler Contract](handler-contract.md) for detailed guidance.

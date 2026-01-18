@@ -104,6 +104,9 @@ pub struct TodoResult {
 
 // This is your core logic handler, receiving parsed clap args
 // and returning a pure Rust data type.
+//
+// Note: This example uses immutable references. If your handler needs
+// mutable state (&mut self), see the "Mutable Handlers" section below.
 pub fn list(matches: &ArgMatches) -> TodoResult {
     let show_done = matches.get_flag("all");
     let todos = storage::list().unwrap();
@@ -579,6 +582,60 @@ For brevity's sake, we've ignored a bunch of finer and relevant points:
 - A help topics system for rich documentation (see [Topics System](../topics/topics-system.md))
 
 Aside from exposing the library primitives, Standout leverages best-in-breed crates like MiniJinja and console::Style under the hood. The lock-in is really negligible: you can use Standout's BB parser or swap it, manually dispatch handlers, and use the renderers directly in your clap dispatch.
+
+## Mutable Handlers (LocalApp)
+
+If your application logic uses `&mut self` methods—common with database connections, file caches, or in-memory indices—you can use `LocalApp` instead of `App`:
+
+```rust
+use standout::cli::{LocalApp, Output};
+use standout::embed_templates;
+
+struct PadStore {
+    index: HashMap<Uuid, Metadata>,
+}
+
+impl PadStore {
+    fn complete(&mut self, id: Uuid) -> Result<()> {
+        // This needs &mut self
+        self.index.get_mut(&id).unwrap().completed = true;
+        Ok(())
+    }
+}
+
+fn main() -> anyhow::Result<()> {
+    let mut store = PadStore::load()?;
+
+    LocalApp::builder()
+        .templates(embed_templates!("src/templates"))
+        .command("complete", |m, ctx| {
+            let id = m.get_one::<Uuid>("id").unwrap();
+            store.complete(*id)?;  // &mut store works!
+            Ok(Output::Silent)
+        }, "")
+        .command("list", |m, ctx| {
+            // Even read-only handlers work with LocalApp
+            Ok(Output::Render(store.list()))
+        }, "{{ items }}")
+        .build()?
+        .run(Cli::command(), std::env::args());
+    Ok(())
+}
+```
+
+**Key differences from `App`:**
+
+- `LocalApp::builder()` accepts `FnMut` closures (not just `Fn`)
+- Handlers can capture `&mut` references to state
+- No `Send + Sync` requirement on handlers
+- `app.run()` takes `&mut self` instead of `&self`
+
+Use `LocalApp` when:
+- Your API has `&mut self` methods
+- You want to avoid `Arc<Mutex<_>>` wrappers
+- Your CLI is single-threaded (the common case)
+
+See [Handler Contract](../topics/handler-contract.md) for the full comparison.
 
 ## Appendix: Common Errors and Troubleshooting
 

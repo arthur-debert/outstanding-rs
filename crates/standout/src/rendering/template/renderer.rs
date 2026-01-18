@@ -34,8 +34,8 @@ use std::collections::HashMap;
 use std::path::Path;
 
 use minijinja::{Environment, Error};
-use standout_bbparser::{BBParser, TagTransform, UnknownTagBehavior};
 use serde::Serialize;
+use standout_bbparser::{BBParser, TagTransform, UnknownTagBehavior};
 
 use super::super::output::OutputMode;
 use super::super::style::Styles;
