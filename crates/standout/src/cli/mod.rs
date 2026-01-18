@@ -24,10 +24,10 @@
 //! `Send + Sync` and use `&self` (not `&mut self`):
 //!
 //! ```rust,ignore
-//! use standout::cli::{App, Output};
+//! use standout::cli::{App, Output, ThreadSafe};
 //!
 //! // Stateless closure - works naturally
-//! App::builder()
+//! App::<ThreadSafe>::builder()
 //!     .command("list", |m, ctx| Ok(Output::Render(get_items()?)), "{{ items }}")
 //!
 //! // Stateful handler requires interior mutability
@@ -89,9 +89,9 @@
 //! ## Quick Start
 //!
 //! ```rust,ignore
-//! use standout::cli::{App, Output, HandlerResult};
+//! use standout::cli::{App, Output, HandlerResult, ThreadSafe};
 //!
-//! App::builder()
+//! App::<ThreadSafe>::builder()
 //!     .command("list", |matches, ctx| {
 //!         let items = load_items()?;
 //!         Ok(Output::Render(items))
@@ -157,7 +157,7 @@ mod app;
 mod builder;
 
 // Local (mutable) handler support
-mod local_app;
+// Local (mutable) handler support
 mod local_builder;
 
 // Public modules
@@ -174,7 +174,8 @@ pub use app::App;
 pub use builder::AppBuilder;
 
 // Re-export local app types
-pub use local_app::LocalApp;
+// Re-export local app types
+pub type LocalApp = App<Local>;
 pub use local_builder::LocalAppBuilder;
 
 // Re-export group types for declarative dispatch
@@ -208,7 +209,7 @@ pub use crate::setup::SetupError;
 ///
 /// This is the simplest entry point for basic CLIs without topics.
 pub fn parse(cmd: clap::Command) -> clap::ArgMatches {
-    App::parse(cmd)
+    App::<ThreadSafe>::parse(cmd)
 }
 
 /// Like `parse`, but takes arguments from an iterator.
@@ -217,5 +218,5 @@ where
     I: IntoIterator<Item = T>,
     T: Into<std::ffi::OsString> + Clone,
 {
-    App::new().parse_from(cmd, itr)
+    App::<ThreadSafe>::new().parse_from(cmd, itr)
 }

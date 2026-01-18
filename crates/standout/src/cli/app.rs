@@ -12,11 +12,20 @@ use clap::{Arg, ArgAction, ArgMatches, Command};
 use serde::Serialize;
 
 use super::core::AppCore;
+use super::dispatch::{
+    extract_command_path, get_deepest_matches, has_subcommand, insert_default_command,
+    DispatchOutput, Dispatchable,
+};
 use super::help::{render_help, render_help_with_topics, HelpConfig};
 use super::hooks::Hooks;
+use super::mode::{HandlerMode, ThreadSafe};
 use super::result::HelpResult;
-use crate::cli::handler::{CommandContext, HandlerResult, Output as HandlerOutput};
+use crate::cli::handler::{CommandContext, HandlerResult, Output as HandlerOutput, RunResult};
 use crate::cli::hooks::{HookError, RenderedOutput};
+use std::collections::HashMap;
+
+use super::mode::Local;
+use super::LocalAppBuilder;
 
 /// Gets the current terminal width, or None if not available.
 pub(crate) fn get_terminal_width() -> Option<usize> {
@@ -37,21 +46,37 @@ pub(crate) fn get_terminal_width() -> Option<usize> {
 /// use standout::cli::App;
 /// use standout::OutputMode;
 ///
-/// let app = App::builder()
+/// let app = App::<standout::cli::ThreadSafe>::builder()
 ///     .templates(embed_templates!("src/templates"))
 ///     .styles(embed_styles!("src/styles"))
 ///     .build()?;
 ///
 /// let output = app.render("list", &data, OutputMode::Term)?;
 /// ```
-pub struct App {
+pub struct App<M: HandlerMode = ThreadSafe> {
     /// Shared core configuration and functionality.
     pub(crate) core: AppCore,
     /// Topic registry for help topics (App-specific).
     pub(crate) registry: TopicRegistry,
+    /// Registered command handlers.
+    pub(crate) commands: HashMap<String, M::DispatchFn>,
 }
 
-impl App {
+impl App<ThreadSafe> {
+    /// Creates a new builder for constructing an App instance.
+    pub fn builder() -> super::AppBuilder {
+        super::AppBuilder::new()
+    }
+}
+
+impl App<Local> {
+    /// Creates a new builder for constructing a LocalApp instance.
+    pub fn builder() -> LocalAppBuilder {
+        LocalAppBuilder::new()
+    }
+}
+
+impl<M: HandlerMode> App<M> {
     /// Creates a new App instance with default settings.
     ///
     /// By default:
@@ -63,6 +88,7 @@ impl App {
         Self {
             core: AppCore::new(),
             registry: TopicRegistry::new(),
+            commands: HashMap::new(),
         }
     }
 
@@ -71,12 +97,8 @@ impl App {
         Self {
             core: AppCore::new(),
             registry,
+            commands: HashMap::new(),
         }
-    }
-
-    /// Creates a new builder for constructing an App instance.
-    pub fn builder() -> super::AppBuilder {
-        super::AppBuilder::new()
     }
 
     /// Returns a reference to the topic registry.
@@ -180,6 +202,142 @@ impl App {
         mode: OutputMode,
     ) -> Result<String, SetupError> {
         self.core.render_inline(template, data, mode)
+    }
+
+    // =========================================================================
+    // Dispatch
+    // =========================================================================
+
+    /// Dispatches to a registered handler if one matches the command path.
+    pub fn dispatch(&self, matches: ArgMatches, output_mode: OutputMode) -> RunResult {
+        let path = extract_command_path(&matches);
+        let path_str = path.join(".");
+
+        if let Some(dispatch) = self.commands.get(&path_str) {
+            let ctx = CommandContext {
+                output_mode,
+                command_path: path,
+            };
+
+            let hooks = self.core.get_hooks(&path_str);
+
+            // Run pre-dispatch hooks
+            if let Some(hooks) = hooks {
+                if let Err(e) = hooks.run_pre_dispatch(&matches, &ctx) {
+                    return RunResult::Handled(format!("Hook error: {}", e));
+                }
+            }
+
+            let sub_matches = get_deepest_matches(&matches);
+
+            // Run the handler
+            let dispatch_output = match dispatch.dispatch(sub_matches, &ctx, hooks) {
+                Ok(output) => output,
+                Err(e) => return RunResult::Handled(e),
+            };
+
+            // Convert to RenderedOutput for post-output hooks
+            let output = match dispatch_output {
+                DispatchOutput::Text(s) => RenderedOutput::Text(s),
+                DispatchOutput::Binary(b, f) => RenderedOutput::Binary(b, f),
+                DispatchOutput::Silent => RenderedOutput::Silent,
+            };
+
+            // Run post-output hooks
+            let final_output = if let Some(hooks) = hooks {
+                match hooks.run_post_output(&matches, &ctx, output) {
+                    Ok(o) => o,
+                    Err(e) => return RunResult::Handled(format!("Hook error: {}", e)),
+                }
+            } else {
+                output
+            };
+
+            match final_output {
+                RenderedOutput::Text(s) => RunResult::Handled(s),
+                RenderedOutput::Binary(b, f) => RunResult::Binary(b, f),
+                RenderedOutput::Silent => RunResult::Handled(String::new()),
+            }
+        } else {
+            RunResult::NoMatch(matches)
+        }
+    }
+
+    /// Parses arguments and dispatches to registered handlers.
+    pub fn dispatch_from<I, T>(&self, cmd: Command, args: I) -> RunResult
+    where
+        I: IntoIterator<Item = T>,
+        T: Into<std::ffi::OsString> + Clone,
+    {
+        let args: Vec<String> = args
+            .into_iter()
+            .map(|a| a.into().to_string_lossy().into_owned())
+            .collect();
+
+        let augmented_cmd = self.core.augment_command(cmd.clone());
+
+        let matches = match augmented_cmd.try_get_matches_from(&args) {
+            Ok(m) => m,
+            Err(e) => return RunResult::Handled(e.to_string()),
+        };
+
+        // Check if we need to insert default command
+        let matches = if !has_subcommand(&matches) && self.core.default_command().is_some() {
+            let default_cmd = self.core.default_command().unwrap();
+            let new_args = insert_default_command(args, default_cmd);
+
+            let augmented_cmd = self.core.augment_command(cmd);
+            match augmented_cmd.try_get_matches_from(&new_args) {
+                Ok(m) => m,
+                Err(e) => return RunResult::Handled(e.to_string()),
+            }
+        } else {
+            matches
+        };
+
+        // Extract output mode using core
+        let output_mode = self.core.extract_output_mode(&matches);
+
+        self.dispatch(matches, output_mode)
+    }
+
+    /// Runs the CLI: parses arguments, dispatches to handlers, and prints output.
+    ///
+    /// # Returns
+    ///
+    /// - `true` if a handler processed and printed output
+    /// - `false` if no handler matched
+    pub fn run<I, T>(&self, cmd: Command, args: I) -> bool
+    where
+        I: IntoIterator<Item = T>,
+        T: Into<std::ffi::OsString> + Clone,
+    {
+        match self.dispatch_from(cmd, args) {
+            RunResult::Handled(output) => {
+                if !output.is_empty() {
+                    println!("{}", output);
+                }
+                true
+            }
+            RunResult::Binary(bytes, filename) => {
+                if let Err(e) = std::fs::write(&filename, &bytes) {
+                    eprintln!("Error writing {}: {}", filename, e);
+                } else {
+                    eprintln!("Wrote {} bytes to {}", bytes.len(), filename);
+                }
+                true
+            }
+            RunResult::NoMatch(_) => false,
+        }
+    }
+
+    /// Runs the CLI and returns the rendered output as a string.
+    pub fn run_to_string<I, T>(&self, cmd: Command, args: I) -> RunResult
+    where
+        I: IntoIterator<Item = T>,
+        T: Into<std::ffi::OsString> + Clone,
+    {
+        self.dispatch_from(cmd, args)
     }
 
     /// Executes a command handler with hooks applied automatically.
@@ -513,7 +671,7 @@ mod tests {
 
     #[test]
     fn test_output_flag_enabled_by_default() {
-        let standout = App::new();
+        let standout = App::<ThreadSafe>::new();
         assert!(standout.core.output_flag.is_some());
         assert_eq!(standout.core.output_flag.as_deref(), Some("output"));
     }

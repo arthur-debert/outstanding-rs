@@ -26,6 +26,7 @@ use super::app::App;
 use super::dispatch::DispatchFn;
 use super::group::CommandRecipe;
 use super::hooks::Hooks;
+use super::mode::ThreadSafe;
 
 /// Stores a pending command recipe along with its resolved template.
 struct PendingCommand {
@@ -40,7 +41,7 @@ struct PendingCommand {
 /// ```rust
 /// use standout::cli::App;
 ///
-/// let standout = App::builder()
+/// let standout = App::<standout::cli::ThreadSafe>::builder()
 ///     .topics_dir("docs/topics")
 ///     .output_flag(Some("format"))
 ///     .build();
@@ -56,7 +57,7 @@ struct PendingCommand {
 /// use crate::context::RenderContext;
 /// use minijinja::Value;
 ///
-/// App::builder()
+/// App::<standout::cli::ThreadSafe>::builder()
 ///     // Static context
 ///     .context("app_version", Value::from("1.0.0"))
 ///
@@ -178,13 +179,20 @@ impl AppBuilder {
     /// # Example
     ///
     /// ```rust,ignore
-    /// let standout = App::builder()
+    /// let standout = App::<standout::cli::ThreadSafe>::builder()
     ///     .styles(embed_styles!("src/styles"))
     ///     .default_theme("dark")
     ///     .build()?;
     /// ```
-    pub fn build(mut self) -> Result<App, SetupError> {
+    pub fn build(mut self) -> Result<App<ThreadSafe>, SetupError> {
         use super::core::AppCore;
+
+        // Ensure commands are finalized
+        self.ensure_commands_finalized();
+        let commands = self
+            .finalized_commands
+            .into_inner()
+            .expect("Commands should be finalized");
 
         // Resolve theme: explicit theme takes precedence, then stylesheet registry
         let theme = if let Some(theme) = self.theme.take() {
@@ -226,6 +234,7 @@ impl AppBuilder {
         Ok(App {
             core,
             registry: self.registry,
+            commands,
         })
     }
 

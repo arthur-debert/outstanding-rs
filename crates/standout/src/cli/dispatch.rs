@@ -19,8 +19,24 @@ use crate::context::{ContextRegistry, RenderContext};
 use crate::{render_auto_with_context, TemplateRegistry, Theme};
 use serde::Serialize;
 
+/// Trait for dispatching commands.
+///
+/// This trait abstracts over the execution of dispatch functions, allowing
+/// unified handling of both thread-safe (`Arc<Fn>`) and local (`Rc<RefCell<FnMut>>`)
+/// handlers.
+pub trait Dispatchable {
+    /// Dispatches the command with the given context.
+    fn dispatch(
+        &self,
+        matches: &ArgMatches,
+        ctx: &CommandContext,
+        hooks: Option<&Hooks>,
+    ) -> Result<DispatchOutput, String>;
+}
+
 /// Internal result type for dispatch functions.
-pub(crate) enum DispatchOutput {
+/// Internal result type for dispatch functions.
+pub enum DispatchOutput {
     /// Text output (rendered template or JSON)
     Text(String),
     /// Binary output (bytes, filename)
@@ -88,11 +104,23 @@ pub(crate) fn render_handler_output<T: Serialize>(
 /// allows post-dispatch hooks to run between handler execution and rendering.
 ///
 /// Used with [`App`](super::App) and [`Handler`](super::handler::Handler).
-pub(crate) type DispatchFn = Arc<
+/// Used with [`App`](super::App) and [`Handler`](super::handler::Handler).
+pub type DispatchFn = Arc<
     dyn Fn(&ArgMatches, &CommandContext, Option<&Hooks>) -> Result<DispatchOutput, String>
         + Send
         + Sync,
 >;
+
+impl Dispatchable for DispatchFn {
+    fn dispatch(
+        &self,
+        matches: &ArgMatches,
+        ctx: &CommandContext,
+        hooks: Option<&Hooks>,
+    ) -> Result<DispatchOutput, String> {
+        (self)(matches, ctx, hooks)
+    }
+}
 
 /// Type-erased dispatch function for local (single-threaded) handlers.
 ///
@@ -102,11 +130,23 @@ pub(crate) type DispatchFn = Arc<
 /// - Does NOT require `Send + Sync`
 ///
 /// Used with [`LocalApp`](super::LocalApp) and [`LocalHandler`](super::handler::LocalHandler).
-pub(crate) type LocalDispatchFn = Rc<
+/// Used with [`LocalApp`](super::LocalApp) and [`LocalHandler`](super::handler::LocalHandler).
+pub type LocalDispatchFn = Rc<
     RefCell<
         dyn FnMut(&ArgMatches, &CommandContext, Option<&Hooks>) -> Result<DispatchOutput, String>,
     >,
 >;
+
+impl Dispatchable for LocalDispatchFn {
+    fn dispatch(
+        &self,
+        matches: &ArgMatches,
+        ctx: &CommandContext,
+        hooks: Option<&Hooks>,
+    ) -> Result<DispatchOutput, String> {
+        (self.borrow_mut())(matches, ctx, hooks)
+    }
+}
 
 /// Extracts the command path from ArgMatches by following subcommand chain.
 pub(crate) fn extract_command_path(matches: &ArgMatches) -> Vec<String> {

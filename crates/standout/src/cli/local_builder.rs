@@ -52,8 +52,11 @@ use crate::{OutputMode, Theme};
 use super::dispatch::{render_handler_output, LocalDispatchFn};
 use super::handler::{CommandContext, HandlerResult, LocalFnHandler, LocalHandler};
 use super::hooks::Hooks;
-use super::local_app::LocalApp;
 use crate::setup::SetupError;
+
+use super::app::App;
+use super::mode::Local;
+use crate::topics::TopicRegistry;
 
 /// Recipe for creating local dispatch closures.
 trait LocalCommandRecipe {
@@ -450,7 +453,7 @@ impl LocalAppBuilder {
     }
 
     /// Builds the LocalApp instance.
-    pub fn build(mut self) -> Result<LocalApp, SetupError> {
+    pub fn build(mut self) -> Result<App<Local>, SetupError> {
         use super::core::AppCore;
         use std::sync::Arc;
 
@@ -496,8 +499,9 @@ impl LocalAppBuilder {
             context_registry: self.context_registry,
         };
 
-        Ok(LocalApp {
+        Ok(App {
             core,
+            registry: TopicRegistry::new(),
             commands: self.finalized_commands.take().unwrap_or_default(),
         })
     }

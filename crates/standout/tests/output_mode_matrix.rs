@@ -38,7 +38,7 @@ fn simple_template() -> &'static str {
 
 #[test]
 fn test_app_output_mode_auto() {
-    let app = App::builder()
+    let app = App::<standout::cli::ThreadSafe>::builder()
         .command(
             "run",
             |_m: &ArgMatches, _ctx: &CommandContext| Ok(Output::Render(TestData::sample())),
@@ -57,7 +57,7 @@ fn test_app_output_mode_auto() {
 
 #[test]
 fn test_app_output_mode_term() {
-    let app = App::builder()
+    let app = App::<standout::cli::ThreadSafe>::builder()
         .command(
             "run",
             |_m: &ArgMatches, _ctx: &CommandContext| Ok(Output::Render(TestData::sample())),
@@ -76,7 +76,7 @@ fn test_app_output_mode_term() {
 
 #[test]
 fn test_app_output_mode_text() {
-    let app = App::builder()
+    let app = App::<standout::cli::ThreadSafe>::builder()
         .command(
             "run",
             |_m: &ArgMatches, _ctx: &CommandContext| Ok(Output::Render(TestData::sample())),
@@ -95,7 +95,7 @@ fn test_app_output_mode_text() {
 
 #[test]
 fn test_app_output_mode_json() {
-    let app = App::builder()
+    let app = App::<standout::cli::ThreadSafe>::builder()
         .command(
             "run",
             |_m: &ArgMatches, _ctx: &CommandContext| Ok(Output::Render(TestData::sample())),
@@ -116,7 +116,7 @@ fn test_app_output_mode_json() {
 
 #[test]
 fn test_app_output_mode_yaml() {
-    let app = App::builder()
+    let app = App::<standout::cli::ThreadSafe>::builder()
         .command(
             "run",
             |_m: &ArgMatches, _ctx: &CommandContext| Ok(Output::Render(TestData::sample())),
@@ -136,7 +136,7 @@ fn test_app_output_mode_yaml() {
 
 #[test]
 fn test_app_output_mode_csv() {
-    let app = App::builder()
+    let app = App::<standout::cli::ThreadSafe>::builder()
         .command(
             "run",
             |_m: &ArgMatches, _ctx: &CommandContext| Ok(Output::Render(TestData::sample())),
@@ -289,7 +289,7 @@ fn test_app_and_local_app_produce_same_json() {
     let data = TestData::sample();
 
     // App output
-    let app = App::builder()
+    let app = App::<standout::cli::ThreadSafe>::builder()
         .command(
             "run",
             |_m: &ArgMatches, _ctx: &CommandContext| Ok(Output::Render(TestData::sample())),
@@ -327,7 +327,7 @@ fn test_app_and_local_app_produce_same_text() {
     let data = TestData::sample();
 
     // App output
-    let app = App::builder()
+    let app = App::<standout::cli::ThreadSafe>::builder()
         .command(
             "run",
             |_m: &ArgMatches, _ctx: &CommandContext| Ok(Output::Render(TestData::sample())),
@@ -370,7 +370,7 @@ fn test_style_tags_in_term_mode() {
     let style = Style::new().blue().bold().force_styling(true);
     let theme = Theme::new().add("title", style);
 
-    let app = App::builder()
+    let app = App::<standout::cli::ThreadSafe>::builder()
         .theme(theme)
         .command(
             "run",
@@ -398,7 +398,7 @@ fn test_style_tags_stripped_in_text_mode() {
     let style = Style::new().blue().bold().force_styling(true);
     let theme = Theme::new().add("title", style);
 
-    let app = App::builder()
+    let app = App::<standout::cli::ThreadSafe>::builder()
         .theme(theme)
         .command(
             "run",
@@ -428,7 +428,7 @@ fn test_style_tags_kept_in_term_debug_mode() {
     let style = Style::new().blue().bold().force_styling(true);
     let theme = Theme::new().add("title", style);
 
-    let app = App::builder()
+    let app = App::<standout::cli::ThreadSafe>::builder()
         .theme(theme)
         .command(
             "run",
