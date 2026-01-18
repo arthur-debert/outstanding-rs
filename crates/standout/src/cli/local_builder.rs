@@ -487,7 +487,7 @@ impl LocalAppBuilder {
             let dispatch =
                 pending_cmd
                     .recipe
-                    .create_dispatch(&pending_cmd.template, context_registry, &theme);
+                    .create_dispatch(&pending_cmd.template, context_registry, theme);
             commands.insert(path, dispatch);
         }
 
