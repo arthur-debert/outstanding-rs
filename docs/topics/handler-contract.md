@@ -1,14 +1,33 @@
 # The Handler Contract
 
-Handlers are where your application logic lives. Standout's handler contract is designed to be **explicit** rather than permissive. By enforcing `Send + Sync` and serializable return types, the framework guarantees that your code remains testable, parallel-safe, and decoupled from output formatting.
+Handlers are where your application logic lives. Standout's handler contract is designed to be **explicit** rather than permissive. By enforcing serializable return types and clear ownership semantics, the framework guarantees that your code remains testable and decoupled from output formatting.
 
-Instead of fighting with generic `Any` types or global state, you work with a clear contract: inputs are immutable references, output is a `Result`.
+Instead of fighting with generic `Any` types or global state, you work with a clear contract: inputs are references, output is a `Result`.
 
 See also:
 
 - [Output Modes](output-modes.md) for how the output enum interacts with formats.
 
-## The Handler Trait
+## Handler Modes
+
+Standout supports two handler modes to accommodate different use cases:
+
+| Aspect | `Handler` (default) | `LocalHandler` |
+|--------|---------------------|----------------|
+| App type | `App` | `LocalApp` |
+| Self reference | `&self` | `&mut self` |
+| Closure type | `Fn` | `FnMut` |
+| Thread bounds | `Send + Sync` | None |
+| State mutation | Via interior mutability | Direct |
+| Use case | Libraries, async, multi-threaded | Simple CLIs with mutable state |
+
+Choose based on your needs:
+
+- **`App` with `Handler`**: Default. Use when handlers are stateless or use interior mutability (`Arc<Mutex<_>>`). Required for potential multi-threading.
+
+- **`LocalApp` with `LocalHandler`**: Use when your handlers need `&mut self` access without wrapper types. Ideal for single-threaded CLIs.
+
+## The Handler Trait (Thread-safe)
 
 ```rust
 pub trait Handler: Send + Sync {
@@ -46,6 +65,81 @@ where T: Serialize + Send + Sync
 ```
 
 Closures must be `Fn` (not `FnMut` or `FnOnce`) because Standout may call them multiple times in certain scenarios.
+
+## The LocalHandler Trait (Mutable State)
+
+When your handlers need `&mut self` access—common with database connections, file caches, or in-memory indices—use `LocalHandler` with `LocalApp`:
+
+```rust
+pub trait LocalHandler {
+    type Output: Serialize;
+    fn handle(&mut self, matches: &ArgMatches, ctx: &CommandContext) -> HandlerResult<Self::Output>;
+}
+```
+
+Key differences from `Handler`:
+
+- **No Send + Sync**: Handlers don't need to be thread-safe
+- **Mutable self**: `&mut self` allows direct state modification
+- **FnMut closures**: Captured variables can be mutated
+
+### When to Use LocalHandler
+
+Use `LocalHandler` when:
+
+- Your API uses `&mut self` methods (common for file/database operations)
+- You want to avoid `Arc<Mutex<_>>` wrappers
+- Your CLI is single-threaded (the typical case)
+
+```rust
+use standout::cli::{LocalApp, LocalHandler, Output, HandlerResult, CommandContext};
+
+struct Database {
+    connection: Connection,
+    cache: HashMap<String, Record>,
+}
+
+impl Database {
+    fn query_mut(&mut self, sql: &str) -> Result<Vec<Row>, Error> {
+        // Needs &mut self because it updates the cache
+        if let Some(cached) = self.cache.get(sql) {
+            return Ok(cached.clone());
+        }
+        let result = self.connection.execute(sql)?;
+        self.cache.insert(sql.to_string(), result.clone());
+        Ok(result)
+    }
+}
+
+impl LocalHandler for Database {
+    type Output = Vec<Row>;
+
+    fn handle(&mut self, matches: &ArgMatches, _ctx: &CommandContext) -> HandlerResult<Vec<Row>> {
+        let query = matches.get_one::<String>("query").unwrap();
+        let rows = self.query_mut(query)?;
+        Ok(Output::Render(rows))
+    }
+}
+```
+
+### Local Closure Handlers
+
+`LocalApp::builder().command()` accepts `FnMut` closures:
+
+```rust
+let mut db = Database::connect()?;
+
+LocalApp::builder()
+    .command("query", |matches, ctx| {
+        let sql = matches.get_one::<String>("sql").unwrap();
+        let rows = db.query_mut(sql)?;  // &mut db works!
+        Ok(Output::Render(rows))
+    }, "{{ rows }}")
+    .build()?
+    .run(cmd, args);
+```
+
+This is the primary use case: capturing mutable references in closures without interior mutability wrappers.
 
 ## HandlerResult
 
@@ -292,3 +386,49 @@ fn test_list_handler() {
 ```
 
 No mocking frameworks needed—construct `ArgMatches` with clap, create a `CommandContext`, call your handler, assert on the result.
+
+### Testing LocalHandlers
+
+`LocalHandler` tests work the same way, but use `&mut self`:
+
+```rust
+#[test]
+fn test_local_handler_state_mutation() {
+    struct Counter { count: u32 }
+
+    impl LocalHandler for Counter {
+        type Output = u32;
+        fn handle(&mut self, _m: &ArgMatches, _ctx: &CommandContext) -> HandlerResult<u32> {
+            self.count += 1;
+            Ok(Output::Render(self.count))
+        }
+    }
+
+    let mut handler = Counter { count: 0 };
+    let cmd = Command::new("test");
+    let matches = cmd.try_get_matches_from(["test"]).unwrap();
+    let ctx = CommandContext {
+        output_mode: OutputMode::Term,
+        command_path: vec!["count".into()],
+    };
+
+    // State accumulates across calls
+    let _ = handler.handle(&matches, &ctx);
+    let _ = handler.handle(&matches, &ctx);
+    let result = handler.handle(&matches, &ctx);
+
+    assert!(matches!(result, Ok(Output::Render(3))));
+}
+```
+
+## Choosing Between Handler and LocalHandler
+
+| Your situation | Use |
+|----------------|-----|
+| Stateless handlers | `App` + closures |
+| State with `Arc<Mutex<_>>` already | `App` + `Handler` trait |
+| API with `&mut self` methods | `LocalApp` + `LocalHandler` |
+| Building a library | `App` (consumers might need thread safety) |
+| Simple single-threaded CLI | Either works; `LocalApp` avoids wrapper types |
+
+The key insight: CLIs are fundamentally single-threaded (parse → run one handler → output → exit). The `Send + Sync` requirement in `Handler` is conventional, not strictly necessary. `LocalHandler` removes this requirement for simpler code when thread safety isn't needed.
