@@ -38,6 +38,19 @@ fn theme_strategy() -> impl Strategy<Value = Option<Theme>> {
     ]
 }
 
+// Strategy for generating template variations
+// Tests different rendering paths that work with any JSON input
+fn template_strategy() -> impl Strategy<Value = &'static str> {
+    prop_oneof![
+        // Simple dump - basic MiniJinja path
+        Just("{{ . }}"),
+        // With style tags - exercises BBParser
+        Just("[title]{{ . }}[/title]"),
+        // Nested style tags
+        Just("[highlight]Output: [title]{{ . }}[/title][/highlight]"),
+    ]
+}
+
 // Strategy for generating arbitrary JSON data
 fn json_data_strategy() -> impl Strategy<Value = Value> {
     let leaf = prop_oneof![
@@ -90,13 +103,14 @@ proptest! {
     fn test_threadsafe_rendering_invariants(
         mode in output_mode_strategy(),
         theme in theme_strategy(),
+        template in template_strategy(),
         data in json_data_strategy()
     ) {
         let builder = App::<ThreadSafe>::builder()
             .command(
                 "test",
                 move |_m, _ctx| Ok(Output::Render(data.clone())),
-                "{{ . }}",
+                template,
             ).unwrap();
 
         let builder = if let Some(t) = theme {
@@ -125,13 +139,14 @@ proptest! {
     fn test_local_rendering_invariants(
         mode in output_mode_strategy(),
         theme in theme_strategy(),
+        template in template_strategy(),
         data in json_data_strategy()
     ) {
         let builder = App::<Local>::builder()
             .command(
                 "test",
                 move |_m, _ctx| Ok(Output::Render(data.clone())),
-                "{{ . }}",
+                template,
             ).unwrap();
 
         let builder = if let Some(t) = theme {
