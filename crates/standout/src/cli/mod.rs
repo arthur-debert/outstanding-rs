@@ -149,6 +149,9 @@
 mod dispatch;
 mod result;
 
+// Shared core for App and LocalApp
+mod core;
+
 // Split from former standout module
 mod app;
 mod builder;
