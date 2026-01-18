@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- **Internal: Shared AppCore architecture** - Extracted common functionality from `App` and `LocalApp` into a shared `AppCore` struct. This ensures feature parity between both app types and eliminates code duplication.
+
+### Fixed
+
+- **LocalApp now supports `{% include %}` in templates** - LocalApp templates can now use `{% include %}` directives to include other templates from the registry, matching the behavior of `App`.
+
 ## [1.1.0] - 2026-01-18
 
 ### Added

@@ -107,7 +107,7 @@ fn output_mode_to_transform(mode: OutputMode) -> TagTransform {
 /// Post-processes rendered output with BBParser to apply style tags.
 ///
 /// This is the second pass of the two-pass rendering system.
-fn apply_style_tags(output: &str, styles: &Styles, mode: OutputMode) -> String {
+pub(crate) fn apply_style_tags(output: &str, styles: &Styles, mode: OutputMode) -> String {
     let transform = output_mode_to_transform(mode);
     let resolved_styles = styles.to_resolved_map();
     let parser =

@@ -36,17 +36,19 @@
 
 use std::collections::HashMap;
 
-use clap::{Arg, ArgAction, ArgMatches, Command};
+use clap::{ArgMatches, Command};
+use serde::Serialize;
 
-use crate::OutputMode;
-use crate::Theme;
+use crate::setup::SetupError;
+use crate::{OutputMode, Theme};
 
+use super::core::AppCore;
 use super::dispatch::{
     extract_command_path, get_deepest_matches, has_subcommand, insert_default_command,
     DispatchOutput, LocalDispatchFn,
 };
 use super::handler::{CommandContext, RunResult};
-use super::hooks::{Hooks, RenderedOutput};
+use super::hooks::RenderedOutput;
 use super::local_builder::LocalAppBuilder;
 
 /// Local (single-threaded) CLI application.
@@ -81,14 +83,10 @@ use super::local_builder::LocalAppBuilder;
 /// | Thread safety | Yes | No |
 /// | Use case | Libraries, async | Simple CLIs |
 pub struct LocalApp {
-    // pub(crate) registry: TopicRegistry, // Unused in local app
-    pub(crate) output_flag: Option<String>,
-    pub(crate) output_file_flag: Option<String>,
-    pub(crate) output_mode: OutputMode,
-    pub(crate) theme: Option<Theme>,
-    pub(crate) command_hooks: HashMap<String, Hooks>,
+    /// Shared core configuration and functionality.
+    pub(crate) core: AppCore,
+    /// Registered command handlers.
     pub(crate) commands: HashMap<String, LocalDispatchFn>,
-    pub(crate) default_command: Option<String>,
 }
 
 impl LocalApp {
@@ -105,59 +103,84 @@ impl LocalApp {
         LocalAppBuilder::new()
     }
 
+    // =========================================================================
+    // Delegated accessors (from AppCore)
+    // =========================================================================
+
     /// Returns the current output mode.
     pub fn output_mode(&self) -> OutputMode {
-        self.output_mode
+        self.core.output_mode()
     }
 
     /// Returns the hooks registered for a specific command path.
-    pub fn get_hooks(&self, path: &str) -> Option<&Hooks> {
-        self.command_hooks.get(path)
+    pub fn get_hooks(&self, path: &str) -> Option<&super::hooks::Hooks> {
+        self.core.get_hooks(path)
     }
 
     /// Returns the default theme, if configured.
     pub fn theme(&self) -> Option<&Theme> {
-        self.theme.as_ref()
+        self.core.theme()
     }
 
-    /// Augments a command with standout's global flags.
-    fn augment_command(&self, mut cmd: Command) -> Command {
-        if let Some(ref flag_name) = self.output_flag {
-            let flag: &'static str = Box::leak(flag_name.clone().into_boxed_str());
-            cmd = cmd.arg(
-                Arg::new("_output_mode")
-                    .long(flag)
-                    .value_name("MODE")
-                    .global(true)
-                    .value_parser([
-                        "auto",
-                        "term",
-                        "text",
-                        "term-debug",
-                        "json",
-                        "yaml",
-                        "xml",
-                        "csv",
-                    ])
-                    .default_value("auto")
-                    .help("Output mode: auto, term, text, term-debug, json, yaml, xml, or csv"),
-            );
-        }
-
-        if let Some(ref flag_name) = self.output_file_flag {
-            let flag: &'static str = Box::leak(flag_name.clone().into_boxed_str());
-            cmd = cmd.arg(
-                Arg::new("_output_file_path")
-                    .long(flag)
-                    .value_name("PATH")
-                    .global(true)
-                    .action(ArgAction::Set)
-                    .help("Write output to file instead of stdout"),
-            );
-        }
-
-        cmd
+    /// Returns the names of all available templates.
+    ///
+    /// Returns an empty iterator if no template registry is configured.
+    pub fn template_names(&self) -> impl Iterator<Item = &str> {
+        self.core.template_names()
     }
+
+    /// Returns the names of all available themes.
+    ///
+    /// Returns an empty vector if no stylesheet registry is configured.
+    pub fn theme_names(&self) -> Vec<String> {
+        self.core.theme_names()
+    }
+
+    /// Gets a theme by name from the stylesheet registry.
+    ///
+    /// This allows using themes other than the default at runtime.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if no stylesheet registry is configured or if the theme
+    /// is not found.
+    pub fn get_theme(&mut self, name: &str) -> Result<Theme, SetupError> {
+        self.core.get_theme(name)
+    }
+
+    // =========================================================================
+    // Rendering (delegated to AppCore)
+    // =========================================================================
+
+    /// Renders a template by name with the given data.
+    ///
+    /// Looks up the template in the registry and renders it.
+    /// Supports `{% include %}` directives via the template registry.
+    pub fn render<T: Serialize>(
+        &self,
+        template: &str,
+        data: &T,
+        mode: OutputMode,
+    ) -> Result<String, SetupError> {
+        self.core.render(template, data, mode)
+    }
+
+    /// Renders an inline template string with the given data.
+    ///
+    /// Unlike `render`, this takes the template content directly.
+    /// Still supports `{% include %}` if a template registry is configured.
+    pub fn render_inline<T: Serialize>(
+        &self,
+        template: &str,
+        data: &T,
+        mode: OutputMode,
+    ) -> Result<String, SetupError> {
+        self.core.render_inline(template, data, mode)
+    }
+
+    // =========================================================================
+    // Dispatch
+    // =========================================================================
 
     /// Dispatches to a registered handler if one matches the command path.
     ///
@@ -172,7 +195,7 @@ impl LocalApp {
                 command_path: path,
             };
 
-            let hooks = self.command_hooks.get(&path_str);
+            let hooks = self.core.get_hooks(&path_str);
 
             // Run pre-dispatch hooks
             if let Some(hooks) = hooks {
@@ -232,7 +255,7 @@ impl LocalApp {
             .map(|a| a.into().to_string_lossy().into_owned())
             .collect();
 
-        let augmented_cmd = self.augment_command(cmd.clone());
+        let augmented_cmd = self.core.augment_command(cmd.clone());
 
         let matches = match augmented_cmd.try_get_matches_from(&args) {
             Ok(m) => m,
@@ -240,11 +263,11 @@ impl LocalApp {
         };
 
         // Check if we need to insert default command
-        let matches = if !has_subcommand(&matches) && self.default_command.is_some() {
-            let default_cmd = self.default_command.as_ref().unwrap();
+        let matches = if !has_subcommand(&matches) && self.core.default_command().is_some() {
+            let default_cmd = self.core.default_command().unwrap();
             let new_args = insert_default_command(args, default_cmd);
 
-            let augmented_cmd = self.augment_command(cmd);
+            let augmented_cmd = self.core.augment_command(cmd);
             match augmented_cmd.try_get_matches_from(&new_args) {
                 Ok(m) => m,
                 Err(e) => return RunResult::Handled(e.to_string()),
@@ -253,24 +276,8 @@ impl LocalApp {
             matches
         };
 
-        // Extract output mode
-        let output_mode = if self.output_flag.is_some() {
-            match matches
-                .get_one::<String>("_output_mode")
-                .map(|s| s.as_str())
-            {
-                Some("term") => OutputMode::Term,
-                Some("text") => OutputMode::Text,
-                Some("term-debug") => OutputMode::TermDebug,
-                Some("json") => OutputMode::Json,
-                Some("yaml") => OutputMode::Yaml,
-                Some("xml") => OutputMode::Xml,
-                Some("csv") => OutputMode::Csv,
-                _ => OutputMode::Auto,
-            }
-        } else {
-            OutputMode::Auto
-        };
+        // Extract output mode using core
+        let output_mode = self.core.extract_output_mode(&matches);
 
         self.dispatch(matches, output_mode)
     }

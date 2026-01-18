@@ -3,22 +3,20 @@
 //! This module provides the [`App`] type which is the main entry point
 //! for standout-clap integration.
 
-use crate::rendering::theme::detect_color_mode;
 use crate::setup::SetupError;
 use crate::topics::{
     display_with_pager, render_topic, render_topics_list, TopicRegistry, TopicRenderConfig,
 };
-use crate::TemplateRegistry;
 use crate::{render_auto, OutputMode, Theme};
 use clap::{Arg, ArgAction, ArgMatches, Command};
 use serde::Serialize;
-use standout_bbparser::{BBParser, TagTransform, UnknownTagBehavior};
-use std::collections::HashMap;
 
+use super::core::AppCore;
 use super::help::{render_help, render_help_with_topics, HelpConfig};
+use super::hooks::Hooks;
 use super::result::HelpResult;
 use crate::cli::handler::{CommandContext, HandlerResult, Output as HandlerOutput};
-use crate::cli::hooks::{HookError, Hooks, RenderedOutput};
+use crate::cli::hooks::{HookError, RenderedOutput};
 
 /// Gets the current terminal width, or None if not available.
 pub(crate) fn get_terminal_width() -> Option<usize> {
@@ -47,16 +45,10 @@ pub(crate) fn get_terminal_width() -> Option<usize> {
 /// let output = app.render("list", &data, OutputMode::Term)?;
 /// ```
 pub struct App {
+    /// Shared core configuration and functionality.
+    pub(crate) core: AppCore,
+    /// Topic registry for help topics (App-specific).
     pub(crate) registry: TopicRegistry,
-    pub(crate) output_flag: Option<String>,
-    pub(crate) output_file_flag: Option<String>,
-    pub(crate) output_mode: OutputMode,
-    pub(crate) theme: Option<Theme>,
-    pub(crate) command_hooks: HashMap<String, Hooks>,
-    /// Template registry for embedded templates (None means use file-based resolution)
-    pub(crate) template_registry: Option<TemplateRegistry>,
-    /// Stylesheet registry for accessing themes
-    pub(crate) stylesheet_registry: Option<crate::StylesheetRegistry>,
 }
 
 impl App {
@@ -69,28 +61,16 @@ impl App {
     /// - No hooks are registered
     pub fn new() -> Self {
         Self {
+            core: AppCore::new(),
             registry: TopicRegistry::new(),
-            output_flag: Some("output".to_string()), // Enabled by default
-            output_file_flag: Some("output-file-path".to_string()),
-            output_mode: OutputMode::Auto,
-            theme: None,
-            command_hooks: HashMap::new(),
-            template_registry: None,
-            stylesheet_registry: None,
         }
     }
 
     /// Creates a new App instance with a pre-configured topic registry.
     pub fn with_registry(registry: TopicRegistry) -> Self {
         Self {
+            core: AppCore::new(),
             registry,
-            output_flag: Some("output".to_string()),
-            output_file_flag: Some("output-file-path".to_string()),
-            output_mode: OutputMode::Auto,
-            theme: None,
-            command_hooks: HashMap::new(),
-            template_registry: None,
-            stylesheet_registry: None,
         }
     }
 
@@ -109,19 +89,23 @@ impl App {
         &mut self.registry
     }
 
+    // =========================================================================
+    // Delegated accessors (from AppCore)
+    // =========================================================================
+
     /// Returns the current output mode.
     pub fn output_mode(&self) -> OutputMode {
-        self.output_mode
+        self.core.output_mode()
     }
 
     /// Returns the hooks registered for a specific command path.
     pub fn get_hooks(&self, path: &str) -> Option<&Hooks> {
-        self.command_hooks.get(path)
+        self.core.get_hooks(path)
     }
 
     /// Returns the default theme, if configured.
     pub fn theme(&self) -> Option<&Theme> {
-        self.theme.as_ref()
+        self.core.theme()
     }
 
     /// Gets a theme by name from the stylesheet registry.
@@ -133,33 +117,26 @@ impl App {
     /// Returns an error if no stylesheet registry is configured or if the theme
     /// is not found.
     pub fn get_theme(&mut self, name: &str) -> Result<Theme, SetupError> {
-        self.stylesheet_registry
-            .as_mut()
-            .ok_or_else(|| SetupError::Config("No stylesheet registry configured".into()))?
-            .get(name)
-            .map_err(|_| SetupError::ThemeNotFound(name.to_string()))
+        self.core.get_theme(name)
     }
 
     /// Returns the names of all available templates.
     ///
     /// Returns an empty iterator if no template registry is configured.
     pub fn template_names(&self) -> impl Iterator<Item = &str> {
-        self.template_registry
-            .as_ref()
-            .map(|r| r.names())
-            .into_iter()
-            .flatten()
+        self.core.template_names()
     }
 
     /// Returns the names of all available themes.
     ///
     /// Returns an empty vector if no stylesheet registry is configured.
     pub fn theme_names(&self) -> Vec<String> {
-        self.stylesheet_registry
-            .as_ref()
-            .map(|r| r.names().map(String::from).collect())
-            .unwrap_or_default()
+        self.core.theme_names()
     }
+
+    // =========================================================================
+    // Rendering (delegated to AppCore)
+    // =========================================================================
 
     /// Renders a template with the given data.
     ///
@@ -189,98 +166,20 @@ impl App {
         data: &T,
         mode: OutputMode,
     ) -> Result<String, SetupError> {
-        // For JSON/YAML/XML/CSV modes, serialize directly
-        if mode.is_structured() {
-            return self.serialize_data(data, mode);
-        }
-
-        // Get template registry
-        let registry = self
-            .template_registry
-            .as_ref()
-            .ok_or_else(|| SetupError::Config("No template registry configured".into()))?;
-
-        // Build MiniJinja environment with all templates
-        let mut env = minijinja::Environment::new();
-        crate::rendering::template::filters::register_filters(&mut env);
-
-        for name in registry.names() {
-            if let Ok(content) = registry.get_content(name) {
-                env.add_template_owned(name.to_string(), content)
-                    .map_err(|e| SetupError::Template(e.to_string()))?;
-            }
-        }
-
-        // Pass 1: MiniJinja template rendering
-        let tmpl = env
-            .get_template(template)
-            .map_err(|e| SetupError::Template(e.to_string()))?;
-        let minijinja_output = tmpl
-            .render(data)
-            .map_err(|e| SetupError::Template(e.to_string()))?;
-
-        // Pass 2: BBParser style tag processing
-        let theme = self.theme.clone().unwrap_or_default();
-        let color_mode = detect_color_mode();
-        let styles = theme.resolve_styles(Some(color_mode));
-        let resolved_styles = styles.to_resolved_map();
-
-        let transform = match mode {
-            OutputMode::Auto => {
-                if mode.should_use_color() {
-                    TagTransform::Apply
-                } else {
-                    TagTransform::Remove
-                }
-            }
-            OutputMode::Term => TagTransform::Apply,
-            OutputMode::Text => TagTransform::Remove,
-            _ => TagTransform::Remove, // Structured modes handled above
-        };
-
-        let parser = BBParser::new(resolved_styles, transform)
-            .unknown_behavior(UnknownTagBehavior::Passthrough);
-        Ok(parser.parse(&minijinja_output))
+        self.core.render(template, data, mode)
     }
 
-    /// Serializes data to structured format (JSON, YAML, XML, CSV).
-    fn serialize_data<T: Serialize>(
+    /// Renders an inline template string with the given data.
+    ///
+    /// Unlike `render`, this takes the template content directly.
+    /// Still supports `{% include %}` if a template registry is configured.
+    pub fn render_inline<T: Serialize>(
         &self,
+        template: &str,
         data: &T,
         mode: OutputMode,
     ) -> Result<String, SetupError> {
-        match mode {
-            OutputMode::Json => {
-                serde_json::to_string_pretty(data).map_err(|e| SetupError::Template(e.to_string()))
-            }
-            OutputMode::Yaml => {
-                serde_yaml::to_string(data).map_err(|e| SetupError::Template(e.to_string()))
-            }
-            OutputMode::Xml => {
-                quick_xml::se::to_string(data).map_err(|e| SetupError::Template(e.to_string()))
-            }
-            OutputMode::Csv => {
-                let value =
-                    serde_json::to_value(data).map_err(|e| SetupError::Template(e.to_string()))?;
-                let (headers, rows) = crate::util::flatten_json_for_csv(&value);
-
-                let mut wtr = csv::Writer::from_writer(Vec::new());
-                wtr.write_record(&headers)
-                    .map_err(|e| SetupError::Template(e.to_string()))?;
-                for row in rows {
-                    wtr.write_record(&row)
-                        .map_err(|e| SetupError::Template(e.to_string()))?;
-                }
-                let bytes = wtr
-                    .into_inner()
-                    .map_err(|e| SetupError::Template(e.to_string()))?;
-                String::from_utf8(bytes).map_err(|e| SetupError::Template(e.to_string()))
-            }
-            _ => Err(SetupError::Config(format!(
-                "serialize_data called with non-structured mode: {:?}",
-                mode
-            ))),
-        }
+        self.core.render_inline(template, data, mode)
     }
 
     /// Executes a command handler with hooks applied automatically.
@@ -343,11 +242,11 @@ impl App {
         T: Serialize,
     {
         let ctx = CommandContext {
-            output_mode: self.output_mode,
+            output_mode: self.core.output_mode(),
             command_path: path.split('.').map(String::from).collect(),
         };
 
-        let hooks = self.command_hooks.get(path);
+        let hooks = self.core.get_hooks(path);
 
         // Run pre-dispatch hooks
         if let Some(hooks) = hooks {
@@ -370,8 +269,8 @@ impl App {
                 }
 
                 // Render the (potentially modified) data
-                let theme = self.theme.clone().unwrap_or_default();
-                match render_auto(template, &json_data, &theme, self.output_mode) {
+                let theme = self.core.theme().cloned().unwrap_or_default();
+                match render_auto(template, &json_data, &theme, self.core.output_mode()) {
                     Ok(rendered) => RenderedOutput::Text(rendered),
                     Err(e) => return Err(HookError::post_output("Render error").with_source(e)),
                 }
@@ -397,7 +296,8 @@ impl App {
     /// - Adds custom `help` subcommand with topic support
     /// - Adds `--output` flag if enabled
     pub fn augment_command(&self, cmd: Command) -> Command {
-        let mut cmd = cmd.disable_help_subcommand(true).subcommand(
+        // First add the help subcommand (App-specific, for topic support)
+        let cmd = cmd.disable_help_subcommand(true).subcommand(
             Command::new("help")
                 .about("Print this message or the help of the given subcommand(s)")
                 .arg(
@@ -414,43 +314,8 @@ impl App {
                 ),
         );
 
-        // Add output flag if enabled
-        if let Some(ref flag_name) = self.output_flag {
-            let flag: &'static str = Box::leak(flag_name.clone().into_boxed_str());
-            cmd = cmd.arg(
-                Arg::new("_output_mode")
-                    .long(flag)
-                    .value_name("MODE")
-                    .global(true)
-                    .value_parser([
-                        "auto",
-                        "term",
-                        "text",
-                        "term-debug",
-                        "json",
-                        "yaml",
-                        "xml",
-                        "csv",
-                    ])
-                    .default_value("auto")
-                    .help("Output mode: auto, term, text, term-debug, json, yaml, xml, or csv"),
-            );
-        }
-
-        // Add output file flag if enabled
-        if let Some(ref flag_name) = self.output_file_flag {
-            let flag: &'static str = Box::leak(flag_name.clone().into_boxed_str());
-            cmd = cmd.arg(
-                Arg::new("_output_file_path")
-                    .long(flag)
-                    .value_name("PATH")
-                    .global(true)
-                    .action(ArgAction::Set)
-                    .help("Write output to file instead of stdout"),
-            );
-        }
-
-        cmd
+        // Then delegate to core for output flags
+        self.core.augment_command(cmd)
     }
 
     /// Parses CLI arguments and returns matches.
@@ -513,28 +378,12 @@ impl App {
             Err(e) => return HelpResult::Error(e),
         };
 
-        // Extract output mode if the flag was configured
-        let output_mode = if self.output_flag.is_some() {
-            match matches
-                .get_one::<String>("_output_mode")
-                .map(|s| s.as_str())
-            {
-                Some("term") => OutputMode::Term,
-                Some("text") => OutputMode::Text,
-                Some("term-debug") => OutputMode::TermDebug,
-                Some("json") => OutputMode::Json,
-                Some("yaml") => OutputMode::Yaml,
-                Some("xml") => OutputMode::Xml,
-                Some("csv") => OutputMode::Csv,
-                _ => OutputMode::Auto,
-            }
-        } else {
-            OutputMode::Auto
-        };
+        // Extract output mode using core
+        let output_mode = self.core.extract_output_mode(&matches);
 
         let config = HelpConfig {
             output_mode: Some(output_mode),
-            theme: self.theme.clone(),
+            theme: self.core.theme().cloned(),
             ..Default::default()
         };
 
@@ -665,7 +514,7 @@ mod tests {
     #[test]
     fn test_output_flag_enabled_by_default() {
         let standout = App::new();
-        assert!(standout.output_flag.is_some());
-        assert_eq!(standout.output_flag.as_deref(), Some("output"));
+        assert!(standout.core.output_flag.is_some());
+        assert_eq!(standout.core.output_flag.as_deref(), Some("output"));
     }
 }

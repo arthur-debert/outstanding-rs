@@ -181,8 +181,11 @@ impl AppBuilder {
     ///     .build()?;
     /// ```
     pub fn build(mut self) -> Result<App, SetupError> {
+        use super::core::AppCore;
+        use std::sync::Arc;
+
         // Resolve theme: explicit theme takes precedence, then stylesheet registry
-        let theme = if let Some(theme) = self.theme {
+        let theme = if let Some(theme) = self.theme.take() {
             Some(theme)
         } else if let Some(ref mut registry) = self.stylesheet_registry {
             if let Some(name) = &self.default_theme_name {
@@ -202,15 +205,25 @@ impl AppBuilder {
             None
         };
 
-        Ok(App {
-            registry: self.registry,
+        // Wrap template registry in Arc for sharing across commands
+        let template_registry = self.template_registry.take().map(Arc::new);
+
+        // Build the AppCore with all shared configuration
+        let core = AppCore {
             output_flag: self.output_flag,
             output_file_flag: self.output_file_flag,
             output_mode: OutputMode::Auto,
             theme,
             command_hooks: self.command_hooks,
-            template_registry: self.template_registry,
+            default_command: self.default_command,
+            template_registry,
             stylesheet_registry: self.stylesheet_registry,
+            context_registry: self.context_registry,
+        };
+
+        Ok(App {
+            core,
+            registry: self.registry,
         })
     }
 
@@ -232,14 +245,14 @@ mod tests {
     #[test]
     fn test_builder_output_flag_enabled_by_default() {
         let standout = AppBuilder::new().build().unwrap();
-        assert!(standout.output_flag.is_some());
-        assert_eq!(standout.output_flag.as_deref(), Some("output"));
+        assert!(standout.core.output_flag.is_some());
+        assert_eq!(standout.core.output_flag.as_deref(), Some("output"));
     }
 
     #[test]
     fn test_no_output_flag() {
         let standout = AppBuilder::new().no_output_flag().build().unwrap();
-        assert!(standout.output_flag.is_none());
+        assert!(standout.core.output_flag.is_none());
     }
 
     #[test]
@@ -248,7 +261,7 @@ mod tests {
             .output_flag(Some("format"))
             .build()
             .unwrap();
-        assert_eq!(standout.output_flag.as_deref(), Some("format"));
+        assert_eq!(standout.core.output_flag.as_deref(), Some("format"));
     }
 
     #[test]
@@ -267,8 +280,8 @@ mod tests {
             .build()
             .unwrap();
 
-        assert!(app.theme.is_some());
-        let theme = app.theme.as_ref().unwrap();
+        assert!(app.core.theme.is_some());
+        let theme = app.core.theme.as_ref().unwrap();
         assert_eq!(theme.name(), Some("base"));
 
         // 2. theme.yaml exists (should override base)
@@ -279,7 +292,7 @@ mod tests {
             .build()
             .unwrap();
 
-        assert_eq!(app.theme.as_ref().unwrap().name(), Some("theme"));
+        assert_eq!(app.core.theme.as_ref().unwrap().name(), Some("theme"));
 
         // 3. default.yaml exists (should override theme)
         fs::write(temp_dir.path().join("default.yaml"), "style: { fg: green }").unwrap();
@@ -289,6 +302,6 @@ mod tests {
             .build()
             .unwrap();
 
-        assert_eq!(app.theme.as_ref().unwrap().name(), Some("default"));
+        assert_eq!(app.core.theme.as_ref().unwrap().name(), Some("default"));
     }
 }
