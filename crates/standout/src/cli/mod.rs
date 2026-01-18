@@ -205,6 +205,11 @@ pub use standout_macros::Dispatch;
 // Re-export error types
 pub use crate::setup::SetupError;
 
+// Re-export dispatch utilities from standout-dispatch
+pub use dispatch::{
+    extract_command_path, get_deepest_matches, has_subcommand, insert_default_command,
+};
+
 /// Parses a clap command with styled help output.
 ///
 /// This is the simplest entry point for basic CLIs without topics.

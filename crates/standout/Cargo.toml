@@ -14,6 +14,7 @@ readme = "README.md"
 standout-render = { version = "2.1.0", path = "../standout-render" }
 standout-bbparser = { version = "2.1.0", path = "../standout-bbparser" }
 standout-macros = { version = "2.1.0", path = "../standout-macros" }
+standout-dispatch = { version = "2.1.0", path = "../standout-dispatch" }
 
 # Direct dependencies (also used by standout-render, but needed here for cli module)
 console = "0.15"
