@@ -41,28 +41,27 @@ use std::cell::RefCell;
 use std::collections::HashMap;
 use std::rc::Rc;
 
-use clap::{Arg, ArgAction, ArgMatches, Command};
+use clap::ArgMatches;
 use serde::Serialize;
 
 use crate::context::{ContextRegistry, RenderContext};
-use crate::topics::TopicRegistry;
+
 use crate::TemplateRegistry;
 use crate::{render_auto_with_context, OutputMode, Theme};
 
 use super::app::get_terminal_width;
+
 use super::dispatch::{
-    extract_command_path, get_deepest_matches, has_subcommand, insert_default_command,
     DispatchOutput, LocalDispatchFn,
 };
-use super::handler::{CommandContext, HandlerResult, LocalFnHandler, LocalHandler, Output, RunResult};
-use super::hooks::{Hooks, RenderedOutput};
+use super::handler::{CommandContext, HandlerResult, LocalFnHandler, LocalHandler, Output};
+use super::hooks::Hooks;
 use super::local_app::LocalApp;
 use crate::setup::SetupError;
 
+
 /// Recipe for creating local dispatch closures.
 trait LocalCommandRecipe {
-    fn template(&self) -> Option<&str>;
-    fn take_hooks(&mut self) -> Option<Hooks>;
     fn create_dispatch(
         self: Box<Self>,
         template: &str,
@@ -78,8 +77,6 @@ where
     T: Serialize + 'static,
 {
     handler: F,
-    template: Option<String>,
-    hooks: Option<Hooks>,
     _phantom: std::marker::PhantomData<T>,
 }
 
@@ -91,8 +88,6 @@ where
     fn new(handler: F) -> Self {
         Self {
             handler,
-            template: None,
-            hooks: None,
             _phantom: std::marker::PhantomData,
         }
     }
@@ -103,14 +98,6 @@ where
     F: FnMut(&ArgMatches, &CommandContext) -> HandlerResult<T> + 'static,
     T: Serialize + 'static,
 {
-    fn template(&self) -> Option<&str> {
-        self.template.as_deref()
-    }
-
-    fn take_hooks(&mut self) -> Option<Hooks> {
-        self.hooks.take()
-    }
-
     fn create_dispatch(
         self: Box<Self>,
         template: &str,
@@ -173,8 +160,6 @@ where
     T: Serialize + 'static,
 {
     handler: H,
-    template: Option<String>,
-    hooks: Option<Hooks>,
     _phantom: std::marker::PhantomData<T>,
 }
 
@@ -186,8 +171,6 @@ where
     fn new(handler: H) -> Self {
         Self {
             handler,
-            template: None,
-            hooks: None,
             _phantom: std::marker::PhantomData,
         }
     }
@@ -198,14 +181,6 @@ where
     H: LocalHandler<Output = T> + 'static,
     T: Serialize + 'static,
 {
-    fn template(&self) -> Option<&str> {
-        self.template.as_deref()
-    }
-
-    fn take_hooks(&mut self) -> Option<Hooks> {
-        self.hooks.take()
-    }
-
     fn create_dispatch(
         mut self: Box<Self>,
         template: &str,
@@ -296,7 +271,7 @@ struct PendingLocalCommand {
 /// | State mutation | Interior mutability | Direct |
 /// | Storage | `Arc<dyn Fn>` | `Rc<RefCell<dyn FnMut>>` |
 pub struct LocalAppBuilder {
-    pub(crate) registry: TopicRegistry,
+    // pub(crate) registry: TopicRegistry, // Unused
     pub(crate) output_flag: Option<String>,
     pub(crate) output_file_flag: Option<String>,
     pub(crate) theme: Option<Theme>,
@@ -322,7 +297,7 @@ impl LocalAppBuilder {
     /// Creates a new builder with default settings.
     pub fn new() -> Self {
         Self {
-            registry: TopicRegistry::new(),
+            // registry: TopicRegistry::new(),
             output_flag: Some("output".to_string()),
             output_file_flag: Some("output-file-path".to_string()),
             theme: None,
@@ -500,12 +475,11 @@ impl LocalAppBuilder {
         String::new()
     }
 
-    fn ensure_commands_finalized(&self) {
+    fn ensure_commands_finalized(&self, theme: &Theme) {
         if self.finalized_commands.borrow().is_some() {
             return;
         }
 
-        let theme = self.theme.clone().unwrap_or_default();
         let context_registry = &self.context_registry;
 
         let mut commands = HashMap::new();
@@ -547,10 +521,12 @@ impl LocalAppBuilder {
         };
 
         // Finalize commands before building
-        self.ensure_commands_finalized();
+        // Use the resolved theme (failed previously because self.theme was taken)
+        let effective_theme = theme.clone().unwrap_or_default();
+        self.ensure_commands_finalized(&effective_theme);
 
         Ok(LocalApp {
-            registry: self.registry,
+            // registry: self.registry,
             output_flag: self.output_flag,
             output_file_flag: self.output_file_flag,
             output_mode: OutputMode::Auto,
@@ -616,20 +592,25 @@ mod tests {
 
     #[test]
     fn test_local_builder_multiple_commands() {
-        let mut state = Vec::new();
+        use std::cell::RefCell;
+        use std::rc::Rc;
+
+        let state = Rc::new(RefCell::new(Vec::new()));
+        let state_add = state.clone();
+        let state_list = state.clone();
 
         let builder = LocalAppBuilder::new()
             .command(
                 "add",
-                |_m, _ctx| {
-                    state.push("item");
-                    Ok(Output::Render(json!({"count": state.len()})))
+                move |_m, _ctx| {
+                    state_add.borrow_mut().push("item");
+                    Ok(Output::Render(json!({"count": state_add.borrow().len()})))
                 },
                 "",
             )
             .command(
                 "list",
-                |_m, _ctx| Ok(Output::Render(json!({"items": state.clone()}))),
+                move |_m, _ctx| Ok(Output::Render(json!({"items": state_list.borrow().clone()}))),
                 "",
             );
 

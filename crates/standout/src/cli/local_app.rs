@@ -38,7 +38,7 @@ use std::collections::HashMap;
 
 use clap::{Arg, ArgAction, ArgMatches, Command};
 
-use crate::topics::TopicRegistry;
+
 use crate::OutputMode;
 use crate::Theme;
 
@@ -82,7 +82,7 @@ use super::local_builder::LocalAppBuilder;
 /// | Thread safety | Yes | No |
 /// | Use case | Libraries, async | Simple CLIs |
 pub struct LocalApp {
-    pub(crate) registry: TopicRegistry,
+    // pub(crate) registry: TopicRegistry, // Unused in local app
     pub(crate) output_flag: Option<String>,
     pub(crate) output_file_flag: Option<String>,
     pub(crate) output_mode: OutputMode,
