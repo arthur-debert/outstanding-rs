@@ -35,7 +35,6 @@ pub trait Dispatchable {
 }
 
 /// Internal result type for dispatch functions.
-/// Internal result type for dispatch functions.
 pub enum DispatchOutput {
     /// Text output (rendered template or JSON)
     Text(String),
@@ -104,7 +103,6 @@ pub(crate) fn render_handler_output<T: Serialize>(
 /// allows post-dispatch hooks to run between handler execution and rendering.
 ///
 /// Used with [`App`](super::App) and [`Handler`](super::handler::Handler).
-/// Used with [`App`](super::App) and [`Handler`](super::handler::Handler).
 pub type DispatchFn = Arc<
     dyn Fn(&ArgMatches, &CommandContext, Option<&Hooks>) -> Result<DispatchOutput, String>
         + Send
@@ -129,7 +127,6 @@ impl Dispatchable for DispatchFn {
 /// - Uses `FnMut` instead of `Fn` (allows mutable state)
 /// - Does NOT require `Send + Sync`
 ///
-/// Used with [`LocalApp`](super::LocalApp) and [`LocalHandler`](super::handler::LocalHandler).
 /// Used with [`LocalApp`](super::LocalApp) and [`LocalHandler`](super::handler::LocalHandler).
 pub type LocalDispatchFn = Rc<
     RefCell<
