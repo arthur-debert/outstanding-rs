@@ -1,13 +1,14 @@
 #![cfg(feature = "clap")]
 use standout::cli::{LocalApp, Output};
-use standout::{Theme, OutputMode};
+use standout::Theme;
 use clap::Command;
 use console::Style;
 
 #[test]
 fn test_theme_preservation_bug() {
     // 1. Create a theme with a custom style
-    let style = Style::new().red();
+    // Note: force_styling(true) is required in tests because there's no TTY
+    let style = Style::new().red().force_styling(true);
     let theme = Theme::new().add("custom_error", style);
 
     // 2. Build the app
@@ -30,9 +31,7 @@ fn test_theme_preservation_bug() {
     
     match result {
         standout::cli::RunResult::Handled(output) => {
-            // println!("Output: {:?}", output);
-            // 4. Verification
-            // If theme works, output should contain ANSI red code: \x1b[31m
+            // 4. Verification: If theme works, output should contain ANSI red code: \x1b[31m
             assert!(output.contains("\x1b[31m"), "Output should contain Red ANSI code, but got: {:?}", output);
         },
         _ => panic!("Expected handled result"),
