@@ -197,6 +197,67 @@ let output = renderer.render("report", &data)?;
 
 In debug builds, file-based templates are re-read on each render (hot reload).
 
+## Using Embedded Templates
+
+For release builds, embed templates at compile time:
+
+```rust
+use standout::{embed_templates, Renderer, Theme};
+
+let theme = Theme::new()
+    .add("title", Style::new().bold());
+
+let mut renderer = Renderer::new(theme)?;
+
+// Load all templates from the embedded source
+renderer.with_embedded_source(embed_templates!("src/templates"));
+
+// Render by name (with or without extension)
+let output = renderer.render("report", &data)?;
+
+// Includes work with extensionless names
+// If src/templates/_header.jinja exists, use {% include "_header" %}
+```
+
+Templates are accessible by both extensionless name (`"report"`) and with extension (`"report.jinja"`).
+
+## Loading Themes from Embedded Styles
+
+For production deployments, embed stylesheets:
+
+```rust
+use standout::{embed_styles, StylesheetRegistry, Renderer};
+
+// Embed all .yaml files from src/styles/
+let styles = embed_styles!("src/styles");
+
+// Convert to a registry for theme lookup
+let mut registry: StylesheetRegistry = styles.into();
+
+// Get a theme by name (e.g., "default" for src/styles/default.yaml)
+let theme = registry.get("default")?;
+
+// Use with Renderer
+let mut renderer = Renderer::new(theme)?;
+```
+
+The relationship:
+- `embed_styles!` → `EmbeddedStyles` (compile-time embedding)
+- `StylesheetRegistry` → manages multiple themes, hot-reload in debug
+- `Theme` → resolved styles for a single theme, used by Renderer
+
+## Feature Support: Includes
+
+Template includes (`{% include "partial" %}`) require a template registry:
+
+| Approach | Includes | Notes |
+|----------|----------|-------|
+| `Renderer` | ✓ | Use `add_template()` or `with_embedded_source()` |
+| `render()` / `render_auto()` | ✗ | Takes template string, no registry |
+
+For one-off templates without includes, use the standalone `render*` functions.
+For multi-template projects with includes, use `Renderer`.
+
 ## Template Validation
 
 Catch style tag errors without producing output:

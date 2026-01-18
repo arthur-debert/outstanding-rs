@@ -998,4 +998,49 @@ mod tests {
         assert!(registry.is_empty());
         assert_eq!(registry.len(), 0);
     }
+
+    #[test]
+    fn test_extensionless_includes_work() {
+        // Simulates the user's report: {% include "_partial" %} should work
+        // when the file is actually "_partial.jinja"
+        let entries: &[(&str, &str)] = &[
+            ("main.jinja", "Start {% include '_partial' %} End"),
+            ("_partial.jinja", "PARTIAL_CONTENT"),
+        ];
+        let registry = TemplateRegistry::from_embedded_entries(entries);
+
+        // Build MiniJinja environment the same way App.render() does
+        let mut env = minijinja::Environment::new();
+        for name in registry.names() {
+            if let Ok(content) = registry.get_content(name) {
+                env.add_template_owned(name.to_string(), content).unwrap();
+            }
+        }
+
+        // Verify extensionless include works
+        let tmpl = env.get_template("main").unwrap();
+        let output = tmpl.render(()).unwrap();
+        assert_eq!(output, "Start PARTIAL_CONTENT End");
+    }
+
+    #[test]
+    fn test_extensionless_includes_with_extension_syntax() {
+        // Also verify that {% include "_partial.jinja" %} works
+        let entries: &[(&str, &str)] = &[
+            ("main.jinja", "Start {% include '_partial.jinja' %} End"),
+            ("_partial.jinja", "PARTIAL_CONTENT"),
+        ];
+        let registry = TemplateRegistry::from_embedded_entries(entries);
+
+        let mut env = minijinja::Environment::new();
+        for name in registry.names() {
+            if let Ok(content) = registry.get_content(name) {
+                env.add_template_owned(name.to_string(), content).unwrap();
+            }
+        }
+
+        let tmpl = env.get_template("main").unwrap();
+        let output = tmpl.render(()).unwrap();
+        assert_eq!(output, "Start PARTIAL_CONTENT End");
+    }
 }

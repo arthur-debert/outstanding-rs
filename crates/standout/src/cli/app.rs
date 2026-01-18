@@ -3,6 +3,7 @@
 //! This module provides the [`App`] type which is the main entry point
 //! for standout-clap integration.
 
+use crate::rendering::theme::detect_color_mode;
 use crate::setup::SetupError;
 use crate::topics::{
     display_with_pager, render_topic, render_topics_list, TopicRegistry, TopicRenderConfig,
@@ -11,6 +12,7 @@ use crate::TemplateRegistry;
 use crate::{render_auto, OutputMode, Theme};
 use clap::{Arg, ArgAction, ArgMatches, Command};
 use serde::Serialize;
+use standout_bbparser::{BBParser, TagTransform, UnknownTagBehavior};
 use std::collections::HashMap;
 
 use super::help::{render_help, render_help_with_topics, HelpConfig};
@@ -209,11 +211,36 @@ impl App {
             }
         }
 
+        // Pass 1: MiniJinja template rendering
         let tmpl = env
             .get_template(template)
             .map_err(|e| SetupError::Template(e.to_string()))?;
-        tmpl.render(data)
-            .map_err(|e| SetupError::Template(e.to_string()))
+        let minijinja_output = tmpl
+            .render(data)
+            .map_err(|e| SetupError::Template(e.to_string()))?;
+
+        // Pass 2: BBParser style tag processing
+        let theme = self.theme.clone().unwrap_or_default();
+        let color_mode = detect_color_mode();
+        let styles = theme.resolve_styles(Some(color_mode));
+        let resolved_styles = styles.to_resolved_map();
+
+        let transform = match mode {
+            OutputMode::Auto => {
+                if mode.should_use_color() {
+                    TagTransform::Apply
+                } else {
+                    TagTransform::Remove
+                }
+            }
+            OutputMode::Term => TagTransform::Apply,
+            OutputMode::Text => TagTransform::Remove,
+            _ => TagTransform::Remove, // Structured modes handled above
+        };
+
+        let parser = BBParser::new(resolved_styles, transform)
+            .unknown_behavior(UnknownTagBehavior::Passthrough);
+        Ok(parser.parse(&minijinja_output))
     }
 
     /// Serializes data to structured format (JSON, YAML, XML, CSV).

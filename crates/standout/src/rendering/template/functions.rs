@@ -44,6 +44,33 @@
 //! ```text
 //! [title]{{ data.title }}[/title]: [count]{{ items | length }}[/count] items
 //! ```
+//!
+//! # Feature Support Matrix
+//!
+//! Different rendering approaches support different features:
+//!
+//! | Approach | Includes | Per-call Mode | Styles | Use Case |
+//! |----------|----------|---------------|--------|----------|
+//! | [`Renderer`] | ✓ | ✓* | ✓ | Pre-compiled templates, hot reload |
+//! | [`App::render`] | ✓ | ✓ | ✓ | CLI apps with embedded templates |
+//! | [`render`] / [`render_auto`] | ✗ | ✓ | ✓ | One-off template strings |
+//!
+//! *Use [`Renderer::set_output_mode`] to change mode between renders.
+//!
+//! ## Template Includes
+//!
+//! Template includes (`{% include "partial" %}`) require a template registry.
+//! The standalone `render*` functions take a template **string**, not a name,
+//! so they cannot resolve includes to other templates.
+//!
+//! For includes, use either:
+//! - [`Renderer`] with [`add_template`](Renderer::add_template) or
+//!   [`with_embedded_source`](Renderer::with_embedded_source)
+//! - [`App`](crate::cli::App) with embedded templates via the builder
+//!
+//! [`Renderer`]: super::renderer::Renderer
+//! [`Renderer::set_output_mode`]: super::renderer::Renderer::set_output_mode
+//! [`App::render`]: crate::cli::App::render
 
 use minijinja::{Environment, Error, Value};
 use serde::Serialize;

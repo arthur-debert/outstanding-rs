@@ -42,6 +42,7 @@ use super::super::style::Styles;
 use super::super::theme::Theme;
 use super::filters::register_filters;
 use super::registry::{walk_template_dir, ResolvedTemplate, TemplateRegistry};
+use crate::EmbeddedTemplates;
 
 /// A renderer with pre-registered templates.
 ///
@@ -285,6 +286,69 @@ impl Renderer {
     pub fn with_embedded(&mut self, templates: HashMap<String, String>) -> &mut Self {
         self.registry.add_embedded(templates);
         self
+    }
+
+    /// Loads templates from an `EmbeddedTemplates` source.
+    ///
+    /// This is the recommended way to use `embed_templates!` with `Renderer`.
+    /// The embedded templates are converted to a registry that supports both
+    /// extensionless and with-extension lookups.
+    ///
+    /// In debug mode, if the source path exists, templates are loaded from disk
+    /// (enabling hot-reload). Otherwise, embedded content is used.
+    ///
+    /// # Example
+    ///
+    /// ```rust,ignore
+    /// use standout::{embed_templates, Renderer, Theme};
+    ///
+    /// let mut renderer = Renderer::new(Theme::new())?;
+    /// renderer.with_embedded_source(embed_templates!("./templates"));
+    ///
+    /// // Now you can render any template from the embedded source
+    /// let output = renderer.render("list", &data)?;
+    /// ```
+    pub fn with_embedded_source(&mut self, source: EmbeddedTemplates) -> &mut Self {
+        // Convert EmbeddedTemplates to TemplateRegistry
+        let template_registry = TemplateRegistry::from(source);
+
+        // Add all templates from the registry to both env and registry
+        // This mirrors the behavior of add_template()
+        for name in template_registry.names() {
+            if let Ok(content) = template_registry.get_content(name) {
+                // Add to minijinja environment (required for includes to work)
+                // Ignore errors for duplicate names (e.g., "foo" and "foo.jinja" have same content)
+                let _ = self
+                    .env
+                    .add_template_owned(name.to_string(), content.clone());
+                // Add to registry for name resolution
+                self.registry.add_inline(name, &content);
+            }
+        }
+        self
+    }
+
+    /// Sets the output mode for subsequent renders.
+    ///
+    /// This allows changing the output mode without creating a new renderer,
+    /// which is useful when the same templates need to be rendered with
+    /// different output modes.
+    ///
+    /// # Example
+    ///
+    /// ```rust,ignore
+    /// let mut renderer = Renderer::new(theme)?;
+    ///
+    /// // Render with terminal colors
+    /// renderer.set_output_mode(OutputMode::Term);
+    /// let colored = renderer.render("list", &data)?;
+    ///
+    /// // Render plain text
+    /// renderer.set_output_mode(OutputMode::Text);
+    /// let plain = renderer.render("list", &data)?;
+    /// ```
+    pub fn set_output_mode(&mut self, mode: OutputMode) {
+        self.output_mode = mode;
     }
 
     /// Forces a rebuild of the template resolution map.
@@ -710,5 +774,86 @@ mod tests {
             .render("embedded", &Data { val: "ok".into() })
             .unwrap();
         assert_eq!(output, "Embedded: ok");
+    }
+
+    #[test]
+    fn test_renderer_set_output_mode() {
+        use console::Style;
+
+        // Use force_styling(true) to ensure ANSI codes are output even in tests
+        let theme = Theme::new().add("highlight", Style::new().green().force_styling(true));
+        let mut renderer = Renderer::with_output(theme, OutputMode::Term).unwrap();
+        renderer
+            .add_template("test", "[highlight]hello[/highlight]")
+            .unwrap();
+
+        #[derive(Serialize)]
+        struct Empty {}
+
+        // With Term mode, should have ANSI codes
+        let term_output = renderer.render("test", &Empty {}).unwrap();
+        assert!(
+            term_output.contains("\x1b["),
+            "Expected ANSI codes in Term mode, got: {:?}",
+            term_output
+        );
+
+        // Switch to Text mode
+        renderer.set_output_mode(OutputMode::Text);
+        let text_output = renderer.render("test", &Empty {}).unwrap();
+        assert_eq!(text_output, "hello", "Expected plain text in Text mode");
+    }
+
+    #[test]
+    fn test_renderer_with_embedded_source() {
+        use crate::embedded::{EmbeddedSource, TemplateResource};
+
+        // Create an EmbeddedTemplates source (simulating embed_templates! output)
+        static ENTRIES: &[(&str, &str)] = &[
+            ("greeting.jinja", "Hello, {{ name }}!"),
+            ("_partial.jinja", "PARTIAL"),
+            (
+                "with_include.jinja",
+                "Before {% include '_partial' %} After",
+            ),
+        ];
+        let source: EmbeddedSource<TemplateResource> =
+            EmbeddedSource::new(ENTRIES, "/nonexistent/path");
+
+        let mut renderer = Renderer::new(Theme::new()).unwrap();
+        renderer.with_embedded_source(source);
+
+        #[derive(Serialize)]
+        struct Data {
+            name: String,
+        }
+
+        // Test basic rendering
+        let output = renderer
+            .render(
+                "greeting",
+                &Data {
+                    name: "World".into(),
+                },
+            )
+            .unwrap();
+        assert_eq!(output, "Hello, World!");
+
+        // Test extensionless access
+        let output2 = renderer
+            .render(
+                "greeting.jinja",
+                &Data {
+                    name: "Test".into(),
+                },
+            )
+            .unwrap();
+        assert_eq!(output2, "Hello, Test!");
+
+        // Test includes work with extensionless names
+        #[derive(Serialize)]
+        struct Empty {}
+        let output3 = renderer.render("with_include", &Empty {}).unwrap();
+        assert_eq!(output3, "Before PARTIAL After");
     }
 }
