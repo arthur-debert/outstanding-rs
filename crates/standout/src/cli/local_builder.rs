@@ -44,127 +44,19 @@ use std::rc::Rc;
 use clap::ArgMatches;
 use serde::Serialize;
 
-use crate::context::{ContextRegistry, RenderContext};
+use crate::context::ContextRegistry;
 
 use crate::TemplateRegistry;
 use crate::{OutputMode, Theme};
 
-/// Renders a template with optional template registry support for includes.
-///
-/// This is similar to `render_auto_with_context` but also accepts a template
-/// registry for `{% include %}` directive support.
-fn render_with_registry(
-    template: &str,
-    data: &serde_json::Value,
-    theme: &Theme,
-    mode: OutputMode,
-    context_registry: &ContextRegistry,
-    render_ctx: &RenderContext,
-    template_registry: Option<&TemplateRegistry>,
-) -> Result<String, minijinja::Error> {
-    use crate::rendering::template::filters::register_filters;
-    use crate::rendering::theme::detect_color_mode;
-    use minijinja::Environment;
-    use standout_bbparser::{BBParser, TagTransform, UnknownTagBehavior};
-
-    // For structured modes, serialize directly
-    if mode.is_structured() {
-        return match mode {
-            OutputMode::Json => serde_json::to_string_pretty(data).map_err(|e| {
-                minijinja::Error::new(minijinja::ErrorKind::InvalidOperation, e.to_string())
-            }),
-            OutputMode::Yaml => serde_yaml::to_string(data).map_err(|e| {
-                minijinja::Error::new(minijinja::ErrorKind::InvalidOperation, e.to_string())
-            }),
-            OutputMode::Xml => quick_xml::se::to_string(data).map_err(|e| {
-                minijinja::Error::new(minijinja::ErrorKind::InvalidOperation, e.to_string())
-            }),
-            OutputMode::Csv => {
-                let (headers, rows) = crate::util::flatten_json_for_csv(data);
-                let mut wtr = csv::Writer::from_writer(Vec::new());
-                wtr.write_record(&headers).map_err(|e| {
-                    minijinja::Error::new(minijinja::ErrorKind::InvalidOperation, e.to_string())
-                })?;
-                for row in rows {
-                    wtr.write_record(&row).map_err(|e| {
-                        minijinja::Error::new(minijinja::ErrorKind::InvalidOperation, e.to_string())
-                    })?;
-                }
-                let bytes = wtr.into_inner().map_err(|e| {
-                    minijinja::Error::new(minijinja::ErrorKind::InvalidOperation, e.to_string())
-                })?;
-                String::from_utf8(bytes).map_err(|e| {
-                    minijinja::Error::new(minijinja::ErrorKind::InvalidOperation, e.to_string())
-                })
-            }
-            _ => unreachable!("is_structured() returned true for non-structured mode"),
-        };
-    }
-
-    let color_mode = detect_color_mode();
-    let styles = theme.resolve_styles(Some(color_mode));
-
-    // Validate style aliases before rendering
-    styles.validate().map_err(|e| {
-        minijinja::Error::new(minijinja::ErrorKind::InvalidOperation, e.to_string())
-    })?;
-
-    let mut env = Environment::new();
-    register_filters(&mut env);
-
-    // Load all templates from registry if available (enables {% include %})
-    if let Some(registry) = template_registry {
-        for name in registry.names() {
-            if let Ok(content) = registry.get_content(name) {
-                env.add_template_owned(name.to_string(), content)?;
-            }
-        }
-    }
-
-    env.add_template_owned("_inline".to_string(), template.to_string())?;
-    let tmpl = env.get_template("_inline")?;
-
-    // Build combined context
-    let context_values = context_registry.resolve(render_ctx);
-    let mut combined: std::collections::HashMap<String, minijinja::Value> =
-        std::collections::HashMap::new();
-
-    // Add context values first (lower priority)
-    for (key, value) in context_values {
-        combined.insert(key, value);
-    }
-
-    // Add data values (higher priority)
-    if let Some(obj) = data.as_object() {
-        for (key, value) in obj {
-            combined.insert(key.clone(), minijinja::Value::from_serialize(value));
-        }
-    }
-
-    // Pass 1: MiniJinja template rendering
-    let minijinja_output = tmpl.render(&combined)?;
-
-    // Pass 2: BBParser style tag processing
-    let transform = match mode {
-        OutputMode::Term | OutputMode::Auto => TagTransform::Apply,
-        OutputMode::TermDebug => TagTransform::Keep,
-        _ => TagTransform::Remove,
-    };
-    let resolved_styles = styles.to_resolved_map();
-    let parser =
-        BBParser::new(resolved_styles, transform).unknown_behavior(UnknownTagBehavior::Passthrough);
-    let final_output = parser.parse(&minijinja_output);
-
-    Ok(final_output)
-}
-
-use super::app::get_terminal_width;
-
-use super::dispatch::{DispatchOutput, LocalDispatchFn};
-use super::handler::{CommandContext, HandlerResult, LocalFnHandler, LocalHandler, Output};
+use super::dispatch::{render_handler_output, LocalDispatchFn};
+use super::handler::{CommandContext, HandlerResult, LocalFnHandler, LocalHandler};
 use super::hooks::Hooks;
-use super::local_app::LocalApp;
 use crate::setup::SetupError;
+
+use super::app::App;
+use super::mode::Local;
+use crate::topics::TopicRegistry;
 
 /// Recipe for creating local dispatch closures.
 trait LocalCommandRecipe {
@@ -219,44 +111,17 @@ where
 
         Rc::new(RefCell::new(
             move |matches: &ArgMatches, ctx: &CommandContext, hooks: Option<&Hooks>| {
-                let result = handler.handle(matches, ctx);
-
-                match result {
-                    Ok(Output::Render(data)) => {
-                        let mut json_data = serde_json::to_value(&data)
-                            .map_err(|e| format!("Failed to serialize handler result: {}", e))?;
-
-                        if let Some(hooks) = hooks {
-                            json_data = hooks
-                                .run_post_dispatch(matches, ctx, json_data)
-                                .map_err(|e| format!("Hook error: {}", e))?;
-                        }
-
-                        let render_ctx = RenderContext::new(
-                            ctx.output_mode,
-                            get_terminal_width(),
-                            &theme,
-                            &json_data,
-                        );
-
-                        let output = render_with_registry(
-                            &template,
-                            &json_data,
-                            &theme,
-                            ctx.output_mode,
-                            &context_registry,
-                            &render_ctx,
-                            template_registry.as_deref(),
-                        )
-                        .map_err(|e| e.to_string())?;
-                        Ok(DispatchOutput::Text(output))
-                    }
-                    Err(e) => Err(format!("Error: {}", e)),
-                    Ok(Output::Silent) => Ok(DispatchOutput::Silent),
-                    Ok(Output::Binary { data, filename }) => {
-                        Ok(DispatchOutput::Binary(data, filename))
-                    }
-                }
+                let result = handler.handle(matches, ctx).map_err(|e| e.to_string());
+                render_handler_output(
+                    result,
+                    matches,
+                    ctx,
+                    hooks,
+                    &template,
+                    &theme,
+                    &context_registry,
+                    template_registry.as_deref(),
+                )
             },
         ))
     }
@@ -303,44 +168,17 @@ where
 
         Rc::new(RefCell::new(
             move |matches: &ArgMatches, ctx: &CommandContext, hooks: Option<&Hooks>| {
-                let result = self.handler.handle(matches, ctx);
-
-                match result {
-                    Ok(Output::Render(data)) => {
-                        let mut json_data = serde_json::to_value(&data)
-                            .map_err(|e| format!("Failed to serialize handler result: {}", e))?;
-
-                        if let Some(hooks) = hooks {
-                            json_data = hooks
-                                .run_post_dispatch(matches, ctx, json_data)
-                                .map_err(|e| format!("Hook error: {}", e))?;
-                        }
-
-                        let render_ctx = RenderContext::new(
-                            ctx.output_mode,
-                            get_terminal_width(),
-                            &theme,
-                            &json_data,
-                        );
-
-                        let output = render_with_registry(
-                            &template,
-                            &json_data,
-                            &theme,
-                            ctx.output_mode,
-                            &context_registry,
-                            &render_ctx,
-                            template_registry.as_deref(),
-                        )
-                        .map_err(|e| e.to_string())?;
-                        Ok(DispatchOutput::Text(output))
-                    }
-                    Err(e) => Err(format!("Error: {}", e)),
-                    Ok(Output::Silent) => Ok(DispatchOutput::Silent),
-                    Ok(Output::Binary { data, filename }) => {
-                        Ok(DispatchOutput::Binary(data, filename))
-                    }
-                }
+                let result = self.handler.handle(matches, ctx).map_err(|e| e.to_string());
+                render_handler_output(
+                    result,
+                    matches,
+                    ctx,
+                    hooks,
+                    &template,
+                    &theme,
+                    &context_registry,
+                    template_registry.as_deref(),
+                )
             },
         ))
     }
@@ -445,7 +283,7 @@ impl LocalAppBuilder {
     ///         Ok(Output::Render(data.len()))
     ///     }, "Added. Total: {{ count }}")
     /// ```
-    pub fn command<F, T>(self, path: &str, handler: F, template: &str) -> Self
+    pub fn command<F, T>(self, path: &str, handler: F, template: &str) -> Result<Self, SetupError>
     where
         F: FnMut(&ArgMatches, &CommandContext) -> HandlerResult<T> + 'static,
         T: Serialize + 'static,
@@ -458,6 +296,10 @@ impl LocalAppBuilder {
 
         let recipe = LocalClosureRecipe::new(handler);
 
+        if self.pending_commands.borrow().contains_key(path) {
+            return Err(SetupError::DuplicateCommand(path.to_string()));
+        }
+
         self.pending_commands.borrow_mut().insert(
             path.to_string(),
             PendingLocalCommand {
@@ -466,7 +308,7 @@ impl LocalAppBuilder {
             },
         );
 
-        self
+        Ok(self)
     }
 
     /// Registers a struct handler implementing [`LocalHandler`].
@@ -489,7 +331,12 @@ impl LocalAppBuilder {
     /// LocalApp::builder()
     ///     .command_handler("count", Counter { count: 0 }, "{{ count }}")
     /// ```
-    pub fn command_handler<H, T>(self, path: &str, handler: H, template: &str) -> Self
+    pub fn command_handler<H, T>(
+        self,
+        path: &str,
+        handler: H,
+        template: &str,
+    ) -> Result<Self, SetupError>
     where
         H: LocalHandler<Output = T> + 'static,
         T: Serialize + 'static,
@@ -502,6 +349,10 @@ impl LocalAppBuilder {
 
         let recipe = LocalStructRecipe::new(handler);
 
+        if self.pending_commands.borrow().contains_key(path) {
+            return Err(SetupError::DuplicateCommand(path.to_string()));
+        }
+
         self.pending_commands.borrow_mut().insert(
             path.to_string(),
             PendingLocalCommand {
@@ -510,7 +361,7 @@ impl LocalAppBuilder {
             },
         );
 
-        self
+        Ok(self)
     }
 
     /// Registers hooks for a specific command path.
@@ -615,7 +466,7 @@ impl LocalAppBuilder {
     }
 
     /// Builds the LocalApp instance.
-    pub fn build(mut self) -> Result<LocalApp, SetupError> {
+    pub fn build(mut self) -> Result<App<Local>, SetupError> {
         use super::core::AppCore;
         use std::sync::Arc;
 
@@ -661,8 +512,9 @@ impl LocalAppBuilder {
             context_registry: self.context_registry,
         };
 
-        Ok(LocalApp {
+        Ok(App {
             core,
+            registry: TopicRegistry::new(),
             commands: self.finalized_commands.take().unwrap_or_default(),
         })
     }
@@ -677,20 +529,23 @@ impl LocalAppBuilder {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::cli::handler::Output;
     use serde_json::json;
 
     #[test]
     fn test_local_builder_command() {
         let mut counter = 0u32;
 
-        let builder = LocalAppBuilder::new().command(
-            "increment",
-            move |_m, _ctx| {
-                counter += 1;
-                Ok(Output::Render(json!({"count": counter})))
-            },
-            "{{ count }}",
-        );
+        let builder = LocalAppBuilder::new()
+            .command(
+                "increment",
+                move |_m, _ctx| {
+                    counter += 1;
+                    Ok(Output::Render(json!({"count": counter})))
+                },
+                "{{ count }}",
+            )
+            .unwrap();
 
         assert!(builder.has_command("increment"));
     }
@@ -710,8 +565,9 @@ mod tests {
             }
         }
 
-        let builder =
-            LocalAppBuilder::new().command_handler("count", Counter { count: 0 }, "{{ . }}");
+        let builder = LocalAppBuilder::new()
+            .command_handler("count", Counter { count: 0 }, "{{ . }}")
+            .unwrap();
 
         assert!(builder.has_command("count"));
     }
@@ -734,6 +590,7 @@ mod tests {
                 },
                 "",
             )
+            .unwrap()
             .command(
                 "list",
                 move |_m, _ctx| {
@@ -742,7 +599,8 @@ mod tests {
                     ))
                 },
                 "",
-            );
+            )
+            .unwrap();
 
         assert!(builder.has_command("add"));
         assert!(builder.has_command("list"));

@@ -1,5 +1,6 @@
 //! Error types for setup operations.
 
+use crate::rendering::template::registry::RegistryError;
 use minijinja::Error as JinjaError;
 
 /// Error type for setup operations.
@@ -13,6 +14,10 @@ pub enum SetupError {
     ThemeNotFound(String),
     /// Configuration error.
     Config(String),
+    /// Duplicate command registered.
+    DuplicateCommand(String),
+    /// I/O error during setup (e.g., loading templates/styles).
+    Io(std::io::Error),
 }
 
 impl std::fmt::Display for SetupError {
@@ -22,7 +27,15 @@ impl std::fmt::Display for SetupError {
             SetupError::Stylesheet(msg) => write!(f, "stylesheet error: {}", msg),
             SetupError::ThemeNotFound(name) => write!(f, "theme not found: {}", name),
             SetupError::Config(msg) => write!(f, "configuration error: {}", msg),
+            SetupError::DuplicateCommand(cmd) => write!(f, "duplicate command: {}", cmd),
+            SetupError::Io(err) => write!(f, "setup I/O error: {}", err),
         }
+    }
+}
+
+impl From<std::io::Error> for SetupError {
+    fn from(e: std::io::Error) -> Self {
+        SetupError::Io(e)
     }
 }
 
@@ -30,6 +43,12 @@ impl std::error::Error for SetupError {}
 
 impl From<JinjaError> for SetupError {
     fn from(e: JinjaError) -> Self {
+        SetupError::Template(e.to_string())
+    }
+}
+
+impl From<RegistryError> for SetupError {
+    fn from(e: RegistryError) -> Self {
         SetupError::Template(e.to_string())
     }
 }

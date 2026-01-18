@@ -19,6 +19,7 @@ use crate::cli::dispatch::{
 use crate::cli::group::{ErasedConfigRecipe, GroupBuilder, GroupEntry};
 use crate::cli::handler::{CommandContext, RunResult};
 use crate::cli::hooks::RenderedOutput;
+use crate::SetupError;
 
 impl AppBuilder {
     /// Registers commands from a dispatch closure (used by the `dispatch!` macro).
@@ -43,7 +44,7 @@ impl AppBuilder {
     ///
     /// The closure receives an empty [`GroupBuilder`] and should return it with
     /// commands added. Each top-level entry becomes a command or group.
-    pub fn commands<F>(mut self, configure: F) -> Self
+    pub fn commands<F>(mut self, configure: F) -> Result<Self, SetupError>
     where
         F: FnOnce(GroupBuilder) -> GroupBuilder,
     {
@@ -70,6 +71,11 @@ impl AppBuilder {
                     // Create a recipe for deferred closure creation
                     let recipe = ErasedConfigRecipe::from_handler(handler);
 
+                    // Check for duplicates
+                    if self.pending_commands.borrow().contains_key(&name) {
+                        return Err(SetupError::DuplicateCommand(name));
+                    }
+
                     // Store pending command
                     self.pending_commands.borrow_mut().insert(
                         name,
@@ -80,12 +86,12 @@ impl AppBuilder {
                     );
                 }
                 GroupEntry::Group { builder: nested } => {
-                    self.register_group(&name, nested);
+                    self.register_group(&name, nested)?;
                 }
             }
         }
 
-        self
+        Ok(self)
     }
 
     /// Dispatches to a registered handler if one matches the command path.
@@ -294,7 +300,7 @@ impl AppBuilder {
     /// use standout::cli::{App, HandlerResult, Output};
     ///
     /// let handled = App::builder()
-    ///     .command("list", |_m, _ctx| Ok(HandlerOutput::Render(vec!["a", "b"]), "{{ . }}")
+    ///     .command("list", |_m, _ctx| Ok(HandlerOutput::Render(vec!["a", "b"])), "{{ . }}")?
     ///     .build()?
     ///     .run(cmd, std::env::args());
     ///
@@ -345,7 +351,7 @@ impl AppBuilder {
     /// use standout::cli::{App, HandlerResult, Output, RunResult};
     ///
     /// let result = App::builder()
-    ///     .command("list", |_m, _ctx| Ok(HandlerOutput::Render(vec!["a", "b"]), "{{ . }}")
+    ///     .command("list", |_m, _ctx| Ok(HandlerOutput::Render(vec!["a", "b"])), "{{ . }}")?
     ///     .build()?
     ///     .run_to_string(cmd, std::env::args());
     ///
@@ -411,9 +417,11 @@ mod tests {
         use crate::dispatch;
         use serde_json::json;
 
-        let builder = AppBuilder::new().commands(dispatch! {
-            list => |_m, _ctx| Ok(HandlerOutput::Render(json!({"items": ["a", "b"]})))
-        });
+        let builder = AppBuilder::new()
+            .commands(dispatch! {
+                list => |_m, _ctx| Ok(HandlerOutput::Render(json!({"items": ["a", "b"]})))
+            })
+            .unwrap();
 
         assert!(builder.has_command("list"));
 
@@ -431,13 +439,15 @@ mod tests {
         use crate::dispatch;
         use serde_json::json;
 
-        let builder = AppBuilder::new().commands(dispatch! {
-            db: {
-                migrate => |_m, _ctx| Ok(HandlerOutput::Render(json!({"migrated": true}))),
-                backup => |_m, _ctx| Ok(HandlerOutput::Render(json!({"backed_up": true}))),
-            },
-            version => |_m, _ctx| Ok(HandlerOutput::Render(json!({"v": "1.0"}))),
-        });
+        let builder = AppBuilder::new()
+            .commands(dispatch! {
+                db: {
+                    migrate => |_m, _ctx| Ok(HandlerOutput::Render(json!({"migrated": true}))),
+                    backup => |_m, _ctx| Ok(HandlerOutput::Render(json!({"backed_up": true}))),
+                },
+                version => |_m, _ctx| Ok(HandlerOutput::Render(json!({"v": "1.0"}))),
+            })
+            .unwrap();
 
         assert!(builder.has_command("db.migrate"));
         assert!(builder.has_command("db.backup"));
@@ -466,12 +476,14 @@ mod tests {
         use crate::dispatch;
         use serde_json::json;
 
-        let builder = AppBuilder::new().commands(dispatch! {
-            list => {
-                handler: |_m, _ctx| Ok(HandlerOutput::Render(json!({"count": 42}))),
-                template: "Count: {{ count }}",
-            }
-        });
+        let builder = AppBuilder::new()
+            .commands(dispatch! {
+                list => {
+                    handler: |_m, _ctx| Ok(HandlerOutput::Render(json!({"count": 42}))),
+                    template: "Count: {{ count }}",
+                }
+            })
+            .unwrap();
 
         let cmd = Command::new("app").subcommand(Command::new("list"));
         let matches = cmd.try_get_matches_from(["app", "list"]).unwrap();
@@ -491,16 +503,18 @@ mod tests {
         let hook_called = Arc::new(AtomicBool::new(false));
         let hook_called_clone = hook_called.clone();
 
-        let builder = AppBuilder::new().commands(dispatch! {
-            list => {
-                handler: |_m, _ctx| Ok(HandlerOutput::Render(json!({"ok": true}))),
-                template: "{{ ok }}",
-                pre_dispatch: move |_, _| {
-                    hook_called_clone.store(true, Ordering::SeqCst);
-                    Ok(())
-                },
-            }
-        });
+        let builder = AppBuilder::new()
+            .commands(dispatch! {
+                list => {
+                    handler: |_m, _ctx| Ok(HandlerOutput::Render(json!({"ok": true}))),
+                    template: "{{ ok }}",
+                    pre_dispatch: move |_, _| {
+                        hook_called_clone.store(true, Ordering::SeqCst);
+                        Ok(())
+                    },
+                }
+            })
+            .unwrap();
 
         let cmd = Command::new("app").subcommand(Command::new("list"));
         let matches = cmd.try_get_matches_from(["app", "list"]).unwrap();
@@ -515,15 +529,17 @@ mod tests {
         use crate::dispatch;
         use serde_json::json;
 
-        let builder = AppBuilder::new().commands(dispatch! {
-            app: {
-                config: {
-                    get => |_m, _ctx| Ok(HandlerOutput::Render(json!({"key": "value"}))),
-                    set => |_m, _ctx| Ok(HandlerOutput::Render(json!({"ok": true}))),
+        let builder = AppBuilder::new()
+            .commands(dispatch! {
+                app: {
+                    config: {
+                        get => |_m, _ctx| Ok(HandlerOutput::Render(json!({"key": "value"}))),
+                        set => |_m, _ctx| Ok(HandlerOutput::Render(json!({"ok": true}))),
+                    },
+                    start => |_m, _ctx| Ok(HandlerOutput::Render(json!({"started": true}))),
                 },
-                start => |_m, _ctx| Ok(HandlerOutput::Render(json!({"started": true}))),
-            },
-        });
+            })
+            .unwrap();
 
         assert!(builder.has_command("app.config.get"));
         assert!(builder.has_command("app.config.set"));
@@ -538,11 +554,13 @@ mod tests {
     fn test_dispatch_to_handler() {
         use serde_json::json;
 
-        let builder = AppBuilder::new().command(
-            "list",
-            |_m, _ctx| Ok(HandlerOutput::Render(json!({"count": 42}))),
-            "Count: {{ count }}",
-        );
+        let builder = AppBuilder::new()
+            .command(
+                "list",
+                |_m, _ctx| Ok(HandlerOutput::Render(json!({"count": 42}))),
+                "Count: {{ count }}",
+            )
+            .unwrap();
 
         let cmd = Command::new("app").subcommand(Command::new("list"));
 
@@ -557,8 +575,9 @@ mod tests {
     fn test_dispatch_unhandled_fallthrough() {
         use serde_json::json;
 
-        let builder =
-            AppBuilder::new().command("list", |_m, _ctx| Ok(HandlerOutput::Render(json!({}))), "");
+        let builder = AppBuilder::new()
+            .command("list", |_m, _ctx| Ok(HandlerOutput::Render(json!({}))), "")
+            .unwrap();
 
         let cmd = Command::new("app")
             .subcommand(Command::new("list"))
@@ -575,11 +594,13 @@ mod tests {
     fn test_dispatch_json_output() {
         use serde_json::json;
 
-        let builder = AppBuilder::new().command(
-            "list",
-            |_m, _ctx| Ok(HandlerOutput::Render(json!({"name": "test", "value": 123}))),
-            "{{ name }}: {{ value }}",
-        );
+        let builder = AppBuilder::new()
+            .command(
+                "list",
+                |_m, _ctx| Ok(HandlerOutput::Render(json!({"name": "test", "value": 123}))),
+                "{{ name }}: {{ value }}",
+            )
+            .unwrap();
 
         let cmd = Command::new("app").subcommand(Command::new("list"));
 
@@ -596,11 +617,13 @@ mod tests {
     fn test_dispatch_nested_command() {
         use serde_json::json;
 
-        let builder = AppBuilder::new().command(
-            "config.get",
-            |_m, _ctx| Ok(HandlerOutput::Render(json!({"key": "value"}))),
-            "{{ key }}",
-        );
+        let builder = AppBuilder::new()
+            .command(
+                "config.get",
+                |_m, _ctx| Ok(HandlerOutput::Render(json!({"key": "value"}))),
+                "{{ key }}",
+            )
+            .unwrap();
 
         let cmd =
             Command::new("app").subcommand(Command::new("config").subcommand(Command::new("get")));
@@ -614,8 +637,9 @@ mod tests {
 
     #[test]
     fn test_dispatch_silent_result() {
-        let builder =
-            AppBuilder::new().command("quiet", |_m, _ctx| Ok(HandlerOutput::<()>::Silent), "");
+        let builder = AppBuilder::new()
+            .command("quiet", |_m, _ctx| Ok(HandlerOutput::<()>::Silent), "")
+            .unwrap();
 
         let cmd = Command::new("app").subcommand(Command::new("quiet"));
 
@@ -628,11 +652,13 @@ mod tests {
 
     #[test]
     fn test_dispatch_error_result() {
-        let builder = AppBuilder::new().command(
-            "fail",
-            |_m, _ctx| Err::<HandlerOutput<()>, _>(anyhow::anyhow!("something went wrong")),
-            "",
-        );
+        let builder = AppBuilder::new()
+            .command(
+                "fail",
+                |_m, _ctx| Err::<HandlerOutput<()>, _>(anyhow::anyhow!("something went wrong")),
+                "",
+            )
+            .unwrap();
 
         let cmd = Command::new("app").subcommand(Command::new("fail"));
 
@@ -649,11 +675,13 @@ mod tests {
     fn test_dispatch_from_basic() {
         use serde_json::json;
 
-        let builder = AppBuilder::new().command(
-            "list",
-            |_m, _ctx| Ok(HandlerOutput::Render(json!({"items": ["a", "b"]}))),
-            "Items: {{ items }}",
-        );
+        let builder = AppBuilder::new()
+            .command(
+                "list",
+                |_m, _ctx| Ok(HandlerOutput::Render(json!({"items": ["a", "b"]}))),
+                "Items: {{ items }}",
+            )
+            .unwrap();
 
         let cmd = Command::new("app").subcommand(Command::new("list"));
 
@@ -667,11 +695,13 @@ mod tests {
     fn test_dispatch_from_with_json_flag() {
         use serde_json::json;
 
-        let builder = AppBuilder::new().command(
-            "list",
-            |_m, _ctx| Ok(HandlerOutput::Render(json!({"count": 5}))),
-            "Count: {{ count }}",
-        );
+        let builder = AppBuilder::new()
+            .command(
+                "list",
+                |_m, _ctx| Ok(HandlerOutput::Render(json!({"count": 5}))),
+                "Count: {{ count }}",
+            )
+            .unwrap();
 
         let cmd = Command::new("app").subcommand(Command::new("list"));
 
@@ -686,8 +716,9 @@ mod tests {
     fn test_dispatch_from_unhandled() {
         use serde_json::json;
 
-        let builder =
-            AppBuilder::new().command("list", |_m, _ctx| Ok(HandlerOutput::Render(json!({}))), "");
+        let builder = AppBuilder::new()
+            .command("list", |_m, _ctx| Ok(HandlerOutput::Render(json!({}))), "")
+            .unwrap();
 
         let cmd = Command::new("app")
             .subcommand(Command::new("list"))
@@ -717,6 +748,7 @@ mod tests {
                 |_m, _ctx| Ok(HandlerOutput::Render(json!({"count": 1}))),
                 "{{ count }}",
             )
+            .unwrap()
             .hooks(
                 "list",
                 Hooks::new().pre_dispatch(move |_, _ctx| {
@@ -745,6 +777,7 @@ mod tests {
                 },
                 "",
             )
+            .unwrap()
             .hooks(
                 "list",
                 Hooks::new()
@@ -772,6 +805,7 @@ mod tests {
                 |_m, _ctx| Ok(HandlerOutput::Render(json!({"msg": "hello"}))),
                 "{{ msg }}",
             )
+            .unwrap()
             .hooks(
                 "list",
                 Hooks::new().post_output(|_, _ctx, output| {
@@ -802,6 +836,7 @@ mod tests {
                 |_m, _ctx| Ok(HandlerOutput::Render(json!({"msg": "test"}))),
                 "{{ msg }}",
             )
+            .unwrap()
             .hooks(
                 "list",
                 Hooks::new()
@@ -840,6 +875,7 @@ mod tests {
                 |_m, _ctx| Ok(HandlerOutput::Render(json!({"msg": "hello"}))),
                 "{{ msg }}",
             )
+            .unwrap()
             .hooks(
                 "list",
                 Hooks::new().post_output(|_, _ctx, _output| {
@@ -868,6 +904,7 @@ mod tests {
                 |_m, _ctx| Ok(HandlerOutput::Render(json!({"value": "secret"}))),
                 "{{ value }}",
             )
+            .unwrap()
             .hooks(
                 "config.get",
                 Hooks::new().post_output(|_, _ctx, output| {
@@ -900,11 +937,13 @@ mod tests {
                 |_m, _ctx| Ok(HandlerOutput::Render(json!({"msg": "list"}))),
                 "{{ msg }}",
             )
+            .unwrap()
             .command(
                 "other",
                 |_m, _ctx| Ok(HandlerOutput::Render(json!({"msg": "other"}))),
                 "{{ msg }}",
             )
+            .unwrap()
             .hooks(
                 "list",
                 Hooks::new().post_output(|_, _ctx, _| {
@@ -936,6 +975,7 @@ mod tests {
                 },
                 "",
             )
+            .unwrap()
             .hooks(
                 "export",
                 Hooks::new().post_output(|_, _ctx, output| {
@@ -1137,6 +1177,7 @@ mod tests {
                 |_m, _ctx| Ok(HandlerOutput::Render(json!({"count": 5}))),
                 "Count: {{ count }}, Modified: {{ modified }}",
             )
+            .unwrap()
             .hooks(
                 "list",
                 Hooks::new().post_dispatch(|_, _ctx, mut data| {
@@ -1168,6 +1209,7 @@ mod tests {
                 |_m, _ctx| Ok(HandlerOutput::Render(json!({"items": []}))),
                 "{{ items }}",
             )
+            .unwrap()
             .hooks(
                 "list",
                 Hooks::new().post_dispatch(|_, _ctx, data| {
@@ -1205,6 +1247,7 @@ mod tests {
                 |_m, _ctx| Ok(HandlerOutput::Render(json!({"value": 1}))),
                 "{{ value }}",
             )
+            .unwrap()
             .hooks(
                 "list",
                 Hooks::new()
@@ -1251,6 +1294,7 @@ mod tests {
                 |_m, _ctx| Ok(HandlerOutput::Render(json!({"msg": "hello"}))),
                 "{{ msg }}",
             )
+            .unwrap()
             .hooks(
                 "list",
                 Hooks::new()
@@ -1378,11 +1422,13 @@ mod tests {
                 |_m, _ctx| Ok(HandlerOutput::Render(json!({"items": ["a", "b"]}))),
                 "Items: {{ items }}",
             )
+            .unwrap()
             .command(
                 "add",
                 |_m, _ctx| Ok(HandlerOutput::Render(json!({"added": true}))),
                 "Added: {{ added }}",
-            );
+            )
+            .unwrap();
 
         let cmd = Command::new("app")
             .subcommand(Command::new("list"))
@@ -1398,11 +1444,14 @@ mod tests {
     fn test_default_command_with_options() {
         use serde_json::json;
 
-        let builder = AppBuilder::new().default_command("list").command(
-            "list",
-            |_m, _ctx| Ok(HandlerOutput::Render(json!({"count": 42}))),
-            "Count: {{ count }}",
-        );
+        let builder = AppBuilder::new()
+            .default_command("list")
+            .command(
+                "list",
+                |_m, _ctx| Ok(HandlerOutput::Render(json!({"count": 42}))),
+                "Count: {{ count }}",
+            )
+            .unwrap();
 
         let cmd = Command::new("app").subcommand(Command::new("list"));
 
@@ -1424,11 +1473,13 @@ mod tests {
                 |_m, _ctx| Ok(HandlerOutput::Render(json!({"cmd": "list"}))),
                 "{{ cmd }}",
             )
+            .unwrap()
             .command(
                 "add",
                 |_m, _ctx| Ok(HandlerOutput::Render(json!({"cmd": "add"}))),
                 "{{ cmd }}",
-            );
+            )
+            .unwrap();
 
         let cmd = Command::new("app")
             .subcommand(Command::new("list"))
@@ -1444,11 +1495,13 @@ mod tests {
     fn test_default_command_no_default_set() {
         use serde_json::json;
 
-        let builder = AppBuilder::new().command(
-            "list",
-            |_m, _ctx| Ok(HandlerOutput::Render(json!({"items": []}))),
-            "Items: {{ items }}",
-        );
+        let builder = AppBuilder::new()
+            .command(
+                "list",
+                |_m, _ctx| Ok(HandlerOutput::Render(json!({"items": []}))),
+                "Items: {{ items }}",
+            )
+            .unwrap();
 
         let cmd = Command::new("app").subcommand(Command::new("list"));
 
@@ -1468,11 +1521,13 @@ mod tests {
         let file_path = temp_dir.path().join("output.txt");
         let path_str = file_path.to_str().unwrap();
 
-        let builder = AppBuilder::new().command(
-            "list",
-            |_m, _ctx| Ok(HandlerOutput::Render(json!({"count": 42}))),
-            "Count: {{ count }}",
-        );
+        let builder = AppBuilder::new()
+            .command(
+                "list",
+                |_m, _ctx| Ok(HandlerOutput::Render(json!({"count": 42}))),
+                "Count: {{ count }}",
+            )
+            .unwrap();
 
         let cmd = Command::new("app").subcommand(Command::new("list"));
 
@@ -1494,11 +1549,14 @@ mod tests {
         let file_path = temp_dir.path().join("out.txt");
         let path_str = file_path.to_str().unwrap();
 
-        let builder = AppBuilder::new().output_file_flag(Some("save-to")).command(
-            "list",
-            |_m, _ctx| Ok(HandlerOutput::Render(json!({"count": 99}))),
-            "{{ count }}",
-        );
+        let builder = AppBuilder::new()
+            .output_file_flag(Some("save-to"))
+            .command(
+                "list",
+                |_m, _ctx| Ok(HandlerOutput::Render(json!({"count": 99}))),
+                "{{ count }}",
+            )
+            .unwrap();
 
         let cmd = Command::new("app").subcommand(Command::new("list"));
 
@@ -1532,6 +1590,7 @@ mod tests {
                 |_m, _ctx| Ok(HandlerOutput::Render(json!({"name": "test"}))),
                 "[late]{{ name }}[/late]",
             )
+            .unwrap()
             .theme(theme); // Theme set AFTER command registration
 
         let cmd = Command::new("app").subcommand(Command::new("list"));
@@ -1559,11 +1618,14 @@ mod tests {
         let theme = Theme::new().add("test_style", Style::new().bold());
 
         // Build with theme set BEFORE command registration
-        let builder = AppBuilder::new().theme(theme).command(
-            "list",
-            |_m, _ctx| Ok(HandlerOutput::Render(json!({"name": "test"}))),
-            "[test_style]{{ name }}[/test_style]",
-        );
+        let builder = AppBuilder::new()
+            .theme(theme)
+            .command(
+                "list",
+                |_m, _ctx| Ok(HandlerOutput::Render(json!({"name": "test"}))),
+                "[test_style]{{ name }}[/test_style]",
+            )
+            .unwrap();
 
         let cmd = Command::new("app").subcommand(Command::new("list"));
         let result = builder.dispatch_from(cmd, ["app", "--output=term", "list"]);

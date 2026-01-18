@@ -20,11 +20,13 @@ use crate::{OutputMode, Theme};
 use std::cell::RefCell;
 use std::collections::HashMap;
 use std::path::PathBuf;
+use std::sync::Arc;
 
 use super::app::App;
 use super::dispatch::DispatchFn;
 use super::group::CommandRecipe;
 use super::hooks::Hooks;
+use super::mode::ThreadSafe;
 
 /// Stores a pending command recipe along with its resolved template.
 struct PendingCommand {
@@ -39,8 +41,8 @@ struct PendingCommand {
 /// ```rust
 /// use standout::cli::App;
 ///
-/// let standout = App::builder()
-///     .topics_dir("docs/topics")
+/// let standout = App::<standout::cli::ThreadSafe>::builder()
+///     .topics_dir(".").unwrap()
 ///     .output_flag(Some("format"))
 ///     .build();
 /// ```
@@ -55,7 +57,7 @@ struct PendingCommand {
 /// use crate::context::RenderContext;
 /// use minijinja::Value;
 ///
-/// App::builder()
+/// App::<standout::cli::ThreadSafe>::builder()
 ///     // Static context
 ///     .context("app_version", Value::from("1.0.0"))
 ///
@@ -78,7 +80,7 @@ pub struct AppBuilder {
     /// Stylesheet registry (built from embedded styles)
     pub(crate) stylesheet_registry: Option<crate::StylesheetRegistry>,
     /// Template registry (built from embedded templates)
-    pub(crate) template_registry: Option<TemplateRegistry>,
+    pub(crate) template_registry: Option<Arc<TemplateRegistry>>,
     pub(crate) default_theme_name: Option<String>,
     /// Pending commands - closures are created lazily at dispatch time
     pending_commands: RefCell<HashMap<String, PendingCommand>>,
@@ -140,10 +142,12 @@ impl AppBuilder {
         // Build dispatch functions from recipes
         let mut commands = HashMap::new();
         for (path, pending) in self.pending_commands.borrow().iter() {
-            let dispatch =
-                pending
-                    .recipe
-                    .create_dispatch(&pending.template, context_registry, &theme);
+            let dispatch = pending.recipe.create_dispatch(
+                &pending.template,
+                context_registry,
+                &theme,
+                self.template_registry.clone(),
+            );
             commands.insert(path.clone(), dispatch);
         }
 
@@ -175,14 +179,20 @@ impl AppBuilder {
     /// # Example
     ///
     /// ```rust,ignore
-    /// let standout = App::builder()
+    /// let standout = App::<standout::cli::ThreadSafe>::builder()
     ///     .styles(embed_styles!("src/styles"))
     ///     .default_theme("dark")
     ///     .build()?;
     /// ```
-    pub fn build(mut self) -> Result<App, SetupError> {
+    pub fn build(mut self) -> Result<App<ThreadSafe>, SetupError> {
         use super::core::AppCore;
-        use std::sync::Arc;
+
+        // Ensure commands are finalized
+        self.ensure_commands_finalized();
+        let commands = self
+            .finalized_commands
+            .into_inner()
+            .expect("Commands should be finalized");
 
         // Resolve theme: explicit theme takes precedence, then stylesheet registry
         let theme = if let Some(theme) = self.theme.take() {
@@ -205,8 +215,8 @@ impl AppBuilder {
             None
         };
 
-        // Wrap template registry in Arc for sharing across commands
-        let template_registry = self.template_registry.take().map(Arc::new);
+        // Template registry is already Arc (or None)
+        let template_registry = self.template_registry.take();
 
         // Build the AppCore with all shared configuration
         let core = AppCore {
@@ -224,6 +234,7 @@ impl AppBuilder {
         Ok(App {
             core,
             registry: self.registry,
+            commands,
         })
     }
 
@@ -277,6 +288,7 @@ mod tests {
         // 1. Only base exists
         let app = AppBuilder::new()
             .styles_dir(temp_dir.path())
+            .unwrap()
             .build()
             .unwrap();
 
@@ -289,6 +301,7 @@ mod tests {
 
         let app = AppBuilder::new()
             .styles_dir(temp_dir.path())
+            .unwrap()
             .build()
             .unwrap();
 
@@ -299,6 +312,7 @@ mod tests {
 
         let app = AppBuilder::new()
             .styles_dir(temp_dir.path())
+            .unwrap()
             .build()
             .unwrap();
 

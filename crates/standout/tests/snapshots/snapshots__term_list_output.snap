@@ -1,0 +1,6 @@
+---
+source: crates/standout/tests/snapshots.rs
+expression: output
+---
+Items: ["apple", "banana", "cherry"]
+Count: 3

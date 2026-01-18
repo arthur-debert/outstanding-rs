@@ -1,0 +1,12 @@
+---
+source: crates/standout/tests/snapshots.rs
+expression: output
+---
+{
+  "count": 3,
+  "items": [
+    "apple",
+    "banana",
+    "cherry"
+  ]
+}

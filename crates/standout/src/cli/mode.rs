@@ -84,6 +84,8 @@ use std::cell::RefCell;
 use std::rc::Rc;
 use std::sync::Arc;
 
+use super::dispatch::{DispatchFn, Dispatchable, LocalDispatchFn};
+
 /// Marker trait for handler execution modes.
 ///
 /// This trait is sealed and cannot be implemented outside this crate.
@@ -99,6 +101,9 @@ pub trait HandlerMode: sealed::Sealed + Default + Clone {
 
     /// Whether this mode requires `Send + Sync` bounds.
     const REQUIRES_SEND_SYNC: bool;
+
+    /// The dispatch function type for this mode.
+    type DispatchFn: Dispatchable + Clone;
 }
 
 /// Thread-safe handler mode (default).
@@ -177,6 +182,7 @@ impl HandlerMode for ThreadSafe {
     where
         F: ?Sized;
     const REQUIRES_SEND_SYNC: bool = true;
+    type DispatchFn = DispatchFn;
 }
 
 impl HandlerMode for Local {
@@ -185,6 +191,7 @@ impl HandlerMode for Local {
     where
         F: ?Sized;
     const REQUIRES_SEND_SYNC: bool = false;
+    type DispatchFn = LocalDispatchFn;
 }
 
 mod sealed {

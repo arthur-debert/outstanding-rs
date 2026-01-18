@@ -12,13 +12,14 @@ fn test_theme_preservation_bug() {
     let theme = Theme::new().add("custom_error", style);
 
     // 2. Build the app
-    let mut app = LocalApp::builder()
+    let app = LocalApp::builder()
         .theme(theme)
         .command(
             "test",
             |_m, _ctx| Ok(Output::Render("my_content".to_string())),
             "[custom_error]my_content[/custom_error]",
         )
+        .unwrap()
         .build()
         .expect("Failed to build app");
 

@@ -9,7 +9,47 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **BREAKING: `App` is now generic over `HandlerMode`** - `App` and `LocalApp` have been unified into a single generic type `App<M: HandlerMode>`. `LocalApp` is now a type alias for `App<Local>`.
+
+  ```diff
+  - use standout::cli::App;
+  - App::builder()
+  + use standout::cli::{App, ThreadSafe};
+  + App::<ThreadSafe>::builder()
+  ```
+
+  Note: `App::builder()` still works and defaults to `ThreadSafe`, but explicit type annotation is recommended for clarity.
+
+- **BREAKING: Builder methods now return `Result`** - All `AppBuilder` command registration methods now return `Result<Self, SetupError>` instead of `Self`. This catches configuration errors at build time rather than runtime.
+
+  ```diff
+  App::builder()
+  -     .command("list", handler, template)
+  +     .command("list", handler, template)?
+      .build()?
+  ```
+
+  **Migration:** Add `?` or `.unwrap()` after each `.command()`, `.command_with()`, `.command_handler()`, and `.group()` call.
+
 - **Internal: Shared AppCore architecture** - Extracted common functionality from `App` and `LocalApp` into a shared `AppCore` struct. This ensures feature parity between both app types and eliminates code duplication.
+
+### Added
+
+- **Duplicate command detection** - Registering the same command path twice now returns `SetupError::DuplicateCommand` instead of silently overwriting. This catches configuration bugs early.
+
+  ```rust
+  App::builder()
+      .command("list", handler1, template)?
+      .command("list", handler2, template)?  // Error: duplicate command "list"
+  ```
+
+- **Design guidelines documentation** - Added `docs/dev/design-guidelines.md` codifying configuration safety principles, structural unification requirements, and testing requirements for contributors.
+
+- **Comprehensive property-based testing** - Added `proptest` tests that verify rendering invariants across all configuration combinations:
+  - 8 output modes (Auto, Term, Text, TermDebug, Json, Yaml, Xml, Csv)
+  - 2 handler modes (ThreadSafe, Local)
+  - Theme variations (none, empty, populated)
+  - Template variations (simple, styled, nested)
 
 ### Fixed
 

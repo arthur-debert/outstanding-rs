@@ -40,3 +40,4 @@ clap = ["dep:clap", "dep:anyhow", "dep:terminal_size", "dep:thiserror", "standou
 proptest = "1"
 tempfile = "3.24.0"
 serial_test = "3"
+insta = { version = "1.46.1", features = ["yaml", "json"] }

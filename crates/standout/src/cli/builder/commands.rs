@@ -15,6 +15,7 @@ use crate::cli::group::{
 };
 use crate::cli::handler::{CommandContext, FnHandler, Handler, HandlerResult};
 use crate::cli::hooks::Hooks;
+use crate::setup::SetupError;
 
 impl AppBuilder {
     /// Creates a command group for organizing related commands.
@@ -38,13 +39,13 @@ impl AppBuilder {
     /// Commands within groups use dot notation for paths:
     /// - `db.migrate`, `db.backup`
     /// - `app.start`, `app.config.get`, `app.config.set`
-    pub fn group<F>(mut self, name: &str, configure: F) -> Self
+    pub fn group<F>(mut self, name: &str, configure: F) -> Result<Self, SetupError>
     where
         F: FnOnce(GroupBuilder) -> GroupBuilder,
     {
         let builder = configure(GroupBuilder::new());
-        self.register_group(name, builder);
-        self
+        self.register_group(name, builder)?;
+        Ok(self)
     }
 
     /// Registers a command handler with inline configuration.
@@ -59,7 +60,12 @@ impl AppBuilder {
     ///         .post_output(copy_to_clipboard))
     ///     .build()
     /// ```
-    pub fn command_with<F, T, C>(mut self, path: &str, handler: F, configure: C) -> Self
+    pub fn command_with<F, T, C>(
+        mut self,
+        path: &str,
+        handler: F,
+        configure: C,
+    ) -> Result<Self, SetupError>
     where
         F: Fn(&ArgMatches, &CommandContext) -> HandlerResult<T> + Send + Sync + 'static,
         T: Serialize + Send + Sync + 'static,
@@ -82,7 +88,11 @@ impl AppBuilder {
         // Create a recipe for deferred closure creation using the handler
         let recipe = ClosureRecipe::new(config.handler);
 
-        // Store pending command - closure will be created at dispatch time
+        // Store pending command - check for duplicates
+        if self.pending_commands.borrow().contains_key(path) {
+            return Err(SetupError::DuplicateCommand(path.to_string()));
+        }
+
         self.pending_commands.borrow_mut().insert(
             path.to_string(),
             PendingCommand {
@@ -91,11 +101,15 @@ impl AppBuilder {
             },
         );
 
-        self
+        Ok(self)
     }
 
     /// Helper to register a group's commands recursively.
-    pub(crate) fn register_group(&mut self, prefix: &str, builder: GroupBuilder) {
+    pub(crate) fn register_group(
+        &mut self,
+        prefix: &str,
+        builder: GroupBuilder,
+    ) -> Result<(), SetupError> {
         for (name, entry) in builder.entries {
             let path = format!("{}.{}", prefix, name);
 
@@ -115,6 +129,11 @@ impl AppBuilder {
                     // Create a recipe for deferred closure creation
                     let recipe = ErasedConfigRecipe::from_handler(handler);
 
+                    // Check for duplicates
+                    if self.pending_commands.borrow().contains_key(&path) {
+                        return Err(SetupError::DuplicateCommand(path.clone()));
+                    }
+
                     // Store pending command
                     self.pending_commands.borrow_mut().insert(
                         path,
@@ -125,10 +144,11 @@ impl AppBuilder {
                     );
                 }
                 GroupEntry::Group { builder: nested } => {
-                    self.register_group(&path, nested);
+                    self.register_group(&path, nested)?;
                 }
             }
         }
+        Ok(())
     }
 
     /// Resolves a template from a command path using conventions.
@@ -183,7 +203,7 @@ impl AppBuilder {
     ///     }, "{% for item in items %}{{ item }}\n{% endfor %}")
     ///     .parse(cmd);
     /// ```
-    pub fn command<F, T>(self, path: &str, handler: F, template: &str) -> Self
+    pub fn command<F, T>(self, path: &str, handler: F, template: &str) -> Result<Self, SetupError>
     where
         F: Fn(&ArgMatches, &CommandContext) -> HandlerResult<T> + Send + Sync + 'static,
         T: Serialize + Send + Sync + 'static,
@@ -221,7 +241,12 @@ impl AppBuilder {
     ///     .command_handler("list", ListHandler { db }, "{% for item in items %}...")
     ///     .parse(cmd);
     /// ```
-    pub fn command_handler<H, T>(self, path: &str, handler: H, template: &str) -> Self
+    pub fn command_handler<H, T>(
+        self,
+        path: &str,
+        handler: H,
+        template: &str,
+    ) -> Result<Self, SetupError>
     where
         H: Handler<Output = T> + Send + Sync + 'static,
         T: Serialize + Send + Sync + 'static,
@@ -230,6 +255,11 @@ impl AppBuilder {
 
         // Create a recipe for deferred closure creation
         let recipe = StructRecipe::new(handler);
+
+        // Check for duplicates
+        if self.pending_commands.borrow().contains_key(path) {
+            return Err(SetupError::DuplicateCommand(path.to_string()));
+        }
 
         // Store pending command - closure will be created at dispatch time
         self.pending_commands.borrow_mut().insert(
@@ -240,7 +270,7 @@ impl AppBuilder {
             },
         );
 
-        self
+        Ok(self)
     }
 
     /// Registers hooks for a specific command path.
@@ -304,11 +334,13 @@ mod tests {
     fn test_command_registration() {
         use serde_json::json;
 
-        let builder = AppBuilder::new().command(
-            "list",
-            |_m, _ctx| Ok(HandlerOutput::Render(json!({"items": ["a", "b"]}))),
-            "Items: {{ items }}",
-        );
+        let builder = AppBuilder::new()
+            .command(
+                "list",
+                |_m, _ctx| Ok(HandlerOutput::Render(json!({"items": ["a", "b"]}))),
+                "Items: {{ items }}",
+            )
+            .unwrap();
 
         assert!(builder.has_command("list"));
     }
@@ -331,17 +363,19 @@ mod tests {
         let counter = Arc::new(AtomicUsize::new(0));
         let counter_clone = counter.clone();
 
-        let builder = AppBuilder::new().command_with(
-            "list",
-            |_m, _ctx| Ok(HandlerOutput::Render(json!({"items": ["a", "b"]}))),
-            move |cfg| {
-                cfg.template("Items: {{ items | length }}")
-                    .pre_dispatch(move |_, _| {
-                        counter_clone.fetch_add(1, Ordering::SeqCst);
-                        Ok(())
-                    })
-            },
-        );
+        let builder = AppBuilder::new()
+            .command_with(
+                "list",
+                |_m, _ctx| Ok(HandlerOutput::Render(json!({"items": ["a", "b"]}))),
+                move |cfg| {
+                    cfg.template("Items: {{ items | length }}")
+                        .pre_dispatch(move |_, _| {
+                            counter_clone.fetch_add(1, Ordering::SeqCst);
+                            Ok(())
+                        })
+                },
+            )
+            .unwrap();
 
         let cmd = Command::new("app").subcommand(Command::new("list"));
 
@@ -361,14 +395,16 @@ mod tests {
     fn test_group_basic() {
         use serde_json::json;
 
-        let builder = AppBuilder::new().group("db", |g| {
-            g.command("migrate", |_m, _ctx| {
-                Ok(HandlerOutput::Render(json!({"status": "migrated"})))
+        let builder = AppBuilder::new()
+            .group("db", |g| {
+                g.command("migrate", |_m, _ctx| {
+                    Ok(HandlerOutput::Render(json!({"status": "migrated"})))
+                })
+                .command("backup", |_m, _ctx| {
+                    Ok(HandlerOutput::Render(json!({"status": "backed_up"})))
+                })
             })
-            .command("backup", |_m, _ctx| {
-                Ok(HandlerOutput::Render(json!({"status": "backed_up"})))
-            })
-        });
+            .unwrap();
 
         let cmd =
             Command::new("app").subcommand(Command::new("db").subcommand(Command::new("migrate")));
@@ -385,19 +421,21 @@ mod tests {
     fn test_group_nested() {
         use serde_json::json;
 
-        let builder = AppBuilder::new().group("app", |g| {
-            g.command("start", |_m, _ctx| {
-                Ok(HandlerOutput::Render(json!({"action": "start"})))
-            })
-            .group("config", |g| {
-                g.command("get", |_m, _ctx| {
-                    Ok(HandlerOutput::Render(json!({"value": "test_value"})))
+        let builder = AppBuilder::new()
+            .group("app", |g| {
+                g.command("start", |_m, _ctx| {
+                    Ok(HandlerOutput::Render(json!({"action": "start"})))
                 })
-                .command("set", |_m, _ctx| {
-                    Ok(HandlerOutput::Render(json!({"ok": true})))
+                .group("config", |g| {
+                    g.command("get", |_m, _ctx| {
+                        Ok(HandlerOutput::Render(json!({"value": "test_value"})))
+                    })
+                    .command("set", |_m, _ctx| {
+                        Ok(HandlerOutput::Render(json!({"ok": true})))
+                    })
                 })
             })
-        });
+            .unwrap();
 
         // Test nested command: app.config.get
         let cmd = Command::new("cli").subcommand(
@@ -424,13 +462,15 @@ mod tests {
     fn test_group_with_template() {
         use serde_json::json;
 
-        let builder = AppBuilder::new().group("db", |g| {
-            g.command_with(
-                "migrate",
-                |_m, _ctx| Ok(HandlerOutput::Render(json!({"count": 5}))),
-                |cfg| cfg.template("Migrated {{ count }} tables"),
-            )
-        });
+        let builder = AppBuilder::new()
+            .group("db", |g| {
+                g.command_with(
+                    "migrate",
+                    |_m, _ctx| Ok(HandlerOutput::Render(json!({"count": 5}))),
+                    |cfg| cfg.template("Migrated {{ count }} tables"),
+                )
+            })
+            .unwrap();
 
         let cmd =
             Command::new("app").subcommand(Command::new("db").subcommand(Command::new("migrate")));
@@ -451,18 +491,20 @@ mod tests {
         let hook_called = Arc::new(AtomicBool::new(false));
         let hook_called_clone = hook_called.clone();
 
-        let builder = AppBuilder::new().group("db", |g| {
-            g.command_with(
-                "migrate",
-                |_m, _ctx| Ok(HandlerOutput::Render(json!({"done": true}))),
-                move |cfg| {
-                    cfg.template("{{ done }}").pre_dispatch(move |_, _| {
-                        hook_called_clone.store(true, Ordering::SeqCst);
-                        Ok(())
-                    })
-                },
-            )
-        });
+        let builder = AppBuilder::new()
+            .group("db", |g| {
+                g.command_with(
+                    "migrate",
+                    |_m, _ctx| Ok(HandlerOutput::Render(json!({"done": true}))),
+                    move |cfg| {
+                        cfg.template("{{ done }}").pre_dispatch(move |_, _| {
+                            hook_called_clone.store(true, Ordering::SeqCst);
+                            Ok(())
+                        })
+                    },
+                )
+            })
+            .unwrap();
 
         let cmd =
             Command::new("app").subcommand(Command::new("db").subcommand(Command::new("migrate")));
@@ -484,11 +526,13 @@ mod tests {
                     Ok(HandlerOutput::Render(json!({"type": "db"})))
                 })
             })
+            .unwrap()
             .group("cache", |g| {
                 g.command("clear", |_m, _ctx| {
                     Ok(HandlerOutput::Render(json!({"type": "cache"})))
                 })
-            });
+            })
+            .unwrap();
 
         assert!(builder.has_command("db.migrate"));
         assert!(builder.has_command("cache.clear"));
@@ -504,11 +548,13 @@ mod tests {
                 |_m, _ctx| Ok(HandlerOutput::Render(json!({"v": "1.0.0"}))),
                 "{{ v }}",
             )
+            .unwrap()
             .group("db", |g| {
                 g.command("migrate", |_m, _ctx| {
                     Ok(HandlerOutput::Render(json!({"ok": true})))
                 })
-            });
+            })
+            .unwrap();
 
         assert!(builder.has_command("version"));
         assert!(builder.has_command("db.migrate"));
