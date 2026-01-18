@@ -20,7 +20,7 @@ use crate::rendering::theme::detect_color_mode;
 use crate::setup::SetupError;
 use crate::{OutputMode, StylesheetRegistry, TemplateRegistry, Theme};
 
-use super::dispatch::get_terminal_width;
+use super::app::get_terminal_width;
 use super::hooks::Hooks;
 
 /// Shared core state for App and LocalApp.
@@ -266,25 +266,15 @@ impl AppCore {
         }
 
         // Get template registry
-        let registry = self.template_registry.as_ref().ok_or_else(|| {
-            SetupError::Config(format!(
-                "Template '{}' requested but no templates configured. \
-                 Add .templates(embed_templates!(\"path/to/templates\")) to your App builder.",
-                template
-            ))
-        })?;
+        let registry = self
+            .template_registry
+            .as_ref()
+            .ok_or_else(|| SetupError::Config("No template registry configured".into()))?;
 
         // Get template content
-        let template_content = registry.get_content(template).map_err(|e| {
-            // Enhance error message with available templates
-            let available: Vec<_> = registry.names().take(5).collect();
-            let suggestion = if available.is_empty() {
-                "No templates are registered.".to_string()
-            } else {
-                format!("Available templates: {:?}", available)
-            };
-            SetupError::Template(format!("{}\n{}", e, suggestion))
-        })?;
+        let template_content = registry
+            .get_content(template)
+            .map_err(|e| SetupError::Template(e.to_string()))?;
 
         // Render the template content
         self.render_template_content(&template_content, data, mode)

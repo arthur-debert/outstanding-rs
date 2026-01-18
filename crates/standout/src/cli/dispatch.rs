@@ -9,14 +9,11 @@
 
 use clap::ArgMatches;
 use std::cell::RefCell;
-use std::collections::HashMap;
 use std::rc::Rc;
 use std::sync::Arc;
 
 use crate::cli::handler::CommandContext;
 use crate::cli::hooks::Hooks;
-use crate::context::{ContextRegistry, RenderContext};
-use crate::{OutputMode, TemplateRegistry, Theme};
 
 /// Internal result type for dispatch functions.
 pub(crate) enum DispatchOutput {
@@ -120,162 +117,6 @@ where
         result.push(command.to_string());
     }
     result
-}
-
-// ============================================================================
-// Shared Rendering Logic
-// ============================================================================
-
-/// Gets the current terminal width, or None if not available.
-pub(crate) fn get_terminal_width() -> Option<usize> {
-    terminal_size::terminal_size().map(|(w, _)| w.0 as usize)
-}
-
-/// Renders a template with optional template registry support for includes.
-///
-/// This consolidates template rendering logic used by all dispatch functions.
-/// Handles both templated modes (Term, Text, Auto) and structured modes (JSON, YAML, etc).
-pub(crate) fn render_with_registry(
-    template: &str,
-    data: &serde_json::Value,
-    theme: &Theme,
-    mode: OutputMode,
-    context_registry: &ContextRegistry,
-    render_ctx: &RenderContext,
-    template_registry: Option<&TemplateRegistry>,
-) -> Result<String, String> {
-    use crate::rendering::template::filters::register_filters;
-    use crate::rendering::theme::detect_color_mode;
-    use minijinja::Environment;
-    use standout_bbparser::{BBParser, TagTransform, UnknownTagBehavior};
-
-    // For structured modes, serialize directly
-    if mode.is_structured() {
-        return match mode {
-            OutputMode::Json => serde_json::to_string_pretty(data)
-                .map_err(|e| format!("JSON serialization error: {}", e)),
-            OutputMode::Yaml => {
-                serde_yaml::to_string(data).map_err(|e| format!("YAML serialization error: {}", e))
-            }
-            OutputMode::Xml => quick_xml::se::to_string(data)
-                .map_err(|e| format!("XML serialization error: {}", e)),
-            OutputMode::Csv => {
-                let (headers, rows) = crate::util::flatten_json_for_csv(data);
-                let mut wtr = csv::Writer::from_writer(Vec::new());
-                wtr.write_record(&headers)
-                    .map_err(|e| format!("CSV write error: {}", e))?;
-                for row in rows {
-                    wtr.write_record(&row)
-                        .map_err(|e| format!("CSV write error: {}", e))?;
-                }
-                let bytes = wtr
-                    .into_inner()
-                    .map_err(|e| format!("CSV finalization error: {}", e))?;
-                String::from_utf8(bytes).map_err(|e| format!("CSV UTF-8 error: {}", e))
-            }
-            _ => Err(format!("Unexpected structured mode: {:?}", mode)),
-        };
-    }
-
-    let color_mode = detect_color_mode();
-    let styles = theme.resolve_styles(Some(color_mode));
-
-    // Validate style aliases before rendering
-    styles
-        .validate()
-        .map_err(|e| format!("Style validation error: {}", e))?;
-
-    let mut env = Environment::new();
-    register_filters(&mut env);
-
-    // Load all templates from registry if available (enables {% include %})
-    if let Some(registry) = template_registry {
-        for name in registry.names() {
-            if let Ok(content) = registry.get_content(name) {
-                env.add_template_owned(name.to_string(), content)
-                    .map_err(|e| format!("Template load error: {}", e))?;
-            }
-        }
-    }
-
-    env.add_template_owned("_inline".to_string(), template.to_string())
-        .map_err(|e| format!("Template parse error: {}", e))?;
-    let tmpl = env
-        .get_template("_inline")
-        .map_err(|e| format!("Template error: {}", e))?;
-
-    // Build combined context
-    let context_values = context_registry.resolve(render_ctx);
-    let mut combined: HashMap<String, minijinja::Value> = HashMap::new();
-
-    // Add context values first (lower priority)
-    for (key, value) in context_values {
-        combined.insert(key, value);
-    }
-
-    // Add data values (higher priority)
-    if let Some(obj) = data.as_object() {
-        for (key, value) in obj {
-            combined.insert(key.clone(), minijinja::Value::from_serialize(value));
-        }
-    }
-
-    // Pass 1: MiniJinja template rendering
-    let minijinja_output = tmpl
-        .render(&combined)
-        .map_err(|e| format!("Template render error: {}", e))?;
-
-    // Pass 2: BBParser style tag processing
-    let transform = match mode {
-        OutputMode::Term | OutputMode::Auto => TagTransform::Apply,
-        OutputMode::TermDebug => TagTransform::Keep,
-        _ => TagTransform::Remove,
-    };
-    let resolved_styles = styles.to_resolved_map();
-    let parser =
-        BBParser::new(resolved_styles, transform).unknown_behavior(UnknownTagBehavior::Passthrough);
-    let final_output = parser.parse(&minijinja_output);
-
-    Ok(final_output)
-}
-
-/// Renders handler output after post-dispatch hooks have been applied.
-///
-/// This is the common logic extracted from all recipe implementations.
-/// It handles creating the render context and calling `render_with_registry`.
-#[allow(clippy::too_many_arguments)]
-pub(crate) fn render_handler_output(
-    json_data: serde_json::Value,
-    matches: &ArgMatches,
-    ctx: &CommandContext,
-    hooks: Option<&Hooks>,
-    template: &str,
-    theme: &Theme,
-    context_registry: &ContextRegistry,
-    template_registry: Option<&TemplateRegistry>,
-) -> Result<DispatchOutput, String> {
-    // Run post-dispatch hooks if present
-    let json_data = if let Some(hooks) = hooks {
-        hooks
-            .run_post_dispatch(matches, ctx, json_data)
-            .map_err(|e| format!("Hook error: {}", e))?
-    } else {
-        json_data
-    };
-
-    let render_ctx = RenderContext::new(ctx.output_mode, get_terminal_width(), theme, &json_data);
-
-    let output = render_with_registry(
-        template,
-        &json_data,
-        theme,
-        ctx.output_mode,
-        context_registry,
-        &render_ctx,
-        template_registry,
-    )?;
-
-    Ok(DispatchOutput::Text(output))
 }
 
 #[cfg(test)]

@@ -14,6 +14,7 @@ use crate::TemplateRegistry;
 use crate::{EmbeddedStyles, EmbeddedTemplates, Theme};
 use minijinja::Value;
 use std::path::PathBuf;
+use std::sync::Arc;
 
 use super::AppBuilder;
 
@@ -134,7 +135,7 @@ impl AppBuilder {
     ///     .run(cmd, args);
     /// ```
     pub fn templates(mut self, templates: EmbeddedTemplates) -> Self {
-        self.template_registry = Some(TemplateRegistry::from(templates));
+        self.template_registry = Some(Arc::new(TemplateRegistry::from(templates)));
         self
     }
 
@@ -234,10 +235,19 @@ impl AppBuilder {
     ///     .templates_dir("~/.myapp/templates")  // User overrides
     /// ```
     pub fn templates_dir<P: AsRef<std::path::Path>>(mut self, path: P) -> Self {
-        let registry = self
-            .template_registry
-            .get_or_insert_with(TemplateRegistry::new);
-        let _ = registry.add_template_dir(path);
+        if self.template_registry.is_none() {
+            self.template_registry = Some(Arc::new(TemplateRegistry::new()));
+        }
+
+        let arc = self.template_registry.as_mut().unwrap();
+        match Arc::get_mut(arc) {
+            Some(registry) => {
+                let _ = registry.add_template_dir(path);
+            }
+            None => {
+                panic!("Cannot modify template registry after commands have been dispatched/finalized.");
+            }
+        }
         self
     }
 

@@ -663,6 +663,7 @@ pub fn render_auto_with_spec<T: Serialize>(
 ///     OutputMode::Text,
 ///     &registry,
 ///     &render_ctx,
+///     None,
 /// ).unwrap();
 ///
 /// assert_eq!(output, "Alice (v1.0.0)");
@@ -674,6 +675,7 @@ pub fn render_with_context<T: Serialize>(
     mode: OutputMode,
     context_registry: &ContextRegistry,
     render_context: &RenderContext,
+    template_registry: Option<&super::TemplateRegistry>,
 ) -> Result<String, Error> {
     let color_mode = detect_color_mode();
     let styles = theme.resolve_styles(Some(color_mode));
@@ -687,6 +689,19 @@ pub fn render_with_context<T: Serialize>(
     register_filters(&mut env);
 
     env.add_template_owned("_inline".to_string(), template.to_string())?;
+
+    // Load all templates from registry if available (enables {% include %})
+    if let Some(registry) = template_registry {
+        for name in registry.names() {
+            if let Ok(content) = registry.get_content(name) {
+                // Ensure we don't overwrite the main template if named same as a registry template
+                if name != "_inline" {
+                    env.add_template_owned(name.to_string(), content)?;
+                }
+            }
+        }
+    }
+
     let tmpl = env.get_template("_inline")?;
 
     // Build the combined context: data + injected context
@@ -752,6 +767,7 @@ pub fn render_with_context<T: Serialize>(
 ///     OutputMode::Text,
 ///     &registry,
 ///     &render_ctx,
+///     None,
 /// ).unwrap();
 /// assert_eq!(text, "Summary (width=120): 42");
 ///
@@ -763,6 +779,7 @@ pub fn render_with_context<T: Serialize>(
 ///     OutputMode::Json,
 ///     &registry,
 ///     &render_ctx,
+///     None,
 /// ).unwrap();
 /// assert!(json.contains("\"title\": \"Summary\""));
 /// ```
@@ -773,6 +790,7 @@ pub fn render_auto_with_context<T: Serialize>(
     mode: OutputMode,
     context_registry: &ContextRegistry,
     render_context: &RenderContext,
+    template_registry: Option<&super::TemplateRegistry>,
 ) -> Result<String, Error> {
     if mode.is_structured() {
         match mode {
@@ -813,6 +831,7 @@ pub fn render_auto_with_context<T: Serialize>(
             mode,
             context_registry,
             render_context,
+            template_registry,
         )
     }
 }
@@ -1414,6 +1433,7 @@ mod tests {
             OutputMode::Text,
             &registry,
             &render_ctx,
+            None,
         )
         .unwrap();
 
@@ -1449,6 +1469,7 @@ mod tests {
             OutputMode::Text,
             &registry,
             &render_ctx,
+            None,
         )
         .unwrap();
 
@@ -1482,6 +1503,7 @@ mod tests {
             OutputMode::Text,
             &registry,
             &render_ctx,
+            None,
         )
         .unwrap();
 
@@ -1513,6 +1535,7 @@ mod tests {
             OutputMode::Text,
             &registry,
             &render_ctx,
+            None,
         )
         .unwrap();
 
@@ -1544,6 +1567,7 @@ mod tests {
             OutputMode::Json,
             &registry,
             &render_ctx,
+            None,
         )
         .unwrap();
 
@@ -1576,6 +1600,7 @@ mod tests {
             OutputMode::Text,
             &registry,
             &render_ctx,
+            None,
         )
         .unwrap();
 
@@ -1607,6 +1632,7 @@ mod tests {
             OutputMode::Term,
             &registry,
             &render_ctx,
+            None,
         )
         .unwrap();
 
@@ -1645,6 +1671,7 @@ mod tests {
             OutputMode::Text,
             &registry,
             &render_ctx,
+            None,
         )
         .unwrap();
 
@@ -2086,6 +2113,7 @@ mod tests {
             OutputMode::Yaml,
             &registry,
             &render_ctx,
+            None,
         )
         .unwrap();
 

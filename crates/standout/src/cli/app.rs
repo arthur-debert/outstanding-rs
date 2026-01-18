@@ -18,6 +18,11 @@ use super::result::HelpResult;
 use crate::cli::handler::{CommandContext, HandlerResult, Output as HandlerOutput};
 use crate::cli::hooks::{HookError, RenderedOutput};
 
+/// Gets the current terminal width, or None if not available.
+pub(crate) fn get_terminal_width() -> Option<usize> {
+    terminal_size::terminal_size().map(|(w, _)| w.0 as usize)
+}
+
 /// Main entry point for standout-clap integration.
 ///
 /// Handles help interception, output flag, topic rendering, command hooks,

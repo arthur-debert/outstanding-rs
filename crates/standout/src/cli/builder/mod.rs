@@ -20,6 +20,7 @@ use crate::{OutputMode, Theme};
 use std::cell::RefCell;
 use std::collections::HashMap;
 use std::path::PathBuf;
+use std::sync::Arc;
 
 use super::app::App;
 use super::dispatch::DispatchFn;
@@ -78,7 +79,7 @@ pub struct AppBuilder {
     /// Stylesheet registry (built from embedded styles)
     pub(crate) stylesheet_registry: Option<crate::StylesheetRegistry>,
     /// Template registry (built from embedded templates)
-    pub(crate) template_registry: Option<TemplateRegistry>,
+    pub(crate) template_registry: Option<Arc<TemplateRegistry>>,
     pub(crate) default_theme_name: Option<String>,
     /// Pending commands - closures are created lazily at dispatch time
     pending_commands: RefCell<HashMap<String, PendingCommand>>,
@@ -138,16 +139,13 @@ impl AppBuilder {
         let context_registry = &self.context_registry;
 
         // Build dispatch functions from recipes
-        // Note: template_registry is not passed here because it would require Clone.
-        // Dispatch closures created this way won't support {% include %} directives.
-        // For full include support, use build() which creates the App with proper Arc sharing.
         let mut commands = HashMap::new();
         for (path, pending) in self.pending_commands.borrow().iter() {
             let dispatch = pending.recipe.create_dispatch(
                 &pending.template,
                 context_registry,
                 &theme,
-                None, // No template registry for lazy dispatch - includes not supported
+                self.template_registry.clone(),
             );
             commands.insert(path.clone(), dispatch);
         }
@@ -187,6 +185,7 @@ impl AppBuilder {
     /// ```
     pub fn build(mut self) -> Result<App, SetupError> {
         use super::core::AppCore;
+
         // Resolve theme: explicit theme takes precedence, then stylesheet registry
         let theme = if let Some(theme) = self.theme.take() {
             Some(theme)
@@ -208,8 +207,8 @@ impl AppBuilder {
             None
         };
 
-        // Wrap template registry in Arc for sharing
-        let template_registry = self.template_registry.take().map(std::sync::Arc::new);
+        // Template registry is already Arc (or None)
+        let template_registry = self.template_registry.take();
 
         // Build the AppCore with all shared configuration
         let core = AppCore {
