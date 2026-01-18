@@ -13,7 +13,11 @@ use std::rc::Rc;
 use std::sync::Arc;
 
 use crate::cli::handler::CommandContext;
+use crate::cli::handler::Output as HandlerOutput;
 use crate::cli::hooks::Hooks;
+use crate::context::{ContextRegistry, RenderContext};
+use crate::{render_auto_with_context, TemplateRegistry, Theme};
+use serde::Serialize;
 
 /// Internal result type for dispatch functions.
 pub(crate) enum DispatchOutput {
@@ -23,6 +27,59 @@ pub(crate) enum DispatchOutput {
     Binary(Vec<u8>, String),
     /// No output (silent)
     Silent,
+}
+
+/// Helper to render output from a handler.
+///
+/// This shared logic ensures consistency between ThreadSafe and Local dispatchers,
+/// including hook execution, context injection, and rendering.
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn render_handler_output<T: Serialize>(
+    result: Result<HandlerOutput<T>, String>,
+    matches: &ArgMatches,
+    ctx: &CommandContext,
+    hooks: Option<&Hooks>,
+    template: &str,
+    theme: &Theme,
+    context_registry: &ContextRegistry,
+    template_registry: Option<&TemplateRegistry>,
+) -> Result<DispatchOutput, String> {
+    match result {
+        Ok(output) => match output {
+            HandlerOutput::Render(data) => {
+                let mut json_data = serde_json::to_value(&data)
+                    .map_err(|e| format!("Failed to serialize handler result: {}", e))?;
+
+                if let Some(hooks) = hooks {
+                    json_data = hooks
+                        .run_post_dispatch(matches, ctx, json_data)
+                        .map_err(|e| format!("Hook error: {}", e))?;
+                }
+
+                let render_ctx = RenderContext::new(
+                    ctx.output_mode,
+                    crate::cli::app::get_terminal_width(),
+                    theme,
+                    &json_data,
+                );
+
+                let output = render_auto_with_context(
+                    template,
+                    &json_data,
+                    theme,
+                    ctx.output_mode,
+                    context_registry,
+                    &render_ctx,
+                    template_registry,
+                )
+                .map_err(|e| e.to_string())?;
+                Ok(DispatchOutput::Text(output))
+            }
+            HandlerOutput::Silent => Ok(DispatchOutput::Silent),
+            HandlerOutput::Binary { data, filename } => Ok(DispatchOutput::Binary(data, filename)),
+        },
+        Err(e) => Err(format!("Error: {}", e)),
+    }
 }
 
 /// Type-erased dispatch function for thread-safe handlers.

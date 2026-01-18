@@ -44,15 +44,13 @@ use std::rc::Rc;
 use clap::ArgMatches;
 use serde::Serialize;
 
-use crate::context::{ContextRegistry, RenderContext};
+use crate::context::ContextRegistry;
 
 use crate::TemplateRegistry;
 use crate::{OutputMode, Theme};
 
-use super::app::get_terminal_width;
-
-use super::dispatch::{DispatchOutput, LocalDispatchFn};
-use super::handler::{CommandContext, HandlerResult, LocalFnHandler, LocalHandler, Output};
+use super::dispatch::{render_handler_output, LocalDispatchFn};
+use super::handler::{CommandContext, HandlerResult, LocalFnHandler, LocalHandler};
 use super::hooks::Hooks;
 use super::local_app::LocalApp;
 use crate::setup::SetupError;
@@ -110,44 +108,17 @@ where
 
         Rc::new(RefCell::new(
             move |matches: &ArgMatches, ctx: &CommandContext, hooks: Option<&Hooks>| {
-                let result = handler.handle(matches, ctx);
-
-                match result {
-                    Ok(Output::Render(data)) => {
-                        let mut json_data = serde_json::to_value(&data)
-                            .map_err(|e| format!("Failed to serialize handler result: {}", e))?;
-
-                        if let Some(hooks) = hooks {
-                            json_data = hooks
-                                .run_post_dispatch(matches, ctx, json_data)
-                                .map_err(|e| format!("Hook error: {}", e))?;
-                        }
-
-                        let render_ctx = RenderContext::new(
-                            ctx.output_mode,
-                            get_terminal_width(),
-                            &theme,
-                            &json_data,
-                        );
-
-                        let output = crate::render_auto_with_context(
-                            &template,
-                            &json_data,
-                            &theme,
-                            ctx.output_mode,
-                            &context_registry,
-                            &render_ctx,
-                            template_registry.as_deref(),
-                        )
-                        .map_err(|e| e.to_string())?;
-                        Ok(DispatchOutput::Text(output))
-                    }
-                    Err(e) => Err(format!("Error: {}", e)),
-                    Ok(Output::Silent) => Ok(DispatchOutput::Silent),
-                    Ok(Output::Binary { data, filename }) => {
-                        Ok(DispatchOutput::Binary(data, filename))
-                    }
-                }
+                let result = handler.handle(matches, ctx).map_err(|e| e.to_string());
+                render_handler_output(
+                    result,
+                    matches,
+                    ctx,
+                    hooks,
+                    &template,
+                    &theme,
+                    &context_registry,
+                    template_registry.as_deref(),
+                )
             },
         ))
     }
@@ -194,44 +165,17 @@ where
 
         Rc::new(RefCell::new(
             move |matches: &ArgMatches, ctx: &CommandContext, hooks: Option<&Hooks>| {
-                let result = self.handler.handle(matches, ctx);
-
-                match result {
-                    Ok(Output::Render(data)) => {
-                        let mut json_data = serde_json::to_value(&data)
-                            .map_err(|e| format!("Failed to serialize handler result: {}", e))?;
-
-                        if let Some(hooks) = hooks {
-                            json_data = hooks
-                                .run_post_dispatch(matches, ctx, json_data)
-                                .map_err(|e| format!("Hook error: {}", e))?;
-                        }
-
-                        let render_ctx = RenderContext::new(
-                            ctx.output_mode,
-                            get_terminal_width(),
-                            &theme,
-                            &json_data,
-                        );
-
-                        let output = crate::render_auto_with_context(
-                            &template,
-                            &json_data,
-                            &theme,
-                            ctx.output_mode,
-                            &context_registry,
-                            &render_ctx,
-                            template_registry.as_deref(),
-                        )
-                        .map_err(|e| e.to_string())?;
-                        Ok(DispatchOutput::Text(output))
-                    }
-                    Err(e) => Err(format!("Error: {}", e)),
-                    Ok(Output::Silent) => Ok(DispatchOutput::Silent),
-                    Ok(Output::Binary { data, filename }) => {
-                        Ok(DispatchOutput::Binary(data, filename))
-                    }
-                }
+                let result = self.handler.handle(matches, ctx).map_err(|e| e.to_string());
+                render_handler_output(
+                    result,
+                    matches,
+                    ctx,
+                    hooks,
+                    &template,
+                    &theme,
+                    &context_registry,
+                    template_registry.as_deref(),
+                )
             },
         ))
     }
@@ -568,6 +512,7 @@ impl LocalAppBuilder {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::cli::handler::Output;
     use serde_json::json;
 
     #[test]
