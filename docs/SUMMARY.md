@@ -21,10 +21,16 @@
 
 ---
 
+# Dispatch (standout-dispatch)
+
+- [Introduction to Dispatch](./crates/dispatch/guides/intro-to-dispatch.md)
+- [Handler Contract](./crates/dispatch/topics/handler-contract.md)
+- [Execution Model](./crates/dispatch/topics/execution-model.md)
+- [Partial Adoption](./crates/dispatch/topics/partial-adoption.md)
+
+---
+
 # Framework Topics
 
-- [Handler Contract](./topics/handler-contract.md)
-- [Execution Model](./topics/execution-model.md)
 - [Output Modes](./topics/output-modes.md)
 - [App Configuration](./topics/app-configuration.md)
-- [Partial Adoption](./topics/partial-adoption.md)
