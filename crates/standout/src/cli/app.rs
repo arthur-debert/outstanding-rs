@@ -214,10 +214,7 @@ impl<M: HandlerMode> App<M> {
         let path_str = path.join(".");
 
         if let Some(dispatch) = self.commands.get(&path_str) {
-            let ctx = CommandContext {
-                output_mode,
-                command_path: path,
-            };
+            let ctx = CommandContext { command_path: path };
 
             let hooks = self.core.get_hooks(&path_str);
 
@@ -230,8 +227,8 @@ impl<M: HandlerMode> App<M> {
 
             let sub_matches = get_deepest_matches(&matches);
 
-            // Run the handler
-            let dispatch_output = match dispatch.dispatch(sub_matches, &ctx, hooks) {
+            // Run the handler (output_mode passed separately as CommandContext is render-agnostic)
+            let dispatch_output = match dispatch.dispatch(sub_matches, &ctx, hooks, output_mode) {
                 Ok(output) => output,
                 Err(e) => return RunResult::Handled(e),
             };
@@ -327,6 +324,7 @@ impl<M: HandlerMode> App<M> {
                 }
                 true
             }
+            RunResult::Silent => true, // Handler ran successfully, no output
             RunResult::NoMatch(_) => false,
         }
     }
@@ -400,7 +398,6 @@ impl<M: HandlerMode> App<M> {
         T: Serialize,
     {
         let ctx = CommandContext {
-            output_mode: self.core.output_mode(),
             command_path: path.split('.').map(String::from).collect(),
         };
 

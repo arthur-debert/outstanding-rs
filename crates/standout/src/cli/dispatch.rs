@@ -31,11 +31,15 @@ pub use standout_dispatch::{
 /// handlers.
 pub trait Dispatchable {
     /// Dispatches the command with the given context.
+    ///
+    /// `output_mode` is passed separately because CommandContext is render-agnostic
+    /// (from standout-dispatch), while output_mode is a rendering concern.
     fn dispatch(
         &self,
         matches: &ArgMatches,
         ctx: &CommandContext,
         hooks: Option<&Hooks>,
+        output_mode: crate::OutputMode,
     ) -> Result<DispatchOutput, String>;
 }
 
@@ -53,6 +57,10 @@ pub enum DispatchOutput {
 ///
 /// This shared logic ensures consistency between ThreadSafe and Local dispatchers,
 /// including hook execution, context injection, and rendering.
+///
+/// Note: `output_mode` is passed separately from `ctx` because CommandContext is
+/// render-agnostic (from standout-dispatch), while output_mode is a rendering concern
+/// managed by standout.
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn render_handler_output<T: Serialize>(
     result: Result<HandlerOutput<T>, String>,
@@ -63,6 +71,7 @@ pub(crate) fn render_handler_output<T: Serialize>(
     theme: &Theme,
     context_registry: &ContextRegistry,
     template_registry: Option<&TemplateRegistry>,
+    output_mode: crate::OutputMode,
 ) -> Result<DispatchOutput, String> {
     match result {
         Ok(output) => match output {
@@ -77,7 +86,7 @@ pub(crate) fn render_handler_output<T: Serialize>(
                 }
 
                 let render_ctx = RenderContext::new(
-                    ctx.output_mode,
+                    output_mode,
                     crate::cli::app::get_terminal_width(),
                     theme,
                     &json_data,
@@ -87,7 +96,7 @@ pub(crate) fn render_handler_output<T: Serialize>(
                     template,
                     &json_data,
                     theme,
-                    ctx.output_mode,
+                    output_mode,
                     context_registry,
                     &render_ctx,
                     template_registry,
@@ -104,12 +113,20 @@ pub(crate) fn render_handler_output<T: Serialize>(
 
 /// Type-erased dispatch function for thread-safe handlers.
 ///
-/// Takes ArgMatches, CommandContext, and optional Hooks. The hooks parameter
-/// allows post-dispatch hooks to run between handler execution and rendering.
+/// Takes ArgMatches, CommandContext, optional Hooks, and OutputMode. The hooks
+/// parameter allows post-dispatch hooks to run between handler execution and
+/// rendering. OutputMode is passed separately because CommandContext is
+/// render-agnostic (from standout-dispatch), while output_mode is a rendering
+/// concern managed by standout.
 ///
 /// Used with [`App`](super::App) and [`Handler`](super::handler::Handler).
 pub type DispatchFn = Arc<
-    dyn Fn(&ArgMatches, &CommandContext, Option<&Hooks>) -> Result<DispatchOutput, String>
+    dyn Fn(
+            &ArgMatches,
+            &CommandContext,
+            Option<&Hooks>,
+            crate::OutputMode,
+        ) -> Result<DispatchOutput, String>
         + Send
         + Sync,
 >;
@@ -120,8 +137,9 @@ impl Dispatchable for DispatchFn {
         matches: &ArgMatches,
         ctx: &CommandContext,
         hooks: Option<&Hooks>,
+        output_mode: crate::OutputMode,
     ) -> Result<DispatchOutput, String> {
-        (self)(matches, ctx, hooks)
+        (self)(matches, ctx, hooks, output_mode)
     }
 }
 
@@ -132,10 +150,18 @@ impl Dispatchable for DispatchFn {
 /// - Uses `FnMut` instead of `Fn` (allows mutable state)
 /// - Does NOT require `Send + Sync`
 ///
+/// OutputMode is passed separately because CommandContext is render-agnostic
+/// (from standout-dispatch), while output_mode is a rendering concern.
+///
 /// Used with [`LocalApp`](super::LocalApp) and [`LocalHandler`](super::handler::LocalHandler).
 pub type LocalDispatchFn = Rc<
     RefCell<
-        dyn FnMut(&ArgMatches, &CommandContext, Option<&Hooks>) -> Result<DispatchOutput, String>,
+        dyn FnMut(
+            &ArgMatches,
+            &CommandContext,
+            Option<&Hooks>,
+            crate::OutputMode,
+        ) -> Result<DispatchOutput, String>,
     >,
 >;
 
@@ -145,8 +171,9 @@ impl Dispatchable for LocalDispatchFn {
         matches: &ArgMatches,
         ctx: &CommandContext,
         hooks: Option<&Hooks>,
+        output_mode: crate::OutputMode,
     ) -> Result<DispatchOutput, String> {
-        (self.borrow_mut())(matches, ctx, hooks)
+        (self.borrow_mut())(matches, ctx, hooks, output_mode)
     }
 }
 

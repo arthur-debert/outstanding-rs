@@ -117,7 +117,10 @@ where
         let theme = theme.clone();
 
         Arc::new(
-            move |matches: &ArgMatches, ctx: &CommandContext, hooks: Option<&Hooks>| {
+            move |matches: &ArgMatches,
+                  ctx: &CommandContext,
+                  hooks: Option<&Hooks>,
+                  output_mode: crate::OutputMode| {
                 let result = handler.handle(matches, ctx).map_err(|e| e.to_string());
                 render_handler_output(
                     result,
@@ -128,6 +131,7 @@ where
                     &theme,
                     &context_registry,
                     template_registry.as_deref(),
+                    output_mode,
                 )
             },
         )
@@ -204,7 +208,10 @@ where
         let theme = theme.clone();
 
         Arc::new(
-            move |matches: &ArgMatches, ctx: &CommandContext, hooks: Option<&Hooks>| {
+            move |matches: &ArgMatches,
+                  ctx: &CommandContext,
+                  hooks: Option<&Hooks>,
+                  output_mode: crate::OutputMode| {
                 let result = handler.handle(matches, ctx).map_err(|e| e.to_string());
                 render_handler_output(
                     result,
@@ -215,6 +222,7 @@ where
                     &theme,
                     &context_registry,
                     template_registry.as_deref(),
+                    output_mode,
                 )
             },
         )
@@ -613,7 +621,10 @@ where
         let handler = Arc::new(self.handler);
 
         Arc::new(
-            move |matches: &ArgMatches, ctx: &CommandContext, hooks: Option<&Hooks>| {
+            move |matches: &ArgMatches,
+                  ctx: &CommandContext,
+                  hooks: Option<&Hooks>,
+                  output_mode: crate::OutputMode| {
                 let result = handler.handle(matches, ctx).map_err(|e| e.to_string());
                 render_handler_output(
                     result,
@@ -624,6 +635,7 @@ where
                     &theme,
                     &context_registry,
                     template_registry.as_deref(),
+                    output_mode,
                 )
             },
         )
@@ -669,7 +681,10 @@ where
         let handler = Arc::new(self.handler);
 
         Arc::new(
-            move |matches: &ArgMatches, ctx: &CommandContext, hooks: Option<&Hooks>| {
+            move |matches: &ArgMatches,
+                  ctx: &CommandContext,
+                  hooks: Option<&Hooks>,
+                  output_mode: crate::OutputMode| {
                 let result = handler.handle(matches, ctx).map_err(|e| e.to_string());
                 render_handler_output(
                     result,
@@ -680,6 +695,7 @@ where
                     &theme,
                     &context_registry,
                     template_registry.as_deref(),
+                    output_mode,
                 )
             },
         )

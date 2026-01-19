@@ -116,10 +116,7 @@ impl AppBuilder {
         // Look up handler
         let commands = self.get_commands();
         if let Some(dispatch) = commands.get(&path_str) {
-            let ctx = CommandContext {
-                output_mode,
-                command_path: path,
-            };
+            let ctx = CommandContext { command_path: path };
 
             // Get hooks for this command (used for pre-dispatch, post-dispatch, and post-output)
             let hooks = self.command_hooks.get(&path_str);
@@ -135,7 +132,8 @@ impl AppBuilder {
             let sub_matches = get_deepest_matches(&matches);
 
             // Run the handler (post-dispatch hooks are run inside dispatch function)
-            let dispatch_output = match dispatch(sub_matches, &ctx, hooks) {
+            // output_mode is passed separately because CommandContext is render-agnostic
+            let dispatch_output = match dispatch(sub_matches, &ctx, hooks, output_mode) {
                 Ok(output) => output,
                 Err(e) => return RunResult::Handled(e),
             };
@@ -330,6 +328,7 @@ impl AppBuilder {
                 }
                 true
             }
+            RunResult::Silent => true, // Handler ran successfully, no output
             RunResult::NoMatch(_) => false,
         }
     }
