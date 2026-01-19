@@ -1,44 +1,52 @@
 # Introduction to Tabular
 
-Polished terminal output requires two things: good formatting (see [Rendering System](../topics/rendering-system.md)) and good layouts. For text-only, non-interactive output, layout mostly means aligning things vertically and controlling how multiple pieces of information are presented together.
+Polished terminal output requires two things: good formatting (see [Rendering Introduction](intro-to-rendering.md)) and good layouts. For text-only, non-interactive output, layout mostly means aligning things vertically and controlling how multiple pieces of information are presented together.
 
 Tabular provides a declarative column system with powerful primitives for sizing (fixed, range, fill, fractions), positioning (anchor to right), overflow handling (clip, wrap, truncate), cell alignment, and automated per-column styling.
 
 Tabular is not only about tables. Any listing where items have multiple fields that benefit from vertical alignment is a good candidate—log entries with authors, timestamps, and messages; file listings with names, sizes, and dates; task lists with IDs, titles, and statuses. Add headers, separators, and borders to a tabular layout, and you have a table.
 
-Tabular is designed to minimize grunt work. It offers a declarative API, template-based syntax, and derive macros to link your existing data types directly to column definitions. Complex tables with complex types can be handled declaratively, with precise control over layout and minimal code.
+**Key capabilities:**
 
-In this guide, we will walk our way up from a simpler table to a more complex one, exploring the available features of Tabular.
+- **Flexible sizing**: Fixed widths, min/max ranges, fill remaining space, fractional proportions
+- **Smart truncation**: Truncate at start, middle, or end with custom ellipsis
+- **Word wrapping**: Wrap long content across multiple lines with proper alignment
+- **Unicode-aware**: CJK characters, combining marks, and ANSI codes handled correctly
+- **Dynamic styling**: Style columns or individual values based on content
+
+In this guide, we will walk from a simple listing to a polished table, exploring the available features.
 
 **See Also:**
 
-- [Tabular Reference](../topics/tabular.md) - complete API reference
-- [Rendering System](../topics/rendering-system.md) - templates and styles in depth
+- [Introduction to Rendering](intro-to-rendering.md) - templates and styles overview
+- [Styling System](../topics/styling-system.md) - themes and adaptive styles
 
 ---
 
-## Our Example: tdoo
+## Our Example: Task List
 
-We'll build the output for `tdoo list`, a command that shows todos. This is a perfect Tabular use case: each todo has an index, title, and status. We want them aligned, readable, and visually clear at a glance.
+We'll build the output for a task list. This is a perfect Tabular use case: each task has an index, title, and status. We want them aligned, readable, and visually clear at a glance.
 
 Here's our data:
 
 ```rust
+use serde::Serialize;
+
 #[derive(Clone, Serialize)]
 #[serde(rename_all = "lowercase")]
 pub enum Status { Pending, Done }
 
 #[derive(Clone, Serialize)]
-struct Todo {
+struct Task {
     title: String,
     status: Status,
 }
 
-let todos = vec![
-    Todo { title: "Implement user authentication".into(), status: Status::Pending },
-    Todo { title: "Fix payment gateway timeout".into(), status: Status::Pending },
-    Todo { title: "Update documentation for API v2".into(), status: Status::Done },
-    Todo { title: "Review pull request #142".into(), status: Status::Pending },
+let tasks = vec![
+    Task { title: "Implement user authentication".into(), status: Status::Pending },
+    Task { title: "Fix payment gateway timeout".into(), status: Status::Pending },
+    Task { title: "Update documentation for API v2".into(), status: Status::Done },
+    Task { title: "Review pull request #142".into(), status: Status::Pending },
 ];
 ```
 
@@ -51,8 +59,8 @@ Let's progressively build this from raw output to a polished, professional listi
 Without any formatting, a naive approach might look like this:
 
 ```jinja
-{% for todo in todos %}
-{{ loop.index }}. {{ todo.title }} {{ todo.status }}
+{% for task in tasks %}
+{{ loop.index }}. {{ task.title }} {{ task.status }}
 {% endfor %}
 ```
 
@@ -74,8 +82,8 @@ This is barely readable. Fields run together, nothing aligns, and scanning the l
 The simplest improvement is the `col` filter. It pads (or truncates) each value to a fixed width:
 
 ```jinja
-{% for todo in todos %}
-{{ loop.index | col(4) }}  {{ todo.status | col(10) }}  {{ todo.title | col(40) }}
+{% for task in tasks %}
+{{ loop.index | col(4) }}  {{ task.status | col(10) }}  {{ task.title | col(40) }}
 {% endfor %}
 ```
 
@@ -88,7 +96,7 @@ Output:
 4.    pending     Review pull request #142
 ```
 
-Already much better. Each column aligns vertically, making it easy to scan. But we've hardcoded widths, and if a title is too long, it gets truncated with `…`.
+Already much better. Each column aligns vertically, making it easy to scan. But we've hardcoded widths, and if a title is too long, it gets truncated with `...`.
 
 > **Key insight:** The `col` filter handles Unicode correctly. CJK characters count as 2 columns, combining marks don't add width, and ANSI escape codes are preserved but not counted.
 
@@ -105,8 +113,8 @@ For more control, use the `tabular()` function. This creates a formatter that yo
     {"name": "title", "width": 40}
 ], separator="  ") %}
 
-{% for todo in todos %}
-{{ t.row([loop.index, todo.status, todo.title]) }}
+{% for task in tasks %}
+{{ t.row([loop.index, task.status, task.title]) }}
 {% endfor %}
 ```
 
@@ -194,17 +202,17 @@ Now the status column is always at the right edge. If the terminal is 100 column
 
 ## Step 7: Handling Long Content
 
-What happens when a title is longer than its column? By default, Tabular truncates at the end with `…`. But you have options:
+What happens when a title is longer than its column? By default, Tabular truncates at the end with `...`. But you have options:
 
 ### Truncate at Different Positions
 
 ```jinja
-{"name": "title", "width": 30, "overflow": "truncate"}                        {# "Very long title th…" #}
-{"name": "title", "width": 30, "overflow": {"truncate": {"at": "start"}}}     {# "…itle that is long" #}
-{"name": "title", "width": 30, "overflow": {"truncate": {"at": "middle"}}}    {# "Very long…is long" #}
+{"name": "title", "width": 30, "overflow": "truncate"}                        {# "Very long title th..." #}
+{"name": "title", "width": 30, "overflow": {"truncate": {"at": "start"}}}     {# "...itle that is long" #}
+{"name": "title", "width": 30, "overflow": {"truncate": {"at": "middle"}}}    {# "Very long...is long" #}
 ```
 
-Middle truncation is perfect for file paths where both the start and end matter: `/home/user/…/important.txt`
+Middle truncation is perfect for file paths where both the start and end matter: `/home/user/.../important.txt`
 
 ### Wrap to Multiple Lines
 
@@ -233,9 +241,9 @@ The wrapped lines are indented to align with the column.
 
 ## Step 8: Dynamic Styling Based on Values
 
-Here's where Tabular shines for todo lists. We want status colors: green for done, yellow for pending.
+Here's where Tabular shines for task lists. We want status colors: green for done, yellow for pending.
 
-First, define styles in your [theme](../topics/rendering-system.md#themes-and-styles):
+First, define styles in your theme:
 
 ```css
 /* styles/default.css */
@@ -252,12 +260,12 @@ Then use the `style_as` filter to apply styles based on the value itself:
     {"name": "title", "width": "fill"}
 ], separator="  ") %}
 
-{% for todo in todos %}
-{{ t.row([loop.index, todo.status | style_as(todo.status), todo.title]) }}
+{% for task in tasks %}
+{{ t.row([loop.index, task.status | style_as(task.status), task.title]) }}
 {% endfor %}
 ```
 
-The `style_as` filter wraps the value in style tags: `[done]done[/done]`. Standout's rendering system then applies the green color.
+The `style_as` filter wraps the value in style tags: `[done]done[/done]`. The rendering system then applies the green color.
 
 Output (with colors):
 
@@ -268,7 +276,7 @@ Output (with colors):
 4.    [yellow]pending[/yellow]   Review pull request #142
 ```
 
-In the terminal, statuses appear in their respective colors, making it instantly clear which todos need attention.
+In the terminal, statuses appear in their respective colors, making it instantly clear which tasks need attention.
 
 ---
 
@@ -290,7 +298,7 @@ Now indices appear in a muted style (typically gray), while titles and statuses 
 
 ## Step 10: Automatic Field Extraction
 
-Tired of manually listing `[todo.title, todo.status, ...]`? If your column names match your struct fields, use `row_from()`:
+Tired of manually listing `[task.title, task.status, ...]`? If your column names match your struct fields, use `row_from()`:
 
 ```jinja
 {% set t = tabular([
@@ -298,12 +306,12 @@ Tired of manually listing `[todo.title, todo.status, ...]`? If your column names
     {"name": "status", "width": 10}
 ]) %}
 
-{% for todo in todos %}
-{{ t.row_from(todo) }}
+{% for task in tasks %}
+{{ t.row_from(task) }}
 {% endfor %}
 ```
 
-Tabular extracts `todo.title`, `todo.status`, etc. automatically. For nested fields, use `key`:
+Tabular extracts `task.title`, `task.status`, etc. automatically. For nested fields, use `key`:
 
 ```jinja
 {"name": "Author", "key": "author.name", "width": 20}
@@ -325,8 +333,8 @@ For a proper table with headers, switch from `tabular()` to `table()`:
 
 {{ t.header_row() }}
 {{ t.separator_row() }}
-{% for todo in todos %}
-{{ t.row([loop.index, todo.status, todo.title]) }}
+{% for task in tasks %}
+{{ t.row([loop.index, task.status, task.title]) }}
 {% endfor %}
 {{ t.bottom_border() }}
 ```
@@ -379,19 +387,19 @@ For dense data, add lines between rows:
 
 ## Step 12: The Complete Example
 
-Putting it all together, here's our polished todo list:
+Putting it all together, here's a polished task list:
 
 ```jinja
 {% set t = table([
     {"name": "#", "width": 4, "style": "muted"},
     {"name": "Status", "width": 10},
     {"name": "Title", "width": "fill", "overflow": {"truncate": {"at": "middle"}}}
-], border="rounded", header_style="bold", separator=" │ ") %}
+], border="rounded", header_style="bold", separator=" | ") %}
 
 {{ t.header_row() }}
 {{ t.separator_row() }}
-{% for todo in todos %}
-{{ t.row([loop.index, todo.status | style_as(todo.status), todo.title]) }}
+{% for task in tasks %}
+{{ t.row([loop.index, task.status | style_as(task.status), task.title]) }}
 {% endfor %}
 {{ t.bottom_border() }}
 ```
@@ -424,139 +432,28 @@ Features in use:
 Everything shown in templates is also available in Rust:
 
 ```rust
-use standout::tabular::{TabularSpec, Col, Table, BorderStyle};
+use standout_render::tabular::{TabularFormatter, ColumnSpec, Overflow, Alignment};
 
-let spec = TabularSpec::builder()
-    .column(Col::fixed(4).header("#").style("muted"))
-    .column(Col::fixed(10).header("Status"))
-    .column(Col::fill().header("Title").truncate_middle())
-    .separator(" │ ")
-    .build();
+let columns = vec![
+    ColumnSpec::fixed(4).header("#").style("muted"),
+    ColumnSpec::fixed(10).header("Status"),
+    ColumnSpec::fill().header("Title").overflow(Overflow::truncate_middle()),
+];
 
-let table = Table::new(spec, 80)
-    .header_from_columns()
-    .header_style("bold")
-    .border(BorderStyle::Rounded);
+let formatter = TabularFormatter::new(columns)
+    .separator(" | ")
+    .terminal_width(80);
 
-// Render the full table
-let output = table.render(&data);
-
-// Or render parts manually for custom logic
-println!("{}", table.header_row());
-println!("{}", table.separator_row());
-for (i, todo) in todos.iter().enumerate() {
-    println!("{}", table.row(&[&(i + 1).to_string(), &todo.status.to_string(), &todo.title]));
-}
-println!("{}", table.bottom_border());
-```
-
----
-
-## Derive Macros: Type-Safe Table Definitions
-
-Instead of manually building `TabularSpec` instances, you can use derive macros to generate them from struct annotations. This keeps your column definitions co-located with your data types and ensures they stay in sync.
-
-### `#[derive(Tabular)]` - Generate Spec from Struct
-
-Add `#[col(...)]` attributes to your struct fields to define column properties:
-
-```rust
-use standout::tabular::{Tabular, TabularRow, Table, BorderStyle};
-use serde::Serialize;
-
-#[derive(Clone, Serialize)]
-#[serde(rename_all = "lowercase")]
-pub enum Status { Pending, Done }
-
-#[derive(Clone, Serialize, Tabular, TabularRow)]
-#[tabular(separator = " │ ")]
-struct Todo {
-    #[col(width = "fill", header = "Title", overflow = "truncate", truncate_at = "middle")]
-    title: String,
-
-    #[col(width = 10, header = "Status")]
-    status: Status,
+// Format individual rows
+for (i, task) in tasks.iter().enumerate() {
+    let row = formatter.format_row(&[
+        &(i + 1).to_string(),
+        &task.status.to_string(),
+        &task.title,
+    ]);
+    println!("{}", row);
 }
 ```
-
-Now create formatters and tables directly from the type:
-
-```rust
-// Create a table using the derived spec
-let table = Table::from_type::<Todo>(80)
-    .header_from_columns()
-    .border(BorderStyle::Rounded);
-
-// Render rows using the TabularRow trait (no JSON serialization)
-for todo in &todos {
-    println!("{}", table.row_from_trait(todo));
-}
-```
-
-### Available Field Attributes
-
-| Attribute | Type | Description |
-| --------- | ---- | ----------- |
-| `width` | `8`, `"fill"`, `"2fr"` | Column width strategy |
-| `min`, `max` | `usize` | Bounded width range |
-| `align` | `"left"`, `"right"`, `"center"` | Text alignment within cell |
-| `anchor` | `"left"`, `"right"` | Column position in row |
-| `overflow` | `"truncate"`, `"wrap"`, `"clip"`, `"expand"` | How to handle long content |
-| `truncate_at` | `"end"`, `"start"`, `"middle"` | Where to truncate |
-| `style` | string | Style name for entire column |
-| `style_from_value` | flag | Use cell value as style name |
-| `header` | string | Column header text |
-| `null_repr` | string | Representation for null values |
-| `key` | string | Override field name for extraction |
-| `skip` | flag | Exclude field from table |
-
-### Container Attributes
-
-| Attribute | Description |
-| --------- | ----------- |
-| `separator` | Column separator (default: `"  "`) |
-| `prefix` | Row prefix |
-| `suffix` | Row suffix |
-
-### Using with Templates
-
-The derived spec can be injected into templates using helper functions:
-
-```rust
-use standout::tabular::filters::{table_from_type, register_tabular_filters};
-use minijinja::{context, Environment};
-
-let mut env = Environment::new();
-register_tabular_filters(&mut env);
-
-// Create a table from the derived spec
-let table = table_from_type::<Todo>(80, BorderStyle::Light, true);
-
-// Use in template context
-env.add_template("todos", r#"
-{{ tbl.top_border() }}
-{{ tbl.header_row() }}
-{{ tbl.separator_row() }}
-{% for todo in todos %}{{ tbl.row([todo.title, todo.status]) }}
-{% endfor %}{{ tbl.bottom_border() }}
-"#)?;
-
-let output = env.get_template("todos")?.render(context! {
-    tbl => table,
-    todos => todo_data,
-})?;
-```
-
-### Why Two Macros?
-
-- **`#[derive(Tabular)]`** generates the `TabularSpec` (column definitions, widths, styles)
-- **`#[derive(TabularRow)]`** generates efficient row extraction (field values to strings)
-
-You can use them independently:
-
-- Use only `Tabular` with `row_from()` to keep serde-based extraction
-- Use only `TabularRow` with manually-built specs for maximum control
-- Use both together for the best type safety and performance
 
 ---
 
@@ -573,8 +470,7 @@ Tabular transforms raw data into polished, scannable output with minimal effort:
 7. **Add visual hierarchy** - style columns and values dynamically
 8. **Extract automatically** - let `row_from()` pull fields from structs
 9. **Decorate as tables** - add borders, headers, and separators
-10. **Use derive macros** - `#[derive(Tabular, TabularRow)]` for type-safe definitions
 
 The declarative approach means your layout adapts to terminal width, handles Unicode correctly, and remains maintainable as your data evolves.
 
-For complete API details, see the [Tabular Reference](../topics/tabular.md).
+For complete API details, see the [API documentation](https://docs.rs/standout-render).

@@ -1,20 +1,15 @@
 # The Handler Contract
 
-Handlers are where your application logic lives. Standout's handler contract is designed to be **explicit** rather than permissive. By enforcing serializable return types and clear ownership semantics, the framework guarantees that your code remains testable and decoupled from output formatting.
+Handlers are where your application logic lives. The handler contract is designed to be **explicit** rather than permissive. By enforcing serializable return types and clear ownership semantics, the library guarantees that your code remains testable and decoupled from output formatting.
 
-Instead of fighting with generic `Any` types or global state, you work with a clear contract: inputs are references, output is a `Result`.
-
-See also:
-
-- [Output Modes](output-modes.md) for how the output enum interacts with formats.
+---
 
 ## Handler Modes
 
-Standout supports two handler modes to accommodate different use cases:
+`standout-dispatch` supports two handler modes:
 
 | Aspect | `Handler` (default) | `LocalHandler` |
 |--------|---------------------|----------------|
-| App type | `App` | `LocalApp` |
 | Self reference | `&self` | `&mut self` |
 | Closure type | `Fn` | `FnMut` |
 | Thread bounds | `Send + Sync` | None |
@@ -23,9 +18,11 @@ Standout supports two handler modes to accommodate different use cases:
 
 Choose based on your needs:
 
-- **`App` with `Handler`**: Default. Use when handlers are stateless or use interior mutability (`Arc<Mutex<_>>`). Required for potential multi-threading.
+- **`Handler`**: Default. Use when handlers are stateless or use interior mutability (`Arc<Mutex<_>>`). Required for potential multi-threading.
 
-- **`LocalApp` with `LocalHandler`**: Use when your handlers need `&mut self` access without wrapper types. Ideal for single-threaded CLIs.
+- **`LocalHandler`**: Use when your handlers need `&mut self` access without wrapper types. Ideal for single-threaded CLIs.
+
+---
 
 ## The Handler Trait (Thread-safe)
 
@@ -42,19 +39,45 @@ Key constraints:
 - **Output must be Serialize**: Needed for JSON/YAML modes and template context
 - **Immutable references**: Handlers cannot modify arguments or context
 
-Implementing the trait directly is useful when your handler needs internal state—database connections, configuration, etc. For stateless logic, closure handlers are more convenient.
+Implementing the trait directly is useful when your handler needs internal state—database connections, configuration, etc.
+
+### Example: Struct Handler
+
+```rust
+use standout_dispatch::{Handler, Output, CommandContext, HandlerResult};
+use clap::ArgMatches;
+use serde::Serialize;
+
+struct DbHandler {
+    pool: DatabasePool,
+    config: Config,
+}
+
+impl Handler for DbHandler {
+    type Output = Vec<Row>;
+
+    fn handle(&self, matches: &ArgMatches, _ctx: &CommandContext) -> HandlerResult<Vec<Row>> {
+        let query: &String = matches.get_one("query").unwrap();
+        let rows = self.pool.query(query)?;
+        Ok(Output::Render(rows))
+    }
+}
+```
+
+---
 
 ## Closure Handlers
 
-Most handlers are simple closures:
+Most handlers are simple closures using `FnHandler`:
 
 ```rust
-App::builder()
-    .command("list", |matches, ctx| {
-        let verbose = matches.get_flag("verbose");
-        let items = storage::list()?;
-        Ok(Output::Render(ListResult { items, verbose }))
-    }, "list.j2")
+use standout_dispatch::{FnHandler, Output, HandlerResult};
+
+let handler = FnHandler::new(|matches, ctx| {
+    let verbose = matches.get_flag("verbose");
+    let items = storage::list()?;
+    Ok(Output::Render(ListResult { items, verbose }))
+});
 ```
 
 The closure signature:
@@ -64,11 +87,13 @@ fn(&ArgMatches, &CommandContext) -> HandlerResult<T>
 where T: Serialize + Send + Sync
 ```
 
-Closures must be `Fn` (not `FnMut` or `FnOnce`) because Standout may call them multiple times in certain scenarios.
+Closures must be `Fn` (not `FnMut` or `FnOnce`) for thread safety.
+
+---
 
 ## The LocalHandler Trait (Mutable State)
 
-When your handlers need `&mut self` access—common with database connections, file caches, or in-memory indices—use `LocalHandler` with `LocalApp`:
+When your handlers need `&mut self` access—common with database connections, file caches, or in-memory indices:
 
 ```rust
 pub trait LocalHandler {
@@ -91,17 +116,18 @@ Use `LocalHandler` when:
 - You want to avoid `Arc<Mutex<_>>` wrappers
 - Your CLI is single-threaded (the typical case)
 
-```rust
-use standout::cli::{LocalApp, LocalHandler, Output, HandlerResult, CommandContext};
+### Example: LocalHandler with Cache
 
-struct Database {
+```rust
+use standout_dispatch::{LocalHandler, Output, CommandContext, HandlerResult};
+
+struct CachingDatabase {
     connection: Connection,
     cache: HashMap<String, Record>,
 }
 
-impl Database {
-    fn query_mut(&mut self, sql: &str) -> Result<Vec<Row>, Error> {
-        // Needs &mut self because it updates the cache
+impl CachingDatabase {
+    fn query_with_cache(&mut self, sql: &str) -> Result<Vec<Row>, Error> {
         if let Some(cached) = self.cache.get(sql) {
             return Ok(cached.clone());
         }
@@ -111,12 +137,12 @@ impl Database {
     }
 }
 
-impl LocalHandler for Database {
+impl LocalHandler for CachingDatabase {
     type Output = Vec<Row>;
 
     fn handle(&mut self, matches: &ArgMatches, _ctx: &CommandContext) -> HandlerResult<Vec<Row>> {
-        let query = matches.get_one::<String>("query").unwrap();
-        let rows = self.query_mut(query)?;
+        let query: &String = matches.get_one("query").unwrap();
+        let rows = self.query_with_cache(query)?;
         Ok(Output::Render(rows))
     }
 }
@@ -124,22 +150,20 @@ impl LocalHandler for Database {
 
 ### Local Closure Handlers
 
-`LocalApp::builder().command()` accepts `FnMut` closures:
+`LocalFnHandler` accepts `FnMut` closures:
 
 ```rust
-let mut db = Database::connect()?;
+use standout_dispatch::LocalFnHandler;
 
-LocalApp::builder()
-    .command("query", |matches, ctx| {
-        let sql = matches.get_one::<String>("sql").unwrap();
-        let rows = db.query_mut(sql)?;  // &mut db works!
-        Ok(Output::Render(rows))
-    }, "{{ rows }}")
-    .build()?
-    .run(cmd, args);
+let mut counter = 0;
+
+let handler = LocalFnHandler::new(move |_matches, _ctx| {
+    counter += 1;  // Mutation works!
+    Ok(Output::Render(counter))
+});
 ```
 
-This is the primary use case: capturing mutable references in closures without interior mutability wrappers.
+---
 
 ## HandlerResult
 
@@ -159,7 +183,7 @@ fn list_handler(matches: &ArgMatches, ctx: &CommandContext) -> HandlerResult<Ite
 }
 ```
 
-Errors become the command output—Standout formats and displays them appropriately.
+---
 
 ## The Output Enum
 
@@ -175,7 +199,7 @@ pub enum Output<T: Serialize> {
 
 ### Output::Render(T)
 
-The common case. Data is serialized to JSON, passed to the template engine, and rendered with styles:
+The common case. Data is passed to the render function:
 
 ```rust
 #[derive(Serialize)]
@@ -193,8 +217,6 @@ fn list_handler(_m: &ArgMatches, _ctx: &CommandContext) -> HandlerResult<ListRes
 }
 ```
 
-In structured output modes (`--output json`), the template is skipped and data serializes directly—same handler code, different output format.
-
 ### Output::Silent
 
 No output produced. Useful for commands with side effects only:
@@ -207,17 +229,14 @@ fn delete_handler(matches: &ArgMatches, _ctx: &CommandContext) -> HandlerResult<
 }
 ```
 
-Silent behavior in the pipeline:
-
-- Post-output hooks still receive `RenderedOutput::Silent` (they can transform it)
-- If `--output-file` is set, nothing is written
+Silent behavior:
+- Post-output hooks still receive `RenderedOutput::Silent`
+- Render function is not called
 - Nothing prints to stdout
-
-The type parameter for `Output::Silent` is often `()` but can be any `Serialize` type—it's never used.
 
 ### Output::Binary
 
-Raw bytes written to a file. Useful for exports, archives, or generated files:
+Raw bytes for file output:
 
 ```rust
 fn export_handler(matches: &ArgMatches, _ctx: &CommandContext) -> HandlerResult<()> {
@@ -231,13 +250,9 @@ fn export_handler(matches: &ArgMatches, _ctx: &CommandContext) -> HandlerResult<
 }
 ```
 
-The filename is used as a literal file path. Standout writes the bytes using `std::fs::write()` and prints a confirmation to stderr. The filename can be:
+Binary output bypasses the render function entirely.
 
-- Relative: `"output/report.pdf"`
-- Absolute: `"/tmp/report.pdf"`
-- Dynamic: `format!("report-{}.pdf", timestamp)`
-
-Binary output bypasses the template engine entirely.
+---
 
 ## CommandContext
 
@@ -245,27 +260,11 @@ Binary output bypasses the template engine entirely.
 
 ```rust
 pub struct CommandContext {
-    pub output_mode: OutputMode,
     pub command_path: Vec<String>,
 }
 ```
 
-**output_mode**: The resolved output format (Term, Text, Json, etc.). Handlers can inspect this to adjust behavior—for example, skipping interactive prompts in JSON mode:
-
-```rust
-fn interactive_handler(matches: &ArgMatches, ctx: &CommandContext) -> HandlerResult<Data> {
-    let confirmed = if ctx.output_mode.is_structured() {
-        true  // Non-interactive in JSON mode
-    } else {
-        prompt_user("Continue?")?
-    };
-    // ...
-}
-```
-
 **command_path**: The subcommand chain as a vector, e.g., `["db", "migrate"]`. Useful for logging or conditional logic.
-
-See [Execution Model](execution-model.md) for more on command paths.
 
 `CommandContext` is intentionally minimal. Application-specific context (config, connections) should be captured in struct handlers or closures:
 
@@ -284,6 +283,8 @@ impl Handler for MyHandler {
     }
 }
 ```
+
+---
 
 ## Accessing CLI Arguments
 
@@ -309,57 +310,9 @@ fn handler(matches: &ArgMatches, _ctx: &CommandContext) -> HandlerResult<Data> {
 }
 ```
 
-For subcommands, you receive the `ArgMatches` for your specific command, not the root. Standout navigates to the deepest match before calling your handler.
+For subcommands, you work with the `ArgMatches` for your specific command level.
 
-## The #[dispatch] Macro
-
-For applications with many commands, the `#[dispatch]` attribute macro generates registration from an enum:
-
-```rust
-#[derive(Dispatch)]
-enum Commands {
-    List,
-    Add,
-    Remove,
-}
-```
-
-This generates a `dispatch_config()` method that registers handlers. Variant names are converted to snake_case command names:
-
-- `List` → `"list"`
-- `ListAll` → `"list_all"`
-
-The macro expects handler functions named after the variant:
-
-```rust
-fn list(_m: &ArgMatches, _ctx: &CommandContext) -> HandlerResult<ListOutput> { ... }
-fn add(_m: &ArgMatches, _ctx: &CommandContext) -> HandlerResult<AddOutput> { ... }
-fn remove(_m: &ArgMatches, _ctx: &CommandContext) -> HandlerResult<RemoveOutput> { ... }
-```
-
-Variant attributes for customization:
-
-```rust
-#[derive(Dispatch)]
-enum Commands {
-    #[dispatch(handler = custom_list_fn)]  // Override handler function
-    List,
-
-    #[dispatch(template = "custom/add.j2")]  // Override template path
-    Add,
-
-    #[dispatch(pre_dispatch = validate_auth)]  // Add hook
-    Remove,
-
-    #[dispatch(skip)]  // Don't register this variant
-    Internal,
-
-    #[dispatch(nested)]  // This is a subcommand enum
-    Db(DbCommands),
-}
-```
-
-The `nested` attribute is required for subcommand enums—it's not inferred from tuple variants.
+---
 
 ## Testing Handlers
 
@@ -368,11 +321,11 @@ Because handlers are pure functions with explicit inputs and outputs, they're st
 ```rust
 #[test]
 fn test_list_handler() {
-    let cmd = Command::new("test").arg(Arg::new("verbose").long("verbose").action(ArgAction::SetTrue));
+    let cmd = Command::new("test")
+        .arg(Arg::new("verbose").long("verbose").action(ArgAction::SetTrue));
     let matches = cmd.try_get_matches_from(["test", "--verbose"]).unwrap();
 
     let ctx = CommandContext {
-        output_mode: OutputMode::Term,
         command_path: vec!["list".into()],
     };
 
@@ -408,7 +361,6 @@ fn test_local_handler_state_mutation() {
     let cmd = Command::new("test");
     let matches = cmd.try_get_matches_from(["test"]).unwrap();
     let ctx = CommandContext {
-        output_mode: OutputMode::Term,
         command_path: vec!["count".into()],
     };
 
@@ -421,14 +373,16 @@ fn test_local_handler_state_mutation() {
 }
 ```
 
+---
+
 ## Choosing Between Handler and LocalHandler
 
 | Your situation | Use |
 |----------------|-----|
-| Stateless handlers | `App` + closures |
-| State with `Arc<Mutex<_>>` already | `App` + `Handler` trait |
-| API with `&mut self` methods | `LocalApp` + `LocalHandler` |
-| Building a library | `App` (consumers might need thread safety) |
-| Simple single-threaded CLI | Either works; `LocalApp` avoids wrapper types |
+| Stateless handlers | `FnHandler` + closures |
+| State with `Arc<Mutex<_>>` already | `Handler` trait |
+| API with `&mut self` methods | `LocalHandler` trait |
+| Building a library | `Handler` (consumers might need thread safety) |
+| Simple single-threaded CLI | Either works; `LocalHandler` avoids wrapper types |
 
 The key insight: CLIs are fundamentally single-threaded (parse → run one handler → output → exit). The `Send + Sync` requirement in `Handler` is conventional, not strictly necessary. `LocalHandler` removes this requirement for simpler code when thread safety isn't needed.

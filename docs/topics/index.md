@@ -4,31 +4,15 @@ In-depth documentation for specific Standout systems and use cases.
 
 ---
 
-## Core Concepts
-
-### [Handler Contract](handler-contract.md)
-
-The interface between your logic and Standout. Covers the `Handler` trait, `HandlerResult`, the `Output` enum (`Render`, `Silent`, `Binary`), and `CommandContext`. Essential reading for understanding how handlers return data to be rendered.
-
-### [Rendering System](rendering-system.md)
-
-How Standout transforms data into styled terminal output. Covers the two-pass architecture (MiniJinja + BBParser), style tags, themes, template filters, context injection, and structured output modes.
-
-### [Output Modes](output-modes.md)
-
-The `--output` flag and `OutputMode` enum. Covers auto/term/text modes for terminal output, structured modes (JSON, YAML, XML, CSV), file output, and how to access the mode in handlers.
-
-### [Execution Model](execution-model.md)
-
-The request lifecycle from CLI input to rendered output. Covers the pipeline (parsing, dispatch, handler, hooks, rendering), command paths, the hooks system (pre-dispatch, post-dispatch, post-output), and default command behavior.
-
----
-
-## Configuration
+## Framework Configuration
 
 ### [App Configuration](app-configuration.md)
 
 The `AppBuilder` API for configuring your application. Covers embedding templates and styles, theme selection, command registration, hooks, context injection, flag customization, and the complete setup workflow.
+
+### [Output Modes](output-modes.md)
+
+The `--output` flag and `OutputMode` enum. Covers auto/term/text modes for terminal output, structured modes (JSON, YAML, XML, CSV), file output, and how to access the mode in handlers.
 
 ### [Topics System](topics-system.md)
 
@@ -36,20 +20,21 @@ Adding help topics to your CLI. Covers the `Topic` struct, `TopicRegistry`, load
 
 ---
 
-## Layout
+## Crate Documentation
 
-### [Tabular Layout](tabular.md)
+For detailed documentation on the underlying libraries, see:
 
-Creating aligned, readable output for lists and tables. Covers the `col` filter, `tabular()` and `table()` functions, flexible widths, overflow handling, column styling, borders, and the Rust API.
+### Rendering (standout-render)
 
----
+- [Introduction to Rendering](../crates/render/guides/intro-to-rendering.md) — Templates, themes, output modes
+- [Introduction to Tabular](../crates/render/guides/intro-to-tabular.md) — Column layouts and tables
+- [Styling System](../crates/render/topics/styling-system.md) — Themes, adaptive styles, CSS syntax
+- [Templating](../crates/render/topics/templating.md) — MiniJinja, style tags, processing modes
+- [File System Resources](../crates/render/topics/file-system-resources.md) — Hot reload, registries, embedding
 
-## Standalone Usage
+### Dispatch (standout-dispatch)
 
-### [Partial Adoption](partial-adoption.md)
-
-Migrating an existing CLI to Standout incrementally. Covers using `run` with fallback dispatch, progressive command migration, and full adoption patterns.
-
-### [Render Only](render-only.md)
-
-Using Standout's rendering layer without CLI integration. Covers standalone rendering functions, building themes programmatically, template validation, and context injection for non-CLI use cases.
+- [Introduction to Dispatch](../crates/dispatch/guides/intro-to-dispatch.md) — Handlers, hooks, testing
+- [Handler Contract](../crates/dispatch/topics/handler-contract.md) — Handler traits, Output enum
+- [Execution Model](../crates/dispatch/topics/execution-model.md) — Pipeline, hooks, command routing
+- [Partial Adoption](../crates/dispatch/topics/partial-adoption.md) — Incremental migration strategies
