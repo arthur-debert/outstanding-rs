@@ -58,11 +58,11 @@ What Standout provides:
 - Autodispatch: save keystrokes with auto dispatch from the known command tree
 - Free [output handling](topics/output-modes.md): rich terminal with graceful degradation, plus structured data (JSON, YAML, CSV)
 - Finely crafted output:
-  - File-based [templates](topics/rendering-system.md) for content and CSS for styling
-  - Rich styling with [adaptive properties](topics/rendering-system.md#adaptive-styles) (light/dark modes), inheritance, and full theming
+  - File-based [templates](crates/render/topics/templating.md) for content and CSS for styling
+  - Rich styling with [adaptive properties](crates/render/topics/styling-system.md) (light/dark modes), inheritance, and full theming
   - Powerful templating through [MiniJinja](https://github.com/mitsuhiko/minijinja), including partials (reusable, smaller templates for models displayed in multiple places)
-  - [Hot reload](topics/rendering-system.md#hot-reloading): changes to templates and styles don't require compiling
-  - Declarative layout support for [tabular data](topics/tabular.md)
+  - [Hot reload](crates/render/topics/file-system-resources.md): changes to templates and styles don't require compiling
+  - Declarative layout support for [tabular data](crates/render/guides/intro-to-tabular.md)
 
 ## Quick Start
 
@@ -192,11 +192,11 @@ if let Some(matches) = app.run(Cli::command(), std::env::args()) {
 }
 ```
 
-See the [Partial Adoption Guide](topics/partial-adoption.md) for the full migration path.
+See the [Partial Adoption Guide](crates/dispatch/topics/partial-adoption.md) for the full migration path.
 
 ## Next Steps
 
 - **[Introduction to Standout](guides/intro-to-standout.md)** — Adopting Standout in a working CLI. Start here.
-- [Introduction to Rendering](guides/intro-to-rendering.md) — Creating polished terminal output
-- [Introduction to Tabular](guides/intro-to-tabular.md) — Building aligned, readable tabular layouts
+- [Introduction to Rendering](crates/render/guides/intro-to-rendering.md) — Creating polished terminal output
+- [Introduction to Tabular](crates/render/guides/intro-to-tabular.md) — Building aligned, readable tabular layouts
 - [All Topics](topics/index.md) — In-depth documentation for specific systems

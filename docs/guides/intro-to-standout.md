@@ -8,10 +8,10 @@ For explanation's sake, we will show a hypothetical list command for tdoo, a tod
 
 **See Also:**
 
-- [Handler Contract](../topics/handler-contract.md) - detailed handler API
-- [Rendering System](../topics/rendering-system.md) - templates and styles in depth
+- [Handler Contract](../crates/dispatch/topics/handler-contract.md) - detailed handler API
+- [Styling System](../crates/render/topics/styling-system.md) - themes and styles in depth
 - [Output Modes](../topics/output-modes.md) - all output format options
-- [Partial Adoption](../topics/partial-adoption.md) - migrating incrementally
+- [Partial Adoption](../crates/dispatch/topics/partial-adoption.md) - migrating incrementally
 
 ## 1. Start: The Argument Parsing
 
@@ -296,7 +296,7 @@ pub fn render_list(result: TodoResult) {
 - Edit templates without recompiling (with minor changes to loading)
 - Non-Rust developers can contribute to UI
 - Clear separation in code reviews: "is this a logic change or display change?"
-- Use partials, filters, and macros for complex outputs (see [Rendering System](../topics/rendering-system.md))
+- Use partials, filters, and macros for complex outputs (see [Templating](../crates/render/topics/templating.md))
 
 **What's next:** Hooking up Standout for automatic dispatch and rich output.
 Also, notice we've yet to do anything Standout-specific. This is not a coincidence—the framework is designed around this pattern, making testability, fast iteration, and rich features natural outcomes of the architecture.
@@ -328,7 +328,7 @@ standout = "2"
 
 Annotate your commands enum with the Dispatch derive macro. This tells Standout that the "list" command should be dispatched to the `list` handler. That's all Standout needs to know, and now it can manage the execution.
 
-See [Handler Contract](../topics/handler-contract.md) for full handler API details.
+See [Handler Contract](../crates/dispatch/topics/handler-contract.md) for full handler API details.
 
 ```rust
 use standout::cli::{Dispatch, CommandContext, HandlerResult, Output};
@@ -403,7 +403,7 @@ fn main() -> anyhow::Result<()> {
 }
 ```
 
-If your app has other clap commands that are not managed by Standout, check for unhandled commands. See [Partial Adoption](../topics/partial-adoption.md) for details on incremental migration.
+If your app has other clap commands that are not managed by Standout, check for unhandled commands. See [Partial Adoption](../crates/dispatch/topics/partial-adoption.md) for details on incremental migration.
 
 ```rust
 if let Some(matches) = app.run(Cli::command(), std::env::args()) {
@@ -451,7 +451,7 @@ src/
 
 Let's transform that mono-typed, monochrome string into a richer and more useful UI. Borrowing from web apps setup, we keep the content in a template file, and we define styles in a stylesheet file.
 
-See [Rendering System](../topics/rendering-system.md) for full styling documentation.
+See [Styling System](../crates/render/topics/styling-system.md) for full styling documentation.
 
 ### 8.1 Create the stylesheet
 
@@ -576,9 +576,9 @@ src/
 For brevity's sake, we've ignored a bunch of finer and relevant points:
 
 - The derive macros can set name mapping explicitly: `#[dispatch(handler = custom_fn, template = "custom.jinja")]`
-- There are pre-dispatch, post-dispatch and post-render hooks (see [Execution Model](../topics/execution-model.md))
-- Standout exposes its primitives as libraries for custom usage (see [Render Only](../topics/render-only.md))
-- Powerful tabular layouts via the `col` filter (see [Tabular Layout](../topics/tabular.md))
+- There are pre-dispatch, post-dispatch and post-render hooks (see [Execution Model](../crates/dispatch/topics/execution-model.md))
+- Standout exposes its primitives as standalone crates (see [standout-render](../crates/render/guides/intro-to-rendering.md), [standout-dispatch](../crates/dispatch/guides/intro-to-dispatch.md))
+- Powerful tabular layouts via the `col` filter (see [Tabular Layout](../crates/render/guides/intro-to-tabular.md))
 - A help topics system for rich documentation (see [Topics System](../topics/topics-system.md))
 
 Aside from exposing the library primitives, Standout leverages best-in-breed crates like MiniJinja and console::Style under the hood. The lock-in is really negligible: you can use Standout's BB parser or swap it, manually dispatch handlers, and use the renderers directly in your clap dispatch.
@@ -635,7 +635,7 @@ Use `LocalApp` when:
 - You want to avoid `Arc<Mutex<_>>` wrappers
 - Your CLI is single-threaded (the common case)
 
-See [Handler Contract](../topics/handler-contract.md) for the full comparison.
+See [Handler Contract](../crates/dispatch/topics/handler-contract.md) for the full comparison.
 
 ## Appendix: Common Errors and Troubleshooting
 

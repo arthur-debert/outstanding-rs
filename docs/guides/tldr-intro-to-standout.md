@@ -6,9 +6,9 @@ It skimps rationale, design and other useful bits you can read from the [longer 
 ## Prerequisites
 
 A cli app, that uses clap for arg parsing.
-A command fucntion that is pure logic, that is , returns the result, and does not print to stdout or format output.
+A command function that is pure logic, that is, returns the result, and does not print to stdout or format output.
 
-For this guide's purpose we'll use a ficticious "list" command of our todo list manager
+For this guide's purpose we'll use a fictitious "list" command of our todo list manager
 
 ## The Core: A pure function logic handler
 
@@ -18,7 +18,7 @@ The logic handler: receives parsed cli args, and returns a serializable data str
     pub fn list(matches: &ArgMatches, _ctx: &CommandContext) -> HandlerResult<TodoResult> {}
 ```
 
-## Making it oustanding
+## Making it outstanding
 
 ### 1. The File System
 
@@ -66,7 +66,7 @@ Configure the app:
 
 ```rust
     let app = App::builder()
-        .templates(embed_templates!("src/templates"))    //  Sets the root template path, hot relead for dev, embeded in release
+        .templates(embed_templates!("src/templates"))    //  Sets the root template path, hot reload for dev, embedded in release
         .styles(embed_styles!("src/styles"))                       //  Likewise the styles root
         .default_theme("default")                                       // Use styles/default.css or default.yaml
         .commands(Commands::dispatch_config())          // Register handlers from derive macro
