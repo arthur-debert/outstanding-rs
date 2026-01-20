@@ -76,9 +76,11 @@ if [[ ! -f "$BANNER_SOURCE_DIR/version-banner.css" || ! -f "$BANNER_SOURCE_DIR/v
     exit 1
 fi
 
-mkdir -p "$SOURCE_DIR/docs/assets"
-cp "$BANNER_SOURCE_DIR/version-banner.css" "$SOURCE_DIR/docs/assets/version-banner.css"
-cp "$BANNER_SOURCE_DIR/version-banner.js" "$SOURCE_DIR/docs/assets/version-banner.js"
+if [[ "$SOURCE_DIR" != "$PROJECT_DIR" ]]; then
+    mkdir -p "$SOURCE_DIR/docs/assets"
+    cp "$BANNER_SOURCE_DIR/version-banner.css" "$SOURCE_DIR/docs/assets/version-banner.css"
+    cp "$BANNER_SOURCE_DIR/version-banner.js" "$SOURCE_DIR/docs/assets/version-banner.js"
+fi
 
 python3 - "$SOURCE_DIR/book.toml" "$BANNER_CSS_REL" "$BANNER_JS_REL" <<'PY'
 import sys
