@@ -1,0 +1,670 @@
+<!DOCTYPE HTML>
+<html lang="en" class="rust" dir="ltr">
+    <head>
+        <!-- Book generated using mdBook -->
+        <meta charset="UTF-8">
+        <title>Introduction to Tabular - Standout</title>
+
+
+        <!-- Custom HTML head -->
+        
+        <meta name="description" content="A CLI framework for Rust that enforces separation between logic and presentation">
+        <meta name="viewport" content="width=device-width, initial-scale=1">
+        <meta name="theme-color" content="#ffffff">
+
+        <link rel="icon" href="../favicon.svg">
+        <link rel="shortcut icon" href="../favicon.png">
+        <link rel="stylesheet" href="../css/variables.css">
+        <link rel="stylesheet" href="../css/general.css">
+        <link rel="stylesheet" href="../css/chrome.css">
+        <link rel="stylesheet" href="../css/print.css" media="print">
+
+        <!-- Fonts -->
+        <link rel="stylesheet" href="../FontAwesome/css/font-awesome.css">
+        <link rel="stylesheet" href="../fonts/fonts.css">
+
+        <!-- Highlight.js Stylesheets -->
+        <link rel="stylesheet" href="../highlight.css">
+        <link rel="stylesheet" href="../tomorrow-night.css">
+        <link rel="stylesheet" href="../ayu-highlight.css">
+
+        <!-- Custom theme stylesheets -->
+
+    </head>
+    <body class="sidebar-visible no-js">
+    <div id="body-container">
+        <!-- Provide site root to javascript -->
+        <script>
+            var path_to_root = "../";
+            var default_theme = window.matchMedia("(prefers-color-scheme: dark)").matches ? "ayu" : "rust";
+        </script>
+
+        <!-- Work around some values being stored in localStorage wrapped in quotes -->
+        <script>
+            try {
+                var theme = localStorage.getItem('mdbook-theme');
+                var sidebar = localStorage.getItem('mdbook-sidebar');
+
+                if (theme.startsWith('"') && theme.endsWith('"')) {
+                    localStorage.setItem('mdbook-theme', theme.slice(1, theme.length - 1));
+                }
+
+                if (sidebar.startsWith('"') && sidebar.endsWith('"')) {
+                    localStorage.setItem('mdbook-sidebar', sidebar.slice(1, sidebar.length - 1));
+                }
+            } catch (e) { }
+        </script>
+
+        <!-- Set the theme before any content is loaded, prevents flash -->
+        <script>
+            var theme;
+            try { theme = localStorage.getItem('mdbook-theme'); } catch(e) { }
+            if (theme === null || theme === undefined) { theme = default_theme; }
+            var html = document.querySelector('html');
+            html.classList.remove('rust')
+            html.classList.add(theme);
+            var body = document.querySelector('body');
+            body.classList.remove('no-js')
+            body.classList.add('js');
+        </script>
+
+        <input type="checkbox" id="sidebar-toggle-anchor" class="hidden">
+
+        <!-- Hide / unhide sidebar before it is displayed -->
+        <script>
+            var body = document.querySelector('body');
+            var sidebar = null;
+            var sidebar_toggle = document.getElementById("sidebar-toggle-anchor");
+            if (document.body.clientWidth >= 1080) {
+                try { sidebar = localStorage.getItem('mdbook-sidebar'); } catch(e) { }
+                sidebar = sidebar || 'visible';
+            } else {
+                sidebar = 'hidden';
+            }
+            sidebar_toggle.checked = sidebar === 'visible';
+            body.classList.remove('sidebar-visible');
+            body.classList.add("sidebar-" + sidebar);
+        </script>
+
+        <nav id="sidebar" class="sidebar" aria-label="Table of contents">
+            <div class="sidebar-scrollbox">
+                <ol class="chapter"><li class="chapter-item affix "><a href="../index.html">Introduction</a></li><li class="chapter-item affix "><li class="spacer"></li><li class="chapter-item expanded "><a href="../guides/index.html"><strong aria-hidden="true">1.</strong> Guides</a><a class="toggle"><div>❱</div></a></li><li><ol class="section"><li class="chapter-item "><a href="../guides/intro-to-standout.html"><strong aria-hidden="true">1.1.</strong> Introduction to Standout</a></li><li class="chapter-item "><a href="../guides/intro-to-rendering.html"><strong aria-hidden="true">1.2.</strong> Introduction to Rendering</a></li><li class="chapter-item expanded "><a href="../guides/intro-to-tabular.html" class="active"><strong aria-hidden="true">1.3.</strong> Introduction to Tabular</a></li><li class="chapter-item "><a href="../guides/tldr-intro-to-standout.html"><strong aria-hidden="true">1.4.</strong> TLDR Quick Start</a></li></ol></li><li class="chapter-item "><a href="../topics/index.html"><strong aria-hidden="true">2.</strong> Topics</a><a class="toggle"><div>❱</div></a></li><li><ol class="section"><li class="chapter-item "><a href="../topics/handler-contract.html"><strong aria-hidden="true">2.1.</strong> Handler Contract</a></li><li class="chapter-item "><a href="../topics/rendering-system.html"><strong aria-hidden="true">2.2.</strong> Rendering System</a></li><li class="chapter-item "><a href="../topics/output-modes.html"><strong aria-hidden="true">2.3.</strong> Output Modes</a></li><li class="chapter-item "><a href="../topics/tabular.html"><strong aria-hidden="true">2.4.</strong> Tabular Layout</a></li><li class="chapter-item "><a href="../topics/app-configuration.html"><strong aria-hidden="true">2.5.</strong> App Configuration</a></li><li class="chapter-item "><a href="../topics/execution-model.html"><strong aria-hidden="true">2.6.</strong> Execution Model</a></li><li class="chapter-item "><a href="../topics/partial-adoption.html"><strong aria-hidden="true">2.7.</strong> Partial Adoption</a></li><li class="chapter-item "><a href="../topics/render-only.html"><strong aria-hidden="true">2.8.</strong> Render Only</a></li></ol></li></ol>
+            </div>
+            <div id="sidebar-resize-handle" class="sidebar-resize-handle">
+                <div class="sidebar-resize-indicator"></div>
+            </div>
+        </nav>
+
+        <!-- Track and set sidebar scroll position -->
+        <script>
+            var sidebarScrollbox = document.querySelector('#sidebar .sidebar-scrollbox');
+            sidebarScrollbox.addEventListener('click', function(e) {
+                if (e.target.tagName === 'A') {
+                    sessionStorage.setItem('sidebar-scroll', sidebarScrollbox.scrollTop);
+                }
+            }, { passive: true });
+            var sidebarScrollTop = sessionStorage.getItem('sidebar-scroll');
+            sessionStorage.removeItem('sidebar-scroll');
+            if (sidebarScrollTop) {
+                // preserve sidebar scroll position when navigating via links within sidebar
+                sidebarScrollbox.scrollTop = sidebarScrollTop;
+            } else {
+                // scroll sidebar to current active section when navigating via "next/previous chapter" buttons
+                var activeSection = document.querySelector('#sidebar .active');
+                if (activeSection) {
+                    activeSection.scrollIntoView({ block: 'center' });
+                }
+            }
+        </script>
+
+        <div id="page-wrapper" class="page-wrapper">
+
+            <div class="page">
+                                <div id="menu-bar-hover-placeholder"></div>
+                <div id="menu-bar" class="menu-bar sticky">
+                    <div class="left-buttons">
+                        <label id="sidebar-toggle" class="icon-button" for="sidebar-toggle-anchor" title="Toggle Table of Contents" aria-label="Toggle Table of Contents" aria-controls="sidebar">
+                            <i class="fa fa-bars"></i>
+                        </label>
+                        <button id="theme-toggle" class="icon-button" type="button" title="Change theme" aria-label="Change theme" aria-haspopup="true" aria-expanded="false" aria-controls="theme-list">
+                            <i class="fa fa-paint-brush"></i>
+                        </button>
+                        <ul id="theme-list" class="theme-popup" aria-label="Themes" role="menu">
+                            <li role="none"><button role="menuitem" class="theme" id="light">Light</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="rust">Rust</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="coal">Coal</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="navy">Navy</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="ayu">Ayu</button></li>
+                        </ul>
+                        <button id="search-toggle" class="icon-button" type="button" title="Search. (Shortkey: s)" aria-label="Toggle Searchbar" aria-expanded="false" aria-keyshortcuts="S" aria-controls="searchbar">
+                            <i class="fa fa-search"></i>
+                        </button>
+                    </div>
+
+                    <h1 class="menu-title">Standout</h1>
+
+                    <div class="right-buttons">
+                        <a href="../print.html" title="Print this book" aria-label="Print this book">
+                            <i id="print-button" class="fa fa-print"></i>
+                        </a>
+                        <a href="https://github.com/arthur-debert/standout" title="Git repository" aria-label="Git repository">
+                            <i id="git-repository-button" class="fa fa-github"></i>
+                        </a>
+                        <a href="https://github.com/arthur-debert/standout/edit/main/docs/docs/guides/intro-to-tabular.md" title="Suggest an edit" aria-label="Suggest an edit">
+                            <i id="git-edit-button" class="fa fa-edit"></i>
+                        </a>
+
+                    </div>
+                </div>
+
+                <div id="search-wrapper" class="hidden">
+                    <form id="searchbar-outer" class="searchbar-outer">
+                        <input type="search" id="searchbar" name="searchbar" placeholder="Search this book ..." aria-controls="searchresults-outer" aria-describedby="searchresults-header">
+                    </form>
+                    <div id="searchresults-outer" class="searchresults-outer hidden">
+                        <div id="searchresults-header" class="searchresults-header"></div>
+                        <ul id="searchresults">
+                        </ul>
+                    </div>
+                </div>
+
+                <!-- Apply ARIA attributes after the sidebar and the sidebar toggle button are added to the DOM -->
+                <script>
+                    document.getElementById('sidebar-toggle').setAttribute('aria-expanded', sidebar === 'visible');
+                    document.getElementById('sidebar').setAttribute('aria-hidden', sidebar !== 'visible');
+                    Array.from(document.querySelectorAll('#sidebar a')).forEach(function(link) {
+                        link.setAttribute('tabIndex', sidebar === 'visible' ? 0 : -1);
+                    });
+                </script>
+
+                <div id="content" class="content">
+                    <main>
+                        <h1 id="introduction-to-tabular"><a class="header" href="#introduction-to-tabular">Introduction to Tabular</a></h1>
+<p>Polished terminal output requires two things: good formatting (see <a href="../topics/rendering-system.html">Rendering System</a>) and good layouts. For text-only, non-interactive output, layout mostly means aligning things vertically and controlling how multiple pieces of information are presented together.</p>
+<p>Tabular provides a declarative column system with powerful primitives for sizing (fixed, range, fill, fractions), positioning (anchor to right), overflow handling (clip, wrap, truncate), cell alignment, and automated per-column styling.</p>
+<p>Tabular is not only about tables. Any listing where items have multiple fields that benefit from vertical alignment is a good candidate—log entries with authors, timestamps, and messages; file listings with names, sizes, and dates; task lists with IDs, titles, and statuses. Add headers, separators, and borders to a tabular layout, and you have a table.</p>
+<p>Tabular is designed to minimize grunt work. It offers a declarative API, template-based syntax, and derive macros to link your existing data types directly to column definitions. Complex tables with complex types can be handled declaratively, with precise control over layout and minimal code.</p>
+<p>In this guide, we will walk our way up from a simpler table to a more complex one, exploring the available features of Tabular.</p>
+<p><strong>See Also:</strong></p>
+<ul>
+<li><a href="../topics/tabular.html">Tabular Reference</a> - complete API reference</li>
+<li><a href="../topics/rendering-system.html">Rendering System</a> - templates and styles in depth</li>
+</ul>
+<hr />
+<h2 id="our-example-tdoo"><a class="header" href="#our-example-tdoo">Our Example: tdoo</a></h2>
+<p>We'll build the output for <code>tdoo list</code>, a command that shows todos. This is a perfect Tabular use case: each todo has an index, title, and status. We want them aligned, readable, and visually clear at a glance.</p>
+<p>Here's our data:</p>
+<pre><pre class="playground"><code class="language-rust"><span class="boring">#![allow(unused)]
+</span><span class="boring">fn main() {
+</span>#[derive(Clone, Serialize)]
+#[serde(rename_all = "lowercase")]
+pub enum Status { Pending, Done }
+
+#[derive(Clone, Serialize)]
+struct Todo {
+    title: String,
+    status: Status,
+}
+
+let todos = vec![
+    Todo { title: "Implement user authentication".into(), status: Status::Pending },
+    Todo { title: "Fix payment gateway timeout".into(), status: Status::Pending },
+    Todo { title: "Update documentation for API v2".into(), status: Status::Done },
+    Todo { title: "Review pull request #142".into(), status: Status::Pending },
+];
+<span class="boring">}</span></code></pre></pre>
+<p>Let's progressively build this from raw output to a polished, professional listing.</p>
+<hr />
+<h2 id="step-1-the-problem-with-plain-output"><a class="header" href="#step-1-the-problem-with-plain-output">Step 1: The Problem with Plain Output</a></h2>
+<p>Without any formatting, a naive approach might look like this:</p>
+<pre><code class="language-jinja">{% for todo in todos %}
+{{ loop.index }}. {{ todo.title }} {{ todo.status }}
+{% endfor %}
+</code></pre>
+<p>Output:</p>
+<pre><code class="language-text">1. Implement user authentication pending
+2. Fix payment gateway timeout pending
+3. Update documentation for API v2 done
+4. Review pull request #142 pending
+</code></pre>
+<p>This is barely readable. Fields run together, nothing aligns, and scanning the list requires mental parsing of each line. Let's fix that.</p>
+<hr />
+<h2 id="step-2-basic-column-alignment-with-col"><a class="header" href="#step-2-basic-column-alignment-with-col">Step 2: Basic Column Alignment with <code>col</code></a></h2>
+<p>The simplest improvement is the <code>col</code> filter. It pads (or truncates) each value to a fixed width:</p>
+<pre><code class="language-jinja">{% for todo in todos %}
+{{ loop.index | col(4) }}  {{ todo.status | col(10) }}  {{ todo.title | col(40) }}
+{% endfor %}
+</code></pre>
+<p>Output:</p>
+<pre><code class="language-text">1.    pending     Implement user authentication
+2.    pending     Fix payment gateway timeout
+3.    done        Update documentation for API v2
+4.    pending     Review pull request #142
+</code></pre>
+<p>Already much better. Each column aligns vertically, making it easy to scan. But we've hardcoded widths, and if a title is too long, it gets truncated with <code>…</code>.</p>
+<blockquote>
+<p><strong>Key insight:</strong> The <code>col</code> filter handles Unicode correctly. CJK characters count as 2 columns, combining marks don't add width, and ANSI escape codes are preserved but not counted.</p>
+</blockquote>
+<hr />
+<h2 id="step-3-structured-layout-with-tabular"><a class="header" href="#step-3-structured-layout-with-tabular">Step 3: Structured Layout with <code>tabular()</code></a></h2>
+<p>For more control, use the <code>tabular()</code> function. This creates a formatter that you configure once and use for all rows:</p>
+<pre><code class="language-jinja">{% set t = tabular([
+    {"name": "index", "width": 4},
+    {"name": "status", "width": 10},
+    {"name": "title", "width": 40}
+], separator="  ") %}
+
+{% for todo in todos %}
+{{ t.row([loop.index, todo.status, todo.title]) }}
+{% endfor %}
+</code></pre>
+<p>The output looks the same, but now the column definitions are centralized. This becomes powerful when we start adding features.</p>
+<hr />
+<h2 id="step-4-flexible-widths"><a class="header" href="#step-4-flexible-widths">Step 4: Flexible Widths</a></h2>
+<p>Hardcoded widths are fragile. What if the terminal is wider or narrower? Tabular offers flexible width strategies:</p>
+<div class="table-wrapper"><table><thead><tr><th>Width</th><th>Meaning</th></tr></thead><tbody>
+<tr><td><code>8</code></td><td>Exactly 8 columns (fixed)</td></tr>
+<tr><td><code>{"min": 10}</code></td><td>At least 10, grows to fit content</td></tr>
+<tr><td><code>{"min": 10, "max": 30}</code></td><td>Between 10 and 30</td></tr>
+<tr><td><code>"fill"</code></td><td>Takes all remaining space</td></tr>
+<tr><td><code>"2fr"</code></td><td>2 parts of remaining (proportional)</td></tr>
+</tbody></table>
+</div>
+<p>Let's make the title column expand to fill available space:</p>
+<pre><code class="language-jinja">{% set t = tabular([
+    {"name": "index", "width": 4},
+    {"name": "status", "width": 10},
+    {"name": "title", "width": "fill"}
+], separator="  ") %}
+</code></pre>
+<p>Now on an 80-column terminal:</p>
+<pre><code class="language-text">1.    pending     Implement user authentication
+2.    pending     Fix payment gateway timeout
+3.    done        Update documentation for API v2
+4.    pending     Review pull request #142
+</code></pre>
+<p>On a 120-column terminal, the title column automatically expands to use the extra space.</p>
+<p>The layout adapts to the available space.</p>
+<hr />
+<h2 id="step-5-right-align-numbers"><a class="header" href="#step-5-right-align-numbers">Step 5: Right-Align Numbers</a></h2>
+<p>Numbers and indices look better right-aligned. Use the <code>align</code> option:</p>
+<pre><code class="language-jinja">{% set t = tabular([
+    {"name": "index", "width": 4, "align": "right"},
+    {"name": "status", "width": 10},
+    {"name": "title", "width": "fill"}
+], separator="  ") %}
+</code></pre>
+<p>Output:</p>
+<pre><code class="language-text">  1.  pending     Implement user authentication
+  2.  pending     Fix payment gateway timeout
+  3.  done        Update documentation for API v2
+  4.  pending     Review pull request #142
+</code></pre>
+<p>The indices now align on the right edge of their column.</p>
+<hr />
+<h2 id="step-6-anchoring-columns"><a class="header" href="#step-6-anchoring-columns">Step 6: Anchoring Columns</a></h2>
+<p>Sometimes you want a column pinned to the terminal's right edge, regardless of how other columns resize. Use <code>anchor</code>:</p>
+<pre><code class="language-jinja">{% set t = tabular([
+    {"name": "index", "width": 4},
+    {"name": "title", "width": "fill"},
+    {"name": "status", "width": 10, "anchor": "right"}
+], separator="  ") %}
+</code></pre>
+<p>Now the status column is always at the right edge. If the terminal is 100 columns or 200, the status stays anchored. The fill column absorbs the extra space between fixed columns and anchored columns.</p>
+<hr />
+<h2 id="step-7-handling-long-content"><a class="header" href="#step-7-handling-long-content">Step 7: Handling Long Content</a></h2>
+<p>What happens when a title is longer than its column? By default, Tabular truncates at the end with <code>…</code>. But you have options:</p>
+<h3 id="truncate-at-different-positions"><a class="header" href="#truncate-at-different-positions">Truncate at Different Positions</a></h3>
+<pre><code class="language-jinja">{"name": "title", "width": 30, "overflow": "truncate"}                        {# "Very long title th…" #}
+{"name": "title", "width": 30, "overflow": {"truncate": {"at": "start"}}}     {# "…itle that is long" #}
+{"name": "title", "width": 30, "overflow": {"truncate": {"at": "middle"}}}    {# "Very long…is long" #}
+</code></pre>
+<p>Middle truncation is perfect for file paths where both the start and end matter: <code>/home/user/…/important.txt</code></p>
+<h3 id="wrap-to-multiple-lines"><a class="header" href="#wrap-to-multiple-lines">Wrap to Multiple Lines</a></h3>
+<p>For descriptions or messages, wrapping is often better than truncating:</p>
+<pre><code class="language-jinja">{% set t = tabular([
+    {"name": "index", "width": 4},
+    {"name": "title", "width": 40, "overflow": "wrap"},
+    {"name": "status", "width": 10}
+], separator="  ") %}
+</code></pre>
+<p>If a title exceeds 40 columns, it wraps:</p>
+<pre><code class="language-text">1.    Implement comprehensive error handling    pending
+      for all API endpoints with proper
+      logging and user feedback
+2.    Quick fix                                 done
+</code></pre>
+<p>The wrapped lines are indented to align with the column.</p>
+<hr />
+<h2 id="step-8-dynamic-styling-based-on-values"><a class="header" href="#step-8-dynamic-styling-based-on-values">Step 8: Dynamic Styling Based on Values</a></h2>
+<p>Here's where Tabular shines for todo lists. We want status colors: green for done, yellow for pending.</p>
+<p>First, define styles in your <a href="../topics/rendering-system.html#themes-and-styles">theme</a>:</p>
+<pre><code class="language-css">/* styles/default.css */
+.done { color: green; }
+.pending { color: yellow; }
+</code></pre>
+<p>Then use the <code>style_as</code> filter to apply styles based on the value itself:</p>
+<pre><code class="language-jinja">{% set t = tabular([
+    {"name": "index", "width": 4},
+    {"name": "status", "width": 10},
+    {"name": "title", "width": "fill"}
+], separator="  ") %}
+
+{% for todo in todos %}
+{{ t.row([loop.index, todo.status | style_as(todo.status), todo.title]) }}
+{% endfor %}
+</code></pre>
+<p>The <code>style_as</code> filter wraps the value in style tags: <code>[done]done[/done]</code>. Standout's rendering system then applies the green color.</p>
+<p>Output (with colors):</p>
+<pre><code class="language-text">1.    [yellow]pending[/yellow]   Implement user authentication
+2.    [yellow]pending[/yellow]   Fix payment gateway timeout
+3.    [green]done[/green]        Update documentation for API v2
+4.    [yellow]pending[/yellow]   Review pull request #142
+</code></pre>
+<p>In the terminal, statuses appear in their respective colors, making it instantly clear which todos need attention.</p>
+<hr />
+<h2 id="step-9-column-level-styles"><a class="header" href="#step-9-column-level-styles">Step 9: Column-Level Styles</a></h2>
+<p>Instead of styling individual values, you can style entire columns. This is useful for de-emphasizing certain information:</p>
+<pre><code class="language-jinja">{% set t = tabular([
+    {"name": "index", "width": 4, "style": "muted"},
+    {"name": "status", "width": 10},
+    {"name": "title", "width": "fill"}
+], separator="  ") %}
+</code></pre>
+<p>Now indices appear in a muted style (typically gray), while titles and statuses remain prominent. This creates visual hierarchy.</p>
+<hr />
+<h2 id="step-10-automatic-field-extraction"><a class="header" href="#step-10-automatic-field-extraction">Step 10: Automatic Field Extraction</a></h2>
+<p>Tired of manually listing <code>[todo.title, todo.status, ...]</code>? If your column names match your struct fields, use <code>row_from()</code>:</p>
+<pre><code class="language-jinja">{% set t = tabular([
+    {"name": "title", "width": "fill"},
+    {"name": "status", "width": 10}
+]) %}
+
+{% for todo in todos %}
+{{ t.row_from(todo) }}
+{% endfor %}
+</code></pre>
+<p>Tabular extracts <code>todo.title</code>, <code>todo.status</code>, etc. automatically. For nested fields, use <code>key</code>:</p>
+<pre><code class="language-jinja">{"name": "Author", "key": "author.name", "width": 20}
+{"name": "Email", "key": "author.email", "width": 30}
+</code></pre>
+<hr />
+<h2 id="step-11-adding-headers-and-borders"><a class="header" href="#step-11-adding-headers-and-borders">Step 11: Adding Headers and Borders</a></h2>
+<p>For a proper table with headers, switch from <code>tabular()</code> to <code>table()</code>:</p>
+<pre><code class="language-jinja">{% set t = table([
+    {"name": "#", "width": 4},
+    {"name": "Status", "width": 10},
+    {"name": "Title", "width": "fill"}
+], border="rounded", header_style="bold") %}
+
+{{ t.header_row() }}
+{{ t.separator_row() }}
+{% for todo in todos %}
+{{ t.row([loop.index, todo.status, todo.title]) }}
+{% endfor %}
+{{ t.bottom_border() }}
+</code></pre>
+<p>Output:</p>
+<pre><code class="language-text">╭──────┬────────────┬────────────────────────────────────────╮
+│ #    │ Status     │ Title                                  │
+├──────┼────────────┼────────────────────────────────────────┤
+│ 1    │ pending    │ Implement user authentication          │
+│ 2    │ pending    │ Fix payment gateway timeout            │
+│ 3    │ done       │ Update documentation for API v2        │
+│ 4    │ pending    │ Review pull request #142               │
+╰──────┴────────────┴────────────────────────────────────────╯
+</code></pre>
+<h3 id="border-styles"><a class="header" href="#border-styles">Border Styles</a></h3>
+<p>Choose from six border styles:</p>
+<div class="table-wrapper"><table><thead><tr><th>Style</th><th>Look</th></tr></thead><tbody>
+<tr><td><code>"none"</code></td><td>No borders</td></tr>
+<tr><td><code>"ascii"</code></td><td><code>+--+--+</code> (ASCII compatible)</td></tr>
+<tr><td><code>"light"</code></td><td><code>┌──┬──┐</code></td></tr>
+<tr><td><code>"heavy"</code></td><td><code>┏━━┳━━┓</code></td></tr>
+<tr><td><code>"double"</code></td><td><code>╔══╦══╗</code></td></tr>
+<tr><td><code>"rounded"</code></td><td><code>╭──┬──╮</code></td></tr>
+</tbody></table>
+</div>
+<h3 id="row-separators"><a class="header" href="#row-separators">Row Separators</a></h3>
+<p>For dense data, add lines between rows:</p>
+<pre><code class="language-jinja">{% set t = table(columns, border="light", row_separator=true) %}
+</code></pre>
+<pre><code class="language-text">┌──────┬────────────────────────────────────╮
+│ #    │ Title                              │
+├──────┼────────────────────────────────────┤
+│ 1    │ Implement user authentication      │
+├──────┼────────────────────────────────────┤
+│ 2    │ Fix payment gateway timeout        │
+└──────┴────────────────────────────────────┘
+</code></pre>
+<hr />
+<h2 id="step-12-the-complete-example"><a class="header" href="#step-12-the-complete-example">Step 12: The Complete Example</a></h2>
+<p>Putting it all together, here's our polished todo list:</p>
+<pre><code class="language-jinja">{% set t = table([
+    {"name": "#", "width": 4, "style": "muted"},
+    {"name": "Status", "width": 10},
+    {"name": "Title", "width": "fill", "overflow": {"truncate": {"at": "middle"}}}
+], border="rounded", header_style="bold", separator=" │ ") %}
+
+{{ t.header_row() }}
+{{ t.separator_row() }}
+{% for todo in todos %}
+{{ t.row([loop.index, todo.status | style_as(todo.status), todo.title]) }}
+{% endfor %}
+{{ t.bottom_border() }}
+</code></pre>
+<p>Output (80 columns, with styling):</p>
+<pre><code class="language-text">╭──────┬────────────┬───────────────────────────────────────────────────────╮
+│ #    │ Status     │ Title                                                 │
+├──────┼────────────┼───────────────────────────────────────────────────────┤
+│ 1    │ pending    │ Implement user authentication                         │
+│ 2    │ pending    │ Fix payment gateway timeout                           │
+│ 3    │ done       │ Update documentation for API v2                       │
+│ 4    │ pending    │ Review pull request #142                              │
+╰──────┴────────────┴───────────────────────────────────────────────────────╯
+</code></pre>
+<p>Features in use:</p>
+<ul>
+<li><strong>Rounded borders</strong> for a modern look</li>
+<li><strong>Muted styling</strong> on index column for visual hierarchy</li>
+<li><strong>Fill width</strong> on title to use available space</li>
+<li><strong>Middle truncation</strong> for titles that exceed the column</li>
+<li><strong>Dynamic status colors</strong> via <code>style_as</code></li>
+</ul>
+<hr />
+<h2 id="using-tabular-from-rust"><a class="header" href="#using-tabular-from-rust">Using Tabular from Rust</a></h2>
+<p>Everything shown in templates is also available in Rust:</p>
+<pre><pre class="playground"><code class="language-rust"><span class="boring">#![allow(unused)]
+</span><span class="boring">fn main() {
+</span>use standout::tabular::{TabularSpec, Col, Table, BorderStyle};
+
+let spec = TabularSpec::builder()
+    .column(Col::fixed(4).header("#").style("muted"))
+    .column(Col::fixed(10).header("Status"))
+    .column(Col::fill().header("Title").truncate_middle())
+    .separator(" │ ")
+    .build();
+
+let table = Table::new(spec, 80)
+    .header_from_columns()
+    .header_style("bold")
+    .border(BorderStyle::Rounded);
+
+// Render the full table
+let output = table.render(&amp;data);
+
+// Or render parts manually for custom logic
+println!("{}", table.header_row());
+println!("{}", table.separator_row());
+for (i, todo) in todos.iter().enumerate() {
+    println!("{}", table.row(&amp;[&amp;(i + 1).to_string(), &amp;todo.status.to_string(), &amp;todo.title]));
+}
+println!("{}", table.bottom_border());
+<span class="boring">}</span></code></pre></pre>
+<hr />
+<h2 id="derive-macros-type-safe-table-definitions"><a class="header" href="#derive-macros-type-safe-table-definitions">Derive Macros: Type-Safe Table Definitions</a></h2>
+<p>Instead of manually building <code>TabularSpec</code> instances, you can use derive macros to generate them from struct annotations. This keeps your column definitions co-located with your data types and ensures they stay in sync.</p>
+<h3 id="derivetabular---generate-spec-from-struct"><a class="header" href="#derivetabular---generate-spec-from-struct"><code>#[derive(Tabular)]</code> - Generate Spec from Struct</a></h3>
+<p>Add <code>#[col(...)]</code> attributes to your struct fields to define column properties:</p>
+<pre><pre class="playground"><code class="language-rust"><span class="boring">#![allow(unused)]
+</span><span class="boring">fn main() {
+</span>use standout::tabular::{Tabular, TabularRow, Table, BorderStyle};
+use serde::Serialize;
+
+#[derive(Clone, Serialize)]
+#[serde(rename_all = "lowercase")]
+pub enum Status { Pending, Done }
+
+#[derive(Clone, Serialize, Tabular, TabularRow)]
+#[tabular(separator = " │ ")]
+struct Todo {
+    #[col(width = "fill", header = "Title", overflow = "truncate", truncate_at = "middle")]
+    title: String,
+
+    #[col(width = 10, header = "Status")]
+    status: Status,
+}
+<span class="boring">}</span></code></pre></pre>
+<p>Now create formatters and tables directly from the type:</p>
+<pre><pre class="playground"><code class="language-rust"><span class="boring">#![allow(unused)]
+</span><span class="boring">fn main() {
+</span>// Create a table using the derived spec
+let table = Table::from_type::&lt;Todo&gt;(80)
+    .header_from_columns()
+    .border(BorderStyle::Rounded);
+
+// Render rows using the TabularRow trait (no JSON serialization)
+for todo in &amp;todos {
+    println!("{}", table.row_from_trait(todo));
+}
+<span class="boring">}</span></code></pre></pre>
+<h3 id="available-field-attributes"><a class="header" href="#available-field-attributes">Available Field Attributes</a></h3>
+<div class="table-wrapper"><table><thead><tr><th>Attribute</th><th>Type</th><th>Description</th></tr></thead><tbody>
+<tr><td><code>width</code></td><td><code>8</code>, <code>"fill"</code>, <code>"2fr"</code></td><td>Column width strategy</td></tr>
+<tr><td><code>min</code>, <code>max</code></td><td><code>usize</code></td><td>Bounded width range</td></tr>
+<tr><td><code>align</code></td><td><code>"left"</code>, <code>"right"</code>, <code>"center"</code></td><td>Text alignment within cell</td></tr>
+<tr><td><code>anchor</code></td><td><code>"left"</code>, <code>"right"</code></td><td>Column position in row</td></tr>
+<tr><td><code>overflow</code></td><td><code>"truncate"</code>, <code>"wrap"</code>, <code>"clip"</code>, <code>"expand"</code></td><td>How to handle long content</td></tr>
+<tr><td><code>truncate_at</code></td><td><code>"end"</code>, <code>"start"</code>, <code>"middle"</code></td><td>Where to truncate</td></tr>
+<tr><td><code>style</code></td><td>string</td><td>Style name for entire column</td></tr>
+<tr><td><code>style_from_value</code></td><td>flag</td><td>Use cell value as style name</td></tr>
+<tr><td><code>header</code></td><td>string</td><td>Column header text</td></tr>
+<tr><td><code>null_repr</code></td><td>string</td><td>Representation for null values</td></tr>
+<tr><td><code>key</code></td><td>string</td><td>Override field name for extraction</td></tr>
+<tr><td><code>skip</code></td><td>flag</td><td>Exclude field from table</td></tr>
+</tbody></table>
+</div>
+<h3 id="container-attributes"><a class="header" href="#container-attributes">Container Attributes</a></h3>
+<div class="table-wrapper"><table><thead><tr><th>Attribute</th><th>Description</th></tr></thead><tbody>
+<tr><td><code>separator</code></td><td>Column separator (default: <code>"  "</code>)</td></tr>
+<tr><td><code>prefix</code></td><td>Row prefix</td></tr>
+<tr><td><code>suffix</code></td><td>Row suffix</td></tr>
+</tbody></table>
+</div>
+<h3 id="using-with-templates"><a class="header" href="#using-with-templates">Using with Templates</a></h3>
+<p>The derived spec can be injected into templates using helper functions:</p>
+<pre><pre class="playground"><code class="language-rust"><span class="boring">#![allow(unused)]
+</span><span class="boring">fn main() {
+</span>use standout::tabular::filters::{table_from_type, register_tabular_filters};
+use minijinja::{context, Environment};
+
+let mut env = Environment::new();
+register_tabular_filters(&amp;mut env);
+
+// Create a table from the derived spec
+let table = table_from_type::&lt;Todo&gt;(80, BorderStyle::Light, true);
+
+// Use in template context
+env.add_template("todos", r#"
+{{ tbl.top_border() }}
+{{ tbl.header_row() }}
+{{ tbl.separator_row() }}
+{% for todo in todos %}{{ tbl.row([todo.title, todo.status]) }}
+{% endfor %}{{ tbl.bottom_border() }}
+"#)?;
+
+let output = env.get_template("todos")?.render(context! {
+    tbl =&gt; table,
+    todos =&gt; todo_data,
+})?;
+<span class="boring">}</span></code></pre></pre>
+<h3 id="why-two-macros"><a class="header" href="#why-two-macros">Why Two Macros?</a></h3>
+<ul>
+<li><strong><code>#[derive(Tabular)]</code></strong> generates the <code>TabularSpec</code> (column definitions, widths, styles)</li>
+<li><strong><code>#[derive(TabularRow)]</code></strong> generates efficient row extraction (field values to strings)</li>
+</ul>
+<p>You can use them independently:</p>
+<ul>
+<li>Use only <code>Tabular</code> with <code>row_from()</code> to keep serde-based extraction</li>
+<li>Use only <code>TabularRow</code> with manually-built specs for maximum control</li>
+<li>Use both together for the best type safety and performance</li>
+</ul>
+<hr />
+<h2 id="summary"><a class="header" href="#summary">Summary</a></h2>
+<p>Tabular transforms raw data into polished, scannable output with minimal effort:</p>
+<ol>
+<li><strong>Start simple</strong> - use <code>col</code> filter for quick alignment</li>
+<li><strong>Structure with <code>tabular()</code></strong> - centralize column definitions</li>
+<li><strong>Flex with widths</strong> - use <code>fill</code>, bounded ranges, and fractions</li>
+<li><strong>Align content</strong> - right-align numbers and dates</li>
+<li><strong>Anchor columns</strong> - pin important data to edges</li>
+<li><strong>Handle overflow</strong> - truncate intelligently or wrap</li>
+<li><strong>Add visual hierarchy</strong> - style columns and values dynamically</li>
+<li><strong>Extract automatically</strong> - let <code>row_from()</code> pull fields from structs</li>
+<li><strong>Decorate as tables</strong> - add borders, headers, and separators</li>
+<li><strong>Use derive macros</strong> - <code>#[derive(Tabular, TabularRow)]</code> for type-safe definitions</li>
+</ol>
+<p>The declarative approach means your layout adapts to terminal width, handles Unicode correctly, and remains maintainable as your data evolves.</p>
+<p>For complete API details, see the <a href="../topics/tabular.html">Tabular Reference</a>.</p>
+
+                    </main>
+
+                    <nav class="nav-wrapper" aria-label="Page navigation">
+                        <!-- Mobile navigation buttons -->
+                            <a rel="prev" href="../guides/intro-to-rendering.html" class="mobile-nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
+                                <i class="fa fa-angle-left"></i>
+                            </a>
+
+                            <a rel="next prefetch" href="../guides/tldr-intro-to-standout.html" class="mobile-nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
+                                <i class="fa fa-angle-right"></i>
+                            </a>
+
+                        <div style="clear: both"></div>
+                    </nav>
+                </div>
+            </div>
+
+            <nav class="nav-wide-wrapper" aria-label="Page navigation">
+                    <a rel="prev" href="../guides/intro-to-rendering.html" class="nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
+                        <i class="fa fa-angle-left"></i>
+                    </a>
+
+                    <a rel="next prefetch" href="../guides/tldr-intro-to-standout.html" class="nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
+                        <i class="fa fa-angle-right"></i>
+                    </a>
+            </nav>
+
+        </div>
+
+
+
+
+        <script>
+            window.playground_copyable = true;
+        </script>
+
+
+        <script src="../elasticlunr.min.js"></script>
+        <script src="../mark.min.js"></script>
+        <script src="../searcher.js"></script>
+
+        <script src="../clipboard.min.js"></script>
+        <script src="../highlight.js"></script>
+        <script src="../book.js"></script>
+
+        <!-- Custom JS scripts -->
+
+
+    </div>
+    </body>
+</html>

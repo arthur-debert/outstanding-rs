@@ -1,0 +1,646 @@
+<!DOCTYPE HTML>
+<html lang="en" class="rust" dir="ltr">
+    <head>
+        <!-- Book generated using mdBook -->
+        <meta charset="UTF-8">
+        <title>Tabular Layout - Standout</title>
+
+
+        <!-- Custom HTML head -->
+        
+        <meta name="description" content="A CLI framework for Rust that enforces separation between logic and presentation">
+        <meta name="viewport" content="width=device-width, initial-scale=1">
+        <meta name="theme-color" content="#ffffff">
+
+        <link rel="icon" href="../favicon.svg">
+        <link rel="shortcut icon" href="../favicon.png">
+        <link rel="stylesheet" href="../css/variables.css">
+        <link rel="stylesheet" href="../css/general.css">
+        <link rel="stylesheet" href="../css/chrome.css">
+        <link rel="stylesheet" href="../css/print.css" media="print">
+
+        <!-- Fonts -->
+        <link rel="stylesheet" href="../FontAwesome/css/font-awesome.css">
+        <link rel="stylesheet" href="../fonts/fonts.css">
+
+        <!-- Highlight.js Stylesheets -->
+        <link rel="stylesheet" href="../highlight.css">
+        <link rel="stylesheet" href="../tomorrow-night.css">
+        <link rel="stylesheet" href="../ayu-highlight.css">
+
+        <!-- Custom theme stylesheets -->
+
+    </head>
+    <body class="sidebar-visible no-js">
+    <div id="body-container">
+        <!-- Provide site root to javascript -->
+        <script>
+            var path_to_root = "../";
+            var default_theme = window.matchMedia("(prefers-color-scheme: dark)").matches ? "ayu" : "rust";
+        </script>
+
+        <!-- Work around some values being stored in localStorage wrapped in quotes -->
+        <script>
+            try {
+                var theme = localStorage.getItem('mdbook-theme');
+                var sidebar = localStorage.getItem('mdbook-sidebar');
+
+                if (theme.startsWith('"') && theme.endsWith('"')) {
+                    localStorage.setItem('mdbook-theme', theme.slice(1, theme.length - 1));
+                }
+
+                if (sidebar.startsWith('"') && sidebar.endsWith('"')) {
+                    localStorage.setItem('mdbook-sidebar', sidebar.slice(1, sidebar.length - 1));
+                }
+            } catch (e) { }
+        </script>
+
+        <!-- Set the theme before any content is loaded, prevents flash -->
+        <script>
+            var theme;
+            try { theme = localStorage.getItem('mdbook-theme'); } catch(e) { }
+            if (theme === null || theme === undefined) { theme = default_theme; }
+            var html = document.querySelector('html');
+            html.classList.remove('rust')
+            html.classList.add(theme);
+            var body = document.querySelector('body');
+            body.classList.remove('no-js')
+            body.classList.add('js');
+        </script>
+
+        <input type="checkbox" id="sidebar-toggle-anchor" class="hidden">
+
+        <!-- Hide / unhide sidebar before it is displayed -->
+        <script>
+            var body = document.querySelector('body');
+            var sidebar = null;
+            var sidebar_toggle = document.getElementById("sidebar-toggle-anchor");
+            if (document.body.clientWidth >= 1080) {
+                try { sidebar = localStorage.getItem('mdbook-sidebar'); } catch(e) { }
+                sidebar = sidebar || 'visible';
+            } else {
+                sidebar = 'hidden';
+            }
+            sidebar_toggle.checked = sidebar === 'visible';
+            body.classList.remove('sidebar-visible');
+            body.classList.add("sidebar-" + sidebar);
+        </script>
+
+        <nav id="sidebar" class="sidebar" aria-label="Table of contents">
+            <div class="sidebar-scrollbox">
+                <ol class="chapter"><li class="chapter-item affix "><a href="../index.html">Introduction</a></li><li class="chapter-item affix "><li class="spacer"></li><li class="chapter-item "><a href="../guides/index.html"><strong aria-hidden="true">1.</strong> Guides</a><a class="toggle"><div>❱</div></a></li><li><ol class="section"><li class="chapter-item "><a href="../guides/intro-to-standout.html"><strong aria-hidden="true">1.1.</strong> Introduction to Standout</a></li><li class="chapter-item "><a href="../guides/intro-to-rendering.html"><strong aria-hidden="true">1.2.</strong> Introduction to Rendering</a></li><li class="chapter-item "><a href="../guides/intro-to-tabular.html"><strong aria-hidden="true">1.3.</strong> Introduction to Tabular</a></li><li class="chapter-item "><a href="../guides/tldr-intro-to-standout.html"><strong aria-hidden="true">1.4.</strong> TLDR Quick Start</a></li></ol></li><li class="chapter-item expanded "><a href="../topics/index.html"><strong aria-hidden="true">2.</strong> Topics</a><a class="toggle"><div>❱</div></a></li><li><ol class="section"><li class="chapter-item "><a href="../topics/handler-contract.html"><strong aria-hidden="true">2.1.</strong> Handler Contract</a></li><li class="chapter-item "><a href="../topics/rendering-system.html"><strong aria-hidden="true">2.2.</strong> Rendering System</a></li><li class="chapter-item "><a href="../topics/output-modes.html"><strong aria-hidden="true">2.3.</strong> Output Modes</a></li><li class="chapter-item expanded "><a href="../topics/tabular.html" class="active"><strong aria-hidden="true">2.4.</strong> Tabular Layout</a></li><li class="chapter-item "><a href="../topics/app-configuration.html"><strong aria-hidden="true">2.5.</strong> App Configuration</a></li><li class="chapter-item "><a href="../topics/execution-model.html"><strong aria-hidden="true">2.6.</strong> Execution Model</a></li><li class="chapter-item "><a href="../topics/partial-adoption.html"><strong aria-hidden="true">2.7.</strong> Partial Adoption</a></li><li class="chapter-item "><a href="../topics/render-only.html"><strong aria-hidden="true">2.8.</strong> Render Only</a></li></ol></li></ol>
+            </div>
+            <div id="sidebar-resize-handle" class="sidebar-resize-handle">
+                <div class="sidebar-resize-indicator"></div>
+            </div>
+        </nav>
+
+        <!-- Track and set sidebar scroll position -->
+        <script>
+            var sidebarScrollbox = document.querySelector('#sidebar .sidebar-scrollbox');
+            sidebarScrollbox.addEventListener('click', function(e) {
+                if (e.target.tagName === 'A') {
+                    sessionStorage.setItem('sidebar-scroll', sidebarScrollbox.scrollTop);
+                }
+            }, { passive: true });
+            var sidebarScrollTop = sessionStorage.getItem('sidebar-scroll');
+            sessionStorage.removeItem('sidebar-scroll');
+            if (sidebarScrollTop) {
+                // preserve sidebar scroll position when navigating via links within sidebar
+                sidebarScrollbox.scrollTop = sidebarScrollTop;
+            } else {
+                // scroll sidebar to current active section when navigating via "next/previous chapter" buttons
+                var activeSection = document.querySelector('#sidebar .active');
+                if (activeSection) {
+                    activeSection.scrollIntoView({ block: 'center' });
+                }
+            }
+        </script>
+
+        <div id="page-wrapper" class="page-wrapper">
+
+            <div class="page">
+                                <div id="menu-bar-hover-placeholder"></div>
+                <div id="menu-bar" class="menu-bar sticky">
+                    <div class="left-buttons">
+                        <label id="sidebar-toggle" class="icon-button" for="sidebar-toggle-anchor" title="Toggle Table of Contents" aria-label="Toggle Table of Contents" aria-controls="sidebar">
+                            <i class="fa fa-bars"></i>
+                        </label>
+                        <button id="theme-toggle" class="icon-button" type="button" title="Change theme" aria-label="Change theme" aria-haspopup="true" aria-expanded="false" aria-controls="theme-list">
+                            <i class="fa fa-paint-brush"></i>
+                        </button>
+                        <ul id="theme-list" class="theme-popup" aria-label="Themes" role="menu">
+                            <li role="none"><button role="menuitem" class="theme" id="light">Light</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="rust">Rust</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="coal">Coal</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="navy">Navy</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="ayu">Ayu</button></li>
+                        </ul>
+                        <button id="search-toggle" class="icon-button" type="button" title="Search. (Shortkey: s)" aria-label="Toggle Searchbar" aria-expanded="false" aria-keyshortcuts="S" aria-controls="searchbar">
+                            <i class="fa fa-search"></i>
+                        </button>
+                    </div>
+
+                    <h1 class="menu-title">Standout</h1>
+
+                    <div class="right-buttons">
+                        <a href="../print.html" title="Print this book" aria-label="Print this book">
+                            <i id="print-button" class="fa fa-print"></i>
+                        </a>
+                        <a href="https://github.com/arthur-debert/standout" title="Git repository" aria-label="Git repository">
+                            <i id="git-repository-button" class="fa fa-github"></i>
+                        </a>
+                        <a href="https://github.com/arthur-debert/standout/edit/main/docs/docs/topics/tabular.md" title="Suggest an edit" aria-label="Suggest an edit">
+                            <i id="git-edit-button" class="fa fa-edit"></i>
+                        </a>
+
+                    </div>
+                </div>
+
+                <div id="search-wrapper" class="hidden">
+                    <form id="searchbar-outer" class="searchbar-outer">
+                        <input type="search" id="searchbar" name="searchbar" placeholder="Search this book ..." aria-controls="searchresults-outer" aria-describedby="searchresults-header">
+                    </form>
+                    <div id="searchresults-outer" class="searchresults-outer hidden">
+                        <div id="searchresults-header" class="searchresults-header"></div>
+                        <ul id="searchresults">
+                        </ul>
+                    </div>
+                </div>
+
+                <!-- Apply ARIA attributes after the sidebar and the sidebar toggle button are added to the DOM -->
+                <script>
+                    document.getElementById('sidebar-toggle').setAttribute('aria-expanded', sidebar === 'visible');
+                    document.getElementById('sidebar').setAttribute('aria-hidden', sidebar !== 'visible');
+                    Array.from(document.querySelectorAll('#sidebar a')).forEach(function(link) {
+                        link.setAttribute('tabIndex', sidebar === 'visible' ? 0 : -1);
+                    });
+                </script>
+
+                <div id="content" class="content">
+                    <main>
+                        <h1 id="tabular-layout"><a class="header" href="#tabular-layout">Tabular Layout</a></h1>
+<p>Standout helps you create aligned, readable output for lists, logs, and tabular data.</p>
+<p><strong>Choose your path:</strong></p>
+<ul>
+<li><a href="#quick-start-the-col-filter">Quick Start</a>: Simple alignment with template filters</li>
+<li><a href="#structured-layout">Structured Layout</a>: Multi-column specs for complex output</li>
+<li><a href="#tables-headers-and-borders">Full Tables</a>: Headers, borders, and separators</li>
+</ul>
+<h2 id="quick-start-the-col-filter"><a class="header" href="#quick-start-the-col-filter">Quick Start: The <code>col</code> Filter</a></h2>
+<p>For simple alignment, use the <code>col</code> filter directly in templates:</p>
+<pre><code class="language-jinja">{% for entry in entries %}
+{{ entry.id | col(8) }}  {{ entry.name | col(20) }}  {{ entry.status | col(10) }}
+{% endfor %}
+</code></pre>
+<p>Output:</p>
+<pre><code class="language-text">abc123    Alice Johnson         active
+def456    Bob Smith             pending
+ghi789    Carol Williams        done
+</code></pre>
+<p>The <code>col</code> filter:</p>
+<ul>
+<li>Pads short values to the specified width</li>
+<li>Truncates long values with <code>…</code></li>
+<li>Handles Unicode correctly (CJK characters count as 2 columns)</li>
+</ul>
+<h3 id="alignment"><a class="header" href="#alignment">Alignment</a></h3>
+<pre><code class="language-jinja">{{ value | col(10) }}                 {# Left-aligned (default) #}
+{{ value | col(10, align="right") }}  {# Right-aligned #}
+{{ value | col(10, align="center") }} {# Centered #}
+</code></pre>
+<pre><code class="language-text">left......
+....right.
+..center..
+</code></pre>
+<h3 id="truncation-position"><a class="header" href="#truncation-position">Truncation Position</a></h3>
+<p>When content is too long, choose where to cut:</p>
+<pre><code class="language-jinja">{{ path | col(15) }}                        {# "Very long pa…" (default: end) #}
+{{ path | col(15, truncate="start") }}      {# "…ng/path/file" #}
+{{ path | col(15, truncate="middle") }}     {# "Very l…h/file" #}
+</code></pre>
+<p>Truncate <code>middle</code> is useful for paths where both start and end matter.</p>
+<h3 id="custom-ellipsis"><a class="header" href="#custom-ellipsis">Custom Ellipsis</a></h3>
+<pre><code class="language-jinja">{{ value | col(10, ellipsis="...") }}   {# "Hello W..." instead of "Hello W…" #}
+{{ value | col(10, ellipsis="→") }}     {# "Hello Wor→" #}
+</code></pre>
+<hr />
+<h2 id="structured-layout"><a class="header" href="#structured-layout">Structured Layout</a></h2>
+<p>When you need consistent column widths across complex output, define a layout spec.</p>
+<h3 id="defining-columns-in-templates"><a class="header" href="#defining-columns-in-templates">Defining Columns in Templates</a></h3>
+<p>Use the <code>tabular()</code> function to create a formatter:</p>
+<pre><code class="language-jinja">{% set t = tabular([
+    {"name": "id", "width": 8},
+    {"name": "author", "width": 20},
+    {"name": "message", "width": "fill"},
+    {"name": "date", "width": 10, "align": "right"}
+]) %}
+
+{% for commit in commits %}
+{{ t.row([commit.id, commit.author, commit.message, commit.date]) }}
+{% endfor %}
+</code></pre>
+<p>Output:</p>
+<pre><code class="language-text">a1b2c3d4  Alice Johnson         Add new login feature             2024-01-15
+e5f6g7h8  Bob Smith             Fix authentication bug            2024-01-14
+i9j0k1l2  Carol Williams        Update dependencies               2024-01-13
+</code></pre>
+<h3 id="width-options"><a class="header" href="#width-options">Width Options</a></h3>
+<div class="table-wrapper"><table><thead><tr><th>Width</th><th>Meaning</th><th>Example</th></tr></thead><tbody>
+<tr><td><code>8</code></td><td>Exactly 8 columns</td><td>IDs, short codes</td></tr>
+<tr><td><code>{"min": 10}</code></td><td>At least 10, grows to fit</td><td>Names, titles</td></tr>
+<tr><td><code>{"min": 10, "max": 30}</code></td><td>Between 10 and 30</td><td>Bounded growth</td></tr>
+<tr><td><code>"fill"</code></td><td>Takes remaining space</td><td>Descriptions</td></tr>
+<tr><td><code>"2fr"</code></td><td>2 parts of remaining (vs 1fr)</td><td>Proportional</td></tr>
+</tbody></table>
+</div>
+<pre><code class="language-jinja">{% set t = tabular([
+    {"name": "id", "width": 8},                    {# Fixed #}
+    {"name": "name", "width": {"min": 10}},        {# Grows to fit #}
+    {"name": "desc", "width": "fill"},             {# Takes the rest #}
+]) %}
+</code></pre>
+<h3 id="anchoring-columns"><a class="header" href="#anchoring-columns">Anchoring Columns</a></h3>
+<p>Put columns at the right edge:</p>
+<pre><code class="language-jinja">{% set t = tabular([
+    {"name": "name", "width": 20},
+    {"name": "path", "width": "fill"},
+    {"name": "size", "width": 8, "anchor": "right"},  {# Stays at right edge #}
+]) %}
+</code></pre>
+<p>Output:</p>
+<pre><code class="language-text">document.txt          /home/user/docs/                    1.2 MB
+image.png             /home/user/photos/vacation/         4.5 MB
+</code></pre>
+<p>The <code>size</code> column is anchored to the right edge. The <code>path</code> column fills the gap.</p>
+<h3 id="handling-long-content"><a class="header" href="#handling-long-content">Handling Long Content</a></h3>
+<p>Choose what happens when content exceeds the column width:</p>
+<pre><code class="language-jinja">{% set t = tabular([
+    {"name": "path", "width": 30, "overflow": "truncate"},  {# Default: "Very long…" #}
+    {"name": "desc", "width": 30, "overflow": "wrap"},      {# Wrap to multiple lines #}
+]) %}
+</code></pre>
+<h4 id="truncate-default"><a class="header" href="#truncate-default">Truncate (default)</a></h4>
+<pre><code class="language-jinja">{"overflow": "truncate"}                      {# Truncate at end #}
+{"overflow": {"truncate": {"at": "middle"}}}  {# Keep start and end #}
+{"overflow": {"truncate": {"marker": "..."}}} {# Custom ellipsis #}
+</code></pre>
+<h4 id="wrap"><a class="header" href="#wrap">Wrap</a></h4>
+<p>Content wraps to multiple lines:</p>
+<pre><code class="language-text">abc123  This is a very long       active
+        description that wraps
+        to multiple lines
+def456  Short description         done
+</code></pre>
+<pre><code class="language-jinja">{"name": "desc", "width": 25, "overflow": "wrap"}
+{"name": "desc", "width": 25, "overflow": {"wrap": {"indent": 2}}}  {# Continuation indent #}
+</code></pre>
+<h3 id="extracting-fields-from-objects"><a class="header" href="#extracting-fields-from-objects">Extracting Fields from Objects</a></h3>
+<p>When column names match struct fields, use <code>row_from()</code>:</p>
+<pre><code class="language-jinja">{% set t = tabular([
+    {"name": "id", "width": 8},
+    {"name": "title", "width": 30},
+    {"name": "status", "width": 10}
+]) %}
+
+{% for item in items %}
+{{ t.row_from(item) }}  {# Automatically extracts item.id, item.title, item.status #}
+{% endfor %}
+</code></pre>
+<p>For nested fields, use <code>key</code>:</p>
+<pre><code class="language-jinja">{% set t = tabular([
+    {"name": "Author", "key": "author.name", "width": 20},
+    {"name": "Email", "key": "author.email", "width": 30}
+]) %}
+</code></pre>
+<h3 id="column-styles"><a class="header" href="#column-styles">Column Styles</a></h3>
+<p>Apply styles to entire columns:</p>
+<pre><code class="language-jinja">{% set t = tabular([
+    {"name": "id", "width": 8, "style": "muted"},
+    {"name": "name", "width": 20, "style": "bold"},
+    {"name": "status", "width": 10}  {# No automatic style #}
+]) %}
+</code></pre>
+<p>The <code>style</code> value wraps content in style tags: <code>[muted]abc123[/muted]</code></p>
+<p>For dynamic styles (style based on value):</p>
+<pre><code class="language-jinja">{% for item in items %}
+{{ t.row([item.id, item.name, item.status | style_as(item.status)]) }}
+{% endfor %}
+</code></pre>
+<p>This applies <code>[pending]pending[/pending]</code> or <code>[done]done[/done]</code> based on the actual status value.</p>
+<hr />
+<h2 id="defining-layout-in-rust"><a class="header" href="#defining-layout-in-rust">Defining Layout in Rust</a></h2>
+<p>For reusable layouts or when you need full control:</p>
+<pre><pre class="playground"><code class="language-rust"><span class="boring">#![allow(unused)]
+</span><span class="boring">fn main() {
+</span>use standout::tabular::{TabularSpec, Col};
+
+let spec = TabularSpec::builder()
+    .column(Col::fixed(8).named("id"))
+    .column(Col::min(10).named("name").style("author"))
+    .column(Col::fill().named("description").wrap())
+    .column(Col::fixed(10).named("status").anchor_right().right())
+    .separator("  ")
+    .build();
+<span class="boring">}</span></code></pre></pre>
+<p>Pass to template context:</p>
+<pre><pre class="playground"><code class="language-rust"><span class="boring">#![allow(unused)]
+</span><span class="boring">fn main() {
+</span>let formatter = TabularFormatter::new(&amp;spec, 80);
+ctx.insert("table", formatter);
+<span class="boring">}</span></code></pre></pre>
+<h3 id="shorthand-column-constructors"><a class="header" href="#shorthand-column-constructors">Shorthand Column Constructors</a></h3>
+<pre><pre class="playground"><code class="language-rust"><span class="boring">#![allow(unused)]
+</span><span class="boring">fn main() {
+</span>Col::fixed(8)          // Exactly 8 columns
+Col::min(10)           // At least 10, grows to fit
+Col::bounded(10, 30)   // Between 10 and 30
+Col::fill()            // Takes remaining space
+Col::fraction(2)       // 2 parts of remaining (2fr)
+
+// Chained modifiers
+Col::fixed(10)
+    .named("status")       // Column name
+    .right()               // Align right
+    .center()              // Align center
+    .anchor_right()        // Position at right edge
+    .wrap()                // Overflow: wrap
+    .clip()                // Overflow: hard cut
+    .truncate_middle()     // Truncate in middle
+    .style("pending")      // Apply style
+    .null_repr("N/A")      // Display for missing values
+<span class="boring">}</span></code></pre></pre>
+<hr />
+<h2 id="tables-headers-and-borders"><a class="header" href="#tables-headers-and-borders">Tables: Headers and Borders</a></h2>
+<p>For output with explicit headers, separators, and borders:</p>
+<pre><code class="language-jinja">{% set t = table([
+    {"name": "ID", "key": "id", "width": 8},
+    {"name": "Author", "key": "author", "width": 20},
+    {"name": "Message", "key": "message", "width": "fill"}
+], border="rounded", header_style="bold") %}
+
+{{ t.header_row() }}
+{{ t.separator_row() }}
+{% for commit in commits %}
+{{ t.row([commit.id, commit.author, commit.message]) }}
+{% endfor %}
+{{ t.bottom_border() }}
+</code></pre>
+<p>Output:</p>
+<pre><code class="language-text">╭──────────┬──────────────────────┬────────────────────────────────╮
+│ ID       │ Author               │ Message                        │
+├──────────┼──────────────────────┼────────────────────────────────┤
+│ a1b2c3d4 │ Alice Johnson        │ Add new login feature          │
+│ e5f6g7h8 │ Bob Smith            │ Fix authentication bug         │
+│ i9j0k1l2 │ Carol Williams       │ Update dependencies            │
+╰──────────┴──────────────────────┴────────────────────────────────╯
+</code></pre>
+<h3 id="table-border-styles"><a class="header" href="#table-border-styles">Table Border Styles</a></h3>
+<pre><code class="language-jinja">border="none"     {# No borders #}
+border="ascii"    {# +--+--+  ASCII compatible #}
+border="light"    {# ┌──┬──┐  Light box drawing #}
+border="heavy"    {# ┏━━┳━━┓  Heavy box drawing #}
+border="double"   {# ╔══╦══╗  Double lines #}
+border="rounded"  {# ╭──┬──╮  Rounded corners #}
+</code></pre>
+<h3 id="row-separators"><a class="header" href="#row-separators">Row Separators</a></h3>
+<p>Add lines between data rows:</p>
+<pre><code class="language-jinja">{% set t = table(columns, border="light", row_separator=true) %}
+</code></pre>
+<pre><code class="language-text">┌──────────┬──────────────────────┐
+│ ID       │ Name                 │
+├──────────┼──────────────────────┤
+│ abc123   │ Alice                │
+├──────────┼──────────────────────┤
+│ def456   │ Bob                  │
+└──────────┴──────────────────────┘
+</code></pre>
+<h3 id="simple-table-rendering"><a class="header" href="#simple-table-rendering">Simple Table Rendering</a></h3>
+<p>For simple cases, render everything in one call using <code>render_all()</code>:</p>
+<pre><code class="language-jinja">{% set t = table([
+    {"width": 8, "header": "ID"},
+    {"width": 20, "header": "Author"}
+], border="light", header=["ID", "Author"]) %}
+{{ t.render_all(commits) }}
+</code></pre>
+<hr />
+<h2 id="in-rust-full-table-api"><a class="header" href="#in-rust-full-table-api">In Rust: Full Table API</a></h2>
+<pre><pre class="playground"><code class="language-rust"><span class="boring">#![allow(unused)]
+</span><span class="boring">fn main() {
+</span>use standout::tabular::{Table, TabularSpec, Col, BorderStyle};
+
+let spec = TabularSpec::builder()
+    .column(Col::fixed(8).header("ID"))
+    .column(Col::min(10).header("Author"))
+    .column(Col::fill().named("Message"))
+    .build();
+
+let table = Table::new(spec, 80)
+    .header_from_columns()        // Use column headers/names as headers
+    .header_style("table-header")
+    .border(BorderStyle::Rounded);
+
+// Render full table
+let data = vec![
+    vec!["a1b2c3d4", "Alice", "Add login"],
+    vec!["e5f6g7h8", "Bob", "Fix bug"],
+];
+let output = table.render(&amp;data);
+println!("{}", output);
+
+// Or render parts manually
+println!("{}", table.header_row());
+println!("{}", table.separator_row());
+for row in &amp;data {
+    println!("{}", table.row(row));
+}
+println!("{}", table.bottom_border());
+<span class="boring">}</span></code></pre></pre>
+<hr />
+<h2 id="terminal-width"><a class="header" href="#terminal-width">Terminal Width</a></h2>
+<p>By default, Standout auto-detects terminal width. Override for testing or fixed-width output:</p>
+<pre><code class="language-jinja">{% set t = tabular(columns, width=80) %}  {# Fixed 80 columns #}
+</code></pre>
+<pre><pre class="playground"><code class="language-rust"><span class="boring">#![allow(unused)]
+</span><span class="boring">fn main() {
+</span>let formatter = TabularFormatter::new(&amp;spec, 80);  // Fixed width
+<span class="boring">}</span></code></pre></pre>
+<hr />
+<h2 id="helper-filters"><a class="header" href="#helper-filters">Helper Filters</a></h2>
+<p>For simpler use cases, these filters work standalone:</p>
+<h3 id="padding"><a class="header" href="#padding">Padding</a></h3>
+<pre><code class="language-jinja">{{ value | pad_right(10) }}   {# "hello     " - left align #}
+{{ value | pad_left(10) }}    {# "     hello" - right align #}
+{{ value | pad_center(10) }}  {# "  hello   " - center #}
+</code></pre>
+<h3 id="truncation"><a class="header" href="#truncation">Truncation</a></h3>
+<pre><code class="language-jinja">{{ path | truncate_at(20) }}                  {# End: "/very/long/path…" #}
+{{ path | truncate_at(20, "middle") }}        {# Middle: "/very…/file" #}
+{{ path | truncate_at(20, "start") }}         {# Start: "…long/path/file" #}
+{{ path | truncate_at(20, "end", "...") }}    {# Custom marker #}
+</code></pre>
+<h3 id="display-width"><a class="header" href="#display-width">Display Width</a></h3>
+<p>Check visual width (handles Unicode):</p>
+<pre><code class="language-jinja">{% if name | display_width &gt; 20 %}
+  {{ name | truncate_at(20) }}
+{% else %}
+  {{ name }}
+{% endif %}
+</code></pre>
+<hr />
+<h2 id="unicode-and-ansi"><a class="header" href="#unicode-and-ansi">Unicode and ANSI</a></h2>
+<p>The tabular system correctly handles:</p>
+<ul>
+<li><strong>CJK characters</strong>: 日本語 counts as 6 columns (2 each)</li>
+<li><strong>Combining marks</strong>: café is 4 columns (é combines)</li>
+<li><strong>ANSI codes</strong>: Preserved in output, not counted in width</li>
+</ul>
+<pre><code class="language-jinja">{{ "Hello 日本" | col(12) }}  →  "Hello 日本  " (10 display columns + 2 padding)
+</code></pre>
+<p>Styled text maintains styles through truncation:</p>
+<pre><code class="language-jinja">{{ "[red]very long red text[/red]" | col(10) }}  →  "[red]very lon…[/red]"
+</code></pre>
+<hr />
+<h2 id="missing-values"><a class="header" href="#missing-values">Missing Values</a></h2>
+<p>Set what displays for null/empty values:</p>
+<pre><code class="language-jinja">{% set t = tabular([
+    {"name": "email", "width": 30, "null_repr": "N/A"}
+]) %}
+</code></pre>
+<p>Or in templates with Jinja's default filter:</p>
+<pre><code class="language-jinja">{{ entry.email | default("N/A") | col(30) }}
+</code></pre>
+<hr />
+<h2 id="complete-example"><a class="header" href="#complete-example">Complete Example</a></h2>
+<p>A git log-style output:</p>
+<pre><code class="language-jinja">{% set t = tabular([
+    {"name": "hash", "width": 8, "style": "muted"},
+    {"name": "author", "width": {"min": 15, "max": 25}, "style": "author"},
+    {"name": "message", "width": "fill"},
+    {"name": "date", "width": 10, "anchor": "right", "align": "right", "style": "date"}
+], separator=" │ ") %}
+
+{% for commit in commits %}
+{{ t.row([commit.hash[:8], commit.author, commit.message, commit.date]) }}
+{% endfor %}
+</code></pre>
+<p>Output (80 columns):</p>
+<pre><code class="language-text">a1b2c3d4 │ Alice Johnson   │ Add new login feature with OAuth    │ 2024-01-15
+e5f6g7h8 │ Bob Smith       │ Fix authentication bug              │ 2024-01-14
+i9j0k1l2 │ Carol Williams  │ Update dependencies and refactor    │ 2024-01-13
+</code></pre>
+<p>With styling (in terminal):</p>
+<pre><code class="language-text">[muted]a1b2c3d4[/muted] │ [author]Alice Johnson[/author]   │ Add new login feature with OAuth    │ [date]2024-01-15[/date]
+</code></pre>
+<hr />
+<h2 id="summary"><a class="header" href="#summary">Summary</a></h2>
+<div class="table-wrapper"><table><thead><tr><th>Need</th><th>Solution</th></tr></thead><tbody>
+<tr><td>Simple column alignment</td><td><code>{{ value | col(width) }}</code></td></tr>
+<tr><td>Multiple columns, same widths</td><td><code>tabular([...])</code> with <code>t.row([...])</code></td></tr>
+<tr><td>Auto field extraction</td><td><code>t.row_from(object)</code></td></tr>
+<tr><td>Headers and borders</td><td><code>table([...])</code></td></tr>
+<tr><td>Right-edge columns</td><td><code>anchor: "right"</code></td></tr>
+<tr><td>Long content wrapping</td><td><code>overflow: "wrap"</code></td></tr>
+<tr><td>Proportional widths</td><td><code>width: "2fr"</code></td></tr>
+</tbody></table>
+</div>
+<hr />
+<h2 id="reference"><a class="header" href="#reference">Reference</a></h2>
+<h3 id="col-filter"><a class="header" href="#col-filter"><code>col</code> Filter</a></h3>
+<pre><code class="language-text">{{ value | col(width, align=?, truncate=?, ellipsis=?) }}
+</code></pre>
+<div class="table-wrapper"><table><thead><tr><th>Param</th><th>Values</th><th>Default</th></tr></thead><tbody>
+<tr><td><code>width</code></td><td>integer</td><td>required</td></tr>
+<tr><td><code>align</code></td><td>"left", "right", "center"</td><td>"left"</td></tr>
+<tr><td><code>truncate</code></td><td>"end", "start", "middle"</td><td>"end"</td></tr>
+<tr><td><code>ellipsis</code></td><td>string</td><td>"…"</td></tr>
+</tbody></table>
+</div>
+<h3 id="column-spec"><a class="header" href="#column-spec">Column Spec</a></h3>
+<pre><code class="language-json">{
+  "name": "string",
+  "key": "field.path",
+  "width": 8 | {"min": 5} | {"min": 5, "max": 20} | "fill" | "2fr",
+  "align": "left" | "right" | "center",
+  "anchor": "left" | "right",
+  "overflow": "truncate" | "wrap" | "clip" | {"truncate": {...}} | {"wrap": {...}},
+  "style": "style-name",
+  "null_repr": "-"
+}
+</code></pre>
+<h3 id="tabular-function"><a class="header" href="#tabular-function"><code>tabular()</code> Function</a></h3>
+<pre><code class="language-jinja">{% set t = tabular(columns, separator=?, width=?) %}
+{{ t.row([values]) }}
+{{ t.row_from(object) }}
+</code></pre>
+<h3 id="table-function"><a class="header" href="#table-function"><code>table()</code> Function</a></h3>
+<pre><code class="language-jinja">{% set t = table(columns, border=?, header=?, header_style=?, row_separator=?, width=?) %}
+{{ t.header_row() }}
+{{ t.separator_row() }}
+{{ t.row([values]) }}
+{{ t.row_from(object) }}
+{{ t.top_border() }}
+{{ t.bottom_border() }}
+{{ t.render_all(rows) }}
+</code></pre>
+<h3 id="border-styles"><a class="header" href="#border-styles">Border Styles</a></h3>
+<div class="table-wrapper"><table><thead><tr><th>Value</th><th>Example</th></tr></thead><tbody>
+<tr><td><code>"none"</code></td><td>No borders</td></tr>
+<tr><td><code>"ascii"</code></td><td><code>+--+--+</code></td></tr>
+<tr><td><code>"light"</code></td><td><code>┌──┬──┐</code></td></tr>
+<tr><td><code>"heavy"</code></td><td><code>┏━━┳━━┓</code></td></tr>
+<tr><td><code>"double"</code></td><td><code>╔══╦══╗</code></td></tr>
+<tr><td><code>"rounded"</code></td><td><code>╭──┬──╮</code></td></tr>
+</tbody></table>
+</div>
+                    </main>
+
+                    <nav class="nav-wrapper" aria-label="Page navigation">
+                        <!-- Mobile navigation buttons -->
+                            <a rel="prev" href="../topics/output-modes.html" class="mobile-nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
+                                <i class="fa fa-angle-left"></i>
+                            </a>
+
+                            <a rel="next prefetch" href="../topics/app-configuration.html" class="mobile-nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
+                                <i class="fa fa-angle-right"></i>
+                            </a>
+
+                        <div style="clear: both"></div>
+                    </nav>
+                </div>
+            </div>
+
+            <nav class="nav-wide-wrapper" aria-label="Page navigation">
+                    <a rel="prev" href="../topics/output-modes.html" class="nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
+                        <i class="fa fa-angle-left"></i>
+                    </a>
+
+                    <a rel="next prefetch" href="../topics/app-configuration.html" class="nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
+                        <i class="fa fa-angle-right"></i>
+                    </a>
+            </nav>
+
+        </div>
+
+
+
+
+        <script>
+            window.playground_copyable = true;
+        </script>
+
+
+        <script src="../elasticlunr.min.js"></script>
+        <script src="../mark.min.js"></script>
+        <script src="../searcher.js"></script>
+
+        <script src="../clipboard.min.js"></script>
+        <script src="../highlight.js"></script>
+        <script src="../book.js"></script>
+
+        <!-- Custom JS scripts -->
+
+
+    </div>
+    </body>
+</html>

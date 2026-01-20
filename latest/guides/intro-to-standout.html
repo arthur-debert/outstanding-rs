@@ -1,0 +1,827 @@
+<!DOCTYPE HTML>
+<html lang="en" class="rust" dir="ltr">
+    <head>
+        <!-- Book generated using mdBook -->
+        <meta charset="UTF-8">
+        <title>Introduction to Standout - Standout</title>
+
+
+        <!-- Custom HTML head -->
+        
+        <meta name="description" content="A CLI framework for Rust that enforces separation between logic and presentation">
+        <meta name="viewport" content="width=device-width, initial-scale=1">
+        <meta name="theme-color" content="#ffffff">
+
+        <link rel="icon" href="../favicon.svg">
+        <link rel="shortcut icon" href="../favicon.png">
+        <link rel="stylesheet" href="../css/variables.css">
+        <link rel="stylesheet" href="../css/general.css">
+        <link rel="stylesheet" href="../css/chrome.css">
+        <link rel="stylesheet" href="../css/print.css" media="print">
+
+        <!-- Fonts -->
+        <link rel="stylesheet" href="../FontAwesome/css/font-awesome.css">
+        <link rel="stylesheet" href="../fonts/fonts.css">
+
+        <!-- Highlight.js Stylesheets -->
+        <link rel="stylesheet" href="../highlight.css">
+        <link rel="stylesheet" href="../tomorrow-night.css">
+        <link rel="stylesheet" href="../ayu-highlight.css">
+
+        <!-- Custom theme stylesheets -->
+
+    </head>
+    <body class="sidebar-visible no-js">
+    <div id="body-container">
+        <!-- Provide site root to javascript -->
+        <script>
+            var path_to_root = "../";
+            var default_theme = window.matchMedia("(prefers-color-scheme: dark)").matches ? "ayu" : "rust";
+        </script>
+
+        <!-- Work around some values being stored in localStorage wrapped in quotes -->
+        <script>
+            try {
+                var theme = localStorage.getItem('mdbook-theme');
+                var sidebar = localStorage.getItem('mdbook-sidebar');
+
+                if (theme.startsWith('"') && theme.endsWith('"')) {
+                    localStorage.setItem('mdbook-theme', theme.slice(1, theme.length - 1));
+                }
+
+                if (sidebar.startsWith('"') && sidebar.endsWith('"')) {
+                    localStorage.setItem('mdbook-sidebar', sidebar.slice(1, sidebar.length - 1));
+                }
+            } catch (e) { }
+        </script>
+
+        <!-- Set the theme before any content is loaded, prevents flash -->
+        <script>
+            var theme;
+            try { theme = localStorage.getItem('mdbook-theme'); } catch(e) { }
+            if (theme === null || theme === undefined) { theme = default_theme; }
+            var html = document.querySelector('html');
+            html.classList.remove('rust')
+            html.classList.add(theme);
+            var body = document.querySelector('body');
+            body.classList.remove('no-js')
+            body.classList.add('js');
+        </script>
+
+        <input type="checkbox" id="sidebar-toggle-anchor" class="hidden">
+
+        <!-- Hide / unhide sidebar before it is displayed -->
+        <script>
+            var body = document.querySelector('body');
+            var sidebar = null;
+            var sidebar_toggle = document.getElementById("sidebar-toggle-anchor");
+            if (document.body.clientWidth >= 1080) {
+                try { sidebar = localStorage.getItem('mdbook-sidebar'); } catch(e) { }
+                sidebar = sidebar || 'visible';
+            } else {
+                sidebar = 'hidden';
+            }
+            sidebar_toggle.checked = sidebar === 'visible';
+            body.classList.remove('sidebar-visible');
+            body.classList.add("sidebar-" + sidebar);
+        </script>
+
+        <nav id="sidebar" class="sidebar" aria-label="Table of contents">
+            <div class="sidebar-scrollbox">
+                <ol class="chapter"><li class="chapter-item affix "><a href="../index.html">Introduction</a></li><li class="chapter-item affix "><li class="spacer"></li><li class="chapter-item affix "><li class="part-title">Getting Started</li><li class="chapter-item "><a href="../guides/tldr-intro-to-standout.html"><strong aria-hidden="true">1.</strong> Quick Start</a></li><li class="chapter-item expanded "><a href="../guides/intro-to-standout.html" class="active"><strong aria-hidden="true">2.</strong> Introduction to Standout</a></li><li class="chapter-item affix "><li class="spacer"></li><li class="chapter-item affix "><li class="part-title">Rendering (standout-render)</li><li class="chapter-item "><a href="../crates/render/guides/intro-to-rendering.html"><strong aria-hidden="true">3.</strong> Introduction to Rendering</a></li><li class="chapter-item "><a href="../crates/render/guides/intro-to-tabular.html"><strong aria-hidden="true">4.</strong> Introduction to Tabular</a></li><li class="chapter-item "><a href="../crates/render/topics/styling-system.html"><strong aria-hidden="true">5.</strong> Styling System</a></li><li class="chapter-item "><a href="../crates/render/topics/templating.html"><strong aria-hidden="true">6.</strong> Templating</a></li><li class="chapter-item "><a href="../crates/render/topics/file-system-resources.html"><strong aria-hidden="true">7.</strong> File System Resources</a></li><li class="chapter-item affix "><li class="spacer"></li><li class="chapter-item affix "><li class="part-title">Dispatch (standout-dispatch)</li><li class="chapter-item "><a href="../crates/dispatch/guides/intro-to-dispatch.html"><strong aria-hidden="true">8.</strong> Introduction to Dispatch</a></li><li class="chapter-item "><a href="../crates/dispatch/topics/handler-contract.html"><strong aria-hidden="true">9.</strong> Handler Contract</a></li><li class="chapter-item "><a href="../crates/dispatch/topics/execution-model.html"><strong aria-hidden="true">10.</strong> Execution Model</a></li><li class="chapter-item "><a href="../crates/dispatch/topics/partial-adoption.html"><strong aria-hidden="true">11.</strong> Partial Adoption</a></li><li class="chapter-item affix "><li class="spacer"></li><li class="chapter-item affix "><li class="part-title">Framework Topics</li><li class="chapter-item "><a href="../topics/output-modes.html"><strong aria-hidden="true">12.</strong> Output Modes</a></li><li class="chapter-item "><a href="../topics/app-configuration.html"><strong aria-hidden="true">13.</strong> App Configuration</a></li></ol>
+            </div>
+            <div id="sidebar-resize-handle" class="sidebar-resize-handle">
+                <div class="sidebar-resize-indicator"></div>
+            </div>
+        </nav>
+
+        <!-- Track and set sidebar scroll position -->
+        <script>
+            var sidebarScrollbox = document.querySelector('#sidebar .sidebar-scrollbox');
+            sidebarScrollbox.addEventListener('click', function(e) {
+                if (e.target.tagName === 'A') {
+                    sessionStorage.setItem('sidebar-scroll', sidebarScrollbox.scrollTop);
+                }
+            }, { passive: true });
+            var sidebarScrollTop = sessionStorage.getItem('sidebar-scroll');
+            sessionStorage.removeItem('sidebar-scroll');
+            if (sidebarScrollTop) {
+                // preserve sidebar scroll position when navigating via links within sidebar
+                sidebarScrollbox.scrollTop = sidebarScrollTop;
+            } else {
+                // scroll sidebar to current active section when navigating via "next/previous chapter" buttons
+                var activeSection = document.querySelector('#sidebar .active');
+                if (activeSection) {
+                    activeSection.scrollIntoView({ block: 'center' });
+                }
+            }
+        </script>
+
+        <div id="page-wrapper" class="page-wrapper">
+
+            <div class="page">
+                                <div id="menu-bar-hover-placeholder"></div>
+                <div id="menu-bar" class="menu-bar sticky">
+                    <div class="left-buttons">
+                        <label id="sidebar-toggle" class="icon-button" for="sidebar-toggle-anchor" title="Toggle Table of Contents" aria-label="Toggle Table of Contents" aria-controls="sidebar">
+                            <i class="fa fa-bars"></i>
+                        </label>
+                        <button id="theme-toggle" class="icon-button" type="button" title="Change theme" aria-label="Change theme" aria-haspopup="true" aria-expanded="false" aria-controls="theme-list">
+                            <i class="fa fa-paint-brush"></i>
+                        </button>
+                        <ul id="theme-list" class="theme-popup" aria-label="Themes" role="menu">
+                            <li role="none"><button role="menuitem" class="theme" id="light">Light</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="rust">Rust</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="coal">Coal</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="navy">Navy</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="ayu">Ayu</button></li>
+                        </ul>
+                        <button id="search-toggle" class="icon-button" type="button" title="Search. (Shortkey: s)" aria-label="Toggle Searchbar" aria-expanded="false" aria-keyshortcuts="S" aria-controls="searchbar">
+                            <i class="fa fa-search"></i>
+                        </button>
+                    </div>
+
+                    <h1 class="menu-title">Standout</h1>
+
+                    <div class="right-buttons">
+                        <a href="../print.html" title="Print this book" aria-label="Print this book">
+                            <i id="print-button" class="fa fa-print"></i>
+                        </a>
+                        <a href="https://github.com/arthur-debert/standout" title="Git repository" aria-label="Git repository">
+                            <i id="git-repository-button" class="fa fa-github"></i>
+                        </a>
+                        <a href="https://github.com/arthur-debert/standout/edit/main/docs/docs/guides/intro-to-standout.md" title="Suggest an edit" aria-label="Suggest an edit">
+                            <i id="git-edit-button" class="fa fa-edit"></i>
+                        </a>
+
+                    </div>
+                </div>
+
+                <div id="search-wrapper" class="hidden">
+                    <form id="searchbar-outer" class="searchbar-outer">
+                        <input type="search" id="searchbar" name="searchbar" placeholder="Search this book ..." aria-controls="searchresults-outer" aria-describedby="searchresults-header">
+                    </form>
+                    <div id="searchresults-outer" class="searchresults-outer hidden">
+                        <div id="searchresults-header" class="searchresults-header"></div>
+                        <ul id="searchresults">
+                        </ul>
+                    </div>
+                </div>
+
+                <!-- Apply ARIA attributes after the sidebar and the sidebar toggle button are added to the DOM -->
+                <script>
+                    document.getElementById('sidebar-toggle').setAttribute('aria-expanded', sidebar === 'visible');
+                    document.getElementById('sidebar').setAttribute('aria-hidden', sidebar !== 'visible');
+                    Array.from(document.querySelectorAll('#sidebar a')).forEach(function(link) {
+                        link.setAttribute('tabIndex', sidebar === 'visible' ? 0 : -1);
+                    });
+                </script>
+
+                <div id="content" class="content">
+                    <main>
+                        <h1 id="standout-how-to"><a class="header" href="#standout-how-to">Standout How To</a></h1>
+<p>This is a small, focused guide for adopting Standout in a working shell application. Each step is self-sufficient, takes a positive step towards a sane CLI design, and can be incrementally merged. This can be done for one command (probably a good idea), then replicated to as many as you'd like.</p>
+<p>Note that only 2 out of 8 steps are Standout related. The others are generally good practices and clear designs for maintainable shell programs. This is not an accident, as Standout's goal is to allow your app to keep a great structure effortlessly, while providing testability, rich and fast output design, and more.</p>
+<p>For explanation's sake, we will show a hypothetical list command for tdoo, a todo list manager.</p>
+<p><strong>See Also:</strong></p>
+<ul>
+<li><a href="../crates/dispatch/topics/handler-contract.html">Handler Contract</a> - detailed handler API</li>
+<li><a href="../crates/render/topics/styling-system.html">Styling System</a> - themes and styles in depth</li>
+<li><a href="../topics/output-modes.html">Output Modes</a> - all output format options</li>
+<li><a href="../crates/dispatch/topics/partial-adoption.html">Partial Adoption</a> - migrating incrementally</li>
+</ul>
+<h2 id="1-start-the-argument-parsing"><a class="header" href="#1-start-the-argument-parsing">1. Start: The Argument Parsing</a></h2>
+<p>Arg parsing is insanely intricate and deceptively simple. In case you are not already: define your application's interface with clap. Nothing else is worth doing until you have a sane starting point.</p>
+<p>If you don't have clap set up yet, here's a minimal starting point:</p>
+<pre><pre class="playground"><code class="language-rust">use clap::{Parser, Subcommand};
+
+#[derive(Parser)]
+#[command(name = "tdoo")]
+struct Cli {
+    #[command(subcommand)]
+    command: Commands,
+}
+
+#[derive(Subcommand)]
+enum Commands {
+    /// List all todos
+    List {
+        #[arg(short, long)]
+        all: bool,
+    },
+    /// Add a new todo
+    Add {
+        title: String,
+    },
+}
+
+fn main() {
+    let cli = Cli::parse();
+    match cli.command {
+        Commands::List { all } =&gt; list_command(all),
+        Commands::Add { title } =&gt; add_command(&amp;title),
+    }
+}</code></pre></pre>
+<p>(If you are using a non-clap-compatible crate, for now, you'd have to write an adapter for clap.)</p>
+<blockquote>
+<p><strong>Verify:</strong> Run <code>cargo build</code> - it should compile without errors.</p>
+</blockquote>
+<h2 id="2-hard-split-logic-and-formatting"><a class="header" href="#2-hard-split-logic-and-formatting">2. Hard Split Logic and Formatting</a></h2>
+<p>Now, your command should be split into two functions: the logic handler and its rendering. Don't worry about the specifics, do the straightest path from your current code.</p>
+<p>This is the one key step, the key design rule. And that's not because Standout requires it, rather the other way around: Standout is designed on top of it, and keeping it separate and easy to iterate on both logic and presentation under this design is Standout's key value.</p>
+<p>If your CLI is in good shape this will be a small task, otherwise you may find yourself patching together print statements everywhere, tidying up the data model and centralizing the processing. The silver lining here being: if it takes considerable work, there will be considerable gain in doing so.</p>
+<p><strong>Before</strong> (tangled logic and output):</p>
+<pre><pre class="playground"><code class="language-rust"><span class="boring">#![allow(unused)]
+</span><span class="boring">fn main() {
+</span>fn list_command(show_all: bool) {
+    let todos = storage::list().unwrap();
+    println!("Your Todos:");
+    println!("-----------");
+    for (i, todo) in todos.iter().enumerate() {
+        if show_all || todo.status == Status::Pending {
+            let marker = if todo.status == Status::Done { "[x]" } else { "[ ]" };
+            println!("{}. {} {}", i + 1, marker, todo.title);
+        }
+    }
+    if todos.is_empty() {
+        println!("No todos yet!");
+    }
+}
+<span class="boring">}</span></code></pre></pre>
+<p><strong>After</strong> (clean separation):</p>
+<pre><pre class="playground"><code class="language-rust"><span class="boring">#![allow(unused)]
+</span><span class="boring">fn main() {
+</span>use clap::ArgMatches;
+
+// Data types for your domain
+#[derive(Clone)]
+pub enum Status { Pending, Done }
+
+#[derive(Clone)]
+pub struct Todo {
+    pub title: String,
+    pub status: Status,
+}
+
+pub struct TodoResult {
+    pub message: Option&lt;String&gt;,
+    pub todos: Vec&lt;Todo&gt;,
+}
+
+// This is your core logic handler, receiving parsed clap args
+// and returning a pure Rust data type.
+//
+// Note: This example uses immutable references. If your handler needs
+// mutable state (&amp;mut self), see the "Mutable Handlers" section below.
+pub fn list(matches: &amp;ArgMatches) -&gt; TodoResult {
+    let show_done = matches.get_flag("all");
+    let todos = storage::list().unwrap();
+
+    let filtered: Vec&lt;Todo&gt; = if show_done {
+        todos
+    } else {
+        todos.into_iter()
+            .filter(|t| matches!(t.status, Status::Pending))
+            .collect()
+    };
+
+    TodoResult {
+        message: None,
+        todos: filtered,
+    }
+}
+
+// This will take the Rust data type and print the result to stdout
+pub fn render_list(result: TodoResult) {
+    if let Some(msg) = result.message {
+        println!("{}", msg);
+    }
+    for (i, todo) in result.todos.iter().enumerate() {
+        let status = match todo.status {
+            Status::Done =&gt; "[x]",
+            Status::Pending =&gt; "[ ]",
+        };
+        println!("{}. {} {}", i + 1, status, todo.title);
+    }
+}
+
+// And the orchestrator:
+pub fn list_command(matches: &amp;ArgMatches) {
+    render_list(list(matches))
+}
+<span class="boring">}</span></code></pre></pre>
+<blockquote>
+<p><strong>Verify:</strong> Run <code>cargo build</code> and then <code>tdoo list</code> - output should look identical to before.</p>
+</blockquote>
+<h3 id="intermezzo-a-milestone---logic-and-presentation-split"><a class="header" href="#intermezzo-a-milestone---logic-and-presentation-split">Intermezzo A: Milestone - Logic and Presentation Split</a></h3>
+<p><strong>What you achieved:</strong> Your command logic is now a pure function that returns data.
+<strong>What's now possible:</strong></p>
+<ul>
+<li>All of your app's logic can be unit tested as any code, from the logic inwards.</li>
+<li>You can test by feeding input strings and verifying your logic handler gets called with the right parameters.</li>
+<li>The rendering can also be tested by feeding data inputs and matching outputs (though this is brittle).</li>
+</ul>
+<p><strong>What's next:</strong> Making the return type serializable for automatic JSON/YAML output.
+<strong>Your files now:</strong></p>
+<pre><code class="language-text">src/
+├── main.rs          # clap setup + orchestrators
+├── handlers.rs      # list(), add() - pure logic
+└── render.rs        # render_list(), render_add() - output formatting
+</code></pre>
+<h2 id="3-fine-tune-the-logic-handlers-return-type"><a class="header" href="#3-fine-tune-the-logic-handlers-return-type">3. Fine Tune the Logic Handler's Return Type</a></h2>
+<p>While any data type works, Standout's renderer takes a generic type that must implement <code>Serialize</code>. This enables automatic JSON/YAML output modes and template rendering through MiniJinja's context system. This is likely a small change, and beneficial as a baseline for logic results that will simplify writing renderers later.</p>
+<p>Add serde to your <code>Cargo.toml</code>:</p>
+<pre><code class="language-toml">[dependencies]
+serde = { version = "1", features = ["derive"] }
+</code></pre>
+<p>Update your types:</p>
+<pre><pre class="playground"><code class="language-rust"><span class="boring">#![allow(unused)]
+</span><span class="boring">fn main() {
+</span>use serde::Serialize;
+
+#[derive(Clone, Serialize)]
+#[serde(rename_all = "lowercase")]
+pub enum Status { Pending, Done }
+
+#[derive(Clone, Serialize)]
+pub struct Todo {
+    pub title: String,
+    pub status: Status,
+}
+
+#[derive(Serialize)]
+pub struct TodoResult {
+    pub message: Option&lt;String&gt;,
+    pub todos: Vec&lt;Todo&gt;,
+}
+<span class="boring">}</span></code></pre></pre>
+<blockquote>
+<p><strong>Verify:</strong> Run <code>cargo build</code> - it should compile without errors.</p>
+</blockquote>
+<h2 id="4-replace-imperative-print-statements-with-a-template"><a class="header" href="#4-replace-imperative-print-statements-with-a-template">4. Replace Imperative Print Statements With a Template</a></h2>
+<p>Reading a template of an output next to the substituting variables is much easier to reason about than scattered prints, string concats and the like.</p>
+<p>This step is optional - if your current output is simple, you can skip to step 5. If you want an intermediate checkpoint, use Rust's format strings:</p>
+<pre><pre class="playground"><code class="language-rust"><span class="boring">#![allow(unused)]
+</span><span class="boring">fn main() {
+</span>pub fn render_list(result: TodoResult) {
+    let output = format!(
+        "{header}\n{todos}",
+        header = result.message.unwrap_or_default(),
+        todos = result.todos.iter().enumerate()
+            .map(|(i, t)| format!("{}. [{}] {}", i + 1, t.status, t.title))
+            .collect::&lt;Vec&lt;_&gt;&gt;()
+            .join("\n")
+    );
+    println!("{}", output);
+}
+<span class="boring">}</span></code></pre></pre>
+<blockquote>
+<p><strong>Verify:</strong> Run <code>tdoo list</code> - output should still work.</p>
+</blockquote>
+<h2 id="5-use-a-minijinja-template-string"><a class="header" href="#5-use-a-minijinja-template-string">5. Use a MiniJinja Template String</a></h2>
+<p>Rewrite your <code>std::fmt</code> or imperative prints into a MiniJinja template string, and add minijinja to your crate. If you're not familiar with it, it's a Rust implementation of Jinja, pretty much a de-facto standard for more complex templates.</p>
+<p><strong>Resources:</strong></p>
+<ul>
+<li><a href="https://docs.rs/minijinja">MiniJinja docs</a></li>
+<li><a href="https://jinja.palletsprojects.com/en/3.1.x/templates/">Jinja syntax reference</a></li>
+</ul>
+<p>Add minijinja to your <code>Cargo.toml</code>:</p>
+<pre><code class="language-toml">[dependencies]
+minijinja = "2"
+</code></pre>
+<p>And then you call render in MiniJinja, passing the template string and the data to use. So now your rendering function looks like this:</p>
+<pre><pre class="playground"><code class="language-rust"><span class="boring">#![allow(unused)]
+</span><span class="boring">fn main() {
+</span>pub fn render_list(result: TodoResult) {
+    let output_tmpl = r#"
+{% if message %}
+    {{ message }}
+{% endif %}
+{% for todo in todos %}
+    {{ loop.index }}. [{{ todo.status }}] {{ todo.title }}
+{% endfor %}
+"#;
+
+    let env = minijinja::Environment::new();
+    let tmpl = env.template_from_str(output_tmpl).unwrap();
+    let output = tmpl.render(&amp;result).unwrap();
+    println!("{}", output);
+}
+<span class="boring">}</span></code></pre></pre>
+<blockquote>
+<p><strong>Verify:</strong> Run <code>tdoo list</code> - output should match (formatting may differ slightly).</p>
+</blockquote>
+<h2 id="6-use-a-dedicated-template-file"><a class="header" href="#6-use-a-dedicated-template-file">6. Use a Dedicated Template File</a></h2>
+<p>Now, move the template content into a file (say <code>src/templates/list.jinja</code>), and load it in the rendering module. Dedicated files have several advantages: triggering editor/IDE support for the file type, more descriptive diffs, less risk of breaking the code/build and, in the event that you have less technical people helping out with the UI, a much cleaner and simpler way for them to contribute.</p>
+<p>Create <code>src/templates/list.jinja</code>:</p>
+<pre><code class="language-jinja">{% if message %}{{ message }} {% endif %}
+{% for todo in todos %}
+    {{ loop.index }}. [{{ todo.status }}] {{ todo.title }}
+{% endfor %}
+</code></pre>
+<p>Update your render function to load from file:</p>
+<pre><pre class="playground"><code class="language-rust"><span class="boring">#![allow(unused)]
+</span><span class="boring">fn main() {
+</span>pub fn render_list(result: TodoResult) {
+    let template_content = include_str!("templates/list.jinja");
+    let env = minijinja::Environment::new();
+    let tmpl = env.template_from_str(template_content).unwrap();
+    let output = tmpl.render(&amp;result).unwrap();
+    println!("{}", output);
+}
+<span class="boring">}</span></code></pre></pre>
+<blockquote>
+<p><strong>Verify:</strong> Run <code>tdoo list</code> - output should be identical.</p>
+</blockquote>
+<h3 id="intermezzo-b-declarative-output-definition"><a class="header" href="#intermezzo-b-declarative-output-definition">Intermezzo B: Declarative Output Definition</a></h3>
+<p><strong>What you achieved:</strong> Output is now defined declaratively in a template file, separate from Rust code.
+<strong>What's now possible:</strong></p>
+<ul>
+<li>Edit templates without recompiling (with minor changes to loading)</li>
+<li>Non-Rust developers can contribute to UI</li>
+<li>Clear separation in code reviews: "is this a logic change or display change?"</li>
+<li>Use partials, filters, and macros for complex outputs (see <a href="../crates/render/topics/templating.html">Templating</a>)</li>
+</ul>
+<p><strong>What's next:</strong> Hooking up Standout for automatic dispatch and rich output.
+Also, notice we've yet to do anything Standout-specific. This is not a coincidence—the framework is designed around this pattern, making testability, fast iteration, and rich features natural outcomes of the architecture.
+<strong>Your files now:</strong></p>
+<pre><code class="language-text">src/
+├── main.rs
+├── handlers.rs
+├── render.rs
+└── templates/
+    └── list.jinja
+</code></pre>
+<h2 id="7-standout-offload-the-handler-orchestration"><a class="header" href="#7-standout-offload-the-handler-orchestration">7. Standout: Offload the Handler Orchestration</a></h2>
+<p>And now the Standout-specific bits finally show up.</p>
+<h3 id="71-add-standout-to-your-cargotoml"><a class="header" href="#71-add-standout-to-your-cargotoml">7.1 Add Standout to your Cargo.toml</a></h3>
+<pre><code class="language-toml">[dependencies]
+standout = "2"
+</code></pre>
+<blockquote>
+<p><strong>Verify:</strong> Run <code>cargo build</code> - dependencies should download and compile.</p>
+</blockquote>
+<h3 id="72-create-the-commands-enum-with-dispatch"><a class="header" href="#72-create-the-commands-enum-with-dispatch">7.2 Create the Commands enum with Dispatch</a></h3>
+<p>Annotate your commands enum with the Dispatch derive macro. This tells Standout that the "list" command should be dispatched to the <code>list</code> handler. That's all Standout needs to know, and now it can manage the execution.</p>
+<p>See <a href="../crates/dispatch/topics/handler-contract.html">Handler Contract</a> for full handler API details.</p>
+<pre><pre class="playground"><code class="language-rust"><span class="boring">#![allow(unused)]
+</span><span class="boring">fn main() {
+</span>use standout::cli::{Dispatch, CommandContext, HandlerResult, Output};
+use clap::{ArgMatches, Subcommand};
+
+// Define your commands enum with the Dispatch derive
+#[derive(Subcommand, Dispatch)]
+#[dispatch(handlers = handlers)]
+pub enum Commands {
+    List,
+    Add,
+}
+
+// Your handlers module
+mod handlers {
+    use super::*;
+
+    pub fn list(_matches: &amp;ArgMatches, _ctx: &amp;CommandContext) -&gt; HandlerResult&lt;TodoResult&gt; {
+        let todos = storage::list()?;
+        Ok(Output::Render(TodoResult {
+            message: None,
+            todos,
+        }))
+    }
+
+    pub fn add(matches: &amp;ArgMatches, _ctx: &amp;CommandContext) -&gt; HandlerResult&lt;TodoResult&gt; {
+        let title: &amp;String = matches.get_one("title").unwrap();
+        let todo = storage::add(title)?;
+        Ok(Output::Render(TodoResult {
+            message: Some(format!("Added: {}", title)),
+            todos: vec![todo],
+        }))
+    }
+}
+<span class="boring">}</span></code></pre></pre>
+<blockquote>
+<p><strong>Verify:</strong> Run <code>cargo build</code> - it should compile without errors.</p>
+</blockquote>
+<h3 id="73-configure-appbuilder"><a class="header" href="#73-configure-appbuilder">7.3 Configure AppBuilder</a></h3>
+<p>Use AppBuilder to configure your app. Instantiate the builder, add the path for your templates. See <a href="../topics/app-configuration.html">App Configuration</a> for all configuration options.</p>
+<pre><pre class="playground"><code class="language-rust"><span class="boring">#![allow(unused)]
+</span><span class="boring">fn main() {
+</span>use standout::cli::App;
+use standout::{embed_templates, embed_styles};
+
+let app = App::builder()
+    .templates(embed_templates!("src/templates"))   // Embeds all .jinja/.j2 files
+    .commands(Commands::dispatch_config())          // Register handlers from derive macro
+    .build()?;
+<span class="boring">}</span></code></pre></pre>
+<blockquote>
+<p><strong>Verify:</strong> Run <code>cargo build</code> - it should compile without errors.</p>
+</blockquote>
+<h3 id="74-wire-up-main"><a class="header" href="#74-wire-up-main">7.4 Wire up main()</a></h3>
+<p>The final bit: handling the dispatching off to Standout:</p>
+<pre><pre class="playground"><code class="language-rust">use standout::cli::App;
+use standout::embed_templates;
+
+fn main() -&gt; anyhow::Result&lt;()&gt; {
+    let app = App::builder()
+        .templates(embed_templates!("src/templates"))
+        .commands(Commands::dispatch_config())
+        .build()?;
+
+    // Run with auto dispatch - handles parsing and execution
+    app.run(Cli::command(), std::env::args());
+    Ok(())
+}</code></pre></pre>
+<p>If your app has other clap commands that are not managed by Standout, check for unhandled commands. See <a href="../crates/dispatch/topics/partial-adoption.html">Partial Adoption</a> for details on incremental migration.</p>
+<pre><pre class="playground"><code class="language-rust"><span class="boring">#![allow(unused)]
+</span><span class="boring">fn main() {
+</span>if let Some(matches) = app.run(Cli::command(), std::env::args()) {
+    // Standout didn't handle this command, fall back to legacy
+    legacy_dispatch(matches);
+}
+<span class="boring">}</span></code></pre></pre>
+<blockquote>
+<p><strong>Verify:</strong> Run <code>tdoo list</code> - it should work as before.
+<strong>Verify:</strong> Run <code>tdoo list --output json</code> - you should get JSON output for free!</p>
+</blockquote>
+<p>And now you can remove the boilerplate: the orchestrator (<code>list_command</code>) and the rendering (<code>render_list</code>). You're pretty much at global optima: a single line of derive macro links your app logic to a command name, a few lines configure Standout, and auto dispatch handles all the boilerplate.</p>
+<p>For the next commands you'd wish to migrate, this is even simpler. Say you have a "create" logic handler: add a "create.jinja" to that template dir, add the derive macro for the create function and that is it. By default the macro will match the command's name to the handlers and to the template files, but you can change these and map explicitly to your heart's content.</p>
+<h3 id="intermezzo-c-welcome-to-standout"><a class="header" href="#intermezzo-c-welcome-to-standout">Intermezzo C: Welcome to Standout</a></h3>
+<p><strong>What you achieved:</strong> Full dispatch pipeline with zero boilerplate.</p>
+<p><strong>What's now possible:</strong></p>
+<ul>
+<li>Alter the template and re-run your CLI, without compilation, and the new template will be used</li>
+<li>Your CLI just got multiple output modes via <code>--output</code> (see <a href="../topics/output-modes.html">Output Modes</a>):
+<ul>
+<li><strong>term</strong>: rich shell formatting (more about this on the next step)</li>
+<li><strong>term-debug</strong>: print formatting info for testing/debugging</li>
+<li><strong>text</strong>: plain text, no styling</li>
+<li><strong>auto</strong>: the default, rich term that degrades gracefully</li>
+<li><strong>json, csv, yaml</strong>: automatic serialization of your data</li>
+</ul>
+</li>
+</ul>
+<p><strong>What's next:</strong> Adding rich styling to make the output beautiful.</p>
+<p><strong>Your files now:</strong></p>
+<pre><code class="language-text">src/
+├── main.rs              # App::builder() setup
+├── commands.rs          # Commands enum with #[derive(Dispatch)]
+├── handlers.rs          # list(), add() returning HandlerResult
+└── templates/
+    ├── list.jinja
+    └── add.jinja
+</code></pre>
+<h2 id="8-make-the-output-awesome"><a class="header" href="#8-make-the-output-awesome">8. Make the Output Awesome</a></h2>
+<p>Let's transform that mono-typed, monochrome string into a richer and more useful UI. Borrowing from web apps setup, we keep the content in a template file, and we define styles in a stylesheet file.</p>
+<p>See <a href="../crates/render/topics/styling-system.html">Styling System</a> for full styling documentation.</p>
+<h3 id="81-create-the-stylesheet"><a class="header" href="#81-create-the-stylesheet">8.1 Create the stylesheet</a></h3>
+<p>Create <code>src/styles/default.css</code>:</p>
+<pre><code class="language-css">/* Styles for completed todos */
+.done {
+    text-decoration: line-through;
+    color: gray;
+}
+
+/* Style for todo index numbers */
+.index {
+    color: yellow;
+}
+
+/* Style for pending todos */
+.pending {
+    font-weight: bold;
+    color: white;
+}
+
+/* Adaptive style for messages */
+.message {
+    color: cyan;
+}
+
+@media (prefers-color-scheme: light) {
+    .pending { color: black; }
+}
+
+@media (prefers-color-scheme: dark) {
+    .pending { color: white; }
+}
+</code></pre>
+<p>Or if you prefer YAML (<code>src/styles/default.yaml</code>):</p>
+<pre><code class="language-yaml">done: strikethrough, gray
+index: yellow
+pending:
+  bold: true
+  fg: white
+  light:
+    fg: black
+  dark:
+    fg: white
+message: cyan
+</code></pre>
+<blockquote>
+<p><strong>Verify:</strong> The file exists at <code>src/styles/default.css</code> or <code>src/styles/default.yaml</code>.</p>
+</blockquote>
+<h3 id="82-add-style-tags-to-your-template"><a class="header" href="#82-add-style-tags-to-your-template">8.2 Add style tags to your template</a></h3>
+<p>Update <code>src/templates/list.jinja</code> with style tags:</p>
+<pre><code class="language-jinja">{% if message %}[message]{{ message }}[/message]
+{% endif %}
+{% for todo in todos %}
+[index]{{ loop.index }}.[/index] [{{ todo.status }}]{{ todo.title }}[/{{ todo.status }}]
+{% endfor %}
+</code></pre>
+<p>The style tags use BBCode-like syntax: <code>[style-name]content[/style-name]</code></p>
+<p>Notice how we use <code>[{{ todo.status }}]</code> dynamically - if <code>todo.status</code> is "done", it applies the <code>.done</code> style; if it's "pending", it applies the <code>.pending</code> style.</p>
+<blockquote>
+<p><strong>Verify:</strong> The template file is updated.</p>
+</blockquote>
+<h3 id="83-wire-up-styles-in-appbuilder"><a class="header" href="#83-wire-up-styles-in-appbuilder">8.3 Wire up styles in AppBuilder</a></h3>
+<p>Add the styles to your app builder:</p>
+<pre><pre class="playground"><code class="language-rust"><span class="boring">#![allow(unused)]
+</span><span class="boring">fn main() {
+</span>let app = App::builder()
+    .templates(embed_templates!("src/templates"))
+    .styles(embed_styles!("src/styles"))       // Load stylesheets
+    .default_theme("default")                  // Use styles/default.css or default.yaml
+    .commands(Commands::dispatch_config())
+    .build()?;
+<span class="boring">}</span></code></pre></pre>
+<blockquote>
+<p><strong>Verify:</strong> Run <code>cargo build</code> - it should compile without errors.
+<strong>Verify:</strong> Run <code>tdoo list</code> - you should see colored, styled output!
+<strong>Verify:</strong> Run <code>tdoo list --output text</code> - plain text, no colors.</p>
+</blockquote>
+<p>Now you're leveraging the core rendering design of Standout:</p>
+<ul>
+<li>File-based templates for content, and stylesheets for styles</li>
+<li>Custom template syntax with BBCode for markup styles <code>[style][/style]</code></li>
+<li>Live reload: iterate through content and styling without recompiling</li>
+</ul>
+<h3 id="intermezzo-d-the-full-setup-is-done"><a class="header" href="#intermezzo-d-the-full-setup-is-done">Intermezzo D: The Full Setup Is Done</a></h3>
+<p><strong>What you achieved:</strong> A fully styled, testable, multi-format CLI.</p>
+<p><strong>What's now possible:</strong></p>
+<ul>
+<li>Rich terminal output with colors, bold, strikethrough</li>
+<li>Automatic light/dark mode adaptation</li>
+<li>JSON/YAML/CSV output for scripting and testing</li>
+<li>Hot reload of templates and styles during development</li>
+<li>Unit testable logic handlers</li>
+</ul>
+<p><strong>Your final files:</strong></p>
+<pre><code class="language-text">src/
+├── main.rs              # App::builder() setup
+├── commands.rs          # Commands enum with #[derive(Dispatch)]
+├── handlers.rs          # list(), add() returning HandlerResult
+├── templates/
+│   ├── list.jinja       # with [style] tags
+│   └── add.jinja
+└── styles/
+    └── default.css      # or default.yaml
+</code></pre>
+<p>For brevity's sake, we've ignored a bunch of finer and relevant points:</p>
+<ul>
+<li>The derive macros can set name mapping explicitly: <code>#[dispatch(handler = custom_fn, template = "custom.jinja")]</code></li>
+<li>There are pre-dispatch, post-dispatch and post-render hooks (see <a href="../crates/dispatch/topics/execution-model.html">Execution Model</a>)</li>
+<li>Standout exposes its primitives as standalone crates (see <a href="../crates/render/guides/intro-to-rendering.html">standout-render</a>, <a href="../crates/dispatch/guides/intro-to-dispatch.html">standout-dispatch</a>)</li>
+<li>Powerful tabular layouts via the <code>col</code> filter (see <a href="../crates/render/guides/intro-to-tabular.html">Tabular Layout</a>)</li>
+<li>A help topics system for rich documentation (see <a href="../topics/topics-system.html">Topics System</a>)</li>
+</ul>
+<p>Aside from exposing the library primitives, Standout leverages best-in-breed crates like MiniJinja and console::Style under the hood. The lock-in is really negligible: you can use Standout's BB parser or swap it, manually dispatch handlers, and use the renderers directly in your clap dispatch.</p>
+<h2 id="mutable-handlers-localapp"><a class="header" href="#mutable-handlers-localapp">Mutable Handlers (LocalApp)</a></h2>
+<p>If your application logic uses <code>&amp;mut self</code> methods—common with database connections, file caches, or in-memory indices—you can use <code>LocalApp</code> instead of <code>App</code>:</p>
+<pre><pre class="playground"><code class="language-rust">use standout::cli::{LocalApp, Output};
+use standout::embed_templates;
+
+struct PadStore {
+    index: HashMap&lt;Uuid, Metadata&gt;,
+}
+
+impl PadStore {
+    fn complete(&amp;mut self, id: Uuid) -&gt; Result&lt;()&gt; {
+        // This needs &amp;mut self
+        self.index.get_mut(&amp;id).unwrap().completed = true;
+        Ok(())
+    }
+}
+
+fn main() -&gt; anyhow::Result&lt;()&gt; {
+    let mut store = PadStore::load()?;
+
+    LocalApp::builder()
+        .templates(embed_templates!("src/templates"))
+        .command("complete", |m, ctx| {
+            let id = m.get_one::&lt;Uuid&gt;("id").unwrap();
+            store.complete(*id)?;  // &amp;mut store works!
+            Ok(Output::Silent)
+        }, "")
+        .command("list", |m, ctx| {
+            // Even read-only handlers work with LocalApp
+            Ok(Output::Render(store.list()))
+        }, "{{ items }}")
+        .build()?
+        .run(Cli::command(), std::env::args());
+    Ok(())
+}</code></pre></pre>
+<p><strong>Key differences from <code>App</code>:</strong></p>
+<ul>
+<li><code>LocalApp::builder()</code> accepts <code>FnMut</code> closures (not just <code>Fn</code>)</li>
+<li>Handlers can capture <code>&amp;mut</code> references to state</li>
+<li>No <code>Send + Sync</code> requirement on handlers</li>
+<li><code>app.run()</code> takes <code>&amp;mut self</code> instead of <code>&amp;self</code></li>
+</ul>
+<p>Use <code>LocalApp</code> when:</p>
+<ul>
+<li>Your API has <code>&amp;mut self</code> methods</li>
+<li>You want to avoid <code>Arc&lt;Mutex&lt;_&gt;&gt;</code> wrappers</li>
+<li>Your CLI is single-threaded (the common case)</li>
+</ul>
+<p>See <a href="../crates/dispatch/topics/handler-contract.html">Handler Contract</a> for the full comparison.</p>
+<h2 id="appendix-common-errors-and-troubleshooting"><a class="header" href="#appendix-common-errors-and-troubleshooting">Appendix: Common Errors and Troubleshooting</a></h2>
+<ul>
+<li>Template not found
+<ul>
+<li><strong>Error:</strong> <code>template 'list' not found</code></li>
+<li><strong>Cause:</strong> The template path in <code>embed_templates!</code> doesn't match your file structure.</li>
+<li><strong>Fix:</strong> Ensure the path is relative to your <code>Cargo.toml</code>, e.g., <code>embed_templates!("src/templates")</code> and that the file is named <code>list.jinja</code>, <code>list.j2</code>, or <code>list.txt</code>.</li>
+</ul>
+</li>
+<li>Style not applied
+<ul>
+<li><strong>Symptom:</strong> Text appears but without colors/formatting.</li>
+<li><strong>Cause:</strong> Style name in template doesn't match stylesheet.</li>
+<li><strong>Fix:</strong> Check that <code>[mystyle]</code> in your template matches <code>.mystyle</code> in CSS or <code>mystyle:</code> in YAML. Run with <code>--output term-debug</code> to see style tag names.</li>
+</ul>
+</li>
+<li>Handler not called
+<ul>
+<li><strong>Symptom:</strong> Command runs but nothing happens or wrong handler runs.</li>
+<li><strong>Cause:</strong> Command name mismatch between clap enum variant and handler function.</li>
+<li><strong>Fix:</strong> Ensure enum variant <code>List</code> maps to function <code>handlers::list</code> (snake_case conversion). Or use explicit mapping: <code>#[dispatch(handler = my_custom_handler)]</code></li>
+</ul>
+</li>
+<li>JSON output is empty or wrong
+<ul>
+<li><strong>Symptom:</strong> <code>--output json</code> produces unexpected results.</li>
+<li><strong>Cause:</strong> <code>Serialize</code> derive is missing or field names don't match template expectations.</li>
+<li><strong>Fix:</strong> Ensure all types in your result implement <code>Serialize</code>. Use <code>#[serde(rename_all = "lowercase")]</code> for consistent naming.</li>
+</ul>
+</li>
+<li>Styles not loading
+<ul>
+<li><strong>Error:</strong> <code>theme not found: default</code></li>
+<li><strong>Cause:</strong> Stylesheet file missing or wrong path.</li>
+<li><strong>Fix:</strong> Ensure <code>src/styles/default.css</code> or <code>default.yaml</code> exists. Check <code>embed_styles!</code> path matches your file structure.</li>
+</ul>
+</li>
+</ul>
+
+                    </main>
+
+                    <nav class="nav-wrapper" aria-label="Page navigation">
+                        <!-- Mobile navigation buttons -->
+                            <a rel="prev" href="../guides/tldr-intro-to-standout.html" class="mobile-nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
+                                <i class="fa fa-angle-left"></i>
+                            </a>
+
+                            <a rel="next prefetch" href="../crates/render/guides/intro-to-rendering.html" class="mobile-nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
+                                <i class="fa fa-angle-right"></i>
+                            </a>
+
+                        <div style="clear: both"></div>
+                    </nav>
+                </div>
+            </div>
+
+            <nav class="nav-wide-wrapper" aria-label="Page navigation">
+                    <a rel="prev" href="../guides/tldr-intro-to-standout.html" class="nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
+                        <i class="fa fa-angle-left"></i>
+                    </a>
+
+                    <a rel="next prefetch" href="../crates/render/guides/intro-to-rendering.html" class="nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
+                        <i class="fa fa-angle-right"></i>
+                    </a>
+            </nav>
+
+        </div>
+
+
+
+
+        <script>
+            window.playground_copyable = true;
+        </script>
+
+
+        <script src="../elasticlunr.min.js"></script>
+        <script src="../mark.min.js"></script>
+        <script src="../searcher.js"></script>
+
+        <script src="../clipboard.min.js"></script>
+        <script src="../highlight.js"></script>
+        <script src="../book.js"></script>
+
+        <!-- Custom JS scripts -->
+
+
+    </div>
+    </body>
+</html>

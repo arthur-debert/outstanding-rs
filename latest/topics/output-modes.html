@@ -1,0 +1,413 @@
+<!DOCTYPE HTML>
+<html lang="en" class="rust" dir="ltr">
+    <head>
+        <!-- Book generated using mdBook -->
+        <meta charset="UTF-8">
+        <title>Output Modes - Standout</title>
+
+
+        <!-- Custom HTML head -->
+        
+        <meta name="description" content="A CLI framework for Rust that enforces separation between logic and presentation">
+        <meta name="viewport" content="width=device-width, initial-scale=1">
+        <meta name="theme-color" content="#ffffff">
+
+        <link rel="icon" href="../favicon.svg">
+        <link rel="shortcut icon" href="../favicon.png">
+        <link rel="stylesheet" href="../css/variables.css">
+        <link rel="stylesheet" href="../css/general.css">
+        <link rel="stylesheet" href="../css/chrome.css">
+        <link rel="stylesheet" href="../css/print.css" media="print">
+
+        <!-- Fonts -->
+        <link rel="stylesheet" href="../FontAwesome/css/font-awesome.css">
+        <link rel="stylesheet" href="../fonts/fonts.css">
+
+        <!-- Highlight.js Stylesheets -->
+        <link rel="stylesheet" href="../highlight.css">
+        <link rel="stylesheet" href="../tomorrow-night.css">
+        <link rel="stylesheet" href="../ayu-highlight.css">
+
+        <!-- Custom theme stylesheets -->
+
+    </head>
+    <body class="sidebar-visible no-js">
+    <div id="body-container">
+        <!-- Provide site root to javascript -->
+        <script>
+            var path_to_root = "../";
+            var default_theme = window.matchMedia("(prefers-color-scheme: dark)").matches ? "ayu" : "rust";
+        </script>
+
+        <!-- Work around some values being stored in localStorage wrapped in quotes -->
+        <script>
+            try {
+                var theme = localStorage.getItem('mdbook-theme');
+                var sidebar = localStorage.getItem('mdbook-sidebar');
+
+                if (theme.startsWith('"') && theme.endsWith('"')) {
+                    localStorage.setItem('mdbook-theme', theme.slice(1, theme.length - 1));
+                }
+
+                if (sidebar.startsWith('"') && sidebar.endsWith('"')) {
+                    localStorage.setItem('mdbook-sidebar', sidebar.slice(1, sidebar.length - 1));
+                }
+            } catch (e) { }
+        </script>
+
+        <!-- Set the theme before any content is loaded, prevents flash -->
+        <script>
+            var theme;
+            try { theme = localStorage.getItem('mdbook-theme'); } catch(e) { }
+            if (theme === null || theme === undefined) { theme = default_theme; }
+            var html = document.querySelector('html');
+            html.classList.remove('rust')
+            html.classList.add(theme);
+            var body = document.querySelector('body');
+            body.classList.remove('no-js')
+            body.classList.add('js');
+        </script>
+
+        <input type="checkbox" id="sidebar-toggle-anchor" class="hidden">
+
+        <!-- Hide / unhide sidebar before it is displayed -->
+        <script>
+            var body = document.querySelector('body');
+            var sidebar = null;
+            var sidebar_toggle = document.getElementById("sidebar-toggle-anchor");
+            if (document.body.clientWidth >= 1080) {
+                try { sidebar = localStorage.getItem('mdbook-sidebar'); } catch(e) { }
+                sidebar = sidebar || 'visible';
+            } else {
+                sidebar = 'hidden';
+            }
+            sidebar_toggle.checked = sidebar === 'visible';
+            body.classList.remove('sidebar-visible');
+            body.classList.add("sidebar-" + sidebar);
+        </script>
+
+        <nav id="sidebar" class="sidebar" aria-label="Table of contents">
+            <div class="sidebar-scrollbox">
+                <ol class="chapter"><li class="chapter-item affix "><a href="../index.html">Introduction</a></li><li class="chapter-item affix "><li class="spacer"></li><li class="chapter-item affix "><li class="part-title">Getting Started</li><li class="chapter-item "><a href="../guides/tldr-intro-to-standout.html"><strong aria-hidden="true">1.</strong> Quick Start</a></li><li class="chapter-item "><a href="../guides/intro-to-standout.html"><strong aria-hidden="true">2.</strong> Introduction to Standout</a></li><li class="chapter-item affix "><li class="spacer"></li><li class="chapter-item affix "><li class="part-title">Rendering (standout-render)</li><li class="chapter-item "><a href="../crates/render/guides/intro-to-rendering.html"><strong aria-hidden="true">3.</strong> Introduction to Rendering</a></li><li class="chapter-item "><a href="../crates/render/guides/intro-to-tabular.html"><strong aria-hidden="true">4.</strong> Introduction to Tabular</a></li><li class="chapter-item "><a href="../crates/render/topics/styling-system.html"><strong aria-hidden="true">5.</strong> Styling System</a></li><li class="chapter-item "><a href="../crates/render/topics/templating.html"><strong aria-hidden="true">6.</strong> Templating</a></li><li class="chapter-item "><a href="../crates/render/topics/file-system-resources.html"><strong aria-hidden="true">7.</strong> File System Resources</a></li><li class="chapter-item affix "><li class="spacer"></li><li class="chapter-item affix "><li class="part-title">Dispatch (standout-dispatch)</li><li class="chapter-item "><a href="../crates/dispatch/guides/intro-to-dispatch.html"><strong aria-hidden="true">8.</strong> Introduction to Dispatch</a></li><li class="chapter-item "><a href="../crates/dispatch/topics/handler-contract.html"><strong aria-hidden="true">9.</strong> Handler Contract</a></li><li class="chapter-item "><a href="../crates/dispatch/topics/execution-model.html"><strong aria-hidden="true">10.</strong> Execution Model</a></li><li class="chapter-item "><a href="../crates/dispatch/topics/partial-adoption.html"><strong aria-hidden="true">11.</strong> Partial Adoption</a></li><li class="chapter-item affix "><li class="spacer"></li><li class="chapter-item affix "><li class="part-title">Framework Topics</li><li class="chapter-item expanded "><a href="../topics/output-modes.html" class="active"><strong aria-hidden="true">12.</strong> Output Modes</a></li><li class="chapter-item "><a href="../topics/app-configuration.html"><strong aria-hidden="true">13.</strong> App Configuration</a></li></ol>
+            </div>
+            <div id="sidebar-resize-handle" class="sidebar-resize-handle">
+                <div class="sidebar-resize-indicator"></div>
+            </div>
+        </nav>
+
+        <!-- Track and set sidebar scroll position -->
+        <script>
+            var sidebarScrollbox = document.querySelector('#sidebar .sidebar-scrollbox');
+            sidebarScrollbox.addEventListener('click', function(e) {
+                if (e.target.tagName === 'A') {
+                    sessionStorage.setItem('sidebar-scroll', sidebarScrollbox.scrollTop);
+                }
+            }, { passive: true });
+            var sidebarScrollTop = sessionStorage.getItem('sidebar-scroll');
+            sessionStorage.removeItem('sidebar-scroll');
+            if (sidebarScrollTop) {
+                // preserve sidebar scroll position when navigating via links within sidebar
+                sidebarScrollbox.scrollTop = sidebarScrollTop;
+            } else {
+                // scroll sidebar to current active section when navigating via "next/previous chapter" buttons
+                var activeSection = document.querySelector('#sidebar .active');
+                if (activeSection) {
+                    activeSection.scrollIntoView({ block: 'center' });
+                }
+            }
+        </script>
+
+        <div id="page-wrapper" class="page-wrapper">
+
+            <div class="page">
+                                <div id="menu-bar-hover-placeholder"></div>
+                <div id="menu-bar" class="menu-bar sticky">
+                    <div class="left-buttons">
+                        <label id="sidebar-toggle" class="icon-button" for="sidebar-toggle-anchor" title="Toggle Table of Contents" aria-label="Toggle Table of Contents" aria-controls="sidebar">
+                            <i class="fa fa-bars"></i>
+                        </label>
+                        <button id="theme-toggle" class="icon-button" type="button" title="Change theme" aria-label="Change theme" aria-haspopup="true" aria-expanded="false" aria-controls="theme-list">
+                            <i class="fa fa-paint-brush"></i>
+                        </button>
+                        <ul id="theme-list" class="theme-popup" aria-label="Themes" role="menu">
+                            <li role="none"><button role="menuitem" class="theme" id="light">Light</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="rust">Rust</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="coal">Coal</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="navy">Navy</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="ayu">Ayu</button></li>
+                        </ul>
+                        <button id="search-toggle" class="icon-button" type="button" title="Search. (Shortkey: s)" aria-label="Toggle Searchbar" aria-expanded="false" aria-keyshortcuts="S" aria-controls="searchbar">
+                            <i class="fa fa-search"></i>
+                        </button>
+                    </div>
+
+                    <h1 class="menu-title">Standout</h1>
+
+                    <div class="right-buttons">
+                        <a href="../print.html" title="Print this book" aria-label="Print this book">
+                            <i id="print-button" class="fa fa-print"></i>
+                        </a>
+                        <a href="https://github.com/arthur-debert/standout" title="Git repository" aria-label="Git repository">
+                            <i id="git-repository-button" class="fa fa-github"></i>
+                        </a>
+                        <a href="https://github.com/arthur-debert/standout/edit/main/docs/docs/topics/output-modes.md" title="Suggest an edit" aria-label="Suggest an edit">
+                            <i id="git-edit-button" class="fa fa-edit"></i>
+                        </a>
+
+                    </div>
+                </div>
+
+                <div id="search-wrapper" class="hidden">
+                    <form id="searchbar-outer" class="searchbar-outer">
+                        <input type="search" id="searchbar" name="searchbar" placeholder="Search this book ..." aria-controls="searchresults-outer" aria-describedby="searchresults-header">
+                    </form>
+                    <div id="searchresults-outer" class="searchresults-outer hidden">
+                        <div id="searchresults-header" class="searchresults-header"></div>
+                        <ul id="searchresults">
+                        </ul>
+                    </div>
+                </div>
+
+                <!-- Apply ARIA attributes after the sidebar and the sidebar toggle button are added to the DOM -->
+                <script>
+                    document.getElementById('sidebar-toggle').setAttribute('aria-expanded', sidebar === 'visible');
+                    document.getElementById('sidebar').setAttribute('aria-hidden', sidebar !== 'visible');
+                    Array.from(document.querySelectorAll('#sidebar a')).forEach(function(link) {
+                        link.setAttribute('tabIndex', sidebar === 'visible' ? 0 : -1);
+                    });
+                </script>
+
+                <div id="content" class="content">
+                    <main>
+                        <h1 id="output-modes"><a class="header" href="#output-modes">Output Modes</a></h1>
+<p>Standout supports multiple output formats through a single handler because modern CLI tools serve two masters: human operators and machine automation.</p>
+<p>The same handler logic produces styled terminal output for eyes, plain text for logs, or structured JSON for <code>jq</code> pipelines—controlled entirely by the user's <code>--output</code> flag. This frees you from writing separate "API" and "CLI" logic.</p>
+<h2 id="the-outputmode-enum"><a class="header" href="#the-outputmode-enum">The OutputMode Enum</a></h2>
+<pre><pre class="playground"><code class="language-rust"><span class="boring">#![allow(unused)]
+</span><span class="boring">fn main() {
+</span>pub enum OutputMode {
+    Auto,       // Auto-detect terminal capabilities
+    Term,       // Always use ANSI escape codes
+    Text,       // Never use ANSI codes (plain text)
+    TermDebug,  // Keep style tags as [name]...[/name]
+    Json,       // Serialize as JSON (skip template)
+    Yaml,       // Serialize as YAML (skip template)
+    Xml,        // Serialize as XML (skip template)
+    Csv,        // Serialize as CSV (skip template)
+}
+<span class="boring">}</span></code></pre></pre>
+<p>Three categories:</p>
+<p><strong>Templated modes</strong> (Auto, Term, Text): Render the template, vary ANSI handling.</p>
+<p><strong>Debug mode</strong> (TermDebug): Render the template, keep tags as literals for inspection.</p>
+<p><strong>Structured modes</strong> (Json, Yaml, Xml, Csv): Skip the template entirely, serialize handler data directly.</p>
+<h2 id="auto-mode"><a class="header" href="#auto-mode">Auto Mode</a></h2>
+<p><code>Auto</code> is the default. It queries the terminal for color support:</p>
+<pre><pre class="playground"><code class="language-rust"><span class="boring">#![allow(unused)]
+</span><span class="boring">fn main() {
+</span>Term::stdout().features().colors_supported()
+<span class="boring">}</span></code></pre></pre>
+<p>If colors are supported, Auto behaves like Term (ANSI codes applied). If not, Auto behaves like Text (tags stripped).</p>
+<p>This detection happens at render time, not startup. Piping output to a file or another process typically disables color support, so:</p>
+<pre><code class="language-bash">myapp list              # Colors (if terminal supports)
+myapp list &gt; file.txt   # No colors (not a TTY)
+myapp list | less       # No colors (pipe)
+</code></pre>
+<h2 id="the---output-flag"><a class="header" href="#the---output-flag">The --output Flag</a></h2>
+<p>Standout adds a global <code>--output</code> flag accepting these values:</p>
+<pre><code class="language-bash">myapp list --output=auto        # Default
+myapp list --output=term        # Force ANSI codes
+myapp list --output=text        # Force plain text
+myapp list --output=term-debug  # Show style tags
+myapp list --output=json        # JSON serialization
+myapp list --output=yaml        # YAML serialization
+myapp list --output=xml         # XML serialization
+myapp list --output=csv         # CSV serialization
+</code></pre>
+<p>The flag is global—it applies to all subcommands.</p>
+<h2 id="term-vs-text"><a class="header" href="#term-vs-text">Term vs Text</a></h2>
+<p><strong>Term</strong>: Always applies ANSI escape codes, even when piping:</p>
+<pre><code class="language-bash">myapp list --output=term &gt; colored.txt
+</code></pre>
+<p>Useful when you want to preserve colors for later display (e.g., <code>less -R</code>).</p>
+<p><strong>Text</strong>: Never applies ANSI codes:</p>
+<pre><code class="language-bash">myapp list --output=text
+</code></pre>
+<p>Useful for clean output regardless of terminal capabilities, or when processing output with other tools.</p>
+<h2 id="termdebug-mode"><a class="header" href="#termdebug-mode">TermDebug Mode</a></h2>
+<p>TermDebug preserves style tags instead of converting them:</p>
+<pre><code class="language-text">Template: [title]Hello[/title]
+Output:   [title]Hello[/title]
+</code></pre>
+<p>Use cases:</p>
+<ul>
+<li>Debugging template issues</li>
+<li>Verifying style tag placement</li>
+<li>Automated testing of template output</li>
+</ul>
+<p>Unlike Term mode, unknown tags don't get the <code>?</code> marker in TermDebug.</p>
+<h2 id="structured-modes"><a class="header" href="#structured-modes">Structured Modes</a></h2>
+<p>Structured modes bypass the template entirely. Handler data is serialized directly:</p>
+<pre><pre class="playground"><code class="language-rust"><span class="boring">#![allow(unused)]
+</span><span class="boring">fn main() {
+</span>#[derive(Serialize)]
+struct ListOutput {
+    items: Vec&lt;Item&gt;,
+    total: usize,
+}
+
+fn list_handler(...) -&gt; HandlerResult&lt;ListOutput&gt; {
+    Ok(Output::Render(ListOutput { items, total: items.len() }))
+}
+<span class="boring">}</span></code></pre></pre>
+<pre><code class="language-bash">myapp list --output=json
+</code></pre>
+<pre><code class="language-json">{
+  "items": [...],
+  "total": 42
+}
+</code></pre>
+<p>Same handler, same types—different output format. This enables:</p>
+<ul>
+<li>Machine-readable output for scripts</li>
+<li>Integration with other tools (<code>jq</code>, etc.)</li>
+<li>API-like behavior from CLI apps</li>
+</ul>
+<h3 id="csv-output"><a class="header" href="#csv-output">CSV Output</a></h3>
+<p>CSV mode flattens nested JSON automatically. For more control, use <code>FlatDataSpec</code>.</p>
+<p>See <a href="tabular.html">Tabular Layout</a> for detailed CSV configuration.</p>
+<pre><pre class="playground"><code class="language-rust"><span class="boring">#![allow(unused)]
+</span><span class="boring">fn main() {
+</span>let spec = FlatDataSpec::builder()
+    .column(Column::new(Width::Fixed(10)).key("name").header("Name"))
+    .column(Column::new(Width::Fixed(10)).key("meta.role").header("Role"))
+    .build();
+
+render_auto_with_spec(template, &amp;data, &amp;theme, OutputMode::Csv, Some(&amp;spec))?
+<span class="boring">}</span></code></pre></pre>
+<p>The <code>key</code> field uses dot notation for nested paths (<code>"meta.role"</code> extracts <code>data["meta"]["role"]</code>).</p>
+<h2 id="file-output"><a class="header" href="#file-output">File Output</a></h2>
+<p>The <code>--output-file-path</code> flag redirects output to a file:</p>
+<pre><code class="language-bash">myapp list --output-file-path=results.txt
+myapp list --output=json --output-file-path=data.json
+</code></pre>
+<p>Behavior:</p>
+<ul>
+<li>Text output: written to file, nothing printed to stdout</li>
+<li>Binary output: written to file (same as without flag)</li>
+<li>Silent output: no-op</li>
+</ul>
+<p>After writing to file, stdout output is suppressed to prevent double-printing.</p>
+<h2 id="customizing-flags"><a class="header" href="#customizing-flags">Customizing Flags</a></h2>
+<p>Rename or disable the flags via <code>AppBuilder</code>:</p>
+<pre><pre class="playground"><code class="language-rust"><span class="boring">#![allow(unused)]
+</span><span class="boring">fn main() {
+</span>App::builder()
+    .output_flag(Some("format"))       // --format instead of --output
+    .output_file_flag(Some("out"))     // --out instead of --output-file-path
+    .build()?
+<span class="boring">}</span></code></pre></pre>
+<pre><pre class="playground"><code class="language-rust"><span class="boring">#![allow(unused)]
+</span><span class="boring">fn main() {
+</span>App::builder()
+    .no_output_flag()                  // Disable --output entirely
+    .no_output_file_flag()             // Disable file output
+    .build()?
+<span class="boring">}</span></code></pre></pre>
+<h2 id="accessing-outputmode-in-handlers"><a class="header" href="#accessing-outputmode-in-handlers">Accessing OutputMode in Handlers</a></h2>
+<p><code>CommandContext</code> carries the resolved output mode:</p>
+<pre><pre class="playground"><code class="language-rust"><span class="boring">#![allow(unused)]
+</span><span class="boring">fn main() {
+</span>fn handler(matches: &amp;ArgMatches, ctx: &amp;CommandContext) -&gt; HandlerResult&lt;Data&gt; {
+    if ctx.output_mode.is_structured() {
+        // Skip interactive prompts in JSON mode
+    }
+
+    if ctx.output_mode == OutputMode::Csv {
+        // Maybe adjust data structure for flat output
+    }
+
+    Ok(Output::Render(data))
+}
+<span class="boring">}</span></code></pre></pre>
+<p>Helper methods:</p>
+<pre><pre class="playground"><code class="language-rust"><span class="boring">#![allow(unused)]
+</span><span class="boring">fn main() {
+</span>ctx.output_mode.should_use_color()  // True for Term, depends on terminal for Auto
+ctx.output_mode.is_structured()     // True for Json, Yaml, Xml, Csv
+ctx.output_mode.is_debug()          // True for TermDebug
+<span class="boring">}</span></code></pre></pre>
+<h2 id="rendering-without-cli"><a class="header" href="#rendering-without-cli">Rendering Without CLI</a></h2>
+<p>For standalone rendering with explicit mode:</p>
+<pre><pre class="playground"><code class="language-rust"><span class="boring">#![allow(unused)]
+</span><span class="boring">fn main() {
+</span>use standout::{render_auto, OutputMode};
+
+// Renders template for Term/Text, serializes for Json/Yaml
+let output = render_auto(template, &amp;data, &amp;theme, OutputMode::Json)?;
+<span class="boring">}</span></code></pre></pre>
+<p>The "auto" in <code>render_auto</code> refers to template-vs-serialize dispatch, not color detection.</p>
+<p>For full control over both output mode and color mode:</p>
+<pre><pre class="playground"><code class="language-rust"><span class="boring">#![allow(unused)]
+</span><span class="boring">fn main() {
+</span>use standout::{render_with_mode, ColorMode};
+
+let output = render_with_mode(
+    template,
+    &amp;data,
+    &amp;theme,
+    OutputMode::Term,
+    ColorMode::Dark,
+)?;
+<span class="boring">}</span></code></pre></pre>
+
+                    </main>
+
+                    <nav class="nav-wrapper" aria-label="Page navigation">
+                        <!-- Mobile navigation buttons -->
+                            <a rel="prev" href="../crates/dispatch/topics/partial-adoption.html" class="mobile-nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
+                                <i class="fa fa-angle-left"></i>
+                            </a>
+
+                            <a rel="next prefetch" href="../topics/app-configuration.html" class="mobile-nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
+                                <i class="fa fa-angle-right"></i>
+                            </a>
+
+                        <div style="clear: both"></div>
+                    </nav>
+                </div>
+            </div>
+
+            <nav class="nav-wide-wrapper" aria-label="Page navigation">
+                    <a rel="prev" href="../crates/dispatch/topics/partial-adoption.html" class="nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
+                        <i class="fa fa-angle-left"></i>
+                    </a>
+
+                    <a rel="next prefetch" href="../topics/app-configuration.html" class="nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
+                        <i class="fa fa-angle-right"></i>
+                    </a>
+            </nav>
+
+        </div>
+
+
+
+
+        <script>
+            window.playground_copyable = true;
+        </script>
+
+
+        <script src="../elasticlunr.min.js"></script>
+        <script src="../mark.min.js"></script>
+        <script src="../searcher.js"></script>
+
+        <script src="../clipboard.min.js"></script>
+        <script src="../highlight.js"></script>
+        <script src="../book.js"></script>
+
+        <!-- Custom JS scripts -->
+
+
+    </div>
+    </body>
+</html>

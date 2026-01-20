@@ -1,0 +1,615 @@
+<!DOCTYPE HTML>
+<html lang="en" class="rust" dir="ltr">
+    <head>
+        <!-- Book generated using mdBook -->
+        <meta charset="UTF-8">
+        <title>Introduction to Rendering - Standout</title>
+
+
+        <!-- Custom HTML head -->
+        
+        <meta name="description" content="A CLI framework for Rust that enforces separation between logic and presentation">
+        <meta name="viewport" content="width=device-width, initial-scale=1">
+        <meta name="theme-color" content="#ffffff">
+
+        <link rel="icon" href="../favicon.svg">
+        <link rel="shortcut icon" href="../favicon.png">
+        <link rel="stylesheet" href="../css/variables.css">
+        <link rel="stylesheet" href="../css/general.css">
+        <link rel="stylesheet" href="../css/chrome.css">
+        <link rel="stylesheet" href="../css/print.css" media="print">
+
+        <!-- Fonts -->
+        <link rel="stylesheet" href="../FontAwesome/css/font-awesome.css">
+        <link rel="stylesheet" href="../fonts/fonts.css">
+
+        <!-- Highlight.js Stylesheets -->
+        <link rel="stylesheet" href="../highlight.css">
+        <link rel="stylesheet" href="../tomorrow-night.css">
+        <link rel="stylesheet" href="../ayu-highlight.css">
+
+        <!-- Custom theme stylesheets -->
+
+    </head>
+    <body class="sidebar-visible no-js">
+    <div id="body-container">
+        <!-- Provide site root to javascript -->
+        <script>
+            var path_to_root = "../";
+            var default_theme = window.matchMedia("(prefers-color-scheme: dark)").matches ? "ayu" : "rust";
+        </script>
+
+        <!-- Work around some values being stored in localStorage wrapped in quotes -->
+        <script>
+            try {
+                var theme = localStorage.getItem('mdbook-theme');
+                var sidebar = localStorage.getItem('mdbook-sidebar');
+
+                if (theme.startsWith('"') && theme.endsWith('"')) {
+                    localStorage.setItem('mdbook-theme', theme.slice(1, theme.length - 1));
+                }
+
+                if (sidebar.startsWith('"') && sidebar.endsWith('"')) {
+                    localStorage.setItem('mdbook-sidebar', sidebar.slice(1, sidebar.length - 1));
+                }
+            } catch (e) { }
+        </script>
+
+        <!-- Set the theme before any content is loaded, prevents flash -->
+        <script>
+            var theme;
+            try { theme = localStorage.getItem('mdbook-theme'); } catch(e) { }
+            if (theme === null || theme === undefined) { theme = default_theme; }
+            var html = document.querySelector('html');
+            html.classList.remove('rust')
+            html.classList.add(theme);
+            var body = document.querySelector('body');
+            body.classList.remove('no-js')
+            body.classList.add('js');
+        </script>
+
+        <input type="checkbox" id="sidebar-toggle-anchor" class="hidden">
+
+        <!-- Hide / unhide sidebar before it is displayed -->
+        <script>
+            var body = document.querySelector('body');
+            var sidebar = null;
+            var sidebar_toggle = document.getElementById("sidebar-toggle-anchor");
+            if (document.body.clientWidth >= 1080) {
+                try { sidebar = localStorage.getItem('mdbook-sidebar'); } catch(e) { }
+                sidebar = sidebar || 'visible';
+            } else {
+                sidebar = 'hidden';
+            }
+            sidebar_toggle.checked = sidebar === 'visible';
+            body.classList.remove('sidebar-visible');
+            body.classList.add("sidebar-" + sidebar);
+        </script>
+
+        <nav id="sidebar" class="sidebar" aria-label="Table of contents">
+            <div class="sidebar-scrollbox">
+                <ol class="chapter"><li class="chapter-item affix "><a href="../index.html">Introduction</a></li><li class="chapter-item affix "><li class="spacer"></li><li class="chapter-item expanded "><a href="../guides/index.html"><strong aria-hidden="true">1.</strong> Guides</a><a class="toggle"><div>❱</div></a></li><li><ol class="section"><li class="chapter-item "><a href="../guides/intro-to-standout.html"><strong aria-hidden="true">1.1.</strong> Introduction to Standout</a></li><li class="chapter-item expanded "><a href="../guides/intro-to-rendering.html" class="active"><strong aria-hidden="true">1.2.</strong> Introduction to Rendering</a></li><li class="chapter-item "><a href="../guides/intro-to-tabular.html"><strong aria-hidden="true">1.3.</strong> Introduction to Tabular</a></li><li class="chapter-item "><a href="../guides/tldr-intro-to-standout.html"><strong aria-hidden="true">1.4.</strong> TLDR Quick Start</a></li></ol></li><li class="chapter-item "><a href="../topics/index.html"><strong aria-hidden="true">2.</strong> Topics</a><a class="toggle"><div>❱</div></a></li><li><ol class="section"><li class="chapter-item "><a href="../topics/handler-contract.html"><strong aria-hidden="true">2.1.</strong> Handler Contract</a></li><li class="chapter-item "><a href="../topics/rendering-system.html"><strong aria-hidden="true">2.2.</strong> Rendering System</a></li><li class="chapter-item "><a href="../topics/output-modes.html"><strong aria-hidden="true">2.3.</strong> Output Modes</a></li><li class="chapter-item "><a href="../topics/tabular.html"><strong aria-hidden="true">2.4.</strong> Tabular Layout</a></li><li class="chapter-item "><a href="../topics/app-configuration.html"><strong aria-hidden="true">2.5.</strong> App Configuration</a></li><li class="chapter-item "><a href="../topics/execution-model.html"><strong aria-hidden="true">2.6.</strong> Execution Model</a></li><li class="chapter-item "><a href="../topics/partial-adoption.html"><strong aria-hidden="true">2.7.</strong> Partial Adoption</a></li><li class="chapter-item "><a href="../topics/render-only.html"><strong aria-hidden="true">2.8.</strong> Render Only</a></li></ol></li></ol>
+            </div>
+            <div id="sidebar-resize-handle" class="sidebar-resize-handle">
+                <div class="sidebar-resize-indicator"></div>
+            </div>
+        </nav>
+
+        <!-- Track and set sidebar scroll position -->
+        <script>
+            var sidebarScrollbox = document.querySelector('#sidebar .sidebar-scrollbox');
+            sidebarScrollbox.addEventListener('click', function(e) {
+                if (e.target.tagName === 'A') {
+                    sessionStorage.setItem('sidebar-scroll', sidebarScrollbox.scrollTop);
+                }
+            }, { passive: true });
+            var sidebarScrollTop = sessionStorage.getItem('sidebar-scroll');
+            sessionStorage.removeItem('sidebar-scroll');
+            if (sidebarScrollTop) {
+                // preserve sidebar scroll position when navigating via links within sidebar
+                sidebarScrollbox.scrollTop = sidebarScrollTop;
+            } else {
+                // scroll sidebar to current active section when navigating via "next/previous chapter" buttons
+                var activeSection = document.querySelector('#sidebar .active');
+                if (activeSection) {
+                    activeSection.scrollIntoView({ block: 'center' });
+                }
+            }
+        </script>
+
+        <div id="page-wrapper" class="page-wrapper">
+
+            <div class="page">
+                                <div id="menu-bar-hover-placeholder"></div>
+                <div id="menu-bar" class="menu-bar sticky">
+                    <div class="left-buttons">
+                        <label id="sidebar-toggle" class="icon-button" for="sidebar-toggle-anchor" title="Toggle Table of Contents" aria-label="Toggle Table of Contents" aria-controls="sidebar">
+                            <i class="fa fa-bars"></i>
+                        </label>
+                        <button id="theme-toggle" class="icon-button" type="button" title="Change theme" aria-label="Change theme" aria-haspopup="true" aria-expanded="false" aria-controls="theme-list">
+                            <i class="fa fa-paint-brush"></i>
+                        </button>
+                        <ul id="theme-list" class="theme-popup" aria-label="Themes" role="menu">
+                            <li role="none"><button role="menuitem" class="theme" id="light">Light</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="rust">Rust</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="coal">Coal</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="navy">Navy</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="ayu">Ayu</button></li>
+                        </ul>
+                        <button id="search-toggle" class="icon-button" type="button" title="Search. (Shortkey: s)" aria-label="Toggle Searchbar" aria-expanded="false" aria-keyshortcuts="S" aria-controls="searchbar">
+                            <i class="fa fa-search"></i>
+                        </button>
+                    </div>
+
+                    <h1 class="menu-title">Standout</h1>
+
+                    <div class="right-buttons">
+                        <a href="../print.html" title="Print this book" aria-label="Print this book">
+                            <i id="print-button" class="fa fa-print"></i>
+                        </a>
+                        <a href="https://github.com/arthur-debert/standout" title="Git repository" aria-label="Git repository">
+                            <i id="git-repository-button" class="fa fa-github"></i>
+                        </a>
+                        <a href="https://github.com/arthur-debert/standout/edit/main/docs/docs/guides/intro-to-rendering.md" title="Suggest an edit" aria-label="Suggest an edit">
+                            <i id="git-edit-button" class="fa fa-edit"></i>
+                        </a>
+
+                    </div>
+                </div>
+
+                <div id="search-wrapper" class="hidden">
+                    <form id="searchbar-outer" class="searchbar-outer">
+                        <input type="search" id="searchbar" name="searchbar" placeholder="Search this book ..." aria-controls="searchresults-outer" aria-describedby="searchresults-header">
+                    </form>
+                    <div id="searchresults-outer" class="searchresults-outer hidden">
+                        <div id="searchresults-header" class="searchresults-header"></div>
+                        <ul id="searchresults">
+                        </ul>
+                    </div>
+                </div>
+
+                <!-- Apply ARIA attributes after the sidebar and the sidebar toggle button are added to the DOM -->
+                <script>
+                    document.getElementById('sidebar-toggle').setAttribute('aria-expanded', sidebar === 'visible');
+                    document.getElementById('sidebar').setAttribute('aria-hidden', sidebar !== 'visible');
+                    Array.from(document.querySelectorAll('#sidebar a')).forEach(function(link) {
+                        link.setAttribute('tabIndex', sidebar === 'visible' ? 0 : -1);
+                    });
+                </script>
+
+                <div id="content" class="content">
+                    <main>
+                        <h1 id="introduction-to-rendering"><a class="header" href="#introduction-to-rendering">Introduction to Rendering</a></h1>
+<p>Terminal outputs have significant limitations: single font, single size, no graphics. But modern terminals provide many facilities like true colors, light/dark mode support, adaptive sizing, and more. Rich, helpful, and clear outputs are within reach.</p>
+<p>The development reality explains why such output remains rare. From a primitive syntax born in the 1970s to the scattered ecosystem support, it's been a major effort to craft great outputs—and logically, it rarely makes sense to invest that time.</p>
+<p>In the past few years, we've made rapid progress. Interactive TUIs have a rich and advanced ecosystem. For non-interactive, textual outputs, we've certainly come far with good crates and tools, but it's still sub-par.</p>
+<p>Standout's rendering layer is designed to make crafting polished outputs a breeze by leveraging ideas, tools, and workflows from web applications—a domain in which rich interface authoring has evolved into the best model we've got. (But none of the JavaScript ecosystem chaos, rest assured.)</p>
+<p>In this guide, we'll explore what makes great outputs and how Standout helps you get there.</p>
+<p><strong>See Also:</strong></p>
+<ul>
+<li><a href="../topics/rendering-system.html">Rendering System</a> - complete rendering API reference</li>
+<li><a href="../topics/output-modes.html">Output Modes</a> - all output format options</li>
+<li><a href="intro-to-standout.html">Introduction to Standout</a> - end-to-end adoption guide</li>
+</ul>
+<hr />
+<h2 id="what-polished-output-entails"><a class="header" href="#what-polished-output-entails">What Polished Output Entails</a></h2>
+<p>If you're building your CLI in Rust, chances are it's not a throwaway grep-formatting script—if that were the case, nothing beats shells. More likely, your program deals with complex data, logic, and computation, and the full power of Rust matters. In the same way, clear, well-presented, and designed outputs improve your users' experience when parsing that information.</p>
+<p>Creating good results depends on discipline, consistency, and above all, experimentation—from exploring options to fine-tuning small details. Unlike code, good layout is experimental and takes many iterations: change, view result, change again, judge the new change, and so on.</p>
+<p>The classical setup for shell UIs is anything but conducive to this. All presentation is mixed with code, often with complicated logic, if not coupled to it. Additionally, from escape codes to whitespace handling to spreading visual information across many lines of code, it becomes hard to visualize and change things.</p>
+<p>The edit-code-compile-run cycle makes small tweaks take minutes. Sometimes a full hour for a minor change. In that scenario, it's no surprise that people don't bother.</p>
+<hr />
+<h2 id="our-example-tdoo"><a class="header" href="#our-example-tdoo">Our Example: tdoo</a></h2>
+<p>We'll use <code>tdoo</code>, a simple todo list manager CLI, to demonstrate the rendering layer. Here's our data:</p>
+<pre><pre class="playground"><code class="language-rust"><span class="boring">#![allow(unused)]
+</span><span class="boring">fn main() {
+</span>#[derive(Clone, Serialize)]
+#[serde(rename_all = "lowercase")]
+pub enum Status { Pending, Done }
+
+#[derive(Clone, Serialize)]
+pub struct Todo {
+    pub title: String,
+    pub status: Status,
+}
+
+#[derive(Serialize)]
+pub struct TodoResult {
+    pub message: Option&lt;String&gt;,
+    pub todos: Vec&lt;Todo&gt;,
+}
+<span class="boring">}</span></code></pre></pre>
+<p>Our goal: transform this raw data into polished, readable output that adapts to the terminal, respects user preferences, and takes minutes to iterate on—not hours.</p>
+<hr />
+<h2 id="the-separation-principle"><a class="header" href="#the-separation-principle">The Separation Principle</a></h2>
+<p>Standout is designed around a strict separation of logic and presentation. This isn't just architectural nicety—it unlocks a fundamentally better workflow.</p>
+<h3 id="without-separation"><a class="header" href="#without-separation">Without Separation</a></h3>
+<p>Here's the typical approach, tangling logic and output:</p>
+<pre><pre class="playground"><code class="language-rust"><span class="boring">#![allow(unused)]
+</span><span class="boring">fn main() {
+</span>fn list_command(show_all: bool) {
+    let todos = storage::list().unwrap();
+    println!("\x1b[1;36mYour Todos\x1b[0m");
+    println!("──────────");
+    for (i, todo) in todos.iter().enumerate() {
+        if show_all || todo.status == Status::Pending {
+            let marker = if todo.status == Status::Done { "[x]" } else { "[ ]" };
+            println!("{}. {} {}", i + 1, marker, todo.title);
+        }
+    }
+    println!("\n{} todos total", todos.len());
+}
+<span class="boring">}</span></code></pre></pre>
+<p>Problems:</p>
+<ul>
+<li>Escape codes are cryptic and error-prone</li>
+<li>Changes require recompilation</li>
+<li>Logic and presentation are intertwined</li>
+<li>Testing is brittle</li>
+<li>No easy way to support multiple output formats</li>
+</ul>
+<h3 id="with-separation"><a class="header" href="#with-separation">With Separation</a></h3>
+<p>The same output, properly separated:</p>
+<pre><pre class="playground"><code class="language-rust"><span class="boring">#![allow(unused)]
+</span><span class="boring">fn main() {
+</span>// Handler: pure logic, returns data
+pub fn list(matches: &amp;ArgMatches, _ctx: &amp;CommandContext) -&gt; HandlerResult&lt;TodoResult&gt; {
+    let show_all = matches.get_flag("all");
+    let todos = storage::list()?;
+
+    let filtered: Vec&lt;Todo&gt; = if show_all {
+        todos
+    } else {
+        todos.into_iter()
+            .filter(|t| matches!(t.status, Status::Pending))
+            .collect()
+    };
+
+    Ok(Output::Render(TodoResult {
+        message: Some(format!("{} todos total", filtered.len())),
+        todos: filtered,
+    }))
+}
+<span class="boring">}</span></code></pre></pre>
+<pre><code class="language-jinja">{# Template: list.jinja #}
+[title]Your Todos[/title]
+──────────
+{% for todo in todos %}
+[{{ todo.status }}]{{ todo.status }}[/{{ todo.status }}]  {{ todo.title }}
+{% endfor %}
+
+{% if message %}[muted]{{ message }}[/muted]{% endif %}
+</code></pre>
+<pre><code class="language-yaml"># Styles: theme.yaml
+title:
+  fg: cyan
+  bold: true
+done: green
+pending: yellow
+muted:
+  dim: true
+</code></pre>
+<p>Now:</p>
+<ul>
+<li>Logic is testable without output concerns</li>
+<li>Presentation is declarative and readable</li>
+<li>Styles are centralized and named semantically</li>
+<li>Changes to appearance don't require recompilation</li>
+</ul>
+<hr />
+<h2 id="quick-iteration-and-workflow"><a class="header" href="#quick-iteration-and-workflow">Quick Iteration and Workflow</a></h2>
+<p>The separation principle enables a radically better workflow. Here's what Standout provides:</p>
+<h3 id="1-file-based-flow"><a class="header" href="#1-file-based-flow">1. File-Based Flow</a></h3>
+<p>Dedicated files for templates and styles:</p>
+<ul>
+<li>Lower risk of breaking code—especially relevant for non-developer types like technical designers</li>
+<li>Simpler diffs and easier navigation</li>
+<li>Trivial to experiment with variations (duplicate files, swap names)</li>
+</ul>
+<p><strong>Directory structure:</strong></p>
+<pre><code class="language-text">src/
+├── handlers.rs        # Logic
+└── templates/
+    └── list.jinja     # Content template
+styles/
+└── default.yaml       # Visual styling
+</code></pre>
+<h3 id="2-hot-live-reload"><a class="header" href="#2-hot-live-reload">2. Hot Live Reload</a></h3>
+<p>During development, you edit the template or styles and re-run. No compilation. No long turnaround.</p>
+<p>This changes the entire experience. You can make and verify small adjustments in seconds. You can extensively fine-tune a command output quickly, then polish the full app in a focused session. Time efficiency aside, the quick iterative cycles encourage caring about smaller details, consistency—the things you forgo when iteration is painful.</p>
+<p>(When released, files are compiled into the binary, costing no performance or path-handling headaches in distribution.)</p>
+<p>See <a href="../topics/rendering-system.html#hot-reloading">Rendering System</a> for details on how hot reload works.</p>
+<hr />
+<h2 id="best-of-breed-specialized-formats"><a class="header" href="#best-of-breed-specialized-formats">Best-of-Breed Specialized Formats</a></h2>
+<h3 id="templates-minijinja"><a class="header" href="#templates-minijinja">Templates: MiniJinja</a></h3>
+<p>Standout uses MiniJinja templates—a Rust implementation of Jinja, a de facto standard for rich and powerful templating. The simple syntax and powerful features let you map template text to actual output much easier than <code>println!</code> spreads.</p>
+<pre><code class="language-jinja">{% if message %}[accent]{{ message }}[/accent]{% endif %}
+
+{% for todo in todos %}
+[{{ todo.status }}]{{ todo.status | upper }}[/{{ todo.status }}]  {{ todo.title }}
+{% endfor %}
+</code></pre>
+<p>Benefits:</p>
+<ul>
+<li>Simple, readable syntax</li>
+<li>Powerful control flow (loops, conditionals, filters)</li>
+<li><strong>Partials support</strong>: templates can include other templates, enabling reuse across commands</li>
+<li><strong>Custom filters</strong>: for complex presentation needs, write small bits of code and keep templates clean</li>
+</ul>
+<p>See <a href="../topics/rendering-system.html">Rendering System</a> for template filters and context injection.</p>
+<h3 id="styles-css-themes"><a class="header" href="#styles-css-themes">Styles: CSS Themes</a></h3>
+<p>The styling layer uses CSS files with the familiar syntax you already know, but with simpler semantics tailored for terminals:</p>
+<pre><code class="language-css">.title {
+    color: cyan;
+    font-weight: bold;
+}
+
+.done { color: green; }
+.blocked { color: red; }
+.pending { color: yellow; }
+
+/* Adaptive for light/dark mode */
+@media (prefers-color-scheme: light) {
+    .panel { color: black; }
+}
+
+@media (prefers-color-scheme: dark) {
+    .panel { color: white; }
+}
+</code></pre>
+<p>Features:</p>
+<ul>
+<li><strong>Adaptive attributes</strong>: a style can render different values for light and dark modes</li>
+<li><strong>Theming support</strong>: swap the entire visual appearance at once, with themes extending other themes</li>
+<li><strong>True color</strong>: RGB values for precise colors (<code>#ff6b35</code> or <code>[255, 107, 53]</code>)</li>
+<li><strong>Aliases</strong>: semantic names resolve to visual styles (<code>commit-message: title</code>)</li>
+</ul>
+<p>YAML syntax is also supported as an alternative. See <a href="../topics/rendering-system.html#themes-and-styles">Rendering System</a> for complete style options.</p>
+<hr />
+<h2 id="template-integration-with-styling"><a class="header" href="#template-integration-with-styling">Template Integration with Styling</a></h2>
+<p>Styles are applied with BBCode-like syntax: <code>[style]content[/style]</code>. A familiar, simple, and accessible form.</p>
+<pre><code class="language-jinja">[title]Your Todos[/title]
+{% for todo in todos %}
+[{{ todo.status }}]{{ todo.title }}[/{{ todo.status }}]
+{% endfor %}
+</code></pre>
+<p>Style tags:</p>
+<ul>
+<li>Nest properly: <code>[outer][inner]text[/inner][/outer]</code></li>
+<li>Can span multiple lines</li>
+<li>Can contain template logic: <code>[title]{% if x %}{{ x }}{% endif %}[/title]</code></li>
+</ul>
+<h3 id="graceful-degradation"><a class="header" href="#graceful-degradation">Graceful Degradation</a></h3>
+<p><strong>Single template for rich and plain text.</strong> Standout degrades gracefully based on terminal capabilities:</p>
+<pre><code class="language-bash">myapp list              # Rich colors (if terminal supports)
+myapp list &gt; file.txt   # Plain text (not a TTY)
+myapp list | less       # Plain text (pipe)
+</code></pre>
+<p>No separate templates for different output modes. The same template serves both.</p>
+<h3 id="debug-mode"><a class="header" href="#debug-mode">Debug Mode</a></h3>
+<p>Override auto behavior with <code>--output=term-debug</code> for debugging:</p>
+<pre><code class="language-text">[title]Your Todos[/title]
+[pending]pending[/pending]  Implement auth
+[done]done[/done]  Fix tests
+</code></pre>
+<p>Style tags remain visible, making it easy to verify correct placement. Useful for testing and automation tools.</p>
+<p>See <a href="../topics/output-modes.html">Output Modes</a> for all available output formats.</p>
+<hr />
+<h2 id="tabular-layout"><a class="header" href="#tabular-layout">Tabular Layout</a></h2>
+<p>Many commands output lists of things—log entries, servers, todos. These benefit from vertically aligned layouts. Aligning fields seems simple at first, but when you factor in ANSI awareness, flexible size ranges, wrapping behavior, truncation, justification, and expanding cells, it becomes really hard. Those one-off bugs that drive you mad—yeah, those.</p>
+<p>Tabular gives you a declarative API, both in Rust and in templates, that handles all of this:</p>
+<pre><code class="language-jinja">{% set t = tabular([
+    {"name": "index", "width": 4},
+    {"name": "status", "width": 10},
+    {"name": "title", "width": "fill"}
+], separator="  ") %}
+
+{% for todo in todos %}
+{{ t.row([loop.index, todo.status | style_as(todo.status), todo.title]) }}
+{% endfor %}
+</code></pre>
+<p>Output adapts to terminal width:</p>
+<pre><code class="language-text">1.    pending     Implement user authentication
+2.    done        Review pull request #142
+3.    pending     Update dependencies
+</code></pre>
+<p>Features:</p>
+<ul>
+<li>Fixed, range, fill, and fractional widths</li>
+<li>Truncation (start, middle, end) with custom ellipsis</li>
+<li>Word wrapping for long content</li>
+<li>Per-column styling</li>
+<li>Automatic field extraction from structs</li>
+</ul>
+<p>See <a href="intro-to-tabular.html">Introduction to Tabular</a> for a comprehensive walkthrough.</p>
+<hr />
+<h2 id="output-control"><a class="header" href="#output-control">Output Control</a></h2>
+<p>Standout supports various output formats at runtime with the <code>--output</code> option:</p>
+<pre><code class="language-bash">myapp list                    # Auto: rich or plain based on terminal
+myapp list --output=term      # Force rich terminal output
+myapp list --output=text      # Force plain text
+myapp list --output=term-debug # Show style tags for debugging
+myapp list --output=json      # JSON serialization
+myapp list --output=yaml      # YAML serialization
+myapp list --output=csv       # CSV serialization
+</code></pre>
+<p><strong>Structured output for free.</strong> Because your handler returns a <code>Serialize</code>-able type, JSON/YAML/CSV outputs work automatically. Automation (tests, scripts, other programs) no longer needs to reverse-engineer data from formatted output.</p>
+<pre><code class="language-bash">myapp list --output=json | jq '.tasks[] | select(.status == "blocked")'
+</code></pre>
+<p>Same handler, same types—different output format. This enables API-like behavior from CLI apps without writing separate code paths.</p>
+<p>See <a href="../topics/output-modes.html">Output Modes</a> for complete documentation.</p>
+<hr />
+<h2 id="putting-it-all-together"><a class="header" href="#putting-it-all-together">Putting It All Together</a></h2>
+<p>Here's a complete example of a polished todo list command:</p>
+<p><strong>Handler (<code>src/handlers.rs</code>):</strong></p>
+<pre><pre class="playground"><code class="language-rust"><span class="boring">#![allow(unused)]
+</span><span class="boring">fn main() {
+</span>use standout::cli::{CommandContext, HandlerResult, Output};
+use clap::ArgMatches;
+use serde::Serialize;
+
+#[derive(Clone, Serialize)]
+#[serde(rename_all = "lowercase")]
+pub enum Status { Pending, Done }
+
+#[derive(Clone, Serialize)]
+pub struct Todo {
+    pub title: String,
+    pub status: Status,
+}
+
+#[derive(Serialize)]
+pub struct TodoResult {
+    pub message: Option&lt;String&gt;,
+    pub todos: Vec&lt;Todo&gt;,
+}
+
+pub fn list(matches: &amp;ArgMatches, _ctx: &amp;CommandContext) -&gt; HandlerResult&lt;TodoResult&gt; {
+    let show_all = matches.get_flag("all");
+    let todos = storage::list()?;
+
+    let filtered: Vec&lt;Todo&gt; = if show_all {
+        todos
+    } else {
+        todos.into_iter()
+            .filter(|t| matches!(t.status, Status::Pending))
+            .collect()
+    };
+
+    let pending_count = filtered.iter()
+        .filter(|t| matches!(t.status, Status::Pending))
+        .count();
+
+    Ok(Output::Render(TodoResult {
+        message: Some(format!("{} pending", pending_count)),
+        todos: filtered,
+    }))
+}
+<span class="boring">}</span></code></pre></pre>
+<p><strong>Template (<code>src/templates/list.jinja</code>):</strong></p>
+<pre><code class="language-jinja">[title]My Todos[/title]
+
+{% set t = tabular([
+    {"name": "index", "width": 4},
+    {"name": "status", "width": 10},
+    {"name": "title", "width": "fill"}
+], separator="  ") %}
+
+{% for todo in todos %}
+{{ t.row([loop.index, todo.status | style_as(todo.status), todo.title]) }}
+{% endfor %}
+
+{% if message %}[muted]{{ message }}[/muted]{% endif %}
+</code></pre>
+<p><strong>Styles (<code>src/styles/default.yaml</code>):</strong></p>
+<pre><code class="language-yaml">title:
+  fg: cyan
+  bold: true
+
+done: green
+pending: yellow
+
+muted:
+  dim: true
+  light:
+    fg: "#666666"
+  dark:
+    fg: "#999999"
+</code></pre>
+<p><strong>Output (terminal):</strong></p>
+<pre><code class="language-text">My Todos
+
+1.    pending     Implement user authentication
+2.    done        Review pull request #142
+3.    pending     Update dependencies
+
+2 pending
+</code></pre>
+<p>With colors, "pending" appears yellow, "done" appears green. The title column fills available space.</p>
+<p><strong>Output (<code>--output=json</code>):</strong></p>
+<pre><code class="language-json">{
+  "message": "2 pending",
+  "todos": [
+    {"title": "Implement user authentication", "status": "pending"},
+    {"title": "Review pull request #142", "status": "done"},
+    {"title": "Update dependencies", "status": "pending"}
+  ]
+}
+</code></pre>
+<p>Same handler. No additional code.</p>
+<hr />
+<h2 id="summary"><a class="header" href="#summary">Summary</a></h2>
+<p>Standout's rendering layer transforms CLI output from a chore into a pleasure:</p>
+<ol>
+<li>
+<p><strong>Separation of concerns</strong>: Logic returns data. Templates define structure. Styles control appearance.</p>
+</li>
+<li>
+<p><strong>Fast iteration</strong>: Hot reload means edit-and-see in seconds, not minutes. This changes what's practical.</p>
+</li>
+<li>
+<p><strong>Familiar tools</strong>: MiniJinja for templates (Jinja syntax), CSS or YAML for styles. No new languages to learn.</p>
+</li>
+<li>
+<p><strong>Graceful degradation</strong>: One template serves rich terminals, plain pipes, and everything in between.</p>
+</li>
+<li>
+<p><strong>Structured output for free</strong>: JSON, YAML, and CSV outputs work automatically from your serializable types.</p>
+</li>
+<li>
+<p><strong>Tabular layouts</strong>: Declarative column definitions handle alignment, wrapping, truncation, and ANSI-awareness.</p>
+</li>
+</ol>
+<p>The rendering system makes it practical to care about details. When iteration is fast and changes are safe, polish becomes achievable—not aspirational.</p>
+<p>For complete API details, see <a href="../topics/rendering-system.html">Rendering System</a>.</p>
+
+                    </main>
+
+                    <nav class="nav-wrapper" aria-label="Page navigation">
+                        <!-- Mobile navigation buttons -->
+                            <a rel="prev" href="../guides/intro-to-standout.html" class="mobile-nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
+                                <i class="fa fa-angle-left"></i>
+                            </a>
+
+                            <a rel="next prefetch" href="../guides/intro-to-tabular.html" class="mobile-nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
+                                <i class="fa fa-angle-right"></i>
+                            </a>
+
+                        <div style="clear: both"></div>
+                    </nav>
+                </div>
+            </div>
+
+            <nav class="nav-wide-wrapper" aria-label="Page navigation">
+                    <a rel="prev" href="../guides/intro-to-standout.html" class="nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
+                        <i class="fa fa-angle-left"></i>
+                    </a>
+
+                    <a rel="next prefetch" href="../guides/intro-to-tabular.html" class="nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
+                        <i class="fa fa-angle-right"></i>
+                    </a>
+            </nav>
+
+        </div>
+
+
+
+
+        <script>
+            window.playground_copyable = true;
+        </script>
+
+
+        <script src="../elasticlunr.min.js"></script>
+        <script src="../mark.min.js"></script>
+        <script src="../searcher.js"></script>
+
+        <script src="../clipboard.min.js"></script>
+        <script src="../highlight.js"></script>
+        <script src="../book.js"></script>
+
+        <!-- Custom JS scripts -->
+
+
+    </div>
+    </body>
+</html>

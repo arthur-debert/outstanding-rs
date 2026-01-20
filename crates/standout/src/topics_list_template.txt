@@ -1,9 +1,0 @@
-[about]Available Topics[/about]
-
-[header]USAGE[/header]
-  [usage]{{ usage }}[/usage]
-
-[header]TOPICS[/header]
-{%- for topic in topics %}
-  [item]{{ topic.name }}[/item]:{{ topic.padding }}[desc]{{ topic.title }}[/desc]
-{%- endfor %}

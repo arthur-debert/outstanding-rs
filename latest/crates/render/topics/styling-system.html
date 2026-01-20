@@ -1,0 +1,583 @@
+<!DOCTYPE HTML>
+<html lang="en" class="rust" dir="ltr">
+    <head>
+        <!-- Book generated using mdBook -->
+        <meta charset="UTF-8">
+        <title>Styling System - Standout</title>
+
+
+        <!-- Custom HTML head -->
+        
+        <meta name="description" content="A CLI framework for Rust that enforces separation between logic and presentation">
+        <meta name="viewport" content="width=device-width, initial-scale=1">
+        <meta name="theme-color" content="#ffffff">
+
+        <link rel="icon" href="../../../favicon.svg">
+        <link rel="shortcut icon" href="../../../favicon.png">
+        <link rel="stylesheet" href="../../../css/variables.css">
+        <link rel="stylesheet" href="../../../css/general.css">
+        <link rel="stylesheet" href="../../../css/chrome.css">
+        <link rel="stylesheet" href="../../../css/print.css" media="print">
+
+        <!-- Fonts -->
+        <link rel="stylesheet" href="../../../FontAwesome/css/font-awesome.css">
+        <link rel="stylesheet" href="../../../fonts/fonts.css">
+
+        <!-- Highlight.js Stylesheets -->
+        <link rel="stylesheet" href="../../../highlight.css">
+        <link rel="stylesheet" href="../../../tomorrow-night.css">
+        <link rel="stylesheet" href="../../../ayu-highlight.css">
+
+        <!-- Custom theme stylesheets -->
+
+    </head>
+    <body class="sidebar-visible no-js">
+    <div id="body-container">
+        <!-- Provide site root to javascript -->
+        <script>
+            var path_to_root = "../../../";
+            var default_theme = window.matchMedia("(prefers-color-scheme: dark)").matches ? "ayu" : "rust";
+        </script>
+
+        <!-- Work around some values being stored in localStorage wrapped in quotes -->
+        <script>
+            try {
+                var theme = localStorage.getItem('mdbook-theme');
+                var sidebar = localStorage.getItem('mdbook-sidebar');
+
+                if (theme.startsWith('"') && theme.endsWith('"')) {
+                    localStorage.setItem('mdbook-theme', theme.slice(1, theme.length - 1));
+                }
+
+                if (sidebar.startsWith('"') && sidebar.endsWith('"')) {
+                    localStorage.setItem('mdbook-sidebar', sidebar.slice(1, sidebar.length - 1));
+                }
+            } catch (e) { }
+        </script>
+
+        <!-- Set the theme before any content is loaded, prevents flash -->
+        <script>
+            var theme;
+            try { theme = localStorage.getItem('mdbook-theme'); } catch(e) { }
+            if (theme === null || theme === undefined) { theme = default_theme; }
+            var html = document.querySelector('html');
+            html.classList.remove('rust')
+            html.classList.add(theme);
+            var body = document.querySelector('body');
+            body.classList.remove('no-js')
+            body.classList.add('js');
+        </script>
+
+        <input type="checkbox" id="sidebar-toggle-anchor" class="hidden">
+
+        <!-- Hide / unhide sidebar before it is displayed -->
+        <script>
+            var body = document.querySelector('body');
+            var sidebar = null;
+            var sidebar_toggle = document.getElementById("sidebar-toggle-anchor");
+            if (document.body.clientWidth >= 1080) {
+                try { sidebar = localStorage.getItem('mdbook-sidebar'); } catch(e) { }
+                sidebar = sidebar || 'visible';
+            } else {
+                sidebar = 'hidden';
+            }
+            sidebar_toggle.checked = sidebar === 'visible';
+            body.classList.remove('sidebar-visible');
+            body.classList.add("sidebar-" + sidebar);
+        </script>
+
+        <nav id="sidebar" class="sidebar" aria-label="Table of contents">
+            <div class="sidebar-scrollbox">
+                <ol class="chapter"><li class="chapter-item affix "><a href="../../../index.html">Introduction</a></li><li class="chapter-item affix "><li class="spacer"></li><li class="chapter-item affix "><li class="part-title">Getting Started</li><li class="chapter-item "><a href="../../../guides/tldr-intro-to-standout.html"><strong aria-hidden="true">1.</strong> Quick Start</a></li><li class="chapter-item "><a href="../../../guides/intro-to-standout.html"><strong aria-hidden="true">2.</strong> Introduction to Standout</a></li><li class="chapter-item affix "><li class="spacer"></li><li class="chapter-item affix "><li class="part-title">Rendering (standout-render)</li><li class="chapter-item "><a href="../../../crates/render/guides/intro-to-rendering.html"><strong aria-hidden="true">3.</strong> Introduction to Rendering</a></li><li class="chapter-item "><a href="../../../crates/render/guides/intro-to-tabular.html"><strong aria-hidden="true">4.</strong> Introduction to Tabular</a></li><li class="chapter-item expanded "><a href="../../../crates/render/topics/styling-system.html" class="active"><strong aria-hidden="true">5.</strong> Styling System</a></li><li class="chapter-item "><a href="../../../crates/render/topics/templating.html"><strong aria-hidden="true">6.</strong> Templating</a></li><li class="chapter-item "><a href="../../../crates/render/topics/file-system-resources.html"><strong aria-hidden="true">7.</strong> File System Resources</a></li><li class="chapter-item affix "><li class="spacer"></li><li class="chapter-item affix "><li class="part-title">Dispatch (standout-dispatch)</li><li class="chapter-item "><a href="../../../crates/dispatch/guides/intro-to-dispatch.html"><strong aria-hidden="true">8.</strong> Introduction to Dispatch</a></li><li class="chapter-item "><a href="../../../crates/dispatch/topics/handler-contract.html"><strong aria-hidden="true">9.</strong> Handler Contract</a></li><li class="chapter-item "><a href="../../../crates/dispatch/topics/execution-model.html"><strong aria-hidden="true">10.</strong> Execution Model</a></li><li class="chapter-item "><a href="../../../crates/dispatch/topics/partial-adoption.html"><strong aria-hidden="true">11.</strong> Partial Adoption</a></li><li class="chapter-item affix "><li class="spacer"></li><li class="chapter-item affix "><li class="part-title">Framework Topics</li><li class="chapter-item "><a href="../../../topics/output-modes.html"><strong aria-hidden="true">12.</strong> Output Modes</a></li><li class="chapter-item "><a href="../../../topics/app-configuration.html"><strong aria-hidden="true">13.</strong> App Configuration</a></li></ol>
+            </div>
+            <div id="sidebar-resize-handle" class="sidebar-resize-handle">
+                <div class="sidebar-resize-indicator"></div>
+            </div>
+        </nav>
+
+        <!-- Track and set sidebar scroll position -->
+        <script>
+            var sidebarScrollbox = document.querySelector('#sidebar .sidebar-scrollbox');
+            sidebarScrollbox.addEventListener('click', function(e) {
+                if (e.target.tagName === 'A') {
+                    sessionStorage.setItem('sidebar-scroll', sidebarScrollbox.scrollTop);
+                }
+            }, { passive: true });
+            var sidebarScrollTop = sessionStorage.getItem('sidebar-scroll');
+            sessionStorage.removeItem('sidebar-scroll');
+            if (sidebarScrollTop) {
+                // preserve sidebar scroll position when navigating via links within sidebar
+                sidebarScrollbox.scrollTop = sidebarScrollTop;
+            } else {
+                // scroll sidebar to current active section when navigating via "next/previous chapter" buttons
+                var activeSection = document.querySelector('#sidebar .active');
+                if (activeSection) {
+                    activeSection.scrollIntoView({ block: 'center' });
+                }
+            }
+        </script>
+
+        <div id="page-wrapper" class="page-wrapper">
+
+            <div class="page">
+                                <div id="menu-bar-hover-placeholder"></div>
+                <div id="menu-bar" class="menu-bar sticky">
+                    <div class="left-buttons">
+                        <label id="sidebar-toggle" class="icon-button" for="sidebar-toggle-anchor" title="Toggle Table of Contents" aria-label="Toggle Table of Contents" aria-controls="sidebar">
+                            <i class="fa fa-bars"></i>
+                        </label>
+                        <button id="theme-toggle" class="icon-button" type="button" title="Change theme" aria-label="Change theme" aria-haspopup="true" aria-expanded="false" aria-controls="theme-list">
+                            <i class="fa fa-paint-brush"></i>
+                        </button>
+                        <ul id="theme-list" class="theme-popup" aria-label="Themes" role="menu">
+                            <li role="none"><button role="menuitem" class="theme" id="light">Light</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="rust">Rust</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="coal">Coal</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="navy">Navy</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="ayu">Ayu</button></li>
+                        </ul>
+                        <button id="search-toggle" class="icon-button" type="button" title="Search. (Shortkey: s)" aria-label="Toggle Searchbar" aria-expanded="false" aria-keyshortcuts="S" aria-controls="searchbar">
+                            <i class="fa fa-search"></i>
+                        </button>
+                    </div>
+
+                    <h1 class="menu-title">Standout</h1>
+
+                    <div class="right-buttons">
+                        <a href="../../../print.html" title="Print this book" aria-label="Print this book">
+                            <i id="print-button" class="fa fa-print"></i>
+                        </a>
+                        <a href="https://github.com/arthur-debert/standout" title="Git repository" aria-label="Git repository">
+                            <i id="git-repository-button" class="fa fa-github"></i>
+                        </a>
+                        <a href="https://github.com/arthur-debert/standout/edit/main/docs/docs/crates/render/topics/styling-system.md" title="Suggest an edit" aria-label="Suggest an edit">
+                            <i id="git-edit-button" class="fa fa-edit"></i>
+                        </a>
+
+                    </div>
+                </div>
+
+                <div id="search-wrapper" class="hidden">
+                    <form id="searchbar-outer" class="searchbar-outer">
+                        <input type="search" id="searchbar" name="searchbar" placeholder="Search this book ..." aria-controls="searchresults-outer" aria-describedby="searchresults-header">
+                    </form>
+                    <div id="searchresults-outer" class="searchresults-outer hidden">
+                        <div id="searchresults-header" class="searchresults-header"></div>
+                        <ul id="searchresults">
+                        </ul>
+                    </div>
+                </div>
+
+                <!-- Apply ARIA attributes after the sidebar and the sidebar toggle button are added to the DOM -->
+                <script>
+                    document.getElementById('sidebar-toggle').setAttribute('aria-expanded', sidebar === 'visible');
+                    document.getElementById('sidebar').setAttribute('aria-hidden', sidebar !== 'visible');
+                    Array.from(document.querySelectorAll('#sidebar a')).forEach(function(link) {
+                        link.setAttribute('tabIndex', sidebar === 'visible' ? 0 : -1);
+                    });
+                </script>
+
+                <div id="content" class="content">
+                    <main>
+                        <h1 id="the-styling-system"><a class="header" href="#the-styling-system">The Styling System</a></h1>
+<p><code>standout-render</code> uses a theme-based styling system where named styles are applied to content through bracket notation tags. Instead of embedding ANSI codes in your templates, you define semantic style names (<code>error</code>, <code>title</code>, <code>muted</code>) and let the theme decide the visual representation.</p>
+<p>This separation provides several benefits:</p>
+<ul>
+<li><strong>Readability</strong>: Templates use meaningful names, not escape codes</li>
+<li><strong>Maintainability</strong>: Change colors in one place, update everywhere</li>
+<li><strong>Adaptability</strong>: Themes can respond to light/dark mode automatically</li>
+<li><strong>Consistency</strong>: Enforce visual hierarchy across your application</li>
+</ul>
+<hr />
+<h2 id="themes"><a class="header" href="#themes">Themes</a></h2>
+<p>A <code>Theme</code> is a named collection of styles. Each style maps a name (like <code>title</code> or <code>error</code>) to visual attributes (bold cyan, dim red, etc.).</p>
+<h3 id="programmatic-themes"><a class="header" href="#programmatic-themes">Programmatic Themes</a></h3>
+<p>Build themes in code using the builder pattern:</p>
+<pre><pre class="playground"><code class="language-rust"><span class="boring">#![allow(unused)]
+</span><span class="boring">fn main() {
+</span>use standout_render::Theme;
+use console::Style;
+
+let theme = Theme::new()
+    .add("title", Style::new().bold().cyan())
+    .add("error", Style::new().red().bold())
+    .add("muted", Style::new().dim())
+    .add("success", Style::new().green());
+<span class="boring">}</span></code></pre></pre>
+<h3 id="yaml-themes"><a class="header" href="#yaml-themes">YAML Themes</a></h3>
+<p>For file-based configuration, YAML provides a concise syntax:</p>
+<pre><code class="language-yaml"># theme.yaml
+title:
+  fg: cyan
+  bold: true
+
+error:
+  fg: red
+  bold: true
+
+muted:
+  dim: true
+
+success:
+  fg: green
+
+# Shorthand: single attribute or space-separated
+warning: yellow
+emphasis: "bold italic"
+</code></pre>
+<p>Load YAML themes:</p>
+<pre><pre class="playground"><code class="language-rust"><span class="boring">#![allow(unused)]
+</span><span class="boring">fn main() {
+</span>use standout_render::Theme;
+
+// From string
+let theme = Theme::from_yaml(yaml_content)?;
+
+// From file (with hot reload in debug builds)
+let theme = Theme::from_yaml_file("styles/theme.yaml")?;
+<span class="boring">}</span></code></pre></pre>
+<h3 id="css-themes"><a class="header" href="#css-themes">CSS Themes</a></h3>
+<p>For developers who prefer standard CSS syntax, <code>standout-render</code> supports a subset of CSS Level 3 tailored for terminals:</p>
+<pre><code class="language-css">/* theme.css */
+.title {
+    color: cyan;
+    font-weight: bold;
+}
+
+.error {
+    color: red;
+    font-weight: bold;
+}
+
+.muted {
+    opacity: 0.5;  /* maps to dim */
+}
+
+.success {
+    color: green;
+}
+
+/* Shorthand works too */
+.warning { color: yellow; }
+</code></pre>
+<p>Load CSS themes:</p>
+<pre><pre class="playground"><code class="language-rust"><span class="boring">#![allow(unused)]
+</span><span class="boring">fn main() {
+</span>use standout_render::Theme;
+
+let theme = Theme::from_css(css_content)?;
+let theme = Theme::from_css_file("styles/theme.css")?;
+<span class="boring">}</span></code></pre></pre>
+<blockquote>
+<p>CSS is the recommended format for new projects. It enables syntax highlighting in editors, linting tools, and familiarity for web developers.</p>
+</blockquote>
+<hr />
+<h2 id="supported-attributes"><a class="header" href="#supported-attributes">Supported Attributes</a></h2>
+<h3 id="colors"><a class="header" href="#colors">Colors</a></h3>
+<div class="table-wrapper"><table><thead><tr><th>Attribute</th><th>CSS Property</th><th>Description</th></tr></thead><tbody>
+<tr><td><code>fg</code></td><td><code>color</code></td><td>Foreground (text) color</td></tr>
+<tr><td><code>bg</code></td><td><code>background</code></td><td>Background color</td></tr>
+</tbody></table>
+</div>
+<h3 id="color-formats"><a class="header" href="#color-formats">Color Formats</a></h3>
+<pre><code class="language-yaml"># Named colors (16 ANSI colors)
+fg: red
+fg: green
+fg: blue
+fg: cyan
+fg: magenta
+fg: yellow
+fg: white
+fg: black
+
+# Bright variants
+fg: bright_red
+fg: bright_green
+
+# 256-color palette (0-255)
+fg: 208
+
+# RGB hex
+fg: "#ff6b35"
+fg: "#f63"      # shorthand
+
+# RGB array
+fg: [255, 107, 53]
+</code></pre>
+<h3 id="text-attributes"><a class="header" href="#text-attributes">Text Attributes</a></h3>
+<div class="table-wrapper"><table><thead><tr><th>YAML</th><th>CSS</th><th>Effect</th></tr></thead><tbody>
+<tr><td><code>bold: true</code></td><td><code>font-weight: bold</code></td><td>Bold text</td></tr>
+<tr><td><code>dim: true</code></td><td><code>opacity: 0.5</code></td><td>Dimmed/faint text</td></tr>
+<tr><td><code>italic: true</code></td><td><code>font-style: italic</code></td><td>Italic text</td></tr>
+<tr><td><code>underline: true</code></td><td><code>text-decoration: underline</code></td><td>Underlined text</td></tr>
+<tr><td><code>blink: true</code></td><td><code>text-decoration: blink</code></td><td>Blinking text</td></tr>
+<tr><td><code>reverse: true</code></td><td>—</td><td>Swap fg/bg colors</td></tr>
+<tr><td><code>hidden: true</code></td><td><code>visibility: hidden</code></td><td>Hidden text</td></tr>
+<tr><td><code>strikethrough: true</code></td><td><code>text-decoration: line-through</code></td><td>Strikethrough</td></tr>
+</tbody></table>
+</div>
+<hr />
+<h2 id="adaptive-styles-lightdark-mode"><a class="header" href="#adaptive-styles-lightdark-mode">Adaptive Styles (Light/Dark Mode)</a></h2>
+<p>Terminal applications run in both light and dark environments. A color that looks great on a dark background may be illegible on a light one. <code>standout-render</code> solves this with adaptive styles.</p>
+<h3 id="how-it-works"><a class="header" href="#how-it-works">How It Works</a></h3>
+<p>Instead of defining separate "light theme" and "dark theme" files, you define mode-specific overrides at the style level:</p>
+<pre><code class="language-yaml">panel:
+  bold: true          # Shared across all modes
+  fg: gray            # Default/fallback
+  light:
+    fg: black         # Override for light mode
+  dark:
+    fg: white         # Override for dark mode
+</code></pre>
+<p>When resolving <code>panel</code> in dark mode:</p>
+<ol>
+<li>Start with base attributes (<code>bold: true</code>, <code>fg: gray</code>)</li>
+<li>Merge dark overrides (<code>fg: white</code> replaces <code>fg: gray</code>)</li>
+<li>Result: bold white text</li>
+</ol>
+<p>This is efficient: most styles (bold, italic, semantic colors like green/red) look fine in both modes. Only a handful need adjustment—typically foreground colors for contrast.</p>
+<h3 id="css-syntax"><a class="header" href="#css-syntax">CSS Syntax</a></h3>
+<pre><code class="language-css">.panel {
+    font-weight: bold;
+    color: gray;
+}
+
+@media (prefers-color-scheme: light) {
+    .panel { color: black; }
+}
+
+@media (prefers-color-scheme: dark) {
+    .panel { color: white; }
+}
+</code></pre>
+<h3 id="programmatic-api"><a class="header" href="#programmatic-api">Programmatic API</a></h3>
+<pre><pre class="playground"><code class="language-rust"><span class="boring">#![allow(unused)]
+</span><span class="boring">fn main() {
+</span>use standout_render::Theme;
+use console::{Style, Color};
+
+let theme = Theme::new()
+    .add_adaptive(
+        "panel",
+        Style::new().bold(),                     // Base (shared)
+        Some(Style::new().fg(Color::Black)),     // Light mode
+        Some(Style::new().fg(Color::White)),     // Dark mode
+    );
+<span class="boring">}</span></code></pre></pre>
+<h3 id="color-mode-detection"><a class="header" href="#color-mode-detection">Color Mode Detection</a></h3>
+<p><code>standout-render</code> auto-detects the OS color scheme:</p>
+<pre><pre class="playground"><code class="language-rust"><span class="boring">#![allow(unused)]
+</span><span class="boring">fn main() {
+</span>use standout_render::{detect_color_mode, ColorMode};
+
+let mode = detect_color_mode();
+match mode {
+    ColorMode::Light =&gt; println!("Light mode"),
+    ColorMode::Dark =&gt; println!("Dark mode"),
+}
+<span class="boring">}</span></code></pre></pre>
+<p>Override for testing:</p>
+<pre><pre class="playground"><code class="language-rust"><span class="boring">#![allow(unused)]
+</span><span class="boring">fn main() {
+</span>use standout_render::set_theme_detector;
+
+set_theme_detector(|| ColorMode::Dark);  // Force dark mode
+<span class="boring">}</span></code></pre></pre>
+<hr />
+<h2 id="style-aliasing"><a class="header" href="#style-aliasing">Style Aliasing</a></h2>
+<p>Aliases let semantic names resolve to visual styles. This is useful when multiple concepts share the same appearance:</p>
+<pre><code class="language-yaml"># Define the visual style once
+title:
+  fg: cyan
+  bold: true
+
+# Aliases
+commit-message: title
+section-header: title
+heading: title
+</code></pre>
+<p>Now <code>[commit-message]</code>, <code>[section-header]</code>, and <code>[heading]</code> all render identically to <code>[title]</code>.</p>
+<p>Benefits:</p>
+<ul>
+<li>Templates use meaningful, context-specific names</li>
+<li>Visual changes propagate automatically</li>
+<li>Refactoring visual design doesn't touch templates</li>
+</ul>
+<p>Aliases can chain: <code>a</code> → <code>b</code> → <code>c</code> → concrete style. Cycles are detected and rejected at load time.</p>
+<hr />
+<h2 id="unknown-style-tags"><a class="header" href="#unknown-style-tags">Unknown Style Tags</a></h2>
+<p>When a template references a style not defined in the theme, <code>standout-render</code> handles it gracefully:</p>
+<div class="table-wrapper"><table><thead><tr><th>Output Mode</th><th>Behavior</th></tr></thead><tbody>
+<tr><td><code>Term</code></td><td>Unknown tags get a <code>?</code> marker: <code>[unknown?]text[/unknown?]</code></td></tr>
+<tr><td><code>Text</code></td><td>Tags stripped (plain text)</td></tr>
+<tr><td><code>TermDebug</code></td><td>Tags preserved as-is</td></tr>
+</tbody></table>
+</div>
+<p>The <code>?</code> marker helps catch typos during development without crashing production apps.</p>
+<h3 id="validation"><a class="header" href="#validation">Validation</a></h3>
+<p>For strict checking at startup:</p>
+<pre><pre class="playground"><code class="language-rust"><span class="boring">#![allow(unused)]
+</span><span class="boring">fn main() {
+</span>use standout_render::validate_template;
+
+let errors = validate_template(template, &amp;sample_data, &amp;theme);
+if !errors.is_empty() {
+    for error in errors {
+        eprintln!("Unknown style: {}", error.tag_name);
+    }
+    std::process::exit(1);
+}
+<span class="boring">}</span></code></pre></pre>
+<hr />
+<h2 id="best-practices"><a class="header" href="#best-practices">Best Practices</a></h2>
+<h3 id="semantic-presentation-and-visual-layers"><a class="header" href="#semantic-presentation-and-visual-layers">Semantic, Presentation, and Visual Layers</a></h3>
+<p>Organize your styles in three conceptual layers:</p>
+<p><strong>1. Visual primitives</strong> (low-level appearance):</p>
+<pre><code class="language-yaml">_cyan-bold:
+  fg: cyan
+  bold: true
+
+_dim:
+  dim: true
+
+_red-bold:
+  fg: red
+  bold: true
+</code></pre>
+<p><strong>2. Presentation roles</strong> (UI concepts):</p>
+<pre><code class="language-yaml">heading: _cyan-bold
+secondary: _dim
+danger: _red-bold
+</code></pre>
+<p><strong>3. Semantic names</strong> (domain concepts):</p>
+<pre><code class="language-yaml"># In templates, use these
+task-title: heading
+task-status-done: success
+task-status-pending: warning
+error-message: danger
+</code></pre>
+<p>Templates use semantic names (<code>task-title</code>), which resolve to presentation roles (<code>heading</code>), which resolve to visual primitives (<code>_cyan-bold</code>).</p>
+<p>This layering lets you:</p>
+<ul>
+<li>Refactor visuals without touching templates</li>
+<li>Maintain consistency across domains</li>
+<li>Document the purpose of each style</li>
+</ul>
+<h3 id="naming-conventions"><a class="header" href="#naming-conventions">Naming Conventions</a></h3>
+<pre><code class="language-yaml"># Good: descriptive, semantic
+error-message: ...
+file-path: ...
+command-name: ...
+
+# Avoid: visual descriptions
+red-text: ...
+bold-cyan: ...
+</code></pre>
+<h3 id="keep-themes-focused"><a class="header" href="#keep-themes-focused">Keep Themes Focused</a></h3>
+<p>One theme per "look". Don't mix concerns:</p>
+<pre><code class="language-yaml"># theme-default.yaml - your app's default look
+# theme-colorblind.yaml - accessibility variant
+# theme-monochrome.yaml - for piped output
+</code></pre>
+<hr />
+<h2 id="api-reference"><a class="header" href="#api-reference">API Reference</a></h2>
+<h3 id="theme-creation"><a class="header" href="#theme-creation">Theme Creation</a></h3>
+<pre><pre class="playground"><code class="language-rust"><span class="boring">#![allow(unused)]
+</span><span class="boring">fn main() {
+</span>// Empty theme
+let theme = Theme::new();
+
+// From YAML string
+let theme = Theme::from_yaml(yaml_str)?;
+
+// From CSS string
+let theme = Theme::from_css(css_str)?;
+
+// From files (hot reload in debug)
+let theme = Theme::from_yaml_file(path)?;
+let theme = Theme::from_css_file(path)?;
+<span class="boring">}</span></code></pre></pre>
+<h3 id="adding-styles"><a class="header" href="#adding-styles">Adding Styles</a></h3>
+<pre><pre class="playground"><code class="language-rust"><span class="boring">#![allow(unused)]
+</span><span class="boring">fn main() {
+</span>// Static style
+theme.add("name", Style::new().bold());
+
+// Adaptive style
+theme.add_adaptive("name", base_style, light_override, dark_override);
+
+// Alias
+theme.add("alias", "target_style");
+<span class="boring">}</span></code></pre></pre>
+<h3 id="resolving-styles"><a class="header" href="#resolving-styles">Resolving Styles</a></h3>
+<pre><pre class="playground"><code class="language-rust"><span class="boring">#![allow(unused)]
+</span><span class="boring">fn main() {
+</span>// Get resolved style for current color mode
+let style: Option&lt;Style&gt; = theme.get("title");
+
+// Get style for specific mode
+let style = theme.get_for_mode("panel", ColorMode::Dark);
+<span class="boring">}</span></code></pre></pre>
+<h3 id="color-mode"><a class="header" href="#color-mode">Color Mode</a></h3>
+<pre><pre class="playground"><code class="language-rust"><span class="boring">#![allow(unused)]
+</span><span class="boring">fn main() {
+</span>use standout_render::{detect_color_mode, set_theme_detector, ColorMode};
+
+// Auto-detect
+let mode = detect_color_mode();
+
+// Override (for testing)
+set_theme_detector(|| ColorMode::Light);
+<span class="boring">}</span></code></pre></pre>
+
+                    </main>
+
+                    <nav class="nav-wrapper" aria-label="Page navigation">
+                        <!-- Mobile navigation buttons -->
+                            <a rel="prev" href="../../../crates/render/guides/intro-to-tabular.html" class="mobile-nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
+                                <i class="fa fa-angle-left"></i>
+                            </a>
+
+                            <a rel="next prefetch" href="../../../crates/render/topics/templating.html" class="mobile-nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
+                                <i class="fa fa-angle-right"></i>
+                            </a>
+
+                        <div style="clear: both"></div>
+                    </nav>
+                </div>
+            </div>
+
+            <nav class="nav-wide-wrapper" aria-label="Page navigation">
+                    <a rel="prev" href="../../../crates/render/guides/intro-to-tabular.html" class="nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
+                        <i class="fa fa-angle-left"></i>
+                    </a>
+
+                    <a rel="next prefetch" href="../../../crates/render/topics/templating.html" class="nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
+                        <i class="fa fa-angle-right"></i>
+                    </a>
+            </nav>
+
+        </div>
+
+
+
+
+        <script>
+            window.playground_copyable = true;
+        </script>
+
+
+        <script src="../../../elasticlunr.min.js"></script>
+        <script src="../../../mark.min.js"></script>
+        <script src="../../../searcher.js"></script>
+
+        <script src="../../../clipboard.min.js"></script>
+        <script src="../../../highlight.js"></script>
+        <script src="../../../book.js"></script>
+
+        <!-- Custom JS scripts -->
+
+
+    </div>
+    </body>
+</html>

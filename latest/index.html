@@ -1,0 +1,400 @@
+<!DOCTYPE HTML>
+<html lang="en" class="rust" dir="ltr">
+    <head>
+        <!-- Book generated using mdBook -->
+        <meta charset="UTF-8">
+        <title>Introduction - Standout</title>
+
+
+        <!-- Custom HTML head -->
+        
+        <meta name="description" content="A CLI framework for Rust that enforces separation between logic and presentation">
+        <meta name="viewport" content="width=device-width, initial-scale=1">
+        <meta name="theme-color" content="#ffffff">
+
+        <link rel="icon" href="favicon.svg">
+        <link rel="shortcut icon" href="favicon.png">
+        <link rel="stylesheet" href="css/variables.css">
+        <link rel="stylesheet" href="css/general.css">
+        <link rel="stylesheet" href="css/chrome.css">
+        <link rel="stylesheet" href="css/print.css" media="print">
+
+        <!-- Fonts -->
+        <link rel="stylesheet" href="FontAwesome/css/font-awesome.css">
+        <link rel="stylesheet" href="fonts/fonts.css">
+
+        <!-- Highlight.js Stylesheets -->
+        <link rel="stylesheet" href="highlight.css">
+        <link rel="stylesheet" href="tomorrow-night.css">
+        <link rel="stylesheet" href="ayu-highlight.css">
+
+        <!-- Custom theme stylesheets -->
+
+    </head>
+    <body class="sidebar-visible no-js">
+    <div id="body-container">
+        <!-- Provide site root to javascript -->
+        <script>
+            var path_to_root = "";
+            var default_theme = window.matchMedia("(prefers-color-scheme: dark)").matches ? "ayu" : "rust";
+        </script>
+
+        <!-- Work around some values being stored in localStorage wrapped in quotes -->
+        <script>
+            try {
+                var theme = localStorage.getItem('mdbook-theme');
+                var sidebar = localStorage.getItem('mdbook-sidebar');
+
+                if (theme.startsWith('"') && theme.endsWith('"')) {
+                    localStorage.setItem('mdbook-theme', theme.slice(1, theme.length - 1));
+                }
+
+                if (sidebar.startsWith('"') && sidebar.endsWith('"')) {
+                    localStorage.setItem('mdbook-sidebar', sidebar.slice(1, sidebar.length - 1));
+                }
+            } catch (e) { }
+        </script>
+
+        <!-- Set the theme before any content is loaded, prevents flash -->
+        <script>
+            var theme;
+            try { theme = localStorage.getItem('mdbook-theme'); } catch(e) { }
+            if (theme === null || theme === undefined) { theme = default_theme; }
+            var html = document.querySelector('html');
+            html.classList.remove('rust')
+            html.classList.add(theme);
+            var body = document.querySelector('body');
+            body.classList.remove('no-js')
+            body.classList.add('js');
+        </script>
+
+        <input type="checkbox" id="sidebar-toggle-anchor" class="hidden">
+
+        <!-- Hide / unhide sidebar before it is displayed -->
+        <script>
+            var body = document.querySelector('body');
+            var sidebar = null;
+            var sidebar_toggle = document.getElementById("sidebar-toggle-anchor");
+            if (document.body.clientWidth >= 1080) {
+                try { sidebar = localStorage.getItem('mdbook-sidebar'); } catch(e) { }
+                sidebar = sidebar || 'visible';
+            } else {
+                sidebar = 'hidden';
+            }
+            sidebar_toggle.checked = sidebar === 'visible';
+            body.classList.remove('sidebar-visible');
+            body.classList.add("sidebar-" + sidebar);
+        </script>
+
+        <nav id="sidebar" class="sidebar" aria-label="Table of contents">
+            <div class="sidebar-scrollbox">
+                <ol class="chapter"><li class="chapter-item affix "><a href="index.html" class="active">Introduction</a></li><li class="chapter-item affix "><li class="spacer"></li><li class="chapter-item affix "><li class="part-title">Getting Started</li><li class="chapter-item "><a href="guides/tldr-intro-to-standout.html"><strong aria-hidden="true">1.</strong> Quick Start</a></li><li class="chapter-item "><a href="guides/intro-to-standout.html"><strong aria-hidden="true">2.</strong> Introduction to Standout</a></li><li class="chapter-item affix "><li class="spacer"></li><li class="chapter-item affix "><li class="part-title">Rendering (standout-render)</li><li class="chapter-item "><a href="crates/render/guides/intro-to-rendering.html"><strong aria-hidden="true">3.</strong> Introduction to Rendering</a></li><li class="chapter-item "><a href="crates/render/guides/intro-to-tabular.html"><strong aria-hidden="true">4.</strong> Introduction to Tabular</a></li><li class="chapter-item "><a href="crates/render/topics/styling-system.html"><strong aria-hidden="true">5.</strong> Styling System</a></li><li class="chapter-item "><a href="crates/render/topics/templating.html"><strong aria-hidden="true">6.</strong> Templating</a></li><li class="chapter-item "><a href="crates/render/topics/file-system-resources.html"><strong aria-hidden="true">7.</strong> File System Resources</a></li><li class="chapter-item affix "><li class="spacer"></li><li class="chapter-item affix "><li class="part-title">Dispatch (standout-dispatch)</li><li class="chapter-item "><a href="crates/dispatch/guides/intro-to-dispatch.html"><strong aria-hidden="true">8.</strong> Introduction to Dispatch</a></li><li class="chapter-item "><a href="crates/dispatch/topics/handler-contract.html"><strong aria-hidden="true">9.</strong> Handler Contract</a></li><li class="chapter-item "><a href="crates/dispatch/topics/execution-model.html"><strong aria-hidden="true">10.</strong> Execution Model</a></li><li class="chapter-item "><a href="crates/dispatch/topics/partial-adoption.html"><strong aria-hidden="true">11.</strong> Partial Adoption</a></li><li class="chapter-item affix "><li class="spacer"></li><li class="chapter-item affix "><li class="part-title">Framework Topics</li><li class="chapter-item "><a href="topics/output-modes.html"><strong aria-hidden="true">12.</strong> Output Modes</a></li><li class="chapter-item "><a href="topics/app-configuration.html"><strong aria-hidden="true">13.</strong> App Configuration</a></li></ol>
+            </div>
+            <div id="sidebar-resize-handle" class="sidebar-resize-handle">
+                <div class="sidebar-resize-indicator"></div>
+            </div>
+        </nav>
+
+        <!-- Track and set sidebar scroll position -->
+        <script>
+            var sidebarScrollbox = document.querySelector('#sidebar .sidebar-scrollbox');
+            sidebarScrollbox.addEventListener('click', function(e) {
+                if (e.target.tagName === 'A') {
+                    sessionStorage.setItem('sidebar-scroll', sidebarScrollbox.scrollTop);
+                }
+            }, { passive: true });
+            var sidebarScrollTop = sessionStorage.getItem('sidebar-scroll');
+            sessionStorage.removeItem('sidebar-scroll');
+            if (sidebarScrollTop) {
+                // preserve sidebar scroll position when navigating via links within sidebar
+                sidebarScrollbox.scrollTop = sidebarScrollTop;
+            } else {
+                // scroll sidebar to current active section when navigating via "next/previous chapter" buttons
+                var activeSection = document.querySelector('#sidebar .active');
+                if (activeSection) {
+                    activeSection.scrollIntoView({ block: 'center' });
+                }
+            }
+        </script>
+
+        <div id="page-wrapper" class="page-wrapper">
+
+            <div class="page">
+                                <div id="menu-bar-hover-placeholder"></div>
+                <div id="menu-bar" class="menu-bar sticky">
+                    <div class="left-buttons">
+                        <label id="sidebar-toggle" class="icon-button" for="sidebar-toggle-anchor" title="Toggle Table of Contents" aria-label="Toggle Table of Contents" aria-controls="sidebar">
+                            <i class="fa fa-bars"></i>
+                        </label>
+                        <button id="theme-toggle" class="icon-button" type="button" title="Change theme" aria-label="Change theme" aria-haspopup="true" aria-expanded="false" aria-controls="theme-list">
+                            <i class="fa fa-paint-brush"></i>
+                        </button>
+                        <ul id="theme-list" class="theme-popup" aria-label="Themes" role="menu">
+                            <li role="none"><button role="menuitem" class="theme" id="light">Light</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="rust">Rust</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="coal">Coal</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="navy">Navy</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="ayu">Ayu</button></li>
+                        </ul>
+                        <button id="search-toggle" class="icon-button" type="button" title="Search. (Shortkey: s)" aria-label="Toggle Searchbar" aria-expanded="false" aria-keyshortcuts="S" aria-controls="searchbar">
+                            <i class="fa fa-search"></i>
+                        </button>
+                    </div>
+
+                    <h1 class="menu-title">Standout</h1>
+
+                    <div class="right-buttons">
+                        <a href="print.html" title="Print this book" aria-label="Print this book">
+                            <i id="print-button" class="fa fa-print"></i>
+                        </a>
+                        <a href="https://github.com/arthur-debert/standout" title="Git repository" aria-label="Git repository">
+                            <i id="git-repository-button" class="fa fa-github"></i>
+                        </a>
+                        <a href="https://github.com/arthur-debert/standout/edit/main/docs/docs/index.md" title="Suggest an edit" aria-label="Suggest an edit">
+                            <i id="git-edit-button" class="fa fa-edit"></i>
+                        </a>
+
+                    </div>
+                </div>
+
+                <div id="search-wrapper" class="hidden">
+                    <form id="searchbar-outer" class="searchbar-outer">
+                        <input type="search" id="searchbar" name="searchbar" placeholder="Search this book ..." aria-controls="searchresults-outer" aria-describedby="searchresults-header">
+                    </form>
+                    <div id="searchresults-outer" class="searchresults-outer hidden">
+                        <div id="searchresults-header" class="searchresults-header"></div>
+                        <ul id="searchresults">
+                        </ul>
+                    </div>
+                </div>
+
+                <!-- Apply ARIA attributes after the sidebar and the sidebar toggle button are added to the DOM -->
+                <script>
+                    document.getElementById('sidebar-toggle').setAttribute('aria-expanded', sidebar === 'visible');
+                    document.getElementById('sidebar').setAttribute('aria-hidden', sidebar !== 'visible');
+                    Array.from(document.querySelectorAll('#sidebar a')).forEach(function(link) {
+                        link.setAttribute('tabIndex', sidebar === 'visible' ? 0 : -1);
+                    });
+                </script>
+
+                <div id="content" class="content">
+                    <main>
+                        <h1 id="standout"><a class="header" href="#standout">Standout</a></h1>
+<p><strong>Test your data. Render your view.</strong></p>
+<p>Standout is a CLI framework for Rust that enforces separation between logic and presentation. Your handlers return structs, not strings—making CLI logic as testable as any other code.</p>
+<h2 id="the-problem"><a class="header" href="#the-problem">The Problem</a></h2>
+<p>CLI code that mixes logic with <code>println!</code> statements is impossible to unit test:</p>
+<pre><pre class="playground"><code class="language-rust"><span class="boring">#![allow(unused)]
+</span><span class="boring">fn main() {
+</span>// You can't unit test this—it writes directly to stdout
+fn list_command(show_all: bool) {
+    let todos = storage::list().unwrap();
+    println!("Your Todos:");
+    for todo in todos.iter() {
+        if show_all || todo.status == Status::Pending {
+            println!("  {} {}", if todo.done { "[x]" } else { "[ ]" }, todo.title);
+        }
+    }
+}
+<span class="boring">}</span></code></pre></pre>
+<p>The only way to test this is regex on captured stdout. That's fragile, verbose, and couples your tests to presentation details.</p>
+<h2 id="the-solution"><a class="header" href="#the-solution">The Solution</a></h2>
+<p>With Standout, handlers return data. The framework handles rendering:</p>
+<pre><pre class="playground"><code class="language-rust"><span class="boring">#![allow(unused)]
+</span><span class="boring">fn main() {
+</span>// This is unit-testable—it's a pure function that returns data
+fn list_handler(matches: &amp;ArgMatches, _ctx: &amp;CommandContext) -&gt; HandlerResult&lt;TodoResult&gt; {
+    let show_all = matches.get_flag("all");
+    let todos = storage::list()?
+        .into_iter()
+        .filter(|t| show_all || t.status == Status::Pending)
+        .collect();
+    Ok(Output::Render(TodoResult { todos }))
+}
+
+#[test]
+fn test_list_filters_completed() {
+    let matches = /* mock ArgMatches with all=false */;
+    let result = list_handler(&amp;matches, &amp;ctx).unwrap();
+    assert!(result.todos.iter().all(|t| t.status == Status::Pending));
+}
+<span class="boring">}</span></code></pre></pre>
+<p>Because your logic returns a struct, you test the struct. No stdout capture, no regex, no brittleness.</p>
+<h2 id="standing-out"><a class="header" href="#standing-out">Standing Out</a></h2>
+<p>What Standout provides:</p>
+<ul>
+<li>Enforced architecture splitting data and presentation</li>
+<li>Logic is testable as any Rust code</li>
+<li>Boilerplateless: declaratively link your handlers to command names and templates, Standout handles the rest</li>
+<li>Autodispatch: save keystrokes with auto dispatch from the known command tree</li>
+<li>Free <a href="topics/output-modes.html">output handling</a>: rich terminal with graceful degradation, plus structured data (JSON, YAML, CSV)</li>
+<li>Finely crafted output:
+<ul>
+<li>File-based <a href="crates/render/topics/templating.html">templates</a> for content and CSS for styling</li>
+<li>Rich styling with <a href="crates/render/topics/styling-system.html">adaptive properties</a> (light/dark modes), inheritance, and full theming</li>
+<li>Powerful templating through <a href="https://github.com/mitsuhiko/minijinja">MiniJinja</a>, including partials (reusable, smaller templates for models displayed in multiple places)</li>
+<li><a href="crates/render/topics/file-system-resources.html">Hot reload</a>: changes to templates and styles don't require compiling</li>
+<li>Declarative layout support for <a href="crates/render/guides/intro-to-tabular.html">tabular data</a></li>
+</ul>
+</li>
+</ul>
+<h2 id="quick-start"><a class="header" href="#quick-start">Quick Start</a></h2>
+<h3 id="1-define-your-commands-and-handlers"><a class="header" href="#1-define-your-commands-and-handlers">1. Define Your Commands and Handlers</a></h3>
+<p>Use the <code>Dispatch</code> derive macro to connect commands to handlers. Handlers receive parsed arguments and return serializable data.</p>
+<pre><pre class="playground"><code class="language-rust"><span class="boring">#![allow(unused)]
+</span><span class="boring">fn main() {
+</span>use standout::cli::{Dispatch, CommandContext, HandlerResult, Output};
+use clap::{ArgMatches, Subcommand};
+use serde::Serialize;
+
+#[derive(Subcommand, Dispatch)]
+#[dispatch(handlers = handlers)]  // handlers are in the `handlers` module
+pub enum Commands {
+    List,
+    Add { title: String },
+}
+
+#[derive(Serialize)]
+struct TodoResult {
+    todos: Vec&lt;Todo&gt;,
+}
+
+mod handlers {
+    use super::*;
+
+    // HandlerResult&lt;T&gt; wraps your data; Output::Render tells Standout to render it
+    pub fn list(_m: &amp;ArgMatches, _ctx: &amp;CommandContext) -&gt; HandlerResult&lt;TodoResult&gt; {
+        let todos = storage::list()?;
+        Ok(Output::Render(TodoResult { todos }))
+    }
+
+    pub fn add(m: &amp;ArgMatches, _ctx: &amp;CommandContext) -&gt; HandlerResult&lt;TodoResult&gt; {
+        let title: &amp;String = m.get_one("title").unwrap();
+        let todo = storage::add(title)?;
+        Ok(Output::Render(TodoResult { todos: vec![todo] }))
+    }
+}
+<span class="boring">}</span></code></pre></pre>
+<h3 id="2-define-your-presentation"><a class="header" href="#2-define-your-presentation">2. Define Your Presentation</a></h3>
+<p>Templates use MiniJinja with semantic style tags. Styles are defined separately in CSS or YAML.</p>
+<pre><code class="language-jinja">{# list.jinja #}
+[title]My Todos[/title]
+{% for todo in todos %}
+  - {{ todo.title }} ([status]{{ todo.status }}[/status])
+{% endfor %}
+</code></pre>
+<pre><code class="language-css">/* styles/default.css */
+.title { color: cyan; font-weight: bold; }
+.status { color: yellow; }
+</code></pre>
+<h3 id="3-wire-it-up"><a class="header" href="#3-wire-it-up">3. Wire It Up</a></h3>
+<pre><pre class="playground"><code class="language-rust">use standout::cli::App;
+use standout::{embed_templates, embed_styles};
+
+fn main() -&gt; Result&lt;(), Box&lt;dyn std::error::Error&gt;&gt; {
+    let app = App::builder()
+        .commands(Commands::dispatch_config())  // Register handlers from derive macro
+        .templates(embed_templates!("src/templates"))
+        .styles(embed_styles!("src/styles"))
+        .build()?;
+
+    app.run(Cli::command(), std::env::args());
+    Ok(())
+}</code></pre></pre>
+<p>Run it:</p>
+<pre><code class="language-bash">myapp list              # Rich terminal output with colors
+myapp list --output json    # JSON for scripting
+myapp list --output yaml    # YAML for config files
+myapp list --output text    # Plain text, no ANSI codes
+</code></pre>
+<h2 id="features"><a class="header" href="#features">Features</a></h2>
+<h3 id="architecture"><a class="header" href="#architecture">Architecture</a></h3>
+<ul>
+<li>Logic/presentation separation enforced by design</li>
+<li>Handlers return data; framework handles rendering</li>
+<li>Unit-testable CLI logic without stdout capture</li>
+</ul>
+<h3 id="output-modes"><a class="header" href="#output-modes">Output Modes</a></h3>
+<ul>
+<li>Rich terminal output with colors and styles</li>
+<li>Automatic JSON, YAML, CSV serialization from the same handler</li>
+<li>Graceful degradation when terminal lacks capabilities</li>
+</ul>
+<h3 id="rendering"><a class="header" href="#rendering">Rendering</a></h3>
+<ul>
+<li><a href="https://github.com/mitsuhiko/minijinja">MiniJinja</a> templates with semantic style tags</li>
+<li>CSS or YAML stylesheets with light/dark mode support</li>
+<li>Hot reload during development—edit templates without recompiling</li>
+<li>Tabular layouts with alignment, truncation, and Unicode support</li>
+</ul>
+<h3 id="integration"><a class="header" href="#integration">Integration</a></h3>
+<ul>
+<li>Clap integration with automatic dispatch</li>
+<li>Declarative command registration via derive macros</li>
+</ul>
+<h2 id="installation"><a class="header" href="#installation">Installation</a></h2>
+<pre><code class="language-bash">cargo add standout
+</code></pre>
+<h2 id="migrating-an-existing-cli"><a class="header" href="#migrating-an-existing-cli">Migrating an Existing CLI</a></h2>
+<p>Already have a CLI? Standout supports incremental adoption. Standout handles matched commands automatically; unmatched commands return <code>ArgMatches</code> for your existing dispatch:</p>
+<pre><pre class="playground"><code class="language-rust"><span class="boring">#![allow(unused)]
+</span><span class="boring">fn main() {
+</span>if let Some(matches) = app.run(Cli::command(), std::env::args()) {
+    // Standout didn't handle this command, fall back to legacy
+    your_existing_dispatch(matches);
+}
+<span class="boring">}</span></code></pre></pre>
+<p>See the <a href="crates/dispatch/topics/partial-adoption.html">Partial Adoption Guide</a> for the full migration path.</p>
+<h2 id="next-steps"><a class="header" href="#next-steps">Next Steps</a></h2>
+<ul>
+<li><strong><a href="guides/intro-to-standout.html">Introduction to Standout</a></strong> — Adopting Standout in a working CLI. Start here.</li>
+<li><a href="crates/render/guides/intro-to-rendering.html">Introduction to Rendering</a> — Creating polished terminal output</li>
+<li><a href="crates/render/guides/intro-to-tabular.html">Introduction to Tabular</a> — Building aligned, readable tabular layouts</li>
+<li><a href="topics/index.html">All Topics</a> — In-depth documentation for specific systems</li>
+</ul>
+
+                    </main>
+
+                    <nav class="nav-wrapper" aria-label="Page navigation">
+                        <!-- Mobile navigation buttons -->
+
+                            <a rel="next prefetch" href="guides/tldr-intro-to-standout.html" class="mobile-nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
+                                <i class="fa fa-angle-right"></i>
+                            </a>
+
+                        <div style="clear: both"></div>
+                    </nav>
+                </div>
+            </div>
+
+            <nav class="nav-wide-wrapper" aria-label="Page navigation">
+
+                    <a rel="next prefetch" href="guides/tldr-intro-to-standout.html" class="nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
+                        <i class="fa fa-angle-right"></i>
+                    </a>
+            </nav>
+
+        </div>
+
+
+
+
+        <script>
+            window.playground_copyable = true;
+        </script>
+
+
+        <script src="elasticlunr.min.js"></script>
+        <script src="mark.min.js"></script>
+        <script src="searcher.js"></script>
+
+        <script src="clipboard.min.js"></script>
+        <script src="highlight.js"></script>
+        <script src="book.js"></script>
+
+        <!-- Custom JS scripts -->
+
+
+    </div>
+    </body>
+</html>

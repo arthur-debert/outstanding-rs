@@ -1,0 +1,560 @@
+<!DOCTYPE HTML>
+<html lang="en" class="rust" dir="ltr">
+    <head>
+        <!-- Book generated using mdBook -->
+        <meta charset="UTF-8">
+        <title>Render Only - Standout</title>
+
+
+        <!-- Custom HTML head -->
+        
+        <meta name="description" content="A CLI framework for Rust that enforces separation between logic and presentation">
+        <meta name="viewport" content="width=device-width, initial-scale=1">
+        <meta name="theme-color" content="#ffffff">
+
+        <link rel="icon" href="../favicon.svg">
+        <link rel="shortcut icon" href="../favicon.png">
+        <link rel="stylesheet" href="../css/variables.css">
+        <link rel="stylesheet" href="../css/general.css">
+        <link rel="stylesheet" href="../css/chrome.css">
+        <link rel="stylesheet" href="../css/print.css" media="print">
+
+        <!-- Fonts -->
+        <link rel="stylesheet" href="../FontAwesome/css/font-awesome.css">
+        <link rel="stylesheet" href="../fonts/fonts.css">
+
+        <!-- Highlight.js Stylesheets -->
+        <link rel="stylesheet" href="../highlight.css">
+        <link rel="stylesheet" href="../tomorrow-night.css">
+        <link rel="stylesheet" href="../ayu-highlight.css">
+
+        <!-- Custom theme stylesheets -->
+
+    </head>
+    <body class="sidebar-visible no-js">
+    <div id="body-container">
+        <!-- Provide site root to javascript -->
+        <script>
+            var path_to_root = "../";
+            var default_theme = window.matchMedia("(prefers-color-scheme: dark)").matches ? "ayu" : "rust";
+        </script>
+
+        <!-- Work around some values being stored in localStorage wrapped in quotes -->
+        <script>
+            try {
+                var theme = localStorage.getItem('mdbook-theme');
+                var sidebar = localStorage.getItem('mdbook-sidebar');
+
+                if (theme.startsWith('"') && theme.endsWith('"')) {
+                    localStorage.setItem('mdbook-theme', theme.slice(1, theme.length - 1));
+                }
+
+                if (sidebar.startsWith('"') && sidebar.endsWith('"')) {
+                    localStorage.setItem('mdbook-sidebar', sidebar.slice(1, sidebar.length - 1));
+                }
+            } catch (e) { }
+        </script>
+
+        <!-- Set the theme before any content is loaded, prevents flash -->
+        <script>
+            var theme;
+            try { theme = localStorage.getItem('mdbook-theme'); } catch(e) { }
+            if (theme === null || theme === undefined) { theme = default_theme; }
+            var html = document.querySelector('html');
+            html.classList.remove('rust')
+            html.classList.add(theme);
+            var body = document.querySelector('body');
+            body.classList.remove('no-js')
+            body.classList.add('js');
+        </script>
+
+        <input type="checkbox" id="sidebar-toggle-anchor" class="hidden">
+
+        <!-- Hide / unhide sidebar before it is displayed -->
+        <script>
+            var body = document.querySelector('body');
+            var sidebar = null;
+            var sidebar_toggle = document.getElementById("sidebar-toggle-anchor");
+            if (document.body.clientWidth >= 1080) {
+                try { sidebar = localStorage.getItem('mdbook-sidebar'); } catch(e) { }
+                sidebar = sidebar || 'visible';
+            } else {
+                sidebar = 'hidden';
+            }
+            sidebar_toggle.checked = sidebar === 'visible';
+            body.classList.remove('sidebar-visible');
+            body.classList.add("sidebar-" + sidebar);
+        </script>
+
+        <nav id="sidebar" class="sidebar" aria-label="Table of contents">
+            <div class="sidebar-scrollbox">
+                <ol class="chapter"><li class="chapter-item affix "><a href="../index.html">Introduction</a></li><li class="chapter-item affix "><li class="spacer"></li><li class="chapter-item "><a href="../guides/index.html"><strong aria-hidden="true">1.</strong> Guides</a><a class="toggle"><div>❱</div></a></li><li><ol class="section"><li class="chapter-item "><a href="../guides/intro-to-standout.html"><strong aria-hidden="true">1.1.</strong> Introduction to Standout</a></li><li class="chapter-item "><a href="../guides/intro-to-rendering.html"><strong aria-hidden="true">1.2.</strong> Introduction to Rendering</a></li><li class="chapter-item "><a href="../guides/intro-to-tabular.html"><strong aria-hidden="true">1.3.</strong> Introduction to Tabular</a></li><li class="chapter-item "><a href="../guides/tldr-intro-to-standout.html"><strong aria-hidden="true">1.4.</strong> TLDR Quick Start</a></li></ol></li><li class="chapter-item expanded "><a href="../topics/index.html"><strong aria-hidden="true">2.</strong> Topics</a><a class="toggle"><div>❱</div></a></li><li><ol class="section"><li class="chapter-item "><a href="../topics/handler-contract.html"><strong aria-hidden="true">2.1.</strong> Handler Contract</a></li><li class="chapter-item "><a href="../topics/rendering-system.html"><strong aria-hidden="true">2.2.</strong> Rendering System</a></li><li class="chapter-item "><a href="../topics/output-modes.html"><strong aria-hidden="true">2.3.</strong> Output Modes</a></li><li class="chapter-item "><a href="../topics/tabular.html"><strong aria-hidden="true">2.4.</strong> Tabular Layout</a></li><li class="chapter-item "><a href="../topics/app-configuration.html"><strong aria-hidden="true">2.5.</strong> App Configuration</a></li><li class="chapter-item "><a href="../topics/execution-model.html"><strong aria-hidden="true">2.6.</strong> Execution Model</a></li><li class="chapter-item "><a href="../topics/partial-adoption.html"><strong aria-hidden="true">2.7.</strong> Partial Adoption</a></li><li class="chapter-item expanded "><a href="../topics/render-only.html" class="active"><strong aria-hidden="true">2.8.</strong> Render Only</a></li></ol></li></ol>
+            </div>
+            <div id="sidebar-resize-handle" class="sidebar-resize-handle">
+                <div class="sidebar-resize-indicator"></div>
+            </div>
+        </nav>
+
+        <!-- Track and set sidebar scroll position -->
+        <script>
+            var sidebarScrollbox = document.querySelector('#sidebar .sidebar-scrollbox');
+            sidebarScrollbox.addEventListener('click', function(e) {
+                if (e.target.tagName === 'A') {
+                    sessionStorage.setItem('sidebar-scroll', sidebarScrollbox.scrollTop);
+                }
+            }, { passive: true });
+            var sidebarScrollTop = sessionStorage.getItem('sidebar-scroll');
+            sessionStorage.removeItem('sidebar-scroll');
+            if (sidebarScrollTop) {
+                // preserve sidebar scroll position when navigating via links within sidebar
+                sidebarScrollbox.scrollTop = sidebarScrollTop;
+            } else {
+                // scroll sidebar to current active section when navigating via "next/previous chapter" buttons
+                var activeSection = document.querySelector('#sidebar .active');
+                if (activeSection) {
+                    activeSection.scrollIntoView({ block: 'center' });
+                }
+            }
+        </script>
+
+        <div id="page-wrapper" class="page-wrapper">
+
+            <div class="page">
+                                <div id="menu-bar-hover-placeholder"></div>
+                <div id="menu-bar" class="menu-bar sticky">
+                    <div class="left-buttons">
+                        <label id="sidebar-toggle" class="icon-button" for="sidebar-toggle-anchor" title="Toggle Table of Contents" aria-label="Toggle Table of Contents" aria-controls="sidebar">
+                            <i class="fa fa-bars"></i>
+                        </label>
+                        <button id="theme-toggle" class="icon-button" type="button" title="Change theme" aria-label="Change theme" aria-haspopup="true" aria-expanded="false" aria-controls="theme-list">
+                            <i class="fa fa-paint-brush"></i>
+                        </button>
+                        <ul id="theme-list" class="theme-popup" aria-label="Themes" role="menu">
+                            <li role="none"><button role="menuitem" class="theme" id="light">Light</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="rust">Rust</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="coal">Coal</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="navy">Navy</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="ayu">Ayu</button></li>
+                        </ul>
+                        <button id="search-toggle" class="icon-button" type="button" title="Search. (Shortkey: s)" aria-label="Toggle Searchbar" aria-expanded="false" aria-keyshortcuts="S" aria-controls="searchbar">
+                            <i class="fa fa-search"></i>
+                        </button>
+                    </div>
+
+                    <h1 class="menu-title">Standout</h1>
+
+                    <div class="right-buttons">
+                        <a href="../print.html" title="Print this book" aria-label="Print this book">
+                            <i id="print-button" class="fa fa-print"></i>
+                        </a>
+                        <a href="https://github.com/arthur-debert/standout" title="Git repository" aria-label="Git repository">
+                            <i id="git-repository-button" class="fa fa-github"></i>
+                        </a>
+                        <a href="https://github.com/arthur-debert/standout/edit/main/docs/docs/topics/render-only.md" title="Suggest an edit" aria-label="Suggest an edit">
+                            <i id="git-edit-button" class="fa fa-edit"></i>
+                        </a>
+
+                    </div>
+                </div>
+
+                <div id="search-wrapper" class="hidden">
+                    <form id="searchbar-outer" class="searchbar-outer">
+                        <input type="search" id="searchbar" name="searchbar" placeholder="Search this book ..." aria-controls="searchresults-outer" aria-describedby="searchresults-header">
+                    </form>
+                    <div id="searchresults-outer" class="searchresults-outer hidden">
+                        <div id="searchresults-header" class="searchresults-header"></div>
+                        <ul id="searchresults">
+                        </ul>
+                    </div>
+                </div>
+
+                <!-- Apply ARIA attributes after the sidebar and the sidebar toggle button are added to the DOM -->
+                <script>
+                    document.getElementById('sidebar-toggle').setAttribute('aria-expanded', sidebar === 'visible');
+                    document.getElementById('sidebar').setAttribute('aria-hidden', sidebar !== 'visible');
+                    Array.from(document.querySelectorAll('#sidebar a')).forEach(function(link) {
+                        link.setAttribute('tabIndex', sidebar === 'visible' ? 0 : -1);
+                    });
+                </script>
+
+                <div id="content" class="content">
+                    <main>
+                        <h1 id="how-to-use-only-the-rendering-layer"><a class="header" href="#how-to-use-only-the-rendering-layer">How To: Use Only the Rendering Layer</a></h1>
+<p>Standout's rendering layer is fully decoupled from its CLI integration (App, Clap, Dispatch). This means you can use the template engine, theme system, and structured output logic in any context—servers, TUI apps, or even other CLI frameworks.</p>
+<p>This decoupling allows you to maintain consistent styling and logic across different parts of your ecosystem.</p>
+<h2 id="when-to-use-this"><a class="header" href="#when-to-use-this">When to Use This</a></h2>
+<ul>
+<li>Adding styled output to an existing application</li>
+<li>Building a library that produces formatted terminal output</li>
+<li>Server-side rendering of CLI-style output</li>
+<li>Testing templates in isolation</li>
+</ul>
+<h2 id="basic-rendering"><a class="header" href="#basic-rendering">Basic Rendering</a></h2>
+<p>The simplest approach—auto-detect terminal capabilities:</p>
+<pre><pre class="playground"><code class="language-rust">use standout::{render, Theme};
+use console::Style;
+use serde::Serialize;
+
+#[derive(Serialize)]
+struct Report {
+    title: String,
+    items: Vec&lt;String&gt;,
+}
+
+fn main() -&gt; Result&lt;(), Box&lt;dyn std::error::Error&gt;&gt; {
+    let theme = Theme::new()
+        .add("title", Style::new().bold().cyan())
+        .add("item", Style::new().green());
+
+    let data = Report {
+        title: "Status Report".into(),
+        items: vec!["Task A: complete".into(), "Task B: pending".into()],
+    };
+
+    let output = render(
+        r#"[title]{{ title }}[/title]
+{% for item in items %}
+  [item]•[/item] {{ item }}
+{% endfor %}"#,
+        &amp;data,
+        &amp;theme,
+    )?;
+
+    println!("{}", output);
+    Ok(())
+}</code></pre></pre>
+<h2 id="explicit-output-mode"><a class="header" href="#explicit-output-mode">Explicit Output Mode</a></h2>
+<p>Control ANSI code generation:</p>
+<pre><pre class="playground"><code class="language-rust"><span class="boring">#![allow(unused)]
+</span><span class="boring">fn main() {
+</span>use standout::{render_with_output, OutputMode};
+
+// Force ANSI codes (even when piping)
+let colored = render_with_output(template, &amp;data, &amp;theme, OutputMode::Term)?;
+
+// Force plain text (no ANSI codes)
+let plain = render_with_output(template, &amp;data, &amp;theme, OutputMode::Text)?;
+
+// Debug mode (tags as literals)
+let debug = render_with_output(template, &amp;data, &amp;theme, OutputMode::TermDebug)?;
+<span class="boring">}</span></code></pre></pre>
+<h2 id="auto-dispatch-template-vs-serialization"><a class="header" href="#auto-dispatch-template-vs-serialization">Auto-Dispatch: Template vs Serialization</a></h2>
+<p><code>render_auto</code> chooses between template rendering and direct serialization:</p>
+<pre><pre class="playground"><code class="language-rust"><span class="boring">#![allow(unused)]
+</span><span class="boring">fn main() {
+</span>use standout::render_auto;
+
+fn format_output(data: &amp;Report, mode: OutputMode) -&gt; Result&lt;String, Error&gt; {
+    render_auto(template, data, &amp;theme, mode)
+}
+
+// Term/Text/Auto: renders template
+format_output(&amp;data, OutputMode::Term)?;
+
+// Json/Yaml/Xml/Csv: serializes data directly
+format_output(&amp;data, OutputMode::Json)?;
+<span class="boring">}</span></code></pre></pre>
+<p>Same function, same data—output format determined by mode.</p>
+<h2 id="full-control-output-mode--color-mode"><a class="header" href="#full-control-output-mode--color-mode">Full Control: Output Mode + Color Mode</a></h2>
+<p>For tests or when forcing specific behavior:</p>
+<pre><pre class="playground"><code class="language-rust"><span class="boring">#![allow(unused)]
+</span><span class="boring">fn main() {
+</span>use standout::{render_with_mode, ColorMode};
+
+// Force dark mode styling
+let dark = render_with_mode(
+    template,
+    &amp;data,
+    &amp;theme,
+    OutputMode::Term,
+    ColorMode::Dark,
+)?;
+
+// Force light mode styling
+let light = render_with_mode(
+    template,
+    &amp;data,
+    &amp;theme,
+    OutputMode::Term,
+    ColorMode::Light,
+)?;
+<span class="boring">}</span></code></pre></pre>
+<h2 id="building-themes-programmatically"><a class="header" href="#building-themes-programmatically">Building Themes Programmatically</a></h2>
+<p>No YAML files needed:</p>
+<pre><pre class="playground"><code class="language-rust"><span class="boring">#![allow(unused)]
+</span><span class="boring">fn main() {
+</span>use standout::Theme;
+use console::{Style, Color};
+
+let theme = Theme::new()
+    // Simple styles
+    .add("bold", Style::new().bold())
+    .add("muted", Style::new().dim())
+    .add("error", Style::new().red().bold())
+
+    // With specific colors
+    .add("info", Style::new().fg(Color::Cyan))
+    .add("warning", Style::new().fg(Color::Yellow))
+
+    // Aliases
+    .add("disabled", "muted")
+    .add("inactive", "muted")
+
+    .add_adaptive(
+        "panel",
+        Style::new().bold(),
+        Some(Style::new().fg(Color::Black)),  // Light mode
+        Some(Style::new().fg(Color::White)),  // Dark mode
+    );
+<span class="boring">}</span></code></pre></pre>
+<h3 id="theme-merging"><a class="header" href="#theme-merging">Theme Merging</a></h3>
+<p>You can layer themes using <code>merge</code>. This is useful for user overrides:</p>
+<pre><pre class="playground"><code class="language-rust"><span class="boring">#![allow(unused)]
+</span><span class="boring">fn main() {
+</span>let base_theme = Theme::from_file("base.yaml")?;
+let user_overrides = Theme::from_file("user-config.yaml")?;
+
+// User styles overwrite base styles
+let final_theme = base_theme.merge(user_overrides);
+<span class="boring">}</span></code></pre></pre>
+<h2 id="pre-compiled-renderer"><a class="header" href="#pre-compiled-renderer">Pre-Compiled Renderer</a></h2>
+<p>For repeated rendering with the same templates:</p>
+<pre><pre class="playground"><code class="language-rust"><span class="boring">#![allow(unused)]
+</span><span class="boring">fn main() {
+</span>use standout::Renderer;
+
+let theme = Theme::new()
+    .add("title", Style::new().bold());
+
+let mut renderer = Renderer::new(theme)?;
+
+// Register templates
+renderer.add_template("header", "[title]{{ title }}[/title]")?;
+renderer.add_template("item", "  - {{ name }}: {{ value }}")?;
+
+// Render multiple times
+for record in records {
+    let header = renderer.render("header", &amp;record)?;
+    println!("{}", header);
+
+    for item in &amp;record.items {
+        let line = renderer.render("item", item)?;
+        println!("{}", line);
+    }
+}
+<span class="boring">}</span></code></pre></pre>
+<h2 id="loading-templates-from-files"><a class="header" href="#loading-templates-from-files">Loading Templates from Files</a></h2>
+<pre><pre class="playground"><code class="language-rust"><span class="boring">#![allow(unused)]
+</span><span class="boring">fn main() {
+</span>let mut renderer = Renderer::new(theme)?;
+
+// Add directory of templates
+renderer.add_template_dir("./templates")?;
+
+// Templates resolved by name (without extension)
+let output = renderer.render("report", &amp;data)?;
+<span class="boring">}</span></code></pre></pre>
+<p>In debug builds, file-based templates are re-read on each render (hot reload).</p>
+<h2 id="using-embedded-templates"><a class="header" href="#using-embedded-templates">Using Embedded Templates</a></h2>
+<p>For release builds, embed templates at compile time:</p>
+<pre><pre class="playground"><code class="language-rust"><span class="boring">#![allow(unused)]
+</span><span class="boring">fn main() {
+</span>use standout::{embed_templates, Renderer, Theme};
+
+let theme = Theme::new()
+    .add("title", Style::new().bold());
+
+let mut renderer = Renderer::new(theme)?;
+
+// Load all templates from the embedded source
+renderer.with_embedded_source(embed_templates!("src/templates"));
+
+// Render by name (with or without extension)
+let output = renderer.render("report", &amp;data)?;
+
+// Includes work with extensionless names
+// If src/templates/_header.jinja exists, use {% include "_header" %}
+<span class="boring">}</span></code></pre></pre>
+<p>Templates are accessible by both extensionless name (<code>"report"</code>) and with extension (<code>"report.jinja"</code>).</p>
+<h2 id="loading-themes-from-embedded-styles"><a class="header" href="#loading-themes-from-embedded-styles">Loading Themes from Embedded Styles</a></h2>
+<p>For production deployments, embed stylesheets:</p>
+<pre><pre class="playground"><code class="language-rust"><span class="boring">#![allow(unused)]
+</span><span class="boring">fn main() {
+</span>use standout::{embed_styles, StylesheetRegistry, Renderer};
+
+// Embed all .yaml files from src/styles/
+let styles = embed_styles!("src/styles");
+
+// Convert to a registry for theme lookup
+let mut registry: StylesheetRegistry = styles.into();
+
+// Get a theme by name (e.g., "default" for src/styles/default.yaml)
+let theme = registry.get("default")?;
+
+// Use with Renderer
+let mut renderer = Renderer::new(theme)?;
+<span class="boring">}</span></code></pre></pre>
+<p>The relationship:</p>
+<ul>
+<li><code>embed_styles!</code> → <code>EmbeddedStyles</code> (compile-time embedding)</li>
+<li><code>StylesheetRegistry</code> → manages multiple themes, hot-reload in debug</li>
+<li><code>Theme</code> → resolved styles for a single theme, used by Renderer</li>
+</ul>
+<h2 id="feature-support-includes"><a class="header" href="#feature-support-includes">Feature Support: Includes</a></h2>
+<p>Template includes (<code>{% include "partial" %}</code>) require a template registry:</p>
+<div class="table-wrapper"><table><thead><tr><th>Approach</th><th>Includes</th><th>Notes</th></tr></thead><tbody>
+<tr><td><code>Renderer</code></td><td>✓</td><td>Use <code>add_template()</code> or <code>with_embedded_source()</code></td></tr>
+<tr><td><code>render()</code> / <code>render_auto()</code></td><td>✗</td><td>Takes template string, no registry</td></tr>
+</tbody></table>
+</div>
+<p>For one-off templates without includes, use the standalone <code>render*</code> functions.
+For multi-template projects with includes, use <code>Renderer</code>.</p>
+<h2 id="template-validation"><a class="header" href="#template-validation">Template Validation</a></h2>
+<p>Catch style tag errors without producing output:</p>
+<pre><pre class="playground"><code class="language-rust"><span class="boring">#![allow(unused)]
+</span><span class="boring">fn main() {
+</span>use standout::validate_template;
+
+let result = validate_template(template, &amp;sample_data, &amp;theme);
+match result {
+    Ok(()) =&gt; println!("Template is valid"),
+    Err(e) =&gt; {
+        eprintln!("Template errors: {}", e);
+        std::process::exit(1);
+    }
+}
+<span class="boring">}</span></code></pre></pre>
+<p>Use at startup or in tests to fail fast on typos.</p>
+<h2 id="context-injection"><a class="header" href="#context-injection">Context Injection</a></h2>
+<h3 id="simple-variables-with-render_with_vars"><a class="header" href="#simple-variables-with-render_with_vars">Simple Variables with <code>render_with_vars</code></a></h3>
+<p>For adding simple key-value pairs to the template context:</p>
+<pre><pre class="playground"><code class="language-rust"><span class="boring">#![allow(unused)]
+</span><span class="boring">fn main() {
+</span>use standout::{render_with_vars, Theme, OutputMode};
+use std::collections::HashMap;
+
+let theme = Theme::new();
+
+let mut vars = HashMap::new();
+vars.insert("version", "1.0.0");
+vars.insert("app_name", "MyApp");
+
+let output = render_with_vars(
+    "{{ name }} - {{ app_name }} v{{ version }}",
+    &amp;data,
+    &amp;theme,
+    OutputMode::Text,
+    vars,
+)?;
+<span class="boring">}</span></code></pre></pre>
+<p>This is the recommended approach for most use cases.</p>
+<h3 id="full-context-system"><a class="header" href="#full-context-system">Full Context System</a></h3>
+<p>For dynamic context computed at render time:</p>
+<pre><pre class="playground"><code class="language-rust"><span class="boring">#![allow(unused)]
+</span><span class="boring">fn main() {
+</span>use standout::{render_with_context, Theme, OutputMode};
+use standout::context::{ContextRegistry, RenderContext};
+use minijinja::Value;
+
+let mut context = ContextRegistry::new();
+context.add_static("version", Value::from("1.0.0"));
+context.add_provider("timestamp", |_ctx: &amp;RenderContext| {
+    Value::from(chrono::Utc::now().to_rfc3339())
+});
+
+let render_ctx = RenderContext::new(
+    OutputMode::Term,
+    Some(80),
+    &amp;theme,
+    &amp;serde_json::to_value(&amp;data)?,
+);
+
+let output = render_with_context(
+    template,
+    &amp;data,
+    &amp;theme,
+    OutputMode::Term,
+    &amp;context,
+    &amp;render_ctx,
+)?;
+<span class="boring">}</span></code></pre></pre>
+<h2 id="structured-output-without-templates"><a class="header" href="#structured-output-without-templates">Structured Output Without Templates</a></h2>
+<p>For JSON/YAML output, templates are bypassed:</p>
+<pre><pre class="playground"><code class="language-rust"><span class="boring">#![allow(unused)]
+</span><span class="boring">fn main() {
+</span>use standout::render_auto;
+
+#[derive(Serialize)]
+struct ApiResponse {
+    status: String,
+    data: Vec&lt;Item&gt;,
+}
+
+let response = ApiResponse { ... };
+
+// Direct JSON serialization
+let json = render_auto("unused", &amp;response, &amp;theme, OutputMode::Json)?;
+println!("{}", json);
+
+// Direct YAML serialization
+let yaml = render_auto("unused", &amp;response, &amp;theme, OutputMode::Yaml)?;
+<span class="boring">}</span></code></pre></pre>
+<p>The template parameter is ignored for structured modes.</p>
+<h2 id="minimal-example"><a class="header" href="#minimal-example">Minimal Example</a></h2>
+<p>Absolute minimum for styled output:</p>
+<pre><pre class="playground"><code class="language-rust"><span class="boring">#![allow(unused)]
+</span><span class="boring">fn main() {
+</span>use standout::{render, Theme};
+use console::Style;
+
+let theme = Theme::new().add("ok", Style::new().green());
+let output = render("[ok]Success[/ok]", &amp;(), &amp;theme)?;
+println!("{}", output);
+<span class="boring">}</span></code></pre></pre>
+<p>No files, no configuration—just a theme and a template string.</p>
+
+                    </main>
+
+                    <nav class="nav-wrapper" aria-label="Page navigation">
+                        <!-- Mobile navigation buttons -->
+                            <a rel="prev" href="../topics/partial-adoption.html" class="mobile-nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
+                                <i class="fa fa-angle-left"></i>
+                            </a>
+
+
+                        <div style="clear: both"></div>
+                    </nav>
+                </div>
+            </div>
+
+            <nav class="nav-wide-wrapper" aria-label="Page navigation">
+                    <a rel="prev" href="../topics/partial-adoption.html" class="nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
+                        <i class="fa fa-angle-left"></i>
+                    </a>
+
+            </nav>
+
+        </div>
+
+
+
+
+        <script>
+            window.playground_copyable = true;
+        </script>
+
+
+        <script src="../elasticlunr.min.js"></script>
+        <script src="../mark.min.js"></script>
+        <script src="../searcher.js"></script>
+
+        <script src="../clipboard.min.js"></script>
+        <script src="../highlight.js"></script>
+        <script src="../book.js"></script>
+
+        <!-- Custom JS scripts -->
+
+
+    </div>
+    </body>
+</html>

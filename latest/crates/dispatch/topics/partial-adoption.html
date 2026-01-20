@@ -1,0 +1,474 @@
+<!DOCTYPE HTML>
+<html lang="en" class="rust" dir="ltr">
+    <head>
+        <!-- Book generated using mdBook -->
+        <meta charset="UTF-8">
+        <title>Partial Adoption - Standout</title>
+
+
+        <!-- Custom HTML head -->
+        
+        <meta name="description" content="A CLI framework for Rust that enforces separation between logic and presentation">
+        <meta name="viewport" content="width=device-width, initial-scale=1">
+        <meta name="theme-color" content="#ffffff">
+
+        <link rel="icon" href="../../../favicon.svg">
+        <link rel="shortcut icon" href="../../../favicon.png">
+        <link rel="stylesheet" href="../../../css/variables.css">
+        <link rel="stylesheet" href="../../../css/general.css">
+        <link rel="stylesheet" href="../../../css/chrome.css">
+        <link rel="stylesheet" href="../../../css/print.css" media="print">
+
+        <!-- Fonts -->
+        <link rel="stylesheet" href="../../../FontAwesome/css/font-awesome.css">
+        <link rel="stylesheet" href="../../../fonts/fonts.css">
+
+        <!-- Highlight.js Stylesheets -->
+        <link rel="stylesheet" href="../../../highlight.css">
+        <link rel="stylesheet" href="../../../tomorrow-night.css">
+        <link rel="stylesheet" href="../../../ayu-highlight.css">
+
+        <!-- Custom theme stylesheets -->
+
+    </head>
+    <body class="sidebar-visible no-js">
+    <div id="body-container">
+        <!-- Provide site root to javascript -->
+        <script>
+            var path_to_root = "../../../";
+            var default_theme = window.matchMedia("(prefers-color-scheme: dark)").matches ? "ayu" : "rust";
+        </script>
+
+        <!-- Work around some values being stored in localStorage wrapped in quotes -->
+        <script>
+            try {
+                var theme = localStorage.getItem('mdbook-theme');
+                var sidebar = localStorage.getItem('mdbook-sidebar');
+
+                if (theme.startsWith('"') && theme.endsWith('"')) {
+                    localStorage.setItem('mdbook-theme', theme.slice(1, theme.length - 1));
+                }
+
+                if (sidebar.startsWith('"') && sidebar.endsWith('"')) {
+                    localStorage.setItem('mdbook-sidebar', sidebar.slice(1, sidebar.length - 1));
+                }
+            } catch (e) { }
+        </script>
+
+        <!-- Set the theme before any content is loaded, prevents flash -->
+        <script>
+            var theme;
+            try { theme = localStorage.getItem('mdbook-theme'); } catch(e) { }
+            if (theme === null || theme === undefined) { theme = default_theme; }
+            var html = document.querySelector('html');
+            html.classList.remove('rust')
+            html.classList.add(theme);
+            var body = document.querySelector('body');
+            body.classList.remove('no-js')
+            body.classList.add('js');
+        </script>
+
+        <input type="checkbox" id="sidebar-toggle-anchor" class="hidden">
+
+        <!-- Hide / unhide sidebar before it is displayed -->
+        <script>
+            var body = document.querySelector('body');
+            var sidebar = null;
+            var sidebar_toggle = document.getElementById("sidebar-toggle-anchor");
+            if (document.body.clientWidth >= 1080) {
+                try { sidebar = localStorage.getItem('mdbook-sidebar'); } catch(e) { }
+                sidebar = sidebar || 'visible';
+            } else {
+                sidebar = 'hidden';
+            }
+            sidebar_toggle.checked = sidebar === 'visible';
+            body.classList.remove('sidebar-visible');
+            body.classList.add("sidebar-" + sidebar);
+        </script>
+
+        <nav id="sidebar" class="sidebar" aria-label="Table of contents">
+            <div class="sidebar-scrollbox">
+                <ol class="chapter"><li class="chapter-item affix "><a href="../../../index.html">Introduction</a></li><li class="chapter-item affix "><li class="spacer"></li><li class="chapter-item affix "><li class="part-title">Getting Started</li><li class="chapter-item "><a href="../../../guides/tldr-intro-to-standout.html"><strong aria-hidden="true">1.</strong> Quick Start</a></li><li class="chapter-item "><a href="../../../guides/intro-to-standout.html"><strong aria-hidden="true">2.</strong> Introduction to Standout</a></li><li class="chapter-item affix "><li class="spacer"></li><li class="chapter-item affix "><li class="part-title">Rendering (standout-render)</li><li class="chapter-item "><a href="../../../crates/render/guides/intro-to-rendering.html"><strong aria-hidden="true">3.</strong> Introduction to Rendering</a></li><li class="chapter-item "><a href="../../../crates/render/guides/intro-to-tabular.html"><strong aria-hidden="true">4.</strong> Introduction to Tabular</a></li><li class="chapter-item "><a href="../../../crates/render/topics/styling-system.html"><strong aria-hidden="true">5.</strong> Styling System</a></li><li class="chapter-item "><a href="../../../crates/render/topics/templating.html"><strong aria-hidden="true">6.</strong> Templating</a></li><li class="chapter-item "><a href="../../../crates/render/topics/file-system-resources.html"><strong aria-hidden="true">7.</strong> File System Resources</a></li><li class="chapter-item affix "><li class="spacer"></li><li class="chapter-item affix "><li class="part-title">Dispatch (standout-dispatch)</li><li class="chapter-item "><a href="../../../crates/dispatch/guides/intro-to-dispatch.html"><strong aria-hidden="true">8.</strong> Introduction to Dispatch</a></li><li class="chapter-item "><a href="../../../crates/dispatch/topics/handler-contract.html"><strong aria-hidden="true">9.</strong> Handler Contract</a></li><li class="chapter-item "><a href="../../../crates/dispatch/topics/execution-model.html"><strong aria-hidden="true">10.</strong> Execution Model</a></li><li class="chapter-item expanded "><a href="../../../crates/dispatch/topics/partial-adoption.html" class="active"><strong aria-hidden="true">11.</strong> Partial Adoption</a></li><li class="chapter-item affix "><li class="spacer"></li><li class="chapter-item affix "><li class="part-title">Framework Topics</li><li class="chapter-item "><a href="../../../topics/output-modes.html"><strong aria-hidden="true">12.</strong> Output Modes</a></li><li class="chapter-item "><a href="../../../topics/app-configuration.html"><strong aria-hidden="true">13.</strong> App Configuration</a></li></ol>
+            </div>
+            <div id="sidebar-resize-handle" class="sidebar-resize-handle">
+                <div class="sidebar-resize-indicator"></div>
+            </div>
+        </nav>
+
+        <!-- Track and set sidebar scroll position -->
+        <script>
+            var sidebarScrollbox = document.querySelector('#sidebar .sidebar-scrollbox');
+            sidebarScrollbox.addEventListener('click', function(e) {
+                if (e.target.tagName === 'A') {
+                    sessionStorage.setItem('sidebar-scroll', sidebarScrollbox.scrollTop);
+                }
+            }, { passive: true });
+            var sidebarScrollTop = sessionStorage.getItem('sidebar-scroll');
+            sessionStorage.removeItem('sidebar-scroll');
+            if (sidebarScrollTop) {
+                // preserve sidebar scroll position when navigating via links within sidebar
+                sidebarScrollbox.scrollTop = sidebarScrollTop;
+            } else {
+                // scroll sidebar to current active section when navigating via "next/previous chapter" buttons
+                var activeSection = document.querySelector('#sidebar .active');
+                if (activeSection) {
+                    activeSection.scrollIntoView({ block: 'center' });
+                }
+            }
+        </script>
+
+        <div id="page-wrapper" class="page-wrapper">
+
+            <div class="page">
+                                <div id="menu-bar-hover-placeholder"></div>
+                <div id="menu-bar" class="menu-bar sticky">
+                    <div class="left-buttons">
+                        <label id="sidebar-toggle" class="icon-button" for="sidebar-toggle-anchor" title="Toggle Table of Contents" aria-label="Toggle Table of Contents" aria-controls="sidebar">
+                            <i class="fa fa-bars"></i>
+                        </label>
+                        <button id="theme-toggle" class="icon-button" type="button" title="Change theme" aria-label="Change theme" aria-haspopup="true" aria-expanded="false" aria-controls="theme-list">
+                            <i class="fa fa-paint-brush"></i>
+                        </button>
+                        <ul id="theme-list" class="theme-popup" aria-label="Themes" role="menu">
+                            <li role="none"><button role="menuitem" class="theme" id="light">Light</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="rust">Rust</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="coal">Coal</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="navy">Navy</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="ayu">Ayu</button></li>
+                        </ul>
+                        <button id="search-toggle" class="icon-button" type="button" title="Search. (Shortkey: s)" aria-label="Toggle Searchbar" aria-expanded="false" aria-keyshortcuts="S" aria-controls="searchbar">
+                            <i class="fa fa-search"></i>
+                        </button>
+                    </div>
+
+                    <h1 class="menu-title">Standout</h1>
+
+                    <div class="right-buttons">
+                        <a href="../../../print.html" title="Print this book" aria-label="Print this book">
+                            <i id="print-button" class="fa fa-print"></i>
+                        </a>
+                        <a href="https://github.com/arthur-debert/standout" title="Git repository" aria-label="Git repository">
+                            <i id="git-repository-button" class="fa fa-github"></i>
+                        </a>
+                        <a href="https://github.com/arthur-debert/standout/edit/main/docs/docs/crates/dispatch/topics/partial-adoption.md" title="Suggest an edit" aria-label="Suggest an edit">
+                            <i id="git-edit-button" class="fa fa-edit"></i>
+                        </a>
+
+                    </div>
+                </div>
+
+                <div id="search-wrapper" class="hidden">
+                    <form id="searchbar-outer" class="searchbar-outer">
+                        <input type="search" id="searchbar" name="searchbar" placeholder="Search this book ..." aria-controls="searchresults-outer" aria-describedby="searchresults-header">
+                    </form>
+                    <div id="searchresults-outer" class="searchresults-outer hidden">
+                        <div id="searchresults-header" class="searchresults-header"></div>
+                        <ul id="searchresults">
+                        </ul>
+                    </div>
+                </div>
+
+                <!-- Apply ARIA attributes after the sidebar and the sidebar toggle button are added to the DOM -->
+                <script>
+                    document.getElementById('sidebar-toggle').setAttribute('aria-expanded', sidebar === 'visible');
+                    document.getElementById('sidebar').setAttribute('aria-hidden', sidebar !== 'visible');
+                    Array.from(document.querySelectorAll('#sidebar a')).forEach(function(link) {
+                        link.setAttribute('tabIndex', sidebar === 'visible' ? 0 : -1);
+                    });
+                </script>
+
+                <div id="content" class="content">
+                    <main>
+                        <h1 id="partial-adoption"><a class="header" href="#partial-adoption">Partial Adoption</a></h1>
+<p>One of the key benefits of <code>standout-dispatch</code> is that you don't need to adopt it all at once. You can migrate one command at a time, keeping existing code alongside dispatch-managed commands.</p>
+<hr />
+<h2 id="the-problem-with-all-or-nothing-frameworks"><a class="header" href="#the-problem-with-all-or-nothing-frameworks">The Problem with All-or-Nothing Frameworks</a></h2>
+<p>Many CLI frameworks require a complete rewrite:</p>
+<ul>
+<li>All commands must use the framework's patterns</li>
+<li>Existing code can't coexist with framework code</li>
+<li>Migration is a massive undertaking</li>
+<li>Risk is concentrated in a single change</li>
+</ul>
+<p><code>standout-dispatch</code> is designed differently. It's a library, not a framework—you call it, it doesn't call you.</p>
+<hr />
+<h2 id="strategy-migrate-one-command-at-a-time"><a class="header" href="#strategy-migrate-one-command-at-a-time">Strategy: Migrate One Command at a Time</a></h2>
+<h3 id="step-1-identify-a-good-starting-command"><a class="header" href="#step-1-identify-a-good-starting-command">Step 1: Identify a Good Starting Command</a></h3>
+<p>Pick a command that:</p>
+<ul>
+<li>Is self-contained (few dependencies on other commands)</li>
+<li>Has clear inputs and outputs</li>
+<li>Would benefit from structured output (JSON, etc.)</li>
+<li>Has existing tests you can update</li>
+</ul>
+<h3 id="step-2-create-the-handler"><a class="header" href="#step-2-create-the-handler">Step 2: Create the Handler</a></h3>
+<p>Convert the command's logic to a handler:</p>
+<pre><pre class="playground"><code class="language-rust"><span class="boring">#![allow(unused)]
+</span><span class="boring">fn main() {
+</span>// Before: mixed logic and output
+fn list_command(matches: &amp;ArgMatches) {
+    let items = storage::list().unwrap();
+    for item in items {
+        println!("{}: {}", item.id, item.name);
+    }
+}
+
+// After: handler returns data
+fn list_handler(_m: &amp;ArgMatches, _ctx: &amp;CommandContext) -&gt; HandlerResult&lt;Vec&lt;Item&gt;&gt; {
+    let items = storage::list()?;
+    Ok(Output::Render(items))
+}
+<span class="boring">}</span></code></pre></pre>
+<h3 id="step-3-set-up-dispatch-for-that-command"><a class="header" href="#step-3-set-up-dispatch-for-that-command">Step 3: Set Up Dispatch for That Command</a></h3>
+<pre><pre class="playground"><code class="language-rust">use standout_dispatch::{FnHandler, from_fn, extract_command_path, path_to_string};
+
+fn main() {
+    let cmd = build_clap_command();  // Your existing clap definition
+    let matches = cmd.get_matches();
+    let path = extract_command_path(&amp;matches);
+
+    // Dispatch-managed command
+    if path_to_string(&amp;path) == "list" {
+        let handler = FnHandler::new(list_handler);
+        let render = from_fn(|data, _| Ok(serde_json::to_string_pretty(data)?));
+
+        let ctx = CommandContext { command_path: path };
+        if let Ok(Output::Render(data)) = handler.handle(&amp;matches, &amp;ctx) {
+            let json = serde_json::to_value(&amp;data).unwrap();
+            println!("{}", render(&amp;json, "list").unwrap());
+        }
+        return;
+    }
+
+    // Fall back to existing code for other commands
+    match matches.subcommand() {
+        Some(("add", sub)) =&gt; add_command(sub),
+        Some(("delete", sub)) =&gt; delete_command(sub),
+        _ =&gt; {}
+    }
+}</code></pre></pre>
+<h3 id="step-4-repeat"><a class="header" href="#step-4-repeat">Step 4: Repeat</a></h3>
+<p>Migrate one command at a time. Each migration:</p>
+<ul>
+<li>Is a small, reviewable change</li>
+<li>Can be tested independently</li>
+<li>Doesn't affect other commands</li>
+<li>Is easy to roll back if needed</li>
+</ul>
+<hr />
+<h2 id="coexistence-patterns"><a class="header" href="#coexistence-patterns">Coexistence Patterns</a></h2>
+<h3 id="pattern-1-check-path-first"><a class="header" href="#pattern-1-check-path-first">Pattern 1: Check Path First</a></h3>
+<pre><pre class="playground"><code class="language-rust"><span class="boring">#![allow(unused)]
+</span><span class="boring">fn main() {
+</span>let path = extract_command_path(&amp;matches);
+
+// Dispatch-managed commands
+let dispatch_commands = ["list", "show", "export"];
+if dispatch_commands.contains(&amp;path_to_string(&amp;path).as_str()) {
+    dispatch_command(&amp;matches, &amp;path);
+    return;
+}
+
+// Legacy commands
+legacy_dispatch(&amp;matches);
+<span class="boring">}</span></code></pre></pre>
+<h3 id="pattern-2-try-dispatch-fall-back"><a class="header" href="#pattern-2-try-dispatch-fall-back">Pattern 2: Try Dispatch, Fall Back</a></h3>
+<pre><pre class="playground"><code class="language-rust"><span class="boring">#![allow(unused)]
+</span><span class="boring">fn main() {
+</span>if let Some(result) = try_dispatch(&amp;matches) {
+    handle_dispatch_result(result);
+} else {
+    // Not a dispatch-managed command
+    legacy_dispatch(&amp;matches);
+}
+<span class="boring">}</span></code></pre></pre>
+<h3 id="pattern-3-wrapper-function"><a class="header" href="#pattern-3-wrapper-function">Pattern 3: Wrapper Function</a></h3>
+<pre><pre class="playground"><code class="language-rust"><span class="boring">#![allow(unused)]
+</span><span class="boring">fn main() {
+</span>fn run_command(matches: &amp;ArgMatches) {
+    let path = extract_command_path(matches);
+
+    match path_to_string(&amp;path).as_str() {
+        // New dispatch-based handlers
+        "list" =&gt; run_with_dispatch(list_handler, matches, &amp;path),
+        "show" =&gt; run_with_dispatch(show_handler, matches, &amp;path),
+
+        // Legacy handlers (unchanged)
+        "add" =&gt; add_command(get_deepest_matches(matches)),
+        "delete" =&gt; delete_command(get_deepest_matches(matches)),
+
+        _ =&gt; eprintln!("Unknown command"),
+    }
+}
+
+fn run_with_dispatch&lt;T: Serialize&gt;(
+    handler: impl Fn(&amp;ArgMatches, &amp;CommandContext) -&gt; HandlerResult&lt;T&gt;,
+    matches: &amp;ArgMatches,
+    path: &amp;[String],
+) {
+    let ctx = CommandContext { command_path: path.to_vec() };
+    match handler(matches, &amp;ctx) {
+        Ok(Output::Render(data)) =&gt; {
+            let json = serde_json::to_value(&amp;data).unwrap();
+            println!("{}", serde_json::to_string_pretty(&amp;json).unwrap());
+        }
+        Ok(Output::Silent) =&gt; {}
+        Ok(Output::Binary { data, filename }) =&gt; {
+            std::fs::write(&amp;filename, &amp;data).unwrap();
+        }
+        Err(e) =&gt; eprintln!("Error: {}", e),
+    }
+}
+<span class="boring">}</span></code></pre></pre>
+<hr />
+<h2 id="benefits-during-migration"><a class="header" href="#benefits-during-migration">Benefits During Migration</a></h2>
+<h3 id="immediate-benefits-per-command"><a class="header" href="#immediate-benefits-per-command">Immediate Benefits per Command</a></h3>
+<p>Each migrated command gains:</p>
+<ol>
+<li><strong>Structured output</strong> — JSON/YAML support</li>
+<li><strong>Testable logic</strong> — Handler is a pure function</li>
+<li><strong>Error handling</strong> — <code>?</code> operator, proper error types</li>
+<li><strong>Hook points</strong> — Add logging, auth without touching handler</li>
+</ol>
+<h3 id="progressive-enhancement"><a class="header" href="#progressive-enhancement">Progressive Enhancement</a></h3>
+<p>As you migrate more commands:</p>
+<ol>
+<li><strong>Shared hooks</strong> — Apply auth check to all migrated commands</li>
+<li><strong>Consistent output</strong> — Same renderer for all commands</li>
+<li><strong>Unified error handling</strong> — Errors formatted consistently</li>
+</ol>
+<hr />
+<h2 id="migration-checklist"><a class="header" href="#migration-checklist">Migration Checklist</a></h2>
+<p>For each command:</p>
+<ul>
+<li><input disabled="" type="checkbox"/>
+Create data types (<code>#[derive(Serialize)]</code>)</li>
+<li><input disabled="" type="checkbox"/>
+Write handler function</li>
+<li><input disabled="" type="checkbox"/>
+Add to dispatch routing</li>
+<li><input disabled="" type="checkbox"/>
+Update tests to test handler directly</li>
+<li><input disabled="" type="checkbox"/>
+Verify existing behavior unchanged</li>
+<li><input disabled="" type="checkbox"/>
+Document the migration</li>
+</ul>
+<hr />
+<h2 id="example-full-migration"><a class="header" href="#example-full-migration">Example: Full Migration</a></h2>
+<p>Before (monolithic):</p>
+<pre><pre class="playground"><code class="language-rust">fn main() {
+    let matches = build_cli().get_matches();
+
+    match matches.subcommand() {
+        Some(("list", sub)) =&gt; list_command(sub),
+        Some(("add", sub)) =&gt; add_command(sub),
+        Some(("delete", sub)) =&gt; delete_command(sub),
+        Some(("export", sub)) =&gt; export_command(sub),
+        _ =&gt; {}
+    }
+}</code></pre></pre>
+<p>After (gradual migration):</p>
+<pre><pre class="playground"><code class="language-rust">fn main() {
+    let matches = build_cli().get_matches();
+    let path = extract_command_path(&amp;matches);
+
+    // Dispatch-managed (migrated)
+    if let Some(result) = dispatch_if_managed(&amp;matches, &amp;path) {
+        return;
+    }
+
+    // Legacy (not yet migrated)
+    match matches.subcommand() {
+        Some(("add", sub)) =&gt; add_command(sub),
+        Some(("delete", sub)) =&gt; delete_command(sub),
+        _ =&gt; {}
+    }
+}
+
+fn dispatch_if_managed(matches: &amp;ArgMatches, path: &amp;[String]) -&gt; Option&lt;()&gt; {
+    let ctx = CommandContext { command_path: path.to_vec() };
+    let render = from_fn(|data, _| Ok(serde_json::to_string_pretty(data)?));
+
+    let result = match path_to_string(path).as_str() {
+        "list" =&gt; list_handler(matches, &amp;ctx),
+        "export" =&gt; export_handler(matches, &amp;ctx),
+        _ =&gt; return None,  // Not managed by dispatch
+    };
+
+    match result {
+        Ok(Output::Render(data)) =&gt; {
+            let json = serde_json::to_value(&amp;data).ok()?;
+            println!("{}", render(&amp;json, "").ok()?);
+        }
+        Ok(Output::Silent) =&gt; {}
+        Ok(Output::Binary { data, filename }) =&gt; {
+            std::fs::write(&amp;filename, &amp;data).ok()?;
+        }
+        Err(e) =&gt; eprintln!("Error: {}", e),
+    }
+
+    Some(())
+}</code></pre></pre>
+<hr />
+<h2 id="summary"><a class="header" href="#summary">Summary</a></h2>
+<p>Partial adoption lets you:</p>
+<ol>
+<li><strong>Start small</strong> — Migrate one command at a time</li>
+<li><strong>Reduce risk</strong> — Each migration is independent</li>
+<li><strong>Maintain velocity</strong> — Keep shipping while migrating</li>
+<li><strong>Validate benefits</strong> — See the value before full commitment</li>
+</ol>
+<p>The goal is pragmatic improvement, not architectural purity. Migrate what benefits most, leave what works alone.</p>
+
+                    </main>
+
+                    <nav class="nav-wrapper" aria-label="Page navigation">
+                        <!-- Mobile navigation buttons -->
+                            <a rel="prev" href="../../../crates/dispatch/topics/execution-model.html" class="mobile-nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
+                                <i class="fa fa-angle-left"></i>
+                            </a>
+
+                            <a rel="next prefetch" href="../../../topics/output-modes.html" class="mobile-nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
+                                <i class="fa fa-angle-right"></i>
+                            </a>
+
+                        <div style="clear: both"></div>
+                    </nav>
+                </div>
+            </div>
+
+            <nav class="nav-wide-wrapper" aria-label="Page navigation">
+                    <a rel="prev" href="../../../crates/dispatch/topics/execution-model.html" class="nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
+                        <i class="fa fa-angle-left"></i>
+                    </a>
+
+                    <a rel="next prefetch" href="../../../topics/output-modes.html" class="nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
+                        <i class="fa fa-angle-right"></i>
+                    </a>
+            </nav>
+
+        </div>
+
+
+
+
+        <script>
+            window.playground_copyable = true;
+        </script>
+
+
+        <script src="../../../elasticlunr.min.js"></script>
+        <script src="../../../mark.min.js"></script>
+        <script src="../../../searcher.js"></script>
+
+        <script src="../../../clipboard.min.js"></script>
+        <script src="../../../highlight.js"></script>
+        <script src="../../../book.js"></script>
+
+        <!-- Custom JS scripts -->
+
+
+    </div>
+    </body>
+</html>
