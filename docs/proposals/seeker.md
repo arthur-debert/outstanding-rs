@@ -1020,6 +1020,7 @@ crates/standout-seeker/
 ## Phase 4: CLI Bridge (Future)
 
 **Status: Not Started**
+**Prerequisite:** ListView implementation (see `docs/proposals/list-view.md`) — Phase 4 integrates with ListView's `filterable` dispatch attribute.
 
 Clap integration for automatic CLI argument generation.
 
