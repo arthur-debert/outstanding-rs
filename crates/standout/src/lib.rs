@@ -297,7 +297,7 @@ pub use standout_macros::{Tabular, TabularRow};
 // Seeker query engine (re-export from standout-seeker)
 pub use standout_seeker as seeker;
 
-// Seeker derive macro
+// Seeker derive macro (requires `features = ["macros"]`)
 pub use standout_macros::Seekable;
 
 // CLI integration

@@ -287,11 +287,11 @@ pub fn tabular_row_derive(input: TokenStream) -> TokenStream {
 ///
 /// | Attribute | Description |
 /// |-----------|-------------|
-/// | `string` | String field (supports Eq, Ne, Contains, StartsWith, EndsWith, Regex) |
-/// | `number` | Numeric field (supports Eq, Ne, Gt, Gte, Lt, Lte) |
-/// | `timestamp` | Timestamp field (supports Eq, Ne, Before, After, Gt, Gte, Lt, Lte) |
-/// | `enum` | Enum field (supports Eq, Ne, In) - requires `SeekerEnum` impl |
-/// | `bool` | Boolean field (supports Eq, Ne, Is) |
+/// | `String` | String field (supports Eq, Ne, Contains, StartsWith, EndsWith, Regex) |
+/// | `Number` | Numeric field (supports Eq, Ne, Gt, Gte, Lt, Lte) |
+/// | `Timestamp` | Timestamp field (supports Eq, Ne, Before, After, Gt, Gte, Lt, Lte) |
+/// | `Enum` | Enum field (supports Eq, Ne, In) - requires `SeekerEnum` impl |
+/// | `Bool` | Boolean field (supports Eq, Ne, Is) |
 /// | `skip` | Exclude this field from queries |
 /// | `rename = "..."` | Use a custom name for queries |
 ///
@@ -310,13 +310,14 @@ pub fn tabular_row_derive(input: TokenStream) -> TokenStream {
 ///
 /// #[derive(Seekable)]
 /// struct Task {
-///     #[seek(string)]
+/// struct Task {
+///     #[seek(String)]
 ///     name: String,
 ///
-///     #[seek(number)]
+///     #[seek(Number)]
 ///     priority: u8,
 ///
-///     #[seek(bool)]
+///     #[seek(Bool)]
 ///     done: bool,
 ///
 ///     #[seek(skip)]
@@ -360,7 +361,7 @@ pub fn tabular_row_derive(input: TokenStream) -> TokenStream {
 ///
 /// #[derive(Seekable)]
 /// struct Task {
-///     #[seek(enum)]
+///     #[seek(Enum)]
 ///     status: Status,
 /// }
 /// ```
@@ -382,7 +383,7 @@ pub fn tabular_row_derive(input: TokenStream) -> TokenStream {
 ///
 /// #[derive(Seekable)]
 /// struct Event {
-///     #[seek(timestamp)]
+///     #[seek(Timestamp)]
 ///     created_at: MyDateTime,
 /// }
 /// ```

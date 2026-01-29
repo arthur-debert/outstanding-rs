@@ -18,11 +18,12 @@ use crate::value::Value;
 ///
 /// #[derive(Seekable)]
 /// struct Task {
-///     #[seek(string)]
+/// struct Task {
+///     #[seek(String)]
 ///     name: String,
-///     #[seek(number)]
+///     #[seek(Number)]
 ///     priority: u8,
-///     #[seek(bool)]
+///     #[seek(Bool)]
 ///     done: bool,
 /// }
 ///
@@ -97,7 +98,7 @@ pub trait Seekable {
 /// Helper trait for converting enum types to their discriminant values.
 ///
 /// This trait is used by the `#[derive(Seekable)]` macro when a field is
-/// marked with `#[seek(enum)]`. Implement this trait for your enum types
+/// marked with `#[seek(Enum)]`. Implement this trait for your enum types
 /// to enable enum querying.
 ///
 /// # Example
@@ -134,7 +135,7 @@ pub trait SeekerEnum {
 /// Helper trait for converting types to timestamps.
 ///
 /// This trait is used by the `#[derive(Seekable)]` macro when a field is
-/// marked with `#[seek(timestamp)]`. Implement this trait for your datetime
+/// marked with `#[seek(Timestamp)]`. Implement this trait for your datetime
 /// types to enable timestamp querying.
 ///
 /// # Example
