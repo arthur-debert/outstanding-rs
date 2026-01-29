@@ -7,15 +7,15 @@
 //!
 //! | Category | Modes | Template? | ANSI? |
 //! |----------|-------|-----------|-------|
-//! | **Templated** | Auto, Term, Text | Yes | Varies |
-//! | **Debug** | TermDebug | Yes | Tags kept as `[name]...[/name]` |
-//! | **Structured** | Json, Yaml, Xml, Csv | No — serializes directly | No |
+//! | Templated | Auto, Term, Text | Yes | Varies |
+//! | Debug | TermDebug | Yes | Tags kept as `[name]...[/name]` |
+//! | Structured | Json, Yaml, Xml, Csv | No — serializes directly | No |
 //!
 //! ## How Modes Are Selected
 //!
-//! 1. **Default**: `Auto` — detects terminal capabilities at render time
-//! 2. **CLI flag**: `--output=json` overrides to structured mode
-//! 3. **Programmatic**: Pass explicit mode to render functions
+//! 1. Default: `Auto` — detects terminal capabilities at render time
+//! 2. CLI flag: `--output=json` overrides to structured mode
+//! 3. Programmatic: Pass explicit mode to render functions
 //!
 //! ## Auto Mode Resolution
 //!

@@ -23,7 +23,7 @@
 //! # Development vs Release
 //!
 //! In development mode (`debug_assertions` enabled):
-//! - Template **content** is re-read from disk on each render
+//! - Template content is re-read from disk on each render
 //! - This enables hot reloading without recompilation
 //!
 //! In release mode:
@@ -53,14 +53,14 @@ use crate::EmbeddedTemplates;
 ///
 /// Templates can come from multiple sources:
 ///
-/// 1. **Inline strings** via [`add_template`](Self::add_template) - highest priority
-/// 2. **Filesystem directories** via [`add_template_dir`](Self::add_template_dir)
-/// 3. **Embedded content** via [`with_embedded`](Self::with_embedded)
+/// 1. Inline strings via [`add_template`](Self::add_template) - highest priority
+/// 2. Filesystem directories via [`add_template_dir`](Self::add_template_dir)
+/// 3. Embedded content via [`with_embedded`](Self::with_embedded)
 ///
 /// When the same name exists in multiple sources, inline templates take
 /// precedence over file-based templates.
 ///
-/// **Note:** File-based templates must have unique names across all registered
+/// Note: File-based templates must have unique names across all registered
 /// directories. If the same name exists in multiple directories, it is treated
 /// as a collision error.
 ///

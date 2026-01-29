@@ -5,10 +5,10 @@
 //!
 //! # Hook Points
 //!
-//! - **Pre-dispatch**: Runs before the command handler. Can abort execution.
-//! - **Post-dispatch**: Runs after the handler but before rendering. Receives the raw
+//! - Pre-dispatch: Runs before the command handler. Can abort execution.
+//! - Post-dispatch: Runs after the handler but before rendering. Receives the raw
 //!   handler data as `serde_json::Value`. Can inspect, modify, or replace the data.
-//! - **Post-output**: Runs after output is generated. Can transform output or abort.
+//! - Post-output: Runs after output is generated. Can transform output or abort.
 //!
 //! # Example
 //!

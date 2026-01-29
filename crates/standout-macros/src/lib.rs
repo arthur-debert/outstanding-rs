@@ -26,8 +26,8 @@
 //!
 //! This design enables:
 //!
-//! - **Release builds**: Use embedded content, zero file I/O
-//! - **Debug builds**: Hot-reload from disk if source path exists
+//! - Release builds: Use embedded content, zero file I/O
+//! - Debug builds: Hot-reload from disk if source path exists
 //!
 //! # Examples
 //!
@@ -66,8 +66,8 @@ use syn::{parse_macro_input, DeriveInput, LitStr};
 ///
 /// # Hot Reload Behavior
 ///
-/// - **Release builds**: Uses embedded content (zero file I/O)
-/// - **Debug builds**: Reads from disk if source path exists (hot-reload)
+/// - Release builds: Uses embedded content (zero file I/O)
+/// - Debug builds: Reads from disk if source path exists (hot-reload)
 ///
 /// For working examples, see `standout/tests/embed_macros.rs`.
 ///
@@ -104,8 +104,8 @@ pub fn embed_templates(input: TokenStream) -> TokenStream {
 ///
 /// # Hot Reload Behavior
 ///
-/// - **Release builds**: Uses embedded content (zero file I/O)
-/// - **Debug builds**: Reads from disk if source path exists (hot-reload)
+/// - Release builds: Uses embedded content (zero file I/O)
+/// - Debug builds: Reads from disk if source path exists (hot-reload)
 ///
 /// For working examples, see `standout/tests/embed_macros.rs`.
 ///
@@ -134,10 +134,10 @@ pub fn embed_styles(input: TokenStream) -> TokenStream {
 ///
 /// # Convention-Based Defaults
 ///
-/// - **Handler**: `{handlers_module}::{variant_snake_case}`
+/// - Handler: `{handlers_module}::{variant_snake_case}`
 ///   - `Add` → `handlers::add`
 ///   - `ListAll` → `handlers::list_all`
-/// - **Template**: `{variant_snake_case}.j2`
+/// - Template: `{variant_snake_case}.j2`
 ///
 /// # Container Attributes
 ///

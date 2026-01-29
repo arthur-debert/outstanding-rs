@@ -21,19 +21,19 @@
 //!
 //! ## Mapping
 //!
-//! - **Selectors**: CSS class selectors (`.my-style`) map directly to style names in the theme.
+//! - Selectors: CSS class selectors (`.my-style`) map directly to style names in the theme.
 //!   Currently, simple class selectors are supported.
 //!   - `.error` -> defines style "error"
 //!   - `.title, .header` -> defines styles "title" and "header"
 //!
-//! - **Properties**: Standard CSS properties are mapped to terminal equivalents.
+//! - Properties: Standard CSS properties are mapped to terminal equivalents.
 //!   - `color` -> Foreground color
 //!   - `background-color` -> Background color
 //!   - `font-weight: bold` -> Bold text
 //!   - `text-decoration: underline` -> Underlined text
 //!   - `visibility: hidden` -> Hidden text
 //!
-//! - **Adaptive Styles**: Media queries are used to define light/dark mode overrides.
+//! - Adaptive Styles: Media queries are used to define light/dark mode overrides.
 //!   - `@media (prefers-color-scheme: dark) { ... }`
 //!
 //! # Supported Attributes
@@ -44,7 +44,7 @@
 //! |--------------|-------|--------|
 //! | `color`, `fg` | Color (Hex, Named, Integer) | Sets the text color |
 //! | `background-color`, `bg` | Color (Hex, Named, Integer) | Sets the background color |
-//! | `font-weight` | `bold` | Makes text **bold** |
+//! | `font-weight` | `bold` | Makes text bold |
 //! | `font-style` | `italic` | Makes text *italic* |
 //! | `text-decoration` | `underline`, `line-through` | Underlines or strikes through text |
 //! | `visibility` | `hidden` | Hides the text |

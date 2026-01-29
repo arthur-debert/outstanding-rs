@@ -10,20 +10,20 @@
 //!
 //! The registry uses a two-phase approach:
 //!
-//! 1. **Collection**: Templates are collected from various sources (inline, directories, embedded)
-//! 2. **Resolution**: A unified map resolves template names to their content or file paths
+//! 1. Collection: Templates are collected from various sources (inline, directories, embedded)
+//! 2. Resolution: A unified map resolves template names to their content or file paths
 //!
 //! This separation enables:
-//! - **Testability**: Resolution logic can be tested without filesystem access
-//! - **Flexibility**: Same resolution rules apply regardless of template source
-//! - **Hot reloading**: File paths can be re-read on each render in development mode
+//! - Testability: Resolution logic can be tested without filesystem access
+//! - Flexibility: Same resolution rules apply regardless of template source
+//! - Hot reloading: File paths can be re-read on each render in development mode
 //!
 //! # Template Resolution
 //!
 //! Templates are resolved by name using these rules:
 //!
-//! 1. **Inline templates** (added via [`TemplateRegistry::add_inline`]) have highest priority
-//! 2. **File templates** are searched in directory registration order (first directory wins)
+//! 1. Inline templates (added via [`TemplateRegistry::add_inline`]) have highest priority
+//! 2. File templates are searched in directory registration order (first directory wins)
 //! 3. Names can be specified with or without extension: both `"config"` and `"config.jinja"` resolve
 //!
 //! # Supported Extensions
@@ -44,8 +44,8 @@
 //!
 //! The registry enforces strict collision rules:
 //!
-//! - **Same-directory, different extensions**: Higher priority extension wins (no error)
-//! - **Cross-directory collisions**: Panic with detailed message listing conflicting files
+//! - Same-directory, different extensions: Higher priority extension wins (no error)
+//! - Cross-directory collisions: Panic with detailed message listing conflicting files
 //!
 //! This strict behavior catches configuration mistakes early rather than silently
 //! using an arbitrary winner.
@@ -511,10 +511,10 @@ impl TemplateRegistry {
     ///
     /// This method applies the same logic as runtime file loading:
     ///
-    /// 1. **Extension stripping**: `"report/summary.jinja"` → `"report/summary"`
-    /// 2. **Extension priority**: When multiple files share a base name, the
+    /// 1. Extension stripping: `"report/summary.jinja"` → `"report/summary"`
+    /// 2. Extension priority: When multiple files share a base name, the
     ///    higher-priority extension wins (see [`TEMPLATE_EXTENSIONS`])
-    /// 3. **Dual registration**: Each template is accessible by both its base
+    /// 3. Dual registration: Each template is accessible by both its base
     ///    name and its full name with extension
     ///
     /// # Example

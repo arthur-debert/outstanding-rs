@@ -7,8 +7,8 @@
 //! # Design
 //!
 //! The key insight is that we want:
-//! - **Release builds**: Use embedded content, zero file I/O
-//! - **Debug builds**: Hot-reload from disk if source path exists
+//! - Release builds: Use embedded content, zero file I/O
+//! - Debug builds: Hot-reload from disk if source path exists
 //!
 //! By storing both the embedded content AND the source path, we can make this
 //! decision at runtime based on `cfg!(debug_assertions)` and path existence.

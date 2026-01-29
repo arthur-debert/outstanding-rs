@@ -7,8 +7,8 @@
 //!
 //! The parsing process has two phases:
 //!
-//! 1. **Parse**: YAML → `HashMap<String, StyleDefinition>`
-//! 2. **Build**: StyleDefinitions → `ThemeVariants` (base/light/dark style maps)
+//! 1. Parse: YAML → `HashMap<String, StyleDefinition>`
+//! 2. Build: StyleDefinitions → `ThemeVariants` (base/light/dark style maps)
 //!
 //! During the build phase:
 //! - Aliases are recorded for later resolution

@@ -3,8 +3,8 @@
 //! This module defines [`StyleDefinition`], the parsed representation of a single
 //! style entry in a YAML stylesheet. Styles can be:
 //!
-//! - **Alias**: Reference to another style by name
-//! - **Attributes**: Direct style with optional light/dark overrides
+//! - Alias: Reference to another style by name
+//! - Attributes: Direct style with optional light/dark overrides
 //!
 //! # YAML Formats
 //!

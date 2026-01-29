@@ -3,14 +3,14 @@
 //! Standout is a CLI output framework that decouples your application logic from
 //! terminal presentation. It provides:
 //!
-//! - **Template rendering** with MiniJinja + styled output
-//! - **Adaptive themes** for named style definitions with light/dark mode support
-//! - **Automatic terminal capability detection** (TTY, CLICOLOR, etc.)
-//! - **Output mode control** (Auto/Term/Text/TermDebug)
-//! - **Help topics system** for extended documentation
-//! - **Pager support** for long content
+//! - Template rendering with MiniJinja + styled output
+//! - Adaptive themes for named style definitions with light/dark mode support
+//! - Automatic terminal capability detection (TTY, CLICOLOR, etc.)
+//! - Output mode control (Auto/Term/Text/TermDebug)
+//! - Help topics system for extended documentation
+//! - Pager support for long content
 //!
-//! This crate is **CLI-agnostic** at its core - it doesn't care how you parse arguments.
+//! This crate is CLI-agnostic at its core - it doesn't care how you parse arguments.
 //! For clap integration, see the [`cli`] module.
 //!
 //! ## Core Concepts
@@ -19,7 +19,7 @@
 //! - [`ColorMode`]: Light or dark color mode enum
 //! - [`OutputMode`]: Control output formatting (Auto/Term/Text/TermDebug)
 //! - [`topics`]: Help topics system for extended documentation
-//! - **Style syntax**: Tag-based styling `[name]content[/name]`
+//! - Style syntax: Tag-based styling `[name]content[/name]`
 //! - [`Renderer`]: Pre-compile templates for repeated rendering
 //! - [`validate_template`]: Check templates for unknown style tags
 //!

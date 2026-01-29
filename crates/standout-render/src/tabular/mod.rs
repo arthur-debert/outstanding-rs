@@ -10,8 +10,8 @@
 //!
 //! | Approach | Use When |
 //! |----------|----------|
-//! | **Template filters** (`col`, `pad_left`) | Simple tables, column widths known at template time |
-//! | **TabularFormatter** | Dynamic widths, CSV export, complex specs with data extraction |
+//! | Template filters (`col`, `pad_left`) | Simple tables, column widths known at template time |
+//! | TabularFormatter | Dynamic widths, CSV export, complex specs with data extraction |
 //!
 //! Template filters are simpler for most cases. Use TabularFormatter when you
 //! need width resolution from actual data or structured CSV export.

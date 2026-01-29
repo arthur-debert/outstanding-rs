@@ -71,19 +71,19 @@
 //! Clap Parsing → Dispatch → Handler → Hooks → Rendering → Output
 //! ```
 //!
-//! 1. **Parsing**: Your clap Command is augmented with Standout's flags
+//! 1. Parsing: Your clap Command is augmented with Standout's flags
 //!    (`--output`, `--output-file-path`) and parsed normally.
 //!
-//! 2. **Dispatch**: Standout extracts the command path from ArgMatches,
+//! 2. Dispatch: Standout extracts the command path from ArgMatches,
 //!    navigating through subcommands to find the registered handler.
 //!
-//! 3. **Handler**: Your logic executes, returning [`Output`] (data to render,
+//! 3. Handler: Your logic executes, returning [`Output`] (data to render,
 //!    silent, or binary). Errors propagate via `?`.
 //!
-//! 4. **Hooks**: Optional hooks run at three points: pre-dispatch (validation),
+//! 4. Hooks: Optional hooks run at three points: pre-dispatch (validation),
 //!    post-dispatch (data transformation), post-output (output transformation).
 //!
-//! 5. **Rendering**: Data flows through the template engine, applying styles.
+//! 5. Rendering: Data flows through the template engine, applying styles.
 //!    Structured modes (JSON, YAML) skip templating and serialize directly.
 //!
 //! ## Quick Start

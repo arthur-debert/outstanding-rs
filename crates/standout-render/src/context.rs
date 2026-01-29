@@ -8,18 +8,18 @@
 //!
 //! The context injection system has two main components:
 //!
-//! 1. **[`RenderContext`]**: Information available at render time (output mode, terminal
+//! 1. [`RenderContext`]: Information available at render time (output mode, terminal
 //!    width, theme, etc.)
-//! 2. **[`ContextProvider`]**: Trait for objects that can produce context values, either
+//! 2. [`ContextProvider`]: Trait for objects that can produce context values, either
 //!    statically or dynamically based on `RenderContext`
 //!
 //! # Use Cases
 //!
-//! - **Table formatters**: Inject `TabularFormatter` instances with resolved terminal width
-//! - **Terminal info**: Provide `terminal.width`, `terminal.is_tty` to templates
-//! - **Environment**: Expose environment variables or paths
-//! - **User preferences**: Date formats, timezone, locale
-//! - **Utilities**: Custom formatters, validators callable from templates
+//! - Table formatters: Inject `TabularFormatter` instances with resolved terminal width
+//! - Terminal info: Provide `terminal.width`, `terminal.is_tty` to templates
+//! - Environment: Expose environment variables or paths
+//! - User preferences: Date formats, timezone, locale
+//! - Utilities: Custom formatters, validators callable from templates
 //!
 //! # Example
 //!
@@ -154,8 +154,8 @@ impl<'a> RenderContext<'a> {
 ///
 /// # Static vs Dynamic Providers
 ///
-/// - **Static providers**: Return the same object regardless of context
-/// - **Dynamic providers**: Use context to configure the returned object
+/// - Static providers: Return the same object regardless of context
+/// - Dynamic providers: Use context to configure the returned object
 ///
 /// # Implementing for Closures
 ///

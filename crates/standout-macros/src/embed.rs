@@ -11,9 +11,9 @@
 //! The macros produce raw `(name_with_extension, content)` pairs and delegate
 //! to `from_embedded_entries()` methods in the standout crate. This design:
 //!
-//! - **Avoids duplication**: Priority/collision logic lives in one place
-//! - **Simplifies debugging**: Macros just read files, easier to troubleshoot
-//! - **Ensures consistency**: Same logic for runtime and compile-time loading
+//! - Avoids duplication: Priority/collision logic lives in one place
+//! - Simplifies debugging: Macros just read files, easier to troubleshoot
+//! - Ensures consistency: Same logic for runtime and compile-time loading
 //!
 //! # Relationship to file_loader
 //!

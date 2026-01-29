@@ -9,13 +9,13 @@
 //! Templates are processed in two distinct passes, which is why style tags use
 //! bracket notation (`[name]...[/name]`) instead of Jinja syntax:
 //!
-//! **Pass 1 - MiniJinja**: Variable substitution, control flow, filters.
+//! Pass 1 - MiniJinja: Variable substitution, control flow, filters.
 //! ```text
 //! Template: [title]{{ name | upper }}[/title] has {{ count }} items
 //! After:    [title]WIDGET[/title] has 42 items
 //! ```
 //!
-//! **Pass 2 - BBParser**: Style tags converted to ANSI codes (or stripped).
+//! Pass 2 - BBParser: Style tags converted to ANSI codes (or stripped).
 //! ```text
 //! Input:  [title]WIDGET[/title] has 42 items
 //! Output: \x1b[1;32mWIDGET\x1b[0m has 42 items

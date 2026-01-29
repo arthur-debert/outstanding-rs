@@ -10,9 +10,9 @@
 //! styles for rendering, the theme selects the appropriate variant based
 //! on the current color mode:
 //!
-//! - **Base styles**: Used when no mode override exists
-//! - **Light overrides**: Applied in light mode
-//! - **Dark overrides**: Applied in dark mode
+//! - Base styles: Used when no mode override exists
+//! - Light overrides: Applied in light mode
+//! - Dark overrides: Applied in dark mode
 //!
 //! # Construction Methods
 //!

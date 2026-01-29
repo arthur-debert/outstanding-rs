@@ -10,20 +10,20 @@
 //!
 //! The registry uses a two-phase approach:
 //!
-//! 1. **Collection**: Stylesheets are collected from various sources (inline, directories, embedded)
-//! 2. **Resolution**: A unified map resolves theme names to their parsed `Theme` instances
+//! 1. Collection: Stylesheets are collected from various sources (inline, directories, embedded)
+//! 2. Resolution: A unified map resolves theme names to their parsed `Theme` instances
 //!
 //! This separation enables:
-//! - **Testability**: Resolution logic can be tested without filesystem access
-//! - **Flexibility**: Same resolution rules apply regardless of stylesheet source
-//! - **Hot reloading**: Files are re-read and re-parsed on each access in development mode
+//! - Testability: Resolution logic can be tested without filesystem access
+//! - Flexibility: Same resolution rules apply regardless of stylesheet source
+//! - Hot reloading: Files are re-read and re-parsed on each access in development mode
 //!
 //! # Stylesheet Resolution
 //!
 //! Stylesheets are resolved by name using these rules:
 //!
-//! 1. **Inline stylesheets** (added via [`StylesheetRegistry::add_inline`]) have highest priority
-//! 2. **File stylesheets** are searched in directory registration order (first directory wins)
+//! 1. Inline stylesheets (added via [`StylesheetRegistry::add_inline`]) have highest priority
+//! 2. File stylesheets are searched in directory registration order (first directory wins)
 //! 3. Names can be specified with or without extension: both `"darcula"` and `"darcula.yaml"` resolve
 //!
 //! # Supported Extensions
@@ -42,8 +42,8 @@
 //!
 //! The registry enforces strict collision rules:
 //!
-//! - **Same-directory, different extensions**: Higher priority extension wins (no error)
-//! - **Cross-directory collisions**: Panic with detailed message listing conflicting files
+//! - Same-directory, different extensions: Higher priority extension wins (no error)
+//! - Cross-directory collisions: Panic with detailed message listing conflicting files
 //!
 //! # Example
 //!
@@ -257,11 +257,11 @@ impl StylesheetRegistry {
     ///
     /// This method applies the same logic as runtime file loading:
     ///
-    /// 1. **YAML parsing**: Each entry's content is parsed as a theme definition
-    /// 2. **Extension stripping**: `"themes/dark.yaml"` → `"themes/dark"`
-    /// 3. **Extension priority**: When multiple files share a base name, the
+    /// 1. YAML parsing: Each entry's content is parsed as a theme definition
+    /// 2. Extension stripping: `"themes/dark.yaml"` → `"themes/dark"`
+    /// 3. Extension priority: When multiple files share a base name, the
     ///    higher-priority extension wins (see [`STYLESHEET_EXTENSIONS`])
-    /// 4. **Dual registration**: Each theme is accessible by both its base
+    /// 4. Dual registration: Each theme is accessible by both its base
     ///    name and its full name with extension
     ///
     /// # Errors

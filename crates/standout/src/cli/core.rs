@@ -30,12 +30,12 @@ use super::hooks::Hooks;
 ///
 /// # Fields
 ///
-/// - **Output configuration**: `output_flag`, `output_file_flag`, `output_mode`
-/// - **Theme and styles**: `theme`, `stylesheet_registry`
-/// - **Templates**: `template_registry`
-/// - **Hooks**: `command_hooks`
-/// - **Default command**: `default_command`
-/// - **Context**: `context_registry`
+/// - Output configuration: `output_flag`, `output_file_flag`, `output_mode`
+/// - Theme and styles: `theme`, `stylesheet_registry`
+/// - Templates: `template_registry`
+/// - Hooks: `command_hooks`
+/// - Default command: `default_command`
+/// - Context: `context_registry`
 pub struct AppCore {
     /// Name of the output mode flag (e.g., "output" for `--output`).
     /// Set to None to disable the flag.

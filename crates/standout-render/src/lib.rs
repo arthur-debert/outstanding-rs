@@ -11,7 +11,7 @@
 //! - [`Theme`]: Named collection of adaptive styles that respond to light/dark mode
 //! - [`ColorMode`]: Light or dark color mode enum
 //! - [`OutputMode`]: Control output formatting (Auto/Term/Text/TermDebug/Json/Yaml)
-//! - **Style syntax**: Tag-based styling `[name]content[/name]`
+//! - Style syntax: Tag-based styling `[name]content[/name]`
 //! - [`Renderer`]: Pre-compile templates for repeated rendering
 //! - [`validate_template`]: Check templates for unknown style tags
 //!

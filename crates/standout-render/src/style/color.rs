@@ -2,11 +2,11 @@
 //!
 //! Supports multiple color formats:
 //!
-//! - **Named colors**: `red`, `green`, `blue`, etc. (16 ANSI colors)
-//! - **Bright variants**: `bright_red`, `bright_green`, etc.
-//! - **256-color palette**: `0` through `255`
-//! - **RGB hex**: `"#ff6b35"` or `"#fff"` (3 or 6 digit)
-//! - **RGB tuple**: `[255, 107, 53]`
+//! - Named colors: `red`, `green`, `blue`, etc. (16 ANSI colors)
+//! - Bright variants: `bright_red`, `bright_green`, etc.
+//! - 256-color palette: `0` through `255`
+//! - RGB hex: `"#ff6b35"` or `"#fff"` (3 or 6 digit)
+//! - RGB tuple: `[255, 107, 53]`
 //!
 //! # Example
 //!

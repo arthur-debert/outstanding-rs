@@ -47,7 +47,7 @@
 //!
 //! ## Construction
 //!
-//! **Programmatic** (for compile-time themes):
+//! Programmatic (for compile-time themes):
 //! ```rust
 //! use standout::Theme;
 //! use console::Style;
@@ -59,7 +59,7 @@
 //!         Some(Style::new().fg(console::Color::White)));
 //! ```
 //!
-//! **YAML** (for user-customizable themes):
+//! YAML (for user-customizable themes):
 //! ```rust
 //! let theme = standout::Theme::from_yaml(r#"
 //! header: { fg: cyan, bold: true }

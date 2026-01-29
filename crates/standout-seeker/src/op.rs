@@ -8,12 +8,12 @@ use std::cmp::Ordering;
 /// Comparison operator for a query clause.
 ///
 /// Operators are grouped by the types they support:
-/// - **Universal**: `Eq`, `Ne` - work on all types
-/// - **String**: `StartsWith`, `EndsWith`, `Contains`, `Regex`
-/// - **Numeric/Timestamp**: `Gt`, `Gte`, `Lt`, `Lte`
-/// - **Timestamp aliases**: `Before` (alias for `Lt`), `After` (alias for `Gt`)
-/// - **Enum**: `In` - check membership in a set
-/// - **Bool alias**: `Is` (alias for `Eq`)
+/// - Universal: `Eq`, `Ne` - work on all types
+/// - String: `StartsWith`, `EndsWith`, `Contains`, `Regex`
+/// - Numeric/Timestamp: `Gt`, `Gte`, `Lt`, `Lte`
+/// - Timestamp aliases: `Before` (alias for `Lt`), `After` (alias for `Gt`)
+/// - Enum: `In` - check membership in a set
+/// - Bool alias: `Is` (alias for `Eq`)
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum Op {
     // Universal operators

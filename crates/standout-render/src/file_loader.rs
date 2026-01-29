@@ -7,10 +7,10 @@
 //!
 //! CLI applications need to manage templates and stylesheets. Developers want:
 //!
-//! - **Separation of concerns** - Keep templates and styles in files, not Rust code
-//! - **Accessible to non-developers** - Designers can edit YAML/Jinja without Rust
-//! - **Rapid iteration** - Changes visible immediately without recompilation
-//! - **Single-binary distribution** - Released apps should be self-contained
+//! - Separation of concerns - Keep templates and styles in files, not Rust code
+//! - Accessible to non-developers - Designers can edit YAML/Jinja without Rust
+//! - Rapid iteration - Changes visible immediately without recompilation
+//! - Single-binary distribution - Released apps should be self-contained
 //!
 //! These requirements create tension: development wants external files for flexibility,
 //! while release wants everything embedded for distribution.
@@ -19,8 +19,8 @@
 //!
 //! The file loader provides a unified system that:
 //!
-//! - **Development mode**: Reads files from disk with hot reload on each access
-//! - **Release mode**: Embeds all files into the binary at compile time via proc macros
+//! - Development mode: Reads files from disk with hot reload on each access
+//! - Release mode: Embeds all files into the binary at compile time via proc macros
 //!
 //! ## Directory Structure
 //!
@@ -236,9 +236,9 @@ pub fn strip_extension(name: &str, extensions: &[&str]) -> String {
 /// This is the core logic for creating registries from compile-time embedded resources.
 /// It handles:
 ///
-/// 1. **Extension priority**: Entries are sorted so higher-priority extensions are processed first
-/// 2. **Dual registration**: Each entry is accessible by both base name and full name with extension
-/// 3. **Transform**: Each entry's content is transformed via the provided function
+/// 1. Extension priority: Entries are sorted so higher-priority extensions are processed first
+/// 2. Dual registration: Each entry is accessible by both base name and full name with extension
+/// 3. Transform: Each entry's content is transformed via the provided function
 ///
 /// # Arguments
 ///

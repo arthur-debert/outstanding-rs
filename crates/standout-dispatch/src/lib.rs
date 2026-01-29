@@ -2,11 +2,11 @@
 //!
 //! `standout-dispatch` provides command routing, handler execution, and a hook
 //! system for CLI applications. It orchestrates the execution flow while remaining
-//! **agnostic to rendering implementation**.
+//! agnostic to rendering implementation.
 //!
 //! # Architecture
 //!
-//! Dispatch is an **orchestration layer** that manages this execution flow:
+//! Dispatch is an orchestration layer that manages this execution flow:
 //!
 //! ```text
 //! parsed CLI args
@@ -19,12 +19,12 @@
 //!
 //! ## Design Rationale
 //!
-//! Dispatch deliberately does **not** own rendering or output format logic:
+//! Dispatch deliberately does not own rendering or output format logic:
 //!
-//! - **Logic handlers** have a strict input signature (`&ArgMatches`, `&CommandContext`)
+//! - Logic handlers have a strict input signature (`&ArgMatches`, `&CommandContext`)
 //!   and return serializable data. They focus purely on business logic.
 //!
-//! - **Render handlers** are pluggable callbacks provided by the consuming framework.
+//! - Render handlers are pluggable callbacks provided by the consuming framework.
 //!   They receive (view name, data) and return a formatted string. All rendering
 //!   decisions (format, theme, template engine) live in the render handler.
 //!
@@ -56,10 +56,10 @@
 //!
 //! # Features
 //!
-//! - **Command routing**: Extract command paths from clap `ArgMatches`
-//! - **Handler traits**: Thread-safe ([`Handler`]) and local ([`LocalHandler`]) variants
-//! - **Hook system**: Pre/post dispatch and post-output hooks for cross-cutting concerns
-//! - **Render abstraction**: Pluggable render handlers via [`RenderFn`] / [`LocalRenderFn`]
+//! - Command routing: Extract command paths from clap `ArgMatches`
+//! - Handler traits: Thread-safe ([`Handler`]) and local ([`LocalHandler`]) variants
+//! - Hook system: Pre/post dispatch and post-output hooks for cross-cutting concerns
+//! - Render abstraction: Pluggable render handlers via [`RenderFn`] / [`LocalRenderFn`]
 //!
 //! # Usage
 //!

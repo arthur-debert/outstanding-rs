@@ -15,8 +15,8 @@
 //!
 //! # Convention-Based Defaults
 //!
-//! - **Handler**: `{handlers_module}::{variant_snake_case}`
-//! - **Template**: `{variant_snake_case}.j2`
+//! - Handler: `{handlers_module}::{variant_snake_case}`
+//! - Template: `{variant_snake_case}.j2`
 //!
 //! # Container Attributes
 //!

@@ -7,12 +7,12 @@
 //!
 //! # Choosing a Mode
 //!
-//! Use **`ThreadSafe`** (the default) when:
+//! Use `ThreadSafe` (the default) when:
 //! - Your handlers are stateless or use interior mutability (`Arc<Mutex<_>>`)
 //! - You want handlers that could theoretically be called from multiple threads
 //! - You're building a library where consumers might need thread safety
 //!
-//! Use **`Local`** when:
+//! Use `Local` when:
 //! - Your handlers need `&mut self` access to state
 //! - You have a single-threaded CLI application
 //! - You want to avoid the ceremony of interior mutability wrappers

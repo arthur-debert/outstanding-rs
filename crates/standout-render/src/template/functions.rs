@@ -37,8 +37,8 @@
 //! Templates use tag-based syntax for styling: `[name]content[/name]`
 //!
 //! The rendering process works in two passes:
-//! 1. **MiniJinja pass**: Variable substitution and template logic
-//! 2. **BBParser pass**: Style tag processing (`[tag]...[/tag]`)
+//! 1. MiniJinja pass: Variable substitution and template logic
+//! 2. BBParser pass: Style tag processing (`[tag]...[/tag]`)
 //!
 //! This allows templates like:
 //! ```text
@@ -60,7 +60,7 @@
 //! ## Template Includes
 //!
 //! Template includes (`{% include "partial" %}`) require a template registry.
-//! The standalone `render*` functions take a template **string**, not a name,
+//! The standalone `render*` functions take a template string, not a name,
 //! so they cannot resolve includes to other templates.
 //!
 //! For includes, use either:
@@ -625,7 +625,7 @@ pub fn render_auto_with_spec<T: Serialize>(
 /// `RenderContext`. Each registered provider is called to produce a value,
 /// which is then merged into the template context.
 ///
-/// If a context key conflicts with a data field, the **data field wins**.
+/// If a context key conflicts with a data field, the data field wins.
 /// Context is supplementary to the handler's data, not a replacement.
 ///
 /// # Example

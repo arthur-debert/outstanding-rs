@@ -14,9 +14,9 @@ use crate::value::{Timestamp, Value};
 /// A query for filtering and ordering collections.
 ///
 /// Queries consist of three clause groups:
-/// - **AND**: All clauses must match
-/// - **OR**: At least one clause must match (or none if empty)
-/// - **NOT**: No clause may match
+/// - AND: All clauses must match
+/// - OR: At least one clause must match (or none if empty)
+/// - NOT: No clause may match
 ///
 /// The overall match logic is:
 /// ```text

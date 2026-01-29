@@ -19,14 +19,14 @@
 //!
 //! # Hook Points
 //!
-//! - **Pre-dispatch**: Runs before the command handler. Can abort execution.
+//! - Pre-dispatch: Runs before the command handler. Can abort execution.
 //!   Use for: authentication, input validation, resource acquisition.
 //!
-//! - **Post-dispatch**: Runs after the handler but before rendering. Receives the raw
+//! - Post-dispatch: Runs after the handler but before rendering. Receives the raw
 //!   handler data as `serde_json::Value`. Can inspect, modify, or replace the data.
 //!   Use for: adding metadata, data transformation, caching.
 //!
-//! - **Post-output**: Runs after output is generated. Can transform output or abort.
+//! - Post-output: Runs after output is generated. Can transform output or abort.
 //!   Use for: logging, clipboard copy, output filtering.
 
 use std::fmt;

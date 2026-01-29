@@ -1,17 +1,17 @@
 //! Command handler types.
 //!
-//! This module provides the core types for building **logic handlers** - the
+//! This module provides the core types for building logic handlers - the
 //! business logic layer in the dispatch pipeline.
 //!
 //! # Design Rationale
 //!
-//! Logic handlers are responsible for **business logic only**. They:
+//! Logic handlers are responsible for business logic only. They:
 //!
 //! - Receive parsed CLI arguments (`&ArgMatches`) and execution context
 //! - Perform application logic (database queries, file operations, etc.)
-//! - Return **serializable data** that will be passed to the render handler
+//! - Return serializable data that will be passed to the render handler
 //!
-//! Handlers explicitly do **not** handle:
+//! Handlers explicitly do not handle:
 //! - Output formatting (that's the render handler's job)
 //! - Template selection (that's configured at the framework level)
 //! - Theme/style decisions (that's the render handler's job)
@@ -34,7 +34,7 @@ use serde::Serialize;
 /// Context passed to command handlers.
 ///
 /// Provides information about the execution environment. Note that output format
-/// is deliberately **not** included here - format decisions are made by the
+/// is deliberately not included here - format decisions are made by the
 /// render handler, not by logic handlers.
 ///
 /// If handlers need format-aware behavior (e.g., skip expensive formatting for

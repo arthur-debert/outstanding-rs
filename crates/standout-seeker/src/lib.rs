@@ -61,9 +61,9 @@
 //!
 //! This provides predictable behavior without complex nesting:
 //!
-//! - **AND group**: All clauses must match (empty = trivially satisfied)
-//! - **OR group**: At least one must match (empty = trivially satisfied)
-//! - **NOT group**: None may match (empty = trivially satisfied)
+//! - AND group: All clauses must match (empty = trivially satisfied)
+//! - OR group: At least one must match (empty = trivially satisfied)
+//! - NOT group: None may match (empty = trivially satisfied)
 //!
 //! # Field Types and Operators
 //!

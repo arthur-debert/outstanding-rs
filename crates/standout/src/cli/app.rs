@@ -340,7 +340,7 @@ impl<M: HandlerMode> App<M> {
 
     /// Executes a command handler with hooks applied automatically.
     ///
-    /// This is for the **regular API** - when you handle dispatch manually
+    /// This is for the regular API - when you handle dispatch manually
     /// but still want to benefit from registered hooks.
     ///
     /// The method:
