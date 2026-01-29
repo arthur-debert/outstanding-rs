@@ -6,4 +6,5 @@ members = [
     "crates/standout-dispatch",
     "crates/standout-macros",
     "crates/standout-render",
+    "crates/standout-seeker",
 ]
