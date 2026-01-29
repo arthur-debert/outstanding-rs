@@ -1,7 +1,7 @@
 //! Property-based tests for seeker using proptest.
 
 use proptest::prelude::*;
-use standout_seeker::{Number, Op, Query, Timestamp, Value};
+use standout_seeker::{Dir, Number, Op, Query, Timestamp, Value};
 
 // ============================================================================
 // Test helpers
@@ -362,4 +362,191 @@ fn limit_zero_returns_empty() {
     let query = Query::new().limit(0).build();
 
     assert!(query.filter(&items, number_accessor).is_empty());
+}
+
+// ============================================================================
+// Parse module property tests
+// ============================================================================
+
+use standout_seeker::{
+    parse_key, parse_operator, parse_ordering, parse_query, SeekType, SeekerSchema,
+};
+
+// Test schema for parsing tests
+struct ParseTestSchema;
+
+impl SeekerSchema for ParseTestSchema {
+    fn field_type(field: &str) -> Option<SeekType> {
+        match field {
+            "name" => Some(SeekType::String),
+            "priority" => Some(SeekType::Number),
+            "created-at" => Some(SeekType::Timestamp),
+            "status" => Some(SeekType::Enum),
+            "done" => Some(SeekType::Bool),
+            _ => None,
+        }
+    }
+
+    fn field_names() -> &'static [&'static str] {
+        &["name", "priority", "created-at", "status", "done"]
+    }
+}
+
+proptest! {
+    /// parse_key should always return some field name (possibly the whole key).
+    #[test]
+    fn parse_key_always_returns_field(key in "[a-z][a-z0-9-]{0,20}") {
+        let (field, _op) = parse_key(&key);
+        prop_assert!(!field.is_empty());
+    }
+
+    /// If key contains a valid operator suffix, it should be parsed.
+    #[test]
+    fn parse_key_with_operator_suffix(
+        field in "[a-z][a-z0-9]{0,10}",
+        op in prop::sample::select(vec!["eq", "ne", "gt", "gte", "lt", "lte", "contains", "startswith", "endswith"])
+    ) {
+        let key = format!("{}-{}", field, op);
+        let (parsed_field, parsed_op) = parse_key(&key);
+
+        prop_assert_eq!(parsed_field, field);
+        prop_assert!(parsed_op.is_some());
+    }
+
+    /// parse_operator should be case insensitive.
+    #[test]
+    fn parse_operator_case_insensitive(
+        base_op in prop::sample::select(vec!["eq", "ne", "gt", "gte", "lt", "lte", "contains"])
+    ) {
+        let lower = parse_operator(&base_op);
+        let upper = parse_operator(&base_op.to_uppercase());
+
+        prop_assert_eq!(lower, upper);
+    }
+
+    /// Parsing valid number strings should succeed.
+    #[test]
+    fn parse_number_value_succeeds(n in any::<i64>()) {
+        let pairs = vec![
+            ("priority-eq".to_string(), n.to_string()),
+        ];
+        let result = parse_query::<ParseTestSchema>(pairs);
+        prop_assert!(result.is_ok());
+    }
+
+    /// Parsing boolean values should accept various formats.
+    #[test]
+    fn parse_bool_value_formats(
+        val in prop::sample::select(vec!["true", "false", "1", "0", "yes", "no", "on", "off"])
+    ) {
+        let pairs = vec![
+            ("done-eq".to_string(), val.to_string()),
+        ];
+        let result = parse_query::<ParseTestSchema>(pairs);
+        prop_assert!(result.is_ok());
+    }
+
+    /// parse_ordering should handle asc/desc suffixes correctly.
+    #[test]
+    fn parse_ordering_handles_direction(
+        field in "[a-z][a-z0-9]{0,10}",
+        dir in prop::sample::select(vec!["asc", "desc"])
+    ) {
+        let value = format!("{}-{}", field, dir);
+        let result = parse_ordering(&value);
+
+        prop_assert!(result.is_ok());
+        let order = result.unwrap();
+        prop_assert_eq!(order.field, field);
+
+        if dir == "asc" {
+            prop_assert_eq!(order.dir, Dir::Asc);
+        } else {
+            prop_assert_eq!(order.dir, Dir::Desc);
+        }
+    }
+
+    /// Group markers should not affect query validity.
+    #[test]
+    fn group_markers_dont_break_parsing(
+        groups in prop::collection::vec(
+            prop::sample::select(vec!["AND", "OR", "NOT"]),
+            0..5
+        )
+    ) {
+        let mut pairs: Vec<(String, String)> = Vec::new();
+
+        // Start with a valid clause
+        pairs.push(("name-eq".to_string(), "test".to_string()));
+
+        // Add group markers interspersed with clauses
+        for group in groups {
+            pairs.push((group.to_string(), "".to_string()));
+            pairs.push(("priority-eq".to_string(), "5".to_string()));
+        }
+
+        let result = parse_query::<ParseTestSchema>(pairs);
+        prop_assert!(result.is_ok());
+    }
+
+    /// Limit and offset should be parsed correctly.
+    #[test]
+    fn limit_offset_parsing(
+        limit in 0usize..1000,
+        offset in 0usize..1000
+    ) {
+        let pairs = vec![
+            ("name-eq".to_string(), "test".to_string()),
+            ("limit".to_string(), limit.to_string()),
+            ("offset".to_string(), offset.to_string()),
+        ];
+
+        let result = parse_query::<ParseTestSchema>(pairs);
+        prop_assert!(result.is_ok());
+    }
+}
+
+// ============================================================================
+// Parse edge case tests
+// ============================================================================
+
+#[test]
+fn parse_unknown_field_fails() {
+    let pairs = vec![("unknown-field".to_string(), "value".to_string())];
+    let result = parse_query::<ParseTestSchema>(pairs);
+    assert!(result.is_err());
+}
+
+#[test]
+fn parse_invalid_operator_for_type_fails() {
+    // "gt" is not valid for String
+    let pairs = vec![("name-gt".to_string(), "value".to_string())];
+    let result = parse_query::<ParseTestSchema>(pairs);
+    assert!(result.is_err());
+}
+
+#[test]
+fn parse_empty_pairs_succeeds() {
+    let pairs: Vec<(String, String)> = vec![];
+    let result = parse_query::<ParseTestSchema>(pairs);
+    assert!(result.is_ok());
+}
+
+#[test]
+fn parse_only_group_markers_succeeds() {
+    let pairs = vec![
+        ("AND".to_string(), "".to_string()),
+        ("OR".to_string(), "".to_string()),
+        ("NOT".to_string(), "".to_string()),
+    ];
+    let result = parse_query::<ParseTestSchema>(pairs);
+    assert!(result.is_ok());
+}
+
+#[test]
+fn parse_compound_field_name() {
+    // "created-at" is a valid field with a hyphen
+    let pairs = vec![("created-at-before".to_string(), "1000".to_string())];
+    let result = parse_query::<ParseTestSchema>(pairs);
+    assert!(result.is_ok());
 }

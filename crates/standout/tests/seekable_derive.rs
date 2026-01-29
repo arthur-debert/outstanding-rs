@@ -606,3 +606,141 @@ fn test_complete_task_query() {
     assert_eq!(results[0].id, "TSK-003"); // priority 4
     assert_eq!(results[1].id, "TSK-001"); // priority 3
 }
+
+// =============================================================================
+// SeekerSchema derive tests
+// =============================================================================
+
+use standout::seeker::{parse_query, SeekType, SeekerSchema};
+
+#[test]
+fn test_seeker_schema_field_type() {
+    // BasicTask has: name (String), priority (Number), done (Bool)
+    assert_eq!(BasicTask::field_type("name"), Some(SeekType::String));
+    assert_eq!(BasicTask::field_type("priority"), Some(SeekType::Number));
+    assert_eq!(BasicTask::field_type("done"), Some(SeekType::Bool));
+    assert_eq!(BasicTask::field_type("unknown"), None);
+}
+
+#[test]
+fn test_seeker_schema_field_names() {
+    let names = BasicTask::field_names();
+    assert_eq!(names.len(), 3);
+    assert!(names.contains(&"name"));
+    assert!(names.contains(&"priority"));
+    assert!(names.contains(&"done"));
+}
+
+#[test]
+fn test_seeker_schema_with_rename() {
+    // RenameTask: name renamed to "title", priority renamed to "prio"
+    assert_eq!(RenameTask::field_type("title"), Some(SeekType::String));
+    assert_eq!(RenameTask::field_type("prio"), Some(SeekType::Number));
+    // Original names should not be accessible
+    assert_eq!(RenameTask::field_type("name"), None);
+    assert_eq!(RenameTask::field_type("priority"), None);
+}
+
+#[test]
+fn test_seeker_schema_skipped_fields() {
+    // SkipTask: name (String), internal_id (skipped), priority (Number)
+    assert_eq!(SkipTask::field_type("name"), Some(SeekType::String));
+    assert_eq!(SkipTask::field_type("priority"), Some(SeekType::Number));
+    assert_eq!(SkipTask::field_type("internal_id"), None); // skipped
+
+    let names = SkipTask::field_names();
+    assert!(!names.contains(&"internal_id"));
+}
+
+#[test]
+fn test_seeker_schema_all_types() {
+    // CompleteTask has all field types
+    assert_eq!(CompleteTask::field_type("id"), Some(SeekType::String));
+    assert_eq!(CompleteTask::field_type("title"), Some(SeekType::String)); // renamed from name
+    assert_eq!(CompleteTask::field_type("priority"), Some(SeekType::Number));
+    assert_eq!(CompleteTask::field_type("archived"), Some(SeekType::Bool));
+    assert_eq!(CompleteTask::field_type("status"), Some(SeekType::Enum));
+    assert_eq!(
+        CompleteTask::field_type("created_at"),
+        Some(SeekType::Timestamp)
+    );
+    // Skipped and unannotated fields
+    assert_eq!(CompleteTask::field_type("internal_state"), None);
+    assert_eq!(CompleteTask::field_type("metadata"), None);
+}
+
+#[test]
+fn test_parse_query_with_derived_schema() {
+    let tasks = vec![
+        BasicTask {
+            name: "Write docs".to_string(),
+            priority: 3,
+            done: false,
+        },
+        BasicTask {
+            name: "Fix bug".to_string(),
+            priority: 5,
+            done: true,
+        },
+        BasicTask {
+            name: "Review PR".to_string(),
+            priority: 4,
+            done: false,
+        },
+    ];
+
+    // Parse query using the derived SeekerSchema
+    let pairs = vec![("name-contains".to_string(), "docs".to_string())];
+    let query = parse_query::<BasicTask>(pairs).unwrap();
+
+    let results = query.filter(&tasks, BasicTask::accessor);
+    assert_eq!(results.len(), 1);
+    assert_eq!(results[0].name, "Write docs");
+}
+
+#[test]
+fn test_parse_query_with_multiple_clauses() {
+    let tasks = vec![
+        BasicTask {
+            name: "Write docs".to_string(),
+            priority: 3,
+            done: false,
+        },
+        BasicTask {
+            name: "Fix bug".to_string(),
+            priority: 5,
+            done: true,
+        },
+        BasicTask {
+            name: "Review PR".to_string(),
+            priority: 4,
+            done: false,
+        },
+    ];
+
+    let pairs = vec![
+        ("priority-gte".to_string(), "4".to_string()),
+        ("NOT".to_string(), "".to_string()),
+        ("done".to_string(), "true".to_string()),
+    ];
+    let query = parse_query::<BasicTask>(pairs).unwrap();
+
+    let results = query.filter(&tasks, BasicTask::accessor);
+    assert_eq!(results.len(), 1);
+    assert_eq!(results[0].name, "Review PR");
+}
+
+#[test]
+fn test_parse_query_unknown_field_error() {
+    let pairs = vec![("unknown-field".to_string(), "value".to_string())];
+    let result = parse_query::<BasicTask>(pairs);
+    assert!(result.is_err());
+}
+
+#[test]
+fn test_parse_query_invalid_operator_error() {
+    // "gt" is not valid for String fields
+    let pairs = vec![("name-gt".to_string(), "value".to_string())];
+    let result = parse_query::<BasicTask>(pairs);
+    assert!(result.is_err());
+}
