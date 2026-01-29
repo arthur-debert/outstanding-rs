@@ -1,0 +1,7 @@
+# Pinned Rust version for consistent local and CI builds.
+# Both `rustup` (local) and `dtolnay/rust-toolchain` (CI) respect this file.
+# To update: change the channel version here, then commit.
+
+[toolchain]
+channel = "1.93.0"
+components = ["rustfmt", "clippy"]

@@ -1,6 +1,14 @@
 #!/bin/bash
 set -e
 
+# CI checks script - used by both pre-commit hook and GitHub Actions.
+#
+# Setup:
+#   - Pre-commit hook: .git/hooks/pre-commit symlinks to this file
+#   - GitHub Actions: .github/workflows/ci.yml calls this script
+#   - Rust version: pinned in rust-toolchain.toml (respected by both local rustup and CI)
+#   - Caching: Swatinem/rust-cache caches toolchain and build artifacts
+
 echo "=== CI Checks ==="
 
 echo "[1/5] cargo check (all packages)"
