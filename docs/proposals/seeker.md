@@ -10,9 +10,10 @@ Seeker is a generic querying engine for filtering Rust struct collections. The f
 
 1. **Core logic + imperative API** — Types, operators, clause composition, ordering, execution
 2. **Derive macros** — Syntactic sugar for field declaration
-3. **CLI bridge** — Clap integration for automatic argument generation
+3. **String parsing** — Shell-agnostic query parsing from key-value pairs
+4. **CLI bridge** — Clap integration for automatic argument generation
 
-This document specifies the complete design. **Current implementation scope is Phase 1 only: core logic and imperative API.**
+This document specifies the complete design.
 
 ---
 
@@ -756,16 +757,394 @@ Built-in `SeekerTimestamp` implementations exist for `i64` and `u64`.
 
 ---
 
-## Phase 3: CLI Bridge (Future)
+## Phase 3: String Parsing
 
-**Out of scope for current work.**
+**Status: In Progress**
 
-Will provide:
-- `FilterArgs<T>` for clap integration
-- Auto-generated `--field-op=value` arguments
-- `--AND`, `--OR`, `--NOT` group markers
-- `--order-by`, `--limit`, `--offset` arguments
-- Help text generation
+A shell-agnostic layer that parses key-value string pairs into typed `Query` objects. This layer is reusable across different interfaces (CLI, web APIs, configuration files).
+
+### Motivation
+
+The string format `field-operator=value` appears in multiple contexts:
+- CLI arguments: `--name-contains=foo`
+- URL query params: `?name-contains=foo`
+- Configuration: `name-contains = foo`
+
+By separating string parsing from CLI specifics, we get a reusable layer.
+
+### SeekerSchema Trait
+
+The parser needs field metadata to:
+1. Validate field names exist
+2. Determine field types for value parsing
+3. Validate operators are appropriate for the field type
+
+```rust
+/// Field metadata for query parsing.
+///
+/// This trait is optional — only needed for string-based query parsing.
+/// Types using only the imperative API don't need to implement it.
+pub trait SeekerSchema {
+    /// Returns the type of a field, or None if field doesn't exist.
+    fn field_type(field: &str) -> Option<SeekType>;
+
+    /// Returns all queryable field names.
+    fn field_names() -> &'static [&'static str];
+}
+
+/// The type of a seekable field.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SeekType {
+    String,
+    Number,
+    Timestamp,
+    Enum,
+    Bool,
+}
+```
+
+The derive macro generates `SeekerSchema` alongside `Seekable` by default. Users can override with a manual implementation to expose only specific fields.
+
+### String Format
+
+**Key format:** `field-name-operator`
+
+Rules:
+1. Split on `-` (dash)
+2. Operators cannot contain dashes
+3. Last segment is the operator (if it's a valid operator name)
+4. Preceding segments form the field name (rejoined with `-`)
+5. If no operator segment, use the type's default operator
+
+**Examples:**
+- `name-contains` → field: `name`, operator: `contains`
+- `created-at-before` → field: `created-at`, operator: `before`
+- `modified-by-eq` → field: `modified-by`, operator: `eq`
+- `name` → field: `name`, operator: `eq` (default)
+- `archived` → field: `archived`, operator: `is` (bool default)
+
+**Valid operator names:**
+
+| Operator | String Name | Aliases |
+|----------|-------------|---------|
+| `Eq` | `eq` | |
+| `Ne` | `ne` | `neq` |
+| `Gt` | `gt` | |
+| `Gte` | `gte` | |
+| `Lt` | `lt` | |
+| `Lte` | `lte` | |
+| `StartsWith` | `startswith` | `prefix` |
+| `EndsWith` | `endswith` | `suffix` |
+| `Contains` | `contains` | |
+| `Regex` | `regex` | `re`, `match` |
+| `Before` | `before` | |
+| `After` | `after` | |
+| `In` | `in` | |
+| `Is` | `is` | |
+
+### Default Operators by Type
+
+When no operator is specified, the default depends on field type:
+
+| Field Type | Default Operator |
+|------------|------------------|
+| `String` | `Eq` |
+| `Number` | `Eq` |
+| `Timestamp` | `Eq` |
+| `Enum` | `Eq` |
+| `Bool` | `Is` (with implicit `true` value) |
+
+For boolean fields, bare `--archived` means `archived-is=true`.
+
+### Value Parsing
+
+Values are parsed based on field type:
+
+| Field Type | Value Format | Examples |
+|------------|--------------|----------|
+| `String` | Raw string | `foo`, `hello world` |
+| `Number` | Integer or float | `42`, `-17`, `3.14` |
+| `Timestamp` | ISO 8601 or Unix ms | `2024-01-15`, `2024-01-15T10:30:00Z`, `1705312200000` |
+| `Enum` | Discriminant (u32) or variant name | `0`, `1`, `active`, `pending` |
+| `Bool` | Boolean literal | `true`, `false`, `1`, `0` |
+
+For `In` operator, values are comma-separated: `--status-in=active,pending,done`
+
+### Clause Groups
+
+Group markers change which group subsequent clauses are added to:
+
+| Marker | Effect |
+|--------|--------|
+| `AND` | Following clauses go to AND group (default) |
+| `OR` | Following clauses go to OR group |
+| `NOT` | Following clauses go to NOT group |
+
+Groups apply to all subsequent clauses until the next marker.
+
+### Ordering and Limits
+
+Special keys for ordering and pagination:
+
+| Key | Format | Example |
+|-----|--------|---------|
+| `order` | `field` or `field-asc` or `field-desc` | `order=priority-desc` |
+| `limit` | Integer | `limit=20` |
+| `offset` | Integer | `offset=10` |
+
+Multiple `order` entries create multi-field ordering (first is primary).
+
+### Parser API
+
+```rust
+/// Error from parsing a query string.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ParseError {
+    /// Field name not found in schema.
+    UnknownField { field: String },
+    /// Operator not valid for field type.
+    InvalidOperator { field: String, operator: String, field_type: SeekType },
+    /// Value could not be parsed for field type.
+    InvalidValue { field: String, value: String, expected: SeekType },
+    /// Invalid regex pattern.
+    InvalidRegex { field: String, pattern: String, error: String },
+    /// Invalid ordering specification.
+    InvalidOrdering { value: String },
+    /// Invalid limit/offset value.
+    InvalidLimit { value: String },
+}
+
+/// Parse key-value pairs into a Query.
+///
+/// # Arguments
+/// * `pairs` - Iterator of (key, value) string pairs
+///
+/// # Type Parameters
+/// * `S` - Type implementing `SeekerSchema` for field metadata
+///
+/// # Example
+/// ```rust
+/// let pairs = vec![
+///     ("name-contains".to_string(), "readme".to_string()),
+///     ("OR".to_string(), "".to_string()),
+///     ("priority-gte".to_string(), "5".to_string()),
+///     ("order".to_string(), "priority-desc".to_string()),
+/// ];
+/// let query = parse_query::<Task>(pairs)?;
+/// ```
+pub fn parse_query<S: SeekerSchema>(
+    pairs: impl IntoIterator<Item = (String, String)>,
+) -> Result<Query, ParseError>;
+
+/// Parse a single key into field name and operator.
+///
+/// Returns (field_name, operator) or just field_name with default operator.
+pub fn parse_key<S: SeekerSchema>(key: &str) -> Result<(String, Op), ParseError>;
+
+/// Parse a value string into a ClauseValue based on field type.
+pub fn parse_value(
+    value: &str,
+    field_type: SeekType,
+    op: Op,
+) -> Result<ClauseValue, ParseError>;
+```
+
+### Enum Value Resolution
+
+For enum fields, values can be either:
+1. **Numeric discriminant:** `0`, `1`, `2`
+2. **Variant name:** `pending`, `active`, `completed`
+
+To support variant names, add an optional method to `SeekerSchema`:
+
+```rust
+pub trait SeekerSchema {
+    // ... existing methods ...
+
+    /// Resolve an enum variant name to its discriminant.
+    /// Returns None if not an enum field or variant not found.
+    fn resolve_enum_variant(field: &str, variant: &str) -> Option<u32> {
+        None // Default: only numeric discriminants supported
+    }
+}
+```
+
+### Usage Example
+
+```rust
+use standout_seeker::{parse_query, Query, SeekerSchema, SeekType};
+
+#[derive(Seekable)]  // Generates both Seekable and SeekerSchema
+struct Task {
+    #[seek(String)]
+    name: String,
+    #[seek(Number)]
+    priority: u8,
+    #[seek(Bool)]
+    done: bool,
+}
+
+// Parse from any source of key-value pairs
+let pairs = vec![
+    ("name-contains", "urgent"),
+    ("priority-gte", "3"),
+    ("NOT", ""),
+    ("done", "true"),
+    ("order", "priority-desc"),
+    ("limit", "10"),
+];
+
+let query = parse_query::<Task>(
+    pairs.into_iter().map(|(k, v)| (k.to_string(), v.to_string()))
+)?;
+
+// Use the query
+let results = query.filter(&tasks, Task::accessor);
+```
+
+### Crate Structure Addition
+
+```
+crates/standout-seeker/
+├── src/
+│   ├── ...existing files...
+│   ├── schema.rs     # SeekerSchema trait and SeekType enum
+│   └── parse.rs      # String parsing logic (+ unit tests)
+└── tests/
+    ├── ...existing files...
+    └── parse_proptest.rs  # Property-based tests for parsing
+```
+
+---
+
+## Phase 4: CLI Bridge (Future)
+
+**Status: Not Started**
+
+Clap integration for automatic CLI argument generation.
+
+### Overview
+
+Phase 4 builds on Phase 3's string parsing to provide seamless clap integration:
+- Auto-generated `--field-op=value` arguments from `SeekerSchema`
+- `--AND`, `--OR`, `--NOT` flags for group markers
+- `--order-by`, `--limit`, `--offset` standard arguments
+- Help text generation showing available fields and operators
+
+### FilterArgs Derive
+
+```rust
+/// Automatically generates clap arguments from a Seekable type.
+#[derive(FilterArgs)]
+#[filter(schema = Task)]
+struct ListArgs {
+    // Auto-generated filter arguments from Task's SeekerSchema
+
+    // Can add custom arguments alongside
+    #[arg(long)]
+    verbose: bool,
+}
+```
+
+### Generated Arguments
+
+For a `Task` with fields `name: String`, `priority: Number`, `done: Bool`:
+
+```
+OPTIONS:
+    --name <VALUE>              Filter by name (equals)
+    --name-eq <VALUE>           Filter by name equals
+    --name-ne <VALUE>           Filter by name not equals
+    --name-contains <VALUE>     Filter by name contains
+    --name-startswith <VALUE>   Filter by name starts with
+    --name-endswith <VALUE>     Filter by name ends with
+    --name-regex <PATTERN>      Filter by name matches regex
+
+    --priority <VALUE>          Filter by priority (equals)
+    --priority-eq <VALUE>       Filter by priority equals
+    --priority-ne <VALUE>       Filter by priority not equals
+    --priority-gt <VALUE>       Filter by priority greater than
+    --priority-gte <VALUE>      Filter by priority greater or equal
+    --priority-lt <VALUE>       Filter by priority less than
+    --priority-lte <VALUE>      Filter by priority less or equal
+
+    --done                      Filter by done is true
+    --done-eq <VALUE>           Filter by done equals
+    --done-ne <VALUE>           Filter by done not equals
+
+    --AND                       Following filters use AND logic (default)
+    --OR                        Following filters use OR logic
+    --NOT                       Following filters use NOT logic
+
+    --order-by <FIELD>          Order by field (append -asc or -desc)
+    --limit <N>                 Maximum results to return
+    --offset <N>                Results to skip
+```
+
+### Integration API
+
+```rust
+impl ListArgs {
+    /// Build a Query from the parsed CLI arguments.
+    pub fn to_query(&self) -> Result<Query, ParseError>;
+}
+
+// Usage in main
+fn main() -> Result<()> {
+    let args = ListArgs::parse();
+    let query = args.to_query()?;
+
+    let tasks = load_tasks();
+    let results = query.filter(&tasks, Task::accessor);
+
+    for task in results {
+        println!("{}", task.name);
+    }
+    Ok(())
+}
+```
+
+### Custom Field Exposure
+
+To expose only specific fields in CLI (while keeping all fields queryable programmatically):
+
+```rust
+#[derive(FilterArgs)]
+#[filter(schema = Task, fields = ["name", "priority"])]  // Only these in CLI
+struct ListArgs { }
+```
+
+Or implement `SeekerSchema` manually to control exposure.
+
+### Help Topics Integration
+
+Integrates with standout's help topics system to provide detailed filter documentation:
+
+```
+$ myapp help filters
+
+QUERY FILTERS
+
+  Filters select which items to include in results.
+
+  FORMAT: --field-operator=value
+
+  FIELDS:
+    name      (string)     The task name
+    priority  (number)     Priority level 1-10
+    done      (boolean)    Completion status
+
+  OPERATORS BY TYPE:
+    String:    eq, ne, contains, startswith, endswith, regex
+    Number:    eq, ne, gt, gte, lt, lte
+    Boolean:   eq, is
+    ...
+
+  EXAMPLES:
+    --name-contains=urgent --priority-gte=5
+    --OR --name=README --name=CHANGELOG
+    --NOT --done
+```
 
 ---
 

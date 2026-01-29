@@ -1,13 +1,23 @@
 //! Implementation of the `#[derive(Seekable)]` macro.
 //!
-//! This macro generates an implementation of the `Seekable` trait and
-//! field name constants for type-safe query building.
+//! This macro generates an implementation of the `Seekable` trait,
+//! `SeekerSchema` trait, and field name constants for type-safe query building.
 
 use proc_macro2::TokenStream;
 use quote::{format_ident, quote};
 use syn::{spanned::Spanned, Data, DeriveInput, Error, Fields, Result};
 
 use super::attrs::{parse_seek_attrs, SeekType};
+
+/// Information about a seekable field.
+struct FieldInfo {
+    /// The query name for this field (may be renamed).
+    query_name: String,
+    /// The seek type.
+    seek_type: SeekType,
+    /// The actual field identifier.
+    field_ident: syn::Ident,
+}
 
 /// Main implementation of the Seekable derive macro.
 pub fn seekable_derive_impl(input: DeriveInput) -> Result<TokenStream> {
@@ -33,8 +43,7 @@ pub fn seekable_derive_impl(input: DeriveInput) -> Result<TokenStream> {
     };
 
     // Collect field information
-    let mut field_matches: Vec<TokenStream> = Vec::new();
-    let mut field_constants: Vec<TokenStream> = Vec::new();
+    let mut field_infos: Vec<FieldInfo> = Vec::new();
 
     for field in fields.iter() {
         let field_name = field
@@ -59,48 +68,88 @@ pub fn seekable_derive_impl(input: DeriveInput) -> Result<TokenStream> {
         // Determine the query field name
         let query_name = seek_attrs.rename.unwrap_or_else(|| field_name.to_string());
 
-        // Generate constant name (SCREAMING_SNAKE_CASE)
-        let const_name = format_ident!("{}", to_screaming_snake_case(&query_name));
-
-        // Generate the constant
-        field_constants.push(quote! {
-            /// Field name constant for type-safe queries.
-            pub const #const_name: &'static str = #query_name;
-        });
-
-        // Generate the match arm for seeker_field_value
-        let value_expr = match seek_type {
-            SeekType::String => {
-                quote! { ::standout_seeker::Value::String(&self.#field_name) }
-            }
-            SeekType::Number => {
-                quote! { ::standout_seeker::Value::Number(::standout_seeker::Number::from(self.#field_name)) }
-            }
-            SeekType::Timestamp => {
-                quote! {
-                    ::standout_seeker::Value::Timestamp(
-                        ::standout_seeker::SeekerTimestamp::seeker_timestamp(&self.#field_name)
-                    )
-                }
-            }
-            SeekType::Enum => {
-                quote! {
-                    ::standout_seeker::Value::Enum(
-                        ::standout_seeker::SeekerEnum::seeker_discriminant(&self.#field_name)
-                    )
-                }
-            }
-            SeekType::Bool => {
-                quote! { ::standout_seeker::Value::Bool(self.#field_name) }
-            }
-        };
-
-        field_matches.push(quote! {
-            #query_name => #value_expr,
+        field_infos.push(FieldInfo {
+            query_name,
+            seek_type,
+            field_ident: field_name.clone(),
         });
     }
 
-    // Generate the impl block
+    // Generate field constants
+    let field_constants: Vec<TokenStream> = field_infos
+        .iter()
+        .map(|info| {
+            let const_name = format_ident!("{}", to_screaming_snake_case(&info.query_name));
+            let query_name = &info.query_name;
+            quote! {
+                /// Field name constant for type-safe queries.
+                pub const #const_name: &'static str = #query_name;
+            }
+        })
+        .collect();
+
+    // Generate match arms for seeker_field_value
+    let field_matches: Vec<TokenStream> = field_infos
+        .iter()
+        .map(|info| {
+            let query_name = &info.query_name;
+            let field_ident = &info.field_ident;
+            let value_expr = match info.seek_type {
+                SeekType::String => {
+                    quote! { ::standout_seeker::Value::String(&self.#field_ident) }
+                }
+                SeekType::Number => {
+                    quote! { ::standout_seeker::Value::Number(::standout_seeker::Number::from(self.#field_ident)) }
+                }
+                SeekType::Timestamp => {
+                    quote! {
+                        ::standout_seeker::Value::Timestamp(
+                            ::standout_seeker::SeekerTimestamp::seeker_timestamp(&self.#field_ident)
+                        )
+                    }
+                }
+                SeekType::Enum => {
+                    quote! {
+                        ::standout_seeker::Value::Enum(
+                            ::standout_seeker::SeekerEnum::seeker_discriminant(&self.#field_ident)
+                        )
+                    }
+                }
+                SeekType::Bool => {
+                    quote! { ::standout_seeker::Value::Bool(self.#field_ident) }
+                }
+            };
+            quote! {
+                #query_name => #value_expr,
+            }
+        })
+        .collect();
+
+    // Generate match arms for SeekerSchema::field_type
+    let schema_field_type_matches: Vec<TokenStream> = field_infos
+        .iter()
+        .map(|info| {
+            let query_name = &info.query_name;
+            let seek_type_token = match info.seek_type {
+                SeekType::String => quote! { ::standout_seeker::SeekType::String },
+                SeekType::Number => quote! { ::standout_seeker::SeekType::Number },
+                SeekType::Timestamp => quote! { ::standout_seeker::SeekType::Timestamp },
+                SeekType::Enum => quote! { ::standout_seeker::SeekType::Enum },
+                SeekType::Bool => quote! { ::standout_seeker::SeekType::Bool },
+            };
+            quote! {
+                #query_name => ::core::option::Option::Some(#seek_type_token),
+            }
+        })
+        .collect();
+
+    // Generate field names array for SeekerSchema::field_names
+    let field_name_literals: Vec<&str> = field_infos
+        .iter()
+        .map(|info| info.query_name.as_str())
+        .collect();
+
+    // Generate the impl blocks
     let expanded = quote! {
         impl #struct_name {
             #(#field_constants)*
@@ -112,6 +161,19 @@ pub fn seekable_derive_impl(input: DeriveInput) -> Result<TokenStream> {
                     #(#field_matches)*
                     _ => ::standout_seeker::Value::None,
                 }
+            }
+        }
+
+        impl ::standout_seeker::SeekerSchema for #struct_name {
+            fn field_type(field: &str) -> ::core::option::Option<::standout_seeker::SeekType> {
+                match field {
+                    #(#schema_field_type_matches)*
+                    _ => ::core::option::Option::None,
+                }
+            }
+
+            fn field_names() -> &'static [&'static str] {
+                &[#(#field_name_literals),*]
             }
         }
     };

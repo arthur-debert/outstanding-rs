@@ -79,7 +79,9 @@ mod clause;
 mod error;
 mod op;
 mod ordering;
+mod parse;
 mod query;
+mod schema;
 mod traits;
 mod value;
 
@@ -88,6 +90,11 @@ pub use clause::{Clause, ClauseValue};
 pub use error::{Result, SeekerError};
 pub use op::Op;
 pub use ordering::{compare_values, Dir, OrderBy};
+pub use parse::{
+    parse_key, parse_operator, parse_ordering, parse_query, parse_value, ClauseGroup, ParseError,
+    ParseResult,
+};
 pub use query::Query;
+pub use schema::{SeekType, SeekerSchema};
 pub use traits::{Seekable, SeekerEnum, SeekerTimestamp};
 pub use value::{Number, Timestamp, Value};
