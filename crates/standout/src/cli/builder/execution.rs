@@ -245,15 +245,18 @@ impl AppBuilder {
         };
 
         // Check if we need to insert default command
-        let matches = if !has_subcommand(&matches) && self.default_command.is_some() {
-            let default_cmd = self.default_command.as_ref().unwrap();
-            let new_args = insert_default_command(args, default_cmd);
+        let matches = if let Some(default_cmd) = &self.default_command {
+            if has_subcommand(&matches) {
+                matches
+            } else {
+                let new_args = insert_default_command(args, default_cmd);
 
-            // Reparse with default command inserted
-            let augmented_cmd = self.augment_command_for_dispatch(cmd);
-            match augmented_cmd.try_get_matches_from(&new_args) {
-                Ok(m) => m,
-                Err(e) => return RunResult::Handled(e.to_string()),
+                // Reparse with default command inserted
+                let augmented_cmd = self.augment_command_for_dispatch(cmd);
+                match augmented_cmd.try_get_matches_from(&new_args) {
+                    Ok(m) => m,
+                    Err(e) => return RunResult::Handled(e.to_string()),
+                }
             }
         } else {
             matches

@@ -571,10 +571,10 @@ impl GroupBuilder {
     ///     .default_command("list"))  // "list" is used when no command specified
     /// ```
     pub fn default_command(mut self, name: &str) -> Self {
-        if self.default_command.is_some() {
+        if let Some(existing) = &self.default_command {
             panic!(
                 "Only one default command can be defined. '{}' is already set as default.",
-                self.default_command.as_ref().unwrap()
+                existing
             );
         }
         self.default_command = Some(name.to_string());
