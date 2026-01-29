@@ -341,6 +341,52 @@ impl AppBuilder {
         self.default_command = Some(name.to_string());
         self
     }
+
+    /// Controls whether framework-supplied templates are included.
+    ///
+    /// Framework templates (in the `standout/` namespace) provide defaults for
+    /// views like `standout/list-view`. They have the lowest priority and can
+    /// be overridden by user templates with the same name.
+    ///
+    /// Default is `true`.
+    ///
+    /// # Example
+    ///
+    /// ```rust,ignore
+    /// use standout::cli::App;
+    ///
+    /// // Disable framework templates to require explicit configuration
+    /// App::builder()
+    ///     .include_framework_templates(false)
+    ///     .build()?;
+    /// ```
+    pub fn include_framework_templates(mut self, include: bool) -> Self {
+        self.include_framework_templates = include;
+        self
+    }
+
+    /// Controls whether framework-supplied styles are included.
+    ///
+    /// Framework styles (prefixed with `standout-`) provide defaults like
+    /// `standout-muted`, `standout-error`, etc. They can be overridden by
+    /// user styles with the same name.
+    ///
+    /// Default is `true`.
+    ///
+    /// # Example
+    ///
+    /// ```rust,ignore
+    /// use standout::cli::App;
+    ///
+    /// // Disable framework styles to use only custom styles
+    /// App::builder()
+    ///     .include_framework_styles(false)
+    ///     .build()?;
+    /// ```
+    pub fn include_framework_styles(mut self, include: bool) -> Self {
+        self.include_framework_styles = include;
+        self
+    }
 }
 
 #[cfg(test)]

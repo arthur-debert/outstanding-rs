@@ -92,6 +92,10 @@ pub struct AppBuilder {
     pub(crate) template_ext: String,
     /// Default command to use when no subcommand is specified
     pub(crate) default_command: Option<String>,
+    /// Whether to include framework-supplied templates (default: true)
+    pub(crate) include_framework_templates: bool,
+    /// Whether to include framework-supplied styles (default: true)
+    pub(crate) include_framework_styles: bool,
 }
 
 impl Default for AppBuilder {
@@ -103,7 +107,8 @@ impl Default for AppBuilder {
 impl AppBuilder {
     /// Creates a new builder with default settings.
     ///
-    /// By default, the `--output` flag is enabled and no hooks are registered.
+    /// By default, the `--output` flag is enabled, framework templates and styles
+    /// are included, and no hooks are registered.
     pub fn new() -> Self {
         Self {
             registry: TopicRegistry::new(),
@@ -120,6 +125,8 @@ impl AppBuilder {
             template_dir: None,
             template_ext: ".j2".to_string(),
             default_command: None,
+            include_framework_templates: true,
+            include_framework_styles: true,
         }
     }
 
@@ -186,6 +193,31 @@ impl AppBuilder {
     /// ```
     pub fn build(mut self) -> Result<App<ThreadSafe>, SetupError> {
         use super::core::AppCore;
+        use crate::assets::FRAMEWORK_TEMPLATES;
+
+        // Add framework templates if enabled (BEFORE finalizing commands)
+        // This must happen before ensure_commands_finalized() because that method
+        // clones the template_registry Arc.
+        if self.include_framework_templates {
+            match self.template_registry.as_mut() {
+                Some(arc) => {
+                    // Get mutable access to the registry
+                    // This works because nothing has cloned the Arc yet
+                    if let Some(registry) = Arc::get_mut(arc) {
+                        registry.add_framework_entries(FRAMEWORK_TEMPLATES);
+                    } else {
+                        // Shouldn't happen during build before finalization
+                        panic!("template registry was shared before build completed");
+                    }
+                }
+                None => {
+                    // Create new registry with just framework templates
+                    let mut registry = TemplateRegistry::new();
+                    registry.add_framework_entries(FRAMEWORK_TEMPLATES);
+                    self.template_registry = Some(Arc::new(registry));
+                }
+            };
+        }
 
         // Ensure commands are finalized
         self.ensure_commands_finalized();

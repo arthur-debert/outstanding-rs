@@ -220,7 +220,9 @@
 mod setup;
 
 // Public submodules
+pub mod assets;
 pub mod topics;
+pub mod views;
 
 // Re-export everything from standout-render
 // This provides the rendering layer without CLI knowledge

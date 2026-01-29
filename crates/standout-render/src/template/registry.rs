@@ -360,6 +360,11 @@ pub struct TemplateRegistry {
 
     /// Tracks source info for collision detection: name → (path, source_dir).
     sources: HashMap<String, (PathBuf, PathBuf)>,
+
+    /// Framework templates (lowest priority fallback).
+    /// These are provided by the standout framework and can be overridden
+    /// by user templates with the same name.
+    framework: HashMap<String, String>,
 }
 
 impl Default for TemplateRegistry {
@@ -376,6 +381,7 @@ impl TemplateRegistry {
             inline: HashMap::new(),
             files: HashMap::new(),
             sources: HashMap::new(),
+            framework: HashMap::new(),
         }
     }
 
@@ -497,6 +503,57 @@ impl TemplateRegistry {
         }
     }
 
+    /// Adds framework templates (lowest priority fallback).
+    ///
+    /// Framework templates are provided by the standout framework and serve as
+    /// defaults that can be overridden by user templates with the same name.
+    /// They are checked last during resolution.
+    ///
+    /// Framework templates typically use the `standout/` namespace to avoid
+    /// accidental collision with user templates (e.g., `standout/list-view`).
+    ///
+    /// # Arguments
+    ///
+    /// * `name` - The template name (e.g., `"standout/list-view"`)
+    /// * `content` - The template content
+    ///
+    /// # Example
+    ///
+    /// ```rust,ignore
+    /// registry.add_framework("standout/list-view", include_str!("templates/list-view.jinja"));
+    /// ```
+    pub fn add_framework(&mut self, name: impl Into<String>, content: impl Into<String>) {
+        self.framework.insert(name.into(), content.into());
+    }
+
+    /// Adds multiple framework templates from embedded entries.
+    ///
+    /// This is similar to [`from_embedded_entries`] but adds templates to the
+    /// framework (lowest priority) tier instead of inline (highest priority).
+    ///
+    /// # Arguments
+    ///
+    /// * `entries` - Slice of `(name_with_ext, content)` pairs
+    pub fn add_framework_entries(&mut self, entries: &[(&str, &str)]) {
+        let framework: HashMap<String, String> =
+            build_embedded_registry(entries, TEMPLATE_EXTENSIONS, |content| {
+                Ok::<_, std::convert::Infallible>(content.to_string())
+            })
+            .unwrap(); // Safe: Infallible error type
+
+        for (name, content) in framework {
+            self.framework.insert(name, content);
+        }
+    }
+
+    /// Clears all framework templates.
+    ///
+    /// This is useful when you want to disable all framework-provided defaults
+    /// and require explicit template configuration.
+    pub fn clear_framework(&mut self) {
+        self.framework.clear();
+    }
+
     /// Creates a registry from embedded template entries.
     ///
     /// This is the primary entry point for compile-time embedded templates,
@@ -555,6 +612,16 @@ impl TemplateRegistry {
     /// - `"config"` resolves to `config.jinja` (or highest-priority extension)
     /// - `"config.jinja"` resolves to exactly that file
     ///
+    /// # Resolution Priority
+    ///
+    /// Templates are resolved in this order:
+    /// 1. Inline templates (highest priority)
+    /// 2. File-based templates from `add_from_files`
+    /// 3. Directory-based templates from `add_template_dir`
+    /// 4. Framework templates (lowest priority)
+    ///
+    /// This allows user templates to override framework defaults.
+    ///
     /// # Errors
     ///
     /// Returns [`RegistryError::NotFound`] if the template doesn't exist.
@@ -572,6 +639,11 @@ impl TemplateRegistry {
         // Check directory-based file registry
         if let Some(entry) = self.inner.get_entry(name) {
             return Ok(ResolvedTemplate::from(entry));
+        }
+
+        // Check framework templates (lowest priority)
+        if let Some(content) = self.framework.get(name) {
+            return Ok(ResolvedTemplate::Inline(content.clone()));
         }
 
         Err(RegistryError::NotFound {
@@ -620,12 +692,15 @@ impl TemplateRegistry {
     /// Note: This counts both extensionless and with-extension entries,
     /// so it may be higher than the number of unique template files.
     pub fn len(&self) -> usize {
-        self.inline.len() + self.files.len() + self.inner.len()
+        self.inline.len() + self.files.len() + self.inner.len() + self.framework.len()
     }
 
     /// Returns true if no templates are registered.
     pub fn is_empty(&self) -> bool {
-        self.inline.is_empty() && self.files.is_empty() && self.inner.is_empty()
+        self.inline.is_empty()
+            && self.files.is_empty()
+            && self.inner.is_empty()
+            && self.framework.is_empty()
     }
 
     /// Returns an iterator over all registered template names.
@@ -635,6 +710,7 @@ impl TemplateRegistry {
             .map(|s| s.as_str())
             .chain(self.files.keys().map(|s| s.as_str()))
             .chain(self.inner.names())
+            .chain(self.framework.keys().map(|s| s.as_str()))
     }
 
     /// Clears all templates from the registry.
@@ -643,6 +719,17 @@ impl TemplateRegistry {
         self.files.clear();
         self.sources.clear();
         self.inner.clear();
+        self.framework.clear();
+    }
+
+    /// Returns true if the registry has framework templates.
+    pub fn has_framework_templates(&self) -> bool {
+        !self.framework.is_empty()
+    }
+
+    /// Returns an iterator over framework template names.
+    pub fn framework_names(&self) -> impl Iterator<Item = &str> {
+        self.framework.keys().map(|s| s.as_str())
     }
 }
 
@@ -1042,5 +1129,116 @@ mod tests {
         let tmpl = env.get_template("main").unwrap();
         let output = tmpl.render(()).unwrap();
         assert_eq!(output, "Start PARTIAL_CONTENT End");
+    }
+
+    // =========================================================================
+    // Framework templates tests
+    // =========================================================================
+
+    #[test]
+    fn test_framework_add_and_get() {
+        let mut registry = TemplateRegistry::new();
+        registry.add_framework("standout/list-view", "Framework list view");
+
+        assert!(registry.has_framework_templates());
+        let content = registry.get_content("standout/list-view").unwrap();
+        assert_eq!(content, "Framework list view");
+    }
+
+    #[test]
+    fn test_framework_lowest_priority() {
+        let mut registry = TemplateRegistry::new();
+
+        // Add framework template
+        registry.add_framework("config", "framework content");
+
+        // Add inline template with same name (should shadow)
+        registry.add_inline("config", "inline content");
+
+        // Inline should win
+        let content = registry.get_content("config").unwrap();
+        assert_eq!(content, "inline content");
+    }
+
+    #[test]
+    fn test_framework_user_can_override() {
+        let mut registry = TemplateRegistry::new();
+
+        // Add framework template in standout/ namespace
+        registry.add_framework("standout/list-view", "framework default");
+
+        // User creates their own version
+        registry.add_inline("standout/list-view", "user override");
+
+        // User version should win
+        let content = registry.get_content("standout/list-view").unwrap();
+        assert_eq!(content, "user override");
+    }
+
+    #[test]
+    fn test_framework_entries() {
+        let mut registry = TemplateRegistry::new();
+
+        let entries: &[(&str, &str)] = &[
+            ("standout/list-view.jinja", "List view content"),
+            ("standout/detail-view.jinja", "Detail view content"),
+        ];
+
+        registry.add_framework_entries(entries);
+
+        // Should be accessible by both names
+        assert!(registry.get("standout/list-view").is_ok());
+        assert!(registry.get("standout/list-view.jinja").is_ok());
+        assert!(registry.get("standout/detail-view").is_ok());
+    }
+
+    #[test]
+    fn test_framework_names_iterator() {
+        let mut registry = TemplateRegistry::new();
+        registry.add_framework("standout/a", "content a");
+        registry.add_framework("standout/b", "content b");
+
+        let names: Vec<&str> = registry.framework_names().collect();
+        assert_eq!(names.len(), 2);
+        assert!(names.contains(&"standout/a"));
+        assert!(names.contains(&"standout/b"));
+    }
+
+    #[test]
+    fn test_framework_clear() {
+        let mut registry = TemplateRegistry::new();
+        registry.add_framework("standout/list-view", "content");
+
+        assert!(registry.has_framework_templates());
+
+        registry.clear_framework();
+
+        assert!(!registry.has_framework_templates());
+        assert!(registry.get("standout/list-view").is_err());
+    }
+
+    #[test]
+    fn test_framework_included_in_len_and_names() {
+        let mut registry = TemplateRegistry::new();
+        registry.add_inline("user-template", "user content");
+        registry.add_framework("standout/framework", "framework content");
+
+        // Both should be counted
+        assert_eq!(registry.len(), 2);
+
+        let names: Vec<&str> = registry.names().collect();
+        assert!(names.contains(&"user-template"));
+        assert!(names.contains(&"standout/framework"));
+    }
+
+    #[test]
+    fn test_framework_clear_all_clears_framework() {
+        let mut registry = TemplateRegistry::new();
+        registry.add_framework("standout/test", "content");
+
+        registry.clear();
+
+        assert!(registry.is_empty());
+        assert!(!registry.has_framework_templates());
     }
 }

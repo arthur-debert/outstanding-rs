@@ -687,7 +687,20 @@ pub fn render_with_context<T: Serialize>(
     let mut env = Environment::new();
     register_filters(&mut env);
 
-    env.add_template_owned("_inline".to_string(), template.to_string())?;
+    // Check if template is a registry key (name) or inline content.
+    // If the registry contains a template with this name, use its content.
+    // Otherwise, treat the template string as inline content.
+    let template_content = if let Some(registry) = template_registry {
+        if let Ok(content) = registry.get_content(template) {
+            content
+        } else {
+            template.to_string()
+        }
+    } else {
+        template.to_string()
+    };
+
+    env.add_template_owned("_inline".to_string(), template_content)?;
 
     // Load all templates from registry if available (enables {% include %})
     if let Some(registry) = template_registry {
