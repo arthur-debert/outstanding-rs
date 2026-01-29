@@ -20,15 +20,8 @@ jobs:
         uses: dtolnay/rust-toolchain@stable
         # Version and components are read from rust-toolchain.toml
 
-      - name: Cache cargo registry
-        uses: actions/cache@v4
-        with:
-          path: |
-            ~/.cargo/registry
-            ~/.cargo/git
-            target
-          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
-          restore-keys: ${{ runner.os }}-cargo-
+      - name: Cache Rust toolchain and cargo artifacts
+        uses: Swatinem/rust-cache@v2
 
       - name: Run CI checks
         run: ./scripts/ci.sh
