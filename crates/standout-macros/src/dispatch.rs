@@ -179,9 +179,9 @@ impl Parse for VariantAttrs {
                 Meta::NameValue(nv) if nv.path.is_ident("item_type") => {
                     if let Expr::Lit(expr_lit) = &nv.value {
                         if let syn::Lit::Str(lit_str) = &expr_lit.lit {
-                             attrs.item_type = Some(lit_str.value());
+                            attrs.item_type = Some(lit_str.value());
                         } else {
-                             return Err(Error::new(nv.value.span(), "expected string literal"));
+                            return Err(Error::new(nv.value.span(), "expected string literal"));
                         }
                     } else {
                         return Err(Error::new(nv.value.span(), "expected string literal"));
@@ -199,7 +199,7 @@ impl Parse for VariantAttrs {
                     }
                 }
                 Meta::NameValue(nv) if nv.path.is_ident("pipe_through") => {
-                     if let Expr::Lit(expr_lit) = &nv.value {
+                    if let Expr::Lit(expr_lit) = &nv.value {
                         if let syn::Lit::Str(lit_str) = &expr_lit.lit {
                             attrs.pipe_through = Some(lit_str.value());
                         } else {

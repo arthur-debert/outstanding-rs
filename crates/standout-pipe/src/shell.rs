@@ -42,19 +42,17 @@ pub fn run_piped(
     }
 
     match timeout {
-        Some(duration) => {
-            match child.wait_timeout(duration)? {
-                Some(status) => {
-                    if !status.success() {
-                        return Err(ShellError::CommandFailed(status));
-                    }
-                }
-                None => {
-                    child.kill()?;
-                    return Err(ShellError::Timeout(duration));
+        Some(duration) => match child.wait_timeout(duration)? {
+            Some(status) => {
+                if !status.success() {
+                    return Err(ShellError::CommandFailed(status));
                 }
             }
-        }
+            None => {
+                child.kill()?;
+                return Err(ShellError::Timeout(duration));
+            }
+        },
         None => {
             let status = child.wait()?;
             if !status.success() {
@@ -78,14 +76,22 @@ mod tests {
 
     #[test]
     fn test_echo() {
-        let cmd = if cfg!(windows) { "echo hello" } else { "echo hello" };
+        let cmd = if cfg!(windows) {
+            "echo hello"
+        } else {
+            "echo hello"
+        };
         let output = run_piped(cmd, "", None).unwrap();
         assert!(output.trim().contains("hello"));
     }
 
     #[test]
     fn test_input_piping() {
-        let cmd = if cfg!(windows) { "findstr foo" } else { "grep foo" };
+        let cmd = if cfg!(windows) {
+            "findstr foo"
+        } else {
+            "grep foo"
+        };
         let input = "foo\nbar\nbaz";
         let output = run_piped(cmd, input, None).unwrap();
         assert_eq!(output.trim(), "foo");
@@ -93,7 +99,11 @@ mod tests {
 
     #[test]
     fn test_timeout() {
-        let cmd = if cfg!(windows) { "ping -n 3 127.0.0.1" } else { "sleep 2" };
+        let cmd = if cfg!(windows) {
+            "ping -n 3 127.0.0.1"
+        } else {
+            "sleep 2"
+        };
         let start = std::time::Instant::now();
         let res = run_piped(cmd, "", Some(Duration::from_millis(500)));
         assert!(matches!(res, Err(ShellError::Timeout(_))));

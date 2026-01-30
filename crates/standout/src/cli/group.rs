@@ -390,7 +390,9 @@ impl<H> CommandConfig<H> {
             if let crate::cli::hooks::RenderedOutput::Text(ref text) = output {
                 let pipe = standout_pipe::SimplePipe::new(command.clone());
                 // Default SimplePipe is Passthrough
-                let result = pipe.pipe(text).map_err(|e| crate::cli::hooks::HookError::post_output(e.to_string()))?;
+                let result = pipe
+                    .pipe(text)
+                    .map_err(|e| crate::cli::hooks::HookError::post_output(e.to_string()))?;
                 Ok(crate::cli::hooks::RenderedOutput::Text(result))
             } else {
                 Ok(output)
@@ -407,7 +409,9 @@ impl<H> CommandConfig<H> {
         self.post_output(move |_matches, _ctx, output| {
             if let crate::cli::hooks::RenderedOutput::Text(ref text) = output {
                 let pipe = standout_pipe::SimplePipe::new(command.clone()).capture();
-                let result = pipe.pipe(text).map_err(|e| crate::cli::hooks::HookError::post_output(e.to_string()))?;
+                let result = pipe
+                    .pipe(text)
+                    .map_err(|e| crate::cli::hooks::HookError::post_output(e.to_string()))?;
                 Ok(crate::cli::hooks::RenderedOutput::Text(result))
             } else {
                 Ok(output)
@@ -426,8 +430,10 @@ impl<H> CommandConfig<H> {
         self.post_output(move |_matches, _ctx, output| {
             if let crate::cli::hooks::RenderedOutput::Text(ref text) = output {
                 if let Some(pipe) = standout_pipe::clipboard() {
-                     let result = pipe.pipe(text).map_err(|e| crate::cli::hooks::HookError::post_output(e.to_string()))?;
-                     Ok(crate::cli::hooks::RenderedOutput::Text(result))
+                    let result = pipe
+                        .pipe(text)
+                        .map_err(|e| crate::cli::hooks::HookError::post_output(e.to_string()))?;
+                    Ok(crate::cli::hooks::RenderedOutput::Text(result))
                 } else {
                     // Graceful degradation: return original output
                     eprintln!("Warning: Clipboard not supported on this platform");
@@ -440,17 +446,20 @@ impl<H> CommandConfig<H> {
     }
 
     /// Pipes the output using a custom PipeTarget.
-    pub fn pipe_with<P>(self, target: P) -> Self 
-    where P: standout_pipe::PipeTarget + Send + Sync + 'static 
+    pub fn pipe_with<P>(self, target: P) -> Self
+    where
+        P: standout_pipe::PipeTarget + Send + Sync + 'static,
     {
         let target = std::sync::Arc::new(target);
         self.post_output(move |_matches, _ctx, output| {
-             if let crate::cli::hooks::RenderedOutput::Text(ref text) = output {
-                 let result = target.pipe(text).map_err(|e| crate::cli::hooks::HookError::post_output(e.to_string()))?;
-                 Ok(crate::cli::hooks::RenderedOutput::Text(result))
-             } else {
-                 Ok(output)
-             }
+            if let crate::cli::hooks::RenderedOutput::Text(ref text) = output {
+                let result = target
+                    .pipe(text)
+                    .map_err(|e| crate::cli::hooks::HookError::post_output(e.to_string()))?;
+                Ok(crate::cli::hooks::RenderedOutput::Text(result))
+            } else {
+                Ok(output)
+            }
         })
     }
 }

@@ -10,7 +10,7 @@ pub enum PipeError {
 /// A target that can receive piped output
 pub trait PipeTarget: Send + Sync {
     /// Pipe the input to the target and return the resulting output.
-    /// 
+    ///
     /// If the target is configured to 'capture', the returned string is the command's stdout.
     /// If the target is 'passthrough', the returned string is the original input.
     /// If the target is 'consume', the returned string is empty (or filtered out by caller).
@@ -66,7 +66,7 @@ impl SimplePipe {
 impl PipeTarget for SimplePipe {
     fn pipe(&self, input: &str) -> Result<String, PipeError> {
         let cmd_output = run_piped(&self.command, input, Some(self.timeout))?;
-        
+
         match self.mode {
             PipeMode::Passthrough => Ok(input.to_string()),
             PipeMode::Capture => Ok(cmd_output),
@@ -81,7 +81,11 @@ mod tests {
 
     #[test]
     fn test_simple_pipe_passthrough() {
-        let pipe = SimplePipe::new(if cfg!(windows) { "findstr foo" } else { "grep foo" });
+        let pipe = SimplePipe::new(if cfg!(windows) {
+            "findstr foo"
+        } else {
+            "grep foo"
+        });
         // Passthrough should return ORIGINAL input, but the command is executed.
         let input = "foo\nbar";
         let output = pipe.pipe(input).unwrap();
@@ -90,17 +94,25 @@ mod tests {
 
     #[test]
     fn test_simple_pipe_capture() {
-        let pipe = SimplePipe::new(if cfg!(windows) { "findstr foo" } else { "grep foo" })
-            .capture();
+        let pipe = SimplePipe::new(if cfg!(windows) {
+            "findstr foo"
+        } else {
+            "grep foo"
+        })
+        .capture();
         let input = "foo\nbar";
         let output = pipe.pipe(input).unwrap();
         assert_eq!(output.trim(), "foo");
     }
 
-     #[test]
+    #[test]
     fn test_simple_pipe_consume() {
-        let pipe = SimplePipe::new(if cfg!(windows) { "findstr foo" } else { "grep foo" })
-            .consume();
+        let pipe = SimplePipe::new(if cfg!(windows) {
+            "findstr foo"
+        } else {
+            "grep foo"
+        })
+        .consume();
         let input = "foo\nbar";
         let output = pipe.pipe(input).unwrap();
         assert_eq!(output, "");
