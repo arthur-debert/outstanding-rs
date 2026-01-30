@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.0.0] - 2026-01-30
+
 ### Changed
 
 - **BREAKING: Removed `clap` feature flag** - The `cli` module and clap integration are now always available. The `clap` feature has been removed.
@@ -551,7 +553,8 @@ let output = render_with_output(template, &data, &theme, OutputMode::Term)?;
   - Command handler system with `dispatch_from` convenience method
   - Archive variant support in clap integration
 
-[Unreleased]: https://github.com/arthur-debert/standout/compare/standout-v2.1.0...HEAD
+[Unreleased]: https://github.com/arthur-debert/standout/compare/standout-v3.0.0...HEAD
+[3.0.0]: https://github.com/arthur-debert/standout/compare/standout-v2.1.0...standout-v3.0.0
 [2.1.0]: https://github.com/arthur-debert/standout/compare/standout-v2.0.0...standout-v2.1.0
 [1.1.0]: https://github.com/arthur-debert/standout/compare/standout-v1.0.0...standout-v1.1.0
 [2.2.0]: https://github.com/arthur-debert/standout/compare/v2.1.2...v2.2.0
