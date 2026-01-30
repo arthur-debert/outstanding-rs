@@ -7,6 +7,38 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **SimpleEngine for lightweight templates** - New `SimpleEngine` using format-string style `{variable}` syntax as an alternative to MiniJinja. Ideal for simple templates that only need variable substitution, with minimal binary overhead (~5KB vs ~248KB for MiniJinja).
+
+  **Syntax:**
+  - `{name}` - Simple variable substitution
+  - `{user.profile.email}` - Nested property access via dot notation
+  - `{items.0}` - Array index access
+  - `{{` and `}}` - Escaped braces (render as `{` and `}`)
+
+  **Does NOT support** (by design):
+  - Loops, conditionals, filters, includes, macros
+
+  **Usage:**
+  ```rust
+  use standout_render::{Renderer, Theme, OutputMode};
+  use standout_render::template::SimpleEngine;
+
+  let engine = Box::new(SimpleEngine::new());
+  let mut renderer = Renderer::with_output_and_engine(
+      Theme::new(),
+      OutputMode::Auto,
+      engine,
+  )?;
+
+  renderer.add_template("status", "Hello, {name}!")?;
+  ```
+
+  **New file extension:** `.stpl` for SimpleEngine templates. Extension priority: `.jinja` > `.jinja2` > `.j2` > `.stpl` > `.txt`
+
+  See the [Template Engines](crates/standout-render/docs/topics/template-engines.md) topic for full documentation.
+
 ## [3.5.0] - 2026-01-30
 
 ### Changed
