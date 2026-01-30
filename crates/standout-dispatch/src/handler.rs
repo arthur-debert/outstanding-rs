@@ -249,6 +249,24 @@ impl Clone for Extensions {
 /// }
 /// ```
 ///
+/// ## Shared Mutable State
+///
+/// Since `app_state` is shared via `Arc`, it is immutable by default. To share mutable state
+/// (like counters or caches), use interior mutability primitives like `RwLock`, `Mutex`, or atomic types:
+///
+/// ```rust,ignore
+/// use std::sync::atomic::AtomicUsize;
+///
+/// struct Metrics { request_count: AtomicUsize }
+///
+/// // Builder
+/// App::builder().app_state(Metrics { request_count: AtomicUsize::new(0) });
+///
+/// // Handler
+/// let metrics = ctx.app_state.get_required::<Metrics>()?;
+/// metrics.request_count.fetch_add(1, Ordering::Relaxed);
+/// ```
+///
 /// # Extensions (Mutable, Per-Request)
 ///
 /// Pre-dispatch hooks inject per-request state into `extensions`:

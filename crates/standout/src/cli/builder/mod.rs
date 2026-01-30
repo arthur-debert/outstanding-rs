@@ -160,6 +160,29 @@ impl AppBuilder {
     /// Use for long-lived resources like database connections, configuration, and
     /// API clients.
     ///
+    /// # Shared Mutable State
+    ///
+    /// To share mutable state (like metrics or caches), use interior mutability:
+    ///
+    /// ```rust
+    /// use standout::cli::{App, Output};
+    /// use std::sync::atomic::{AtomicUsize, Ordering};
+    ///
+    /// struct Metrics {
+    ///     requests: AtomicUsize,
+    /// }
+    ///
+    /// let app = App::<standout::cli::ThreadSafe>::builder()
+    ///     .app_state(Metrics { requests: AtomicUsize::new(0) })
+    ///     .command("test", |_m, ctx| {
+    ///         let metrics = ctx.app_state.get_required::<Metrics>()?;
+    ///         metrics.requests.fetch_add(1, Ordering::SeqCst);
+    ///         Ok(Output::<()>::Silent)
+    ///     }, "").unwrap()
+    ///     .build()
+    ///     .unwrap();
+    /// ```
+    ///
     /// # Example
     ///
     /// ```rust,ignore
