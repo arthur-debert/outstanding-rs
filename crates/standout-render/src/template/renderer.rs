@@ -943,4 +943,22 @@ mod tests {
         // The MockEngine::render_named returns "Mock Named: content data={...}"
         assert_eq!(output, "Mock Named: content data={\"val\":42}");
     }
+
+    #[test]
+    fn test_renderer_with_simple_engine() {
+        use crate::template::{SimpleEngine, TemplateEngine};
+        
+        let engine = Box::new(SimpleEngine::new());
+        let mut renderer = Renderer::with_output_and_engine(Theme::new(), OutputMode::Text, engine).unwrap();
+
+        // Add an inline template using SimpleEngine syntax
+        renderer.add_template("welcome", "Hello, {name}!").unwrap();
+        
+        #[derive(Serialize)]
+        struct User { name: String }
+        
+        // Render it
+        let output = renderer.render("welcome", &User { name: "Standout".into() }).unwrap();
+        assert_eq!(output, "Hello, Standout!");
+    }
 }
