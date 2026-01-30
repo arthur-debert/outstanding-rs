@@ -7,6 +7,30 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **ListView macro support** - New attributes for `#[derive(Dispatch)]` to streamline list/table command output:
+
+  ```rust
+  #[derive(Dispatch)]
+  #[dispatch(handlers = handlers)]
+  enum Commands {
+      #[dispatch(list_view, item_type = "Task")]
+      List(ListArgs),
+  }
+  ```
+
+  Features:
+  - `list_view` attribute marks a command as returning tabular data
+  - `item_type` specifies the struct type for column inference
+  - Automatically injects `tabular_spec` into dispatch handlers
+  - Framework assets infrastructure with built-in `list-view.jinja` template
+
+### Fixed
+
+- **Pinned Rust 1.93.0** - Added `rust-toolchain.toml` to ensure local and CI environments use the same Rust version
+- **Improved CI caching** - Switched to `Swatinem/rust-cache` for faster builds
+
 ## [3.1.0] - 2026-01-30
 
 ### Added
