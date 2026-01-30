@@ -139,6 +139,7 @@
 // Internal modules
 pub mod context;
 mod embedded;
+mod error;
 pub mod file_loader;
 pub mod output;
 pub mod prelude;
@@ -148,8 +149,8 @@ pub mod template;
 pub mod theme;
 mod util;
 
-// Re-export minijinja::Error for convenience
-pub use minijinja::Error;
+// Error type
+pub use error::RenderError;
 
 // Style module exports (including former stylesheet exports)
 pub use style::{
@@ -183,6 +184,9 @@ pub use template::{
     TemplateFile,
     TemplateRegistry,
     TEMPLATE_EXTENSIONS,
+    // Template engine abstraction
+    MiniJinjaEngine,
+    TemplateEngine,
 };
 
 // Re-export BBParser types for template validation

@@ -1,14 +1,14 @@
 //! Help rendering functions.
 
 use crate::topics::TopicRegistry;
-use crate::{render_with_output, OutputMode};
+use crate::{render_with_output, OutputMode, RenderError};
 use clap::Command;
 
 use super::config::{default_help_theme, HelpConfig};
 use super::data::{extract_help_data, extract_help_data_with_topics};
 
 /// Renders the help for a clap command using standout.
-pub fn render_help(cmd: &Command, config: Option<HelpConfig>) -> Result<String, crate::Error> {
+pub fn render_help(cmd: &Command, config: Option<HelpConfig>) -> Result<String, RenderError> {
     let config = config.unwrap_or_default();
     let template = config
         .template
@@ -28,7 +28,7 @@ pub fn render_help_with_topics(
     cmd: &Command,
     registry: &TopicRegistry,
     config: Option<HelpConfig>,
-) -> Result<String, crate::Error> {
+) -> Result<String, RenderError> {
     let config = config.unwrap_or_default();
     let template = config
         .template

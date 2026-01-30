@@ -60,7 +60,7 @@ use std::process::{Command as ProcessCommand, Stdio};
 use console::Style;
 use serde::Serialize;
 
-use crate::{render_with_output, Error, OutputMode, Theme};
+use crate::{render_with_output, OutputMode, RenderError, Theme};
 
 /// Fixed width for the name column in topic listings.
 const NAME_COLUMN_WIDTH: usize = 14;
@@ -305,7 +305,7 @@ struct TopicListItem {
 /// let output = render_topic(&topic, None).unwrap();
 /// println!("{}", output);
 /// ```
-pub fn render_topic(topic: &Topic, config: Option<TopicRenderConfig>) -> Result<String, Error> {
+pub fn render_topic(topic: &Topic, config: Option<TopicRenderConfig>) -> Result<String, RenderError> {
     let config = config.unwrap_or_default();
     let template = config
         .topic_template
@@ -347,7 +347,7 @@ pub fn render_topics_list(
     registry: &TopicRegistry,
     usage_prefix: &str,
     config: Option<TopicRenderConfig>,
-) -> Result<String, Error> {
+) -> Result<String, RenderError> {
     let config = config.unwrap_or_default();
     let template = config
         .list_template

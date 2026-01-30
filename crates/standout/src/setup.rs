@@ -1,7 +1,6 @@
 //! Error types for setup operations.
 
-use minijinja::Error as JinjaError;
-use standout_render::RegistryError;
+use standout_render::{RegistryError, RenderError};
 
 /// Error type for setup operations.
 #[derive(Debug)]
@@ -41,8 +40,8 @@ impl From<std::io::Error> for SetupError {
 
 impl std::error::Error for SetupError {}
 
-impl From<JinjaError> for SetupError {
-    fn from(e: JinjaError) -> Self {
+impl From<RenderError> for SetupError {
+    fn from(e: RenderError) -> Self {
         SetupError::Template(e.to_string())
     }
 }
