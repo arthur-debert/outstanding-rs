@@ -625,6 +625,125 @@ where
     }
 }
 
+/// A handler wrapper for functions that don't need [`CommandContext`].
+///
+/// This is the simpler variant of [`FnHandler`] for handlers that only need
+/// [`ArgMatches`]. The context parameter is accepted but ignored internally.
+///
+/// The closure can return either:
+/// - `Result<T, E>` - automatically wrapped in [`Output::Render`]
+/// - `HandlerResult<T>` - passed through unchanged (for [`Output::Silent`] or [`Output::Binary`])
+///
+/// # Example
+///
+/// ```rust
+/// use standout_dispatch::{SimpleFnHandler, Handler, CommandContext, Output};
+/// use clap::ArgMatches;
+///
+/// // Handler that doesn't need context - just uses ArgMatches
+/// let handler = SimpleFnHandler::new(|_m: &ArgMatches| {
+///     Ok::<_, anyhow::Error>("Hello, world!".to_string())
+/// });
+///
+/// // Can still be used via Handler trait (context is ignored)
+/// let ctx = CommandContext::default();
+/// let matches = clap::Command::new("test").get_matches_from(vec!["test"]);
+/// let result = handler.handle(&matches, &ctx);
+/// assert!(matches!(result, Ok(Output::Render(_))));
+/// ```
+pub struct SimpleFnHandler<F, T, R = HandlerResult<T>>
+where
+    T: Serialize + Send + Sync,
+{
+    f: F,
+    _phantom: std::marker::PhantomData<fn() -> (T, R)>,
+}
+
+impl<F, T, R> SimpleFnHandler<F, T, R>
+where
+    F: Fn(&ArgMatches) -> R + Send + Sync,
+    R: IntoHandlerResult<T>,
+    T: Serialize + Send + Sync,
+{
+    /// Creates a new SimpleFnHandler wrapping the given closure.
+    pub fn new(f: F) -> Self {
+        Self {
+            f,
+            _phantom: std::marker::PhantomData,
+        }
+    }
+}
+
+impl<F, T, R> Handler for SimpleFnHandler<F, T, R>
+where
+    F: Fn(&ArgMatches) -> R + Send + Sync,
+    R: IntoHandlerResult<T>,
+    T: Serialize + Send + Sync,
+{
+    type Output = T;
+
+    fn handle(&self, matches: &ArgMatches, _ctx: &CommandContext) -> HandlerResult<T> {
+        (self.f)(matches).into_handler_result()
+    }
+}
+
+/// A local handler wrapper for functions that don't need [`CommandContext`].
+///
+/// This is the simpler variant of [`LocalFnHandler`] for handlers that only need
+/// [`ArgMatches`]. The context parameter is accepted but ignored internally.
+///
+/// Similar to [`SimpleFnHandler`], but:
+/// - Does NOT require `Send + Sync`
+/// - Takes `FnMut` instead of `Fn` (allows mutation)
+///
+/// # Example
+///
+/// ```rust
+/// use standout_dispatch::{LocalSimpleFnHandler, LocalHandler, CommandContext};
+/// use clap::ArgMatches;
+///
+/// let mut call_count = 0;
+/// let mut handler = LocalSimpleFnHandler::new(|m: &ArgMatches| {
+///     call_count += 1;
+///     Ok::<_, anyhow::Error>(format!("Call #{}", call_count))
+/// });
+/// ```
+pub struct LocalSimpleFnHandler<F, T, R = HandlerResult<T>>
+where
+    T: Serialize,
+{
+    f: F,
+    _phantom: std::marker::PhantomData<fn() -> (T, R)>,
+}
+
+impl<F, T, R> LocalSimpleFnHandler<F, T, R>
+where
+    F: FnMut(&ArgMatches) -> R,
+    R: IntoHandlerResult<T>,
+    T: Serialize,
+{
+    /// Creates a new LocalSimpleFnHandler wrapping the given FnMut closure.
+    pub fn new(f: F) -> Self {
+        Self {
+            f,
+            _phantom: std::marker::PhantomData,
+        }
+    }
+}
+
+impl<F, T, R> LocalHandler for LocalSimpleFnHandler<F, T, R>
+where
+    F: FnMut(&ArgMatches) -> R,
+    R: IntoHandlerResult<T>,
+    T: Serialize,
+{
+    type Output = T;
+
+    fn handle(&mut self, matches: &ArgMatches, _ctx: &CommandContext) -> HandlerResult<T> {
+        (self.f)(matches).into_handler_result()
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1135,5 +1254,139 @@ mod tests {
             .unwrap_err()
             .to_string()
             .contains("CustomError: oops"));
+    }
+
+    // SimpleFnHandler tests (no CommandContext)
+    #[test]
+    fn test_simple_fn_handler_basic() {
+        use super::SimpleFnHandler;
+
+        let handler = SimpleFnHandler::new(|_m: &ArgMatches| {
+            Ok::<_, anyhow::Error>("no context needed".to_string())
+        });
+
+        let ctx = CommandContext::default();
+        let matches = clap::Command::new("test").get_matches_from(vec!["test"]);
+
+        let result = handler.handle(&matches, &ctx);
+        assert!(result.is_ok());
+        match result.unwrap() {
+            Output::Render(s) => assert_eq!(s, "no context needed"),
+            _ => panic!("Expected Output::Render"),
+        }
+    }
+
+    #[test]
+    fn test_simple_fn_handler_with_args() {
+        use super::SimpleFnHandler;
+
+        let handler = SimpleFnHandler::new(|m: &ArgMatches| {
+            let verbose = m.get_flag("verbose");
+            Ok::<_, anyhow::Error>(verbose)
+        });
+
+        let ctx = CommandContext::default();
+        let matches = clap::Command::new("test")
+            .arg(
+                clap::Arg::new("verbose")
+                    .short('v')
+                    .action(clap::ArgAction::SetTrue),
+            )
+            .get_matches_from(vec!["test", "-v"]);
+
+        let result = handler.handle(&matches, &ctx);
+        assert!(result.is_ok());
+        match result.unwrap() {
+            Output::Render(v) => assert!(v),
+            _ => panic!("Expected Output::Render"),
+        }
+    }
+
+    #[test]
+    fn test_simple_fn_handler_explicit_output() {
+        use super::SimpleFnHandler;
+
+        let handler = SimpleFnHandler::new(|_m: &ArgMatches| Ok(Output::<()>::Silent));
+
+        let ctx = CommandContext::default();
+        let matches = clap::Command::new("test").get_matches_from(vec!["test"]);
+
+        let result = handler.handle(&matches, &ctx);
+        assert!(result.is_ok());
+        assert!(matches!(result.unwrap(), Output::Silent));
+    }
+
+    #[test]
+    fn test_simple_fn_handler_error() {
+        use super::SimpleFnHandler;
+
+        let handler = SimpleFnHandler::new(|_m: &ArgMatches| {
+            Err::<String, _>(anyhow::anyhow!("simple error"))
+        });
+
+        let ctx = CommandContext::default();
+        let matches = clap::Command::new("test").get_matches_from(vec!["test"]);
+
+        let result = handler.handle(&matches, &ctx);
+        assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("simple error"));
+    }
+
+    // LocalSimpleFnHandler tests
+    #[test]
+    fn test_local_simple_fn_handler_basic() {
+        use super::LocalSimpleFnHandler;
+
+        let mut handler = LocalSimpleFnHandler::new(|_m: &ArgMatches| {
+            Ok::<_, anyhow::Error>("local no context".to_string())
+        });
+
+        let ctx = CommandContext::default();
+        let matches = clap::Command::new("test").get_matches_from(vec!["test"]);
+
+        let result = handler.handle(&matches, &ctx);
+        assert!(result.is_ok());
+        match result.unwrap() {
+            Output::Render(s) => assert_eq!(s, "local no context"),
+            _ => panic!("Expected Output::Render"),
+        }
+    }
+
+    #[test]
+    fn test_local_simple_fn_handler_mutation() {
+        use super::LocalSimpleFnHandler;
+
+        let mut counter = 0u32;
+        let mut handler = LocalSimpleFnHandler::new(|_m: &ArgMatches| {
+            counter += 1;
+            Ok::<_, anyhow::Error>(counter)
+        });
+
+        let ctx = CommandContext::default();
+        let matches = clap::Command::new("test").get_matches_from(vec!["test"]);
+
+        let _ = handler.handle(&matches, &ctx);
+        let _ = handler.handle(&matches, &ctx);
+        let result = handler.handle(&matches, &ctx);
+
+        assert!(result.is_ok());
+        match result.unwrap() {
+            Output::Render(n) => assert_eq!(n, 3),
+            _ => panic!("Expected Output::Render"),
+        }
+    }
+
+    #[test]
+    fn test_local_simple_fn_handler_explicit_output() {
+        use super::LocalSimpleFnHandler;
+
+        let mut handler = LocalSimpleFnHandler::new(|_m: &ArgMatches| Ok(Output::<()>::Silent));
+
+        let ctx = CommandContext::default();
+        let matches = clap::Command::new("test").get_matches_from(vec!["test"]);
+
+        let result = handler.handle(&matches, &ctx);
+        assert!(result.is_ok());
+        assert!(matches!(result.unwrap(), Output::Silent));
     }
 }

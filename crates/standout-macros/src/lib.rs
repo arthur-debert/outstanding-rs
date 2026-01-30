@@ -17,6 +17,10 @@
 //! - [`TabularRow`] - Generate optimized row extraction without JSON serialization
 //! - [`Seekable`] - Generate query-enabled accessor functions for Seeker
 //!
+//! ## Attribute Macros
+//!
+//! - [`handler`] - Transform pure functions into Standout-compatible handlers
+//!
 //! # Design Philosophy
 //!
 //! These macros return [`EmbeddedSource`] types that contain:
@@ -40,6 +44,7 @@
 
 mod dispatch;
 mod embed;
+mod handler;
 mod seeker;
 mod tabular;
 
@@ -391,6 +396,83 @@ pub fn tabular_row_derive(input: TokenStream) -> TokenStream {
 pub fn seekable_derive(input: TokenStream) -> TokenStream {
     let input = parse_macro_input!(input as DeriveInput);
     seeker::seekable_derive_impl(input)
+        .unwrap_or_else(|e| e.to_compile_error())
+        .into()
+}
+
+/// Transforms a pure function into a Standout-compatible handler.
+///
+/// This macro generates a wrapper function that extracts CLI arguments from
+/// `ArgMatches` and calls your pure function. The original function is preserved
+/// for direct testing.
+///
+/// # Parameter Annotations
+///
+/// | Annotation | Type | Description |
+/// |------------|------|-------------|
+/// | `#[flag]` | `bool` | Boolean CLI flag |
+/// | `#[flag(name = "x")]` | `bool` | Flag with custom CLI name |
+/// | `#[arg]` | `T` | Required CLI argument |
+/// | `#[arg]` | `Option<T>` | Optional CLI argument |
+/// | `#[arg]` | `Vec<T>` | Multiple CLI arguments |
+/// | `#[arg(name = "x")]` | `T` | Argument with custom CLI name |
+/// | `#[ctx]` | `&CommandContext` | Access to command context |
+/// | `#[matches]` | `&ArgMatches` | Raw matches (escape hatch) |
+///
+/// # Return Type Handling
+///
+/// | Return Type | Behavior |
+/// |-------------|----------|
+/// | `Result<T, E>` | Passed through (dispatch auto-wraps in Output::Render) |
+/// | `Result<(), E>` | Wrapped in `HandlerResult<()>` with `Output::Silent` |
+///
+/// # Generated Code
+///
+/// For a function `fn foo(...)`, the macro generates `fn foo__handler(...)`.
+///
+/// # Example
+///
+/// ```rust,ignore
+/// use standout_macros::handler;
+///
+/// // Pure function - easy to test
+/// #[handler]
+/// pub fn list(#[flag] all: bool, #[arg] limit: Option<usize>) -> Result<Vec<Item>, Error> {
+///     storage::list(all, limit)
+/// }
+///
+/// // Generates:
+/// // pub fn list__handler(m: &ArgMatches) -> Result<Vec<Item>, Error> {
+/// //     let all = m.get_flag("all");
+/// //     let limit = m.get_one::<usize>("limit").cloned();
+/// //     list(all, limit)
+/// // }
+///
+/// // Use with Dispatch derive:
+/// #[derive(Subcommand, Dispatch)]
+/// #[dispatch(handlers = handlers)]
+/// enum Commands {
+///     #[dispatch(handler = list)]  // Uses list__handler
+///     List { ... },
+/// }
+/// ```
+///
+/// # Testing
+///
+/// The original function is preserved, so you can test it directly:
+///
+/// ```rust,ignore
+/// #[test]
+/// fn test_list() {
+///     let result = list(true, Some(10));
+///     assert!(result.is_ok());
+/// }
+/// ```
+#[proc_macro_attribute]
+pub fn handler(attr: TokenStream, item: TokenStream) -> TokenStream {
+    let attr = proc_macro2::TokenStream::from(attr);
+    let item = proc_macro2::TokenStream::from(item);
+    handler::handler_impl(attr, item)
         .unwrap_or_else(|e| e.to_compile_error())
         .into()
 }
