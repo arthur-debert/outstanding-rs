@@ -63,9 +63,9 @@ use std::fmt;
 /// ctx.extensions.insert(UserScope { user_id: 42 });
 ///
 /// // In a handler, retrieve state
-/// if let Some(api) = ctx.extensions.get::<ApiClient>() {
-///     println!("API base: {}", api.base_url);
-/// }
+/// let api = ctx.extensions.get_required::<ApiClient>()?;
+/// println!("API base: {}", api.base_url);
+/// # Ok::<(), anyhow::Error>(())
 /// ```
 #[derive(Default)]
 pub struct Extensions {
@@ -199,8 +199,7 @@ impl Clone for Extensions {
 ///
 /// // In handler:
 /// fn my_handler(matches: &clap::ArgMatches, ctx: &CommandContext) -> anyhow::Result<()> {
-///     let db = ctx.extensions.get::<Database>()
-///         .ok_or_else(|| anyhow::anyhow!("Database not initialized"))?;
+///     let db = ctx.extensions.get_required::<Database>()?;
 ///     // use db...
 ///     Ok(())
 /// }
