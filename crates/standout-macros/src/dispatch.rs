@@ -79,6 +79,8 @@ struct VariantAttrs {
     item_type: Option<String>,
     /// Handler only takes `&ArgMatches` (no `&CommandContext`)
     simple: bool,
+    /// Handler is a pure function wrapped by `#[handler]` (auto-appends `__handler`)
+    pure: bool,
 }
 
 /// Information extracted from a single enum variant
@@ -189,6 +191,9 @@ impl Parse for VariantAttrs {
                 }
                 Meta::Path(p) if p.is_ident("simple") => {
                     attrs.simple = true;
+                }
+                Meta::Path(p) if p.is_ident("pure") => {
+                    attrs.pure = true;
                 }
                 _ => {
                     return Err(Error::new(
@@ -351,7 +356,11 @@ pub fn dispatch_derive_impl(input: DeriveInput) -> Result<TokenStream> {
             } else {
                 // Leaf command
                 let handler_path = v.attrs.handler.clone().unwrap_or_else(|| {
-                    let handler_ident = format_ident!("{}", v.snake_name);
+                    let mut handler_name = v.snake_name.clone();
+                    if v.attrs.pure {
+                        handler_name = format!("{}__handler", handler_name);
+                    }
+                    let handler_ident = format_ident!("{}", handler_name);
                     let mut path = handlers_path.clone();
                     path.segments.push(syn::PathSegment {
                         ident: handler_ident,

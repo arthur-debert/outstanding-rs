@@ -253,7 +253,9 @@ fn generate_extraction(param: &ParamInfo) -> TokenStream {
             } else {
                 // Required T -> get_one::<T>().unwrap().clone()
                 quote! {
-                    let #rust_name: #ty = __matches.get_one::<#ty>(#cli_name).unwrap().clone();
+                    let #rust_name: #ty = __matches.get_one::<#ty>(#cli_name)
+                        .expect(concat!("Missing required argument '", #cli_name, "' - ensure clap definition matches handler"))
+                        .clone();
                 }
             }
         }
@@ -356,7 +358,7 @@ pub fn handler_impl(attr: TokenStream, item: TokenStream) -> Result<TokenStream>
     let call_args: Vec<TokenStream> = params.iter().map(generate_call_arg).collect();
 
     // Determine wrapper signature
-    let wrapper_params = if has_ctx {
+    let _wrapper_params = if has_ctx {
         quote! { __matches: &::clap::ArgMatches, __ctx: &::standout_dispatch::CommandContext }
     } else {
         // Even if has_matches, we still use the simple signature
@@ -405,7 +407,7 @@ pub fn handler_impl(attr: TokenStream, item: TokenStream) -> Result<TokenStream>
         #clean_fn
 
         // Generated wrapper
-        #fn_vis fn #wrapper_name(#wrapper_params) #wrapper_return_type {
+        #fn_vis fn #wrapper_name(__matches: &::clap::ArgMatches, __ctx: &::standout_dispatch::CommandContext) #wrapper_return_type {
             #(#extractions)*
             #call_and_return
         }

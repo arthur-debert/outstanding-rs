@@ -25,7 +25,8 @@ fn test_simple_flag_true() {
         )
         .get_matches_from(vec!["test", "-v"]);
 
-    let result = simple_flag__handler(&matches);
+    let ctx = CommandContext::default();
+    let result = simple_flag__handler(&matches, &ctx);
     assert!(result.is_ok());
     assert!(result.unwrap());
 }
@@ -40,7 +41,8 @@ fn test_simple_flag_false() {
         )
         .get_matches_from(vec!["test"]);
 
-    let result = simple_flag__handler(&matches);
+    let ctx = CommandContext::default();
+    let result = simple_flag__handler(&matches, &ctx);
     assert!(result.is_ok());
     assert!(!result.unwrap());
 }
@@ -64,7 +66,8 @@ fn test_flag_with_custom_name() {
         )
         .get_matches_from(vec!["test", "--show-all"]);
 
-    let result = flag_with_name__handler(&matches);
+    let ctx = CommandContext::default();
+    let result = flag_with_name__handler(&matches, &ctx);
     assert!(result.is_ok());
     assert!(result.unwrap());
 }
@@ -84,7 +87,8 @@ fn test_required_arg() {
         .arg(clap::Arg::new("name").required(true))
         .get_matches_from(vec!["test", "world"]);
 
-    let result = required_arg__handler(&matches);
+    let ctx = CommandContext::default();
+    let result = required_arg__handler(&matches, &ctx);
     assert!(result.is_ok());
     assert_eq!(result.unwrap(), "Hello, world!");
 }
@@ -107,7 +111,8 @@ fn test_optional_arg_present() {
         .arg(clap::Arg::new("limit").value_parser(clap::value_parser!(usize)))
         .get_matches_from(vec!["test", "10"]);
 
-    let result = optional_arg__handler(&matches);
+    let ctx = CommandContext::default();
+    let result = optional_arg__handler(&matches, &ctx);
     assert!(result.is_ok());
     assert_eq!(result.unwrap(), "Limit: 10");
 }
@@ -118,7 +123,8 @@ fn test_optional_arg_missing() {
         .arg(clap::Arg::new("limit").value_parser(clap::value_parser!(usize)))
         .get_matches_from(vec!["test"]);
 
-    let result = optional_arg__handler(&matches);
+    let ctx = CommandContext::default();
+    let result = optional_arg__handler(&matches, &ctx);
     assert!(result.is_ok());
     assert_eq!(result.unwrap(), "No limit");
 }
@@ -138,7 +144,8 @@ fn test_vec_arg_multiple() {
         .arg(clap::Arg::new("tags").action(clap::ArgAction::Append))
         .get_matches_from(vec!["test", "foo", "bar", "baz"]);
 
-    let result = vec_arg__handler(&matches);
+    let ctx = CommandContext::default();
+    let result = vec_arg__handler(&matches, &ctx);
     assert!(result.is_ok());
     assert_eq!(result.unwrap(), 3);
 }
@@ -149,7 +156,8 @@ fn test_vec_arg_empty() {
         .arg(clap::Arg::new("tags").action(clap::ArgAction::Append))
         .get_matches_from(vec!["test"]);
 
-    let result = vec_arg__handler(&matches);
+    let ctx = CommandContext::default();
+    let result = vec_arg__handler(&matches, &ctx);
     assert!(result.is_ok());
     assert_eq!(result.unwrap(), 0);
 }
@@ -173,7 +181,8 @@ fn test_arg_with_custom_name() {
         )
         .get_matches_from(vec!["test", "5"]);
 
-    let result = arg_with_name__handler(&matches);
+    let ctx = CommandContext::default();
+    let result = arg_with_name__handler(&matches, &ctx);
     assert!(result.is_ok());
     assert_eq!(result.unwrap(), 10);
 }
@@ -207,7 +216,8 @@ fn test_multiple_params() {
         .arg(clap::Arg::new("count").value_parser(clap::value_parser!(usize)))
         .get_matches_from(vec!["test", "-v", "alice", "42"]);
 
-    let result = multiple_params__handler(&matches);
+    let ctx = CommandContext::default();
+    let result = multiple_params__handler(&matches, &ctx);
     assert!(result.is_ok());
     assert_eq!(result.unwrap(), "verbose=true, name=alice, count=42");
 }
@@ -250,7 +260,8 @@ fn test_with_matches() {
         )
         .get_matches_from(vec!["test", "-v"]);
 
-    let result = with_matches__handler(&matches);
+    let ctx = CommandContext::default();
+    let result = with_matches__handler(&matches, &ctx);
     assert!(result.is_ok());
     assert!(result.unwrap());
 }
@@ -272,7 +283,8 @@ fn test_silent_handler() {
         .arg(clap::Arg::new("path").required(true))
         .get_matches_from(vec!["test", "/tmp/foo"]);
 
-    let result = silent_handler__handler(&matches);
+    let ctx = CommandContext::default();
+    let result = silent_handler__handler(&matches, &ctx);
     assert!(result.is_ok());
     assert!(matches!(result.unwrap(), Output::Silent));
 }
