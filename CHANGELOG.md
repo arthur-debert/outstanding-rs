@@ -7,6 +7,36 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **Context Extensions for dependency injection** - Pre-dispatch hooks can now inject state that handlers retrieve, enabling dependency injection without modifying handler signatures.
+
+  ```rust
+  // Pre-dispatch hook injects dependencies
+  Hooks::new().pre_dispatch(|_m, ctx| {
+      ctx.extensions.insert(Database::connect()?);
+      ctx.extensions.insert(Config::load()?);
+      Ok(())
+  })
+
+  // Handler retrieves them - works with #[derive(Dispatch)]!
+  fn list_handler(m: &ArgMatches, ctx: &CommandContext) -> HandlerResult<Items> {
+      let db = ctx.extensions.get_required::<Database>()?;
+      Ok(Output::Render(db.query()?))
+  }
+  ```
+
+  **Extensions API:**
+  - `insert<T>(value)` - Insert a value, returns previous if any
+  - `get<T>()` - Get reference (`Option<&T>`)
+  - `get_required<T>()` - Get reference or error (`Result<&T, Error>`)
+  - `get_mut<T>()` / `get_mut_required<T>()` - Mutable variants
+  - `remove<T>()`, `contains<T>()`, `len()`, `is_empty()`, `clear()`
+
+### Changed
+
+- **Pre-dispatch hooks now receive `&mut CommandContext`** - This enables state injection via `ctx.extensions`. Existing hooks that don't use extensions continue to work unchanged.
+
 ## [3.2.0] - 2026-01-30
 
 ### Added
