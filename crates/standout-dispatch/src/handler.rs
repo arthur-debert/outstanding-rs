@@ -40,6 +40,14 @@ use std::fmt;
 /// Extensions allow pre-dispatch hooks to inject state that handlers can retrieve.
 /// This enables dependency injection without modifying handler signatures.
 ///
+/// # Warning: Clone Behavior
+///
+/// `Extensions` is **not** cloned when the container is cloned. Cloning an `Extensions` instance
+/// results in a new, empty map. This is because the underlying `Box<dyn Any>` values cannot
+/// be cloned generically.
+///
+/// If you need to share state across threads/clones, use `Arc<T>` inside the extension.
+///
 /// # Example
 ///
 /// ```rust
@@ -95,6 +103,30 @@ impl Extensions {
         self.map
             .get_mut(&TypeId::of::<T>())
             .and_then(|boxed| boxed.downcast_mut())
+    }
+
+    /// Gets a required reference to a value of the specified type.
+    ///
+    /// Returns an error if no value of this type exists.
+    pub fn get_required<T: 'static>(&self) -> Result<&T, anyhow::Error> {
+        self.get::<T>().ok_or_else(|| {
+            anyhow::anyhow!(
+                "Extension missing: type {} not found in context",
+                std::any::type_name::<T>()
+            )
+        })
+    }
+
+    /// Gets a required mutable reference to a value of the specified type.
+    ///
+    /// Returns an error if no value of this type exists.
+    pub fn get_mut_required<T: 'static>(&mut self) -> Result<&mut T, anyhow::Error> {
+        self.get_mut::<T>().ok_or_else(|| {
+            anyhow::anyhow!(
+                "Extension missing: type {} not found in context",
+                std::any::type_name::<T>()
+            )
+        })
     }
 
     /// Removes a value of the specified type, returning it if it existed.
@@ -505,6 +537,75 @@ mod tests {
 
         let ext = Extensions::new();
         assert!(ext.get::<NotInserted>().is_none());
+    }
+
+    #[test]
+    fn test_extensions_get_required() {
+        #[derive(Debug)]
+        struct Config {
+            value: i32,
+        }
+
+        let mut ext = Extensions::new();
+        ext.insert(Config { value: 100 });
+
+        // Success case
+        let val = ext.get_required::<Config>();
+        assert!(val.is_ok());
+        assert_eq!(val.unwrap().value, 100);
+
+        // Failure case
+        #[derive(Debug)]
+        struct Missing;
+        let err = ext.get_required::<Missing>();
+        assert!(err.is_err());
+        assert!(err
+            .unwrap_err()
+            .to_string()
+            .contains("Extension missing: type"));
+    }
+
+    #[test]
+    fn test_extensions_get_mut_required() {
+        #[derive(Debug)]
+        struct State {
+            count: i32,
+        }
+
+        let mut ext = Extensions::new();
+        ext.insert(State { count: 0 });
+
+        // Success case
+        {
+            let val = ext.get_mut_required::<State>();
+            assert!(val.is_ok());
+            val.unwrap().count += 1;
+        }
+        assert_eq!(ext.get_required::<State>().unwrap().count, 1);
+
+        // Failure case
+        #[derive(Debug)]
+        struct Missing;
+        let err = ext.get_mut_required::<Missing>();
+        assert!(err.is_err());
+    }
+
+    #[test]
+    fn test_extensions_clone_behavior() {
+        // Verify the documented behavior that Clone drops extensions
+        struct Data(i32);
+
+        let mut original = Extensions::new();
+        original.insert(Data(42));
+
+        let cloned = original.clone();
+
+        // Original has data
+        assert!(original.get::<Data>().is_some());
+
+        // Cloned is empty
+        assert!(cloned.is_empty());
+        assert!(cloned.get::<Data>().is_none());
     }
 
     #[test]
