@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.5.0] - 2026-01-30
+
 ### Changed
 
 - **Pluggable template engine architecture** - The template rendering system now uses a `TemplateEngine` trait, decoupling the public API from the MiniJinja implementation. This enables future alternative backends (e.g., a lighter "simple-templates" engine for users who don't need full template features).
@@ -720,7 +722,8 @@ let output = render_with_output(template, &data, &theme, OutputMode::Term)?;
   - Command handler system with `dispatch_from` convenience method
   - Archive variant support in clap integration
 
-[Unreleased]: https://github.com/arthur-debert/standout/compare/standout-v3.4.0...HEAD
+[Unreleased]: https://github.com/arthur-debert/standout/compare/standout-v3.5.0...HEAD
+[3.5.0]: https://github.com/arthur-debert/standout/compare/standout-v3.4.0...standout-v3.5.0
 [3.4.0]: https://github.com/arthur-debert/standout/compare/standout-v3.3.0...standout-v3.4.0
 [3.3.0]: https://github.com/arthur-debert/standout/compare/standout-v3.2.0...standout-v3.3.0
 [3.2.0]: https://github.com/arthur-debert/standout/compare/standout-v3.1.0...standout-v3.2.0
