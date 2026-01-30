@@ -26,7 +26,11 @@ pub trait TemplateEngine: Send + Sync {
     /// This compiles and renders the template in one step. For repeated
     /// rendering of the same template, use [`add_template`](Self::add_template)
     /// and [`render_named`](Self::render_named).
-    fn render_template(&self, template: &str, data: &serde_json::Value) -> Result<String, RenderError>;
+    fn render_template(
+        &self,
+        template: &str,
+        data: &serde_json::Value,
+    ) -> Result<String, RenderError>;
 
     /// Adds a named template to the engine.
     ///
@@ -127,7 +131,11 @@ impl Default for MiniJinjaEngine {
 }
 
 impl TemplateEngine for MiniJinjaEngine {
-    fn render_template(&self, template: &str, data: &serde_json::Value) -> Result<String, RenderError> {
+    fn render_template(
+        &self,
+        template: &str,
+        data: &serde_json::Value,
+    ) -> Result<String, RenderError> {
         let value = Value::from_serialize(data);
         Ok(self.env.render_str(template, value)?)
     }
@@ -156,13 +164,13 @@ impl TemplateEngine for MiniJinjaEngine {
     ) -> Result<String, RenderError> {
         // Merge data into context (data takes precedence)
         let mut combined = HashMap::new();
-         for (key, value) in context {
-            combined.insert(key, Value::from_serialize(&value));
+        for (key, value) in context {
+            combined.insert(key, Value::from_serialize(value));
         }
-        
+
         if let serde_json::Value::Object(map) = data {
             for (key, value) in map {
-                combined.insert(key.clone(), Value::from_serialize(&value));
+                combined.insert(key.clone(), Value::from_serialize(value));
             }
         }
 
@@ -190,9 +198,7 @@ pub fn register_filters(env: &mut Environment<'static>) {
     use minijinja::{Error, ErrorKind};
 
     // Newline filter
-    env.add_filter("nl", |value: Value| -> String {
-        format!("{}\n", value)
-    });
+    env.add_filter("nl", |value: Value| -> String { format!("{}\n", value) });
 
     // Deprecated style filter with helpful error message
     env.add_filter(
@@ -249,7 +255,10 @@ mod tests {
         };
         let data_value = serde_json::to_value(&data).unwrap();
         let output = engine
-            .render_template("{% for item in items %}{{ item }},{% endfor %}", &data_value)
+            .render_template(
+                "{% for item in items %}{{ item }},{% endfor %}",
+                &data_value,
+            )
             .unwrap();
         assert_eq!(output, "a,b,c,");
     }
@@ -287,7 +296,10 @@ mod tests {
         }
 
         let mut context = HashMap::new();
-        context.insert("version".to_string(), serde_json::Value::String("1.0.0".into()));
+        context.insert(
+            "version".to_string(),
+            serde_json::Value::String("1.0.0".into()),
+        );
 
         let data = Data {
             name: "Test".into(),

@@ -209,7 +209,11 @@ pub fn validate_template<T: Serialize>(
 ///     &theme,
 /// ).unwrap();
 /// ```
-pub fn render<T: Serialize>(template: &str, data: &T, theme: &Theme) -> Result<String, RenderError> {
+pub fn render<T: Serialize>(
+    template: &str,
+    data: &T,
+    theme: &Theme,
+) -> Result<String, RenderError> {
     render_with_output(template, data, theme, OutputMode::Auto)
 }
 
@@ -801,7 +805,8 @@ fn build_combined_context<T: Serialize>(
         // Convert minijinja::Value to serde_json::Value
         // This is a bit inefficient but necessary for the abstraction
         // In the future, ContextRegistry should probably return serde_json::Value
-        let json_val = serde_json::to_value(value).map_err(|e| RenderError::ContextError(e.to_string()))?;
+        let json_val =
+            serde_json::to_value(value).map_err(|e| RenderError::ContextError(e.to_string()))?;
         combined.insert(key, json_val);
     }
 
@@ -814,8 +819,6 @@ fn build_combined_context<T: Serialize>(
 
     Ok(combined)
 }
-
-
 
 /// Auto-dispatches rendering using a provided TemplateEngine.
 ///
@@ -861,7 +864,7 @@ pub fn render_auto_with_engine(
         // Note: data is already Value, but build_combined_context expects T: Serialize
         // We can pass &data directly since Value implements Serialize
         let context_map = build_combined_context(data, context_registry, render_context)?;
-        
+
         // Merge into a single Value for the engine
         let combined_value = serde_json::Value::Object(context_map.into_iter().collect());
 
@@ -882,10 +885,10 @@ pub fn render_auto_with_engine(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use minijinja::Value;
     use crate::tabular::{Column, FlatDataSpec, Width};
     use crate::Theme;
     use console::Style;
+    use minijinja::Value;
     use serde::Serialize;
     use serde_json::json;
 

@@ -230,7 +230,10 @@ impl AppBuilder {
     /// sets a custom template engine to be used for rendering.
     ///
     /// If not set, the default MiniJinja engine will be used.
-    pub fn template_engine(mut self, engine: Box<dyn standout_render::template::TemplateEngine>) -> Self {
+    pub fn template_engine(
+        mut self,
+        engine: Box<dyn standout_render::template::TemplateEngine>,
+    ) -> Self {
         self.template_engine = Arc::new(engine);
         self
     }
@@ -324,17 +327,17 @@ impl AppBuilder {
         // Populate engine with templates from registry
         // We use Arc::get_mut to mutate the engine in-place before sharing it
         if let Some(registry) = &self.template_registry {
-             if let Some(engine_box) = Arc::get_mut(&mut self.template_engine) {
+            if let Some(engine_box) = Arc::get_mut(&mut self.template_engine) {
                 for name in registry.names() {
                     if let Ok(content) = registry.get_content(name) {
                         let _ = engine_box.add_template(name, &content);
                     }
                 }
-             } else {
-                 // If we can't get mut, it means the engine is already shared (e.g. via ensure_commands_finalized called early?)
-                 // In that case, we can't add templates.
-                 // This might be a warning condition?
-             }
+            } else {
+                // If we can't get mut, it means the engine is already shared (e.g. via ensure_commands_finalized called early?)
+                // In that case, we can't add templates.
+                // This might be a warning condition?
+            }
         }
 
         // Ensure commands are finalized (captures the engine)

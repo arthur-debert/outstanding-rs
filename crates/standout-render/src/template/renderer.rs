@@ -158,7 +158,7 @@ impl Renderer {
     }
 
     /// Creates a new renderer with explicit output mode and template engine.
-    /// 
+    ///
     /// This allows injecting a custom template engine implementation.
     pub fn with_output_and_engine(
         theme: Theme,
@@ -510,10 +510,11 @@ impl Renderer {
                 // In debug mode, always re-read for hot reloading
                 // In release mode, we still read (could optimize with caching)
                 std::fs::read_to_string(&path).map_err(|e| {
-                    RenderError::IoError(std::io::Error::new(
-                        std::io::ErrorKind::Other,
-                        format!("Failed to read template {}: {}", path.display(), e),
-                    ))
+                    RenderError::IoError(std::io::Error::other(format!(
+                        "Failed to read template {}: {}",
+                        path.display(),
+                        e
+                    )))
                 })
             }
         }
@@ -866,30 +867,38 @@ mod tests {
     #[test]
     fn test_renderer_with_custom_engine() {
         use std::collections::HashMap;
-        
+
         struct MockEngine {
             templates: HashMap<String, String>,
         }
-        
+
         impl TemplateEngine for MockEngine {
             fn add_template(&mut self, name: &str, source: &str) -> Result<(), RenderError> {
                 self.templates.insert(name.to_string(), source.to_string());
                 Ok(())
             }
-            
+
             fn has_template(&self, name: &str) -> bool {
                 self.templates.contains_key(name)
             }
-            
-            fn render_template(&self, source: &str, data: &serde_json::Value) -> Result<String, RenderError> {
-                 Ok(format!("Mock Render: {} data={}", source, data))
+
+            fn render_template(
+                &self,
+                source: &str,
+                data: &serde_json::Value,
+            ) -> Result<String, RenderError> {
+                Ok(format!("Mock Render: {} data={}", source, data))
             }
-            
-            fn render_named(&self, name: &str, data: &serde_json::Value) -> Result<String, RenderError> {
+
+            fn render_named(
+                &self,
+                name: &str,
+                data: &serde_json::Value,
+            ) -> Result<String, RenderError> {
                 if let Some(src) = self.templates.get(name) {
-                     Ok(format!("Mock Named: {} data={}", src, data))
+                    Ok(format!("Mock Named: {} data={}", src, data))
                 } else {
-                     Err(RenderError::TemplateNotFound(name.to_string()))
+                    Err(RenderError::TemplateNotFound(name.to_string()))
                 }
             }
 
@@ -902,19 +911,30 @@ mod tests {
                 self.render_template(template, data)
             }
 
-            fn supports_includes(&self) -> bool { false }
-            fn supports_filters(&self) -> bool { false }
-            fn supports_control_flow(&self) -> bool { false }
+            fn supports_includes(&self) -> bool {
+                false
+            }
+            fn supports_filters(&self) -> bool {
+                false
+            }
+            fn supports_control_flow(&self) -> bool {
+                false
+            }
         }
 
-        let engine = Box::new(MockEngine { templates: HashMap::new() });
-        let mut renderer = Renderer::with_output_and_engine(Theme::new(), OutputMode::Text, engine).unwrap();
+        let engine = Box::new(MockEngine {
+            templates: HashMap::new(),
+        });
+        let mut renderer =
+            Renderer::with_output_and_engine(Theme::new(), OutputMode::Text, engine).unwrap();
 
         renderer.add_template("test", "content").unwrap();
-        
+
         #[derive(Serialize)]
-        struct Data { val: i32 }
-        
+        struct Data {
+            val: i32,
+        }
+
         let output = renderer.render("test", &Data { val: 42 }).unwrap();
         // The mock engine formats as "Mock Render: {}" or "Mock Named: {}"
         // Since we added it as named template, render() calls render_named logic.

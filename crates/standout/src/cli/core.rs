@@ -355,7 +355,12 @@ impl AppCore {
         // Convert minijinja::Value map to serde_json::Value map for the template engine
         let combined_json_map: serde_json::Map<String, serde_json::Value> = combined_minijinja_map
             .into_iter()
-            .map(|(k, v)| (k, serde_json::to_value(v).unwrap_or(serde_json::Value::Null)))
+            .map(|(k, v)| {
+                (
+                    k,
+                    serde_json::to_value(v).unwrap_or(serde_json::Value::Null),
+                )
+            })
             .collect();
 
         // Pass 1: Template rendering via engine
@@ -398,8 +403,9 @@ impl AppCore {
         // Add context values first (lower priority)
         // Convert minijinja::Value to serde_json::Value
         for (key, val) in context_values_minijinja {
-             let json_val = serde_json::to_value(val)
-                .map_err(|e| SetupError::Config(format!("Failed to convert context value: {}", e)))?;
+            let json_val = serde_json::to_value(val).map_err(|e| {
+                SetupError::Config(format!("Failed to convert context value: {}", e))
+            })?;
             combined.insert(key, json_val);
         }
 
@@ -453,8 +459,6 @@ impl AppCore {
         }
     }
 }
-
-
 
 #[cfg(test)]
 mod tests {
@@ -592,12 +596,12 @@ mod tests {
         registry.add_inline("_header.j2", "=== {{ title }} ===");
 
         let mut core = AppCore::new();
-        
+
         // Populate engine manually for test
         if let Some(engine_box) = Arc::get_mut(&mut core.template_engine) {
             for name in registry.names() {
-                 let content = registry.get_content(name).unwrap();
-                 engine_box.add_template(name, &content).unwrap();
+                let content = registry.get_content(name).unwrap();
+                engine_box.add_template(name, &content).unwrap();
             }
         }
 
@@ -632,12 +636,12 @@ mod tests {
         );
 
         let mut core = AppCore::new();
-        
+
         // Populate engine manually for test
         if let Some(engine_box) = Arc::get_mut(&mut core.template_engine) {
             for name in registry.names() {
-                 let content = registry.get_content(name).unwrap();
-                 engine_box.add_template(name, &content).unwrap();
+                let content = registry.get_content(name).unwrap();
+                engine_box.add_template(name, &content).unwrap();
             }
         }
 

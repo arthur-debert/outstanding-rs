@@ -314,7 +314,10 @@ impl LocalAppBuilder {
     /// sets a custom template engine to be used for rendering.
     ///
     /// If not set, the default MiniJinja engine will be used.
-    pub fn template_engine(mut self, engine: Box<dyn standout_render::template::TemplateEngine>) -> Self {
+    pub fn template_engine(
+        mut self,
+        engine: Box<dyn standout_render::template::TemplateEngine>,
+    ) -> Self {
         self.template_engine = Arc::new(engine);
         self
     }
@@ -543,13 +546,13 @@ impl LocalAppBuilder {
 
         // Populate engine with templates from registry
         if let Some(registry) = &self.template_registry {
-             if let Some(engine_box) = Arc::get_mut(&mut self.template_engine) {
+            if let Some(engine_box) = Arc::get_mut(&mut self.template_engine) {
                 for name in registry.names() {
                     if let Ok(content) = registry.get_content(name) {
                         let _ = engine_box.add_template(name, &content);
                     }
                 }
-             }
+            }
         }
 
         // Finalize commands before building

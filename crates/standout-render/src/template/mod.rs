@@ -82,9 +82,8 @@ mod renderer;
 
 pub use engine::{register_filters, MiniJinjaEngine, TemplateEngine};
 pub use functions::{
-    render, render_auto, render_auto_with_context, render_auto_with_engine,
-    render_auto_with_spec, render_with_context,
-    render_with_mode, render_with_output, render_with_vars, validate_template,
+    render, render_auto, render_auto_with_context, render_auto_with_engine, render_auto_with_spec,
+    render_with_context, render_with_mode, render_with_output, render_with_vars, validate_template,
 };
 pub use registry::{
     walk_template_dir, RegistryError, ResolvedTemplate, TemplateFile, TemplateRegistry,

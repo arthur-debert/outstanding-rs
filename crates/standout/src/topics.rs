@@ -305,7 +305,10 @@ struct TopicListItem {
 /// let output = render_topic(&topic, None).unwrap();
 /// println!("{}", output);
 /// ```
-pub fn render_topic(topic: &Topic, config: Option<TopicRenderConfig>) -> Result<String, RenderError> {
+pub fn render_topic(
+    topic: &Topic,
+    config: Option<TopicRenderConfig>,
+) -> Result<String, RenderError> {
     let config = config.unwrap_or_default();
     let template = config
         .topic_template

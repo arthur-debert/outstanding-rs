@@ -179,15 +179,15 @@ pub use template::{
     validate_template,
     // Template registry
     walk_template_dir,
+    // Template engine abstraction
+    MiniJinjaEngine,
     RegistryError,
     Renderer,
     ResolvedTemplate,
+    TemplateEngine,
     TemplateFile,
     TemplateRegistry,
     TEMPLATE_EXTENSIONS,
-    // Template engine abstraction
-    MiniJinjaEngine,
-    TemplateEngine,
 };
 
 // Re-export BBParser types for template validation
