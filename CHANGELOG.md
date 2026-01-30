@@ -14,12 +14,34 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   ```diff
   [dependencies]
   - standout = { version = "2", features = ["clap", "macros"] }
-  + standout = "2"
+  + standout = "3"
   ```
 
   **Migration:** Remove `features = ["clap"]` from your `Cargo.toml`. If you only used `features = ["macros"]`, note that macros are also now always available.
 
 - **`macros` feature is now a no-op** - The `macros` feature still exists for backwards compatibility but does nothing. All macros (`embed_templates!`, `embed_styles!`, `Dispatch`, `Tabular`, `TabularRow`) are now always available.
+
+### Added
+
+- **New `standout-dispatch` crate** - Extracted command dispatch/routing into a standalone crate for users who need routing without the full framework.
+
+  The new crate provides:
+  - Command registration and path-based dispatch
+  - Handler and hook type definitions
+  - Clean separation from rendering concerns
+
+  **Usage:**
+  ```rust
+  // For dispatch-only use cases
+  use standout_dispatch::{Dispatcher, Handler, Output};
+
+  // Full framework users continue using standout (unchanged API)
+  use standout::{cli::App, Handler, Output};
+  ```
+
+  The main `standout` crate re-exports everything from `standout-dispatch`, so existing code continues to work without changes.
+
+- **Documentation rewrite** - Standalone-first documentation for the split crate architecture (`standout`, `standout-render`, `standout-dispatch`).
 
 ## [2.1.0] - 2026-01-18
 
