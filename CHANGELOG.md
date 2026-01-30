@@ -7,6 +7,44 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **New Seeker module** - A query/filtering system for collections with three layers of API:
+
+  **Imperative API** - Build queries programmatically:
+  ```rust
+  use standout::seeker::{Query, Filter, Op};
+
+  let query = Query::new()
+      .filter(Filter::new("status", Op::Eq, "active"))
+      .filter(Filter::new("priority", Op::Gte, 5))
+      .order_by("created_at", Descending)
+      .limit(10);
+
+  let results = query.apply(&items);
+  ```
+
+  **Derive macro** - Add querying to any struct:
+  ```rust
+  #[derive(Seekable)]
+  struct Task {
+      #[seekable]
+      status: Status,
+      #[seekable]
+      priority: u8,
+      #[seekable(rename = "created")]
+      created_at: DateTime,
+  }
+  ```
+
+  **String parsing** - Parse CLI arguments or query strings:
+  ```rust
+  // "status-eq=active" "priority-gte=5" "order=created_at:desc"
+  let query = parse_query::<Task>(&args)?;
+  ```
+
+  Supported operators: `eq`, `ne`, `gt`, `gte`, `lt`, `lte`, `contains`, `startswith`, `endswith`, `regex`, `before`, `after`, `in`, `is`
+
 ## [3.0.0] - 2026-01-30
 
 ### Changed
