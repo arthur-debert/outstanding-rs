@@ -42,6 +42,7 @@
 //! | `default` | Use as default command when no subcommand specified | false |
 //! | `list_view` | Enable ListView integration | false |
 //! | `item_type` | Type name for tabular spec injection | None |
+//! | `simple` | Handler only takes `&ArgMatches` (no context) | false |
 //!
 //! # Generated Code
 //!
@@ -76,6 +77,8 @@ struct VariantAttrs {
     default: bool,
     list_view: bool,
     item_type: Option<String>,
+    /// Handler only takes `&ArgMatches` (no `&CommandContext`)
+    simple: bool,
 }
 
 /// Information extracted from a single enum variant
@@ -184,10 +187,13 @@ impl Parse for VariantAttrs {
                         return Err(Error::new(nv.value.span(), "expected string literal"));
                     }
                 }
+                Meta::Path(p) if p.is_ident("simple") => {
+                    attrs.simple = true;
+                }
                 _ => {
                     return Err(Error::new(
                         meta.span(),
-                        "unknown attribute, expected one of: handler, template, pre_dispatch, post_dispatch, post_output, nested, skip, default",
+                        "unknown attribute, expected one of: handler, template, pre_dispatch, post_dispatch, post_output, nested, skip, default, simple",
                     ));
                 }
             }
@@ -367,29 +373,54 @@ pub fn dispatch_derive_impl(input: DeriveInput) -> Result<TokenStream> {
                     || (v.attrs.list_view && v.attrs.item_type.is_some());
 
                 // Determine the handler expression (original or wrapped)
+                // Simple handlers only take &ArgMatches, so we wrap them in a closure
+                // that ignores the context parameter
                 let handler_expr = if v.attrs.list_view {
                      if let Some(item_type_str) = &v.attrs.item_type {
                         let item_type_path: syn::Path = syn::parse_str(item_type_str)
                             .expect("Failed to parse item_type as path");
                         // Generate wrapper to inject tabular spec
-                        quote! {
-                            |matches, ctx| {
-                                let result = #handler_path(matches, ctx);
-                                result.map(|output| {
-                                    match output {
-                                        ::standout::cli::handler::Output::Render(mut lv) => {
-                                             // Inject tabular spec from the Item type
-                                             lv.tabular_spec = Some(<#item_type_path as ::standout::tabular::Tabular>::tabular_spec());
-                                             ::standout::cli::handler::Output::Render(lv)
+                        // Handle both simple and regular handlers
+                        if v.attrs.simple {
+                            quote! {
+                                |matches, _ctx| {
+                                    let result = #handler_path(matches);
+                                    result.map(|output| {
+                                        match output {
+                                            ::standout::cli::handler::Output::Render(mut lv) => {
+                                                 lv.tabular_spec = Some(<#item_type_path as ::standout::tabular::Tabular>::tabular_spec());
+                                                 ::standout::cli::handler::Output::Render(lv)
+                                            }
+                                            o => o
                                         }
-                                        o => o
-                                    }
-                                })
+                                    })
+                                }
+                            }
+                        } else {
+                            quote! {
+                                |matches, ctx| {
+                                    let result = #handler_path(matches, ctx);
+                                    result.map(|output| {
+                                        match output {
+                                            ::standout::cli::handler::Output::Render(mut lv) => {
+                                                 lv.tabular_spec = Some(<#item_type_path as ::standout::tabular::Tabular>::tabular_spec());
+                                                 ::standout::cli::handler::Output::Render(lv)
+                                            }
+                                            o => o
+                                        }
+                                    })
+                                }
                             }
                         }
+                     } else if v.attrs.simple {
+                        // Simple handler without list_view
+                        quote! { |matches, _ctx| #handler_path(matches) }
                      } else {
                         quote! { #handler_path }
                      }
+                } else if v.attrs.simple {
+                    // Simple handler (only takes &ArgMatches, no context)
+                    quote! { |matches, _ctx| #handler_path(matches) }
                 } else {
                     quote! { #handler_path }
                 };
