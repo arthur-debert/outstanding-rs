@@ -16,7 +16,7 @@ Each stage has a clear responsibility:
 
 **Pre-dispatch Hook**: Runs before the handler. Can abort execution (e.g., auth checks).
 
-**Handler**: Your logic function executes. It receives `ArgMatches` and `CommandContext`, returning a `HandlerResult<T>`—either data to render, a silent marker, or binary content.
+**Handler**: Your logic function executes. It receives `ArgMatches` and `CommandContext`, returning a `HandlerResult<T>`—either data to render, a silent marker, or binary content. For simpler handlers, use the `#[handler]` macro to write pure functions that return `Result<T, E>` directly (see [Handler Contract](handler-contract.md)).
 
 **Post-dispatch Hook**: Runs after the handler, before rendering. Can transform data.
 
@@ -287,7 +287,7 @@ A complete dispatch flow:
 
 ```rust
 use standout_dispatch::{
-    FnHandler, Output, CommandContext, Hooks, HookError,
+    SimpleFnHandler, FnHandler, Output, CommandContext, Hooks, HookError,
     from_fn, extract_command_path, get_deepest_matches, path_to_string,
 };
 
@@ -298,10 +298,12 @@ fn main() -> anyhow::Result<()> {
         .subcommand(Command::new("delete").arg(Arg::new("id").required(true)));
 
     // 2. Create handlers
-    let list_handler = FnHandler::new(|_m, _ctx| {
-        Ok(Output::Render(storage::list()?))
+    // SimpleFnHandler: for handlers that don't need CommandContext
+    let list_handler = SimpleFnHandler::new(|_m| {
+        storage::list()  // Result<T, E> auto-wraps in Output::Render
     });
 
+    // FnHandler: when you need CommandContext
     let delete_handler = FnHandler::new(|matches, _ctx| {
         let id: &String = matches.get_one("id").unwrap();
         storage::delete(id)?;

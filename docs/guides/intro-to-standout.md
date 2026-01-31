@@ -325,48 +325,88 @@ standout = "2"
 
 > **Verify:** Run `cargo build` - dependencies should download and compile.
 
-### 7.2 Create the Commands enum with Dispatch
+### 7.2 Create Handlers with the `#[handler]` Macro
 
-Annotate your commands enum with the Dispatch derive macro. This tells Standout that the "list" command should be dispatched to the `list` handler. That's all Standout needs to know, and now it can manage the execution.
+The `#[handler]` macro transforms pure Rust functions into Standout-compatible handlers. Write your logic as a simple function, annotate parameters, and the macro generates the wrapper that extracts CLI arguments.
 
 See [Handler Contract](../crates/dispatch/topics/handler-contract.md) for full handler API details.
 
 ```rust
-use standout::cli::{Dispatch, CommandContext, HandlerResult, Output};
-use clap::{ArgMatches, Subcommand};
+use standout_macros::handler;
 
-// Define your commands enum with the Dispatch derive
+mod handlers {
+    use super::*;
+
+    // Pure function - easy to test, no boilerplate
+    #[handler]
+    pub fn list(#[flag] all: bool) -> Result<TodoResult, anyhow::Error> {
+        let todos = storage::list()?;
+        let filtered = if all {
+            todos
+        } else {
+            todos.into_iter().filter(|t| !t.done).collect()
+        };
+        Ok(TodoResult { message: None, todos: filtered })
+    }
+
+    #[handler]
+    pub fn add(#[arg] title: String) -> Result<TodoResult, anyhow::Error> {
+        let todo = storage::add(&title)?;
+        Ok(TodoResult {
+            message: Some(format!("Added: {}", title)),
+            todos: vec![todo],
+        })
+    }
+}
+```
+
+The `#[handler]` macro:
+- Extracts CLI arguments automatically from `ArgMatches`
+- Converts `#[flag]` to `bool` flags, `#[arg]` to required/optional args
+- Auto-wraps `Result<T, E>` in `Output::Render` for you
+
+**Parameter Annotations:**
+
+| Annotation | Type | What it extracts |
+|------------|------|------------------|
+| `#[flag]` | `bool` | Boolean flag (`--verbose`) |
+| `#[arg]` | `T` | Required argument |
+| `#[arg]` | `Option<T>` | Optional argument |
+| `#[arg]` | `Vec<T>` | Multiple values |
+| `#[ctx]` | `&CommandContext` | Access to context (when needed) |
+
+### 7.2.1 Connect Commands to Handlers
+
+```rust
+use clap::Subcommand;
+use standout::cli::Dispatch;
+
 #[derive(Subcommand, Dispatch)]
 #[dispatch(handlers = handlers)]
 pub enum Commands {
     List,
     Add,
 }
+```
 
-// Your handlers module
-mod handlers {
-    use super::*;
+The derive macro matches command variants to handler functions by name (`List` → `handlers::list`).
 
-    pub fn list(_matches: &ArgMatches, _ctx: &CommandContext) -> HandlerResult<TodoResult> {
-        let todos = storage::list()?;
-        Ok(Output::Render(TodoResult {
-            message: None,
-            todos,
-        }))
-    }
+> **Verify:** Run `cargo build` - it should compile without errors.
 
-    pub fn add(matches: &ArgMatches, _ctx: &CommandContext) -> HandlerResult<TodoResult> {
-        let title: &String = matches.get_one("title").unwrap();
-        let todo = storage::add(title)?;
-        Ok(Output::Render(TodoResult {
-            message: Some(format!("Added: {}", title)),
-            todos: vec![todo],
-        }))
-    }
+### 7.2.2 Accessing App State (Optional)
+
+When your handler needs shared resources like databases, use the `#[ctx]` annotation:
+
+```rust
+#[handler]
+pub fn list(#[flag] all: bool, #[ctx] ctx: &CommandContext) -> Result<TodoResult, anyhow::Error> {
+    let db = ctx.app_state.get_required::<Database>()?;
+    let todos = db.list()?;
+    Ok(TodoResult { message: None, todos })
 }
 ```
 
-> **Verify:** Run `cargo build` - it should compile without errors.
+> **Note:** For the full handler signature (without macros) and advanced patterns, see [Handler Contract](../crates/dispatch/topics/handler-contract.md).
 
 ### 7.3 Configure AppBuilder
 
@@ -397,13 +437,14 @@ let app = App::builder()
     .build()?;
 ```
 
-Handlers retrieve app state via `ctx.app_state`:
+Handlers retrieve app state via `#[ctx]`:
 
 ```rust
-pub fn list(_matches: &ArgMatches, ctx: &CommandContext) -> HandlerResult<TodoResult> {
+#[handler]
+pub fn list(#[flag] all: bool, #[ctx] ctx: &CommandContext) -> Result<TodoResult, anyhow::Error> {
     let db = ctx.app_state.get_required::<Database>()?;
     let todos = db.list()?;
-    Ok(Output::Render(TodoResult { message: None, todos }))
+    Ok(TodoResult { message: None, todos })
 }
 ```
 
@@ -467,7 +508,7 @@ For the next commands you'd wish to migrate, this is even simpler. Say you have 
 src/
 ├── main.rs              # App::builder() setup
 ├── commands.rs          # Commands enum with #[derive(Dispatch)]
-├── handlers.rs          # list(), add() returning HandlerResult
+├── handlers.rs          # list(), add() with #[handler] - pure functions returning Result<T, E>
 └── templates/
     ├── list.jinja
     └── add.jinja
@@ -591,7 +632,7 @@ Now you're leveraging the core rendering design of Standout:
 src/
 ├── main.rs              # App::builder() setup
 ├── commands.rs          # Commands enum with #[derive(Dispatch)]
-├── handlers.rs          # list(), add() returning HandlerResult
+├── handlers.rs          # list(), add() with #[handler] - pure functions
 ├── templates/
 │   ├── list.jinja       # with [style] tags
 │   └── add.jinja

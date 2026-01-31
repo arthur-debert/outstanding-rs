@@ -4,6 +4,50 @@ Handlers are where your application logic lives. The handler contract is designe
 
 ---
 
+## Quick Start: The `#[handler]` Macro
+
+For most handlers, use the `#[handler]` macro to write pure functions:
+
+```rust
+use standout_macros::handler;
+
+#[handler]
+pub fn list(#[flag] all: bool, #[arg] limit: Option<usize>) -> Result<Vec<Item>, anyhow::Error> {
+    storage::list(all, limit)
+}
+
+// Generates: list__handler(&ArgMatches, &CommandContext) -> HandlerResult<Vec<Item>>
+```
+
+The macro:
+- Extracts CLI arguments from `ArgMatches` based on annotations
+- Auto-wraps `Result<T, E>` in `Output::Render` via `IntoHandlerResult`
+- Preserves the original function for direct testing
+
+**Parameter Annotations:**
+
+| Annotation | Type | Extraction |
+|------------|------|------------|
+| `#[flag]` | `bool` | `matches.get_flag("name")` |
+| `#[flag(name = "x")]` | `bool` | `matches.get_flag("x")` |
+| `#[arg]` | `T` | Required argument |
+| `#[arg]` | `Option<T>` | Optional argument |
+| `#[arg]` | `Vec<T>` | Multiple values |
+| `#[arg(name = "x")]` | `T` | Argument with custom CLI name |
+| `#[ctx]` | `&CommandContext` | Access to context |
+| `#[matches]` | `&ArgMatches` | Raw matches (escape hatch) |
+
+**Return Type Handling:**
+
+| Return Type | Generated Wrapper |
+|-------------|-------------------|
+| `Result<T, E>` | Auto-wrapped in `Output::Render` |
+| `Result<(), E>` | Wrapped in `Output::Silent` |
+
+> **Testing:** The original function is preserved, so you can test directly: `list(true, Some(10))`.
+
+---
+
 ## Handler Modes
 
 `standout-dispatch` supports two handler modes:
@@ -88,6 +132,69 @@ where T: Serialize + Send + Sync
 ```
 
 Closures must be `Fn` (not `FnMut` or `FnOnce`) for thread safety.
+
+---
+
+## SimpleFnHandler (No Context Needed)
+
+When your handler doesn't need `CommandContext`, use `SimpleFnHandler` for a cleaner signature:
+
+```rust
+use standout_dispatch::SimpleFnHandler;
+
+let handler = SimpleFnHandler::new(|matches| {
+    let verbose = matches.get_flag("verbose");
+    let items = storage::list()?;
+    Ok(ListResult { items, verbose })
+});
+```
+
+The closure signature:
+
+```rust
+fn(&ArgMatches) -> Result<T, E>
+where T: Serialize + Send + Sync, E: Into<anyhow::Error>
+```
+
+`SimpleFnHandler` automatically wraps the result in `Output::Render` via `IntoHandlerResult`.
+
+For `LocalHandler` equivalent, use `LocalSimpleFnHandler`:
+
+```rust
+use standout_dispatch::LocalSimpleFnHandler;
+
+let handler = LocalSimpleFnHandler::new(|matches| {
+    // No Send + Sync required
+    Ok(items)
+});
+```
+
+---
+
+## IntoHandlerResult Trait
+
+The `IntoHandlerResult` trait enables handlers to return `Result<T, E>` directly instead of `HandlerResult<T>`:
+
+```rust
+use standout_dispatch::IntoHandlerResult;
+
+// Before: explicit Output wrapping
+fn list(_m: &ArgMatches, _ctx: &CommandContext) -> HandlerResult<Vec<Item>> {
+    let items = storage::list()?;
+    Ok(Output::Render(items))
+}
+
+// After: automatic conversion
+fn list(_m: &ArgMatches, _ctx: &CommandContext) -> impl IntoHandlerResult<Vec<Item>> {
+    storage::list()  // Result<Vec<Item>, Error> auto-converts
+}
+```
+
+The trait is implemented for:
+- `Result<T, E>` where `E: Into<anyhow::Error>` → wraps `Ok(t)` in `Output::Render(t)`
+- `HandlerResult<T>` → passes through unchanged
+
+This is used internally by `SimpleFnHandler` and the `#[handler]` macro.
 
 ---
 
