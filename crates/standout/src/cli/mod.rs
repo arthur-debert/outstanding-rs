@@ -210,6 +210,9 @@ pub use dispatch::{
     extract_command_path, get_deepest_matches, has_subcommand, insert_default_command,
 };
 
+// Re-export Resource types from standout-dispatch
+pub use standout_dispatch::{ResourceQuery, ResourceStore};
+
 /// Parses a clap command with styled help output.
 ///
 /// This is the simplest entry point for basic CLIs without topics.

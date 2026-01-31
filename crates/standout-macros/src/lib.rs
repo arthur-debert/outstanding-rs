@@ -42,6 +42,7 @@
 //! [`EmbeddedSource`]: standout::EmbeddedSource
 //! [`RenderSetup`]: standout::RenderSetup
 
+mod resource;
 mod dispatch;
 mod embed;
 mod handler;
@@ -473,6 +474,80 @@ pub fn handler(attr: TokenStream, item: TokenStream) -> TokenStream {
     let attr = proc_macro2::TokenStream::from(attr);
     let item = proc_macro2::TokenStream::from(item);
     handler::handler_impl(attr, item)
+        .unwrap_or_else(|e| e.to_compile_error())
+        .into()
+}
+
+/// Derives Resource commands and handlers for a struct.
+///
+/// This macro generates a complete Resource CLI interface for the annotated struct,
+/// including list, view, create, update, and delete commands with corresponding
+/// handlers.
+///
+/// # Required Attributes
+///
+/// | Attribute | Description |
+/// |-----------|-------------|
+/// | `object = "name"` | Singular name for the object (e.g., "task") |
+/// | `store = Type` | Type implementing `ResourceStore` trait |
+///
+/// # Optional Attributes
+///
+/// | Attribute | Description | Default |
+/// |-----------|-------------|---------|
+/// | `plural = "name"` | Plural name for the object | `"{object}s"` |
+/// | `operations = [...]` | Subset of operations to generate | All operations |
+///
+/// # Field Attributes
+///
+/// | Attribute | Description |
+/// |-----------|-------------|
+/// | `id` | Marks field as primary identifier (required) |
+/// | `readonly` | Excludes field from create/update |
+/// | `skip` | Excludes field from all Resource operations |
+/// | `default = "expr"` | Default value for create |
+/// | `choices = ["a", "b"]` | Constrained values |
+///
+/// # Generated Code
+///
+/// For `#[resource(object = "task", store = TaskStore)]` on `Task`:
+///
+/// - `TaskCommands` enum with List, View, Create, Update, Delete variants
+/// - `TaskCommands::dispatch_config()` for use with `App::builder().group()`
+/// - Handler functions in `__task_resource_handlers` module
+///
+/// # Example
+///
+/// ```rust,ignore
+/// use standout_macros::Resource;
+///
+/// #[derive(Clone, Resource)]
+/// #[resource(object = "task", store = TaskStore)]
+/// pub struct Task {
+///     #[resource(id)]
+///     pub id: String,
+///
+///     #[resource(arg(short, long))]
+///     pub title: String,
+///
+///     #[resource(choices = ["pending", "done"])]
+///     pub status: String,
+///
+///     #[resource(readonly)]
+///     pub created_at: String,
+/// }
+///
+/// // In main.rs:
+/// App::builder()
+///     .app_state(TaskStore::new())
+///     .group("task", TaskCommands::dispatch_config())
+///     .build()?
+///     .run(Cli::command(), std::env::args_os());
+/// ```
+#[proc_macro_derive(Resource, attributes(resource))]
+pub fn resource_derive(input: TokenStream) -> TokenStream {
+    let input = parse_macro_input!(input as DeriveInput);
+    resource::resource_derive_impl(input)
         .unwrap_or_else(|e| e.to_compile_error())
         .into()
 }
