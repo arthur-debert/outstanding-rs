@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.6.1] - 2026-01-31
+
 ### Added
 
 - **Auto-wrap `Result<T>` in `Output::Render`** - Handlers can now return `Result<T, E>` directly instead of wrapping in `Ok(Output::Render(...))`. The framework automatically wraps successful results.
@@ -849,7 +851,8 @@ let output = render_with_output(template, &data, &theme, OutputMode::Term)?;
   - Command handler system with `dispatch_from` convenience method
   - Archive variant support in clap integration
 
-[Unreleased]: https://github.com/arthur-debert/standout/compare/standout-v3.6.0...HEAD
+[Unreleased]: https://github.com/arthur-debert/standout/compare/standout-v3.6.1...HEAD
+[3.6.1]: https://github.com/arthur-debert/standout/compare/standout-v3.6.0...standout-v3.6.1
 [3.6.0]: https://github.com/arthur-debert/standout/compare/standout-v3.5.0...standout-v3.6.0
 [3.5.0]: https://github.com/arthur-debert/standout/compare/standout-v3.4.0...standout-v3.5.0
 [3.4.0]: https://github.com/arthur-debert/standout/compare/standout-v3.3.0...standout-v3.4.0
