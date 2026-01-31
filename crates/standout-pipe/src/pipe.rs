@@ -30,6 +30,25 @@ pub enum PipeMode {
     Consume,
 }
 
+/// A simple pipe that executes a shell command with input on stdin.
+///
+/// # Security Warning
+///
+/// The command string is passed directly to the shell (`sh -c` on Unix, `cmd /C` on Windows).
+/// If you construct the command from untrusted input, you risk shell injection attacks.
+///
+/// ```ignore
+/// // DANGEROUS if `user_input` is untrusted:
+/// SimplePipe::new(format!("grep {}", user_input))
+///
+/// // SAFE alternatives:
+/// // 1. Use a fixed command string
+/// SimplePipe::new("grep pattern")
+///
+/// // 2. Validate/sanitize user input before interpolation
+/// let sanitized = sanitize_for_shell(user_input);
+/// SimplePipe::new(format!("grep {}", sanitized))
+/// ```
 pub struct SimplePipe {
     command: String,
     mode: PipeMode,
@@ -37,6 +56,13 @@ pub struct SimplePipe {
 }
 
 impl SimplePipe {
+    /// Create a new pipe that executes the given shell command.
+    ///
+    /// The default mode is [`PipeMode::Passthrough`] with a 30-second timeout.
+    ///
+    /// # Security
+    ///
+    /// See the struct-level documentation for shell injection warnings.
     pub fn new(command: impl Into<String>) -> Self {
         Self {
             command: command.into(),

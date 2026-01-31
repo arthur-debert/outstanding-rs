@@ -8,14 +8,28 @@ use wait_timeout::ChildExt;
 pub enum ShellError {
     #[error("IO error: {0}")]
     Io(#[from] std::io::Error),
-    #[error("Command timed out after {0:?}")]
-    Timeout(Duration),
-    #[error("Command failed with status {0}")]
-    CommandFailed(std::process::ExitStatus),
+    #[error("Command `{0}` timed out after {1:?}")]
+    Timeout(String, Duration),
+    #[error("Command `{0}` failed with status {1}")]
+    CommandFailed(String, std::process::ExitStatus),
     #[error("Command output was not valid UTF-8")]
     InvalidUtf8(#[from] std::string::FromUtf8Error),
 }
 
+/// Execute a shell command with the given input piped to stdin.
+///
+/// Returns the command's stdout on success.
+///
+/// # Arguments
+///
+/// * `command_str` - The shell command to execute
+/// * `input` - Data to write to the command's stdin
+/// * `timeout` - Optional timeout; if exceeded, the process is killed
+///
+/// # Notes
+///
+/// The entire stdout is buffered in memory before being returned.
+/// For very large outputs (multi-megabyte), consider streaming alternatives.
 pub fn run_piped(
     command_str: &str,
     input: &str,
@@ -45,18 +59,24 @@ pub fn run_piped(
         Some(duration) => match child.wait_timeout(duration)? {
             Some(status) => {
                 if !status.success() {
-                    return Err(ShellError::CommandFailed(status));
+                    return Err(ShellError::CommandFailed(
+                        command_str.to_string(),
+                        status,
+                    ));
                 }
             }
             None => {
                 child.kill()?;
-                return Err(ShellError::Timeout(duration));
+                return Err(ShellError::Timeout(command_str.to_string(), duration));
             }
         },
         None => {
             let status = child.wait()?;
             if !status.success() {
-                return Err(ShellError::CommandFailed(status));
+                return Err(ShellError::CommandFailed(
+                    command_str.to_string(),
+                    status,
+                ));
             }
         }
     }
@@ -106,7 +126,23 @@ mod tests {
         };
         let start = std::time::Instant::now();
         let res = run_piped(cmd, "", Some(Duration::from_millis(500)));
-        assert!(matches!(res, Err(ShellError::Timeout(_))));
+        assert!(matches!(res, Err(ShellError::Timeout(_, _))));
         assert!(start.elapsed() < Duration::from_secs(2));
+    }
+
+    #[test]
+    fn test_command_failed_includes_command_name() {
+        let cmd = if cfg!(windows) {
+            "exit 1"
+        } else {
+            "exit 1"
+        };
+        let res = run_piped(cmd, "", None);
+        match res {
+            Err(ShellError::CommandFailed(cmd_str, _)) => {
+                assert_eq!(cmd_str, cmd);
+            }
+            _ => panic!("Expected CommandFailed error"),
+        }
     }
 }
