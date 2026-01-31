@@ -13,6 +13,8 @@ default-theme = "rust"
 preferred-dark-theme = "ayu"
 git-repository-url = "https://github.com/arthur-debert/standout"
 edit-url-template = "https://github.com/arthur-debert/standout/edit/main/docs/{path}"
+additional-css = ["assets/version-banner.css"]
+additional-js = ["assets/version-banner.js"]
 
 [output.html.fold]
 enable = true

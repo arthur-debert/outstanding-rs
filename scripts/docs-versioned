@@ -1,0 +1,243 @@
+#!/bin/bash
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+PROJECT_DIR="$(dirname "$SCRIPT_DIR")"
+
+DOCS_VERSION=""
+OUTPUT_ROOT="public"
+SOURCE_DIR="$PROJECT_DIR"
+BANNER_CSS_REL="assets/version-banner.css"
+BANNER_JS_REL="assets/version-banner.js"
+BANNER_SOURCE_DIR="$PROJECT_DIR/assets"
+
+usage() {
+    echo "Usage: $0 <version> [--output <dir>] [--source <dir>]" >&2
+}
+
+while [[ $# -gt 0 ]]; do
+    case "$1" in
+        --output)
+            OUTPUT_ROOT="${2:-}"
+            shift 2
+            ;;
+        --source)
+            SOURCE_DIR="${2:-}"
+            shift 2
+            ;;
+        -*)
+            echo "Unknown option: $1" >&2
+            usage
+            exit 1
+            ;;
+        *)
+            if [[ -z "$DOCS_VERSION" ]]; then
+                DOCS_VERSION="$1"
+                shift
+            else
+                echo "Unexpected argument: $1" >&2
+                usage
+                exit 1
+            fi
+            ;;
+    esac
+done
+
+if [[ -z "$DOCS_VERSION" ]]; then
+    usage
+    exit 1
+fi
+
+if [[ -z "$OUTPUT_ROOT" ]]; then
+    echo "Output directory cannot be empty." >&2
+    exit 1
+fi
+
+if [[ "$OUTPUT_ROOT" != /* ]]; then
+    OUTPUT_ROOT="$PROJECT_DIR/$OUTPUT_ROOT"
+fi
+
+if [[ "$SOURCE_DIR" != /* ]]; then
+    SOURCE_DIR="$PROJECT_DIR/$SOURCE_DIR"
+fi
+
+if [[ ! -f "$SOURCE_DIR/book.toml" ]]; then
+    echo "Missing book.toml in $SOURCE_DIR" >&2
+    exit 1
+fi
+
+if [[ ! -d "$SOURCE_DIR/docs" ]]; then
+    echo "Missing docs directory in $SOURCE_DIR" >&2
+    exit 1
+fi
+
+if [[ ! -f "$BANNER_SOURCE_DIR/version-banner.css" || ! -f "$BANNER_SOURCE_DIR/version-banner.js" ]]; then
+    echo "Missing version banner assets in $BANNER_SOURCE_DIR" >&2
+    exit 1
+fi
+
+if [[ "$SOURCE_DIR" != "$PROJECT_DIR" ]]; then
+    mkdir -p "$SOURCE_DIR/assets"
+    cp "$BANNER_SOURCE_DIR/version-banner.css" "$SOURCE_DIR/assets/version-banner.css"
+    cp "$BANNER_SOURCE_DIR/version-banner.js" "$SOURCE_DIR/assets/version-banner.js"
+fi
+
+python3 - "$SOURCE_DIR/book.toml" "$BANNER_CSS_REL" "$BANNER_JS_REL" <<'PY'
+import sys
+from pathlib import Path
+
+book_toml = Path(sys.argv[1])
+css_rel = sys.argv[2]
+js_rel = sys.argv[3]
+
+text = book_toml.read_text()
+has_css = "additional-css" in text
+has_js = "additional-js" in text
+
+if has_css and has_js:
+    raise SystemExit(0)
+
+lines = text.splitlines()
+out = []
+inserted = False
+in_output = False
+
+for line in lines:
+    stripped = line.strip()
+    if stripped == "[output.html]":
+        in_output = True
+        out.append(line)
+        continue
+    if in_output and stripped.startswith("[") and stripped != "[output.html]":
+        if not inserted:
+            if not has_css:
+                out.append(f'additional-css = ["{css_rel}"]')
+            if not has_js:
+                out.append(f'additional-js = ["{js_rel}"]')
+            inserted = True
+        in_output = False
+    out.append(line)
+
+if in_output and not inserted:
+    if not has_css:
+        out.append(f'additional-css = ["{css_rel}"]')
+    if not has_js:
+        out.append(f'additional-js = ["{js_rel}"]')
+    inserted = True
+
+if not inserted:
+    out.append("")
+    out.append("[output.html]")
+    if not has_css:
+        out.append(f'additional-css = ["{css_rel}"]')
+    if not has_js:
+        out.append(f'additional-js = ["{js_rel}"]')
+
+book_toml.write_text("\n".join(out) + "\n")
+PY
+
+mkdir -p "$OUTPUT_ROOT"
+
+BUILD_DIR="$(mktemp -d)"
+cleanup() {
+    if [[ -n "${BUILD_DIR:-}" && -d "$BUILD_DIR" ]]; then
+        rm -rf "$BUILD_DIR"
+    fi
+}
+trap cleanup EXIT
+
+(
+    cd "$SOURCE_DIR"
+    mdbook build -d "$BUILD_DIR"
+)
+
+rm -rf "$OUTPUT_ROOT/$DOCS_VERSION"
+mv "$BUILD_DIR" "$OUTPUT_ROOT/$DOCS_VERSION"
+BUILD_DIR=""
+
+if [[ -f "$PROJECT_DIR/CNAME" ]]; then
+    cp "$PROJECT_DIR/CNAME" "$OUTPUT_ROOT/CNAME"
+fi
+
+shopt -s nullglob
+versions=()
+for dir in "$OUTPUT_ROOT"/*/; do
+    base="$(basename "$dir")"
+    if [[ "$base" == "latest" ]]; then
+        continue
+    fi
+    if [[ "$base" == standout-v* ]]; then
+        versions+=("$base")
+    fi
+done
+shopt -u nullglob
+
+sorted_versions=()
+if [[ ${#versions[@]} -gt 0 ]]; then
+    while IFS= read -r line; do
+        sorted_versions+=("$line")
+    done < <(printf '%s\n' "${versions[@]}" | sort -V)
+fi
+
+entries=()
+if [[ -d "$OUTPUT_ROOT/latest" ]]; then
+    entries+=("latest")
+fi
+for version in "${sorted_versions[@]}"; do
+    entries+=("$version")
+done
+
+json_tmp="$OUTPUT_ROOT/.versions.json.tmp"
+{
+    echo "["
+    if [[ ${#entries[@]} -gt 0 ]]; then
+        for i in "${!entries[@]}"; do
+            comma=","
+            if [[ $i -eq $((${#entries[@]} - 1)) ]]; then
+                comma=""
+            fi
+            printf '  "%s"%s\n' "${entries[$i]}" "$comma"
+        done
+    fi
+    echo "]"
+} > "$json_tmp"
+mv "$json_tmp" "$OUTPUT_ROOT/versions.json"
+
+index_tmp="$OUTPUT_ROOT/.index.html.tmp"
+{
+    cat <<'HTML'
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Standout Documentation</title>
+    <style>
+      body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; margin: 2rem; color: #1f2933; }
+      h1 { margin-bottom: 0.25rem; }
+      p { margin-top: 0; color: #52606d; }
+      ul { list-style: none; padding: 0; }
+      li { margin: 0.4rem 0; }
+      a { color: #1e40af; text-decoration: none; }
+      a:hover { text-decoration: underline; }
+      .tag { display: inline-block; background: #eef2ff; color: #3730a3; padding: 0.1rem 0.4rem; border-radius: 0.25rem; font-size: 0.85rem; margin-left: 0.3rem; }
+    </style>
+  </head>
+  <body>
+    <h1>Standout Documentation</h1>
+    <p>Select a version of the docs.</p>
+    <ul>
+HTML
+    if [[ -d "$OUTPUT_ROOT/latest" ]]; then
+        echo '      <li><a href="latest/">Latest</a> <span class="tag">latest</span></li>'
+    fi
+    for version in "${sorted_versions[@]}"; do
+        echo "      <li><a href=\"$version/\">$version</a></li>"
+    done
+    cat <<'HTML'
+    </ul>
+  </body>
+</html>
+HTML
+} > "$index_tmp"
+mv "$index_tmp" "$OUTPUT_ROOT/index.html"
