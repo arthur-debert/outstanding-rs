@@ -946,7 +946,7 @@ mod tests {
 
     #[test]
     fn test_renderer_with_simple_engine() {
-        use crate::template::{SimpleEngine, TemplateEngine};
+        use crate::template::SimpleEngine;
 
         let engine = Box::new(SimpleEngine::new());
         let mut renderer =
