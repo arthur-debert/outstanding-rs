@@ -28,7 +28,7 @@ The macro:
 **Parameter Annotations:**
 
 | Annotation | Type | Extraction |
-|------------|------|------------|
+| ------------ | ------ | ------------ |
 | `#[flag]` | `bool` | `matches.get_flag("name")` |
 | `#[flag(name = "x")]` | `bool` | `matches.get_flag("x")` |
 | `#[arg]` | `T` | Required argument |
@@ -297,7 +297,7 @@ pub struct CommandContext {
 Handlers access state through two distinct mechanisms with different semantics:
 
 | Aspect | `ctx.app_state` | `ctx.extensions` |
-|--------|-----------------|------------------|
+| -------- | ----------------- | ------------------ |
 | **Mutability** | Immutable (`&`) | Mutable (`&mut`) |
 | **Lifetime** | App lifetime | Per-request |
 | **Set by** | `AppBuilder::app_state()` | Pre-dispatch hooks |
@@ -366,7 +366,7 @@ fn list_handler(matches: &ArgMatches, ctx: &CommandContext) -> HandlerResult<Vec
 Both `app_state` and `extensions` use the same `Extensions` type with these methods:
 
 | Method | Description |
-|--------|-------------|
+| -------- | ------------- |
 | `insert<T>(value)` | Insert a value, returns previous if any |
 | `get<T>()` | Get immutable reference, returns `Option<&T>` |
 | `get_required<T>()` | Get reference or return error if missing |

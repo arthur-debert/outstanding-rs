@@ -423,7 +423,7 @@ inquire = { version = "0.7", optional = true }
 ## Dependency Analysis
 
 | Configuration | Unique Deps | Use Case |
-|---------------|-------------|----------|
+| --------------- | ------------- | ---------- |
 | `default-features = false` | ~2 | Minimal: just arg/stdin/env |
 | `features = ["editor"]` | ~16 | + Editor (tempfile, which) |
 | `features = ["simple-prompts"]` | ~2 | + Basic TTY prompts |

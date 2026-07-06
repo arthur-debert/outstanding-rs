@@ -574,7 +574,7 @@ fn test_config_source() {
 ## Summary
 
 | Backend | Feature | Dependencies | Sources |
-|---------|---------|--------------|---------|
+| --------- | --------- | -------------- | --------- |
 | Core | always | clap, thiserror | ArgSource, FlagSource, StdinSource, EnvSource, ClipboardSource, DefaultSource |
 | Editor | `editor` | tempfile, which | EditorSource |
 | Simple Prompts | `simple-prompts` | none | TextPromptSource, ConfirmPromptSource |

@@ -289,7 +289,7 @@ The help topics system (`TopicRegistry`, help rendering) remains in `standout` b
 ## Summary
 
 | Crate | Purpose | Dependencies |
-|-------|---------|--------------|
+| ------- | --------- | -------------- |
 | `standout-bbparser` | BBCode parser | minimal |
 | `standout-macros` | Embed macros | proc-macro |
 | `standout-render` | Template + style rendering | minijinja, console |

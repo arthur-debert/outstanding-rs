@@ -105,7 +105,7 @@ let theme = registry.get("default")?;  // loads default.css or default.yaml
 ### Templates
 
 | Extension | Priority |
-|-----------|----------|
+| ----------- | ---------- |
 | `.jinja` | 1 (highest) |
 | `.jinja2` | 2 |
 | `.j2` | 3 |
@@ -116,7 +116,7 @@ If both `report.jinja` and `report.txt` exist, `report.jinja` is used.
 ### Stylesheets
 
 | Extension | Format |
-|-----------|--------|
+| ----------- | -------- |
 | `.css` | CSS syntax |
 | `.yaml` | YAML syntax |
 | `.yml` | YAML syntax |

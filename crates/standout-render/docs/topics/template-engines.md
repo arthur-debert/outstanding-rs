@@ -14,7 +14,7 @@
 ### Feature Comparison
 
 | Feature | MiniJinjaEngine | SimpleEngine |
-|---------|-----------------|--------------|
+| --------- | ----------------- | -------------- |
 | Variable substitution | `{{ name }}` | `{name}` |
 | Nested property access | `{{ user.name }}` | `{user.name}` |
 | Array index access | `{{ items[0] }}` | `{items.0}` |
@@ -149,7 +149,7 @@ let output = render_auto_with_engine(
 When loading templates from files, the extension determines the intended engine:
 
 | Priority | Extension | Engine |
-|----------|-----------|--------|
+| ---------- | ----------- | -------- |
 | 1 | `.jinja` | MiniJinjaEngine |
 | 2 | `.jinja2` | MiniJinjaEngine |
 | 3 | `.j2` | MiniJinjaEngine |
@@ -223,7 +223,7 @@ impl TemplateEngine for MyEngine {
 ### Trait Methods
 
 | Method | Purpose |
-|--------|---------|
+| -------- | --------- |
 | `render_template` | Render an inline template string |
 | `add_template` | Register a named template |
 | `render_named` | Render a previously registered template |

@@ -28,7 +28,7 @@ let message = InputChain::<String>::new()
 ## Feature Flags
 
 | Feature | Default | Dependencies | Provides |
-|---------|---------|--------------|----------|
+| --------- | --------- | -------------- | ---------- |
 | `editor` | Yes | tempfile, which | `EditorSource` |
 | `simple-prompts` | Yes | none | `TextPromptSource`, `ConfirmPromptSource` |
 | `inquire` | No | inquire (~29 deps) | Rich TUI prompts |
@@ -92,7 +92,7 @@ let source = EnvSource::with_reader("TOKEN", env);
 ### Non-Interactive (always available)
 
 | Source | Type | Description |
-|--------|------|-------------|
+| -------- | ------ | ------------- |
 | `ArgSource` | `String` | CLI argument |
 | `FlagSource` | `bool` | CLI flag |
 | `StdinSource` | `String` | Piped stdin (skipped if terminal) |
@@ -116,7 +116,7 @@ let source = EnvSource::with_reader("TOKEN", env);
 ### Inquire (`inquire` feature)
 
 | Source | Type | Description |
-|--------|------|-------------|
+| -------- | ------ | ------------- |
 | `InquireText` | `String` | Text with autocomplete |
 | `InquireConfirm` | `bool` | Polished yes/no |
 | `InquireSelect<T>` | `T` | Single selection |

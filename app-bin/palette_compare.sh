@@ -20,7 +20,7 @@ set -euo pipefail
 
 THEME="${1:-xterm}"
 
-python3 - "$THEME" << 'PYEOF'
+python3 - "$THEME" <<'PYEOF'
 import sys, math
 
 # ─── Color conversion helpers ────────────────────────────────────────

@@ -60,7 +60,7 @@ let deep = get_deepest_matches(&matches);  // ArgMatches for "migrate"
 ### Command Path Utilities
 
 | Function | Purpose |
-|----------|---------|
+| ---------- | --------- |
 | `extract_command_path` | Get subcommand chain as `Vec<String>` |
 | `path_to_string` | Convert path to dot notation (`"db.migrate"`) |
 | `string_to_path` | Convert dot notation to path |
@@ -214,7 +214,7 @@ let app = App::builder()
 ```
 
 | Mode | Method | Behavior |
-|------|--------|----------|
+| ------ | -------- | ---------- |
 | Passthrough | `pipe_to()` | Run command, return original output |
 | Capture | `pipe_through()` | Return command's stdout as new output |
 | Consume | `pipe_to_clipboard()` | Send to clipboard, return empty |

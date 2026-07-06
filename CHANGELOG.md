@@ -8,10 +8,10 @@ Migrated changelog to fragment-directory system from arthur-debert/release.
 
 ## [7.6.3] - 2026-05-23
 
-
 ### Changed
 
 - First release through the canonical `arthur-debert/release/.github/workflows/rust-lib.yml@v1` reusable workflow (replacing the hand-rolled `publish.yml` tag-push trigger). No source changes; this dispatch validates the canonical rust-lib pipeline end-to-end for the standout workspace's 8 published crates.
+
 ## [7.6.2] - 2026-04-30
 
 ### Added
@@ -169,7 +169,7 @@ Migrated changelog to fragment-directory system from arthur-debert/release.
 - **Built-in table row tint styles** — `Theme::default()` now ships with adaptive alternating-row styles in five tints: gray (default), blue, red, green, and purple. Each tint provides a subtle background color shift for odd rows, with dark- and light-mode variants.
 
   | Tint | Dark bg (odd) | Light bg (odd) |
-  |--------|---------------|----------------|
+  | -------- | --------------- | ---------------- |
   | gray | 236 `#303030` | 254 `#e4e4e4` |
   | blue | 17 `#00005f` | 189 `#d7d7ff` |
   | red | 52 `#5f0000` | 224 `#ffd7d7` |
@@ -317,7 +317,6 @@ Migrated changelog to fragment-directory system from arthur-debert/release.
   - Commands now correctly use the final configured theme regardless of registration order.
   - Works with all registration methods: `.command()`, `.commands()` (dispatch! macro), and nested `.group()` calls.
 
-
 ## [5.0.0] - 2026-02-03
 
 ### Added
@@ -342,8 +341,9 @@ Migrated changelog to fragment-directory system from arthur-debert/release.
   - `DefaultSource<T>` - Fallback values
 
   **Feature-gated sources:**
+
   | Feature | Dependencies | Provides |
-  |---------|--------------|----------|
+  | --------- | -------------- | ---------- |
   | `editor` (default) | tempfile, which | `EditorSource` - Opens $VISUAL/$EDITOR |
   | `simple-prompts` (default) | none | `TextPromptSource`, `ConfirmPromptSource` |
   | `inquire` | inquire (~29 deps) | Rich TUI: `InquireText`, `InquireConfirm`, `InquireSelect`, `InquireMultiSelect`, `InquirePassword`, `InquireEditor` |
@@ -375,6 +375,7 @@ Migrated changelog to fragment-directory system from arthur-debert/release.
   - Removed all `Send + Sync` bounds from handler system
 
   **Migration:**
+
   ```rust
   // Before
   use standout::cli::{App, ThreadSafe, LocalApp, LocalHandler};
@@ -465,6 +466,7 @@ Migrated changelog to fragment-directory system from arthur-debert/release.
   - `LocalSimpleFnHandler<F, T>` - Local (non-Send) variant
 
   **Dispatch derive support:**
+
   ```rust
   #[derive(Subcommand, Dispatch)]
   #[dispatch(handlers = handlers)]
@@ -494,8 +496,9 @@ Migrated changelog to fragment-directory system from arthur-debert/release.
   ```
 
   **Supported annotations:**
+
   | Annotation | Type | Description |
-  |------------|------|-------------|
+  | ------------ | ------ | ------------- |
   | `#[flag]` | `bool` | Boolean CLI flag |
   | `#[flag(name = "x")]` | `bool` | Flag with custom CLI name |
   | `#[arg]` | `T` | Required CLI argument |
@@ -543,8 +546,9 @@ Migrated changelog to fragment-directory system from arthur-debert/release.
   ```
 
   **Three piping modes:**
+
   | Mode | Method | Behavior |
-  |------|--------|----------|
+  | ------ | -------- | ---------- |
   | Passthrough | `pipe_to()` | Run command, return original output |
   | Capture | `pipe_through()` | Use command's stdout as new output |
   | Consume | `pipe_to_clipboard()` | Send to clipboard, return empty |
@@ -574,6 +578,7 @@ Migrated changelog to fragment-directory system from arthur-debert/release.
   - Loops, conditionals, filters, includes, macros
 
   **Usage:**
+
   ```rust
   use standout_render::{Renderer, Theme, OutputMode};
   use standout_render::template::SimpleEngine;
@@ -641,8 +646,9 @@ Migrated changelog to fragment-directory system from arthur-debert/release.
   ```
 
   **Two-state model:**
+
   | Aspect | `ctx.app_state` | `ctx.extensions` |
-  |--------|-----------------|------------------|
+  | -------- | ----------------- | ------------------ |
   | Mutability | Immutable (`&`) | Mutable (`&mut`) |
   | Lifetime | App lifetime | Per-request |
   | Set by | `AppBuilder::app_state()` | Pre-dispatch hooks |
@@ -728,6 +734,7 @@ Migrated changelog to fragment-directory system from arthur-debert/release.
 - **New Seeker module** - A query/filtering system for collections with three layers of API:
 
   **Imperative API** - Build queries programmatically:
+
   ```rust
   use standout::seeker::{Query, Filter, Op};
 
@@ -741,6 +748,7 @@ Migrated changelog to fragment-directory system from arthur-debert/release.
   ```
 
   **Derive macro** - Add querying to any struct:
+
   ```rust
   #[derive(Seekable)]
   struct Task {
@@ -754,6 +762,7 @@ Migrated changelog to fragment-directory system from arthur-debert/release.
   ```
 
   **String parsing** - Parse CLI arguments or query strings:
+
   ```rust
   // "status-eq=active" "priority-gte=5" "order=created_at:desc"
   let query = parse_query::<Task>(&args)?;
@@ -787,6 +796,7 @@ Migrated changelog to fragment-directory system from arthur-debert/release.
   - Clean separation from rendering concerns
 
   **Usage:**
+
   ```rust
   // For dispatch-only use cases
   use standout_dispatch::{Dispatcher, Handler, Output};
@@ -813,6 +823,7 @@ Migrated changelog to fragment-directory system from arthur-debert/release.
   - File-based resources with hot-reload in dev, embedded in release
 
   **Usage:**
+
   ```rust
   // For render-only use cases (no CLI framework)
   use standout_render::{render, Theme};
@@ -888,6 +899,7 @@ Migrated changelog to fragment-directory system from arthur-debert/release.
   - `LocalHandler` trait - For struct-based handlers with `&mut self`
 
   **Example:**
+
   ```rust
   use standout::cli::{LocalApp, Output};
 
@@ -903,8 +915,9 @@ Migrated changelog to fragment-directory system from arthur-debert/release.
   ```
 
   **Comparison with App:**
+
   | Aspect | `App` | `LocalApp` |
-  |--------|-------|------------|
+  | -------- | ------- | ------------ |
   | Handler type | `Fn + Send + Sync` | `FnMut` |
   | State mutation | Via `Arc<Mutex<_>>` | Direct |
   | Thread safety | Yes | No |
@@ -1307,7 +1320,6 @@ let output = render_with_output(template, &data, &theme, OutputMode::Term)?;
   - Command handler system with `dispatch_from` convenience method
   - Archive variant support in clap integration
 
-[Unreleased]: https://github.com/arthur-debert/standout/compare/standout-v7.6.2...HEAD
 [7.6.2]: https://github.com/arthur-debert/standout/compare/standout-v7.6.1...standout-v7.6.2
 [7.5.1]: https://github.com/arthur-debert/standout/compare/standout-v7.5.0...standout-v7.5.1
 [7.5.0]: https://github.com/arthur-debert/standout/compare/standout-v7.4.0...standout-v7.5.0
@@ -1338,7 +1350,6 @@ let output = render_with_output(template, &data, &theme, OutputMode::Term)?;
 [2.2.0]: https://github.com/arthur-debert/standout/compare/v2.1.2...v2.2.0
 [2.1.2]: https://github.com/arthur-debert/standout/compare/v2.1.1...v2.1.2
 [2.1.1]: https://github.com/arthur-debert/standout/compare/v2.1.0...v2.1.1
-[2.1.0]: https://github.com/arthur-debert/standout/compare/v2.0.0...v2.1.0
 [2.0.0]: https://github.com/arthur-debert/standout/compare/v1.0.0...v2.0.0
 [1.0.0]: https://github.com/arthur-debert/standout/compare/v0.15.0...v1.0.0
 [0.14.0]: https://github.com/arthur-debert/standout/compare/v0.13.0...v0.14.0

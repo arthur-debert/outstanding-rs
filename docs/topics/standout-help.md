@@ -259,7 +259,7 @@ let config = HelpConfig {
 The template receives a `HelpData` struct with these fields:
 
 | Variable | Type | Description |
-|----------|------|-------------|
+| ---------- | ------ | ------------- |
 | `about` | String | Command's about text |
 | `usage` | String | Usage line (without "Usage: " prefix) |
 | `subcommands` | Vec | Command groups (each with `title`, `help`, `commands`) |

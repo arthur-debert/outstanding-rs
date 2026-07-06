@@ -66,7 +66,7 @@ Consolidated feedback from external reviews of Standout's documentation and posi
 Add a "Why Standout?" or "Why not just use X?" section:
 
 | Tool Category | Examples | What they do | What's missing |
-|---------------|----------|--------------|----------------|
+| --------------- | ---------- | -------------- | ---------------- |
 | Tables only | comfy-table, tabled | Format tabular data | No dispatch, output modes, or styles |
 | Terminal styling | console, termcolor | ANSI codes, colors | No templates, no JSON output |
 | Rich text | termimad | Markdown-to-terminal | No clap integration, no structured output |
@@ -133,7 +133,7 @@ Create a short guide showing:
 **Items to clarify:**
 
 | Topic | Question | Action |
-|-------|----------|--------|
+| ------- | ---------- | -------- |
 | Progress/streaming | In scope for long operations? | State explicitly if in/out of scope |
 | Error output | Opinions on stderr vs stdout, exit codes? | Document error handling approach |
 | Shell completions | Does it expose clap's completion generation? | Mention if supported |

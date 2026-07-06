@@ -136,7 +136,7 @@ Renderer::new(theme)
 ### 4. Type Renames for Clarity
 
 | Current | Proposed | Rationale |
-|---------|----------|-----------|
+| --------- | ---------- | ----------- |
 | `Standout` (clap) | `App` | Shorter, clearer |
 | `StandoutApp` (core) | `RenderEngine` | Distinguishes from App |
 | `StandoutBuilder` | `AppBuilder` | Follows App rename |
@@ -610,7 +610,7 @@ Ref: docs/proposals/new-api.md
 ## Timeline Estimate
 
 | Phase | Estimated Time | Dependencies |
-|-------|---------------|--------------|
+| ------- | --------------- | -------------- |
 | 1. Preparation | 2 hr | None |
 | 2. Crate Merge | 4 hr | 1.3 |
 | 3. Builder Unification | 4 hr | 2 |

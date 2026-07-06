@@ -5,7 +5,7 @@ Standout went through three major version bumps since 3.8.0 (4.0, 5.0, 6.0). Thi
 ## Quick Summary
 
 | Version | What Changed |
-|---------|-------------|
+| --------- | ------------- |
 | **4.0.0** | `App`/`LocalApp` unified into single-threaded `App` |
 | **5.0.0** | New `standout-input` crate (additive, no breakage) |
 | **6.0.0** | Internal dispatch fix for theme ordering (transparent for most users) |

@@ -34,7 +34,7 @@ DispatchFn (Arc)          ←→  LocalDispatchFn (Rc<RefCell>)
 The same dispatch logic is repeated **6+ times** across these files:
 
 | File | Lines | Implementation |
-|------|-------|----------------|
+| ------ | ------- | ---------------- |
 | `group.rs:108-160` | `ClosureRecipe::create_dispatch` | Thread-safe closure |
 | `group.rs:220-272` | `StructRecipe::create_dispatch` | Thread-safe struct |
 | `group.rs:653-704` | `ClosureCommandConfig::register` | Thread-safe group closure |
@@ -357,7 +357,7 @@ impl NullTemplateRegistry {
 The framework has multiple orthogonal configuration dimensions:
 
 | Dimension | Options | Count |
-|-----------|---------|-------|
+| ----------- | --------- | ------- |
 | Output mode | Auto, Term, Text, TermDebug, Json, Yaml, Xml, Csv | 8 |
 | Handler mode | ThreadSafe, Local | 2 |
 | Template source | Embedded, File-based, None | 3 |
@@ -577,7 +577,7 @@ full = ["cli", "macros"]
 ## Summary Table
 
 | Issue | Severity | Effort | Impact | Priority |
-|-------|----------|--------|--------|----------|
+| ------- | ---------- | -------- | -------- | ---------- |
 | App/LocalApp duplication | Critical | High | High | 1 (in progress) |
 | Panic-based invariants | High | Medium | High | 2 |
 | Silent optional fallbacks | High | Medium | Medium | 3 |

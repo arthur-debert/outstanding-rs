@@ -139,7 +139,7 @@ The second example shows dynamic style names—the style applied depends on the 
 Pass 2 (BBParser) processes style tags differently based on the output mode:
 
 | Mode | Behavior | Use Case |
-|------|----------|----------|
+| ------ | ---------- | ---------- |
 | `Term` | Replace tags with ANSI escape codes | Rich terminal output |
 | `Text` | Strip tags completely | Plain text, pipes, files |
 | `TermDebug` | Keep tags as literal text | Debugging, testing |
@@ -341,7 +341,7 @@ let output = render_auto(template, &data, &theme, OutputMode::Json)?;
 ```
 
 | Mode | Behavior |
-|------|----------|
+| ------ | ---------- |
 | `Term` | Render template, apply styles |
 | `Text` | Render template, strip styles |
 | `TermDebug` | Render template, keep style tags |

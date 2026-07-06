@@ -14,7 +14,7 @@ The macros provide compile-time specification generation from struct annotations
 The tabular module is fully implemented:
 
 | Component | Status | Location |
-|-----------|--------|----------|
+| ----------- | -------- | ---------- |
 | Core types (`Column`, `Width`, `Align`, `Anchor`, `Overflow`) | Complete | `src/rendering/tabular/types.rs` |
 | `TabularFormatter` with `row_from<T: Serialize>()` | Complete | `src/rendering/tabular/formatter.rs` |
 | `Table` decorator (borders, headers) | Complete | `src/rendering/tabular/decorator.rs` |
@@ -67,7 +67,7 @@ impl Tabular for Task {
 ### Field Attributes (`#[col(...)]`)
 
 | Attribute | Type | Maps to | Example |
-|-----------|------|---------|---------|
+| ----------- | ------ | --------- | --------- |
 | `width` | `usize` | `Width::Fixed(n)` | `width = 8` |
 | `width` | `"fill"` | `Width::Fill` | `width = "fill"` |
 | `width` | `"Nfr"` | `Width::Fraction(N)` | `width = "2fr"` |
@@ -87,7 +87,7 @@ impl Tabular for Task {
 ### Container Attributes (`#[tabular(...)]`)
 
 | Attribute | Type | Maps to | Example |
-|-----------|------|---------|---------|
+| ----------- | ------ | --------- | --------- |
 | `separator` | string | `Decorations.column_sep` | `separator = " │ "` |
 | `prefix` | string | `Decorations.row_prefix` | `prefix = "│ "` |
 | `suffix` | string | `Decorations.row_suffix` | `suffix = " │"` |

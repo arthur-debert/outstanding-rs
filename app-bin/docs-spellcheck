@@ -5,9 +5,9 @@ set -uo pipefail
 
 DICT="${1:-en_US}"
 DOC_DIRS=(
-    "docs"
-    "crates/standout-render/docs"
-    "crates/standout-dispatch/docs"
+	"docs"
+	"crates/standout-render/docs"
+	"crates/standout-dispatch/docs"
 )
 
 echo "Spell checking documentation with dictionary: $DICT"
@@ -17,30 +17,30 @@ echo ""
 found_errors=false
 
 for doc_dir in "${DOC_DIRS[@]}"; do
-    if [[ ! -d "$doc_dir" ]]; then
-        continue
-    fi
-    
-    # Find all markdown files, avoiding symlinks
-    while IFS= read -r -d '' file; do
-        # Run nuspell and capture misspelled words
-        misspelled=$(nuspell -l -d "$DICT" "$file" 2>/dev/null | sort -u || true)
-        
-        echo "$file:"
-        if [[ -n "$misspelled" ]]; then
-            found_errors=true
-            echo "  Errors found:"
-            echo "$misspelled" | sed 's/^/    - /'
-        else
-            echo "  No spelling errors found!"
-        fi
-        echo ""
-    done < <(find "$doc_dir" -type f -name "*.md" -print0)
+	if [[ ! -d "$doc_dir" ]]; then
+		continue
+	fi
+
+	# Find all markdown files, avoiding symlinks
+	while IFS= read -r -d '' file; do
+		# Run nuspell and capture misspelled words
+		misspelled=$(nuspell -l -d "$DICT" "$file" 2>/dev/null | sort -u || true)
+
+		echo "$file:"
+		if [[ -n "$misspelled" ]]; then
+			found_errors=true
+			echo "  Errors found:"
+			echo "$misspelled" | sed 's/^/    - /'
+		else
+			echo "  No spelling errors found!"
+		fi
+		echo ""
+	done < <(find "$doc_dir" -type f -name "*.md" -print0)
 done
 
 if [[ "$found_errors" == "true" ]]; then
-    echo "⚠ Some files have spelling errors"
-    exit 1
+	echo "⚠ Some files have spelling errors"
+	exit 1
 else
-    echo "✓ All files passed spell check!"
+	echo "✓ All files passed spell check!"
 fi

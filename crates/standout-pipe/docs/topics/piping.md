@@ -21,7 +21,7 @@ Standout's piping integrates as a post-output hook, running *after* rendering co
 Piping has three modes, each for different use cases:
 
 | Mode | Returns | Use Case |
-|------|---------|----------|
+| ------ | --------- | ---------- |
 | **Passthrough** | Original output | Side effects (logging, clipboard) while still displaying output |
 | **Capture** | Command's stdout | Filters (jq, grep, sort) that transform output |
 | **Consume** | Empty string | Clipboard-only, no terminal display |
@@ -98,7 +98,7 @@ let app = App::builder()
 ### Macro Attributes
 
 | Attribute | Mode | Example |
-|-----------|------|---------|
+| ----------- | ------ | --------- |
 | `pipe_to = "cmd"` | Passthrough | `#[dispatch(pipe_to = "tee log.txt")]` |
 | `pipe_through = "cmd"` | Capture | `#[dispatch(pipe_through = "jq .data")]` |
 | `pipe_to_clipboard` | Consume | `#[dispatch(pipe_to_clipboard)]` |
@@ -160,7 +160,7 @@ Order matters: the second pipe receives the first pipe's output.
 `pipe_to_clipboard()` automatically selects the right command:
 
 | Platform | Command |
-|----------|---------|
+| ---------- | --------- |
 | macOS | `pbcopy` |
 | Linux | `xclip -selection clipboard` |
 | Other | Error (use `pipe_to` with explicit command) |
@@ -288,7 +288,7 @@ You can combine piping with other post-output hooks:
 ## Summary
 
 | Feature | Method/Attribute |
-|---------|------------------|
+| --------- | ------------------ |
 | Log while displaying | `pipe_to("tee file")` |
 | Filter output | `pipe_through("jq .data")` |
 | Copy to clipboard | `pipe_to_clipboard` |

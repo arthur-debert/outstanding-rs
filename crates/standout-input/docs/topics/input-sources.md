@@ -46,7 +46,7 @@ Input sources fall into two categories:
 These work in scripts and CI pipelines:
 
 | Source | Use Case |
-|--------|----------|
+| -------- | ---------- |
 | **Arg** | Short content as CLI arguments |
 | **Stdin** | Piped content (`cat file \| cmd`) |
 | **Clipboard** | Pre-filled content from clipboard |
@@ -58,7 +58,7 @@ These work in scripts and CI pipelines:
 These require a TTY and user interaction:
 
 | Source | Use Case | Output Type |
-|--------|----------|-------------|
+| -------- | ---------- | ------------- |
 | **Editor** | Long-form text (commit messages) | `String` |
 | **Text** | Short text input ("Enter name:") | `String` |
 | **Confirm** | Yes/no questions ("Proceed?") | `bool` |
@@ -247,7 +247,7 @@ InputSource::chain()
 ### Macro Attributes
 
 | Attribute | Behavior |
-|-----------|----------|
+| ----------- | ---------- |
 | `#[input]` | Resolve from arg of same name |
 | `#[input(fallback = "editor")]` | Arg → stdin → editor chain |
 | `#[input(fallback = "stdin")]` | Arg → stdin chain |
@@ -310,7 +310,7 @@ let content = Editor::new()
 Editor detection follows established conventions:
 
 | Priority | Source | Example |
-|----------|--------|---------|
+| ---------- | -------- | --------- |
 | 1 | `VISUAL` env var | `VISUAL=code` |
 | 2 | `EDITOR` env var | `EDITOR=vim` |
 | 3 | Platform default | `vim` (Unix), `notepad` (Windows) |
@@ -430,7 +430,7 @@ Editor::new().initial(&initial).edit()?
 Platform support:
 
 | Platform | Read Command |
-|----------|--------------|
+| ---------- | -------------- |
 | macOS | `pbpaste` |
 | Linux | `xclip -selection clipboard -o` |
 | Windows | PowerShell `Get-Clipboard` |
@@ -442,7 +442,7 @@ Platform support:
 Input sources and output piping are symmetric but opposite:
 
 | Aspect | Input Sources | Output Piping |
-|--------|---------------|---------------|
+| -------- | --------------- | --------------- |
 | Direction | External → Handler | Handler → External |
 | Pipeline position | Pre-handler | Post-output |
 | Interactive | Can be (editor) | Never |
@@ -492,7 +492,7 @@ Input errors are returned before handler execution:
 ## Summary
 
 | Feature | Method/Attribute |
-|---------|------------------|
+| --------- | ------------------ |
 | From CLI arg | `InputSource::arg("name")` |
 | From piped stdin | `InputSource::stdin()` |
 | From editor | `InputSource::editor()` |

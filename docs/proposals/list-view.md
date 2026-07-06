@@ -44,7 +44,7 @@ Views are dispatch configurations that reference this struct, not new types.
 Three tiers of complexity:
 
 | Tier | Use Case | What You Provide |
-|------|----------|------------------|
+| ------ | ---------- | ------------------ |
 | **Zero-config** | Quick prototypes | Struct + `#[derive(Tabular)]` |
 | **Styled** | Production lists | Struct + tabular spec + optional intro/ending templates |
 | **Custom** | Complex layouts | Full template override |
@@ -254,7 +254,7 @@ Showing 2 of 15 tasks (filtered by: status=pending, name contains "auth")
 ListView is designed as the first piece of a larger CRUD system. The same struct annotations power all views:
 
 | View | Derives Used | Template Default |
-|------|--------------|------------------|
+| ------ | -------------- | ------------------ |
 | ListView | `Tabular`, `Seekable` | `list-view.jinja` |
 | DetailView | `Tabular` (vertical) | `detail-view.jinja` |
 | DeleteView | — | `delete-confirm.jinja` |
@@ -387,7 +387,7 @@ enum Commands {
 ### Template Variables
 
 | Variable | Type | Description |
-|----------|------|-------------|
+| ---------- | ------ | ------------- |
 | `items` | `Vec<T>` | The items to display |
 | `intro` | `Option<String>` | Header text |
 | `ending` | `Option<String>` | Footer text |
@@ -405,7 +405,7 @@ enum Commands {
 ### Derive Macros
 
 | Macro | Purpose | Required For |
-|-------|---------|--------------|
+| ------- | --------- | -------------- |
 | `#[derive(Tabular)]` | Column layout spec | Zero-template mode |
 | `#[derive(TabularRow)]` | Optimized row extraction | Performance |
 | `#[derive(Seekable)]` | Query field access | Filtering |
@@ -414,7 +414,7 @@ enum Commands {
 ### Dispatch Attributes
 
 | Attribute | Type | Description |
-|-----------|------|-------------|
+| ----------- | ------ | ------------- |
 | `list_view` | marker | Enable list view mode |
 | `item_type` | string | The item struct name |
 | `filterable` | marker | Enable Seeker integration |
@@ -554,7 +554,7 @@ $ $EDITOR ui/templates/standout/list-view.jinja
 ### Framework Asset Inventory
 
 | Asset Type | Name | Purpose |
-|------------|------|---------|
+| ------------ | ------ | --------- |
 | Template | `standout/list-view` | Generic list rendering with tabular support |
 | Template | `standout/detail-view` | Single item detail display |
 | Template | `standout/empty-list` | "No items found" message |

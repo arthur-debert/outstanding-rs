@@ -497,7 +497,7 @@ For long tables, alternating background colors on even/odd rows improves readabi
 The default theme includes five adaptive tints that automatically adjust to the user's light/dark terminal setting:
 
 | Tint | Usage | Dark mode | Light mode |
-|--------|-------|-----------|------------|
+| -------- | ------- | ----------- | ------------ |
 | gray | `row_styles=true` | dark gray bg | light gray bg |
 | blue | `row_styles="blue"` | dark navy bg | lavender bg |
 | red | `row_styles="red"` | dark crimson bg | blush bg |

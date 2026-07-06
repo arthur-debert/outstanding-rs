@@ -161,7 +161,7 @@ let filename = result.value;
 These sources don't require user interaction and work in CI/scripted environments:
 
 | Source | Type | Description |
-|--------|------|-------------|
+| -------- | ------ | ------------- |
 | `ArgSource` | `String` | CLI argument value |
 | `FlagSource` | `bool` | CLI flag (true/false) |
 | `StdinSource` | `String` | Piped stdin (skipped if stdin is a terminal) |
@@ -189,7 +189,7 @@ These require a terminal and are feature-gated to control dependencies:
 **`inquire` feature (optional, adds inquire crate):**
 
 | Source | Type | Description |
-|--------|------|-------------|
+| -------- | ------ | ------------- |
 | `InquireText` | `String` | Rich text input with autocomplete |
 | `InquireConfirm` | `bool` | Polished yes/no prompt |
 | `InquireSelect<T>` | `T` | Single selection with arrow keys |
@@ -226,7 +226,7 @@ let proceed: bool = InquireConfirm::new("Continue?")
 Available on every interactive source:
 
 | Source | Returns |
-|--------|---------|
+| -------- | --------- |
 | `TextPromptSource`, `ConfirmPromptSource` | `Result<String, _>`, `Result<bool, _>` |
 | `EditorSource` | `Result<String, _>` |
 | `InquireText`, `InquireConfirm`, `InquirePassword`, `InquireEditor` | as above |
@@ -394,7 +394,7 @@ fn test_input_priority() {
 `standout-input` uses feature flags to control dependencies:
 
 | Feature | Default | Dependencies | Provides |
-|---------|---------|--------------|----------|
+| --------- | --------- | -------------- | ---------- |
 | `editor` | Yes | tempfile, which | `EditorSource` |
 | `simple-prompts` | Yes | none | `TextPromptSource`, `ConfirmPromptSource` |
 | `inquire` | No | inquire (~29 deps) | Rich TUI prompts |

@@ -15,7 +15,7 @@ This is a mix of architectural choices (which move more testable code closer to 
 A Standout app has three testing layers, each appropriate to a different kind of change:
 
 | Level | What it covers | Tool | Speed |
-|---|---|---|---|
+| --- | --- | --- | --- |
 | Unit | A single handler's logic, as a pure function | Plain `#[test]` + direct call | Microseconds |
 | Integration | Full dispatch pipeline in-process: argv → handler → render | `standout-test::TestHarness` | Microseconds to low milliseconds |
 | End-to-end | Real process, real PTY, real signals, real subprocess fan-out | `assert_cmd`, `expectrl`, `rexpect` | Tens to hundreds of milliseconds per test |

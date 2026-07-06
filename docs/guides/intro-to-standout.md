@@ -370,7 +370,7 @@ The `#[handler]` macro:
 **Parameter Annotations:**
 
 | Annotation | Type | What it extracts |
-|------------|------|------------------|
+| ------------ | ------ | ------------------ |
 | `#[flag]` | `bool` | Boolean flag (`--verbose`) |
 | `#[arg]` | `T` | Required argument |
 | `#[arg]` | `Option<T>` | Optional argument |

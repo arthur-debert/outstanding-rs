@@ -7,19 +7,19 @@ echo "🔧 Running pre-commit checks..."
 STAGED_RS_FILES=$(git diff --cached --name-only --diff-filter=ACM | grep '\.rs$' || true)
 
 if [ -z "$STAGED_RS_FILES" ]; then
-    echo "No Rust files staged, skipping Rust checks..."
+	echo "No Rust files staged, skipping Rust checks..."
 else
-    # Run cargo fmt and re-stage formatted files
-    echo "📝 Running cargo fmt..."
-    cargo fmt --all
+	# Run cargo fmt and re-stage formatted files
+	echo "📝 Running cargo fmt..."
+	cargo fmt --all
 
-    # Re-stage any files that were formatted
-    for file in $STAGED_RS_FILES; do
-        if [ -f "$file" ]; then
-            git add "$file"
-        fi
-    done
-    echo "✓ Formatting complete and changes re-staged"
+	# Re-stage any files that were formatted
+	for file in $STAGED_RS_FILES; do
+		if [ -f "$file" ]; then
+			git add "$file"
+		fi
+	done
+	echo "✓ Formatting complete and changes re-staged"
 fi
 
 # Run clippy with auto-fix on the whole project (allow warnings during fix phase)
@@ -28,12 +28,12 @@ cargo clippy --fix --allow-dirty --allow-staged --all-targets --all-features 2>&
 
 # Re-stage any files that clippy fixed
 if [ -n "$STAGED_RS_FILES" ]; then
-    for file in $STAGED_RS_FILES; do
-        if [ -f "$file" ]; then
-            git add "$file"
-        fi
-    done
-    echo "✓ Clippy fixes applied and re-staged"
+	for file in $STAGED_RS_FILES; do
+		if [ -f "$file" ]; then
+			git add "$file"
+		fi
+	done
+	echo "✓ Clippy fixes applied and re-staged"
 fi
 
 # Run clippy and fail on any warnings (must match CI: --all-features)

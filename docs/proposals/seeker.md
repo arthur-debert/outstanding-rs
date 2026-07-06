@@ -22,7 +22,7 @@ This document specifies the complete design.
 Before designing Seeker, we evaluated existing Rust crates:
 
 | Crate | Operators | AND/OR/NOT | Ordering | Field Derive | Verdict |
-|-------|-----------|------------|----------|--------------|---------|
+| ------- | ----------- | ------------ | ---------- | -------------- | --------- |
 | `predicates` | Excellent | Yes/Yes/Yes | No | No | Great composition, no field extraction |
 | `modql` | Excellent | Yes/Yes/? | Yes | Yes | SQL-focused, needs custom executor |
 | `vec_filter` | Good | Yes/Yes/No | No | Yes | Missing NOT and ordering |
@@ -136,7 +136,7 @@ This is **not**:
 Each queryable field has one of these types:
 
 | Type | Rust Types | Description |
-|------|------------|-------------|
+| ------ | ------------ | ------------- |
 | `String` | `String`, `&str`, `Cow<str>` | Text data |
 | `Number` | `i8`–`i128`, `u8`–`u128`, `f32`, `f64` | Numeric data |
 | `Timestamp` | `SystemTime`, `chrono::DateTime<Tz>` | Temporal data |
@@ -150,7 +150,7 @@ Each type supports specific comparison operators:
 **String Operators:**
 
 | Operator | Description |
-|----------|-------------|
+| ---------- | ------------- |
 | `Eq` | Exact match (default) |
 | `Ne` | Not equal |
 | `StartsWith` | Prefix match |
@@ -161,7 +161,7 @@ Each type supports specific comparison operators:
 **Number Operators:**
 
 | Operator | Description |
-|----------|-------------|
+| ---------- | ------------- |
 | `Eq` | Equal (default) |
 | `Ne` | Not equal |
 | `Gt` | Greater than |
@@ -172,7 +172,7 @@ Each type supports specific comparison operators:
 **Timestamp Operators:**
 
 | Operator | Description |
-|----------|-------------|
+| ---------- | ------------- |
 | `Eq` | Exact match (default) |
 | `Ne` | Not equal |
 | `Before` | Earlier than |
@@ -181,7 +181,7 @@ Each type supports specific comparison operators:
 **Enum Operators:**
 
 | Operator | Description |
-|----------|-------------|
+| ---------- | ------------- |
 | `Eq` | Exact match (default) |
 | `Ne` | Not equal |
 | `In` | Value is one of the given set |
@@ -212,7 +212,7 @@ Examples:
 A **clause group** is a set of clauses sharing a logical role. There are three groups:
 
 | Group | Role | Internal Logic |
-|-------|------|----------------|
+| ------- | ------ | ---------------- |
 | **AND** | All must match | `clause₁ AND clause₂ AND ...` |
 | **OR** | At least one must match | `clause₁ OR clause₂ OR ...` |
 | **NOT** | None may match | `NOT clause₁ AND NOT clause₂ AND ...` |
@@ -682,7 +682,7 @@ The `#[derive(Seekable)]` macro generates accessor functions and field constants
 ### Field Attributes
 
 | Attribute | Description |
-|-----------|-------------|
+| ----------- | ------------- |
 | `#[seek(String)]` | String field (Eq, Ne, Contains, StartsWith, EndsWith, Regex) |
 | `#[seek(Number)]` | Numeric field (Eq, Ne, Gt, Gte, Lt, Lte) |
 | `#[seek(Timestamp)]` | Timestamp field (Eq, Ne, Before, After) - requires `SeekerTimestamp` impl |
@@ -831,7 +831,7 @@ Rules:
 **Valid operator names:**
 
 | Operator | String Name | Aliases |
-|----------|-------------|---------|
+| ---------- | ------------- | --------- |
 | `Eq` | `eq` | |
 | `Ne` | `ne` | `neq` |
 | `Gt` | `gt` | |
@@ -852,7 +852,7 @@ Rules:
 When no operator is specified, the default depends on field type:
 
 | Field Type | Default Operator |
-|------------|------------------|
+| ------------ | ------------------ |
 | `String` | `Eq` |
 | `Number` | `Eq` |
 | `Timestamp` | `Eq` |
@@ -866,7 +866,7 @@ For boolean fields, bare `--archived` means `archived-is=true`.
 Values are parsed based on field type:
 
 | Field Type | Value Format | Examples |
-|------------|--------------|----------|
+| ------------ | -------------- | ---------- |
 | `String` | Raw string | `foo`, `hello world` |
 | `Number` | Integer or float | `42`, `-17`, `3.14` |
 | `Timestamp` | ISO 8601 or Unix ms | `2024-01-15`, `2024-01-15T10:30:00Z`, `1705312200000` |
@@ -880,7 +880,7 @@ For `In` operator, values are comma-separated: `--status-in=active,pending,done`
 Group markers change which group subsequent clauses are added to:
 
 | Marker | Effect |
-|--------|--------|
+| -------- | -------- |
 | `AND` | Following clauses go to AND group (default) |
 | `OR` | Following clauses go to OR group |
 | `NOT` | Following clauses go to NOT group |
@@ -892,7 +892,7 @@ Groups apply to all subsequent clauses until the next marker.
 Special keys for ordering and pagination:
 
 | Key | Format | Example |
-|-----|--------|---------|
+| ----- | -------- | --------- |
 | `order` | `field` or `field-asc` or `field-desc` | `order=priority-desc` |
 | `limit` | Integer | `limit=20` |
 | `offset` | Integer | `offset=10` |
@@ -1199,7 +1199,7 @@ Evaluated existing crates (`predicates`, `modql`, `vec_filter`, `fltrs`). None c
 Out of scope for all phases but may be added later:
 
 | Feature | Description |
-|---------|-------------|
+| --------- | ------------- |
 | **Nested field access** | `"file.content.size"` for struct fields |
 | **Enum variant fields** | Query data inside enum variants |
 | **Aggregations** | count, sum, avg over results |

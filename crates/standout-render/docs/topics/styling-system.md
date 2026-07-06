@@ -118,7 +118,7 @@ Attach a palette to a theme with `Theme::with_palette()`.
 ### Text Attributes
 
 | CSS Property | Effect |
-|-------------|--------|
+| ------------- | -------- |
 | `font-weight: bold` | Bold text |
 | `opacity: 0.5` | Dimmed/faint text |
 | `font-style: italic` | Italic text |
@@ -230,7 +230,7 @@ Aliases can chain: `a` → `b` → `c` → concrete style. Cycles are detected a
 When a template references a style not defined in the theme, `standout-render` handles it gracefully:
 
 | Output Mode | Behavior |
-|-------------|----------|
+| ------------- | ---------- |
 | `Term` | Unknown tags get a `?` marker: `[unknown?]text[/unknown?]` |
 | `Text` | Tags stripped (plain text) |
 | `TermDebug` | Tags preserved as-is |
@@ -260,7 +260,7 @@ if !errors.is_empty() {
 `Theme::default()` includes adaptive styles for alternating table row backgrounds. These are used automatically when you pass `row_styles=true` (or a tint name) to the `table()` template function.
 
 | Style name | Purpose |
-|------------|---------|
+| ------------ | --------- |
 | `table_row_even` | Even rows — no background (transparent) |
 | `table_row_odd` | Odd rows — subtle gray background shift |
 | `table_row_even_gray` | Alias for `table_row_even` |

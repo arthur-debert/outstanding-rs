@@ -7,7 +7,7 @@
 ## The Two State Types
 
 | Aspect | `app_state` | `extensions` |
-|--------|-------------|--------------|
+| -------- | ------------- | -------------- |
 | **Mutability** | Immutable (`&`) | Mutable (`&mut`) |
 | **Lifetime** | App lifetime | Per-request |
 | **Set by** | `AppBuilder::app_state()` | Pre-dispatch hooks |

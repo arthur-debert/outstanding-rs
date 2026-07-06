@@ -128,7 +128,7 @@ flowchart TB
 ## Type Flow Summary
 
 | Stage | Input Type | Output Type |
-|-------|-----------|------------|
+| ------- | ----------- | ------------ |
 | Entry | `Vec<String>` (CLI args) | - |
 | Parsing | `Vec<String>` + `clap::Command` | `ArgMatches` |
 | Routing | `ArgMatches` | `DispatchFn` lookup |
