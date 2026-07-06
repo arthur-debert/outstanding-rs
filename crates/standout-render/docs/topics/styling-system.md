@@ -77,10 +77,10 @@ let theme = Theme::new()
 
 ### Colors
 
-| Attribute | CSS Property | Description |
-|-----------|--------------|-------------|
-| `fg` | `color` | Foreground (text) color |
-| `bg` | `background` | Background color |
+| Attribute | CSS Property | Description             |
+| --------- | ------------ | ----------------------- |
+| `fg`      | `color`      | Foreground (text) color |
+| `bg`      | `background` | Background color        |
 
 ### Color Formats
 
@@ -117,15 +117,15 @@ Attach a palette to a theme with `Theme::with_palette()`.
 
 ### Text Attributes
 
-| CSS Property | Effect |
-| ------------- | -------- |
-| `font-weight: bold` | Bold text |
-| `opacity: 0.5` | Dimmed/faint text |
-| `font-style: italic` | Italic text |
-| `text-decoration: underline` | Underlined text |
-| `text-decoration: blink` | Blinking text |
-| `text-decoration: line-through` | Strikethrough |
-| `visibility: hidden` | Hidden text |
+| CSS Property                    | Effect            |
+| ------------------------------- | ----------------- |
+| `font-weight: bold`             | Bold text         |
+| `opacity: 0.5`                  | Dimmed/faint text |
+| `font-style: italic`            | Italic text       |
+| `text-decoration: underline`    | Underlined text   |
+| `text-decoration: blink`        | Blinking text     |
+| `text-decoration: line-through` | Strikethrough     |
+| `visibility: hidden`            | Hidden text       |
 
 ---
 
@@ -229,11 +229,11 @@ Aliases can chain: `a` → `b` → `c` → concrete style. Cycles are detected a
 
 When a template references a style not defined in the theme, `standout-render` handles it gracefully:
 
-| Output Mode | Behavior |
-| ------------- | ---------- |
-| `Term` | Unknown tags get a `?` marker: `[unknown?]text[/unknown?]` |
-| `Text` | Tags stripped (plain text) |
-| `TermDebug` | Tags preserved as-is |
+| Output Mode | Behavior                                                   |
+| ----------- | ---------------------------------------------------------- |
+| `Term`      | Unknown tags get a `?` marker: `[unknown?]text[/unknown?]` |
+| `Text`      | Tags stripped (plain text)                                 |
+| `TermDebug` | Tags preserved as-is                                       |
 
 The `?` marker helps catch typos during development without crashing production apps.
 
@@ -259,20 +259,20 @@ if !errors.is_empty() {
 
 `Theme::default()` includes adaptive styles for alternating table row backgrounds. These are used automatically when you pass `row_styles=true` (or a tint name) to the `table()` template function.
 
-| Style name | Purpose |
-| ------------ | --------- |
-| `table_row_even` | Even rows — no background (transparent) |
-| `table_row_odd` | Odd rows — subtle gray background shift |
-| `table_row_even_gray` | Alias for `table_row_even` |
-| `table_row_odd_gray` | Alias for `table_row_odd` |
-| `table_row_even_blue` | Even rows for blue tint |
-| `table_row_odd_blue` | Odd rows — dark navy / lavender bg |
-| `table_row_even_red` | Even rows for red tint |
-| `table_row_odd_red` | Odd rows — dark crimson / blush bg |
-| `table_row_even_green` | Even rows for green tint |
-| `table_row_odd_green` | Odd rows — dark forest / mint bg |
-| `table_row_even_purple` | Even rows for purple tint |
-| `table_row_odd_purple` | Odd rows — dark plum / lilac bg |
+| Style name              | Purpose                                 |
+| ----------------------- | --------------------------------------- |
+| `table_row_even`        | Even rows — no background (transparent) |
+| `table_row_odd`         | Odd rows — subtle gray background shift |
+| `table_row_even_gray`   | Alias for `table_row_even`              |
+| `table_row_odd_gray`    | Alias for `table_row_odd`               |
+| `table_row_even_blue`   | Even rows for blue tint                 |
+| `table_row_odd_blue`    | Odd rows — dark navy / lavender bg      |
+| `table_row_even_red`    | Even rows for red tint                  |
+| `table_row_odd_red`     | Odd rows — dark crimson / blush bg      |
+| `table_row_even_green`  | Even rows for green tint                |
+| `table_row_odd_green`   | Odd rows — dark forest / mint bg        |
+| `table_row_even_purple` | Even rows for purple tint               |
+| `table_row_odd_purple`  | Odd rows — dark plum / lilac bg         |
 
 All odd-row styles are adaptive: they resolve to a dark variant when the terminal is in dark mode, and a light variant in light mode. You can override any of these by defining the same style name in your theme.
 

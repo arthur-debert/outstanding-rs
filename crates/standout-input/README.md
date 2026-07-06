@@ -27,11 +27,11 @@ let message = InputChain::<String>::new()
 
 ## Feature Flags
 
-| Feature | Default | Dependencies | Provides |
-| --------- | --------- | -------------- | ---------- |
-| `editor` | Yes | tempfile, which | `EditorSource` |
-| `simple-prompts` | Yes | none | `TextPromptSource`, `ConfirmPromptSource` |
-| `inquire` | No | inquire (~29 deps) | Rich TUI prompts |
+| Feature          | Default | Dependencies       | Provides                                  |
+| ---------------- | ------- | ------------------ | ----------------------------------------- |
+| `editor`         | Yes     | tempfile, which    | `EditorSource`                            |
+| `simple-prompts` | Yes     | none               | `TextPromptSource`, `ConfirmPromptSource` |
+| `inquire`        | No      | inquire (~29 deps) | Rich TUI prompts                          |
 
 ### Minimal Build
 
@@ -91,38 +91,38 @@ let source = EnvSource::with_reader("TOKEN", env);
 
 ### Non-Interactive (always available)
 
-| Source | Type | Description |
-| -------- | ------ | ------------- |
-| `ArgSource` | `String` | CLI argument |
-| `FlagSource` | `bool` | CLI flag |
-| `StdinSource` | `String` | Piped stdin (skipped if terminal) |
-| `EnvSource` | `String` | Environment variable |
-| `ClipboardSource` | `String` | System clipboard |
-| `DefaultSource<T>` | `T` | Fallback value |
+| Source             | Type     | Description                       |
+| ------------------ | -------- | --------------------------------- |
+| `ArgSource`        | `String` | CLI argument                      |
+| `FlagSource`       | `bool`   | CLI flag                          |
+| `StdinSource`      | `String` | Piped stdin (skipped if terminal) |
+| `EnvSource`        | `String` | Environment variable              |
+| `ClipboardSource`  | `String` | System clipboard                  |
+| `DefaultSource<T>` | `T`      | Fallback value                    |
 
 ### Editor (`editor` feature, default)
 
-| Source | Type | Description |
-|--------|------|-------------|
+| Source         | Type     | Description           |
+| -------------- | -------- | --------------------- |
 | `EditorSource` | `String` | Opens $VISUAL/$EDITOR |
 
 ### Simple Prompts (`simple-prompts` feature, default)
 
-| Source | Type | Description |
-|--------|------|-------------|
-| `TextPromptSource` | `String` | Basic text input |
-| `ConfirmPromptSource` | `bool` | Yes/no prompt |
+| Source                | Type     | Description      |
+| --------------------- | -------- | ---------------- |
+| `TextPromptSource`    | `String` | Basic text input |
+| `ConfirmPromptSource` | `bool`   | Yes/no prompt    |
 
 ### Inquire (`inquire` feature)
 
-| Source | Type | Description |
-| -------- | ------ | ------------- |
-| `InquireText` | `String` | Text with autocomplete |
-| `InquireConfirm` | `bool` | Polished yes/no |
-| `InquireSelect<T>` | `T` | Single selection |
-| `InquireMultiSelect<T>` | `Vec<T>` | Multiple selection |
-| `InquirePassword` | `String` | Masked input |
-| `InquireEditor` | `String` | Editor with preview |
+| Source                  | Type     | Description            |
+| ----------------------- | -------- | ---------------------- |
+| `InquireText`           | `String` | Text with autocomplete |
+| `InquireConfirm`        | `bool`   | Polished yes/no        |
+| `InquireSelect<T>`      | `T`      | Single selection       |
+| `InquireMultiSelect<T>` | `Vec<T>` | Multiple selection     |
+| `InquirePassword`       | `String` | Masked input           |
+| `InquireEditor`         | `String` | Editor with preview    |
 
 ## Documentation
 

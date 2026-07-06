@@ -21,12 +21,12 @@ This document specifies the complete design.
 
 Before designing Seeker, we evaluated existing Rust crates:
 
-| Crate | Operators | AND/OR/NOT | Ordering | Field Derive | Verdict |
-| ------- | ----------- | ------------ | ---------- | -------------- | --------- |
-| `predicates` | Excellent | Yes/Yes/Yes | No | No | Great composition, no field extraction |
-| `modql` | Excellent | Yes/Yes/? | Yes | Yes | SQL-focused, needs custom executor |
-| `vec_filter` | Good | Yes/Yes/No | No | Yes | Missing NOT and ordering |
-| `fltrs` | Basic | Yes/Yes/Yes | No | PathResolver | Limited operators |
+| Crate        | Operators | AND/OR/NOT  | Ordering | Field Derive | Verdict                                |
+| ------------ | --------- | ----------- | -------- | ------------ | -------------------------------------- |
+| `predicates` | Excellent | Yes/Yes/Yes | No       | No           | Great composition, no field extraction |
+| `modql`      | Excellent | Yes/Yes/?   | Yes      | Yes          | SQL-focused, needs custom executor     |
+| `vec_filter` | Good      | Yes/Yes/No  | No       | Yes          | Missing NOT and ordering               |
+| `fltrs`      | Basic     | Yes/Yes/Yes | No       | PathResolver | Limited operators                      |
 
 **Decision:** Build custom. No existing crate combines: derive macro + full operators + AND/OR/NOT + ordering. The gaps would require building most of the system anyway.
 
@@ -135,13 +135,13 @@ This is **not**:
 
 Each queryable field has one of these types:
 
-| Type | Rust Types | Description |
-| ------ | ------------ | ------------- |
-| `String` | `String`, `&str`, `Cow<str>` | Text data |
-| `Number` | `i8`–`i128`, `u8`–`u128`, `f32`, `f64` | Numeric data |
-| `Timestamp` | `SystemTime`, `chrono::DateTime<Tz>` | Temporal data |
-| `Enum` | Unit enums (no associated data) | Discrete choices |
-| `Bool` | `bool` | Boolean flags |
+| Type        | Rust Types                             | Description      |
+| ----------- | -------------------------------------- | ---------------- |
+| `String`    | `String`, `&str`, `Cow<str>`           | Text data        |
+| `Number`    | `i8`–`i128`, `u8`–`u128`, `f32`, `f64` | Numeric data     |
+| `Timestamp` | `SystemTime`, `chrono::DateTime<Tz>`   | Temporal data    |
+| `Enum`      | Unit enums (no associated data)        | Discrete choices |
+| `Bool`      | `bool`                                 | Boolean flags    |
 
 ### Operators
 
@@ -149,49 +149,49 @@ Each type supports specific comparison operators:
 
 **String Operators:**
 
-| Operator | Description |
-| ---------- | ------------- |
-| `Eq` | Exact match (default) |
-| `Ne` | Not equal |
-| `StartsWith` | Prefix match |
-| `EndsWith` | Suffix match |
-| `Contains` | Substring match |
-| `Regex` | Regular expression match |
+| Operator     | Description              |
+| ------------ | ------------------------ |
+| `Eq`         | Exact match (default)    |
+| `Ne`         | Not equal                |
+| `StartsWith` | Prefix match             |
+| `EndsWith`   | Suffix match             |
+| `Contains`   | Substring match          |
+| `Regex`      | Regular expression match |
 
 **Number Operators:**
 
-| Operator | Description |
-| ---------- | ------------- |
-| `Eq` | Equal (default) |
-| `Ne` | Not equal |
-| `Gt` | Greater than |
-| `Gte` | Greater than or equal |
-| `Lt` | Less than |
-| `Lte` | Less than or equal |
+| Operator | Description           |
+| -------- | --------------------- |
+| `Eq`     | Equal (default)       |
+| `Ne`     | Not equal             |
+| `Gt`     | Greater than          |
+| `Gte`    | Greater than or equal |
+| `Lt`     | Less than             |
+| `Lte`    | Less than or equal    |
 
 **Timestamp Operators:**
 
-| Operator | Description |
-| ---------- | ------------- |
-| `Eq` | Exact match (default) |
-| `Ne` | Not equal |
-| `Before` | Earlier than |
-| `After` | Later than |
+| Operator | Description           |
+| -------- | --------------------- |
+| `Eq`     | Exact match (default) |
+| `Ne`     | Not equal             |
+| `Before` | Earlier than          |
+| `After`  | Later than            |
 
 **Enum Operators:**
 
-| Operator | Description |
-| ---------- | ------------- |
-| `Eq` | Exact match (default) |
-| `Ne` | Not equal |
-| `In` | Value is one of the given set |
+| Operator | Description                   |
+| -------- | ----------------------------- |
+| `Eq`     | Exact match (default)         |
+| `Ne`     | Not equal                     |
+| `In`     | Value is one of the given set |
 
 **Bool Operators:**
 
-| Operator | Description |
-|----------|-------------|
-| `Eq` | Equal (default) |
-| `Is` | Alias for `Eq` |
+| Operator | Description     |
+| -------- | --------------- |
+| `Eq`     | Equal (default) |
+| `Is`     | Alias for `Eq`  |
 
 ### Clause
 
@@ -211,11 +211,11 @@ Examples:
 
 A **clause group** is a set of clauses sharing a logical role. There are three groups:
 
-| Group | Role | Internal Logic |
-| ------- | ------ | ---------------- |
-| **AND** | All must match | `clause₁ AND clause₂ AND ...` |
-| **OR** | At least one must match | `clause₁ OR clause₂ OR ...` |
-| **NOT** | None may match | `NOT clause₁ AND NOT clause₂ AND ...` |
+| Group   | Role                    | Internal Logic                        |
+| ------- | ----------------------- | ------------------------------------- |
+| **AND** | All must match          | `clause₁ AND clause₂ AND ...`         |
+| **OR**  | At least one must match | `clause₁ OR clause₂ OR ...`           |
+| **NOT** | None may match          | `NOT clause₁ AND NOT clause₂ AND ...` |
 
 ### Query
 
@@ -268,10 +268,10 @@ If no ordering is specified, the original collection order is preserved.
 
 A query may specify:
 
-| Parameter | Description |
-|-----------|-------------|
-| `limit` | Maximum number of results to return |
-| `offset` | Number of results to skip before returning |
+| Parameter | Description                                |
+| --------- | ------------------------------------------ |
+| `limit`   | Maximum number of results to return        |
+| `offset`  | Number of results to skip before returning |
 
 ---
 
@@ -681,16 +681,16 @@ The `#[derive(Seekable)]` macro generates accessor functions and field constants
 
 ### Field Attributes
 
-| Attribute | Description |
-| ----------- | ------------- |
-| `#[seek(String)]` | String field (Eq, Ne, Contains, StartsWith, EndsWith, Regex) |
-| `#[seek(Number)]` | Numeric field (Eq, Ne, Gt, Gte, Lt, Lte) |
-| `#[seek(Timestamp)]` | Timestamp field (Eq, Ne, Before, After) - requires `SeekerTimestamp` impl |
-| `#[seek(Enum)]` | Enum field (Eq, Ne, In) - requires `SeekerEnum` impl |
-| `#[seek(Bool)]` | Boolean field (Eq, Ne, Is) |
-| `#[seek(skip)]` | Exclude field from queries |
-| `#[seek(ty = "enum")]` | Alternative syntax for reserved keywords |
-| `rename = "..."` | Custom query field name |
+| Attribute              | Description                                                               |
+| ---------------------- | ------------------------------------------------------------------------- |
+| `#[seek(String)]`      | String field (Eq, Ne, Contains, StartsWith, EndsWith, Regex)              |
+| `#[seek(Number)]`      | Numeric field (Eq, Ne, Gt, Gte, Lt, Lte)                                  |
+| `#[seek(Timestamp)]`   | Timestamp field (Eq, Ne, Before, After) - requires `SeekerTimestamp` impl |
+| `#[seek(Enum)]`        | Enum field (Eq, Ne, In) - requires `SeekerEnum` impl                      |
+| `#[seek(Bool)]`        | Boolean field (Eq, Ne, Is)                                                |
+| `#[seek(skip)]`        | Exclude field from queries                                                |
+| `#[seek(ty = "enum")]` | Alternative syntax for reserved keywords                                  |
+| `rename = "..."`       | Custom query field name                                                   |
 
 ### Generated Code
 
@@ -830,34 +830,34 @@ Rules:
 
 **Valid operator names:**
 
-| Operator | String Name | Aliases |
-| ---------- | ------------- | --------- |
-| `Eq` | `eq` | |
-| `Ne` | `ne` | `neq` |
-| `Gt` | `gt` | |
-| `Gte` | `gte` | |
-| `Lt` | `lt` | |
-| `Lte` | `lte` | |
-| `StartsWith` | `startswith` | `prefix` |
-| `EndsWith` | `endswith` | `suffix` |
-| `Contains` | `contains` | |
-| `Regex` | `regex` | `re`, `match` |
-| `Before` | `before` | |
-| `After` | `after` | |
-| `In` | `in` | |
-| `Is` | `is` | |
+| Operator     | String Name  | Aliases       |
+| ------------ | ------------ | ------------- |
+| `Eq`         | `eq`         |               |
+| `Ne`         | `ne`         | `neq`         |
+| `Gt`         | `gt`         |               |
+| `Gte`        | `gte`        |               |
+| `Lt`         | `lt`         |               |
+| `Lte`        | `lte`        |               |
+| `StartsWith` | `startswith` | `prefix`      |
+| `EndsWith`   | `endswith`   | `suffix`      |
+| `Contains`   | `contains`   |               |
+| `Regex`      | `regex`      | `re`, `match` |
+| `Before`     | `before`     |               |
+| `After`      | `after`      |               |
+| `In`         | `in`         |               |
+| `Is`         | `is`         |               |
 
 ### Default Operators by Type
 
 When no operator is specified, the default depends on field type:
 
-| Field Type | Default Operator |
-| ------------ | ------------------ |
-| `String` | `Eq` |
-| `Number` | `Eq` |
-| `Timestamp` | `Eq` |
-| `Enum` | `Eq` |
-| `Bool` | `Is` (with implicit `true` value) |
+| Field Type  | Default Operator                  |
+| ----------- | --------------------------------- |
+| `String`    | `Eq`                              |
+| `Number`    | `Eq`                              |
+| `Timestamp` | `Eq`                              |
+| `Enum`      | `Eq`                              |
+| `Bool`      | `Is` (with implicit `true` value) |
 
 For boolean fields, bare `--archived` means `archived-is=true`.
 
@@ -865,13 +865,13 @@ For boolean fields, bare `--archived` means `archived-is=true`.
 
 Values are parsed based on field type:
 
-| Field Type | Value Format | Examples |
-| ------------ | -------------- | ---------- |
-| `String` | Raw string | `foo`, `hello world` |
-| `Number` | Integer or float | `42`, `-17`, `3.14` |
-| `Timestamp` | ISO 8601 or Unix ms | `2024-01-15`, `2024-01-15T10:30:00Z`, `1705312200000` |
-| `Enum` | Discriminant (u32) or variant name | `0`, `1`, `active`, `pending` |
-| `Bool` | Boolean literal | `true`, `false`, `1`, `0` |
+| Field Type  | Value Format                       | Examples                                              |
+| ----------- | ---------------------------------- | ----------------------------------------------------- |
+| `String`    | Raw string                         | `foo`, `hello world`                                  |
+| `Number`    | Integer or float                   | `42`, `-17`, `3.14`                                   |
+| `Timestamp` | ISO 8601 or Unix ms                | `2024-01-15`, `2024-01-15T10:30:00Z`, `1705312200000` |
+| `Enum`      | Discriminant (u32) or variant name | `0`, `1`, `active`, `pending`                         |
+| `Bool`      | Boolean literal                    | `true`, `false`, `1`, `0`                             |
 
 For `In` operator, values are comma-separated: `--status-in=active,pending,done`
 
@@ -879,11 +879,11 @@ For `In` operator, values are comma-separated: `--status-in=active,pending,done`
 
 Group markers change which group subsequent clauses are added to:
 
-| Marker | Effect |
-| -------- | -------- |
-| `AND` | Following clauses go to AND group (default) |
-| `OR` | Following clauses go to OR group |
-| `NOT` | Following clauses go to NOT group |
+| Marker | Effect                                      |
+| ------ | ------------------------------------------- |
+| `AND`  | Following clauses go to AND group (default) |
+| `OR`   | Following clauses go to OR group            |
+| `NOT`  | Following clauses go to NOT group           |
 
 Groups apply to all subsequent clauses until the next marker.
 
@@ -891,11 +891,11 @@ Groups apply to all subsequent clauses until the next marker.
 
 Special keys for ordering and pagination:
 
-| Key | Format | Example |
-| ----- | -------- | --------- |
-| `order` | `field` or `field-asc` or `field-desc` | `order=priority-desc` |
-| `limit` | Integer | `limit=20` |
-| `offset` | Integer | `offset=10` |
+| Key      | Format                                 | Example               |
+| -------- | -------------------------------------- | --------------------- |
+| `order`  | `field` or `field-asc` or `field-desc` | `order=priority-desc` |
+| `limit`  | Integer                                | `limit=20`            |
+| `offset` | Integer                                | `offset=10`           |
 
 Multiple `order` entries create multi-field ordering (first is primary).
 
@@ -1198,13 +1198,13 @@ Evaluated existing crates (`predicates`, `modql`, `vec_filter`, `fltrs`). None c
 
 Out of scope for all phases but may be added later:
 
-| Feature | Description |
-| --------- | ------------- |
+| Feature                 | Description                             |
+| ----------------------- | --------------------------------------- |
 | **Nested field access** | `"file.content.size"` for struct fields |
-| **Enum variant fields** | Query data inside enum variants |
-| **Aggregations** | count, sum, avg over results |
-| **Grouping** | Group by field with aggregates |
-| **Saved queries** | Named, reusable query definitions |
-| **Query algebra** | Combine queries: `query1.and(query2)` |
-| **Streaming** | Lazy evaluation for large collections |
-| **Indexing hints** | Annotations for query optimization |
+| **Enum variant fields** | Query data inside enum variants         |
+| **Aggregations**        | count, sum, avg over results            |
+| **Grouping**            | Group by field with aggregates          |
+| **Saved queries**       | Named, reusable query definitions       |
+| **Query algebra**       | Combine queries: `query1.and(query2)`   |
+| **Streaming**           | Lazy evaluation for large collections   |
+| **Indexing hints**      | Annotations for query optimization      |

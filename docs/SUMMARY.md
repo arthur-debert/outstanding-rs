@@ -4,7 +4,7 @@
 
 ---
 
-# Getting Started
+## Getting Started
 
 - [Complete Working Example](./guides/complete-example.md)
 - [Quick Start](./guides/tldr-intro-to-standout.md)
@@ -13,7 +13,7 @@
 
 ---
 
-# Rendering (standout-render)
+## Rendering (standout-render)
 
 - [Introduction to Rendering](./crates/render/guides/intro-to-rendering.md)
 - [Introduction to Tabular](./crates/render/guides/intro-to-tabular.md)
@@ -23,7 +23,7 @@
 
 ---
 
-# Dispatch (standout-dispatch)
+## Dispatch (standout-dispatch)
 
 - [Introduction to Dispatch](./crates/dispatch/guides/intro-to-dispatch.md)
 - [Handler Contract](./crates/dispatch/topics/handler-contract.md)
@@ -32,7 +32,7 @@
 
 ---
 
-# Input (standout-input)
+## Input (standout-input)
 
 - [Introduction to Input](./crates/input/guides/intro-to-input.md)
 - [Input Sources](./crates/input/topics/input-sources.md)
@@ -42,7 +42,7 @@
 
 ---
 
-# Framework Topics
+## Framework Topics
 
 - [Output Modes](./topics/output-modes.md)
 - [App Configuration](./topics/app-configuration.md)

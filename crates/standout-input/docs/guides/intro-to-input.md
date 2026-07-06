@@ -160,14 +160,14 @@ let filename = result.value;
 
 These sources don't require user interaction and work in CI/scripted environments:
 
-| Source | Type | Description |
-| -------- | ------ | ------------- |
-| `ArgSource` | `String` | CLI argument value |
-| `FlagSource` | `bool` | CLI flag (true/false) |
-| `StdinSource` | `String` | Piped stdin (skipped if stdin is a terminal) |
-| `EnvSource` | `String` | Environment variable |
-| `ClipboardSource` | `String` | System clipboard contents |
-| `DefaultSource<T>` | `T` | Fallback value |
+| Source             | Type     | Description                                  |
+| ------------------ | -------- | -------------------------------------------- |
+| `ArgSource`        | `String` | CLI argument value                           |
+| `FlagSource`       | `bool`   | CLI flag (true/false)                        |
+| `StdinSource`      | `String` | Piped stdin (skipped if stdin is a terminal) |
+| `EnvSource`        | `String` | Environment variable                         |
+| `ClipboardSource`  | `String` | System clipboard contents                    |
+| `DefaultSource<T>` | `T`      | Fallback value                               |
 
 ### Interactive Sources (Feature-Gated)
 
@@ -175,27 +175,27 @@ These require a terminal and are feature-gated to control dependencies:
 
 **`simple-prompts` feature (default, no dependencies):**
 
-| Source | Type | Description |
-|--------|------|-------------|
-| `TextPromptSource` | `String` | Basic text input prompt |
-| `ConfirmPromptSource` | `bool` | Yes/no confirmation prompt |
+| Source                | Type     | Description                |
+| --------------------- | -------- | -------------------------- |
+| `TextPromptSource`    | `String` | Basic text input prompt    |
+| `ConfirmPromptSource` | `bool`   | Yes/no confirmation prompt |
 
 **`editor` feature (default, adds tempfile + which):**
 
-| Source | Type | Description |
-|--------|------|-------------|
+| Source         | Type     | Description                                |
+| -------------- | -------- | ------------------------------------------ |
 | `EditorSource` | `String` | Opens $VISUAL/$EDITOR for multi-line input |
 
 **`inquire` feature (optional, adds inquire crate):**
 
-| Source | Type | Description |
-| -------- | ------ | ------------- |
-| `InquireText` | `String` | Rich text input with autocomplete |
-| `InquireConfirm` | `bool` | Polished yes/no prompt |
-| `InquireSelect<T>` | `T` | Single selection with arrow keys |
+| Source                  | Type     | Description                        |
+| ----------------------- | -------- | ---------------------------------- |
+| `InquireText`           | `String` | Rich text input with autocomplete  |
+| `InquireConfirm`        | `bool`   | Polished yes/no prompt             |
+| `InquireSelect<T>`      | `T`      | Single selection with arrow keys   |
 | `InquireMultiSelect<T>` | `Vec<T>` | Multiple selection with checkboxes |
-| `InquirePassword` | `String` | Masked password input |
-| `InquireEditor` | `String` | Editor with preview |
+| `InquirePassword`       | `String` | Masked password input              |
+| `InquireEditor`         | `String` | Editor with preview                |
 
 See [Backends](../topics/backends.md) for full documentation on each source.
 
@@ -225,12 +225,12 @@ let proceed: bool = InquireConfirm::new("Continue?")
 
 Available on every interactive source:
 
-| Source | Returns |
-| -------- | --------- |
-| `TextPromptSource`, `ConfirmPromptSource` | `Result<String, _>`, `Result<bool, _>` |
-| `EditorSource` | `Result<String, _>` |
-| `InquireText`, `InquireConfirm`, `InquirePassword`, `InquireEditor` | as above |
-| `InquireSelect<T>`, `InquireMultiSelect<T>` | `Result<T, _>`, `Result<Vec<T>, _>` |
+| Source                                                              | Returns                                |
+| ------------------------------------------------------------------- | -------------------------------------- |
+| `TextPromptSource`, `ConfirmPromptSource`                           | `Result<String, _>`, `Result<bool, _>` |
+| `EditorSource`                                                      | `Result<String, _>`                    |
+| `InquireText`, `InquireConfirm`, `InquirePassword`, `InquireEditor` | as above                               |
+| `InquireSelect<T>`, `InquireMultiSelect<T>`                         | `Result<T, _>`, `Result<Vec<T>, _>`    |
 
 The `InputCollector` impls are unchanged — these sources still work in chains exactly as before. See [Interactive Flows](../topics/interactive-flows.md) for a full wizard walkthrough that pairs `.prompt()` with standout's renderer.
 
@@ -393,11 +393,11 @@ fn test_input_priority() {
 
 `standout-input` uses feature flags to control dependencies:
 
-| Feature | Default | Dependencies | Provides |
-| --------- | --------- | -------------- | ---------- |
-| `editor` | Yes | tempfile, which | `EditorSource` |
-| `simple-prompts` | Yes | none | `TextPromptSource`, `ConfirmPromptSource` |
-| `inquire` | No | inquire (~29 deps) | Rich TUI prompts |
+| Feature          | Default | Dependencies       | Provides                                  |
+| ---------------- | ------- | ------------------ | ----------------------------------------- |
+| `editor`         | Yes     | tempfile, which    | `EditorSource`                            |
+| `simple-prompts` | Yes     | none               | `TextPromptSource`, `ConfirmPromptSource` |
+| `inquire`        | No      | inquire (~29 deps) | Rich TUI prompts                          |
 
 ### Minimal Dependencies
 

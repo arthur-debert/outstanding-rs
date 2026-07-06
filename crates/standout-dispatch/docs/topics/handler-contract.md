@@ -27,23 +27,23 @@ The macro:
 
 **Parameter Annotations:**
 
-| Annotation | Type | Extraction |
-| ------------ | ------ | ------------ |
-| `#[flag]` | `bool` | `matches.get_flag("name")` |
-| `#[flag(name = "x")]` | `bool` | `matches.get_flag("x")` |
-| `#[arg]` | `T` | Required argument |
-| `#[arg]` | `Option<T>` | Optional argument |
-| `#[arg]` | `Vec<T>` | Multiple values |
-| `#[arg(name = "x")]` | `T` | Argument with custom CLI name |
-| `#[ctx]` | `&CommandContext` | Access to context |
-| `#[matches]` | `&ArgMatches` | Raw matches (escape hatch) |
+| Annotation            | Type              | Extraction                    |
+| --------------------- | ----------------- | ----------------------------- |
+| `#[flag]`             | `bool`            | `matches.get_flag("name")`    |
+| `#[flag(name = "x")]` | `bool`            | `matches.get_flag("x")`       |
+| `#[arg]`              | `T`               | Required argument             |
+| `#[arg]`              | `Option<T>`       | Optional argument             |
+| `#[arg]`              | `Vec<T>`          | Multiple values               |
+| `#[arg(name = "x")]`  | `T`               | Argument with custom CLI name |
+| `#[ctx]`              | `&CommandContext` | Access to context             |
+| `#[matches]`          | `&ArgMatches`     | Raw matches (escape hatch)    |
 
 **Return Type Handling:**
 
-| Return Type | Generated Wrapper |
-|-------------|-------------------|
-| `Result<T, E>` | Auto-wrapped in `Output::Render` |
-| `Result<(), E>` | Wrapped in `Output::Silent` |
+| Return Type     | Generated Wrapper                |
+| --------------- | -------------------------------- |
+| `Result<T, E>`  | Auto-wrapped in `Output::Render` |
+| `Result<(), E>` | Wrapped in `Output::Silent`      |
 
 > **Testing:** The original function is preserved, so you can test directly: `list(true, Some(10))`.
 
@@ -296,12 +296,12 @@ pub struct CommandContext {
 
 Handlers access state through two distinct mechanisms with different semantics:
 
-| Aspect | `ctx.app_state` | `ctx.extensions` |
-| -------- | ----------------- | ------------------ |
-| **Mutability** | Immutable (`&`) | Mutable (`&mut`) |
-| **Lifetime** | App lifetime | Per-request |
-| **Set by** | `AppBuilder::app_state()` | Pre-dispatch hooks |
-| **Use for** | Database, Config, API clients | User sessions, request IDs |
+| Aspect         | `ctx.app_state`               | `ctx.extensions`           |
+| -------------- | ----------------------------- | -------------------------- |
+| **Mutability** | Immutable (`&`)               | Mutable (`&mut`)           |
+| **Lifetime**   | App lifetime                  | Per-request                |
+| **Set by**     | `AppBuilder::app_state()`     | Pre-dispatch hooks         |
+| **Use for**    | Database, Config, API clients | User sessions, request IDs |
 
 ### App State (Shared Resources)
 
@@ -365,17 +365,17 @@ fn list_handler(matches: &ArgMatches, ctx: &CommandContext) -> HandlerResult<Vec
 
 Both `app_state` and `extensions` use the same `Extensions` type with these methods:
 
-| Method | Description |
-| -------- | ------------- |
-| `insert<T>(value)` | Insert a value, returns previous if any |
-| `get<T>()` | Get immutable reference, returns `Option<&T>` |
-| `get_required<T>()` | Get reference or return error if missing |
-| `get_mut<T>()` | Get mutable reference, returns `Option<&mut T>` |
-| `remove<T>()` | Remove and return value |
-| `contains<T>()` | Check if type exists |
-| `len()` | Number of stored values |
-| `is_empty()` | True if no values stored |
-| `clear()` | Remove all values |
+| Method              | Description                                     |
+| ------------------- | ----------------------------------------------- |
+| `insert<T>(value)`  | Insert a value, returns previous if any         |
+| `get<T>()`          | Get immutable reference, returns `Option<&T>`   |
+| `get_required<T>()` | Get reference or return error if missing        |
+| `get_mut<T>()`      | Get mutable reference, returns `Option<&mut T>` |
+| `remove<T>()`       | Remove and return value                         |
+| `contains<T>()`     | Check if type exists                            |
+| `len()`             | Number of stored values                         |
+| `is_empty()`        | True if no values stored                        |
+| `clear()`           | Remove all values                               |
 
 Use `get_required` for mandatory dependencies (fails fast with clear error), `get` for optional ones.
 

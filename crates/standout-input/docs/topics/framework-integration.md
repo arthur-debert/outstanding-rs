@@ -208,10 +208,10 @@ use standout::input::{ArgSource, InputChain, StdinSource};
 
 A default `standout` dependency only enables `standout-input`'s `simple-prompts` backend, which has no extra deps. The heavier backends are opt-in via these `standout` features:
 
-| Feature | Enables | Adds deps |
-|---------|---------|-----------|
-| `input-editor` | `EditorSource` (opens `$VISUAL` / `$EDITOR`) | `tempfile`, `which`, `shell-words` |
-| `input-inquire` | The `Inquire*` rich TUI prompt sources | `inquire` (~29 transitive) |
+| Feature         | Enables                                      | Adds deps                          |
+| --------------- | -------------------------------------------- | ---------------------------------- |
+| `input-editor`  | `EditorSource` (opens `$VISUAL` / `$EDITOR`) | `tempfile`, `which`, `shell-words` |
+| `input-inquire` | The `Inquire*` rich TUI prompt sources       | `inquire` (~29 transitive)         |
 
 ```toml
 [dependencies]

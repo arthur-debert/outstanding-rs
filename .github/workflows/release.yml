@@ -43,7 +43,9 @@ jobs:
       # standout-render depends on standout-bbparser; standout (trunk)
       # depends on all seven above — preserved from the old
       # publish.yml's documented ordering.
-      crates: standout-bbparser,standout-macros,standout-pipe,standout-dispatch,standout-input,standout-seeker,standout-render,standout
+      crates: >-
+        standout-bbparser,standout-macros,standout-pipe,standout-dispatch,
+        standout-input,standout-seeker,standout-render,standout
       changelog-path: CHANGELOG.md
     secrets:
       RELEASE_TOKEN: ${{ secrets.RELEASE_TOKEN }}

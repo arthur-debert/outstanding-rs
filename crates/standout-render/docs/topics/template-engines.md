@@ -6,30 +6,30 @@
 
 ## Available Engines
 
-| Engine | Syntax | Features | Binary Size | Use When |
-|--------|--------|----------|-------------|----------|
-| `MiniJinjaEngine` | `{{ var }}` | Loops, conditionals, filters, includes | ~248KB | Full template logic needed (default) |
-| `SimpleEngine` | `{var}` | Variable substitution only | ~5KB | Simple output, minimal binary size |
+| Engine            | Syntax      | Features                               | Binary Size | Use When                             |
+| ----------------- | ----------- | -------------------------------------- | ----------- | ------------------------------------ |
+| `MiniJinjaEngine` | `{{ var }}` | Loops, conditionals, filters, includes | ~248KB      | Full template logic needed (default) |
+| `SimpleEngine`    | `{var}`     | Variable substitution only             | ~5KB        | Simple output, minimal binary size   |
 
 ### Feature Comparison
 
-| Feature | MiniJinjaEngine | SimpleEngine |
-| --------- | ----------------- | -------------- |
-| Variable substitution | `{{ name }}` | `{name}` |
-| Nested property access | `{{ user.name }}` | `{user.name}` |
-| Array index access | `{{ items[0] }}` | `{items.0}` |
-| Filters | `{{ name \| upper }}` | - |
-| Conditionals | `{% if %}...{% endif %}` | - |
-| Loops | `{% for %}...{% endfor %}` | - |
-| Template includes | `{% include "file" %}` | - |
-| Macros | `{% macro %}...{% endmacro %}` | - |
-| Comments | `{# comment #}` | - |
-| Escaped delimiters | `{{ "{{" }}` | `{{` → `{` |
-| Context injection | Yes | Yes |
-| Named templates | Yes | Yes |
-| Style tags | Yes (pass-through) | Yes (pass-through) |
-| Hot reload | Yes | Yes |
-| Structured output (JSON/YAML) | Yes | Yes |
+| Feature                       | MiniJinjaEngine                | SimpleEngine       |
+| ----------------------------- | ------------------------------ | ------------------ |
+| Variable substitution         | `{{ name }}`                   | `{name}`           |
+| Nested property access        | `{{ user.name }}`              | `{user.name}`      |
+| Array index access            | `{{ items[0] }}`               | `{items.0}`        |
+| Filters                       | `{{ name \| upper }}`          | -                  |
+| Conditionals                  | `{% if %}...{% endif %}`       | -                  |
+| Loops                         | `{% for %}...{% endfor %}`     | -                  |
+| Template includes             | `{% include "file" %}`         | -                  |
+| Macros                        | `{% macro %}...{% endmacro %}` | -                  |
+| Comments                      | `{# comment #}`                | -                  |
+| Escaped delimiters            | `{{ "{{" }}`                   | `{{` → `{`         |
+| Context injection             | Yes                            | Yes                |
+| Named templates               | Yes                            | Yes                |
+| Style tags                    | Yes (pass-through)             | Yes (pass-through) |
+| Hot reload                    | Yes                            | Yes                |
+| Structured output (JSON/YAML) | Yes                            | Yes                |
 
 ### MiniJinjaEngine (Default)
 
@@ -148,13 +148,13 @@ let output = render_auto_with_engine(
 
 When loading templates from files, the extension determines the intended engine:
 
-| Priority | Extension | Engine |
-| ---------- | ----------- | -------- |
-| 1 | `.jinja` | MiniJinjaEngine |
-| 2 | `.jinja2` | MiniJinjaEngine |
-| 3 | `.j2` | MiniJinjaEngine |
-| 4 | `.stpl` | SimpleEngine |
-| 5 | `.txt` | (generic) |
+| Priority | Extension | Engine          |
+| -------- | --------- | --------------- |
+| 1        | `.jinja`  | MiniJinjaEngine |
+| 2        | `.jinja2` | MiniJinjaEngine |
+| 3        | `.j2`     | MiniJinjaEngine |
+| 4        | `.stpl`   | SimpleEngine    |
+| 5        | `.txt`    | (generic)       |
 
 When multiple files share the same base name, higher-priority extensions win for extensionless lookups.
 
@@ -222,14 +222,14 @@ impl TemplateEngine for MyEngine {
 
 ### Trait Methods
 
-| Method | Purpose |
-| -------- | --------- |
-| `render_template` | Render an inline template string |
-| `add_template` | Register a named template |
-| `render_named` | Render a previously registered template |
-| `has_template` | Check if a template exists |
+| Method                | Purpose                                  |
+| --------------------- | ---------------------------------------- |
+| `render_template`     | Render an inline template string         |
+| `add_template`        | Register a named template                |
+| `render_named`        | Render a previously registered template  |
+| `has_template`        | Check if a template exists               |
 | `render_with_context` | Render with additional context variables |
-| `supports_*` | Feature flags for capability discovery |
+| `supports_*`          | Feature flags for capability discovery   |
 
 ---
 

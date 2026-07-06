@@ -4,8 +4,8 @@ This is a minor upgrade. Only one internal change landed, and it is transparent 
 
 ## Quick Summary
 
-| Version | What Changed |
-|---------|-------------|
+| Version   | What Changed                                                           |
+| --------- | ---------------------------------------------------------------------- |
 | **6.0.0** | Internal dispatch fix: theme resolved at runtime instead of build time |
 
 ## Step 1: Update Cargo.toml
