@@ -1,10 +1,14 @@
-<!-- generated - do not edit. See CHANGELOG/README.txt -->
+<!-- generated - do not edit; fragments live in CHANGELOG/ (`shipit changelog render` regenerates this file) -->
 
 # Changelog
 
 ## Unreleased
 
+- Fix the standout-docs skill: relocate to standout-docs/SKILL.md and add required frontmatter so it's discoverable
 Migrated changelog to fragment-directory system from arthur-debert/release.
+- ci: migrate release reusable-workflow callers from @v2 to @v3
+- expand RenderError tests to cover all Display branches, From impls, and source() chaining
+- Remove dead readthedocs/mkdocs config (.readthedocs.yaml, docs/requirements.txt); move palette_compare.sh to app-bin/
 
 ## [7.6.3] - 2026-05-23
 
