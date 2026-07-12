@@ -356,7 +356,7 @@ fn parse_date_only(value: &str) -> Option<Timestamp> {
     }
 
     let days = days_from_ymd(year, month, day)?;
-    let ms = days as i64 * 24 * 60 * 60 * 1000;
+    let ms = days * 24 * 60 * 60 * 1000;
     Some(Timestamp(ms))
 }
 
@@ -395,7 +395,7 @@ fn parse_datetime(value: &str) -> Option<Timestamp> {
 
     let days = days_from_ymd(year, month, day)?;
     let seconds = hour * 3600 + minute * 60 + second;
-    let ms = days as i64 * 24 * 60 * 60 * 1000 + seconds as i64 * 1000;
+    let ms = days * 24 * 60 * 60 * 1000 + seconds as i64 * 1000;
     Some(Timestamp(ms))
 }
 
