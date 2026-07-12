@@ -156,7 +156,9 @@ impl FlatDataSpec {
                     let width = if i == flex_indices.len() - 1 {
                         remaining_space
                     } else {
-                        let share = (remaining * weight) / total_weight;
+                        // checked_div per clippy::manual_checked_ops; the
+                        // `total_weight > 0` guard above makes None unreachable.
+                        let share = (remaining * weight).checked_div(total_weight).unwrap_or(0);
                         remaining_space = remaining_space.saturating_sub(share);
                         share
                     };
