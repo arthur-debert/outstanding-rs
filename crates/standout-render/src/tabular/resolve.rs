@@ -157,8 +157,12 @@ impl FlatDataSpec {
                         remaining_space
                     } else {
                         // checked_div per clippy::manual_checked_ops; the
-                        // `total_weight > 0` guard above makes None unreachable.
-                        let share = (remaining * weight).checked_div(total_weight).unwrap_or(0);
+                        // `total_weight > 0` guard above makes None unreachable,
+                        // so surface it loudly rather than masking it with a
+                        // fallback that would hide a broken invariant.
+                        let share = (remaining * weight)
+                            .checked_div(total_weight)
+                            .expect("total_weight > 0 is guaranteed by the enclosing guard");
                         remaining_space = remaining_space.saturating_sub(share);
                         share
                     };
