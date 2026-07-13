@@ -10,10 +10,12 @@ Write and review documentation for the Standout CLI framework.
 ## Documentation Structure
 
 ### README
+
 - `README.md` is the main project README
 - `crates/standout/README.md` links to the main README (no duplication)
 
 ### Guides (`docs/guides/`)
+
 Step-by-step walkthroughs covering principles, rationale, and features. They educate readers about the "why" and overall design, not just the "how."
 
 - `intro-to-standout.md` - Adopting Standout in a working CLI
@@ -22,6 +24,7 @@ Step-by-step walkthroughs covering principles, rationale, and features. They edu
 - `tldr-intro-to-standout.md` - Fast-paced intro for experienced developers
 
 ### Topics (`docs/topics/`)
+
 Focused, in-depth documentation on specific systems and use cases. Still well-written with context and rationale, not dry API dumps.
 
 - `handler-contract.md` - Handler trait, HandlerResult, Output enum
@@ -40,7 +43,7 @@ Focused, in-depth documentation on specific systems and use cases. Still well-wr
 Always show the ONE preferred way in examples. Hint at alternatives via comments only.
 
 | Feature | Canonical Form | Alternatives (mention sparingly) |
-|---------|----------------|----------------------------------|
+| --------- | ---------------- | ---------------------------------- |
 | Styling | File-based CSS (`styles/default.css`) | YAML, programmatic, inline strings |
 | Command Setup | `#[derive(Dispatch)]` macro | Explicit `App::builder().command()` |
 | Dispatch | Auto dispatch via derive macro | Manual dispatch with ArgMatches |
@@ -50,6 +53,7 @@ Always show the ONE preferred way in examples. Hint at alternatives via comments
 ### The Run Pattern
 
 **Always use this form:**
+
 ```rust
 if let Some(matches) = app.run(cli, std::env::args()) {
     // Standout didn't handle this command, fall back to legacy
@@ -58,6 +62,7 @@ if let Some(matches) = app.run(cli, std::env::args()) {
 ```
 
 **Only use `run_to_string()` when explicitly discussing:**
+
 - Capturing output for testing
 - Post-processing output before printing
 - Logging/recording generated output
@@ -67,6 +72,7 @@ if let Some(matches) = app.run(cli, std::env::args()) {
 All documentation uses `tdoo`, a simple todo list manager. This provides consistency and familiarity.
 
 ### Data Model
+
 ```rust
 #[derive(Clone, Serialize)]
 #[serde(rename_all = "lowercase")]
@@ -86,6 +92,7 @@ pub struct TodoResult {
 ```
 
 ### Example Todos
+
 ```rust
 let todos = vec![
     Todo { title: "Implement user authentication".into(), status: Status::Pending },
@@ -96,6 +103,7 @@ let todos = vec![
 ```
 
 ### Example Template
+
 ```jinja
 [title]My Todos[/title]
 
@@ -107,6 +115,7 @@ let todos = vec![
 ```
 
 ### Example Styles
+
 ```css
 .title { color: cyan; font-weight: bold; }
 .done { color: green; }
@@ -117,33 +126,41 @@ let todos = vec![
 ## Writing Guidelines
 
 ### Guides vs Topics
+
 - **Guides**: Walk users through a flow/need/subsystem. Educate on principles and rationale. Progressive, building on concepts.
 - **Topics**: Document a focused area in depth. Include use cases and patterns, then dive into details.
 
 ### Cross-Linking
+
 Generously link to related topics. In guides, point to topics for in-depth information:
+
 ```markdown
 See [Output Modes](../topics/output-modes.md) for complete documentation.
 ```
 
 ### Showing Alternatives
+
 In canonical examples, hint at alternatives via comments:
+
 ```rust
 // Template matched by convention from command name, but can be set explicitly
 .command("list", list_handler, "list.j2")
 ```
 
 Only document alternatives in depth when:
+
 - The doc is specifically about that system ("How to use X standalone")
 - The topic explicitly covers multiple approaches
 
 ### Code Examples
+
 - Use consistent formatting
 - Include necessary imports
 - Show realistic, working code
 - Keep examples focused on the concept being explained
 
 ### Tone
+
 - Direct and practical
 - Respect developer time
 - Explain the "why" alongside the "how"
