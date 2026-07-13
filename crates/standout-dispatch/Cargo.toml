@@ -1,6 +1,6 @@
 [package]
 name = "standout-dispatch"
-version = "7.6.4-rc.1"
+version = "7.6.4-rc.2"
 edition = "2021"
 description = "Command dispatch and routing for clap-based CLIs"
 license = "MIT"
