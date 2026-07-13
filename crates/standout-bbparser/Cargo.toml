@@ -1,6 +1,6 @@
 [package]
 name = "standout-bbparser"
-version = "7.6.4-rc.1"
+version = "7.6.4-release-rc"
 edition = "2021"
 description = "BBCode-style tag parser for terminal styling"
 license = "MIT"
