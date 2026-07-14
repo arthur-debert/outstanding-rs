@@ -21,7 +21,7 @@ Keep templates in files and style semantic tags with CSS:
 .pending { color: yellow; }
 ```
 
-`embed_templates!` accepts `.jinja`, `.jinja2`, `.j2`, `.stpl`, and `.txt`. `embed_styles!` accepts CSS plus legacy YAML. A stylesheet filename supplies its theme name. Prefer CSS and MiniJinja for new application code.
+`embed_templates!` accepts `.jinja`, `.jinja2`, `.j2`, and `.txt`; runtime template loading additionally accepts `.stpl`. `embed_styles!` accepts CSS plus legacy YAML. A stylesheet filename supplies its theme name. Prefer CSS and MiniJinja for new application code.
 
 ## Output modes
 

@@ -32,7 +32,7 @@ fn list_is_machine_readable() {
 }
 ```
 
-The harness can control env vars, cwd and tempdir fixtures, terminal width, TTY/color detection, stdin, clipboard, scripted prompts, and output mode. It returns assertions and accessors for handled text, errors, no-match, silent, and binary outcomes.
+The harness can control env vars, cwd and tempdir fixtures, terminal width, TTY/color detection, stdin, clipboard, scripted prompts, and output mode. It returns assertions and accessors for handled text, errors, no-match, and binary outcomes. There is no dedicated silent accessor: `run_to_string` currently exposes silent output as an empty handled string, so the harness cannot distinguish it from intentionally empty text.
 
 Every test using `TestHarness` must use `#[serial]`: its seams mutate process-global state. Restoration occurs when the returned `TestResult` drops. Do not mix a harness run with manually installed detector or default-reader overrides in the same scope; those reset to library defaults, not prior custom overrides.
 
