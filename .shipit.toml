@@ -85,7 +85,7 @@ local = true
 endpoints = ["gh-release", "crates"]
 
 [shipit]
-version = "0a8a4410923b8ccf4db98ac131d0b9c7d5bc5ef0"
+version = "9ed36a74add2da27a468d7d2a0116f8875cc78a5"
 
 [managed]
 "skills/coordinating/SKILL.md" = "sha256:065a793b117dcfbb1e97fea0a80b405c69995850af9a350061dbcc1f4ea4976a"
@@ -100,6 +100,7 @@ version = "0a8a4410923b8ccf4db98ac131d0b9c7d5bc5ef0"
 "skills/to-spec/SKILL.md" = "sha256:9f7e5216675070146daabdc0f63ddb8cc8ecf37843ab5d3290354bf57d8097c0"
 "skills/to-tickets/SKILL.md" = "sha256:38df45b1560de0e10be3ab8f7ef4113114ee851e3790ac9087b4c9560c7dc6df"
 "AGENTS.md#shipit-block" = "sha256:aae40d34d67837bdef546e9294b65900b0e5fbf5ed18603a30ca68c756d7d8db"
+".gitignore#shipit-release-outputs" = "sha256:4a9beb3dea542cd0f1426a298069a506c6ea1fdfb3e852a9d2032dd475dfe143"
 "bin/shipit" = "sha256:c1c8d6653ce37ada6b6dbad1866148bc1e54a8951384ebc07df01abd86d084a3"
 "bin/setup-dev-env.sh" = "sha256:0558c0ba79c3569f55683f4fe80098565b5ffae03a11f14beb279ff29a1be8a7"
 agent-start = "sha256:3f8b7d1d6e1d51f9a714e4781f8be89a60e3da26f33f55715c3a67f4ae2c43fd"
