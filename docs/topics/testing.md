@@ -242,6 +242,6 @@ The goal is to keep level-3 tests small and intentional — the cases where you 
 ## See also
 
 - [Introduction to Testing](../guides/intro-to-testing.md) — the tutorial
-- [Handler Contract](../crates/dispatch/topics/handler-contract.md) — what makes a handler pure
+- [Handler Contract](../crates/dispatch/topics/handler-contract.md) — typed handler adapter contract
 - [Output Modes](./output-modes.md) — forcing deterministic output
 - [Introduction to Input](../crates/input/guides/intro-to-input.md) — input sources and their mock variants

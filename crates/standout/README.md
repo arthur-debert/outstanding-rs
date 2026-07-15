@@ -59,6 +59,7 @@ CLI code that mixes logic with `println!` is impossible to unit test. With Stand
 standout = "7"
 clap = { version = "4", features = ["derive"] }
 serde = { version = "1", features = ["derive"] }
+anyhow = "1"
 ```
 
 ```rust

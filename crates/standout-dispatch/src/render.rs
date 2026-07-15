@@ -10,7 +10,7 @@
 //! This separation exists because:
 //!
 //! 1. Flexibility: Different applications may use different renderers (or none at all)
-//! 2. Separation of concerns: Business logic (handlers) shouldn't know about presentation
+//! 2. Separation of concerns: Handler adapters shouldn't know about presentation
 //! 3. Runtime configuration: Format/theme decisions happen at runtime (from CLI args),
 //!    not at compile time
 //!

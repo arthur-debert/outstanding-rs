@@ -1,12 +1,15 @@
 # The Handler Contract
 
-Handlers are where your application logic lives. The handler contract is designed to be **explicit** rather than permissive. By enforcing serializable return types and clear ownership semantics, the library guarantees that your code remains testable and decoupled from output formatting.
+Handlers are shell adapters: they map parsed CLI input to application calls and
+return serializable CLI-owned view data. Keep reusable behavior in a CLI-free
+library. The handler contract is designed to be **explicit** rather than
+permissive, so adapters remain testable and decoupled from output formatting.
 
 ---
 
 ## Quick Start: The `#[handler]` Macro
 
-For most handlers, use the `#[handler]` macro to write pure functions:
+For most handlers, use the `#[handler]` macro to write typed adapter functions:
 
 ```rust
 use standout_macros::handler;
@@ -449,7 +452,9 @@ For subcommands, you work with the `ArgMatches` for your specific command level.
 
 ## Testing Handlers
 
-Because handlers are pure functions with explicit inputs and outputs, they're straightforward to test:
+Because handlers have explicit inputs and outputs, their adapter behavior is
+straightforward to test directly. Test validation, filtering, and state
+transitions through the CLI-free library instead:
 
 ```rust
 #[test]

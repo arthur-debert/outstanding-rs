@@ -10,7 +10,10 @@ Hooks run in registration order and stop on the first `HookError`:
 - `post_dispatch(&ArgMatches, &CommandContext, serde_json::Value)` transforms the serialized handler data before rendering.
 - `post_output(&ArgMatches, &CommandContext, RenderedOutput)` transforms or observes text/binary/silent output after rendering.
 
-Attach hooks through `command_with`, derive attributes, or `.hooks(path, Hooks::new()...)`. Keep business logic in the handler; use hooks only when the concern crosses commands or pipeline phases.
+Attach hooks through `command_with`, derive attributes, or
+`.hooks(path, Hooks::new()...)`. Keep reusable behavior in the CLI-free library,
+keep handlers as adapters, and use hooks only when the shell concern crosses
+commands or pipeline phases.
 
 ## Declarative inputs
 

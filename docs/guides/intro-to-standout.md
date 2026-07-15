@@ -109,13 +109,12 @@ pub struct TodoResult {
     pub todos: Vec<Todo>,
 }
 
-// This is your core logic handler, receiving parsed clap args
-// and returning a pure Rust data type.
+// This is your application function. It knows nothing about clap and returns
+// an ordinary Rust data type.
 //
-// Note: This example uses immutable references. If your handler needs
-// mutable state (&mut self), see the "Mutable Handlers" section below.
-pub fn list(matches: &ArgMatches) -> TodoResult {
-    let show_done = matches.get_flag("all");
+// Note: This example uses immutable references. If your application service
+// needs mutable state (&mut self), see the "Mutable Handlers" section below.
+pub fn list(show_done: bool) -> TodoResult {
     let todos = storage::list().unwrap();
 
     let filtered: Vec<Todo> = if show_done {
@@ -148,7 +147,7 @@ pub fn render_list(result: TodoResult) {
 
 // And the orchestrator:
 pub fn list_command(matches: &ArgMatches) {
-    render_list(list(matches))
+    render_list(list(matches.get_flag("all")))
 }
 ```
 
@@ -160,7 +159,7 @@ pub fn list_command(matches: &ArgMatches) {
 **What's now possible:**
 
 - All of your app's logic can be unit tested as any code, from the logic inwards.
-- You can test by feeding input strings and verifying your logic handler gets called with the right parameters.
+- You can test by passing domain inputs directly to the application function.
 - The rendering can also be tested by feeding data inputs and matching outputs (though this is brittle).
 
 **What's next:** Making the return type serializable for automatic JSON/YAML output.
@@ -169,11 +168,11 @@ pub fn list_command(matches: &ArgMatches) {
 ```text
 src/
 ├── main.rs          # clap setup + orchestrators
-├── handlers.rs      # list(), add() - pure logic
+├── core.rs          # list(), add() - CLI-free application behavior
 └── render.rs        # render_list(), render_add() - output formatting
 ```
 
-## 3. Fine Tune the Logic Handler's Return Type
+## 3. Fine Tune the Application Result Type
 
 While any data type works, Standout's renderer takes a generic type that must implement `Serialize`. This enables automatic JSON/YAML output modes and template rendering through MiniJinja's context system. This is likely a small change, and beneficial as a baseline for logic results that will simplify writing renderers later.
 
@@ -326,40 +325,40 @@ And now the Standout-specific bits finally show up.
 
 ```toml
 [dependencies]
-standout = "2"
+standout = "7"
+standout-dispatch = "7" # required by code generated from #[handler]
+anyhow = "1"
 ```
 
 > **Verify:** Run `cargo build` - dependencies should download and compile.
 
 ### 7.2 Create Handlers with the `#[handler]` Macro
 
-The `#[handler]` macro transforms pure Rust functions into Standout-compatible handlers. Write your logic as a simple function, annotate parameters, and the macro generates the wrapper that extracts CLI arguments.
+The `#[handler]` macro transforms typed Rust functions into Standout-compatible
+handlers. Keep application behavior in the CLI-free core; the handler annotates
+CLI parameters, calls the core, and maps its result into serializable view data.
 
 See [Handler Contract](../crates/dispatch/topics/handler-contract.md) for full handler API details.
 
 ```rust
-use standout_macros::handler;
+use standout::handler;
 
 mod handlers {
     use super::*;
 
-    // Pure function - easy to test, no boilerplate
+    // Thin CLI adapter - easy to test, no extraction boilerplate
     #[handler]
     pub fn list(#[flag] all: bool) -> Result<TodoResult, anyhow::Error> {
-        let todos = storage::list()?;
-        let filtered = if all {
-            todos
-        } else {
-            todos.into_iter().filter(|t| !t.done).collect()
-        };
-        Ok(TodoResult { message: None, todos: filtered })
+        let filter = if all { TodoFilter::All } else { TodoFilter::Pending };
+        let todos = core::list(filter)?;
+        Ok(TodoResult { message: None, todos })
     }
 
     #[handler]
     pub fn add(#[arg] title: String) -> Result<TodoResult, anyhow::Error> {
-        let todo = storage::add(&title)?;
+        let todo = core::add(title)?;
         Ok(TodoResult {
-            message: Some(format!("Added: {}", title)),
+            message: Some(format!("Added: {}", todo.title)),
             todos: vec![todo],
         })
     }
@@ -391,7 +390,9 @@ use standout::cli::Dispatch;
 #[derive(Subcommand, Dispatch)]
 #[dispatch(handlers = handlers)]
 pub enum Commands {
+    #[dispatch(pure)]
     List,
+    #[dispatch(pure)]
     Add,
 }
 ```
@@ -425,7 +426,7 @@ use standout::{embed_templates, embed_styles};
 
 let app = App::builder()
     .templates(embed_templates!("src/templates"))   // Embeds all .jinja/.j2 files
-    .commands(Commands::dispatch_config())          // Register handlers from derive macro
+    .commands(Commands::dispatch_config())?         // Register handlers from derive macro
     .build()?;
 ```
 
@@ -440,7 +441,7 @@ let app = App::builder()
     .app_state(Database::connect()?)    // Shared across all handlers
     .app_state(Config::load()?)
     .templates(embed_templates!("src/templates"))
-    .commands(Commands::dispatch_config())
+    .commands(Commands::dispatch_config())?
     .build()?;
 ```
 
@@ -492,9 +493,14 @@ match `RunResult::NoMatch(matches)`.
 > **Verify:** Run `tdoo list` - it should work as before.
 > **Verify:** Run `tdoo list --output json` - you should get JSON output for free!
 
-And now you can remove the boilerplate: the orchestrator (`list_command`) and the rendering (`render_list`). You're pretty much at global optima: a single line of derive macro links your app logic to a command name, a few lines configure Standout, and auto dispatch handles all the boilerplate.
+And now you can remove the boilerplate: the orchestrator (`list_command`) and
+the rendering (`render_list`). A single derive attribute links each CLI handler
+adapter to a command name, a few lines configure Standout, and auto dispatch
+handles the shell boilerplate.
 
-For the next commands you'd wish to migrate, this is even simpler. Say you have a "create" logic handler: add a "create.jinja" to that template dir, add the derive macro for the create function and that is it. By default the macro will match the command's name to the handlers and to the template files, but you can change these and map explicitly to your heart's content.
+For the next commands you migrate, add a thin adapter plus its template. By
+default the macro matches the command's name to handlers and template files,
+but you can map either explicitly.
 
 ### Intermezzo C: Welcome to Standout
 
@@ -596,7 +602,7 @@ let app = App::builder()
     .templates(embed_templates!("src/templates"))
     .styles(embed_styles!("src/styles"))       // Load stylesheets
     .default_theme("default")                  // Use styles/default.css
-    .commands(Commands::dispatch_config())
+    .commands(Commands::dispatch_config())?
     .build()?;
 ```
 

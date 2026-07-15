@@ -16,8 +16,8 @@
 //! data, and the render layer (configured by standout) handles formatting.
 //!
 //! Output format (JSON, YAML, terminal, etc.) is NOT passed to handlers via
-//! CommandContext. This is intentional: handlers should focus on business logic
-//! and produce data, not make format decisions. If a handler truly needs to know
+//! CommandContext. This is intentional: handlers should adapt application calls
+//! into view data, not make format decisions. If a handler truly needs to know
 //! the output format, it can check the `--output` flag in ArgMatches directly.
 //!
 //! # Single-Threaded Design

@@ -11,7 +11,7 @@
 //! ```text
 //! parsed CLI args
 //!   → pre-dispatch hook (validation, setup)
-//!   → logic handler (business logic → serializable data)
+//!   → handler adapter (CLI input → application call → serializable view data)
 //!   → post-dispatch hook (data transformation)
 //!   → render handler (view + data → string output)
 //!   → post-output hook (output transformation)
@@ -21,8 +21,9 @@
 //!
 //! Dispatch deliberately does not own rendering or output format logic:
 //!
-//! - Logic handlers have a strict input signature (`&ArgMatches`, `&CommandContext`)
-//!   and return serializable data. They focus purely on business logic.
+//! - Handler adapters have a strict input signature (`&ArgMatches`,
+//!   `&CommandContext`) and return serializable data. Reusable application
+//!   behavior remains behind a CLI-free library interface.
 //!
 //! - Render handlers are pluggable callbacks provided by the consuming framework.
 //!   They receive (view name, data) and return a formatted string. All rendering

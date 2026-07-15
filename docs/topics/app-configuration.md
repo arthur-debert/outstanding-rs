@@ -175,7 +175,7 @@ enum Commands {
 }
 
 App::builder()
-    .commands(Commands::dispatch_config())
+    .commands(Commands::dispatch_config())?
 ```
 
 The macro generates registration for all variants.
@@ -211,7 +211,7 @@ enum Commands {
 }
 
 App::builder()
-    .commands(Commands::dispatch_config())
+    .commands(Commands::dispatch_config())?
 ```
 
 Only one command can be marked as default. Multiple `#[dispatch(default)]` attributes will cause a compile error.

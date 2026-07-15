@@ -30,7 +30,7 @@ echo "Description" | gh pr create --body-file -
 Your CLI should support these patterns, but the logic doesn't belong in handlers:
 
 - **Separation of concerns**: Handlers produce results, input acquisition is a setup concern
-- **Testability**: Handlers remain pure functions that receive data
+- **Testability**: Handler adapters receive already-resolved data through an explicit seam
 - **Composability**: Different commands can mix input sources
 
 Standout's input system integrates as a pre-handler phase, running *before* your handler executes. Your handler receives resolved content—input acquisition is transparent.

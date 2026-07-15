@@ -19,7 +19,7 @@
 //!
 //! ## Attribute Macros
 //!
-//! - [`handler`] - Transform pure functions into Standout-compatible handlers
+//! - [`handler`] - Transform typed adapter functions into Standout-compatible handlers
 //!
 //! # Design Philosophy
 //!

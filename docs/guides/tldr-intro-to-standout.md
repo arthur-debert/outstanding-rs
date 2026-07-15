@@ -83,8 +83,8 @@ Configure the app:
         .templates(embed_templates!("src/templates"))    // Sets the root template path
         .styles(embed_styles!("src/styles"))             // Likewise the styles root
         .default_theme("default")                        // Use styles/default.css
-        .commands(Commands::dispatch_config())           // Register handlers from derive macro
-    .build()?;
+        .commands(Commands::dispatch_config()?)          // Register handlers from derive macro
+        .build()?;
 ```
 
 > Handlers access shared state via `ctx.app_state.get_required::<Database>()?`. See [App State and Extensions](../crates/dispatch/topics/app-state.md) for details.

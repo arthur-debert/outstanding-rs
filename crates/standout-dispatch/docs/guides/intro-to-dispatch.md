@@ -5,7 +5,7 @@ CLI applications typically mix business logic with output formatting: database q
 `standout-dispatch` enforces a clean separation:
 
 ```text
-CLI args → Handler (logic) → Data → Renderer (presentation) → Output
+CLI args → Handler (adapter) → View data → Renderer (presentation) → Output
 ```
 
 - **Handlers** receive parsed arguments, return serializable data
@@ -14,7 +14,7 @@ CLI args → Handler (logic) → Data → Renderer (presentation) → Output
 
 This isn't just architectural nicety—it unlocks:
 
-- **Testable handlers** — Pure functions with explicit inputs and outputs
+- **Testable handlers** — Typed adapters with explicit inputs and outputs
 - **Swappable renderers** — JSON, templates, plain text from the same handler
 - **Cross-cutting concerns** — Auth, logging, transformation via hooks
 - **Incremental adoption** — Migrate one command at a time
@@ -55,7 +55,8 @@ Problems with this approach:
 
 ## The Solution: Handlers Return Data
 
-With `standout-dispatch`, handlers focus purely on logic:
+With `standout-dispatch`, handlers adapt CLI input into application calls and
+return view data:
 
 ```rust
 use standout_dispatch::{Handler, Output, CommandContext, HandlerResult};
@@ -398,7 +399,8 @@ let deep = get_deepest_matches(&matches);   // ArgMatches for "migrate"
 
 ## Testing Handlers
 
-Because handlers are pure functions, testing is straightforward:
+Because handlers have explicit inputs and outputs, testing their CLI adapter
+behavior is straightforward:
 
 ```rust
 #[test]
@@ -431,7 +433,7 @@ No mocking needed—construct `ArgMatches` with clap, call your handler, assert 
 1. **Clean separation** — Handlers return data, renderers produce output
 2. **Pluggable rendering** — Use any output format without changing handlers
 3. **Hook system** — Cross-cutting concerns without code duplication
-4. **Testable design** — Handlers are pure functions with explicit contracts
+4. **Testable design** — CLI-free library behavior and typed handler adapters have explicit contracts
 5. **Incremental adoption** — Migrate one command at a time
 
 For complete API details, see the [API documentation](https://docs.rs/standout-dispatch).

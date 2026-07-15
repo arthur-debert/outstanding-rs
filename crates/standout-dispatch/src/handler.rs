@@ -1,15 +1,15 @@
 //! Command handler types.
 //!
-//! This module provides the core types for building logic handlers - the
-//! business logic layer in the dispatch pipeline.
+//! This module provides the core types for building CLI handler adapters in the
+//! dispatch pipeline.
 //!
 //! # Design Rationale
 //!
-//! Logic handlers are responsible for business logic only. They:
+//! Handler adapters are responsible for the CLI-to-application seam. They:
 //!
 //! - Receive parsed CLI arguments (`&ArgMatches`) and execution context
-//! - Perform application logic (database queries, file operations, etc.)
-//! - Return serializable data that will be passed to the render handler
+//! - Call a CLI-free application library
+//! - Map library results into serializable CLI view data for the render handler
 //!
 //! Handlers explicitly do not handle:
 //! - Output formatting (that's the render handler's job)

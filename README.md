@@ -44,7 +44,7 @@ fn list(
 }
 
 #[test]
-fn test_list_filters_completed() {
+fn test_list_returns_pending_view() {
     let Output::Render(result) = list(false, &ctx).unwrap() else {
         panic!("expected rendered data");
     };

@@ -22,7 +22,7 @@ CLI commands typically mix business logic with output formatting: database queri
 **standout-dispatch** enforces a clean separation:
 
 ```text
-CLI args → Handler (logic) → Data → Renderer (presentation) → Output
+CLI args → Handler (adapter) → View data → Renderer (presentation) → Output
 ```
 
 - **Handlers** receive parsed arguments, return serializable data
@@ -31,7 +31,7 @@ CLI args → Handler (logic) → Data → Renderer (presentation) → Output
 
 This isn't just architectural nicety—it unlocks:
 
-- **Testable handlers** — Pure functions with explicit inputs and outputs
+- **Testable handlers** — Typed adapters with explicit inputs and outputs
 - **Swappable renderers** — JSON, templates, plain text from the same handler
 - **Cross-cutting concerns** — Auth, logging, transformation via hooks
 - **Incremental adoption** — Migrate one command at a time
