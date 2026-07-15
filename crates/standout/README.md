@@ -57,6 +57,7 @@ CLI code that mixes logic with `println!` is impossible to unit test. With Stand
 ```toml
 [dependencies]
 standout = "7"
+standout-dispatch = "7" # required by #[handler] and #[derive(Dispatch)]
 clap = { version = "4", features = ["derive"] }
 serde = { version = "1", features = ["derive"] }
 anyhow = "1"

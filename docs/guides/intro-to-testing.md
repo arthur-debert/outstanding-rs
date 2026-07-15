@@ -48,7 +48,8 @@ pub fn list(
     let store = ctx.app_state.get_required::<TodoStore>()?;
     let filter = if all { TodoFilter::All } else { TodoFilter::Pending };
     let todos = store.list(filter).into_iter().map(TodoView::from).collect();
-    Ok(Output::Render(TodoListView { todos }))
+    let total = todos.len();
+    Ok(Output::Render(TodoListView { todos, total }))
 }
 ```
 
