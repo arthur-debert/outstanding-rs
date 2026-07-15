@@ -1,0 +1,15 @@
+[package]
+name = "todo-core"
+version = "7.6.4-rc.2"
+edition = "2021"
+description = "CLI-free todo domain and JSON persistence for the Standout worked example"
+license = "MIT"
+publish = false
+
+[dependencies]
+anyhow = "1"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+
+[dev-dependencies]
+tempfile = "3"

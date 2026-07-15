@@ -6,16 +6,29 @@ It skimps rationale, design and other useful bits you can read from the [longer 
 ## Prerequisites
 
 A cli app, that uses clap for arg parsing.
-A command function that is pure logic, that is, returns the result, and does not print to stdout or format output.
+A CLI-free library function that owns the application behavior, plus a handler
+that adapts parsed CLI input to that library and returns serializable view data.
+The library must not depend on Clap, Standout, `CommandContext`, templates,
+styles, environment lookup, or app construction.
 
 For this guide's purpose we'll use a fictitious "list" command of our todo list manager
 
-## The Core: A pure function logic handler
+## The core and its handler adapter
 
-The logic handler: receives parsed cli args, and returns a serializable data structure:
+The library owns filtering, validation, and state transitions. The handler is a
+CLI adapter: it receives parsed arguments, calls the library, and returns a
+serializable CLI view:
 
 ```rust
-    pub fn list(matches: &ArgMatches, _ctx: &CommandContext) -> HandlerResult<TodoResult> {}
+    #[handler]
+    pub fn list(
+        #[flag] all: bool,
+        #[ctx] ctx: &CommandContext,
+    ) -> Result<Output<TodoResult>, anyhow::Error> {
+        let store = ctx.app_state.get_required::<TodoStore>()?;
+        let filter = if all { TodoFilter::All } else { TodoFilter::Pending };
+        Ok(Output::Render(TodoResult::from(store.list(filter))))
+    }
 ```
 
 ## Making it outstanding
@@ -89,8 +102,11 @@ Connect your logic to a command name and template :
 And finally, run in main, the autodispatcher:
 
 ```rust
-    match app.run(Cli::command(), std::env::args()) {
-        // If you've got other commands on vanilla manual dispatch, call it for unported commands
-        RunResult::NoMatch(matches) => legacy_dispatch(matches),  // Your existing handler
+    if !app.run(Cli::command(), std::env::args()) {
+        // If some commands still use manual dispatch, fall back here.
+        legacy_dispatch();
     }
 ```
+
+When the fallback needs the unmatched `ArgMatches`, call `run_to_string(...)`
+and match `RunResult::NoMatch(matches)` instead.

@@ -6,6 +6,11 @@ Note that only 2 out of 8 steps are Standout related. The others are generally g
 
 For explanation's sake, we will show a hypothetical list command for tdoo, a todo list manager.
 
+This guide keeps the migration in one package so each step is small. Once the
+application behavior is separated from output, move it into a CLI-free library;
+the canonical [production-shaped application](production-shaped-example.md)
+shows the final ownership model.
+
 **See Also:**
 
 - [Handler Contract](../crates/dispatch/topics/handler-contract.md) - detailed handler API
@@ -463,7 +468,7 @@ use standout::embed_templates;
 fn main() -> anyhow::Result<()> {
     let app = App::builder()
         .templates(embed_templates!("src/templates"))
-        .commands(Commands::dispatch_config())
+        .commands(Commands::dispatch_config())?
         .build()?;
 
     // Run with auto dispatch - handles parsing and execution
@@ -475,11 +480,14 @@ fn main() -> anyhow::Result<()> {
 If your app has other clap commands that are not managed by Standout, check for unhandled commands. See [Partial Adoption](../crates/dispatch/topics/partial-adoption.md) for details on incremental migration.
 
 ```rust
-if let Some(matches) = app.run(Cli::command(), std::env::args()) {
-    // Standout didn't handle this command, fall back to legacy
-    legacy_dispatch(matches);
+if !app.run(Cli::command(), std::env::args()) {
+    // Standout didn't handle this command, fall back to legacy.
+    legacy_dispatch();
 }
 ```
+
+If the fallback needs the unmatched `ArgMatches`, use `run_to_string(...)` and
+match `RunResult::NoMatch(matches)`.
 
 > **Verify:** Run `tdoo list` - it should work as before.
 > **Verify:** Run `tdoo list --output json` - you should get JSON output for free!
@@ -511,7 +519,7 @@ For the next commands you'd wish to migrate, this is even simpler. Say you have 
 src/
 ├── main.rs              # App::builder() setup
 ├── commands.rs          # Commands enum with #[derive(Dispatch)]
-├── handlers.rs          # list(), add() with #[handler] - pure functions returning Result<T, E>
+├── handlers.rs          # list(), add() with #[handler] - CLI adapters returning view data
 └── templates/
     ├── list.jinja
     └── add.jinja
@@ -612,7 +620,7 @@ Now you're leveraging the core rendering design of Standout:
 - Automatic light/dark mode adaptation
 - JSON/YAML/CSV output for scripting and testing
 - Hot reload of templates and styles during development
-- Unit testable logic handlers
+- Directly testable handler adapters
 
 **Your final files:**
 
@@ -620,7 +628,7 @@ Now you're leveraging the core rendering design of Standout:
 src/
 ├── main.rs              # App::builder() setup
 ├── commands.rs          # Commands enum with #[derive(Dispatch)]
-├── handlers.rs          # list(), add() with #[handler] - pure functions
+├── handlers.rs          # list(), add() with #[handler] - CLI adapters
 ├── templates/
 │   ├── list.jinja       # with [style] tags
 │   └── add.jinja

@@ -2,7 +2,9 @@
 
 **Test your data. Render your view.**
 
-Standout is a CLI framework for Rust that enforces separation between logic and presentation. Your handlers return structs, not strings—making CLI logic as testable as any other code.
+Standout is a CLI framework for Rust that enforces separation between logic and
+presentation. Keep application behavior in a CLI-free library; handlers adapt
+that behavior into serializable CLI view data instead of strings.
 
 ## The Problem
 
@@ -25,28 +27,34 @@ The only way to test this is regex on captured stdout. That's fragile, verbose, 
 
 ## The Solution
 
-With Standout, handlers return data. The framework handles rendering:
+With Standout, the library owns behavior, handlers return CLI view data, and
+the framework handles rendering:
 
 ```rust
-// This is unit-testable—it's a pure function that returns data
-fn list_handler(matches: &ArgMatches, _ctx: &CommandContext) -> HandlerResult<TodoResult> {
-    let show_all = matches.get_flag("all");
-    let todos = storage::list()?
-        .into_iter()
-        .filter(|t| show_all || t.status == Status::Pending)
-        .collect();
-    Ok(Output::Render(TodoResult { todos }))
+#[handler]
+fn list(
+    #[flag] all: bool,
+    #[ctx] ctx: &CommandContext,
+) -> Result<Output<TodoListView>, anyhow::Error> {
+    let store = ctx.app_state.get_required::<TodoStore>()?;
+    let filter = if all { TodoFilter::All } else { TodoFilter::Pending };
+    let todos = store.list(filter).into_iter().map(TodoView::from).collect();
+    Ok(Output::Render(TodoListView { todos }))
 }
 
 #[test]
 fn test_list_filters_completed() {
-    let matches = /* mock ArgMatches with all=false */;
-    let result = list_handler(&matches, &ctx).unwrap();
-    assert!(result.todos.iter().all(|t| t.status == Status::Pending));
+    let Output::Render(result) = list(false, &ctx).unwrap() else {
+        panic!("expected rendered data");
+    };
+    assert!(result.todos.iter().all(|todo| !todo.done));
 }
 ```
 
-Because your logic returns a struct, you test the struct. No stdout capture, no regex, no brittleness.
+Test filtering and state transitions through the library interface. Test only
+the mapping and returned view struct in the handler. No stdout capture, regex,
+or template coupling. See the
+[production-shaped application](guides/production-shaped-example.md).
 
 ## Standing Out
 
@@ -68,17 +76,20 @@ What Standout provides:
 
 ### 1. Define Your Commands and Handlers
 
-Use the `Dispatch` derive macro to connect commands to handlers. Handlers receive parsed arguments and return serializable data.
+Use the `Dispatch` derive macro to connect commands to typed handler adapters.
 
 ```rust
-use standout::cli::{Dispatch, CommandContext, HandlerResult, Output};
-use clap::{ArgMatches, Subcommand};
+use standout::cli::{CommandContext, Dispatch, Output};
+use standout::handler;
+use clap::Subcommand;
 use serde::Serialize;
 
 #[derive(Subcommand, Dispatch)]
 #[dispatch(handlers = handlers)]  // handlers are in the `handlers` module
 pub enum Commands {
+    #[dispatch(pure)]
     List,
+    #[dispatch(pure)]
     Add { title: String },
 }
 
@@ -90,16 +101,19 @@ struct TodoResult {
 mod handlers {
     use super::*;
 
-    // HandlerResult<T> wraps your data; Output::Render tells Standout to render it
-    pub fn list(_m: &ArgMatches, _ctx: &CommandContext) -> HandlerResult<TodoResult> {
-        let todos = storage::list()?;
-        Ok(Output::Render(TodoResult { todos }))
+    #[handler]
+    pub fn list(#[ctx] ctx: &CommandContext) -> Result<Output<TodoResult>, anyhow::Error> {
+        let core = ctx.app_state.get_required::<TodoStore>()?;
+        Ok(Output::Render(TodoResult::from(core.list(TodoFilter::Pending))))
     }
 
-    pub fn add(m: &ArgMatches, _ctx: &CommandContext) -> HandlerResult<TodoResult> {
-        let title: &String = m.get_one("title").unwrap();
-        let todo = storage::add(title)?;
-        Ok(Output::Render(TodoResult { todos: vec![todo] }))
+    #[handler]
+    pub fn add(
+        #[arg] title: String,
+        #[ctx] ctx: &CommandContext,
+    ) -> Result<Output<TodoResult>, anyhow::Error> {
+        let core = ctx.app_state.get_required::<TodoStore>()?;
+        Ok(Output::Render(TodoResult::from(vec![core.add(title)?])))
     }
 }
 ```
@@ -130,7 +144,7 @@ use standout::{embed_templates, embed_styles};
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let app = App::builder()
-        .commands(Commands::dispatch_config())  // Register handlers from derive macro
+        .commands(Commands::dispatch_config())? // Register handlers from derive macro
         .templates(embed_templates!("src/templates"))
         .styles(embed_styles!("src/styles"))
         .build()?;
@@ -153,9 +167,9 @@ myapp list --output text    # Plain text, no ANSI codes
 
 ### Architecture
 
-- Logic/presentation separation enforced by design
-- Handlers return data; framework handles rendering
-- Unit-testable CLI logic without stdout capture
+- CLI-free library separated from shell presentation
+- Handlers adapt library results; framework handles rendering
+- Core behavior and CLI adapters testable without stdout capture
 
 ### Output Modes
 
@@ -178,19 +192,22 @@ myapp list --output text    # Plain text, no ANSI codes
 ## Installation
 
 ```bash
-cargo add standout
+cargo add standout standout-dispatch
 ```
 
 ## Migrating an Existing CLI
 
-Already have a CLI? Standout supports incremental adoption. Standout handles matched commands automatically; unmatched commands return `ArgMatches` for your existing dispatch:
+Already have a CLI? Standout supports incremental adoption. `run` reports
+whether Standout handled the command:
 
 ```rust
-if let Some(matches) = app.run(Cli::command(), std::env::args()) {
-    // Standout didn't handle this command, fall back to legacy
-    your_existing_dispatch(matches);
+if !app.run(Cli::command(), std::env::args()) {
+    your_existing_dispatch();
 }
 ```
+
+Use `run_to_string(...)` and match `RunResult::NoMatch(matches)` when the legacy
+dispatcher needs the unmatched `ArgMatches`.
 
 See the [Partial Adoption Guide](crates/dispatch/topics/partial-adoption.md) for the full migration path.
 
