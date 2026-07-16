@@ -77,8 +77,9 @@ The `tdoo` package adapts the shell to the core library.
 ### `cli.rs`: shell input and configuration
 
 Clap's `Cli` and `Commands` types live here. So does `resolve_store_path`, which
-maps `TODO_FILE` or `$HOME/.todos.json` into the explicit path required by
-`TodoStore::load`. The core never reads process environment.
+maps `TODO_FILE` or the platform home directory (`$HOME`, then `%USERPROFILE%`)
+into the explicit path required by `TodoStore::load`. The core never reads
+process environment.
 
 ### `handlers.rs`: adapters, not application logic
 
@@ -165,7 +166,7 @@ needed; this example has no process-only behavior that the harness cannot model.
 ## Trying it
 
 ```bash
-# Default store path is $HOME/.todos.json; override it per run.
+# Default store path is .todos.json under $HOME or %USERPROFILE%; override it per run.
 TODO_FILE=/tmp/tdoo.json cargo run -p tdoo -- add --title "buy milk"
 TODO_FILE=/tmp/tdoo.json cargo run -p tdoo -- list
 TODO_FILE=/tmp/tdoo.json cargo run -p tdoo -- done 1
