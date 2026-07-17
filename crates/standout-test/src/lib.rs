@@ -47,7 +47,9 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use clap::Command;
-use standout::cli::{App, ExitStatus, RunErrorKind, RunResult, SuccessKind};
+use standout::cli::{
+    App, ArtifactDestination, ArtifactRun, ExitStatus, RunErrorKind, RunResult, SuccessKind,
+};
 use standout_input::env::{MockClipboard, MockStdin};
 use standout_input::{
     reset_default_clipboard_reader, reset_default_prompt_responder, reset_default_stdin_reader,
@@ -626,15 +628,122 @@ impl TestResult {
         }
     }
 
+    /// If the run completed a compound artifact, returns it.
+    ///
+    /// The [`ArtifactRun`] carries everything worth asserting: the bytes, what
+    /// the application suggested, the receipt naming where the framework
+    /// actually wrote, and the report rendered after that write.
+    pub fn artifact(&self) -> Option<&ArtifactRun> {
+        self.outcome.artifact()
+    }
+
+    /// Returns the artifact bytes, or `None` if the run produced no artifact.
+    pub fn artifact_bytes(&self) -> Option<&[u8]> {
+        self.artifact().map(ArtifactRun::bytes)
+    }
+
+    /// Returns the destination the framework selected and wrote to.
+    pub fn artifact_destination(&self) -> Option<&ArtifactDestination> {
+        self.artifact().map(ArtifactRun::destination)
+    }
+
+    /// Returns the rendered artifact report.
+    ///
+    /// This is the report as the user would see it: for a file destination on
+    /// stdout, for a stdout destination on stderr.
+    pub fn artifact_report(&self) -> Option<&str> {
+        self.artifact().and_then(ArtifactRun::report)
+    }
+
+    /// Panics unless the run completed an artifact, returning it.
+    #[track_caller]
+    pub fn expect_artifact(&self) -> &ArtifactRun {
+        match self.artifact() {
+            Some(run) => run,
+            None => panic!(
+                "expected a completed artifact, got: {:?}",
+                describe_outcome(&self.outcome)
+            ),
+        }
+    }
+
+    /// Panics unless the artifact bytes are exactly `expected`.
+    ///
+    /// Artifact bytes must survive the framework byte-for-byte; this is the
+    /// assertion that says so.
+    #[track_caller]
+    pub fn assert_artifact_bytes(&self, expected: &[u8]) {
+        let actual = self.expect_artifact().bytes();
+        if actual != expected {
+            panic!(
+                "artifact bytes mismatch\n--- expected ({} bytes) ---\n{:?}\n--- actual ({} bytes) ---\n{:?}",
+                expected.len(),
+                expected,
+                actual.len(),
+                actual
+            );
+        }
+    }
+
+    /// Panics unless the application suggested `expected` as the destination.
+    #[track_caller]
+    pub fn assert_artifact_suggested_destination(&self, expected: impl AsRef<Path>) {
+        let actual = self.expect_artifact().suggested_destination();
+        assert_eq!(
+            actual,
+            Some(expected.as_ref()),
+            "unexpected suggested artifact destination"
+        );
+    }
+
+    /// Panics unless the framework wrote the artifact to `expected`.
+    #[track_caller]
+    pub fn assert_artifact_written_to(&self, expected: impl AsRef<Path>) {
+        let receipt = self.expect_artifact().receipt();
+        assert_eq!(
+            receipt.path(),
+            Some(expected.as_ref()),
+            "unexpected artifact destination"
+        );
+    }
+
+    /// Panics unless the framework routed the artifact bytes to stdout.
+    #[track_caller]
+    pub fn assert_artifact_to_stdout(&self) {
+        let receipt = self.expect_artifact().receipt();
+        assert!(
+            receipt.is_stdout(),
+            "expected the artifact to go to stdout, but it went to {}",
+            receipt.destination().label()
+        );
+    }
+
+    /// Panics unless the rendered artifact report contains `needle`.
+    #[track_caller]
+    pub fn assert_artifact_report_contains(&self, needle: &str) {
+        match self.expect_artifact().report() {
+            Some(report) if report.contains(needle) => {}
+            Some(report) => panic!(
+                "artifact report did not contain {:?}\n--- report ---\n{}\n--------------",
+                needle, report
+            ),
+            None => panic!("expected an artifact report, but the artifact carried none"),
+        }
+    }
+
     // --- assertions ----------------------------------------------------------
 
     /// Panics unless the run ended in a successful dispatch
-    /// (`RunResult::Handled`, `RunResult::Silent`, or `RunResult::Binary`).
-    /// `RunResult::NoMatch` and `RunResult::Error` trigger a panic.
+    /// (`RunResult::Handled`, `RunResult::Silent`, `RunResult::Binary`, or
+    /// `RunResult::Artifact`). `RunResult::NoMatch` and `RunResult::Error`
+    /// trigger a panic.
     #[track_caller]
     pub fn assert_success(&self) {
         match &self.outcome {
-            RunResult::Handled(_) | RunResult::Silent | RunResult::Binary(_, _) => {}
+            RunResult::Handled(_)
+            | RunResult::Silent
+            | RunResult::Binary(_, _)
+            | RunResult::Artifact(_) => {}
             RunResult::NoMatch(_) => {
                 panic!("expected successful dispatch but no handler matched; stdout was empty")
             }
@@ -752,6 +861,11 @@ fn describe_outcome(o: &RunResult) -> String {
         RunResult::Handled(s) => format!("Handled({:?})", s),
         RunResult::Silent => "Silent".into(),
         RunResult::Binary(b, f) => format!("Binary(len={}, {:?})", b.len(), f),
+        RunResult::Artifact(run) => format!(
+            "Artifact(len={}, destination={:?})",
+            run.bytes().len(),
+            run.destination().label()
+        ),
         RunResult::Error(s) => format!("Error({:?})", s),
         RunResult::NoMatch(_) => "NoMatch".into(),
         _ => "Unknown".into(),

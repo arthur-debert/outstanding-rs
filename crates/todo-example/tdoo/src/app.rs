@@ -40,6 +40,9 @@ pub(crate) fn build(store: TodoStore) -> Result<App> {
         .command_with("done", handlers::done__handler, |config| {
             config.template("done.jinja").post_dispatch(audit_hook)
         })?
+        .command_with("export", handlers::export__handler, |config| {
+            config.template("export.jinja")
+        })?
         .build()?)
 }
 
@@ -73,6 +76,7 @@ mod tests {
     use super::*;
     use crate::cli;
     use serial_test::serial;
+    use standout::OutputMode;
     use standout_test::TestHarness;
     use tempfile::TempDir;
 
@@ -182,6 +186,106 @@ mod tests {
         );
 
         result.assert_error_contains("title cannot be empty");
+    }
+
+    #[test]
+    #[serial]
+    fn export_lets_standout_own_the_destination_and_the_success_report() {
+        let (app, dir) = fresh_app();
+        let destination = dir.path().join("todos.csv");
+
+        TestHarness::new()
+            .no_color()
+            .run(&app, cli::command(), ["tdoo", "add", "--title", "buy milk"])
+            .assert_success();
+
+        // `--output-file-path` overrides the core's filename suggestion. The
+        // handler never learns the winner; the report still names it, because
+        // Standout renders it only after its own write.
+        let result = TestHarness::new().no_color().run(
+            &app,
+            cli::command(),
+            [
+                "tdoo",
+                "export",
+                "--output-file-path",
+                destination.to_str().unwrap(),
+            ],
+        );
+
+        result.assert_success();
+        result.assert_artifact_suggested_destination("todos.csv");
+        result.assert_artifact_written_to(&destination);
+        result.assert_artifact_bytes(b"id,title,done\n1,buy milk,false\n");
+        result.assert_artifact_report_contains("Exported 1 todos");
+        result.assert_artifact_report_contains(&destination.display().to_string());
+        assert_eq!(
+            std::fs::read_to_string(&destination).unwrap(),
+            "id,title,done\n1,buy milk,false\n"
+        );
+    }
+
+    #[test]
+    #[serial]
+    fn export_keeps_core_warnings_typed_in_both_output_modes() {
+        let (app, _dir) = fresh_app();
+
+        TestHarness::new()
+            .no_color()
+            .run(&app, cli::command(), ["tdoo", "add", "--title", "buy milk"])
+            .assert_success();
+        TestHarness::new()
+            .no_color()
+            .run(&app, cli::command(), ["tdoo", "add", "--title", "ship it"])
+            .assert_success();
+        TestHarness::new()
+            .no_color()
+            .run(&app, cli::command(), ["tdoo", "done", "2"])
+            .assert_success();
+
+        // Human mode: the CLI's wording of the core's fact.
+        let human =
+            TestHarness::new()
+                .no_color()
+                .run(&app, cli::command(), ["tdoo", "export", "--stdout"]);
+        human.assert_artifact_to_stdout();
+        human.assert_artifact_report_contains("warning: 1 completed todo(s) omitted");
+
+        // Structured mode: the same fact, still typed, plus the receipt.
+        let json = TestHarness::new()
+            .no_color()
+            .output_mode(OutputMode::Json)
+            .run(&app, cli::command(), ["tdoo", "export", "--stdout"]);
+        let value: JsonValue = serde_json::from_str(json.artifact_report().unwrap()).unwrap();
+        assert_eq!(value["report"]["exported"], 1);
+        assert_eq!(value["report"]["warnings"][0]["kind"], "completed_omitted");
+        assert_eq!(value["receipt"]["destination"], "-");
+        assert_eq!(value["receipt"]["stdout"], true);
+    }
+
+    #[test]
+    #[serial]
+    fn export_reports_a_failed_write_instead_of_a_false_success() {
+        let (app, dir) = fresh_app();
+        let unwritable = dir.path().join("missing").join("todos.csv");
+
+        let result = TestHarness::new().no_color().run(
+            &app,
+            cli::command(),
+            [
+                "tdoo",
+                "export",
+                "--output-file-path",
+                unwritable.to_str().unwrap(),
+            ],
+        );
+
+        result.assert_error_contains("Error writing artifact");
+        assert!(
+            result.artifact().is_none(),
+            "a failed write reports nothing"
+        );
+        assert!(!unwritable.exists());
     }
 
     #[test]

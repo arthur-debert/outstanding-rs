@@ -155,13 +155,14 @@ pub use help::{
 
 // Re-export handler types
 pub use handler::{
-    CommandContext, CommandContextInput, ExitStatus, ExternalFailure, FnHandler, Handler,
-    HandlerResult, InvalidExternalStatus, Output, OutputKind, RunError, RunErrorKind, RunOutput,
-    RunResult, SuccessKind,
+    Artifact, ArtifactDestination, ArtifactReceipt, ArtifactRun, CommandContext,
+    CommandContextInput, ExitStatus, ExternalFailure, FnHandler, Handler, HandlerResult,
+    InvalidExternalStatus, Output, OutputKind, RunError, RunErrorKind, RunOutput, RunResult,
+    SuccessKind,
 };
 
 // Re-export hook types
-pub use hooks::{HookError, HookPhase, Hooks, RenderedOutput};
+pub use hooks::{ArtifactOutput, HookError, HookPhase, Hooks, RenderedOutput};
 
 // Re-export derive macros from standout-macros
 pub use standout_macros::Dispatch;

@@ -47,6 +47,11 @@ pipeline in detail.
 - **I — Return data, not presentation.** A normal handler returns
   `Output::Render(data)`, `Output::Silent`, or `Output::Binary { ... }`. It
   should not print, emit ANSI, render a template, or branch on output mode.
+- **I — Let the framework own the write for reported artifacts.** When a command
+  produces a file *and* a report, return `Output::Artifact(...)` with owned bytes,
+  an opt-in suggested destination, and the report. Standout selects the
+  destination, writes, and renders the report afterwards with a receipt — the
+  application never opens the file or words a success it hasn't earned.
 - **I — Keep one data contract across modes.** `auto`, `term`, and `text` render
   the MiniJinja template and transform semantic style tags. `term-debug` keeps
   the tags visible. Structured `json`, `yaml`, `xml`, and `csv` modes serialize

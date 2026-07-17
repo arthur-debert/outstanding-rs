@@ -1,0 +1,11 @@
+{#
+  The success report for an artifact command.
+
+  It can name `receipt.destination` because Standout renders this template
+  only after its own write succeeded. `report` is the handler's view model;
+  `receipt` is the framework's record of where the bytes actually landed.
+#}
+[ok]Exported {{ report.exported }} todos[/ok] to [index]{{ receipt.destination }}[/index]
+{%- for warning in report.warnings %}
+[muted]warning: {{ warning.message }}[/muted]
+{%- endfor %}

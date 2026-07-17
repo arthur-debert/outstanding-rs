@@ -295,6 +295,40 @@ the same status.
 
 This path has no `#[serial]` requirement — nothing global is touched.
 
+### Asserting a compound artifact
+
+For `Output::Artifact`, the harness observes the whole framework-owned
+transaction: the bytes, what the application suggested, where the framework
+actually wrote, the rendered report, and the typed failure when no destination
+can be selected.
+
+```rust
+let dir = tempfile::tempdir().unwrap();
+let out = dir.path().join("todos.csv");
+
+let result = TestHarness::new().run(
+    &app,
+    command,
+    ["myapp", "export", "--output-file-path", out.to_str().unwrap()],
+);
+
+result.assert_success();
+result.assert_artifact_bytes(b"id,title,done\n1,buy milk,false\n");
+result.assert_artifact_suggested_destination("todos.csv"); // the app's suggestion
+result.assert_artifact_written_to(&out);                   // where it actually went
+result.assert_artifact_report_contains("Exported 1 todos");
+```
+
+`assert_artifact_to_stdout()` covers the `allow_stdout()` destination, and
+`artifact_report()` returns the rendered (or, in structured mode, serialized)
+report for deeper assertions. A write that cannot pick a destination — or that
+fails — is a typed error the harness asserts like any other:
+
+```rust
+result.assert_error_kind(RunErrorKind::FinalWrite(OutputKind::Artifact));
+assert!(result.artifact().is_none()); // a failed write reports nothing
+```
+
 ### Mixing levels
 
 A common layout for a CLI crate:

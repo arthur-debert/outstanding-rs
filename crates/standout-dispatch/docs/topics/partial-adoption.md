@@ -33,6 +33,7 @@ match app.run_to_string(command, args) {
     RunResult::NoMatch(matches) => legacy_dispatch(matches),
     RunResult::Handled(output) => consume_text(output),
     RunResult::Binary(bytes, filename) => consume_binary(bytes, filename),
+    RunResult::Artifact(run) => consume_artifact(run),
     RunResult::Error(error) => {
         eprintln!("{}", error);
         std::process::exit(error.exit_status().code().into());
@@ -41,6 +42,13 @@ match app.run_to_string(command, args) {
     _ => {}
 }
 ```
+
+`RunResult::Artifact` only appears once dispatch owns the write. In a
+hand-rolled dispatcher (below) an `Output::Artifact` handler comes back through
+`run_command` as `RenderedOutput::Artifact` with the report serialized but
+**not** written: the manual seam performs no framework write, so a caller adopting
+one command at a time keeps owning that command's file placement until it moves
+to `App::run` / `App::dispatch`.
 
 `NoMatch` is deliberately status-free and emits nothing. It does not become a
 Clap usage error; the fallback owns the command. All completed Standout paths
@@ -186,7 +194,10 @@ fn run_with_dispatch<T: Serialize>(
         Ok(Output::Binary { data, filename }) => {
             std::fs::write(&filename, &data).unwrap();
         }
+        // `Output` is #[non_exhaustive]; a manual dispatcher owns the write
+        // for artifacts it chooses to support.
         Err(e) => eprintln!("Error: {}", e),
+        _ => {}
     }
 }
 ```

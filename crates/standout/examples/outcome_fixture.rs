@@ -1,6 +1,12 @@
 use clap::Command;
 use serde_json::json;
-use standout::cli::{App, ExternalFailure, HandlerResult, HookError, Hooks, Output};
+use standout::cli::{App, Artifact, ExternalFailure, HandlerResult, HookError, Hooks, Output};
+
+/// Where the artifact fixtures suggest their bytes should land.
+const ARTIFACT_PATH_ENV: &str = "STANDOUT_FIXTURE_ARTIFACT_PATH";
+
+/// The report template every artifact fixture renders after the write.
+const ARTIFACT_TEMPLATE: &str = "wrote {{ report.entries }} entries to {{ receipt.destination }}";
 
 fn command() -> Command {
     Command::new("outcome-fixture")
@@ -15,6 +21,9 @@ fn command() -> Command {
         .subcommand(Command::new("warn-fail"))
         .subcommand(Command::new("external"))
         .subcommand(Command::new("external-pre"))
+        .subcommand(Command::new("artifact"))
+        .subcommand(Command::new("artifact-stdout"))
+        .subcommand(Command::new("artifact-no-destination"))
 }
 
 fn app() -> App {
@@ -103,6 +112,40 @@ fn app() -> App {
             "external-pre",
             |_, _| Ok(Output::Render(json!({ "message": "unreachable" }))),
             "{{ message }}",
+        )
+        .unwrap()
+        .command(
+            "artifact",
+            |_, _| {
+                Ok(Output::Artifact(
+                    Artifact::new(vec![0, 1, 2])
+                        .suggest_destination(std::env::var(ARTIFACT_PATH_ENV).unwrap())
+                        .with_report(json!({ "entries": 3 })),
+                ))
+            },
+            ARTIFACT_TEMPLATE,
+        )
+        .unwrap()
+        .command(
+            "artifact-stdout",
+            |_, _| {
+                Ok(Output::Artifact(
+                    Artifact::new(vec![0, 1, 2])
+                        .allow_stdout()
+                        .with_report(json!({ "entries": 3 })),
+                ))
+            },
+            ARTIFACT_TEMPLATE,
+        )
+        .unwrap()
+        .command(
+            "artifact-no-destination",
+            |_, _| {
+                Ok(Output::Artifact(
+                    Artifact::new(vec![0, 1, 2]).with_report(json!({ "entries": 3 })),
+                ))
+            },
+            ARTIFACT_TEMPLATE,
         )
         .unwrap()
         .hooks(

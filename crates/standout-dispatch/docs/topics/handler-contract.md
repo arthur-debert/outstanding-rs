@@ -224,12 +224,17 @@ mapping mechanism. Handlers must not print or call `process::exit` themselves.
 `Output<T>` represents what a handler produces:
 
 ```rust
+#[non_exhaustive]
 pub enum Output<T: Serialize> {
     Render(T),
     Silent,
     Binary { data: Vec<u8>, filename: String },
+    Artifact(Artifact<T>),
 }
 ```
+
+`Output` is `#[non_exhaustive]`: matches on it need a `_` arm so later shapes
+can be added without breaking downstream code.
 
 ### Output::Render(T)
 
@@ -286,6 +291,105 @@ fn export_handler(matches: &ArgMatches, _ctx: &CommandContext) -> HandlerResult<
 ```
 
 Binary output bypasses the render function entirely.
+
+The filename is a **hint for the caller**, not permission to write. Without
+`--output-file-path`, `run()` sends the bytes to stdout and touches no file. If
+you want the framework to write the suggested destination, use `Output::Artifact`
+— that opt-in is the whole difference between the two shapes.
+
+### Output::Artifact
+
+Owned bytes plus an application-owned report, for commands that produce a file
+*and* have something to say about it. `Output::Binary` cannot carry a report,
+and nothing renders after its write, so a command that wants to say "exported 12
+rows to /tmp/report.csv (2 warnings)" would otherwise have to write the file
+itself — pulling destination policy back into the application core.
+
+```rust
+use standout::cli::{Artifact, HandlerResult, Output};
+
+#[derive(Serialize)]
+struct ExportReport {
+    exported: usize,
+    warnings: Vec<Warning>,
+}
+
+fn export_handler(_m: &ArgMatches, _ctx: &CommandContext) -> HandlerResult<ExportReport> {
+    let export = core::export_csv()?;   // bytes + facts, no filesystem
+
+    Ok(Output::Artifact(
+        Artifact::new(export.csv)
+            .suggest_destination(export.suggested_filename)
+            .with_report(ExportReport {
+                exported: export.rows,
+                warnings: export.warnings,
+            }),
+    ))
+}
+```
+
+Who owns what:
+
+| Concern | Owner |
+| --- | --- |
+| Artifact bytes | Application |
+| Suggested destination | Application (a suggestion) |
+| Semantic report and warning taxonomy | Application |
+| Destination selection | Framework |
+| The write and its failure | Framework |
+| Receipt (completed destination) | Framework |
+
+#### Destination policy
+
+Standout selects the destination deterministically:
+
+1. the explicit `--output-file-path` override;
+2. the artifact's `suggest_destination(...)`, if the application opted in;
+3. stdout, if the application opted in with `allow_stdout()`.
+
+If none applies, the run fails with `FinalWrite(Artifact)` rather than inventing
+a file or dropping the bytes. All three steps share that one failure path.
+
+#### Write first, report second
+
+Standout writes, then renders the report from a fixed envelope:
+
+```json
+{
+  "report": { "exported": 12, "warnings": [] },
+  "receipt": { "destination": "/tmp/report.csv", "stdout": false, "byte_count": 480 }
+}
+```
+
+So a template can say what only the framework knows:
+
+```jinja
+Exported {{ report.exported }} rows to {{ receipt.destination }}
+```
+
+The envelope shape is fixed (`report` + `receipt`) whatever the report's type,
+so no application key can collide with the receipt. Structured modes serialize
+the same envelope. A failed write renders nothing: success cannot outrun the
+write that justifies it.
+
+#### The report channel
+
+Mixing a report into the bytes would corrupt them, so the channel follows the
+destination:
+
+| Artifact destination | Report goes to |
+| --- | --- |
+| File | stdout |
+| Stdout (`allow_stdout()`) | stderr |
+
+#### Hooks and artifacts
+
+Post-dispatch hooks see the report as ordinary handler data. Post-output hooks
+see `RenderedOutput::Artifact` and can still transform the bytes or the report
+via `as_artifact_mut()`. Hooks never perform the write — that stays framework-
+owned, which is what keeps the failure path single and the report honest.
+
+Bytes are owned; streaming is deliberately not part of this contract.
 
 ---
 

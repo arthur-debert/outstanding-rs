@@ -121,11 +121,15 @@
 //! the template registry, theme, and output format from CLI args.
 
 // Core modules
+pub mod artifact;
 mod dispatch;
 mod handler;
 mod hooks;
 mod render;
 pub mod verify;
+
+// Re-export compound artifact types
+pub use artifact::{Artifact, ArtifactDestination, ArtifactReceipt, ArtifactRun};
 
 // Re-export command routing utilities
 pub use dispatch::{
@@ -142,8 +146,8 @@ pub use handler::{
 
 // Re-export hook types
 pub use hooks::{
-    HookError, HookPhase, Hooks, PostDispatchFn, PostOutputFn, PreDispatchFn, RenderedOutput,
-    TextOutput,
+    ArtifactOutput, HookError, HookPhase, Hooks, PostDispatchFn, PostOutputFn, PreDispatchFn,
+    RenderedOutput, TextOutput,
 };
 
 // Re-export render abstraction

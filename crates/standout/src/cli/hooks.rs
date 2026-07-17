@@ -48,8 +48,8 @@
 // Re-export all hook types from standout-dispatch.
 // These types are render-agnostic and focus on hook execution.
 pub use standout_dispatch::{
-    HookError, HookPhase, Hooks, PostDispatchFn, PostOutputFn, PreDispatchFn, RenderedOutput,
-    TextOutput,
+    ArtifactOutput, HookError, HookPhase, Hooks, PostDispatchFn, PostOutputFn, PreDispatchFn,
+    RenderedOutput, TextOutput,
 };
 
 // Tests for these types are in the standout-dispatch crate.

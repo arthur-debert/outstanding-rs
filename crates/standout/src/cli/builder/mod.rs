@@ -49,7 +49,7 @@ use super::dispatch::{insert_default_command, DispatchFn};
 use super::group::CommandRecipe;
 use super::handler::{CommandContext, Extensions, HandlerResult, Output as HandlerOutput};
 use super::help::{render_help, render_help_with_topics, CommandGroup, HelpConfig};
-use super::hooks::{HookError, Hooks, RenderedOutput, TextOutput};
+use super::hooks::{ArtifactOutput, HookError, Hooks, RenderedOutput, TextOutput};
 use super::result::HelpResult;
 use standout_dispatch::verify::ExpectedArg;
 
@@ -857,6 +857,15 @@ impl AppBuilder {
     /// 3. Renders the result using the template
     /// 4. Runs post-output hooks (if any)
     /// 5. Returns the final output
+    ///
+    /// # Final writes
+    ///
+    /// This is the manual-dispatch seam, so it performs no final write. An
+    /// [`Output::Artifact`](crate::cli::Output::Artifact) comes back as
+    /// [`RenderedOutput::Artifact`] with its report serialized but not
+    /// rendered: destination selection, the write, and the receipt-bearing
+    /// report belong to [`dispatch`](Self::dispatch) / [`run`](Self::run),
+    /// which own that transaction end to end.
     pub fn run_command<F, T>(
         &self,
         path: &str,
@@ -904,6 +913,32 @@ impl AppBuilder {
             }
             Ok(HandlerOutput::Silent) => RenderedOutput::Silent,
             Ok(HandlerOutput::Binary { data, filename }) => RenderedOutput::Binary(data, filename),
+            Ok(HandlerOutput::Artifact(artifact)) => {
+                let (bytes, suggested_destination, stdout_allowed, report) = artifact.into_parts();
+                let report = match report {
+                    Some(report) => {
+                        let mut json = serde_json::to_value(&report).map_err(|e| {
+                            HookError::post_dispatch("Serialization error").with_source(e)
+                        })?;
+                        if let Some(hooks) = hooks {
+                            json = hooks.run_post_dispatch(matches, &ctx, json)?;
+                        }
+                        Some(json)
+                    }
+                    None => None,
+                };
+                RenderedOutput::Artifact(ArtifactOutput {
+                    bytes,
+                    suggested_destination,
+                    stdout_allowed,
+                    report,
+                })
+            }
+            Ok(_) => {
+                return Err(HookError::post_output(
+                    "Unsupported handler output variant: this standout version cannot present it",
+                ));
+            }
         };
 
         // Run post-output hooks

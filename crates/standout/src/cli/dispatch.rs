@@ -12,7 +12,7 @@ use std::rc::Rc;
 
 use crate::cli::handler::Output as HandlerOutput;
 use crate::cli::handler::{CommandContext, ExternalFailure, RunError, RunErrorKind};
-use crate::cli::hooks::{HookError, Hooks};
+use crate::cli::hooks::{ArtifactOutput, HookError, Hooks};
 use crate::context::{ContextRegistry, RenderContext};
 use crate::StructuredOutputProjection;
 use crate::Theme;
@@ -34,8 +34,84 @@ pub enum DispatchOutput {
     },
     /// Binary output (bytes, filename)
     Binary(Vec<u8>, String),
+    /// A compound artifact whose report is deliberately *not* rendered yet.
+    ///
+    /// The report can only name the destination once the framework has
+    /// selected one and the write has succeeded, so the artifact travels with
+    /// the presentation configuration needed to render it later, in
+    /// `AppBuilder::dispatch`, after the write.
+    Artifact {
+        /// Bytes, suggestion, stdout opt-in, and the serialized report.
+        output: ArtifactOutput,
+        /// How to render that report once the receipt exists. Boxed: the
+        /// presentation config dwarfs the other variants' payloads.
+        presentation: Box<Presentation>,
+    },
     /// No output (silent)
     Silent,
+}
+
+/// Everything needed to turn one JSON value into presented text.
+///
+/// The render pipeline normally runs inside [`render_handler_output`], but the
+/// artifact path has to defer it until after the final write. Capturing the
+/// configuration in an owned value lets the same rendering rules apply at
+/// either point, instead of the artifact path growing a second, drifting copy.
+pub struct Presentation {
+    template: String,
+    theme: Theme,
+    context_registry: ContextRegistry,
+    template_engine: Rc<Box<dyn standout_render::template::TemplateEngine>>,
+    output_mode: crate::OutputMode,
+    structured_output_projection: Option<StructuredOutputProjection>,
+    ambiguous_width: crate::AmbiguousWidth,
+}
+
+impl Presentation {
+    /// Renders `json_data`, returning `(formatted, raw)`.
+    ///
+    /// Structured modes serialize the value directly; templated modes render
+    /// the command's template. A CSV projection, when configured, replaces the
+    /// template for `OutputMode::Csv`.
+    pub(crate) fn render(
+        &self,
+        json_data: &serde_json::Value,
+    ) -> Result<(String, String), RunError> {
+        let ambiguous_width =
+            standout_render::detect_ambiguous_width_override().unwrap_or(self.ambiguous_width);
+        let render_ctx = RenderContext::with_ambiguous_width(
+            self.output_mode,
+            standout_render::detect_terminal_width(),
+            ambiguous_width,
+            &self.theme,
+            json_data,
+        );
+
+        // Projection happens at the presentation boundary: after
+        // post-dispatch hooks and before post-output hooks.
+        let render_result = match (self.output_mode, self.structured_output_projection.as_ref()) {
+            (crate::OutputMode::Csv, Some(projection)) => {
+                standout_render::template::RenderResult::plain(
+                    projection
+                        .csv_projection()
+                        .render(json_data)
+                        .map_err(|e| RunError::new(e.to_string(), RunErrorKind::Render))?,
+                )
+            }
+            _ => standout_render::template::render_auto_with_engine_split(
+                &**self.template_engine,
+                &self.template,
+                json_data,
+                &self.theme,
+                self.output_mode,
+                &self.context_registry,
+                &render_ctx,
+            )
+            .map_err(|e| RunError::new(e.to_string(), RunErrorKind::Render))?,
+        };
+
+        Ok((render_result.formatted, render_result.raw))
+    }
 }
 
 #[derive(Debug)]
@@ -69,72 +145,91 @@ pub(crate) fn render_handler_output<T: Serialize>(
     template: &str,
     theme: &Theme,
     context_registry: &ContextRegistry,
-    template_engine: &dyn standout_render::template::TemplateEngine,
+    template_engine: &Rc<Box<dyn standout_render::template::TemplateEngine>>,
     output_mode: crate::OutputMode,
     structured_output_projection: Option<&StructuredOutputProjection>,
     ambiguous_width: crate::AmbiguousWidth,
 ) -> Result<DispatchOutput, RunError> {
-    match result {
-        Ok(output) => match output {
-            HandlerOutput::Render(data) => {
-                let mut json_data = serde_json::to_value(&data).map_err(|e| {
-                    RunError::new(
-                        format!("Failed to serialize handler result: {}", e),
-                        RunErrorKind::Render,
-                    )
-                })?;
+    let output = match result {
+        Ok(output) => output,
+        Err(error) => return Err(handler_run_error(error)),
+    };
 
-                if let Some(hooks) = hooks {
-                    json_data =
-                        hooks
-                            .run_post_dispatch(matches, ctx, json_data)
-                            .map_err(|error| {
-                                hook_run_error(error, crate::cli::HookPhase::PostDispatch)
-                            })?;
+    let presentation = Presentation {
+        template: template.to_string(),
+        theme: theme.clone(),
+        context_registry: context_registry.clone(),
+        template_engine: template_engine.clone(),
+        output_mode,
+        structured_output_projection: structured_output_projection.cloned(),
+        ambiguous_width,
+    };
+
+    match output {
+        HandlerOutput::Render(data) => {
+            let json_data = serialize_handler_data(&data)?;
+            let json_data = run_post_dispatch_hooks(json_data, matches, ctx, hooks)?;
+            let (formatted, raw) = presentation.render(&json_data)?;
+            Ok(DispatchOutput::Text { formatted, raw })
+        }
+        HandlerOutput::Silent => Ok(DispatchOutput::Silent),
+        HandlerOutput::Binary { data, filename } => Ok(DispatchOutput::Binary(data, filename)),
+        HandlerOutput::Artifact(artifact) => {
+            let (bytes, suggested_destination, stdout_allowed, report) = artifact.into_parts();
+
+            // The report is handler data like any other, so it passes through
+            // post-dispatch hooks on the same seam `Output::Render` uses. It
+            // is *not* rendered here: rendering waits for the receipt.
+            let report = match report {
+                Some(report) => {
+                    let json = serialize_handler_data(&report)?;
+                    Some(run_post_dispatch_hooks(json, matches, ctx, hooks)?)
                 }
+                None => None,
+            };
 
-                let ambiguous_width =
-                    standout_render::detect_ambiguous_width_override().unwrap_or(ambiguous_width);
-                let render_ctx = RenderContext::with_ambiguous_width(
-                    output_mode,
-                    standout_render::detect_terminal_width(),
-                    ambiguous_width,
-                    theme,
-                    &json_data,
-                );
+            Ok(DispatchOutput::Artifact {
+                presentation: Box::new(presentation),
+                output: ArtifactOutput {
+                    bytes,
+                    suggested_destination,
+                    stdout_allowed,
+                    report,
+                },
+            })
+        }
+        // `Output` is `#[non_exhaustive]`, so this arm is required from
+        // outside standout-dispatch. It is unreachable for any variant this
+        // version knows; a future one lands here loudly rather than silently.
+        _ => Err(RunError::new(
+            "Unsupported handler output variant: this standout version cannot present it",
+            RunErrorKind::Render,
+        )),
+    }
+}
 
-                // Projection happens at the presentation boundary: after
-                // post-dispatch hooks and before post-output hooks.
-                let render_result = match (output_mode, structured_output_projection) {
-                    (crate::OutputMode::Csv, Some(projection)) => {
-                        standout_render::template::RenderResult::plain(
-                            projection
-                                .csv_projection()
-                                .render(&json_data)
-                                .map_err(|e| RunError::new(e.to_string(), RunErrorKind::Render))?,
-                        )
-                    }
-                    _ => standout_render::template::render_auto_with_engine_split(
-                        template_engine,
-                        template,
-                        &json_data,
-                        theme,
-                        output_mode,
-                        context_registry,
-                        &render_ctx,
-                    )
-                    .map_err(|e| RunError::new(e.to_string(), RunErrorKind::Render))?,
-                };
+/// Serializes handler data, mapping failure onto the render origin.
+fn serialize_handler_data<T: Serialize>(data: &T) -> Result<serde_json::Value, RunError> {
+    serde_json::to_value(data).map_err(|e| {
+        RunError::new(
+            format!("Failed to serialize handler result: {}", e),
+            RunErrorKind::Render,
+        )
+    })
+}
 
-                Ok(DispatchOutput::Text {
-                    formatted: render_result.formatted,
-                    raw: render_result.raw,
-                })
-            }
-            HandlerOutput::Silent => Ok(DispatchOutput::Silent),
-            HandlerOutput::Binary { data, filename } => Ok(DispatchOutput::Binary(data, filename)),
-        },
-        Err(error) => Err(handler_run_error(error)),
+/// Runs post-dispatch hooks over serialized handler data, if any are registered.
+fn run_post_dispatch_hooks(
+    json_data: serde_json::Value,
+    matches: &ArgMatches,
+    ctx: &CommandContext,
+    hooks: Option<&Hooks>,
+) -> Result<serde_json::Value, RunError> {
+    match hooks {
+        Some(hooks) => hooks
+            .run_post_dispatch(matches, ctx, json_data)
+            .map_err(|error| hook_run_error(error, crate::cli::HookPhase::PostDispatch)),
+        None => Ok(json_data),
     }
 }
 
