@@ -84,9 +84,12 @@ pub(crate) fn render_handler_output<T: Serialize>(
                 })?;
 
                 if let Some(hooks) = hooks {
-                    json_data = hooks
-                        .run_post_dispatch(matches, ctx, json_data)
-                        .map_err(hook_run_error)?;
+                    json_data =
+                        hooks
+                            .run_post_dispatch(matches, ctx, json_data)
+                            .map_err(|error| {
+                                hook_run_error(error, crate::cli::HookPhase::PostDispatch)
+                            })?;
                 }
 
                 let render_ctx = RenderContext::new(
@@ -134,32 +137,32 @@ pub(crate) fn render_handler_output<T: Serialize>(
 /// Converts the one application-declared escape hatch without changing the
 /// status policy for ordinary handler errors.
 pub(crate) fn handler_run_error(error: anyhow::Error) -> RunError {
-    if let Some(external) = error.downcast_ref::<ExternalFailure>() {
-        return RunError::from(external.clone());
-    }
+    let error = match error.downcast::<ExternalFailure>() {
+        Ok(external) => return RunError::from(external),
+        Err(error) => error,
+    };
 
     RunError::new(format!("Error: {}", error), RunErrorKind::Handler)
         .with_source(HandlerErrorSource(error.into_boxed_dyn_error()))
 }
 
-/// Converts a supported pre-dispatch external failure while preserving normal
-/// hook phase/status behavior for every other hook error.
-pub(crate) fn hook_run_error(error: HookError) -> RunError {
-    if error.phase == crate::cli::HookPhase::PreDispatch {
-        if let Some(external) = error
-            .source
-            .as_deref()
-            .and_then(|source| source.downcast_ref::<ExternalFailure>())
-        {
-            return RunError::from(external.clone());
+/// Converts a hook failure using the phase that actually executed.
+///
+/// Only the pre-dispatch seam recognizes `ExternalFailure`; a post-dispatch or
+/// post-output hook cannot opt into external status handling by self-labeling
+/// its `HookError` as pre-dispatch.
+pub(crate) fn hook_run_error(mut error: HookError, phase: crate::cli::HookPhase) -> RunError {
+    if phase == crate::cli::HookPhase::PreDispatch {
+        if let Some(source) = error.source.take() {
+            match source.downcast::<ExternalFailure>() {
+                Ok(external) => return RunError::from(*external),
+                Err(source) => error.source = Some(source),
+            }
         }
     }
 
-    RunError::new(
-        format!("Hook error: {}", error),
-        RunErrorKind::Hook(error.phase),
-    )
-    .with_source(error)
+    error.phase = phase;
+    RunError::new(format!("Hook error: {}", error), RunErrorKind::Hook(phase)).with_source(error)
 }
 
 /// Type-erased dispatch function for single-threaded handlers.

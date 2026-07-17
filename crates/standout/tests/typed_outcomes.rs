@@ -191,6 +191,43 @@ fn external_failure_metadata_crosses_handler_and_pre_dispatch_seams() {
 }
 
 #[test]
+fn post_hooks_cannot_self_label_as_pre_dispatch_external() {
+    for (hooks, phase) in [
+        (
+            Hooks::new().post_dispatch(|_, _, _| {
+                Err(HookError::pre_dispatch_external(
+                    ExternalFailure::new(128, "must stay ordinary").unwrap(),
+                ))
+            }),
+            HookPhase::PostDispatch,
+        ),
+        (
+            Hooks::new().post_output(|_, _, _| {
+                Err(HookError::pre_dispatch_external(
+                    ExternalFailure::new(128, "must stay ordinary").unwrap(),
+                ))
+            }),
+            HookPhase::PostOutput,
+        ),
+    ] {
+        let result = App::builder()
+            .command(
+                "go",
+                |_matches, _ctx| Ok(Output::Render(json!({ "message": "ok" }))),
+                "{{ message }}",
+            )
+            .unwrap()
+            .hooks("go", hooks)
+            .build()
+            .unwrap()
+            .run_to_string(command(), ["app", "go"]);
+
+        assert_eq!(result.exit_status(), Some(ExitStatus::FAILURE));
+        assert_eq!(result.error_kind(), Some(RunErrorKind::Hook(phase)));
+    }
+}
+
+#[test]
 fn render_and_output_file_write_failures_are_typed() {
     let render = App::builder()
         .command(

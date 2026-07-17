@@ -4,7 +4,7 @@
 
 ## Unreleased
 
-- Preserve authoritative external-command failures through Standout-owned output (issue #206): applications can declare an exact nonzero status and verbatim stderr payload from handlers or pre-dispatch, while capture APIs and `TestHarness` expose the typed external origin without changing ordinary 0/1/2 semantics.
+- Preserve authoritative external-command failures through Standout-owned output (issue #206, PR #208): applications can declare an exact nonzero status and verbatim stderr payload from handlers or pre-dispatch, while capture APIs and `TestHarness` expose the typed external origin without changing ordinary 0/1/2 semantics.
 
 ## 7.7.0 - 2026-07-17
 

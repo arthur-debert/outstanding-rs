@@ -134,7 +134,10 @@ impl AppBuilder {
             // Run pre-dispatch hooks if registered (hooks can inject state via ctx.extensions)
             if let Some(hooks) = hooks {
                 if let Err(e) = hooks.run_pre_dispatch(&matches, &mut ctx) {
-                    return RunResult::Error(super::super::dispatch::hook_run_error(e));
+                    return RunResult::Error(super::super::dispatch::hook_run_error(
+                        e,
+                        crate::cli::HookPhase::PreDispatch,
+                    ));
                 }
             }
 
@@ -165,7 +168,12 @@ impl AppBuilder {
             let mut final_output = if let Some(hooks) = hooks {
                 match hooks.run_post_output(&matches, &ctx, output) {
                     Ok(o) => o,
-                    Err(e) => return RunResult::Error(super::super::dispatch::hook_run_error(e)),
+                    Err(e) => {
+                        return RunResult::Error(super::super::dispatch::hook_run_error(
+                            e,
+                            crate::cli::HookPhase::PostOutput,
+                        ))
+                    }
                 }
             } else {
                 output

@@ -671,7 +671,17 @@ pub struct RunError {
 
 impl RunError {
     /// Creates a failure with its framework origin.
+    ///
+    /// # Panics
+    ///
+    /// Panics for [`RunErrorKind::External`]. External outcomes must be
+    /// constructed through [`ExternalFailure`] so their nonzero declared
+    /// status and verbatim diagnostic cannot become inconsistent.
     pub fn new(message: impl Into<String>, kind: RunErrorKind) -> Self {
+        assert!(
+            kind != RunErrorKind::External,
+            "external run errors must be constructed from ExternalFailure"
+        );
         let status = match kind {
             RunErrorKind::ClapUsage => ExitStatus::USAGE_ERROR,
             _ => ExitStatus::FAILURE,
@@ -1078,6 +1088,12 @@ mod tests {
             std::error::Error::source(&captured).unwrap().to_string(),
             "git failed"
         );
+    }
+
+    #[test]
+    #[should_panic(expected = "external run errors must be constructed from ExternalFailure")]
+    fn run_error_new_rejects_external_kind() {
+        let _ = RunError::new("inconsistent", RunErrorKind::External);
     }
 
     #[test]
