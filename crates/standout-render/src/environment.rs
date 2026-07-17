@@ -39,6 +39,7 @@
 //! with `#[serial]` (via the `serial_test` crate) and should use
 //! [`DetectorGuard`] to guarantee cleanup even when the test panics.
 
+use crate::AmbiguousWidth;
 use console::Term;
 use once_cell::sync::Lazy;
 use std::sync::Mutex;
@@ -46,12 +47,15 @@ use std::sync::Mutex;
 type WidthDetector = fn() -> Option<usize>;
 type TtyDetector = fn() -> bool;
 type ColorDetector = fn() -> bool;
+type AmbiguousWidthDetector = fn() -> Option<AmbiguousWidth>;
 
 static WIDTH_DETECTOR: Lazy<Mutex<WidthDetector>> =
     Lazy::new(|| Mutex::new(default_width_detector));
 static TTY_DETECTOR: Lazy<Mutex<TtyDetector>> = Lazy::new(|| Mutex::new(default_tty_detector));
 static COLOR_DETECTOR: Lazy<Mutex<ColorDetector>> =
     Lazy::new(|| Mutex::new(default_color_detector));
+static AMBIGUOUS_WIDTH_DETECTOR: Lazy<Mutex<AmbiguousWidthDetector>> =
+    Lazy::new(|| Mutex::new(default_ambiguous_width_detector));
 
 /// Overrides the detector used to query terminal width.
 ///
@@ -79,6 +83,14 @@ pub fn set_color_capability_detector(detector: ColorDetector) {
     *COLOR_DETECTOR.lock().unwrap() = detector;
 }
 
+/// Overrides the explicit ambiguous-width policy for rendering tests.
+///
+/// Returning `None` leaves the application or renderer configuration in
+/// control. Standout never guesses this policy from locale settings.
+pub fn set_ambiguous_width_detector(detector: AmbiguousWidthDetector) {
+    *AMBIGUOUS_WIDTH_DETECTOR.lock().unwrap() = detector;
+}
+
 /// Returns the current terminal width in columns, or `None` when unavailable.
 pub fn detect_terminal_width() -> Option<usize> {
     // Copy the fn pointer out and release the lock before invoking the
@@ -100,6 +112,12 @@ pub fn detect_color_capability() -> bool {
     detector()
 }
 
+/// Returns a test override for ambiguous width, if one is installed.
+pub fn detect_ambiguous_width_override() -> Option<AmbiguousWidth> {
+    let detector = *AMBIGUOUS_WIDTH_DETECTOR.lock().unwrap();
+    detector()
+}
+
 fn default_width_detector() -> Option<usize> {
     terminal_size::terminal_size().map(|(w, _)| w.0 as usize)
 }
@@ -112,6 +130,10 @@ fn default_color_detector() -> bool {
     Term::stdout().features().colors_supported()
 }
 
+fn default_ambiguous_width_detector() -> Option<AmbiguousWidth> {
+    None
+}
+
 /// Resets every environment detector in this module to its default
 /// (real-terminal) implementation.
 ///
@@ -122,6 +144,7 @@ pub fn reset_detectors() {
     set_terminal_width_detector(default_width_detector);
     set_tty_detector(default_tty_detector);
     set_color_capability_detector(default_color_detector);
+    set_ambiguous_width_detector(default_ambiguous_width_detector);
 }
 
 /// RAII guard that calls [`reset_detectors`] when dropped.

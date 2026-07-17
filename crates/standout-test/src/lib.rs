@@ -55,8 +55,8 @@ use standout_input::{
     PromptResponder,
 };
 use standout_render::{
-    reset_environment_detectors, set_color_capability_detector, set_terminal_width_detector,
-    set_tty_detector, OutputMode,
+    reset_environment_detectors, set_ambiguous_width_detector, set_color_capability_detector,
+    set_terminal_width_detector, set_tty_detector, AmbiguousWidth, OutputMode,
 };
 use tempfile::TempDir;
 
@@ -86,6 +86,7 @@ pub struct TestHarness {
     tempdir: Option<TempDir>,
     fixtures: Vec<(PathBuf, Vec<u8>)>,
     terminal_width: Option<Option<usize>>,
+    ambiguous_width: Option<AmbiguousWidth>,
     is_tty: Option<bool>,
     color_capable: Option<bool>,
     output_mode: Option<OutputMode>,
@@ -105,6 +106,7 @@ impl TestHarness {
             tempdir: None,
             fixtures: Vec::new(),
             terminal_width: None,
+            ambiguous_width: None,
             is_tty: None,
             color_capable: None,
             output_mode: None,
@@ -143,6 +145,12 @@ impl TestHarness {
     /// is not a TTY).
     pub fn no_terminal_width(mut self) -> Self {
         self.terminal_width = Some(None);
+        self
+    }
+
+    /// Forces either narrow or wide treatment of East Asian Ambiguous text.
+    pub fn ambiguous_width(mut self, policy: AmbiguousWidth) -> Self {
+        self.ambiguous_width = Some(policy);
         self
     }
 
@@ -381,6 +389,20 @@ impl TestHarness {
                 *WIDTH_SLOT
                     .get()
                     .expect("width slot initialized above")
+                    .lock()
+                    .unwrap()
+            });
+            restore.reset_env_detectors = true;
+        }
+        if let Some(policy) = self.ambiguous_width {
+            static POLICY_SLOT: std::sync::OnceLock<std::sync::Mutex<Option<AmbiguousWidth>>> =
+                std::sync::OnceLock::new();
+            let slot = POLICY_SLOT.get_or_init(|| std::sync::Mutex::new(None));
+            *slot.lock().unwrap() = Some(policy);
+            set_ambiguous_width_detector(|| {
+                *POLICY_SLOT
+                    .get()
+                    .expect("ambiguous width slot initialized above")
                     .lock()
                     .unwrap()
             });

@@ -96,9 +96,12 @@ impl AppBuilder {
         // Build render context for context providers
         let json_data =
             serde_json::to_value(data).map_err(|e| SetupError::Config(e.to_string()))?;
-        let render_ctx = RenderContext::new(
+        let ambiguous_width =
+            standout_render::detect_ambiguous_width_override().unwrap_or(self.ambiguous_width);
+        let render_ctx = RenderContext::with_ambiguous_width(
             mode,
             standout_render::detect_terminal_width(),
+            ambiguous_width,
             &theme,
             &json_data,
         );
@@ -120,7 +123,11 @@ impl AppBuilder {
         // Pass 1: Template rendering via engine
         let minijinja_output = self
             .template_engine
-            .render_template(template, &serde_json::Value::Object(combined_json_map))
+            .render_template_with_width(
+                template,
+                &serde_json::Value::Object(combined_json_map),
+                ambiguous_width,
+            )
             .map_err(|e| SetupError::Template(e.to_string()))?;
 
         // Pass 2: BBParser style tag processing

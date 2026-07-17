@@ -53,6 +53,7 @@
 
 use super::output::OutputMode;
 use super::theme::Theme;
+use crate::AmbiguousWidth;
 use minijinja::Value;
 use std::collections::HashMap;
 use std::fmt::Debug;
@@ -125,12 +126,43 @@ impl<'a> RenderContext<'a> {
         theme: &'a Theme,
         data: &'a serde_json::Value,
     ) -> Self {
+        Self::with_ambiguous_width(
+            output_mode,
+            terminal_width,
+            AmbiguousWidth::Narrow,
+            theme,
+            data,
+        )
+    }
+
+    /// Creates a render context with an explicit ambiguous-width policy.
+    pub fn with_ambiguous_width(
+        output_mode: OutputMode,
+        terminal_width: Option<usize>,
+        ambiguous_width: AmbiguousWidth,
+        theme: &'a Theme,
+        data: &'a serde_json::Value,
+    ) -> Self {
+        let extras = match ambiguous_width {
+            AmbiguousWidth::Narrow => HashMap::new(),
+            AmbiguousWidth::Wide => {
+                HashMap::from([("standout.ambiguous_width".to_string(), "wide".to_string())])
+            }
+        };
         Self {
             output_mode,
             terminal_width,
             theme,
             data,
-            extras: HashMap::new(),
+            extras,
+        }
+    }
+
+    /// Returns the explicit ambiguous-width policy for this render.
+    pub fn ambiguous_width(&self) -> AmbiguousWidth {
+        match self.get_extra("standout.ambiguous_width") {
+            Some("wide") => AmbiguousWidth::Wide,
+            _ => AmbiguousWidth::Narrow,
         }
     }
 

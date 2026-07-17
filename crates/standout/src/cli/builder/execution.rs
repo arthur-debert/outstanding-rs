@@ -149,11 +149,18 @@ impl AppBuilder {
             // Late binding: theme is resolved here at dispatch time, not when commands were registered
             let default_theme = crate::Theme::default();
             let theme = self.theme.as_ref().unwrap_or(&default_theme);
-            let dispatch_output =
-                match dispatch(dispatch_fn, sub_matches, &ctx, hooks, output_mode, theme) {
-                    Ok(output) => output,
-                    Err(e) => return RunResult::Error(e),
-                };
+            let dispatch_output = match dispatch(
+                dispatch_fn,
+                sub_matches,
+                &ctx,
+                hooks,
+                output_mode,
+                theme,
+                self.ambiguous_width,
+            ) {
+                Ok(output) => output,
+                Err(e) => return RunResult::Error(e),
+            };
 
             // Convert to Output enum for post-output hooks
             let output = match dispatch_output {

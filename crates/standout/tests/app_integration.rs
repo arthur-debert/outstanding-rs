@@ -1,6 +1,7 @@
 use clap::Command;
 use serde_json::json;
 use standout::cli::{App, HandlerResult, Output};
+use standout::AmbiguousWidth;
 use std::cell::RefCell;
 use std::rc::Rc;
 
@@ -24,6 +25,24 @@ fn test_app_integration() {
     } else {
         panic!("Expected RunResult::Handled, got {:?}", result);
     }
+}
+
+#[test]
+fn app_builder_wide_policy_reaches_dispatch_rendering() {
+    let app = App::builder()
+        .ambiguous_width(AmbiguousWidth::Wide)
+        .command(
+            "width",
+            |_m, _ctx| Ok(Output::Render(json!({"indicator": "↦≈Δ"}))),
+            "{{ indicator | display_width }}",
+        )
+        .unwrap()
+        .build()
+        .unwrap();
+
+    let cmd = Command::new("test").subcommand(Command::new("width"));
+    let result = app.run_to_string(cmd, ["test", "width"]);
+    assert_eq!(result.output(), Some("5"));
 }
 
 // Test App with mutable state (FnMut closures)

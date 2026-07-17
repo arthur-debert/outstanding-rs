@@ -287,6 +287,38 @@ let row = formatter.format_row_cells(&[
 ]);
 ```
 
+`TabularFormatter::new` uses narrow ambiguous-character widths for backward
+compatibility. To match terminals where East Asian Ambiguous glyphs occupy two
+columns, construct the formatter explicitly:
+
+```rust
+use standout_render::AmbiguousWidth;
+
+let formatter = TabularFormatter::with_ambiguous_width(
+    &spec,
+    60,
+    AmbiguousWidth::Wide,
+);
+```
+
+The same policy is used for separators, data-driven width resolution,
+sub-columns, borders, padding, truncation, and wrapping. MiniJinja `col`,
+`display_width`, padding, truncation, `tabular`, and `table` operations receive
+the renderer or application policy automatically.
+
+Policy-aware counterparts are also available for direct construction, including
+`TabularFormatter::with_widths_and_ambiguous_width`,
+`TabularFormatter::from_type_with_ambiguous_width`,
+`Table::from_spec_with_ambiguous_width`, and
+`Table::from_type_with_ambiguous_width`. Lower-level MiniJinja environments can
+use `register_tabular_filters_with_policy`.
+
+In Wide mode, a decorated Unicode table treats its requested width as a hard
+maximum. The selected Light, Heavy, Double, or Rounded border is preserved. If
+an odd width cannot be filled by a two-column horizontal border glyph, that
+border row may underfill by one column; it never exceeds the maximum or silently
+switches to ASCII. Narrow table geometry is unchanged.
+
 ### Design Constraints
 
 - **One level only**: Sub-columns cannot be nested recursively.
@@ -594,6 +626,6 @@ Tabular transforms raw data into polished, scannable output with minimal effort:
 8. **Extract automatically** - let `row_from()` pull fields from structs
 9. **Decorate as tables** - add borders, headers, and separators
 
-The declarative approach means your layout adapts to terminal width, handles Unicode correctly, and remains maintainable as your data evolves.
+The declarative approach means your layout adapts to terminal width, applies the explicitly selected Unicode ambiguous-width policy consistently, and remains maintainable as your data evolves.
 
 For complete API details, see the [API documentation](https://docs.rs/standout-render).

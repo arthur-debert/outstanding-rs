@@ -159,6 +159,7 @@ pub mod template;
 pub mod theme;
 mod util;
 pub mod warnings;
+pub mod width;
 
 // Error type
 pub use error::RenderError;
@@ -181,12 +182,13 @@ pub use output::{write_binary_output, write_output, OutputDestination, OutputMod
 pub use projection::{
     CsvProjection, CsvProjectionBuilder, ProjectionError, StructuredOutputProjection,
 };
+pub use width::{AmbiguousWidth, WidthCalculator};
 
 // Environment detection exports
 pub use environment::{
-    detect_color_capability, detect_is_tty, detect_terminal_width,
-    reset_detectors as reset_environment_detectors, set_color_capability_detector,
-    set_terminal_width_detector, set_tty_detector, DetectorGuard,
+    detect_ambiguous_width_override, detect_color_capability, detect_is_tty, detect_terminal_width,
+    reset_detectors as reset_environment_detectors, set_ambiguous_width_detector,
+    set_color_capability_detector, set_terminal_width_detector, set_tty_detector, DetectorGuard,
 };
 
 // Render module exports
@@ -220,6 +222,7 @@ pub use standout_bbparser::{UnknownTagError, UnknownTagErrors, UnknownTagKind};
 // Utility exports
 pub use util::{
     flatten_json_for_csv, rgb_to_ansi256, rgb_to_truecolor, serialize_to_xml, truncate_to_width,
+    truncate_to_width_with_policy,
 };
 
 // File loader exports

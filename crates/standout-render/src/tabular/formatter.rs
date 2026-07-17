@@ -48,9 +48,11 @@ use super::types::{
     Align, Anchor, Column, FlatDataSpec, Overflow, SubColumns, TabularSpec, TruncateAt, Width,
 };
 use super::util::{
-    display_width, pad_center, pad_left, pad_right, truncate_end, truncate_middle, truncate_start,
-    visible_width, wrap_indent,
+    display_width_with_policy, pad_center_with_policy, pad_left_with_policy, pad_right_with_policy,
+    truncate_end_with_policy, truncate_middle_with_policy, truncate_start_with_policy,
+    visible_width_with_policy, wrap_indent_with_policy,
 };
+use crate::AmbiguousWidth;
 
 /// Formats table rows according to a specification.
 ///
@@ -92,6 +94,7 @@ pub struct TabularFormatter {
     suffix: String,
     /// Total target width for anchor calculations.
     total_width: usize,
+    ambiguous_width: AmbiguousWidth,
 }
 
 impl TabularFormatter {
@@ -102,8 +105,17 @@ impl TabularFormatter {
     /// * `spec` - Table specification
     /// * `total_width` - Total available width including decorations
     pub fn new(spec: &FlatDataSpec, total_width: usize) -> Self {
-        let resolved = spec.resolve_widths(total_width);
-        Self::from_resolved_with_width(spec, resolved, total_width)
+        Self::with_ambiguous_width(spec, total_width, AmbiguousWidth::Narrow)
+    }
+
+    /// Creates a formatter with an explicit ambiguous-width policy.
+    pub fn with_ambiguous_width(
+        spec: &FlatDataSpec,
+        total_width: usize,
+        policy: AmbiguousWidth,
+    ) -> Self {
+        let resolved = spec.resolve_widths_with_policy(total_width, policy);
+        Self::from_resolved_with_width_and_policy(spec, resolved, total_width, policy)
     }
 
     /// Create a formatter with pre-resolved widths.
@@ -123,6 +135,21 @@ impl TabularFormatter {
         resolved: ResolvedWidths,
         total_width: usize,
     ) -> Self {
+        Self::from_resolved_with_width_and_policy(
+            spec,
+            resolved,
+            total_width,
+            AmbiguousWidth::Narrow,
+        )
+    }
+
+    /// Creates a formatter from resolved widths with an explicit policy.
+    pub fn from_resolved_with_width_and_policy(
+        spec: &FlatDataSpec,
+        resolved: ResolvedWidths,
+        total_width: usize,
+        policy: AmbiguousWidth,
+    ) -> Self {
         TabularFormatter {
             columns: spec.columns.clone(),
             widths: resolved.widths,
@@ -130,6 +157,7 @@ impl TabularFormatter {
             prefix: spec.decorations.row_prefix.clone(),
             suffix: spec.decorations.row_suffix.clone(),
             total_width,
+            ambiguous_width: policy,
         }
     }
 
@@ -137,6 +165,15 @@ impl TabularFormatter {
     ///
     /// This is useful for direct construction without a full FlatDataSpec.
     pub fn with_widths(columns: Vec<Column>, widths: Vec<usize>) -> Self {
+        Self::with_widths_and_ambiguous_width(columns, widths, AmbiguousWidth::Narrow)
+    }
+
+    /// Creates a formatter from explicit widths with an explicit policy.
+    pub fn with_widths_and_ambiguous_width(
+        columns: Vec<Column>,
+        widths: Vec<usize>,
+        policy: AmbiguousWidth,
+    ) -> Self {
         let total_width = widths.iter().sum();
         TabularFormatter {
             columns,
@@ -145,6 +182,7 @@ impl TabularFormatter {
             prefix: String::new(),
             suffix: String::new(),
             total_width,
+            ambiguous_width: policy,
         }
     }
 
@@ -170,8 +208,16 @@ impl TabularFormatter {
     /// let formatter = TabularFormatter::from_type::<Task>(80);
     /// ```
     pub fn from_type<T: super::traits::Tabular>(total_width: usize) -> Self {
+        Self::from_type_with_ambiguous_width::<T>(total_width, AmbiguousWidth::Narrow)
+    }
+
+    /// Creates a formatter from a `Tabular` type with an explicit policy.
+    pub fn from_type_with_ambiguous_width<T: super::traits::Tabular>(
+        total_width: usize,
+        policy: AmbiguousWidth,
+    ) -> Self {
         let spec: TabularSpec = T::tabular_spec();
-        Self::new(&spec, total_width)
+        Self::with_ambiguous_width(&spec, total_width, policy)
     }
 
     /// Set the total target width (for anchor gap calculations).
@@ -253,7 +299,7 @@ impl TabularFormatter {
             let width = self.widths.get(i).copied().unwrap_or(0);
             let value = values.get(i).map(|s| s.as_ref()).unwrap_or(&col.null_repr);
 
-            let formatted = format_cell(value, width, col);
+            let formatted = format_cell_with_policy(value, width, col, self.ambiguous_width);
             result.push_str(&formatted);
         }
 
@@ -317,7 +363,12 @@ impl TabularFormatter {
                     Some(CellValue::Single(s)) => vec![s],
                     None => vec![],
                 };
-                let formatted = format_sub_cells(sub_cols, &sub_values, width);
+                let formatted = format_sub_cells_with_policy(
+                    sub_cols,
+                    &sub_values,
+                    width,
+                    self.ambiguous_width,
+                );
                 result.push_str(&formatted);
             } else {
                 // Normal cell formatting
@@ -326,7 +377,7 @@ impl TabularFormatter {
                     Some(CellValue::Sub(v)) => v.first().copied().unwrap_or(&col.null_repr),
                     None => &col.null_repr,
                 };
-                let formatted = format_cell(value, width, col);
+                let formatted = format_cell_with_policy(value, width, col, self.ambiguous_width);
                 result.push_str(&formatted);
             }
         }
@@ -354,9 +405,9 @@ impl TabularFormatter {
         }
 
         // Calculate current content width
-        let prefix_width = display_width(&self.prefix);
-        let suffix_width = display_width(&self.suffix);
-        let sep_width = display_width(&self.separator);
+        let prefix_width = display_width_with_policy(&self.prefix, self.ambiguous_width);
+        let suffix_width = display_width_with_policy(&self.suffix, self.ambiguous_width);
+        let sep_width = display_width_with_policy(&self.separator, self.ambiguous_width);
         let content_width: usize = self.widths.iter().sum();
         let num_seps = self.columns.len().saturating_sub(1);
         let current_total = prefix_width + content_width + (num_seps * sep_width) + suffix_width;
@@ -409,7 +460,7 @@ impl TabularFormatter {
             .map(|(i, col)| {
                 let width = self.widths.get(i).copied().unwrap_or(0);
                 let value = values.get(i).map(|s| s.as_ref()).unwrap_or(&col.null_repr);
-                format_cell_lines(value, width, col)
+                format_cell_lines_with_policy(value, width, col, self.ambiguous_width)
             })
             .collect();
 
@@ -443,7 +494,7 @@ impl TabularFormatter {
                 }
 
                 let width = self.widths.get(i).copied().unwrap_or(0);
-                let line = cell.line(line_idx, width, col.align);
+                let line = cell.line_with_policy(line_idx, width, col.align, self.ambiguous_width);
                 row.push_str(&line);
             }
 
@@ -477,6 +528,41 @@ impl TabularFormatter {
     /// Get the column specifications.
     pub fn columns(&self) -> &[Column] {
         &self.columns
+    }
+
+    /// Returns the formatter's ambiguous-width policy.
+    pub fn ambiguous_width(&self) -> AmbiguousWidth {
+        self.ambiguous_width
+    }
+
+    pub(crate) fn rendered_width(&self) -> usize {
+        self.widths.iter().sum::<usize>()
+            + display_width_with_policy(&self.prefix, self.ambiguous_width)
+            + display_width_with_policy(&self.suffix, self.ambiguous_width)
+            + self.columns.len().saturating_sub(1)
+                * display_width_with_policy(&self.separator, self.ambiguous_width)
+    }
+
+    pub(crate) fn limit_to_width(&mut self, maximum: usize) {
+        let decoration_width = self
+            .rendered_width()
+            .saturating_sub(self.widths.iter().sum());
+        let content_limit = maximum.saturating_sub(decoration_width);
+        let mut excess = self
+            .widths
+            .iter()
+            .sum::<usize>()
+            .saturating_sub(content_limit);
+
+        for width in self.widths.iter_mut().rev() {
+            let reduction = (*width).min(excess);
+            *width -= reduction;
+            excess -= reduction;
+            if excess == 0 {
+                break;
+            }
+        }
+        self.total_width = self.total_width.min(maximum);
     }
 
     /// Extract headers from column specifications.
@@ -788,7 +874,17 @@ impl Object for TabularFormatter {
 }
 
 /// Format a single cell value according to column spec.
+#[cfg(test)]
 fn format_cell(value: &str, width: usize, col: &Column) -> String {
+    format_cell_with_policy(value, width, col, AmbiguousWidth::Narrow)
+}
+
+fn format_cell_with_policy(
+    value: &str,
+    width: usize,
+    col: &Column,
+    policy: AmbiguousWidth,
+) -> String {
     // If style_from_value is set, use the value as the style
     let style_override = if col.style_from_value {
         Some(value)
@@ -796,7 +892,7 @@ fn format_cell(value: &str, width: usize, col: &Column) -> String {
         None
     };
     let style = style_override.or(col.style.as_deref());
-    format_value(value, width, col.align, &col.overflow, style)
+    format_value_with_policy(value, width, col.align, &col.overflow, style, policy)
 }
 
 /// Format a value with the given width, alignment, overflow, and optional style.
@@ -804,6 +900,7 @@ fn format_cell(value: &str, width: usize, col: &Column) -> String {
 /// This is the core formatting function used by both regular cells and sub-cells.
 /// It correctly handles BBCode tags in `value`: tags are stripped for width
 /// measurement and truncation, but preserved in the output when the content fits.
+#[cfg(test)]
 fn format_value(
     value: &str,
     width: usize,
@@ -811,36 +908,47 @@ fn format_value(
     overflow: &Overflow,
     style: Option<&str>,
 ) -> String {
+    format_value_with_policy(value, width, align, overflow, style, AmbiguousWidth::Narrow)
+}
+
+fn format_value_with_policy(
+    value: &str,
+    width: usize,
+    align: Align,
+    overflow: &Overflow,
+    style: Option<&str>,
+    policy: AmbiguousWidth,
+) -> String {
     if width == 0 {
         return String::new();
     }
 
     let stripped = standout_bbparser::strip_tags(value);
-    let current_width = display_width(&stripped);
+    let current_width = display_width_with_policy(&stripped, policy);
 
     if current_width > width {
         // Content overflows — truncate the stripped text (tags are lost)
         let truncated = match overflow {
             Overflow::Truncate { at, marker } => match at {
-                TruncateAt::End => truncate_end(&stripped, width, marker),
-                TruncateAt::Start => truncate_start(&stripped, width, marker),
-                TruncateAt::Middle => truncate_middle(&stripped, width, marker),
+                TruncateAt::End => truncate_end_with_policy(&stripped, width, marker, policy),
+                TruncateAt::Start => truncate_start_with_policy(&stripped, width, marker, policy),
+                TruncateAt::Middle => truncate_middle_with_policy(&stripped, width, marker, policy),
             },
-            Overflow::Clip => truncate_end(&stripped, width, ""),
+            Overflow::Clip => truncate_end_with_policy(&stripped, width, "", policy),
             Overflow::Expand => {
                 // Don't truncate — pad is also skipped below
                 return apply_style(value, style);
             }
             Overflow::Wrap { .. } => {
                 // Single-line fallback; multi-line wrapping handled by format_cell_lines
-                truncate_end(&stripped, width, "…")
+                truncate_end_with_policy(&stripped, width, "…", policy)
             }
         };
 
         let padded = match align {
-            Align::Left => pad_right(&truncated, width),
-            Align::Right => pad_left(&truncated, width),
-            Align::Center => pad_center(&truncated, width),
+            Align::Left => pad_right_with_policy(&truncated, width, policy),
+            Align::Right => pad_left_with_policy(&truncated, width, policy),
+            Align::Center => pad_center_with_policy(&truncated, width, policy),
         };
         apply_style(&padded, style)
     } else {
@@ -896,8 +1004,18 @@ pub(crate) enum OwnedCellValue {
 ///
 /// Returns a Vec of resolved widths such that:
 /// `sum(widths) + separator_overhead == parent_width`
+#[cfg(test)]
 fn resolve_sub_widths(sub_cols: &SubColumns, values: &[&str], parent_width: usize) -> Vec<usize> {
-    let sep_width = display_width(&sub_cols.separator);
+    resolve_sub_widths_with_policy(sub_cols, values, parent_width, AmbiguousWidth::Narrow)
+}
+
+fn resolve_sub_widths_with_policy(
+    sub_cols: &SubColumns,
+    values: &[&str],
+    parent_width: usize,
+    policy: AmbiguousWidth,
+) -> Vec<usize> {
+    let sep_width = display_width_with_policy(&sub_cols.separator, policy);
     let n = sub_cols.columns.len();
     let mut widths = vec![0usize; n];
     let mut grower_index = 0;
@@ -912,7 +1030,10 @@ fn resolve_sub_widths(sub_cols: &SubColumns, values: &[&str], parent_width: usiz
                 widths[i] = *w;
             }
             Width::Bounded { min, max } => {
-                let content_w = values.get(i).map(|v| visible_width(v)).unwrap_or(0);
+                let content_w = values
+                    .get(i)
+                    .map(|v| visible_width_with_policy(v, policy))
+                    .unwrap_or(0);
                 let min_w = min.unwrap_or(0);
                 let max_w = max.unwrap_or(usize::MAX);
                 widths[i] = content_w.max(min_w).min(max_w);
@@ -974,12 +1095,22 @@ fn resolve_sub_widths(sub_cols: &SubColumns, values: &[&str], parent_width: usiz
 /// sub-column absorbs remaining space. Zero-width *non-grower* columns are
 /// skipped entirely (no separator emitted). The grower is always present in
 /// the output—even at zero width—so separator counts stay correct.
+#[cfg(test)]
 fn format_sub_cells(sub_cols: &SubColumns, values: &[&str], parent_width: usize) -> String {
+    format_sub_cells_with_policy(sub_cols, values, parent_width, AmbiguousWidth::Narrow)
+}
+
+fn format_sub_cells_with_policy(
+    sub_cols: &SubColumns,
+    values: &[&str],
+    parent_width: usize,
+    policy: AmbiguousWidth,
+) -> String {
     if parent_width == 0 {
         return String::new();
     }
 
-    let widths = resolve_sub_widths(sub_cols, values, parent_width);
+    let widths = resolve_sub_widths_with_policy(sub_cols, values, parent_width, policy);
     let grower_index = sub_cols
         .columns
         .iter()
@@ -998,12 +1129,13 @@ fn format_sub_cells(sub_cols: &SubColumns, values: &[&str], parent_width: usize)
             parts.push(String::new());
         } else {
             let value = values.get(i).copied().unwrap_or(&sub_col.null_repr);
-            parts.push(format_value(
+            parts.push(format_value_with_policy(
                 value,
                 width,
                 sub_col.align,
                 &sub_col.overflow,
                 sub_col.style.as_deref(),
+                policy,
             ));
         }
     }
@@ -1039,13 +1171,24 @@ impl CellOutput {
     /// Content may contain BBCode from `apply_style`, so we use `visible_width`
     /// for measurement and manual padding to avoid miscounting tags.
     pub fn line(&self, index: usize, width: usize, align: Align) -> String {
+        self.line_with_policy(index, width, align, AmbiguousWidth::Narrow)
+    }
+
+    /// Gets a line using an explicit ambiguous-width policy.
+    pub fn line_with_policy(
+        &self,
+        index: usize,
+        width: usize,
+        align: Align,
+        policy: AmbiguousWidth,
+    ) -> String {
         let content = match self {
             CellOutput::Single(s) if index == 0 => s.as_str(),
             CellOutput::Multi(lines) => lines.get(index).map(|s| s.as_str()).unwrap_or(""),
             _ => "",
         };
 
-        let content_width = visible_width(content);
+        let content_width = visible_width_with_policy(content, policy);
         if content_width >= width {
             return content.to_string();
         }
@@ -1084,13 +1227,23 @@ fn apply_style(content: &str, style: Option<&str>) -> String {
 }
 
 /// Format a cell with potential multi-line output (for Wrap mode).
+#[cfg(test)]
 fn format_cell_lines(value: &str, width: usize, col: &Column) -> CellOutput {
+    format_cell_lines_with_policy(value, width, col, AmbiguousWidth::Narrow)
+}
+
+fn format_cell_lines_with_policy(
+    value: &str,
+    width: usize,
+    col: &Column,
+    policy: AmbiguousWidth,
+) -> CellOutput {
     if width == 0 {
         return CellOutput::Single(String::new());
     }
 
     let stripped = standout_bbparser::strip_tags(value);
-    let current_width = display_width(&stripped);
+    let current_width = display_width_with_policy(&stripped, policy);
 
     // Determine style: style_from_value takes precedence
     let style = if col.style_from_value {
@@ -1116,14 +1269,14 @@ fn format_cell_lines(value: &str, width: usize, col: &Column) -> CellOutput {
                 CellOutput::Single(apply_style(&padded, style))
             } else {
                 // Wrap to multiple lines — tags are stripped (same as truncation)
-                let wrapped = wrap_indent(&stripped, width, *indent);
+                let wrapped = wrap_indent_with_policy(&stripped, width, *indent, policy);
                 let padded: Vec<String> = wrapped
                     .into_iter()
                     .map(|line| {
                         let padded_line = match col.align {
-                            Align::Left => pad_right(&line, width),
-                            Align::Right => pad_left(&line, width),
-                            Align::Center => pad_center(&line, width),
+                            Align::Left => pad_right_with_policy(&line, width, policy),
+                            Align::Right => pad_left_with_policy(&line, width, policy),
+                            Align::Center => pad_center_with_policy(&line, width, policy),
                         };
                         apply_style(&padded_line, style)
                     })
@@ -1136,13 +1289,14 @@ fn format_cell_lines(value: &str, width: usize, col: &Column) -> CellOutput {
             }
         }
         // All other modes are single-line
-        _ => CellOutput::Single(format_cell(value, width, col)),
+        _ => CellOutput::Single(format_cell_with_policy(value, width, col, policy)),
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::tabular::display_width;
     use crate::tabular::{TabularSpec, Width};
 
     fn simple_spec() -> FlatDataSpec {
@@ -1319,6 +1473,18 @@ mod tests {
 
         let output = formatter.format_row(&["hi", "there"]);
         assert_eq!(output, "hi    - there     ");
+    }
+
+    #[test]
+    fn explicit_width_constructor_accepts_ambiguous_width_policy() {
+        let formatter = TabularFormatter::with_widths_and_ambiguous_width(
+            vec![Column::new(Width::Fixed(4))],
+            vec![4],
+            AmbiguousWidth::Wide,
+        );
+
+        assert_eq!(formatter.ambiguous_width(), AmbiguousWidth::Wide);
+        assert_eq!(formatter.format_row(&["≈"]), "≈  ");
     }
 
     // ============================================================================
@@ -2641,7 +2807,7 @@ mod tests {
 #[cfg(test)]
 mod proptests {
     use super::*;
-    use crate::tabular::{SubCol, SubColumns};
+    use crate::tabular::{display_width, SubCol, SubColumns};
     use proptest::prelude::*;
 
     proptest! {

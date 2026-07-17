@@ -40,7 +40,8 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use super::formatter::{CellValue, OwnedCellValue, TabularFormatter};
 use super::traits::{Tabular, TabularRow};
 use super::types::{FlatDataSpec, TabularSpec};
-use super::util::display_width;
+use super::util::display_width_with_policy;
+use crate::{AmbiguousWidth, WidthCalculator};
 
 /// Border style for table decoration.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -179,6 +180,10 @@ impl BorderChars {
 pub struct Table {
     /// The underlying formatter.
     formatter: TabularFormatter,
+    /// Original specification, retained so border selection can re-resolve Wide layouts.
+    spec: FlatDataSpec,
+    /// Requested width passed to the constructor.
+    requested_width: usize,
     /// Column headers.
     headers: Option<Vec<String>>,
     /// Border style.
@@ -198,6 +203,8 @@ impl Clone for Table {
     fn clone(&self) -> Self {
         Self {
             formatter: self.formatter.clone(),
+            spec: self.spec.clone(),
+            requested_width: self.requested_width,
             headers: self.headers.clone(),
             border: self.border,
             header_style: self.header_style.clone(),
@@ -212,6 +219,7 @@ impl std::fmt::Debug for Table {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("Table")
             .field("formatter", &self.formatter)
+            .field("requested_width", &self.requested_width)
             .field("headers", &self.headers)
             .field("border", &self.border)
             .field("header_style", &self.header_style)
@@ -225,9 +233,20 @@ impl std::fmt::Debug for Table {
 impl Table {
     /// Create a new table with the given spec and total width.
     pub fn new(spec: TabularSpec, total_width: usize) -> Self {
-        let formatter = TabularFormatter::new(&spec, total_width);
+        Self::with_ambiguous_width(spec, total_width, AmbiguousWidth::Narrow)
+    }
+
+    /// Creates a table with an explicit ambiguous-width policy.
+    pub fn with_ambiguous_width(
+        spec: TabularSpec,
+        total_width: usize,
+        policy: AmbiguousWidth,
+    ) -> Self {
+        let formatter = TabularFormatter::with_ambiguous_width(&spec, total_width, policy);
         Table {
             formatter,
+            spec,
+            requested_width: total_width,
             headers: None,
             border: BorderStyle::None,
             header_style: None,
@@ -239,16 +258,16 @@ impl Table {
 
     /// Create a table from a raw FlatDataSpec.
     pub fn from_spec(spec: &FlatDataSpec, total_width: usize) -> Self {
-        let formatter = TabularFormatter::new(spec, total_width);
-        Table {
-            formatter,
-            headers: None,
-            border: BorderStyle::None,
-            header_style: None,
-            row_separator: false,
-            row_styles: None,
-            row_counter: AtomicUsize::new(0),
-        }
+        Self::from_spec_with_ambiguous_width(spec, total_width, AmbiguousWidth::Narrow)
+    }
+
+    /// Creates a table from a raw spec with an explicit policy.
+    pub fn from_spec_with_ambiguous_width(
+        spec: &FlatDataSpec,
+        total_width: usize,
+        policy: AmbiguousWidth,
+    ) -> Self {
+        Self::with_ambiguous_width(spec.clone(), total_width, policy)
     }
 
     /// Create a table from a type that implements `Tabular`.
@@ -276,14 +295,52 @@ impl Table {
     ///     .border(BorderStyle::Light);
     /// ```
     pub fn from_type<T: Tabular>(total_width: usize) -> Self {
+        Self::from_type_with_ambiguous_width::<T>(total_width, AmbiguousWidth::Narrow)
+    }
+
+    /// Creates a table from a `Tabular` type with an explicit policy.
+    pub fn from_type_with_ambiguous_width<T: Tabular>(
+        total_width: usize,
+        policy: AmbiguousWidth,
+    ) -> Self {
         let spec = T::tabular_spec();
-        Self::new(spec, total_width)
+        Self::with_ambiguous_width(spec, total_width, policy)
     }
 
     /// Set the border style.
     pub fn border(mut self, border: BorderStyle) -> Self {
         self.border = border;
+        self.rebuild_formatter_for_border();
         self
+    }
+
+    fn rebuild_formatter_for_border(&mut self) {
+        let policy = self.formatter.ambiguous_width();
+        let mut formatter_width = self.requested_width;
+
+        // Preserve the legacy Narrow layout exactly. Under Wide, Unicode border
+        // glyphs occupy two cells, so the requested table width becomes a hard
+        // maximum and the formatter receives the remaining interior width.
+        if policy == AmbiguousWidth::Wide
+            && matches!(
+                self.border,
+                BorderStyle::Light
+                    | BorderStyle::Heavy
+                    | BorderStyle::Double
+                    | BorderStyle::Rounded
+            )
+        {
+            let calculator = WidthCalculator::new(policy);
+            let vertical = self.border.chars().vertical;
+            formatter_width =
+                formatter_width.saturating_sub(calculator.char_width(vertical).saturating_mul(2));
+        }
+
+        self.formatter =
+            TabularFormatter::with_ambiguous_width(&self.spec, formatter_width, policy);
+        if policy == AmbiguousWidth::Wide && self.border != BorderStyle::None {
+            self.formatter.limit_to_width(formatter_width);
+        }
     }
 
     /// Set the column headers.
@@ -502,9 +559,23 @@ impl Table {
 
         // Calculate total content width
         let content_width: usize = widths.iter().sum();
-        let sep_width = display_width(&self.formatter_separator());
+        let sep_width = display_width_with_policy(
+            &self.formatter_separator(),
+            self.formatter.ambiguous_width(),
+        );
         let num_seps = widths.len().saturating_sub(1);
-        let total_content = content_width + (num_seps * sep_width);
+        let total_content = if self.formatter.ambiguous_width() == AmbiguousWidth::Wide
+            && matches!(
+                self.border,
+                BorderStyle::Light
+                    | BorderStyle::Heavy
+                    | BorderStyle::Double
+                    | BorderStyle::Rounded
+            ) {
+            self.formatter.rendered_width()
+        } else {
+            content_width + (num_seps * sep_width)
+        };
 
         let (left, _joint, right) = match line_type {
             LineType::Top => (chars.top_left, chars.top_t, chars.top_right),
@@ -532,10 +603,14 @@ impl Table {
         // Add separators between columns
         // For simplicity, we'll just draw a continuous line
         // A more sophisticated version would place joints at column boundaries
+        let horizontal_width = WidthCalculator::new(self.formatter.ambiguous_width())
+            .char_width(chars.horizontal)
+            .max(1);
         line = format!(
             "{}{}{}",
             left,
-            std::iter::repeat_n(chars.horizontal, total_content).collect::<String>(),
+            std::iter::repeat_n(chars.horizontal, total_content / horizontal_width)
+                .collect::<String>(),
             right
         );
 
@@ -776,6 +851,7 @@ impl minijinja::value::Object for Table {
 mod tests {
     use super::*;
     use crate::tabular::Col;
+    use crate::WidthCalculator;
 
     fn simple_spec() -> TabularSpec {
         TabularSpec::builder()
@@ -1127,5 +1203,67 @@ mod tests {
         assert!(output.contains("Value"));
         assert!(output.contains("Alice"));
         assert!(output.contains("100"));
+    }
+
+    #[test]
+    fn unicode_borders_honor_wide_maximum_without_ascii_fallback() {
+        let styles = [
+            (BorderStyle::Light, '┌'),
+            (BorderStyle::Heavy, '┏'),
+            (BorderStyle::Double, '╔'),
+            (BorderStyle::Rounded, '╭'),
+        ];
+        let calculator = WidthCalculator::new(AmbiguousWidth::Wide);
+
+        for (style, expected_corner) in styles {
+            for requested in [20, 21] {
+                let spec = TabularSpec::builder().column(Col::fill()).build();
+                let table = Table::with_ambiguous_width(spec, requested, AmbiguousWidth::Wide)
+                    .border(style);
+                let rendered = table.render(&[vec!["≈Δ"]]);
+
+                for line in rendered.lines() {
+                    let width = calculator.visible_width(line);
+                    assert!(
+                        width <= requested,
+                        "{style:?} line exceeded {requested}: {line}"
+                    );
+                    assert!(
+                        requested - width <= 1,
+                        "{style:?} underfilled {requested}: {line}"
+                    );
+                }
+                assert!(table.top_border().starts_with(expected_corner));
+                assert!(
+                    !rendered.contains('+'),
+                    "must not substitute ASCII: {rendered}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn narrow_unicode_border_layout_remains_compatible() {
+        let calculator = WidthCalculator::new(AmbiguousWidth::Narrow);
+
+        for style in [
+            BorderStyle::Light,
+            BorderStyle::Heavy,
+            BorderStyle::Double,
+            BorderStyle::Rounded,
+        ] {
+            let spec = TabularSpec::builder().column(Col::fill()).build();
+            let default = Table::new(spec.clone(), 21)
+                .border(style)
+                .render(&[vec!["≈Δ"]]);
+            let explicit = Table::with_ambiguous_width(spec, 21, AmbiguousWidth::Narrow)
+                .border(style)
+                .render(&[vec!["≈Δ"]]);
+
+            assert_eq!(default, explicit);
+            assert!(default
+                .lines()
+                .all(|line| calculator.visible_width(line) == 23));
+        }
     }
 }

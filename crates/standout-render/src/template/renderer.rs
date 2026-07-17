@@ -42,6 +42,7 @@ use crate::error::RenderError;
 use crate::output::OutputMode;
 use crate::style::Styles;
 use crate::theme::{detect_icon_mode, Theme};
+use crate::AmbiguousWidth;
 use crate::EmbeddedTemplates;
 
 /// A renderer with pre-registered templates.
@@ -131,6 +132,8 @@ pub struct Renderer {
     output_mode: OutputMode,
     /// Resolved icon context for template injection
     icon_context: HashMap<String, serde_json::Value>,
+    /// Explicit ambiguous-width policy; narrow preserves existing behavior.
+    ambiguous_width: AmbiguousWidth,
 }
 
 impl Renderer {
@@ -198,7 +201,22 @@ impl Renderer {
             styles,
             output_mode: mode,
             icon_context,
+            ambiguous_width: AmbiguousWidth::Narrow,
         })
+    }
+
+    /// Sets how East Asian Ambiguous characters are measured.
+    ///
+    /// Standout does not infer this from locale settings. The default is
+    /// [`AmbiguousWidth::Narrow`] for compatibility.
+    pub fn set_ambiguous_width(&mut self, policy: AmbiguousWidth) {
+        self.ambiguous_width = policy;
+    }
+
+    /// Configures how East Asian Ambiguous characters are measured.
+    pub fn with_ambiguous_width(mut self, policy: AmbiguousWidth) -> Self {
+        self.set_ambiguous_width(policy);
+        self
     }
 
     /// Registers a named inline template.
@@ -449,6 +467,8 @@ impl Renderer {
     /// let output = renderer.render("todos/list", &data)?;
     /// ```
     pub fn render<T: Serialize>(&mut self, name: &str, data: &T) -> Result<String, RenderError> {
+        let ambiguous_width =
+            crate::detect_ambiguous_width_override().unwrap_or(self.ambiguous_width);
         // First, check if it's an inline template
         // We check this first to avoid filesystem lookups for known templates.
         // In debug mode, if it's a file-based template, we want to skip this check
@@ -478,14 +498,18 @@ impl Renderer {
         // In debug mode: only use engine cache if it's an inline template (which doesn't change on disk).
         let template_output = if !cfg!(debug_assertions) || is_inline {
             // Try to render with the engine's cached template
-            match self.engine.render_named(name, &data_value) {
+            match self
+                .engine
+                .render_named_with_width(name, &data_value, ambiguous_width)
+            {
                 Ok(output) => output,
                 Err(_) => {
                     // Template not in cache, load and render
                     self.ensure_registry_initialized()?;
                     let content = self.get_template_content(name)?;
                     self.engine.add_template(name, &content)?;
-                    self.engine.render_named(name, &data_value)?
+                    self.engine
+                        .render_named_with_width(name, &data_value, ambiguous_width)?
                 }
             }
         } else {
@@ -493,7 +517,8 @@ impl Renderer {
             self.ensure_registry_initialized()?;
             let content = self.get_template_content(name)?;
             self.engine.add_template(name, &content)?;
-            self.engine.render_named(name, &data_value)?
+            self.engine
+                .render_named_with_width(name, &data_value, ambiguous_width)?
         };
 
         // Pass 2: BBParser style tag processing
@@ -1082,5 +1107,26 @@ mod tests {
             )
             .unwrap();
         assert_eq!(output, "hi");
+    }
+
+    #[test]
+    fn renderer_applies_width_policy_to_filters_and_tables() {
+        let template = "{{ '↦≈Δ' | display_width }}|{% set t = tabular([{\"width\": 7}], width=7) %}{{ t.row(['↦≈Δ']) }}";
+
+        let mut narrow = Renderer::with_output(Theme::new(), OutputMode::Text).unwrap();
+        narrow.add_template("width", template).unwrap();
+        assert_eq!(
+            narrow.render("width", &serde_json::json!({})).unwrap(),
+            "3|↦≈Δ    "
+        );
+
+        let mut wide = Renderer::with_output(Theme::new(), OutputMode::Text)
+            .unwrap()
+            .with_ambiguous_width(AmbiguousWidth::Wide);
+        wide.add_template("width", template).unwrap();
+        assert_eq!(
+            wide.render("width", &serde_json::json!({})).unwrap(),
+            "5|↦≈Δ  "
+        );
     }
 }

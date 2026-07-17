@@ -353,6 +353,26 @@ Features:
 
 See [Introduction to Tabular](intro-to-tabular.md) for a comprehensive walkthrough.
 
+### Ambiguous character widths
+
+Unicode marks some characters, including `≈` and `Δ`, as East Asian
+Ambiguous. Standout treats them as one column by default, preserving existing
+layouts. Applications that target terminals where these glyphs occupy two
+columns can select the policy explicitly:
+
+```rust
+use standout_render::{AmbiguousWidth, Renderer, Theme};
+
+let renderer = Renderer::new(Theme::new())?
+    .with_ambiguous_width(AmbiguousWidth::Wide);
+```
+
+The selection flows through measurement, ANSI and style-tag-aware visible
+width, padding, truncation, wrapping, tabular formatting, and MiniJinja width
+filters. Standout makes no locale-based guess and promises no automatic
+detection. The policy-aware helper variants, such as
+`display_width_with_policy`, are available when formatting directly.
+
 ---
 
 ## Structured Output

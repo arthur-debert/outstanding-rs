@@ -50,9 +50,13 @@ use super::traits::Tabular;
 use super::types::{
     Align, Column, Overflow, SubColumn, SubColumns, TabularSpec, TruncateAt, Width,
 };
+#[cfg(test)]
+use super::util::display_width;
 use super::util::{
-    display_width, pad_center, pad_left, pad_right, truncate_end, truncate_middle, truncate_start,
+    display_width_with_policy, pad_center_with_policy, pad_left_with_policy, pad_right_with_policy,
+    truncate_end_with_policy, truncate_middle_with_policy, truncate_start_with_policy,
 };
+use crate::width::WidthPolicySource;
 
 /// Register all tabular-related filters on a MiniJinja environment.
 ///
@@ -73,14 +77,30 @@ use super::util::{
 /// register_tabular_filters(&mut env);
 /// ```
 pub fn register_tabular_filters(env: &mut Environment<'static>) {
+    register_tabular_filters_with_policy(env, crate::AmbiguousWidth::Narrow);
+}
+
+/// Registers tabular filters and functions with an explicit width policy.
+pub fn register_tabular_filters_with_policy(
+    env: &mut Environment<'static>,
+    policy: crate::AmbiguousWidth,
+) {
+    register_tabular_filters_with_source(env, WidthPolicySource::new(policy));
+}
+
+pub(crate) fn register_tabular_filters_with_source(
+    env: &mut Environment<'static>,
+    policy: WidthPolicySource,
+) {
     // col filter: {{ value | col(width) }} or {{ value | col(width, align="right", truncate="middle") }}
     // "fill" support (Option B): {{ value | col("fill", width=80) }}
+    let col_policy = policy.clone();
     env.add_filter(
         "col",
-        |value: Value,
-         width_val: Value,
-         kwargs: minijinja::value::Kwargs|
-         -> Result<String, minijinja::Error> {
+        move |value: Value,
+              width_val: Value,
+              kwargs: minijinja::value::Kwargs|
+              -> Result<String, minijinja::Error> {
             let text = value.to_string();
 
             // Resolve width: can be number or "fill" (requiring 'width' kwarg)
@@ -117,16 +137,24 @@ pub fn register_tabular_filters(env: &mut Environment<'static>) {
 
             kwargs.assert_all_used()?;
 
-            Ok(format_col(&text, width, &align, &truncate, &ellipsis))
+            Ok(format_col_with_policy(
+                &text,
+                width,
+                &align,
+                &truncate,
+                &ellipsis,
+                col_policy.get(),
+            ))
         },
     );
 
     // pad_left filter: {{ value | pad_left(width) }}
     // BBCode tags are stripped for width measurement; padding preserves tags.
-    env.add_filter("pad_left", |value: Value, width: usize| -> String {
+    let pad_left_policy = policy.clone();
+    env.add_filter("pad_left", move |value: Value, width: usize| -> String {
         let text = value.to_string();
         let stripped = strip_tags(&text);
-        let visible_width = display_width(&stripped);
+        let visible_width = display_width_with_policy(&stripped, pad_left_policy.get());
         if visible_width >= width {
             text
         } else {
@@ -136,10 +164,11 @@ pub fn register_tabular_filters(env: &mut Environment<'static>) {
 
     // pad_right filter: {{ value | pad_right(width) }}
     // BBCode tags are stripped for width measurement; padding preserves tags.
-    env.add_filter("pad_right", |value: Value, width: usize| -> String {
+    let pad_right_policy = policy.clone();
+    env.add_filter("pad_right", move |value: Value, width: usize| -> String {
         let text = value.to_string();
         let stripped = strip_tags(&text);
-        let visible_width = display_width(&stripped);
+        let visible_width = display_width_with_policy(&stripped, pad_right_policy.get());
         if visible_width >= width {
             text
         } else {
@@ -149,10 +178,11 @@ pub fn register_tabular_filters(env: &mut Environment<'static>) {
 
     // pad_center filter: {{ value | pad_center(width) }}
     // BBCode tags are stripped for width measurement; padding preserves tags.
-    env.add_filter("pad_center", |value: Value, width: usize| -> String {
+    let pad_center_policy = policy.clone();
+    env.add_filter("pad_center", move |value: Value, width: usize| -> String {
         let text = value.to_string();
         let stripped = strip_tags(&text);
-        let visible_width = display_width(&stripped);
+        let visible_width = display_width_with_policy(&stripped, pad_center_policy.get());
         if visible_width >= width {
             text
         } else {
@@ -165,31 +195,35 @@ pub fn register_tabular_filters(env: &mut Environment<'static>) {
 
     // truncate_at filter: {{ value | truncate_at(width, "middle") }}
     // BBCode tags are stripped before truncation.
+    let truncate_policy = policy.clone();
     env.add_filter(
         "truncate_at",
-        |value: Value,
-         width: usize,
-         position: Option<String>,
-         ellipsis: Option<String>|
-         -> String {
+        move |value: Value,
+              width: usize,
+              position: Option<String>,
+              ellipsis: Option<String>|
+              -> String {
             let text = value.to_string();
             let stripped = strip_tags(&text);
             let pos = position.as_deref().unwrap_or("end");
             let ell = ellipsis.as_deref().unwrap_or("…");
 
             match pos {
-                "start" => truncate_start(&stripped, width, ell),
-                "middle" => truncate_middle(&stripped, width, ell),
-                _ => truncate_end(&stripped, width, ell),
+                "start" => truncate_start_with_policy(&stripped, width, ell, truncate_policy.get()),
+                "middle" => {
+                    truncate_middle_with_policy(&stripped, width, ell, truncate_policy.get())
+                }
+                _ => truncate_end_with_policy(&stripped, width, ell, truncate_policy.get()),
             }
         },
     );
 
     // display_width filter: {{ value | display_width }}
     // BBCode tags are stripped before measuring width.
-    env.add_filter("display_width", |value: Value| -> usize {
+    let display_policy = policy.clone();
+    env.add_filter("display_width", move |value: Value| -> usize {
         let stripped = strip_tags(&value.to_string());
-        display_width(&stripped)
+        display_width_with_policy(&stripped, display_policy.get())
     });
 
     // style_as filter: {{ value | style_as("error") }} => [error]value[/error]
@@ -203,15 +237,18 @@ pub fn register_tabular_filters(env: &mut Environment<'static>) {
     });
 
     // Register global functions for creating formatters
-    register_table_functions(env);
+    register_table_functions(env, policy);
 }
 
 /// Register global functions for creating table formatters.
-fn register_table_functions(env: &mut Environment<'static>) {
+fn register_table_functions(env: &mut Environment<'static>, policy: WidthPolicySource) {
     // tabular(columns, separator=?, width=?) -> TabularFormatter
+    let tabular_policy = policy.clone();
     env.add_function(
         "tabular",
-        |columns: Value, kwargs: minijinja::value::Kwargs| -> Result<Value, minijinja::Error> {
+        move |columns: Value,
+              kwargs: minijinja::value::Kwargs|
+              -> Result<Value, minijinja::Error> {
             let cols = parse_columns(&columns)?;
             let separator = kwargs
                 .get::<Option<String>>("separator")?
@@ -228,15 +265,17 @@ fn register_table_functions(env: &mut Environment<'static>) {
             }
 
             let spec = builder.build();
-            let formatter = TabularFormatter::new(&spec, width);
+            let formatter =
+                TabularFormatter::with_ambiguous_width(&spec, width, tabular_policy.get());
             Ok(Value::from_object(formatter))
         },
     );
 
     // table(columns, border=?, header=?, header_style=?, width=?) -> Table
+    let table_policy = policy;
     env.add_function(
         "table",
-        |columns: Value, kwargs: minijinja::value::Kwargs| -> Result<Value, minijinja::Error> {
+        move |columns: Value, kwargs: minijinja::value::Kwargs| -> Result<Value, minijinja::Error> {
             let cols = parse_columns(&columns)?;
             let separator = kwargs
                 .get::<Option<String>>("separator")?
@@ -260,7 +299,8 @@ fn register_table_functions(env: &mut Environment<'static>) {
             }
 
             let spec = builder.build();
-            let mut table = Table::new(spec, width).border(parse_border_style(&border));
+            let mut table = Table::with_ambiguous_width(spec, width, table_policy.get())
+                .border(parse_border_style(&border));
 
             // Set header if provided
             if let Some(h) = header {
@@ -699,7 +739,15 @@ fn parse_border_style(s: &str) -> BorderStyle {
 /// };
 /// ```
 pub fn formatter_from_type<T: Tabular>(width: usize) -> Value {
-    let formatter = TabularFormatter::from_type::<T>(width);
+    formatter_from_type_with_ambiguous_width::<T>(width, crate::AmbiguousWidth::Narrow)
+}
+
+/// Creates a MiniJinja formatter value from a `Tabular` type with an explicit policy.
+pub fn formatter_from_type_with_ambiguous_width<T: Tabular>(
+    width: usize,
+    policy: crate::AmbiguousWidth,
+) -> Value {
+    let formatter = TabularFormatter::from_type_with_ambiguous_width::<T>(width, policy);
     Value::from_object(formatter)
 }
 
@@ -731,7 +779,22 @@ pub fn formatter_from_type<T: Tabular>(width: usize) -> Value {
 /// };
 /// ```
 pub fn table_from_type<T: Tabular>(width: usize, border: BorderStyle, use_headers: bool) -> Value {
-    let mut table = Table::from_type::<T>(width).border(border);
+    table_from_type_with_ambiguous_width::<T>(
+        width,
+        border,
+        use_headers,
+        crate::AmbiguousWidth::Narrow,
+    )
+}
+
+/// Creates a decorated MiniJinja table value with an explicit policy.
+pub fn table_from_type_with_ambiguous_width<T: Tabular>(
+    width: usize,
+    border: BorderStyle,
+    use_headers: bool,
+    policy: crate::AmbiguousWidth,
+) -> Value {
+    let mut table = Table::from_type_with_ambiguous_width::<T>(width, policy).border(border);
     if use_headers {
         table = table.header_from_columns();
     }
@@ -744,27 +807,34 @@ pub fn table_from_type<T: Tabular>(width: usize, border: BorderStyle, use_header
 /// width measurement is done on the stripped text, and tags are preserved in the
 /// output when padding. When truncation is needed, tags are stripped first since
 /// the visible content exceeds the available width.
-fn format_col(text: &str, width: usize, align: &str, truncate: &str, ellipsis: &str) -> String {
+fn format_col_with_policy(
+    text: &str,
+    width: usize,
+    align: &str,
+    truncate: &str,
+    ellipsis: &str,
+    policy: crate::AmbiguousWidth,
+) -> String {
     if width == 0 {
         return String::new();
     }
 
     // Strip BBCode tags to measure visible width
     let stripped = strip_tags(text);
-    let visible_width = display_width(&stripped);
+    let visible_width = display_width_with_policy(&stripped, policy);
 
     if visible_width > width {
         // Content is genuinely too wide — truncate the stripped text
         let truncated = match truncate {
-            "start" => truncate_start(&stripped, width, ellipsis),
-            "middle" => truncate_middle(&stripped, width, ellipsis),
-            _ => truncate_end(&stripped, width, ellipsis),
+            "start" => truncate_start_with_policy(&stripped, width, ellipsis, policy),
+            "middle" => truncate_middle_with_policy(&stripped, width, ellipsis, policy),
+            _ => truncate_end_with_policy(&stripped, width, ellipsis, policy),
         };
         // Pad the truncated (tag-free) text
         match align {
-            "right" => pad_left(&truncated, width),
-            "center" => pad_center(&truncated, width),
-            _ => pad_right(&truncated, width),
+            "right" => pad_left_with_policy(&truncated, width, policy),
+            "center" => pad_center_with_policy(&truncated, width, policy),
+            _ => pad_right_with_policy(&truncated, width, policy),
         }
     } else {
         // Content fits — pad the original text, preserving BBCode tags

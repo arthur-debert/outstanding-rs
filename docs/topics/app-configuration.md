@@ -259,6 +259,17 @@ App::builder()
 ```
 
 Dynamic providers receive `RenderContext` with output mode, terminal width, and handler data.
+They also receive `ctx.ambiguous_width()`, the application's explicit
+East Asian Ambiguous character-width policy. Configure it at the rendering
+seam; narrow is the compatibility default and Standout does not infer a locale:
+
+```rust
+use standout::{AmbiguousWidth, cli::App};
+
+let app = App::builder()
+    .ambiguous_width(AmbiguousWidth::Wide)
+    .build()?;
+```
 
 ## Topics
 

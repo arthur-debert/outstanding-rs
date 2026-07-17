@@ -20,6 +20,15 @@ use std::rc::Rc;
 use super::AppBuilder;
 
 impl AppBuilder {
+    /// Selects how East Asian Ambiguous characters occupy terminal columns.
+    ///
+    /// Narrow is the compatibility default. Standout does not infer this from
+    /// locale settings.
+    pub fn ambiguous_width(mut self, policy: crate::AmbiguousWidth) -> Self {
+        self.ambiguous_width = policy;
+        self
+    }
+
     /// Adds a static context value available to all templates.
     ///
     /// Static context values are created once and reused for all renders.

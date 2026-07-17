@@ -1,0 +1,1 @@
+- Add an explicit narrow/wide East Asian Ambiguous character-width policy (issue #207, PR #210): App and direct Renderer configuration, tabular layout, MiniJinja filters, and TestHarness now share one authoritative measurement seam while narrow remains the compatibility default.

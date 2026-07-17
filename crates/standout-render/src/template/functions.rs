@@ -993,9 +993,17 @@ pub fn render_auto_with_engine_split(
 
         // Pass 1: Render template (this is the raw/intermediate output)
         let raw_output = if engine.has_template(template) {
-            engine.render_named(template, &combined_value)?
+            engine.render_named_with_width(
+                template,
+                &combined_value,
+                render_context.ambiguous_width(),
+            )?
         } else {
-            engine.render_template(template, &combined_value)?
+            engine.render_template_with_width(
+                template,
+                &combined_value,
+                render_context.ambiguous_width(),
+            )?
         };
 
         // Pass 2: Apply styles to get formatted output
