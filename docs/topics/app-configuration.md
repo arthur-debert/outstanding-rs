@@ -200,6 +200,60 @@ With this configuration:
 - `myapp --output=json` becomes `myapp list --output=json`
 - `myapp add foo` stays as `myapp add foo` (explicit command takes precedence)
 
+Default resolution applies to both the integrated dispatch path (`run`, `dispatch_from`, `run_to_string`) and configured parsing (`parse_from`, `get_matches_from`). If you parse first and build dispatch state afterwards, the matches you get back already name the resolved command.
+
+### Invocation-Aware Defaults
+
+A fixed name can't express "it depends". `default_command_with` chooses the default per invocation:
+
+```rust
+App::builder()
+    .default_command_with(|ctx| {
+        Some(if ctx.stdin_is_piped() { "add" } else { "list" }.to_string())
+    })
+    .command("list", list_handler, "list.j2")
+    .command("add", add_handler, "add.j2")
+```
+
+- `myapp` at a terminal becomes `myapp list`
+- `cat notes.txt | myapp` becomes `myapp add`, which reads the pipe
+- `myapp done 3` stays as `myapp done 3`
+
+The resolver receives a `DefaultCommandContext` exposing only the facts needed to pick a command:
+
+| Method | Fact |
+| --- | --- |
+| `matches()` | The parsed root `ArgMatches` — globals and root flags |
+| `app_state::<T>()` | Read-only app state registered via `.app_state(...)` |
+| `stdin_is_terminal()` / `stdin_is_piped()` | Whether stdin is redirected |
+
+**Stdin is never read during resolution.** The terminal check is the same non-consuming `StdinReader::is_terminal` seam the input system uses, so a handler's `InputChain` still consumes the pipe normally afterwards. This also means piped-but-empty stdin is a *pipe*, not a terminal — emptiness is only knowable by reading, which resolution never does. If empty input should be an error, that's the receiving command's `InputChain` policy, not the resolver's.
+
+### Ordering guarantees
+
+Resolution runs only after Clap has already parsed a naked invocation successfully, so Clap stays authoritative:
+
+- **Explicit and nested commands** short-circuit resolution — it never runs.
+- **`--help` / `--version`** short-circuit inside Clap before resolution is reached.
+- **Invalid syntax** stays a Clap usage error (exit 2); the resolver never sees it.
+
+Note that a naked invocation only *reaches* resolution if it parses. With `#[command(subcommand)] command: Commands`, Clap rejects a bare `myapp` before Standout is involved — make the field `Option<Commands>` to let it through.
+
+### Combining both
+
+Both may be configured together. The resolver is consulted first; returning `None` declines to the static default:
+
+```rust
+App::builder()
+    // Pipes mean `add`; everything else falls back to `list`.
+    .default_command("list")
+    .default_command_with(|ctx| ctx.stdin_is_piped().then(|| "add".to_string()))
+```
+
+Returning a name that isn't a command of your `clap::Command` fails the run with `RunErrorKind::DefaultCommand` (exit 1), carrying a diagnostic that names the offending resolver output and lists the valid commands. A resolver naming a command the CLI doesn't have is an application bug, so it's reported as one rather than reaching Clap as a usage error blaming the user. Return `None` to decline.
+
+Validation is against your `clap::Command`'s names, not Standout's registered handlers — so partial adoption stays coherent: resolving to a Clap command Standout doesn't handle yields `NoMatch`, exactly as typing it explicitly would.
+
 ### With Dispatch Macro
 
 Use the `#[dispatch(default)]` attribute to mark a variant as the default:

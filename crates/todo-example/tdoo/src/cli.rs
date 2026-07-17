@@ -5,8 +5,11 @@ use std::path::PathBuf;
 #[derive(Parser)]
 #[command(name = "tdoo", about = "A tiny todo list - the Standout sample app")]
 pub(crate) struct Cli {
+    /// Optional so a naked `tdoo` parses successfully and reaches Standout's
+    /// default-command resolution (see `app::build`) instead of failing as a
+    /// clap usage error.
     #[command(subcommand)]
-    pub(crate) command: Commands,
+    pub(crate) command: Option<Commands>,
 }
 
 #[derive(Subcommand)]

@@ -45,7 +45,7 @@ use std::collections::HashMap;
 use std::path::PathBuf;
 use std::rc::Rc;
 
-use super::dispatch::DispatchFn;
+use super::dispatch::{insert_default_command, DispatchFn};
 use super::group::CommandRecipe;
 use super::handler::{CommandContext, Extensions, HandlerResult, Output as HandlerOutput};
 use super::help::{render_help, render_help_with_topics, CommandGroup, HelpConfig};
@@ -120,8 +120,11 @@ pub struct AppBuilder {
     pub(crate) context_registry: ContextRegistry,
     pub(crate) template_dir: Option<PathBuf>,
     pub(crate) template_ext: String,
-    /// Default command to use when no subcommand is specified
+    /// Static default command to use when no subcommand is specified
     pub(crate) default_command: Option<String>,
+    /// Invocation-aware default command chooser, consulted before the static
+    /// default. See [`crate::cli::default_command`].
+    pub(crate) default_command_resolver: Option<crate::cli::DefaultCommandResolver>,
     /// Whether to include framework-supplied templates (default: true)
     pub(crate) include_framework_templates: bool,
     /// Whether to include framework-supplied styles (default: true)
@@ -177,6 +180,7 @@ impl AppBuilder {
             template_dir: None,
             template_ext: ".j2".to_string(),
             default_command: None,
+            default_command_resolver: None,
             include_framework_templates: true,
             include_framework_styles: true,
             app_state: Rc::new(Extensions::new()),
@@ -532,6 +536,13 @@ impl AppBuilder {
     /// When `help_handling` is enabled, all help invocations (`help`, `--help`, `-h`)
     /// are intercepted and rendered through standout. When disabled, only output flags
     /// are augmented and clap handles help natively.
+    ///
+    /// A naked invocation resolves its default command here too — statically via
+    /// [`default_command`](Self::default_command) or per-invocation via
+    /// [`default_command_with`](Self::default_command_with) — so the returned
+    /// matches name the same command `dispatch_from` would have run. Consumers
+    /// that parse first and build dispatch state afterwards therefore see one
+    /// consistent answer.
     pub fn get_matches_from<I, T>(&self, cmd: Command, itr: I) -> HelpResult
     where
         I: IntoIterator<Item = T>,
@@ -551,6 +562,36 @@ impl AppBuilder {
                     return self.render_help_for_display_help_error(&mut cmd, &args);
                 }
                 return HelpResult::Error(e);
+            }
+        };
+
+        // Only a successful naked parse can resolve a default command.
+        let matches = match self.resolve_default_command(&cmd, &matches) {
+            Err(e) => {
+                return HelpResult::Error(
+                    cmd.clone()
+                        .error(clap::error::ErrorKind::InvalidSubcommand, e.to_string()),
+                )
+            }
+            Ok(None) => matches,
+            Ok(Some(default_cmd)) => {
+                let args: Vec<std::ffi::OsString> = insert_default_command(
+                    args.iter().map(|a| a.to_string_lossy().into_owned()),
+                    &default_cmd,
+                )
+                .into_iter()
+                .map(Into::into)
+                .collect();
+
+                match cmd.clone().try_get_matches_from(&args) {
+                    Ok(m) => m,
+                    Err(e) => {
+                        if self.help_handling && e.kind() == clap::error::ErrorKind::DisplayHelp {
+                            return self.render_help_for_display_help_error(&mut cmd, &args);
+                        }
+                        return HelpResult::Error(e);
+                    }
+                }
             }
         };
 

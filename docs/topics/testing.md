@@ -106,20 +106,69 @@ These drive `OutputMode::Auto`'s color decision and the render context's termina
 
 ```rust
 use std::sync::Arc;
-use standout_input::{
-    set_default_stdin_reader, reset_default_stdin_reader,
-    set_default_clipboard_reader, reset_default_clipboard_reader,
-};
-use standout_input::env::{MockStdin, MockClipboard};
+use standout_input::{set_default_stdin_reader, reset_default_stdin_reader};
+use standout_input::env::MockStdin;
 
-set_default_stdin_reader(Arc::new(MockStdin::piped("hello")));
+struct StdinGuard;
+
+impl StdinGuard {
+    fn install(reader: MockStdin) -> Self {
+        set_default_stdin_reader(Arc::new(reader));
+        Self
+    }
+}
+
+impl Drop for StdinGuard {
+    fn drop(&mut self) {
+        reset_default_stdin_reader();
+    }
+}
+
+let _stdin = StdinGuard::install(MockStdin::piped("hello"));
 // ... run test ...
-reset_default_stdin_reader();
 ```
+
+The guard resets even if the test panics. Use the same pattern with
+`set_default_clipboard_reader` / `reset_default_clipboard_reader` when testing
+the default clipboard seam.
 
 Handlers that use `StdinSource::new()` / `ClipboardSource::new()` / `read_if_piped()` pick up the mock transparently — no handler refactor needed.
 
 Handlers that need per-instance control keep using `StdinSource::with_reader(MockStdin::piped(...))` as before.
+
+### Testing invocation-aware default commands
+
+`default_command_with` resolves through the same `DefaultStdin` seam, so `TestHarness` drives it with no extra wiring:
+
+```rust
+// Piped stdin resolves the naked invocation to the piped entry point.
+TestHarness::new()
+    .piped_stdin("ship the docs\n")
+    .run(&app, cli::command(), ["tdoo"])
+    .assert_stdout_contains("Added");
+
+// A terminal resolves it to the interactive one.
+TestHarness::new()
+    .interactive_stdin()
+    .run(&app, cli::command(), ["tdoo"])
+    .assert_stdout_contains("Your Todos");
+```
+
+`piped_stdin("")` covers the **piped-but-empty** case: the resolver sees a pipe, not a terminal, because emptiness is only knowable by reading. Use it to assert that a receiving command's `InputChain` rejects empty input, rather than expecting resolution to route around it.
+
+`interactive_stdin()` is required for the terminal branch — without it the harness inherits the real stdin, which is *not* a terminal under a test runner, so a naked invocation would take the piped branch and the test would pass or fail depending on how it was launched.
+
+For the parse-only path (`get_matches_from` / `parse_from`) there's no harness entry point; install the override directly:
+
+```rust
+let _stdin = StdinGuard::install(MockStdin::terminal());
+match app.get_matches_from(cli::command(), ["tdoo"]) {
+    HelpResult::Matches(m) => assert_eq!(m.subcommand_name(), Some("list")),
+    other => panic!("expected matches, got {other:?}"),
+}
+```
+
+Both the harness and the manual override are process-global — mark these tests `#[serial]`.
 
 ### `standout-input` prompt responder
 

@@ -169,6 +169,18 @@ Command Dispatch:
   - insert_default_command(): add default subcommand
   - path_to_string() / string_to_path(): path conversion
 
+Default Command Resolution (naked invocations):
+  - .default_command(name): static default
+  - .default_command_with(resolver): invocation-aware default
+  - DefaultCommandContext: narrow resolver facts
+    - matches(): parsed root ArgMatches
+    - app_state::<T>(): read-only app state
+    - stdin_is_terminal() / stdin_is_piped(): non-consuming stdin fact
+  - Resolver wins over the static default; None declines to it
+  - Applies to dispatch_from/run/run_to_string and get_matches_from/parse_from
+  - Runs only after a successful naked parse; explicit/nested commands,
+    help, version, and usage errors are never affected
+
 Dispatch Derive Macro:
   - #[derive(Dispatch)]: generate dispatch from clap Subcommand enums
   - #[dispatch(handlers = path)]: module containing handlers
