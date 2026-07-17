@@ -1,6 +1,6 @@
-//! `#[handler]` proc macro for pure function handlers.
+//! `#[handler]` proc macro for typed handler adapters.
 //!
-//! This macro transforms pure Rust functions into Standout-compatible handlers,
+//! This macro transforms typed Rust functions into Standout-compatible handlers,
 //! extracting CLI arguments automatically and generating wrapper functions.
 //!
 //! # Example

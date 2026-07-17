@@ -13,9 +13,13 @@
 | `crates/standout-bbparser` | Semantic style-tag parsing and transformation |
 | `crates/standout-seeker` | In-memory typed filtering, ordering, and query parsing |
 | `crates/standout-test` | In-process application test harness |
-| `crates/todo-example` | Worked framework application and integration tests |
+| `crates/todo-example/todo-core` | CLI-free worked library: domain behavior and JSON persistence |
+| `crates/todo-example/tdoo` | Binary-only worked CLI: app wiring, adapters, views, assets, and harness tests |
 
-Start broad framework changes at `crates/todo-example/README.md` and `src/lib.rs`. Use `docs/SUMMARY.md` to locate guides and topics. Follow a claim into the owning crate's public types and integration tests before copying it.
+Start broad framework changes at `crates/todo-example/README.md`, then use
+`todo-core/src/lib.rs` for the library interface and `tdoo/src/app.rs` for CLI
+assembly. Use `docs/SUMMARY.md` to locate guides and topics. Follow a claim into
+the owning crate's public types and integration tests before copying it.
 
 ## Drift checks
 
@@ -28,6 +32,9 @@ Common copied examples can target older APIs. Confirm these current contracts:
 - `#[derive(Dispatch)]` maps to `handlers::name`; add `#[dispatch(pure)]` for a `#[handler]`-generated wrapper.
 - `TestHarness` mutations are process-global; every harness test is serial.
 - Structured output bypasses templates, so template fixes cannot change JSON/YAML/XML/CSV.
+- Domain serialization and CLI structured output are separate interfaces. Map
+  domain values into CLI-owned view DTOs rather than serializing persistence
+  types directly.
 - Embedded paths are resolved at compile time; debug hot reload depends on the original path remaining available.
 
 Do not infer a crate's role from its name. In particular, `standout-seeker` is a query engine, not a file/resource resolver.

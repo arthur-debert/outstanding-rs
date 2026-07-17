@@ -4,11 +4,15 @@ Choose the smallest boundary that covers the behavior:
 
 | Level | Covers | Tool |
 | --- | --- | --- |
-| Unit | Typed handler/application logic | Direct function call |
+| Core | Validation, filtering, state transitions, persistence | Library interface |
+| Adapter | CLI-to-core mapping and returned view DTOs | Direct typed handler call |
 | Integration | clap through handler, hooks, and rendering | `standout_test::TestHarness` |
 | End to end | Real process, PTY, signals, build/link behavior | `assert_cmd`, `expectrl`, or `rexpect` |
 
-Use direct tests for filtering, validation, state transitions, and returned data. With `#[handler]`, call the preserved typed function rather than constructing `ArgMatches` for the generated wrapper.
+Test filtering, validation, state transitions, and persistence directly through
+the CLI-free library interface. With `#[handler]`, call the preserved typed
+function to test flag/argument mapping and CLI-owned returned data rather than
+constructing `ArgMatches` for the generated wrapper.
 
 Use `TestHarness` when command registration, input/environment seams, templates, or output modes matter:
 
@@ -38,4 +42,8 @@ Every test using `TestHarness` must use `#[serial]`: its seams mutate process-gl
 
 The harness cannot provide a real PTY, deliver signals, mock subprocesses launched by application code, or validate build/link integration. Keep those cases in a small end-to-end suite. Place subprocess calls behind an application-owned trait when unit tests need a fake.
 
-Use JSON to assert returned shape, text/no-color for rendered strings, and terminal-debug for style tags. See `crates/standout-test/src/lib.rs`, `docs/topics/testing.md`, and `crates/todo-example/tests/integration.rs`.
+Use JSON to assert returned shape, text/no-color for rendered strings, and
+terminal-debug for style tags. See `crates/standout-test/src/lib.rs`,
+`docs/topics/testing.md`,
+`crates/todo-example/todo-core/src/store.rs`, and
+`crates/todo-example/tdoo/src/app.rs`.

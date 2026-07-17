@@ -7,6 +7,11 @@ description: Write or review documentation for the Standout Rust CLI framework. 
 
 Write practical documentation that leads with Standout's testable separation of command logic from shell presentation. Verify examples against current public Rust signatures and integration tests before publishing them.
 
+For production-shaped examples, state the stronger ownership invariant: the
+reusable library is fully CLI-free, while the binary package owns Clap,
+Standout, handlers, view DTOs, assets, environment lookup, app construction,
+and final output. Describe handlers as adapters, not as pure application logic.
+
 ## Place the content
 
 - Keep the project entry point in `README.md`; `crates/standout/README.md` should link rather than duplicate it.
@@ -28,7 +33,7 @@ Prefer one recommended path in the main example:
 | Templates and styles | File-based MiniJinja plus CSS |
 | Asset loading | `embed_templates!` and `embed_styles!` |
 | Execution | `app.run(...)`; `run_to_string(...)` only for capture or explicit result handling |
-| Testing | Direct handler tests first, then `TestHarness` for the pipeline |
+| Testing | Library tests, then direct handler tests, then `TestHarness` for the pipeline |
 
 Mention alternatives briefly unless the page specifically teaches them. Keep examples compilable, include necessary imports, and use convention-based names where possible.
 
@@ -46,40 +51,59 @@ When fallback code needs the unmatched `ArgMatches`, show `run_to_string(...)` a
 
 Use the shared todo application unless a feature requires a different domain:
 
+- `crates/todo-example/todo-core/` is the canonical reusable library.
+- `crates/todo-example/tdoo/` is the canonical binary-only CLI.
+- `docs/guides/minimal-single-crate.md` is only the compact introductory form;
+  do not use it to teach production package ownership.
+
 ```rust
-#[derive(Clone, serde::Serialize)]
-#[serde(rename_all = "lowercase")]
-pub enum Status {
-    Pending,
-    Done,
+// todo-core domain and persistence type
+#[derive(Clone, serde::Serialize, serde::Deserialize)]
+pub struct Todo {
+    pub id: u32,
+    pub title: String,
+    pub done: bool,
 }
 
-#[derive(Clone, serde::Serialize)]
-pub struct Todo {
+// tdoo CLI-owned structured output types
+#[derive(serde::Serialize)]
+pub struct TodoView {
+    pub id: u32,
     pub title: String,
-    pub status: Status,
+    pub done: bool,
 }
 
 #[derive(serde::Serialize)]
-pub struct TodoResult {
-    pub message: Option<String>,
-    pub todos: Vec<Todo>,
+pub struct TodoListView {
+    pub todos: Vec<TodoView>,
+    pub total: usize,
+}
+
+#[derive(serde::Serialize)]
+pub struct TodoActionView {
+    pub message: String,
+    pub todo: TodoView,
 }
 ```
 
 ```jinja
-[title]My Todos[/title]
-{% for todo in todos %}
-[{{ todo.status }}]{{ todo.status }}[/{{ todo.status }}]  {{ todo.title }}
-{% endfor %}
-{% if message %}[muted]{{ message }}[/muted]{% endif %}
+[title]Your Todos[/title] [muted]({{ total }})[/muted]
+{% if total == 0 %}
+[muted]Nothing here yet. Add one with `tdoo add --title "<title>"`.[/muted]
+{%- else %}
+{% for todo in todos -%}
+{%- set status = "done" if todo.done else "pending" -%}
+[index]#{{ todo.id }}[/index]  [{{ status }}]{{ todo.title }}[/{{ status }}]
+{% endfor -%}
+{%- endif %}
 ```
 
 ```css
 .title { color: cyan; font-weight: bold; }
-.done { color: green; }
-.pending { color: yellow; }
-.muted { opacity: 0.6; }
+.index { color: yellow; }
+.done { color: gray; text-decoration: line-through; }
+.pending { font-weight: bold; }
+.muted { color: gray; }
 ```
 
 Cross-link from guides to deeper topics. Use relative links that resolve from the source file and check them after moves.
@@ -87,6 +111,8 @@ Cross-link from guides to deeper topics. Use relative links that resolve from th
 ## Review bar
 
 - Lead with testability and the logic/presentation boundary, not visual polish alone.
+- Keep application behavior in the CLI-free library and show handlers mapping
+  to CLI-owned view DTOs.
 - Make partial adoption prominent where a reader may already have a CLI.
 - Show structured output for automation and direct handler assertions for logic.
 - Explain runtime override trade-offs alongside compile-time embedding.

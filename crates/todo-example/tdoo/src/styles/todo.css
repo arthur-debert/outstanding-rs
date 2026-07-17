@@ -1,0 +1,24 @@
+/* Semantic styles stay with the CLI presentation layer. */
+
+.title {
+    color: cyan;
+    font-weight: bold;
+}
+
+.index { color: yellow; }
+.muted { color: gray; }
+.ok { color: green; font-weight: bold; }
+.pending { font-weight: bold; }
+.done { color: gray; text-decoration: line-through; }
+
+@media (prefers-color-scheme: light) {
+    .title { color: blue; }
+    .pending { color: black; }
+    .muted { color: #555555; }
+}
+
+@media (prefers-color-scheme: dark) {
+    .title { color: cyan; }
+    .pending { color: white; }
+    .muted { color: #999999; }
+}

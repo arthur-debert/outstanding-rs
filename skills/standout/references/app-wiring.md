@@ -1,6 +1,9 @@
 # App and command wiring
 
-Build the whole environment before dispatch: state, embedded presentation assets, theme, commands, and hooks.
+App construction belongs in the CLI package. Build the whole shell environment
+before dispatch: CLI-resolved dependencies, embedded presentation assets,
+theme, commands, and hooks. Reusable libraries must not build or return a
+Standout `App`.
 
 ```rust
 use standout::cli::App;
@@ -54,4 +57,6 @@ Use `run_to_string` when code needs rendered output, errors, binary bytes, or th
 
 Embedded resources are compile-time bundles; debug builds re-read the original source path when available. Explicit template names include their extension. Convention-based resolution uses the configured extension (`.j2` by default).
 
-Evidence: `crates/todo-example/src/lib.rs`, `crates/standout/src/cli/builder/`, and `crates/standout-macros/src/dispatch.rs`.
+Evidence: `crates/todo-example/tdoo/src/app.rs`,
+`crates/standout/src/cli/builder/`, and
+`crates/standout-macros/src/dispatch.rs`.

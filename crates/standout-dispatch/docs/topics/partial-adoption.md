@@ -168,7 +168,7 @@ fn run_with_dispatch<T: Serialize>(
 Each migrated command gains:
 
 1. **Structured output** — JSON/YAML support
-2. **Testable logic** — Handler is a pure function
+2. **Testable adapter** — Handler inputs and returned view data are explicit
 3. **Error handling** — `?` operator, proper error types
 4. **Hook points** — Add logging, auth without touching handler
 

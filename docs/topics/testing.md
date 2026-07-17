@@ -10,27 +10,39 @@ Most CLI frameworks punt on testing. Users end up with one of two patterns: (a) 
 
 This is a mix of architectural choices (which move more testable code closer to the surface) and concrete tooling (`standout-test`, environment detectors, default reader shims).
 
-## Three levels, three tools
+## Four levels, four tools
 
-A Standout app has three testing layers, each appropriate to a different kind of change:
+A production-shaped Standout app has four testing layers, each appropriate to a different kind of change:
 
 | Level | What it covers | Tool | Speed |
 | --- | --- | --- | --- |
-| Unit | A single handler's logic, as a pure function | Plain `#[test]` + direct call | Microseconds |
+| Core | Library validation, filtering, transitions, persistence | Plain `#[test]` through the library interface | Microseconds |
+| Adapter | CLI-to-core mapping and returned view DTOs | Direct typed handler call | Microseconds |
 | Integration | Full dispatch pipeline in-process: argv → handler → render | `standout-test::TestHarness` | Microseconds to low milliseconds |
 | End-to-end | Real process, real PTY, real signals, real subprocess fan-out | `assert_cmd`, `expectrl`, `rexpect` | Tens to hundreds of milliseconds per test |
 
-Choose by what the change touches. A bug in a filter predicate belongs in level 1. A bug in "does this command actually read `$TODO_FILE`?" belongs in level 2. A bug in raw-mode TUI redraw belongs in level 3 — and is a signal to look hard at whether the logic in question could be extracted.
+Choose by what the change touches. A bug in a filter predicate belongs in the
+core library. A bug mapping `--all` to that filter belongs in a direct handler
+test. A bug in "does this command actually read piped stdin?" belongs in the
+harness. A bug in raw-mode TUI redraw belongs in an end-to-end test.
 
 ## What each layer gives you for free
 
-### Handlers are pure functions
+### The library owns behavior; handlers are adapters
 
-The `HandlerResult<T>` contract is that a handler takes `&ArgMatches` + `&CommandContext` and returns a serializable value. It doesn't touch stdout. It doesn't render. It returns data.
+Keep the reusable application library free of Clap, Standout, command contexts,
+environment lookup, templates, and output. Test filtering, validation, state
+transitions, and persistence through that library's interface.
 
-This alone covers the majority of a real CLI's logic surface. You test handlers the way you test any Rust function: construct inputs, call, assert on the output struct. No stdout capture, no regex.
+The handler then maps CLI input to a library call and maps the result to a
+CLI-owned serializable view model. It does not touch stdout or render. With
+`#[handler]`, test this mapping by calling the preserved typed function and
+asserting on `Output::Render` data.
 
-For the canonical example, see [the Introduction to Standout](../guides/intro-to-standout.md#2-hard-split-logic-and-formatting). The key invariant is that *nothing about the handler depends on terminal state*.
+For the canonical example, see the
+[production-shaped application](../guides/production-shaped-example.md). The
+key invariant is stronger than terminal independence: *nothing in the reusable
+library depends on the CLI*.
 
 ### Clap is already tested
 
@@ -230,6 +242,6 @@ The goal is to keep level-3 tests small and intentional — the cases where you 
 ## See also
 
 - [Introduction to Testing](../guides/intro-to-testing.md) — the tutorial
-- [Handler Contract](../crates/dispatch/topics/handler-contract.md) — what makes a handler pure
+- [Handler Contract](../crates/dispatch/topics/handler-contract.md) — typed handler adapter contract
 - [Output Modes](./output-modes.md) — forcing deterministic output
 - [Introduction to Input](../crates/input/guides/intro-to-input.md) — input sources and their mock variants

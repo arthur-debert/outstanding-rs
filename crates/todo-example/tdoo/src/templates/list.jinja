@@ -1,6 +1,6 @@
 [title]Your Todos[/title] [muted]({{ total }})[/muted]
 {% if total == 0 %}
-[muted]Nothing here yet. Add one with `tdoo add "<title>"`.[/muted]
+[muted]Nothing here yet. Add one with `tdoo add --title "<title>"`.[/muted]
 {%- else %}
 {% for todo in todos -%}
 {%- set status = "done" if todo.done else "pending" -%}

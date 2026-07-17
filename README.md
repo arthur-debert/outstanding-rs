@@ -28,26 +28,36 @@ fn list_command(show_all: bool) {
 
 ## The Solution
 
-With Standout, handlers return data. The framework handles rendering:
+With Standout, a CLI-free library owns application behavior. Handlers are thin
+adapters that return CLI-owned view data; the framework handles rendering:
 
 ```rust
-fn list_handler(matches: &ArgMatches, _ctx: &CommandContext) -> HandlerResult<TodoResult> {
-    let show_all = matches.get_flag("all");
-    let todos = storage::list()?
-        .into_iter()
-        .filter(|t| show_all || t.status == Status::Pending)
-        .collect();
-    Ok(Output::Render(TodoResult { todos }))
+#[handler]
+fn list(
+    #[flag] all: bool,
+    #[ctx] ctx: &CommandContext,
+) -> Result<Output<TodoListView>, anyhow::Error> {
+    let store = ctx.app_state.get_required::<TodoStore>()?;
+    let filter = if all { TodoFilter::All } else { TodoFilter::Pending };
+    let todos = store.list(filter).into_iter().map(TodoView::from).collect();
+    let total = todos.len();
+    Ok(Output::Render(TodoListView { todos, total }))
 }
 
 #[test]
-fn test_list_filters_completed() {
-    let result = list_handler(&matches, &ctx).unwrap();
-    assert!(result.todos.iter().all(|t| t.status == Status::Pending));
+fn test_list_returns_pending_view() {
+    let Output::Render(result) = list(false, &ctx).unwrap() else {
+        panic!("expected rendered data");
+    };
+    assert!(result.todos.iter().all(|todo| !todo.done));
 }
 ```
 
-Because your logic returns a struct, you test the struct. No stdout capture, no regex, no brittleness.
+The core behavior is tested through the library interface. The direct handler
+test checks only adapter and view-model behavior—no stdout capture, regex, or
+template coupling. See the
+**[production-shaped example](https://standout.magik.works/guides/production-shaped-example.html)**
+for the complete two-package layout.
 
 For full-pipeline tests — "run the CLI as if it were invoked from a shell, with *this* env, *this* piped stdin, *these* fixture files" — the `standout-test` crate runs the whole app in-process:
 
@@ -99,7 +109,7 @@ pub enum Commands {
 }
 
 let app = App::builder()
-    .commands(Commands::dispatch_config())
+    .commands(Commands::dispatch_config())?
     .templates(embed_templates!("src/templates"))
     .styles(embed_styles!("src/styles"))
     .build()?;

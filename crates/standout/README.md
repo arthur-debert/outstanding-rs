@@ -5,14 +5,15 @@ A CLI framework for Rust that enforces separation between logic and presentation
 **Test your data. Render your view.**
 
 ```rust
-use standout::cli::{App, HandlerResult, Output, CommandContext};
-use clap::ArgMatches;
+use standout::cli::{CommandContext, Output};
+use standout::handler;
 use serde::Serialize;
 
 #[derive(Serialize)]
 struct ListResult { items: Vec<String>, total: usize }
 
-fn list_handler(_m: &ArgMatches, _ctx: &CommandContext) -> HandlerResult<ListResult> {
+#[handler]
+fn list(#[ctx] _ctx: &CommandContext) -> Result<Output<ListResult>, anyhow::Error> {
     let items = storage::list()?;
     Ok(Output::Render(ListResult { total: items.len(), items }))
 }
@@ -20,10 +21,17 @@ fn list_handler(_m: &ArgMatches, _ctx: &CommandContext) -> HandlerResult<ListRes
 // Test the handler directly—no stdout capture needed
 #[test]
 fn test_list() {
-    let result = list_handler(&matches, &ctx).unwrap();
+    let Output::Render(result) = list(&ctx).unwrap() else {
+        panic!("expected rendered data");
+    };
     assert_eq!(result.total, 3);
 }
 ```
+
+In a full application, `storage` and application behavior belong in a
+CLI-free library. The handler belongs in the binary package and adapts library
+results into CLI-owned serializable view models. See the
+[production-shaped example](https://standout.magik.works/guides/production-shaped-example.html).
 
 ## What is Standout?
 
@@ -48,15 +56,23 @@ CLI code that mixes logic with `println!` is impossible to unit test. With Stand
 
 ```toml
 [dependencies]
-standout = "2.1"
+standout = "7"
+standout-dispatch = "7" # required by #[handler] and #[derive(Dispatch)]
 clap = { version = "4", features = ["derive"] }
 serde = { version = "1", features = ["derive"] }
+anyhow = "1"
 ```
 
 ```rust
 use standout::cli::{App, Dispatch, CommandContext, HandlerResult, Output};
 use standout::{embed_templates, embed_styles};
-use clap::Subcommand;
+use clap::{ArgMatches, CommandFactory, Parser, Subcommand};
+
+#[derive(Parser)]
+struct Cli {
+    #[command(subcommand)]
+    command: Commands,
+}
 
 #[derive(Subcommand, Dispatch)]
 #[dispatch(handlers = handlers)]
@@ -65,6 +81,8 @@ pub enum Commands {
 }
 
 mod handlers {
+    use super::*;
+
     pub fn list(_m: &ArgMatches, _ctx: &CommandContext) -> HandlerResult<Vec<String>> {
         Ok(Output::Render(vec!["item-1".into(), "item-2".into()]))
     }
@@ -72,7 +90,7 @@ mod handlers {
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let app = App::builder()
-        .commands(Commands::dispatch_config())
+        .commands(Commands::dispatch_config())?
         .templates(embed_templates!("src/templates"))
         .styles(embed_styles!("src/styles"))
         .build()?;

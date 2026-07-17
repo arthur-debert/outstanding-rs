@@ -25,51 +25,60 @@ The honest answer is that most CLI codebases *don't* keep logic and output clean
 
 ## 2. The free win: architecture
 
-Standout's first contribution to testability has nothing to do with testing tools. It's the architecture itself.
+Standout's first contribution to testability has nothing to do with testing
+tools. It is the architecture around the framework: a CLI-free library owns
+behavior, and Standout handlers adapt shell input and library results.
 
-A handler is a pure function:
+The library exposes ordinary Rust behavior:
 
 ```rust
-pub fn list(m: &ArgMatches, ctx: &CommandContext) -> HandlerResult<TodoResult> {
-    let show_all = m.get_flag("all");
-    let todos = storage::list()?
-        .into_iter()
-        .filter(|t| show_all || matches!(t.status, Status::Pending))
-        .collect();
-    Ok(Output::Render(TodoResult { todos }))
+pub fn list(&self, filter: TodoFilter) -> Vec<Todo> {
+    // filtering and persistence details stay behind this interface
 }
 ```
 
-Output is data. Rendering lives somewhere else — a template, a stylesheet. The handler never touches stdout.
+The handler is a typed adapter returning CLI view data:
 
-This means you can test the handler the way you test any other Rust function:
+```rust
+#[handler]
+pub fn list(
+    #[flag] all: bool,
+    #[ctx] ctx: &CommandContext,
+) -> Result<Output<TodoListView>, anyhow::Error> {
+    let store = ctx.app_state.get_required::<TodoStore>()?;
+    let filter = if all { TodoFilter::All } else { TodoFilter::Pending };
+    let todos = store.list(filter).into_iter().map(TodoView::from).collect();
+    let total = todos.len();
+    Ok(Output::Render(TodoListView { todos, total }))
+}
+```
+
+Test behavior through the library interface, then test only adapter mapping in
+the handler:
 
 ```rust
 #[test]
 fn list_filters_completed_by_default() {
-    let matches = build_matches(&["list"]);
-    let ctx = CommandContext::default();
-
-    let Output::Render(result) = list(&matches, &ctx).unwrap() else {
-        panic!("expected Render");
-    };
-
-    assert!(result.todos.iter().all(|t| matches!(t.status, Status::Pending)));
+    let store = fixture_store();
+    let todos = store.list(TodoFilter::Pending);
+    assert!(todos.iter().all(|todo| !todo.done));
 }
 
 #[test]
-fn list_with_all_returns_everything() {
-    let matches = build_matches(&["list", "--all"]);
-    let ctx = CommandContext::default();
-
-    let Output::Render(result) = list(&matches, &ctx).unwrap() else { panic!() };
-    assert_eq!(result.todos.len(), storage::list().unwrap().len());
+fn list_handler_maps_pending_view() {
+    let ctx = context_with_fixture_store();
+    let Output::Render(result) = list(false, &ctx).unwrap() else {
+        panic!("expected Render");
+    };
+    assert!(result.todos.iter().all(|todo| !todo.done));
 }
 ```
 
 No stdout capture. No regex. No subprocess. Just a function call and a struct assertion. The test reads like the behavior it describes.
 
-This covers the majority of real logic — filtering, aggregation, validation, business rules. Standout didn't *invent* the idea of testing a pure function; it made sure the surrounding framework doesn't tempt you away from it.
+This keeps the majority of real logic—filtering, aggregation, validation, and
+business rules—independent of the shell. Standout keeps the adapter data-first
+so the CLI seam is directly testable too.
 
 > **Verify:** Pick a handler in your app. Write a test that calls it directly and asserts on the returned data. If you can't, the handler has logic tangled with side effects — that's the real bug.
 
@@ -77,7 +86,8 @@ This covers the majority of real logic — filtering, aggregation, validation, b
 
 **What you got for free:**
 
-- Handlers are pure functions; logic tests are straightforward `fn() -> Result<T, E>` tests.
+- Core behavior is tested through a CLI-free library interface.
+- Typed handlers are directly testable adapters returning `Output<T>`.
 - Output data is a `Serialize` struct. You can also assert on it as JSON (useful for cross-language consumers).
 - Argument parsing is clap's problem. Clap has its own extensive test suite — you don't need to re-test it.
 - Template rendering is `standout-render`'s problem. Its test suite covers MiniJinja syntax, tag parsing, style resolution, output modes.

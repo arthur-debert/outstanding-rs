@@ -10,7 +10,7 @@ Shell commands excel at composition: `ls | grep foo | head -5`. Your CLI's outpu
 
 - **Separation of concerns**: Handlers produce data, piping is an output concern
 - **User choice**: Let users decide what to do with output
-- **Testability**: Handlers remain pure functions that return data
+- **Testability**: Handler adapters keep returning data through an explicit seam
 
 Standout's piping integrates as a post-output hook, running *after* rendering completes. Your handler and template are unchanged—piping is purely additive.
 

@@ -1,6 +1,8 @@
 # Execution Model
 
-`standout-dispatch` manages a strict linear pipeline from CLI input to rendered output. This explicitly separated flow ensures that logic (handlers) remains decoupled from presentation (renderers) and side-effects (hooks).
+`standout-dispatch` manages a strict linear pipeline from CLI input to rendered
+output. This explicitly separated flow keeps handler adapters decoupled from
+presentation (renderers) and shell pipeline side effects (hooks).
 
 ---
 
@@ -16,7 +18,11 @@ Each stage has a clear responsibility:
 
 **Pre-dispatch Hook**: Runs before the handler. Can abort execution (e.g., auth checks).
 
-**Handler**: Your logic function executes. It receives `ArgMatches` and `CommandContext`, returning a `HandlerResult<T>`—either data to render, a silent marker, or binary content. For simpler handlers, use the `#[handler]` macro to write pure functions that return `Result<T, E>` directly (see [Handler Contract](handler-contract.md)).
+**Handler**: Your CLI adapter executes. It receives `ArgMatches` and
+`CommandContext`, calls the CLI-free application library, and returns a
+`HandlerResult<T>`—either data to render, a silent marker, or binary content.
+For simpler adapters, use the `#[handler]` macro to write typed functions that
+return `Result<T, E>` directly (see [Handler Contract](handler-contract.md)).
 
 **Post-dispatch Hook**: Runs after the handler, before rendering. Can transform data.
 

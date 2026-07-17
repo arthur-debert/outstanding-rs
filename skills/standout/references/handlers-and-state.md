@@ -6,10 +6,24 @@ Use the `#[handler]` macro to keep clap extraction outside the typed function:
 use serde::Serialize;
 use standout::cli::{CommandContext, Output};
 use standout::handler;
+use todo_core::{Todo, TodoFilter, TodoStore};
 
 #[derive(Serialize)]
-pub struct ListResult {
-    pub items: Vec<Item>,
+pub struct TodoView {
+    pub id: u32,
+    pub title: String,
+    pub done: bool,
+}
+
+impl From<Todo> for TodoView {
+    fn from(todo: Todo) -> Self {
+        Self { id: todo.id, title: todo.title, done: todo.done }
+    }
+}
+
+#[derive(Serialize)]
+pub struct TodoListView {
+    pub todos: Vec<TodoView>,
     pub total: usize,
 }
 
@@ -17,11 +31,12 @@ pub struct ListResult {
 pub fn list(
     #[flag] all: bool,
     #[ctx] ctx: &CommandContext,
-) -> Result<Output<ListResult>, anyhow::Error> {
-    let store = ctx.app_state.get_required::<Store>()?;
-    let items = store.list(all)?;
-    let total = items.len();
-    Ok(Output::Render(ListResult { items, total }))
+) -> Result<Output<TodoListView>, anyhow::Error> {
+    let store = ctx.app_state.get_required::<TodoStore>()?;
+    let filter = if all { TodoFilter::All } else { TodoFilter::Pending };
+    let todos: Vec<_> = store.list(filter).into_iter().map(TodoView::from).collect();
+    let total = todos.len();
+    Ok(Output::Render(TodoListView { todos, total }))
 }
 ```
 
@@ -33,8 +48,13 @@ The macro preserves `list(all, ctx)` and generates `list__handler(matches, ctx)`
 let Output::Render(result) = list(false, &ctx).unwrap() else {
     panic!("expected rendered data");
 };
-assert_eq!(result.total, result.items.len());
+assert_eq!(result.total, result.todos.len());
 ```
+
+Handlers are CLI adapters, not the home of reusable application behavior. A
+handler may map a flag to a library type, obtain a dependency from app state,
+call the library, and map the result to a CLI-owned view DTO. Validation,
+filtering rules, and state transitions belong behind the library interface.
 
 ## Output contract
 
@@ -49,6 +69,10 @@ Do not branch presentation in a handler. `CommandContext` contains `command_path
 ## State boundaries
 
 Register long-lived values once with `.app_state(value)` and retrieve them by concrete type with `ctx.app_state.get_required::<T>()`. Use interior mutability when shared state must mutate.
+
+Construct those dependencies before app assembly. Environment lookup and
+configuration-file conventions belong in the CLI; pass explicit values such as
+paths or URLs into the CLI-free library.
 
 Inject request-only values in a pre-dispatch hook with `ctx.extensions.insert(value)` and retrieve them with `ctx.extensions.get_required::<T>()`. Declarative named inputs use a typed bag in extensions; access those through `CommandContextInput::input`, not directly.
 

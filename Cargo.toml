@@ -10,5 +10,6 @@ members = [
     "crates/standout-pipe",
     "crates/standout-seeker",
     "crates/standout-test",
-    "crates/todo-example",
+    "crates/todo-example/todo-core",
+    "crates/todo-example/tdoo",
 ]

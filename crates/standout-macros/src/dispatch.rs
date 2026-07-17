@@ -82,7 +82,7 @@ struct VariantAttrs {
     pipe_to_clipboard: bool,
     /// Handler only takes `&ArgMatches` (no `&CommandContext`)
     simple: bool,
-    /// Handler is a pure function wrapped by `#[handler]` (auto-appends `__handler`)
+    /// Handler is a typed function wrapped by `#[handler]` (auto-appends `__handler`)
     pure: bool,
 }
 
