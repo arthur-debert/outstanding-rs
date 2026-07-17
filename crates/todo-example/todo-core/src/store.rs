@@ -74,13 +74,19 @@ impl TodoStore {
     /// rows, and what the CSV could not represent. Nothing is written: the
     /// caller owns the destination, so the caller owns the write.
     pub fn export_csv(&self, filter: TodoFilter) -> CsvExport {
-        let selected = self.list(filter);
-        let completed = self
-            .list(TodoFilter::All)
+        let current = self.lock();
+        let selected = current
+            .todos
             .iter()
-            .filter(|todo| todo.done)
-            .count();
-        export_csv(&selected, filter, completed)
+            .filter(|todo| filter == TodoFilter::All || !todo.done)
+            .cloned()
+            .collect::<Vec<_>>();
+        let omitted_completed = if filter == TodoFilter::Pending {
+            current.todos.iter().filter(|todo| todo.done).count()
+        } else {
+            0
+        };
+        export_csv(&selected, filter, omitted_completed)
     }
 
     /// Marks todo `id` done and persists the transition.

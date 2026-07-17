@@ -672,7 +672,7 @@ fn emit_artifact<W: Write, E: Write>(
     written.err().map(|error| {
         RunError::new(
             format!("Error writing artifact report: {}", error),
-            RunErrorKind::FinalWrite(OutputKind::Text),
+            RunErrorKind::FinalWrite(OutputKind::Artifact),
         )
     })
 }
@@ -2724,6 +2724,43 @@ header:
         assert_eq!(
             binary_failure.unwrap().kind(),
             RunErrorKind::FinalWrite(OutputKind::Binary)
+        );
+    }
+
+    #[test]
+    fn artifact_report_write_failures_keep_artifact_kind_on_both_channels() {
+        let file_run = ArtifactRun::new(
+            vec![0, 1],
+            None,
+            ArtifactReceipt::new(ArtifactDestination::File("out.bin".into()), 2),
+            Some("wrote out.bin".into()),
+        );
+        let (_, file_report_failure) = emit_run_result(
+            &RunResult::Artifact(file_run),
+            &mut FailingWriter,
+            &mut Vec::new(),
+        );
+        assert_eq!(
+            file_report_failure.unwrap().kind(),
+            RunErrorKind::FinalWrite(OutputKind::Artifact)
+        );
+
+        let stdout_run = ArtifactRun::new(
+            vec![0, 1],
+            None,
+            ArtifactReceipt::new(ArtifactDestination::Stdout, 2),
+            Some("wrote stdout".into()),
+        );
+        let mut stdout = Vec::new();
+        let (_, stdout_report_failure) = emit_run_result(
+            &RunResult::Artifact(stdout_run),
+            &mut stdout,
+            &mut FailingWriter,
+        );
+        assert_eq!(stdout, [0, 1]);
+        assert_eq!(
+            stdout_report_failure.unwrap().kind(),
+            RunErrorKind::FinalWrite(OutputKind::Artifact)
         );
     }
 }
