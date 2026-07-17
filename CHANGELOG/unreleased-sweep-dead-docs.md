@@ -1,1 +1,0 @@
-- Remove dead readthedocs/mkdocs config (.readthedocs.yaml, docs/requirements.txt); move palette_compare.sh to app-bin/

@@ -1,1 +1,0 @@
-- Fix the standout-docs skill: relocate to standout-docs/SKILL.md and add required frontmatter so it's discoverable

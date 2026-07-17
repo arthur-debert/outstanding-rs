@@ -4,6 +4,8 @@
 
 ## Unreleased
 
+## 7.6.4 - 2026-07-17
+
 - Fix the standout-docs skill: relocate to standout-docs/SKILL.md and add required frontmatter so it's discoverable
 Migrated changelog to fragment-directory system from arthur-debert/release.
 - ci: migrate release reusable-workflow callers from @v2 to @v3
