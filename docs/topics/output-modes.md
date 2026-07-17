@@ -155,11 +155,52 @@ render_auto_with_spec(template, &data, &theme, OutputMode::Csv, Some(&spec))?
 
 The `key` field uses dot notation for nested paths (`"meta.role"` extracts `data["meta"]["role"]`).
 
-`FlatDataSpec` is not accepted as per-command configuration by normal `App`
-dispatch, so arbitrary per-command CSV projection is not currently integrated
-into that path. Prefer a stable CLI-owned output DTO. If the CLI requires a
-different projection, treat that as an explicit rendering integration or a
-framework gap rather than branching inside the handler.
+When a command's canonical response is an object containing the CSV rows,
+attach a presentation-layer projection through `CommandConfig`:
+
+```rust
+use serde_json::json;
+use standout::tabular::{Column, Width};
+use standout::{CsvProjection, StructuredOutputProjection};
+
+let projection = StructuredOutputProjection::csv(
+    CsvProjection::builder("items")
+        .column(Column::new(Width::default()).key("language").header("LANGUAGE"))
+        .column(Column::new(Width::default()).key("code").header("CODE"))
+        .derived_column(
+            Column::new(Width::default()).header("NET"),
+            |row, _root| json!(
+                row["code"].as_i64().unwrap_or(0)
+                    - row["comments"].as_i64().unwrap_or(0)
+            ),
+        )
+        .synthetic_row(|root| json!({
+            "language": "TOTAL",
+            "code": root["totals"]["code"],
+            "comments": root["totals"]["comments"]
+        }))
+        .conditional_row(|root| {
+            (root["skipped"].as_u64().unwrap_or(0) > 0)
+                .then(|| json!({ "language": "SKIPPED" }))
+        })
+        .build(),
+);
+
+App::builder().command_with("summary", summary_handler, |config| {
+    config.structured_output_projection(projection)
+});
+```
+
+Direct-column dot paths are resolved against each selected row. Derived
+columns receive both the current row and the root response. Synthetic-row
+callbacks receive the root response and run in registration order. Column
+ordering, headers, and `null_repr` use the existing `FlatDataSpec` behavior.
+
+The projection applies only to CSV. Text and terminal modes still use the
+template, while JSON, YAML, and XML serialize the canonical response. In the
+pipeline, post-dispatch hooks run before projection and post-output hooks run
+after it; `run_to_string`, output-file handling, and final emission therefore
+observe the same projected CSV.
 
 See [Introduction to Tabular](../crates/render/guides/intro-to-tabular.md) for
 tabular specifications and layout.

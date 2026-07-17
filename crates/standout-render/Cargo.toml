@@ -24,6 +24,7 @@ unicode-width = "0.2"
 cssparser = "0.31"
 terminal_size = "0.4"
 standout-bbparser = { version = "7.6.5", path = "../standout-bbparser" }
+thiserror = "2"
 
 [dev-dependencies]
 tempfile = "3.24.0"

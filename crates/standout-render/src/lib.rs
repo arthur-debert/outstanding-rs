@@ -152,6 +152,7 @@ mod error;
 pub mod file_loader;
 pub mod output;
 pub mod prelude;
+mod projection;
 pub mod style;
 pub mod tabular;
 pub mod template;
@@ -177,6 +178,9 @@ pub use theme::{
 
 // Output module exports
 pub use output::{write_binary_output, write_output, OutputDestination, OutputMode};
+pub use projection::{
+    CsvProjection, CsvProjectionBuilder, ProjectionError, StructuredOutputProjection,
+};
 
 // Environment detection exports
 pub use environment::{
