@@ -64,6 +64,7 @@
 //! - [`RunResult`]: The result of running the CLI dispatcher
 //! - [`Handler`]: Trait for command handlers (`&mut self`)
 
+use crate::hooks::HookPhase;
 use crate::verify::ExpectedArg;
 use clap::ArgMatches;
 use serde::Serialize;
@@ -427,6 +428,242 @@ impl<T: Serialize> IntoHandlerResult<T> for HandlerResult<T> {
     }
 }
 
+/// Process exit status selected by Standout's execution policy.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct ExitStatus(u8);
+
+impl ExitStatus {
+    /// Successful command, help, or version display.
+    pub const SUCCESS: Self = Self(0);
+    /// Runtime or final-write failure.
+    pub const FAILURE: Self = Self(1);
+    /// Clap command-line usage error.
+    pub const USAGE_ERROR: Self = Self(2);
+
+    /// Returns the numeric status reported to the operating system.
+    pub const fn code(self) -> u8 {
+        self.0
+    }
+}
+
+/// Successful text outcome carried by [`RunResult::Handled`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[non_exhaustive]
+pub enum SuccessKind {
+    /// A registered command completed successfully.
+    Command,
+    /// Clap requested a help display.
+    ClapHelp,
+    /// Clap requested a version display.
+    ClapVersion,
+}
+
+/// The final payload whose write failed.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[non_exhaustive]
+pub enum OutputKind {
+    /// Rendered text output.
+    Text,
+    /// Binary output.
+    Binary,
+}
+
+/// Typed origin for an unsuccessful framework run.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[non_exhaustive]
+pub enum RunErrorKind {
+    /// Clap rejected the command line.
+    ClapUsage,
+    /// The application handler returned an error.
+    Handler,
+    /// A hook failed in the identified phase. Pipe failures are post-output hooks.
+    Hook(HookPhase),
+    /// Handler data serialization or presentation rendering failed.
+    Render,
+    /// A framework-owned file/stdout write failed.
+    FinalWrite(OutputKind),
+}
+
+/// Metadata-bearing successful text compatible with string-oriented access.
+#[derive(Debug, Clone)]
+pub struct RunOutput {
+    text: String,
+    kind: SuccessKind,
+}
+
+impl RunOutput {
+    /// Creates a successful command output.
+    pub fn command(text: impl Into<String>) -> Self {
+        Self {
+            text: text.into(),
+            kind: SuccessKind::Command,
+        }
+    }
+
+    /// Creates a Clap help display.
+    pub fn clap_help(text: impl Into<String>) -> Self {
+        Self {
+            text: text.into(),
+            kind: SuccessKind::ClapHelp,
+        }
+    }
+
+    /// Creates a Clap version display.
+    pub fn clap_version(text: impl Into<String>) -> Self {
+        Self {
+            text: text.into(),
+            kind: SuccessKind::ClapVersion,
+        }
+    }
+
+    /// Returns the captured text.
+    pub fn as_str(&self) -> &str {
+        &self.text
+    }
+
+    /// Returns the typed success origin.
+    pub const fn kind(&self) -> SuccessKind {
+        self.kind
+    }
+
+    /// Consumes the wrapper and returns the captured text.
+    pub fn into_string(self) -> String {
+        self.text
+    }
+}
+
+impl std::ops::Deref for RunOutput {
+    type Target = str;
+    fn deref(&self) -> &Self::Target {
+        self.as_str()
+    }
+}
+
+impl AsRef<str> for RunOutput {
+    fn as_ref(&self) -> &str {
+        self.as_str()
+    }
+}
+
+impl fmt::Display for RunOutput {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(self.as_str())
+    }
+}
+
+impl PartialEq<str> for RunOutput {
+    fn eq(&self, other: &str) -> bool {
+        self.as_str() == other
+    }
+}
+
+impl PartialEq<&str> for RunOutput {
+    fn eq(&self, other: &&str) -> bool {
+        self.as_str() == *other
+    }
+}
+
+impl PartialEq<String> for RunOutput {
+    fn eq(&self, other: &String) -> bool {
+        self.as_str() == other
+    }
+}
+
+impl From<String> for RunOutput {
+    fn from(text: String) -> Self {
+        Self::command(text)
+    }
+}
+
+impl From<&str> for RunOutput {
+    fn from(text: &str) -> Self {
+        Self::command(text)
+    }
+}
+
+impl From<RunOutput> for String {
+    fn from(output: RunOutput) -> Self {
+        output.into_string()
+    }
+}
+
+/// Metadata-bearing failure compatible with string-oriented access.
+#[derive(Debug, Clone)]
+pub struct RunError {
+    message: String,
+    kind: RunErrorKind,
+}
+
+impl RunError {
+    /// Creates a failure with its framework origin.
+    pub fn new(message: impl Into<String>, kind: RunErrorKind) -> Self {
+        Self {
+            message: message.into(),
+            kind,
+        }
+    }
+
+    /// Returns the existing human-readable diagnostic.
+    pub fn as_str(&self) -> &str {
+        &self.message
+    }
+
+    /// Returns the typed failure origin.
+    pub const fn kind(&self) -> RunErrorKind {
+        self.kind
+    }
+
+    /// Returns the shell status selected for this failure.
+    pub const fn exit_status(&self) -> ExitStatus {
+        match self.kind {
+            RunErrorKind::ClapUsage => ExitStatus::USAGE_ERROR,
+            _ => ExitStatus::FAILURE,
+        }
+    }
+
+    /// Consumes the wrapper and returns the diagnostic text.
+    pub fn into_string(self) -> String {
+        self.message
+    }
+}
+
+impl std::ops::Deref for RunError {
+    type Target = str;
+    fn deref(&self) -> &Self::Target {
+        self.as_str()
+    }
+}
+
+impl AsRef<str> for RunError {
+    fn as_ref(&self) -> &str {
+        self.as_str()
+    }
+}
+
+impl fmt::Display for RunError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(self.as_str())
+    }
+}
+
+impl From<String> for RunError {
+    fn from(message: String) -> Self {
+        Self::new(message, RunErrorKind::Handler)
+    }
+}
+
+impl From<&str> for RunError {
+    fn from(message: &str) -> Self {
+        Self::new(message, RunErrorKind::Handler)
+    }
+}
+
+impl From<RunError> for String {
+    fn from(error: RunError) -> Self {
+        error.into_string()
+    }
+}
+
 /// Result of running the CLI dispatcher.
 ///
 /// After processing arguments, the dispatcher either handles a command,
@@ -438,14 +675,14 @@ impl<T: Serialize> IntoHandlerResult<T> for HandlerResult<T> {
 #[non_exhaustive]
 pub enum RunResult {
     /// A handler processed the command successfully; contains the rendered output
-    Handled(String),
+    Handled(RunOutput),
     /// A handler produced binary output (bytes, suggested filename)
     Binary(Vec<u8>, String),
     /// Silent output (handler completed but produced no output)
     Silent,
     /// A handler, hook, or output step failed; contains the formatted error message.
     /// Consumers should write this to stderr and exit non-zero.
-    Error(String),
+    Error(RunError),
     /// No handler matched; contains the ArgMatches for manual handling
     NoMatch(ArgMatches),
 }
@@ -484,6 +721,37 @@ impl RunResult {
         match self {
             RunResult::Error(s) => Some(s),
             _ => None,
+        }
+    }
+
+    /// Returns the typed success origin for captured text.
+    pub fn success_kind(&self) -> Option<SuccessKind> {
+        match self {
+            RunResult::Handled(output) => Some(output.kind()),
+            RunResult::Binary(_, _) | RunResult::Silent => Some(SuccessKind::Command),
+            _ => None,
+        }
+    }
+
+    /// Returns the typed error origin, if this run failed.
+    pub fn error_kind(&self) -> Option<RunErrorKind> {
+        match self {
+            RunResult::Error(error) => Some(error.kind()),
+            _ => None,
+        }
+    }
+
+    /// Returns the completed run's shell status.
+    ///
+    /// `NoMatch` returns `None`: it is a fallback handoff, not a completed
+    /// framework execution and is deliberately not treated as a usage error.
+    pub fn exit_status(&self) -> Option<ExitStatus> {
+        match self {
+            RunResult::Handled(_) | RunResult::Binary(_, _) | RunResult::Silent => {
+                Some(ExitStatus::SUCCESS)
+            }
+            RunResult::Error(error) => Some(error.exit_status()),
+            RunResult::NoMatch(_) => None,
         }
     }
 

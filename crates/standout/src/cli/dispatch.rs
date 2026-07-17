@@ -10,8 +10,8 @@ use clap::ArgMatches;
 use std::cell::RefCell;
 use std::rc::Rc;
 
-use crate::cli::handler::CommandContext;
 use crate::cli::handler::Output as HandlerOutput;
+use crate::cli::handler::{CommandContext, RunError, RunErrorKind};
 use crate::cli::hooks::Hooks;
 use crate::context::{ContextRegistry, RenderContext};
 use crate::StructuredOutputProjection;
@@ -57,17 +57,23 @@ pub(crate) fn render_handler_output<T: Serialize>(
     template_engine: &dyn standout_render::template::TemplateEngine,
     output_mode: crate::OutputMode,
     structured_output_projection: Option<&StructuredOutputProjection>,
-) -> Result<DispatchOutput, String> {
+) -> Result<DispatchOutput, RunError> {
     match result {
         Ok(output) => match output {
             HandlerOutput::Render(data) => {
-                let mut json_data = serde_json::to_value(&data)
-                    .map_err(|e| format!("Failed to serialize handler result: {}", e))?;
+                let mut json_data = serde_json::to_value(&data).map_err(|e| {
+                    RunError::new(
+                        format!("Failed to serialize handler result: {}", e),
+                        RunErrorKind::Render,
+                    )
+                })?;
 
                 if let Some(hooks) = hooks {
                     json_data = hooks
                         .run_post_dispatch(matches, ctx, json_data)
-                        .map_err(|e| format!("Hook error: {}", e))?;
+                        .map_err(|e| {
+                            RunError::new(format!("Hook error: {}", e), RunErrorKind::Hook(e.phase))
+                        })?;
                 }
 
                 let render_ctx = RenderContext::new(
@@ -85,7 +91,7 @@ pub(crate) fn render_handler_output<T: Serialize>(
                             projection
                                 .csv_projection()
                                 .render(&json_data)
-                                .map_err(|e| e.to_string())?,
+                                .map_err(|e| RunError::new(e.to_string(), RunErrorKind::Render))?,
                         )
                     }
                     _ => standout_render::template::render_auto_with_engine_split(
@@ -97,7 +103,7 @@ pub(crate) fn render_handler_output<T: Serialize>(
                         context_registry,
                         &render_ctx,
                     )
-                    .map_err(|e| e.to_string())?,
+                    .map_err(|e| RunError::new(e.to_string(), RunErrorKind::Render))?,
                 };
 
                 Ok(DispatchOutput::Text {
@@ -108,7 +114,10 @@ pub(crate) fn render_handler_output<T: Serialize>(
             HandlerOutput::Silent => Ok(DispatchOutput::Silent),
             HandlerOutput::Binary { data, filename } => Ok(DispatchOutput::Binary(data, filename)),
         },
-        Err(e) => Err(format!("Error: {}", e)),
+        Err(e) => Err(RunError::new(
+            format!("Error: {}", e),
+            RunErrorKind::Handler,
+        )),
     }
 }
 
@@ -129,7 +138,7 @@ pub type DispatchFn = Rc<
             Option<&Hooks>,
             crate::OutputMode,
             &crate::Theme,
-        ) -> Result<DispatchOutput, String>,
+        ) -> Result<DispatchOutput, RunError>,
     >,
 >;
 
@@ -141,7 +150,7 @@ pub fn dispatch(
     hooks: Option<&Hooks>,
     output_mode: crate::OutputMode,
     theme: &crate::Theme,
-) -> Result<DispatchOutput, String> {
+) -> Result<DispatchOutput, RunError> {
     (dispatch_fn.borrow_mut())(matches, ctx, hooks, output_mode, theme)
 }
 

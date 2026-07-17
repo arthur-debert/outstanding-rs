@@ -55,7 +55,8 @@
 // Re-export all handler types from standout-dispatch.
 // These types are render-agnostic and focus on handler execution.
 pub use standout_dispatch::{
-    CommandContext, Extensions, FnHandler, Handler, HandlerResult, Output, RunResult,
+    CommandContext, ExitStatus, Extensions, FnHandler, Handler, HandlerResult, Output, OutputKind,
+    RunError, RunErrorKind, RunOutput, RunResult, SuccessKind,
 };
 
 use standout_input::{InputSourceKind, Inputs, MissingInput};

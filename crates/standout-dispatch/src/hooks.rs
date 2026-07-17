@@ -134,7 +134,7 @@ impl RenderedOutput {
 }
 
 /// The phase at which a hook error occurred.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum HookPhase {
     /// Error occurred during pre-dispatch phase
     PreDispatch,

@@ -47,7 +47,7 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use clap::Command;
-use standout::cli::{App, RunResult};
+use standout::cli::{App, ExitStatus, RunErrorKind, RunResult, SuccessKind};
 use standout_input::env::{MockClipboard, MockStdin};
 use standout_input::{
     reset_default_clipboard_reader, reset_default_prompt_responder, reset_default_stdin_reader,
@@ -559,6 +559,23 @@ impl TestResult {
         &self.outcome
     }
 
+    /// Returns the completed run's typed shell status.
+    ///
+    /// A no-match handoff has no framework status and returns `None`.
+    pub fn exit_status(&self) -> Option<ExitStatus> {
+        self.outcome.exit_status()
+    }
+
+    /// Returns the typed success origin for handled/help/version output.
+    pub fn success_kind(&self) -> Option<SuccessKind> {
+        self.outcome.success_kind()
+    }
+
+    /// Returns the typed error origin, if execution failed.
+    pub fn error_kind(&self) -> Option<RunErrorKind> {
+        self.outcome.error_kind()
+    }
+
     /// Returns the rendered text output, or `""` for `Silent` / `Binary` /
     /// `NoMatch`.
     pub fn stdout(&self) -> &str {
@@ -607,6 +624,28 @@ impl TestResult {
                 describe_outcome(&self.outcome)
             ),
         }
+    }
+
+    /// Panics unless the run exposes `expected` as its shell status.
+    #[track_caller]
+    pub fn assert_exit_status(&self, expected: ExitStatus) {
+        assert_eq!(
+            self.exit_status(),
+            Some(expected),
+            "unexpected exit status for {}",
+            describe_outcome(&self.outcome)
+        );
+    }
+
+    /// Panics unless the run exposes the expected typed error origin.
+    #[track_caller]
+    pub fn assert_error_kind(&self, expected: RunErrorKind) {
+        assert_eq!(
+            self.error_kind(),
+            Some(expected),
+            "unexpected error kind for {}",
+            describe_outcome(&self.outcome)
+        );
     }
 
     /// Returns `true` if the run produced an error.

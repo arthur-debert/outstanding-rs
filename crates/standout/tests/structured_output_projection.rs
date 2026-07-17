@@ -3,7 +3,9 @@
 use clap::Command;
 use serde_json::{json, Value};
 use standout::cli::hooks::TextOutput;
-use standout::cli::{App, Output, RenderedOutput, RunResult};
+use standout::cli::{
+    App, ExitStatus, Output, RenderedOutput, RunErrorKind, RunResult, SuccessKind,
+};
 use standout::tabular::{Column, Width};
 use standout::{CsvProjection, OutputMode, StructuredOutputProjection};
 
@@ -88,7 +90,7 @@ fn direct_dispatch(app: &App, mode: OutputMode) -> String {
     let RunResult::Handled(output) = app.dispatch(matches, mode) else {
         panic!("expected handled output")
     };
-    output
+    output.into_string()
 }
 
 #[test]
@@ -131,9 +133,10 @@ fn commands_without_a_projection_keep_automatic_csv_flattening() {
 #[test]
 fn run_to_string_and_output_file_use_the_same_projection() {
     let app = app();
-    let RunResult::Handled(output) =
-        app.run_to_string(command(), ["rustloc", "summary", "--output=csv"])
-    else {
+    let result = app.run_to_string(command(), ["rustloc", "summary", "--output=csv"]);
+    assert_eq!(result.exit_status(), Some(ExitStatus::SUCCESS));
+    assert_eq!(result.success_kind(), Some(SuccessKind::Command));
+    let RunResult::Handled(output) = result else {
         panic!("expected handled output")
     };
     assert_eq!(output, EXPECTED_CSV);
@@ -141,14 +144,40 @@ fn run_to_string_and_output_file_use_the_same_projection() {
     let tempdir = tempfile::tempdir().unwrap();
     let output_path = tempdir.path().join("summary.csv");
     let output_arg = format!("--output-file-path={}", output_path.display());
-    let RunResult::Handled(stdout) = app.run_to_string(
+    let file_result = app.run_to_string(
         command(),
         ["rustloc", "summary", "--output=csv", &output_arg],
-    ) else {
+    );
+    assert_eq!(file_result.exit_status(), Some(ExitStatus::SUCCESS));
+    let RunResult::Handled(stdout) = file_result else {
         panic!("expected handled output")
     };
     assert!(stdout.is_empty());
     assert_eq!(std::fs::read_to_string(output_path).unwrap(), EXPECTED_CSV);
+}
+
+#[test]
+fn projection_failures_are_typed_render_errors() {
+    let projection = StructuredOutputProjection::csv(
+        CsvProjection::builder("missing.items")
+            .column(column("language", "LANGUAGE"))
+            .build(),
+    );
+    let app = App::builder()
+        .command_with(
+            "summary",
+            |_matches, _ctx| Ok(Output::Render(response())),
+            |config| config.structured_output_projection(projection),
+        )
+        .unwrap()
+        .build()
+        .unwrap();
+
+    let result = app.run_to_string(command(), ["rustloc", "summary", "--output=csv"]);
+
+    assert_eq!(result.exit_status(), Some(ExitStatus::FAILURE));
+    assert_eq!(result.error_kind(), Some(RunErrorKind::Render));
+    assert!(result.error().unwrap().contains("missing.items"));
 }
 
 #[test]

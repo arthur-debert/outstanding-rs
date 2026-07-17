@@ -320,13 +320,16 @@ pub struct App {
 ### Standard Execution
 
 ```rust
-if let Some(matches) = app.run(Cli::command(), std::env::args()) {
-    // Standout didn't handle this command, fall back to legacy
-    legacy_dispatch(matches);
+if !app.run(Cli::command(), std::env::args()) {
+    // Standout did not handle this command; fall back to legacy dispatch.
+    legacy_dispatch();
 }
 ```
 
-Parses args, dispatches to handler, prints output. Returns `Option<ArgMatches>`—`None` if handled, `Some(matches)` for fallback.
+Parses args, dispatches to a handler, and performs the final write. It returns
+`true` when Standout handled the command and `false` for an unmatched fallback.
+Help/version and successes use stdout/status 0, usage errors use stderr/status
+2, and runtime/write failures use stderr/status 1.
 
 ### Capture Output
 
@@ -336,11 +339,15 @@ For testing, post-processing, or when you need the output string:
 match app.run_to_string(cmd, args) {
     RunResult::Handled(output) => { /* use output string */ }
     RunResult::Binary(bytes, filename) => { /* handle binary */ }
+    RunResult::Error(error) => { /* inspect error.kind() */ }
     RunResult::NoMatch(matches) => { /* fallback dispatch */ }
+    _ => {}
 }
 ```
 
-Returns `RunResult` instead of printing.
+Returns `RunResult` instead of printing. Use `exit_status()`, `success_kind()`,
+and `error_kind()` for typed assertions; see [Execution
+Outcomes](./execution-outcomes.md).
 
 ### Parse Only
 

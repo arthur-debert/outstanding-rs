@@ -56,6 +56,11 @@ Argument parsing is clap's responsibility, and clap has an extensive test suite 
 
 `TestHarness` (in the `standout-test` crate) is the unified in-process runner. It wraps `App::run_to_string` with fluent setup for every injectable piece of state:
 
+Its `TestResult` also exposes `exit_status()`, `success_kind()`, and
+`error_kind()`, with assertions for typed status and failure origin. `NoMatch`
+returns no framework status because the fallback dispatcher still owns the
+command.
+
 - Env vars (real `std::env::set_var`, originals captured and restored on drop)
 - Working directory (real `std::env::set_current_dir`, original restored on drop)
 - Fixture files (written into a `tempfile::TempDir`)

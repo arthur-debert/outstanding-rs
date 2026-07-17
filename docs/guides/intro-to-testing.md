@@ -493,15 +493,36 @@ TestHarness::new()
     // execute
     .run(&app, cmd, ["binname", "subcommand", "--flag"])
 
-// TestResult
+// TestResult: choose the assertion group that matches the observed outcome.
+
+// Success
 result.assert_success();                // Handled / Silent / Binary
-result.assert_no_match();               // clap didn't match any subcommand
+result.assert_exit_status(ExitStatus::SUCCESS);
 result.assert_stdout_contains("hi");
 result.assert_stdout_eq("hi\n");
+
+// No match
+result.assert_no_match();               // clap didn't match any subcommand
+assert_eq!(result.exit_status(), None);  // fallback owns the eventual status
+
+// Error
+result.assert_error();
+result.assert_exit_status(ExitStatus::FAILURE);
+result.assert_error_kind(RunErrorKind::Handler);
+
+// Accessors for any outcome
 result.stdout();                        // &str
 result.outcome();                       // &RunResult, for bespoke assertions
 result.binary();                        // Option<(&[u8], &str)> for Binary
+result.exit_status();                   // Option<ExitStatus>; None for NoMatch
+result.success_kind();                  // command / Clap help / Clap version
+result.error_kind();                    // typed failure origin
 ```
+
+The harness captures the pipeline before the real stdout/stderr write. Use it
+for typed parser, handler, hook, render, pipe, and output-file outcomes. Keep a
+small process-level test for OS exit codes, stream routing, and broken final
+writers.
 
 ## Appendix: common pitfalls
 

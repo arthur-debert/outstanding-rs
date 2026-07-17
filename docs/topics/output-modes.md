@@ -217,7 +217,7 @@ myapp list --output=json --output-file-path=data.json
 Behavior:
 
 - Text output: written to file, nothing printed to stdout
-- Binary output: written to file (same as without flag)
+- Binary output: written to the requested file instead of stdout
 - Silent output: no-op
 
 After writing to file, stdout output is suppressed to prevent double-printing.
