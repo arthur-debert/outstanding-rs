@@ -390,11 +390,24 @@ fn get_matches_from_reports_an_unknown_command_as_a_clap_error() {
 /// The `TestHarness` owns this seam for `run()`; `get_matches_from` is a
 /// parse-only path with no harness entry point, so these tests drive the same
 /// override directly.
+struct StdinGuard;
+
+impl StdinGuard {
+    fn install(reader: MockStdin) -> Self {
+        set_default_stdin_reader(Arc::new(reader));
+        Self
+    }
+}
+
+impl Drop for StdinGuard {
+    fn drop(&mut self) {
+        reset_default_stdin_reader();
+    }
+}
+
 fn with_stdin<R>(reader: MockStdin, body: impl FnOnce() -> R) -> R {
-    set_default_stdin_reader(Arc::new(reader));
-    let out = body();
-    reset_default_stdin_reader();
-    out
+    let _guard = StdinGuard::install(reader);
+    body()
 }
 
 #[test]

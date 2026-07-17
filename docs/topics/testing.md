@@ -106,16 +106,31 @@ These drive `OutputMode::Auto`'s color decision and the render context's termina
 
 ```rust
 use std::sync::Arc;
-use standout_input::{
-    set_default_stdin_reader, reset_default_stdin_reader,
-    set_default_clipboard_reader, reset_default_clipboard_reader,
-};
-use standout_input::env::{MockStdin, MockClipboard};
+use standout_input::{set_default_stdin_reader, reset_default_stdin_reader};
+use standout_input::env::MockStdin;
 
-set_default_stdin_reader(Arc::new(MockStdin::piped("hello")));
+struct StdinGuard;
+
+impl StdinGuard {
+    fn install(reader: MockStdin) -> Self {
+        set_default_stdin_reader(Arc::new(reader));
+        Self
+    }
+}
+
+impl Drop for StdinGuard {
+    fn drop(&mut self) {
+        reset_default_stdin_reader();
+    }
+}
+
+let _stdin = StdinGuard::install(MockStdin::piped("hello"));
 // ... run test ...
-reset_default_stdin_reader();
 ```
+
+The guard resets even if the test panics. Use the same pattern with
+`set_default_clipboard_reader` / `reset_default_clipboard_reader` when testing
+the default clipboard seam.
 
 Handlers that use `StdinSource::new()` / `ClipboardSource::new()` / `read_if_piped()` pick up the mock transparently — no handler refactor needed.
 
@@ -146,12 +161,11 @@ TestHarness::new()
 For the parse-only path (`get_matches_from` / `parse_from`) there's no harness entry point; install the override directly:
 
 ```rust
-set_default_stdin_reader(Arc::new(MockStdin::terminal()));
+let _stdin = StdinGuard::install(MockStdin::terminal());
 match app.get_matches_from(cli::command(), ["tdoo"]) {
     HelpResult::Matches(m) => assert_eq!(m.subcommand_name(), Some("list")),
     other => panic!("expected matches, got {other:?}"),
 }
-reset_default_stdin_reader();
 ```
 
 Both the harness and the manual override are process-global — mark these tests `#[serial]`.
