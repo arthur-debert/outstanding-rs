@@ -328,6 +328,12 @@ impl AppBuilder {
     ///
     /// When the CLI is invoked without a subcommand (a "naked" invocation),
     /// the default command is automatically inserted and the arguments are reparsed.
+    /// This applies to both the integrated dispatch path (`run` / `dispatch_from`
+    /// / `run_to_string`) and configured parsing (`parse_from` / `get_matches_from`).
+    ///
+    /// For a default that varies per invocation, see
+    /// [`default_command_with`](Self::default_command_with); it is consulted
+    /// first and falls back to this static name when it declines.
     ///
     /// # Example
     ///
@@ -348,6 +354,58 @@ impl AppBuilder {
     /// ```
     pub fn default_command(mut self, name: &str) -> Self {
         self.default_command = Some(name.to_string());
+        self
+    }
+
+    /// Chooses the default command per invocation instead of using one fixed name.
+    ///
+    /// The resolver runs only for a naked invocation that Clap already parsed
+    /// successfully, and only after explicit commands, nested commands, help,
+    /// and version have had their say — so it can never override them, and
+    /// invalid syntax stays a Clap usage error the resolver never sees.
+    ///
+    /// It receives a [`DefaultCommandContext`](crate::cli::DefaultCommandContext)
+    /// exposing the parsed root matches, read-only app state, and whether stdin
+    /// is a terminal. Stdin is never read during resolution, so a handler's
+    /// `InputChain` still consumes the pipe normally.
+    ///
+    /// Return `Some(name)` to select a command or `None` to decline, which falls
+    /// back to [`default_command`](Self::default_command) if one is set. Both
+    /// may be configured together.
+    ///
+    /// # Failure
+    ///
+    /// Returning a name that is not a command (or alias) of the `clap::Command`
+    /// being parsed fails the run with
+    /// [`RunErrorKind::DefaultCommand`](crate::cli::RunErrorKind::DefaultCommand)
+    /// (a Clap error on the parse-only path) rather than panicking or letting a
+    /// bogus name reach Clap as a usage error. Return `None` to decline.
+    ///
+    /// # Example
+    ///
+    /// A CLI that reads a piped payload but is interactive at a terminal:
+    ///
+    /// ```rust,ignore
+    /// use standout::cli::App;
+    ///
+    /// // - `myapp` at a terminal becomes `myapp list`
+    /// // - `cat notes.txt | myapp` becomes `myapp add` (which reads stdin)
+    /// // - `myapp done 3` stays as `myapp done 3`
+    ///
+    /// App::builder()
+    ///     .default_command_with(|ctx| {
+    ///         Some(if ctx.stdin_is_piped() { "add" } else { "list" }.to_string())
+    ///     })
+    ///     .command("list", list_handler, "...")
+    ///     .command("add", add_handler, "...")
+    ///     .build()?
+    ///     .run(cmd, args);
+    /// ```
+    pub fn default_command_with<F>(mut self, resolver: F) -> Self
+    where
+        F: Fn(&crate::cli::DefaultCommandContext<'_>) -> Option<String> + 'static,
+    {
+        self.default_command_resolver = Some(std::rc::Rc::new(resolver));
         self
     }
 

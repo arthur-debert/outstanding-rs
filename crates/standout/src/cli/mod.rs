@@ -120,6 +120,7 @@
 //! - [`help`]: Help rendering and topic system
 
 // Internal modules
+mod default_command;
 mod dispatch;
 mod result;
 
@@ -172,6 +173,9 @@ pub use crate::setup::SetupError;
 pub use dispatch::{
     extract_command_path, get_deepest_matches, has_subcommand, insert_default_command,
 };
+
+// Re-export invocation-aware default-command resolution types
+pub use default_command::{DefaultCommandContext, DefaultCommandResolver, UnknownDefaultCommand};
 
 /// Parses a clap command with styled help output.
 ///

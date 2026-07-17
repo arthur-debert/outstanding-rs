@@ -4,6 +4,8 @@
 
 ## Unreleased
 
+- Add invocation-aware default command resolution (issue #211): `.default_command_with(resolver)` selects a naked invocation's command per invocation from a narrow `DefaultCommandContext` (root matches, read-only app state, and the existing non-consuming stdin terminal fact), so a CLI can pick a piped entry point when stdin is redirected — piped-empty included — and an interactive one at a terminal. Resolution is centralized, so `dispatch_from` / `run_to_string` and `get_matches_from` / `parse_from` agree; it runs only after a successful naked parse, leaving explicit and nested commands, help, version, and usage errors unchanged. Static `.default_command(...)` users are unaffected and can combine both, with the resolver declining via `None`.
+
 ## 7.8.0 - 2026-07-17
 
 - Add an explicit narrow/wide East Asian Ambiguous character-width policy (issue #207, PR #210): App and direct Renderer configuration, tabular layout, MiniJinja filters, and TestHarness now share one authoritative measurement seam while narrow remains the compatibility default.

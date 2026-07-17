@@ -326,6 +326,22 @@ mod tests {
     use super::*;
     use serial_test::serial;
 
+    struct StdinOverrideGuard;
+
+    impl Drop for StdinOverrideGuard {
+        fn drop(&mut self) {
+            reset_default_stdin_reader();
+        }
+    }
+
+    struct ClipboardOverrideGuard;
+
+    impl Drop for ClipboardOverrideGuard {
+        fn drop(&mut self) {
+            reset_default_clipboard_reader();
+        }
+    }
+
     #[test]
     fn mock_stdin_terminal() {
         let stdin = MockStdin::terminal();
@@ -382,10 +398,10 @@ mod tests {
     #[serial]
     fn default_stdin_uses_override() {
         set_default_stdin_reader(Arc::new(MockStdin::piped("overridden")));
+        let _guard = StdinOverrideGuard;
         let reader = DefaultStdin;
         assert!(!reader.is_terminal());
         assert_eq!(reader.read_to_string().unwrap(), "overridden");
-        reset_default_stdin_reader();
     }
 
     #[test]
@@ -402,8 +418,8 @@ mod tests {
     #[serial]
     fn default_clipboard_uses_override() {
         set_default_clipboard_reader(Arc::new(MockClipboard::with_content("paste")));
+        let _guard = ClipboardOverrideGuard;
         let reader = DefaultClipboard;
         assert_eq!(reader.read().unwrap(), Some("paste".to_string()));
-        reset_default_clipboard_reader();
     }
 }
