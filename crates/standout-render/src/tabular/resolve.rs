@@ -4,7 +4,8 @@
 //! based on the column specifications and available space.
 
 use super::types::{FlatDataSpec, Width};
-use super::util::display_width;
+use super::util::display_width_with_policy;
+use crate::AmbiguousWidth;
 
 /// Resolved widths for all columns in a table.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -46,7 +47,16 @@ impl FlatDataSpec {
     ///
     /// * `total_width` - Total available width including decorations
     pub fn resolve_widths(&self, total_width: usize) -> ResolvedWidths {
-        self.resolve_widths_impl(total_width, None)
+        self.resolve_widths_with_policy(total_width, AmbiguousWidth::Narrow)
+    }
+
+    /// Resolve widths with an explicit ambiguous-width policy.
+    pub fn resolve_widths_with_policy(
+        &self,
+        total_width: usize,
+        policy: AmbiguousWidth,
+    ) -> ResolvedWidths {
+        self.resolve_widths_impl(total_width, None, policy)
     }
 
     /// Resolve column widths by examining data to determine optimal widths.
@@ -82,19 +92,29 @@ impl FlatDataSpec {
         total_width: usize,
         data: &[Vec<S>],
     ) -> ResolvedWidths {
+        self.resolve_widths_from_data_with_policy(total_width, data, AmbiguousWidth::Narrow)
+    }
+
+    /// Resolve data-driven widths with an explicit ambiguous-width policy.
+    pub fn resolve_widths_from_data_with_policy<S: AsRef<str>>(
+        &self,
+        total_width: usize,
+        data: &[Vec<S>],
+        policy: AmbiguousWidth,
+    ) -> ResolvedWidths {
         // Calculate max width for each column from data
         let mut max_data_widths: Vec<usize> = vec![0; self.columns.len()];
 
         for row in data {
             for (i, cell) in row.iter().enumerate() {
                 if i < max_data_widths.len() {
-                    let cell_width = display_width(cell.as_ref());
+                    let cell_width = display_width_with_policy(cell.as_ref(), policy);
                     max_data_widths[i] = max_data_widths[i].max(cell_width);
                 }
             }
         }
 
-        self.resolve_widths_impl(total_width, Some(&max_data_widths))
+        self.resolve_widths_impl(total_width, Some(&max_data_widths), policy)
     }
 
     /// Internal implementation of width resolution.
@@ -102,12 +122,15 @@ impl FlatDataSpec {
         &self,
         total_width: usize,
         data_widths: Option<&[usize]>,
+        policy: AmbiguousWidth,
     ) -> ResolvedWidths {
         if self.columns.is_empty() {
             return ResolvedWidths { widths: vec![] };
         }
 
-        let overhead = self.decorations.overhead(self.columns.len());
+        let overhead = self
+            .decorations
+            .overhead_with_policy(self.columns.len(), policy);
         let available = total_width.saturating_sub(overhead);
 
         let mut widths: Vec<usize> = Vec::with_capacity(self.columns.len());

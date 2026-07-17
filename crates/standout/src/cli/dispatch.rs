@@ -72,6 +72,7 @@ pub(crate) fn render_handler_output<T: Serialize>(
     template_engine: &dyn standout_render::template::TemplateEngine,
     output_mode: crate::OutputMode,
     structured_output_projection: Option<&StructuredOutputProjection>,
+    ambiguous_width: crate::AmbiguousWidth,
 ) -> Result<DispatchOutput, RunError> {
     match result {
         Ok(output) => match output {
@@ -92,9 +93,12 @@ pub(crate) fn render_handler_output<T: Serialize>(
                             })?;
                 }
 
-                let render_ctx = RenderContext::new(
+                let ambiguous_width =
+                    standout_render::detect_ambiguous_width_override().unwrap_or(ambiguous_width);
+                let render_ctx = RenderContext::with_ambiguous_width(
                     output_mode,
                     standout_render::detect_terminal_width(),
+                    ambiguous_width,
                     theme,
                     &json_data,
                 );
@@ -182,6 +186,7 @@ pub type DispatchFn = Rc<
             Option<&Hooks>,
             crate::OutputMode,
             &crate::Theme,
+            crate::AmbiguousWidth,
         ) -> Result<DispatchOutput, RunError>,
     >,
 >;
@@ -194,8 +199,9 @@ pub fn dispatch(
     hooks: Option<&Hooks>,
     output_mode: crate::OutputMode,
     theme: &crate::Theme,
+    ambiguous_width: crate::AmbiguousWidth,
 ) -> Result<DispatchOutput, RunError> {
-    (dispatch_fn.borrow_mut())(matches, ctx, hooks, output_mode, theme)
+    (dispatch_fn.borrow_mut())(matches, ctx, hooks, output_mode, theme, ambiguous_width)
 }
 
 // Note: extract_command_path, get_deepest_matches, has_subcommand, insert_default_command,

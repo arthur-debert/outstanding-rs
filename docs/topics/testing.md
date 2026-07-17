@@ -182,12 +182,18 @@ fn list_snapshot() {
     let result = TestHarness::new()
         .fixture("todos.txt", "a\nb\nc\n")
         .terminal_width(80)
+        .ambiguous_width(standout::AmbiguousWidth::Narrow)
         .no_color()
         .run(&app(), command(), ["todo", "list"]);
 
     assert_snapshot!(result.stdout());
 }
 ```
+
+Use `TestHarness::ambiguous_width(AmbiguousWidth::Narrow)` and
+`AmbiguousWidth::Wide` to assert the same rendering fixture under both explicit
+policies. The override crosses the same App/Renderer width seam as production
+configuration and is restored when the `TestResult` drops.
 
 ### Asserting JSON shape
 

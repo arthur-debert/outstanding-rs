@@ -146,6 +146,8 @@ pub struct AppBuilder {
     /// themed, grouped help for all invocation forms (`help`, `--help`, `-h`).
     /// Required when using `command_groups` or topics.
     pub(crate) help_handling: bool,
+    /// Explicit East Asian Ambiguous width policy.
+    pub(crate) ambiguous_width: crate::AmbiguousWidth,
 }
 
 impl Default for AppBuilder {
@@ -181,6 +183,7 @@ impl AppBuilder {
             template_engine: Rc::new(Box::new(standout_render::template::MiniJinjaEngine::new())),
             help_command_groups: None,
             help_handling: false,
+            ambiguous_width: crate::AmbiguousWidth::Narrow,
         }
     }
 

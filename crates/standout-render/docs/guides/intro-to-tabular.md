@@ -287,6 +287,25 @@ let row = formatter.format_row_cells(&[
 ]);
 ```
 
+`TabularFormatter::new` uses narrow ambiguous-character widths for backward
+compatibility. To match terminals where East Asian Ambiguous glyphs occupy two
+columns, construct the formatter explicitly:
+
+```rust
+use standout_render::AmbiguousWidth;
+
+let formatter = TabularFormatter::with_ambiguous_width(
+    &spec,
+    60,
+    AmbiguousWidth::Wide,
+);
+```
+
+The same policy is used for separators, data-driven width resolution,
+sub-columns, borders, padding, truncation, and wrapping. MiniJinja `col`,
+`display_width`, padding, truncation, `tabular`, and `table` operations receive
+the renderer or application policy automatically.
+
 ### Design Constraints
 
 - **One level only**: Sub-columns cannot be nested recursively.
@@ -594,6 +613,6 @@ Tabular transforms raw data into polished, scannable output with minimal effort:
 8. **Extract automatically** - let `row_from()` pull fields from structs
 9. **Decorate as tables** - add borders, headers, and separators
 
-The declarative approach means your layout adapts to terminal width, handles Unicode correctly, and remains maintainable as your data evolves.
+The declarative approach means your layout adapts to terminal width, applies the explicitly selected Unicode ambiguous-width policy consistently, and remains maintainable as your data evolves.
 
 For complete API details, see the [API documentation](https://docs.rs/standout-render).

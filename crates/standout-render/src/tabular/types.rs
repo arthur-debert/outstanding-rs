@@ -879,10 +879,15 @@ impl Decorations {
 
     /// Calculate the total overhead (prefix + suffix + separators between n columns).
     pub fn overhead(&self, num_columns: usize) -> usize {
-        use crate::tabular::display_width;
-        let prefix_width = display_width(&self.row_prefix);
-        let suffix_width = display_width(&self.row_suffix);
-        let sep_width = display_width(&self.column_sep);
+        self.overhead_with_policy(num_columns, crate::AmbiguousWidth::Narrow)
+    }
+
+    /// Calculates decoration overhead with an explicit ambiguous-width policy.
+    pub fn overhead_with_policy(&self, num_columns: usize, policy: crate::AmbiguousWidth) -> usize {
+        use crate::tabular::display_width_with_policy;
+        let prefix_width = display_width_with_policy(&self.row_prefix, policy);
+        let suffix_width = display_width_with_policy(&self.row_suffix, policy);
+        let sep_width = display_width_with_policy(&self.column_sep, policy);
         let sep_count = num_columns.saturating_sub(1);
         prefix_width + suffix_width + (sep_width * sep_count)
     }

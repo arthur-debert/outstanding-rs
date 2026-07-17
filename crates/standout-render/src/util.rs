@@ -62,10 +62,19 @@ pub fn rgb_to_truecolor(rgb: (u8, u8, u8)) -> (u8, u8, u8) {
 /// assert_eq!(truncate_to_width("Hello World", 6), "Hello…");
 /// ```
 pub fn truncate_to_width(s: &str, max_width: usize) -> String {
-    use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
+    truncate_to_width_with_policy(s, max_width, crate::AmbiguousWidth::Narrow)
+}
+
+/// Policy-aware variant of [`truncate_to_width`].
+pub fn truncate_to_width_with_policy(
+    s: &str,
+    max_width: usize,
+    policy: crate::AmbiguousWidth,
+) -> String {
+    let calculator = crate::WidthCalculator::new(policy);
 
     // If the string fits, return it unchanged
-    if s.width() <= max_width {
+    if calculator.text_width(s) <= max_width {
         return s.to_string();
     }
 
@@ -75,7 +84,7 @@ pub fn truncate_to_width(s: &str, max_width: usize) -> String {
     let limit = max_width.saturating_sub(1);
 
     for c in s.chars() {
-        let char_width = c.width().unwrap_or(0);
+        let char_width = calculator.char_width(c);
         if current_width + char_width > limit {
             result.push('…');
             return result;

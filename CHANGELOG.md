@@ -4,6 +4,7 @@
 
 ## Unreleased
 
+- Add an explicit narrow/wide East Asian Ambiguous character-width policy (issue #207): App and direct Renderer configuration, tabular layout, MiniJinja filters, and TestHarness now share one authoritative measurement seam while narrow remains the compatibility default. The draft PR number will be added after creation.
 - Preserve authoritative external-command failures through Standout-owned output (issue #206, PR #208): applications can declare an exact nonzero status and verbatim stderr payload from handlers or pre-dispatch, while capture APIs and `TestHarness` expose the typed external origin without changing ordinary 0/1/2 semantics.
 
 ## 7.7.0 - 2026-07-17

@@ -3,8 +3,7 @@
 //! All functions in this module correctly handle ANSI escape codes: they are
 //! preserved in output but don't count toward display width calculations.
 
-use console::{measure_text_width, pad_str, strip_ansi_codes, Alignment};
-use standout_bbparser::strip_tags;
+use crate::{AmbiguousWidth, WidthCalculator};
 
 /// Returns the display width of a string, ignoring ANSI escape codes.
 ///
@@ -22,7 +21,12 @@ use standout_bbparser::strip_tags;
 /// assert_eq!(display_width("日本"), 4);  // CJK characters are 2 columns each
 /// ```
 pub fn display_width(s: &str) -> usize {
-    measure_text_width(s)
+    display_width_with_policy(s, AmbiguousWidth::Narrow)
+}
+
+/// Policy-aware variant of [`display_width`].
+pub fn display_width_with_policy(s: &str, policy: AmbiguousWidth) -> usize {
+    WidthCalculator::new(policy).display_width(s)
 }
 
 /// Returns the visible display width of a string, stripping both BBCode tags
@@ -44,8 +48,12 @@ pub fn display_width(s: &str) -> usize {
 /// assert_eq!(visible_width("\x1b[31m[red]hi[/red]\x1b[0m"), 2);
 /// ```
 pub fn visible_width(s: &str) -> usize {
-    let no_ansi = strip_ansi_codes(s);
-    measure_text_width(&strip_tags(&no_ansi))
+    visible_width_with_policy(s, AmbiguousWidth::Narrow)
+}
+
+/// Policy-aware variant of [`visible_width`].
+pub fn visible_width_with_policy(s: &str, policy: AmbiguousWidth) -> usize {
+    WidthCalculator::new(policy).visible_width(s)
 }
 
 /// Truncates a string from the end to fit within a maximum display width.
@@ -70,15 +78,26 @@ pub fn visible_width(s: &str) -> usize {
 /// assert_eq!(truncate_end("Short", 10, "…"), "Short");
 /// ```
 pub fn truncate_end(s: &str, max_width: usize, ellipsis: &str) -> String {
-    let width = measure_text_width(s);
+    truncate_end_with_policy(s, max_width, ellipsis, AmbiguousWidth::Narrow)
+}
+
+/// Policy-aware variant of [`truncate_end`].
+pub fn truncate_end_with_policy(
+    s: &str,
+    max_width: usize,
+    ellipsis: &str,
+    policy: AmbiguousWidth,
+) -> String {
+    let calculator = WidthCalculator::new(policy);
+    let width = calculator.display_width(s);
     if width <= max_width {
         return s.to_string();
     }
 
-    let ellipsis_width = measure_text_width(ellipsis);
+    let ellipsis_width = calculator.display_width(ellipsis);
     if max_width < ellipsis_width {
         // Not enough room even for ellipsis - truncate ellipsis itself
-        return truncate_to_display_width(ellipsis, max_width);
+        return truncate_to_display_width(ellipsis, max_width, calculator);
     }
     if max_width == ellipsis_width {
         // Exactly enough room for ellipsis only
@@ -86,7 +105,7 @@ pub fn truncate_end(s: &str, max_width: usize, ellipsis: &str) -> String {
     }
 
     let target_width = max_width - ellipsis_width;
-    let mut result = truncate_to_display_width(s, target_width);
+    let mut result = truncate_to_display_width(s, target_width, calculator);
     result.push_str(ellipsis);
     result
 }
@@ -108,15 +127,26 @@ pub fn truncate_end(s: &str, max_width: usize, ellipsis: &str) -> String {
 /// assert_eq!(truncate_start("/path/to/file.rs", 12, "…"), "…/to/file.rs");
 /// ```
 pub fn truncate_start(s: &str, max_width: usize, ellipsis: &str) -> String {
-    let width = measure_text_width(s);
+    truncate_start_with_policy(s, max_width, ellipsis, AmbiguousWidth::Narrow)
+}
+
+/// Policy-aware variant of [`truncate_start`].
+pub fn truncate_start_with_policy(
+    s: &str,
+    max_width: usize,
+    ellipsis: &str,
+    policy: AmbiguousWidth,
+) -> String {
+    let calculator = WidthCalculator::new(policy);
+    let width = calculator.display_width(s);
     if width <= max_width {
         return s.to_string();
     }
 
-    let ellipsis_width = measure_text_width(ellipsis);
+    let ellipsis_width = calculator.display_width(ellipsis);
     if max_width < ellipsis_width {
         // Not enough room even for ellipsis - truncate ellipsis itself
-        return truncate_to_display_width(ellipsis, max_width);
+        return truncate_to_display_width(ellipsis, max_width, calculator);
     }
     if max_width == ellipsis_width {
         // Exactly enough room for ellipsis only
@@ -124,7 +154,7 @@ pub fn truncate_start(s: &str, max_width: usize, ellipsis: &str) -> String {
     }
 
     let target_width = max_width - ellipsis_width;
-    let truncated = find_suffix_with_width(s, target_width);
+    let truncated = find_suffix_with_width(s, target_width, calculator);
     format!("{}{}", ellipsis, truncated)
 }
 
@@ -145,15 +175,26 @@ pub fn truncate_start(s: &str, max_width: usize, ellipsis: &str) -> String {
 /// assert_eq!(truncate_middle("abcdefghij", 7, "..."), "ab...ij");
 /// ```
 pub fn truncate_middle(s: &str, max_width: usize, ellipsis: &str) -> String {
-    let width = measure_text_width(s);
+    truncate_middle_with_policy(s, max_width, ellipsis, AmbiguousWidth::Narrow)
+}
+
+/// Policy-aware variant of [`truncate_middle`].
+pub fn truncate_middle_with_policy(
+    s: &str,
+    max_width: usize,
+    ellipsis: &str,
+    policy: AmbiguousWidth,
+) -> String {
+    let calculator = WidthCalculator::new(policy);
+    let width = calculator.display_width(s);
     if width <= max_width {
         return s.to_string();
     }
 
-    let ellipsis_width = measure_text_width(ellipsis);
+    let ellipsis_width = calculator.display_width(ellipsis);
     if max_width < ellipsis_width {
         // Not enough room even for ellipsis - truncate ellipsis itself
-        return truncate_to_display_width(ellipsis, max_width);
+        return truncate_to_display_width(ellipsis, max_width, calculator);
     }
     if max_width == ellipsis_width {
         // Exactly enough room for ellipsis only
@@ -164,8 +205,8 @@ pub fn truncate_middle(s: &str, max_width: usize, ellipsis: &str) -> String {
     let right_width = available.div_ceil(2); // Bias toward end (more useful info usually)
     let left_width = available - right_width;
 
-    let left = truncate_to_display_width(s, left_width);
-    let right = find_suffix_with_width(s, right_width);
+    let left = truncate_to_display_width(s, left_width, calculator);
+    let right = find_suffix_with_width(s, right_width, calculator);
 
     format!("{}{}{}", left, ellipsis, right)
 }
@@ -187,7 +228,13 @@ pub fn truncate_middle(s: &str, max_width: usize, ellipsis: &str) -> String {
 /// assert_eq!(pad_left("hello", 3), "hello");  // No truncation
 /// ```
 pub fn pad_left(s: &str, width: usize) -> String {
-    pad_str(s, width, Alignment::Right, None).into_owned()
+    pad_left_with_policy(s, width, AmbiguousWidth::Narrow)
+}
+
+/// Policy-aware variant of [`pad_left`].
+pub fn pad_left_with_policy(s: &str, width: usize, policy: AmbiguousWidth) -> String {
+    let padding = width.saturating_sub(display_width_with_policy(s, policy));
+    format!("{}{}", " ".repeat(padding), s)
 }
 
 /// Pads a string on the right (left-aligns) to reach the target width.
@@ -207,7 +254,13 @@ pub fn pad_left(s: &str, width: usize) -> String {
 /// assert_eq!(pad_right("hello", 3), "hello");  // No truncation
 /// ```
 pub fn pad_right(s: &str, width: usize) -> String {
-    pad_str(s, width, Alignment::Left, None).into_owned()
+    pad_right_with_policy(s, width, AmbiguousWidth::Narrow)
+}
+
+/// Policy-aware variant of [`pad_right`].
+pub fn pad_right_with_policy(s: &str, width: usize, policy: AmbiguousWidth) -> String {
+    let padding = width.saturating_sub(display_width_with_policy(s, policy));
+    format!("{}{}", s, " ".repeat(padding))
 }
 
 /// Pads a string on both sides (centers) to reach the target width.
@@ -228,7 +281,14 @@ pub fn pad_right(s: &str, width: usize) -> String {
 /// assert_eq!(pad_center("hi", 5), " hi  ");  // Extra space on right
 /// ```
 pub fn pad_center(s: &str, width: usize) -> String {
-    pad_str(s, width, Alignment::Center, None).into_owned()
+    pad_center_with_policy(s, width, AmbiguousWidth::Narrow)
+}
+
+/// Policy-aware variant of [`pad_center`].
+pub fn pad_center_with_policy(s: &str, width: usize, policy: AmbiguousWidth) -> String {
+    let padding = width.saturating_sub(display_width_with_policy(s, policy));
+    let left = padding / 2;
+    format!("{}{}{}", " ".repeat(left), s, " ".repeat(padding - left))
 }
 
 /// Wraps text to fit within a maximum display width, breaking at word boundaries.
@@ -262,7 +322,12 @@ pub fn pad_center(s: &str, width: usize) -> String {
 /// }
 /// ```
 pub fn wrap(s: &str, width: usize) -> Vec<String> {
-    wrap_indent(s, width, 0)
+    wrap_with_policy(s, width, AmbiguousWidth::Narrow)
+}
+
+/// Policy-aware variant of [`wrap`].
+pub fn wrap_with_policy(s: &str, width: usize, policy: AmbiguousWidth) -> Vec<String> {
+    wrap_indent_with_policy(s, width, 0, policy)
 }
 
 /// Wraps text with a continuation indent on subsequent lines.
@@ -287,6 +352,17 @@ pub fn wrap(s: &str, width: usize) -> Vec<String> {
 /// assert_eq!(lines, vec!["hello world", "  foo bar"]);
 /// ```
 pub fn wrap_indent(s: &str, width: usize, indent: usize) -> Vec<String> {
+    wrap_indent_with_policy(s, width, indent, AmbiguousWidth::Narrow)
+}
+
+/// Policy-aware variant of [`wrap_indent`].
+pub fn wrap_indent_with_policy(
+    s: &str,
+    width: usize,
+    indent: usize,
+    policy: AmbiguousWidth,
+) -> Vec<String> {
+    let calculator = WidthCalculator::new(policy);
     if width == 0 {
         return vec![];
     }
@@ -297,7 +373,7 @@ pub fn wrap_indent(s: &str, width: usize, indent: usize) -> Vec<String> {
     }
 
     // If the whole string fits, return it directly
-    if measure_text_width(s) <= width {
+    if calculator.display_width(s) <= width {
         return vec![s.to_string()];
     }
 
@@ -308,7 +384,7 @@ pub fn wrap_indent(s: &str, width: usize, indent: usize) -> Vec<String> {
 
     // Split on whitespace, preserving the structure
     for word in s.split_whitespace() {
-        let word_width = measure_text_width(word);
+        let word_width = calculator.display_width(word);
         let effective_width = if is_first_line {
             width
         } else {
@@ -326,7 +402,7 @@ pub fn wrap_indent(s: &str, width: usize, indent: usize) -> Vec<String> {
             }
 
             // Force-break the long word
-            let broken = break_long_word(word, effective_width, indent, is_first_line);
+            let broken = break_long_word(word, effective_width, indent, is_first_line, calculator);
             let broken_len = broken.len();
             for (i, part) in broken.into_iter().enumerate() {
                 if i == 0 && is_first_line {
@@ -338,7 +414,7 @@ pub fn wrap_indent(s: &str, width: usize, indent: usize) -> Vec<String> {
                 } else {
                     // Last part - becomes the start of the next line
                     current_line = part;
-                    current_width = measure_text_width(&current_line);
+                    current_width = calculator.display_width(&current_line);
                 }
             }
             continue;
@@ -380,14 +456,20 @@ pub fn wrap_indent(s: &str, width: usize, indent: usize) -> Vec<String> {
 
     // Handle edge case where we produced no lines (shouldn't happen with non-empty input)
     if lines.is_empty() && !s.is_empty() {
-        lines.push(truncate_to_display_width(s, width));
+        lines.push(truncate_to_display_width(s, width, calculator));
     }
 
     lines
 }
 
 /// Break a word that's longer than the available width into multiple parts.
-fn break_long_word(word: &str, width: usize, indent: usize, is_first: bool) -> Vec<String> {
+fn break_long_word(
+    word: &str,
+    width: usize,
+    indent: usize,
+    is_first: bool,
+    calculator: WidthCalculator,
+) -> Vec<String> {
     let mut parts = Vec::new();
     let mut remaining = word;
     let mut first_part = is_first;
@@ -404,7 +486,7 @@ fn break_long_word(word: &str, width: usize, indent: usize, is_first: bool) -> V
             break;
         }
 
-        let remaining_width = measure_text_width(remaining);
+        let remaining_width = calculator.display_width(remaining);
         if remaining_width <= effective_width {
             // Rest fits
             let prefix = if first_part {
@@ -434,7 +516,7 @@ fn break_long_word(word: &str, width: usize, indent: usize, is_first: bool) -> V
         } else {
             " ".repeat(indent)
         };
-        let truncated = truncate_to_display_width(remaining, break_width);
+        let truncated = truncate_to_display_width(remaining, break_width, calculator);
         parts.push(format!("{}{}…", prefix, truncated));
 
         // Find where we actually cut in the original string
@@ -454,13 +536,13 @@ fn break_long_word(word: &str, width: usize, indent: usize, is_first: bool) -> V
 
 /// Truncate string to fit display width, keeping characters from the start.
 /// Handles ANSI escape codes properly.
-fn truncate_to_display_width(s: &str, max_width: usize) -> String {
+fn truncate_to_display_width(s: &str, max_width: usize, calculator: WidthCalculator) -> String {
     if max_width == 0 {
         return String::new();
     }
 
     // Fast path: if string fits, return as-is
-    if measure_text_width(s) <= max_width {
+    if calculator.display_width(s) <= max_width {
         return s.to_string();
     }
 
@@ -489,7 +571,7 @@ fn truncate_to_display_width(s: &str, max_width: usize) -> String {
         }
 
         // Regular character - check width
-        let char_width = unicode_width::UnicodeWidthChar::width(c).unwrap_or(0);
+        let char_width = calculator.char_width(c);
         if current_width + char_width > max_width {
             break;
         }
@@ -501,12 +583,12 @@ fn truncate_to_display_width(s: &str, max_width: usize) -> String {
 }
 
 /// Find the longest suffix of s that has display width <= max_width.
-fn find_suffix_with_width(s: &str, max_width: usize) -> String {
+fn find_suffix_with_width(s: &str, max_width: usize, calculator: WidthCalculator) -> String {
     if max_width == 0 {
         return String::new();
     }
 
-    let total_width = measure_text_width(s);
+    let total_width = calculator.display_width(s);
     if total_width <= max_width {
         return s.to_string();
     }
@@ -534,7 +616,7 @@ fn find_suffix_with_width(s: &str, max_width: usize) -> String {
             continue;
         }
 
-        let char_width = unicode_width::UnicodeWidthChar::width(c).unwrap_or(0);
+        let char_width = calculator.char_width(c);
         current_width += char_width;
         byte_offset = i + c.len_utf8();
 
@@ -571,6 +653,26 @@ mod tests {
         assert_eq!(display_width("日本語"), 6); // 3 chars, 2 columns each
         assert_eq!(display_width("café"), 4);
         assert_eq!(display_width("🎉"), 2); // Emoji typically 2 columns
+    }
+
+    #[test]
+    fn policy_aware_helpers_share_ambiguous_width_measurement() {
+        let text = "↦≈Δ";
+        assert_eq!(display_width_with_policy(text, AmbiguousWidth::Narrow), 3);
+        assert_eq!(display_width_with_policy(text, AmbiguousWidth::Wide), 5);
+        assert_eq!(
+            pad_right_with_policy(text, 7, AmbiguousWidth::Narrow),
+            "↦≈Δ    "
+        );
+        assert_eq!(
+            pad_right_with_policy(text, 7, AmbiguousWidth::Wide),
+            "↦≈Δ  "
+        );
+        assert_eq!(
+            truncate_end_with_policy(text, 4, "…", AmbiguousWidth::Wide),
+            "↦…"
+        );
+        assert_eq!(wrap_with_policy("≈ Δ", 2, AmbiguousWidth::Wide), ["≈", "Δ"]);
     }
 
     // --- truncate_end tests ---

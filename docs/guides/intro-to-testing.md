@@ -172,6 +172,11 @@ That's it. `run()` drives the same dispatch path as production — same clap par
 >
 > **Verify:** Add a `TestHarness::new().run(...)` test to your app. It should run in under 10ms, not 100ms.
 
+For width-sensitive fixtures, run the same app with
+`.ambiguous_width(AmbiguousWidth::Narrow)` and
+`.ambiguous_width(AmbiguousWidth::Wide)`. Narrow is the compatibility default;
+the harness override makes either policy deterministic without locale guessing.
+
 ### 4.1 Env vars
 
 Your command reads `$EDITOR`? Set it:

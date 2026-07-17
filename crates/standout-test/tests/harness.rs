@@ -13,7 +13,7 @@ use standout::cli::{
 use standout::tabular::{Column, Width};
 use standout::{CsvProjection, StructuredOutputProjection};
 use standout_input::{ClipboardSource, EnvSource, InputChain, StdinSource};
-use standout_render::OutputMode;
+use standout_render::{AmbiguousWidth, OutputMode};
 use standout_test::TestHarness;
 
 fn build_echo_app(template: &'static str) -> App {
@@ -47,6 +47,23 @@ fn simple_handler_returns_rendered_text() {
     result.assert_success();
     result.assert_stdout_eq("hello");
     result.assert_exit_status(ExitStatus::SUCCESS);
+}
+
+#[test]
+#[serial]
+fn ambiguous_width_policy_can_be_injected_for_the_same_app_fixture() {
+    let app = build_echo_app("{{ msg | display_width }}");
+
+    let narrow = TestHarness::new()
+        .ambiguous_width(AmbiguousWidth::Narrow)
+        .run(&app, echo_command(), ["app", "echo", "↦≈Δ"]);
+    narrow.assert_stdout_eq("3");
+    drop(narrow);
+
+    let wide = TestHarness::new()
+        .ambiguous_width(AmbiguousWidth::Wide)
+        .run(&app, echo_command(), ["app", "echo", "↦≈Δ"]);
+    wide.assert_stdout_eq("5");
 }
 
 #[test]

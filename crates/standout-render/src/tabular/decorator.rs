@@ -40,7 +40,8 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use super::formatter::{CellValue, OwnedCellValue, TabularFormatter};
 use super::traits::{Tabular, TabularRow};
 use super::types::{FlatDataSpec, TabularSpec};
-use super::util::display_width;
+use super::util::display_width_with_policy;
+use crate::AmbiguousWidth;
 
 /// Border style for table decoration.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -225,7 +226,16 @@ impl std::fmt::Debug for Table {
 impl Table {
     /// Create a new table with the given spec and total width.
     pub fn new(spec: TabularSpec, total_width: usize) -> Self {
-        let formatter = TabularFormatter::new(&spec, total_width);
+        Self::with_ambiguous_width(spec, total_width, AmbiguousWidth::Narrow)
+    }
+
+    /// Creates a table with an explicit ambiguous-width policy.
+    pub fn with_ambiguous_width(
+        spec: TabularSpec,
+        total_width: usize,
+        policy: AmbiguousWidth,
+    ) -> Self {
+        let formatter = TabularFormatter::with_ambiguous_width(&spec, total_width, policy);
         Table {
             formatter,
             headers: None,
@@ -502,7 +512,10 @@ impl Table {
 
         // Calculate total content width
         let content_width: usize = widths.iter().sum();
-        let sep_width = display_width(&self.formatter_separator());
+        let sep_width = display_width_with_policy(
+            &self.formatter_separator(),
+            self.formatter.ambiguous_width(),
+        );
         let num_seps = widths.len().saturating_sub(1);
         let total_content = content_width + (num_seps * sep_width);
 

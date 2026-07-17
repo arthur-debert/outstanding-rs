@@ -144,7 +144,8 @@ where
                   ctx: &CommandContext,
                   hooks: Option<&Hooks>,
                   output_mode: crate::OutputMode,
-                  theme: &crate::Theme| {
+                  theme: &crate::Theme,
+                  ambiguous_width: crate::AmbiguousWidth| {
                 let result = handler.borrow_mut().handle(matches, ctx);
                 render_handler_output(
                     result,
@@ -157,6 +158,7 @@ where
                     &**template_engine,
                     output_mode,
                     structured_output_projection.as_ref(),
+                    ambiguous_width,
                 )
             },
         ))
@@ -251,7 +253,8 @@ where
                   ctx: &CommandContext,
                   hooks: Option<&Hooks>,
                   output_mode: crate::OutputMode,
-                  theme: &crate::Theme| {
+                  theme: &crate::Theme,
+                  ambiguous_width: crate::AmbiguousWidth| {
                 let result = handler.borrow_mut().handle(matches, ctx);
                 render_handler_output(
                     result,
@@ -264,6 +267,7 @@ where
                     &**template_engine,
                     output_mode,
                     structured_output_projection.as_ref(),
+                    ambiguous_width,
                 )
             },
         ))
@@ -404,7 +408,8 @@ where
                   ctx: &CommandContext,
                   _hooks: Option<&Hooks>,
                   _output_mode: crate::OutputMode,
-                  _theme: &crate::Theme| {
+                  _theme: &crate::Theme,
+                  _ambiguous_width: crate::AmbiguousWidth| {
                 let result = (handler.borrow_mut())(matches, ctx);
                 match result {
                     Ok(()) => Ok(super::dispatch::DispatchOutput::Silent),
@@ -1019,7 +1024,8 @@ where
                   ctx: &CommandContext,
                   hooks: Option<&Hooks>,
                   output_mode: crate::OutputMode,
-                  theme: &crate::Theme| {
+                  theme: &crate::Theme,
+                  ambiguous_width: crate::AmbiguousWidth| {
                 let result = handler.borrow_mut().handle(matches, ctx);
                 render_handler_output(
                     result,
@@ -1032,6 +1038,7 @@ where
                     &**template_engine,
                     output_mode,
                     structured_output_projection.as_ref(),
+                    ambiguous_width,
                 )
             },
         ))
@@ -1086,7 +1093,8 @@ where
                   ctx: &CommandContext,
                   hooks: Option<&Hooks>,
                   output_mode: crate::OutputMode,
-                  theme: &crate::Theme| {
+                  theme: &crate::Theme,
+                  ambiguous_width: crate::AmbiguousWidth| {
                 let result = handler.borrow_mut().handle(matches, ctx);
                 render_handler_output(
                     result,
@@ -1099,6 +1107,7 @@ where
                     &**template_engine,
                     output_mode,
                     structured_output_projection.as_ref(),
+                    ambiguous_width,
                 )
             },
         ))
@@ -1147,7 +1156,8 @@ where
                   ctx: &CommandContext,
                   _hooks: Option<&Hooks>,
                   _output_mode: crate::OutputMode,
-                  _theme: &crate::Theme| {
+                  _theme: &crate::Theme,
+                  _ambiguous_width: crate::AmbiguousWidth| {
                 let result = (handler.borrow_mut())(matches, ctx);
                 match result {
                     Ok(()) => Ok(super::dispatch::DispatchOutput::Silent),
