@@ -46,6 +46,7 @@
 
 ## Framework Topics
 
+- [Execution Outcomes](./topics/execution-outcomes.md)
 - [Output Modes](./topics/output-modes.md)
 - [App Configuration](./topics/app-configuration.md)
 - [Testing](./topics/testing.md)

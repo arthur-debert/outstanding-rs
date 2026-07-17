@@ -92,12 +92,11 @@
 //!     RunResult::Handled(output) => println!("{}", output),
 //!     RunResult::NoMatch(matches) => legacy_dispatch(matches),
 //!     RunResult::Binary(bytes, filename) => std::fs::write(filename, bytes)?,
-//!     RunResult::Error(msg) => {
-//!         eprintln!("{}", msg);
-//!         std::process::exit(1);
+//!     RunResult::Error(error) => {
+//!         eprintln!("{}", error);
+//!         std::process::exit(error.exit_status().code().into());
 //!     },
-//!     // RunResult is #[non_exhaustive]; covers Silent (currently mapped to
-//!     // Handled(String::new()) in 7.x) and any future variants.
+//!     // RunResult is #[non_exhaustive]; cover Silent and future variants.
 //!     _ => {},
 //! }
 //! ```
@@ -109,7 +108,7 @@
 //! - [`FnHandler`]: Wrapper for `FnMut` closures
 //! - [`Output`]: What handlers produce (render data, silent, binary)
 //! - [`HandlerResult`]: `Result<Output<T>, Error>` — enables `?` for error handling
-//! - [`RunResult`]: Dispatch outcome (handled, binary, or no match)
+//! - [`RunResult`]: Typed dispatch outcome, status, and failure origin
 //! - [`Hooks`]: Pre/post execution hooks for validation and transformation
 //! - [`CommandContext`]: Runtime info passed to handlers (command path, app state)
 //!
@@ -155,7 +154,8 @@ pub use help::{
 
 // Re-export handler types
 pub use handler::{
-    CommandContext, CommandContextInput, FnHandler, Handler, HandlerResult, Output, RunResult,
+    CommandContext, CommandContextInput, ExitStatus, FnHandler, Handler, HandlerResult, Output,
+    OutputKind, RunError, RunErrorKind, RunOutput, RunResult, SuccessKind,
 };
 
 // Re-export hook types

@@ -6,7 +6,7 @@
 use clap::Command;
 use serde_json::json;
 use serial_test::serial;
-use standout::cli::{App, Output};
+use standout::cli::{App, ExitStatus, HandlerResult, Output, RunErrorKind, SuccessKind};
 use standout::tabular::{Column, Width};
 use standout::{CsvProjection, StructuredOutputProjection};
 use standout_input::{ClipboardSource, EnvSource, InputChain, StdinSource};
@@ -43,6 +43,39 @@ fn simple_handler_returns_rendered_text() {
     let result = TestHarness::new().run(&app, echo_command(), vec!["app", "echo", "hello"]);
     result.assert_success();
     result.assert_stdout_eq("hello");
+    result.assert_exit_status(ExitStatus::SUCCESS);
+}
+
+#[test]
+#[serial]
+fn harness_exposes_typed_clap_and_handler_outcomes() {
+    let app = build_echo_app("{{ msg }}");
+    let help = TestHarness::new().run(&app, echo_command(), ["app", "--help"]);
+    help.assert_success();
+    help.assert_exit_status(ExitStatus::SUCCESS);
+    assert_eq!(help.success_kind(), Some(SuccessKind::ClapHelp));
+
+    let usage = TestHarness::new().run(&app, echo_command(), ["app", "--unknown"]);
+    usage.assert_error();
+    usage.assert_exit_status(ExitStatus::USAGE_ERROR);
+    usage.assert_error_kind(RunErrorKind::ClapUsage);
+
+    let failing = App::builder()
+        .command(
+            "fail",
+            |_matches, _ctx| -> HandlerResult<serde_json::Value> {
+                Err(std::io::Error::other("boom").into())
+            },
+            "",
+        )
+        .unwrap()
+        .build()
+        .unwrap();
+    let failing_command = Command::new("app").subcommand(Command::new("fail"));
+    let failure = TestHarness::new().run(&failing, failing_command, ["app", "fail"]);
+    failure.assert_error();
+    failure.assert_exit_status(ExitStatus::FAILURE);
+    failure.assert_error_kind(RunErrorKind::Handler);
 }
 
 #[test]

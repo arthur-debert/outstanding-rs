@@ -12,7 +12,9 @@ use std::collections::HashMap;
 use std::rc::Rc;
 
 use super::dispatch::{render_handler_output, DispatchFn};
-use crate::cli::handler::{CommandContext, FnHandler, Handler, HandlerResult};
+use crate::cli::handler::{
+    CommandContext, FnHandler, Handler, HandlerResult, RunError, RunErrorKind,
+};
 use crate::cli::hooks::{Hooks, RenderedOutput, TextOutput};
 use crate::StructuredOutputProjection;
 use standout_dispatch::verify::ExpectedArg;
@@ -414,7 +416,10 @@ where
                 let result = (handler.borrow_mut())(matches, ctx);
                 match result {
                     Ok(()) => Ok(super::dispatch::DispatchOutput::Silent),
-                    Err(e) => Err(format!("Error: {}", e)),
+                    Err(e) => Err(RunError::new(
+                        format!("Error: {}", e),
+                        RunErrorKind::Handler,
+                    )),
                 }
             },
         ))
@@ -1163,7 +1168,10 @@ where
                 let result = (handler.borrow_mut())(matches, ctx);
                 match result {
                     Ok(()) => Ok(super::dispatch::DispatchOutput::Silent),
-                    Err(e) => Err(format!("Error: {}", e)),
+                    Err(e) => Err(RunError::new(
+                        format!("Error: {}", e),
+                        RunErrorKind::Handler,
+                    )),
                 }
             },
         ))

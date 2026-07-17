@@ -209,6 +209,7 @@ fn test_pipe_with_custom_target() {
 /// Test that piping a failed command propagates the error
 #[test]
 fn test_pipe_command_failure() {
+    use standout::cli::{ExitStatus, HookPhase, RunErrorKind};
     let app = App::builder()
         .commands(|g| {
             g.command_with(
@@ -225,6 +226,12 @@ fn test_pipe_command_failure() {
 
     let cmd = Command::new("test").subcommand(Command::new("fail"));
     let result = app.run_to_string(cmd, vec!["test", "fail"]);
+
+    assert_eq!(result.exit_status(), Some(ExitStatus::FAILURE));
+    assert_eq!(
+        result.error_kind(),
+        Some(RunErrorKind::Hook(HookPhase::PostOutput))
+    );
 
     // Hook error should produce RunResult::Error with the failure message
     match result {

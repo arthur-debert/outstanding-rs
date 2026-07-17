@@ -15,6 +15,38 @@ Many CLI frameworks require a complete rewrite:
 
 `standout-dispatch` is designed differently. It's a library, not a framework—you call it, it doesn't call you.
 
+## Current App handoff
+
+For a fallback that does not need parsed matches, keep the source-level
+`run() -> bool` contract:
+
+```rust
+if !app.run(command, args) {
+    legacy_dispatch();
+}
+```
+
+When the legacy path needs `ArgMatches`, capture the result instead:
+
+```rust
+match app.run_to_string(command, args) {
+    RunResult::NoMatch(matches) => legacy_dispatch(matches),
+    RunResult::Handled(output) => consume_text(output),
+    RunResult::Binary(bytes, filename) => consume_binary(bytes, filename),
+    RunResult::Error(error) => {
+        eprintln!("{}", error);
+        std::process::exit(error.exit_status().code().into());
+    }
+    RunResult::Silent => {}
+    _ => {}
+}
+```
+
+`NoMatch` is deliberately status-free and emits nothing. It does not become a
+Clap usage error; the fallback owns the command. All completed Standout paths
+expose typed status/origin metadata. See [Execution
+Outcomes](../../../topics/execution-outcomes.md).
+
 ---
 
 ## Strategy: Migrate One Command at a Time

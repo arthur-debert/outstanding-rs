@@ -9,6 +9,7 @@
 
 use crate::{write_binary_output, write_output, OutputDestination, OutputMode};
 use clap::{Arg, ArgAction, ArgMatches, Command};
+use std::io::Write;
 use std::path::PathBuf;
 
 use super::{AppBuilder, PendingCommand};
@@ -17,7 +18,9 @@ use crate::cli::dispatch::{
     DispatchOutput,
 };
 use crate::cli::group::{ErasedConfigRecipe, GroupBuilder, GroupEntry};
-use crate::cli::handler::{CommandContext, RunResult};
+use crate::cli::handler::{
+    CommandContext, OutputKind, RunError, RunErrorKind, RunOutput, RunResult,
+};
 use crate::cli::hooks::{RenderedOutput, TextOutput};
 use crate::SetupError;
 
@@ -99,9 +102,8 @@ impl AppBuilder {
     /// Returns:
     /// - `RunResult::Handled(output)` if a handler was found and executed successfully,
     /// - `RunResult::Binary(bytes, filename)` for binary output,
-    /// - `RunResult::Handled(String::new())` if the handler completed silently
-    ///   (silent completion is currently mapped onto an empty `Handled`; the
-    ///   8.0 overhaul will return a distinct `RunResult::Silent`),
+    /// - `RunResult::Handled(RunOutput::command(String::new()))` if the handler
+    ///   completed silently (preserving the capture compatibility accessor),
     /// - `RunResult::Error(msg)` if a handler, hook, or output step failed,
     /// - `RunResult::NoMatch(matches)` if no handler matched.
     ///
@@ -132,7 +134,10 @@ impl AppBuilder {
             // Run pre-dispatch hooks if registered (hooks can inject state via ctx.extensions)
             if let Some(hooks) = hooks {
                 if let Err(e) = hooks.run_pre_dispatch(&matches, &mut ctx) {
-                    return RunResult::Error(format!("Hook error: {}", e));
+                    return RunResult::Error(RunError::new(
+                        format!("Hook error: {}", e),
+                        RunErrorKind::Hook(e.phase),
+                    ));
                 }
             }
 
@@ -163,7 +168,12 @@ impl AppBuilder {
             let mut final_output = if let Some(hooks) = hooks {
                 match hooks.run_post_output(&matches, &ctx, output) {
                     Ok(o) => o,
-                    Err(e) => return RunResult::Error(format!("Hook error: {}", e)),
+                    Err(e) => {
+                        return RunResult::Error(RunError::new(
+                            format!("Hook error: {}", e),
+                            RunErrorKind::Hook(e.phase),
+                        ))
+                    }
                 }
             } else {
                 output
@@ -182,14 +192,20 @@ impl AppBuilder {
                         RenderedOutput::Text(t) => {
                             // Write raw output (without ANSI codes) to file
                             if let Err(e) = write_output(&t.raw, &dest) {
-                                return RunResult::Error(format!("Error writing output: {}", e));
+                                return RunResult::Error(RunError::new(
+                                    format!("Error writing output: {}", e),
+                                    RunErrorKind::FinalWrite(OutputKind::Text),
+                                ));
                             }
                             // Suppress further output
                             final_output = RenderedOutput::Silent;
                         }
                         RenderedOutput::Binary(b, _) => {
                             if let Err(e) = write_binary_output(b, &dest) {
-                                return RunResult::Error(format!("Error writing output: {}", e));
+                                return RunResult::Error(RunError::new(
+                                    format!("Error writing output: {}", e),
+                                    RunErrorKind::FinalWrite(OutputKind::Binary),
+                                ));
                             }
                             final_output = RenderedOutput::Silent;
                         }
@@ -200,9 +216,11 @@ impl AppBuilder {
 
             // Convert back to RunResult (using formatted for terminal display)
             match final_output {
-                RenderedOutput::Text(t) => RunResult::Handled(t.formatted),
+                RenderedOutput::Text(t) => RunResult::Handled(RunOutput::command(t.formatted)),
                 RenderedOutput::Binary(b, f) => RunResult::Binary(b, f),
-                RenderedOutput::Silent => RunResult::Handled(String::new()),
+                // Preserve the 7.x capture contract: silent success is an
+                // empty handled string. `run()` still emits nothing.
+                RenderedOutput::Silent => RunResult::Handled(RunOutput::command(String::new())),
             }
         } else {
             RunResult::NoMatch(matches)
@@ -259,9 +277,15 @@ impl AppBuilder {
             Ok(m) => m,
             Err(e) => {
                 if e.use_stderr() {
-                    return RunResult::Error(e.to_string());
+                    return RunResult::Error(RunError::new(e.to_string(), RunErrorKind::ClapUsage));
                 }
-                return RunResult::Handled(e.to_string());
+                let output = match e.kind() {
+                    clap::error::ErrorKind::DisplayVersion => {
+                        RunOutput::clap_version(e.to_string())
+                    }
+                    _ => RunOutput::clap_help(e.to_string()),
+                };
+                return RunResult::Handled(output);
             }
         };
 
@@ -278,9 +302,18 @@ impl AppBuilder {
                     Ok(m) => m,
                     Err(e) => {
                         if e.use_stderr() {
-                            return RunResult::Error(e.to_string());
+                            return RunResult::Error(RunError::new(
+                                e.to_string(),
+                                RunErrorKind::ClapUsage,
+                            ));
                         }
-                        return RunResult::Handled(e.to_string());
+                        let output = match e.kind() {
+                            clap::error::ErrorKind::DisplayVersion => {
+                                RunOutput::clap_version(e.to_string())
+                            }
+                            _ => RunOutput::clap_help(e.to_string()),
+                        };
+                        return RunResult::Handled(output);
                     }
                 }
             }
@@ -323,9 +356,10 @@ impl AppBuilder {
     ///
     /// # Errors and exit codes
     ///
-    /// On `RunResult::Error`, this function writes the error message to
-    /// stderr and calls `std::process::exit(1)` — it does not return.
-    /// Likewise, a binary write failure writes to stderr and exits 1.
+    /// On `RunResult::Error`, this function writes the diagnostic to stderr
+    /// and exits with its typed status: Clap usage errors use 2 and runtime
+    /// failures use 1. Final text and binary writes are framework-owned; a
+    /// write failure is diagnosed on stderr and exits 1.
     /// Callers needing fine-grained control over exit codes should use
     /// [`Self::run_to_string`] or [`Self::dispatch_from`] and match on
     /// `RunResult` themselves.
@@ -350,41 +384,14 @@ impl AppBuilder {
         T: Into<std::ffi::OsString> + Clone,
     {
         let result = self.dispatch_from(cmd, args);
-        // Track whether we need to terminate the process with a non-zero
-        // exit code. We can't return `ExitCode` from `run()` without a
-        // breaking signature change, so we exit explicitly after flushing
-        // warnings (see issue #141).
-        let mut exit_code: Option<i32> = None;
-        let handled = match result {
-            RunResult::Handled(ref output) => {
-                if !output.is_empty() {
-                    println!("{}", output);
-                }
-                true
-            }
-            RunResult::Binary(ref bytes, ref filename) => {
-                // For binary output, write to stdout or the suggested file
-                // By default, we write to the suggested filename
-                if let Err(e) = std::fs::write(filename, bytes) {
-                    eprintln!("Error writing {}: {}", filename, e);
-                    exit_code = Some(1);
-                } else {
-                    eprintln!("Wrote {} bytes to {}", bytes.len(), filename);
-                }
-                true
-            }
-            RunResult::Silent => true, // Handler ran successfully, no output
-            RunResult::Error(ref msg) => {
-                eprintln!("{}", msg);
-                exit_code = Some(1);
-                true
-            }
-            RunResult::NoMatch(_) => false,
-            // Required by `#[non_exhaustive]`. Conservative default: treat
-            // any future variant as "not handled" so the caller's fallback
-            // path runs.
-            _ => false,
-        };
+        let primary_status = result.exit_status();
+        let stdout = std::io::stdout();
+        let stderr = std::io::stderr();
+        let mut stdout = stdout.lock();
+        let mut stderr = stderr.lock();
+        let (handled, final_write_failure) = emit_run_result(&result, &mut stdout, &mut stderr);
+        drop(stdout);
+        drop(stderr);
 
         // After the primary output has been flushed to stdout, render any
         // framework warnings collected during setup/dispatch to stderr so
@@ -395,8 +402,12 @@ impl AppBuilder {
         let theme = self.theme.as_ref().unwrap_or(&default_theme);
         standout_render::warnings::flush_to_stderr(theme, OutputMode::Auto);
 
-        if let Some(code) = exit_code {
-            std::process::exit(code);
+        let status = final_write_failure
+            .as_ref()
+            .map(RunError::exit_status)
+            .or(primary_status);
+        if let Some(status) = status.filter(|status| status.code() != 0) {
+            std::process::exit(i32::from(status.code()));
         }
 
         handled
@@ -409,11 +420,10 @@ impl AppBuilder {
     ///
     /// # Returns
     ///
-    /// - `RunResult::Handled(output)` - Handler executed successfully, output is the rendered string.
-    ///   Note: silent completion currently surfaces as `Handled(String::new())` rather than a
-    ///   distinct `Silent` variant; that distinction returns in the 8.0 error-handling overhaul.
+    /// - `RunResult::Handled(output)` - Handler executed successfully, or Clap produced help/version.
+    ///   Silent completion remains an empty handled string for capture compatibility.
     /// - `RunResult::Binary(bytes, filename)` - Handler produced binary output
-    /// - `RunResult::Error(msg)` - A handler, hook, output step, or clap parse failed
+    /// - `RunResult::Error(error)` - A typed handler, hook, render, write, or Clap usage failure
     /// - `RunResult::NoMatch(matches)` - No handler matched
     ///
     /// # Example
@@ -429,9 +439,9 @@ impl AppBuilder {
     /// match result {
     ///     RunResult::Handled(output) => println!("{}", output),
     ///     RunResult::Binary(bytes, filename) => std::fs::write(filename, bytes)?,
-    ///     RunResult::Error(msg) => {
-    ///         eprintln!("{}", msg);
-    ///         std::process::exit(1);
+    ///     RunResult::Error(error) => {
+    ///         eprintln!("{}", error);
+    ///         std::process::exit(error.exit_status().code().into());
     ///     },
     ///     RunResult::NoMatch(matches) => { /* handle manually */ },
     ///     // RunResult is #[non_exhaustive]; cover Silent and any future variants.
@@ -485,6 +495,49 @@ impl AppBuilder {
 
         cmd
     }
+}
+
+/// Emits one captured result through framework-owned writers.
+///
+/// Keeping this as a writer seam makes final text/binary failures typed and
+/// unit-testable while `run()` retains its public `bool` contract.
+fn emit_run_result<W: Write, E: Write>(
+    result: &RunResult,
+    stdout: &mut W,
+    stderr: &mut E,
+) -> (bool, Option<RunError>) {
+    let failure = match result {
+        RunResult::Handled(output) if output.is_empty() => None,
+        RunResult::Handled(output) => writeln!(stdout, "{}", output).err().map(|error| {
+            RunError::new(
+                format!("Error writing stdout: {}", error),
+                RunErrorKind::FinalWrite(OutputKind::Text),
+            )
+        }),
+        RunResult::Binary(bytes, _) => stdout.write_all(bytes).err().map(|error| {
+            RunError::new(
+                format!("Error writing binary stdout: {}", error),
+                RunErrorKind::FinalWrite(OutputKind::Binary),
+            )
+        }),
+        RunResult::Silent => None,
+        RunResult::Error(error) => writeln!(stderr, "{}", error).err().map(|write_error| {
+            RunError::new(
+                format!("Error writing stderr: {}", write_error),
+                RunErrorKind::FinalWrite(OutputKind::Text),
+            )
+        }),
+        RunResult::NoMatch(_) => return (false, None),
+        _ => return (false, None),
+    };
+
+    if let Some(error) = &failure {
+        // Best effort: if stderr itself is broken there is nowhere else to
+        // report the final-write diagnostic, but the typed failure still
+        // determines status 1.
+        let _ = writeln!(stderr, "{}", error);
+    }
+    (true, failure)
 }
 
 #[cfg(test)]
@@ -2355,5 +2408,81 @@ header:
 
         assert!(result.is_handled());
         assert_eq!(result.output(), Some("https://api.example.com"));
+    }
+
+    struct FailingWriter;
+
+    impl std::io::Write for FailingWriter {
+        fn write(&mut self, _buf: &[u8]) -> std::io::Result<usize> {
+            Err(std::io::Error::new(
+                std::io::ErrorKind::BrokenPipe,
+                "closed",
+            ))
+        }
+
+        fn flush(&mut self) -> std::io::Result<()> {
+            Err(std::io::Error::new(
+                std::io::ErrorKind::BrokenPipe,
+                "closed",
+            ))
+        }
+    }
+
+    #[test]
+    fn final_emission_routes_success_and_diagnostics_to_distinct_streams() {
+        let mut stdout = Vec::new();
+        let mut stderr = Vec::new();
+        let (handled, failure) = emit_run_result(
+            &RunResult::Handled(RunOutput::command("hello")),
+            &mut stdout,
+            &mut stderr,
+        );
+        assert!(handled);
+        assert!(failure.is_none());
+        assert_eq!(stdout, b"hello\n");
+        assert!(stderr.is_empty());
+
+        stdout.clear();
+        let (handled, failure) = emit_run_result(
+            &RunResult::Error(RunError::new("bad argv", RunErrorKind::ClapUsage)),
+            &mut stdout,
+            &mut stderr,
+        );
+        assert!(handled);
+        assert!(failure.is_none());
+        assert!(stdout.is_empty());
+        assert_eq!(stderr, b"bad argv\n");
+    }
+
+    #[test]
+    fn final_text_and_binary_write_failures_keep_payload_kind() {
+        let mut stderr = Vec::new();
+        let (_, text_failure) = emit_run_result(
+            &RunResult::Handled(RunOutput::command("hello")),
+            &mut FailingWriter,
+            &mut stderr,
+        );
+        let text_failure = text_failure.unwrap();
+        assert_eq!(
+            text_failure.kind(),
+            RunErrorKind::FinalWrite(OutputKind::Text)
+        );
+        assert_eq!(text_failure.exit_status(), crate::cli::ExitStatus::FAILURE);
+
+        stderr.clear();
+        let (_, binary_failure) = emit_run_result(
+            &RunResult::Binary(vec![0, 1], "data.bin".into()),
+            &mut FailingWriter,
+            &mut stderr,
+        );
+        let binary_failure = binary_failure.unwrap();
+        assert_eq!(
+            binary_failure.kind(),
+            RunErrorKind::FinalWrite(OutputKind::Binary)
+        );
+        assert_eq!(
+            binary_failure.exit_status(),
+            crate::cli::ExitStatus::FAILURE
+        );
     }
 }
