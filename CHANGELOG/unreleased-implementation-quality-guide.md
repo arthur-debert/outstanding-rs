@@ -1,0 +1,1 @@
+- Add a compact implementation-quality guide and skill checklist for leveraging Standout's logic/presentation boundary, output modes, templates and CSS, tabular layout, declarative dispatch, and layered test seams.

@@ -4,6 +4,8 @@
 
 ## Unreleased
 
+- Add a compact implementation-quality guide and skill checklist for leveraging Standout's logic/presentation boundary, output modes, templates and CSS, tabular layout, declarative dispatch, and layered test seams.
+
 ## 7.6.4 - 2026-07-17
 
 - Fix the standout-docs skill: relocate to standout-docs/SKILL.md and add required frontmatter so it's discoverable
