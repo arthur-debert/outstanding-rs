@@ -121,6 +121,41 @@ Handlers that use `StdinSource::new()` / `ClipboardSource::new()` / `read_if_pip
 
 Handlers that need per-instance control keep using `StdinSource::with_reader(MockStdin::piped(...))` as before.
 
+### Testing invocation-aware default commands
+
+`default_command_with` resolves through the same `DefaultStdin` seam, so `TestHarness` drives it with no extra wiring:
+
+```rust
+// Piped stdin resolves the naked invocation to the piped entry point.
+TestHarness::new()
+    .piped_stdin("ship the docs\n")
+    .run(&app, cli::command(), ["tdoo"])
+    .assert_stdout_contains("Added");
+
+// A terminal resolves it to the interactive one.
+TestHarness::new()
+    .interactive_stdin()
+    .run(&app, cli::command(), ["tdoo"])
+    .assert_stdout_contains("Your Todos");
+```
+
+`piped_stdin("")` covers the **piped-but-empty** case: the resolver sees a pipe, not a terminal, because emptiness is only knowable by reading. Use it to assert that a receiving command's `InputChain` rejects empty input, rather than expecting resolution to route around it.
+
+`interactive_stdin()` is required for the terminal branch — without it the harness inherits the real stdin, which is *not* a terminal under a test runner, so a naked invocation would take the piped branch and the test would pass or fail depending on how it was launched.
+
+For the parse-only path (`get_matches_from` / `parse_from`) there's no harness entry point; install the override directly:
+
+```rust
+set_default_stdin_reader(Arc::new(MockStdin::terminal()));
+match app.get_matches_from(cli::command(), ["tdoo"]) {
+    HelpResult::Matches(m) => assert_eq!(m.subcommand_name(), Some("list")),
+    other => panic!("expected matches, got {other:?}"),
+}
+reset_default_stdin_reader();
+```
+
+Both the harness and the manual override are process-global — mark these tests `#[serial]`.
+
 ### `standout-input` prompt responder
 
 The `.prompt()` shortcut on every interactive source (`InquireText`, `InquireSelect`, `TextPromptSource`, `EditorSource`, …) consults a process-global [`PromptResponder`](https://docs.rs/standout-input/latest/standout_input/trait.PromptResponder.html) before opening any real prompt. Install one to make wizard handlers testable in-process:

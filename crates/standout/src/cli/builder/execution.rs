@@ -14,8 +14,7 @@ use std::path::PathBuf;
 
 use super::{AppBuilder, PendingCommand};
 use crate::cli::dispatch::{
-    dispatch, extract_command_path, get_deepest_matches, has_subcommand, insert_default_command,
-    DispatchOutput,
+    dispatch, extract_command_path, get_deepest_matches, insert_default_command, DispatchOutput,
 };
 use crate::cli::group::{ErasedConfigRecipe, GroupBuilder, GroupEntry};
 use crate::cli::handler::{
@@ -296,12 +295,16 @@ impl AppBuilder {
             }
         };
 
-        // Check if we need to insert default command
-        let matches = if let Some(default_cmd) = &self.default_command {
-            if has_subcommand(&matches) {
-                matches
-            } else {
-                let new_args = insert_default_command(args, default_cmd);
+        // A naked invocation may resolve to a default command — statically, or
+        // per-invocation via `default_command_with`. Both funnel through
+        // `resolve_default_command` so this path and `get_matches_from` agree.
+        let matches = match self.resolve_default_command(&cmd, &matches) {
+            Err(e) => {
+                return RunResult::Error(RunError::new(e.to_string(), RunErrorKind::DefaultCommand))
+            }
+            Ok(None) => matches,
+            Ok(Some(default_cmd)) => {
+                let new_args = insert_default_command(args, &default_cmd);
 
                 // Reparse with default command inserted
                 let augmented_cmd = self.augment_command_for_dispatch(cmd);
@@ -324,8 +327,6 @@ impl AppBuilder {
                     }
                 }
             }
-        } else {
-            matches
         };
 
         // Extract output mode

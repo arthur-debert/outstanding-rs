@@ -545,6 +545,8 @@ pub enum OutputKind {
 pub enum RunErrorKind {
     /// Clap rejected the command line.
     ClapUsage,
+    /// A default-command resolver named a command the CLI does not have.
+    DefaultCommand,
     /// The application handler returned an error.
     Handler,
     /// A hook failed in the identified phase. Pipe failures are post-output hooks.
