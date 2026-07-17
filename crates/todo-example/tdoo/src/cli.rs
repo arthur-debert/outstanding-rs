@@ -23,6 +23,15 @@ pub(crate) enum Commands {
     },
     /// Mark a todo done.
     Done { id: u32 },
+    /// Export todos as CSV. Writes ./todos.csv unless --stdout or
+    /// --output-file-path redirects it.
+    Export {
+        #[arg(short, long)]
+        all: bool,
+        /// Write the CSV to stdout; the report goes to stderr.
+        #[arg(long)]
+        stdout: bool,
+    },
 }
 
 pub(crate) fn command() -> clap::Command {

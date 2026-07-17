@@ -11,7 +11,8 @@ ends and shell-specific behavior begins.
 
 The user-visible application is unchanged: `tdoo add`, `tdoo list`, and
 `tdoo done` operate on a JSON store and support Standout's structured output
-modes.
+modes. `tdoo export` adds the compound-artifact boundary: the core produces CSV
+bytes and typed warnings, and Standout owns the destination and the write.
 
 ## Source map
 
@@ -23,6 +24,7 @@ crates/todo-example/
 │   └── src/
 │       ├── lib.rs             Small public library interface
 │       ├── model.rs           Todo and TodoFilter
+│       ├── export.rs          CSV bytes + typed warnings, no filesystem
 │       └── store.rs           Validation, behavior, JSON persistence, tests
 └── tdoo/
     ├── Cargo.toml             Binary package; depends on todo-core + Standout
@@ -107,6 +109,31 @@ domain representation does not silently change `tdoo --output json`.
 Handlers do not print or render. They return `Output::Render` data for Standout
 to send through either a template or a structured serializer.
 
+### `export`: the compound-artifact boundary
+
+`tdoo export` is where "the core owns behavior, the shell owns the transaction"
+becomes concrete for a command that writes a file. `todo-core` renders the CSV
+bytes, suggests the name `todos.csv`, and returns typed `ExportWarning`s (for
+example, completed todos the filter omitted). It writes nothing:
+`store.export_csv(...)` returns a `CsvExport`, never a path.
+
+The `export` handler maps that into a view model and states *which* destination
+opt-ins apply — a suggested filename by default, or `allow_stdout()` under
+`--stdout` — and returns `Output::Artifact`. It still opens no file and words no
+success message. Standout then:
+
+1. selects the destination (`--output-file-path` override, else the suggestion,
+   else opted-in stdout);
+2. performs the write, sharing one typed failure path (`FinalWrite(Artifact)`);
+3. renders `export.jinja` *after* the write, with a `receipt` naming where the
+   bytes actually landed.
+
+Because the report renders only after a successful write, `tdoo export` can never
+claim a file it did not produce, and the warning taxonomy stays the core's while
+the wording stays the CLI's — visible in both the human report and
+`--output json`. The report channel follows the bytes: for a file it prints on
+stdout, and for `--stdout` it moves to stderr so it cannot corrupt the CSV.
+
 ### `app.rs`: framework assembly
 
 The app builder registers the core store as application state, embeds the CLI's
@@ -179,6 +206,11 @@ echo "write tests" | TODO_FILE=/tmp/tdoo.json cargo run -p tdoo -- add
 TODO_FILE=/tmp/tdoo.json cargo run -p tdoo -- list --output json
 TODO_FILE=/tmp/tdoo.json cargo run -p tdoo -- list --output yaml
 TODO_FILE=/tmp/tdoo.json cargo run -p tdoo -- list --output text
+
+# Compound artifact: Standout owns the destination and the write.
+TODO_FILE=/tmp/tdoo.json cargo run -p tdoo -- export                 # writes ./todos.csv
+TODO_FILE=/tmp/tdoo.json cargo run -p tdoo -- export --output-file-path /tmp/todos.csv
+TODO_FILE=/tmp/tdoo.json cargo run -p tdoo -- export --stdout > /tmp/todos.csv  # report on stderr
 
 # Test the reusable library and the CLI independently.
 cargo test -p todo-core

@@ -30,6 +30,7 @@
 //!   Use for: logging, clipboard copy, output filtering.
 
 use std::fmt;
+use std::path::PathBuf;
 use std::rc::Rc;
 use thiserror::Error;
 
@@ -68,6 +69,28 @@ impl TextOutput {
     }
 }
 
+/// Artifact bytes and report as post-output hooks see them.
+///
+/// Post-output hooks observe this *before* the framework selects a destination
+/// and performs the final write, so a hook can still transform the bytes or
+/// enrich the report. Hooks deliberately cannot perform the write themselves:
+/// the framework owns it, which is what keeps the success report truthful and
+/// the failure path single.
+///
+/// The fields are public so hooks can mutate them, mirroring [`TextOutput`].
+#[derive(Debug, Clone)]
+pub struct ArtifactOutput {
+    /// The artifact bytes, byte-for-byte as the handler produced them.
+    pub bytes: Vec<u8>,
+    /// The destination the application suggested, if it opted in. `Some`
+    /// authorizes the framework to write there absent an explicit override.
+    pub suggested_destination: Option<PathBuf>,
+    /// Whether the application authorized the stdout fallback.
+    pub stdout_allowed: bool,
+    /// The serialized application-owned report, after post-dispatch hooks.
+    pub report: Option<serde_json::Value>,
+}
+
 /// Output from a command, used in post-output hooks.
 ///
 /// This represents the final output from a command handler after rendering.
@@ -79,6 +102,8 @@ pub enum RenderedOutput {
     Text(TextOutput),
     /// Binary output with suggested filename
     Binary(Vec<u8>, String),
+    /// A compound artifact awaiting the framework-owned write.
+    Artifact(ArtifactOutput),
     /// No output (silent command)
     Silent,
 }
@@ -92,6 +117,11 @@ impl RenderedOutput {
     /// Returns true if this is binary output.
     pub fn is_binary(&self) -> bool {
         matches!(self, RenderedOutput::Binary(_, _))
+    }
+
+    /// Returns true if this is a compound artifact awaiting the final write.
+    pub fn is_artifact(&self) -> bool {
+        matches!(self, RenderedOutput::Artifact(_))
     }
 
     /// Returns true if this is silent (no output).
@@ -128,6 +158,23 @@ impl RenderedOutput {
     pub fn as_binary(&self) -> Option<(&[u8], &str)> {
         match self {
             RenderedOutput::Binary(bytes, filename) => Some((bytes, filename)),
+            _ => None,
+        }
+    }
+
+    /// Returns the pending artifact if this is artifact output.
+    pub fn as_artifact(&self) -> Option<&ArtifactOutput> {
+        match self {
+            RenderedOutput::Artifact(artifact) => Some(artifact),
+            _ => None,
+        }
+    }
+
+    /// Returns the pending artifact mutably, for hooks that transform bytes or
+    /// enrich the report before the framework-owned write.
+    pub fn as_artifact_mut(&mut self) -> Option<&mut ArtifactOutput> {
+        match self {
+            RenderedOutput::Artifact(artifact) => Some(artifact),
             _ => None,
         }
     }

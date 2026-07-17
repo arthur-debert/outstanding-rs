@@ -13,6 +13,9 @@ runtime failure.
 | Successful rendered text or binary | stdout | `0` |
 | `Output::Silent` | none | `0` |
 | `--output-file-path` success | file only | `0` |
+| Artifact written to a file | bytes to the file, report to stdout | `0` |
+| Artifact written to stdout | bytes to stdout, report to stderr | `0` |
+| Artifact with no selectable destination | stderr | `1` |
 | Clap usage error | stderr | `2` |
 | Handler, hook, render, pipe, or write failure | stderr | `1` |
 | Application-declared external failure | stderr | exact declared nonzero status |
@@ -35,6 +38,10 @@ let result = app.run_to_string(command, args);
 match &result {
     RunResult::Handled(output) => println!("{}", output),
     RunResult::Binary(bytes, filename) => consume(bytes, filename),
+    RunResult::Artifact(run) => {
+        // The framework already wrote a file destination; the receipt says where.
+        println!("{:?}: {:?}", run.destination(), run.report());
+    }
     RunResult::Error(error) => eprintln!("{}", error),
     RunResult::NoMatch(matches) => legacy_dispatch(matches),
     RunResult::Silent => {}
@@ -49,7 +56,7 @@ assert_eq!(result.error_kind(), None);
 `RunOutput` and `RunError` dereference to `str`, implement `Display`, and expose
 `as_str()` / `into_string()` for callers that used the tuple payloads as text.
 `RunError::kind()` identifies `ClapUsage`, `Handler`, `Hook(phase)`, `Render`, or
-`FinalWrite(Text|Binary)`. `External` identifies the narrow
+`FinalWrite(Text|Binary|Artifact)`. `External` identifies the narrow
 application-declared external path; its `exit_status()` is the exact declared
 nonzero status and its text is the verbatim diagnostic payload.
 
@@ -72,3 +79,17 @@ Capture APIs do not perform the final stdout/stderr write, but file redirection
 is part of dispatch and therefore reports typed `FinalWrite` failures directly.
 External failures are never redirected to an output file: they remain stderr
 diagnostics when `run()` performs the final write.
+
+## Compound artifacts
+
+`Output::Artifact` extends the framework-owned write to commands that also have
+something to say about it. The application returns bytes, an optional suggested
+destination, and an optional report; Standout selects the destination, writes,
+and only then renders the report with a receipt naming where the bytes landed.
+Ordering is the guarantee: a failed write produces `FinalWrite(Artifact)` and no
+report at all, so a success message can never promise a file that never
+appeared.
+
+See [Handler Contract](../crates/dispatch/topics/handler-contract.md) for the
+destination policy, the report envelope, and the artifact-to-stdout report
+channel.

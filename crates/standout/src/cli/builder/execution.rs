@@ -15,13 +15,14 @@ use std::path::PathBuf;
 use super::{AppBuilder, PendingCommand};
 use crate::cli::dispatch::{
     dispatch, extract_command_path, get_deepest_matches, has_subcommand, insert_default_command,
-    DispatchOutput,
+    DispatchOutput, Presentation,
 };
 use crate::cli::group::{ErasedConfigRecipe, GroupBuilder, GroupEntry};
 use crate::cli::handler::{
-    CommandContext, OutputKind, RunError, RunErrorKind, RunOutput, RunResult,
+    ArtifactDestination, ArtifactReceipt, ArtifactRun, CommandContext, OutputKind, RunError,
+    RunErrorKind, RunOutput, RunResult,
 };
-use crate::cli::hooks::{RenderedOutput, TextOutput};
+use crate::cli::hooks::{ArtifactOutput, RenderedOutput, TextOutput};
 use crate::SetupError;
 
 impl AppBuilder {
@@ -162,13 +163,20 @@ impl AppBuilder {
                 Err(e) => return RunResult::Error(e),
             };
 
-            // Convert to Output enum for post-output hooks
-            let output = match dispatch_output {
+            // Convert to Output enum for post-output hooks. An artifact's
+            // presentation travels beside the hook payload: hooks may still
+            // change the bytes or the report, so the report is only rendered
+            // after the write, further down.
+            let (output, presentation) = match dispatch_output {
                 DispatchOutput::Text { formatted, raw } => {
-                    RenderedOutput::Text(TextOutput::new(formatted, raw))
+                    (RenderedOutput::Text(TextOutput::new(formatted, raw)), None)
                 }
-                DispatchOutput::Binary(b, f) => RenderedOutput::Binary(b, f),
-                DispatchOutput::Silent => RenderedOutput::Silent,
+                DispatchOutput::Binary(b, f) => (RenderedOutput::Binary(b, f), None),
+                DispatchOutput::Artifact {
+                    output,
+                    presentation,
+                } => (RenderedOutput::Artifact(output), Some(presentation)),
+                DispatchOutput::Silent => (RenderedOutput::Silent, None),
             };
 
             // Run post-output hooks if registered
@@ -186,38 +194,47 @@ impl AppBuilder {
                 output
             };
 
-            // Handle file output if configured
-            if self.output_file_flag.is_some() {
-                if let Some(path_str) = matches
+            // The explicit output-file override, when the app enabled the flag.
+            let override_path = self.output_file_flag.as_ref().and_then(|_| {
+                matches
                     .try_get_one::<String>("_output_file_path")
                     .unwrap_or(None)
-                {
-                    let path = PathBuf::from(path_str);
-                    let dest = OutputDestination::File(path);
+                    .map(PathBuf::from)
+            });
 
-                    match &final_output {
-                        RenderedOutput::Text(t) => {
-                            // Write raw output (without ANSI codes) to file
-                            if let Err(e) = write_output(&t.raw, &dest) {
-                                return RunResult::Error(RunError::new(
-                                    format!("Error writing output: {}", e),
-                                    RunErrorKind::FinalWrite(OutputKind::Text),
-                                ));
-                            }
-                            // Suppress further output
-                            final_output = RenderedOutput::Silent;
+            // The artifact path owns its own destination policy and write, so
+            // it is resolved before the legacy override handling below.
+            if let RenderedOutput::Artifact(artifact) = final_output {
+                return complete_artifact(artifact, presentation, override_path);
+            }
+
+            // Handle file output if configured
+            if let Some(path) = override_path {
+                let dest = OutputDestination::File(path);
+
+                match &final_output {
+                    RenderedOutput::Text(t) => {
+                        // Write raw output (without ANSI codes) to file
+                        if let Err(e) = write_output(&t.raw, &dest) {
+                            return RunResult::Error(RunError::new(
+                                format!("Error writing output: {}", e),
+                                RunErrorKind::FinalWrite(OutputKind::Text),
+                            ));
                         }
-                        RenderedOutput::Binary(b, _) => {
-                            if let Err(e) = write_binary_output(b, &dest) {
-                                return RunResult::Error(RunError::new(
-                                    format!("Error writing output: {}", e),
-                                    RunErrorKind::FinalWrite(OutputKind::Binary),
-                                ));
-                            }
-                            final_output = RenderedOutput::Silent;
-                        }
-                        RenderedOutput::Silent => {}
+                        // Suppress further output
+                        final_output = RenderedOutput::Silent;
                     }
+                    RenderedOutput::Binary(b, _) => {
+                        if let Err(e) = write_binary_output(b, &dest) {
+                            return RunResult::Error(RunError::new(
+                                format!("Error writing output: {}", e),
+                                RunErrorKind::FinalWrite(OutputKind::Binary),
+                            ));
+                        }
+                        final_output = RenderedOutput::Silent;
+                    }
+                    RenderedOutput::Artifact(_) => unreachable!("artifacts returned above"),
+                    RenderedOutput::Silent => {}
                 }
             }
 
@@ -225,6 +242,7 @@ impl AppBuilder {
             match final_output {
                 RenderedOutput::Text(t) => RunResult::Handled(RunOutput::command(t.formatted)),
                 RenderedOutput::Binary(b, f) => RunResult::Binary(b, f),
+                RenderedOutput::Artifact(_) => unreachable!("artifacts returned above"),
                 // Preserve the 7.x capture contract: silent success is an
                 // empty handled string. `run()` still emits nothing.
                 RenderedOutput::Silent => RunResult::Handled(RunOutput::command(String::new())),
@@ -505,6 +523,160 @@ impl AppBuilder {
     }
 }
 
+/// Selects the destination for an artifact, deterministically.
+///
+/// The policy is, in order:
+///
+/// 1. the explicit output-file override;
+/// 2. the application's suggested destination (opt-in);
+/// 3. stdout, if the application opted in.
+///
+/// An artifact that matches none of these is a typed final-write failure: the
+/// framework refuses to invent a file, and refuses to drop the bytes silently.
+fn resolve_artifact_destination(
+    artifact: &ArtifactOutput,
+    override_path: Option<PathBuf>,
+) -> Result<ArtifactDestination, RunError> {
+    if let Some(path) = override_path {
+        return Ok(ArtifactDestination::File(path));
+    }
+    if let Some(path) = &artifact.suggested_destination {
+        return Ok(ArtifactDestination::File(path.clone()));
+    }
+    if artifact.stdout_allowed {
+        return Ok(ArtifactDestination::Stdout);
+    }
+    Err(RunError::new(
+        "Error writing artifact: no destination selected (the artifact suggested none, \
+         stdout was not allowed, and no output file was given)",
+        RunErrorKind::FinalWrite(OutputKind::Artifact),
+    ))
+}
+
+/// Builds the value the artifact report is rendered from.
+///
+/// The shape is always `{"report": <report or null>, "receipt": {…}}`. Fixing
+/// the envelope keeps the framework's receipt from colliding with an
+/// application key and lets templates rely on `{{ receipt.destination }}`
+/// whatever the report's own type is.
+fn report_envelope(
+    report: Option<serde_json::Value>,
+    receipt: &ArtifactReceipt,
+) -> Result<serde_json::Value, RunError> {
+    let receipt = serde_json::to_value(receipt).map_err(|e| {
+        RunError::new(
+            format!("Failed to serialize artifact receipt: {}", e),
+            RunErrorKind::Render,
+        )
+    })?;
+    Ok(serde_json::json!({
+        "report": report.unwrap_or(serde_json::Value::Null),
+        "receipt": receipt,
+    }))
+}
+
+/// Completes an artifact: select a destination, write, and only then report.
+///
+/// The ordering is the whole point of the shape. A report rendered before the
+/// write could promise a file that never appeared; a write failure therefore
+/// returns a typed error and no report at all.
+///
+/// The stdout destination is the one deferral: its bytes are handed to the
+/// framework's stdout writer (see `emit_run_result`) so that capture APIs stay
+/// side-effect-free, exactly as `RunResult::Binary` already behaves.
+fn complete_artifact(
+    artifact: ArtifactOutput,
+    presentation: Option<Box<Presentation>>,
+    override_path: Option<PathBuf>,
+) -> RunResult {
+    let destination = match resolve_artifact_destination(&artifact, override_path) {
+        Ok(destination) => destination,
+        Err(error) => return RunResult::Error(error),
+    };
+
+    if let ArtifactDestination::File(path) = &destination {
+        let dest = OutputDestination::File(path.clone());
+        if let Err(e) = write_binary_output(&artifact.bytes, &dest) {
+            return RunResult::Error(RunError::new(
+                format!("Error writing artifact: {}", e),
+                RunErrorKind::FinalWrite(OutputKind::Artifact),
+            ));
+        }
+    }
+
+    let receipt = ArtifactReceipt::new(destination, artifact.bytes.len());
+
+    let report = match artifact.report {
+        None => None,
+        Some(report) => {
+            // A post-output hook can turn text into an artifact, but it has no
+            // presentation configuration to render a report with. Say so
+            // rather than dropping the report on the floor.
+            let Some(presentation) = presentation else {
+                return RunResult::Error(RunError::new(
+                    "Cannot render artifact report: the artifact carries a report but was not \
+                     produced by a handler, so no template configuration is available",
+                    RunErrorKind::Render,
+                ));
+            };
+            let envelope = match report_envelope(Some(report), &receipt) {
+                Ok(envelope) => envelope,
+                Err(error) => return RunResult::Error(error),
+            };
+            match presentation.render(&envelope) {
+                Ok((formatted, _raw)) => Some(formatted),
+                Err(error) => return RunResult::Error(error),
+            }
+        }
+    };
+
+    RunResult::Artifact(ArtifactRun::new(
+        artifact.bytes,
+        artifact.suggested_destination,
+        receipt,
+        report,
+    ))
+}
+
+/// Emits a completed artifact run through the framework-owned writers.
+///
+/// The report channel follows the destination: an artifact written to a file
+/// leaves stdout free for its report, while an artifact written to stdout owns
+/// stdout entirely, so its report goes to stderr where it cannot corrupt the
+/// bytes. Either way the bytes go first — a stdout write that fails must not be
+/// preceded by a success report.
+fn emit_artifact<W: Write, E: Write>(
+    run: &ArtifactRun,
+    stdout: &mut W,
+    stderr: &mut E,
+) -> Option<RunError> {
+    let to_stdout = run.destination().is_stdout();
+
+    if to_stdout {
+        if let Err(error) = stdout.write_all(run.bytes()).and_then(|()| stdout.flush()) {
+            return Some(RunError::new(
+                format!("Error writing artifact stdout: {}", error),
+                RunErrorKind::FinalWrite(OutputKind::Artifact),
+            ));
+        }
+    }
+
+    let report = run.report().filter(|report| !report.is_empty())?;
+
+    let written = if to_stdout {
+        writeln!(stderr, "{}", report).and_then(|()| stderr.flush())
+    } else {
+        writeln!(stdout, "{}", report).and_then(|()| stdout.flush())
+    };
+
+    written.err().map(|error| {
+        RunError::new(
+            format!("Error writing artifact report: {}", error),
+            RunErrorKind::FinalWrite(OutputKind::Text),
+        )
+    })
+}
+
 /// Emits one captured result through framework-owned writers.
 ///
 /// Keeping this as a writer seam makes final text/binary failures typed and
@@ -535,6 +707,7 @@ fn emit_run_result<W: Write, E: Write>(
                     RunErrorKind::FinalWrite(OutputKind::Binary),
                 )
             }),
+        RunResult::Artifact(run) => emit_artifact(run, stdout, stderr),
         RunResult::Silent => None,
         RunResult::Error(error) => (if error.kind() == RunErrorKind::External {
             stderr.write_all(error.as_str().as_bytes())

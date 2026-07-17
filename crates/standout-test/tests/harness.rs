@@ -7,8 +7,8 @@ use clap::Command;
 use serde_json::json;
 use serial_test::serial;
 use standout::cli::{
-    App, ExitStatus, ExternalFailure, HandlerResult, HookError, Hooks, Output, RunErrorKind,
-    SuccessKind,
+    App, Artifact, ExitStatus, ExternalFailure, HandlerResult, HookError, Hooks, Output,
+    OutputKind, RunErrorKind, SuccessKind,
 };
 use standout::tabular::{Column, Width};
 use standout::{CsvProjection, StructuredOutputProjection};
@@ -645,5 +645,119 @@ fn no_match_reports_cleanly() {
         result.is_error() || result.is_no_match(),
         "expected Error or NoMatch, got: {:?}",
         result.outcome()
+    );
+}
+
+// ---------------------------------------------------------------------------
+// Compound artifacts
+// ---------------------------------------------------------------------------
+
+const ARTIFACT_BYTES: &[u8] = b"id,title\n1,buy milk\n";
+
+/// An export app whose artifact suggests `destination`, mirroring the
+/// application/framework split: the app produces bytes and facts, the harness
+/// observes what the framework did with them.
+fn build_export_app(destination: Option<std::path::PathBuf>) -> App {
+    App::builder()
+        .output_file_flag(Some("output-file-path"))
+        .command(
+            "export",
+            move |_m, _ctx| {
+                let mut artifact = Artifact::new(ARTIFACT_BYTES.to_vec())
+                    .with_report(json!({ "entries": 1, "warnings": ["no due date"] }));
+                artifact = match &destination {
+                    Some(path) => artifact.suggest_destination(path),
+                    None => artifact.allow_stdout(),
+                };
+                Ok(Output::Artifact(artifact))
+            },
+            "Wrote {{ report.entries }} entries to {{ receipt.destination }}",
+        )
+        .unwrap()
+        .build()
+        .unwrap()
+}
+
+fn export_command() -> Command {
+    Command::new("app").subcommand(Command::new("export"))
+}
+
+#[test]
+#[serial]
+fn harness_asserts_bytes_destinations_receipt_and_report() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("export.csv");
+    let app = build_export_app(Some(path.clone()));
+
+    let result = TestHarness::new().run(&app, export_command(), ["app", "export"]);
+
+    result.assert_success();
+    result.assert_exit_status(ExitStatus::SUCCESS);
+    result.assert_artifact_bytes(ARTIFACT_BYTES);
+    result.assert_artifact_suggested_destination(&path);
+    result.assert_artifact_written_to(&path);
+    result.assert_artifact_report_contains("Wrote 1 entries to");
+    result.assert_artifact_report_contains(&path.display().to_string());
+
+    assert_eq!(result.artifact_bytes(), Some(ARTIFACT_BYTES));
+    assert_eq!(
+        result.artifact().unwrap().receipt().byte_count(),
+        ARTIFACT_BYTES.len()
+    );
+    assert_eq!(std::fs::read(&path).unwrap(), ARTIFACT_BYTES);
+}
+
+#[test]
+#[serial]
+fn harness_asserts_the_stdout_artifact_destination() {
+    let app = build_export_app(None);
+    let result = TestHarness::new().run(&app, export_command(), ["app", "export"]);
+
+    result.assert_success();
+    result.assert_artifact_to_stdout();
+    result.assert_artifact_report_contains("Wrote 1 entries to -");
+    assert!(result.artifact_destination().unwrap().is_stdout());
+}
+
+#[test]
+#[serial]
+fn harness_asserts_the_report_data_in_structured_mode() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("export.csv");
+    let app = build_export_app(Some(path.clone()));
+
+    let result = TestHarness::new().output_mode(OutputMode::Json).run(
+        &app,
+        export_command(),
+        ["app", "export"],
+    );
+
+    let report: serde_json::Value =
+        serde_json::from_str(result.artifact_report().unwrap()).unwrap();
+    assert_eq!(report["report"]["entries"], json!(1));
+    assert_eq!(report["report"]["warnings"][0], json!("no due date"));
+    assert_eq!(
+        report["receipt"]["destination"],
+        json!(path.display().to_string())
+    );
+    assert_eq!(report["receipt"]["stdout"], json!(false));
+}
+
+#[test]
+#[serial]
+fn harness_asserts_a_typed_artifact_write_failure() {
+    let dir = tempfile::tempdir().unwrap();
+    let unwritable = dir.path().join("missing").join("export.csv");
+    let app = build_export_app(Some(unwritable));
+
+    let result = TestHarness::new().run(&app, export_command(), ["app", "export"]);
+
+    result.assert_error();
+    result.assert_error_kind(RunErrorKind::FinalWrite(OutputKind::Artifact));
+    result.assert_exit_status(ExitStatus::FAILURE);
+    result.assert_error_contains("Error writing artifact");
+    assert!(
+        result.artifact().is_none(),
+        "a failed write produces no report"
     );
 }

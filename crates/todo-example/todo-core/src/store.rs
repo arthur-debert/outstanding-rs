@@ -1,4 +1,5 @@
-use crate::{Todo, TodoFilter};
+use crate::export::export_csv;
+use crate::{CsvExport, Todo, TodoFilter};
 use anyhow::{bail, Context, Result};
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
@@ -65,6 +66,21 @@ impl TodoStore {
             next.todos.push(todo.clone());
             Ok(todo)
         })
+    }
+
+    /// Exports the todos selected by `filter` as CSV.
+    ///
+    /// Returns the bytes and the domain facts about producing them — how many
+    /// rows, and what the CSV could not represent. Nothing is written: the
+    /// caller owns the destination, so the caller owns the write.
+    pub fn export_csv(&self, filter: TodoFilter) -> CsvExport {
+        let selected = self.list(filter);
+        let completed = self
+            .list(TodoFilter::All)
+            .iter()
+            .filter(|todo| todo.done)
+            .count();
+        export_csv(&selected, filter, completed)
     }
 
     /// Marks todo `id` done and persists the transition.
@@ -183,6 +199,41 @@ mod tests {
 
         assert_eq!(error.to_string(), "no todo with id 99");
         assert!(!store.list(TodoFilter::All)[0].done);
+    }
+
+    #[test]
+    fn export_reports_rows_and_omitted_completed_todos() {
+        let (store, _dir, _path) = store();
+        store.add("buy milk").unwrap();
+        store.add("ship it").unwrap();
+        store.mark_done(2).unwrap();
+
+        let pending = store.export_csv(TodoFilter::Pending);
+        assert_eq!(
+            String::from_utf8(pending.csv).unwrap(),
+            "id,title,done\n1,buy milk,false\n"
+        );
+        assert_eq!(pending.exported, 1);
+        assert_eq!(
+            pending.warnings,
+            vec![crate::ExportWarning::CompletedOmitted { count: 1 }]
+        );
+
+        let all = store.export_csv(TodoFilter::All);
+        assert_eq!(all.exported, 2);
+        assert!(all.warnings.is_empty());
+    }
+
+    #[test]
+    fn export_writes_nothing_by_itself() {
+        let (store, dir, _path) = store();
+        store.add("buy milk").unwrap();
+
+        let export = store.export_csv(TodoFilter::All);
+
+        // The suggestion is a name, not a location, and no file appeared.
+        assert_eq!(export.suggested_filename, "todos.csv");
+        assert!(!dir.path().join("todos.csv").exists());
     }
 
     #[test]

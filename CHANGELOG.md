@@ -4,6 +4,8 @@
 
 ## Unreleased
 
+- Add compound artifacts with post-write semantic reports (issue #212, PR #213): `Output::Artifact` carries owned bytes, an opt-in suggested destination, and an application-owned report, while Standout owns the shell transaction — it selects the destination (override, suggestion, or opted-in stdout), performs the final write, and only then renders the report enriched with a receipt naming the completed destination. Write failures are typed as `FinalWrite(Artifact)` and emit no success report; `Output::Binary` behavior is unchanged and a suggested filename still authorizes no write. `TestHarness` gains artifact byte, destination, receipt, report, and typed-failure assertions, and the `todo-core`/`tdoo` example demonstrates the ownership boundary with a CSV export.
+
 ## 7.8.0 - 2026-07-17
 
 - Add an explicit narrow/wide East Asian Ambiguous character-width policy (issue #207, PR #210): App and direct Renderer configuration, tabular layout, MiniJinja filters, and TestHarness now share one authoritative measurement seam while narrow remains the compatibility default.

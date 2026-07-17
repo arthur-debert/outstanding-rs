@@ -48,6 +48,82 @@ fn run(binary: &PathBuf, args: &[&str]) -> Output {
     Command::new(binary).args(args).output().unwrap()
 }
 
+/// Runs the fixture with the artifact fixtures' suggested destination set.
+fn run_with_artifact_path(
+    binary: &PathBuf,
+    args: &[&str],
+    artifact_path: &std::path::Path,
+) -> Output {
+    Command::new(binary)
+        .args(args)
+        .env("STANDOUT_FIXTURE_ARTIFACT_PATH", artifact_path)
+        .output()
+        .unwrap()
+}
+
+#[test]
+fn real_process_routes_artifact_bytes_and_reports_to_separate_channels() {
+    let binary = fixture_binary();
+    let tempdir = tempfile::tempdir().unwrap();
+
+    // A file destination leaves stdout free, so the report lands there.
+    let to_file = tempdir.path().join("artifact.bin");
+    let file_run = run_with_artifact_path(&binary, &["artifact"], &to_file);
+    assert_eq!(file_run.status.code(), Some(0));
+    assert_eq!(std::fs::read(&to_file).unwrap(), [0, 1, 2]);
+    assert_eq!(
+        String::from_utf8_lossy(&file_run.stdout),
+        format!("wrote 3 entries to {}\n", to_file.display())
+    );
+    assert!(file_run.stderr.is_empty());
+
+    // An explicit override redirects the artifact, and the report follows it.
+    let override_path = tempdir.path().join("override.bin");
+    let override_run = run_with_artifact_path(
+        &binary,
+        &[
+            "--output-file-path",
+            override_path.to_str().unwrap(),
+            "artifact",
+        ],
+        &to_file,
+    );
+    assert_eq!(override_run.status.code(), Some(0));
+    assert_eq!(std::fs::read(&override_path).unwrap(), [0, 1, 2]);
+    assert_eq!(
+        String::from_utf8_lossy(&override_run.stdout),
+        format!("wrote 3 entries to {}\n", override_path.display())
+    );
+
+    // Artifact-to-stdout: the bytes own stdout byte-for-byte, and the report
+    // is pushed to the diagnostic channel so it cannot corrupt them.
+    let stdout_run = run_with_artifact_path(&binary, &["artifact-stdout"], &to_file);
+    assert_eq!(stdout_run.status.code(), Some(0));
+    assert_eq!(stdout_run.stdout, [0, 1, 2]);
+    assert_eq!(
+        String::from_utf8_lossy(&stdout_run.stderr),
+        "wrote 3 entries to -\n"
+    );
+
+    // No destination at all: non-zero, diagnosed on stderr, and no success
+    // report anywhere.
+    let no_destination = run_with_artifact_path(&binary, &["artifact-no-destination"], &to_file);
+    assert_eq!(no_destination.status.code(), Some(1));
+    assert!(no_destination.stdout.is_empty());
+    let stderr = String::from_utf8_lossy(&no_destination.stderr);
+    assert!(stderr.contains("no destination selected"));
+    assert!(!stderr.contains("wrote 3 entries"));
+
+    // A failed write is non-zero and emits no success report.
+    let unwritable = tempdir.path().join("missing").join("artifact.bin");
+    let write_failure = run_with_artifact_path(&binary, &["artifact"], &unwritable);
+    assert_eq!(write_failure.status.code(), Some(1));
+    assert!(write_failure.stdout.is_empty());
+    let stderr = String::from_utf8_lossy(&write_failure.stderr);
+    assert!(stderr.contains("Error writing artifact"));
+    assert!(!stderr.contains("wrote 3 entries"));
+}
+
 #[test]
 fn real_process_status_and_stream_matrix() {
     let binary = fixture_binary();

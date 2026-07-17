@@ -164,7 +164,7 @@ Hooks::new().post_dispatch(|_matches, _ctx, mut data| {
 
 **Post-output**: Runs after rendering. Can transform the final string.
 
-Use for: adding headers/footers, logging, metrics. The hook receives `RenderedOutput`—an enum of `Text(String)`, `Binary(Vec<u8>, String)`, or `Silent`.
+Use for: adding headers/footers, logging, metrics. The hook receives `RenderedOutput`—an enum of `Text(TextOutput)`, `Binary(Vec<u8>, String)`, `Artifact(ArtifactOutput)`, or `Silent`. For an artifact the bytes and report are still pre-write, so a hook may transform them via `as_artifact_mut()`; the framework, not the hook, performs the final write.
 
 ```rust
 use standout_dispatch::RenderedOutput;

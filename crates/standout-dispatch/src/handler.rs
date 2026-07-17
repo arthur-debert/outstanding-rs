@@ -64,6 +64,7 @@
 //! - [`RunResult`]: The result of running the CLI dispatcher
 //! - [`Handler`]: Trait for command handlers (`&mut self`)
 
+use crate::artifact::{Artifact, ArtifactRun};
 use crate::hooks::HookPhase;
 use crate::verify::ExpectedArg;
 use clap::ArgMatches;
@@ -338,7 +339,23 @@ impl Default for CommandContext {
 /// What a handler produces.
 ///
 /// This enum represents the different types of output a command handler can produce.
+///
+/// # Binary vs. Artifact
+///
+/// [`Output::Binary`] hands bytes and a filename *hint* back to the caller: the
+/// framework writes them to stdout, or to an explicit `--output-file-path`
+/// override, and the filename never authorizes a filesystem write on its own.
+///
+/// [`Output::Artifact`] is the opt-in compound shape: bytes plus an optional
+/// suggested destination that *does* authorize a write, plus an
+/// application-owned semantic report the framework renders only after the write
+/// succeeds. See the [`artifact`](crate::artifact) module for the destination
+/// policy and report channel.
+///
+/// Marked `#[non_exhaustive]` so future output shapes can be added without
+/// breaking exhaustive matchers.
 #[derive(Debug)]
+#[non_exhaustive]
 pub enum Output<T: Serialize> {
     /// Data to render with a template or serialize to JSON/YAML/etc.
     Render(T),
@@ -351,6 +368,9 @@ pub enum Output<T: Serialize> {
         /// Suggested filename for the output
         filename: String,
     },
+    /// Owned artifact bytes with an optional suggested destination and an
+    /// application-owned report rendered after the framework-owned write.
+    Artifact(Artifact<T>),
 }
 
 impl<T: Serialize> Output<T> {
@@ -367,6 +387,11 @@ impl<T: Serialize> Output<T> {
     /// Returns true if this is a binary result.
     pub fn is_binary(&self) -> bool {
         matches!(self, Output::Binary { .. })
+    }
+
+    /// Returns true if this is a compound artifact result.
+    pub fn is_artifact(&self) -> bool {
+        matches!(self, Output::Artifact(_))
     }
 }
 
@@ -537,6 +562,10 @@ pub enum OutputKind {
     Text,
     /// Binary output.
     Binary,
+    /// Compound artifact bytes. Also covers a destination that could not be
+    /// selected: an unwritable artifact is a final-write failure, not a
+    /// silently discarded one.
+    Artifact,
 }
 
 /// Typed origin for an unsuccessful framework run.
@@ -794,6 +823,13 @@ pub enum RunResult {
     Handled(RunOutput),
     /// A handler produced binary output (bytes, suggested filename)
     Binary(Vec<u8>, String),
+    /// A handler produced a compound artifact the framework completed: the
+    /// bytes, the receipt naming the destination the write completed to, and
+    /// the report rendered after that write.
+    ///
+    /// For a file destination the bytes are already on disk. For the stdout
+    /// destination the byte write is deferred to the framework's stdout writer.
+    Artifact(ArtifactRun),
     /// Silent output (handler completed but produced no output)
     Silent,
     /// A handler, hook, or output step failed; contains the formatted error message.
@@ -812,6 +848,11 @@ impl RunResult {
     /// Returns true if the result is binary output.
     pub fn is_binary(&self) -> bool {
         matches!(self, RunResult::Binary(_, _))
+    }
+
+    /// Returns true if the result is a completed artifact run.
+    pub fn is_artifact(&self) -> bool {
+        matches!(self, RunResult::Artifact(_))
     }
 
     /// Returns true if the result is silent.
@@ -844,7 +885,9 @@ impl RunResult {
     pub fn success_kind(&self) -> Option<SuccessKind> {
         match self {
             RunResult::Handled(output) => Some(output.kind()),
-            RunResult::Binary(_, _) | RunResult::Silent => Some(SuccessKind::Command),
+            RunResult::Binary(_, _) | RunResult::Artifact(_) | RunResult::Silent => {
+                Some(SuccessKind::Command)
+            }
             _ => None,
         }
     }
@@ -863,9 +906,10 @@ impl RunResult {
     /// framework execution and is deliberately not treated as a usage error.
     pub fn exit_status(&self) -> Option<ExitStatus> {
         match self {
-            RunResult::Handled(_) | RunResult::Binary(_, _) | RunResult::Silent => {
-                Some(ExitStatus::SUCCESS)
-            }
+            RunResult::Handled(_)
+            | RunResult::Binary(_, _)
+            | RunResult::Artifact(_)
+            | RunResult::Silent => Some(ExitStatus::SUCCESS),
             RunResult::Error(error) => Some(error.exit_status()),
             RunResult::NoMatch(_) => None,
         }
@@ -875,6 +919,14 @@ impl RunResult {
     pub fn binary(&self) -> Option<(&[u8], &str)> {
         match self {
             RunResult::Binary(bytes, filename) => Some((bytes, filename)),
+            _ => None,
+        }
+    }
+
+    /// Returns the completed artifact run, or None otherwise.
+    pub fn artifact(&self) -> Option<&ArtifactRun> {
+        match self {
+            RunResult::Artifact(run) => Some(run),
             _ => None,
         }
     }
