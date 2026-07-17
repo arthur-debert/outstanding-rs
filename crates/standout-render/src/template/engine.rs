@@ -171,8 +171,8 @@ impl TemplateEngine for MiniJinjaEngine {
         template: &str,
         data: &serde_json::Value,
     ) -> Result<String, RenderError> {
-        let value = Value::from_serialize(data);
-        Ok(self.env.render_str(template, value)?)
+        let _policy = self.width_policy.scoped(AmbiguousWidth::Narrow);
+        self.render_template_inner(template, data)
     }
 
     fn render_template_with_width(
@@ -181,10 +181,8 @@ impl TemplateEngine for MiniJinjaEngine {
         data: &serde_json::Value,
         policy: AmbiguousWidth,
     ) -> Result<String, RenderError> {
-        let previous = self.width_policy.set(policy);
-        let result = self.render_template(template, data);
-        self.width_policy.set(previous);
-        result
+        let _policy = self.width_policy.scoped(policy);
+        self.render_template_inner(template, data)
     }
 
     fn add_template(&mut self, name: &str, source: &str) -> Result<(), RenderError> {
@@ -194,9 +192,8 @@ impl TemplateEngine for MiniJinjaEngine {
     }
 
     fn render_named(&self, name: &str, data: &serde_json::Value) -> Result<String, RenderError> {
-        let tmpl = self.env.get_template(name)?;
-        let value = Value::from_serialize(data);
-        Ok(tmpl.render(value)?)
+        let _policy = self.width_policy.scoped(AmbiguousWidth::Narrow);
+        self.render_named_inner(name, data)
     }
 
     fn render_named_with_width(
@@ -205,10 +202,8 @@ impl TemplateEngine for MiniJinjaEngine {
         data: &serde_json::Value,
         policy: AmbiguousWidth,
     ) -> Result<String, RenderError> {
-        let previous = self.width_policy.set(policy);
-        let result = self.render_named(name, data);
-        self.width_policy.set(previous);
-        result
+        let _policy = self.width_policy.scoped(policy);
+        self.render_named_inner(name, data)
     }
 
     fn has_template(&self, name: &str) -> bool {
@@ -216,6 +211,60 @@ impl TemplateEngine for MiniJinjaEngine {
     }
 
     fn render_with_context(
+        &self,
+        template: &str,
+        data: &serde_json::Value,
+        context: HashMap<String, serde_json::Value>,
+    ) -> Result<String, RenderError> {
+        let _policy = self.width_policy.scoped(AmbiguousWidth::Narrow);
+        self.render_with_context_inner(template, data, context)
+    }
+
+    fn render_with_context_and_width(
+        &self,
+        template: &str,
+        data: &serde_json::Value,
+        context: HashMap<String, serde_json::Value>,
+        policy: AmbiguousWidth,
+    ) -> Result<String, RenderError> {
+        let _policy = self.width_policy.scoped(policy);
+        self.render_with_context_inner(template, data, context)
+    }
+
+    fn supports_includes(&self) -> bool {
+        true
+    }
+
+    fn supports_filters(&self) -> bool {
+        true
+    }
+
+    fn supports_control_flow(&self) -> bool {
+        true
+    }
+}
+
+impl MiniJinjaEngine {
+    fn render_template_inner(
+        &self,
+        template: &str,
+        data: &serde_json::Value,
+    ) -> Result<String, RenderError> {
+        let value = Value::from_serialize(data);
+        Ok(self.env.render_str(template, value)?)
+    }
+
+    fn render_named_inner(
+        &self,
+        name: &str,
+        data: &serde_json::Value,
+    ) -> Result<String, RenderError> {
+        let tmpl = self.env.get_template(name)?;
+        let value = Value::from_serialize(data);
+        Ok(tmpl.render(value)?)
+    }
+
+    fn render_with_context_inner(
         &self,
         template: &str,
         data: &serde_json::Value,
@@ -235,31 +284,6 @@ impl TemplateEngine for MiniJinjaEngine {
 
         Ok(self.env.render_str(template, &combined)?)
     }
-
-    fn render_with_context_and_width(
-        &self,
-        template: &str,
-        data: &serde_json::Value,
-        context: HashMap<String, serde_json::Value>,
-        policy: AmbiguousWidth,
-    ) -> Result<String, RenderError> {
-        let previous = self.width_policy.set(policy);
-        let result = self.render_with_context(template, data, context);
-        self.width_policy.set(previous);
-        result
-    }
-
-    fn supports_includes(&self) -> bool {
-        true
-    }
-
-    fn supports_filters(&self) -> bool {
-        true
-    }
-
-    fn supports_control_flow(&self) -> bool {
-        true
-    }
 }
 
 /// Registers standout's custom filters with a MiniJinja environment.
@@ -267,7 +291,12 @@ impl TemplateEngine for MiniJinjaEngine {
 /// This is called automatically by [`MiniJinjaEngine::new`]. If you're using
 /// the environment directly, call this to get standout's filters.
 pub fn register_filters(env: &mut Environment<'static>) {
-    register_filters_with_source(env, WidthPolicySource::new(AmbiguousWidth::Narrow));
+    register_filters_with_policy(env, AmbiguousWidth::Narrow);
+}
+
+/// Registers Standout's custom filters with an explicit ambiguous-width policy.
+pub fn register_filters_with_policy(env: &mut Environment<'static>, policy: AmbiguousWidth) {
+    register_filters_with_source(env, WidthPolicySource::new(policy));
 }
 
 fn register_filters_with_source(env: &mut Environment<'static>, policy: WidthPolicySource) {
@@ -296,6 +325,11 @@ fn register_filters_with_source(env: &mut Environment<'static>, policy: WidthPol
 mod tests {
     use super::*;
     use serde::Serialize;
+    use std::sync::{
+        atomic::{AtomicUsize, Ordering},
+        Arc, Barrier,
+    };
+    use std::time::Duration;
 
     #[derive(Serialize)]
     struct TestData {
@@ -393,5 +427,101 @@ mod tests {
         assert!(engine.supports_includes());
         assert!(engine.supports_filters());
         assert!(engine.supports_control_flow());
+    }
+
+    #[test]
+    fn width_policy_is_restored_after_a_filter_panics() {
+        let mut engine = MiniJinjaEngine::new();
+        engine
+            .environment_mut()
+            .add_filter("panic_now", |_value: Value| -> String {
+                panic!("intentional filter panic")
+            });
+
+        let panic = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            let _ = engine.render_template_with_width(
+                "{{ '≈' | panic_now }}",
+                &serde_json::Value::Null,
+                AmbiguousWidth::Wide,
+            );
+        }));
+        assert!(panic.is_err());
+
+        // The poisoned render lock is recoverable and the default remains Narrow.
+        assert_eq!(
+            engine
+                .render_template("{{ '≈' | display_width }}", &serde_json::Value::Null)
+                .unwrap(),
+            "1"
+        );
+    }
+
+    #[test]
+    fn concurrent_renders_cannot_cross_contaminate_width_policies() {
+        let mut engine = MiniJinjaEngine::new();
+        let active = Arc::new(AtomicUsize::new(0));
+        let active_filter = Arc::clone(&active);
+        engine
+            .environment_mut()
+            .add_filter("pause", move |value: Value| -> String {
+                assert_eq!(active_filter.fetch_add(1, Ordering::SeqCst), 0);
+                std::thread::sleep(Duration::from_millis(2));
+                active_filter.fetch_sub(1, Ordering::SeqCst);
+                value.to_string()
+            });
+
+        let engine = Arc::new(engine);
+        let start = Arc::new(Barrier::new(3));
+        let spawn_render = |policy, expected: &'static str| {
+            let engine = Arc::clone(&engine);
+            let start = Arc::clone(&start);
+            std::thread::spawn(move || {
+                start.wait();
+                for _ in 0..12 {
+                    let rendered = engine
+                        .render_template_with_width(
+                            "{{ '≈' | pause | display_width }}",
+                            &serde_json::Value::Null,
+                            policy,
+                        )
+                        .unwrap();
+                    assert_eq!(rendered, expected);
+                }
+            })
+        };
+
+        let narrow = spawn_render(AmbiguousWidth::Narrow, "1");
+        let wide = spawn_render(AmbiguousWidth::Wide, "2");
+        start.wait();
+        narrow.join().unwrap();
+        wide.join().unwrap();
+        assert_eq!(active.load(Ordering::SeqCst), 0);
+    }
+
+    #[test]
+    fn named_and_context_renders_cross_the_same_policy_seam() {
+        let mut engine = MiniJinjaEngine::new();
+        engine
+            .add_template("width", "{{ value | display_width }}")
+            .unwrap();
+        let data = serde_json::json!({ "value": "≈" });
+
+        assert_eq!(
+            engine
+                .render_named_with_width("width", &data, AmbiguousWidth::Wide)
+                .unwrap(),
+            "2"
+        );
+        assert_eq!(
+            engine
+                .render_with_context_and_width(
+                    "{{ value | display_width }}",
+                    &serde_json::Value::Null,
+                    HashMap::from([("value".to_string(), serde_json::json!("≈"))]),
+                    AmbiguousWidth::Wide,
+                )
+                .unwrap(),
+            "2"
+        );
     }
 }

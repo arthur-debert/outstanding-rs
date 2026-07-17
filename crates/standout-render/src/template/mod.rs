@@ -112,7 +112,7 @@ pub mod registry;
 mod renderer;
 mod simple;
 
-pub use engine::{register_filters, MiniJinjaEngine, TemplateEngine};
+pub use engine::{register_filters, register_filters_with_policy, MiniJinjaEngine, TemplateEngine};
 pub use functions::{
     apply_style_tags, render, render_auto, render_auto_with_context, render_auto_with_engine,
     render_auto_with_engine_split, render_auto_with_spec, render_with_context, render_with_mode,

@@ -695,7 +695,11 @@ fn test_full_table_workflow_with_macros() {
 // =============================================================================
 
 use minijinja::{context, Environment};
-use standout::tabular::filters::{formatter_from_type, register_tabular_filters, table_from_type};
+use standout::tabular::filters::{
+    formatter_from_type, formatter_from_type_with_ambiguous_width, register_tabular_filters,
+    table_from_type, table_from_type_with_ambiguous_width,
+};
+use standout::{AmbiguousWidth, WidthCalculator};
 
 // Define a struct for template tests
 #[derive(Serialize, DeriveTabular, DeriveTabularRow)]
@@ -739,6 +743,34 @@ fn test_helper_formatter_from_type() {
     assert!(result.contains("TSK-001"));
     assert!(result.contains("Implement feature"));
     assert!(result.contains("pending"));
+}
+
+#[test]
+fn policy_aware_derive_helpers_use_wide_measurement() {
+    let formatter = formatter_from_type_with_ambiguous_width::<DemoTask>(60, AmbiguousWidth::Wide);
+    let table = table_from_type_with_ambiguous_width::<DemoTask>(
+        61,
+        BorderStyle::Light,
+        false,
+        AmbiguousWidth::Wide,
+    );
+    let mut env = setup_template_env();
+    env.add_template(
+        "policy_helpers",
+        "{{ fmt.row(['A', '↦≈Δ', 'ok']) }}\n{{ tbl.row(['A', '↦≈Δ', 'ok']) }}",
+    )
+    .unwrap();
+    let rendered = env
+        .get_template("policy_helpers")
+        .unwrap()
+        .render(context!(fmt => formatter, tbl => table))
+        .unwrap();
+    let lines: Vec<_> = rendered.lines().collect();
+    let calculator = WidthCalculator::new(AmbiguousWidth::Wide);
+
+    assert_eq!(calculator.visible_width(lines[0]), 60);
+    assert!(calculator.visible_width(lines[1]) <= 61);
+    assert!(lines[1].starts_with('│') && lines[1].ends_with('│'));
 }
 
 #[test]

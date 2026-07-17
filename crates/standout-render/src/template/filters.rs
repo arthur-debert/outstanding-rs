@@ -12,6 +12,11 @@ use minijinja::{Environment, Error, ErrorKind, Value};
 ///
 /// * `env` - The MiniJinja environment to register filters on
 pub fn register_filters(env: &mut Environment<'static>) {
+    register_filters_with_policy(env, crate::AmbiguousWidth::Narrow);
+}
+
+/// Registers built-in filters with an explicit ambiguous-width policy.
+pub fn register_filters_with_policy(env: &mut Environment<'static>, policy: crate::AmbiguousWidth) {
     // Filter to append a newline to the value, enabling explicit line break control.
     // Usage: {{ content | nl }} outputs content followed by \n
     //        {{ "" | nl }} outputs just \n (a blank line)
@@ -32,7 +37,7 @@ pub fn register_filters(env: &mut Environment<'static>) {
     );
 
     // Register tabular formatting filters (col, pad_left, pad_right, truncate_at, etc.)
-    crate::tabular::filters::register_tabular_filters(env);
+    crate::tabular::filters::register_tabular_filters_with_policy(env, policy);
 }
 
 #[cfg(test)]
@@ -70,6 +75,16 @@ mod tests {
         assert!(
             err_msg.contains("1.0") || err_msg.contains("removed"),
             "Error should indicate this was a breaking change"
+        );
+    }
+
+    #[test]
+    fn policy_aware_registration_reaches_width_filters() {
+        let mut env = Environment::new();
+        register_filters_with_policy(&mut env, crate::AmbiguousWidth::Wide);
+        assert_eq!(
+            env.render_str("{{ '↦≈Δ' | display_width }}", ()).unwrap(),
+            "5"
         );
     }
 }

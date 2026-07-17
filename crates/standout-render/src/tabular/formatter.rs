@@ -165,6 +165,15 @@ impl TabularFormatter {
     ///
     /// This is useful for direct construction without a full FlatDataSpec.
     pub fn with_widths(columns: Vec<Column>, widths: Vec<usize>) -> Self {
+        Self::with_widths_and_ambiguous_width(columns, widths, AmbiguousWidth::Narrow)
+    }
+
+    /// Creates a formatter from explicit widths with an explicit policy.
+    pub fn with_widths_and_ambiguous_width(
+        columns: Vec<Column>,
+        widths: Vec<usize>,
+        policy: AmbiguousWidth,
+    ) -> Self {
         let total_width = widths.iter().sum();
         TabularFormatter {
             columns,
@@ -173,7 +182,7 @@ impl TabularFormatter {
             prefix: String::new(),
             suffix: String::new(),
             total_width,
-            ambiguous_width: AmbiguousWidth::Narrow,
+            ambiguous_width: policy,
         }
     }
 
@@ -199,8 +208,16 @@ impl TabularFormatter {
     /// let formatter = TabularFormatter::from_type::<Task>(80);
     /// ```
     pub fn from_type<T: super::traits::Tabular>(total_width: usize) -> Self {
+        Self::from_type_with_ambiguous_width::<T>(total_width, AmbiguousWidth::Narrow)
+    }
+
+    /// Creates a formatter from a `Tabular` type with an explicit policy.
+    pub fn from_type_with_ambiguous_width<T: super::traits::Tabular>(
+        total_width: usize,
+        policy: AmbiguousWidth,
+    ) -> Self {
         let spec: TabularSpec = T::tabular_spec();
-        Self::new(&spec, total_width)
+        Self::with_ambiguous_width(&spec, total_width, policy)
     }
 
     /// Set the total target width (for anchor gap calculations).
@@ -516,6 +533,36 @@ impl TabularFormatter {
     /// Returns the formatter's ambiguous-width policy.
     pub fn ambiguous_width(&self) -> AmbiguousWidth {
         self.ambiguous_width
+    }
+
+    pub(crate) fn rendered_width(&self) -> usize {
+        self.widths.iter().sum::<usize>()
+            + display_width_with_policy(&self.prefix, self.ambiguous_width)
+            + display_width_with_policy(&self.suffix, self.ambiguous_width)
+            + self.columns.len().saturating_sub(1)
+                * display_width_with_policy(&self.separator, self.ambiguous_width)
+    }
+
+    pub(crate) fn limit_to_width(&mut self, maximum: usize) {
+        let decoration_width = self
+            .rendered_width()
+            .saturating_sub(self.widths.iter().sum());
+        let content_limit = maximum.saturating_sub(decoration_width);
+        let mut excess = self
+            .widths
+            .iter()
+            .sum::<usize>()
+            .saturating_sub(content_limit);
+
+        for width in self.widths.iter_mut().rev() {
+            let reduction = (*width).min(excess);
+            *width -= reduction;
+            excess -= reduction;
+            if excess == 0 {
+                break;
+            }
+        }
+        self.total_width = self.total_width.min(maximum);
     }
 
     /// Extract headers from column specifications.
@@ -1426,6 +1473,18 @@ mod tests {
 
         let output = formatter.format_row(&["hi", "there"]);
         assert_eq!(output, "hi    - there     ");
+    }
+
+    #[test]
+    fn explicit_width_constructor_accepts_ambiguous_width_policy() {
+        let formatter = TabularFormatter::with_widths_and_ambiguous_width(
+            vec![Column::new(Width::Fixed(4))],
+            vec![4],
+            AmbiguousWidth::Wide,
+        );
+
+        assert_eq!(formatter.ambiguous_width(), AmbiguousWidth::Wide);
+        assert_eq!(formatter.format_row(&["≈"]), "≈  ");
     }
 
     // ============================================================================

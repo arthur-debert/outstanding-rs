@@ -739,7 +739,15 @@ fn parse_border_style(s: &str) -> BorderStyle {
 /// };
 /// ```
 pub fn formatter_from_type<T: Tabular>(width: usize) -> Value {
-    let formatter = TabularFormatter::from_type::<T>(width);
+    formatter_from_type_with_ambiguous_width::<T>(width, crate::AmbiguousWidth::Narrow)
+}
+
+/// Creates a MiniJinja formatter value from a `Tabular` type with an explicit policy.
+pub fn formatter_from_type_with_ambiguous_width<T: Tabular>(
+    width: usize,
+    policy: crate::AmbiguousWidth,
+) -> Value {
+    let formatter = TabularFormatter::from_type_with_ambiguous_width::<T>(width, policy);
     Value::from_object(formatter)
 }
 
@@ -771,7 +779,22 @@ pub fn formatter_from_type<T: Tabular>(width: usize) -> Value {
 /// };
 /// ```
 pub fn table_from_type<T: Tabular>(width: usize, border: BorderStyle, use_headers: bool) -> Value {
-    let mut table = Table::from_type::<T>(width).border(border);
+    table_from_type_with_ambiguous_width::<T>(
+        width,
+        border,
+        use_headers,
+        crate::AmbiguousWidth::Narrow,
+    )
+}
+
+/// Creates a decorated MiniJinja table value with an explicit policy.
+pub fn table_from_type_with_ambiguous_width<T: Tabular>(
+    width: usize,
+    border: BorderStyle,
+    use_headers: bool,
+    policy: crate::AmbiguousWidth,
+) -> Value {
+    let mut table = Table::from_type_with_ambiguous_width::<T>(width, policy).border(border);
     if use_headers {
         table = table.header_from_columns();
     }

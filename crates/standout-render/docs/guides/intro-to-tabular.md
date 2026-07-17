@@ -306,6 +306,19 @@ sub-columns, borders, padding, truncation, and wrapping. MiniJinja `col`,
 `display_width`, padding, truncation, `tabular`, and `table` operations receive
 the renderer or application policy automatically.
 
+Policy-aware counterparts are also available for direct construction, including
+`TabularFormatter::with_widths_and_ambiguous_width`,
+`TabularFormatter::from_type_with_ambiguous_width`,
+`Table::from_spec_with_ambiguous_width`, and
+`Table::from_type_with_ambiguous_width`. Lower-level MiniJinja environments can
+use `register_tabular_filters_with_policy`.
+
+In Wide mode, a decorated Unicode table treats its requested width as a hard
+maximum. The selected Light, Heavy, Double, or Rounded border is preserved. If
+an odd width cannot be filled by a two-column horizontal border glyph, that
+border row may underfill by one column; it never exceeds the maximum or silently
+switches to ASCII. Narrow table geometry is unchanged.
+
 ### Design Constraints
 
 - **One level only**: Sub-columns cannot be nested recursively.

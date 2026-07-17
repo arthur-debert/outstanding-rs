@@ -10,7 +10,7 @@ use serde::{Deserialize, Serialize};
 use standout_bbparser::strip_tags;
 use std::sync::{
     atomic::{AtomicU8, Ordering},
-    Arc,
+    Arc, Mutex, MutexGuard,
 };
 use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
 
@@ -33,28 +33,62 @@ pub struct WidthCalculator {
     policy: AmbiguousWidth,
 }
 
+#[derive(Debug)]
+struct WidthPolicyState {
+    current: AtomicU8,
+    render_lock: Mutex<()>,
+}
+
 #[derive(Clone, Debug)]
-pub(crate) struct WidthPolicySource(Arc<AtomicU8>);
+pub(crate) struct WidthPolicySource(Arc<WidthPolicyState>);
+
+pub(crate) struct WidthPolicyGuard<'a> {
+    source: &'a WidthPolicySource,
+    previous: AmbiguousWidth,
+    _render_lock: MutexGuard<'a, ()>,
+}
+
+impl Drop for WidthPolicyGuard<'_> {
+    fn drop(&mut self) {
+        self.source.store(self.previous);
+    }
+}
 
 impl WidthPolicySource {
     pub(crate) fn new(policy: AmbiguousWidth) -> Self {
-        Self(Arc::new(AtomicU8::new(policy as u8)))
+        Self(Arc::new(WidthPolicyState {
+            current: AtomicU8::new(policy as u8),
+            render_lock: Mutex::new(()),
+        }))
     }
 
     pub(crate) fn get(&self) -> AmbiguousWidth {
-        if self.0.load(Ordering::Relaxed) == AmbiguousWidth::Wide as u8 {
+        if self.0.current.load(Ordering::Relaxed) == AmbiguousWidth::Wide as u8 {
             AmbiguousWidth::Wide
         } else {
             AmbiguousWidth::Narrow
         }
     }
 
-    pub(crate) fn set(&self, policy: AmbiguousWidth) -> AmbiguousWidth {
-        let previous = self.0.swap(policy as u8, Ordering::Relaxed);
-        if previous == AmbiguousWidth::Wide as u8 {
-            AmbiguousWidth::Wide
-        } else {
-            AmbiguousWidth::Narrow
+    fn store(&self, policy: AmbiguousWidth) {
+        self.0.current.store(policy as u8, Ordering::Relaxed);
+    }
+
+    pub(crate) fn scoped(&self, policy: AmbiguousWidth) -> WidthPolicyGuard<'_> {
+        // A render that unwinds poisons the standard mutex. Recover its guard:
+        // policy restoration is handled by WidthPolicyGuard, so the protected
+        // state remains valid after a template/filter panic.
+        let render_lock = self
+            .0
+            .render_lock
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        let previous = self.get();
+        self.store(policy);
+        WidthPolicyGuard {
+            source: self,
+            previous,
+            _render_lock: render_lock,
         }
     }
 }
