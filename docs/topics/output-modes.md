@@ -96,6 +96,8 @@ Use cases:
 - Automated testing of template output
 
 Unlike Term mode, unknown tags don't get the `?` marker in TermDebug.
+TermDebug shows tag placement; it does not check whether a tag has a matching
+style definition. Use `validate_template` when validation is required.
 
 ## Structured Modes
 
@@ -132,11 +134,17 @@ Same handler, same types—different output format. This enables:
 
 ### CSV Output
 
-CSV mode flattens nested JSON automatically. For more control, use `FlatDataSpec`.
+Normal `App` dispatch flattens the serializable handler data automatically for
+CSV. That is the same handler data used by the other structured modes; handlers
+should not inspect the requested mode or return a CSV-specific shape.
 
-See [Tabular Layout](tabular.md) for detailed CSV configuration.
+The standalone rendering API also supports direct `FlatDataSpec` rendering when
+a caller needs explicit columns and headers:
 
 ```rust
+use standout::tabular::{Column, FlatDataSpec, Width};
+use standout::{render_auto_with_spec, OutputMode};
+
 let spec = FlatDataSpec::builder()
     .column(Column::new(Width::Fixed(10)).key("name").header("Name"))
     .column(Column::new(Width::Fixed(10)).key("meta.role").header("Role"))
@@ -146,6 +154,15 @@ render_auto_with_spec(template, &data, &theme, OutputMode::Csv, Some(&spec))?
 ```
 
 The `key` field uses dot notation for nested paths (`"meta.role"` extracts `data["meta"]["role"]`).
+
+`FlatDataSpec` is not accepted as per-command configuration by normal `App`
+dispatch, so arbitrary per-command CSV projection is not currently integrated
+into that path. Prefer a stable CLI-owned output DTO. If the CLI requires a
+different projection, treat that as an explicit rendering integration or a
+framework gap rather than branching inside the handler.
+
+See [Introduction to Tabular](../crates/render/guides/intro-to-tabular.md) for
+tabular specifications and layout.
 
 ## File Output
 
@@ -182,31 +199,13 @@ App::builder()
     .build()?
 ```
 
-## Accessing OutputMode in Handlers
+## Keep Output Mode Out of Handlers
 
-`CommandContext` carries the resolved output mode:
-
-```rust
-fn handler(matches: &ArgMatches, ctx: &CommandContext) -> HandlerResult<Data> {
-    if ctx.output_mode.is_structured() {
-        // Skip interactive prompts in JSON mode
-    }
-
-    if ctx.output_mode == OutputMode::Csv {
-        // Maybe adjust data structure for flat output
-    }
-
-    Ok(Output::Render(data))
-}
-```
-
-Helper methods:
-
-```rust
-ctx.output_mode.should_use_color()  // True for Term, depends on terminal for Auto
-ctx.output_mode.is_structured()     // True for Json, Yaml, Xml, Csv
-ctx.output_mode.is_debug()          // True for TermDebug
-```
+Output mode is a rendering concern and is deliberately absent from
+`CommandContext`. A handler should return the same serializable data regardless
+of whether the caller selected terminal, text, or structured output. If a
+command's behavior genuinely differs, model that as an explicit command or
+argument rather than an implicit presentation-mode branch.
 
 ## Rendering Without CLI
 

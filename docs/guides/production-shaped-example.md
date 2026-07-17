@@ -45,3 +45,7 @@ Read the canonical source rather than copying a second implementation here:
 
 For a five-minute look at dispatch and rendering without the package split, use
 the [minimal single-crate example](minimal-single-crate.md).
+
+For a broader review of ownership, rendering, testing, and optional framework
+capabilities, use the
+[Leveraging Standout implementation quality checklist](leveraging-standout.md).

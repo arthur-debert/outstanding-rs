@@ -40,6 +40,7 @@ Read every reference whose condition matches the task; each is directly reachabl
 - **Must read [testing.md](references/testing.md)** before writing or reviewing Standout tests, choosing a test level, using `TestHarness`, or diagnosing test interference.
 - **Must read [hooks-input-and-piping.md](references/hooks-input-and-piping.md)** before adding hooks, declarative inputs, prompts, stdin/clipboard sources, or output pipes.
 - **Must read [project-map-and-gotchas.md](references/project-map-and-gotchas.md)** when locating ownership, choosing a crate/doc/example, upgrading copied code, or resolving an API mismatch.
+- **Must read [implementation-quality-checklist.md](references/implementation-quality-checklist.md)** before reviewing how completely or effectively an application leverages Standout.
 
 Use `crates/todo-example/todo-core/` as the canonical CLI-free library and
 `crates/todo-example/tdoo/` as the canonical binary-only Standout CLI. For
