@@ -493,13 +493,24 @@ TestHarness::new()
     // execute
     .run(&app, cmd, ["binname", "subcommand", "--flag"])
 
-// TestResult
+// TestResult: choose the assertion group that matches the observed outcome.
+
+// Success
 result.assert_success();                // Handled / Silent / Binary
-result.assert_no_match();               // clap didn't match any subcommand
 result.assert_exit_status(ExitStatus::SUCCESS);
-result.assert_error_kind(RunErrorKind::Handler);
 result.assert_stdout_contains("hi");
 result.assert_stdout_eq("hi\n");
+
+// No match
+result.assert_no_match();               // clap didn't match any subcommand
+assert_eq!(result.exit_status(), None);  // fallback owns the eventual status
+
+// Error
+result.assert_error();
+result.assert_exit_status(ExitStatus::FAILURE);
+result.assert_error_kind(RunErrorKind::Handler);
+
+// Accessors for any outcome
 result.stdout();                        // &str
 result.outcome();                       // &RunResult, for bespoke assertions
 result.binary();                        // Option<(&[u8], &str)> for Binary

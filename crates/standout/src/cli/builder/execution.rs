@@ -508,25 +508,35 @@ fn emit_run_result<W: Write, E: Write>(
 ) -> (bool, Option<RunError>) {
     let failure = match result {
         RunResult::Handled(output) if output.is_empty() => None,
-        RunResult::Handled(output) => writeln!(stdout, "{}", output).err().map(|error| {
-            RunError::new(
-                format!("Error writing stdout: {}", error),
-                RunErrorKind::FinalWrite(OutputKind::Text),
-            )
-        }),
-        RunResult::Binary(bytes, _) => stdout.write_all(bytes).err().map(|error| {
-            RunError::new(
-                format!("Error writing binary stdout: {}", error),
-                RunErrorKind::FinalWrite(OutputKind::Binary),
-            )
-        }),
+        RunResult::Handled(output) => writeln!(stdout, "{}", output)
+            .and_then(|()| stdout.flush())
+            .err()
+            .map(|error| {
+                RunError::new(
+                    format!("Error writing stdout: {}", error),
+                    RunErrorKind::FinalWrite(OutputKind::Text),
+                )
+            }),
+        RunResult::Binary(bytes, _) => stdout
+            .write_all(bytes)
+            .and_then(|()| stdout.flush())
+            .err()
+            .map(|error| {
+                RunError::new(
+                    format!("Error writing binary stdout: {}", error),
+                    RunErrorKind::FinalWrite(OutputKind::Binary),
+                )
+            }),
         RunResult::Silent => None,
-        RunResult::Error(error) => writeln!(stderr, "{}", error).err().map(|write_error| {
-            RunError::new(
-                format!("Error writing stderr: {}", write_error),
-                RunErrorKind::FinalWrite(OutputKind::Text),
-            )
-        }),
+        RunResult::Error(error) => writeln!(stderr, "{}", error)
+            .and_then(|()| stderr.flush())
+            .err()
+            .map(|write_error| {
+                RunError::new(
+                    format!("Error writing stderr: {}", write_error),
+                    RunErrorKind::FinalWrite(OutputKind::Text),
+                )
+            }),
         RunResult::NoMatch(_) => return (false, None),
         _ => return (false, None),
     };
@@ -535,7 +545,7 @@ fn emit_run_result<W: Write, E: Write>(
         // Best effort: if stderr itself is broken there is nowhere else to
         // report the final-write diagnostic, but the typed failure still
         // determines status 1.
-        let _ = writeln!(stderr, "{}", error);
+        let _ = writeln!(stderr, "{}", error).and_then(|()| stderr.flush());
     }
     (true, failure)
 }
@@ -2428,6 +2438,25 @@ header:
         }
     }
 
+    #[derive(Default)]
+    struct FlushFailingWriter {
+        bytes: Vec<u8>,
+    }
+
+    impl std::io::Write for FlushFailingWriter {
+        fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+            self.bytes.extend_from_slice(buf);
+            Ok(buf.len())
+        }
+
+        fn flush(&mut self) -> std::io::Result<()> {
+            Err(std::io::Error::new(
+                std::io::ErrorKind::BrokenPipe,
+                "flush closed",
+            ))
+        }
+    }
+
     #[test]
     fn final_emission_routes_success_and_diagnostics_to_distinct_streams() {
         let mut stdout = Vec::new();
@@ -2483,6 +2512,33 @@ header:
         assert_eq!(
             binary_failure.exit_status(),
             crate::cli::ExitStatus::FAILURE
+        );
+    }
+
+    #[test]
+    fn final_text_and_binary_flush_failures_keep_payload_kind() {
+        let mut text_stdout = FlushFailingWriter::default();
+        let (_, text_failure) = emit_run_result(
+            &RunResult::Handled(RunOutput::command("hello")),
+            &mut text_stdout,
+            &mut Vec::new(),
+        );
+        assert_eq!(text_stdout.bytes, b"hello\n");
+        assert_eq!(
+            text_failure.unwrap().kind(),
+            RunErrorKind::FinalWrite(OutputKind::Text)
+        );
+
+        let mut binary_stdout = FlushFailingWriter::default();
+        let (_, binary_failure) = emit_run_result(
+            &RunResult::Binary(vec![0, 1], "data.bin".into()),
+            &mut binary_stdout,
+            &mut Vec::new(),
+        );
+        assert_eq!(binary_stdout.bytes, [0, 1]);
+        assert_eq!(
+            binary_failure.unwrap().kind(),
+            RunErrorKind::FinalWrite(OutputKind::Binary)
         );
     }
 }
