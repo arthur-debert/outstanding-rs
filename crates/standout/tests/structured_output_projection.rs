@@ -92,7 +92,7 @@ fn direct_dispatch(app: &App, mode: OutputMode) -> String {
 }
 
 #[test]
-fn csv_projection_applies_to_direct_dispatch_only() {
+fn csv_projection_preserves_canonical_output_in_other_modes() {
     let app = app();
 
     assert_eq!(direct_dispatch(&app, OutputMode::Csv), EXPECTED_CSV);

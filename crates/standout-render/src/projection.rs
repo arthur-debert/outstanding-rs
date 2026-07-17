@@ -82,7 +82,16 @@ impl CsvProjection {
             self.columns
                 .iter()
                 .enumerate()
-                .map(|(index, projection)| projection.column().clone().key(index.to_string()))
+                .map(|(index, projection)| {
+                    let column = projection.column();
+                    let header = column
+                        .header
+                        .as_deref()
+                        .or(column.key.as_deref())
+                        .unwrap_or("");
+
+                    column.clone().header(header).key(index.to_string())
+                })
                 .collect(),
         );
 
@@ -304,6 +313,25 @@ mod tests {
         assert_eq!(
             projection().render(&root).unwrap(),
             "LANGUAGE,CODE,NET\nRust,-,-2\nTOTAL,-,-2\n"
+        );
+    }
+
+    #[test]
+    fn preserves_key_based_header_fallback_for_direct_and_derived_columns() {
+        let projection = CsvProjection::builder("items")
+            .column(Column::new(Width::default()).key("language"))
+            .derived_column(Column::new(Width::default()).key("net"), |row, _root| {
+                json!(row["code"].as_i64().unwrap() - row["comments"].as_i64().unwrap())
+            })
+            .build();
+
+        assert_eq!(
+            projection
+                .render(&json!({
+                    "items": [{ "language": "Rust", "code": 12, "comments": 2 }]
+                }))
+                .unwrap(),
+            "language,net\nRust,10\n"
         );
     }
 }
