@@ -1,1 +1,0 @@
-- Carry typed exit status and error origin through framework-owned final writes (issue #201, PR #205), preserving correct 0/1/2 exit codes and stdout/stderr routing and exposing typed `TestHarness` assertions.
