@@ -14,6 +14,7 @@ use crate::cli::handler::CommandContext;
 use crate::cli::handler::Output as HandlerOutput;
 use crate::cli::hooks::Hooks;
 use crate::context::{ContextRegistry, RenderContext};
+use crate::StructuredOutputProjection;
 use crate::Theme;
 use serde::Serialize;
 
@@ -55,6 +56,7 @@ pub(crate) fn render_handler_output<T: Serialize>(
     context_registry: &ContextRegistry,
     template_engine: &dyn standout_render::template::TemplateEngine,
     output_mode: crate::OutputMode,
+    structured_output_projection: Option<&StructuredOutputProjection>,
 ) -> Result<DispatchOutput, String> {
     match result {
         Ok(output) => match output {
@@ -75,17 +77,28 @@ pub(crate) fn render_handler_output<T: Serialize>(
                     &json_data,
                 );
 
-                // Use the split render function to get both formatted and raw output
-                let render_result = standout_render::template::render_auto_with_engine_split(
-                    template_engine,
-                    template,
-                    &json_data,
-                    theme,
-                    output_mode,
-                    context_registry,
-                    &render_ctx,
-                )
-                .map_err(|e| e.to_string())?;
+                // Projection happens at the presentation boundary: after
+                // post-dispatch hooks and before post-output hooks.
+                let render_result = match (output_mode, structured_output_projection) {
+                    (crate::OutputMode::Csv, Some(projection)) => {
+                        standout_render::template::RenderResult::plain(
+                            projection
+                                .csv_projection()
+                                .render(&json_data)
+                                .map_err(|e| e.to_string())?,
+                        )
+                    }
+                    _ => standout_render::template::render_auto_with_engine_split(
+                        template_engine,
+                        template,
+                        &json_data,
+                        theme,
+                        output_mode,
+                        context_registry,
+                        &render_ctx,
+                    )
+                    .map_err(|e| e.to_string())?,
+                };
 
                 Ok(DispatchOutput::Text {
                     formatted: render_result.formatted,

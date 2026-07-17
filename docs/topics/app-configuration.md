@@ -147,7 +147,10 @@ App::builder()
         .post_dispatch(log_deletion))
 ```
 
-Inline hook attachment without separate `.hooks()` call.
+Inline command configuration can also attach a
+`StructuredOutputProjection` for CSV shaping. The projection stays at the
+presentation boundary: it sees post-dispatch data, and handlers remain
+independent of the selected output mode. See [Output Modes](output-modes.md#csv-output).
 
 ### Nested Groups
 

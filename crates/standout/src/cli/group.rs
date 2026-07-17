@@ -14,6 +14,7 @@ use std::rc::Rc;
 use super::dispatch::{render_handler_output, DispatchFn};
 use crate::cli::handler::{CommandContext, FnHandler, Handler, HandlerResult};
 use crate::cli::hooks::{Hooks, RenderedOutput, TextOutput};
+use crate::StructuredOutputProjection;
 use standout_dispatch::verify::ExpectedArg;
 use standout_pipe::PipeTarget;
 
@@ -72,6 +73,7 @@ where
     handler: Rc<RefCell<FnHandler<F, T>>>,
     template: Option<String>,
     hooks: Option<Hooks>,
+    structured_output_projection: Option<StructuredOutputProjection>,
 }
 
 impl<F, T> ClosureRecipe<F, T>
@@ -84,6 +86,7 @@ where
             handler: Rc::new(RefCell::new(handler)),
             template: None,
             hooks: None,
+            structured_output_projection: None,
         }
     }
 
@@ -96,6 +99,14 @@ where
     #[allow(dead_code)]
     pub fn with_hooks(mut self, hooks: Hooks) -> Self {
         self.hooks = Some(hooks);
+        self
+    }
+
+    pub fn with_structured_output_projection(
+        mut self,
+        projection: StructuredOutputProjection,
+    ) -> Self {
+        self.structured_output_projection = Some(projection);
         self
     }
 }
@@ -126,6 +137,7 @@ where
         let handler = self.handler.clone();
         let template = template.to_string();
         let context_registry = context_registry.clone();
+        let structured_output_projection = self.structured_output_projection.clone();
 
         Rc::new(RefCell::new(
             move |matches: &ArgMatches,
@@ -147,6 +159,7 @@ where
                     &context_registry,
                     &**template_engine,
                     output_mode,
+                    structured_output_projection.as_ref(),
                 )
             },
         ))
@@ -167,6 +180,7 @@ where
     #[allow(dead_code)]
     template: Option<String>,
     hooks: Option<Hooks>,
+    structured_output_projection: Option<StructuredOutputProjection>,
     _phantom: std::marker::PhantomData<T>,
 }
 
@@ -180,6 +194,7 @@ where
             handler: Rc::new(RefCell::new(handler)),
             template: None,
             hooks: None,
+            structured_output_projection: None,
             _phantom: std::marker::PhantomData,
         }
     }
@@ -193,6 +208,15 @@ where
     #[allow(dead_code)]
     pub fn with_hooks(mut self, hooks: Hooks) -> Self {
         self.hooks = Some(hooks);
+        self
+    }
+
+    #[allow(dead_code)]
+    pub fn with_structured_output_projection(
+        mut self,
+        projection: StructuredOutputProjection,
+    ) -> Self {
+        self.structured_output_projection = Some(projection);
         self
     }
 }
@@ -223,6 +247,7 @@ where
         let handler = self.handler.clone();
         let template = template.to_string();
         let context_registry = context_registry.clone();
+        let structured_output_projection = self.structured_output_projection.clone();
 
         Rc::new(RefCell::new(
             move |matches: &ArgMatches,
@@ -244,6 +269,7 @@ where
                     &context_registry,
                     &**template_engine,
                     output_mode,
+                    structured_output_projection.as_ref(),
                 )
             },
         ))
@@ -407,6 +433,7 @@ pub struct CommandConfig<H> {
     pub(crate) handler: H,
     pub(crate) template: Option<String>,
     pub(crate) hooks: Option<Hooks>,
+    pub(crate) structured_output_projection: Option<StructuredOutputProjection>,
 }
 
 impl<H> CommandConfig<H> {
@@ -416,6 +443,7 @@ impl<H> CommandConfig<H> {
             handler,
             template: None,
             hooks: None,
+            structured_output_projection: None,
         }
     }
 
@@ -431,6 +459,15 @@ impl<H> CommandConfig<H> {
     /// Sets hooks for this command.
     pub fn hooks(mut self, hooks: Hooks) -> Self {
         self.hooks = Some(hooks);
+        self
+    }
+
+    /// Attaches a presentation-layer projection for structured output.
+    ///
+    /// The projection consumes the serialized response after post-dispatch
+    /// hooks. It does not change handler data or human-rendered output.
+    pub fn structured_output_projection(mut self, projection: StructuredOutputProjection) -> Self {
+        self.structured_output_projection = Some(projection);
         self
     }
 
@@ -821,6 +858,7 @@ impl GroupBuilder {
                     handler: Rc::new(RefCell::new(config.handler)),
                     template: config.template,
                     hooks: config.hooks,
+                    structured_output_projection: config.structured_output_projection,
                 }),
             },
         );
@@ -852,6 +890,7 @@ impl GroupBuilder {
                     handler: Rc::new(RefCell::new(config.handler)),
                     template: config.template,
                     hooks: config.hooks,
+                    structured_output_projection: config.structured_output_projection,
                 }),
             },
         );
@@ -951,6 +990,7 @@ where
     handler: Rc<RefCell<FnHandler<F, T>>>,
     template: Option<String>,
     hooks: Option<Hooks>,
+    structured_output_projection: Option<StructuredOutputProjection>,
 }
 
 impl<F, T> ErasedCommandConfig for ClosureCommandConfig<F, T>
@@ -978,6 +1018,7 @@ where
         template_engine: Rc<Box<dyn standout_render::template::TemplateEngine>>,
     ) -> DispatchFn {
         let handler = self.handler;
+        let structured_output_projection = self.structured_output_projection;
 
         Rc::new(RefCell::new(
             move |matches: &ArgMatches,
@@ -999,6 +1040,7 @@ where
                     &context_registry,
                     &**template_engine,
                     output_mode,
+                    structured_output_projection.as_ref(),
                 )
             },
         ))
@@ -1018,6 +1060,7 @@ where
     handler: Rc<RefCell<H>>,
     template: Option<String>,
     hooks: Option<Hooks>,
+    structured_output_projection: Option<StructuredOutputProjection>,
 }
 
 impl<H, T> ErasedCommandConfig for StructCommandConfig<H, T>
@@ -1045,6 +1088,7 @@ where
         template_engine: Rc<Box<dyn standout_render::template::TemplateEngine>>,
     ) -> DispatchFn {
         let handler = self.handler;
+        let structured_output_projection = self.structured_output_projection;
 
         Rc::new(RefCell::new(
             move |matches: &ArgMatches,
@@ -1066,6 +1110,7 @@ where
                     &context_registry,
                     &**template_engine,
                     output_mode,
+                    structured_output_projection.as_ref(),
                 )
             },
         ))

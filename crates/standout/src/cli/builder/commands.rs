@@ -87,7 +87,10 @@ impl AppBuilder {
         }
 
         // Create a recipe for deferred closure creation using the handler
-        let recipe = ClosureRecipe::new(config.handler);
+        let mut recipe = ClosureRecipe::new(config.handler);
+        if let Some(projection) = config.structured_output_projection {
+            recipe = recipe.with_structured_output_projection(projection);
+        }
 
         // Store pending command - check for duplicates
         if self.pending_commands.borrow().contains_key(path) {

@@ -56,6 +56,7 @@
 ///         pre_dispatch: hook_fn,             // optional
 ///         post_dispatch: hook_fn,            // optional
 ///         post_output: hook_fn,              // optional
+///         structured_output_projection: projection, // optional
 ///     },
 ///
 ///     // Nested group
@@ -220,12 +221,25 @@ macro_rules! dispatch_apply_config {
     ($cfg:expr; post_output : $hook:expr) => {
         $cfg.post_output($hook)
     };
+
+    // Structured-output projection
+    ($cfg:expr; structured_output_projection : $projection:expr , $($rest:tt)*) => {
+        $crate::dispatch_apply_config!(
+            $cfg.structured_output_projection($projection);
+            $($rest)*
+        )
+    };
+    ($cfg:expr; structured_output_projection : $projection:expr) => {
+        $cfg.structured_output_projection($projection)
+    };
 }
 
 #[cfg(test)]
 mod tests {
     use crate::cli::handler::{CommandContext, Output};
     use crate::cli::GroupBuilder;
+    use crate::tabular::{Column, Width};
+    use crate::{CsvProjection, StructuredOutputProjection};
     use clap::ArgMatches;
     use serde_json::json;
 
@@ -269,6 +283,26 @@ mod tests {
             list => {
                 handler: |_m: &ArgMatches, _ctx: &CommandContext| Ok(Output::Render(json!({}))),
                 template: "custom.j2",
+            },
+        };
+
+        let builder = configure(GroupBuilder::new());
+        assert!(builder.entries.contains_key("list"));
+    }
+
+    #[test]
+    fn test_dispatch_command_with_structured_output_projection() {
+        let projection = StructuredOutputProjection::csv(
+            CsvProjection::builder("items")
+                .column(Column::new(Width::default()).key("name"))
+                .build(),
+        );
+        let configure = dispatch! {
+            list => {
+                handler: |_m: &ArgMatches, _ctx: &CommandContext| {
+                    Ok(Output::Render(json!({ "items": [{ "name": "one" }] })))
+                },
+                structured_output_projection: projection,
             },
         };
 
