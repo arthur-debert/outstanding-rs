@@ -1,0 +1,1 @@
+- Add per-command structured-output projections (issue #200, PR #204): commands can declaratively select CSV rows, derive row- and root-level cells, and emit synthetic or conditional rows while canonical JSON, YAML, and XML serialization remains unchanged.
