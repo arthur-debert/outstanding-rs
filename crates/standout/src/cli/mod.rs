@@ -154,8 +154,9 @@ pub use help::{
 
 // Re-export handler types
 pub use handler::{
-    CommandContext, CommandContextInput, ExitStatus, FnHandler, Handler, HandlerResult, Output,
-    OutputKind, RunError, RunErrorKind, RunOutput, RunResult, SuccessKind,
+    CommandContext, CommandContextInput, ExitStatus, ExternalFailure, FnHandler, Handler,
+    HandlerResult, InvalidExternalStatus, Output, OutputKind, RunError, RunErrorKind, RunOutput,
+    RunResult, SuccessKind,
 };
 
 // Re-export hook types

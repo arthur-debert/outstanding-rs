@@ -1,6 +1,6 @@
 use clap::Command;
 use serde_json::json;
-use standout::cli::{App, HandlerResult, Output};
+use standout::cli::{App, ExternalFailure, HandlerResult, HookError, Hooks, Output};
 
 fn command() -> Command {
     Command::new("outcome-fixture")
@@ -13,6 +13,8 @@ fn command() -> Command {
         .subcommand(Command::new("binary-huge"))
         .subcommand(Command::new("warn-ok"))
         .subcommand(Command::new("warn-fail"))
+        .subcommand(Command::new("external"))
+        .subcommand(Command::new("external-pre"))
 }
 
 fn app() -> App {
@@ -87,6 +89,30 @@ fn app() -> App {
             "",
         )
         .unwrap()
+        .command(
+            "external",
+            |_, _| -> HandlerResult<serde_json::Value> {
+                Err(ExternalFailure::new(128, "fatal: external fixture failed")
+                    .unwrap()
+                    .into())
+            },
+            "",
+        )
+        .unwrap()
+        .command(
+            "external-pre",
+            |_, _| Ok(Output::Render(json!({ "message": "unreachable" }))),
+            "{{ message }}",
+        )
+        .unwrap()
+        .hooks(
+            "external-pre",
+            Hooks::new().pre_dispatch(|_, _| {
+                Err(HookError::pre_dispatch_external(
+                    ExternalFailure::new(128, "fatal: pre-dispatch fixture failed").unwrap(),
+                ))
+            }),
+        )
         .build()
         .unwrap()
 }

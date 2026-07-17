@@ -329,7 +329,9 @@ if !app.run(Cli::command(), std::env::args()) {
 Parses args, dispatches to a handler, and performs the final write. It returns
 `true` when Standout handled the command and `false` for an unmatched fallback.
 Help/version and successes use stdout/status 0, usage errors use stderr/status
-2, and runtime/write failures use stderr/status 1.
+2, and runtime/write failures use stderr/status 1. An explicit
+`ExternalFailure` is the sole exception: it preserves an authoritative external
+operation's declared nonzero status and verbatim stderr payload.
 
 ### Capture Output
 

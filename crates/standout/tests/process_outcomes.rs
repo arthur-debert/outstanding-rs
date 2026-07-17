@@ -77,6 +77,16 @@ fn real_process_status_and_stream_matrix() {
     assert!(handler.stdout.is_empty());
     assert!(String::from_utf8_lossy(&handler.stderr).contains("fixture handler failed"));
 
+    let external = run(&binary, &["external"]);
+    assert_eq!(external.status.code(), Some(128));
+    assert!(external.stdout.is_empty());
+    assert_eq!(external.stderr, b"fatal: external fixture failed");
+
+    let external_pre = run(&binary, &["external-pre"]);
+    assert_eq!(external_pre.status.code(), Some(128));
+    assert!(external_pre.stdout.is_empty());
+    assert_eq!(external_pre.stderr, b"fatal: pre-dispatch fixture failed");
+
     let silent = run(&binary, &["silent"]);
     assert_eq!(silent.status.code(), Some(0));
     assert!(silent.stdout.is_empty());

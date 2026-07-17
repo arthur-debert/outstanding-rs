@@ -72,6 +72,7 @@ use std::any::{Any, TypeId};
 use std::collections::HashMap;
 use std::fmt;
 use std::rc::Rc;
+use std::sync::Arc;
 
 /// Type-safe container for injecting custom state into handlers.
 ///
@@ -446,6 +447,76 @@ impl ExitStatus {
     }
 }
 
+/// Error returned when an external failure attempts to declare success.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
+#[error("an external failure status must be nonzero")]
+pub struct InvalidExternalStatus;
+
+/// An application-declared failure from an authoritative external operation.
+///
+/// Use this narrow escape hatch when a command delegates to another executable
+/// and must preserve that executable's exact nonzero status and stderr payload.
+/// Returning ordinary handler or hook errors continues to use Standout's normal
+/// runtime status (`1`); this type does not configure general error mapping.
+///
+/// `ExternalFailure` can flow through a handler's existing [`HandlerResult`]
+/// error seam via `?`/`Into<anyhow::Error>`. For pre-dispatch, wrap it with
+/// [`HookError::pre_dispatch_external`](crate::HookError::pre_dispatch_external).
+#[derive(Debug, Clone)]
+pub struct ExternalFailure {
+    status: ExitStatus,
+    diagnostic: String,
+    source: Option<Arc<dyn std::error::Error + Send + Sync + 'static>>,
+}
+
+impl ExternalFailure {
+    /// Declares an external failure with an exact nonzero process status and
+    /// verbatim stderr payload.
+    pub fn new(status: u8, diagnostic: impl Into<String>) -> Result<Self, InvalidExternalStatus> {
+        if status == 0 {
+            return Err(InvalidExternalStatus);
+        }
+        Ok(Self {
+            status: ExitStatus(status),
+            diagnostic: diagnostic.into(),
+            source: None,
+        })
+    }
+
+    /// Returns the exact status declared by the application.
+    pub const fn exit_status(&self) -> ExitStatus {
+        self.status
+    }
+
+    /// Returns the stderr payload without adding or removing any text.
+    pub fn diagnostic(&self) -> &str {
+        &self.diagnostic
+    }
+
+    /// Attaches the error that caused the external operation to fail.
+    pub fn with_source<E>(mut self, source: E) -> Self
+    where
+        E: std::error::Error + Send + Sync + 'static,
+    {
+        self.source = Some(Arc::new(source));
+        self
+    }
+}
+
+impl fmt::Display for ExternalFailure {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(self.diagnostic())
+    }
+}
+
+impl std::error::Error for ExternalFailure {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        self.source
+            .as_deref()
+            .map(|source| source as &(dyn std::error::Error + 'static))
+    }
+}
+
 /// Successful text outcome carried by [`RunResult::Handled`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 #[non_exhaustive]
@@ -482,6 +553,8 @@ pub enum RunErrorKind {
     Render,
     /// A framework-owned file/stdout write failed.
     FinalWrite(OutputKind),
+    /// The application declared a failure from an authoritative external operation.
+    External,
 }
 
 /// Metadata-bearing successful text compatible with string-oriented access.
@@ -592,15 +665,32 @@ impl From<RunOutput> for String {
 pub struct RunError {
     message: String,
     kind: RunErrorKind,
+    status: ExitStatus,
+    source: Option<Arc<dyn std::error::Error + Send + Sync + 'static>>,
 }
 
 impl RunError {
     /// Creates a failure with its framework origin.
     pub fn new(message: impl Into<String>, kind: RunErrorKind) -> Self {
+        let status = match kind {
+            RunErrorKind::ClapUsage => ExitStatus::USAGE_ERROR,
+            _ => ExitStatus::FAILURE,
+        };
         Self {
             message: message.into(),
             kind,
+            status,
+            source: None,
         }
+    }
+
+    /// Attaches the error that caused this captured failure.
+    pub fn with_source<E>(mut self, source: E) -> Self
+    where
+        E: std::error::Error + Send + Sync + 'static,
+    {
+        self.source = Some(Arc::new(source));
+        self
     }
 
     /// Returns the existing human-readable diagnostic.
@@ -615,10 +705,7 @@ impl RunError {
 
     /// Returns the shell status selected for this failure.
     pub const fn exit_status(&self) -> ExitStatus {
-        match self.kind {
-            RunErrorKind::ClapUsage => ExitStatus::USAGE_ERROR,
-            _ => ExitStatus::FAILURE,
-        }
+        self.status
     }
 
     /// Consumes the wrapper and returns the diagnostic text.
@@ -643,6 +730,25 @@ impl AsRef<str> for RunError {
 impl fmt::Display for RunError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.write_str(self.as_str())
+    }
+}
+
+impl std::error::Error for RunError {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        self.source
+            .as_deref()
+            .map(|source| source as &(dyn std::error::Error + 'static))
+    }
+}
+
+impl From<ExternalFailure> for RunError {
+    fn from(failure: ExternalFailure) -> Self {
+        Self {
+            message: failure.diagnostic,
+            kind: RunErrorKind::External,
+            status: failure.status,
+            source: failure.source,
+        }
     }
 }
 
@@ -945,6 +1051,33 @@ mod tests {
             extensions: Extensions::new(),
         };
         assert_eq!(ctx.command_path, vec!["config", "get"]);
+    }
+
+    #[test]
+    fn external_failure_rejects_success_and_preserves_metadata() {
+        assert_eq!(
+            ExternalFailure::new(0, "not a failure").unwrap_err(),
+            InvalidExternalStatus
+        );
+
+        let failure = ExternalFailure::new(128, "fatal: repository missing\n")
+            .unwrap()
+            .with_source(std::io::Error::other("git failed"));
+        assert_eq!(failure.exit_status().code(), 128);
+        assert_eq!(failure.diagnostic(), "fatal: repository missing\n");
+        assert_eq!(
+            std::error::Error::source(&failure).unwrap().to_string(),
+            "git failed"
+        );
+
+        let captured = RunError::from(failure);
+        assert_eq!(captured.kind(), RunErrorKind::External);
+        assert_eq!(captured.exit_status().code(), 128);
+        assert_eq!(captured.as_str(), "fatal: repository missing\n");
+        assert_eq!(
+            std::error::Error::source(&captured).unwrap().to_string(),
+            "git failed"
+        );
     }
 
     #[test]

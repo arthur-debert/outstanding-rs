@@ -6,6 +6,7 @@
 //! - [`CommandContext`]: Environment information passed to handlers (command path only)
 //! - [`Output`]: What a handler produces (render data, silent, or binary)
 //! - [`HandlerResult`]: The result type for handlers (`Result<Output<T>, Error>`)
+//! - [`ExternalFailure`]: An intentional delegated-operation failure with an exact status/payload
 //! - [`RunResult`]: The result of running the CLI dispatcher
 //! - [`Handler`]: Trait for command handlers (`&mut self`)
 //!
@@ -55,8 +56,9 @@
 // Re-export all handler types from standout-dispatch.
 // These types are render-agnostic and focus on handler execution.
 pub use standout_dispatch::{
-    CommandContext, ExitStatus, Extensions, FnHandler, Handler, HandlerResult, Output, OutputKind,
-    RunError, RunErrorKind, RunOutput, RunResult, SuccessKind,
+    CommandContext, ExitStatus, Extensions, ExternalFailure, FnHandler, Handler, HandlerResult,
+    InvalidExternalStatus, Output, OutputKind, RunError, RunErrorKind, RunOutput, RunResult,
+    SuccessKind,
 };
 
 use standout_input::{InputSourceKind, Inputs, MissingInput};

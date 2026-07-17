@@ -134,10 +134,7 @@ impl AppBuilder {
             // Run pre-dispatch hooks if registered (hooks can inject state via ctx.extensions)
             if let Some(hooks) = hooks {
                 if let Err(e) = hooks.run_pre_dispatch(&matches, &mut ctx) {
-                    return RunResult::Error(RunError::new(
-                        format!("Hook error: {}", e),
-                        RunErrorKind::Hook(e.phase),
-                    ));
+                    return RunResult::Error(super::super::dispatch::hook_run_error(e));
                 }
             }
 
@@ -168,12 +165,7 @@ impl AppBuilder {
             let mut final_output = if let Some(hooks) = hooks {
                 match hooks.run_post_output(&matches, &ctx, output) {
                     Ok(o) => o,
-                    Err(e) => {
-                        return RunResult::Error(RunError::new(
-                            format!("Hook error: {}", e),
-                            RunErrorKind::Hook(e.phase),
-                        ))
-                    }
+                    Err(e) => return RunResult::Error(super::super::dispatch::hook_run_error(e)),
                 }
             } else {
                 output
@@ -357,9 +349,10 @@ impl AppBuilder {
     /// # Errors and exit codes
     ///
     /// On `RunResult::Error`, this function writes the diagnostic to stderr
-    /// and exits with its typed status: Clap usage errors use 2 and runtime
-    /// failures use 1. Final text and binary writes are framework-owned; a
-    /// write failure is diagnosed on stderr and exits 1.
+    /// and exits with its typed status: Clap usage errors use 2, runtime
+    /// failures use 1, and an application-declared `ExternalFailure` preserves
+    /// its exact nonzero status and verbatim diagnostic. Final text and binary
+    /// writes are framework-owned; a write failure is diagnosed on stderr and exits 1.
     /// Callers needing fine-grained control over exit codes should use
     /// [`Self::run_to_string`] or [`Self::dispatch_from`] and match on
     /// `RunResult` themselves.
@@ -423,7 +416,7 @@ impl AppBuilder {
     /// - `RunResult::Handled(output)` - Handler executed successfully, or Clap produced help/version.
     ///   Silent completion remains an empty handled string for capture compatibility.
     /// - `RunResult::Binary(bytes, filename)` - Handler produced binary output
-    /// - `RunResult::Error(error)` - A typed handler, hook, render, write, or Clap usage failure
+    /// - `RunResult::Error(error)` - A typed handler, hook, render, write, Clap usage, or external failure
     /// - `RunResult::NoMatch(matches)` - No handler matched
     ///
     /// # Example
@@ -528,15 +521,19 @@ fn emit_run_result<W: Write, E: Write>(
                 )
             }),
         RunResult::Silent => None,
-        RunResult::Error(error) => writeln!(stderr, "{}", error)
-            .and_then(|()| stderr.flush())
-            .err()
-            .map(|write_error| {
-                RunError::new(
-                    format!("Error writing stderr: {}", write_error),
-                    RunErrorKind::FinalWrite(OutputKind::Text),
-                )
-            }),
+        RunResult::Error(error) => (if error.kind() == RunErrorKind::External {
+            stderr.write_all(error.as_str().as_bytes())
+        } else {
+            writeln!(stderr, "{}", error)
+        })
+        .and_then(|()| stderr.flush())
+        .err()
+        .map(|write_error| {
+            RunError::new(
+                format!("Error writing stderr: {}", write_error),
+                RunErrorKind::FinalWrite(OutputKind::Text),
+            )
+        }),
         RunResult::NoMatch(_) => return (false, None),
         _ => return (false, None),
     };

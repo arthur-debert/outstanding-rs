@@ -15,6 +15,7 @@ runtime failure.
 | `--output-file-path` success | file only | `0` |
 | Clap usage error | stderr | `2` |
 | Handler, hook, render, pipe, or write failure | stderr | `1` |
+| Application-declared external failure | stderr | exact declared nonzero status |
 
 Warning flushing happens after the primary output and does not replace its
 status. A final text or binary write failure does replace a successful status
@@ -48,7 +49,9 @@ assert_eq!(result.error_kind(), None);
 `RunOutput` and `RunError` dereference to `str`, implement `Display`, and expose
 `as_str()` / `into_string()` for callers that used the tuple payloads as text.
 `RunError::kind()` identifies `ClapUsage`, `Handler`, `Hook(phase)`, `Render`, or
-`FinalWrite(Text|Binary)`.
+`FinalWrite(Text|Binary)`. `External` identifies the narrow
+application-declared external path; its `exit_status()` is the exact declared
+nonzero status and its text is the verbatim diagnostic payload.
 
 ## No-match is a handoff, not an error
 
@@ -67,3 +70,5 @@ file instead of stdout.
 
 Capture APIs do not perform the final stdout/stderr write, but file redirection
 is part of dispatch and therefore reports typed `FinalWrite` failures directly.
+External failures are never redirected to an output file: they remain stderr
+diagnostics when `run()` performs the final write.

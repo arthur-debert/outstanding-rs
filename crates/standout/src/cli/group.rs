@@ -12,9 +12,7 @@ use std::collections::HashMap;
 use std::rc::Rc;
 
 use super::dispatch::{render_handler_output, DispatchFn};
-use crate::cli::handler::{
-    CommandContext, FnHandler, Handler, HandlerResult, RunError, RunErrorKind,
-};
+use crate::cli::handler::{CommandContext, FnHandler, Handler, HandlerResult};
 use crate::cli::hooks::{Hooks, RenderedOutput, TextOutput};
 use crate::StructuredOutputProjection;
 use standout_dispatch::verify::ExpectedArg;
@@ -147,10 +145,7 @@ where
                   hooks: Option<&Hooks>,
                   output_mode: crate::OutputMode,
                   theme: &crate::Theme| {
-                let result = handler
-                    .borrow_mut()
-                    .handle(matches, ctx)
-                    .map_err(|e| e.to_string());
+                let result = handler.borrow_mut().handle(matches, ctx);
                 render_handler_output(
                     result,
                     matches,
@@ -257,10 +252,7 @@ where
                   hooks: Option<&Hooks>,
                   output_mode: crate::OutputMode,
                   theme: &crate::Theme| {
-                let result = handler
-                    .borrow_mut()
-                    .handle(matches, ctx)
-                    .map_err(|e| e.to_string());
+                let result = handler.borrow_mut().handle(matches, ctx);
                 render_handler_output(
                     result,
                     matches,
@@ -416,10 +408,7 @@ where
                 let result = (handler.borrow_mut())(matches, ctx);
                 match result {
                     Ok(()) => Ok(super::dispatch::DispatchOutput::Silent),
-                    Err(e) => Err(RunError::new(
-                        format!("Error: {}", e),
-                        RunErrorKind::Handler,
-                    )),
+                    Err(e) => Err(super::dispatch::handler_run_error(e)),
                 }
             },
         ))
@@ -1031,10 +1020,7 @@ where
                   hooks: Option<&Hooks>,
                   output_mode: crate::OutputMode,
                   theme: &crate::Theme| {
-                let result = handler
-                    .borrow_mut()
-                    .handle(matches, ctx)
-                    .map_err(|e| e.to_string());
+                let result = handler.borrow_mut().handle(matches, ctx);
                 render_handler_output(
                     result,
                     matches,
@@ -1101,10 +1087,7 @@ where
                   hooks: Option<&Hooks>,
                   output_mode: crate::OutputMode,
                   theme: &crate::Theme| {
-                let result = handler
-                    .borrow_mut()
-                    .handle(matches, ctx)
-                    .map_err(|e| e.to_string());
+                let result = handler.borrow_mut().handle(matches, ctx);
                 render_handler_output(
                     result,
                     matches,
@@ -1168,10 +1151,7 @@ where
                 let result = (handler.borrow_mut())(matches, ctx);
                 match result {
                     Ok(()) => Ok(super::dispatch::DispatchOutput::Silent),
-                    Err(e) => Err(RunError::new(
-                        format!("Error: {}", e),
-                        RunErrorKind::Handler,
-                    )),
+                    Err(e) => Err(super::dispatch::handler_run_error(e)),
                 }
             },
         ))
