@@ -59,7 +59,9 @@ Argument parsing is clap's responsibility, and clap has an extensive test suite 
 Its `TestResult` also exposes `exit_status()`, `success_kind()`, and
 `error_kind()`, with assertions for typed status and failure origin. `NoMatch`
 returns no framework status because the fallback dispatcher still owns the
-command.
+command. For an `ExternalFailure`, `stdout()` is empty, `error()` is the
+verbatim diagnostic, `error_kind()` is `RunErrorKind::External`, and
+`exit_status()` retains the declared value (including values such as `128`).
 
 - Env vars (real `std::env::set_var`, originals captured and restored on drop)
 - Working directory (real `std::env::set_current_dir`, original restored on drop)
@@ -217,6 +219,24 @@ fn filter_excludes_done_by_default() {
     assert!(result.todos.iter().all(|t| matches!(t.status, Status::Pending)));
 }
 ```
+
+### Testing a delegated process failure
+
+Use a direct typed-handler test for the adapter mapping, `TestHarness` for the
+captured metadata, and one process test when exact OS status and stream bytes
+are part of the application's contract:
+
+```rust
+let result = TestHarness::new().run(&app, command, ["myapp", "fetch"]);
+result.assert_error_kind(RunErrorKind::External);
+assert_eq!(result.exit_status().unwrap().code(), 128);
+assert_eq!(result.error(), Some("fatal: repository not found\n"));
+result.assert_stdout_eq("");
+```
+
+The harness does not perform final writes, so the process-level test remains
+the proof that `run()` writes only the declared payload to stderr and exits with
+the same status.
 
 This path has no `#[serial]` requirement — nothing global is touched.
 

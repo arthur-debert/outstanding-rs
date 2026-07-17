@@ -33,7 +33,7 @@ use std::fmt;
 use std::rc::Rc;
 use thiserror::Error;
 
-use crate::handler::CommandContext;
+use crate::handler::{CommandContext, ExternalFailure};
 use clap::ArgMatches;
 
 /// Text output with both formatted and raw versions.
@@ -174,6 +174,19 @@ impl HookError {
             message: message.into(),
             phase: HookPhase::PreDispatch,
             source: None,
+        }
+    }
+
+    /// Declares an authoritative external failure before handler dispatch.
+    ///
+    /// Standout preserves the failure's exact nonzero status and diagnostic.
+    /// This constructor is intentionally limited to the pre-dispatch seam;
+    /// ordinary hook failures retain status `1`.
+    pub fn pre_dispatch_external(failure: ExternalFailure) -> Self {
+        Self {
+            message: failure.diagnostic().to_owned(),
+            phase: HookPhase::PreDispatch,
+            source: Some(Box::new(failure)),
         }
     }
 

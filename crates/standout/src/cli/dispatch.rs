@@ -11,8 +11,8 @@ use std::cell::RefCell;
 use std::rc::Rc;
 
 use crate::cli::handler::Output as HandlerOutput;
-use crate::cli::handler::{CommandContext, RunError, RunErrorKind};
-use crate::cli::hooks::Hooks;
+use crate::cli::handler::{CommandContext, ExternalFailure, RunError, RunErrorKind};
+use crate::cli::hooks::{HookError, Hooks};
 use crate::context::{ContextRegistry, RenderContext};
 use crate::StructuredOutputProjection;
 use crate::Theme;
@@ -38,6 +38,21 @@ pub enum DispatchOutput {
     Silent,
 }
 
+#[derive(Debug)]
+struct HandlerErrorSource(Box<dyn std::error::Error + Send + Sync + 'static>);
+
+impl std::fmt::Display for HandlerErrorSource {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        std::fmt::Display::fmt(&self.0, f)
+    }
+}
+
+impl std::error::Error for HandlerErrorSource {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        Some(self.0.as_ref())
+    }
+}
+
 /// Helper to render output from a handler.
 ///
 /// This shared logic ensures consistent hook execution, context injection, and rendering.
@@ -47,7 +62,7 @@ pub enum DispatchOutput {
 /// managed by standout.
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn render_handler_output<T: Serialize>(
-    result: Result<HandlerOutput<T>, String>,
+    result: crate::cli::HandlerResult<T>,
     matches: &ArgMatches,
     ctx: &CommandContext,
     hooks: Option<&Hooks>,
@@ -69,11 +84,12 @@ pub(crate) fn render_handler_output<T: Serialize>(
                 })?;
 
                 if let Some(hooks) = hooks {
-                    json_data = hooks
-                        .run_post_dispatch(matches, ctx, json_data)
-                        .map_err(|e| {
-                            RunError::new(format!("Hook error: {}", e), RunErrorKind::Hook(e.phase))
-                        })?;
+                    json_data =
+                        hooks
+                            .run_post_dispatch(matches, ctx, json_data)
+                            .map_err(|error| {
+                                hook_run_error(error, crate::cli::HookPhase::PostDispatch)
+                            })?;
                 }
 
                 let render_ctx = RenderContext::new(
@@ -114,11 +130,39 @@ pub(crate) fn render_handler_output<T: Serialize>(
             HandlerOutput::Silent => Ok(DispatchOutput::Silent),
             HandlerOutput::Binary { data, filename } => Ok(DispatchOutput::Binary(data, filename)),
         },
-        Err(e) => Err(RunError::new(
-            format!("Error: {}", e),
-            RunErrorKind::Handler,
-        )),
+        Err(error) => Err(handler_run_error(error)),
     }
+}
+
+/// Converts the one application-declared escape hatch without changing the
+/// status policy for ordinary handler errors.
+pub(crate) fn handler_run_error(error: anyhow::Error) -> RunError {
+    let error = match error.downcast::<ExternalFailure>() {
+        Ok(external) => return RunError::from(external),
+        Err(error) => error,
+    };
+
+    RunError::new(format!("Error: {}", error), RunErrorKind::Handler)
+        .with_source(HandlerErrorSource(error.into_boxed_dyn_error()))
+}
+
+/// Converts a hook failure using the phase that actually executed.
+///
+/// Only the pre-dispatch seam recognizes `ExternalFailure`; a post-dispatch or
+/// post-output hook cannot opt into external status handling by self-labeling
+/// its `HookError` as pre-dispatch.
+pub(crate) fn hook_run_error(mut error: HookError, phase: crate::cli::HookPhase) -> RunError {
+    if phase == crate::cli::HookPhase::PreDispatch {
+        if let Some(source) = error.source.take() {
+            match source.downcast::<ExternalFailure>() {
+                Ok(external) => return RunError::from(*external),
+                Err(source) => error.source = Some(source),
+            }
+        }
+    }
+
+    error.phase = phase;
+    RunError::new(format!("Hook error: {}", error), RunErrorKind::Hook(phase)).with_source(error)
 }
 
 /// Type-erased dispatch function for single-threaded handlers.

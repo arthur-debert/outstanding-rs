@@ -135,8 +135,9 @@ pub use dispatch::{
 
 // Re-export handler types
 pub use handler::{
-    CommandContext, ExitStatus, Extensions, FnHandler, Handler, HandlerResult, IntoHandlerResult,
-    Output, OutputKind, RunError, RunErrorKind, RunOutput, RunResult, SimpleFnHandler, SuccessKind,
+    CommandContext, ExitStatus, Extensions, ExternalFailure, FnHandler, Handler, HandlerResult,
+    IntoHandlerResult, InvalidExternalStatus, Output, OutputKind, RunError, RunErrorKind,
+    RunOutput, RunResult, SimpleFnHandler, SuccessKind,
 };
 
 // Re-export hook types

@@ -4,6 +4,8 @@
 
 ## Unreleased
 
+- Preserve authoritative external-command failures through Standout-owned output (issue #206, PR #208): applications can declare an exact nonzero status and verbatim stderr payload from handlers or pre-dispatch, while capture APIs and `TestHarness` expose the typed external origin without changing ordinary 0/1/2 semantics.
+
 ## 7.7.0 - 2026-07-17
 
 - Add per-command structured-output projections (issue #200, PR #204): commands can declaratively select CSV rows, derive row- and root-level cells, and emit synthetic or conditional rows while canonical JSON, YAML, and XML serialization remains unchanged.

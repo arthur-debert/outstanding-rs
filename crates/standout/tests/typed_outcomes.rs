@@ -1,8 +1,8 @@
 use clap::Command;
 use serde_json::json;
 use standout::cli::{
-    App, ExitStatus, HandlerResult, HookError, HookPhase, Hooks, Output, OutputKind, RunErrorKind,
-    RunResult, SuccessKind,
+    App, ExitStatus, ExternalFailure, HandlerResult, HookError, HookPhase, Hooks, Output,
+    OutputKind, RunErrorKind, RunResult, SuccessKind,
 };
 
 fn command() -> Command {
@@ -126,6 +126,102 @@ fn handler_and_each_hook_phase_keep_their_origin() {
             .build()
             .unwrap()
             .run_to_string(command(), ["app", "go"]);
+        assert_eq!(result.exit_status(), Some(ExitStatus::FAILURE));
+        assert_eq!(result.error_kind(), Some(RunErrorKind::Hook(phase)));
+    }
+}
+
+#[test]
+fn external_failure_metadata_crosses_handler_and_pre_dispatch_seams() {
+    let handler = App::builder()
+        .command(
+            "go",
+            |_matches, _ctx| -> HandlerResult<serde_json::Value> {
+                Err(anyhow::Error::new(
+                    ExternalFailure::new(128, "fatal: handler external\n")
+                        .unwrap()
+                        .with_source(std::io::Error::other("git failed")),
+                )
+                .context("delegated Git invocation"))
+            },
+            "",
+        )
+        .unwrap()
+        .build()
+        .unwrap()
+        .run_to_string(command(), ["app", "go"]);
+
+    assert_eq!(handler.exit_status().unwrap().code(), 128);
+    assert_eq!(handler.error_kind(), Some(RunErrorKind::External));
+    assert_eq!(handler.error(), Some("fatal: handler external\n"));
+    assert_eq!(handler.output(), None);
+    let RunResult::Error(handler_error) = &handler else {
+        panic!("expected external error");
+    };
+    assert_eq!(
+        std::error::Error::source(handler_error)
+            .unwrap()
+            .to_string(),
+        "git failed"
+    );
+
+    let pre_dispatch = App::builder()
+        .command(
+            "go",
+            |_matches, _ctx| Ok(Output::Render(json!({ "message": "unreachable" }))),
+            "{{ message }}",
+        )
+        .unwrap()
+        .hooks(
+            "go",
+            Hooks::new().pre_dispatch(|_, _| {
+                Err(HookError::pre_dispatch_external(
+                    ExternalFailure::new(128, "fatal: pre-dispatch external\n").unwrap(),
+                ))
+            }),
+        )
+        .build()
+        .unwrap()
+        .run_to_string(command(), ["app", "go"]);
+
+    assert_eq!(pre_dispatch.exit_status().unwrap().code(), 128);
+    assert_eq!(pre_dispatch.error_kind(), Some(RunErrorKind::External));
+    assert_eq!(pre_dispatch.error(), Some("fatal: pre-dispatch external\n"));
+    assert_eq!(pre_dispatch.output(), None);
+}
+
+#[test]
+fn post_hooks_cannot_self_label_as_pre_dispatch_external() {
+    for (hooks, phase) in [
+        (
+            Hooks::new().post_dispatch(|_, _, _| {
+                Err(HookError::pre_dispatch_external(
+                    ExternalFailure::new(128, "must stay ordinary").unwrap(),
+                ))
+            }),
+            HookPhase::PostDispatch,
+        ),
+        (
+            Hooks::new().post_output(|_, _, _| {
+                Err(HookError::pre_dispatch_external(
+                    ExternalFailure::new(128, "must stay ordinary").unwrap(),
+                ))
+            }),
+            HookPhase::PostOutput,
+        ),
+    ] {
+        let result = App::builder()
+            .command(
+                "go",
+                |_matches, _ctx| Ok(Output::Render(json!({ "message": "ok" }))),
+                "{{ message }}",
+            )
+            .unwrap()
+            .hooks("go", hooks)
+            .build()
+            .unwrap()
+            .run_to_string(command(), ["app", "go"]);
+
         assert_eq!(result.exit_status(), Some(ExitStatus::FAILURE));
         assert_eq!(result.error_kind(), Some(RunErrorKind::Hook(phase)));
     }

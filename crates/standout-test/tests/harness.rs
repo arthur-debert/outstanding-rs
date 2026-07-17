@@ -6,7 +6,10 @@
 use clap::Command;
 use serde_json::json;
 use serial_test::serial;
-use standout::cli::{App, ExitStatus, HandlerResult, Output, RunErrorKind, SuccessKind};
+use standout::cli::{
+    App, ExitStatus, ExternalFailure, HandlerResult, HookError, Hooks, Output, RunErrorKind,
+    SuccessKind,
+};
 use standout::tabular::{Column, Width};
 use standout::{CsvProjection, StructuredOutputProjection};
 use standout_input::{ClipboardSource, EnvSource, InputChain, StdinSource};
@@ -76,6 +79,58 @@ fn harness_exposes_typed_clap_and_handler_outcomes() {
     failure.assert_error();
     failure.assert_exit_status(ExitStatus::FAILURE);
     failure.assert_error_kind(RunErrorKind::Handler);
+}
+
+#[test]
+#[serial]
+fn harness_exposes_external_failure_payload_status_and_origin() {
+    let app = App::builder()
+        .command(
+            "external",
+            |_matches, _ctx| -> HandlerResult<serde_json::Value> {
+                Err(
+                    ExternalFailure::new(128, "fatal: delegated command failed\n")
+                        .unwrap()
+                        .into(),
+                )
+            },
+            "",
+        )
+        .unwrap()
+        .command(
+            "external-pre",
+            |_matches, _ctx| Ok(Output::Render(json!({ "message": "unreachable" }))),
+            "{{ message }}",
+        )
+        .unwrap()
+        .hooks(
+            "external-pre",
+            Hooks::new().pre_dispatch(|_, _| {
+                Err(HookError::pre_dispatch_external(
+                    ExternalFailure::new(128, "fatal: pre-dispatch failed\n").unwrap(),
+                ))
+            }),
+        )
+        .build()
+        .unwrap();
+    let command = Command::new("app")
+        .subcommand(Command::new("external"))
+        .subcommand(Command::new("external-pre"));
+
+    let handler = TestHarness::new().run(&app, command.clone(), ["app", "external"]);
+    handler.assert_error();
+    handler.assert_exit_status(ExternalFailure::new(128, "").unwrap().exit_status());
+    handler.assert_error_kind(RunErrorKind::External);
+    assert_eq!(handler.error(), Some("fatal: delegated command failed\n"));
+    handler.assert_stdout_eq("");
+
+    drop(handler);
+    let pre_dispatch = TestHarness::new().run(&app, command, ["app", "external-pre"]);
+    pre_dispatch.assert_error();
+    pre_dispatch.assert_exit_status(ExternalFailure::new(128, "").unwrap().exit_status());
+    pre_dispatch.assert_error_kind(RunErrorKind::External);
+    assert_eq!(pre_dispatch.error(), Some("fatal: pre-dispatch failed\n"));
+    pre_dispatch.assert_stdout_eq("");
 }
 
 #[test]
