@@ -4,6 +4,8 @@
 
 ## Unreleased
 
+## 7.6.5 - 2026-07-17
+
 - Add a compact implementation-quality guide and skill checklist for leveraging Standout's logic/presentation boundary, output modes, templates and CSS, tabular layout, declarative dispatch, and layered test seams.
 
 ## 7.6.4 - 2026-07-17

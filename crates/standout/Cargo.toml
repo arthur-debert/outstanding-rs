@@ -1,6 +1,6 @@
 [package]
 name = "standout"
-version = "7.6.4"
+version = "7.6.5"
 edition = "2021"
 description = "Styled CLI template rendering with automatic terminal detection"
 license = "MIT"
@@ -11,17 +11,17 @@ readme = "README.md"
 
 [dependencies]
 # Core rendering (re-exported from standout-render)
-standout-render = { version = "7.6.4", path = "../standout-render" }
-standout-pipe = { path = "../standout-pipe", version = "7.6.4" }
-standout-bbparser = { version = "7.6.4", path = "../standout-bbparser" }
-standout-macros = { version = "7.6.4", path = "../standout-macros" }
-standout-dispatch = { version = "7.6.4", path = "../standout-dispatch" }
+standout-render = { version = "7.6.5", path = "../standout-render" }
+standout-pipe = { path = "../standout-pipe", version = "7.6.5" }
+standout-bbparser = { version = "7.6.5", path = "../standout-bbparser" }
+standout-macros = { version = "7.6.5", path = "../standout-macros" }
+standout-dispatch = { version = "7.6.5", path = "../standout-dispatch" }
 # Heavier input backends (editor — tempfile/which/shell-words; inquire — ~29 deps)
 # stay opt-in via the input-editor / input-inquire features below. simple-prompts
 # is free (no extra deps) and stays on so basic TextPromptSource works out of
 # the box.
-standout-input = { version = "7.6.4", path = "../standout-input", default-features = false, features = ["simple-prompts"] }
-standout-seeker = { version = "7.6.4", path = "../standout-seeker" }
+standout-input = { version = "7.6.5", path = "../standout-input", default-features = false, features = ["simple-prompts"] }
+standout-seeker = { version = "7.6.5", path = "../standout-seeker" }
 
 # Direct dependencies (also used by standout-render, but needed here for cli module)
 console = "0.16"
