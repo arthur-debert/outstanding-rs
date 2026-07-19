@@ -123,9 +123,10 @@ impl AppBuilder {
         // Pass 1: Template rendering via engine
         let minijinja_output = self
             .template_engine
-            .render_template_with_width(
+            .render_template_with_render_widths(
                 template,
                 &serde_json::Value::Object(combined_json_map),
+                render_ctx.terminal_width,
                 ambiguous_width,
             )
             .map_err(|e| SetupError::Template(e.to_string()))?;

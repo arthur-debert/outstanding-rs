@@ -706,7 +706,13 @@ pub fn render_with_context<T: Serialize>(
 
     // Pass 1: Template rendering with context
     let data_value = serde_json::to_value(data)?;
-    let template_output = engine.render_with_context(&template_content, &data_value, context)?;
+    let template_output = engine.render_with_context_and_render_widths(
+        &template_content,
+        &data_value,
+        context,
+        render_context.terminal_width,
+        render_context.ambiguous_width(),
+    )?;
 
     // Pass 2: BBParser style tag processing
     let final_output = apply_style_tags(&template_output, &styles, mode);
@@ -924,9 +930,19 @@ pub fn render_auto_with_engine(
 
         // Render template
         let template_output = if engine.has_template(template) {
-            engine.render_named(template, &combined_value)?
+            engine.render_named_with_render_widths(
+                template,
+                &combined_value,
+                render_context.terminal_width,
+                render_context.ambiguous_width(),
+            )?
         } else {
-            engine.render_template(template, &combined_value)?
+            engine.render_template_with_render_widths(
+                template,
+                &combined_value,
+                render_context.terminal_width,
+                render_context.ambiguous_width(),
+            )?
         };
 
         // Apply styles
@@ -993,15 +1009,17 @@ pub fn render_auto_with_engine_split(
 
         // Pass 1: Render template (this is the raw/intermediate output)
         let raw_output = if engine.has_template(template) {
-            engine.render_named_with_width(
+            engine.render_named_with_render_widths(
                 template,
                 &combined_value,
+                render_context.terminal_width,
                 render_context.ambiguous_width(),
             )?
         } else {
-            engine.render_template_with_width(
+            engine.render_template_with_render_widths(
                 template,
                 &combined_value,
+                render_context.terminal_width,
                 render_context.ambiguous_width(),
             )?
         };

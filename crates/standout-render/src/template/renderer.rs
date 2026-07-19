@@ -469,6 +469,7 @@ impl Renderer {
     pub fn render<T: Serialize>(&mut self, name: &str, data: &T) -> Result<String, RenderError> {
         let ambiguous_width =
             crate::detect_ambiguous_width_override().unwrap_or(self.ambiguous_width);
+        let terminal_width = crate::detect_terminal_width();
         // First, check if it's an inline template
         // We check this first to avoid filesystem lookups for known templates.
         // In debug mode, if it's a file-based template, we want to skip this check
@@ -498,18 +499,24 @@ impl Renderer {
         // In debug mode: only use engine cache if it's an inline template (which doesn't change on disk).
         let template_output = if !cfg!(debug_assertions) || is_inline {
             // Try to render with the engine's cached template
-            match self
-                .engine
-                .render_named_with_width(name, &data_value, ambiguous_width)
-            {
+            match self.engine.render_named_with_render_widths(
+                name,
+                &data_value,
+                terminal_width,
+                ambiguous_width,
+            ) {
                 Ok(output) => output,
                 Err(_) => {
                     // Template not in cache, load and render
                     self.ensure_registry_initialized()?;
                     let content = self.get_template_content(name)?;
                     self.engine.add_template(name, &content)?;
-                    self.engine
-                        .render_named_with_width(name, &data_value, ambiguous_width)?
+                    self.engine.render_named_with_render_widths(
+                        name,
+                        &data_value,
+                        terminal_width,
+                        ambiguous_width,
+                    )?
                 }
             }
         } else {
@@ -517,8 +524,12 @@ impl Renderer {
             self.ensure_registry_initialized()?;
             let content = self.get_template_content(name)?;
             self.engine.add_template(name, &content)?;
-            self.engine
-                .render_named_with_width(name, &data_value, ambiguous_width)?
+            self.engine.render_named_with_render_widths(
+                name,
+                &data_value,
+                terminal_width,
+                ambiguous_width,
+            )?
         };
 
         // Pass 2: BBParser style tag processing

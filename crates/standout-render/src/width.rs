@@ -9,7 +9,7 @@ use console::strip_ansi_codes;
 use serde::{Deserialize, Serialize};
 use standout_bbparser::strip_tags;
 use std::sync::{
-    atomic::{AtomicU8, Ordering},
+    atomic::{AtomicU8, AtomicUsize, Ordering},
     Arc, Mutex, MutexGuard,
 };
 use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
@@ -34,60 +34,88 @@ pub struct WidthCalculator {
 }
 
 #[derive(Debug)]
-struct WidthPolicyState {
-    current: AtomicU8,
+struct RenderWidthState {
+    ambiguous_width: AtomicU8,
+    terminal_width: AtomicUsize,
     render_lock: Mutex<()>,
 }
 
 #[derive(Clone, Debug)]
-pub(crate) struct WidthPolicySource(Arc<WidthPolicyState>);
+pub(crate) struct RenderWidthSource(Arc<RenderWidthState>);
 
-pub(crate) struct WidthPolicyGuard<'a> {
-    source: &'a WidthPolicySource,
-    previous: AmbiguousWidth,
+pub(crate) struct RenderWidthGuard<'a> {
+    source: &'a RenderWidthSource,
+    previous_ambiguous_width: AmbiguousWidth,
+    previous_terminal_width: Option<usize>,
     _render_lock: MutexGuard<'a, ()>,
 }
 
-impl Drop for WidthPolicyGuard<'_> {
+impl Drop for RenderWidthGuard<'_> {
     fn drop(&mut self) {
-        self.source.store(self.previous);
+        self.source
+            .store_ambiguous_width(self.previous_ambiguous_width);
+        self.source
+            .store_terminal_width(self.previous_terminal_width);
     }
 }
 
-impl WidthPolicySource {
+impl RenderWidthSource {
     pub(crate) fn new(policy: AmbiguousWidth) -> Self {
-        Self(Arc::new(WidthPolicyState {
-            current: AtomicU8::new(policy as u8),
+        Self(Arc::new(RenderWidthState {
+            ambiguous_width: AtomicU8::new(policy as u8),
+            terminal_width: AtomicUsize::new(0),
             render_lock: Mutex::new(()),
         }))
     }
 
-    pub(crate) fn get(&self) -> AmbiguousWidth {
-        if self.0.current.load(Ordering::Relaxed) == AmbiguousWidth::Wide as u8 {
+    pub(crate) fn ambiguous_width(&self) -> AmbiguousWidth {
+        if self.0.ambiguous_width.load(Ordering::Relaxed) == AmbiguousWidth::Wide as u8 {
             AmbiguousWidth::Wide
         } else {
             AmbiguousWidth::Narrow
         }
     }
 
-    fn store(&self, policy: AmbiguousWidth) {
-        self.0.current.store(policy as u8, Ordering::Relaxed);
+    pub(crate) fn terminal_width(&self) -> Option<usize> {
+        match self.0.terminal_width.load(Ordering::Relaxed) {
+            0 => None,
+            width => Some(width),
+        }
     }
 
-    pub(crate) fn scoped(&self, policy: AmbiguousWidth) -> WidthPolicyGuard<'_> {
+    fn store_ambiguous_width(&self, policy: AmbiguousWidth) {
+        self.0
+            .ambiguous_width
+            .store(policy as u8, Ordering::Relaxed);
+    }
+
+    fn store_terminal_width(&self, width: Option<usize>) {
+        self.0
+            .terminal_width
+            .store(width.unwrap_or(0), Ordering::Relaxed);
+    }
+
+    pub(crate) fn scoped(
+        &self,
+        policy: AmbiguousWidth,
+        terminal_width: Option<usize>,
+    ) -> RenderWidthGuard<'_> {
         // A render that unwinds poisons the standard mutex. Recover its guard:
-        // policy restoration is handled by WidthPolicyGuard, so the protected
+        // restoration is handled by RenderWidthGuard, so the protected
         // state remains valid after a template/filter panic.
         let render_lock = self
             .0
             .render_lock
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner());
-        let previous = self.get();
-        self.store(policy);
-        WidthPolicyGuard {
+        let previous_ambiguous_width = self.ambiguous_width();
+        let previous_terminal_width = self.terminal_width();
+        self.store_ambiguous_width(policy);
+        self.store_terminal_width(terminal_width);
+        RenderWidthGuard {
             source: self,
-            previous,
+            previous_ambiguous_width,
+            previous_terminal_width,
             _render_lock: render_lock,
         }
     }

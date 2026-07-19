@@ -11,6 +11,7 @@ use standout::cli::{
     OutputKind, RunErrorKind, SuccessKind,
 };
 use standout::tabular::{Column, Width};
+use standout::views::list_view;
 use standout::{CsvProjection, StructuredOutputProjection};
 use standout_input::{ClipboardSource, EnvSource, InputChain, StdinSource};
 use standout_render::{AmbiguousWidth, OutputMode};
@@ -39,6 +40,36 @@ fn echo_command() -> Command {
         .subcommand(Command::new("echo").arg(clap::Arg::new("msg").required(false).index(1)))
 }
 
+#[derive(Clone, serde::Serialize)]
+struct WidthSensitiveItem {
+    name: &'static str,
+}
+
+fn build_framework_list_view_app() -> App {
+    App::builder()
+        .command(
+            "list",
+            |_matches, _ctx| {
+                let spec = standout::tabular::TabularSpec::builder()
+                    .column(Column::new(Width::Fill).key("name"))
+                    .build();
+                Ok(Output::Render(
+                    list_view(vec![WidthSensitiveItem { name: "cascade" }])
+                        .tabular_spec(spec)
+                        .build(),
+                ))
+            },
+            "standout/list-view",
+        )
+        .unwrap()
+        .build()
+        .unwrap()
+}
+
+fn list_command() -> Command {
+    Command::new("app").subcommand(Command::new("list"))
+}
+
 #[test]
 #[serial]
 fn simple_handler_returns_rendered_text() {
@@ -64,6 +95,43 @@ fn ambiguous_width_policy_can_be_injected_for_the_same_app_fixture() {
         .ambiguous_width(AmbiguousWidth::Wide)
         .run(&app, echo_command(), ["app", "echo", "↦≈Δ"]);
     wide.assert_stdout_eq("5");
+}
+
+#[test]
+#[serial]
+fn terminal_width_cascades_through_the_framework_list_view_template() {
+    let app = build_framework_list_view_app();
+
+    for width in [31, 47] {
+        let result =
+            TestHarness::new()
+                .terminal_width(width)
+                .run(&app, list_command(), ["app", "list"]);
+        result.assert_success();
+        let row = result
+            .stdout()
+            .lines()
+            .find(|line| line.contains("cascade"))
+            .expect("framework list view should render its tabular row");
+        assert_eq!(row.chars().count(), width);
+        drop(result);
+    }
+}
+
+#[test]
+#[serial]
+fn unknown_terminal_width_uses_the_framework_list_view_fallback() {
+    let app = build_framework_list_view_app();
+    let result = TestHarness::new()
+        .no_terminal_width()
+        .run(&app, list_command(), ["app", "list"]);
+    result.assert_success();
+    let row = result
+        .stdout()
+        .lines()
+        .find(|line| line.contains("cascade"))
+        .expect("framework list view should render its tabular row");
+    assert_eq!(row.chars().count(), 80);
 }
 
 #[test]

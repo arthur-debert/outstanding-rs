@@ -56,7 +56,10 @@ use super::util::{
     display_width_with_policy, pad_center_with_policy, pad_left_with_policy, pad_right_with_policy,
     truncate_end_with_policy, truncate_middle_with_policy, truncate_start_with_policy,
 };
-use crate::width::WidthPolicySource;
+use crate::width::RenderWidthSource;
+
+/// Deterministic helper width when the render boundary cannot detect a terminal.
+const DEFAULT_TABLE_WIDTH: usize = 80;
 
 /// Register all tabular-related filters on a MiniJinja environment.
 ///
@@ -85,16 +88,16 @@ pub fn register_tabular_filters_with_policy(
     env: &mut Environment<'static>,
     policy: crate::AmbiguousWidth,
 ) {
-    register_tabular_filters_with_source(env, WidthPolicySource::new(policy));
+    register_tabular_filters_with_source(env, RenderWidthSource::new(policy));
 }
 
 pub(crate) fn register_tabular_filters_with_source(
     env: &mut Environment<'static>,
-    policy: WidthPolicySource,
+    widths: RenderWidthSource,
 ) {
     // col filter: {{ value | col(width) }} or {{ value | col(width, align="right", truncate="middle") }}
     // "fill" support (Option B): {{ value | col("fill", width=80) }}
-    let col_policy = policy.clone();
+    let col_policy = widths.clone();
     env.add_filter(
         "col",
         move |value: Value,
@@ -143,18 +146,18 @@ pub(crate) fn register_tabular_filters_with_source(
                 &align,
                 &truncate,
                 &ellipsis,
-                col_policy.get(),
+                col_policy.ambiguous_width(),
             ))
         },
     );
 
     // pad_left filter: {{ value | pad_left(width) }}
     // BBCode tags are stripped for width measurement; padding preserves tags.
-    let pad_left_policy = policy.clone();
+    let pad_left_policy = widths.clone();
     env.add_filter("pad_left", move |value: Value, width: usize| -> String {
         let text = value.to_string();
         let stripped = strip_tags(&text);
-        let visible_width = display_width_with_policy(&stripped, pad_left_policy.get());
+        let visible_width = display_width_with_policy(&stripped, pad_left_policy.ambiguous_width());
         if visible_width >= width {
             text
         } else {
@@ -164,11 +167,12 @@ pub(crate) fn register_tabular_filters_with_source(
 
     // pad_right filter: {{ value | pad_right(width) }}
     // BBCode tags are stripped for width measurement; padding preserves tags.
-    let pad_right_policy = policy.clone();
+    let pad_right_policy = widths.clone();
     env.add_filter("pad_right", move |value: Value, width: usize| -> String {
         let text = value.to_string();
         let stripped = strip_tags(&text);
-        let visible_width = display_width_with_policy(&stripped, pad_right_policy.get());
+        let visible_width =
+            display_width_with_policy(&stripped, pad_right_policy.ambiguous_width());
         if visible_width >= width {
             text
         } else {
@@ -178,11 +182,12 @@ pub(crate) fn register_tabular_filters_with_source(
 
     // pad_center filter: {{ value | pad_center(width) }}
     // BBCode tags are stripped for width measurement; padding preserves tags.
-    let pad_center_policy = policy.clone();
+    let pad_center_policy = widths.clone();
     env.add_filter("pad_center", move |value: Value, width: usize| -> String {
         let text = value.to_string();
         let stripped = strip_tags(&text);
-        let visible_width = display_width_with_policy(&stripped, pad_center_policy.get());
+        let visible_width =
+            display_width_with_policy(&stripped, pad_center_policy.ambiguous_width());
         if visible_width >= width {
             text
         } else {
@@ -195,7 +200,7 @@ pub(crate) fn register_tabular_filters_with_source(
 
     // truncate_at filter: {{ value | truncate_at(width, "middle") }}
     // BBCode tags are stripped before truncation.
-    let truncate_policy = policy.clone();
+    let truncate_policy = widths.clone();
     env.add_filter(
         "truncate_at",
         move |value: Value,
@@ -209,21 +214,34 @@ pub(crate) fn register_tabular_filters_with_source(
             let ell = ellipsis.as_deref().unwrap_or("…");
 
             match pos {
-                "start" => truncate_start_with_policy(&stripped, width, ell, truncate_policy.get()),
-                "middle" => {
-                    truncate_middle_with_policy(&stripped, width, ell, truncate_policy.get())
-                }
-                _ => truncate_end_with_policy(&stripped, width, ell, truncate_policy.get()),
+                "start" => truncate_start_with_policy(
+                    &stripped,
+                    width,
+                    ell,
+                    truncate_policy.ambiguous_width(),
+                ),
+                "middle" => truncate_middle_with_policy(
+                    &stripped,
+                    width,
+                    ell,
+                    truncate_policy.ambiguous_width(),
+                ),
+                _ => truncate_end_with_policy(
+                    &stripped,
+                    width,
+                    ell,
+                    truncate_policy.ambiguous_width(),
+                ),
             }
         },
     );
 
     // display_width filter: {{ value | display_width }}
     // BBCode tags are stripped before measuring width.
-    let display_policy = policy.clone();
+    let display_policy = widths.clone();
     env.add_filter("display_width", move |value: Value| -> usize {
         let stripped = strip_tags(&value.to_string());
-        display_width_with_policy(&stripped, display_policy.get())
+        display_width_with_policy(&stripped, display_policy.ambiguous_width())
     });
 
     // style_as filter: {{ value | style_as("error") }} => [error]value[/error]
@@ -237,13 +255,13 @@ pub(crate) fn register_tabular_filters_with_source(
     });
 
     // Register global functions for creating formatters
-    register_table_functions(env, policy);
+    register_table_functions(env, widths);
 }
 
 /// Register global functions for creating table formatters.
-fn register_table_functions(env: &mut Environment<'static>, policy: WidthPolicySource) {
+fn register_table_functions(env: &mut Environment<'static>, widths: RenderWidthSource) {
     // tabular(columns, separator=?, width=?) -> TabularFormatter
-    let tabular_policy = policy.clone();
+    let tabular_widths = widths.clone();
     env.add_function(
         "tabular",
         move |columns: Value,
@@ -253,7 +271,10 @@ fn register_table_functions(env: &mut Environment<'static>, policy: WidthPolicyS
             let separator = kwargs
                 .get::<Option<String>>("separator")?
                 .unwrap_or_default();
-            let width = kwargs.get::<Option<usize>>("width")?.unwrap_or(80);
+            let width = kwargs
+                .get::<Option<usize>>("width")?
+                .or_else(|| tabular_widths.terminal_width())
+                .unwrap_or(DEFAULT_TABLE_WIDTH);
             kwargs.assert_all_used()?;
 
             let mut builder = TabularSpec::builder();
@@ -265,14 +286,17 @@ fn register_table_functions(env: &mut Environment<'static>, policy: WidthPolicyS
             }
 
             let spec = builder.build();
-            let formatter =
-                TabularFormatter::with_ambiguous_width(&spec, width, tabular_policy.get());
+            let formatter = TabularFormatter::with_ambiguous_width(
+                &spec,
+                width,
+                tabular_widths.ambiguous_width(),
+            );
             Ok(Value::from_object(formatter))
         },
     );
 
     // table(columns, border=?, header=?, header_style=?, width=?) -> Table
-    let table_policy = policy;
+    let table_widths = widths;
     env.add_function(
         "table",
         move |columns: Value, kwargs: minijinja::value::Kwargs| -> Result<Value, minijinja::Error> {
@@ -287,7 +311,10 @@ fn register_table_functions(env: &mut Environment<'static>, policy: WidthPolicyS
                 .get::<Option<bool>>("row_separator")?
                 .unwrap_or(false);
             let row_styles = kwargs.get::<Option<Value>>("row_styles")?;
-            let width = kwargs.get::<Option<usize>>("width")?.unwrap_or(80);
+            let width = kwargs
+                .get::<Option<usize>>("width")?
+                .or_else(|| table_widths.terminal_width())
+                .unwrap_or(DEFAULT_TABLE_WIDTH);
             kwargs.assert_all_used()?;
 
             let mut builder = TabularSpec::builder();
@@ -299,8 +326,12 @@ fn register_table_functions(env: &mut Environment<'static>, policy: WidthPolicyS
             }
 
             let spec = builder.build();
-            let mut table = Table::with_ambiguous_width(spec, width, table_policy.get())
-                .border(parse_border_style(&border));
+            let mut table = Table::with_ambiguous_width(
+                spec,
+                width,
+                table_widths.ambiguous_width(),
+            )
+            .border(parse_border_style(&border));
 
             // Set header if provided
             if let Some(h) = header {
@@ -368,10 +399,18 @@ fn register_table_functions(env: &mut Environment<'static>, policy: WidthPolicyS
 
 /// Parse column definitions from a template array value.
 fn parse_columns(columns: &Value) -> Result<Vec<Column>, minijinja::Error> {
+    // The framework list view passes the serialized TabularSpec, while direct
+    // helper calls commonly pass the columns array itself.
+    let columns = columns
+        .get_attr("columns")
+        .ok()
+        .filter(|value| !value.is_undefined() && !value.is_none())
+        .unwrap_or_else(|| columns.clone());
+
     let iter = columns.try_iter().map_err(|_| {
         minijinja::Error::new(
             minijinja::ErrorKind::InvalidOperation,
-            "columns must be an array",
+            "columns must be an array or a tabular spec",
         )
     })?;
 

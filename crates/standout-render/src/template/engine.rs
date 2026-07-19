@@ -9,7 +9,7 @@ use minijinja::{Environment, Value};
 use std::collections::HashMap;
 
 use crate::error::RenderError;
-use crate::width::WidthPolicySource;
+use crate::width::RenderWidthSource;
 use crate::AmbiguousWidth;
 
 /// A template engine that can render templates with data.
@@ -44,6 +44,17 @@ pub trait TemplateEngine {
         self.render_template(template, data)
     }
 
+    /// Renders with terminal columns and an explicit ambiguous-width policy.
+    fn render_template_with_render_widths(
+        &self,
+        template: &str,
+        data: &serde_json::Value,
+        _terminal_width: Option<usize>,
+        policy: AmbiguousWidth,
+    ) -> Result<String, RenderError> {
+        self.render_template_with_width(template, data, policy)
+    }
+
     /// Adds a named template to the engine.
     ///
     /// The template is compiled and cached for later use via [`render_named`](Self::render_named).
@@ -62,6 +73,18 @@ pub trait TemplateEngine {
         _policy: AmbiguousWidth,
     ) -> Result<String, RenderError> {
         self.render_named(name, data)
+    }
+
+    /// Renders a named template with terminal columns and an explicit
+    /// ambiguous-width policy.
+    fn render_named_with_render_widths(
+        &self,
+        name: &str,
+        data: &serde_json::Value,
+        _terminal_width: Option<usize>,
+        policy: AmbiguousWidth,
+    ) -> Result<String, RenderError> {
+        self.render_named_with_width(name, data, policy)
     }
 
     /// Checks if a template with the given name exists.
@@ -87,6 +110,19 @@ pub trait TemplateEngine {
         _policy: AmbiguousWidth,
     ) -> Result<String, RenderError> {
         self.render_with_context(template, data, context)
+    }
+
+    /// Renders with additional context, terminal columns, and an explicit
+    /// ambiguous-width policy.
+    fn render_with_context_and_render_widths(
+        &self,
+        template: &str,
+        data: &serde_json::Value,
+        context: HashMap<String, serde_json::Value>,
+        _terminal_width: Option<usize>,
+        policy: AmbiguousWidth,
+    ) -> Result<String, RenderError> {
+        self.render_with_context_and_width(template, data, context, policy)
     }
 
     /// Whether this engine supports template includes (`{% include %}`).
@@ -130,16 +166,16 @@ pub trait TemplateEngine {
 /// ```
 pub struct MiniJinjaEngine {
     env: Environment<'static>,
-    width_policy: WidthPolicySource,
+    render_widths: RenderWidthSource,
 }
 
 impl MiniJinjaEngine {
     /// Creates a new MiniJinja engine with default filters registered.
     pub fn new() -> Self {
         let mut env = Environment::new();
-        let width_policy = WidthPolicySource::new(AmbiguousWidth::Narrow);
-        register_filters_with_source(&mut env, width_policy.clone());
-        Self { env, width_policy }
+        let render_widths = RenderWidthSource::new(AmbiguousWidth::Narrow);
+        register_filters_with_source(&mut env, render_widths.clone());
+        Self { env, render_widths }
     }
 
     /// Returns a reference to the underlying MiniJinja environment.
@@ -171,7 +207,7 @@ impl TemplateEngine for MiniJinjaEngine {
         template: &str,
         data: &serde_json::Value,
     ) -> Result<String, RenderError> {
-        let _policy = self.width_policy.scoped(AmbiguousWidth::Narrow);
+        let _widths = self.render_widths.scoped(AmbiguousWidth::Narrow, None);
         self.render_template_inner(template, data)
     }
 
@@ -181,7 +217,18 @@ impl TemplateEngine for MiniJinjaEngine {
         data: &serde_json::Value,
         policy: AmbiguousWidth,
     ) -> Result<String, RenderError> {
-        let _policy = self.width_policy.scoped(policy);
+        let _widths = self.render_widths.scoped(policy, None);
+        self.render_template_inner(template, data)
+    }
+
+    fn render_template_with_render_widths(
+        &self,
+        template: &str,
+        data: &serde_json::Value,
+        terminal_width: Option<usize>,
+        policy: AmbiguousWidth,
+    ) -> Result<String, RenderError> {
+        let _widths = self.render_widths.scoped(policy, terminal_width);
         self.render_template_inner(template, data)
     }
 
@@ -192,7 +239,7 @@ impl TemplateEngine for MiniJinjaEngine {
     }
 
     fn render_named(&self, name: &str, data: &serde_json::Value) -> Result<String, RenderError> {
-        let _policy = self.width_policy.scoped(AmbiguousWidth::Narrow);
+        let _widths = self.render_widths.scoped(AmbiguousWidth::Narrow, None);
         self.render_named_inner(name, data)
     }
 
@@ -202,7 +249,18 @@ impl TemplateEngine for MiniJinjaEngine {
         data: &serde_json::Value,
         policy: AmbiguousWidth,
     ) -> Result<String, RenderError> {
-        let _policy = self.width_policy.scoped(policy);
+        let _widths = self.render_widths.scoped(policy, None);
+        self.render_named_inner(name, data)
+    }
+
+    fn render_named_with_render_widths(
+        &self,
+        name: &str,
+        data: &serde_json::Value,
+        terminal_width: Option<usize>,
+        policy: AmbiguousWidth,
+    ) -> Result<String, RenderError> {
+        let _widths = self.render_widths.scoped(policy, terminal_width);
         self.render_named_inner(name, data)
     }
 
@@ -216,7 +274,7 @@ impl TemplateEngine for MiniJinjaEngine {
         data: &serde_json::Value,
         context: HashMap<String, serde_json::Value>,
     ) -> Result<String, RenderError> {
-        let _policy = self.width_policy.scoped(AmbiguousWidth::Narrow);
+        let _widths = self.render_widths.scoped(AmbiguousWidth::Narrow, None);
         self.render_with_context_inner(template, data, context)
     }
 
@@ -227,7 +285,19 @@ impl TemplateEngine for MiniJinjaEngine {
         context: HashMap<String, serde_json::Value>,
         policy: AmbiguousWidth,
     ) -> Result<String, RenderError> {
-        let _policy = self.width_policy.scoped(policy);
+        let _widths = self.render_widths.scoped(policy, None);
+        self.render_with_context_inner(template, data, context)
+    }
+
+    fn render_with_context_and_render_widths(
+        &self,
+        template: &str,
+        data: &serde_json::Value,
+        context: HashMap<String, serde_json::Value>,
+        terminal_width: Option<usize>,
+        policy: AmbiguousWidth,
+    ) -> Result<String, RenderError> {
+        let _widths = self.render_widths.scoped(policy, terminal_width);
         self.render_with_context_inner(template, data, context)
     }
 
@@ -296,10 +366,10 @@ pub fn register_filters(env: &mut Environment<'static>) {
 
 /// Registers Standout's custom filters with an explicit ambiguous-width policy.
 pub fn register_filters_with_policy(env: &mut Environment<'static>, policy: AmbiguousWidth) {
-    register_filters_with_source(env, WidthPolicySource::new(policy));
+    register_filters_with_source(env, RenderWidthSource::new(policy));
 }
 
-fn register_filters_with_source(env: &mut Environment<'static>, policy: WidthPolicySource) {
+fn register_filters_with_source(env: &mut Environment<'static>, widths: RenderWidthSource) {
     use minijinja::{Error, ErrorKind};
 
     // Newline filter
@@ -318,7 +388,7 @@ fn register_filters_with_source(env: &mut Environment<'static>, policy: WidthPol
     );
 
     // Register tabular filters
-    crate::tabular::filters::register_tabular_filters_with_source(env, policy);
+    crate::tabular::filters::register_tabular_filters_with_source(env, widths);
 }
 
 #[cfg(test)]
@@ -523,5 +593,57 @@ mod tests {
                 .unwrap(),
             "2"
         );
+    }
+
+    #[test]
+    fn table_helpers_use_render_width_unless_explicitly_overridden() {
+        let engine = MiniJinjaEngine::new();
+        let data = serde_json::Value::Null;
+        let tabular = r#"{% set t = tabular([{"width": "fill"}]) %}{{ t.row(["x"]) }}"#;
+        let table = r#"{% set t = table([{"width": "fill"}]) %}{{ t.row(["x"]) }}"#;
+        let explicit_tabular =
+            r#"{% set t = tabular([{"width": "fill"}], width=23) %}{{ t.row(["x"]) }}"#;
+        let explicit_table =
+            r#"{% set t = table([{"width": "fill"}], width=23) %}{{ t.row(["x"]) }}"#;
+
+        for template in [tabular, table] {
+            let output = engine
+                .render_template_with_render_widths(
+                    template,
+                    &data,
+                    Some(37),
+                    AmbiguousWidth::Narrow,
+                )
+                .unwrap();
+            assert_eq!(output.chars().count(), 37);
+        }
+
+        for template in [explicit_tabular, explicit_table] {
+            let output = engine
+                .render_template_with_render_widths(
+                    template,
+                    &data,
+                    Some(37),
+                    AmbiguousWidth::Narrow,
+                )
+                .unwrap();
+            assert_eq!(output.chars().count(), 23);
+        }
+    }
+
+    #[test]
+    fn table_helpers_fall_back_to_eighty_columns_without_a_render_width() {
+        let engine = MiniJinjaEngine::new();
+        let data = serde_json::Value::Null;
+
+        for template in [
+            r#"{% set t = tabular([{"width": "fill"}]) %}{{ t.row(["x"]) }}"#,
+            r#"{% set t = table([{"width": "fill"}]) %}{{ t.row(["x"]) }}"#,
+        ] {
+            let output = engine
+                .render_template_with_render_widths(template, &data, None, AmbiguousWidth::Narrow)
+                .unwrap();
+            assert_eq!(output.chars().count(), 80);
+        }
     }
 }

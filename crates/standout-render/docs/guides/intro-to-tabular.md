@@ -306,6 +306,11 @@ sub-columns, borders, padding, truncation, and wrapping. MiniJinja `col`,
 `display_width`, padding, truncation, `tabular`, and `table` operations receive
 the renderer or application policy automatically.
 
+MiniJinja `tabular()` and `table()` also use the terminal width supplied by the
+current application render context when `width` is omitted. An explicit
+`width=...` argument takes precedence. When terminal-width detection is
+unavailable, both helpers use a deterministic 80-column fallback.
+
 Policy-aware counterparts are also available for direct construction, including
 `TabularFormatter::with_widths_and_ambiguous_width`,
 `TabularFormatter::from_type_with_ambiguous_width`,
