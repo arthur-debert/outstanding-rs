@@ -844,6 +844,16 @@ impl Object for TabularFormatter {
                     Ok(Value::from(formatted))
                 }
             }
+            "row_from" => {
+                if args.is_empty() {
+                    return Err(minijinja::Error::new(
+                        minijinja::ErrorKind::MissingArgument,
+                        "row_from() requires an object argument",
+                    ));
+                }
+
+                Ok(Value::from(self.row_from(&args[0])))
+            }
             "column_width" => {
                 // column_width(index) - get width of a specific column
                 if args.is_empty() {
