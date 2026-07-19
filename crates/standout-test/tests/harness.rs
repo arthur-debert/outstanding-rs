@@ -51,7 +51,7 @@ fn build_framework_list_view_app() -> App {
             "list",
             |_matches, _ctx| {
                 let spec = standout::tabular::TabularSpec::builder()
-                    .column(Column::new(Width::Fill).key("name"))
+                    .column(Column::new(Width::Fill).right().key("name"))
                     .build();
                 Ok(Output::Render(
                     list_view(vec![WidthSensitiveItem { name: "cascade" }])
@@ -114,6 +114,30 @@ fn terminal_width_cascades_through_the_framework_list_view_template() {
             .find(|line| line.contains("cascade"))
             .expect("framework list view should render its tabular row");
         assert_eq!(row.chars().count(), width);
+        drop(result);
+    }
+}
+
+#[test]
+#[serial]
+fn terminal_width_places_right_aligned_field_at_the_right_edge() {
+    let app = build_framework_list_view_app();
+    let field = "cascade";
+
+    for width in [80, 120] {
+        let result =
+            TestHarness::new()
+                .terminal_width(width)
+                .run(&app, list_command(), ["app", "list"]);
+        result.assert_success();
+        let row = result
+            .stdout()
+            .lines()
+            .find(|line| line.contains(field))
+            .expect("framework list view should render its right-aligned field");
+        assert_eq!(row.chars().count(), width);
+        assert_eq!(row.find(field), Some(width - field.len()));
+        assert!(row.ends_with(field));
         drop(result);
     }
 }
