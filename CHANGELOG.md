@@ -4,6 +4,10 @@
 
 ## Unreleased
 
+## 7.9.1 - 2026-07-19
+
+- Cascade detected or test-injected terminal width through the render/template seam into `tabular()` and `table()` defaults (issue #215, PR #217), while explicit helper widths still take precedence and 80 columns remains the deterministic fallback only when width is unavailable; the framework list-view path and `TestHarness` cover the behavior.
+
 ## 7.9.0 - 2026-07-17
 
 - Add invocation-aware default command resolution (issue #211, PR #213): `.default_command_with(resolver)` selects a naked invocation's command per invocation from a narrow `DefaultCommandContext` (root matches, read-only app state, and the existing non-consuming stdin terminal fact), so a CLI can pick a piped entry point when stdin is redirected — piped-empty included — and an interactive one at a terminal. Resolution is centralized, so `dispatch_from` / `run_to_string` and `get_matches_from` / `parse_from` agree; it runs only after a successful naked parse, leaving explicit and nested commands, help, version, and usage errors unchanged. Static `.default_command(...)` users are unaffected and can combine both, with the resolver declining via `None`.
