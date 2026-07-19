@@ -12,7 +12,7 @@
 //! # Usage
 //!
 //! In application code, call the `detect_*` functions. They resolve to real
-//! terminal queries by default:
+//! process and terminal state by default:
 //!
 //! ```rust
 //! use standout_render::{detect_terminal_width, detect_is_tty, detect_color_capability};
@@ -57,11 +57,13 @@ static COLOR_DETECTOR: Lazy<Mutex<ColorDetector>> =
 static AMBIGUOUS_WIDTH_DETECTOR: Lazy<Mutex<AmbiguousWidthDetector>> =
     Lazy::new(|| Mutex::new(default_ambiguous_width_detector));
 
-/// Overrides the detector used to query terminal width.
+/// Overrides the detector used to resolve terminal width.
 ///
-/// Accepts a `fn` pointer or a non-capturing closure. The detector returns
-/// `Some(cols)` when a width can be determined and `None` when output is not
-/// a terminal. Useful to force a fixed width in snapshot tests.
+/// The default detector consults a valid positive `$COLUMNS` value before
+/// probing the terminal. An override replaces that entire resolution, returning
+/// `Some(cols)` when a width should be used and `None` when it is unavailable.
+/// Accepts a `fn` pointer or a non-capturing closure; useful to force a fixed
+/// width in tests.
 pub fn set_terminal_width_detector(detector: WidthDetector) {
     *WIDTH_DETECTOR.lock().unwrap() = detector;
 }
@@ -91,7 +93,13 @@ pub fn set_ambiguous_width_detector(detector: AmbiguousWidthDetector) {
     *AMBIGUOUS_WIDTH_DETECTOR.lock().unwrap() = detector;
 }
 
-/// Returns the current terminal width in columns, or `None` when unavailable.
+/// Resolves the current terminal width in columns.
+///
+/// By default, a valid positive `$COLUMNS` value takes precedence over probing
+/// the terminal. Returns `None` when neither source provides a width. Layout
+/// helpers may apply their own documented fallback when width is unavailable.
+/// A detector installed with [`set_terminal_width_detector`] replaces this
+/// default resolution so tests and applications can control the result.
 pub fn detect_terminal_width() -> Option<usize> {
     // Copy the fn pointer out and release the lock before invoking the
     // detector. Holding the mutex across the call would poison it on panic
@@ -119,7 +127,20 @@ pub fn detect_ambiguous_width_override() -> Option<AmbiguousWidth> {
 }
 
 fn default_width_detector() -> Option<usize> {
-    terminal_size::terminal_size().map(|(w, _)| w.0 as usize)
+    resolve_terminal_width(std::env::var_os("COLUMNS").as_deref(), || {
+        terminal_size::terminal_size().map(|(width, _)| width.0 as usize)
+    })
+}
+
+fn resolve_terminal_width(
+    columns: Option<&std::ffi::OsStr>,
+    probe_terminal: impl FnOnce() -> Option<usize>,
+) -> Option<usize> {
+    columns
+        .and_then(std::ffi::OsStr::to_str)
+        .and_then(|value| value.parse::<usize>().ok())
+        .filter(|&width| width > 0)
+        .or_else(probe_terminal)
 }
 
 fn default_tty_detector() -> bool {
@@ -135,7 +156,7 @@ fn default_ambiguous_width_detector() -> Option<AmbiguousWidth> {
 }
 
 /// Resets every environment detector in this module to its default
-/// (real-terminal) implementation.
+/// (real process-environment and terminal) implementation.
 ///
 /// Tests that installed overrides should call this in teardown to avoid
 /// leaking state into sibling tests. For panic-safe cleanup, prefer
@@ -188,7 +209,28 @@ impl Drop for DetectorGuard {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use proptest::prelude::*;
     use serial_test::serial;
+    use std::ffi::{OsStr, OsString};
+
+    struct ColumnsGuard(Option<OsString>);
+
+    impl ColumnsGuard {
+        fn set(value: &str) -> Self {
+            let original = std::env::var_os("COLUMNS");
+            std::env::set_var("COLUMNS", value);
+            Self(original)
+        }
+    }
+
+    impl Drop for ColumnsGuard {
+        fn drop(&mut self) {
+            match self.0.take() {
+                Some(value) => std::env::set_var("COLUMNS", value),
+                None => std::env::remove_var("COLUMNS"),
+            }
+        }
+    }
 
     #[test]
     #[serial]
@@ -198,6 +240,17 @@ mod tests {
         assert_eq!(detect_terminal_width(), Some(42));
         set_terminal_width_detector(|| None);
         assert_eq!(detect_terminal_width(), None);
+    }
+
+    #[test]
+    #[serial]
+    fn default_width_resolution_honors_columns() {
+        let _guard = DetectorGuard::new();
+        let _columns = ColumnsGuard::set("47");
+
+        reset_detectors();
+
+        assert_eq!(detect_terminal_width(), Some(47));
     }
 
     #[test]
@@ -266,5 +319,32 @@ mod tests {
         set_terminal_width_detector(boom);
         drop(DetectorGuard::new());
         let _ = detect_terminal_width();
+    }
+
+    proptest! {
+        #![proptest_config(ProptestConfig::with_cases(128))]
+
+        #[test]
+        fn columns_values_are_resolved_without_panicking(value in any::<String>()) {
+            let expected = value
+                .parse::<usize>()
+                .ok()
+                .filter(|&width| width > 0)
+                .or(Some(73));
+            prop_assert_eq!(
+                resolve_terminal_width(Some(OsStr::new(&value)), || Some(73)),
+                expected,
+            );
+        }
+
+        #[test]
+        fn every_positive_columns_width_precedes_the_terminal_probe(width in 1usize..) {
+            prop_assert_eq!(
+                resolve_terminal_width(Some(OsStr::new(&width.to_string())), || {
+                    panic!("valid COLUMNS must prevent terminal probing")
+                }),
+                Some(width),
+            );
+        }
     }
 }
