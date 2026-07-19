@@ -1,6 +1,6 @@
 [package]
 name = "standout-render"
-version = "7.9.1"
+version = "7.9.2"
 edition = "2021"
 description = "Styled terminal rendering with templates, themes, and adaptive color support"
 license = "MIT"
@@ -24,7 +24,7 @@ unicode-width = "0.2"
 east-asian-width = "0.1"
 cssparser = "0.31"
 terminal_size = "0.4"
-standout-bbparser = { version = "7.9.1", path = "../standout-bbparser" }
+standout-bbparser = { version = "7.9.2", path = "../standout-bbparser" }
 thiserror = "2"
 
 [dev-dependencies]
