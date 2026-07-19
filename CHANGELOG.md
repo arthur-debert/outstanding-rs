@@ -4,6 +4,8 @@
 
 ## Unreleased
 
+- Resolve terminal width from a valid positive `$COLUMNS` value before probing the terminal, while preserving explicit detector overrides and the existing 80-column tabular fallback (issue #220).
+
 ## 7.9.1 - 2026-07-19
 
 - Cascade detected or test-injected terminal width through the render/template seam into `tabular()` and `table()` defaults (issue #215, PR #217), while explicit helper widths still take precedence and 80 columns remains the deterministic fallback only when width is unavailable; the framework list-view path and `TestHarness` cover the behavior.

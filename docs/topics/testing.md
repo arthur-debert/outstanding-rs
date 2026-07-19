@@ -98,7 +98,7 @@ use standout_render::{
 
 Each takes a `fn() -> T` (function pointer or non-capturing closure). `DetectorGuard` is a RAII helper that resets all three on drop.
 
-These drive `OutputMode::Auto`'s color decision and the render context's terminal width. Install an override in any test that snapshots rendered output, and the result becomes deterministic across machines.
+These drive `OutputMode::Auto`'s color decision and the render context's terminal width. By default, terminal width resolves from a valid positive `$COLUMNS` value before probing the terminal. Installing a width detector replaces that full resolution, so an override keeps snapshot tests deterministic regardless of the process environment.
 
 ### `standout-input` default readers
 

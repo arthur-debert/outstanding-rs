@@ -58,8 +58,21 @@ use super::util::{
 };
 use crate::width::RenderWidthSource;
 
-/// Deterministic helper width when the render boundary cannot detect a terminal.
-const DEFAULT_TABLE_WIDTH: usize = 80;
+/// Deterministic tabular width when the render boundary cannot resolve one.
+const DEFAULT_TABULAR_WIDTH: usize = 80;
+
+/// Resolves the width shared by `tabular()` and `table()`.
+///
+/// An explicit helper argument wins over the current render's terminal width;
+/// the deterministic tabular fallback applies only when neither is available.
+fn resolve_tabular_width(
+    explicit_width: Option<usize>,
+    render_widths: &RenderWidthSource,
+) -> usize {
+    explicit_width
+        .or_else(|| render_widths.terminal_width())
+        .unwrap_or(DEFAULT_TABULAR_WIDTH)
+}
 
 /// Register all tabular-related filters on a MiniJinja environment.
 ///
@@ -271,10 +284,8 @@ fn register_table_functions(env: &mut Environment<'static>, widths: RenderWidthS
             let separator = kwargs
                 .get::<Option<String>>("separator")?
                 .unwrap_or_default();
-            let width = kwargs
-                .get::<Option<usize>>("width")?
-                .or_else(|| tabular_widths.terminal_width())
-                .unwrap_or(DEFAULT_TABLE_WIDTH);
+            let width =
+                resolve_tabular_width(kwargs.get::<Option<usize>>("width")?, &tabular_widths);
             kwargs.assert_all_used()?;
 
             let mut builder = TabularSpec::builder();
@@ -311,10 +322,8 @@ fn register_table_functions(env: &mut Environment<'static>, widths: RenderWidthS
                 .get::<Option<bool>>("row_separator")?
                 .unwrap_or(false);
             let row_styles = kwargs.get::<Option<Value>>("row_styles")?;
-            let width = kwargs
-                .get::<Option<usize>>("width")?
-                .or_else(|| table_widths.terminal_width())
-                .unwrap_or(DEFAULT_TABLE_WIDTH);
+            let width =
+                resolve_tabular_width(kwargs.get::<Option<usize>>("width")?, &table_widths);
             kwargs.assert_all_used()?;
 
             let mut builder = TabularSpec::builder();

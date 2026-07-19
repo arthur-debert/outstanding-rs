@@ -120,6 +120,22 @@ fn terminal_width_cascades_through_the_framework_list_view_template() {
 
 #[test]
 #[serial]
+fn columns_environment_width_precedes_the_terminal_probe_across_the_render_pipeline() {
+    let app = build_framework_list_view_app();
+    let result = TestHarness::new()
+        .env("COLUMNS", "37")
+        .run(&app, list_command(), ["app", "list"]);
+    result.assert_success();
+    let row = result
+        .stdout()
+        .lines()
+        .find(|line| line.contains("cascade"))
+        .expect("framework list view should render its tabular row");
+    assert_eq!(row.chars().count(), 37);
+}
+
+#[test]
+#[serial]
 fn terminal_width_places_right_aligned_field_at_the_right_edge() {
     let app = build_framework_list_view_app();
     let field = "cascade";
