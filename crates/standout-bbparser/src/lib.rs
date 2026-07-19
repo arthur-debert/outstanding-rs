@@ -64,7 +64,7 @@
 //! `\` is kept as-is because `\\` is not a recognized escape, then `\[` is
 //! consumed as an escape and emits `[`).
 
-use console::Style;
+use console::{AnsiCodeIterator, Style};
 use std::collections::HashMap;
 use std::ops::Range;
 
@@ -234,6 +234,8 @@ pub fn strip_tags(input: &str) -> String {
 /// The parser keeps style tags out of the visible character stream. Selecting
 /// one or more character ranges preserves the styles that cover each range and
 /// closes every emitted tag, including when a range ends inside nested tags.
+/// ANSI controls recognized by [`console::strip_ansi_codes`] are likewise
+/// zero-width and are preserved when their position falls inside a selection.
 #[derive(Debug, Clone)]
 pub struct StyledText<'a> {
     events: Vec<StyledEvent<'a>>,
@@ -437,19 +439,22 @@ fn visit_text_units<'a>(
     unescape_brackets: bool,
     mut visitor: impl FnMut(Option<char>, &'a str),
 ) {
+    for (unit, is_ansi) in AnsiCodeIterator::new(source) {
+        if is_ansi {
+            visitor(None, unit);
+        } else {
+            visit_plain_text_units(unit, unescape_brackets, &mut visitor);
+        }
+    }
+}
+
+fn visit_plain_text_units<'a>(
+    source: &'a str,
+    unescape_brackets: bool,
+    visitor: &mut impl FnMut(Option<char>, &'a str),
+) {
     let mut indices = source.char_indices().peekable();
     while let Some((start, character)) = indices.next() {
-        if character == '\x1b' && source.as_bytes().get(start + 1) == Some(&b'[') {
-            let mut end = start + 1;
-            for (control_start, control) in indices.by_ref() {
-                end = control_start + control.len_utf8();
-                if ('@'..='~').contains(&control) && control != '[' {
-                    break;
-                }
-            }
-            visitor(None, &source[start..end]);
-            continue;
-        }
         if unescape_brackets && character == '\\' {
             if let Some(&(next_start, next)) = indices.peek() {
                 if next == '[' || next == ']' {
@@ -877,37 +882,35 @@ fn compute_valid_tags(tokens: &[Token<'_>]) -> std::collections::HashSet<usize> 
 ///
 /// Both `\[` and `\]` are treated as escape sequences and skipped. Other
 /// backslashes (e.g. `\n`, `\\`, trailing `\`) are not consumed and don't
-/// affect bracket detection. Brackets inside ANSI CSI control sequences are
-/// skipped as terminal control syntax rather than parsed as semantic tags.
+/// affect bracket detection. ANSI controls recognized by
+/// [`console::strip_ansi_codes`] are skipped as terminal syntax rather than
+/// parsed as semantic tags. This deliberately shares the parser used by the
+/// established visible-width interface instead of maintaining a CSI-only
+/// approximation here.
 ///
 /// Byte-level scanning is safe here: `\`, `[`, and `]` are ASCII and cannot
 /// appear as continuation bytes in a UTF-8 sequence.
 fn find_unescaped_bracket(s: &str) -> Option<usize> {
-    let bytes = s.as_bytes();
-    let mut i = 0;
-    while i < bytes.len() {
-        if bytes[i] == b'\x1b' && bytes.get(i + 1) == Some(&b'[') {
-            i += 2;
+    let mut source_offset = 0;
+    for (unit, is_ansi) in AnsiCodeIterator::new(s) {
+        if !is_ansi {
+            let bytes = unit.as_bytes();
+            let mut i = 0;
             while i < bytes.len() {
-                let byte = bytes[i];
-                i += 1;
-                if (0x40..=0x7e).contains(&byte) {
-                    break;
+                if bytes[i] == b'\\' && i + 1 < bytes.len() {
+                    let next = bytes[i + 1];
+                    if next == b'[' || next == b']' {
+                        i += 2;
+                        continue;
+                    }
                 }
-            }
-            continue;
-        }
-        if bytes[i] == b'\\' && i + 1 < bytes.len() {
-            let next = bytes[i + 1];
-            if next == b'[' || next == b']' {
-                i += 2;
-                continue;
+                if bytes[i] == b'[' {
+                    return Some(source_offset + i);
+                }
+                i += 1;
             }
         }
-        if bytes[i] == b'[' {
-            return Some(i);
-        }
-        i += 1;
+        source_offset += unit.len();
     }
     None
 }
@@ -1171,6 +1174,28 @@ mod tests {
                 text.select_range(0..5),
                 "\x1b[31m[outer]hello[/outer]\x1b[0m"
             );
+        }
+
+        #[test]
+        fn legacy_ansi_designation_sequences_are_zero_width_and_preserved() {
+            let input = "\x1b(0[outer]hello[/outer]\x1b(B";
+            let text = StyledText::parse(input);
+            let mut visible = String::new();
+            text.visit_visible_chars(|character| visible.push(character));
+
+            assert_eq!(visible, "hello");
+            assert_eq!(text.select_range(0..5), input);
+        }
+
+        #[test]
+        fn c1_ansi_sequences_are_zero_width_and_preserved() {
+            let input = "\u{9b}31m[outer]hello[/outer]\u{9b}0m";
+            let text = StyledText::parse(input);
+            let mut visible = String::new();
+            text.visit_visible_chars(|character| visible.push(character));
+
+            assert_eq!(visible, "hello");
+            assert_eq!(text.select_range(0..5), input);
         }
     }
 
@@ -2037,6 +2062,7 @@ mod tests {
 #[cfg(test)]
 mod proptests {
     use super::*;
+    use console::strip_ansi_codes;
     use proptest::prelude::*;
 
     fn valid_tag_name() -> impl Strategy<Value = String> {
@@ -2046,6 +2072,19 @@ mod proptests {
     fn plain_text() -> impl Strategy<Value = String> {
         "[a-zA-Z0-9 .,!?:;'\"]{0,50}"
             .prop_filter("no brackets", |s| !s.contains('[') && !s.contains(']'))
+    }
+
+    fn ansi_control() -> impl Strategy<Value = &'static str> {
+        prop::sample::select(vec![
+            "\x1b[31m",
+            "\x1b[0m",
+            "\x1b(0",
+            "\x1b(B",
+            "\x1b)0",
+            "\x1b)B",
+            "\u{9b}31m",
+            "\u{9b}0m",
+        ])
     }
 
     proptest! {
@@ -2061,6 +2100,29 @@ mod proptests {
         fn remove_mode_plain_text_unchanged(content in plain_text()) {
             let parser = BBParser::new(HashMap::new(), TagTransform::Remove);
             prop_assert_eq!(parser.parse(&content), content);
+        }
+
+        #[test]
+        fn styled_text_matches_established_ansi_stripping_semantics(
+            prefix in prop::collection::vec(ansi_control(), 0..4),
+            content in plain_text(),
+            suffix in prop::collection::vec(ansi_control(), 0..4),
+        ) {
+            let input = format!(
+                "{}[outer]{}[/outer]{}",
+                prefix.concat(),
+                content,
+                suffix.concat()
+            );
+            let styled = StyledText::parse(&input);
+            let mut visible = String::new();
+            styled.visit_visible_chars(|character| visible.push(character));
+            let expected = strip_tags(&strip_ansi_codes(&input));
+
+            prop_assert_eq!(&visible, &expected);
+            if !visible.is_empty() {
+                prop_assert_eq!(styled.select_range(0..visible.chars().count()), input);
+            }
         }
 
         #[test]

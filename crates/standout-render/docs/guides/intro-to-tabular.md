@@ -308,8 +308,10 @@ the renderer or application policy automatically.
 
 MiniJinja `tabular()` and `table()` also use the terminal width supplied by the
 current application render context when `width` is omitted. An explicit
-`width=...` argument takes precedence. When terminal-width detection is
-unavailable, both helpers use a deterministic 80-column fallback.
+`width=...` argument takes precedence. The default terminal-width detector
+consults a valid positive `$COLUMNS` value before probing the terminal. When
+neither source resolves a width, both helpers use a deterministic 80-column
+fallback.
 
 Policy-aware counterparts are also available for direct construction, including
 `TabularFormatter::with_widths_and_ambiguous_width`,

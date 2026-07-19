@@ -300,7 +300,7 @@ mod tests {
     use crate::tabular::{
         truncate_end_with_policy, truncate_middle_with_policy, truncate_start_with_policy,
     };
-    use console::Style;
+    use console::{strip_ansi_codes, Style};
     use proptest::prelude::*;
     use standout_bbparser::{BBParser, TagTransform, UnknownTagBehavior};
     use std::collections::HashMap;
@@ -359,6 +359,15 @@ mod tests {
         })
     }
 
+    fn ansi_pair() -> impl Strategy<Value = (&'static str, &'static str)> {
+        prop::sample::select(vec![
+            ("\x1b[31m", "\x1b[0m"),
+            ("\x1b(0", "\x1b(B"),
+            ("\x1b)0", "\x1b)B"),
+            ("\u{9b}31m", "\u{9b}0m"),
+        ])
+    }
+
     fn plain_render(input: &str) -> String {
         let styles = ["outer", "inner", "match"]
             .into_iter()
@@ -407,6 +416,40 @@ mod tests {
                 prop_assert!(calculator.visible_width(&result) <= max_width);
                 assert_balanced(&result);
                 prop_assert_eq!(plain_render(&result), expected);
+            }
+        }
+
+        #[test]
+        fn ansi_compatible_tagged_truncation_matches_plain_text(
+            tagged in tagged_text(),
+            (open, close) in ansi_pair(),
+            max_width in 0usize..30,
+        ) {
+            let input = format!("{open}{tagged}{close}");
+            let calculator = WidthCalculator::new(AmbiguousWidth::Narrow);
+            let plain = plain_render(&tagged);
+            for at in [
+                VisibleTruncateAt::End,
+                VisibleTruncateAt::Start,
+                VisibleTruncateAt::Middle,
+            ] {
+                let result = calculator.truncate_visible(&input, max_width, "…", at);
+                let expected = match at {
+                    VisibleTruncateAt::End => truncate_end_with_policy(
+                        &plain, max_width, "…", AmbiguousWidth::Narrow,
+                    ),
+                    VisibleTruncateAt::Start => truncate_start_with_policy(
+                        &plain, max_width, "…", AmbiguousWidth::Narrow,
+                    ),
+                    VisibleTruncateAt::Middle => truncate_middle_with_policy(
+                        &plain, max_width, "…", AmbiguousWidth::Narrow,
+                    ),
+                };
+
+                prop_assert!(calculator.visible_width(&result) <= max_width);
+                assert_balanced(&result);
+                let plain_result = plain_render(&result);
+                prop_assert_eq!(strip_ansi_codes(&plain_result), expected);
             }
         }
 
