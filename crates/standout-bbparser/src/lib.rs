@@ -64,8 +64,9 @@
 //! `\` is kept as-is because `\\` is not a recognized escape, then `\[` is
 //! consumed as an escape and emits `[`).
 
-use console::Style;
+use console::{AnsiCodeIterator, Style};
 use std::collections::HashMap;
+use std::ops::Range;
 
 /// How to transform matched tags in the output.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -208,7 +209,9 @@ impl<'a> IntoIterator for &'a UnknownTagErrors {
 /// This is a convenience function that creates a parser in [`TagTransform::Remove`] mode
 /// with [`UnknownTagBehavior::Strip`] to remove all tags (both known and unknown).
 ///
-/// Useful for measuring the visible width of text that may contain inline markup.
+/// Use this only when producing plain-text output. Width measurement and layout
+/// should inspect [`StyledText`] so semantic styling remains available for later
+/// rendering.
 ///
 /// # Example
 ///
@@ -223,6 +226,248 @@ pub fn strip_tags(input: &str) -> String {
     let parser = BBParser::new(HashMap::new(), TagTransform::Remove)
         .unknown_behavior(UnknownTagBehavior::Strip);
     parser.parse(input)
+}
+
+/// Parsed semantic style text that can be measured or selected without
+/// converting the whole value to plain text.
+///
+/// The parser keeps style tags out of the visible character stream. Selecting
+/// one or more character ranges preserves the styles that cover each range and
+/// closes every emitted tag, including when a range ends inside nested tags.
+/// ANSI controls recognized by [`console::strip_ansi_codes`] are likewise
+/// zero-width and are preserved when their position falls inside a selection.
+#[derive(Debug, Clone)]
+pub struct StyledText<'a> {
+    events: Vec<StyledEvent<'a>>,
+}
+
+#[derive(Debug, Clone)]
+enum StyledEvent<'a> {
+    Text {
+        source: &'a str,
+        unescape_brackets: bool,
+    },
+    OpenTag(&'a str),
+    CloseTag(&'a str),
+}
+
+impl<'a> StyledText<'a> {
+    /// Parses semantic style tags while retaining the original tagged source.
+    ///
+    /// Balanced tags form zero-width style events. Invalid, unexpected, or
+    /// unbalanced tag syntax remains visible literal text, matching
+    /// [`BBParser`] behavior.
+    pub fn parse(input: &'a str) -> Self {
+        let tokens = Tokenizer::new(input).collect::<Vec<_>>();
+        let valid_opens = compute_valid_tags(&tokens);
+        let mut events = Vec::new();
+        let mut stack: Vec<&str> = Vec::new();
+
+        for (index, token) in tokens.iter().enumerate() {
+            match token {
+                Token::Text { content, .. } => events.push(StyledEvent::Text {
+                    source: content,
+                    unescape_brackets: true,
+                }),
+                Token::OpenTag { name, .. } if valid_opens.contains(&index) => {
+                    stack.push(name);
+                    events.push(StyledEvent::OpenTag(name));
+                }
+                Token::OpenTag { start, end, .. } => events.push(StyledEvent::Text {
+                    source: &input[*start..*end],
+                    unescape_brackets: false,
+                }),
+                Token::CloseTag { name, .. } if stack.last().copied() == Some(*name) => {
+                    stack.pop();
+                    events.push(StyledEvent::CloseTag(name));
+                }
+                Token::CloseTag { name, .. } if stack.contains(name) => {
+                    while let Some(open) = stack.pop() {
+                        events.push(StyledEvent::CloseTag(open));
+                        if open == *name {
+                            break;
+                        }
+                    }
+                }
+                Token::CloseTag { start, end, .. } => events.push(StyledEvent::Text {
+                    source: &input[*start..*end],
+                    unescape_brackets: false,
+                }),
+                Token::InvalidTag { content, .. } => events.push(StyledEvent::Text {
+                    source: content,
+                    unescape_brackets: false,
+                }),
+            }
+        }
+
+        while let Some(tag) = stack.pop() {
+            events.push(StyledEvent::CloseTag(tag));
+        }
+
+        Self { events }
+    }
+
+    /// Visits each visible character in rendered order.
+    ///
+    /// Style tag bytes are never visited. Escaped brackets are visited as the
+    /// single literal bracket they render as.
+    pub fn visit_visible_chars(&self, mut visitor: impl FnMut(char)) {
+        for event in &self.events {
+            if let StyledEvent::Text {
+                source,
+                unescape_brackets,
+            } = event
+            {
+                visit_text_units(source, *unescape_brackets, |character, _| {
+                    if let Some(character) = character {
+                        visitor(character);
+                    }
+                });
+            }
+        }
+    }
+
+    /// Renders selected visible-character ranges with balanced semantic tags.
+    ///
+    /// Ranges use character offsets from [`Self::visit_visible_chars`]. Each
+    /// range is rendered as a self-contained balanced fragment. `separator` is
+    /// inserted outside styling between non-empty ranges.
+    pub fn select(&self, ranges: &[Range<usize>], separator: &str) -> String {
+        let mut result = String::new();
+        let mut rendered_any = false;
+
+        for range in ranges.iter().filter(|range| range.start < range.end) {
+            if rendered_any {
+                result.push_str(separator);
+            }
+            result.push_str(&self.render_range(range.clone()));
+            rendered_any = true;
+        }
+
+        result
+    }
+
+    /// Render one visible character range as a balanced styled fragment.
+    ///
+    /// The range uses character offsets from [`Self::visit_visible_chars`].
+    pub fn select_range(&self, range: Range<usize>) -> String {
+        self.render_range(range)
+    }
+
+    fn render_range(&self, range: Range<usize>) -> String {
+        let mut result = String::new();
+        let mut source_stack: Vec<&str> = Vec::new();
+        let mut output_stack: Vec<&str> = Vec::new();
+        let mut visible_index = 0;
+        let mut started = false;
+
+        for event in &self.events {
+            match event {
+                StyledEvent::OpenTag(tag) => {
+                    source_stack.push(tag);
+                    if started && visible_index < range.end {
+                        push_open_tag(&mut result, tag);
+                        output_stack.push(tag);
+                    }
+                }
+                StyledEvent::CloseTag(tag) => {
+                    source_stack.pop();
+                    if started && output_stack.last().copied() == Some(*tag) {
+                        push_close_tag(&mut result, tag);
+                        output_stack.pop();
+                    }
+                }
+                StyledEvent::Text {
+                    source,
+                    unescape_brackets,
+                } => {
+                    visit_text_units(source, *unescape_brackets, |character, raw| {
+                        if character.is_none() {
+                            if (started && visible_index <= range.end)
+                                || (!started
+                                    && visible_index == range.start
+                                    && range.start < range.end)
+                            {
+                                if !started {
+                                    for tag in &source_stack {
+                                        push_open_tag(&mut result, tag);
+                                        output_stack.push(tag);
+                                    }
+                                    started = true;
+                                }
+                                result.push_str(raw);
+                            }
+                            return;
+                        }
+                        if visible_index >= range.start && visible_index < range.end {
+                            if !started {
+                                for tag in &source_stack {
+                                    push_open_tag(&mut result, tag);
+                                    output_stack.push(tag);
+                                }
+                                started = true;
+                            }
+                            result.push_str(raw);
+                        }
+                        visible_index += 1;
+                    });
+                }
+            }
+        }
+
+        for tag in output_stack.into_iter().rev() {
+            push_close_tag(&mut result, tag);
+        }
+        result
+    }
+}
+
+fn push_open_tag(output: &mut String, tag: &str) {
+    output.push('[');
+    output.push_str(tag);
+    output.push(']');
+}
+
+fn push_close_tag(output: &mut String, tag: &str) {
+    output.push_str("[/");
+    output.push_str(tag);
+    output.push(']');
+}
+
+fn visit_text_units<'a>(
+    source: &'a str,
+    unescape_brackets: bool,
+    mut visitor: impl FnMut(Option<char>, &'a str),
+) {
+    for (unit, is_ansi) in AnsiCodeIterator::new(source) {
+        if is_ansi {
+            visitor(None, unit);
+        } else {
+            visit_plain_text_units(unit, unescape_brackets, &mut visitor);
+        }
+    }
+}
+
+fn visit_plain_text_units<'a>(
+    source: &'a str,
+    unescape_brackets: bool,
+    visitor: &mut impl FnMut(Option<char>, &'a str),
+) {
+    let mut indices = source.char_indices().peekable();
+    while let Some((start, character)) = indices.next() {
+        if unescape_brackets && character == '\\' {
+            if let Some(&(next_start, next)) = indices.peek() {
+                if next == '[' || next == ']' {
+                    indices.next();
+                    let end = next_start + next.len_utf8();
+                    visitor(Some(next), &source[start..end]);
+                    continue;
+                }
+            }
+        }
+        let end = start + character.len_utf8();
+        visitor(Some(character), &source[start..end]);
+    }
 }
 
 /// A BBCode-style tag parser for terminal styling.
@@ -337,7 +582,7 @@ impl BBParser {
     /// Internal parsing that returns both output and errors.
     fn parse_internal(&self, input: &str) -> (String, UnknownTagErrors) {
         let tokens = Tokenizer::new(input).collect::<Vec<_>>();
-        let valid_opens = self.compute_valid_tags(&tokens);
+        let valid_opens = compute_valid_tags(&tokens);
         let mut events = Vec::new();
         let mut errors = UnknownTagErrors::new();
         let mut stack: Vec<&str> = Vec::new();
@@ -548,32 +793,6 @@ impl BBParser {
         result
     }
 
-    /// Pre-computes which OpenTag tokens have a valid matching CloseTag.
-    /// This is O(N) instead of O(N^2).
-    fn compute_valid_tags(&self, tokens: &[Token]) -> std::collections::HashSet<usize> {
-        use std::collections::{HashMap, HashSet};
-        let mut valid_indices = HashSet::new();
-        let mut open_indices_by_tag: HashMap<&str, Vec<usize>> = HashMap::new();
-
-        for (i, token) in tokens.iter().enumerate() {
-            match token {
-                Token::OpenTag { name, .. } => {
-                    open_indices_by_tag.entry(name).or_default().push(i);
-                }
-                Token::CloseTag { name, .. } => {
-                    if let Some(indices) = open_indices_by_tag.get_mut(name) {
-                        if let Some(open_idx) = indices.pop() {
-                            valid_indices.insert(open_idx);
-                        }
-                    }
-                }
-                _ => {}
-            }
-        }
-
-        valid_indices
-    }
-
     /// Helper to append styled text.
     fn append_styled(&self, output: &mut String, text: &str, style_stack: &[&Style]) {
         if text.is_empty() {
@@ -633,29 +852,65 @@ enum Token<'a> {
     },
 }
 
+/// Pre-computes which OpenTag tokens have a matching CloseTag.
+/// This is O(N) instead of O(N^2).
+fn compute_valid_tags(tokens: &[Token<'_>]) -> std::collections::HashSet<usize> {
+    use std::collections::{HashMap, HashSet};
+    let mut valid_indices = HashSet::new();
+    let mut open_indices_by_tag: HashMap<&str, Vec<usize>> = HashMap::new();
+
+    for (index, token) in tokens.iter().enumerate() {
+        match token {
+            Token::OpenTag { name, .. } => {
+                open_indices_by_tag.entry(name).or_default().push(index);
+            }
+            Token::CloseTag { name, .. } => {
+                if let Some(indices) = open_indices_by_tag.get_mut(name) {
+                    if let Some(open_index) = indices.pop() {
+                        valid_indices.insert(open_index);
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+
+    valid_indices
+}
+
 /// Finds the byte offset of the next `[` that is not preceded by a `\` escape.
 ///
 /// Both `\[` and `\]` are treated as escape sequences and skipped. Other
 /// backslashes (e.g. `\n`, `\\`, trailing `\`) are not consumed and don't
-/// affect bracket detection.
+/// affect bracket detection. ANSI controls recognized by
+/// [`console::strip_ansi_codes`] are skipped as terminal syntax rather than
+/// parsed as semantic tags. This deliberately shares the parser used by the
+/// established visible-width interface instead of maintaining a CSI-only
+/// approximation here.
 ///
 /// Byte-level scanning is safe here: `\`, `[`, and `]` are ASCII and cannot
 /// appear as continuation bytes in a UTF-8 sequence.
 fn find_unescaped_bracket(s: &str) -> Option<usize> {
-    let bytes = s.as_bytes();
-    let mut i = 0;
-    while i < bytes.len() {
-        if bytes[i] == b'\\' && i + 1 < bytes.len() {
-            let next = bytes[i + 1];
-            if next == b'[' || next == b']' {
-                i += 2;
-                continue;
+    let mut source_offset = 0;
+    for (unit, is_ansi) in AnsiCodeIterator::new(s) {
+        if !is_ansi {
+            let bytes = unit.as_bytes();
+            let mut i = 0;
+            while i < bytes.len() {
+                if bytes[i] == b'\\' && i + 1 < bytes.len() {
+                    let next = bytes[i + 1];
+                    if next == b'[' || next == b']' {
+                        i += 2;
+                        continue;
+                    }
+                }
+                if bytes[i] == b'[' {
+                    return Some(source_offset + i);
+                }
+                i += 1;
             }
         }
-        if bytes[i] == b'[' {
-            return Some(i);
-        }
-        i += 1;
+        source_offset += unit.len();
     }
     None
 }
@@ -865,6 +1120,82 @@ mod tests {
         #[test]
         fn nested_tags() {
             assert_eq!(strip_tags("[a][b]text[/b][/a]"), "text");
+        }
+    }
+
+    mod styled_text_tests {
+        use super::super::StyledText;
+
+        #[test]
+        fn selected_range_rebuilds_nested_balanced_tags() {
+            let text = StyledText::parse("[outer]ab[inner]cdef[/inner]gh[/outer]");
+
+            assert_eq!(
+                text.select_range(0..5),
+                "[outer]ab[inner]cde[/inner][/outer]"
+            );
+            assert_eq!(
+                text.select_range(3..8),
+                "[outer][inner]def[/inner]gh[/outer]"
+            );
+        }
+
+        #[test]
+        fn separate_ranges_are_independently_balanced() {
+            let text = StyledText::parse("[outer]ab[inner]cdef[/inner]gh[/outer]");
+
+            assert_eq!(
+                text.select(&[0..2, 6..8], "…"),
+                "[outer]ab[/outer]…[outer]gh[/outer]"
+            );
+        }
+
+        #[test]
+        fn selected_escaped_brackets_remain_escaped_source() {
+            let text = StyledText::parse(r"[outer]a\[inner\]z[/outer]");
+            let mut visible = String::new();
+            text.visit_visible_chars(|character| visible.push(character));
+
+            assert_eq!(visible, "a[inner]z");
+            assert_eq!(
+                text.select_range(0..visible.chars().count()),
+                r"[outer]a\[inner\]z[/outer]"
+            );
+        }
+
+        #[test]
+        fn ansi_sequences_are_zero_width_and_preserved_when_selected() {
+            let text = StyledText::parse("\x1b[31m[outer]hello[/outer]\x1b[0m");
+            let mut visible = String::new();
+            text.visit_visible_chars(|character| visible.push(character));
+
+            assert_eq!(visible, "hello");
+            assert_eq!(
+                text.select_range(0..5),
+                "\x1b[31m[outer]hello[/outer]\x1b[0m"
+            );
+        }
+
+        #[test]
+        fn legacy_ansi_designation_sequences_are_zero_width_and_preserved() {
+            let input = "\x1b(0[outer]hello[/outer]\x1b(B";
+            let text = StyledText::parse(input);
+            let mut visible = String::new();
+            text.visit_visible_chars(|character| visible.push(character));
+
+            assert_eq!(visible, "hello");
+            assert_eq!(text.select_range(0..5), input);
+        }
+
+        #[test]
+        fn c1_ansi_sequences_are_zero_width_and_preserved() {
+            let input = "\u{9b}31m[outer]hello[/outer]\u{9b}0m";
+            let text = StyledText::parse(input);
+            let mut visible = String::new();
+            text.visit_visible_chars(|character| visible.push(character));
+
+            assert_eq!(visible, "hello");
+            assert_eq!(text.select_range(0..5), input);
         }
     }
 
@@ -1731,6 +2062,7 @@ mod tests {
 #[cfg(test)]
 mod proptests {
     use super::*;
+    use console::strip_ansi_codes;
     use proptest::prelude::*;
 
     fn valid_tag_name() -> impl Strategy<Value = String> {
@@ -1740,6 +2072,19 @@ mod proptests {
     fn plain_text() -> impl Strategy<Value = String> {
         "[a-zA-Z0-9 .,!?:;'\"]{0,50}"
             .prop_filter("no brackets", |s| !s.contains('[') && !s.contains(']'))
+    }
+
+    fn ansi_control() -> impl Strategy<Value = &'static str> {
+        prop::sample::select(vec![
+            "\x1b[31m",
+            "\x1b[0m",
+            "\x1b(0",
+            "\x1b(B",
+            "\x1b)0",
+            "\x1b)B",
+            "\u{9b}31m",
+            "\u{9b}0m",
+        ])
     }
 
     proptest! {
@@ -1755,6 +2100,29 @@ mod proptests {
         fn remove_mode_plain_text_unchanged(content in plain_text()) {
             let parser = BBParser::new(HashMap::new(), TagTransform::Remove);
             prop_assert_eq!(parser.parse(&content), content);
+        }
+
+        #[test]
+        fn styled_text_matches_established_ansi_stripping_semantics(
+            prefix in prop::collection::vec(ansi_control(), 0..4),
+            content in plain_text(),
+            suffix in prop::collection::vec(ansi_control(), 0..4),
+        ) {
+            let input = format!(
+                "{}[outer]{}[/outer]{}",
+                prefix.concat(),
+                content,
+                suffix.concat()
+            );
+            let styled = StyledText::parse(&input);
+            let mut visible = String::new();
+            styled.visit_visible_chars(|character| visible.push(character));
+            let expected = strip_tags(&strip_ansi_codes(&input));
+
+            prop_assert_eq!(&visible, &expected);
+            if !visible.is_empty() {
+                prop_assert_eq!(styled.select_range(0..visible.chars().count()), input);
+            }
         }
 
         #[test]

@@ -7,7 +7,7 @@
 
 use console::strip_ansi_codes;
 use serde::{Deserialize, Serialize};
-use standout_bbparser::strip_tags;
+use standout_bbparser::StyledText;
 use std::sync::{
     atomic::{AtomicU8, AtomicUsize, Ordering},
     Arc, Mutex, MutexGuard,
@@ -31,6 +31,14 @@ pub enum AmbiguousWidth {
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct WidthCalculator {
     policy: AmbiguousWidth,
+}
+
+/// Which visible portion to retain when tagged text is truncated.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum VisibleTruncateAt {
+    End,
+    Start,
+    Middle,
 }
 
 #[derive(Debug)]
@@ -171,15 +179,131 @@ impl WidthCalculator {
     }
 
     /// Measures text while ignoring ANSI sequences and Standout style tags.
+    ///
+    /// Semantic tags are parsed as zero-width structure; this does not render a
+    /// tag-free copy of the input.
     pub fn visible_width(self, text: &str) -> usize {
-        let no_ansi = strip_ansi_codes(text);
-        self.text_width(&strip_tags(&no_ansi))
+        let styled = StyledText::parse(text);
+        let mut width = 0;
+        styled.visit_visible_chars(|character| width += self.char_width(character));
+        width
     }
+
+    /// Truncates tagged text by visible terminal width while preserving balanced
+    /// semantic style tags around every retained fragment.
+    pub(crate) fn truncate_visible(
+        self,
+        text: &str,
+        max_width: usize,
+        marker: &str,
+        at: VisibleTruncateAt,
+    ) -> String {
+        let styled = StyledText::parse(text);
+        let characters = visible_characters(&styled);
+        let width = characters
+            .iter()
+            .map(|&character| self.char_width(character))
+            .sum::<usize>();
+        if width <= max_width {
+            return text.to_string();
+        }
+
+        let marker_text = StyledText::parse(marker);
+        let marker_characters = visible_characters(&marker_text);
+        let marker_width = marker_characters
+            .iter()
+            .map(|&character| self.char_width(character))
+            .sum::<usize>();
+        if max_width <= marker_width {
+            let count = prefix_character_count(&marker_characters, max_width, self);
+            return marker_text.select_range(0..count);
+        }
+
+        let available = max_width - marker_width;
+        let total_characters = characters.len();
+        match at {
+            VisibleTruncateAt::End => {
+                let count = prefix_character_count(&characters, available, self);
+                format!("{}{}", styled.select_range(0..count), marker)
+            }
+            VisibleTruncateAt::Start => {
+                let count = suffix_character_count(&characters, available, self);
+                format!(
+                    "{}{}",
+                    marker,
+                    styled.select_range(total_characters - count..total_characters)
+                )
+            }
+            VisibleTruncateAt::Middle => {
+                let right_width = available.div_ceil(2);
+                let left_width = available - right_width;
+                let left_count = prefix_character_count(&characters, left_width, self);
+                let right_count = suffix_character_count(&characters, right_width, self);
+                let left = styled.select_range(0..left_count);
+                let right = styled.select_range(total_characters - right_count..total_characters);
+                format!("{}{}{}", left, marker, right)
+            }
+        }
+    }
+}
+
+fn visible_characters(styled: &StyledText<'_>) -> Vec<char> {
+    let mut characters = Vec::new();
+    styled.visit_visible_chars(|character| characters.push(character));
+    characters
+}
+
+fn prefix_character_count(
+    characters: &[char],
+    max_width: usize,
+    calculator: WidthCalculator,
+) -> usize {
+    let mut width = 0;
+    characters
+        .iter()
+        .take_while(|&&character| {
+            let next = width + calculator.char_width(character);
+            if next > max_width {
+                false
+            } else {
+                width = next;
+                true
+            }
+        })
+        .count()
+}
+
+fn suffix_character_count(
+    characters: &[char],
+    max_width: usize,
+    calculator: WidthCalculator,
+) -> usize {
+    let mut width = 0;
+    characters
+        .iter()
+        .rev()
+        .take_while(|&&character| {
+            let next = width + calculator.char_width(character);
+            if next > max_width {
+                false
+            } else {
+                width = next;
+                true
+            }
+        })
+        .count()
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::tabular::{
+        truncate_end_with_policy, truncate_middle_with_policy, truncate_start_with_policy,
+    };
+    use console::{strip_ansi_codes, Style};
+    use proptest::prelude::*;
+    use standout_bbparser::{BBParser, TagTransform, UnknownTagBehavior};
+    use std::collections::HashMap;
 
     #[test]
     fn ambiguous_characters_follow_the_selected_policy() {
@@ -197,8 +321,156 @@ mod tests {
     }
 
     #[test]
-    fn visible_width_strips_ansi_and_style_tags() {
+    fn visible_width_ignores_ansi_and_style_tags() {
         let wide = WidthCalculator::new(AmbiguousWidth::Wide);
         assert_eq!(wide.visible_width("\x1b[31m[status]↦≈Δ[/status]\x1b[0m"), 5);
+    }
+
+    #[test]
+    fn truncation_preserves_nested_semantic_styles() {
+        let calculator = WidthCalculator::new(AmbiguousWidth::Narrow);
+        let input = "[outer]ab[inner]cdef[/inner]ghij[/outer]";
+
+        assert_eq!(
+            calculator.truncate_visible(input, 6, "…", VisibleTruncateAt::End),
+            "[outer]ab[inner]cde[/inner][/outer]…"
+        );
+        assert_eq!(
+            calculator.truncate_visible(input, 6, "…", VisibleTruncateAt::Start),
+            "…[outer][inner]f[/inner]ghij[/outer]"
+        );
+        assert_eq!(
+            calculator.truncate_visible(input, 6, "…", VisibleTruncateAt::Middle),
+            "[outer]ab[/outer]…[outer]hij[/outer]"
+        );
+    }
+
+    fn tagged_text() -> impl Strategy<Value = String> {
+        let leaf = "[a-zA-Z0-9 Δ≈日本]{0,12}".prop_map(|text| text);
+        leaf.prop_recursive(4, 64, 4, |inner| {
+            prop_oneof![
+                (
+                    prop::sample::select(vec!["outer", "inner", "match"]),
+                    inner.clone()
+                )
+                    .prop_map(|(tag, content)| format!("[{tag}]{content}[/{tag}]")),
+                prop::collection::vec(inner, 1..4).prop_map(|fragments| fragments.concat()),
+            ]
+        })
+    }
+
+    fn ansi_pair() -> impl Strategy<Value = (&'static str, &'static str)> {
+        prop::sample::select(vec![
+            ("\x1b[31m", "\x1b[0m"),
+            ("\x1b(0", "\x1b(B"),
+            ("\x1b)0", "\x1b)B"),
+            ("\u{9b}31m", "\u{9b}0m"),
+        ])
+    }
+
+    fn plain_render(input: &str) -> String {
+        let styles = ["outer", "inner", "match"]
+            .into_iter()
+            .map(|tag| (tag.to_string(), Style::new()))
+            .collect::<HashMap<_, _>>();
+        BBParser::new(styles, TagTransform::Remove)
+            .unknown_behavior(UnknownTagBehavior::Strip)
+            .parse(input)
+    }
+
+    fn assert_balanced(input: &str) {
+        let styles = ["outer", "inner", "match"]
+            .into_iter()
+            .map(|tag| (tag.to_string(), Style::new()))
+            .collect::<HashMap<_, _>>();
+        let parser = BBParser::new(styles, TagTransform::Keep);
+        assert!(parser.validate(input).is_ok(), "unbalanced output: {input}");
+    }
+
+    proptest! {
+        #[test]
+        fn tagged_truncation_is_balanced_bounded_and_matches_plain_text(
+            input in tagged_text(),
+            max_width in 0usize..30,
+        ) {
+            let calculator = WidthCalculator::new(AmbiguousWidth::Narrow);
+            let plain = plain_render(&input);
+            for at in [
+                VisibleTruncateAt::End,
+                VisibleTruncateAt::Start,
+                VisibleTruncateAt::Middle,
+            ] {
+                let result = calculator.truncate_visible(&input, max_width, "…", at);
+                let expected = match at {
+                    VisibleTruncateAt::End => truncate_end_with_policy(
+                        &plain, max_width, "…", AmbiguousWidth::Narrow,
+                    ),
+                    VisibleTruncateAt::Start => truncate_start_with_policy(
+                        &plain, max_width, "…", AmbiguousWidth::Narrow,
+                    ),
+                    VisibleTruncateAt::Middle => truncate_middle_with_policy(
+                        &plain, max_width, "…", AmbiguousWidth::Narrow,
+                    ),
+                };
+
+                prop_assert!(calculator.visible_width(&result) <= max_width);
+                assert_balanced(&result);
+                prop_assert_eq!(plain_render(&result), expected);
+            }
+        }
+
+        #[test]
+        fn ansi_compatible_tagged_truncation_matches_plain_text(
+            tagged in tagged_text(),
+            (open, close) in ansi_pair(),
+            max_width in 0usize..30,
+        ) {
+            let input = format!("{open}{tagged}{close}");
+            let calculator = WidthCalculator::new(AmbiguousWidth::Narrow);
+            let plain = plain_render(&tagged);
+            for at in [
+                VisibleTruncateAt::End,
+                VisibleTruncateAt::Start,
+                VisibleTruncateAt::Middle,
+            ] {
+                let result = calculator.truncate_visible(&input, max_width, "…", at);
+                let expected = match at {
+                    VisibleTruncateAt::End => truncate_end_with_policy(
+                        &plain, max_width, "…", AmbiguousWidth::Narrow,
+                    ),
+                    VisibleTruncateAt::Start => truncate_start_with_policy(
+                        &plain, max_width, "…", AmbiguousWidth::Narrow,
+                    ),
+                    VisibleTruncateAt::Middle => truncate_middle_with_policy(
+                        &plain, max_width, "…", AmbiguousWidth::Narrow,
+                    ),
+                };
+
+                prop_assert!(calculator.visible_width(&result) <= max_width);
+                assert_balanced(&result);
+                let plain_result = plain_render(&result);
+                prop_assert_eq!(strip_ansi_codes(&plain_result), expected);
+            }
+        }
+
+        #[test]
+        fn unstyled_inputs_keep_existing_unicode_truncation_semantics(
+            input in "[a-zA-Z0-9 Δ≈日本]{0,40}",
+            max_width in 0usize..30,
+        ) {
+            let calculator = WidthCalculator::new(AmbiguousWidth::Narrow);
+            prop_assert_eq!(
+                calculator.truncate_visible(&input, max_width, "…", VisibleTruncateAt::End),
+                truncate_end_with_policy(&input, max_width, "…", AmbiguousWidth::Narrow),
+            );
+            prop_assert_eq!(
+                calculator.truncate_visible(&input, max_width, "…", VisibleTruncateAt::Start),
+                truncate_start_with_policy(&input, max_width, "…", AmbiguousWidth::Narrow),
+            );
+            prop_assert_eq!(
+                calculator.truncate_visible(&input, max_width, "…", VisibleTruncateAt::Middle),
+                truncate_middle_with_policy(&input, max_width, "…", AmbiguousWidth::Narrow),
+            );
+        }
     }
 }

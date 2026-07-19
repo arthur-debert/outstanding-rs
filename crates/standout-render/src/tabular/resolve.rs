@@ -4,7 +4,7 @@
 //! based on the column specifications and available space.
 
 use super::types::{FlatDataSpec, Width};
-use super::util::display_width_with_policy;
+use super::util::visible_width_with_policy;
 use crate::AmbiguousWidth;
 
 /// Resolved widths for all columns in a table.
@@ -108,7 +108,7 @@ impl FlatDataSpec {
         for row in data {
             for (i, cell) in row.iter().enumerate() {
                 if i < max_data_widths.len() {
-                    let cell_width = display_width_with_policy(cell.as_ref(), policy);
+                    let cell_width = visible_width_with_policy(cell.as_ref(), policy);
                     max_data_widths[i] = max_data_widths[i].max(cell_width);
                 }
             }

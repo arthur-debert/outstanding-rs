@@ -5,6 +5,7 @@
 ## Unreleased
 
 - Resolve terminal width from a valid positive `$COLUMNS` value before probing the terminal, while preserving explicit detector overrides and the existing 80-column tabular fallback (issue #220, PR #221).
+- Preserve semantic styles through visible-width measurement, truncation, and wrapping (issue #220, PR #222): style tags no longer get stripped as a layout shortcut, retained text keeps balanced nested tags, and property tests cover every truncation position across Unicode and generated style trees.
 
 ## 7.9.1 - 2026-07-19
 

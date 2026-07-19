@@ -48,9 +48,8 @@ use super::types::{
     Align, Anchor, Column, FlatDataSpec, Overflow, SubColumns, TabularSpec, TruncateAt, Width,
 };
 use super::util::{
-    display_width_with_policy, pad_center_with_policy, pad_left_with_policy, pad_right_with_policy,
-    truncate_end_with_policy, truncate_middle_with_policy, truncate_start_with_policy,
-    visible_width_with_policy, wrap_indent_with_policy,
+    truncate_visible_end_with_policy, truncate_visible_middle_with_policy,
+    truncate_visible_start_with_policy, visible_width_with_policy, wrap_visible_indent_with_policy,
 };
 use crate::AmbiguousWidth;
 
@@ -405,9 +404,9 @@ impl TabularFormatter {
         }
 
         // Calculate current content width
-        let prefix_width = display_width_with_policy(&self.prefix, self.ambiguous_width);
-        let suffix_width = display_width_with_policy(&self.suffix, self.ambiguous_width);
-        let sep_width = display_width_with_policy(&self.separator, self.ambiguous_width);
+        let prefix_width = visible_width_with_policy(&self.prefix, self.ambiguous_width);
+        let suffix_width = visible_width_with_policy(&self.suffix, self.ambiguous_width);
+        let sep_width = visible_width_with_policy(&self.separator, self.ambiguous_width);
         let content_width: usize = self.widths.iter().sum();
         let num_seps = self.columns.len().saturating_sub(1);
         let current_total = prefix_width + content_width + (num_seps * sep_width) + suffix_width;
@@ -537,10 +536,10 @@ impl TabularFormatter {
 
     pub(crate) fn rendered_width(&self) -> usize {
         self.widths.iter().sum::<usize>()
-            + display_width_with_policy(&self.prefix, self.ambiguous_width)
-            + display_width_with_policy(&self.suffix, self.ambiguous_width)
+            + visible_width_with_policy(&self.prefix, self.ambiguous_width)
+            + visible_width_with_policy(&self.suffix, self.ambiguous_width)
             + self.columns.len().saturating_sub(1)
-                * display_width_with_policy(&self.separator, self.ambiguous_width)
+                * visible_width_with_policy(&self.separator, self.ambiguous_width)
     }
 
     pub(crate) fn limit_to_width(&mut self, maximum: usize) {
@@ -908,8 +907,8 @@ fn format_cell_with_policy(
 /// Format a value with the given width, alignment, overflow, and optional style.
 ///
 /// This is the core formatting function used by both regular cells and sub-cells.
-/// It correctly handles BBCode tags in `value`: tags are stripped for width
-/// measurement and truncation, but preserved in the output when the content fits.
+/// It correctly handles semantic style tags in `value`: tag bytes have zero
+/// width, and truncation closes and reopens tags around retained content.
 #[cfg(test)]
 fn format_value(
     value: &str,
@@ -933,47 +932,53 @@ fn format_value_with_policy(
         return String::new();
     }
 
-    let stripped = standout_bbparser::strip_tags(value);
-    let current_width = display_width_with_policy(&stripped, policy);
+    let current_width = visible_width_with_policy(value, policy);
 
     if current_width > width {
-        // Content overflows — truncate the stripped text (tags are lost)
+        // Content overflows — truncate visible content while preserving tags.
         let truncated = match overflow {
             Overflow::Truncate { at, marker } => match at {
-                TruncateAt::End => truncate_end_with_policy(&stripped, width, marker, policy),
-                TruncateAt::Start => truncate_start_with_policy(&stripped, width, marker, policy),
-                TruncateAt::Middle => truncate_middle_with_policy(&stripped, width, marker, policy),
+                TruncateAt::End => truncate_visible_end_with_policy(value, width, marker, policy),
+                TruncateAt::Start => {
+                    truncate_visible_start_with_policy(value, width, marker, policy)
+                }
+                TruncateAt::Middle => {
+                    truncate_visible_middle_with_policy(value, width, marker, policy)
+                }
             },
-            Overflow::Clip => truncate_end_with_policy(&stripped, width, "", policy),
+            Overflow::Clip => truncate_visible_end_with_policy(value, width, "", policy),
             Overflow::Expand => {
                 // Don't truncate — pad is also skipped below
                 return apply_style(value, style);
             }
             Overflow::Wrap { .. } => {
                 // Single-line fallback; multi-line wrapping handled by format_cell_lines
-                truncate_end_with_policy(&stripped, width, "…", policy)
+                truncate_visible_end_with_policy(value, width, "…", policy)
             }
         };
 
-        let padded = match align {
-            Align::Left => pad_right_with_policy(&truncated, width, policy),
-            Align::Right => pad_left_with_policy(&truncated, width, policy),
-            Align::Center => pad_center_with_policy(&truncated, width, policy),
-        };
+        let padded = pad_visible_value(&truncated, width, align, policy);
         apply_style(&padded, style)
     } else {
-        // Content fits — pad the original value (preserving tags) using manual spacing
-        let padding = width - current_width;
-        let padded = match align {
-            Align::Left => format!("{}{}", value, " ".repeat(padding)),
-            Align::Right => format!("{}{}", " ".repeat(padding), value),
-            Align::Center => {
-                let left_pad = padding / 2;
-                let right_pad = padding - left_pad;
-                format!("{}{}{}", " ".repeat(left_pad), value, " ".repeat(right_pad))
-            }
-        };
+        let padded = pad_visible_value(value, width, align, policy);
         apply_style(&padded, style)
+    }
+}
+
+fn pad_visible_value(value: &str, width: usize, align: Align, policy: AmbiguousWidth) -> String {
+    let padding = width.saturating_sub(visible_width_with_policy(value, policy));
+    match align {
+        Align::Left => format!("{}{}", value, " ".repeat(padding)),
+        Align::Right => format!("{}{}", " ".repeat(padding), value),
+        Align::Center => {
+            let left = padding / 2;
+            format!(
+                "{}{}{}",
+                " ".repeat(left),
+                value,
+                " ".repeat(padding - left)
+            )
+        }
     }
 }
 
@@ -1025,7 +1030,7 @@ fn resolve_sub_widths_with_policy(
     parent_width: usize,
     policy: AmbiguousWidth,
 ) -> Vec<usize> {
-    let sep_width = display_width_with_policy(&sub_cols.separator, policy);
+    let sep_width = visible_width_with_policy(&sub_cols.separator, policy);
     let n = sub_cols.columns.len();
     let mut widths = vec![0usize; n];
     let mut grower_index = 0;
@@ -1252,8 +1257,7 @@ fn format_cell_lines_with_policy(
         return CellOutput::Single(String::new());
     }
 
-    let stripped = standout_bbparser::strip_tags(value);
-    let current_width = display_width_with_policy(&stripped, policy);
+    let current_width = visible_width_with_policy(value, policy);
 
     // Determine style: style_from_value takes precedence
     let style = if col.style_from_value {
@@ -1278,16 +1282,12 @@ fn format_cell_lines_with_policy(
                 };
                 CellOutput::Single(apply_style(&padded, style))
             } else {
-                // Wrap to multiple lines — tags are stripped (same as truncation)
-                let wrapped = wrap_indent_with_policy(&stripped, width, *indent, policy);
+                // Wrap to balanced tagged fragments without flattening styles.
+                let wrapped = wrap_visible_indent_with_policy(value, width, *indent, policy);
                 let padded: Vec<String> = wrapped
                     .into_iter()
                     .map(|line| {
-                        let padded_line = match col.align {
-                            Align::Left => pad_right_with_policy(&line, width, policy),
-                            Align::Right => pad_left_with_policy(&line, width, policy),
-                            Align::Center => pad_center_with_policy(&line, width, policy),
-                        };
+                        let padded_line = pad_visible_value(&line, width, col.align, policy);
                         apply_style(&padded_line, style)
                     })
                     .collect();
@@ -2686,8 +2686,11 @@ mod tests {
         };
         // "hello" is 5 visible chars, column is 10 — tags should be preserved
         let result = format_value("[bold]hello[/bold]", 10, Align::Left, &overflow, None);
-        let stripped = standout_bbparser::strip_tags(&result);
-        assert_eq!(display_width(&stripped), 10, "visible width should be 10");
+        assert_eq!(
+            visible_width_with_policy(&result, AmbiguousWidth::Narrow),
+            10,
+            "visible width should be 10"
+        );
         assert!(
             result.contains("[bold]hello[/bold]"),
             "tags should be preserved when content fits"
@@ -2702,11 +2705,27 @@ mod tests {
         };
         // "[red]hello world[/red]" has 11 visible chars, column is 8
         let result = format_value("[red]hello world[/red]", 8, Align::Left, &overflow, None);
-        let stripped = standout_bbparser::strip_tags(&result);
         assert_eq!(
-            display_width(&stripped),
+            visible_width_with_policy(&result, AmbiguousWidth::Narrow),
             8,
             "truncated output should be exactly 8 visible columns"
+        );
+        assert_eq!(result, "[red]hello w[/red]…");
+    }
+
+    #[test]
+    fn overflowing_highlighted_table_cell_keeps_match_style() {
+        let spec = FlatDataSpec::builder()
+            .column(Column::new(Width::Fixed(12)))
+            .build();
+        let formatter = TabularFormatter::new(&spec, 12);
+
+        let result = formatter.format_row(&["prefix [match]needle[/match] suffix"]);
+
+        assert_eq!(result, "prefix [match]need[/match]…");
+        assert_eq!(
+            visible_width_with_policy(&result, AmbiguousWidth::Narrow),
+            12
         );
     }
 
@@ -2717,8 +2736,10 @@ mod tests {
             marker: "…".to_string(),
         };
         let result = format_value("[dim]hi[/dim]", 6, Align::Right, &overflow, None);
-        let stripped = standout_bbparser::strip_tags(&result);
-        assert_eq!(display_width(&stripped), 6);
+        assert_eq!(
+            visible_width_with_policy(&result, AmbiguousWidth::Narrow),
+            6
+        );
         // Should have leading spaces then the tagged content
         assert!(result.contains("[dim]hi[/dim]"));
         assert!(result.starts_with("    "));
@@ -2732,8 +2753,10 @@ mod tests {
         };
         // BBCode input + column style applied
         let result = format_value("[dim]ok[/dim]", 8, Align::Left, &overflow, Some("green"));
-        let stripped = standout_bbparser::strip_tags(&result);
-        assert_eq!(display_width(&stripped), 8);
+        assert_eq!(
+            visible_width_with_policy(&result, AmbiguousWidth::Narrow),
+            8
+        );
         // Should have outer [green]...[/green] wrapper
         assert!(result.starts_with("[green]"));
         assert!(result.ends_with("[/green]"));
@@ -2746,19 +2769,27 @@ mod tests {
         let result = format_cell_lines("[bold]hello world foo[/bold]", 10, &col);
         match result {
             CellOutput::Multi(lines) => {
+                assert_eq!(
+                    lines,
+                    [
+                        "[bold]hello[/bold]     ",
+                        "[bold]world[/bold] [bold]foo[/bold] ",
+                    ]
+                );
                 for line in &lines {
-                    let stripped = standout_bbparser::strip_tags(line);
                     assert!(
-                        display_width(&stripped) <= 10,
+                        visible_width_with_policy(line, AmbiguousWidth::Narrow) <= 10,
                         "wrapped line '{}' exceeds column width (visible: {})",
                         line,
-                        display_width(&stripped)
+                        visible_width_with_policy(line, AmbiguousWidth::Narrow)
                     );
                 }
             }
             CellOutput::Single(s) => {
-                let stripped = standout_bbparser::strip_tags(&s);
-                assert!(display_width(&stripped) <= 10, "single line should fit");
+                assert!(
+                    visible_width_with_policy(&s, AmbiguousWidth::Narrow) <= 10,
+                    "single line should fit"
+                );
             }
         }
     }
@@ -2774,8 +2805,7 @@ mod tests {
                     s.contains("[bold]hi[/bold]"),
                     "tags should be preserved when content fits"
                 );
-                let stripped = standout_bbparser::strip_tags(&s);
-                assert_eq!(display_width(&stripped), 10);
+                assert_eq!(visible_width_with_policy(&s, AmbiguousWidth::Narrow), 10);
             }
             _ => panic!("expected Single output"),
         }
@@ -2786,9 +2816,8 @@ mod tests {
         // Simulate a styled CellOutput with BBCode
         let output = CellOutput::Single("[green]ok[/green]".to_string());
         let line = output.line(0, 8, Align::Left);
-        let stripped = standout_bbparser::strip_tags(&line);
         assert_eq!(
-            display_width(&stripped),
+            visible_width_with_policy(&line, AmbiguousWidth::Narrow),
             8,
             "CellOutput::line should pad to correct visible width"
         );

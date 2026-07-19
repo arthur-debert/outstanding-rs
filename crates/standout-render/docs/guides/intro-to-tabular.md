@@ -349,6 +349,12 @@ What happens when a title is longer than its column? By default, Tabular truncat
 
 Middle truncation is perfect for file paths where both the start and end matter: `/home/user/.../important.txt`
 
+Semantic style tags are zero-width layout metadata. Tabular measures only the
+visible characters, and truncation preserves balanced tags around retained
+text. For example, truncating `prefix [match]needle[/match] suffix` at 12
+columns produces `prefix [match]need[/match]…`; the highlighted portion remains
+styled when rendered. Plain-text output is the only stage that strips tags.
+
 ### Wrap to Multiple Lines
 
 For descriptions or messages, wrapping is often better than truncating:

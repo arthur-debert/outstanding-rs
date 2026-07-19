@@ -3,7 +3,11 @@
 //! All functions in this module correctly handle ANSI escape codes: they are
 //! preserved in output but don't count toward display width calculations.
 
+use crate::width::VisibleTruncateAt;
 use crate::{AmbiguousWidth, WidthCalculator};
+use console::AnsiCodeIterator;
+use standout_bbparser::StyledText;
+use std::ops::Range;
 
 /// Returns the display width of a string, ignoring ANSI escape codes.
 ///
@@ -29,14 +33,14 @@ pub fn display_width_with_policy(s: &str, policy: AmbiguousWidth) -> usize {
     WidthCalculator::new(policy).display_width(s)
 }
 
-/// Returns the visible display width of a string, stripping both BBCode tags
-/// and ANSI escape codes before measurement.
+/// Returns the visible display width of a string, parsing semantic style tags as
+/// zero-width structure and ignoring ANSI escape codes.
 ///
 /// Use this for any text that may contain markup. For strings known to be
 /// tag-free (e.g., separator literals), [`display_width`] avoids the overhead.
 ///
-/// ANSI is stripped first so that the `[` and `]` bytes inside CSI sequences
-/// don't get mistaken for malformed BBCode tags by the tag stripper.
+/// ANSI controls use the same parser as [`display_width`], so control bytes
+/// cannot be mistaken for semantic markup and all width paths agree.
 ///
 /// # Example
 ///
@@ -54,6 +58,33 @@ pub fn visible_width(s: &str) -> usize {
 /// Policy-aware variant of [`visible_width`].
 pub fn visible_width_with_policy(s: &str, policy: AmbiguousWidth) -> usize {
     WidthCalculator::new(policy).visible_width(s)
+}
+
+pub(crate) fn truncate_visible_end_with_policy(
+    s: &str,
+    max_width: usize,
+    ellipsis: &str,
+    policy: AmbiguousWidth,
+) -> String {
+    WidthCalculator::new(policy).truncate_visible(s, max_width, ellipsis, VisibleTruncateAt::End)
+}
+
+pub(crate) fn truncate_visible_start_with_policy(
+    s: &str,
+    max_width: usize,
+    ellipsis: &str,
+    policy: AmbiguousWidth,
+) -> String {
+    WidthCalculator::new(policy).truncate_visible(s, max_width, ellipsis, VisibleTruncateAt::Start)
+}
+
+pub(crate) fn truncate_visible_middle_with_policy(
+    s: &str,
+    max_width: usize,
+    ellipsis: &str,
+    policy: AmbiguousWidth,
+) -> String {
+    WidthCalculator::new(policy).truncate_visible(s, max_width, ellipsis, VisibleTruncateAt::Middle)
 }
 
 /// Truncates a string from the end to fit within a maximum display width.
@@ -462,6 +493,171 @@ pub fn wrap_indent_with_policy(
     lines
 }
 
+/// Wraps semantic style text without turning it into plain text.
+///
+/// Every returned line is a balanced tagged fragment. Whitespace normalization
+/// and long-word breaking match [`wrap_indent_with_policy`].
+pub(crate) fn wrap_visible_indent_with_policy(
+    s: &str,
+    width: usize,
+    indent: usize,
+    policy: AmbiguousWidth,
+) -> Vec<String> {
+    if width == 0 {
+        return vec![];
+    }
+
+    let styled = StyledText::parse(s);
+    let mut characters = Vec::new();
+    styled.visit_visible_chars(|character| characters.push(character));
+    let Some(first) = characters
+        .iter()
+        .position(|character| !character.is_whitespace())
+    else {
+        return vec![];
+    };
+    let last = characters
+        .iter()
+        .rposition(|character| !character.is_whitespace())
+        .unwrap()
+        + 1;
+    let calculator = WidthCalculator::new(policy);
+    let total_width = characters[first..last]
+        .iter()
+        .map(|&character| calculator.char_width(character))
+        .sum::<usize>();
+    if total_width <= width {
+        return vec![styled.select_range(first..last)];
+    }
+
+    let mut words = Vec::new();
+    let mut cursor = first;
+    while cursor < last {
+        while cursor < last && characters[cursor].is_whitespace() {
+            cursor += 1;
+        }
+        let start = cursor;
+        while cursor < last && !characters[cursor].is_whitespace() {
+            cursor += 1;
+        }
+        if start < cursor {
+            words.push(start..cursor);
+        }
+    }
+
+    let mut lines = Vec::new();
+    let mut current_words: Vec<Range<usize>> = Vec::new();
+    let mut current_width = 0;
+
+    for word in words {
+        let word_width = range_width(&characters, &word, calculator);
+        let effective_width = if lines.is_empty() {
+            width
+        } else {
+            width.saturating_sub(indent)
+        };
+
+        if word_width > effective_width {
+            if !current_words.is_empty() {
+                push_selected_line(&mut lines, &styled, &current_words, indent);
+                current_words.clear();
+                current_width = 0;
+            }
+
+            let mut start = word.start;
+            while start < word.end {
+                let effective_width = if lines.is_empty() {
+                    width
+                } else {
+                    width.saturating_sub(indent)
+                };
+                if effective_width == 0 {
+                    break;
+                }
+                let remaining = start..word.end;
+                if range_width(&characters, &remaining, calculator) <= effective_width {
+                    current_words.push(remaining);
+                    current_width =
+                        range_width(&characters, current_words.last().unwrap(), calculator);
+                    break;
+                }
+
+                let content_width = effective_width.saturating_sub(1);
+                if content_width == 0 {
+                    let mut line = " ".repeat(if lines.is_empty() { 0 } else { indent });
+                    line.push('…');
+                    lines.push(line);
+                    break;
+                }
+                let count = prefix_count(&characters[start..word.end], content_width, calculator);
+                if count == 0 {
+                    break;
+                }
+                let mut line = " ".repeat(if lines.is_empty() { 0 } else { indent });
+                line.push_str(&styled.select_range(start..start + count));
+                line.push('…');
+                lines.push(line);
+                start += count;
+            }
+            continue;
+        }
+
+        let needed_width = if current_words.is_empty() {
+            word_width
+        } else {
+            current_width + 1 + word_width
+        };
+        if needed_width <= effective_width {
+            current_words.push(word);
+            current_width = needed_width;
+        } else {
+            push_selected_line(&mut lines, &styled, &current_words, indent);
+            current_words.clear();
+            current_words.push(word);
+            current_width = word_width;
+        }
+    }
+
+    if !current_words.is_empty() {
+        push_selected_line(&mut lines, &styled, &current_words, indent);
+    }
+    lines
+}
+
+fn push_selected_line(
+    lines: &mut Vec<String>,
+    styled: &StyledText<'_>,
+    ranges: &[Range<usize>],
+    indent: usize,
+) {
+    let mut line = " ".repeat(if lines.is_empty() { 0 } else { indent });
+    line.push_str(&styled.select(ranges, " "));
+    lines.push(line);
+}
+
+fn range_width(characters: &[char], range: &Range<usize>, calculator: WidthCalculator) -> usize {
+    characters[range.clone()]
+        .iter()
+        .map(|&character| calculator.char_width(character))
+        .sum()
+}
+
+fn prefix_count(characters: &[char], max_width: usize, calculator: WidthCalculator) -> usize {
+    let mut width = 0;
+    characters
+        .iter()
+        .take_while(|&&character| {
+            let next = width + calculator.char_width(character);
+            if next > max_width {
+                false
+            } else {
+                width = next;
+                true
+            }
+        })
+        .count()
+}
+
 /// Break a word that's longer than the available width into multiple parts.
 fn break_long_word(
     word: &str,
@@ -516,16 +712,13 @@ fn break_long_word(
         } else {
             " ".repeat(indent)
         };
-        let truncated = truncate_to_display_width(remaining, break_width, calculator);
+        let (truncated, consumed_bytes) =
+            take_prefix_to_display_width(remaining, break_width, calculator);
         parts.push(format!("{}{}…", prefix, truncated));
 
-        // Find where we actually cut in the original string
-        let truncated_len = truncated.chars().count();
-        remaining = &remaining[remaining
-            .char_indices()
-            .nth(truncated_len)
-            .map(|(i, _)| i)
-            .unwrap_or(remaining.len())..];
+        // Advance by source bytes, not output characters: ANSI controls are
+        // preserved in the selected prefix but occupy no display columns.
+        remaining = &remaining[consumed_bytes..];
         first_part = false;
     }
 
@@ -535,51 +728,49 @@ fn break_long_word(
 // --- Internal helpers ---
 
 /// Truncate string to fit display width, keeping characters from the start.
-/// Handles ANSI escape codes properly.
+/// Preserves every ANSI control recognized by [`console::strip_ansi_codes`]
+/// without charging it display width.
 fn truncate_to_display_width(s: &str, max_width: usize, calculator: WidthCalculator) -> String {
+    take_prefix_to_display_width(s, max_width, calculator).0
+}
+
+/// Returns the width-bounded source prefix and the number of source bytes it
+/// consumed. Sharing the source offset keeps wrapping correct when the prefix
+/// contains zero-width ANSI controls.
+fn take_prefix_to_display_width(
+    s: &str,
+    max_width: usize,
+    calculator: WidthCalculator,
+) -> (String, usize) {
     if max_width == 0 {
-        return String::new();
+        return (String::new(), 0);
     }
 
     // Fast path: if string fits, return as-is
     if calculator.display_width(s) <= max_width {
-        return s.to_string();
+        return (s.to_string(), s.len());
     }
 
-    // We need to walk through the string carefully, tracking both
-    // printable width and ANSI escape sequences
     let mut result = String::new();
     let mut current_width = 0;
-    let chars = s.chars().peekable();
-    let mut in_escape = false;
-
-    for c in chars {
-        if c == '\x1b' {
-            // Start of ANSI escape sequence - include it all
-            result.push(c);
-            in_escape = true;
+    'units: for (unit, is_ansi) in AnsiCodeIterator::new(s) {
+        if is_ansi {
+            result.push_str(unit);
             continue;
         }
 
-        if in_escape {
-            result.push(c);
-            // ANSI CSI sequences end with a letter (@ through ~)
-            if c.is_ascii_alphabetic() || c == '~' {
-                in_escape = false;
+        for character in unit.chars() {
+            let char_width = calculator.char_width(character);
+            if current_width + char_width > max_width {
+                break 'units;
             }
-            continue;
+            result.push(character);
+            current_width += char_width;
         }
-
-        // Regular character - check width
-        let char_width = calculator.char_width(c);
-        if current_width + char_width > max_width {
-            break;
-        }
-        result.push(c);
-        current_width += char_width;
     }
 
-    result
+    let consumed_bytes = result.len();
+    (result, consumed_bytes)
 }
 
 /// Find the longest suffix of s that has display width <= max_width.
@@ -599,30 +790,24 @@ fn find_suffix_with_width(s: &str, max_width: usize, calculator: WidthCalculator
 
     let mut current_width = 0;
     let mut byte_offset = 0;
-    let mut in_escape = false;
+    let mut source_offset = 0;
 
-    for (i, c) in s.char_indices() {
-        if c == '\x1b' {
-            in_escape = true;
-            byte_offset = i + c.len_utf8();
+    'units: for (unit, is_ansi) in AnsiCodeIterator::new(s) {
+        if is_ansi {
+            byte_offset = source_offset + unit.len();
+            source_offset += unit.len();
             continue;
         }
 
-        if in_escape {
-            byte_offset = i + c.len_utf8();
-            if c.is_ascii_alphabetic() || c == '~' {
-                in_escape = false;
+        for (unit_offset, character) in unit.char_indices() {
+            current_width += calculator.char_width(character);
+            byte_offset = source_offset + unit_offset + character.len_utf8();
+
+            if current_width >= skip_width {
+                break 'units;
             }
-            continue;
         }
-
-        let char_width = calculator.char_width(c);
-        current_width += char_width;
-        byte_offset = i + c.len_utf8();
-
-        if current_width >= skip_width {
-            break;
-        }
+        source_offset += unit.len();
     }
 
     s[byte_offset..].to_string()
@@ -631,6 +816,7 @@ fn find_suffix_with_width(s: &str, max_width: usize, calculator: WidthCalculator
 #[cfg(test)]
 mod tests {
     use super::*;
+    use console::strip_ansi_codes;
 
     // --- display_width tests ---
 
@@ -711,6 +897,48 @@ mod tests {
         let result = truncate_end(styled, 8, "…");
         assert_eq!(display_width(&result), 8);
         assert!(result.contains("\x1b[31m")); // ANSI preserved
+    }
+
+    #[test]
+    fn ansi_parser_compatibility_spans_measure_truncate_and_wrap() {
+        for (open, close) in [("\x1b(0", "\x1b(B"), ("\u{9b}31m", "\u{9b}0m")] {
+            let input = format!("{open}abcdefghij{close}");
+            assert_eq!(display_width(&input), 10);
+
+            let end = truncate_end(&input, 5, "…");
+            let start = truncate_start(&input, 5, "…");
+            let middle = truncate_middle(&input, 5, "…");
+            assert_eq!(strip_ansi_codes(&end), "abcd…");
+            assert_eq!(strip_ansi_codes(&start), "…ghij");
+            assert_eq!(strip_ansi_codes(&middle), "ab…ij");
+            for result in [&end, &start, &middle] {
+                assert_eq!(display_width(result), 5);
+            }
+
+            let lines = wrap(&input, 5);
+            assert!(lines.iter().all(|line| display_width(line) <= 5));
+            let plain = lines
+                .iter()
+                .map(|line| strip_ansi_codes(line).replace('…', ""))
+                .collect::<String>();
+            assert_eq!(plain, "abcdefghij");
+        }
+    }
+
+    #[test]
+    fn styled_wrap_uses_the_same_ansi_parser_as_measurement() {
+        for (open, close) in [("\x1b(0", "\x1b(B"), ("\u{9b}31m", "\u{9b}0m")] {
+            let input = format!("{open}[outer]abcdefghij[/outer]{close}");
+            assert_eq!(visible_width(&input), 10);
+
+            let lines = wrap_visible_indent_with_policy(&input, 5, 0, AmbiguousWidth::Narrow);
+            assert!(lines.iter().all(|line| visible_width(line) <= 5));
+            let plain = lines
+                .iter()
+                .map(|line| strip_ansi_codes(&standout_bbparser::strip_tags(line)).replace('…', ""))
+                .collect::<String>();
+            assert_eq!(plain, "abcdefghij");
+        }
     }
 
     #[test]

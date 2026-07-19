@@ -65,6 +65,10 @@
 //! - [`TruncateAt::Start`] - Keep end: "…o World"
 //! - [`TruncateAt::Middle`] - Keep both: "Hel…orld" (useful for paths)
 //!
+//! Semantic style tags do not consume display width. Truncation and wrapping
+//! preserve the styles on retained text and emit balanced tags, so a styled
+//! cell can be measured and fitted without first converting it to plain text.
+//!
 //! ## Sub-Columns
 //!
 //! Columns can contain inner sub-columns for per-row layout within a parent
