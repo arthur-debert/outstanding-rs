@@ -42,7 +42,6 @@
 //! ```
 
 use minijinja::{Environment, Value};
-use standout_bbparser::strip_tags;
 
 use super::decorator::{BorderStyle, Table};
 use super::formatter::TabularFormatter;
@@ -53,8 +52,8 @@ use super::types::{
 #[cfg(test)]
 use super::util::display_width;
 use super::util::{
-    display_width_with_policy, pad_center_with_policy, pad_left_with_policy, pad_right_with_policy,
-    truncate_end_with_policy, truncate_middle_with_policy, truncate_start_with_policy,
+    truncate_visible_end_with_policy, truncate_visible_middle_with_policy,
+    truncate_visible_start_with_policy, visible_width_with_policy,
 };
 use crate::width::RenderWidthSource;
 
@@ -152,12 +151,11 @@ pub(crate) fn register_tabular_filters_with_source(
     );
 
     // pad_left filter: {{ value | pad_left(width) }}
-    // BBCode tags are stripped for width measurement; padding preserves tags.
+    // Semantic style tags have zero width; padding preserves them.
     let pad_left_policy = widths.clone();
     env.add_filter("pad_left", move |value: Value, width: usize| -> String {
         let text = value.to_string();
-        let stripped = strip_tags(&text);
-        let visible_width = display_width_with_policy(&stripped, pad_left_policy.ambiguous_width());
+        let visible_width = visible_width_with_policy(&text, pad_left_policy.ambiguous_width());
         if visible_width >= width {
             text
         } else {
@@ -166,13 +164,11 @@ pub(crate) fn register_tabular_filters_with_source(
     });
 
     // pad_right filter: {{ value | pad_right(width) }}
-    // BBCode tags are stripped for width measurement; padding preserves tags.
+    // Semantic style tags have zero width; padding preserves them.
     let pad_right_policy = widths.clone();
     env.add_filter("pad_right", move |value: Value, width: usize| -> String {
         let text = value.to_string();
-        let stripped = strip_tags(&text);
-        let visible_width =
-            display_width_with_policy(&stripped, pad_right_policy.ambiguous_width());
+        let visible_width = visible_width_with_policy(&text, pad_right_policy.ambiguous_width());
         if visible_width >= width {
             text
         } else {
@@ -181,13 +177,11 @@ pub(crate) fn register_tabular_filters_with_source(
     });
 
     // pad_center filter: {{ value | pad_center(width) }}
-    // BBCode tags are stripped for width measurement; padding preserves tags.
+    // Semantic style tags have zero width; padding preserves them.
     let pad_center_policy = widths.clone();
     env.add_filter("pad_center", move |value: Value, width: usize| -> String {
         let text = value.to_string();
-        let stripped = strip_tags(&text);
-        let visible_width =
-            display_width_with_policy(&stripped, pad_center_policy.ambiguous_width());
+        let visible_width = visible_width_with_policy(&text, pad_center_policy.ambiguous_width());
         if visible_width >= width {
             text
         } else {
@@ -199,7 +193,7 @@ pub(crate) fn register_tabular_filters_with_source(
     });
 
     // truncate_at filter: {{ value | truncate_at(width, "middle") }}
-    // BBCode tags are stripped before truncation.
+    // Semantic style tags are preserved and excluded from truncation width.
     let truncate_policy = widths.clone();
     env.add_filter(
         "truncate_at",
@@ -209,25 +203,24 @@ pub(crate) fn register_tabular_filters_with_source(
               ellipsis: Option<String>|
               -> String {
             let text = value.to_string();
-            let stripped = strip_tags(&text);
             let pos = position.as_deref().unwrap_or("end");
             let ell = ellipsis.as_deref().unwrap_or("…");
 
             match pos {
-                "start" => truncate_start_with_policy(
-                    &stripped,
+                "start" => truncate_visible_start_with_policy(
+                    &text,
                     width,
                     ell,
                     truncate_policy.ambiguous_width(),
                 ),
-                "middle" => truncate_middle_with_policy(
-                    &stripped,
+                "middle" => truncate_visible_middle_with_policy(
+                    &text,
                     width,
                     ell,
                     truncate_policy.ambiguous_width(),
                 ),
-                _ => truncate_end_with_policy(
-                    &stripped,
+                _ => truncate_visible_end_with_policy(
+                    &text,
                     width,
                     ell,
                     truncate_policy.ambiguous_width(),
@@ -237,11 +230,10 @@ pub(crate) fn register_tabular_filters_with_source(
     );
 
     // display_width filter: {{ value | display_width }}
-    // BBCode tags are stripped before measuring width.
+    // Semantic style tags have zero display width.
     let display_policy = widths.clone();
     env.add_filter("display_width", move |value: Value| -> usize {
-        let stripped = strip_tags(&value.to_string());
-        display_width_with_policy(&stripped, display_policy.ambiguous_width())
+        visible_width_with_policy(&value.to_string(), display_policy.ambiguous_width())
     });
 
     // style_as filter: {{ value | style_as("error") }} => [error]value[/error]
@@ -843,9 +835,8 @@ pub fn table_from_type_with_ambiguous_width<T: Tabular>(
 /// Format a value for a column with specified width, alignment, and truncation.
 ///
 /// BBCode-style markup tags (e.g., `[bold]...[/bold]`) are treated as zero-width:
-/// width measurement is done on the stripped text, and tags are preserved in the
-/// output when padding. When truncation is needed, tags are stripped first since
-/// the visible content exceeds the available width.
+/// width measurement excludes tag bytes, and tags remain balanced in output
+/// after either padding or truncation.
 fn format_col_with_policy(
     text: &str,
     width: usize,
@@ -858,38 +849,30 @@ fn format_col_with_policy(
         return String::new();
     }
 
-    // Strip BBCode tags to measure visible width
-    let stripped = strip_tags(text);
-    let visible_width = display_width_with_policy(&stripped, policy);
+    let visible_width = visible_width_with_policy(text, policy);
 
     if visible_width > width {
-        // Content is genuinely too wide — truncate the stripped text
+        // Content is genuinely too wide — truncate its visible styled content.
         let truncated = match truncate {
-            "start" => truncate_start_with_policy(&stripped, width, ellipsis, policy),
-            "middle" => truncate_middle_with_policy(&stripped, width, ellipsis, policy),
-            _ => truncate_end_with_policy(&stripped, width, ellipsis, policy),
+            "start" => truncate_visible_start_with_policy(text, width, ellipsis, policy),
+            "middle" => truncate_visible_middle_with_policy(text, width, ellipsis, policy),
+            _ => truncate_visible_end_with_policy(text, width, ellipsis, policy),
         };
-        // Pad the truncated (tag-free) text
-        match align {
-            "right" => pad_left_with_policy(&truncated, width, policy),
-            "center" => pad_center_with_policy(&truncated, width, policy),
-            _ => pad_right_with_policy(&truncated, width, policy),
-        }
+        pad_col_visible(&truncated, width, align, policy)
     } else {
-        // Content fits — pad the original text, preserving BBCode tags
-        let padding = width - visible_width;
-        if padding == 0 {
-            return text.to_string();
+        pad_col_visible(text, width, align, policy)
+    }
+}
+
+fn pad_col_visible(text: &str, width: usize, align: &str, policy: crate::AmbiguousWidth) -> String {
+    let padding = width.saturating_sub(visible_width_with_policy(text, policy));
+    match align {
+        "right" => format!("{}{}", " ".repeat(padding), text),
+        "center" => {
+            let left = padding / 2;
+            format!("{}{}{}", " ".repeat(left), text, " ".repeat(padding - left))
         }
-        match align {
-            "right" => format!("{}{}", " ".repeat(padding), text),
-            "center" => {
-                let left_pad = padding / 2;
-                let right_pad = padding - left_pad;
-                format!("{}{}{}", " ".repeat(left_pad), text, " ".repeat(right_pad))
-            }
-            _ => format!("{}{}", text, " ".repeat(padding)),
-        }
+        _ => format!("{}{}", text, " ".repeat(padding)),
     }
 }
 
@@ -1212,9 +1195,10 @@ mod tests {
         assert!(result.contains("-0"));
         assert!(result.contains("[additions]"));
         assert!(result.contains("[/deletions]"));
-        // Total visible width (after stripping tags) should be 16
-        let stripped = standout_bbparser::strip_tags(&result);
-        assert_eq!(display_width(&stripped), 16);
+        assert_eq!(
+            visible_width_with_policy(&result, crate::AmbiguousWidth::Narrow),
+            16
+        );
     }
 
     #[test]
@@ -1228,9 +1212,11 @@ mod tests {
             .unwrap();
         // Visible "hi" = 2 chars, padded to 10, tags preserved
         assert!(result.contains("[bold]hi[/bold]"));
-        let stripped = standout_bbparser::strip_tags(&result);
-        assert_eq!(stripped, "hi        ");
-        assert_eq!(display_width(&stripped), 10);
+        assert_eq!(result, "[bold]hi[/bold]        ");
+        assert_eq!(
+            visible_width_with_policy(&result, crate::AmbiguousWidth::Narrow),
+            10
+        );
     }
 
     #[test]
@@ -1246,8 +1232,7 @@ mod tests {
         // Right-aligned: spaces before the tagged text
         assert!(result.starts_with("        "));
         assert!(result.contains("[bold]hi[/bold]"));
-        let stripped = standout_bbparser::strip_tags(&result);
-        assert_eq!(stripped, "        hi");
+        assert_eq!(result, "        [bold]hi[/bold]");
     }
 
     #[test]
@@ -1260,8 +1245,28 @@ mod tests {
             .render(context!(value => "[bold]hello world[/bold]"))
             .unwrap();
         // Visible "hello world" = 11 chars, truncated to 5
-        let stripped = standout_bbparser::strip_tags(&result);
-        assert_eq!(display_width(&stripped), 5);
+        assert_eq!(
+            visible_width_with_policy(&result, crate::AmbiguousWidth::Narrow),
+            5
+        );
+        assert_eq!(result, "[bold]hell[/bold]…");
+    }
+
+    #[test]
+    fn filter_col_pads_after_wide_styled_truncation() {
+        let mut env = setup_env();
+        env.add_template("test", "{{ value | col(4) }}").unwrap();
+        let result = env
+            .get_template("test")
+            .unwrap()
+            .render(context!(value => "[match]日本語[/match]"))
+            .unwrap();
+
+        assert_eq!(result, "[match]日[/match]… ");
+        assert_eq!(
+            visible_width_with_policy(&result, crate::AmbiguousWidth::Narrow),
+            4
+        );
     }
 
     #[test]
@@ -1328,8 +1333,10 @@ mod tests {
             .render(context!(value => "[bold]hi[/bold]"))
             .unwrap();
         assert!(result.contains("[bold]hi[/bold]"));
-        let stripped = standout_bbparser::strip_tags(&result);
-        assert_eq!(display_width(&stripped), 8);
+        assert_eq!(
+            visible_width_with_policy(&result, crate::AmbiguousWidth::Narrow),
+            8
+        );
     }
 
     #[test]
@@ -1343,8 +1350,10 @@ mod tests {
             .render(context!(value => "[bold]hi[/bold]"))
             .unwrap();
         assert!(result.contains("[bold]hi[/bold]"));
-        let stripped = standout_bbparser::strip_tags(&result);
-        assert_eq!(display_width(&stripped), 8);
+        assert_eq!(
+            visible_width_with_policy(&result, crate::AmbiguousWidth::Narrow),
+            8
+        );
     }
 
     #[test]
@@ -1357,7 +1366,11 @@ mod tests {
             .unwrap()
             .render(context!(value => "[bold]hello world[/bold]"))
             .unwrap();
-        assert_eq!(display_width(&result), 8);
+        assert_eq!(
+            visible_width_with_policy(&result, crate::AmbiguousWidth::Narrow),
+            8
+        );
+        assert_eq!(result, "[bold]hello w[/bold]…");
     }
 
     // ============================================================================

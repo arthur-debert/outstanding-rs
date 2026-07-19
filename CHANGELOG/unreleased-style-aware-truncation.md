@@ -1,0 +1,1 @@
+- Preserve semantic styles through visible-width measurement, truncation, and wrapping (issue #220): style tags no longer get stripped as a layout shortcut, retained text keeps balanced nested tags, and property tests cover every truncation position across Unicode and generated style trees.

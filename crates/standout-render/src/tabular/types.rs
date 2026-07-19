@@ -884,10 +884,10 @@ impl Decorations {
 
     /// Calculates decoration overhead with an explicit ambiguous-width policy.
     pub fn overhead_with_policy(&self, num_columns: usize, policy: crate::AmbiguousWidth) -> usize {
-        use crate::tabular::display_width_with_policy;
-        let prefix_width = display_width_with_policy(&self.row_prefix, policy);
-        let suffix_width = display_width_with_policy(&self.row_suffix, policy);
-        let sep_width = display_width_with_policy(&self.column_sep, policy);
+        use crate::tabular::visible_width_with_policy;
+        let prefix_width = visible_width_with_policy(&self.row_prefix, policy);
+        let suffix_width = visible_width_with_policy(&self.row_suffix, policy);
+        let sep_width = visible_width_with_policy(&self.column_sep, policy);
         let sep_count = num_columns.saturating_sub(1);
         prefix_width + suffix_width + (sep_width * sep_count)
     }
