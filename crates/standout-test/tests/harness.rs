@@ -120,7 +120,7 @@ fn terminal_width_cascades_through_the_framework_list_view_template() {
 
 #[test]
 #[serial]
-fn columns_environment_width_precedes_the_terminal_probe_across_the_render_pipeline() {
+fn columns_environment_width_cascades_through_the_framework_list_view_template() {
     let app = build_framework_list_view_app();
     let result = TestHarness::new()
         .env("COLUMNS", "37")
