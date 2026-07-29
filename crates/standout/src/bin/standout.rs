@@ -637,6 +637,20 @@ fn core_signature_fragment(input: &CommandInput) -> String {
     format!("{}: {}", input.name, input.rust_type())
 }
 
+fn core_fn_signature(spec: &ProjectSpec) -> String {
+    if spec.inputs.len() == 1 {
+        format!("({})", core_signature_fragment(&spec.inputs[0]))
+    } else {
+        let params = spec
+            .inputs
+            .iter()
+            .map(|input| format!("    {},", core_signature_fragment(input)))
+            .collect::<Vec<_>>()
+            .join("\n");
+        format!("(\n{params}\n)")
+    }
+}
+
 fn core_primary_value(spec: &ProjectSpec) -> String {
     let primary = &spec.inputs[0];
     match (primary.value_type, primary.cardinality) {
@@ -707,6 +721,99 @@ fn core_valid_assertions(spec: &ProjectSpec) -> String {
             })
             .collect::<Vec<_>>()
             .join("\n"),
+    }
+}
+
+fn core_test_call(spec: &ProjectSpec, blank_primary: bool) -> String {
+    if spec.inputs.len() == 1 {
+        return format!(
+            "{}({})",
+            spec.operation_name,
+            core_test_arg(&spec.inputs[0], blank_primary)
+        );
+    }
+    let args = spec
+        .inputs
+        .iter()
+        .enumerate()
+        .map(|(index, input)| {
+            format!(
+                "            {},",
+                core_test_arg(input, blank_primary && index == 0)
+            )
+        })
+        .collect::<Vec<_>>()
+        .join("\n");
+    format!("{}(\n{args}\n        )", spec.operation_name)
+}
+
+fn core_sample_result(spec: &ProjectSpec) -> String {
+    if spec.inputs.len() == 1 {
+        format!(
+            "        let result = {}({}).unwrap();",
+            spec.operation_name,
+            core_test_arg(&spec.inputs[0], false)
+        )
+    } else {
+        format!(
+            "        let result = {}\n        .unwrap();",
+            core_test_call(spec, false)
+        )
+    }
+}
+
+fn core_blank_assertion(spec: &ProjectSpec) -> String {
+    if spec.inputs.len() == 1 {
+        format!(
+            "        assert_eq!({}({}), Err(CoreError::EmptyInput));",
+            spec.operation_name,
+            core_test_arg(&spec.inputs[0], true)
+        )
+    } else {
+        let args = spec
+            .inputs
+            .iter()
+            .enumerate()
+            .map(|(index, input)| format!("                {},", core_test_arg(input, index == 0)))
+            .collect::<Vec<_>>()
+            .join("\n");
+        format!(
+            "        assert_eq!(\n            {}(\n{args}\n            ),\n            Err(CoreError::EmptyInput)\n        );",
+            spec.operation_name
+        )
+    }
+}
+
+fn core_test_arg(input: &CommandInput, blank: bool) -> String {
+    match (input.value_type, input.cardinality) {
+        (InputValueType::String, InputCardinality::Required) => {
+            if blank {
+                "\"\".to_string()".into()
+            } else {
+                "\"Standout\".to_string()".into()
+            }
+        }
+        (InputValueType::String, InputCardinality::Optional) => {
+            if blank {
+                "Some(\"\".to_string())".into()
+            } else {
+                "Some(\"optional\".to_string())".into()
+            }
+        }
+        (InputValueType::String, InputCardinality::Repeated) => {
+            "vec![\"alpha\".to_string(), \"beta\".to_string()]".into()
+        }
+        (InputValueType::Bool, InputCardinality::Boolean) => "true".into(),
+        (InputValueType::Path, InputCardinality::Required) => {
+            "std::path::PathBuf::from(\"config.toml\")".into()
+        }
+        (InputValueType::Path, InputCardinality::Optional) => {
+            "Some(std::path::PathBuf::from(\"config.toml\"))".into()
+        }
+        (InputValueType::Path, InputCardinality::Repeated) => {
+            "vec![std::path::PathBuf::from(\"one.toml\")]".into()
+        }
+        _ => unreachable!("validated input combinations are renderable"),
     }
 }
 
@@ -843,11 +950,11 @@ impl CommandInput {
                 self.name, self.name
             ),
             (InputValueType::Path, InputCardinality::Repeated) => format!(
-                "let {} = matches.get_many::<std::path::PathBuf>(\"{}\").map(|values| values.cloned().collect()).unwrap_or_default();",
+                "let {} = matches\n        .get_many::<std::path::PathBuf>(\"{}\")\n        .map(|values| values.cloned().collect())\n        .unwrap_or_default();",
                 self.name, self.name
             ),
             (InputValueType::String, InputCardinality::Repeated) => format!(
-                "let {} = matches.get_many::<String>(\"{}\").map(|values| values.cloned().collect()).unwrap_or_default();",
+                "let {} = matches\n        .get_many::<String>(\"{}\")\n        .map(|values| values.cloned().collect())\n        .unwrap_or_default();",
                 self.name, self.name
             ),
             (InputValueType::String, InputCardinality::Optional) => {
@@ -916,6 +1023,7 @@ fn model(spec: &ProjectSpec) -> minijinja::Value {
             }
         }).collect::<Vec<_>>(),
         core_params => spec.inputs.iter().map(core_signature_fragment).collect::<Vec<_>>().join(", "),
+        core_fn_signature => core_fn_signature(spec),
         core_call_args => spec.inputs.iter().map(CommandInput::core_call_arg).collect::<Vec<_>>().join(", "),
         core_validations => spec.inputs.iter().filter_map(CommandInput::core_validation).collect::<Vec<_>>().join("\n    "),
         cli_args => spec.inputs.iter().map(CommandInput::cli_arg).collect::<Vec<_>>().join("\n        "),
@@ -931,6 +1039,8 @@ fn model(spec: &ProjectSpec) -> minijinja::Value {
         result_init => result_init(spec),
         view_from_fields => view_from_fields(spec),
         core_valid_assertions => core_valid_assertions(spec),
+        core_sample_result => core_sample_result(spec),
+        core_blank_assertion => core_blank_assertion(spec),
         handler_expected_fields => handler_expected_fields(spec),
         template_body => template_body(spec),
         human_expected => expected_first_field(spec, "Ada").1,
@@ -1007,7 +1117,7 @@ pub enum CoreError {
 ///
 /// The caller supplies explicit values. This crate deliberately has no Clap,
 /// Standout, template, terminal, environment, or CLI-view dependencies.
-pub fn {{ operation_name }}({{ core_params }}) -> Result<{{ view_name }}, CoreError> {
+pub fn {{ operation_name }}{{ core_fn_signature }} -> Result<{{ view_name }}, CoreError> {
     {{ core_validations }}
     let primary = {{ core_primary_value }};
     Ok({{ view_name }} {
@@ -1021,14 +1131,14 @@ mod tests {
 
     #[test]
     fn valid_input_returns_a_typed_result() {
-        let result = {{ operation_name }}("Standout".to_string()).unwrap();
+{{ core_sample_result }}
 
 {{ core_valid_assertions }}
     }
 
     #[test]
     fn blank_input_is_rejected_by_the_core() {
-        assert_eq!({{ operation_name }}("".to_string()), Err(CoreError::EmptyInput));
+{{ core_blank_assertion }}
     }
 }
 "#,
@@ -1532,19 +1642,65 @@ mod tests {
         assert!(!confirm(&mut input, &mut output).unwrap());
     }
 
+    fn rich_spec(root: &Path) -> ProjectSpec {
+        let mut spec = ProjectSpec::from_answers(WizardAnswers {
+            project_name: "inspect-tool".into(),
+            executable_name: "inspect-tool".into(),
+            command_name: "inspect".into(),
+            command_description: "Inspect document input".into(),
+            inputs: vec![
+                CommandInput {
+                    name: "document".into(),
+                    value_type: InputValueType::String,
+                    cardinality: InputCardinality::Required,
+                    sources: vec![InputSource::Argument, InputSource::File, InputSource::Stdin],
+                },
+                CommandInput {
+                    name: "verbose".into(),
+                    value_type: InputValueType::Bool,
+                    cardinality: InputCardinality::Boolean,
+                    sources: vec![InputSource::Argument],
+                },
+                CommandInput {
+                    name: "tag".into(),
+                    value_type: InputValueType::String,
+                    cardinality: InputCardinality::Repeated,
+                    sources: vec![InputSource::Argument],
+                },
+                CommandInput {
+                    name: "config".into(),
+                    value_type: InputValueType::Path,
+                    cardinality: InputCardinality::Optional,
+                    sources: vec![InputSource::Argument],
+                },
+            ],
+            result_shape: ResultShape::Record,
+            record_fields: vec!["summary".into(), "count".into(), "echo".into()],
+        })
+        .unwrap();
+        spec.destination = root.join("inspect-tool");
+        spec.local_patch_root = Some(workspace_root());
+        spec
+    }
+
     #[test]
-    fn generated_project_formats_checks_tests_and_runs() {
+    fn generated_project_matrix_formats_checks_tests_and_runs() {
         let dir = TempDir::new().unwrap();
-        let spec = sample_spec(dir.path());
-        publish_project(&spec).unwrap();
+        let mut message = sample_spec(dir.path());
+        message.result_shape = ResultShape::Message;
+        message.record_fields.clear();
+        let rich = rich_spec(dir.path());
 
-        run_cargo(&spec.destination, ["fmt", "--check"]);
-        run_cargo(&spec.destination, ["check", "--workspace"]);
-        run_cargo(&spec.destination, ["test", "--workspace"]);
+        for spec in [&message, &rich] {
+            publish_project(spec).unwrap();
+            run_cargo(&spec.destination, ["fmt", "--check"]);
+            run_cargo(&spec.destination, ["check", "--workspace"]);
+            run_cargo(&spec.destination, ["test", "--workspace"]);
+        }
 
-        let human = Command::new("cargo")
-            .current_dir(&spec.destination)
-            .args([
+        let message_human = run_binary(
+            &message.destination,
+            [
                 "run",
                 "-q",
                 "-p",
@@ -1553,113 +1709,140 @@ mod tests {
                 "greet",
                 "--name",
                 "Ada",
-            ])
-            .output()
-            .unwrap();
-        assert!(
-            human.status.success(),
-            "human run failed: {}",
-            String::from_utf8_lossy(&human.stderr)
+            ],
+        );
+        let stdout = String::from_utf8(message_human.stdout).unwrap();
+        assert!(stdout.contains("Processed Ada"));
+
+        let human = run_binary(
+            &rich.destination,
+            [
+                "run",
+                "-q",
+                "-p",
+                "inspect-tool",
+                "--",
+                "inspect",
+                "--document",
+                "Ada",
+                "--verbose",
+                "--tag",
+                "alpha",
+                "--tag",
+                "beta",
+                "--config",
+                "settings.toml",
+            ],
         );
         let stdout = String::from_utf8(human.stdout).unwrap();
         assert!(stdout.contains("Ada"));
         assert!(stdout.contains("Summary:"));
+        assert!(stdout.contains("Echo: Ada"));
 
-        let json = Command::new("cargo")
-            .current_dir(&spec.destination)
-            .args([
+        let json = run_binary(
+            &rich.destination,
+            [
                 "run",
                 "-q",
                 "-p",
-                "hello-tool",
+                "inspect-tool",
                 "--",
-                "greet",
-                "--name",
+                "inspect",
+                "--document",
                 "Ada",
                 "--output",
                 "json",
-            ])
-            .output()
-            .unwrap();
-        assert!(
-            json.status.success(),
-            "json run failed: {}",
-            String::from_utf8_lossy(&json.stderr)
+            ],
         );
-        let value: serde_json::Value = serde_json::from_slice(&json.stdout).unwrap();
+        let value = json_value(&json);
         assert_eq!(value["summary"], "Processed Ada");
         assert_eq!(value["count"], "3");
+        assert_eq!(value["echo"], "Ada");
 
-        let input_file = spec.destination.join("input.txt");
+        let input_file = rich.destination.join("input.txt");
         fs::write(&input_file, "File Ada").unwrap();
-        let file_json = Command::new("cargo")
-            .current_dir(&spec.destination)
-            .args([
+        let file_json = run_binary(
+            &rich.destination,
+            [
                 "run",
                 "-q",
                 "-p",
-                "hello-tool",
+                "inspect-tool",
                 "--",
-                "greet",
-                "--name-file",
+                "inspect",
+                "--document-file",
                 input_file.to_str().unwrap(),
                 "--output",
                 "json",
-            ])
-            .output()
-            .unwrap();
-        assert!(
-            file_json.status.success(),
-            "file json run failed: {}",
-            String::from_utf8_lossy(&file_json.stderr)
+            ],
         );
-        let value: serde_json::Value = serde_json::from_slice(&file_json.stdout).unwrap();
+        let value = json_value(&file_json);
         assert_eq!(value["summary"], "Processed File Ada");
         assert_eq!(value["count"], "8");
 
-        let precedence_json = Command::new("cargo")
-            .current_dir(&spec.destination)
-            .args([
+        let stdin_json = run_binary_with_stdin(
+            &rich.destination,
+            [
                 "run",
                 "-q",
                 "-p",
-                "hello-tool",
+                "inspect-tool",
                 "--",
-                "greet",
-                "--name",
+                "inspect",
+                "--output",
+                "json",
+            ],
+            "Pipe Ada\n",
+        );
+        let value = json_value(&stdin_json);
+        assert_eq!(value["summary"], "Processed Pipe Ada");
+        assert_eq!(value["count"], "8");
+
+        let precedence_json = run_binary(
+            &rich.destination,
+            [
+                "run",
+                "-q",
+                "-p",
+                "inspect-tool",
+                "--",
+                "inspect",
+                "--document",
                 "Arg Ada",
-                "--name-file",
+                "--document-file",
                 input_file.to_str().unwrap(),
                 "--output",
                 "json",
-            ])
-            .output()
-            .unwrap();
-        assert!(
-            precedence_json.status.success(),
-            "precedence json run failed: {}",
-            String::from_utf8_lossy(&precedence_json.stderr)
+            ],
         );
-        let value: serde_json::Value = serde_json::from_slice(&precedence_json.stdout).unwrap();
+        let value = json_value(&precedence_json);
         assert_eq!(value["summary"], "Processed Arg Ada");
         assert_eq!(value["count"], "7");
 
         let invalid = Command::new("cargo")
-            .current_dir(&spec.destination)
+            .current_dir(&rich.destination)
             .args([
                 "run",
                 "-q",
                 "-p",
-                "hello-tool",
+                "inspect-tool",
                 "--",
-                "greet",
-                "--name",
+                "inspect",
+                "--document",
                 "   ",
             ])
             .output()
             .unwrap();
         assert!(!invalid.status.success());
-        assert!(String::from_utf8_lossy(&invalid.stderr).contains("name cannot be empty"));
+        assert!(String::from_utf8_lossy(&invalid.stderr).contains("document cannot be empty"));
+
+        let missing = Command::new("cargo")
+            .current_dir(&rich.destination)
+            .args(["run", "-q", "-p", "inspect-tool", "--", "inspect"])
+            .output()
+            .unwrap();
+        assert!(!missing.status.success());
+        assert!(String::from_utf8_lossy(&missing.stderr).contains("document is required"));
     }
 
     fn run_cargo<const N: usize>(cwd: &Path, args: [&str; N]) {
@@ -1674,5 +1857,56 @@ mod tests {
             String::from_utf8_lossy(&output.stdout),
             String::from_utf8_lossy(&output.stderr)
         );
+    }
+
+    fn run_binary<const N: usize>(cwd: &Path, args: [&str; N]) -> std::process::Output {
+        let output = Command::new("cargo")
+            .current_dir(cwd)
+            .args(args)
+            .output()
+            .unwrap();
+        assert!(
+            output.status.success(),
+            "binary run failed\nstdout:\n{}\nstderr:\n{}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
+        output
+    }
+
+    fn run_binary_with_stdin<const N: usize>(
+        cwd: &Path,
+        args: [&str; N],
+        stdin: &str,
+    ) -> std::process::Output {
+        use std::io::Write;
+        use std::process::Stdio;
+
+        let mut child = Command::new("cargo")
+            .current_dir(cwd)
+            .args(args)
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
+            .unwrap();
+        child
+            .stdin
+            .as_mut()
+            .unwrap()
+            .write_all(stdin.as_bytes())
+            .unwrap();
+        let output = child.wait_with_output().unwrap();
+        assert!(
+            output.status.success(),
+            "binary run with stdin failed\nstdout:\n{}\nstderr:\n{}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
+        output
+    }
+
+    fn json_value(output: &std::process::Output) -> serde_json::Value {
+        serde_json::from_slice(&output.stdout).unwrap()
     }
 }
