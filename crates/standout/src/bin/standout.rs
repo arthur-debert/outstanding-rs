@@ -173,15 +173,6 @@ impl ProjectSpec {
 }
 
 impl CommandInput {
-    fn required_string(name: impl Into<String>) -> Self {
-        Self {
-            name: name.into(),
-            value_type: InputValueType::String,
-            cardinality: InputCardinality::Required,
-            sources: vec![InputSource::Argument, InputSource::File, InputSource::Stdin],
-        }
-    }
-
     fn validate(&self) -> Result<()> {
         validate_ident(&self.name, "input name")?;
         if self.sources.is_empty() {
@@ -280,9 +271,7 @@ fn prompt_answers(input: &mut dyn BufRead, output: &mut dyn Write) -> Result<Wiz
         bail!("command description cannot be empty");
     }
 
-    let input_name = prompt(input, output, "Required string input name")?;
-    let command_input = CommandInput::required_string(input_name);
-    command_input.validate()?;
+    let inputs = prompt_command_inputs(input, output)?;
     let result_shape = prompt_result_shape(input, output)?;
     let record_fields = match result_shape {
         ResultShape::Message => Vec::new(),
@@ -294,10 +283,41 @@ fn prompt_answers(input: &mut dyn BufRead, output: &mut dyn Write) -> Result<Wiz
         executable_name,
         command_name,
         command_description,
-        inputs: vec![command_input],
+        inputs,
         result_shape,
         record_fields,
     })
+}
+
+fn prompt_command_inputs(
+    input: &mut dyn BufRead,
+    output: &mut dyn Write,
+) -> Result<Vec<CommandInput>> {
+    let count = prompt_default(input, output, "Number of command inputs", "1")?;
+    let count: usize = count
+        .parse()
+        .context("number of command inputs must be an integer")?;
+    if count == 0 {
+        bail!("at least one command input is required");
+    }
+
+    let mut inputs = Vec::with_capacity(count);
+    for index in 1..=count {
+        writeln!(output, "Input {index}:")?;
+        let name = prompt(input, output, "  Name")?;
+        let value_type = prompt_input_value_type(input, output)?;
+        let cardinality = prompt_input_cardinality(input, output, value_type)?;
+        let sources = prompt_input_sources(input, output, value_type, cardinality)?;
+        let command_input = CommandInput {
+            name,
+            value_type,
+            cardinality,
+            sources,
+        };
+        command_input.validate()?;
+        inputs.push(command_input);
+    }
+    Ok(inputs)
 }
 
 fn prompt(input: &mut dyn BufRead, output: &mut dyn Write, label: &str) -> Result<String> {
@@ -355,6 +375,68 @@ fn prompt_record_fields(input: &mut dyn BufRead, output: &mut dyn Write) -> Resu
         "summary,count",
     )?;
     parse_record_fields(&value)
+}
+
+fn prompt_input_value_type(
+    input: &mut dyn BufRead,
+    output: &mut dyn Write,
+) -> Result<InputValueType> {
+    let value = prompt_default(input, output, "  Type (string/bool/path)", "string")?;
+    match value.as_str() {
+        "string" => Ok(InputValueType::String),
+        "bool" => Ok(InputValueType::Bool),
+        "path" => Ok(InputValueType::Path),
+        _ => bail!("input type must be string, bool, or path"),
+    }
+}
+
+fn prompt_input_cardinality(
+    input: &mut dyn BufRead,
+    output: &mut dyn Write,
+    value_type: InputValueType,
+) -> Result<InputCardinality> {
+    let default = if value_type == InputValueType::Bool {
+        "boolean"
+    } else {
+        "required"
+    };
+    let value = prompt_default(
+        input,
+        output,
+        "  Cardinality (required/optional/repeated/boolean)",
+        default,
+    )?;
+    match value.as_str() {
+        "required" => Ok(InputCardinality::Required),
+        "optional" => Ok(InputCardinality::Optional),
+        "repeated" => Ok(InputCardinality::Repeated),
+        "boolean" => Ok(InputCardinality::Boolean),
+        _ => bail!("input cardinality must be required, optional, repeated, or boolean"),
+    }
+}
+
+fn prompt_input_sources(
+    input: &mut dyn BufRead,
+    output: &mut dyn Write,
+    value_type: InputValueType,
+    cardinality: InputCardinality,
+) -> Result<Vec<InputSource>> {
+    let default = if value_type == InputValueType::String
+        && matches!(
+            cardinality,
+            InputCardinality::Required | InputCardinality::Optional
+        ) {
+        "argument,file,stdin"
+    } else {
+        "argument"
+    };
+    let value = prompt_default(
+        input,
+        output,
+        "  Sources in precedence order (argument,file,stdin)",
+        default,
+    )?;
+    parse_input_sources(&value)
 }
 
 fn write_review(spec: &ProjectSpec, output: &mut dyn Write) -> Result<()> {
@@ -582,6 +664,30 @@ fn parse_record_fields(value: &str) -> Result<Vec<String>> {
     Ok(fields)
 }
 
+fn parse_input_sources(value: &str) -> Result<Vec<InputSource>> {
+    let mut sources = Vec::new();
+    for source in value
+        .split(',')
+        .map(str::trim)
+        .filter(|part| !part.is_empty())
+    {
+        let parsed = match source {
+            "argument" | "arg" => InputSource::Argument,
+            "file" => InputSource::File,
+            "stdin" | "piped stdin" => InputSource::Stdin,
+            _ => bail!("input source must be argument, file, or stdin"),
+        };
+        if sources.contains(&parsed) {
+            bail!("input source {source} is declared more than once");
+        }
+        sources.push(parsed);
+    }
+    if sources.is_empty() {
+        bail!("at least one input source is required");
+    }
+    Ok(sources)
+}
+
 fn validate_result_fields(shape: ResultShape, fields: &[String]) -> Result<()> {
     match shape {
         ResultShape::Message if !fields.is_empty() => {
@@ -661,6 +767,22 @@ fn core_primary_value(spec: &ProjectSpec) -> String {
     }
 }
 
+fn core_unused_inputs(spec: &ProjectSpec) -> String {
+    let names = spec
+        .inputs
+        .iter()
+        .skip(1)
+        .map(|input| format!("&{}", input.name))
+        .collect::<Vec<_>>();
+    if names.is_empty() {
+        String::new()
+    } else if names.len() == 1 {
+        format!("let _ = {};", names[0])
+    } else {
+        format!("let _ = ({});", names.join(", "))
+    }
+}
+
 fn result_fields(spec: &ProjectSpec, visibility: &str) -> String {
     match spec.result_shape {
         ResultShape::Message => format!("    {visibility}message: String,"),
@@ -707,9 +829,14 @@ fn view_from_fields(spec: &ProjectSpec) -> String {
 }
 
 fn core_valid_assertions(spec: &ProjectSpec) -> String {
+    let sample = match spec.inputs[0].value_type {
+        InputValueType::Path => "config.toml",
+        _ => "Standout",
+    };
     match spec.result_shape {
         ResultShape::Message => {
-            "        assert_eq!(result.message, \"Processed Standout\");".into()
+            let expected = expected_first_field(spec, sample).1;
+            format!("        assert_eq!(result.message, {});", quote(&expected))
         }
         ResultShape::Record => spec
             .record_fields
@@ -762,26 +889,58 @@ fn core_sample_result(spec: &ProjectSpec) -> String {
     }
 }
 
-fn core_blank_assertion(spec: &ProjectSpec) -> String {
+fn core_invalid_test(spec: &ProjectSpec) -> String {
+    let Some(index) = spec.inputs.iter().position(|input| {
+        input.value_type == InputValueType::String
+            && input.cardinality == InputCardinality::Required
+    }) else {
+        return format!(
+            r#"    #[test]
+    fn configured_inputs_are_accepted_by_the_core() {{
+        let result = {}
+        .unwrap();
+
+        assert_eq!(result, result.clone());
+    }}"#,
+            core_test_call(spec, false)
+        );
+    };
+
     if spec.inputs.len() == 1 {
-        format!(
-            "        assert_eq!({}({}), Err(CoreError::EmptyInput));",
+        return format!(
+            r#"    #[test]
+    fn invalid_required_string_is_rejected_by_the_core() {{
+        assert_eq!({}({}), Err(CoreError::EmptyInput));
+    }}"#,
             spec.operation_name,
             core_test_arg(&spec.inputs[0], true)
-        )
-    } else {
-        let args = spec
-            .inputs
-            .iter()
-            .enumerate()
-            .map(|(index, input)| format!("                {},", core_test_arg(input, index == 0)))
-            .collect::<Vec<_>>()
-            .join("\n");
-        format!(
-            "        assert_eq!(\n            {}(\n{args}\n            ),\n            Err(CoreError::EmptyInput)\n        );",
-            spec.operation_name
-        )
+        );
     }
+
+    let args = spec
+        .inputs
+        .iter()
+        .enumerate()
+        .map(|(input_index, input)| {
+            format!(
+                "                {},",
+                core_test_arg(input, input_index == index)
+            )
+        })
+        .collect::<Vec<_>>()
+        .join("\n");
+    format!(
+        r#"    #[test]
+    fn invalid_required_string_is_rejected_by_the_core() {{
+        assert_eq!(
+            {}(
+{args}
+            ),
+            Err(CoreError::EmptyInput)
+        );
+    }}"#,
+        spec.operation_name
+    )
 }
 
 fn core_test_arg(input: &CommandInput, blank: bool) -> String {
@@ -818,14 +977,24 @@ fn core_test_arg(input: &CommandInput, blank: bool) -> String {
 }
 
 fn handler_expected_fields(spec: &ProjectSpec) -> String {
+    let expected = expected_first_field(spec, "hello");
     result_field_names(spec)
         .into_iter()
         .map(|field| match field.as_str() {
             "message" | "summary" => {
-                format!("                {field}: \"Processed hello\".into(),")
+                format!("                {field}: {}.into(),", quote(&expected.1))
             }
-            "count" | "length" => format!("                {field}: \"5\".into(),"),
-            _ => format!("                {field}: \"hello\".into(),"),
+            "count" | "length" => {
+                let value = expected_primary_text(&spec.inputs[0], "hello")
+                    .chars()
+                    .count()
+                    .to_string();
+                format!("                {field}: {}.into(),", quote(&value))
+            }
+            _ => {
+                let value = expected_primary_text(&spec.inputs[0], "hello");
+                format!("                {field}: {}.into(),", quote(&value))
+            }
         })
         .collect::<Vec<_>>()
         .join("\n")
@@ -849,12 +1018,155 @@ fn template_body(spec: &ProjectSpec) -> String {
 
 fn expected_first_field(spec: &ProjectSpec, input: &str) -> (String, String) {
     let field = result_field_names(spec).remove(0);
+    let input = expected_primary_text(&spec.inputs[0], input);
     let value = match field.as_str() {
         "message" | "summary" => format!("Processed {input}"),
         "count" | "length" => input.chars().count().to_string(),
-        _ => input.to_string(),
+        _ => input,
     };
     (field, value)
+}
+
+fn expected_primary_text(input: &CommandInput, value: &str) -> String {
+    match (input.value_type, input.cardinality) {
+        (InputValueType::String, InputCardinality::Required) => value.to_string(),
+        (InputValueType::String, InputCardinality::Optional) => format!("Some(\"{value}\")"),
+        (InputValueType::String, InputCardinality::Repeated) => {
+            format!("[\"{value}\", \"extra\"]")
+        }
+        (InputValueType::Bool, InputCardinality::Boolean) => "true".into(),
+        (InputValueType::Path, InputCardinality::Required) => format!("\"{value}\""),
+        (InputValueType::Path, InputCardinality::Optional) => format!("Some(\"{value}\")"),
+        (InputValueType::Path, InputCardinality::Repeated) => {
+            format!("[\"{value}\", \"extra.toml\"]")
+        }
+        _ => unreachable!("validated input combinations are renderable"),
+    }
+}
+
+fn sample_cli_args(spec: &ProjectSpec, primary_value: &str) -> Vec<String> {
+    let mut args = vec![
+        quote(&spec.executable_name),
+        quote(&spec.command_name),
+        quote("--output"),
+        quote("text"),
+    ];
+    args.extend(sample_command_args(spec, primary_value, false));
+    args
+}
+
+fn sample_json_cli_args(spec: &ProjectSpec, primary_value: &str) -> Vec<String> {
+    let mut args = vec![
+        quote(&spec.executable_name),
+        quote(&spec.command_name),
+        quote("--output"),
+        quote("json"),
+    ];
+    args.extend(sample_command_args(
+        spec,
+        primary_value,
+        !primary_can_use_argument(spec),
+    ));
+    args
+}
+
+fn sample_handler_args(spec: &ProjectSpec) -> Vec<String> {
+    let mut args = vec![quote(&spec.executable_name), quote(&spec.command_name)];
+    args.extend(sample_command_args(spec, "hello", false));
+    args
+}
+
+fn sample_command_args(
+    spec: &ProjectSpec,
+    primary_value: &str,
+    omit_stdin_primary: bool,
+) -> Vec<String> {
+    let mut args = Vec::new();
+    for (index, input) in spec.inputs.iter().enumerate() {
+        if omit_stdin_primary && index == 0 {
+            continue;
+        }
+        args.extend(input.sample_args(if index == 0 { primary_value } else { "sample" }));
+    }
+    args
+}
+
+fn primary_can_use_argument(spec: &ProjectSpec) -> bool {
+    spec.inputs[0].sources.contains(&InputSource::Argument)
+}
+
+fn primary_can_use_stdin(spec: &ProjectSpec) -> bool {
+    spec.inputs[0].sources.contains(&InputSource::Stdin)
+}
+
+fn generated_json_pipeline_test(spec: &ProjectSpec) -> String {
+    let primary_value = if primary_can_use_stdin(spec) {
+        "Grace"
+    } else {
+        match spec.inputs[0].value_type {
+            InputValueType::Path => "config.toml",
+            _ => "Grace",
+        }
+    };
+    let (field, expected) = expected_first_field(spec, primary_value);
+    let args = if primary_can_use_stdin(spec) {
+        sample_json_cli_args(spec, "Grace")
+    } else {
+        sample_json_cli_args(spec, primary_value)
+    };
+    let harness = if primary_can_use_stdin(spec) {
+        "TestHarness::new().no_color().piped_stdin(\"Grace\\n\")"
+    } else {
+        "TestHarness::new().no_color()"
+    };
+    format!(
+        r#"    #[test]
+    #[serial]
+    fn pipeline_serializes_json_for_configured_inputs() {{
+        let app = build_app().unwrap();
+
+        let result = {harness}.run(
+            &app,
+            cli::command(),
+            {args},
+        );
+
+        result.assert_success();
+        let value: Value = serde_json::from_str(result.stdout()).unwrap();
+        assert_eq!(value["{field}"], {expected});
+    }}"#,
+        args = rust_array(&args, 16, 70),
+        expected = quote(&expected)
+    )
+}
+
+fn readme_input_policy(spec: &ProjectSpec) -> String {
+    spec.inputs
+        .iter()
+        .map(|input| format!("- {}.", input.policy_sentence()))
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
+fn quote(value: &str) -> String {
+    format!("{value:?}")
+}
+
+fn rust_array(items: &[String], indent: usize, max_inline_len: usize) -> String {
+    let inline = format!("[{}]", items.join(", "));
+    if inline.len() <= max_inline_len {
+        return inline;
+    }
+    let spaces = " ".repeat(indent);
+    let mut output = String::from("[\n");
+    for item in items {
+        output.push_str(&spaces);
+        output.push_str(item);
+        output.push_str(",\n");
+    }
+    output.push_str(&" ".repeat(indent.saturating_sub(4)));
+    output.push(']');
+    output
 }
 
 impl CommandInput {
@@ -919,6 +1231,36 @@ impl CommandInput {
         args
     }
 
+    fn sample_args(&self, primary_value: &str) -> Vec<String> {
+        let long = format!("--{}", self.name.replace('_', "-"));
+        match (self.value_type, self.cardinality) {
+            (InputValueType::Bool, InputCardinality::Boolean) => vec![quote(&long)],
+            (InputValueType::String, InputCardinality::Required | InputCardinality::Optional) => {
+                if self.sources.contains(&InputSource::Argument) {
+                    vec![quote(&long), quote(primary_value)]
+                } else {
+                    Vec::new()
+                }
+            }
+            (InputValueType::String, InputCardinality::Repeated) => vec![
+                quote(&long),
+                quote(primary_value),
+                quote(&long),
+                quote("extra"),
+            ],
+            (InputValueType::Path, InputCardinality::Required | InputCardinality::Optional) => {
+                vec![quote(&long), quote(primary_value)]
+            }
+            (InputValueType::Path, InputCardinality::Repeated) => vec![
+                quote(&long),
+                quote(primary_value),
+                quote(&long),
+                quote("extra.toml"),
+            ],
+            _ => unreachable!("validated input combinations are renderable"),
+        }
+    }
+
     fn core_call_arg(&self) -> String {
         self.name.clone()
     }
@@ -942,7 +1284,7 @@ impl CommandInput {
                 format!("let {} = matches.get_flag(\"{}\");", self.name, self.name)
             }
             (InputValueType::Path, InputCardinality::Required) => format!(
-                "let {} = matches.get_one::<std::path::PathBuf>(\"{}\").cloned().ok_or_else(|| anyhow::anyhow!(\"{} is required\"))?;",
+                "let {} = matches\n        .get_one::<std::path::PathBuf>(\"{}\")\n        .cloned()\n        .ok_or_else(|| anyhow::anyhow!(\"{} is required\"))?;",
                 self.name, self.name, self.name
             ),
             (InputValueType::Path, InputCardinality::Optional) => format!(
@@ -958,19 +1300,16 @@ impl CommandInput {
                 self.name, self.name
             ),
             (InputValueType::String, InputCardinality::Optional) => {
-                self.string_resolver("None")
+                self.string_resolver(false)
             }
             (InputValueType::String, InputCardinality::Required) => {
-                self.string_resolver(&format!(
-                    "return Err(anyhow::anyhow!(\"{} is required\"))",
-                    self.name
-                ))
+                self.string_resolver(true)
             }
             _ => unreachable!("validated input combinations are renderable"),
         }
     }
 
-    fn string_resolver(&self, missing: &str) -> String {
+    fn string_resolver(&self, required: bool) -> String {
         let mut lines = vec![format!("let mut {} = None;", self.name)];
         for source in &self.sources {
             match source {
@@ -988,10 +1327,12 @@ impl CommandInput {
                 )),
             }
         }
-        lines.push(format!(
-            "let {} = match {} {{\n        Some(value) => value,\n        None => {missing},\n    }};",
-            self.name, self.name
-        ));
+        if required {
+            lines.push(format!(
+                "let {} = match {} {{\n        Some(value) => value,\n        None => return Err(anyhow::anyhow!(\"{} is required\")),\n    }};",
+                self.name, self.name, self.name
+            ));
+        }
         lines.join("\n    ")
     }
 }
@@ -1026,6 +1367,7 @@ fn model(spec: &ProjectSpec) -> minijinja::Value {
         core_fn_signature => core_fn_signature(spec),
         core_call_args => spec.inputs.iter().map(CommandInput::core_call_arg).collect::<Vec<_>>().join(", "),
         core_validations => spec.inputs.iter().filter_map(CommandInput::core_validation).collect::<Vec<_>>().join("\n    "),
+        core_unused_inputs => core_unused_inputs(spec),
         cli_args => spec.inputs.iter().map(CommandInput::cli_arg).collect::<Vec<_>>().join("\n        "),
         resolve_inputs => spec.inputs.iter().map(CommandInput::resolve_statement).collect::<Vec<_>>().join("\n    "),
         lib_crate => spec.lib_crate,
@@ -1040,12 +1382,15 @@ fn model(spec: &ProjectSpec) -> minijinja::Value {
         view_from_fields => view_from_fields(spec),
         core_valid_assertions => core_valid_assertions(spec),
         core_sample_result => core_sample_result(spec),
-        core_blank_assertion => core_blank_assertion(spec),
+        core_invalid_test => core_invalid_test(spec),
         handler_expected_fields => handler_expected_fields(spec),
+        pipeline_human_args => rust_array(&sample_cli_args(spec, "Ada"), 16, 70),
+        pipeline_json_test => generated_json_pipeline_test(spec),
+        handler_args => rust_array(&sample_handler_args(spec), 16, 60),
         template_body => template_body(spec),
-        human_expected => expected_first_field(spec, "Ada").1,
-        json_field => expected_first_field(spec, "Grace").0,
-        json_expected => expected_first_field(spec, "Grace").1,
+        human_expected => quote(&expected_first_field(spec, "Ada").1),
+        readme_input_policy => readme_input_policy(spec),
+        command_syntax => spec.inputs.iter().map(command_syntax_fragment).collect::<Vec<_>>().join(" "),
         standout_version => spec.standout_version,
         local_patch_root => spec.local_patch_root.as_ref().map(|path| path.display().to_string()),
     }
@@ -1118,7 +1463,12 @@ pub enum CoreError {
 /// The caller supplies explicit values. This crate deliberately has no Clap,
 /// Standout, template, terminal, environment, or CLI-view dependencies.
 pub fn {{ operation_name }}{{ core_fn_signature }} -> Result<{{ view_name }}, CoreError> {
+{%- if core_validations %}
     {{ core_validations }}
+{%- endif %}
+{%- if core_unused_inputs %}
+    {{ core_unused_inputs }}
+{%- endif %}
     let primary = {{ core_primary_value }};
     Ok({{ view_name }} {
 {{ result_init }}
@@ -1136,10 +1486,7 @@ mod tests {
 {{ core_valid_assertions }}
     }
 
-    #[test]
-    fn blank_input_is_rejected_by_the_core() {
-{{ core_blank_assertion }}
-    }
+{{ core_invalid_test }}
 }
 "#,
     ),
@@ -1205,28 +1552,14 @@ mod tests {
         let result = TestHarness::new().no_color().run(
             &app,
             cli::command(),
-            ["{{ executable_name }}", "{{ command_name }}", "--{{ input_name }}", "Ada"],
+            {{ pipeline_human_args }},
         );
 
         result.assert_success();
-        result.assert_stdout_contains("{{ human_expected }}");
+        result.assert_stdout_contains({{ human_expected }});
     }
 
-    #[test]
-    #[serial]
-    fn pipeline_reads_piped_stdin_and_serializes_json() {
-        let app = build_app().unwrap();
-
-        let result = TestHarness::new().no_color().piped_stdin("Grace\n").run(
-            &app,
-            cli::command(),
-            ["{{ executable_name }}", "{{ command_name }}", "--output", "json"],
-        );
-
-        result.assert_success();
-        let value: Value = serde_json::from_str(result.stdout()).unwrap();
-        assert_eq!(value["{{ json_field }}"], "{{ json_expected }}");
-    }
+{{ pipeline_json_test }}
 }
 "#,
     ),
@@ -1298,7 +1631,7 @@ mod tests {
     #[test]
     fn typed_handler_maps_input_to_core_and_view() {
         let matches = crate::cli::command()
-            .try_get_matches_from(["{{ executable_name }}", "{{ command_name }}", "--{{ input_name }}", "hello"])
+            .try_get_matches_from({{ handler_args }})
             .unwrap();
         let (_, matches) = matches.subcommand().unwrap();
         let ctx = CommandContext::default();
@@ -1343,8 +1676,17 @@ cargo run -p {{ executable_name }} -- {{ command_name }} --{{ input_name }} VALU
 cargo run -p {{ executable_name }} -- {{ command_name }} --{{ input_name }} VALUE --output json
 ```
 
-`{{ input_name }}` is resolved according to the input policy reviewed by the
-wizard, and blank required string values are rejected by the core operation.
+Command syntax:
+
+```text
+{{ executable_name }} {{ command_name }} {{ command_syntax }}
+```
+
+Input policy:
+
+{{ readme_input_policy }}
+
+Blank required string values are rejected by the core operation.
 
 The generated `{{ result_shape }}` result is intentionally small. The handler
 maps resolved shell input into `{{ lib_crate }}::{{ operation_name }}` and maps
@@ -1367,13 +1709,22 @@ mod tests {
     use std::process::Command;
     use tempfile::TempDir;
 
+    fn required_string(name: impl Into<String>) -> CommandInput {
+        CommandInput {
+            name: name.into(),
+            value_type: InputValueType::String,
+            cardinality: InputCardinality::Required,
+            sources: vec![InputSource::Argument, InputSource::File, InputSource::Stdin],
+        }
+    }
+
     fn sample_spec(root: &Path) -> ProjectSpec {
         let mut spec = ProjectSpec::from_answers(WizardAnswers {
             project_name: "hello-tool".into(),
             executable_name: "hello-tool".into(),
             command_name: "greet".into(),
             command_description: "Greet one value".into(),
-            inputs: vec![CommandInput::required_string("name")],
+            inputs: vec![required_string("name")],
             result_shape: ResultShape::Record,
             record_fields: vec!["summary".into(), "count".into()],
         })
@@ -1402,13 +1753,66 @@ mod tests {
     }
 
     #[test]
+    fn questionnaire_collects_supported_input_matrix() {
+        let answers = [
+            "inspect-tool",
+            "",
+            "inspect",
+            "Inspect document input",
+            "4",
+            "document",
+            "string",
+            "required",
+            "argument,file,stdin",
+            "verbose",
+            "bool",
+            "boolean",
+            "argument",
+            "tag",
+            "string",
+            "repeated",
+            "argument",
+            "config",
+            "path",
+            "optional",
+            "argument",
+            "record",
+            "summary,count,echo",
+        ]
+        .join("\n")
+            + "\n";
+        let mut input = io::Cursor::new(answers);
+        let mut output = Vec::new();
+
+        let answers = prompt_answers(&mut input, &mut output).unwrap();
+        let spec = ProjectSpec::from_answers(answers).unwrap();
+
+        assert_eq!(spec.executable_name, "inspect-tool");
+        assert_eq!(spec.inputs.len(), 4);
+        assert_eq!(
+            spec.inputs[0].sources,
+            vec![InputSource::Argument, InputSource::File, InputSource::Stdin,]
+        );
+        assert_eq!(spec.inputs[1].value_type, InputValueType::Bool);
+        assert_eq!(spec.inputs[2].cardinality, InputCardinality::Repeated);
+        assert_eq!(spec.inputs[3].value_type, InputValueType::Path);
+    }
+
+    #[test]
+    fn input_source_aliases_cannot_declare_the_same_source_twice() {
+        let duplicate = parse_input_sources("argument,arg").unwrap_err();
+
+        assert!(duplicate.to_string().contains("declared more than once"));
+    }
+
+    #[test]
     fn project_spec_is_private_validated_model() {
         let spec = ProjectSpec::from_answers(WizardAnswers {
             project_name: "demo".into(),
             executable_name: "demo".into(),
             command_name: "inspect".into(),
             command_description: "Inspect one value".into(),
-            inputs: vec![CommandInput::required_string("document")],
+            inputs: vec![required_string("document")],
             result_shape: ResultShape::Message,
             record_fields: Vec::new(),
         })
@@ -1443,7 +1847,7 @@ mod tests {
             executable_name: "demo".into(),
             command_name: "inspect".into(),
             command_description: "Inspect one value".into(),
-            inputs: vec![CommandInput::required_string("document")],
+            inputs: vec![required_string("document")],
             result_shape: ResultShape::Record,
             record_fields: vec!["summary".into(), "summary".into()],
         })
@@ -1453,7 +1857,7 @@ mod tests {
             executable_name: "demo".into(),
             command_name: "match".into(),
             command_description: "Inspect one value".into(),
-            inputs: vec![CommandInput::required_string("document")],
+            inputs: vec![required_string("document")],
             result_shape: ResultShape::Message,
             record_fields: Vec::new(),
         })
@@ -1470,7 +1874,7 @@ mod tests {
             executable_name: "demo".into(),
             command_name: "inspect".into(),
             command_description: "Inspect one value".into(),
-            inputs: vec![CommandInput::required_string("document")],
+            inputs: vec![required_string("document")],
             result_shape: ResultShape::Message,
             record_fields: Vec::new(),
         })
@@ -1683,6 +2087,35 @@ mod tests {
         spec
     }
 
+    fn path_first_spec(root: &Path) -> ProjectSpec {
+        let mut spec = ProjectSpec::from_answers(WizardAnswers {
+            project_name: "config-tool".into(),
+            executable_name: "config-tool".into(),
+            command_name: "inspect".into(),
+            command_description: "Inspect a config path".into(),
+            inputs: vec![
+                CommandInput {
+                    name: "config".into(),
+                    value_type: InputValueType::Path,
+                    cardinality: InputCardinality::Required,
+                    sources: vec![InputSource::Argument],
+                },
+                CommandInput {
+                    name: "note".into(),
+                    value_type: InputValueType::String,
+                    cardinality: InputCardinality::Optional,
+                    sources: vec![InputSource::Argument],
+                },
+            ],
+            result_shape: ResultShape::Message,
+            record_fields: Vec::new(),
+        })
+        .unwrap();
+        spec.destination = root.join("config-tool");
+        spec.local_patch_root = Some(workspace_root());
+        spec
+    }
+
     #[test]
     fn generated_project_matrix_formats_checks_tests_and_runs() {
         let dir = TempDir::new().unwrap();
@@ -1690,8 +2123,9 @@ mod tests {
         message.result_shape = ResultShape::Message;
         message.record_fields.clear();
         let rich = rich_spec(dir.path());
+        let path_first = path_first_spec(dir.path());
 
-        for spec in [&message, &rich] {
+        for spec in [&message, &rich, &path_first] {
             publish_project(spec).unwrap();
             run_cargo(&spec.destination, ["fmt", "--check"]);
             run_cargo(&spec.destination, ["check", "--workspace"]);
