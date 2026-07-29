@@ -176,6 +176,14 @@ impl CommandInput {
         {
             bail!("{} bool inputs must use boolean cardinality", self.name);
         }
+        if self.value_type == InputValueType::Path
+            && self
+                .sources
+                .iter()
+                .any(|source| *source != InputSource::Argument)
+        {
+            bail!("{} path inputs only support argument source", self.name);
+        }
         if self.cardinality == InputCardinality::Repeated
             && self
                 .sources
@@ -558,6 +566,19 @@ impl CommandInput {
         format!("{0},", self.name)
     }
 
+    fn core_validation(&self) -> Option<String> {
+        if self.value_type == InputValueType::String
+            && self.cardinality == InputCardinality::Required
+        {
+            Some(format!(
+                "if {}.trim().is_empty() {{\n        return Err(CoreError::EmptyInput);\n    }}",
+                self.name
+            ))
+        } else {
+            None
+        }
+    }
+
     fn handler_view_field(&self) -> String {
         self.core_view_field().replace("pub ", "pub(crate) ")
     }
@@ -658,6 +679,7 @@ fn model(spec: &ProjectSpec) -> minijinja::Value {
         }).collect::<Vec<_>>(),
         core_params => spec.inputs.iter().map(core_signature_fragment).collect::<Vec<_>>().join(", "),
         core_call_args => spec.inputs.iter().map(CommandInput::core_call_arg).collect::<Vec<_>>().join(", "),
+        core_validations => spec.inputs.iter().filter_map(CommandInput::core_validation).collect::<Vec<_>>().join("\n    "),
         cli_args => spec.inputs.iter().map(CommandInput::cli_arg).collect::<Vec<_>>().join("\n        "),
         core_view_fields => spec.inputs.iter().map(CommandInput::core_view_field).collect::<Vec<_>>().join("\n    "),
         core_view_inits => spec.inputs.iter().map(CommandInput::core_view_init).collect::<Vec<_>>().join("\n        "),
@@ -741,9 +763,7 @@ pub enum CoreError {
 /// Standout, template, terminal, environment, or CLI-view dependencies.
 pub fn {{ operation_name }}({{ core_params }}) -> Result<{{ view_name }}, CoreError> {
     let summary = format!("{:?}", (&{{ core_call_args }}));
-    if {{ input_name }}.trim().is_empty() {
-        return Err(CoreError::EmptyInput);
-    }
+    {{ core_validations }}
     Ok({{ view_name }} { {{ core_view_inits }} summary })
 }
 
@@ -1098,6 +1118,50 @@ mod tests {
         assert!(error
             .to_string()
             .contains("bool inputs must use boolean cardinality"));
+
+        let error = ProjectSpec::from_answers(WizardAnswers {
+            project_name: "demo".into(),
+            executable_name: "demo".into(),
+            command_name: "inspect".into(),
+            command_description: "Inspect one value".into(),
+            inputs: vec![CommandInput {
+                name: "config".into(),
+                value_type: InputValueType::Path,
+                cardinality: InputCardinality::Required,
+                sources: vec![InputSource::Argument, InputSource::File],
+            }],
+        })
+        .unwrap_err();
+
+        assert!(error
+            .to_string()
+            .contains("path inputs only support argument source"));
+    }
+
+    #[test]
+    fn path_input_rendering_does_not_emit_string_validation() {
+        let spec = ProjectSpec::from_answers(WizardAnswers {
+            project_name: "demo".into(),
+            executable_name: "demo".into(),
+            command_name: "inspect".into(),
+            command_description: "Inspect one value".into(),
+            inputs: vec![CommandInput {
+                name: "config".into(),
+                value_type: InputValueType::Path,
+                cardinality: InputCardinality::Required,
+                sources: vec![InputSource::Argument],
+            }],
+        })
+        .unwrap();
+
+        let generated = GeneratedFiles::render(&spec).unwrap();
+        let core = generated
+            .files
+            .get(Path::new("crates/demolib/src/lib.rs"))
+            .unwrap();
+
+        assert!(core.contains("config: std::path::PathBuf"));
+        assert!(!core.contains("config.trim()"));
     }
 
     #[test]
