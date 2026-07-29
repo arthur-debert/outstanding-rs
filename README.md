@@ -96,6 +96,19 @@ No subprocess. No stdout plumbing. Env vars, cwd, stdin, clipboard, terminal wid
 cargo add standout
 ```
 
+To start a new production-shaped workspace, install the package's project tool
+and run its interactive wizard:
+
+```bash
+cargo install standout
+standout new-project
+```
+
+The wizard generates a CLI-free library, a Standout binary, one complete
+command, presentation assets, and layered tests. See
+**[Bootstrap a Standout project](https://standout.magik.works/guides/bootstrap-a-project.html)**
+for the supported input types, cardinalities, and sources.
+
 ## Quick Example
 
 ```rust
@@ -127,6 +140,7 @@ myapp list --output json    # JSON for scripting
 You can find comprehensive documentation in our book: **[standout.magik.works](https://standout.magik.works/)**
 
 - [Introduction to Testing](https://standout.magik.works/guides/intro-to-testing.html) — The primary value prop: why Standout CLIs are testable end-to-end, in-process, without subprocess spawning
+- [Bootstrap a Standout project](https://standout.magik.works/guides/bootstrap-a-project.html) — Generate a production-shaped two-crate starter with one runnable command and layered tests
 - [Introduction to Standout](https://standout.magik.works/guides/intro-to-standout.html) — Adopting the framework in an existing CLI
 - [Rendering System](https://standout.magik.works/topics/rendering-system.html) — Templates and styles
 - [Tabular Layouts](https://standout.magik.works/topics/tabular.html) — Tables and alignment

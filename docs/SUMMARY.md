@@ -6,6 +6,7 @@
 
 ## Getting Started
 
+- [Bootstrap a Standout project](./guides/bootstrap-a-project.md)
 - [Minimal single-crate example](./guides/minimal-single-crate.md)
 - [Production-shaped application](./guides/production-shaped-example.md)
 - [Leveraging Standout checklist](./guides/leveraging-standout.md)
