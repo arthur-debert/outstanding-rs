@@ -1,0 +1,3 @@
+# Use a Resource descriptor with derivable defaults
+
+The dedicated Resource descriptor is the architectural seam: its associated types define the create, patch, stored/read, query, and action shapes consumed by Resource behavior, adapters, and generated commands. An ordinary derive generates the descriptor plus routine create, patch, and query types for the common case, while applications may override any associated type individually for advanced domain models or remote Resources. This hybrid keeps routine declarations compact without making generated types mandatory or forcing advanced Resources to replace the entire descriptor.
