@@ -44,15 +44,9 @@ struct WizardAnswers {
     executable_name: String,
     command_name: String,
     command_description: String,
-    input_name: String,
+    inputs: Vec<CommandInput>,
     result_shape: ResultShape,
     record_fields: Vec<String>,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum ResultShape {
-    Message,
-    Record,
 }
 
 #[derive(Debug, Clone)]
@@ -61,7 +55,7 @@ struct ProjectSpec {
     executable_name: String,
     command_name: String,
     command_description: String,
-    input_name: String,
+    inputs: Vec<CommandInput>,
     result_shape: ResultShape,
     record_fields: Vec<String>,
     lib_crate: String,
@@ -72,12 +66,64 @@ struct ProjectSpec {
     local_patch_root: Option<PathBuf>,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct CommandInput {
+    name: String,
+    value_type: InputValueType,
+    cardinality: InputCardinality,
+    sources: Vec<InputSource>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[allow(dead_code)]
+enum InputValueType {
+    String,
+    Bool,
+    Path,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[allow(dead_code)]
+enum InputCardinality {
+    Required,
+    Optional,
+    Repeated,
+    Boolean,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum InputSource {
+    Argument,
+    File,
+    Stdin,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ResultShape {
+    Message,
+    Record,
+}
+
+impl ResultShape {
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::Message => "message",
+            Self::Record => "record",
+        }
+    }
+}
+
 impl ProjectSpec {
     fn from_answers(answers: WizardAnswers) -> Result<Self> {
         validate_crate_name(&answers.project_name, "project name")?;
         validate_crate_name(&answers.executable_name, "executable name")?;
         validate_ident(&answers.command_name.replace('-', "_"), "command name")?;
-        validate_ident(&answers.input_name, "input name")?;
+        if answers.inputs.is_empty() {
+            bail!("at least one command input is required");
+        }
+        for input in &answers.inputs {
+            input.validate()?;
+        }
         validate_result_fields(answers.result_shape, &answers.record_fields)?;
         if answers.command_description.trim().is_empty() {
             bail!("command description cannot be empty");
@@ -93,7 +139,7 @@ impl ProjectSpec {
             executable_name: answers.executable_name,
             command_name: answers.command_name,
             command_description: answers.command_description,
-            input_name: answers.input_name,
+            inputs: answers.inputs,
             result_shape: answers.result_shape,
             record_fields: answers.record_fields,
             lib_crate,
@@ -126,12 +172,67 @@ impl ProjectSpec {
     }
 }
 
-impl ResultShape {
-    fn as_str(self) -> &'static str {
-        match self {
-            ResultShape::Message => "message",
-            ResultShape::Record => "record",
+impl CommandInput {
+    fn required_string(name: impl Into<String>) -> Self {
+        Self {
+            name: name.into(),
+            value_type: InputValueType::String,
+            cardinality: InputCardinality::Required,
+            sources: vec![InputSource::Argument, InputSource::File, InputSource::Stdin],
         }
+    }
+
+    fn validate(&self) -> Result<()> {
+        validate_ident(&self.name, "input name")?;
+        if self.sources.is_empty() {
+            bail!("{} must allow at least one input source", self.name);
+        }
+        if self.cardinality == InputCardinality::Boolean {
+            if self.value_type != InputValueType::Bool {
+                bail!("{} uses boolean cardinality but is not bool", self.name);
+            }
+            if self.sources != [InputSource::Argument] {
+                bail!("{} boolean flags only support argument source", self.name);
+            }
+        }
+        if self.value_type == InputValueType::Bool && self.cardinality != InputCardinality::Boolean
+        {
+            bail!("{} bool inputs must use boolean cardinality", self.name);
+        }
+        if self.value_type == InputValueType::Path
+            && self
+                .sources
+                .iter()
+                .any(|source| *source != InputSource::Argument)
+        {
+            bail!("{} path inputs only support argument source", self.name);
+        }
+        if self.cardinality == InputCardinality::Repeated
+            && self
+                .sources
+                .iter()
+                .any(|source| *source != InputSource::Argument)
+        {
+            bail!("{} repeated inputs only support argument source", self.name);
+        }
+        Ok(())
+    }
+
+    fn policy_sentence(&self) -> String {
+        let sources = self
+            .sources
+            .iter()
+            .map(|source| match source {
+                InputSource::Argument if self.cardinality == InputCardinality::Boolean => {
+                    format!("--{}", self.name.replace('_', "-"))
+                }
+                InputSource::Argument => format!("--{}", self.name.replace('_', "-")),
+                InputSource::File => format!("--{}-file", self.name.replace('_', "-")),
+                InputSource::Stdin => "piped stdin".to_string(),
+            })
+            .collect::<Vec<_>>()
+            .join(", then ");
+        format!("{} comes from {sources}", self.name)
     }
 }
 
@@ -180,21 +281,20 @@ fn prompt_answers(input: &mut dyn BufRead, output: &mut dyn Write) -> Result<Wiz
     }
 
     let input_name = prompt(input, output, "Required string input name")?;
-    validate_ident(&input_name, "input name")?;
-
+    let command_input = CommandInput::required_string(input_name);
+    command_input.validate()?;
     let result_shape = prompt_result_shape(input, output)?;
     let record_fields = match result_shape {
         ResultShape::Message => Vec::new(),
         ResultShape::Record => prompt_record_fields(input, output)?,
     };
-    validate_result_fields(result_shape, &record_fields)?;
 
     Ok(WizardAnswers {
         project_name,
         executable_name,
         command_name,
         command_description,
-        input_name,
+        inputs: vec![command_input],
         result_shape,
         record_fields,
     })
@@ -266,18 +366,29 @@ fn write_review(spec: &ProjectSpec, output: &mut dyn Write) -> Result<()> {
     }
     writeln!(
         output,
-        "Command syntax: {} {} <{}>",
-        spec.executable_name, spec.command_name, spec.input_name
+        "Command syntax: {} {} {}",
+        spec.executable_name,
+        spec.command_name,
+        spec.inputs
+            .iter()
+            .map(command_syntax_fragment)
+            .collect::<Vec<_>>()
+            .join(" ")
     )?;
+    writeln!(output, "Input policy:")?;
+    for input in &spec.inputs {
+        writeln!(output, "  - {}.", input.policy_sentence())?;
+    }
     writeln!(
         output,
-        "Input policy: {} is required and comes from the positional argument, then piped stdin.",
-        spec.input_name
-    )?;
-    writeln!(
-        output,
-        "Core operation: {}::{}({}: String)",
-        spec.lib_crate, spec.operation_name, spec.input_name
+        "Core operation: {}::{}({})",
+        spec.lib_crate,
+        spec.operation_name,
+        spec.inputs
+            .iter()
+            .map(core_signature_fragment)
+            .collect::<Vec<_>>()
+            .join(", ")
     )?;
     writeln!(
         output,
@@ -473,11 +584,10 @@ fn parse_record_fields(value: &str) -> Result<Vec<String>> {
 
 fn validate_result_fields(shape: ResultShape, fields: &[String]) -> Result<()> {
     match shape {
-        ResultShape::Message => {
-            if !fields.is_empty() {
-                bail!("message results cannot declare record fields");
-            }
+        ResultShape::Message if !fields.is_empty() => {
+            bail!("message results cannot declare record fields");
         }
+        ResultShape::Message => {}
         ResultShape::Record => {
             if fields.is_empty() {
                 bail!("record results must declare at least one field");
@@ -508,69 +618,78 @@ fn pascal_case(value: &str) -> String {
         .collect()
 }
 
-fn render_inline(template: &str, spec: &ProjectSpec) -> Result<String> {
-    Environment::new()
-        .template_from_str(template)?
-        .render(model(spec))
-        .with_context(|| format!("path template {template} is missing model data"))
-}
-
-fn model(spec: &ProjectSpec) -> minijinja::Value {
-    context! {
-        project_name => spec.project_name,
-        executable_name => spec.executable_name,
-        command_name => spec.command_name,
-        command_ident => spec.command_name.replace('-', "_"),
-        command_variant => pascal_case(&spec.command_name.replace('-', "_")),
-        command_description => spec.command_description,
-        input_name => spec.input_name,
-        lib_crate => spec.lib_crate,
-        lib_package => spec.lib_crate.replace('_', "-"),
-        operation_name => spec.operation_name,
-        view_name => spec.view_name,
-        result_shape => spec.result_shape.as_str(),
-        core_result_fields => core_result_fields(spec),
-        core_result_init => core_result_init(spec),
-        core_valid_assertions => core_valid_assertions(spec),
-        cli_view_fields => cli_view_fields(spec),
-        cli_view_from_fields => cli_view_from_fields(spec),
-        handler_expected_fields => handler_expected_fields(spec),
-        template_body => template_body(spec),
-        human_assertions => human_assertions(spec),
-        json_assertions => json_assertions(spec),
-        standout_version => spec.standout_version,
-        local_patch_root => spec.local_patch_root.as_ref().map(|path| path.display().to_string()),
+fn command_syntax_fragment(input: &CommandInput) -> String {
+    match input.cardinality {
+        InputCardinality::Boolean => format!("[--{}]", input.name.replace('_', "-")),
+        InputCardinality::Required => {
+            format!("--{} <{}>", input.name.replace('_', "-"), input.name)
+        }
+        InputCardinality::Optional => {
+            format!("[--{} <{}>]", input.name.replace('_', "-"), input.name)
+        }
+        InputCardinality::Repeated => {
+            format!("[--{} <{}>]...", input.name.replace('_', "-"), input.name)
+        }
     }
 }
 
-fn core_result_fields(spec: &ProjectSpec) -> String {
+fn core_signature_fragment(input: &CommandInput) -> String {
+    format!("{}: {}", input.name, input.rust_type())
+}
+
+fn core_primary_value(spec: &ProjectSpec) -> String {
+    let primary = &spec.inputs[0];
+    match (primary.value_type, primary.cardinality) {
+        (InputValueType::String, InputCardinality::Required) => {
+            format!("{}.trim().to_string()", primary.name)
+        }
+        _ => format!("format!(\"{{:?}}\", &{})", primary.name),
+    }
+}
+
+fn result_fields(spec: &ProjectSpec, visibility: &str) -> String {
     match spec.result_shape {
-        ResultShape::Message => "    pub message: String,".into(),
+        ResultShape::Message => format!("    {visibility}message: String,"),
         ResultShape::Record => spec
             .record_fields
             .iter()
-            .map(|field| format!("    pub {field}: String,"))
+            .map(|field| format!("    {visibility}{field}: String,"))
             .collect::<Vec<_>>()
             .join("\n"),
     }
 }
 
-fn core_result_init(spec: &ProjectSpec) -> String {
+fn result_init(spec: &ProjectSpec) -> String {
     match spec.result_shape {
-        ResultShape::Message => "        message: format!(\"Processed {normalized}\"),".into(),
+        ResultShape::Message => "        message: format!(\"Processed {primary}\"),".into(),
         ResultShape::Record => spec
             .record_fields
             .iter()
             .map(|field| match field.as_str() {
-                "summary" => "        summary: format!(\"Processed {normalized}\"),".into(),
+                "summary" => "        summary: format!(\"Processed {primary}\"),".into(),
                 "count" | "length" => {
-                    format!("        {field}: normalized.chars().count().to_string(),")
+                    format!("        {field}: primary.chars().count().to_string(),")
                 }
-                other => format!("        {other}: normalized.clone(),"),
+                other => format!("        {other}: primary.clone(),"),
             })
             .collect::<Vec<_>>()
             .join("\n"),
     }
+}
+
+fn result_field_names(spec: &ProjectSpec) -> Vec<String> {
+    match spec.result_shape {
+        ResultShape::Message => vec!["message".into()],
+        ResultShape::Record => spec.record_fields.clone(),
+    }
+}
+
+fn view_from_fields(spec: &ProjectSpec) -> String {
+    result_field_names(spec)
+        .into_iter()
+        .map(|field| format!("            {field}: value.{field},"))
+        .collect::<Vec<_>>()
+        .join("\n")
 }
 
 fn core_valid_assertions(spec: &ProjectSpec) -> String {
@@ -591,36 +710,18 @@ fn core_valid_assertions(spec: &ProjectSpec) -> String {
     }
 }
 
-fn cli_view_fields(spec: &ProjectSpec) -> String {
-    core_result_fields(spec).replace("pub ", "pub(crate) ")
-}
-
-fn cli_view_from_fields(spec: &ProjectSpec) -> String {
-    let fields: Vec<_> = match spec.result_shape {
-        ResultShape::Message => vec!["message".to_string()],
-        ResultShape::Record => spec.record_fields.clone(),
-    };
-    fields
+fn handler_expected_fields(spec: &ProjectSpec) -> String {
+    result_field_names(spec)
         .into_iter()
-        .map(|field| format!("            {field}: value.{field},"))
+        .map(|field| match field.as_str() {
+            "message" | "summary" => {
+                format!("                {field}: \"Processed hello\".into(),")
+            }
+            "count" | "length" => format!("                {field}: \"5\".into(),"),
+            _ => format!("                {field}: \"hello\".into(),"),
+        })
         .collect::<Vec<_>>()
         .join("\n")
-}
-
-fn handler_expected_fields(spec: &ProjectSpec) -> String {
-    match spec.result_shape {
-        ResultShape::Message => "                message: \"Processed hello\".into(),".into(),
-        ResultShape::Record => spec
-            .record_fields
-            .iter()
-            .map(|field| match field.as_str() {
-                "summary" => "                summary: \"Processed hello\".into(),".into(),
-                "count" | "length" => format!("                {field}: \"5\".into(),"),
-                other => format!("                {other}: \"hello\".into(),"),
-            })
-            .collect::<Vec<_>>()
-            .join("\n"),
-    }
 }
 
 fn template_body(spec: &ProjectSpec) -> String {
@@ -639,41 +740,204 @@ fn template_body(spec: &ProjectSpec) -> String {
     }
 }
 
-fn human_assertions(spec: &ProjectSpec) -> String {
-    match spec.result_shape {
-        ResultShape::Message => "        result.assert_stdout_contains(\"Processed Ada\");".into(),
-        ResultShape::Record => {
-            let field = spec
-                .record_fields
-                .first()
-                .expect("record fields are validated");
-            let expected = match field.as_str() {
-                "summary" => "Processed Ada",
-                "count" | "length" => "3",
-                _ => "Ada",
-            };
-            format!("        result.assert_stdout_contains(\"{expected}\");")
+fn expected_first_field(spec: &ProjectSpec, input: &str) -> (String, String) {
+    let field = result_field_names(spec).remove(0);
+    let value = match field.as_str() {
+        "message" | "summary" => format!("Processed {input}"),
+        "count" | "length" => input.chars().count().to_string(),
+        _ => input.to_string(),
+    };
+    (field, value)
+}
+
+impl CommandInput {
+    fn rust_type(&self) -> &'static str {
+        match (self.value_type, self.cardinality) {
+            (InputValueType::String, InputCardinality::Required) => "String",
+            (InputValueType::String, InputCardinality::Optional) => "Option<String>",
+            (InputValueType::String, InputCardinality::Repeated) => "Vec<String>",
+            (InputValueType::Bool, InputCardinality::Boolean) => "bool",
+            (InputValueType::Path, InputCardinality::Required) => "std::path::PathBuf",
+            (InputValueType::Path, InputCardinality::Optional) => "Option<std::path::PathBuf>",
+            (InputValueType::Path, InputCardinality::Repeated) => "Vec<std::path::PathBuf>",
+            _ => "String",
         }
+    }
+
+    fn cli_arg(&self) -> String {
+        let long = self.name.replace('_', "-");
+        let mut args = match (self.value_type, self.cardinality) {
+            (InputValueType::Bool, InputCardinality::Boolean) => {
+                format!("#[arg(long = \"{long}\", action = clap::ArgAction::SetTrue)]\n        {}: bool,", self.name)
+            }
+            (InputValueType::Path, InputCardinality::Required) => {
+                format!("#[arg(long = \"{long}\", value_name = \"PATH\")]\n        {}: std::path::PathBuf,", self.name)
+            }
+            (InputValueType::Path, InputCardinality::Optional) => {
+                format!("#[arg(long = \"{long}\", value_name = \"PATH\")]\n        {}: Option<std::path::PathBuf>,", self.name)
+            }
+            (InputValueType::Path, InputCardinality::Repeated) => {
+                format!("#[arg(long = \"{long}\", value_name = \"PATH\")]\n        {}: Vec<std::path::PathBuf>,", self.name)
+            }
+            (_, InputCardinality::Required) => {
+                if self.sources == [InputSource::Argument] {
+                    format!("#[arg(long = \"{long}\")]\n        {}: String,", self.name)
+                } else {
+                    format!(
+                        "#[arg(long = \"{long}\")]\n        {}: Option<String>,",
+                        self.name
+                    )
+                }
+            }
+            (_, InputCardinality::Optional) => {
+                format!(
+                    "#[arg(long = \"{long}\")]\n        {}: Option<String>,",
+                    self.name
+                )
+            }
+            (_, InputCardinality::Repeated) => {
+                format!(
+                    "#[arg(long = \"{long}\")]\n        {}: Vec<String>,",
+                    self.name
+                )
+            }
+            _ => unreachable!("validated input combinations are renderable"),
+        };
+        if self.value_type == InputValueType::String && self.sources.contains(&InputSource::File) {
+            args.push_str(&format!(
+                "\n        #[arg(long = \"{long}-file\", value_name = \"PATH\")]\n        {0}_file: Option<std::path::PathBuf>,",
+                self.name
+            ));
+        }
+        args
+    }
+
+    fn core_call_arg(&self) -> String {
+        self.name.clone()
+    }
+
+    fn core_validation(&self) -> Option<String> {
+        if self.value_type == InputValueType::String
+            && self.cardinality == InputCardinality::Required
+        {
+            Some(format!(
+                "if {}.trim().is_empty() {{\n        return Err(CoreError::EmptyInput);\n    }}",
+                self.name
+            ))
+        } else {
+            None
+        }
+    }
+
+    fn resolve_statement(&self) -> String {
+        match (self.value_type, self.cardinality) {
+            (InputValueType::Bool, InputCardinality::Boolean) => {
+                format!("let {} = matches.get_flag(\"{}\");", self.name, self.name)
+            }
+            (InputValueType::Path, InputCardinality::Required) => format!(
+                "let {} = matches.get_one::<std::path::PathBuf>(\"{}\").cloned().ok_or_else(|| anyhow::anyhow!(\"{} is required\"))?;",
+                self.name, self.name, self.name
+            ),
+            (InputValueType::Path, InputCardinality::Optional) => format!(
+                "let {} = matches.get_one::<std::path::PathBuf>(\"{}\").cloned();",
+                self.name, self.name
+            ),
+            (InputValueType::Path, InputCardinality::Repeated) => format!(
+                "let {} = matches.get_many::<std::path::PathBuf>(\"{}\").map(|values| values.cloned().collect()).unwrap_or_default();",
+                self.name, self.name
+            ),
+            (InputValueType::String, InputCardinality::Repeated) => format!(
+                "let {} = matches.get_many::<String>(\"{}\").map(|values| values.cloned().collect()).unwrap_or_default();",
+                self.name, self.name
+            ),
+            (InputValueType::String, InputCardinality::Optional) => {
+                self.string_resolver("None")
+            }
+            (InputValueType::String, InputCardinality::Required) => {
+                self.string_resolver(&format!(
+                    "return Err(anyhow::anyhow!(\"{} is required\"))",
+                    self.name
+                ))
+            }
+            _ => unreachable!("validated input combinations are renderable"),
+        }
+    }
+
+    fn string_resolver(&self, missing: &str) -> String {
+        let mut lines = vec![format!("let mut {} = None;", self.name)];
+        for source in &self.sources {
+            match source {
+                InputSource::Argument => lines.push(format!(
+                    "if {0}.is_none() {{\n        {0} = matches.get_one::<String>(\"{0}\").cloned();\n    }}",
+                    self.name
+                )),
+                InputSource::File => lines.push(format!(
+                    "if {0}.is_none() {{\n        if let Some(path) = matches.get_one::<std::path::PathBuf>(\"{0}_file\") {{\n            {0} =\n                Some(std::fs::read_to_string(path).map_err(|error| {{\n                    anyhow::anyhow!(\"failed to read {{}}: {{error}}\", path.display())\n                }})?);\n        }}\n    }}",
+                    self.name
+                )),
+                InputSource::Stdin => lines.push(format!(
+                    "if {0}.is_none() {{\n        {0} = standout_input::read_if_piped()?;\n    }}",
+                    self.name
+                )),
+            }
+        }
+        lines.push(format!(
+            "let {} = match {} {{\n        Some(value) => value,\n        None => {missing},\n    }};",
+            self.name, self.name
+        ));
+        lines.join("\n    ")
     }
 }
 
-fn json_assertions(spec: &ProjectSpec) -> String {
-    match spec.result_shape {
-        ResultShape::Message => {
-            "        assert_eq!(value[\"message\"], \"Processed Grace\");".into()
-        }
-        ResultShape::Record => {
-            let field = spec
-                .record_fields
-                .first()
-                .expect("record fields are validated");
-            let expected = match field.as_str() {
-                "summary" => "Processed Grace",
-                "count" | "length" => "5",
-                _ => "Grace",
-            };
-            format!("        assert_eq!(value[\"{field}\"], \"{expected}\");")
-        }
+fn render_inline(template: &str, spec: &ProjectSpec) -> Result<String> {
+    Environment::new()
+        .template_from_str(template)?
+        .render(model(spec))
+        .with_context(|| format!("path template {template} is missing model data"))
+}
+
+fn model(spec: &ProjectSpec) -> minijinja::Value {
+    let primary = &spec.inputs[0];
+    context! {
+        project_name => spec.project_name,
+        executable_name => spec.executable_name,
+        command_name => spec.command_name,
+        command_ident => spec.command_name.replace('-', "_"),
+        command_variant => pascal_case(&spec.command_name.replace('-', "_")),
+        command_description => spec.command_description,
+        input_name => primary.name,
+        inputs => spec.inputs.iter().map(|input| {
+            context! {
+                name => input.name,
+                cli_arg => input.cli_arg(),
+                core_call_arg => input.core_call_arg(),
+                rust_type => input.rust_type(),
+                policy => input.policy_sentence(),
+            }
+        }).collect::<Vec<_>>(),
+        core_params => spec.inputs.iter().map(core_signature_fragment).collect::<Vec<_>>().join(", "),
+        core_call_args => spec.inputs.iter().map(CommandInput::core_call_arg).collect::<Vec<_>>().join(", "),
+        core_validations => spec.inputs.iter().filter_map(CommandInput::core_validation).collect::<Vec<_>>().join("\n    "),
+        cli_args => spec.inputs.iter().map(CommandInput::cli_arg).collect::<Vec<_>>().join("\n        "),
+        resolve_inputs => spec.inputs.iter().map(CommandInput::resolve_statement).collect::<Vec<_>>().join("\n    "),
+        lib_crate => spec.lib_crate,
+        lib_package => spec.lib_crate.replace('_', "-"),
+        operation_name => spec.operation_name,
+        view_name => spec.view_name,
+        result_shape => spec.result_shape.as_str(),
+        core_primary_value => core_primary_value(spec),
+        core_result_fields => result_fields(spec, "pub "),
+        cli_view_fields => result_fields(spec, "pub(crate) "),
+        result_init => result_init(spec),
+        view_from_fields => view_from_fields(spec),
+        core_valid_assertions => core_valid_assertions(spec),
+        handler_expected_fields => handler_expected_fields(spec),
+        template_body => template_body(spec),
+        human_expected => expected_first_field(spec, "Ada").1,
+        json_field => expected_first_field(spec, "Grace").0,
+        json_expected => expected_first_field(spec, "Grace").1,
+        standout_version => spec.standout_version,
+        local_patch_root => spec.local_patch_root.as_ref().map(|path| path.display().to_string()),
     }
 }
 
@@ -743,13 +1007,11 @@ pub enum CoreError {
 ///
 /// The caller supplies explicit values. This crate deliberately has no Clap,
 /// Standout, template, terminal, environment, or CLI-view dependencies.
-pub fn {{ operation_name }}({{ input_name }}: impl Into<String>) -> Result<{{ view_name }}, CoreError> {
-    let normalized = {{ input_name }}.into().trim().to_string();
-    if normalized.is_empty() {
-        return Err(CoreError::EmptyInput);
-    }
+pub fn {{ operation_name }}({{ core_params }}) -> Result<{{ view_name }}, CoreError> {
+    {{ core_validations }}
+    let primary = {{ core_primary_value }};
     Ok({{ view_name }} {
-{{ core_result_init }}
+{{ result_init }}
     })
 }
 
@@ -759,14 +1021,14 @@ mod tests {
 
     #[test]
     fn valid_input_returns_a_typed_result() {
-        let result = {{ operation_name }}("  Standout  ").unwrap();
+        let result = {{ operation_name }}("Standout".to_string()).unwrap();
 
 {{ core_valid_assertions }}
     }
 
     #[test]
     fn blank_input_is_rejected_by_the_core() {
-        assert_eq!({{ operation_name }}("   "), Err(CoreError::EmptyInput));
+        assert_eq!({{ operation_name }}("".to_string()), Err(CoreError::EmptyInput));
     }
 }
 "#,
@@ -784,13 +1046,13 @@ clap = { version = "4", features = ["derive"] }
 serde = { version = "1", features = ["derive"] }
 standout = "{{ standout_version }}"
 standout-dispatch = "{{ standout_version }}"
+standout-input = "{{ standout_version }}"
 {{ lib_crate }} = { package = "{{ lib_package }}", path = "../{{ lib_crate }}" }
 
 [dev-dependencies]
 serde_json = "1"
 serial_test = "3"
 standout-test = "{{ standout_version }}"
-standout-input = "{{ standout_version }}"
 "#,
     ),
     (
@@ -799,7 +1061,6 @@ standout-input = "{{ standout_version }}"
 mod handlers;
 
 use anyhow::Result;
-use standout::input::{ArgSource, InputChain, StdinSource};
 use standout::{embed_styles, embed_templates};
 
 fn main() -> Result<()> {
@@ -814,13 +1075,7 @@ fn build_app() -> Result<standout::cli::App> {
         .styles(embed_styles!("src/styles"))
         .default_theme("{{ project_name }}")
         .command_with("{{ command_name }}", handlers::{{ command_ident }}__handler, |config| {
-            config.template("{{ command_name }}.jinja").input(
-                "{{ input_name }}",
-                InputChain::<String>::new()
-                    .try_source(ArgSource::new("{{ input_name }}"))
-                    .try_source(StdinSource::new())
-                    .validate(|value| !value.trim().is_empty(), "{{ input_name }} cannot be empty"),
-            )
+            config.template("{{ command_name }}.jinja")
         })?
         .build()?)
 }
@@ -837,13 +1092,14 @@ mod tests {
     fn pipeline_renders_human_output_from_argument() {
         let app = build_app().unwrap();
 
-        let result =
-            TestHarness::new()
-                .no_color()
-                .run(&app, cli::command(), ["{{ executable_name }}", "{{ command_name }}", "Ada"]);
+        let result = TestHarness::new().no_color().run(
+            &app,
+            cli::command(),
+            ["{{ executable_name }}", "{{ command_name }}", "--{{ input_name }}", "Ada"],
+        );
 
         result.assert_success();
-{{ human_assertions }}
+        result.assert_stdout_contains("{{ human_expected }}");
     }
 
     #[test]
@@ -859,44 +1115,9 @@ mod tests {
 
         result.assert_success();
         let value: Value = serde_json::from_str(result.stdout()).unwrap();
-{{ json_assertions }}
+        assert_eq!(value["{{ json_field }}"], "{{ json_expected }}");
     }
 }
-"#,
-    ),
-    (
-        "readme",
-        r#"# {{ executable_name }}
-
-This generated project is a Standout architecture starter, not a finished
-application. The reusable `{{ lib_crate }}` crate owns the CLI-free operation
-and validation. This binary crate owns Clap declarations, Standout wiring,
-input policy, handlers, serializable view types, templates, styles, and process
-execution.
-
-Run the generated command:
-
-```sh
-cargo run -p {{ executable_name }} -- {{ command_name }} VALUE
-cargo run -p {{ executable_name }} -- {{ command_name }} VALUE --output json
-```
-
-`{{ input_name }}` is resolved from the optional positional argument first, then
-from piped stdin, and blank values are rejected before the core operation runs.
-
-The generated `{{ result_shape }}` result is intentionally small. The handler
-maps resolved shell input into `{{ lib_crate }}::{{ operation_name }}` and maps
-the core result into the CLI-owned `{{ view_name }}`. Human output renders
-through `src/templates/{{ command_name }}.jinja` and `src/styles/{{ project_name }}.css`;
-structured output serializes the same view directly.
-
-Verify the project with:
-
-```sh
-cargo fmt --check
-cargo check --workspace
-cargo test --workspace
-```
 "#,
     ),
     (
@@ -914,8 +1135,7 @@ pub(crate) struct Cli {
 pub(crate) enum Commands {
     /// {{ command_description }}
     {{ command_variant }} {
-        #[arg(required = false)]
-        {{ input_name }}: Option<String>,
+        {{ cli_args }}
     },
 }
 
@@ -928,9 +1148,10 @@ pub(crate) fn command() -> clap::Command {
         "handlers",
         r#"#![allow(non_snake_case)]
 
+use clap::ArgMatches;
 use {{ lib_crate }} as core;
 use serde::Serialize;
-use standout::cli::{CommandContext, CommandContextInput, Output};
+use standout::cli::{CommandContext, Output};
 use standout::handler;
 
 #[derive(Debug, Serialize, PartialEq, Eq)]
@@ -941,48 +1162,38 @@ pub(crate) struct {{ view_name }} {
 impl From<core::{{ view_name }}> for {{ view_name }} {
     fn from(value: core::{{ view_name }}) -> Self {
         Self {
-{{ cli_view_from_fields }}
+{{ view_from_fields }}
         }
     }
 }
 
-/// Adapts resolved shell input into the CLI-free core operation.
+/// Adapts typed shell input into the CLI-free core operation.
 ///
-/// The handler owns the CLI view type and returns data for Standout to render
-/// or serialize; it does not print, template, or read environment state.
+/// The handler owns CLI-only source resolution, including file-content reads,
+/// then returns data for Standout to render or serialize.
 #[handler]
-pub(crate) fn {{ command_ident }}(#[ctx] ctx: &CommandContext) -> Result<Output<{{ view_name }}>, anyhow::Error> {
-    let value: &String = ctx.input("{{ input_name }}")?;
-    let result = core::{{ operation_name }}(value.clone())?;
+pub(crate) fn {{ command_ident }}(
+    #[matches] matches: &ArgMatches,
+    #[ctx] _ctx: &CommandContext,
+) -> Result<Output<{{ view_name }}>, anyhow::Error> {
+    {{ resolve_inputs }}
+    let result = core::{{ operation_name }}({{ core_call_args }})?;
     Ok(Output::Render(result.into()))
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use standout_dispatch::Extensions;
-    use standout_input::{InputSourceKind, Inputs, ResolvedInput};
-    use std::rc::Rc;
-
-    fn context_with_input(value: &str) -> CommandContext {
-        let mut ctx = CommandContext::new(Vec::new(), Rc::new(Extensions::new()));
-        let mut inputs = Inputs::new();
-        inputs.insert(
-            "{{ input_name }}",
-            ResolvedInput {
-                value: value.to_string(),
-                source: InputSourceKind::Arg,
-            },
-        );
-        ctx.extensions.insert(inputs);
-        ctx
-    }
 
     #[test]
     fn typed_handler_maps_input_to_core_and_view() {
-        let ctx = context_with_input("  hello  ");
+        let matches = crate::cli::command()
+            .try_get_matches_from(["{{ executable_name }}", "{{ command_name }}", "--{{ input_name }}", "hello"])
+            .unwrap();
+        let (_, matches) = matches.subcommand().unwrap();
+        let ctx = CommandContext::default();
 
-        let Output::Render(view) = {{ command_ident }}(&ctx).unwrap() else {
+        let Output::Render(view) = {{ command_ident }}(matches, &ctx).unwrap() else {
             panic!("expected rendered data");
         };
 
@@ -1005,6 +1216,39 @@ mod tests {
 }
 "#,
     ),
+    (
+        "readme",
+        r#"# {{ executable_name }}
+
+This generated project is a Standout architecture starter, not a finished
+application. The reusable `{{ lib_crate }}` crate owns the CLI-free operation
+and validation. This binary crate owns Clap declarations, Standout wiring,
+input policy, handlers, serializable view types, templates, styles, and process
+execution.
+
+Run the generated command:
+
+```sh
+cargo run -p {{ executable_name }} -- {{ command_name }} --{{ input_name }} VALUE
+cargo run -p {{ executable_name }} -- {{ command_name }} --{{ input_name }} VALUE --output json
+```
+
+`{{ input_name }}` is resolved according to the input policy reviewed by the
+wizard, and blank required string values are rejected by the core operation.
+
+The generated `{{ result_shape }}` result is intentionally small. The handler
+maps resolved shell input into `{{ lib_crate }}::{{ operation_name }}` and maps
+the core result into the CLI-owned `{{ view_name }}`.
+
+Verify the project with:
+
+```sh
+cargo fmt --check
+cargo check --workspace
+cargo test --workspace
+```
+"#,
+    ),
 ];
 
 #[cfg(test)]
@@ -1019,7 +1263,7 @@ mod tests {
             executable_name: "hello-tool".into(),
             command_name: "greet".into(),
             command_description: "Greet one value".into(),
-            input_name: "name".into(),
+            inputs: vec![CommandInput::required_string("name")],
             result_shape: ResultShape::Record,
             record_fields: vec!["summary".into(), "count".into()],
         })
@@ -1054,7 +1298,7 @@ mod tests {
             executable_name: "demo".into(),
             command_name: "inspect".into(),
             command_description: "Inspect one value".into(),
-            input_name: "document".into(),
+            inputs: vec![CommandInput::required_string("document")],
             result_shape: ResultShape::Message,
             record_fields: Vec::new(),
         })
@@ -1063,66 +1307,6 @@ mod tests {
         assert_eq!(spec.lib_crate, "demolib");
         assert_eq!(spec.operation_name, "process_inspect");
         assert_eq!(spec.view_name, "InspectView");
-        assert_eq!(spec.result_shape, ResultShape::Message);
-    }
-
-    #[test]
-    fn record_result_fields_are_validated_before_rendering() {
-        let error = ProjectSpec::from_answers(WizardAnswers {
-            project_name: "demo".into(),
-            executable_name: "demo".into(),
-            command_name: "inspect".into(),
-            command_description: "Inspect one value".into(),
-            input_name: "document".into(),
-            result_shape: ResultShape::Record,
-            record_fields: vec!["summary".into(), "summary".into()],
-        })
-        .unwrap_err();
-
-        assert!(error.to_string().contains("declared more than once"));
-    }
-
-    #[test]
-    fn record_result_fields_reject_reserved_rust_keywords() {
-        let error = ProjectSpec::from_answers(WizardAnswers {
-            project_name: "demo".into(),
-            executable_name: "demo".into(),
-            command_name: "inspect".into(),
-            command_description: "Inspect one value".into(),
-            input_name: "document".into(),
-            result_shape: ResultShape::Record,
-            record_fields: vec!["type".into()],
-        })
-        .unwrap_err();
-
-        assert!(error.to_string().contains("reserved Rust keyword"));
-    }
-
-    #[test]
-    fn generated_command_and_input_identifiers_reject_reserved_rust_keywords() {
-        let command_error = ProjectSpec::from_answers(WizardAnswers {
-            project_name: "demo".into(),
-            executable_name: "demo".into(),
-            command_name: "match".into(),
-            command_description: "Inspect one value".into(),
-            input_name: "document".into(),
-            result_shape: ResultShape::Message,
-            record_fields: Vec::new(),
-        })
-        .unwrap_err();
-        let input_error = ProjectSpec::from_answers(WizardAnswers {
-            project_name: "demo".into(),
-            executable_name: "demo".into(),
-            command_name: "inspect".into(),
-            command_description: "Inspect one value".into(),
-            input_name: "pub".into(),
-            result_shape: ResultShape::Message,
-            record_fields: Vec::new(),
-        })
-        .unwrap_err();
-
-        assert!(command_error.to_string().contains("reserved Rust keyword"));
-        assert!(input_error.to_string().contains("reserved Rust keyword"));
     }
 
     #[test]
@@ -1143,15 +1327,42 @@ mod tests {
     }
 
     #[test]
+    fn result_fields_and_generated_identifiers_are_validated() {
+        let duplicate = ProjectSpec::from_answers(WizardAnswers {
+            project_name: "demo".into(),
+            executable_name: "demo".into(),
+            command_name: "inspect".into(),
+            command_description: "Inspect one value".into(),
+            inputs: vec![CommandInput::required_string("document")],
+            result_shape: ResultShape::Record,
+            record_fields: vec!["summary".into(), "summary".into()],
+        })
+        .unwrap_err();
+        let keyword = ProjectSpec::from_answers(WizardAnswers {
+            project_name: "demo".into(),
+            executable_name: "demo".into(),
+            command_name: "match".into(),
+            command_description: "Inspect one value".into(),
+            inputs: vec![CommandInput::required_string("document")],
+            result_shape: ResultShape::Message,
+            record_fields: Vec::new(),
+        })
+        .unwrap_err();
+
+        assert!(duplicate.to_string().contains("declared more than once"));
+        assert!(keyword.to_string().contains("reserved Rust keyword"));
+    }
+
+    #[test]
     fn render_omits_local_patch_paths_by_default() {
         let spec = ProjectSpec::from_answers(WizardAnswers {
             project_name: "demo".into(),
             executable_name: "demo".into(),
             command_name: "inspect".into(),
             command_description: "Inspect one value".into(),
-            input_name: "document".into(),
-            result_shape: ResultShape::Record,
-            record_fields: vec!["summary".into(), "count".into()],
+            inputs: vec![CommandInput::required_string("document")],
+            result_shape: ResultShape::Message,
+            record_fields: Vec::new(),
         })
         .unwrap();
 
@@ -1160,6 +1371,117 @@ mod tests {
 
         assert!(!manifest.contains("[patch.crates-io]"));
         assert!(!manifest.contains(env!("CARGO_MANIFEST_DIR")));
+    }
+
+    #[test]
+    fn validates_supported_typed_cardinality_source_combinations() {
+        let rich_inputs = vec![
+            CommandInput {
+                name: "document".into(),
+                value_type: InputValueType::String,
+                cardinality: InputCardinality::Required,
+                sources: vec![InputSource::Argument, InputSource::File, InputSource::Stdin],
+            },
+            CommandInput {
+                name: "verbose".into(),
+                value_type: InputValueType::Bool,
+                cardinality: InputCardinality::Boolean,
+                sources: vec![InputSource::Argument],
+            },
+            CommandInput {
+                name: "config".into(),
+                value_type: InputValueType::Path,
+                cardinality: InputCardinality::Optional,
+                sources: vec![InputSource::Argument],
+            },
+        ];
+
+        let spec = ProjectSpec::from_answers(WizardAnswers {
+            project_name: "demo".into(),
+            executable_name: "demo".into(),
+            command_name: "inspect".into(),
+            command_description: "Inspect one value".into(),
+            inputs: rich_inputs,
+            result_shape: ResultShape::Record,
+            record_fields: vec!["summary".into(), "count".into()],
+        })
+        .unwrap();
+
+        assert_eq!(
+            spec.inputs[0].policy_sentence(),
+            "document comes from --document, then --document-file, then piped stdin"
+        );
+    }
+
+    #[test]
+    fn rejects_unsupported_input_combinations_before_rendering() {
+        let error = ProjectSpec::from_answers(WizardAnswers {
+            project_name: "demo".into(),
+            executable_name: "demo".into(),
+            command_name: "inspect".into(),
+            command_description: "Inspect one value".into(),
+            inputs: vec![CommandInput {
+                name: "enabled".into(),
+                value_type: InputValueType::Bool,
+                cardinality: InputCardinality::Optional,
+                sources: vec![InputSource::Argument],
+            }],
+            result_shape: ResultShape::Message,
+            record_fields: Vec::new(),
+        })
+        .unwrap_err();
+
+        assert!(error
+            .to_string()
+            .contains("bool inputs must use boolean cardinality"));
+
+        let error = ProjectSpec::from_answers(WizardAnswers {
+            project_name: "demo".into(),
+            executable_name: "demo".into(),
+            command_name: "inspect".into(),
+            command_description: "Inspect one value".into(),
+            inputs: vec![CommandInput {
+                name: "config".into(),
+                value_type: InputValueType::Path,
+                cardinality: InputCardinality::Required,
+                sources: vec![InputSource::Argument, InputSource::File],
+            }],
+            result_shape: ResultShape::Message,
+            record_fields: Vec::new(),
+        })
+        .unwrap_err();
+
+        assert!(error
+            .to_string()
+            .contains("path inputs only support argument source"));
+    }
+
+    #[test]
+    fn path_input_rendering_does_not_emit_string_validation() {
+        let spec = ProjectSpec::from_answers(WizardAnswers {
+            project_name: "demo".into(),
+            executable_name: "demo".into(),
+            command_name: "inspect".into(),
+            command_description: "Inspect one value".into(),
+            inputs: vec![CommandInput {
+                name: "config".into(),
+                value_type: InputValueType::Path,
+                cardinality: InputCardinality::Required,
+                sources: vec![InputSource::Argument],
+            }],
+            result_shape: ResultShape::Message,
+            record_fields: Vec::new(),
+        })
+        .unwrap();
+
+        let generated = GeneratedFiles::render(&spec).unwrap();
+        let core = generated
+            .files
+            .get(Path::new("crates/demolib/src/lib.rs"))
+            .unwrap();
+
+        assert!(core.contains("config: std::path::PathBuf"));
+        assert!(!core.contains("config.trim()"));
     }
 
     #[test]
@@ -1222,7 +1544,16 @@ mod tests {
 
         let human = Command::new("cargo")
             .current_dir(&spec.destination)
-            .args(["run", "-q", "-p", "hello-tool", "--", "greet", "Ada"])
+            .args([
+                "run",
+                "-q",
+                "-p",
+                "hello-tool",
+                "--",
+                "greet",
+                "--name",
+                "Ada",
+            ])
             .output()
             .unwrap();
         assert!(
@@ -1232,7 +1563,7 @@ mod tests {
         );
         let stdout = String::from_utf8(human.stdout).unwrap();
         assert!(stdout.contains("Ada"));
-        assert!(stdout.contains("Count: 3"));
+        assert!(stdout.contains("Summary:"));
 
         let json = Command::new("cargo")
             .current_dir(&spec.destination)
@@ -1243,6 +1574,7 @@ mod tests {
                 "hello-tool",
                 "--",
                 "greet",
+                "--name",
                 "Ada",
                 "--output",
                 "json",
@@ -1258,9 +1590,72 @@ mod tests {
         assert_eq!(value["summary"], "Processed Ada");
         assert_eq!(value["count"], "3");
 
+        let input_file = spec.destination.join("input.txt");
+        fs::write(&input_file, "File Ada").unwrap();
+        let file_json = Command::new("cargo")
+            .current_dir(&spec.destination)
+            .args([
+                "run",
+                "-q",
+                "-p",
+                "hello-tool",
+                "--",
+                "greet",
+                "--name-file",
+                input_file.to_str().unwrap(),
+                "--output",
+                "json",
+            ])
+            .output()
+            .unwrap();
+        assert!(
+            file_json.status.success(),
+            "file json run failed: {}",
+            String::from_utf8_lossy(&file_json.stderr)
+        );
+        let value: serde_json::Value = serde_json::from_slice(&file_json.stdout).unwrap();
+        assert_eq!(value["summary"], "Processed File Ada");
+        assert_eq!(value["count"], "8");
+
+        let precedence_json = Command::new("cargo")
+            .current_dir(&spec.destination)
+            .args([
+                "run",
+                "-q",
+                "-p",
+                "hello-tool",
+                "--",
+                "greet",
+                "--name",
+                "Arg Ada",
+                "--name-file",
+                input_file.to_str().unwrap(),
+                "--output",
+                "json",
+            ])
+            .output()
+            .unwrap();
+        assert!(
+            precedence_json.status.success(),
+            "precedence json run failed: {}",
+            String::from_utf8_lossy(&precedence_json.stderr)
+        );
+        let value: serde_json::Value = serde_json::from_slice(&precedence_json.stdout).unwrap();
+        assert_eq!(value["summary"], "Processed Arg Ada");
+        assert_eq!(value["count"], "7");
+
         let invalid = Command::new("cargo")
             .current_dir(&spec.destination)
-            .args(["run", "-q", "-p", "hello-tool", "--", "greet", "   "])
+            .args([
+                "run",
+                "-q",
+                "-p",
+                "hello-tool",
+                "--",
+                "greet",
+                "--name",
+                "   ",
+            ])
             .output()
             .unwrap();
         assert!(!invalid.status.success());
