@@ -45,6 +45,8 @@ struct WizardAnswers {
     command_name: String,
     command_description: String,
     inputs: Vec<CommandInput>,
+    result_shape: ResultShape,
+    record_fields: Vec<String>,
 }
 
 #[derive(Debug, Clone)]
@@ -54,6 +56,8 @@ struct ProjectSpec {
     command_name: String,
     command_description: String,
     inputs: Vec<CommandInput>,
+    result_shape: ResultShape,
+    record_fields: Vec<String>,
     lib_crate: String,
     operation_name: String,
     view_name: String,
@@ -94,6 +98,21 @@ enum InputSource {
     Stdin,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ResultShape {
+    Message,
+    Record,
+}
+
+impl ResultShape {
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::Message => "message",
+            Self::Record => "record",
+        }
+    }
+}
+
 impl ProjectSpec {
     fn from_answers(answers: WizardAnswers) -> Result<Self> {
         validate_crate_name(&answers.project_name, "project name")?;
@@ -105,6 +124,7 @@ impl ProjectSpec {
         for input in &answers.inputs {
             input.validate()?;
         }
+        validate_result_fields(answers.result_shape, &answers.record_fields)?;
         if answers.command_description.trim().is_empty() {
             bail!("command description cannot be empty");
         }
@@ -120,6 +140,8 @@ impl ProjectSpec {
             command_name: answers.command_name,
             command_description: answers.command_description,
             inputs: answers.inputs,
+            result_shape: answers.result_shape,
+            record_fields: answers.record_fields,
             lib_crate,
             operation_name,
             view_name,
@@ -134,6 +156,7 @@ impl ProjectSpec {
             format!("crates/{}/Cargo.toml", self.lib_crate),
             format!("crates/{}/src/lib.rs", self.lib_crate),
             format!("crates/{}/Cargo.toml", self.executable_name),
+            format!("crates/{}/README.md", self.executable_name),
             format!("crates/{}/src/main.rs", self.executable_name),
             format!("crates/{}/src/cli.rs", self.executable_name),
             format!("crates/{}/src/handlers.rs", self.executable_name),
@@ -260,6 +283,11 @@ fn prompt_answers(input: &mut dyn BufRead, output: &mut dyn Write) -> Result<Wiz
     let input_name = prompt(input, output, "Required string input name")?;
     let command_input = CommandInput::required_string(input_name);
     command_input.validate()?;
+    let result_shape = prompt_result_shape(input, output)?;
+    let record_fields = match result_shape {
+        ResultShape::Message => Vec::new(),
+        ResultShape::Record => prompt_record_fields(input, output)?,
+    };
 
     Ok(WizardAnswers {
         project_name,
@@ -267,6 +295,8 @@ fn prompt_answers(input: &mut dyn BufRead, output: &mut dyn Write) -> Result<Wiz
         command_name,
         command_description,
         inputs: vec![command_input],
+        result_shape,
+        record_fields,
     })
 }
 
@@ -308,6 +338,25 @@ fn confirm(input: &mut dyn BufRead, output: &mut dyn Write) -> Result<bool> {
     Ok(line.trim() == "yes")
 }
 
+fn prompt_result_shape(input: &mut dyn BufRead, output: &mut dyn Write) -> Result<ResultShape> {
+    let value = prompt_default(input, output, "Result shape (message/record)", "record")?;
+    match value.as_str() {
+        "message" => Ok(ResultShape::Message),
+        "record" => Ok(ResultShape::Record),
+        _ => bail!("result shape must be message or record"),
+    }
+}
+
+fn prompt_record_fields(input: &mut dyn BufRead, output: &mut dyn Write) -> Result<Vec<String>> {
+    let value = prompt_default(
+        input,
+        output,
+        "Record fields (comma-separated)",
+        "summary,count",
+    )?;
+    parse_record_fields(&value)
+}
+
 fn write_review(spec: &ProjectSpec, output: &mut dyn Write) -> Result<()> {
     writeln!(output, "\nReview")?;
     writeln!(output, "Destination: {}", spec.destination.display())?;
@@ -343,7 +392,8 @@ fn write_review(spec: &ProjectSpec, output: &mut dyn Write) -> Result<()> {
     )?;
     writeln!(
         output,
-        "Output shape: {} renders human output and serializes as JSON.",
+        "Output shape: {} {} renders human output and serializes as JSON.",
+        spec.result_shape.as_str(),
         spec.view_name
     )?;
     writeln!(
@@ -456,6 +506,101 @@ fn validate_ident(value: &str, label: &str) -> Result<()> {
     if !chars.all(|ch| ch.is_ascii_alphanumeric() || ch == '_') {
         bail!("{label} may only contain letters, numbers, or underscores");
     }
+    if is_rust_keyword(value) {
+        bail!("{label} cannot be a reserved Rust keyword");
+    }
+    Ok(())
+}
+
+fn is_rust_keyword(value: &str) -> bool {
+    matches!(
+        value,
+        "Self"
+            | "abstract"
+            | "as"
+            | "async"
+            | "await"
+            | "become"
+            | "box"
+            | "break"
+            | "const"
+            | "continue"
+            | "crate"
+            | "do"
+            | "dyn"
+            | "else"
+            | "enum"
+            | "extern"
+            | "false"
+            | "final"
+            | "fn"
+            | "for"
+            | "gen"
+            | "if"
+            | "impl"
+            | "in"
+            | "let"
+            | "loop"
+            | "macro"
+            | "match"
+            | "mod"
+            | "move"
+            | "mut"
+            | "override"
+            | "priv"
+            | "pub"
+            | "ref"
+            | "return"
+            | "self"
+            | "static"
+            | "struct"
+            | "super"
+            | "trait"
+            | "true"
+            | "try"
+            | "type"
+            | "typeof"
+            | "union"
+            | "unsafe"
+            | "unsized"
+            | "use"
+            | "virtual"
+            | "where"
+            | "while"
+            | "yield"
+    )
+}
+
+fn parse_record_fields(value: &str) -> Result<Vec<String>> {
+    let fields: Vec<_> = value
+        .split(',')
+        .map(str::trim)
+        .filter(|field| !field.is_empty())
+        .map(ToOwned::to_owned)
+        .collect();
+    validate_result_fields(ResultShape::Record, &fields)?;
+    Ok(fields)
+}
+
+fn validate_result_fields(shape: ResultShape, fields: &[String]) -> Result<()> {
+    match shape {
+        ResultShape::Message if !fields.is_empty() => {
+            bail!("message results cannot declare record fields");
+        }
+        ResultShape::Message => {}
+        ResultShape::Record => {
+            if fields.is_empty() {
+                bail!("record results must declare at least one field");
+            }
+            let mut seen = std::collections::BTreeSet::new();
+            for field in fields {
+                validate_ident(field, "record field")?;
+                if !seen.insert(field) {
+                    bail!("record field {field} is declared more than once");
+                }
+            }
+        }
+    }
     Ok(())
 }
 
@@ -490,6 +635,119 @@ fn command_syntax_fragment(input: &CommandInput) -> String {
 
 fn core_signature_fragment(input: &CommandInput) -> String {
     format!("{}: {}", input.name, input.rust_type())
+}
+
+fn core_primary_value(spec: &ProjectSpec) -> String {
+    let primary = &spec.inputs[0];
+    match (primary.value_type, primary.cardinality) {
+        (InputValueType::String, InputCardinality::Required) => {
+            format!("{}.trim().to_string()", primary.name)
+        }
+        _ => format!("format!(\"{{:?}}\", &{})", primary.name),
+    }
+}
+
+fn result_fields(spec: &ProjectSpec, visibility: &str) -> String {
+    match spec.result_shape {
+        ResultShape::Message => format!("    {visibility}message: String,"),
+        ResultShape::Record => spec
+            .record_fields
+            .iter()
+            .map(|field| format!("    {visibility}{field}: String,"))
+            .collect::<Vec<_>>()
+            .join("\n"),
+    }
+}
+
+fn result_init(spec: &ProjectSpec) -> String {
+    match spec.result_shape {
+        ResultShape::Message => "        message: format!(\"Processed {primary}\"),".into(),
+        ResultShape::Record => spec
+            .record_fields
+            .iter()
+            .map(|field| match field.as_str() {
+                "summary" => "        summary: format!(\"Processed {primary}\"),".into(),
+                "count" | "length" => {
+                    format!("        {field}: primary.chars().count().to_string(),")
+                }
+                other => format!("        {other}: primary.clone(),"),
+            })
+            .collect::<Vec<_>>()
+            .join("\n"),
+    }
+}
+
+fn result_field_names(spec: &ProjectSpec) -> Vec<String> {
+    match spec.result_shape {
+        ResultShape::Message => vec!["message".into()],
+        ResultShape::Record => spec.record_fields.clone(),
+    }
+}
+
+fn view_from_fields(spec: &ProjectSpec) -> String {
+    result_field_names(spec)
+        .into_iter()
+        .map(|field| format!("            {field}: value.{field},"))
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
+fn core_valid_assertions(spec: &ProjectSpec) -> String {
+    match spec.result_shape {
+        ResultShape::Message => {
+            "        assert_eq!(result.message, \"Processed Standout\");".into()
+        }
+        ResultShape::Record => spec
+            .record_fields
+            .iter()
+            .map(|field| match field.as_str() {
+                "summary" => "        assert_eq!(result.summary, \"Processed Standout\");".into(),
+                "count" | "length" => format!("        assert_eq!(result.{field}, \"8\");"),
+                other => format!("        assert_eq!(result.{other}, \"Standout\");"),
+            })
+            .collect::<Vec<_>>()
+            .join("\n"),
+    }
+}
+
+fn handler_expected_fields(spec: &ProjectSpec) -> String {
+    result_field_names(spec)
+        .into_iter()
+        .map(|field| match field.as_str() {
+            "message" | "summary" => {
+                format!("                {field}: \"Processed hello\".into(),")
+            }
+            "count" | "length" => format!("                {field}: \"5\".into(),"),
+            _ => format!("                {field}: \"hello\".into(),"),
+        })
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
+fn template_body(spec: &ProjectSpec) -> String {
+    match spec.result_shape {
+        ResultShape::Message => "[title]{{ message }}[/title]\n".into(),
+        ResultShape::Record => {
+            let mut lines = vec![format!(
+                "[title]{{{{ {} }}}}[/title]",
+                spec.record_fields[0]
+            )];
+            for field in &spec.record_fields {
+                lines.push(format!("{}: {{{{ {} }}}}", pascal_case(field), field));
+            }
+            lines.join("\n") + "\n"
+        }
+    }
+}
+
+fn expected_first_field(spec: &ProjectSpec, input: &str) -> (String, String) {
+    let field = result_field_names(spec).remove(0);
+    let value = match field.as_str() {
+        "message" | "summary" => format!("Processed {input}"),
+        "count" | "length" => input.chars().count().to_string(),
+        _ => input.to_string(),
+    };
+    (field, value)
 }
 
 impl CommandInput {
@@ -558,14 +816,6 @@ impl CommandInput {
         self.name.clone()
     }
 
-    fn core_view_field(&self) -> String {
-        format!("pub {}: {},", self.name, self.rust_type())
-    }
-
-    fn core_view_init(&self) -> String {
-        format!("{0},", self.name)
-    }
-
     fn core_validation(&self) -> Option<String> {
         if self.value_type == InputValueType::String
             && self.cardinality == InputCardinality::Required
@@ -577,14 +827,6 @@ impl CommandInput {
         } else {
             None
         }
-    }
-
-    fn handler_view_field(&self) -> String {
-        self.core_view_field().replace("pub ", "pub(crate) ")
-    }
-
-    fn handler_view_from(&self) -> String {
-        format!("{0}: value.{0},", self.name)
     }
 
     fn resolve_statement(&self) -> String {
@@ -669,10 +911,6 @@ fn model(spec: &ProjectSpec) -> minijinja::Value {
                 name => input.name,
                 cli_arg => input.cli_arg(),
                 core_call_arg => input.core_call_arg(),
-                core_view_field => input.core_view_field(),
-                core_view_init => input.core_view_init(),
-                handler_view_field => input.handler_view_field(),
-                handler_view_from => input.handler_view_from(),
                 rust_type => input.rust_type(),
                 policy => input.policy_sentence(),
             }
@@ -681,15 +919,23 @@ fn model(spec: &ProjectSpec) -> minijinja::Value {
         core_call_args => spec.inputs.iter().map(CommandInput::core_call_arg).collect::<Vec<_>>().join(", "),
         core_validations => spec.inputs.iter().filter_map(CommandInput::core_validation).collect::<Vec<_>>().join("\n    "),
         cli_args => spec.inputs.iter().map(CommandInput::cli_arg).collect::<Vec<_>>().join("\n        "),
-        core_view_fields => spec.inputs.iter().map(CommandInput::core_view_field).collect::<Vec<_>>().join("\n    "),
-        core_view_inits => spec.inputs.iter().map(CommandInput::core_view_init).collect::<Vec<_>>().join("\n        "),
-        handler_view_fields => spec.inputs.iter().map(CommandInput::handler_view_field).collect::<Vec<_>>().join("\n    "),
-        handler_view_from => spec.inputs.iter().map(CommandInput::handler_view_from).collect::<Vec<_>>().join("\n            "),
         resolve_inputs => spec.inputs.iter().map(CommandInput::resolve_statement).collect::<Vec<_>>().join("\n    "),
         lib_crate => spec.lib_crate,
         lib_package => spec.lib_crate.replace('_', "-"),
         operation_name => spec.operation_name,
         view_name => spec.view_name,
+        result_shape => spec.result_shape.as_str(),
+        core_primary_value => core_primary_value(spec),
+        core_result_fields => result_fields(spec, "pub "),
+        cli_view_fields => result_fields(spec, "pub(crate) "),
+        result_init => result_init(spec),
+        view_from_fields => view_from_fields(spec),
+        core_valid_assertions => core_valid_assertions(spec),
+        handler_expected_fields => handler_expected_fields(spec),
+        template_body => template_body(spec),
+        human_expected => expected_first_field(spec, "Ada").1,
+        json_field => expected_first_field(spec, "Grace").0,
+        json_expected => expected_first_field(spec, "Grace").1,
         standout_version => spec.standout_version,
         local_patch_root => spec.local_patch_root.as_ref().map(|path| path.display().to_string()),
     }
@@ -700,6 +946,7 @@ const FILE_MAP: &[(&str, &str)] = &[
     ("crates/{{ lib_crate }}/Cargo.toml", "core_manifest"),
     ("crates/{{ lib_crate }}/src/lib.rs", "core_lib"),
     ("crates/{{ executable_name }}/Cargo.toml", "cli_manifest"),
+    ("crates/{{ executable_name }}/README.md", "readme"),
     ("crates/{{ executable_name }}/src/main.rs", "main"),
     ("crates/{{ executable_name }}/src/cli.rs", "cli"),
     ("crates/{{ executable_name }}/src/handlers.rs", "handlers"),
@@ -747,8 +994,7 @@ thiserror = "2"
         "core_lib",
         r#"#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct {{ view_name }} {
-    {{ core_view_fields }}
-    pub summary: String,
+{{ core_result_fields }}
 }
 
 #[derive(Debug, thiserror::Error, PartialEq, Eq)]
@@ -762,9 +1008,11 @@ pub enum CoreError {
 /// The caller supplies explicit values. This crate deliberately has no Clap,
 /// Standout, template, terminal, environment, or CLI-view dependencies.
 pub fn {{ operation_name }}({{ core_params }}) -> Result<{{ view_name }}, CoreError> {
-    let summary = format!("{:?}", (&{{ core_call_args }}));
     {{ core_validations }}
-    Ok({{ view_name }} { {{ core_view_inits }} summary })
+    let primary = {{ core_primary_value }};
+    Ok({{ view_name }} {
+{{ result_init }}
+    })
 }
 
 #[cfg(test)]
@@ -775,8 +1023,7 @@ mod tests {
     fn valid_input_returns_a_typed_result() {
         let result = {{ operation_name }}("Standout".to_string()).unwrap();
 
-        assert_eq!(result.{{ input_name }}, "Standout");
-        assert!(result.summary.contains("Standout"));
+{{ core_valid_assertions }}
     }
 
     #[test]
@@ -852,8 +1099,7 @@ mod tests {
         );
 
         result.assert_success();
-        result.assert_stdout_contains("Ada");
-        result.assert_stdout_contains("Summary:");
+        result.assert_stdout_contains("{{ human_expected }}");
     }
 
     #[test]
@@ -869,7 +1115,7 @@ mod tests {
 
         result.assert_success();
         let value: Value = serde_json::from_str(result.stdout()).unwrap();
-        assert_eq!(value["{{ input_name }}"], "Grace");
+        assert_eq!(value["{{ json_field }}"], "{{ json_expected }}");
     }
 }
 "#,
@@ -910,15 +1156,13 @@ use standout::handler;
 
 #[derive(Debug, Serialize, PartialEq, Eq)]
 pub(crate) struct {{ view_name }} {
-    {{ handler_view_fields }}
-    pub(crate) summary: String,
+{{ cli_view_fields }}
 }
 
 impl From<core::{{ view_name }}> for {{ view_name }} {
     fn from(value: core::{{ view_name }}) -> Self {
         Self {
-            {{ handler_view_from }}
-            summary: value.summary,
+{{ view_from_fields }}
         }
     }
 }
@@ -953,24 +1197,56 @@ mod tests {
             panic!("expected rendered data");
         };
 
-        assert_eq!(view.{{ input_name }}, "hello");
-        assert!(view.summary.contains("hello"));
+        assert_eq!(
+            view,
+            {{ view_name }} {
+{{ handler_expected_fields }}
+            }
+        );
     }
 }
 "#,
     ),
+    ("template", r#"{{ template_body }}"#),
     (
-        "template",
-        r#"[title]{{ command_name }}[/title]
-{{ input_name }}: {{ "{{ " }}{{ input_name }}{{ " }}" }}
-Summary: {{ "{{ summary }}" }}
+        "style",
+        r#".title {
+  font-weight: bold;
+  color: cyan;
+}
 "#,
     ),
     (
-        "style",
-        r#"title:
-  bold: true
-  fg: cyan
+        "readme",
+        r#"# {{ executable_name }}
+
+This generated project is a Standout architecture starter, not a finished
+application. The reusable `{{ lib_crate }}` crate owns the CLI-free operation
+and validation. This binary crate owns Clap declarations, Standout wiring,
+input policy, handlers, serializable view types, templates, styles, and process
+execution.
+
+Run the generated command:
+
+```sh
+cargo run -p {{ executable_name }} -- {{ command_name }} --{{ input_name }} VALUE
+cargo run -p {{ executable_name }} -- {{ command_name }} --{{ input_name }} VALUE --output json
+```
+
+`{{ input_name }}` is resolved according to the input policy reviewed by the
+wizard, and blank required string values are rejected by the core operation.
+
+The generated `{{ result_shape }}` result is intentionally small. The handler
+maps resolved shell input into `{{ lib_crate }}::{{ operation_name }}` and maps
+the core result into the CLI-owned `{{ view_name }}`.
+
+Verify the project with:
+
+```sh
+cargo fmt --check
+cargo check --workspace
+cargo test --workspace
+```
 "#,
     ),
 ];
@@ -988,6 +1264,8 @@ mod tests {
             command_name: "greet".into(),
             command_description: "Greet one value".into(),
             inputs: vec![CommandInput::required_string("name")],
+            result_shape: ResultShape::Record,
+            record_fields: vec!["summary".into(), "count".into()],
         })
         .unwrap();
         spec.destination = root.join("hello-tool");
@@ -1021,6 +1299,8 @@ mod tests {
             command_name: "inspect".into(),
             command_description: "Inspect one value".into(),
             inputs: vec![CommandInput::required_string("document")],
+            result_shape: ResultShape::Message,
+            record_fields: Vec::new(),
         })
         .unwrap();
 
@@ -1040,7 +1320,37 @@ mod tests {
         assert!(generated
             .files
             .contains_key(Path::new("crates/hello_toollib/src/lib.rs")));
+        assert!(generated
+            .files
+            .contains_key(Path::new("crates/hello-tool/README.md")));
         assert!(!spec.destination.exists());
+    }
+
+    #[test]
+    fn result_fields_and_generated_identifiers_are_validated() {
+        let duplicate = ProjectSpec::from_answers(WizardAnswers {
+            project_name: "demo".into(),
+            executable_name: "demo".into(),
+            command_name: "inspect".into(),
+            command_description: "Inspect one value".into(),
+            inputs: vec![CommandInput::required_string("document")],
+            result_shape: ResultShape::Record,
+            record_fields: vec!["summary".into(), "summary".into()],
+        })
+        .unwrap_err();
+        let keyword = ProjectSpec::from_answers(WizardAnswers {
+            project_name: "demo".into(),
+            executable_name: "demo".into(),
+            command_name: "match".into(),
+            command_description: "Inspect one value".into(),
+            inputs: vec![CommandInput::required_string("document")],
+            result_shape: ResultShape::Message,
+            record_fields: Vec::new(),
+        })
+        .unwrap_err();
+
+        assert!(duplicate.to_string().contains("declared more than once"));
+        assert!(keyword.to_string().contains("reserved Rust keyword"));
     }
 
     #[test]
@@ -1051,6 +1361,8 @@ mod tests {
             command_name: "inspect".into(),
             command_description: "Inspect one value".into(),
             inputs: vec![CommandInput::required_string("document")],
+            result_shape: ResultShape::Message,
+            record_fields: Vec::new(),
         })
         .unwrap();
 
@@ -1090,6 +1402,8 @@ mod tests {
             command_name: "inspect".into(),
             command_description: "Inspect one value".into(),
             inputs: rich_inputs,
+            result_shape: ResultShape::Record,
+            record_fields: vec!["summary".into(), "count".into()],
         })
         .unwrap();
 
@@ -1112,6 +1426,8 @@ mod tests {
                 cardinality: InputCardinality::Optional,
                 sources: vec![InputSource::Argument],
             }],
+            result_shape: ResultShape::Message,
+            record_fields: Vec::new(),
         })
         .unwrap_err();
 
@@ -1130,6 +1446,8 @@ mod tests {
                 cardinality: InputCardinality::Required,
                 sources: vec![InputSource::Argument, InputSource::File],
             }],
+            result_shape: ResultShape::Message,
+            record_fields: Vec::new(),
         })
         .unwrap_err();
 
@@ -1151,6 +1469,8 @@ mod tests {
                 cardinality: InputCardinality::Required,
                 sources: vec![InputSource::Argument],
             }],
+            result_shape: ResultShape::Message,
+            record_fields: Vec::new(),
         })
         .unwrap();
 
@@ -1267,7 +1587,8 @@ mod tests {
             String::from_utf8_lossy(&json.stderr)
         );
         let value: serde_json::Value = serde_json::from_slice(&json.stdout).unwrap();
-        assert_eq!(value["name"], "Ada");
+        assert_eq!(value["summary"], "Processed Ada");
+        assert_eq!(value["count"], "3");
 
         let input_file = spec.destination.join("input.txt");
         fs::write(&input_file, "File Ada").unwrap();
@@ -1293,7 +1614,8 @@ mod tests {
             String::from_utf8_lossy(&file_json.stderr)
         );
         let value: serde_json::Value = serde_json::from_slice(&file_json.stdout).unwrap();
-        assert_eq!(value["name"], "File Ada");
+        assert_eq!(value["summary"], "Processed File Ada");
+        assert_eq!(value["count"], "8");
 
         let precedence_json = Command::new("cargo")
             .current_dir(&spec.destination)
@@ -1319,7 +1641,8 @@ mod tests {
             String::from_utf8_lossy(&precedence_json.stderr)
         );
         let value: serde_json::Value = serde_json::from_slice(&precedence_json.stdout).unwrap();
-        assert_eq!(value["name"], "Arg Ada");
+        assert_eq!(value["summary"], "Processed Arg Ada");
+        assert_eq!(value["count"], "7");
 
         let invalid = Command::new("cargo")
             .current_dir(&spec.destination)
