@@ -395,7 +395,69 @@ fn validate_ident(value: &str, label: &str) -> Result<()> {
     if !chars.all(|ch| ch.is_ascii_alphanumeric() || ch == '_') {
         bail!("{label} may only contain letters, numbers, or underscores");
     }
+    if is_rust_keyword(value) {
+        bail!("{label} cannot be a reserved Rust keyword");
+    }
     Ok(())
+}
+
+fn is_rust_keyword(value: &str) -> bool {
+    matches!(
+        value,
+        "Self"
+            | "abstract"
+            | "as"
+            | "async"
+            | "await"
+            | "become"
+            | "box"
+            | "break"
+            | "const"
+            | "continue"
+            | "crate"
+            | "do"
+            | "dyn"
+            | "else"
+            | "enum"
+            | "extern"
+            | "false"
+            | "final"
+            | "fn"
+            | "for"
+            | "gen"
+            | "if"
+            | "impl"
+            | "in"
+            | "let"
+            | "loop"
+            | "macro"
+            | "match"
+            | "mod"
+            | "move"
+            | "mut"
+            | "override"
+            | "priv"
+            | "pub"
+            | "ref"
+            | "return"
+            | "self"
+            | "static"
+            | "struct"
+            | "super"
+            | "trait"
+            | "true"
+            | "try"
+            | "type"
+            | "typeof"
+            | "union"
+            | "unsafe"
+            | "unsized"
+            | "use"
+            | "virtual"
+            | "where"
+            | "while"
+            | "yield"
+    )
 }
 
 fn parse_record_fields(value: &str) -> Result<Vec<String>> {
@@ -1018,6 +1080,49 @@ mod tests {
         .unwrap_err();
 
         assert!(error.to_string().contains("declared more than once"));
+    }
+
+    #[test]
+    fn record_result_fields_reject_reserved_rust_keywords() {
+        let error = ProjectSpec::from_answers(WizardAnswers {
+            project_name: "demo".into(),
+            executable_name: "demo".into(),
+            command_name: "inspect".into(),
+            command_description: "Inspect one value".into(),
+            input_name: "document".into(),
+            result_shape: ResultShape::Record,
+            record_fields: vec!["type".into()],
+        })
+        .unwrap_err();
+
+        assert!(error.to_string().contains("reserved Rust keyword"));
+    }
+
+    #[test]
+    fn generated_command_and_input_identifiers_reject_reserved_rust_keywords() {
+        let command_error = ProjectSpec::from_answers(WizardAnswers {
+            project_name: "demo".into(),
+            executable_name: "demo".into(),
+            command_name: "match".into(),
+            command_description: "Inspect one value".into(),
+            input_name: "document".into(),
+            result_shape: ResultShape::Message,
+            record_fields: Vec::new(),
+        })
+        .unwrap_err();
+        let input_error = ProjectSpec::from_answers(WizardAnswers {
+            project_name: "demo".into(),
+            executable_name: "demo".into(),
+            command_name: "inspect".into(),
+            command_description: "Inspect one value".into(),
+            input_name: "pub".into(),
+            result_shape: ResultShape::Message,
+            record_fields: Vec::new(),
+        })
+        .unwrap_err();
+
+        assert!(command_error.to_string().contains("reserved Rust keyword"));
+        assert!(input_error.to_string().contains("reserved Rust keyword"));
     }
 
     #[test]
