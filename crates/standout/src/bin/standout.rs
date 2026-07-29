@@ -59,7 +59,7 @@ struct ProjectSpec {
     view_name: String,
     destination: PathBuf,
     standout_version: String,
-    repo_root: PathBuf,
+    local_patch_root: Option<PathBuf>,
 }
 
 impl ProjectSpec {
@@ -87,7 +87,7 @@ impl ProjectSpec {
             operation_name,
             view_name,
             standout_version: env!("CARGO_PKG_VERSION").to_string(),
-            repo_root: repo_root(),
+            local_patch_root: None,
         })
     }
 
@@ -241,11 +241,19 @@ fn write_review(spec: &ProjectSpec, output: &mut dyn Write) -> Result<()> {
 }
 
 fn publish_project(spec: &ProjectSpec) -> Result<()> {
-    if spec.destination.exists() && fs::read_dir(&spec.destination)?.next().is_some() {
-        bail!(
-            "destination {} already exists and is not empty",
-            spec.destination.display()
-        );
+    if spec.destination.exists() {
+        if !spec.destination.is_dir() {
+            bail!(
+                "destination {} already exists and is not a directory",
+                spec.destination.display()
+            );
+        }
+        if fs::read_dir(&spec.destination)?.next().is_some() {
+            bail!(
+                "destination {} already exists and is not empty",
+                spec.destination.display()
+            );
+        }
     }
 
     let generated = GeneratedFiles::render(spec)?;
@@ -373,16 +381,8 @@ fn model(spec: &ProjectSpec) -> minijinja::Value {
         operation_name => spec.operation_name,
         view_name => spec.view_name,
         standout_version => spec.standout_version,
-        repo_root => spec.repo_root.display().to_string(),
+        local_patch_root => spec.local_patch_root.as_ref().map(|path| path.display().to_string()),
     }
-}
-
-fn repo_root() -> PathBuf {
-    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .parent()
-        .and_then(Path::parent)
-        .expect("standout crate lives under crates/standout")
-        .to_path_buf()
 }
 
 const FILE_MAP: &[(&str, &str)] = &[
@@ -413,11 +413,13 @@ members = [
     "crates/{{ executable_name }}",
 ]
 
+{%- if local_patch_root %}
 [patch.crates-io]
-standout = { path = "{{ repo_root }}/crates/standout" }
-standout-test = { path = "{{ repo_root }}/crates/standout-test" }
-standout-dispatch = { path = "{{ repo_root }}/crates/standout-dispatch" }
-standout-input = { path = "{{ repo_root }}/crates/standout-input" }
+standout = { path = "{{ local_patch_root }}/crates/standout" }
+standout-test = { path = "{{ local_patch_root }}/crates/standout-test" }
+standout-dispatch = { path = "{{ local_patch_root }}/crates/standout-dispatch" }
+standout-input = { path = "{{ local_patch_root }}/crates/standout-input" }
+{%- endif %}
 "#,
     ),
     (
@@ -713,7 +715,16 @@ mod tests {
         })
         .unwrap();
         spec.destination = root.join("hello-tool");
+        spec.local_patch_root = Some(workspace_root());
         spec
+    }
+
+    fn workspace_root() -> PathBuf {
+        PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .parent()
+            .and_then(Path::parent)
+            .expect("standout crate lives under crates/standout in the repository")
+            .to_path_buf()
     }
 
     #[test]
@@ -757,6 +768,24 @@ mod tests {
     }
 
     #[test]
+    fn render_omits_local_patch_paths_by_default() {
+        let spec = ProjectSpec::from_answers(WizardAnswers {
+            project_name: "demo".into(),
+            executable_name: "demo".into(),
+            command_name: "inspect".into(),
+            command_description: "Inspect one value".into(),
+            input_name: "document".into(),
+        })
+        .unwrap();
+
+        let generated = GeneratedFiles::render(&spec).unwrap();
+        let manifest = generated.files.get(Path::new("Cargo.toml")).unwrap();
+
+        assert!(!manifest.contains("[patch.crates-io]"));
+        assert!(!manifest.contains(env!("CARGO_MANIFEST_DIR")));
+    }
+
+    #[test]
     fn publish_refuses_non_empty_destination_without_partial_staging() {
         let dir = TempDir::new().unwrap();
         let spec = sample_spec(dir.path());
@@ -770,6 +799,24 @@ mod tests {
             fs::read_to_string(spec.destination.join("keep.txt")).unwrap(),
             "existing"
         );
+        let staged: Vec<_> = fs::read_dir(dir.path())
+            .unwrap()
+            .filter_map(Result::ok)
+            .filter(|entry| entry.file_name().to_string_lossy().contains("standout-new"))
+            .collect();
+        assert!(staged.is_empty());
+    }
+
+    #[test]
+    fn publish_refuses_file_destination_with_clear_error() {
+        let dir = TempDir::new().unwrap();
+        let spec = sample_spec(dir.path());
+        fs::write(&spec.destination, "existing").unwrap();
+
+        let error = publish_project(&spec).unwrap_err();
+
+        assert!(error.to_string().contains("not a directory"));
+        assert_eq!(fs::read_to_string(&spec.destination).unwrap(), "existing");
         let staged: Vec<_> = fs::read_dir(dir.path())
             .unwrap()
             .filter_map(Result::ok)
