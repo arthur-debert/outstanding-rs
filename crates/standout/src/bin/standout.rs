@@ -124,6 +124,7 @@ impl ProjectSpec {
         for input in &answers.inputs {
             input.validate()?;
         }
+        validate_generated_flags(&answers.inputs)?;
         validate_result_fields(answers.result_shape, &answers.record_fields)?;
         if answers.command_description.trim().is_empty() {
             bail!("command description cannot be empty");
@@ -710,6 +711,29 @@ fn validate_result_fields(shape: ResultShape, fields: &[String]) -> Result<()> {
     Ok(())
 }
 
+fn validate_generated_flags(inputs: &[CommandInput]) -> Result<()> {
+    let mut flags = BTreeMap::new();
+    for input in inputs {
+        let logical_flag = input.name.replace('_', "-");
+        if let Some(owner) = flags.insert(logical_flag.clone(), input.name.as_str()) {
+            bail!(
+                "input {} generates --{logical_flag}, which conflicts with input {owner}",
+                input.name
+            );
+        }
+        if input.sources.contains(&InputSource::File) {
+            let file_flag = format!("{logical_flag}-file");
+            if let Some(owner) = flags.insert(file_flag.clone(), input.name.as_str()) {
+                bail!(
+                    "input {} generates --{file_flag}, which conflicts with input {owner}",
+                    input.name
+                );
+            }
+        }
+    }
+    Ok(())
+}
+
 fn pascal_case(value: &str) -> String {
     value
         .split('_')
@@ -829,22 +853,34 @@ fn view_from_fields(spec: &ProjectSpec) -> String {
 }
 
 fn core_valid_assertions(spec: &ProjectSpec) -> String {
-    let sample = match spec.inputs[0].value_type {
-        InputValueType::Path => "config.toml",
-        _ => "Standout",
+    let primary = match (spec.inputs[0].value_type, spec.inputs[0].cardinality) {
+        (InputValueType::String, InputCardinality::Required) => "Standout".to_string(),
+        (InputValueType::String, InputCardinality::Optional) => "Some(\"optional\")".to_string(),
+        (InputValueType::String, InputCardinality::Repeated) => "[\"alpha\", \"beta\"]".to_string(),
+        (InputValueType::Bool, InputCardinality::Boolean) => "true".to_string(),
+        (InputValueType::Path, InputCardinality::Required) => "\"config.toml\"".to_string(),
+        (InputValueType::Path, InputCardinality::Optional) => "Some(\"config.toml\")".to_string(),
+        (InputValueType::Path, InputCardinality::Repeated) => "[\"one.toml\"]".to_string(),
+        _ => unreachable!("validated input combinations are renderable"),
     };
     match spec.result_shape {
         ResultShape::Message => {
-            let expected = expected_first_field(spec, sample).1;
+            let expected = format!("Processed {primary}");
             format!("        assert_eq!(result.message, {});", quote(&expected))
         }
         ResultShape::Record => spec
             .record_fields
             .iter()
             .map(|field| match field.as_str() {
-                "summary" => "        assert_eq!(result.summary, \"Processed Standout\");".into(),
-                "count" | "length" => format!("        assert_eq!(result.{field}, \"8\");"),
-                other => format!("        assert_eq!(result.{other}, \"Standout\");"),
+                "summary" => format!(
+                    "        assert_eq!(result.summary, {});",
+                    quote(&format!("Processed {primary}"))
+                ),
+                "count" | "length" => format!(
+                    "        assert_eq!(result.{field}, {});",
+                    quote(&primary.chars().count().to_string())
+                ),
+                other => format!("        assert_eq!(result.{other}, {});", quote(&primary)),
             })
             .collect::<Vec<_>>()
             .join("\n"),
@@ -894,15 +930,19 @@ fn core_invalid_test(spec: &ProjectSpec) -> String {
         input.value_type == InputValueType::String
             && input.cardinality == InputCardinality::Required
     }) else {
+        let call = core_test_call(spec, false);
+        let result = if spec.inputs.len() == 1 {
+            format!("        let result = {call}.unwrap();")
+        } else {
+            format!("        let result = {call}\n        .unwrap();")
+        };
         return format!(
             r#"    #[test]
     fn configured_inputs_are_accepted_by_the_core() {{
-        let result = {}
-        .unwrap();
+{result}
 
         assert_eq!(result, result.clone());
-    }}"#,
-            core_test_call(spec, false)
+    }}"#
         );
     };
 
@@ -1051,7 +1091,7 @@ fn sample_cli_args(spec: &ProjectSpec, primary_value: &str) -> Vec<String> {
         quote("--output"),
         quote("text"),
     ];
-    args.extend(sample_command_args(spec, primary_value, false));
+    args.extend(sample_command_args(spec, primary_value));
     args
 }
 
@@ -1062,80 +1102,184 @@ fn sample_json_cli_args(spec: &ProjectSpec, primary_value: &str) -> Vec<String> 
         quote("--output"),
         quote("json"),
     ];
-    args.extend(sample_command_args(
-        spec,
-        primary_value,
-        !primary_can_use_argument(spec),
-    ));
+    args.extend(sample_command_args(spec, primary_value));
     args
 }
 
 fn sample_handler_args(spec: &ProjectSpec) -> Vec<String> {
-    let mut args = vec![quote(&spec.executable_name), quote(&spec.command_name)];
-    args.extend(sample_command_args(spec, "hello", false));
-    args
-}
-
-fn sample_command_args(
-    spec: &ProjectSpec,
-    primary_value: &str,
-    omit_stdin_primary: bool,
-) -> Vec<String> {
-    let mut args = Vec::new();
+    let mut args = vec![
+        format!("{}.to_string()", quote(&spec.executable_name)),
+        format!("{}.to_string()", quote(&spec.command_name)),
+    ];
     for (index, input) in spec.inputs.iter().enumerate() {
-        if omit_stdin_primary && index == 0 {
-            continue;
+        let value = if index == 0 { "hello" } else { "sample" };
+        if input.sources[0] == InputSource::File {
+            args.push(format!(
+                "{}.to_string()",
+                quote(&format!("--{}-file", input.name.replace('_', "-")))
+            ));
+            args.push(format!("{}_test_file.display().to_string()", input.name));
+        } else {
+            args.extend(
+                input
+                    .sample_args_for_source(input.sources[0], value)
+                    .into_iter()
+                    .map(|arg| format!("{arg}.to_string()")),
+            );
         }
-        args.extend(input.sample_args(if index == 0 { primary_value } else { "sample" }));
     }
     args
 }
 
-fn primary_can_use_argument(spec: &ProjectSpec) -> bool {
-    spec.inputs[0].sources.contains(&InputSource::Argument)
+fn sample_command_args(spec: &ProjectSpec, primary_value: &str) -> Vec<String> {
+    let mut args = Vec::new();
+    for (index, input) in spec.inputs.iter().enumerate() {
+        args.extend(input.sample_args_for_source(
+            input.sources[0],
+            if index == 0 { primary_value } else { "sample" },
+        ));
+    }
+    args
 }
 
-fn primary_can_use_stdin(spec: &ProjectSpec) -> bool {
-    spec.inputs[0].sources.contains(&InputSource::Stdin)
+fn harness_for_samples(spec: &ProjectSpec, primary_value: &str) -> String {
+    let has_source_setup = spec
+        .inputs
+        .iter()
+        .any(|input| input.sources[0] != InputSource::Argument);
+    let mut harness = if has_source_setup {
+        "TestHarness::new()\n            .no_color()".to_string()
+    } else {
+        "TestHarness::new().no_color()".to_string()
+    };
+    for (index, input) in spec.inputs.iter().enumerate() {
+        let value = if index == 0 { primary_value } else { "sample" };
+        match input.sources[0] {
+            InputSource::File => harness.push_str(&format!(
+                "\n            .fixture({}, {})",
+                quote(&input.sample_file_name()),
+                quote(value)
+            )),
+            InputSource::Stdin => {
+                harness.push_str(&format!(
+                    "\n            .piped_stdin({})",
+                    quote(&format!("{value}\n"))
+                ));
+            }
+            InputSource::Argument => {}
+        }
+    }
+    harness
+}
+
+fn generated_harness_run(spec: &ProjectSpec, primary_value: &str, args: &[String]) -> String {
+    let harness = harness_for_samples(spec, primary_value);
+    if harness.contains('\n') {
+        let args = rust_array(args, 20, 63);
+        format!(
+            r#"        let result = {harness}
+            .run(
+                &app,
+                cli::command(),
+                {args},
+            );"#
+        )
+    } else {
+        let args = rust_array(args, 16, 63);
+        format!(
+            r#"        let result = {harness}.run(
+            &app,
+            cli::command(),
+            {args},
+        );"#
+        )
+    }
+}
+
+/// Generates panic-safe setup for file and stdin sources in the handler test.
+fn handler_sample_setup(spec: &ProjectSpec) -> String {
+    let mut lines = Vec::new();
+    if spec
+        .inputs
+        .iter()
+        .any(|input| input.sources[0] == InputSource::Stdin)
+    {
+        lines.push(
+            r#"        struct StdinGuard;
+
+        impl StdinGuard {
+            fn install(reader: standout_input::MockStdin) -> Self {
+                standout_input::env::set_default_stdin_reader(std::sync::Arc::new(reader));
+                Self
+            }
+        }
+
+        impl Drop for StdinGuard {
+            fn drop(&mut self) {
+                standout_input::env::reset_default_stdin_reader();
+            }
+        }"#
+            .to_string(),
+        );
+    }
+    for (index, input) in spec.inputs.iter().enumerate() {
+        let value = if index == 0 { "hello" } else { "sample" };
+        match input.sources[0] {
+            InputSource::File => {
+                lines.push(format!(
+                    "        let {0}_test_file =\n            std::env::temp_dir().join(format!(\"{1}-{0}-{{}}.txt\", std::process::id()));",
+                    input.name, spec.executable_name
+                ));
+                lines.push(format!(
+                    "        std::fs::write(&{}_test_file, {}).unwrap();",
+                    input.name,
+                    quote(value)
+                ));
+            }
+            InputSource::Stdin => lines.push(format!(
+                "        let _stdin = StdinGuard::install(standout_input::MockStdin::piped({}));",
+                quote(&format!("{value}\n"))
+            )),
+            InputSource::Argument => {}
+        }
+    }
+    lines.join("\n")
+}
+
+/// Generates explicit cleanup for temporary files used by the handler test.
+fn handler_sample_cleanup(spec: &ProjectSpec) -> String {
+    let mut lines = Vec::new();
+    for input in &spec.inputs {
+        if input.sources[0] == InputSource::File {
+            lines.push(format!(
+                "        std::fs::remove_file({}_test_file).unwrap();",
+                input.name
+            ));
+        }
+    }
+    lines.join("\n")
 }
 
 fn generated_json_pipeline_test(spec: &ProjectSpec) -> String {
-    let primary_value = if primary_can_use_stdin(spec) {
-        "Grace"
-    } else {
-        match spec.inputs[0].value_type {
-            InputValueType::Path => "config.toml",
-            _ => "Grace",
-        }
+    let primary_value = match spec.inputs[0].value_type {
+        InputValueType::Path => "config.toml",
+        _ => "Grace",
     };
     let (field, expected) = expected_first_field(spec, primary_value);
-    let args = if primary_can_use_stdin(spec) {
-        sample_json_cli_args(spec, "Grace")
-    } else {
-        sample_json_cli_args(spec, primary_value)
-    };
-    let harness = if primary_can_use_stdin(spec) {
-        "TestHarness::new().no_color().piped_stdin(\"Grace\\n\")"
-    } else {
-        "TestHarness::new().no_color()"
-    };
+    let args = sample_json_cli_args(spec, primary_value);
+    let run = generated_harness_run(spec, primary_value, &args);
     format!(
         r#"    #[test]
     #[serial]
     fn pipeline_serializes_json_for_configured_inputs() {{
         let app = build_app().unwrap();
 
-        let result = {harness}.run(
-            &app,
-            cli::command(),
-            {args},
-        );
+{run}
 
         result.assert_success();
         let value: Value = serde_json::from_str(result.stdout()).unwrap();
         assert_eq!(value["{field}"], {expected});
     }}"#,
-        args = rust_array(&args, 16, 70),
         expected = quote(&expected)
     )
 }
@@ -1146,6 +1290,51 @@ fn readme_input_policy(spec: &ProjectSpec) -> String {
         .map(|input| format!("- {}.", input.policy_sentence()))
         .collect::<Vec<_>>()
         .join("\n")
+}
+
+fn handler_imports(spec: &ProjectSpec) -> String {
+    let mut imports = [
+        "use clap::ArgMatches;".to_string(),
+        format!("use {} as core;", spec.lib_crate),
+        "use serde::Serialize;".to_string(),
+        "use standout::cli::{CommandContext, Output};".to_string(),
+        "use standout::handler;".to_string(),
+    ];
+    imports.sort();
+    imports.join("\n")
+}
+
+fn readme_examples(spec: &ProjectSpec) -> String {
+    let command = format!(
+        "cargo run -p {} -- {}",
+        spec.executable_name, spec.command_name
+    );
+    let args = spec
+        .inputs
+        .iter()
+        .enumerate()
+        .flat_map(|(index, input)| input.readme_args(if index == 0 { "VALUE" } else { "SAMPLE" }))
+        .collect::<Vec<_>>()
+        .join(" ");
+    let mut lines = Vec::new();
+    for input in &spec.inputs {
+        if input.sources[0] == InputSource::File {
+            lines.push(format!("printf '%s' VALUE > {}", input.sample_file_name()));
+        }
+    }
+    let invocation = format!("{command} {args}").trim().to_string();
+    if spec
+        .inputs
+        .iter()
+        .any(|input| input.sources[0] == InputSource::Stdin)
+    {
+        lines.push(format!("printf '%s\\n' VALUE | {invocation}"));
+        lines.push(format!("printf '%s\\n' VALUE | {invocation} --output json"));
+    } else {
+        lines.push(invocation.clone());
+        lines.push(format!("{invocation} --output json"));
+    }
+    lines.join("\n")
 }
 
 fn quote(value: &str) -> String {
@@ -1231,8 +1420,18 @@ impl CommandInput {
         args
     }
 
-    fn sample_args(&self, primary_value: &str) -> Vec<String> {
+    fn sample_args_for_source(&self, source: InputSource, primary_value: &str) -> Vec<String> {
         let long = format!("--{}", self.name.replace('_', "-"));
+        match source {
+            InputSource::File => {
+                return vec![
+                    quote(&format!("{long}-file")),
+                    quote(&self.sample_file_name()),
+                ];
+            }
+            InputSource::Stdin => return Vec::new(),
+            InputSource::Argument => {}
+        }
         match (self.value_type, self.cardinality) {
             (InputValueType::Bool, InputCardinality::Boolean) => vec![quote(&long)],
             (InputValueType::String, InputCardinality::Required | InputCardinality::Optional) => {
@@ -1258,6 +1457,25 @@ impl CommandInput {
                 quote("extra.toml"),
             ],
             _ => unreachable!("validated input combinations are renderable"),
+        }
+    }
+
+    fn sample_file_name(&self) -> String {
+        format!("{}-input.txt", self.name.replace('_', "-"))
+    }
+
+    fn readme_args(&self, value: &str) -> Vec<String> {
+        let long = format!("--{}", self.name.replace('_', "-"));
+        match self.sources[0] {
+            InputSource::File => vec![format!("{long}-file"), self.sample_file_name()],
+            InputSource::Stdin => Vec::new(),
+            InputSource::Argument => match (self.value_type, self.cardinality) {
+                (InputValueType::Bool, InputCardinality::Boolean) => vec![long],
+                (_, InputCardinality::Repeated) => {
+                    vec![long.clone(), value.into(), long, "EXTRA".into()]
+                }
+                _ => vec![long, value.into()],
+            },
         }
     }
 
@@ -1384,12 +1602,16 @@ fn model(spec: &ProjectSpec) -> minijinja::Value {
         core_sample_result => core_sample_result(spec),
         core_invalid_test => core_invalid_test(spec),
         handler_expected_fields => handler_expected_fields(spec),
-        pipeline_human_args => rust_array(&sample_cli_args(spec, "Ada"), 16, 70),
+        handler_imports => handler_imports(spec),
+        pipeline_human_run => generated_harness_run(spec, "Ada", &sample_cli_args(spec, "Ada")),
         pipeline_json_test => generated_json_pipeline_test(spec),
         handler_args => rust_array(&sample_handler_args(spec), 16, 60),
+        handler_sample_setup => handler_sample_setup(spec),
+        handler_sample_cleanup => handler_sample_cleanup(spec),
         template_body => template_body(spec),
         human_expected => quote(&expected_first_field(spec, "Ada").1),
         readme_input_policy => readme_input_policy(spec),
+        readme_examples => readme_examples(spec),
         command_syntax => spec.inputs.iter().map(command_syntax_fragment).collect::<Vec<_>>().join(" "),
         standout_version => spec.standout_version,
         local_patch_root => spec.local_patch_root.as_ref().map(|path| path.display().to_string()),
@@ -1549,11 +1771,7 @@ mod tests {
     fn pipeline_renders_human_output_from_argument() {
         let app = build_app().unwrap();
 
-        let result = TestHarness::new().no_color().run(
-            &app,
-            cli::command(),
-            {{ pipeline_human_args }},
-        );
+{{ pipeline_human_run }}
 
         result.assert_success();
         result.assert_stdout_contains({{ human_expected }});
@@ -1591,11 +1809,7 @@ pub(crate) fn command() -> clap::Command {
         "handlers",
         r#"#![allow(non_snake_case)]
 
-use clap::ArgMatches;
-use {{ lib_crate }} as core;
-use serde::Serialize;
-use standout::cli::{CommandContext, Output};
-use standout::handler;
+{{ handler_imports }}
 
 #[derive(Debug, Serialize, PartialEq, Eq)]
 pub(crate) struct {{ view_name }} {
@@ -1630,6 +1844,9 @@ mod tests {
 
     #[test]
     fn typed_handler_maps_input_to_core_and_view() {
+{%- if handler_sample_setup %}
+{{ handler_sample_setup }}
+{%- endif %}
         let matches = crate::cli::command()
             .try_get_matches_from({{ handler_args }})
             .unwrap();
@@ -1639,6 +1856,9 @@ mod tests {
         let Output::Render(view) = {{ command_ident }}(matches, &ctx).unwrap() else {
             panic!("expected rendered data");
         };
+{%- if handler_sample_cleanup %}
+{{ handler_sample_cleanup }}
+{%- endif %}
 
         assert_eq!(
             view,
@@ -1672,8 +1892,7 @@ execution.
 Run the generated command:
 
 ```sh
-cargo run -p {{ executable_name }} -- {{ command_name }} --{{ input_name }} VALUE
-cargo run -p {{ executable_name }} -- {{ command_name }} --{{ input_name }} VALUE --output json
+{{ readme_examples }}
 ```
 
 Command syntax:
@@ -1868,6 +2087,31 @@ mod tests {
     }
 
     #[test]
+    fn generated_flags_cannot_collide_across_inputs() {
+        let error = ProjectSpec::from_answers(WizardAnswers {
+            project_name: "demo".into(),
+            executable_name: "demo".into(),
+            command_name: "inspect".into(),
+            command_description: "Inspect one value".into(),
+            inputs: vec![
+                required_string("document"),
+                CommandInput {
+                    name: "document_file".into(),
+                    value_type: InputValueType::Path,
+                    cardinality: InputCardinality::Optional,
+                    sources: vec![InputSource::Argument],
+                },
+            ],
+            result_shape: ResultShape::Message,
+            record_fields: Vec::new(),
+        })
+        .unwrap_err();
+
+        assert!(error.to_string().contains("--document-file"));
+        assert!(error.to_string().contains("conflicts"));
+    }
+
+    #[test]
     fn render_omits_local_patch_paths_by_default() {
         let spec = ProjectSpec::from_answers(WizardAnswers {
             project_name: "demo".into(),
@@ -2046,43 +2290,76 @@ mod tests {
         assert!(!confirm(&mut input, &mut output).unwrap());
     }
 
-    fn rich_spec(root: &Path) -> ProjectSpec {
+    fn rich_questionnaire_spec(root: &Path) -> ProjectSpec {
+        let answers = [
+            "inspect-tool",
+            "",
+            "inspect",
+            "Inspect document input",
+            "4",
+            "document",
+            "string",
+            "required",
+            "argument,file,stdin",
+            "verbose",
+            "bool",
+            "boolean",
+            "argument",
+            "tag",
+            "string",
+            "repeated",
+            "argument",
+            "config",
+            "path",
+            "optional",
+            "argument",
+            "record",
+            "summary,count,echo",
+        ]
+        .join("\n")
+            + "\n";
+        let mut input = io::Cursor::new(answers);
+        let mut review = Vec::new();
+        let answers = prompt_answers(&mut input, &mut review).unwrap();
+        let mut spec = ProjectSpec::from_answers(answers).unwrap();
+        spec.destination = root.join("inspect-tool");
+        spec.local_patch_root = Some(workspace_root());
+        spec
+    }
+
+    fn file_only_spec(root: &Path) -> ProjectSpec {
         let mut spec = ProjectSpec::from_answers(WizardAnswers {
-            project_name: "inspect-tool".into(),
-            executable_name: "inspect-tool".into(),
+            project_name: "file-tool".into(),
+            executable_name: "file-tool".into(),
             command_name: "inspect".into(),
-            command_description: "Inspect document input".into(),
-            inputs: vec![
-                CommandInput {
-                    name: "document".into(),
-                    value_type: InputValueType::String,
-                    cardinality: InputCardinality::Required,
-                    sources: vec![InputSource::Argument, InputSource::File, InputSource::Stdin],
-                },
-                CommandInput {
-                    name: "verbose".into(),
-                    value_type: InputValueType::Bool,
-                    cardinality: InputCardinality::Boolean,
-                    sources: vec![InputSource::Argument],
-                },
-                CommandInput {
-                    name: "tag".into(),
-                    value_type: InputValueType::String,
-                    cardinality: InputCardinality::Repeated,
-                    sources: vec![InputSource::Argument],
-                },
-                CommandInput {
-                    name: "config".into(),
-                    value_type: InputValueType::Path,
-                    cardinality: InputCardinality::Optional,
-                    sources: vec![InputSource::Argument],
-                },
-            ],
-            result_shape: ResultShape::Record,
-            record_fields: vec!["summary".into(), "count".into(), "echo".into()],
+            command_description: "Inspect file contents".into(),
+            inputs: vec![CommandInput {
+                name: "document".into(),
+                value_type: InputValueType::String,
+                cardinality: InputCardinality::Required,
+                sources: vec![InputSource::File],
+            }],
+            result_shape: ResultShape::Message,
+            record_fields: Vec::new(),
         })
         .unwrap();
-        spec.destination = root.join("inspect-tool");
+        spec.destination = root.join("file-tool");
+        spec.local_patch_root = Some(workspace_root());
+        spec
+    }
+
+    fn single_input_spec(root: &Path, project_name: &str, input: CommandInput) -> ProjectSpec {
+        let mut spec = ProjectSpec::from_answers(WizardAnswers {
+            project_name: project_name.into(),
+            executable_name: project_name.into(),
+            command_name: "inspect".into(),
+            command_description: "Inspect configured input".into(),
+            inputs: vec![input],
+            result_shape: ResultShape::Message,
+            record_fields: Vec::new(),
+        })
+        .unwrap();
+        spec.destination = root.join(project_name);
         spec.local_patch_root = Some(workspace_root());
         spec
     }
@@ -2122,15 +2399,81 @@ mod tests {
         let mut message = sample_spec(dir.path());
         message.result_shape = ResultShape::Message;
         message.record_fields.clear();
-        let rich = rich_spec(dir.path());
+        let rich = rich_questionnaire_spec(dir.path());
         let path_first = path_first_spec(dir.path());
+        let file_only = file_only_spec(dir.path());
+        let bool_first = single_input_spec(
+            dir.path(),
+            "bool-tool",
+            CommandInput {
+                name: "verbose".into(),
+                value_type: InputValueType::Bool,
+                cardinality: InputCardinality::Boolean,
+                sources: vec![InputSource::Argument],
+            },
+        );
+        let optional_first = single_input_spec(
+            dir.path(),
+            "optional-tool",
+            CommandInput {
+                name: "note".into(),
+                value_type: InputValueType::String,
+                cardinality: InputCardinality::Optional,
+                sources: vec![InputSource::Argument],
+            },
+        );
+        let repeated_first = single_input_spec(
+            dir.path(),
+            "repeated-tool",
+            CommandInput {
+                name: "tag".into(),
+                value_type: InputValueType::String,
+                cardinality: InputCardinality::Repeated,
+                sources: vec![InputSource::Argument],
+            },
+        );
 
-        for spec in [&message, &rich, &path_first] {
+        for spec in [
+            &message,
+            &rich,
+            &path_first,
+            &file_only,
+            &bool_first,
+            &optional_first,
+            &repeated_first,
+        ] {
             publish_project(spec).unwrap();
             run_cargo(&spec.destination, ["fmt", "--check"]);
             run_cargo(&spec.destination, ["check", "--workspace"]);
             run_cargo(&spec.destination, ["test", "--workspace"]);
         }
+
+        let file_readme =
+            fs::read_to_string(file_only.destination.join("crates/file-tool/README.md")).unwrap();
+        assert!(file_readme.contains("--document-file document-input.txt"));
+        assert!(!file_readme.contains("--document VALUE"));
+        let bool_readme =
+            fs::read_to_string(bool_first.destination.join("crates/bool-tool/README.md")).unwrap();
+        assert!(bool_readme.contains("inspect --verbose"));
+
+        let file_input = file_only.destination.join("document.txt");
+        fs::write(&file_input, "File only").unwrap();
+        let file_only_run = run_binary(
+            &file_only.destination,
+            [
+                "run",
+                "-q",
+                "-p",
+                "file-tool",
+                "--",
+                "inspect",
+                "--document-file",
+                file_input.to_str().unwrap(),
+            ],
+        );
+        assert!(String::from_utf8(file_only_run.stdout)
+            .unwrap()
+            .contains("Processed File only"));
 
         let message_human = run_binary(
             &message.destination,
