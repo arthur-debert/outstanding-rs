@@ -666,7 +666,6 @@ fn parse_record_fields(value: &str) -> Result<Vec<String>> {
 
 fn parse_input_sources(value: &str) -> Result<Vec<InputSource>> {
     let mut sources = Vec::new();
-    let mut seen = std::collections::BTreeSet::new();
     for source in value
         .split(',')
         .map(str::trim)
@@ -678,7 +677,7 @@ fn parse_input_sources(value: &str) -> Result<Vec<InputSource>> {
             "stdin" | "piped stdin" => InputSource::Stdin,
             _ => bail!("input source must be argument, file, or stdin"),
         };
-        if !seen.insert(parsed as u8) {
+        if sources.contains(&parsed) {
             bail!("input source {source} is declared more than once");
         }
         sources.push(parsed);
@@ -1797,6 +1796,13 @@ mod tests {
         assert_eq!(spec.inputs[1].value_type, InputValueType::Bool);
         assert_eq!(spec.inputs[2].cardinality, InputCardinality::Repeated);
         assert_eq!(spec.inputs[3].value_type, InputValueType::Path);
+    }
+
+    #[test]
+    fn input_source_aliases_cannot_declare_the_same_source_twice() {
+        let duplicate = parse_input_sources("argument,arg").unwrap_err();
+
+        assert!(duplicate.to_string().contains("declared more than once"));
     }
 
     #[test]
