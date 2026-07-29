@@ -1196,8 +1196,32 @@ fn generated_harness_run(spec: &ProjectSpec, primary_value: &str, args: &[String
     }
 }
 
+/// Generates panic-safe setup for file and stdin sources in the handler test.
 fn handler_sample_setup(spec: &ProjectSpec) -> String {
     let mut lines = Vec::new();
+    if spec
+        .inputs
+        .iter()
+        .any(|input| input.sources[0] == InputSource::Stdin)
+    {
+        lines.push(
+            r#"        struct StdinGuard;
+
+        impl StdinGuard {
+            fn install(reader: standout_input::MockStdin) -> Self {
+                standout_input::env::set_default_stdin_reader(std::sync::Arc::new(reader));
+                Self
+            }
+        }
+
+        impl Drop for StdinGuard {
+            fn drop(&mut self) {
+                standout_input::env::reset_default_stdin_reader();
+            }
+        }"#
+            .to_string(),
+        );
+    }
     for (index, input) in spec.inputs.iter().enumerate() {
         let value = if index == 0 { "hello" } else { "sample" };
         match input.sources[0] {
@@ -1213,7 +1237,7 @@ fn handler_sample_setup(spec: &ProjectSpec) -> String {
                 ));
             }
             InputSource::Stdin => lines.push(format!(
-                "        standout_input::env::set_default_stdin_reader(std::sync::Arc::new(standout_input::MockStdin::piped({})));",
+                "        let _stdin = StdinGuard::install(standout_input::MockStdin::piped({}));",
                 quote(&format!("{value}\n"))
             )),
             InputSource::Argument => {}
@@ -1222,15 +1246,9 @@ fn handler_sample_setup(spec: &ProjectSpec) -> String {
     lines.join("\n")
 }
 
+/// Generates explicit cleanup for temporary files used by the handler test.
 fn handler_sample_cleanup(spec: &ProjectSpec) -> String {
     let mut lines = Vec::new();
-    if spec
-        .inputs
-        .iter()
-        .any(|input| input.sources[0] == InputSource::Stdin)
-    {
-        lines.push("        standout_input::env::reset_default_stdin_reader();".to_string());
-    }
     for input in &spec.inputs {
         if input.sources[0] == InputSource::File {
             lines.push(format!(
