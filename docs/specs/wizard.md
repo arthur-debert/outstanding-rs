@@ -300,4 +300,3 @@ combinatorial permutation.
    the normal compatible Cargo requirement?
 5. Should generated projects include explanatory comments, a short README, or
    both?
-
