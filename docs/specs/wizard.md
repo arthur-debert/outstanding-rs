@@ -130,7 +130,8 @@ It does not ask:
 Before generation, summarize the resolved policy in plain language:
 
 > `document` comes from `--document`, then `--document-file`, then piped stdin.
-> Empty contents are rejected before the operation runs.
+> Because `document` is a required string, empty contents are rejected before
+> the operation runs.
 
 ### 3. Core operation
 
