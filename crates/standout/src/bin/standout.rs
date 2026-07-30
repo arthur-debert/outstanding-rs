@@ -770,7 +770,6 @@ fn command_syntax_fragment(input: &CommandInput) -> String {
         .map(|source| match source {
             InputSource::Argument => match input.cardinality {
                 InputCardinality::Boolean => format!("--{long}"),
-                InputCardinality::Repeated => format!("--{long} <{}>...", input.name),
                 _ => format!("--{long} <{}>", input.name),
             },
             InputSource::File => format!("--{long}-file <PATH>"),
@@ -786,6 +785,7 @@ fn command_syntax_fragment(input: &CommandInput) -> String {
                 format!("({sources})")
             }
         }
+        InputCardinality::Repeated => format!("[{sources}]..."),
         _ => format!("[{sources}]"),
     }
 }
@@ -914,24 +914,18 @@ fn core_valid_assertions(spec: &ProjectSpec) -> String {
     }
 }
 
-fn core_test_call(spec: &ProjectSpec, blank_primary: bool) -> String {
+fn core_test_call(spec: &ProjectSpec) -> String {
     if spec.inputs.len() == 1 {
         return format!(
             "{}({})",
             spec.operation_name,
-            core_test_arg(&spec.inputs[0], blank_primary)
+            core_test_arg(&spec.inputs[0], false)
         );
     }
     let args = spec
         .inputs
         .iter()
-        .enumerate()
-        .map(|(index, input)| {
-            format!(
-                "            {},",
-                core_test_arg(input, blank_primary && index == 0)
-            )
-        })
+        .map(|input| format!("            {},", core_test_arg(input, false)))
         .collect::<Vec<_>>()
         .join("\n");
     format!("{}(\n{args}\n        )", spec.operation_name)
@@ -947,7 +941,7 @@ fn core_sample_result(spec: &ProjectSpec) -> String {
     } else {
         format!(
             "        let result = {}\n        .unwrap();",
-            core_test_call(spec, false)
+            core_test_call(spec)
         )
     }
 }
@@ -957,7 +951,7 @@ fn core_invalid_test(spec: &ProjectSpec) -> String {
         input.value_type == InputValueType::String
             && input.cardinality == InputCardinality::Required
     }) else {
-        let call = core_test_call(spec, false);
+        let call = core_test_call(spec);
         let result = if spec.inputs.len() == 1 {
             format!("        let result = {call}.unwrap();")
         } else {
@@ -1395,6 +1389,27 @@ fn quote(value: &str) -> String {
     format!("{value:?}")
 }
 
+/// Escapes a path for interpolation inside a TOML basic string.
+fn toml_basic_string_content(path: &Path) -> String {
+    let mut escaped = String::new();
+    for character in path.to_string_lossy().chars() {
+        match character {
+            '"' => escaped.push_str("\\\""),
+            '\\' => escaped.push_str("\\\\"),
+            '\u{0008}' => escaped.push_str("\\b"),
+            '\t' => escaped.push_str("\\t"),
+            '\n' => escaped.push_str("\\n"),
+            '\u{000C}' => escaped.push_str("\\f"),
+            '\r' => escaped.push_str("\\r"),
+            character if character <= '\u{001F}' || character == '\u{007F}' => {
+                escaped.push_str(&format!("\\u{:04X}", character as u32));
+            }
+            character => escaped.push(character),
+        }
+    }
+    escaped
+}
+
 fn rust_array(items: &[String], indent: usize, max_inline_len: usize) -> String {
     let inline = format!("[{}]", items.join(", "));
     if inline.len() <= max_inline_len {
@@ -1676,7 +1691,7 @@ fn model(spec: &ProjectSpec) -> minijinja::Value {
         readme_examples => readme_examples(spec),
         command_syntax => spec.inputs.iter().map(command_syntax_fragment).collect::<Vec<_>>().join(" "),
         standout_version => spec.standout_version,
-        local_patch_root => spec.local_patch_root.as_ref().map(|path| path.display().to_string()),
+        local_patch_root => spec.local_patch_root.as_deref().map(toml_basic_string_content),
     }
 }
 
@@ -2231,6 +2246,28 @@ mod tests {
     }
 
     #[test]
+    fn local_patch_paths_are_escaped_as_toml_basic_string_content() {
+        let mut spec = ProjectSpec::from_answers(WizardAnswers {
+            project_name: "demo".into(),
+            executable_name: "demo".into(),
+            command_name: "inspect".into(),
+            command_description: "Inspect one value".into(),
+            inputs: vec![required_string("document")],
+            result_shape: ResultShape::Message,
+            record_fields: Vec::new(),
+        })
+        .unwrap();
+        spec.local_patch_root = Some(PathBuf::from(r#"C:\Users\Ada "Q"\standout"#));
+
+        let generated = GeneratedFiles::render(&spec).unwrap();
+        let manifest = generated.files.get(Path::new("Cargo.toml")).unwrap();
+
+        assert!(manifest
+            .contains(r#"standout = { path = "C:\\Users\\Ada \"Q\"\\standout/crates/standout" }"#));
+        assert!(!manifest.contains(r#"path = "C:\Users"#));
+    }
+
+    #[test]
     fn validates_supported_typed_cardinality_source_combinations() {
         let rich_inputs = vec![
             CommandInput {
@@ -2281,6 +2318,15 @@ mod tests {
         assert_eq!(
             command_syntax_fragment(&file_only),
             "--document-file <PATH>"
+        );
+        assert_eq!(
+            command_syntax_fragment(&CommandInput {
+                name: "tag".into(),
+                value_type: InputValueType::String,
+                cardinality: InputCardinality::Repeated,
+                sources: vec![InputSource::Argument],
+            }),
+            "[--tag <tag>]..."
         );
 
         let spec = ProjectSpec::from_answers(WizardAnswers {
