@@ -4,6 +4,8 @@
 
 ## Unreleased
 
+## 7.10.0 - 2026-07-30
+
 - Add the `standout new-project` bootstrap wizard (epic #228), which interactively generates a runnable, production-shaped two-crate workspace with bounded string, boolean, and path inputs; ordered argument, file-content, and piped-stdin resolution where supported; MiniJinja and CSS presentation; and core, typed-handler, and `TestHarness` pipeline tests.
 
 ## 7.9.2 - 2026-07-19
