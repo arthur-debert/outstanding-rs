@@ -110,8 +110,7 @@ For each logical input, ask for:
 - Rust value type from a deliberately small supported set;
 - required, optional, repeated, or boolean cardinality;
 - allowed sources;
-- precedence when more than one source is allowed;
-- a core validation demonstrated by the generated example.
+- precedence when more than one source is allowed.
 
 Initial source support is narrow:
 
@@ -130,20 +129,21 @@ It does not ask:
 
 Before generation, summarize the resolved policy in plain language:
 
-> `document` comes from `--document`, then `--file`, then piped stdin. Empty
-> contents are rejected before the operation runs.
+> `document` comes from `--document`, then `--document-file`, then piped stdin.
+> Empty contents are rejected before the operation runs.
 
 ### 3. Core operation
 
-Ask for:
+Derive the operation name as `process_<command>` rather than asking the user to
+name it. Ask for:
 
-- operation name;
 - whether it returns a message or record;
-- a small set of result fields;
-- one validation or error case worth demonstrating.
+- a small set of result fields.
 
 The generated library interface accepts explicit values and dependencies,
-return typed results, and contain no CLI concepts.
+returns typed results, and contains no CLI concepts. It emits a fixed
+blank-value validation only for required string inputs; the wizard does not ask
+the user to choose an arbitrary validation or error case.
 
 ### 4. Presentation
 
@@ -195,7 +195,8 @@ Every generated project must include:
 Calls `<name>lib` directly and proves:
 
 - valid input produces the expected typed result;
-- the selected validation case produces a core error.
+- a blank required string produces the fixed core error when that input shape
+  is present.
 
 ### Typed-handler test
 
