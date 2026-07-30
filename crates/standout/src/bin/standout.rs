@@ -712,9 +712,17 @@ fn validate_result_fields(shape: ResultShape, fields: &[String]) -> Result<()> {
 }
 
 fn validate_generated_flags(inputs: &[CommandInput]) -> Result<()> {
+    const RESERVED_FLAGS: &[&str] = &["help", "output", "output-file-path"];
+
     let mut flags = BTreeMap::new();
     for input in inputs {
         let logical_flag = input.name.replace('_', "-");
+        if RESERVED_FLAGS.contains(&logical_flag.as_str()) {
+            bail!(
+                "input {} generates reserved framework/Clap flag --{logical_flag}",
+                input.name
+            );
+        }
         if let Some(owner) = flags.insert(logical_flag.clone(), input.name.as_str()) {
             bail!(
                 "input {} generates --{logical_flag}, which conflicts with input {owner}",
@@ -723,6 +731,12 @@ fn validate_generated_flags(inputs: &[CommandInput]) -> Result<()> {
         }
         if input.sources.contains(&InputSource::File) {
             let file_flag = format!("{logical_flag}-file");
+            if RESERVED_FLAGS.contains(&file_flag.as_str()) {
+                bail!(
+                    "input {} generates reserved framework/Clap flag --{file_flag}",
+                    input.name
+                );
+            }
             if let Some(owner) = flags.insert(file_flag.clone(), input.name.as_str()) {
                 bail!(
                     "input {} generates --{file_flag}, which conflicts with input {owner}",
@@ -1292,6 +1306,28 @@ fn readme_input_policy(spec: &ProjectSpec) -> String {
         .join("\n")
 }
 
+fn readme_validation_note(spec: &ProjectSpec) -> String {
+    let inputs = spec
+        .inputs
+        .iter()
+        .filter(|input| {
+            input.value_type == InputValueType::String
+                && input.cardinality == InputCardinality::Required
+        })
+        .map(|input| format!("`{}`", input.name))
+        .collect::<Vec<_>>();
+    match inputs.as_slice() {
+        [] => String::new(),
+        [input] => {
+            format!("Blank values for the required string input {input} are rejected by the core operation.")
+        }
+        _ => format!(
+            "Blank values for the required string inputs {} are rejected by the core operation.",
+            inputs.join(", ")
+        ),
+    }
+}
+
 fn handler_imports(spec: &ProjectSpec) -> String {
     let mut imports = [
         "use clap::ArgMatches;".to_string(),
@@ -1611,6 +1647,7 @@ fn model(spec: &ProjectSpec) -> minijinja::Value {
         template_body => template_body(spec),
         human_expected => quote(&expected_first_field(spec, "Ada").1),
         readme_input_policy => readme_input_policy(spec),
+        readme_validation_note => readme_validation_note(spec),
         readme_examples => readme_examples(spec),
         command_syntax => spec.inputs.iter().map(command_syntax_fragment).collect::<Vec<_>>().join(" "),
         standout_version => spec.standout_version,
@@ -1905,7 +1942,10 @@ Input policy:
 
 {{ readme_input_policy }}
 
-Blank required string values are rejected by the core operation.
+{%- if readme_validation_note %}
+
+{{ readme_validation_note }}
+{%- endif %}
 
 The generated `{{ result_shape }}` result is intentionally small. The handler
 maps resolved shell input into `{{ lib_crate }}::{{ operation_name }}` and maps
@@ -2088,27 +2128,58 @@ mod tests {
 
     #[test]
     fn generated_flags_cannot_collide_across_inputs() {
-        let error = ProjectSpec::from_answers(WizardAnswers {
+        let answers_with = |inputs| WizardAnswers {
             project_name: "demo".into(),
             executable_name: "demo".into(),
             command_name: "inspect".into(),
             command_description: "Inspect one value".into(),
-            inputs: vec![
-                required_string("document"),
-                CommandInput {
-                    name: "document_file".into(),
-                    value_type: InputValueType::Path,
-                    cardinality: InputCardinality::Optional,
-                    sources: vec![InputSource::Argument],
-                },
-            ],
+            inputs,
             result_shape: ResultShape::Message,
             record_fields: Vec::new(),
-        })
-        .unwrap_err();
+        };
 
-        assert!(error.to_string().contains("--document-file"));
-        assert!(error.to_string().contains("conflicts"));
+        for reserved in ["output", "output_file_path", "help"] {
+            let error = ProjectSpec::from_answers(answers_with(vec![required_string(reserved)]))
+                .unwrap_err();
+            assert!(error.to_string().contains("reserved framework/Clap flag"));
+            assert!(error
+                .to_string()
+                .contains(&format!("--{}", reserved.replace('_', "-"))));
+        }
+
+        let derived_collision = ProjectSpec::from_answers(answers_with(vec![
+            required_string("document"),
+            CommandInput {
+                name: "document_file".into(),
+                value_type: InputValueType::Path,
+                cardinality: InputCardinality::Optional,
+                sources: vec![InputSource::Argument],
+            },
+        ]))
+        .unwrap_err();
+        assert!(derived_collision.to_string().contains("--document-file"));
+        assert!(derived_collision.to_string().contains("conflicts"));
+
+        let questionnaire = [
+            "reserved-tool",
+            "",
+            "inspect",
+            "Inspect one value",
+            "1",
+            "output",
+            "string",
+            "required",
+            "argument",
+            "message",
+        ]
+        .join("\n")
+            + "\n";
+        let mut input = io::Cursor::new(questionnaire);
+        let answers = prompt_answers(&mut input, &mut Vec::new()).unwrap();
+        let error = ProjectSpec::from_answers(answers).unwrap_err();
+        assert!(error
+            .to_string()
+            .contains("reserved framework/Clap flag --output"));
     }
 
     #[test]
@@ -2452,9 +2523,30 @@ mod tests {
             fs::read_to_string(file_only.destination.join("crates/file-tool/README.md")).unwrap();
         assert!(file_readme.contains("--document-file document-input.txt"));
         assert!(!file_readme.contains("--document VALUE"));
+        assert!(file_readme
+            .contains("Blank values for the required string input `document` are rejected"));
         let bool_readme =
             fs::read_to_string(bool_first.destination.join("crates/bool-tool/README.md")).unwrap();
         assert!(bool_readme.contains("inspect --verbose"));
+        assert!(!bool_readme.contains("Blank values"));
+        let path_readme =
+            fs::read_to_string(path_first.destination.join("crates/config-tool/README.md"))
+                .unwrap();
+        assert!(!path_readme.contains("Blank values"));
+        let optional_readme = fs::read_to_string(
+            optional_first
+                .destination
+                .join("crates/optional-tool/README.md"),
+        )
+        .unwrap();
+        assert!(!optional_readme.contains("Blank values"));
+        let repeated_readme = fs::read_to_string(
+            repeated_first
+                .destination
+                .join("crates/repeated-tool/README.md"),
+        )
+        .unwrap();
+        assert!(!repeated_readme.contains("Blank values"));
 
         let file_input = file_only.destination.join("document.txt");
         fs::write(&file_input, "File only").unwrap();
