@@ -763,17 +763,30 @@ fn pascal_case(value: &str) -> String {
 }
 
 fn command_syntax_fragment(input: &CommandInput) -> String {
+    let long = input.name.replace('_', "-");
+    let sources = input
+        .sources
+        .iter()
+        .map(|source| match source {
+            InputSource::Argument => match input.cardinality {
+                InputCardinality::Boolean => format!("--{long}"),
+                InputCardinality::Repeated => format!("--{long} <{}>...", input.name),
+                _ => format!("--{long} <{}>", input.name),
+            },
+            InputSource::File => format!("--{long}-file <PATH>"),
+            InputSource::Stdin => "<piped stdin>".to_string(),
+        })
+        .collect::<Vec<_>>()
+        .join(" | ");
     match input.cardinality {
-        InputCardinality::Boolean => format!("[--{}]", input.name.replace('_', "-")),
         InputCardinality::Required => {
-            format!("--{} <{}>", input.name.replace('_', "-"), input.name)
+            if input.sources.len() == 1 {
+                sources
+            } else {
+                format!("({sources})")
+            }
         }
-        InputCardinality::Optional => {
-            format!("[--{} <{}>]", input.name.replace('_', "-"), input.name)
-        }
-        InputCardinality::Repeated => {
-            format!("[--{} <{}>]...", input.name.replace('_', "-"), input.name)
-        }
+        _ => format!("[{sources}]"),
     }
 }
 
@@ -964,10 +977,14 @@ fn core_invalid_test(spec: &ProjectSpec) -> String {
         return format!(
             r#"    #[test]
     fn invalid_required_string_is_rejected_by_the_core() {{
-        assert_eq!({}({}), Err(CoreError::EmptyInput));
+        assert_eq!(
+            {}({}),
+            Err(CoreError::EmptyInput {{ field: {} }})
+        );
     }}"#,
             spec.operation_name,
-            core_test_arg(&spec.inputs[0], true)
+            core_test_arg(&spec.inputs[0], true),
+            quote(&spec.inputs[index].name)
         );
     }
 
@@ -990,10 +1007,11 @@ fn core_invalid_test(spec: &ProjectSpec) -> String {
             {}(
 {args}
             ),
-            Err(CoreError::EmptyInput)
+            Err(CoreError::EmptyInput {{ field: {} }})
         );
     }}"#,
-        spec.operation_name
+        spec.operation_name,
+        quote(&spec.inputs[index].name)
     )
 }
 
@@ -1410,50 +1428,56 @@ impl CommandInput {
 
     fn cli_arg(&self) -> String {
         let long = self.name.replace('_', "-");
-        let mut args = match (self.value_type, self.cardinality) {
+        let mut args = Vec::new();
+        let argument = match (self.value_type, self.cardinality) {
             (InputValueType::Bool, InputCardinality::Boolean) => {
-                format!("#[arg(long = \"{long}\", action = clap::ArgAction::SetTrue)]\n        {}: bool,", self.name)
+                Some(format!("#[arg(long = \"{long}\", action = clap::ArgAction::SetTrue)]\n        {}: bool,", self.name))
             }
             (InputValueType::Path, InputCardinality::Required) => {
-                format!("#[arg(long = \"{long}\", value_name = \"PATH\")]\n        {}: std::path::PathBuf,", self.name)
+                Some(format!("#[arg(long = \"{long}\", value_name = \"PATH\")]\n        {}: std::path::PathBuf,", self.name))
             }
             (InputValueType::Path, InputCardinality::Optional) => {
-                format!("#[arg(long = \"{long}\", value_name = \"PATH\")]\n        {}: Option<std::path::PathBuf>,", self.name)
+                Some(format!("#[arg(long = \"{long}\", value_name = \"PATH\")]\n        {}: Option<std::path::PathBuf>,", self.name))
             }
             (InputValueType::Path, InputCardinality::Repeated) => {
-                format!("#[arg(long = \"{long}\", value_name = \"PATH\")]\n        {}: Vec<std::path::PathBuf>,", self.name)
+                Some(format!("#[arg(long = \"{long}\", value_name = \"PATH\")]\n        {}: Vec<std::path::PathBuf>,", self.name))
             }
             (_, InputCardinality::Required) => {
-                if self.sources == [InputSource::Argument] {
-                    format!("#[arg(long = \"{long}\")]\n        {}: String,", self.name)
+                if !self.sources.contains(&InputSource::Argument) {
+                    None
+                } else if self.sources == [InputSource::Argument] {
+                    Some(format!("#[arg(long = \"{long}\")]\n        {}: String,", self.name))
                 } else {
-                    format!(
+                    Some(format!(
                         "#[arg(long = \"{long}\")]\n        {}: Option<String>,",
                         self.name
-                    )
+                    ))
                 }
             }
             (_, InputCardinality::Optional) => {
-                format!(
+                self.sources.contains(&InputSource::Argument).then(|| format!(
                     "#[arg(long = \"{long}\")]\n        {}: Option<String>,",
                     self.name
-                )
+                ))
             }
             (_, InputCardinality::Repeated) => {
-                format!(
+                Some(format!(
                     "#[arg(long = \"{long}\")]\n        {}: Vec<String>,",
                     self.name
-                )
+                ))
             }
             _ => unreachable!("validated input combinations are renderable"),
         };
+        if let Some(argument) = argument {
+            args.push(argument);
+        }
         if self.value_type == InputValueType::String && self.sources.contains(&InputSource::File) {
-            args.push_str(&format!(
-                "\n        #[arg(long = \"{long}-file\", value_name = \"PATH\")]\n        {0}_file: Option<std::path::PathBuf>,",
+            args.push(format!(
+                "#[arg(long = \"{long}-file\", value_name = \"PATH\")]\n        {0}_file: Option<std::path::PathBuf>,",
                 self.name
             ));
         }
-        args
+        args.join("\n        ")
     }
 
     fn sample_args_for_source(&self, source: InputSource, primary_value: &str) -> Vec<String> {
@@ -1524,8 +1548,9 @@ impl CommandInput {
             && self.cardinality == InputCardinality::Required
         {
             Some(format!(
-                "if {}.trim().is_empty() {{\n        return Err(CoreError::EmptyInput);\n    }}",
-                self.name
+                "if {}.trim().is_empty() {{\n        return Err(CoreError::EmptyInput {{ field: {} }});\n    }}",
+                self.name,
+                quote(&self.name)
             ))
         } else {
             None
@@ -1713,8 +1738,8 @@ pub struct {{ view_name }} {
 
 #[derive(Debug, thiserror::Error, PartialEq, Eq)]
 pub enum CoreError {
-    #[error("{{ input_name }} cannot be empty")]
-    EmptyInput,
+    #[error("{field} cannot be empty")]
+    EmptyInput { field: &'static str },
 }
 
 /// Runs the CLI-free core operation for the generated command.
@@ -1832,6 +1857,7 @@ pub(crate) struct Cli {
 #[derive(Subcommand)]
 pub(crate) enum Commands {
     /// {{ command_description }}
+    #[command(name = "{{ command_name }}")]
     {{ command_variant }} {
         {{ cli_args }}
     },
@@ -1878,8 +1904,10 @@ pub(crate) fn {{ command_ident }}(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use serial_test::serial;
 
     #[test]
+    #[serial]
     fn typed_handler_maps_input_to_core_and_view() {
 {%- if handler_sample_setup %}
 {{ handler_sample_setup }}
@@ -2240,6 +2268,67 @@ mod tests {
             spec.inputs[0].policy_sentence(),
             "document comes from --document, then --document-file, then piped stdin"
         );
+    }
+
+    #[test]
+    fn generated_sources_commands_and_validation_preserve_the_validated_model() {
+        let file_only = CommandInput {
+            name: "document".into(),
+            value_type: InputValueType::String,
+            cardinality: InputCardinality::Required,
+            sources: vec![InputSource::File],
+        };
+        assert_eq!(
+            command_syntax_fragment(&file_only),
+            "--document-file <PATH>"
+        );
+
+        let spec = ProjectSpec::from_answers(WizardAnswers {
+            project_name: "demo".into(),
+            executable_name: "demo".into(),
+            command_name: "send_email".into(),
+            command_description: "Send one message".into(),
+            inputs: vec![
+                file_only,
+                CommandInput {
+                    name: "subject".into(),
+                    value_type: InputValueType::String,
+                    cardinality: InputCardinality::Required,
+                    sources: vec![InputSource::Stdin],
+                },
+            ],
+            result_shape: ResultShape::Message,
+            record_fields: Vec::new(),
+        })
+        .unwrap();
+
+        let generated = GeneratedFiles::render(&spec).unwrap();
+        let cli = generated
+            .files
+            .get(Path::new("crates/demo/src/cli.rs"))
+            .unwrap();
+        let handlers = generated
+            .files
+            .get(Path::new("crates/demo/src/handlers.rs"))
+            .unwrap();
+        let core = generated
+            .files
+            .get(Path::new("crates/demolib/src/lib.rs"))
+            .unwrap();
+        let readme = generated
+            .files
+            .get(Path::new("crates/demo/README.md"))
+            .unwrap();
+
+        assert!(cli.contains("#[command(name = \"send_email\")]"));
+        assert!(cli.contains("long = \"document-file\""));
+        assert!(!cli.contains("long = \"document\""));
+        assert!(!cli.contains("long = \"subject\""));
+        assert!(handlers.contains("use serial_test::serial;"));
+        assert!(handlers.contains("#[serial]\n    fn typed_handler_maps_input_to_core_and_view()"));
+        assert!(core.contains("CoreError::EmptyInput { field: \"document\" }"));
+        assert!(core.contains("CoreError::EmptyInput { field: \"subject\" }"));
+        assert!(readme.contains("demo send_email --document-file <PATH> <piped stdin>"));
     }
 
     #[test]
