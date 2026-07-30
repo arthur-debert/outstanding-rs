@@ -1,19 +1,19 @@
-# Standout Bootstrap Wizard — Draft Specification
+# Standout Bootstrap Wizard Specification
 
 ## Status
 
-Draft for planning. This document describes the smallest useful version of the
-feature. It is not an implementation plan.
+Implemented by WIZ01. This document records the shipped first-release scope;
+the recovered decision record is [ADR 0001](../adr/0001-wizard.md).
 
 ## Overview
 
 Standout makes sophisticated CLI behavior easier to build, but its preferred
 architecture differs from the structure many Rust developers initially reach
-for. The bootstrap wizard should create a small, runnable Standout project that
+for. The bootstrap wizard creates a small, runnable Standout project that
 demonstrates the intended architecture through one complete command.
 
 The generated project is an architectural tracer bullet, not a finished CLI.
-It should show where reusable logic, CLI adaptation, application assembly,
+It shows where reusable logic, CLI adaptation, application assembly,
 presentation, and tests belong.
 
 ## Goals
@@ -85,7 +85,7 @@ For the initial one-command project:
 - `cli.rs` owns Clap declarations;
 - `handlers.rs` owns thin adapters and CLI-specific serializable view types.
 
-The wizard should not create `app.rs`, `views.rs`, or `<name>lib/src/api.rs`
+The wizard does not create `app.rs`, `views.rs`, or `<name>lib/src/api.rs`
 until the generated project has enough independent responsibility to justify
 those modules.
 
@@ -110,40 +110,41 @@ For each logical input, ask for:
 - Rust value type from a deliberately small supported set;
 - required, optional, repeated, or boolean cardinality;
 - allowed sources;
-- precedence when more than one source is allowed;
-- validation demonstrated by the generated example.
+- precedence when more than one source is allowed.
 
-Initial source support should remain narrow:
+Initial source support is narrow:
 
-- positional or named command argument;
+- named command argument;
 - piped stdin;
 - file contents.
 
-The wizard should ask behavioral questions rather than framework questions. For
+The wizard asks behavioral questions rather than framework questions. For
 example:
 
 > Can `document` come from `--document`, piped stdin, or a file?
 
-It should not ask:
+It does not ask:
 
 > Should this command use an `InputChain`?
 
 Before generation, summarize the resolved policy in plain language:
 
-> `document` comes from `--document`, then `--file`, then piped stdin. Empty
-> contents are rejected before the operation runs.
+> `document` comes from `--document`, then `--document-file`, then piped stdin.
+> Because `document` is a required string, empty contents are rejected before
+> the operation runs.
 
 ### 3. Core operation
 
-Ask for:
+Derive the operation name as `process_<command>` rather than asking the user to
+name it. Ask for:
 
-- operation name;
-- whether it returns a message, record, list, artifact, or silent success;
-- a small set of result fields;
-- one validation or error case worth demonstrating.
+- whether it returns a message or record;
+- a small set of result fields.
 
-The generated library interface should accept explicit values and dependencies,
-return typed results, and contain no CLI concepts.
+The generated library interface accepts explicit values and dependencies,
+returns typed results, and contains no CLI concepts. It emits a fixed
+blank-value validation only for required string inputs; the wizard does not ask
+the user to choose an arbitrary validation or error case.
 
 ### 4. Presentation
 
@@ -170,7 +171,7 @@ Generation requires explicit confirmation after this review.
 
 ## Internal project model
 
-The questionnaire should resolve into one validated internal project model
+The questionnaire resolves into one validated internal project model
 before any files are rendered.
 
 Conceptually:
@@ -179,7 +180,7 @@ Conceptually:
 Wizard answers → ProjectSpec → validation → GeneratedFiles
 ```
 
-`ProjectSpec` is initially a private implementation detail. It should isolate
+`ProjectSpec` is a private implementation detail. It isolates
 interactive prompting from validation and file rendering, enabling deterministic
 tests without simulating a terminal.
 
@@ -195,7 +196,8 @@ Every generated project must include:
 Calls `<name>lib` directly and proves:
 
 - valid input produces the expected typed result;
-- the selected validation case produces a core error.
+- a blank required string produces the fixed core error when that input shape
+  is present.
 
 ### Typed-handler test
 
@@ -248,7 +250,7 @@ release evidence.
 
 ## Configuration test matrix
 
-The initial matrix should cover at least:
+The initial matrix covers:
 
 1. required argument to rendered record;
 2. optional flag behavior;
@@ -258,7 +260,7 @@ The initial matrix should cover at least:
 6. human text and JSON output;
 7. invalid or missing input.
 
-The matrix should cover supported behaviors without attempting every
+The matrix covers supported behaviors without attempting every
 combinatorial permutation.
 
 ## File-system behavior
@@ -266,37 +268,40 @@ combinatorial permutation.
 - Refuse to overwrite a non-empty destination.
 - Do not partially replace an existing project.
 - Validate the full project model before writing.
-- If generation fails after writing begins, report which files were created.
-- Prefer generation into a new destination followed by an atomic or otherwise
-  clearly recoverable placement step where practical.
+- Generate into a sibling staging directory, clean it up on failure, and
+  publish it to the requested destination by rename.
 - Never execute generated code until after the user has confirmed generation.
 
 ## Acceptance criteria
 
-- [ ] A user can describe a project and one command through the wizard.
-- [ ] The generated workspace contains `<name>lib` and `<name>` crates with the
+- [x] A user can describe a project and one command through the wizard.
+- [x] The generated workspace contains `<name>lib` and `<name>` crates with the
       stated ownership split.
-- [ ] The generated CLI-free crate has no Clap or Standout dependency.
-- [ ] The generated handler is a thin adapter returning a CLI-owned view.
-- [ ] The generated project contains a template and semantic CSS.
-- [ ] Selected argument, piped-input, and file-content policies work as
+- [x] The generated CLI-free crate has no Clap or Standout dependency.
+- [x] The generated handler is a thin adapter returning a CLI-owned view.
+- [x] The generated project contains a template and semantic CSS.
+- [x] Selected argument, piped-input, and file-content policies work as
       specified.
-- [ ] Generated core, handler, and pipeline tests pass.
-- [ ] Supported generated configurations format, compile, and test.
-- [ ] A real generated binary succeeds for representative input paths.
-- [ ] JSON output parses and preserves the declared view shape.
-- [ ] Invalid input produces a non-zero result and useful diagnostic.
-- [ ] Existing destinations are not overwritten.
-- [ ] The documentation clearly presents the result as a starting architecture,
+- [x] Generated core, handler, and pipeline tests pass.
+- [x] Supported generated configurations format, compile, and test.
+- [x] A real generated binary succeeds for representative input paths.
+- [x] JSON output parses and preserves the declared view shape.
+- [x] Invalid input produces a non-zero result and useful diagnostic.
+- [x] Existing destinations are not overwritten.
+- [x] The documentation clearly presents the result as a starting architecture,
       not a finished CLI.
 
-## Open questions
+## Resolved first-release contract
 
-1. What command exposes the wizard: a `standout new` subcommand or a separate
-   executable?
-2. What small set of Rust input and output types belongs in the first release?
-3. Should file input use a dedicated `--file` option or allow a positional path?
-4. Should the generated project pin the current Standout version exactly or use
-   the normal compatible Cargo requirement?
-5. Should generated projects include explanatory comments, a short README, or
-   both?
+1. The package exposes the wizard as `standout new-project`.
+2. Inputs support string, boolean, and path values. Strings support required,
+   optional, and repeated cardinality; booleans use boolean cardinality; paths
+   support required, optional, and repeated cardinality. Required and optional
+   strings may select ordered argument, file-content, and piped-stdin sources.
+   Repeated strings, booleans, and paths are argument-only.
+3. File-content sources use a dedicated generated `--<name>-file PATH` option.
+   Path-typed inputs are named arguments and remain paths.
+4. Generated manifests use the running wizard's Standout version as a normal
+   compatible Cargo requirement.
+5. Each generated binary crate includes a short README documenting its
+   architecture, command syntax, source policy, and verification commands.

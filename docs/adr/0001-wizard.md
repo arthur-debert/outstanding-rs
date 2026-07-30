@@ -1,302 +1,76 @@
-# Standout Bootstrap Wizard — Draft Specification
+# Recover the bootstrap wizard as a bounded architecture generator
 
 ## Status
 
-Draft for planning. This document describes the smallest useful version of the
-feature. It is not an implementation plan.
-
-## Overview
-
-Standout makes sophisticated CLI behavior easier to build, but its preferred
-architecture differs from the structure many Rust developers initially reach
-for. The bootstrap wizard should create a small, runnable Standout project that
-demonstrates the intended architecture through one complete command.
-
-The generated project is an architectural tracer bullet, not a finished CLI.
-It should show where reusable logic, CLI adaptation, application assembly,
-presentation, and tests belong.
-
-## Goals
-
-1. Ask users for a project name, initial command, command inputs, input sources,
-   and output shape.
-2. Generate a Rust workspace containing:
-   - a CLI-free `<name>lib` crate;
-   - a `<name>` binary crate using Clap and Standout.
-3. Generate one working command from argument parsing through core logic and
-   rendered or structured output.
-4. Demonstrate Standout input resolution for selected sources such as command
-   arguments, piped stdin, and file contents.
-5. Generate a MiniJinja template and a minimal semantic CSS theme.
-6. Generate tests that demonstrate the intended testing seams:
-   - core-library behavior;
-   - typed-handler adaptation;
-   - full argv-to-output behavior through `TestHarness`.
-7. Prove that supported generated projects format, compile, test, and run.
-
-## Non-goals
-
-- Generating a complete production application.
-- Adding commands to an existing project.
-- Editing, parsing, migrating, or regenerating existing Rust source.
-- Maintaining generated files after initial creation.
-- Supporting arbitrary project layouts.
-- Providing a plugin or third-party template ecosystem.
-- Designing persistence, configuration, authentication, logging, or deployment.
-- Exposing a stable public generator schema.
-- Providing a graphical project editor.
-- Generating every Standout capability in the initial project.
-
-## Generated architecture
-
-The default generated workspace is:
-
-```text
-<name>/
-├── Cargo.toml
-└── crates/
-    ├── <name>lib/
-    │   ├── Cargo.toml
-    │   └── src/
-    │       └── lib.rs
-    └── <name>/
-        ├── Cargo.toml
-        └── src/
-            ├── main.rs
-            ├── cli.rs
-            ├── handlers.rs
-            ├── templates/
-            │   └── <command>.jinja
-            └── styles/
-                └── <name>.css
-```
-
-`<name>lib` owns reusable application behavior and must not depend on Clap,
-Standout, templates, terminal behavior, environment lookup, or CLI view types.
-
-`<name>` owns all shell-facing behavior: Clap declarations, Standout assembly,
-handlers, CLI view types, input-source policy, templates, styles, and process
-execution.
-
-For the initial one-command project:
-
-- `main.rs` owns dependency construction, Standout application assembly, and
-  process execution;
-- `cli.rs` owns Clap declarations;
-- `handlers.rs` owns thin adapters and CLI-specific serializable view types.
-
-The wizard should not create `app.rs`, `views.rs`, or `<name>lib/src/api.rs`
-until the generated project has enough independent responsibility to justify
-those modules.
-
-## Wizard flow
-
-### 1. Project identity
-
-Ask for:
-
-- project name;
-- executable name, defaulting to the project name;
-- initial command name;
-- one-sentence command description.
-
-Validate names before asking detailed command questions.
-
-### 2. Command inputs
-
-For each logical input, ask for:
-
-- name;
-- Rust value type from a deliberately small supported set;
-- required, optional, repeated, or boolean cardinality;
-- allowed sources;
-- precedence when more than one source is allowed;
-- validation demonstrated by the generated example.
-
-Initial source support should remain narrow:
-
-- positional or named command argument;
-- piped stdin;
-- file contents.
-
-The wizard should ask behavioral questions rather than framework questions. For
-example:
-
-> Can `document` come from `--document`, piped stdin, or a file?
-
-It should not ask:
-
-> Should this command use an `InputChain`?
-
-Before generation, summarize the resolved policy in plain language:
-
-> `document` comes from `--document`, then `--file`, then piped stdin. Empty
-> contents are rejected before the operation runs.
-
-### 3. Core operation
-
-Ask for:
-
-- operation name;
-- whether it returns a message, record, list, artifact, or silent success;
-- a small set of result fields;
-- one validation or error case worth demonstrating.
-
-The generated library interface should accept explicit values and dependencies,
-return typed results, and contain no CLI concepts.
-
-### 4. Presentation
-
-Generate:
-
-- a CLI-owned serializable view type;
-- one MiniJinja template for human output;
-- minimal CSS using semantic style names;
-- structured output from the same view type without handler branching.
-
-### 5. Review and confirmation
-
-Before writing files, show:
-
-- the destination;
-- generated tree;
-- command syntax;
-- input-source precedence;
-- core operation;
-- output shape;
-- tests that will be generated.
-
-Generation requires explicit confirmation after this review.
-
-## Internal project model
-
-The questionnaire should resolve into one validated internal project model
-before any files are rendered.
-
-Conceptually:
-
-```text
-Wizard answers → ProjectSpec → validation → GeneratedFiles
-```
-
-`ProjectSpec` is initially a private implementation detail. It should isolate
-interactive prompting from validation and file rendering, enabling deterministic
-tests without simulating a terminal.
-
-The first version does not promise that this model is serializable, stable, or
-accepted as user-authored configuration.
-
-## Generated tests
-
-Every generated project must include:
-
-### Core test
-
-Calls `<name>lib` directly and proves:
-
-- valid input produces the expected typed result;
-- the selected validation case produces a core error.
-
-### Typed-handler test
-
-Calls the preserved typed handler and proves:
-
-- resolved CLI input is mapped into the core call;
-- the core result is mapped into the expected CLI view;
-- the handler returns data instead of printing or rendering.
-
-### Pipeline test
-
-Uses `standout_test::TestHarness` and proves:
-
-- argv reaches the registered command;
-- the selected input source is resolved;
-- human output uses the generated template;
-- JSON output is valid and has the expected shape.
-
-Harness tests must follow Standout's serialization requirements for
-process-global test seams.
-
-## Generator verification
-
-The generator's own integration suite must create projects in temporary
-directories and verify the emitted artifacts rather than only snapshotting file
-contents.
-
-For every supported configuration represented in the test matrix, the suite
-must run:
-
-```text
-cargo fmt --check
-cargo check --workspace
-cargo test --workspace
-```
-
-It must also execute the generated binary and assert:
-
-- representative argument input;
-- piped input when selected;
-- file-content input when selected;
-- source precedence where multiple sources are selected;
-- human-rendered text;
-- parseable structured JSON;
-- non-zero failure and a useful diagnostic for invalid input.
-
-At least one end-to-end case must exercise the richest supported configuration
-through a real generated binary. Fixtures or snapshots alone are insufficient
-release evidence.
-
-## Configuration test matrix
-
-The initial matrix should cover at least:
-
-1. required argument to rendered record;
-2. optional flag behavior;
-3. piped stdin;
-4. file contents;
-5. multiple input sources with defined precedence;
-6. human text and JSON output;
-7. invalid or missing input.
-
-The matrix should cover supported behaviors without attempting every
-combinatorial permutation.
-
-## File-system behavior
-
-- Refuse to overwrite a non-empty destination.
-- Do not partially replace an existing project.
-- Validate the full project model before writing.
-- If generation fails after writing begins, report which files were created.
-- Prefer generation into a new destination followed by an atomic or otherwise
-  clearly recoverable placement step where practical.
-- Never execute generated code until after the user has confirmed generation.
-
-## Acceptance criteria
-
-- [ ] A user can describe a project and one command through the wizard.
-- [ ] The generated workspace contains `<name>lib` and `<name>` crates with the
-      stated ownership split.
-- [ ] The generated CLI-free crate has no Clap or Standout dependency.
-- [ ] The generated handler is a thin adapter returning a CLI-owned view.
-- [ ] The generated project contains a template and semantic CSS.
-- [ ] Selected argument, piped-input, and file-content policies work as
-      specified.
-- [ ] Generated core, handler, and pipeline tests pass.
-- [ ] Supported generated configurations format, compile, and test.
-- [ ] A real generated binary succeeds for representative input paths.
-- [ ] JSON output parses and preserves the declared view shape.
-- [ ] Invalid input produces a non-zero result and useful diagnostic.
-- [ ] Existing destinations are not overwritten.
-- [ ] The documentation clearly presents the result as a starting architecture,
-      not a finished CLI.
-
-## Open questions
-
-1. What command exposes the wizard: a `standout new` subcommand or a separate
-   executable?
-2. What small set of Rust input and output types belongs in the first release?
-3. Should file input use a dedicated `--file` option or allow a positional path?
-4. Should the generated project pin the current Standout version exactly or use
-   the normal compatible Cargo requirement?
-5. Should generated projects include explanatory comments, a short README, or
-   both?
+Accepted and implemented by WIZ01.
+
+## Context
+
+Standout's preferred application shape separates reusable behavior from shell
+adaptation and presentation. That boundary is easy to describe but costly for
+a new user to assemble correctly before they can run a first command.
+
+The WIZ01 epic introduced a bootstrap wizard. The original ADR content was
+lost when this path was accidentally replaced with a copy of the draft
+Specification, so this record recovers the decisions represented by epic #228
+and the shipped implementation.
+
+The first release needed to demonstrate the architecture through real,
+compiling output while keeping its questionnaire and generator contract small.
+It was not intended to become a general source-code generator, project editor,
+or stable template ecosystem.
+
+## Decision
+
+The `standout` package ships an executable named `standout` with a
+`new-project` subcommand. It interactively collects one project and one initial
+command, resolves those answers into a private validated project model, shows a
+plain-language review, and requires explicit confirmation before writing.
+
+The generated project is a two-crate Cargo workspace:
+
+- `<name>lib` owns typed reusable behavior and has no Clap or Standout
+  dependency.
+- `<name>` owns Clap declarations, Standout assembly, shell-input policy, thin
+  handlers, CLI view types, templates, styles, and process execution.
+
+The initial input contract is deliberately bounded:
+
+- value types are string, boolean, and path;
+- strings may be required, optional, or repeated;
+- booleans use boolean cardinality;
+- paths may be required, optional, or repeated;
+- required and optional strings may use an ordered combination of argument,
+  file-content, and piped-stdin sources;
+- repeated strings, booleans, and every path cardinality are argument-only.
+
+File-content input uses a dedicated generated `--<name>-file PATH` option.
+Paths remain `PathBuf` values rather than implicitly becoming file contents.
+When a string has several sources, the user-provided order defines precedence.
+
+The generated command returns either a small message or record view. Human
+output uses a MiniJinja template and semantic CSS; structured output serializes
+the same CLI-owned view. Generated tests cover the CLI-free core operation,
+typed handler mapping, and the argv-to-output pipeline through `TestHarness`.
+A generated README records the selected command syntax and input policy.
+
+Generated manifests use the running wizard's Standout version as a normal
+compatible Cargo requirement. The generator refuses non-empty destinations,
+writes into a sibling staging directory, and publishes by rename so a failed
+write does not expose a partially generated project at the requested path.
+
+## Consequences
+
+Users get a runnable tracer bullet that teaches ownership through code and
+tests. The generated structure is intentionally more substantial than a
+single-crate quick start, but it scales without moving core behavior out of
+CLI modules later.
+
+The supported questionnaire is narrower than Standout itself. New value types,
+source combinations, result shapes, existing-project mutation, or a public
+generator schema require new decisions and verification rather than being
+implied by this ADR.
+
+The internal project model and templates remain implementation details.
+Generated projects are owned by their users after creation; the wizard does
+not update or regenerate them.

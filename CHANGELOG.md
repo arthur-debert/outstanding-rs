@@ -4,6 +4,8 @@
 
 ## Unreleased
 
+- Add the `standout new-project` bootstrap wizard (epic #228), which interactively generates a runnable, production-shaped two-crate workspace with bounded string, boolean, and path inputs; ordered argument, file-content, and piped-stdin resolution where supported; MiniJinja and CSS presentation; and core, typed-handler, and `TestHarness` pipeline tests.
+
 ## 7.9.2 - 2026-07-19
 
 - Resolve terminal width from a valid positive `$COLUMNS` value before probing the terminal, while preserving explicit detector overrides and the existing 80-column tabular fallback (issue #220, PR #221).
