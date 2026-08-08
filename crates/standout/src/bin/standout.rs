@@ -2143,6 +2143,36 @@ mod tests {
     }
 
     #[test]
+    fn generated_manifests_only_depend_on_publishable_workspace_crates() {
+        let dir = TempDir::new().unwrap();
+        let mut spec = sample_spec(dir.path());
+        // [patch.crates-io] would redirect the family deps to local paths and
+        // hide what a user's clean registry resolution actually sees.
+        spec.local_patch_root = None;
+        let generated = GeneratedFiles::render(&spec).unwrap();
+        write_generated_files(&spec.destination, &generated).unwrap();
+
+        let emitted = generated_family_crates_io_deps(&spec.destination.join("Cargo.toml"));
+        assert!(
+            !emitted.is_empty(),
+            "the generated project is expected to depend on the standout family"
+        );
+
+        let publishable = workspace_crates_io_publishable();
+        let stranded: Vec<&String> = emitted
+            .iter()
+            .filter(|name| publishable.get(*name) != Some(&true))
+            .collect();
+        assert!(
+            stranded.is_empty(),
+            "the wizard emits crates.io dependencies on workspace crates that are not \
+             published to crates.io: {stranded:?}. A generated project cannot resolve \
+             them at any version this workspace pins. Publish those crates or stop \
+             generating a dependency on them.\nemitted: {emitted:?}\npublishable: {publishable:?}"
+        );
+    }
+
+    #[test]
     fn result_fields_and_generated_identifiers_are_validated() {
         let duplicate = ProjectSpec::from_answers(WizardAnswers {
             project_name: "demo".into(),
@@ -2847,6 +2877,70 @@ mod tests {
             .unwrap();
         assert!(!missing.status.success());
         assert!(String::from_utf8_lossy(&missing.stderr).contains("document is required"));
+    }
+
+    fn cargo_metadata(manifest: &Path) -> serde_json::Value {
+        let output = Command::new("cargo")
+            .args([
+                "metadata",
+                "--no-deps",
+                "--offline",
+                "--format-version",
+                "1",
+                "--manifest-path",
+            ])
+            .arg(manifest)
+            .output()
+            .unwrap();
+        assert!(
+            output.status.success(),
+            "cargo metadata failed for {}\nstderr:\n{}",
+            manifest.display(),
+            String::from_utf8_lossy(&output.stderr)
+        );
+        serde_json::from_slice(&output.stdout).unwrap()
+    }
+
+    /// How `cargo metadata` spells the source of a dependency that resolves
+    /// from the default registry.
+    const CRATES_IO_SOURCE: &str = "registry+https://github.com/rust-lang/crates.io-index";
+
+    /// Names of the crates.io `standout*` dependencies declared anywhere in the
+    /// workspace rooted at `manifest`, across every dependency kind.
+    fn generated_family_crates_io_deps(manifest: &Path) -> std::collections::BTreeSet<String> {
+        let metadata = cargo_metadata(manifest);
+        let mut names = std::collections::BTreeSet::new();
+        for package in metadata["packages"].as_array().unwrap() {
+            for dependency in package["dependencies"].as_array().unwrap() {
+                let name = dependency["name"].as_str().unwrap();
+                let from_crates_io = dependency["source"].as_str() == Some(CRATES_IO_SOURCE);
+                if from_crates_io && name.starts_with("standout") {
+                    names.insert(name.to_string());
+                }
+            }
+        }
+        names
+    }
+
+    /// Every member of this repository's workspace, mapped to whether `cargo
+    /// publish` would send it to crates.io.
+    fn workspace_crates_io_publishable() -> std::collections::BTreeMap<String, bool> {
+        let metadata = cargo_metadata(&workspace_root().join("Cargo.toml"));
+        metadata["packages"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|package| {
+                let registries = &package["publish"];
+                let publishable = match registries.as_array() {
+                    None => true,
+                    Some(registries) => registries
+                        .iter()
+                        .any(|registry| registry.as_str() == Some("crates-io")),
+                };
+                (package["name"].as_str().unwrap().to_string(), publishable)
+            })
+            .collect()
     }
 
     fn run_cargo<const N: usize>(cwd: &Path, args: [&str; N]) {
