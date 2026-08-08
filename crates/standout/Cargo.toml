@@ -26,7 +26,9 @@ standout-seeker = { version = "7.10.0", path = "../standout-seeker" }
 # Direct dependencies (also used by standout-render, but needed here for cli module)
 console = "0.16"
 deunicode = "1.6.2"
-minijinja = { version = "2", features = ["loader"] }
+# Capped below 2.22, which renders booleans and none with Python spellings
+# (`True`/`False`/`None`) instead of the `true`/`false`/`none` standout emits.
+minijinja = { version = ">=2, <2.22", features = ["loader"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 
