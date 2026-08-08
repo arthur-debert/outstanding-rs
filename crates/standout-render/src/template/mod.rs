@@ -111,6 +111,7 @@ mod functions;
 pub mod registry;
 mod renderer;
 mod simple;
+pub mod spelling;
 
 pub use engine::{register_filters, register_filters_with_policy, MiniJinjaEngine, TemplateEngine};
 pub use functions::{
@@ -124,3 +125,4 @@ pub use registry::{
 };
 pub use renderer::Renderer;
 pub use simple::SimpleEngine;
+pub use spelling::{new_environment, stringify};

@@ -9,6 +9,7 @@ use minijinja::{Environment, Value};
 use std::collections::HashMap;
 
 use crate::error::RenderError;
+use crate::template::spelling::{self, stringify};
 use crate::width::RenderWidthSource;
 use crate::AmbiguousWidth;
 
@@ -172,7 +173,7 @@ pub struct MiniJinjaEngine {
 impl MiniJinjaEngine {
     /// Creates a new MiniJinja engine with default filters registered.
     pub fn new() -> Self {
-        let mut env = Environment::new();
+        let mut env = spelling::new_environment();
         let render_widths = RenderWidthSource::new(AmbiguousWidth::Narrow);
         register_filters_with_source(&mut env, render_widths.clone());
         Self { env, render_widths }
@@ -372,8 +373,12 @@ pub fn register_filters_with_policy(env: &mut Environment<'static>, policy: Ambi
 fn register_filters_with_source(env: &mut Environment<'static>, widths: RenderWidthSource) {
     use minijinja::{Error, ErrorKind};
 
+    spelling::install(env);
+
     // Newline filter
-    env.add_filter("nl", |value: Value| -> String { format!("{}\n", value) });
+    env.add_filter("nl", |value: Value| -> String {
+        format!("{}\n", stringify(&value))
+    });
 
     // Deprecated style filter with helpful error message
     env.add_filter(

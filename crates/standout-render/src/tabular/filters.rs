@@ -55,6 +55,7 @@ use super::util::{
     truncate_visible_end_with_policy, truncate_visible_middle_with_policy,
     truncate_visible_start_with_policy, visible_width_with_policy,
 };
+use crate::template::stringify;
 use crate::width::RenderWidthSource;
 
 /// Deterministic tabular width when the render boundary cannot resolve one.
@@ -85,10 +86,10 @@ fn resolve_tabular_width(
 /// # Example
 ///
 /// ```rust,ignore
-/// use minijinja::Environment;
 /// use standout_render::tabular::filters::register_tabular_filters;
+/// use standout_render::template::new_environment;
 ///
-/// let mut env = Environment::new();
+/// let mut env = new_environment();
 /// register_tabular_filters(&mut env);
 /// ```
 pub fn register_tabular_filters(env: &mut Environment<'static>) {
@@ -116,7 +117,7 @@ pub(crate) fn register_tabular_filters_with_source(
               width_val: Value,
               kwargs: minijinja::value::Kwargs|
               -> Result<String, minijinja::Error> {
-            let text = value.to_string();
+            let text = stringify(&value).into_owned();
 
             // Resolve width: can be number or "fill" (requiring 'width' kwarg)
             let width = if let Some(w) = width_val.as_i64() {
@@ -167,7 +168,7 @@ pub(crate) fn register_tabular_filters_with_source(
     // Semantic style tags have zero width; padding preserves them.
     let pad_left_policy = widths.clone();
     env.add_filter("pad_left", move |value: Value, width: usize| -> String {
-        let text = value.to_string();
+        let text = stringify(&value).into_owned();
         let visible_width = visible_width_with_policy(&text, pad_left_policy.ambiguous_width());
         if visible_width >= width {
             text
@@ -180,7 +181,7 @@ pub(crate) fn register_tabular_filters_with_source(
     // Semantic style tags have zero width; padding preserves them.
     let pad_right_policy = widths.clone();
     env.add_filter("pad_right", move |value: Value, width: usize| -> String {
-        let text = value.to_string();
+        let text = stringify(&value).into_owned();
         let visible_width = visible_width_with_policy(&text, pad_right_policy.ambiguous_width());
         if visible_width >= width {
             text
@@ -193,7 +194,7 @@ pub(crate) fn register_tabular_filters_with_source(
     // Semantic style tags have zero width; padding preserves them.
     let pad_center_policy = widths.clone();
     env.add_filter("pad_center", move |value: Value, width: usize| -> String {
-        let text = value.to_string();
+        let text = stringify(&value).into_owned();
         let visible_width = visible_width_with_policy(&text, pad_center_policy.ambiguous_width());
         if visible_width >= width {
             text
@@ -215,7 +216,7 @@ pub(crate) fn register_tabular_filters_with_source(
               position: Option<String>,
               ellipsis: Option<String>|
               -> String {
-            let text = value.to_string();
+            let text = stringify(&value).into_owned();
             let pos = position.as_deref().unwrap_or("end");
             let ell = ellipsis.as_deref().unwrap_or("…");
 
@@ -246,12 +247,12 @@ pub(crate) fn register_tabular_filters_with_source(
     // Semantic style tags have zero display width.
     let display_policy = widths.clone();
     env.add_filter("display_width", move |value: Value| -> usize {
-        visible_width_with_policy(&value.to_string(), display_policy.ambiguous_width())
+        visible_width_with_policy(&stringify(&value), display_policy.ambiguous_width())
     });
 
     // style_as filter: {{ value | style_as("error") }} => [error]value[/error]
     env.add_filter("style_as", |value: Value, style: String| -> String {
-        let text = value.to_string();
+        let text = stringify(&value).into_owned();
         if style.is_empty() {
             text
         } else {
@@ -344,7 +345,7 @@ fn register_table_functions(env: &mut Environment<'static>, widths: RenderWidthS
                             "header must be an array of strings",
                         )
                     })?
-                    .map(|v| v.to_string())
+                    .map(|v| stringify(&v).into_owned())
                     .collect();
                 table = table.header(headers);
             }
@@ -460,7 +461,7 @@ fn parse_column(value: &Value) -> Result<Column, minijinja::Error> {
     // Optional: header
     if let Ok(header_val) = value.get_attr("header") {
         if !header_val.is_none() && !header_val.is_undefined() {
-            col = col.header(header_val.to_string());
+            col = col.header(stringify(&header_val).into_owned());
         }
     }
 
@@ -474,7 +475,7 @@ fn parse_column(value: &Value) -> Result<Column, minijinja::Error> {
     // Optional: null_repr
     if let Ok(null_val) = value.get_attr("null_repr") {
         if !null_val.is_none() && !null_val.is_undefined() {
-            col = col.null_repr(null_val.to_string());
+            col = col.null_repr(stringify(&null_val).into_owned());
         }
     }
 
@@ -529,7 +530,7 @@ fn parse_overflow(value: &Value) -> Result<Overflow, minijinja::Error> {
             };
             let marker = if let Ok(marker_val) = truncate_obj.get_attr("marker") {
                 if !marker_val.is_none() && !marker_val.is_undefined() {
-                    marker_val.to_string()
+                    stringify(&marker_val).into_owned()
                 } else {
                     "…".to_string()
                 }
@@ -585,7 +586,7 @@ fn parse_sub_columns(value: &Value) -> Result<SubColumns, minijinja::Error> {
         .get_attr("separator")
         .ok()
         .filter(|v| !v.is_none() && !v.is_undefined())
-        .map(|v| v.to_string())
+        .map(|v| stringify(&v).into_owned())
         .unwrap_or_else(|| " ".to_string());
 
     SubColumns::new(columns, separator)
@@ -629,7 +630,7 @@ fn parse_sub_column(value: &Value) -> Result<SubColumn, minijinja::Error> {
 
     if let Ok(null_val) = value.get_attr("null_repr") {
         if !null_val.is_none() && !null_val.is_undefined() {
-            sub_col = sub_col.null_repr(null_val.to_string());
+            sub_col = sub_col.null_repr(stringify(&null_val).into_owned());
         }
     }
 
@@ -892,7 +893,7 @@ mod tests {
     use serde::Serialize;
 
     fn setup_env() -> Environment<'static> {
-        let mut env = Environment::new();
+        let mut env = crate::template::new_environment();
         register_tabular_filters(&mut env);
         env
     }

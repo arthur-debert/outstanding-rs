@@ -51,6 +51,7 @@ use super::util::{
     truncate_visible_end_with_policy, truncate_visible_middle_with_policy,
     truncate_visible_start_with_policy, visible_width_with_policy, wrap_visible_indent_with_policy,
 };
+use crate::template::stringify;
 use crate::AmbiguousWidth;
 
 /// Formats table rows according to a specification.
@@ -791,7 +792,7 @@ impl Object for TabularFormatter {
                     let outer_iter = match values_arg.try_iter() {
                         Ok(iter) => iter,
                         Err(_) => {
-                            let values = vec![values_arg.to_string()];
+                            let values = vec![stringify(values_arg).into_owned()];
                             let formatted = self.format_row(&values);
                             return Ok(Value::from(formatted));
                         }
@@ -809,13 +810,14 @@ impl Object for TabularFormatter {
                         if is_sub_col {
                             if let Ok(inner_iter) = v.try_iter() {
                                 let sub_vals: Vec<String> =
-                                    inner_iter.map(|iv| iv.to_string()).collect();
+                                    inner_iter.map(|iv| stringify(&iv).into_owned()).collect();
                                 owned_values.push(OwnedCellValue::Sub(sub_vals));
                             } else {
-                                owned_values.push(OwnedCellValue::Single(v.to_string()));
+                                owned_values
+                                    .push(OwnedCellValue::Single(stringify(&v).into_owned()));
                             }
                         } else {
-                            owned_values.push(OwnedCellValue::Single(v.to_string()));
+                            owned_values.push(OwnedCellValue::Single(stringify(&v).into_owned()));
                         }
                     }
 
@@ -835,8 +837,8 @@ impl Object for TabularFormatter {
                 } else {
                     // Fast path: no sub-columns, flatten all values to strings
                     let values: Vec<String> = match values_arg.try_iter() {
-                        Ok(iter) => iter.map(|v| v.to_string()).collect(),
-                        Err(_) => vec![values_arg.to_string()],
+                        Ok(iter) => iter.map(|v| stringify(&v).into_owned()).collect(),
+                        Err(_) => vec![stringify(values_arg).into_owned()],
                     };
 
                     let formatted = self.format_row(&values);
@@ -1544,8 +1546,6 @@ mod tests {
 
     #[test]
     fn object_row_method_via_template() {
-        use minijinja::Environment;
-
         let spec = TabularSpec::builder()
             .column(Column::new(Width::Fixed(10)))
             .column(Column::new(Width::Fixed(8)))
@@ -1553,7 +1553,7 @@ mod tests {
             .build();
         let formatter = TabularFormatter::new(&spec, 80);
 
-        let mut env = Environment::new();
+        let mut env = crate::template::new_environment();
         env.add_template("test", "{{ table.row(['Hello', 'World']) }}")
             .unwrap();
 
@@ -1567,8 +1567,6 @@ mod tests {
 
     #[test]
     fn object_row_method_in_loop() {
-        use minijinja::Environment;
-
         let spec = TabularSpec::builder()
             .column(Column::new(Width::Fixed(8)))
             .column(Column::new(Width::Fixed(6)))
@@ -1576,7 +1574,7 @@ mod tests {
             .build();
         let formatter = TabularFormatter::new(&spec, 80);
 
-        let mut env = Environment::new();
+        let mut env = crate::template::new_environment();
         env.add_template(
             "test",
             "{% for item in items %}{{ table.row([item.name, item.value]) }}\n{% endfor %}",
@@ -1600,15 +1598,13 @@ mod tests {
 
     #[test]
     fn object_column_width_method_via_template() {
-        use minijinja::Environment;
-
         let spec = TabularSpec::builder()
             .column(Column::new(Width::Fixed(10)))
             .column(Column::new(Width::Fixed(8)))
             .build();
         let formatter = TabularFormatter::new(&spec, 80);
 
-        let mut env = Environment::new();
+        let mut env = crate::template::new_environment();
         env.add_template(
             "test",
             "{{ table.column_width(0) }}-{{ table.column_width(1) }}",
@@ -1625,8 +1621,6 @@ mod tests {
 
     #[test]
     fn object_attribute_access_via_template() {
-        use minijinja::Environment;
-
         let spec = TabularSpec::builder()
             .column(Column::new(Width::Fixed(10)))
             .column(Column::new(Width::Fixed(8)))
@@ -1634,7 +1628,7 @@ mod tests {
             .build();
         let formatter = TabularFormatter::new(&spec, 80);
 
-        let mut env = Environment::new();
+        let mut env = crate::template::new_environment();
         env.add_template(
             "test",
             "cols={{ table.num_columns }}, sep='{{ table.separator }}'",
@@ -2605,8 +2599,6 @@ mod tests {
 
     #[test]
     fn sub_column_via_template() {
-        use minijinja::Environment;
-
         let sub_cols =
             SubColumns::new(vec![SubCol::fill(), SubCol::bounded(0, 15).right()], " ").unwrap();
 
@@ -2617,7 +2609,7 @@ mod tests {
             .build();
         let formatter = TabularFormatter::new(&spec, 50);
 
-        let mut env = Environment::new();
+        let mut env = crate::template::new_environment();
         env.add_template("test", "{{ t.row(['1.', ['My Title', '[tag]']]) }}")
             .unwrap();
 

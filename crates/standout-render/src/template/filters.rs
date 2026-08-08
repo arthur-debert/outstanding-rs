@@ -17,10 +17,14 @@ pub fn register_filters(env: &mut Environment<'static>) {
 
 /// Registers built-in filters with an explicit ambiguous-width policy.
 pub fn register_filters_with_policy(env: &mut Environment<'static>, policy: crate::AmbiguousWidth) {
+    crate::template::spelling::install(env);
+
     // Filter to append a newline to the value, enabling explicit line break control.
     // Usage: {{ content | nl }} outputs content followed by \n
     //        {{ "" | nl }} outputs just \n (a blank line)
-    env.add_filter("nl", |value: Value| -> String { format!("{}\n", value) });
+    env.add_filter("nl", |value: Value| -> String {
+        format!("{}\n", crate::template::spelling::stringify(&value))
+    });
 
     // Deprecated style filter - provide helpful migration message
     // The old style() filter was replaced with BBCode-style tags in Standout 1.0
@@ -46,7 +50,7 @@ mod tests {
 
     #[test]
     fn test_deprecated_style_filter_gives_helpful_error() {
-        let mut env = Environment::new();
+        let mut env = crate::template::new_environment();
         register_filters(&mut env);
 
         env.add_template("test", "{{ value | style('header') }}")
@@ -80,7 +84,7 @@ mod tests {
 
     #[test]
     fn policy_aware_registration_reaches_width_filters() {
-        let mut env = Environment::new();
+        let mut env = crate::template::new_environment();
         register_filters_with_policy(&mut env, crate::AmbiguousWidth::Wide);
         assert_eq!(
             env.render_str("{{ '↦≈Δ' | display_width }}", ()).unwrap(),
