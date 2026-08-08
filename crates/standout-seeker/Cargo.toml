@@ -1,6 +1,6 @@
 [package]
 name = "standout-seeker"
-version = "7.10.0"
+version = "7.10.1"
 edition = "2021"
 description = "Generic query engine for filtering Rust struct collections"
 license = "MIT"
