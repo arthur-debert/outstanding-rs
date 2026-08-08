@@ -2152,7 +2152,7 @@ mod tests {
         let generated = GeneratedFiles::render(&spec).unwrap();
         write_generated_files(&spec.destination, &generated).unwrap();
 
-        let emitted = generated_family_registry_deps(&spec.destination.join("Cargo.toml"));
+        let emitted = generated_family_crates_io_deps(&spec.destination.join("Cargo.toml"));
         assert!(
             !emitted.is_empty(),
             "the generated project is expected to depend on the standout family"
@@ -2901,18 +2901,20 @@ mod tests {
         serde_json::from_slice(&output.stdout).unwrap()
     }
 
+    /// How `cargo metadata` spells the source of a dependency that resolves
+    /// from the default registry.
+    const CRATES_IO_SOURCE: &str = "registry+https://github.com/rust-lang/crates.io-index";
+
     /// Names of the crates.io `standout*` dependencies declared anywhere in the
     /// workspace rooted at `manifest`, across every dependency kind.
-    fn generated_family_registry_deps(manifest: &Path) -> std::collections::BTreeSet<String> {
+    fn generated_family_crates_io_deps(manifest: &Path) -> std::collections::BTreeSet<String> {
         let metadata = cargo_metadata(manifest);
         let mut names = std::collections::BTreeSet::new();
         for package in metadata["packages"].as_array().unwrap() {
             for dependency in package["dependencies"].as_array().unwrap() {
                 let name = dependency["name"].as_str().unwrap();
-                let from_registry = dependency["source"]
-                    .as_str()
-                    .is_some_and(|source| source.starts_with("registry+"));
-                if from_registry && name.starts_with("standout") {
+                let from_crates_io = dependency["source"].as_str() == Some(CRATES_IO_SOURCE);
+                if from_crates_io && name.starts_with("standout") {
                     names.insert(name.to_string());
                 }
             }
