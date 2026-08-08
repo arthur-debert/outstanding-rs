@@ -1,7 +1,6 @@
 .todos.db
 /target
 **/*.rs.bk
-Cargo.lock
 .DS_Store
 *.swp
 tmp/
