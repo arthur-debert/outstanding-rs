@@ -7,7 +7,6 @@ license = "MIT"
 keywords = ["cli", "testing", "harness", "standout"]
 categories = ["command-line-interface", "development-tools::testing"]
 repository = "https://github.com/arthur-debert/standout"
-publish = false
 
 [dependencies]
 standout = { version = "7.10.0", path = "../standout" }
