@@ -32,9 +32,8 @@ fn production_code_builds_environments_through_the_spelling_seam() {
         .iter()
         .filter(|path| **path != seam)
         .filter(|path| {
-            fs::read_to_string(path)
-                .expect("source file is readable")
-                .contains("Environment::new()")
+            let source = fs::read_to_string(path).expect("source file is readable");
+            strip_line_comments(&source).contains("Environment::new()")
         })
         .map(|path| display_path(&root, path))
         .collect();
@@ -45,6 +44,29 @@ fn production_code_builds_environments_through_the_spelling_seam() {
          environments render `True`/`False`/`None`; call \
          standout_render::template::new_environment() instead: {offenders:?}"
     );
+}
+
+#[test]
+fn prose_naming_the_constructor_is_not_read_as_a_call() {
+    let commented = "//! Production code does not call Environment::new().\n\
+                     let x = 1; // ... unlike Environment::new()\n";
+    assert!(!strip_line_comments(commented).contains("Environment::new()"));
+
+    let call = "let env = Environment::new(); // the real thing\n";
+    assert!(strip_line_comments(call).contains("Environment::new()"));
+}
+
+/// `source` with `//` line comments stripped, so prose naming the constructor
+/// is not mistaken for a call to it.
+fn strip_line_comments(source: &str) -> String {
+    source
+        .lines()
+        .map(|line| match line.find("//") {
+            Some(comment) => &line[..comment],
+            None => line,
+        })
+        .collect::<Vec<_>>()
+        .join("\n")
 }
 
 fn workspace_root() -> PathBuf {
