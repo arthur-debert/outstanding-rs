@@ -1473,14 +1473,19 @@ const ATTR_FN_LIKE_WIDTH: usize = 70;
 /// Renders the generated CLI's `#[command(...)]` attribute exactly as the
 /// pinned rustfmt would format it: inline while the argument list fits
 /// [`ATTR_FN_LIKE_WIDTH`], one argument per line without a trailing comma
-/// once it does not. Emitting the formatted shape keeps generated projects
-/// `cargo fmt --check`-clean without invoking a formatter at generation
-/// time, even for long command descriptions.
+/// once it does not. The budget is measured in Unicode display width
+/// (via `unicode-width`, the same crate rustfmt's heuristics use), not
+/// char count, so wide characters in a description (CJK, emoji) trip the
+/// split at the same point rustfmt would. Emitting the formatted shape
+/// keeps generated projects `cargo fmt --check`-clean without invoking a
+/// formatter at generation time, even for long command descriptions.
 fn cli_command_attribute(spec: &ProjectSpec) -> String {
+    use unicode_width::UnicodeWidthStr;
+
     let name = quote(&spec.executable_name);
     let about = quote(&spec.command_description);
     let arguments = format!("name = {name}, about = {about}");
-    if arguments.chars().count() <= ATTR_FN_LIKE_WIDTH {
+    if arguments.width() <= ATTR_FN_LIKE_WIDTH {
         format!("#[command({arguments})]")
     } else {
         format!("#[command(\n    name = {name},\n    about = {about}\n)]")
@@ -2825,6 +2830,33 @@ mod tests {
             format!(
                 "#[command(\n    name = \"demo\",\n    about = \"{}\"\n)]",
                 "a".repeat(ATTR_FN_LIKE_WIDTH - 24)
+            )
+        );
+    }
+
+    #[test]
+    fn command_attribute_measures_display_width_not_char_count() {
+        // rustfmt's width heuristic counts Unicode display width, so CJK
+        // characters (width 2) hit the budget at half the char count. The
+        // scaffolding `name = "demo", about = ""` contributes 25 columns.
+        // 22 CJK chars: width 25 + 44 = 69 <= 70 -> inline (47 chars total).
+        let inline = spec_with_description(&"検".repeat(22));
+        assert_eq!(
+            cli_command_attribute(&inline),
+            format!(
+                "#[command(name = \"demo\", about = \"{}\")]",
+                "検".repeat(22)
+            )
+        );
+
+        // 23 CJK chars: width 25 + 46 = 71 > 70 -> split, even though the
+        // argument list is only 48 chars (well under the budget by count).
+        let split = spec_with_description(&"検".repeat(23));
+        assert_eq!(
+            cli_command_attribute(&split),
+            format!(
+                "#[command(\n    name = \"demo\",\n    about = \"{}\"\n)]",
+                "検".repeat(23)
             )
         );
     }
