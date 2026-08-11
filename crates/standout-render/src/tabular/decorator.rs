@@ -41,6 +41,7 @@ use super::formatter::{CellValue, OwnedCellValue, TabularFormatter};
 use super::traits::{Tabular, TabularRow};
 use super::types::{FlatDataSpec, TabularSpec};
 use super::util::display_width_with_policy;
+use crate::template::stringify;
 use crate::{AmbiguousWidth, WidthCalculator};
 
 /// Border style for table decoration.
@@ -625,7 +626,7 @@ impl Table {
         let arc_formatter = Arc::new(self.formatter.clone());
         arc_formatter
             .get_value(&Value::from("separator"))
-            .map(|v| v.to_string())
+            .map(|v| stringify(&v).into_owned())
             .unwrap_or_default()
     }
 
@@ -733,7 +734,7 @@ impl minijinja::value::Object for Table {
                     let outer_iter = match values_arg.try_iter() {
                         Ok(iter) => iter,
                         Err(_) => {
-                            let values = vec![values_arg.to_string()];
+                            let values = vec![stringify(values_arg).into_owned()];
                             return Ok(minijinja::Value::from(self.row(&values)));
                         }
                     };
@@ -750,13 +751,14 @@ impl minijinja::value::Object for Table {
                         if is_sub_col {
                             if let Ok(inner_iter) = v.try_iter() {
                                 let sub_vals: Vec<String> =
-                                    inner_iter.map(|iv| iv.to_string()).collect();
+                                    inner_iter.map(|iv| stringify(&iv).into_owned()).collect();
                                 owned_values.push(OwnedCellValue::Sub(sub_vals));
                             } else {
-                                owned_values.push(OwnedCellValue::Single(v.to_string()));
+                                owned_values
+                                    .push(OwnedCellValue::Single(stringify(&v).into_owned()));
                             }
                         } else {
-                            owned_values.push(OwnedCellValue::Single(v.to_string()));
+                            owned_values.push(OwnedCellValue::Single(stringify(&v).into_owned()));
                         }
                     }
 
@@ -774,8 +776,8 @@ impl minijinja::value::Object for Table {
                     Ok(minijinja::Value::from(formatted))
                 } else {
                     let values: Vec<String> = match values_arg.try_iter() {
-                        Ok(iter) => iter.map(|v| v.to_string()).collect(),
-                        Err(_) => vec![values_arg.to_string()],
+                        Ok(iter) => iter.map(|v| stringify(&v).into_owned()).collect(),
+                        Err(_) => vec![stringify(values_arg).into_owned()],
                     };
 
                     let formatted = self.row(&values);
@@ -831,8 +833,8 @@ impl minijinja::value::Object for Table {
                 let rows: Vec<Vec<String>> = rows_iter
                     .map(|row| {
                         row.try_iter()
-                            .map(|iter| iter.map(|v| v.to_string()).collect())
-                            .unwrap_or_else(|_| vec![row.to_string()])
+                            .map(|iter| iter.map(|v| stringify(&v).into_owned()).collect())
+                            .unwrap_or_else(|_| vec![stringify(&row).into_owned()])
                     })
                     .collect();
 

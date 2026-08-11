@@ -245,6 +245,16 @@ Add minijinja to your `Cargo.toml`:
 minijinja = "2"
 ```
 
+> **A note on booleans and none:** a bare `minijinja::Environment` renders these
+> the Jinja2 way — `True`, `False`, `None` — from minijinja 2.22 onward.
+> Standout renders `true`, `false`, and `none`, and normalizes for you from step
+> 7 on, once rendering goes through `App`. Until then the spelling is
+> minijinja's. If you want standout's spelling now, add `standout-render = "7"`
+> next to minijinja and build the environment with
+> `standout_render::template::new_environment()` instead of
+> `minijinja::Environment::new()` in the snippets below — the snippets keep the
+> bare constructor, since `standout` only arrives in step 7.
+
 And then you call render in MiniJinja, passing the template string and the data to use. So now your rendering function looks like this:
 
 ```rust

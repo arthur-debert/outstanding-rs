@@ -6,7 +6,8 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use anyhow::{anyhow, bail, Context, Result};
 use clap::{Parser, Subcommand};
-use minijinja::{context, Environment};
+use minijinja::context;
+use standout_render::template::new_environment;
 
 #[derive(Parser)]
 #[command(name = "standout", about = "Standout project tools")]
@@ -235,7 +236,7 @@ struct GeneratedFiles {
 
 impl GeneratedFiles {
     fn render(spec: &ProjectSpec) -> Result<Self> {
-        let mut env = Environment::new();
+        let mut env = new_environment();
         for (name, source) in TEMPLATE_CATALOG {
             env.add_template(name, source)
                 .with_context(|| format!("template {name} is malformed"))?;
@@ -1632,7 +1633,7 @@ impl CommandInput {
 }
 
 fn render_inline(template: &str, spec: &ProjectSpec) -> Result<String> {
-    Environment::new()
+    new_environment()
         .template_from_str(template)?
         .render(model(spec))
         .with_context(|| format!("path template {template} is missing model data"))

@@ -81,6 +81,32 @@ MiniJinja implements Jinja2 syntax, a widely-used templating language. Here's a 
 
 For comprehensive MiniJinja documentation, see the [MiniJinja documentation](https://docs.rs/minijinja).
 
+### Booleans and None
+
+Standout renders these the Rust way — `true`, `false`, `none` — not the Jinja2
+way MiniJinja itself uses (`True`, `False`, `None`). This holds for
+interpolation, loop and `set` bindings, `| string`, `| join`, sequence and map
+literals, standout's own filters, and table cells:
+
+```jinja
+{{ flag }}                {# true #}
+{{ missing }}             {# none #}
+{{ flags }}               {# [true, false, none] #}
+{{ flags | join(", ") }}  {# true, false, none #}
+```
+
+Two exceptions:
+
+- The `~` concatenation operator formats inside MiniJinja's evaluator, which
+  exposes no hook: `{{ "x" ~ flag }}` yields `xTrue`. Write `{{ "x" }}{{ flag }}`
+  or `{{ "x" ~ flag | string }}`.
+- Structured output (JSON, YAML, XML, CSV) skips templates entirely and
+  serializes your data directly, so those modes follow their format's own rules.
+
+If you build a `minijinja::Environment` yourself, use
+`standout_render::template::new_environment()` — or call `register_filters` on
+your own environment, which installs the same spelling.
+
 ---
 
 ## Style Tags

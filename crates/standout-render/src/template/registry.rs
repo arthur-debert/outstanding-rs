@@ -1102,7 +1102,7 @@ mod tests {
         let registry = TemplateRegistry::from_embedded_entries(entries);
 
         // Build MiniJinja environment the same way App.render() does
-        let mut env = minijinja::Environment::new();
+        let mut env = crate::template::new_environment();
         for name in registry.names() {
             if let Ok(content) = registry.get_content(name) {
                 env.add_template_owned(name.to_string(), content).unwrap();
@@ -1124,7 +1124,7 @@ mod tests {
         ];
         let registry = TemplateRegistry::from_embedded_entries(entries);
 
-        let mut env = minijinja::Environment::new();
+        let mut env = crate::template::new_environment();
         for name in registry.names() {
             if let Ok(content) = registry.get_content(name) {
                 env.add_template_owned(name.to_string(), content).unwrap();
