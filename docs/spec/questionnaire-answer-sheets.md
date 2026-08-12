@@ -26,7 +26,7 @@ Offline collection also introduces compatibility and validation problems. Displa
 - Parse answers from a named file or explicit piped stdin into the same raw answer representation used by interactive collection.
 - Use shared field decoders and validators so equivalent interactive and batch answers produce the same application-owned answer and domain models.
 - Preserve immediate, one-question-at-a-time feedback for interactive users while accumulating field and whole-form diagnostics for batch users.
-- Reject stale or incompatible answer sheets predictably through exact questionnaire identity and schema-fingerprint matching in the first release.
+- Reject stale or incompatible answer sheets predictably through exact questionnaire identity and semantic-fingerprint matching in the first release.
 - Integrate answer-sheet generation and consumption into `standout new-project` without weakening its review, confirmation, validation, or no-partial-write guarantees.
 
 ## Non-Goals
@@ -53,7 +53,7 @@ The rendered artifact is an answer sheet, not a configuration file. A representa
 ```text
 #! standout-answers 1
 #! questionnaire: standout.new-project
-#! schema: sha256:7a81c1d8...
+#! fingerprint: sha256:7a81c1d8...
 
 1. What is the project name? [project.name] (string)
 -> wizard-question-generator
@@ -92,7 +92,7 @@ A repeatable-group header opens one occurrence, and its child field IDs are scop
 
 The renderer emits exactly the declared minimum number of repeatable-group blocks. It includes short editing guidance for copying a whole block when more items are wanted. Nested numbering such as `3.2` helps people understand structure but has no parsing or compatibility meaning. Variable item counts are inferred from occurrences of the stable repeatable-group header, never from display numbers or heuristics over question wording.
 
-The metadata preamble is deliberately small and visually separate from the questions. It carries an answer-format version, questionnaire ID, and schema fingerprint. The first release accepts only the expected answer-format version, exact questionnaire ID, and exact fingerprint. A mismatch produces a diagnostic telling the user to render a fresh answer sheet; it never guesses which old field maps to which new field.
+The metadata preamble is deliberately small and visually separate from the questions. It carries an answer-format version, questionnaire ID, and semantic fingerprint under the unambiguous `fingerprint` key. The first release accepts only the expected answer-format version, exact questionnaire ID, and exact fingerprint. A mismatch produces a diagnostic telling the user to render a fresh answer sheet; it never guesses which old field maps to which new field.
 
 The fingerprint is computed from a canonical, short semantic definition. It includes stable IDs, value kinds, optionality, group structure, repeat bounds, defaults, constraints, conditional-applicability rules, and explicit revisions for application validators whose semantics cannot otherwise be represented. It excludes question wording, help text, display numbers, presentation order, indentation, and styling. It is a compatibility checksum, not an authenticity or tamper-proofing mechanism.
 
