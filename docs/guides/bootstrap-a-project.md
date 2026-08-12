@@ -33,6 +33,18 @@ destination, generated files, command syntax, source precedence, core
 operation, output shape, and generated test seams. No files are published until
 you type `yes` at the confirmation prompt.
 
+An invalid answer does not abort the questionnaire. The wizard prints the
+validation error and asks again, keeping every earlier valid answer. It retries
+the smallest coherent unit: the current question for an invalid scalar answer,
+the whole comma-separated list for an invalid record field, and the whole
+current input block when a combination of answers is unsupported — for
+example a `path` input with a `file` source, or an input whose generated flag
+collides with an earlier input's.
+
+Answer an exact uppercase `X` at any questionnaire prompt to cancel the wizard.
+Cancellation is not an error: the wizard publishes no files and reports that
+generation was cancelled.
+
 ## Supported inputs
 
 The first release deliberately supports a small, explicit matrix:

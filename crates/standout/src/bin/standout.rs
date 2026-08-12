@@ -25,7 +25,14 @@ enum Commands {
 fn main() -> Result<()> {
     match Cli::parse().command {
         Commands::NewProject => {
-            let answers = prompt_answers(&mut io::stdin().lock(), &mut io::stdout())?;
+            let answers = match prompt_answers(&mut io::stdin().lock(), &mut io::stdout()) {
+                Ok(answers) => answers,
+                Err(error) if error.is::<Cancelled>() => {
+                    println!("Generation cancelled.");
+                    return Ok(());
+                }
+                Err(error) => return Err(error),
+            };
             let spec = ProjectSpec::from_answers(answers)?;
             write_review(&spec, &mut io::stdout())?;
             if !confirm(&mut io::stdin().lock(), &mut io::stdout())? {
@@ -258,20 +265,57 @@ impl GeneratedFiles {
     }
 }
 
-fn prompt_answers(input: &mut dyn BufRead, output: &mut dyn Write) -> Result<WizardAnswers> {
-    let project_name = prompt(input, output, "Project name")?;
-    validate_crate_name(&project_name, "project name")?;
+/// Control-flow marker raised when the user answers an exact uppercase `X`
+/// at any questionnaire prompt. The caller reports a successful,
+/// non-mutating cancellation instead of surfacing an error.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct Cancelled;
 
-    let executable_name = prompt_default(input, output, "Executable name", &project_name)?;
-    validate_crate_name(&executable_name, "executable name")?;
-
-    let command_name = prompt(input, output, "Initial command name")?;
-    validate_ident(&command_name.replace('-', "_"), "command name")?;
-
-    let command_description = prompt(input, output, "One-sentence command description")?;
-    if command_description.trim().is_empty() {
-        bail!("command description cannot be empty");
+impl std::fmt::Display for Cancelled {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.write_str("generation cancelled")
     }
+}
+
+impl std::error::Error for Cancelled {}
+
+/// The exact answer that cancels the questionnaire at any prompt.
+const CANCEL_ANSWER: &str = "X";
+
+/// Collects and validates every questionnaire answer, re-prompting the
+/// smallest coherent unit — the current scalar question, the record-field
+/// list, or the current input block — on an invalid answer instead of
+/// discarding the session. An exact uppercase `X` at any prompt raises
+/// [`Cancelled`]; exhausted input aborts with an error.
+fn prompt_answers(input: &mut dyn BufRead, output: &mut dyn Write) -> Result<WizardAnswers> {
+    let project_name = prompt_retrying(input, output, "Project name", None, |value| {
+        validate_crate_name(value, "project name")?;
+        Ok(value.to_string())
+    })?;
+
+    let executable_name = prompt_retrying(
+        input,
+        output,
+        "Executable name",
+        Some(&project_name),
+        |value| {
+            validate_crate_name(value, "executable name")?;
+            Ok(value.to_string())
+        },
+    )?;
+
+    let command_name = prompt_retrying(input, output, "Initial command name", None, |value| {
+        validate_ident(&value.replace('-', "_"), "command name")?;
+        Ok(value.to_string())
+    })?;
+
+    let command_description = prompt_retrying(
+        input,
+        output,
+        "One-sentence command description",
+        None,
+        |value| Ok(value.to_string()),
+    )?;
 
     let inputs = prompt_command_inputs(input, output)?;
     let result_shape = prompt_result_shape(input, output)?;
@@ -291,64 +335,151 @@ fn prompt_answers(input: &mut dyn BufRead, output: &mut dyn Write) -> Result<Wiz
     })
 }
 
+/// Asks one question until the answer parses, printing each validation
+/// error before re-prompting. An empty answer takes `default` when one
+/// exists and otherwise re-prompts. Cancellation ([`CANCEL_ANSWER`]) and
+/// end of input abort the questionnaire instead of retrying.
+fn prompt_retrying<T>(
+    input: &mut dyn BufRead,
+    output: &mut dyn Write,
+    label: &str,
+    default: Option<&str>,
+    parse: impl Fn(&str) -> Result<T>,
+) -> Result<T> {
+    loop {
+        match default {
+            Some(default) => write!(output, "{label} [{default}]: ")?,
+            None => write!(output, "{label}: ")?,
+        }
+        output.flush()?;
+        let mut line = String::new();
+        if input.read_line(&mut line)? == 0 {
+            bail!("input ended before the questionnaire completed");
+        }
+        let mut value = line.trim();
+        if value == CANCEL_ANSWER {
+            return Err(Cancelled.into());
+        }
+        if value.is_empty() {
+            match default {
+                Some(default) => value = default,
+                None => {
+                    writeln!(output, "{label} cannot be empty")?;
+                    continue;
+                }
+            }
+        }
+        match parse(value) {
+            Ok(parsed) => return Ok(parsed),
+            Err(error) => writeln!(output, "{error}")?,
+        }
+    }
+}
+
+/// Collects the requested number of command inputs. Scalar answers inside
+/// a block retry individually; a cross-answer constraint failure — an
+/// unsupported type/cardinality/source combination or a generated-flag
+/// collision with an earlier input — retries the whole current block.
 fn prompt_command_inputs(
     input: &mut dyn BufRead,
     output: &mut dyn Write,
 ) -> Result<Vec<CommandInput>> {
-    let count = prompt_default(input, output, "Number of command inputs", "1")?;
-    let count: usize = count
-        .parse()
-        .context("number of command inputs must be an integer")?;
-    if count == 0 {
-        bail!("at least one command input is required");
-    }
+    let count = prompt_retrying(
+        input,
+        output,
+        "Number of command inputs",
+        Some("1"),
+        |value| {
+            let count: usize = value
+                .parse()
+                .context("number of command inputs must be an integer")?;
+            if count == 0 {
+                bail!("at least one command input is required");
+            }
+            Ok(count)
+        },
+    )?;
 
-    let mut inputs = Vec::with_capacity(count);
+    let mut inputs: Vec<CommandInput> = Vec::with_capacity(count);
     for index in 1..=count {
-        writeln!(output, "Input {index}:")?;
-        let name = prompt(input, output, "  Name")?;
-        let value_type = prompt_input_value_type(input, output)?;
-        let cardinality = prompt_input_cardinality(input, output, value_type)?;
-        let sources = prompt_input_sources(input, output, value_type, cardinality)?;
-        let command_input = CommandInput {
-            name,
-            value_type,
-            cardinality,
-            sources,
-        };
-        command_input.validate()?;
-        inputs.push(command_input);
+        loop {
+            writeln!(output, "Input {index}:")?;
+            let candidate = prompt_command_input(input, output)?;
+            let cross_answer_check = candidate.validate().and_then(|()| {
+                let mut trial = inputs.clone();
+                trial.push(candidate.clone());
+                validate_generated_flags(&trial)
+            });
+            if let Err(error) = cross_answer_check {
+                writeln!(output, "{error}")?;
+                continue;
+            }
+            inputs.push(candidate);
+            break;
+        }
     }
     Ok(inputs)
 }
 
-fn prompt(input: &mut dyn BufRead, output: &mut dyn Write, label: &str) -> Result<String> {
-    write!(output, "{label}: ")?;
-    output.flush()?;
-    let mut line = String::new();
-    input.read_line(&mut line)?;
-    let value = line.trim().to_string();
-    if value.is_empty() {
-        bail!("{label} cannot be empty");
-    }
-    Ok(value)
-}
-
-fn prompt_default(
-    input: &mut dyn BufRead,
-    output: &mut dyn Write,
-    label: &str,
-    default: &str,
-) -> Result<String> {
-    write!(output, "{label} [{default}]: ")?;
-    output.flush()?;
-    let mut line = String::new();
-    input.read_line(&mut line)?;
-    let value = line.trim();
-    Ok(if value.is_empty() {
-        default.to_string()
+/// Collects one input block: name, value type, cardinality, and sources.
+/// Each scalar answer validates and retries on its own; cross-answer
+/// constraints are enforced by the caller, which retries the whole block.
+fn prompt_command_input(input: &mut dyn BufRead, output: &mut dyn Write) -> Result<CommandInput> {
+    let name = prompt_retrying(input, output, "  Name", None, |value| {
+        validate_ident(value, "input name")?;
+        Ok(value.to_string())
+    })?;
+    let value_type = prompt_retrying(
+        input,
+        output,
+        "  Type (string/bool/path)",
+        Some("string"),
+        |value| match value {
+            "string" => Ok(InputValueType::String),
+            "bool" => Ok(InputValueType::Bool),
+            "path" => Ok(InputValueType::Path),
+            _ => bail!("input type must be string, bool, or path"),
+        },
+    )?;
+    let cardinality_default = if value_type == InputValueType::Bool {
+        "boolean"
     } else {
-        value.to_string()
+        "required"
+    };
+    let cardinality = prompt_retrying(
+        input,
+        output,
+        "  Cardinality (required/optional/repeated/boolean)",
+        Some(cardinality_default),
+        |value| match value {
+            "required" => Ok(InputCardinality::Required),
+            "optional" => Ok(InputCardinality::Optional),
+            "repeated" => Ok(InputCardinality::Repeated),
+            "boolean" => Ok(InputCardinality::Boolean),
+            _ => bail!("input cardinality must be required, optional, repeated, or boolean"),
+        },
+    )?;
+    let sources_default = if value_type == InputValueType::String
+        && matches!(
+            cardinality,
+            InputCardinality::Required | InputCardinality::Optional
+        ) {
+        "argument,file,stdin"
+    } else {
+        "argument"
+    };
+    let sources = prompt_retrying(
+        input,
+        output,
+        "  Sources in precedence order (argument,file,stdin)",
+        Some(sources_default),
+        parse_input_sources,
+    )?;
+    Ok(CommandInput {
+        name,
+        value_type,
+        cardinality,
+        sources,
     })
 }
 
@@ -361,84 +492,29 @@ fn confirm(input: &mut dyn BufRead, output: &mut dyn Write) -> Result<bool> {
 }
 
 fn prompt_result_shape(input: &mut dyn BufRead, output: &mut dyn Write) -> Result<ResultShape> {
-    let value = prompt_default(input, output, "Result shape (message/record)", "record")?;
-    match value.as_str() {
-        "message" => Ok(ResultShape::Message),
-        "record" => Ok(ResultShape::Record),
-        _ => bail!("result shape must be message or record"),
-    }
+    prompt_retrying(
+        input,
+        output,
+        "Result shape (message/record)",
+        Some("record"),
+        |value| match value {
+            "message" => Ok(ResultShape::Message),
+            "record" => Ok(ResultShape::Record),
+            _ => bail!("result shape must be message or record"),
+        },
+    )
 }
 
+/// Asks for the record-field list, retrying the whole comma-separated list
+/// when any field is invalid or duplicated.
 fn prompt_record_fields(input: &mut dyn BufRead, output: &mut dyn Write) -> Result<Vec<String>> {
-    let value = prompt_default(
+    prompt_retrying(
         input,
         output,
         "Record fields (comma-separated)",
-        "summary,count",
-    )?;
-    parse_record_fields(&value)
-}
-
-fn prompt_input_value_type(
-    input: &mut dyn BufRead,
-    output: &mut dyn Write,
-) -> Result<InputValueType> {
-    let value = prompt_default(input, output, "  Type (string/bool/path)", "string")?;
-    match value.as_str() {
-        "string" => Ok(InputValueType::String),
-        "bool" => Ok(InputValueType::Bool),
-        "path" => Ok(InputValueType::Path),
-        _ => bail!("input type must be string, bool, or path"),
-    }
-}
-
-fn prompt_input_cardinality(
-    input: &mut dyn BufRead,
-    output: &mut dyn Write,
-    value_type: InputValueType,
-) -> Result<InputCardinality> {
-    let default = if value_type == InputValueType::Bool {
-        "boolean"
-    } else {
-        "required"
-    };
-    let value = prompt_default(
-        input,
-        output,
-        "  Cardinality (required/optional/repeated/boolean)",
-        default,
-    )?;
-    match value.as_str() {
-        "required" => Ok(InputCardinality::Required),
-        "optional" => Ok(InputCardinality::Optional),
-        "repeated" => Ok(InputCardinality::Repeated),
-        "boolean" => Ok(InputCardinality::Boolean),
-        _ => bail!("input cardinality must be required, optional, repeated, or boolean"),
-    }
-}
-
-fn prompt_input_sources(
-    input: &mut dyn BufRead,
-    output: &mut dyn Write,
-    value_type: InputValueType,
-    cardinality: InputCardinality,
-) -> Result<Vec<InputSource>> {
-    let default = if value_type == InputValueType::String
-        && matches!(
-            cardinality,
-            InputCardinality::Required | InputCardinality::Optional
-        ) {
-        "argument,file,stdin"
-    } else {
-        "argument"
-    };
-    let value = prompt_default(
-        input,
-        output,
-        "  Sources in precedence order (argument,file,stdin)",
-        default,
-    )?;
-    parse_input_sources(&value)
+        Some("summary,count"),
+        parse_record_fields,
+    )
 }
 
 fn write_review(spec: &ProjectSpec, output: &mut dyn Write) -> Result<()> {
@@ -1390,6 +1466,32 @@ fn quote(value: &str) -> String {
     format!("{value:?}")
 }
 
+/// Width budget rustfmt's default `attr_fn_like_width` heuristic grants a
+/// function-like attribute's argument list before splitting it across lines.
+const ATTR_FN_LIKE_WIDTH: usize = 70;
+
+/// Renders the generated CLI's `#[command(...)]` attribute exactly as the
+/// pinned rustfmt would format it: inline while the argument list fits
+/// [`ATTR_FN_LIKE_WIDTH`], one argument per line without a trailing comma
+/// once it does not. The budget is measured in Unicode display width
+/// (via `unicode-width`, the same crate rustfmt's heuristics use), not
+/// char count, so wide characters in a description (CJK, emoji) trip the
+/// split at the same point rustfmt would. Emitting the formatted shape
+/// keeps generated projects `cargo fmt --check`-clean without invoking a
+/// formatter at generation time, even for long command descriptions.
+fn cli_command_attribute(spec: &ProjectSpec) -> String {
+    use unicode_width::UnicodeWidthStr;
+
+    let name = quote(&spec.executable_name);
+    let about = quote(&spec.command_description);
+    let arguments = format!("name = {name}, about = {about}");
+    if arguments.width() <= ATTR_FN_LIKE_WIDTH {
+        format!("#[command({arguments})]")
+    } else {
+        format!("#[command(\n    name = {name},\n    about = {about}\n)]")
+    }
+}
+
 /// Escapes a path for interpolation inside a TOML basic string.
 fn toml_basic_string_content(path: &Path) -> String {
     let mut escaped = String::new();
@@ -1648,6 +1750,7 @@ fn model(spec: &ProjectSpec) -> minijinja::Value {
         command_ident => spec.command_name.replace('-', "_"),
         command_variant => pascal_case(&spec.command_name.replace('-', "_")),
         command_description => spec.command_description,
+        cli_command_attribute => cli_command_attribute(spec),
         input_name => primary.name,
         inputs => spec.inputs.iter().map(|input| {
             context! {
@@ -1864,7 +1967,7 @@ mod tests {
         r#"use clap::{CommandFactory, Parser, Subcommand};
 
 #[derive(Parser)]
-#[command(name = "{{ executable_name }}", about = "{{ command_description }}")]
+{{ cli_command_attribute }}
 pub(crate) struct Cli {
     #[command(subcommand)]
     command: Commands,
@@ -2046,13 +2149,177 @@ mod tests {
     }
 
     #[test]
-    fn answers_validate_before_rendering() {
+    fn exhausted_input_aborts_instead_of_looping() {
         let mut input = io::Cursor::new("1bad\n");
         let mut output = Vec::new();
 
         let error = prompt_answers(&mut input, &mut output).unwrap_err();
 
-        assert!(error.to_string().contains("project name must start"));
+        let transcript = String::from_utf8(output).unwrap();
+        assert!(transcript.contains("project name must start"));
+        assert!(error
+            .to_string()
+            .contains("input ended before the questionnaire completed"));
+    }
+
+    #[test]
+    fn invalid_scalar_answers_reprompt_the_current_question() {
+        let answers = [
+            "1bad",
+            "hello-tool",
+            "",
+            "fn",
+            "greet",
+            "Greet one value",
+            "two",
+            "0",
+            "1",
+            "name",
+            "strang",
+            "string",
+            "sometimes",
+            "required",
+            "carrier,argument",
+            "argument",
+            "list",
+            "message",
+        ]
+        .join("\n")
+            + "\n";
+        let mut input = io::Cursor::new(answers);
+        let mut output = Vec::new();
+
+        let answers = prompt_answers(&mut input, &mut output).unwrap();
+
+        assert_eq!(answers.project_name, "hello-tool");
+        assert_eq!(answers.command_name, "greet");
+        assert_eq!(answers.inputs.len(), 1);
+        assert_eq!(answers.result_shape, ResultShape::Message);
+        let transcript = String::from_utf8(output).unwrap();
+        assert!(transcript.contains("project name must start"));
+        assert!(transcript.contains("reserved Rust keyword"));
+        assert!(transcript.contains("number of command inputs must be an integer"));
+        assert!(transcript.contains("at least one command input is required"));
+        assert!(transcript.contains("input type must be string, bool, or path"));
+        assert!(transcript.contains("input cardinality must be required"));
+        assert!(transcript.contains("input source must be argument, file, or stdin"));
+        assert!(transcript.contains("result shape must be message or record"));
+    }
+
+    #[test]
+    fn invalid_record_field_answers_reprompt_without_discarding_progress() {
+        let answers = [
+            "hello-tool",
+            "",
+            "greet",
+            "Greet one value",
+            "1",
+            "name",
+            "string",
+            "required",
+            "argument",
+            "record",
+            "docker-volume,summary",
+            "docker_volume,summary",
+        ]
+        .join("\n")
+            + "\n";
+        let mut input = io::Cursor::new(answers);
+        let mut output = Vec::new();
+
+        let answers = prompt_answers(&mut input, &mut output).unwrap();
+
+        assert_eq!(answers.record_fields, vec!["docker_volume", "summary"]);
+        let transcript = String::from_utf8(output).unwrap();
+        assert!(
+            transcript.contains("record field may only contain letters, numbers, or underscores")
+        );
+        assert_eq!(
+            transcript
+                .matches("Record fields (comma-separated)")
+                .count(),
+            2
+        );
+    }
+
+    #[test]
+    fn cross_answer_input_constraint_retries_the_input_block() {
+        let answers = [
+            "demo",
+            "",
+            "inspect",
+            "Inspect one value",
+            "1",
+            "config",
+            "path",
+            "required",
+            "argument,file",
+            "config",
+            "path",
+            "required",
+            "argument",
+            "message",
+        ]
+        .join("\n")
+            + "\n";
+        let mut input = io::Cursor::new(answers);
+        let mut output = Vec::new();
+
+        let answers = prompt_answers(&mut input, &mut output).unwrap();
+
+        assert_eq!(answers.inputs.len(), 1);
+        assert_eq!(answers.inputs[0].sources, vec![InputSource::Argument]);
+        let transcript = String::from_utf8(output).unwrap();
+        assert!(transcript.contains("path inputs only support argument source"));
+        assert_eq!(transcript.matches("Input 1:").count(), 2);
+    }
+
+    #[test]
+    fn colliding_generated_flags_retry_the_conflicting_input_block() {
+        let answers = [
+            "demo",
+            "",
+            "inspect",
+            "Inspect one value",
+            "2",
+            "document",
+            "string",
+            "required",
+            "argument,file",
+            "document_file",
+            "path",
+            "optional",
+            "argument",
+            "note",
+            "string",
+            "optional",
+            "argument",
+            "message",
+        ]
+        .join("\n")
+            + "\n";
+        let mut input = io::Cursor::new(answers);
+        let mut output = Vec::new();
+
+        let answers = prompt_answers(&mut input, &mut output).unwrap();
+
+        assert_eq!(answers.inputs.len(), 2);
+        assert_eq!(answers.inputs[1].name, "note");
+        let transcript = String::from_utf8(output).unwrap();
+        assert!(transcript.contains("--document-file"));
+        assert!(transcript.contains("conflicts"));
+        assert_eq!(transcript.matches("Input 2:").count(), 2);
+    }
+
+    #[test]
+    fn uppercase_x_cancels_after_earlier_valid_answers() {
+        let answers = ["hello-tool", "", "greet", "X"].join("\n") + "\n";
+        let mut input = io::Cursor::new(answers);
+        let mut output = Vec::new();
+
+        let error = prompt_answers(&mut input, &mut output).unwrap_err();
+
+        assert!(error.is::<Cancelled>());
     }
 
     #[test]
@@ -2244,16 +2511,20 @@ mod tests {
             "string",
             "required",
             "argument",
+            "document",
+            "string",
+            "required",
+            "argument",
             "message",
         ]
         .join("\n")
             + "\n";
         let mut input = io::Cursor::new(questionnaire);
-        let answers = prompt_answers(&mut input, &mut Vec::new()).unwrap();
-        let error = ProjectSpec::from_answers(answers).unwrap_err();
-        assert!(error
-            .to_string()
-            .contains("reserved framework/Clap flag --output"));
+        let mut output = Vec::new();
+        let answers = prompt_answers(&mut input, &mut output).unwrap();
+        assert_eq!(answers.inputs[0].name, "document");
+        let transcript = String::from_utf8(output).unwrap();
+        assert!(transcript.contains("reserved framework/Clap flag --output"));
     }
 
     #[test]
@@ -2525,6 +2796,96 @@ mod tests {
         let mut output = Vec::new();
 
         assert!(!confirm(&mut input, &mut output).unwrap());
+    }
+
+    fn spec_with_description(description: &str) -> ProjectSpec {
+        ProjectSpec::from_answers(WizardAnswers {
+            project_name: "demo".into(),
+            executable_name: "demo".into(),
+            command_name: "inspect".into(),
+            command_description: description.into(),
+            inputs: vec![required_string("document")],
+            result_shape: ResultShape::Message,
+            record_fields: Vec::new(),
+        })
+        .unwrap()
+    }
+
+    #[test]
+    fn command_attribute_splits_exactly_at_the_rustfmt_width_boundary() {
+        // The rendered argument list is `name = "demo", about = "..."`:
+        // 25 characters of scaffolding around the description text.
+        let at_limit = spec_with_description(&"a".repeat(ATTR_FN_LIKE_WIDTH - 25));
+        assert_eq!(
+            cli_command_attribute(&at_limit),
+            format!(
+                "#[command(name = \"demo\", about = \"{}\")]",
+                "a".repeat(ATTR_FN_LIKE_WIDTH - 25)
+            )
+        );
+
+        let over_limit = spec_with_description(&"a".repeat(ATTR_FN_LIKE_WIDTH - 24));
+        assert_eq!(
+            cli_command_attribute(&over_limit),
+            format!(
+                "#[command(\n    name = \"demo\",\n    about = \"{}\"\n)]",
+                "a".repeat(ATTR_FN_LIKE_WIDTH - 24)
+            )
+        );
+    }
+
+    #[test]
+    fn command_attribute_measures_display_width_not_char_count() {
+        // rustfmt's width heuristic counts Unicode display width, so CJK
+        // characters (width 2) hit the budget at half the char count. The
+        // scaffolding `name = "demo", about = ""` contributes 25 columns.
+        // 22 CJK chars: width 25 + 44 = 69 <= 70 -> inline (47 chars total).
+        let inline = spec_with_description(&"検".repeat(22));
+        assert_eq!(
+            cli_command_attribute(&inline),
+            format!(
+                "#[command(name = \"demo\", about = \"{}\")]",
+                "検".repeat(22)
+            )
+        );
+
+        // 23 CJK chars: width 25 + 46 = 71 > 70 -> split, even though the
+        // argument list is only 48 chars (well under the budget by count).
+        let split = spec_with_description(&"検".repeat(23));
+        assert_eq!(
+            cli_command_attribute(&split),
+            format!(
+                "#[command(\n    name = \"demo\",\n    about = \"{}\"\n)]",
+                "検".repeat(23)
+            )
+        );
+    }
+
+    #[test]
+    fn long_description_generated_project_is_rustfmt_clean() {
+        let dir = TempDir::new().unwrap();
+        let mut spec = ProjectSpec::from_answers(WizardAnswers {
+            project_name: "provisioning-tool".into(),
+            executable_name: "provisioning-tool".into(),
+            command_name: "provision".into(),
+            command_description: "Provisions pinned env either container or bare metal".into(),
+            inputs: vec![required_string("target")],
+            result_shape: ResultShape::Message,
+            record_fields: Vec::new(),
+        })
+        .unwrap();
+        spec.destination = dir.path().join("provisioning-tool");
+        spec.local_patch_root = Some(workspace_root());
+
+        publish_project(&spec).unwrap();
+
+        let cli = fs::read_to_string(spec.destination.join("crates/provisioning-tool/src/cli.rs"))
+            .unwrap();
+        assert!(cli.contains(
+            "#[command(\n    name = \"provisioning-tool\",\n    \
+             about = \"Provisions pinned env either container or bare metal\"\n)]"
+        ));
+        run_cargo(&spec.destination, ["fmt", "--check"]);
     }
 
     fn rich_questionnaire_spec(root: &Path) -> ProjectSpec {

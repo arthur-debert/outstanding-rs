@@ -1751,6 +1751,7 @@ dependencies = [
  "standout-seeker",
  "tempfile",
  "thiserror 2.0.20",
+ "unicode-width 0.2.2",
 ]
 
 [[package]]
