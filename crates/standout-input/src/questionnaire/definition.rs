@@ -15,6 +15,8 @@
 //! empty or malformed IDs and duplicate field IDs, so every constructed
 //! questionnaire can render and parse without further checks.
 
+use std::collections::HashSet;
+
 use super::fingerprint::compute_fingerprint;
 
 /// The kind of value a scalar field collects.
@@ -176,15 +178,14 @@ impl Questionnaire {
         if fields.is_empty() {
             return Err(QuestionnaireError::NoFields);
         }
-        let mut seen: Vec<&str> = Vec::with_capacity(fields.len());
+        let mut seen: HashSet<&str> = HashSet::with_capacity(fields.len());
         for field in &fields {
             if !valid_id(&field.id) {
                 return Err(QuestionnaireError::InvalidFieldId(field.id.clone()));
             }
-            if seen.contains(&field.id.as_str()) {
+            if !seen.insert(&field.id) {
                 return Err(QuestionnaireError::DuplicateFieldId(field.id.clone()));
             }
-            seen.push(&field.id);
         }
         let fingerprint = compute_fingerprint(&id, &fields);
         Ok(Self {

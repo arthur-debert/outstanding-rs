@@ -71,12 +71,18 @@ let questionnaire = Questionnaire::new(
         ScalarField::new("project.name", "What is your project called?", ScalarKind::String),
         ScalarField::new("project.notes", "Add any notes.", ScalarKind::Text).optional(),
     ],
-)?;
+)
+.unwrap();
 
 // Render a blank sheet for the user to edit…
 let sheet = questionnaire.render_answer_sheet();
 
-// …and later, parse the edited document back.
+// …and later, parse the edited document back. In a real flow the edited
+// text comes back from the user's editor; here we answer in place.
+let edited_text = sheet.replace(
+    "[project.name] (string)\n->",
+    "[project.name] (string)\n-> wizard-question-generator",
+);
 match questionnaire.parse_answer_sheet(&edited_text) {
     Ok(answers) => {
         // Raw text by stable ID; decoding into domain types is yours.
