@@ -37,6 +37,14 @@
 //! └── DefaultSource  → (not reached)
 //! ```
 //!
+//! # Questionnaire answer sheets
+//!
+//! The [`questionnaire`] module renders an application-defined questionnaire
+//! as an editable prose answer sheet and parses the edited document back into
+//! raw answers by stable field identity. See the module documentation for the
+//! format, the application/library ownership boundary, and the exact-match
+//! compatibility contract.
+//!
 //! # Testing
 //!
 //! All sources accept mock implementations for testing:
@@ -53,6 +61,7 @@ mod collector;
 pub mod env;
 mod error;
 mod inputs;
+pub mod questionnaire;
 mod responder;
 pub mod sources;
 
