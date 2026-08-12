@@ -1,0 +1,5 @@
+# Adopt prose answer sheets with stable identities
+
+Questionnaire answers use a dedicated prose-first document rather than a general configuration format: bracketed semantic IDs identify fields and groups, `->` introduces answer text, and visible numbering, wording, and type hints remain cosmetic. `standout-input` publicly owns rendering, parsing, normalization, and diagnostics, while applications own questionnaire definitions, domain conversion, flow, and side effects; this keeps the format reusable without exposing application models such as the bootstrap wizard's `ProjectSpec`.
+
+Each document carries an answer-format version, questionnaire ID, and fingerprint of the canonical semantic definition. Version 1 accepts only exact identity and fingerprint matches, infers repeated items from stable group occurrences rather than display numbers, and rejects incompatible sheets instead of fuzzy-matching or migrating them; this deliberately trades automatic reuse of stale documents for predictable interpretation and leaves a future migration protocol to evidence from real schema evolution.
