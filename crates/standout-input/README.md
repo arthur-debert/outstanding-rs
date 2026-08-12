@@ -128,6 +128,7 @@ let source = EnvSource::with_reader("TOKEN", env);
 
 - [Introduction to Input](docs/guides/intro-to-input.md) - Getting started guide
 - [Backends](docs/topics/backends.md) - Detailed backend documentation and custom implementations
+- [Answer Sheets](docs/topics/answer-sheets.md) - Editable prose questionnaires with stable identities
 
 ## License
 
