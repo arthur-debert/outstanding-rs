@@ -2,7 +2,9 @@
 //!
 //! A command configured with a questionnaire gets reserved clap surface from
 //! the app builder (`--answers`, `--yes`, and a `questions` subcommand). The
-//! handler then reads the filled application type from
+//! framework resolves and validates the filled application type before
+//! dispatch, optionally lets the application render a review, runs the
+//! attended confirmation gate, and then the handler reads the filled type from
 //! [`CommandContextInput::questionnaire`](crate::cli::CommandContextInput::questionnaire).
 //! File and stdin sheets keep non-fatal parse diagnostics visible by queuing
 //! their `RawAnswers` warnings for the framework warning flush.
@@ -90,6 +92,20 @@ where
     T: QuestionnaireInput + Clone + Send + Sync + 'static,
     F: FnOnce(&T) -> Vec<FormError>,
 {
+    questionnaire_pre_dispatch_with_review::<T, F, _>(matches, ctx, form, |_, _| Ok(()))
+}
+
+pub(crate) fn questionnaire_pre_dispatch_with_review<T, F, R>(
+    matches: &ArgMatches,
+    ctx: &mut CommandContext,
+    form: F,
+    review: R,
+) -> Result<(), HookError>
+where
+    T: QuestionnaireInput + Clone + Send + Sync + 'static,
+    F: FnOnce(&T) -> Vec<FormError>,
+    R: FnOnce(&T, &mut dyn Write) -> anyhow::Result<()>,
+{
     let sub_matches = get_deepest_matches(matches);
     let resolved = collect_questionnaire_with::<T, F>(sub_matches, form).map_err(|error| {
         HookError::pre_dispatch(format!(
@@ -98,6 +114,15 @@ where
     })?;
 
     let assume_yes = sub_matches.get_flag(YES_ARG_ID);
+    {
+        let stdout = io::stdout();
+        let mut stdout = stdout.lock();
+        review(&resolved.value, &mut stdout)
+            .map_err(|error| HookError::pre_dispatch(error.to_string()))?;
+        stdout
+            .flush()
+            .map_err(|error| HookError::pre_dispatch(error.to_string()))?;
+    }
     if !assume_yes
         && !confirm_attended_from_env()
             .map_err(|error| HookError::pre_dispatch(error.to_string()))?
