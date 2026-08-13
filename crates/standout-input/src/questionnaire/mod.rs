@@ -266,5 +266,8 @@ pub use definition::{
     Condition, Constraint, DynamicDefault, FieldValidator, Group, Item, Questionnaire,
     QuestionnaireError, Repeat, ScalarField, ScalarKind,
 };
-pub use derive::{QuestionnaireInput, QuestionnaireInputError};
+pub use derive::{
+    QuestionnaireChoiceParseError, QuestionnaireChoices, QuestionnaireInput,
+    QuestionnaireInputError,
+};
 pub use parse::{AnswerSheetDiagnostic, RawAnswers};
