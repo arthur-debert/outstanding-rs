@@ -1,0 +1,230 @@
+//! Real CLI flows for the bootstrap wizard's answer sheets: questionnaire
+//! rendering to stdout and a file, successful and failing `--answers FILE`
+//! submissions through the review and confirmation gate, stale fingerprints,
+//! accumulated batch errors, and the no-partial-write guarantee.
+//!
+//! Every test runs the production `standout` binary in a fresh temporary
+//! working directory without a real terminal; confirmation answers arrive on
+//! piped stdin, exactly as the wizard reads them in production.
+
+use std::fs;
+use std::io::Write as _;
+use std::path::Path;
+use std::process::{Command, Output, Stdio};
+
+use tempfile::TempDir;
+
+/// Run the production wizard binary in `cwd` with `stdin` piped in. A run
+/// that fails fast (a missing answers file, a rejected sheet) may exit
+/// before reading stdin; the broken pipe that write then reports is an
+/// expected outcome, so the helper still returns the child's output for
+/// failure-mode assertions.
+fn run_standout(cwd: &Path, args: &[&str], stdin: &str) -> Output {
+    let mut child = Command::new(env!("CARGO_BIN_EXE_standout"))
+        .current_dir(cwd)
+        .args(args)
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .unwrap();
+    if let Err(error) = child.stdin.as_mut().unwrap().write_all(stdin.as_bytes()) {
+        assert_eq!(
+            error.kind(),
+            std::io::ErrorKind::BrokenPipe,
+            "writing the child's stdin failed: {error}"
+        );
+    }
+    child.wait_with_output().unwrap()
+}
+
+fn stdout(output: &Output) -> String {
+    String::from_utf8_lossy(&output.stdout).into_owned()
+}
+
+fn stderr(output: &Output) -> String {
+    String::from_utf8_lossy(&output.stderr).into_owned()
+}
+
+/// The entries of `dir`, sorted, for whole-directory no-partial-write
+/// assertions (a failed run must leave nothing behind — no destination and
+/// no staging leftovers).
+fn dir_entries(dir: &Path) -> Vec<String> {
+    let mut entries: Vec<String> = fs::read_dir(dir)
+        .unwrap()
+        .map(|entry| entry.unwrap().file_name().to_string_lossy().into_owned())
+        .collect();
+    entries.sort();
+    entries
+}
+
+/// Replace the answer marker line under the first header carrying `[id]`
+/// with `-> value`.
+fn fill(sheet: &str, id: &str, value: &str) -> String {
+    let token = format!("[{id}]");
+    let mut lines: Vec<String> = sheet.lines().map(ToOwned::to_owned).collect();
+    for index in 0..lines.len() {
+        if lines[index].contains(&token)
+            && lines
+                .get(index + 1)
+                .is_some_and(|line| line.starts_with("->"))
+        {
+            lines[index + 1] = format!("-> {value}");
+            return lines.join("\n") + "\n";
+        }
+    }
+    panic!("answer sheet has no header {token}");
+}
+
+/// A completed sheet for a minimal `hello-tool` project, produced by the
+/// binary's own `questions` rendering.
+fn completed_sheet(cwd: &Path) -> String {
+    let rendered = run_standout(cwd, &["new-project", "questions"], "");
+    assert!(rendered.status.success());
+    let sheet = stdout(&rendered);
+    let sheet = fill(&sheet, "project.name", "hello-tool");
+    let sheet = fill(&sheet, "command.name", "greet");
+    let sheet = fill(&sheet, "command.description", "Greet one value");
+    fill(&sheet, "command.inputs.name", "name")
+}
+
+#[test]
+fn questions_renders_a_deterministic_sheet_and_generates_nothing() {
+    let dir = TempDir::new().unwrap();
+
+    let first = run_standout(dir.path(), &["new-project", "questions"], "");
+    let second = run_standout(dir.path(), &["new-project", "questions"], "");
+
+    assert!(first.status.success());
+    assert_eq!(stdout(&first), stdout(&second));
+    let sheet = stdout(&first);
+    assert!(sheet.starts_with("#! standout-answers 1\n"));
+    assert!(sheet.contains("#! questionnaire: standout.new-project"));
+    assert!(sheet.contains("[project.name]"));
+    assert!(sheet.contains("[command.inputs.sources]"));
+    assert!(dir_entries(dir.path()).is_empty());
+}
+
+#[test]
+fn questions_writes_the_same_sheet_to_a_named_file() {
+    let dir = TempDir::new().unwrap();
+
+    let to_stdout = run_standout(dir.path(), &["new-project", "questions"], "");
+    let to_file = run_standout(
+        dir.path(),
+        &["new-project", "questions", "--file", "answers.txt"],
+        "",
+    );
+
+    assert!(to_file.status.success());
+    assert_eq!(
+        fs::read_to_string(dir.path().join("answers.txt")).unwrap(),
+        stdout(&to_stdout)
+    );
+    assert_eq!(dir_entries(dir.path()), ["answers.txt"]);
+}
+
+#[test]
+fn answers_file_generates_after_review_and_confirmation() {
+    let dir = TempDir::new().unwrap();
+    fs::write(dir.path().join("answers.txt"), completed_sheet(dir.path())).unwrap();
+
+    let output = run_standout(
+        dir.path(),
+        &["new-project", "--answers", "answers.txt"],
+        "yes\n",
+    );
+
+    assert!(output.status.success(), "stderr: {}", stderr(&output));
+    let transcript = stdout(&output);
+    assert!(transcript.contains("Review"));
+    assert!(transcript.contains("Generate this project? Type 'yes' to continue:"));
+    assert!(transcript.contains("Created hello-tool"));
+    let destination = dir.path().join("hello-tool");
+    assert!(destination.join("Cargo.toml").is_file());
+    assert!(destination.join("crates/hello-tool/src/main.rs").is_file());
+    assert_eq!(dir_entries(dir.path()), ["answers.txt", "hello-tool"]);
+}
+
+#[test]
+fn rejected_confirmation_leaves_the_destination_unwritten() {
+    let dir = TempDir::new().unwrap();
+    fs::write(dir.path().join("answers.txt"), completed_sheet(dir.path())).unwrap();
+
+    let output = run_standout(
+        dir.path(),
+        &["new-project", "--answers", "answers.txt"],
+        "no\n",
+    );
+
+    assert!(output.status.success());
+    assert!(stdout(&output).contains("Generation cancelled."));
+    assert_eq!(dir_entries(dir.path()), ["answers.txt"]);
+}
+
+#[test]
+fn stale_fingerprint_is_rejected_before_any_write() {
+    let dir = TempDir::new().unwrap();
+    let stale = completed_sheet(dir.path()).replacen(
+        "#! fingerprint: sha256:",
+        "#! fingerprint: sha256:00",
+        1,
+    );
+    fs::write(dir.path().join("answers.txt"), stale).unwrap();
+
+    let output = run_standout(
+        dir.path(),
+        &["new-project", "--answers", "answers.txt"],
+        "yes\n",
+    );
+
+    assert!(!output.status.success());
+    let errors = stderr(&output);
+    assert!(errors.contains("render a fresh answer sheet"));
+    assert!(errors.contains("nothing was generated"));
+    assert_eq!(dir_entries(dir.path()), ["answers.txt"]);
+}
+
+#[test]
+fn invalid_sheet_accumulates_errors_and_writes_nothing() {
+    let dir = TempDir::new().unwrap();
+    let rendered = run_standout(dir.path(), &["new-project", "questions"], "");
+    let sheet = stdout(&rendered);
+    let sheet = fill(&sheet, "project.name", "9bad");
+    let sheet = fill(&sheet, "command.name", "greet");
+    let sheet = fill(&sheet, "command.description", "Greet one value");
+    let sheet = fill(&sheet, "command.inputs.name", "name");
+    let sheet = fill(&sheet, "command.inputs.sources", "argument,teleport");
+    let sheet = fill(&sheet, "result.shape", "message");
+    let sheet = fill(&sheet, "result.fields", "summary,extra");
+    fs::write(dir.path().join("answers.txt"), sheet).unwrap();
+
+    let output = run_standout(
+        dir.path(),
+        &["new-project", "--answers", "answers.txt"],
+        "yes\n",
+    );
+
+    assert!(!output.status.success());
+    let errors = stderr(&output);
+    assert!(errors.contains("[project.name]"));
+    assert!(errors.contains("[command.inputs[0].sources]"));
+    assert!(errors.contains("[result.fields]"));
+    assert!(errors.contains("3 problem(s)"));
+    assert_eq!(dir_entries(dir.path()), ["answers.txt"]);
+}
+
+#[test]
+fn missing_answer_file_is_an_error_without_partial_writes() {
+    let dir = TempDir::new().unwrap();
+
+    let output = run_standout(
+        dir.path(),
+        &["new-project", "--answers", "missing.txt"],
+        "yes\n",
+    );
+
+    assert!(!output.status.success());
+    assert!(stderr(&output).contains("Could not read the answer sheet"));
+    assert!(dir_entries(dir.path()).is_empty());
+}
