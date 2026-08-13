@@ -372,9 +372,9 @@ pub fn questionnaire_derive_impl(input: DeriveInput) -> Result<TokenStream> {
 
             fn questionnaire_items_with_context(
                 __prefix: &str,
-                __inherited_controllers: &[(&'static str, String)],
+                __inherited_controllers: &[(&'static str, ::std::string::String)],
             ) -> ::std::vec::Vec<::standout_input::questionnaire::Item> {
-                let mut __controller_ids: ::std::vec::Vec<(&'static str, String)> = vec![
+                let mut __controller_ids: ::std::vec::Vec<(&'static str, ::std::string::String)> = vec![
                     #(#controller_map_entries),*
                 ];
                 __controller_ids.extend_from_slice(__inherited_controllers);

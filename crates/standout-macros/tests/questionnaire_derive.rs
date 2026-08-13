@@ -1075,6 +1075,40 @@ fn nested_active_when_uses_the_current_repeated_group_occurrence() {
     );
 }
 
+mod shadowed_string_hygiene {
+    use super::*;
+
+    #[allow(dead_code)]
+    type String = PathBuf;
+
+    #[derive(Questionnaire)]
+    #[question(id = "demo.shadowed-string")]
+    #[allow(dead_code)]
+    struct ShadowedRoot {
+        /// Enabled?
+        enabled: bool,
+
+        /// Child?
+        child: ShadowedChild,
+    }
+
+    #[derive(Questionnaire)]
+    #[question(id = "demo.shadowed-string.child")]
+    #[allow(dead_code)]
+    struct ShadowedChild {
+        /// Visible?
+        #[question(active_when(field = "enabled", is = "yes"))]
+        visible: Option<bool>,
+    }
+
+    #[test]
+    fn generated_context_uses_std_string_when_string_is_shadowed() {
+        let questionnaire = ShadowedRoot::questionnaire().unwrap();
+
+        assert_eq!(questionnaire.id(), "demo.shadowed-string");
+    }
+}
+
 #[derive(Questionnaire)]
 #[question(id = "demo.empty-default-revision")]
 #[allow(dead_code)]
