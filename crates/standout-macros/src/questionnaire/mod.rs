@@ -317,6 +317,18 @@ pub fn questionnaire_derive_impl(input: DeriveInput) -> Result<TokenStream> {
             Ok((ident.to_string(), id))
         })
         .collect::<Result<Vec<_>>>()?;
+    let controller_map_entries = field_ids.iter().map(|(name, id)| {
+        quote! {
+            (
+                #name,
+                if __prefix.is_empty() {
+                    #id.to_string()
+                } else {
+                    ::std::format!("{}.{}", __prefix, #id)
+                },
+            )
+        }
+    });
 
     for field in fields {
         let info = FieldInfo::new(field)?;
@@ -326,7 +338,7 @@ pub fn questionnaire_derive_impl(input: DeriveInput) -> Result<TokenStream> {
                 format!("duplicate question id '{}'", info.id),
             ));
         }
-        builder_fields.push(info.builder_tokens(&field_ids));
+        builder_fields.push(info.builder_tokens());
         fill_fields.push(info.fill_tokens());
     }
 
@@ -352,6 +364,20 @@ pub fn questionnaire_derive_impl(input: DeriveInput) -> Result<TokenStream> {
             }
 
             fn questionnaire_items(__prefix: &str) -> ::std::vec::Vec<::standout_input::questionnaire::Item> {
+                <Self as ::standout_input::questionnaire::QuestionnaireInput>::questionnaire_items_with_context(
+                    __prefix,
+                    &[],
+                )
+            }
+
+            fn questionnaire_items_with_context(
+                __prefix: &str,
+                __inherited_controllers: &[(&'static str, ::std::string::String)],
+            ) -> ::std::vec::Vec<::standout_input::questionnaire::Item> {
+                let mut __controller_ids: ::std::vec::Vec<(&'static str, ::std::string::String)> = vec![
+                    #(#controller_map_entries),*
+                ];
+                __controller_ids.extend_from_slice(__inherited_controllers);
                 vec![
                     #(#builder_fields),*
                 ]
@@ -607,11 +633,11 @@ impl FieldInfo {
         })
     }
 
-    fn builder_tokens(&self, field_ids: &[(String, String)]) -> TokenStream {
+    fn builder_tokens(&self) -> TokenStream {
         let id = prefixed_id_tokens(&self.id);
         let prompt = &self.prompt;
         let active_when = self.active_when.as_ref().map(|active_when| {
-            let controller = controller_id_tokens(active_when, field_ids);
+            let controller = controller_id_tokens(active_when);
             let expected = &active_when.expected;
             quote! { .active_when(#controller, #expected) }
         });
@@ -692,7 +718,10 @@ impl FieldInfo {
                     ::standout_input::questionnaire::Group::new(
                         __group_id.clone(),
                         #prompt,
-                        <#ty as ::standout_input::questionnaire::QuestionnaireInput>::questionnaire_items(&__group_id),
+                        <#ty as ::standout_input::questionnaire::QuestionnaireInput>::questionnaire_items_with_context(
+                            &__group_id,
+                            &__controller_ids,
+                        ),
                     )
                     .into()
                 }
@@ -705,7 +734,10 @@ impl FieldInfo {
                         ::standout_input::questionnaire::Group::new(
                             __group_id.clone(),
                             #prompt,
-                            <#ty as ::standout_input::questionnaire::QuestionnaireInput>::questionnaire_items(&__group_id),
+                            <#ty as ::standout_input::questionnaire::QuestionnaireInput>::questionnaire_items_with_context(
+                                &__group_id,
+                                &__controller_ids,
+                            ),
                         )
                         #repeat
                         .into()
@@ -1070,19 +1102,13 @@ fn prefixed_id_tokens(id: &str) -> TokenStream {
     }
 }
 
-fn controller_id_tokens(
-    active_when: &ActiveWhenAttr,
-    field_ids: &[(String, String)],
-) -> TokenStream {
-    let controller = field_ids
-        .iter()
-        .find_map(|(name, id)| (name == &active_when.field).then_some(id.as_str()));
-    match controller {
-        Some(id) => prefixed_id_tokens(id),
-        None => {
-            let controller = &active_when.field;
-            quote! { #controller.to_string() }
-        }
+fn controller_id_tokens(active_when: &ActiveWhenAttr) -> TokenStream {
+    let controller = &active_when.field;
+    quote! {
+        __controller_ids
+            .iter()
+            .find_map(|(__name, __id)| (*__name == #controller).then_some(__id.clone()))
+            .unwrap_or_else(|| #controller.to_string())
     }
 }
 
