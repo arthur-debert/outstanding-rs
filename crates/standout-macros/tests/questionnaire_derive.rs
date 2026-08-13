@@ -892,6 +892,53 @@ fn hook_revisions_participate_in_the_fingerprint() {
     assert_ne!(base.fingerprint(), validator_revision.fingerprint());
 }
 
+#[derive(Debug, PartialEq, Eq, Questionnaire)]
+#[question(id = "demo.conditional.optional.scalar")]
+struct ConditionalScalarProfile {
+    /// Enabled?
+    enabled: bool,
+
+    /// Name?
+    #[question(active_when(field = "enabled", is = "yes"))]
+    name: Option<String>,
+}
+
+#[derive(Debug, PartialEq, Eq, Questionnaire)]
+#[question(id = "demo.conditional.optional.choice")]
+struct ConditionalChoiceProfile {
+    /// Enabled?
+    enabled: bool,
+
+    /// Package style?
+    #[question(choice, active_when(field = "enabled", is = "yes"))]
+    kind: Option<PackageKind>,
+}
+
+#[test]
+fn inactive_optional_conditional_scalar_and_choice_fields_fill_as_none() {
+    let scalar = ConditionalScalarProfile::questionnaire().unwrap();
+    let sheet = answer(&scalar.render_answer_sheet(), "enabled", "no");
+    let raw = scalar.parse_answer_sheet(&sheet).unwrap();
+    assert_eq!(
+        ConditionalScalarProfile::from_raw_answers(&raw).unwrap(),
+        ConditionalScalarProfile {
+            enabled: false,
+            name: None,
+        }
+    );
+
+    let choice = ConditionalChoiceProfile::questionnaire().unwrap();
+    let sheet = answer(&choice.render_answer_sheet(), "enabled", "no");
+    let raw = choice.parse_answer_sheet(&sheet).unwrap();
+    assert_eq!(
+        ConditionalChoiceProfile::from_raw_answers(&raw).unwrap(),
+        ConditionalChoiceProfile {
+            enabled: false,
+            kind: None,
+        }
+    );
+}
+
 #[derive(Questionnaire)]
 #[question(id = "demo.empty-default-revision")]
 #[allow(dead_code)]
@@ -928,7 +975,7 @@ fn empty_hook_revisions_are_rejected_by_the_builder() {
 struct UnknownController {
     /// Name?
     #[question(active_when(field = "ghost", is = "yes"))]
-    name: String,
+    name: Option<String>,
 }
 
 #[derive(Questionnaire)]
@@ -937,7 +984,7 @@ struct UnknownController {
 struct LaterController {
     /// Name?
     #[question(active_when(field = "enabled", is = "yes"))]
-    name: String,
+    name: Option<String>,
 
     /// Enabled?
     enabled: bool,
@@ -968,7 +1015,7 @@ struct ScopedFirst {
 struct ScopedSecond {
     /// Name?
     #[question(active_when(field = "first.enabled", is = "yes"))]
-    name: String,
+    name: Option<String>,
 }
 
 #[derive(Questionnaire)]
@@ -981,7 +1028,7 @@ struct NeverMatchingController {
 
     /// Image?
     #[question(active_when(field = "runtime", is = "podman"))]
-    image: String,
+    image: Option<String>,
 }
 
 #[test]
