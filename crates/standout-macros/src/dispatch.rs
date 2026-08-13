@@ -37,6 +37,7 @@
 //! | `pre_dispatch = fn` | Pre-dispatch hook | None |
 //! | `post_dispatch = fn` | Post-dispatch hook | None |
 //! | `post_output = fn` | Post-output hook | None |
+//! | `questionnaire = path::Type` | Inject questionnaire CLI surface and resolved typed input | None |
 //! | `nested` | Treat variant as nested subcommand | false |
 //! | `skip` | Skip this variant | false |
 //! | `default` | Use as default command when no subcommand specified | false |
@@ -72,6 +73,7 @@ struct VariantAttrs {
     pre_dispatch: Option<Path>,
     post_dispatch: Option<Path>,
     post_output: Option<Path>,
+    questionnaire: Option<Path>,
     nested: bool,
     skip: bool,
     default: bool,
@@ -169,6 +171,13 @@ impl Parse for VariantAttrs {
                         return Err(Error::new(nv.value.span(), "expected path"));
                     }
                 }
+                Meta::NameValue(nv) if nv.path.is_ident("questionnaire") => {
+                    if let Expr::Path(expr_path) = &nv.value {
+                        attrs.questionnaire = Some(expr_path.path.clone());
+                    } else {
+                        return Err(Error::new(nv.value.span(), "expected path"));
+                    }
+                }
                 Meta::Path(p) if p.is_ident("nested") => {
                     attrs.nested = true;
                 }
@@ -226,7 +235,7 @@ impl Parse for VariantAttrs {
                 _ => {
                     return Err(Error::new(
                         meta.span(),
-                        "unknown attribute, expected one of: handler, template, pre_dispatch, post_dispatch, post_output, nested, skip, default, list_view, item_type, pipe_to, pipe_through, pipe_to_clipboard, simple, pure",
+                        "unknown attribute, expected one of: handler, template, pre_dispatch, post_dispatch, post_output, questionnaire, nested, skip, default, list_view, item_type, pipe_to, pipe_through, pipe_to_clipboard, simple, pure",
                     ));
                 }
             }
@@ -407,6 +416,7 @@ pub fn dispatch_derive_impl(input: DeriveInput) -> Result<TokenStream> {
                     || v.attrs.pre_dispatch.is_some()
                     || v.attrs.post_dispatch.is_some()
                     || v.attrs.post_output.is_some()
+                    || v.attrs.questionnaire.is_some()
                     || (v.attrs.list_view && v.attrs.item_type.is_some())
                     || v.attrs.pipe_to.is_some()
                     || v.attrs.pipe_through.is_some()
@@ -479,6 +489,9 @@ pub fn dispatch_derive_impl(input: DeriveInput) -> Result<TokenStream> {
                     let post_output_call = v.attrs.post_output.as_ref().map(|p| {
                         quote! { __cfg = __cfg.post_output(#p); }
                     });
+                    let questionnaire_call = v.attrs.questionnaire.as_ref().map(|p| {
+                        quote! { __cfg = __cfg.questionnaire::<#p>(); }
+                    });
                     let pipe_to_call = v.attrs.pipe_to.as_ref().map(|p| {
                         quote! { __cfg = __cfg.pipe_to(#p); }
                     });
@@ -494,6 +507,7 @@ pub fn dispatch_derive_impl(input: DeriveInput) -> Result<TokenStream> {
                     quote! {
                         let __builder = __builder.command_with(#cmd_name, #handler_expr, |mut __cfg| {
                             #template_call
+                            #questionnaire_call
                             #pre_dispatch_call
                             #post_dispatch_call
                             #post_output_call

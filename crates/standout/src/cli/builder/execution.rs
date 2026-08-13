@@ -23,6 +23,10 @@ use crate::cli::handler::{
     RunErrorKind, RunOutput, RunResult,
 };
 use crate::cli::hooks::{ArtifactOutput, RenderedOutput, TextOutput};
+use crate::cli::questionnaire::{
+    augment_questionnaire_command, render_questions_result, validate_questionnaire_surface,
+    ANSWERS_ARG_ID, QUESTIONS_SUBCOMMAND, YES_ARG_ID,
+};
 use crate::SetupError;
 
 impl AppBuilder {
@@ -70,6 +74,10 @@ impl AppBuilder {
 
                     if let Some(hooks) = handler.take_hooks() {
                         self.command_hooks.insert(name.clone(), hooks);
+                    }
+                    if let Some(questionnaire) = handler.take_questionnaire() {
+                        self.questionnaire_commands
+                            .insert(name.clone(), questionnaire);
                     }
 
                     // Create a recipe for deferred closure creation
@@ -290,7 +298,11 @@ impl AppBuilder {
             .map(|a| a.into().to_string_lossy().into_owned())
             .collect();
 
-        // Augment command with --output flag
+        if let Err(error) = self.validate_questionnaire_surfaces(&cmd) {
+            return RunResult::Error(RunError::new(error.to_string(), RunErrorKind::ClapUsage));
+        }
+
+        // Augment command with framework-owned flags and questionnaire command surface.
         let augmented_cmd = self.augment_command_for_dispatch(cmd.clone());
 
         // Parse arguments. Clap's "errors" include `--help` and `--version`,
@@ -347,6 +359,28 @@ impl AppBuilder {
                 }
             }
         };
+
+        if let Some((path, questionnaire)) = self.questionnaire_questions_invocation(&matches) {
+            if let Some(parent_matches) =
+                command_matches_for_path(&matches, &path.split('.').collect::<Vec<_>>())
+            {
+                let has_answers = parent_matches
+                    .try_get_one::<String>(ANSWERS_ARG_ID)
+                    .unwrap_or(None)
+                    .is_some();
+                let has_yes = parent_matches
+                    .try_get_one::<bool>(YES_ARG_ID)
+                    .unwrap_or(None)
+                    == Some(&true);
+                if has_answers || has_yes {
+                    return RunResult::Error(RunError::new(
+                        "`questions` renders the blank answer sheet and cannot be combined with --answers or --yes",
+                        RunErrorKind::ClapUsage,
+                    ));
+                }
+            }
+            return render_questions_result(questionnaire, &matches);
+        }
 
         // Extract output mode
         let output_mode = if self.output_flag.is_some() {
@@ -486,6 +520,8 @@ impl AppBuilder {
 
     /// Augments a command for dispatch (adds --output flag without help subcommand).
     pub(crate) fn augment_command_for_dispatch(&self, mut cmd: Command) -> Command {
+        self.augment_questionnaire_commands(&mut cmd, &[]);
+
         if let Some(ref flag_name) = self.output_flag {
             let flag: &'static str = Box::leak(flag_name.clone().into_boxed_str());
             cmd = cmd.arg(
@@ -523,6 +559,53 @@ impl AppBuilder {
 
         cmd
     }
+
+    fn augment_questionnaire_commands(&self, cmd: &mut Command, path: &[String]) {
+        let path_str = path.join(".");
+        if self.questionnaire_commands.contains_key(&path_str) {
+            *cmd = augment_questionnaire_command(cmd.clone());
+        }
+
+        for subcommand in cmd.get_subcommands_mut() {
+            let mut child_path = path.to_vec();
+            child_path.push(subcommand.get_name().to_string());
+            self.augment_questionnaire_commands(subcommand, &child_path);
+        }
+    }
+
+    pub(crate) fn validate_questionnaire_surfaces(&self, cmd: &Command) -> Result<(), SetupError> {
+        for path in self.questionnaire_commands.keys() {
+            let parts = path.split('.').collect::<Vec<_>>();
+            let Some(command) = crate::cli::app::find_subcommand_recursive(cmd, &parts) else {
+                continue;
+            };
+            validate_questionnaire_surface(command, path)?;
+        }
+        Ok(())
+    }
+
+    fn questionnaire_questions_invocation(
+        &self,
+        matches: &ArgMatches,
+    ) -> Option<(&str, &crate::cli::questionnaire::QuestionnaireCommand)> {
+        let path = extract_command_path(matches);
+        let (last, parent) = path.split_last()?;
+        if last.as_str() != QUESTIONS_SUBCOMMAND || parent.is_empty() {
+            return None;
+        }
+        let parent_path = parent.join(".");
+        self.questionnaire_commands
+            .get_key_value(&parent_path)
+            .map(|(path, command)| (path.as_str(), command))
+    }
+}
+
+fn command_matches_for_path<'a>(matches: &'a ArgMatches, path: &[&str]) -> Option<&'a ArgMatches> {
+    let mut current = matches;
+    for segment in path {
+        current = current.subcommand_matches(segment)?;
+    }
+    Some(current)
 }
 
 /// Selects the destination for an artifact, deterministically.

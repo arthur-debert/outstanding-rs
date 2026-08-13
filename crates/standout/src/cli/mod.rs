@@ -122,6 +122,7 @@
 // Internal modules
 mod default_command;
 mod dispatch;
+mod questionnaire;
 mod result;
 
 // Helper functions (formerly the App struct lived here)

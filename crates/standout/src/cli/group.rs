@@ -14,8 +14,10 @@ use std::rc::Rc;
 use super::dispatch::{render_handler_output, DispatchFn};
 use crate::cli::handler::{CommandContext, FnHandler, Handler, HandlerResult};
 use crate::cli::hooks::{Hooks, RenderedOutput, TextOutput};
+use crate::cli::questionnaire::{questionnaire_pre_dispatch, QuestionnaireCommand};
 use crate::StructuredOutputProjection;
 use standout_dispatch::verify::ExpectedArg;
+use standout_input::questionnaire::QuestionnaireInput;
 use standout_pipe::PipeTarget;
 
 // ============================================================================
@@ -43,6 +45,10 @@ pub(crate) trait CommandRecipe {
     /// Returns hooks for this command, if set.
     #[allow(dead_code)]
     fn hooks(&self) -> Option<&Hooks>;
+
+    /// Takes ownership of questionnaire metadata, if set.
+    #[allow(dead_code)]
+    fn take_questionnaire(&mut self) -> Option<QuestionnaireCommand>;
 
     /// Takes ownership of hooks (for registration with AppBuilder).
     #[allow(dead_code)]
@@ -73,6 +79,7 @@ where
     handler: Rc<RefCell<FnHandler<F, T>>>,
     template: Option<String>,
     hooks: Option<Hooks>,
+    questionnaire: Option<QuestionnaireCommand>,
     structured_output_projection: Option<StructuredOutputProjection>,
 }
 
@@ -86,6 +93,7 @@ where
             handler: Rc::new(RefCell::new(handler)),
             template: None,
             hooks: None,
+            questionnaire: None,
             structured_output_projection: None,
         }
     }
@@ -126,6 +134,10 @@ where
 
     fn take_hooks(&mut self) -> Option<Hooks> {
         self.hooks.take()
+    }
+
+    fn take_questionnaire(&mut self) -> Option<QuestionnaireCommand> {
+        self.questionnaire.take()
     }
 
     fn create_dispatch(
@@ -179,6 +191,7 @@ where
     #[allow(dead_code)]
     template: Option<String>,
     hooks: Option<Hooks>,
+    questionnaire: Option<QuestionnaireCommand>,
     structured_output_projection: Option<StructuredOutputProjection>,
     _phantom: std::marker::PhantomData<T>,
 }
@@ -193,6 +206,7 @@ where
             handler: Rc::new(RefCell::new(handler)),
             template: None,
             hooks: None,
+            questionnaire: None,
             structured_output_projection: None,
             _phantom: std::marker::PhantomData,
         }
@@ -235,6 +249,10 @@ where
 
     fn take_hooks(&mut self) -> Option<Hooks> {
         self.hooks.take()
+    }
+
+    fn take_questionnaire(&mut self) -> Option<QuestionnaireCommand> {
+        self.questionnaire.take()
     }
 
     fn create_dispatch(
@@ -327,6 +345,10 @@ impl CommandRecipe for ErasedConfigRecipe {
         self.hooks.borrow_mut().take()
     }
 
+    fn take_questionnaire(&mut self) -> Option<QuestionnaireCommand> {
+        None
+    }
+
     fn create_dispatch(
         &self,
         template: &str,
@@ -395,6 +417,10 @@ where
         None
     }
 
+    fn take_questionnaire(&mut self) -> Option<QuestionnaireCommand> {
+        None
+    }
+
     fn create_dispatch(
         &self,
         _template: &str,
@@ -432,6 +458,7 @@ pub struct CommandConfig<H> {
     pub(crate) handler: H,
     pub(crate) template: Option<String>,
     pub(crate) hooks: Option<Hooks>,
+    pub(crate) questionnaire: Option<QuestionnaireCommand>,
     pub(crate) structured_output_projection: Option<StructuredOutputProjection>,
 }
 
@@ -442,6 +469,7 @@ impl<H> CommandConfig<H> {
             handler,
             template: None,
             hooks: None,
+            questionnaire: None,
             structured_output_projection: None,
         }
     }
@@ -459,6 +487,25 @@ impl<H> CommandConfig<H> {
     pub fn hooks(mut self, hooks: Hooks) -> Self {
         self.hooks = Some(hooks);
         self
+    }
+
+    /// Attaches a derived questionnaire input to this command.
+    ///
+    /// Standout injects the reserved questionnaire CLI surface into this
+    /// command at parse time: `--answers FILE|-`, `--yes`, and the
+    /// side-effect-free `questions` subcommand. Before the handler runs, the
+    /// framework resolves exactly one answer source (answer sheet file,
+    /// explicit stdin, or interactive prompts), decodes it through the shared
+    /// questionnaire pipeline, runs the attended confirmation gate unless
+    /// `--yes` was supplied, and stores the typed value in the command
+    /// context. Handlers read it with
+    /// [`CommandContextInput::questionnaire`](crate::cli::CommandContextInput::questionnaire).
+    pub fn questionnaire<T>(mut self) -> Self
+    where
+        T: QuestionnaireInput + Clone + Send + Sync + 'static,
+    {
+        self.questionnaire = Some(QuestionnaireCommand::new::<T>());
+        self.pre_dispatch(questionnaire_pre_dispatch::<T>)
     }
 
     /// Attaches a presentation-layer projection for structured output.
@@ -752,6 +799,7 @@ pub(crate) trait ErasedCommandConfig {
     #[allow(dead_code)]
     fn hooks(&self) -> Option<&Hooks>;
     fn take_hooks(&mut self) -> Option<Hooks>;
+    fn take_questionnaire(&mut self) -> Option<QuestionnaireCommand>;
     fn register(
         self: Box<Self>,
         path: &str,
@@ -857,6 +905,7 @@ impl GroupBuilder {
                     handler: Rc::new(RefCell::new(config.handler)),
                     template: config.template,
                     hooks: config.hooks,
+                    questionnaire: config.questionnaire,
                     structured_output_projection: config.structured_output_projection,
                 }),
             },
@@ -889,6 +938,7 @@ impl GroupBuilder {
                     handler: Rc::new(RefCell::new(config.handler)),
                     template: config.template,
                     hooks: config.hooks,
+                    questionnaire: config.questionnaire,
                     structured_output_projection: config.structured_output_projection,
                 }),
             },
@@ -989,6 +1039,7 @@ where
     handler: Rc<RefCell<FnHandler<F, T>>>,
     template: Option<String>,
     hooks: Option<Hooks>,
+    questionnaire: Option<QuestionnaireCommand>,
     structured_output_projection: Option<StructuredOutputProjection>,
 }
 
@@ -1007,6 +1058,10 @@ where
 
     fn take_hooks(&mut self) -> Option<Hooks> {
         self.hooks.take()
+    }
+
+    fn take_questionnaire(&mut self) -> Option<QuestionnaireCommand> {
+        self.questionnaire.take()
     }
 
     fn register(
@@ -1058,6 +1113,7 @@ where
     handler: Rc<RefCell<H>>,
     template: Option<String>,
     hooks: Option<Hooks>,
+    questionnaire: Option<QuestionnaireCommand>,
     structured_output_projection: Option<StructuredOutputProjection>,
 }
 
@@ -1076,6 +1132,10 @@ where
 
     fn take_hooks(&mut self) -> Option<Hooks> {
         self.hooks.take()
+    }
+
+    fn take_questionnaire(&mut self) -> Option<QuestionnaireCommand> {
+        self.questionnaire.take()
     }
 
     fn register(
@@ -1139,6 +1199,10 @@ where
     }
 
     fn take_hooks(&mut self) -> Option<Hooks> {
+        None
+    }
+
+    fn take_questionnaire(&mut self) -> Option<QuestionnaireCommand> {
         None
     }
 
