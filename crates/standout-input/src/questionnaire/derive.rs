@@ -42,10 +42,15 @@ pub trait QuestionnaireInput: Sized {
     ///
     /// Generated implementations use `prefix` to make nested struct field IDs
     /// extend their enclosing group ID. Manual implementations may keep the
-    /// default root-only behavior unless they need nested reuse.
+    /// default root-only behavior unless they need nested reuse. The default
+    /// implementation panics for non-empty prefixes so accidental nested reuse
+    /// fails at the call site instead of constructing root-scoped items.
     #[doc(hidden)]
     fn questionnaire_items(prefix: &str) -> Vec<Item> {
-        let _ = prefix;
+        assert!(
+            prefix.is_empty(),
+            "manual QuestionnaireInput implementation cannot be nested unless questionnaire_items is overridden"
+        );
         Self::questionnaire()
             .expect("manual QuestionnaireInput implementation cannot be nested unless questionnaire_items is overridden")
             .items()
@@ -56,10 +61,15 @@ pub trait QuestionnaireInput: Sized {
     ///
     /// Generated implementations use `prefix` to read fields inside nested and
     /// repeatable group occurrences. Manual implementations may keep the
-    /// default root-only behavior unless they need nested reuse.
+    /// default root-only behavior unless they need nested reuse. The default
+    /// implementation panics for non-empty prefixes so accidental nested reuse
+    /// fails at the call site instead of reading root-scoped answers.
     #[doc(hidden)]
     fn from_decoded_answers_at(answers: &Answers, prefix: &str) -> Self {
-        let _ = prefix;
+        assert!(
+            prefix.is_empty(),
+            "manual QuestionnaireInput implementation cannot be nested unless from_decoded_answers_at is overridden"
+        );
         Self::from_decoded_answers(answers)
     }
 

@@ -294,6 +294,24 @@ impl FieldInfo {
             }
         }
 
+        if let Some((max, span)) = attrs.max.as_ref() {
+            if *max == 0 {
+                return Err(Error::new(
+                    *span,
+                    "max must be at least 1 for repeatable questionnaire groups",
+                ));
+            }
+        }
+
+        if let (Some((min, _)), Some((max, span))) = (attrs.min.as_ref(), attrs.max.as_ref()) {
+            if max < min {
+                return Err(Error::new(
+                    *span,
+                    "max must be greater than or equal to min for repeatable questionnaire groups",
+                ));
+            }
+        }
+
         let id = attrs
             .id
             .as_ref()
