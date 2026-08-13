@@ -2155,8 +2155,29 @@ cargo test --workspace
 #[cfg(test)]
 mod tests {
     use super::*;
+    use serial_test::serial;
+    use standout_input::{
+        reset_default_prompt_responder, set_default_prompt_responder, PromptResponse,
+        ScriptedResponder,
+    };
     use std::process::Command;
+    use std::sync::Arc;
     use tempfile::TempDir;
+
+    struct PromptResponderGuard;
+
+    impl PromptResponderGuard {
+        fn install(responses: impl IntoIterator<Item = PromptResponse>) -> Self {
+            set_default_prompt_responder(Arc::new(ScriptedResponder::new(responses)));
+            Self
+        }
+    }
+
+    impl Drop for PromptResponderGuard {
+        fn drop(&mut self) {
+            reset_default_prompt_responder();
+        }
+    }
 
     fn required_string(name: impl Into<String>) -> CommandInput {
         CommandInput {
@@ -3417,6 +3438,57 @@ mod tests {
         assert_eq!(
             ProjectSpec::from_answers(from_file).unwrap(),
             ProjectSpec::from_answers(from_stdin).unwrap()
+        );
+    }
+
+    #[test]
+    #[serial(prompt_responder)]
+    fn interactive_file_and_stdin_decode_to_identical_answers_and_specs() {
+        use standout_input::questionnaire::QuestionnaireInput;
+
+        let sheet = minimal_sheet();
+        let dir = TempDir::new().unwrap();
+        let path = dir.path().join("answers.txt");
+        fs::write(&path, &sheet).unwrap();
+        let questionnaire = questionnaire();
+
+        let _guard = PromptResponderGuard::install([
+            PromptResponse::text("hello-tool"),
+            PromptResponse::Skip,
+            PromptResponse::text("greet"),
+            PromptResponse::text("Greet one value"),
+            PromptResponse::text("name"),
+            PromptResponse::Skip,
+            PromptResponse::Skip,
+            PromptResponse::Skip,
+            PromptResponse::Skip,
+            PromptResponse::Skip,
+            PromptResponse::Skip,
+        ]);
+        let interactive_raw = questionnaire.collect_interactive().unwrap();
+        let from_file_raw = questionnaire.read_answer_sheet_file(&path).unwrap();
+        let from_stdin_raw = questionnaire
+            .read_answer_sheet_stdin_with(&standout_input::MockStdin::piped(&sheet))
+            .unwrap();
+
+        let from_interactive =
+            NewProjectAnswers::from_raw_answers_with(&interactive_raw, new_project_form_rules)
+                .unwrap();
+        let from_file =
+            NewProjectAnswers::from_raw_answers_with(&from_file_raw, new_project_form_rules)
+                .unwrap();
+        let from_stdin =
+            NewProjectAnswers::from_raw_answers_with(&from_stdin_raw, new_project_form_rules)
+                .unwrap();
+
+        assert_eq!(from_interactive, from_file);
+        assert_eq!(from_interactive, from_stdin);
+        let spec = ProjectSpec::from_answers(from_interactive).unwrap();
+        assert_eq!(spec, ProjectSpec::from_answers(from_file).unwrap());
+        assert_eq!(spec, ProjectSpec::from_answers(from_stdin).unwrap());
+        assert_eq!(
+            spec.inputs[0].sources,
+            vec![InputSource::Argument, InputSource::File, InputSource::Stdin,]
         );
     }
 }
