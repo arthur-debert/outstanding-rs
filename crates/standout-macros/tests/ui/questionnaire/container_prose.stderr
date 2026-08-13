@@ -1,0 +1,5 @@
+error: container #[question(...)] only supports id
+ --> tests/ui/questionnaire/container_prose.rs:4:1
+  |
+4 | #[question(id = "demo.container", prose)]
+  | ^

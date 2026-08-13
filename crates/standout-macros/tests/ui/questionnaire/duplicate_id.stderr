@@ -1,0 +1,5 @@
+error: duplicate question id 'same'
+  --> tests/ui/questionnaire/duplicate_id.rs:11:21
+   |
+11 |     #[question(id = "same")]
+   |                     ^^^^^^
