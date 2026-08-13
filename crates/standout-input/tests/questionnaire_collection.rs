@@ -9,7 +9,7 @@ use std::sync::Arc;
 use serial_test::serial;
 use standout_input::env::{reset_default_stdin_reader, set_default_stdin_reader, MockStdin};
 use standout_input::questionnaire::{
-    AnswerSheetDiagnostic, Questionnaire, ScalarField, ScalarKind,
+    AnswerSheetDiagnostic, Group, Item, Questionnaire, ScalarField, ScalarKind,
 };
 use standout_input::{
     reset_default_prompt_responder, set_default_prompt_responder, InputError, MockTerminal,
@@ -306,8 +306,169 @@ fn interactive_collection_refuses_a_non_terminal_without_a_responder() {
 }
 
 // ============================================================================
+// Interactive adapter: repeatable groups
+// ============================================================================
+
+/// A repeatable group (minimum 1, maximum 3) with a per-occurrence
+/// conditional field.
+fn repeatable_questionnaire() -> Questionnaire {
+    Questionnaire::new(
+        "demo.repeats",
+        vec![Item::from(
+            Group::new(
+                "inputs",
+                "Describe an input.",
+                vec![
+                    ScalarField::new("inputs.name", "Name?", ScalarKind::String),
+                    ScalarField::new("inputs.flag", "Expose a flag?", ScalarKind::Bool)
+                        .with_default("no"),
+                    ScalarField::new("inputs.flag_name", "Flag name?", ScalarKind::String)
+                        .active_when("inputs.flag", "yes"),
+                ],
+            )
+            .repeatable(1)
+            .max_occurrences(3),
+        )],
+    )
+    .unwrap()
+}
+
+#[test]
+#[serial(prompt_responder)]
+fn interactive_collection_walks_repeatable_occurrences() {
+    let q = repeatable_questionnaire();
+    // Occurrence 0: name, flag=yes, flag_name. Add another? yes.
+    // Occurrence 1: name, flag=no (skip), flag_name skipped (inactive).
+    // Add another? no.
+    let _guard = ResponderGuard::install([
+        PromptResponse::text("alpha"),
+        PromptResponse::text("yes"),
+        PromptResponse::text("alpha-flag"),
+        PromptResponse::text("yes"), // add another?
+        PromptResponse::text("beta"),
+        PromptResponse::Skip,       // flag: default "no"
+        PromptResponse::text("no"), // add another?
+    ]);
+    let raw = q.collect_interactive().unwrap();
+    assert_eq!(raw.occurrence_count("inputs"), 2);
+    let answers = q.decode_answers(&raw).unwrap();
+    assert_eq!(answers.occurrence_count("inputs"), 2);
+    assert_eq!(answers.get_text("inputs[0].name"), Some("alpha"));
+    assert_eq!(answers.get_text("inputs[0].flag_name"), Some("alpha-flag"));
+    assert_eq!(answers.get_text("inputs[1].name"), Some("beta"));
+    assert_eq!(answers.get_bool("inputs[1].flag"), Some(false));
+    assert_eq!(answers.get("inputs[1].flag_name"), None);
+}
+
+#[test]
+#[serial(prompt_responder)]
+fn interactive_collection_stops_at_the_maximum_without_asking() {
+    let q = Questionnaire::new(
+        "demo.capped",
+        vec![Item::from(
+            Group::new(
+                "items",
+                "Item?",
+                vec![ScalarField::new("items.name", "Name?", ScalarKind::String)],
+            )
+            .repeatable(1)
+            .max_occurrences(1),
+        )],
+    )
+    .unwrap();
+    // Exactly one prompt: the scripted responder would panic on an
+    // unexpected add-another question.
+    let _guard = ResponderGuard::install([PromptResponse::text("only")]);
+    let raw = q.collect_interactive().unwrap();
+    assert_eq!(raw.occurrence_count("items"), 1);
+    assert_eq!(raw.get("items[0].name"), Some("only"));
+}
+
+#[test]
+#[serial(prompt_responder)]
+fn interactive_blank_add_another_means_no() {
+    let q = repeatable_questionnaire();
+    let _guard = ResponderGuard::install([
+        PromptResponse::text("alpha"),
+        PromptResponse::Skip, // flag: default "no"
+        PromptResponse::Skip, // add another? blank = no
+    ]);
+    let raw = q.collect_interactive().unwrap();
+    assert_eq!(raw.occurrence_count("inputs"), 1);
+}
+
+#[test]
+#[serial(prompt_responder)]
+fn interactive_add_another_retries_on_a_non_bool_answer() {
+    let q = repeatable_questionnaire();
+    let _guard = ResponderGuard::install([
+        PromptResponse::text("alpha"),
+        PromptResponse::Skip,          // flag: default "no"
+        PromptResponse::text("maybe"), // add another: not yes/no -> re-ask
+        PromptResponse::text("no"),
+    ]);
+    let raw = q.collect_interactive().unwrap();
+    assert_eq!(raw.occurrence_count("inputs"), 1);
+}
+
+#[test]
+#[serial(prompt_responder)]
+fn interactive_cancellation_inside_an_occurrence_aborts() {
+    let q = repeatable_questionnaire();
+    let _guard = ResponderGuard::install([PromptResponse::text("alpha"), PromptResponse::Cancel]);
+    let err = q.collect_interactive().unwrap_err();
+    assert!(matches!(err, InputError::PromptCancelled));
+}
+
+// ============================================================================
 // Cross-source equivalence
 // ============================================================================
+
+#[test]
+#[serial(prompt_responder)]
+fn nested_interactive_and_sheet_submissions_decode_identically() {
+    let q = repeatable_questionnaire();
+
+    let _guard = ResponderGuard::install([
+        PromptResponse::text("alpha"),
+        PromptResponse::text("yes"),
+        PromptResponse::text("alpha-flag"),
+        PromptResponse::text("yes"), // add another?
+        PromptResponse::text("beta"),
+        PromptResponse::Skip,       // flag: default "no"
+        PromptResponse::text("no"), // add another?
+    ]);
+    let interactive = q.decode_answers(&q.collect_interactive().unwrap()).unwrap();
+
+    // The same answers as a sheet: the rendered block answered, plus one
+    // copied block for the second occurrence.
+    let sheet = q.render_answer_sheet();
+    let block_start = sheet.find("Describe an input.").unwrap();
+    let block = sheet[block_start..].to_string();
+    let first = sheet
+        .replace(
+            "[inputs.name] (string)\n->",
+            "[inputs.name] (string)\n-> alpha",
+        )
+        .replace("-> no", "-> yes")
+        .replace(
+            "[inputs.flag_name] (string; only when inputs.flag is true)\n->",
+            "[inputs.flag_name] (string; only when inputs.flag is true)\n-> alpha-flag",
+        );
+    let second = block.replace(
+        "[inputs.name] (string)\n->",
+        "[inputs.name] (string)\n-> beta",
+    );
+    let document = format!("{first}\n{second}");
+    let batch = q
+        .decode_answers(
+            &q.read_answer_sheet_stdin_with(&MockStdin::piped(document))
+                .unwrap(),
+        )
+        .unwrap();
+
+    assert_eq!(interactive, batch);
+}
 
 #[test]
 #[serial(prompt_responder)]

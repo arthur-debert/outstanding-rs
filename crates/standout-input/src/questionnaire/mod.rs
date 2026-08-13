@@ -49,6 +49,56 @@
 //! field. Answers keep internal line breaks and lose only outer whitespace.
 //! Declared defaults render pre-filled on the marker line.
 //!
+//! # Nested and repeatable groups
+//!
+//! A questionnaire is a tree: alongside scalar fields it may declare
+//! [`Group`]s — nested sections answered once, or *repeatable* sections
+//! answered once per submitted item within declared [`Repeat`] bounds. A
+//! questionnaire with a repeatable `command.inputs` group (minimum 1)
+//! renders as:
+//!
+//! ```text
+//! 2. Describe the initial command. [command] (section)
+//!
+//! 2.1 What is the command name? [command.name] (string)
+//! ->
+//!
+//! 2.2 Describe a command input. [command.inputs] (repeatable section, minimum 1)
+//! (Add an item by copying one complete block - its heading line and its
+//! questions - below the last block, then answering the copy.)
+//!
+//! 2.2.1 What is its name? [command.inputs.name] (string)
+//! ->
+//! ```
+//!
+//! Rendering emits exactly the declared minimum number of blocks per
+//! repeatable group. Adding an item is *copy-the-block* editing: copy one
+//! complete block — the group heading line and its questions — paste it
+//! below the last block, and answer the copy. Display numbers stay purely
+//! decorative: every copy may keep saying `2.2.1`, because the parser counts
+//! *occurrences of the stable group header* and nothing else — never
+//! numbering, wording, or any count written in prose.
+//!
+//! A group header is recognized only when its bracketed ID names a group
+//! valid at that point of the document *and* it is followed by a child its
+//! definition permits (a child field with its `->` marker, or a child
+//! group); a field header is recognized only where its definition places
+//! it. Bracketed prose inside answers that satisfies neither contract stays
+//! answer content.
+//!
+//! ## Definition IDs vs occurrence indexes
+//!
+//! Definition IDs never change: the name field of *every* submitted input
+//! is defined as `command.inputs.name`. A submitted *instance* of that
+//! field is addressed by its **occurrence path**, which inserts a
+//! zero-based index per enclosing repeatable-group occurrence: the second
+//! input's name is `command.inputs[1].name`. Diagnostics use occurrence
+//! paths, so an error points at the exact copied block to fix; [`Answers`]
+//! and [`RawAnswers`] are keyed by them and expose
+//! [`occurrence_count`](Answers::occurrence_count) for iterating submitted
+//! items. Indexes belong to an answer instance, never to the definition —
+//! which is why they participate in paths but not in the fingerprint.
+//!
 //! # Decoding: defaults, omission, conditions
 //!
 //! Decoding a submission ([`Questionnaire::decode_answers`]) applies one
@@ -126,6 +176,57 @@
 //! assert_eq!(answers.get_bool("project.docker"), Some(false));
 //! assert_eq!(answers.get("project.docker_image"), None); // inactive
 //! ```
+//!
+//! # Nested and repeatable round trip
+//!
+//! ```
+//! use standout_input::questionnaire::{Group, Item, Questionnaire, ScalarField, ScalarKind};
+//!
+//! let questionnaire = Questionnaire::new(
+//!     "demo.commands",
+//!     vec![
+//!         Item::from(ScalarField::new(
+//!             "command.name",
+//!             "What is the command name?",
+//!             ScalarKind::String,
+//!         )),
+//!         // A repeatable group: at least one input, each with two fields.
+//!         Item::from(
+//!             Group::new(
+//!                 "command.inputs",
+//!                 "Describe a command input.",
+//!                 vec![
+//!                     ScalarField::new("command.inputs.name", "Its name?", ScalarKind::String),
+//!                     ScalarField::new("command.inputs.value_type", "Its type?", ScalarKind::String)
+//!                         .with_default("string"),
+//!                 ],
+//!             )
+//!             .repeatable(1),
+//!         ),
+//!     ],
+//! )
+//! .unwrap();
+//!
+//! // Answer the sheet, then simulate copy-the-block editing: duplicate the
+//! // one rendered `command.inputs` block to submit a second item.
+//! let sheet = questionnaire
+//!     .render_answer_sheet()
+//!     .replace("[command.name] (string)\n->", "[command.name] (string)\n-> generate")
+//!     .replace("[command.inputs.name] (string)\n->", "[command.inputs.name] (string)\n-> definition");
+//! let block_start = sheet.find("Describe a command input.").unwrap();
+//! let block = sheet[block_start..].to_string();
+//! let copied = format!("{sheet}\n{}", block.replace("-> definition", "-> output"));
+//!
+//! let raw = questionnaire.parse_answer_sheet(&copied).unwrap();
+//! let answers = questionnaire.decode_answers(&raw).unwrap();
+//!
+//! // Occurrences are counted from the stable group header; each submitted
+//! // instance is addressed by its indexed occurrence path.
+//! assert_eq!(answers.occurrence_count("command.inputs"), 2);
+//! assert_eq!(answers.get_text("command.inputs[0].name"), Some("definition"));
+//! assert_eq!(answers.get_text("command.inputs[1].name"), Some("output"));
+//! assert_eq!(answers.get_text("command.inputs[1].value_type"), Some("string")); // default
+//! ```
 
 mod collect;
 mod decode;
@@ -136,7 +237,7 @@ mod render;
 
 pub use decode::{AnswerValue, Answers, FormError, ValidationDiagnostic};
 pub use definition::{
-    Condition, Constraint, FieldValidator, Questionnaire, QuestionnaireError, ScalarField,
-    ScalarKind,
+    Condition, Constraint, FieldValidator, Group, Item, Questionnaire, QuestionnaireError, Repeat,
+    ScalarField, ScalarKind,
 };
 pub use parse::{AnswerSheetDiagnostic, RawAnswers};

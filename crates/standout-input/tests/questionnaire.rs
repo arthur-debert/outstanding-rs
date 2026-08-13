@@ -80,10 +80,7 @@ fn definition_rejects_invalid_field_id() {
         vec![ScalarField::new("Project.Name", "A?", ScalarKind::String)],
     )
     .unwrap_err();
-    assert_eq!(
-        err,
-        QuestionnaireError::InvalidFieldId("Project.Name".into())
-    );
+    assert_eq!(err, QuestionnaireError::InvalidId("Project.Name".into()));
 }
 
 #[test]
@@ -96,12 +93,12 @@ fn definition_rejects_duplicate_field_ids() {
         ],
     )
     .unwrap_err();
-    assert_eq!(err, QuestionnaireError::DuplicateFieldId("a".into()));
+    assert_eq!(err, QuestionnaireError::DuplicateId("a".into()));
 }
 
 #[test]
 fn definition_rejects_empty_field_list() {
-    let err = Questionnaire::new("demo", vec![]).unwrap_err();
+    let err = Questionnaire::new("demo", Vec::<ScalarField>::new()).unwrap_err();
     assert_eq!(err, QuestionnaireError::NoFields);
 }
 
@@ -464,7 +461,7 @@ fn duplicate_field_header_is_a_diagnostic() {
     assert_eq!(
         diags,
         vec![AnswerSheetDiagnostic::DuplicateField {
-            id: "project.name".into(),
+            path: "project.name".into(),
             line: 8,
         }]
     );

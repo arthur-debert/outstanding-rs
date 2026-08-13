@@ -30,7 +30,7 @@ use std::collections::BTreeMap;
 use std::sync::Arc;
 
 #[cfg(feature = "simple-prompts")]
-use super::definition::{Constraint, ScalarKind};
+use super::definition::{Constraint, Group, Item, ScalarField, ScalarKind};
 
 #[cfg(feature = "simple-prompts")]
 use crate::sources::{RealTerminal, TerminalIO, TextPromptSource};
@@ -38,7 +38,7 @@ use crate::sources::{RealTerminal, TerminalIO, TextPromptSource};
 use crate::InputError;
 
 #[cfg(feature = "simple-prompts")]
-use super::decode::{decode_field, is_active, FieldOutcome};
+use super::decode::{decode_field, is_active, parse_bool, FieldOutcome, ScopeCtx};
 
 impl Questionnaire {
     /// Read one complete answer sheet from a named file.
@@ -103,7 +103,8 @@ impl Questionnaire {
         self.parse_answer_sheet(&text)
     }
 
-    /// Collect answers interactively, one prompt per applicable field.
+    /// Collect answers interactively, one prompt per applicable field
+    /// occurrence.
     ///
     /// Prompts through [`TextPromptSource`] on the real terminal — and
     /// therefore through any installed
@@ -116,9 +117,16 @@ impl Questionnaire {
     /// a required-answer retry), and inactive conditional fields are skipped
     /// without prompting.
     ///
+    /// Groups walk their children in place. A repeatable group collects its
+    /// declared minimum number of occurrences, then asks a yes/no
+    /// "add another?" question (blank means no) before each further
+    /// occurrence, stopping unprompted at the declared maximum — so an
+    /// interactive submission always satisfies the declared bounds, exactly
+    /// like a well-formed answer sheet.
+    ///
     /// The result is the same [`RawAnswers`] representation the document
-    /// adapters produce (each entry already field-valid); run
-    /// [`decode_answers`](Self::decode_answers) or
+    /// adapters produce (each entry already field-valid, keyed by occurrence
+    /// path); run [`decode_answers`](Self::decode_answers) or
     /// [`decode_answers_with`](Self::decode_answers_with) on it for typed
     /// values and whole-form rules.
     ///
@@ -146,55 +154,165 @@ impl Questionnaire {
             return Err(InputError::NoInput);
         }
 
-        let mut raw: BTreeMap<String, String> = BTreeMap::new();
-        let mut outcomes: BTreeMap<String, FieldOutcome> = BTreeMap::new();
+        let mut collector = Collector {
+            questionnaire: self,
+            terminal,
+            raw: BTreeMap::new(),
+            occurrences: BTreeMap::new(),
+            outcomes: BTreeMap::new(),
+        };
+        collector.collect_items(self.items(), &mut vec![ScopeCtx::root()])?;
+        Ok(RawAnswers::from_parts(collector.raw, collector.occurrences))
+    }
+}
 
-        for field in self.fields() {
-            // Interactive fields either decode or retry, so controllers are
-            // never in an errored state and applicability is always known.
-            if is_active(field, &outcomes) != Some(true) {
-                outcomes.insert(field.id().to_string(), FieldOutcome::Inactive);
-                continue;
+/// One interactive collection pass: the walk state threaded through the
+/// definition tree.
+#[cfg(feature = "simple-prompts")]
+struct Collector<'a, T: TerminalIO + 'static> {
+    questionnaire: &'a Questionnaire,
+    terminal: Arc<T>,
+    /// Accepted raw answer text per occurrence path.
+    raw: BTreeMap<String, String>,
+    /// Collected occurrences per repeatable-group path base.
+    occurrences: BTreeMap<String, usize>,
+    /// Decode outcomes per occurrence path, for condition evaluation.
+    outcomes: BTreeMap<String, FieldOutcome>,
+}
+
+#[cfg(feature = "simple-prompts")]
+impl<T: TerminalIO + 'static> Collector<'_, T> {
+    /// Walk one scope's items; `chain` is the open scope chain, innermost
+    /// last (used to build occurrence paths and resolve controllers).
+    fn collect_items(
+        &mut self,
+        items: &[Item],
+        chain: &mut Vec<ScopeCtx>,
+    ) -> Result<(), InputError> {
+        for item in items {
+            match item {
+                Item::Field(field) => self.collect_field(field, chain)?,
+                Item::Group(group) => match group.repeat() {
+                    None => {
+                        let base = chain
+                            .last()
+                            .expect("chain starts rooted")
+                            .child_path(group.id());
+                        chain.push(scope_for(group, base));
+                        self.collect_items(group.children(), chain)?;
+                        chain.pop();
+                    }
+                    Some(repeat) => {
+                        let base = chain
+                            .last()
+                            .expect("chain starts rooted")
+                            .child_path(group.id());
+                        let mut count = 0;
+                        loop {
+                            if count >= repeat.min()
+                                && (repeat.max() == Some(count) || !self.ask_add_another(group)?)
+                            {
+                                break;
+                            }
+                            chain.push(scope_for(group, format!("{base}[{count}]")));
+                            self.collect_items(group.children(), chain)?;
+                            chain.pop();
+                            count += 1;
+                        }
+                        self.occurrences.insert(base, count);
+                    }
+                },
             }
+        }
+        Ok(())
+    }
 
-            let base = interactive_message(field);
-            let mut message = base.clone();
-            loop {
-                let source = TextPromptSource::with_terminal(message.clone(), terminal.clone());
-                let entered = match source.prompt() {
-                    Ok(text) => text,
-                    // Blank entry (or a responder `Skip`): the shared blank
-                    // rule decides between default, omission, and retry.
-                    Err(InputError::NoInput) => String::new(),
-                    Err(error) => return Err(error),
-                };
-                match decode_field(field, Some(&entered)) {
-                    Ok(outcome) => {
-                        raw.insert(field.id().to_string(), entered.trim().to_string());
-                        outcomes.insert(
-                            field.id().to_string(),
-                            match outcome {
-                                Some(value) => FieldOutcome::Answered(value),
-                                None => FieldOutcome::Omitted,
-                            },
-                        );
-                        break;
-                    }
-                    Err(diagnostic) => {
-                        message = format!("{diagnostic} Try again: {base}");
-                    }
+    /// Prompt for one field occurrence, retrying locally until an answer
+    /// decodes (inactive occurrences are skipped without prompting).
+    fn collect_field(&mut self, field: &ScalarField, chain: &[ScopeCtx]) -> Result<(), InputError> {
+        let path = chain
+            .last()
+            .expect("chain starts rooted")
+            .child_path(field.id());
+        // Interactive fields either decode or retry, so controllers are
+        // never in an errored state and applicability is always known.
+        if is_active(self.questionnaire, field, chain, &self.outcomes) != Some(true) {
+            self.outcomes.insert(path, FieldOutcome::Inactive);
+            return Ok(());
+        }
+
+        let base = interactive_message(field);
+        let mut message = base.clone();
+        loop {
+            // A blank entry (or a responder `Skip`) resolves to an empty
+            // string: the shared blank rule then decides between default,
+            // omission, and retry.
+            let entered: String = self.prompt(message.clone())?.unwrap_or_default();
+            match decode_field(field, &path, Some(&entered)) {
+                Ok(outcome) => {
+                    self.raw.insert(path.clone(), entered.trim().to_string());
+                    self.outcomes.insert(
+                        path,
+                        match outcome {
+                            Some(value) => FieldOutcome::Answered(value),
+                            None => FieldOutcome::Omitted,
+                        },
+                    );
+                    return Ok(());
+                }
+                Err(diagnostic) => {
+                    message = format!("{diagnostic} Try again: {base}");
                 }
             }
         }
+    }
 
-        Ok(RawAnswers::from_values(raw))
+    /// Ask whether to collect one more occurrence of a repeatable group.
+    /// Blank means no; a non-yes/no entry re-asks with the diagnostic.
+    fn ask_add_another(&mut self, group: &Group) -> Result<bool, InputError> {
+        let base = format!("Add another? {} (yes/no) ", group.prompt());
+        let mut message = base.clone();
+        loop {
+            match self.prompt(message.clone())? {
+                None => return Ok(false),
+                Some(entered) => match parse_bool(&entered) {
+                    Some(answer) => return Ok(answer),
+                    None => {
+                        message = format!(
+                            "Expected a yes/no answer (true, false, yes, no, y, or n). Try again: {base}"
+                        );
+                    }
+                },
+            }
+        }
+    }
+
+    /// One prompt round trip: `Ok(None)` is a blank entry, cancellation and
+    /// I/O failures propagate.
+    fn prompt(&self, message: String) -> Result<Option<String>, InputError> {
+        let source = TextPromptSource::with_terminal(message, self.terminal.clone());
+        match source.prompt() {
+            Ok(text) => Ok(Some(text)),
+            Err(InputError::NoInput) => Ok(None),
+            Err(error) => Err(error),
+        }
+    }
+}
+
+/// The scope-chain entry for one group occurrence.
+#[cfg(feature = "simple-prompts")]
+fn scope_for(group: &Group, path_prefix: String) -> ScopeCtx {
+    ScopeCtx {
+        group_id: Some(group.id().to_string()),
+        def_prefix: group.def_prefix(),
+        path_prefix,
     }
 }
 
 /// The cosmetic prompt message for one field: its wording plus entry hints
 /// (choices, the yes/no vocabulary, the pre-filled default).
 #[cfg(feature = "simple-prompts")]
-fn interactive_message(field: &super::definition::ScalarField) -> String {
+fn interactive_message(field: &ScalarField) -> String {
     let mut message = field.prompt().to_string();
     if let Some(Constraint::OneOf(choices)) = field.constraint() {
         message.push_str(&format!(" ({})", choices.join(" / ")));
