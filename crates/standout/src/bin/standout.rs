@@ -691,12 +691,16 @@ impl AttendedTerminal for ControllingTerminal {
 /// A scripted [`AttendedTerminal`] for tests that must run the production
 /// binary without a real terminal: either no terminal at all, or a fixed
 /// reply script. Questions echo to stdout so CLI transcripts can assert the
-/// prompt appeared without a terminal device in the loop.
+/// prompt appeared without a terminal device in the loop. Compiled for
+/// debug builds (which honor the [`TERMINAL_SEAM_VAR`] seam) and tests
+/// only — a release binary carries no scripted terminal.
+#[cfg(any(test, debug_assertions))]
 struct ScriptedTerminal {
     attended: bool,
     replies: std::collections::VecDeque<String>,
 }
 
+#[cfg(any(test, debug_assertions))]
 impl ScriptedTerminal {
     fn absent() -> Self {
         Self {
@@ -713,6 +717,7 @@ impl ScriptedTerminal {
     }
 }
 
+#[cfg(any(test, debug_assertions))]
 impl AttendedTerminal for ScriptedTerminal {
     fn is_attended(&self) -> bool {
         self.attended
@@ -728,12 +733,19 @@ impl AttendedTerminal for ScriptedTerminal {
 /// The env var that swaps the attended-terminal seam for tests. This is a
 /// TEST SEAM, not user configuration: unset means the real controlling
 /// terminal; `absent` simulates a missing terminal; any other value names a
-/// file whose lines are the scripted terminal replies.
+/// file whose lines are the scripted terminal replies. Debug builds only —
+/// a release binary never consults it, so an inherited environment cannot
+/// auto-confirm or block generation in production.
+#[cfg(debug_assertions)]
 const TERMINAL_SEAM_VAR: &str = "STANDOUT_NEW_PROJECT_TERMINAL";
 
-/// Resolve the [`AttendedTerminal`] the confirmation gate uses, honoring
-/// the [`TERMINAL_SEAM_VAR`] test seam.
+/// Resolve the [`AttendedTerminal`] the confirmation gate uses.
+///
+/// Debug builds honor the [`TERMINAL_SEAM_VAR`] test seam (integration
+/// tests exercise the debug-profile binary); release builds always use the
+/// real controlling terminal and never read the env var.
 fn attended_terminal_from_env() -> Result<Box<dyn AttendedTerminal>> {
+    #[cfg(debug_assertions)]
     match std::env::var_os(TERMINAL_SEAM_VAR) {
         None => Ok(Box::new(ControllingTerminal)),
         Some(value) if value == "absent" => Ok(Box::new(ScriptedTerminal::absent())),
@@ -749,6 +761,8 @@ fn attended_terminal_from_env() -> Result<Box<dyn AttendedTerminal>> {
             )))
         }
     }
+    #[cfg(not(debug_assertions))]
+    Ok(Box::new(ControllingTerminal))
 }
 
 fn prompt_result_shape(input: &mut dyn BufRead, output: &mut dyn Write) -> Result<ResultShape> {
@@ -1377,6 +1391,8 @@ fn stdin_sheet_answers(reader: &dyn StdinReader) -> Result<WizardAnswers, Vec<St
 /// The collection-source-independent tail of sheet reading: decode raw
 /// sheet answers with the wizard's whole-form rules and convert them to
 /// [`WizardAnswers`], rendering any accumulated diagnostics for display.
+/// Parser warnings (answer text containing a `<id:` tag fragment) print to
+/// stderr without failing the submission.
 fn decode_sheet(
     questionnaire: &Questionnaire,
     raw: Result<RawAnswers, Vec<AnswerSheetDiagnostic>>,
@@ -1385,6 +1401,9 @@ fn decode_sheet(
         diagnostics.iter().map(ToString::to_string).collect()
     }
     let raw = raw.map_err(rendered)?;
+    for warning in raw.warnings() {
+        eprintln!("{warning}");
+    }
     let answers = questionnaire
         .decode_answers_with(&raw, wizard_form_rules)
         .map_err(rendered)?;
@@ -3956,25 +3975,36 @@ mod tests {
         serde_json::from_slice(&output.stdout).unwrap()
     }
 
-    /// Replace the answer marker line under the `nth` (zero-based) header
-    /// carrying `[id]` with `-> value`. Panics when the sheet has no such
-    /// header, so a test cannot silently leave a question unanswered.
+    /// Set `value` as the answer text below the `nth` (zero-based) question
+    /// line ending with `<id:...>`, replacing a pre-filled default line when
+    /// one is rendered. Panics when the sheet has no such question line, so
+    /// a test cannot silently leave a question unanswered.
     fn fill_nth(sheet: &str, id: &str, value: &str, nth: usize) -> String {
-        let token = format!("[{id}]");
-        let mut lines: Vec<String> = sheet.lines().map(ToOwned::to_owned).collect();
+        let tag = format!("<id:{id}>");
+        let lines: Vec<&str> = sheet.lines().collect();
+        let mut out: Vec<String> = Vec::new();
         let mut seen = 0;
-        for index in 0..lines.len() {
-            if lines[index].contains(&token)
-                && lines.get(index + 1).is_some_and(|l| l.starts_with("->"))
-            {
+        let mut done = false;
+        let mut i = 0;
+        while i < lines.len() {
+            let line = lines[i];
+            out.push(line.to_string());
+            i += 1;
+            if line.trim_end().ends_with(&tag) {
                 if seen == nth {
-                    lines[index + 1] = format!("-> {value}");
-                    return lines.join("\n") + "\n";
+                    // A non-blank line right below the question is a
+                    // pre-filled default: the answer replaces it.
+                    if lines.get(i).is_some_and(|next| !next.trim().is_empty()) {
+                        i += 1;
+                    }
+                    out.push(value.to_string());
+                    done = true;
                 }
                 seen += 1;
             }
         }
-        panic!("answer sheet has no occurrence {nth} of {token}");
+        assert!(done, "answer sheet has no occurrence {nth} of {tag}");
+        out.join("\n") + "\n"
     }
 
     fn fill(sheet: &str, id: &str, value: &str) -> String {
@@ -3982,19 +4012,20 @@ mod tests {
     }
 
     /// Simulate copy-the-block editing: duplicate the complete last
-    /// `command.inputs` block (its heading line through its last question's
-    /// marker line) below itself, exactly as a user adding an item would.
+    /// `command.inputs` block (its group tag line through its last
+    /// question's answer line) below itself, exactly as a user adding an
+    /// item would.
     fn duplicate_inputs_block(sheet: &str) -> String {
         let lines: Vec<&str> = sheet.lines().collect();
         let start = lines
             .iter()
-            .rposition(|line| line.contains("[command.inputs] ("))
-            .expect("sheet renders the repeatable inputs group header");
+            .rposition(|line| line.trim_end().ends_with("<id:command.inputs>"))
+            .expect("sheet renders the repeatable inputs group tag line");
         let sources = lines
             .iter()
-            .rposition(|line| line.contains("[command.inputs.sources]"))
+            .rposition(|line| line.trim_end().ends_with("<id:command.inputs.sources>"))
             .expect("sheet renders the sources question");
-        let end = sources + 1; // the sources answer marker line
+        let end = sources + 1; // the sources answer line (default or filled)
         let mut copied: Vec<&str> = lines[..=end].to_vec();
         copied.push("");
         copied.extend(&lines[start..=end]);

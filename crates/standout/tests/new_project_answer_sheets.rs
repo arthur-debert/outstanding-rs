@@ -22,7 +22,8 @@ use tempfile::TempDir;
 
 /// The binary's attended-terminal test seam (see `ScriptedTerminal` in the
 /// binary): `absent` simulates no terminal; any other value names a file of
-/// scripted reply lines.
+/// scripted reply lines. Debug builds only — these tests exercise the
+/// debug-profile binary; a release binary never reads the variable.
 const TERMINAL_SEAM_VAR: &str = "STANDOUT_NEW_PROJECT_TERMINAL";
 
 /// Run the production wizard binary in `cwd` with `stdin` piped in and the
@@ -92,22 +93,31 @@ fn dir_entries(dir: &Path) -> Vec<String> {
     entries
 }
 
-/// Replace the answer marker line under the first header carrying `[id]`
-/// with `-> value`.
+/// Set `value` as the answer text below the first question line ending
+/// with `<id:...>`, replacing a pre-filled default line when one is
+/// rendered.
 fn fill(sheet: &str, id: &str, value: &str) -> String {
-    let token = format!("[{id}]");
-    let mut lines: Vec<String> = sheet.lines().map(ToOwned::to_owned).collect();
-    for index in 0..lines.len() {
-        if lines[index].contains(&token)
-            && lines
-                .get(index + 1)
-                .is_some_and(|line| line.starts_with("->"))
-        {
-            lines[index + 1] = format!("-> {value}");
-            return lines.join("\n") + "\n";
+    let tag = format!("<id:{id}>");
+    let lines: Vec<&str> = sheet.lines().collect();
+    let mut out: Vec<String> = Vec::new();
+    let mut found = false;
+    let mut i = 0;
+    while i < lines.len() {
+        let line = lines[i];
+        out.push(line.to_string());
+        i += 1;
+        if !found && line.trim_end().ends_with(&tag) {
+            found = true;
+            // A non-blank line right below the question is a pre-filled
+            // default: the answer replaces it.
+            if lines.get(i).is_some_and(|next| !next.trim().is_empty()) {
+                i += 1;
+            }
+            out.push(value.to_string());
         }
     }
-    panic!("answer sheet has no header {token}");
+    assert!(found, "answer sheet has no question line for {tag}");
+    out.join("\n") + "\n"
 }
 
 /// A completed sheet for a minimal `hello-tool` project, produced by the
@@ -134,8 +144,8 @@ fn questions_renders_a_deterministic_sheet_and_generates_nothing() {
     let sheet = stdout(&first);
     assert!(sheet.starts_with("#! standout-answers 1\n"));
     assert!(sheet.contains("#! questionnaire: standout.new-project"));
-    assert!(sheet.contains("[project.name]"));
-    assert!(sheet.contains("[command.inputs.sources]"));
+    assert!(sheet.contains("<id:project.name>"));
+    assert!(sheet.contains("<id:command.inputs.sources>"));
     assert!(dir_entries(dir.path()).is_empty());
 }
 

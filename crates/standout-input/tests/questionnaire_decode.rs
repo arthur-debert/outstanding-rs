@@ -37,23 +37,30 @@ fn full() -> Questionnaire {
     .unwrap()
 }
 
-/// Replace a field's rendered marker (bare or pre-filled) with `answer`.
+/// Set `answer` as the answer text directly below the question line tagged
+/// `id`, replacing a rendered pre-filled default line when one is present.
 fn answer(sheet: &str, id: &str, answer: &str) -> String {
-    let needle = format!("[{id}]");
-    let mut out = String::new();
-    let mut lines = sheet.lines().peekable();
-    while let Some(line) = lines.next() {
-        out.push_str(line);
-        out.push('\n');
-        if line.contains(&needle) {
-            let marker = lines.next().expect("marker follows header");
-            assert!(marker.starts_with("->"), "expected a marker line");
-            out.push_str("-> ");
-            out.push_str(answer);
-            out.push('\n');
+    let tag = format!("<id:{id}>");
+    let lines: Vec<&str> = sheet.lines().collect();
+    let mut out: Vec<String> = Vec::new();
+    let mut found = false;
+    let mut i = 0;
+    while i < lines.len() {
+        let line = lines[i];
+        out.push(line.to_string());
+        i += 1;
+        if !found && line.trim_end().ends_with(&tag) {
+            found = true;
+            // A non-blank line right below the question is a pre-filled
+            // default: the answer replaces it.
+            if lines.get(i).is_some_and(|next| !next.trim().is_empty()) {
+                i += 1;
+            }
+            out.push(answer.to_string());
         }
     }
-    out
+    assert!(found, "answer sheet has no question line for {tag}");
+    out.join("\n") + "\n"
 }
 
 fn decode(
@@ -112,7 +119,7 @@ fn default_must_decode_cleanly() {
     .unwrap_err();
     assert!(matches!(err, QuestionnaireError::InvalidDefault { .. }));
 
-    // A multiline default cannot render on the marker line.
+    // A multiline default cannot render as a single pre-filled line.
     let err = Questionnaire::new(
         "demo.q",
         vec![ScalarField::new("a", "A?", ScalarKind::Text).with_default("one\ntwo")],
@@ -298,8 +305,8 @@ fn bool_condition_values_are_canonicalized_for_identity() {
 fn defaults_render_pre_filled_and_round_trip() {
     let q = full();
     let sheet = q.render_answer_sheet();
-    assert!(sheet.contains("[project.license] (mit, bsd, or gpl)\n-> mit\n"));
-    assert!(sheet.contains("-> no\n"));
+    assert!(sheet.contains("(mit, bsd, or gpl) <id:project.license>\nmit\n"));
+    assert!(sheet.contains("<id:project.docker>\nno\n"));
 
     // An untouched sheet decodes: name is missing (required, no default),
     // everything else resolves through defaults and omission.

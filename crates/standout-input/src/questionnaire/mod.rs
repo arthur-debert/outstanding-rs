@@ -29,25 +29,33 @@
 //! #! questionnaire: demo.profile
 //! #! fingerprint: sha256:…
 //!
-//! 1. What is your project called? [project.name] (string)
-//! ->
+//! 1. What is your project called? (string) <id:project.name>
 //!
-//! 2. License. [project.license] (mit, bsd, or gpl)
-//! -> mit
+//! 2. License. (mit, bsd, or gpl) <id:project.license>
+//! mit
 //!
-//! 3. Add any notes. [project.notes] (text, optional)
-//! ->
+//! 3. Add any notes. (text, optional) <id:project.notes>
 //! ```
 //!
-//! The bracketed token is the stable machine identity. Everything else in a
-//! question block — the display number, the wording, indentation, and the
-//! parenthesized type hint — is cosmetic: a user (or a later release of the
-//! application) may reword, renumber, or re-indent freely without changing
-//! what the document means. A field is recognized only by a
-//! schema-recognized bracketed ID whose next line begins with the `->`
-//! answer marker; ordinary bracketed prose inside an answer never opens a
-//! field. Answers keep internal line breaks and lose only outer whitespace.
-//! Declared defaults render pre-filled on the marker line.
+//! The line-terminal `<id:...>` tag is the stable machine identity, and
+//! recognition is one rule: a line is a *question line* if and only if it
+//! ends with a tag as its last non-whitespace content — any trailing
+//! non-blank character, even a period, demotes the line to ordinary prose.
+//! The answer is all text between a question line and the next question
+//! line (or end of file); it keeps internal line breaks and loses only
+//! outer whitespace. Everything before the tag — the display number, the
+//! wording, indentation, and the parenthesized type hint — is cosmetic: a
+//! user (or a later release of the application) may reword, renumber, or
+//! re-indent freely without changing what the document means, and hints may
+//! contain any characters. Declared defaults render pre-filled as the
+//! answer text below their question line.
+//!
+//! One limitation is accepted by design: an answer line that itself ends
+//! with a schema-valid `<id:...>` tag is read as a question line — there is
+//! no escaping mechanism. As a guard, accepted answer text containing
+//! `<id:` anywhere (a mid-line mention, a mangled or half-deleted tag)
+//! raises a warning-level diagnostic ([`RawAnswers::warnings`]) without
+//! failing the submission.
 //!
 //! # Nested and repeatable groups
 //!
@@ -58,17 +66,15 @@
 //! renders as:
 //!
 //! ```text
-//! 2. Describe the initial command. [command] (section)
+//! 2. Describe the initial command. (section) <id:command>
 //!
-//! 2.1 What is the command name? [command.name] (string)
-//! ->
+//! 2.1 What is the command name? (string) <id:command.name>
 //!
-//! 2.2 Describe a command input. [command.inputs] (repeatable section, minimum 1)
+//! 2.2 Describe a command input. (repeatable section, minimum 1) <id:command.inputs>
 //! (Add an item by copying one complete block - its heading line and its
 //! questions - below the last block, then answering the copy.)
 //!
-//! 2.2.1 What is its name? [command.inputs.name] (string)
-//! ->
+//! 2.2.1 What is its name? (string) <id:command.inputs.name>
 //! ```
 //!
 //! Rendering emits exactly the declared minimum number of blocks per
@@ -76,15 +82,13 @@
 //! complete block — the group heading line and its questions — paste it
 //! below the last block, and answer the copy. Display numbers stay purely
 //! decorative: every copy may keep saying `2.2.1`, because the parser counts
-//! *occurrences of the stable group header* and nothing else — never
+//! *lines ending with the stable group tag* and nothing else — never
 //! numbering, wording, or any count written in prose.
 //!
-//! A group header is recognized only when its bracketed ID names a group
-//! valid at that point of the document *and* it is followed by a child its
-//! definition permits (a child field with its `->` marker, or a child
-//! group); a field header is recognized only where its definition places
-//! it. Bracketed prose inside answers that satisfies neither contract stays
-//! answer content.
+//! A group occurrence is exactly a line ending with the group's tag; a
+//! field question line is recognized only where its definition places it.
+//! Mid-line tag mentions, bracketed prose, and `->` bullets inside answers
+//! are inert answer content.
 //!
 //! ## Definition IDs vs occurrence indexes
 //!
@@ -164,8 +168,8 @@
 //! // conditional image question may stay blank.
 //! let sheet = questionnaire.render_answer_sheet();
 //! let edited = sheet.replace(
-//!     "[project.name] (string)\n->",
-//!     "[project.name] (string)\n-> demo",
+//!     "<id:project.name>\n",
+//!     "<id:project.name>\ndemo\n",
 //! );
 //!
 //! let raw = questionnaire.parse_answer_sheet(&edited).unwrap();
@@ -211,11 +215,11 @@
 //! // one rendered `command.inputs` block to submit a second item.
 //! let sheet = questionnaire
 //!     .render_answer_sheet()
-//!     .replace("[command.name] (string)\n->", "[command.name] (string)\n-> generate")
-//!     .replace("[command.inputs.name] (string)\n->", "[command.inputs.name] (string)\n-> definition");
+//!     .replace("<id:command.name>\n", "<id:command.name>\ngenerate\n")
+//!     .replace("<id:command.inputs.name>\n", "<id:command.inputs.name>\ndefinition\n");
 //! let block_start = sheet.find("Describe a command input.").unwrap();
 //! let block = sheet[block_start..].to_string();
-//! let copied = format!("{sheet}\n{}", block.replace("-> definition", "-> output"));
+//! let copied = format!("{sheet}\n{}", block.replace("\ndefinition\n", "\noutput\n"));
 //!
 //! let raw = questionnaire.parse_answer_sheet(&copied).unwrap();
 //! let answers = questionnaire.decode_answers(&raw).unwrap();
