@@ -73,10 +73,10 @@ impl std::error::Error for QuestionnaireChoiceParseError {}
 ///
 /// The derive also emits hidden helpers used to lower and fill nested
 /// questionnaire structs. They keep nested fields on the same stable
-/// group-prefix and occurrence-path model as the public runtime definition,
-/// and carry enclosing Rust field-name mappings so `active_when` attributes
-/// in nested structs can lower to the same definition IDs a hand-built
-/// questionnaire would use.
+/// group-prefix and occurrence-path model as the public runtime definition.
+/// An `active_when` controller must name a field of the same derived struct;
+/// the macro resolves it to the field's stable definition ID at expansion
+/// time.
 pub trait QuestionnaireInput: Sized {
     /// Construct the runtime questionnaire definition for this type.
     ///
@@ -113,22 +113,6 @@ pub trait QuestionnaireInput: Sized {
             .expect("manual QuestionnaireInput implementation cannot be nested unless questionnaire_items is overridden")
             .items()
             .to_vec()
-    }
-
-    /// Build this type's items under `prefix`, with controller mappings
-    /// inherited from enclosing derived structs.
-    ///
-    /// Generated implementations use `inherited_controllers` to resolve
-    /// `active_when(field = "...")` references to enclosing Rust field names
-    /// before handing the condition to the runtime builder. Manual
-    /// implementations normally keep the default behavior.
-    #[doc(hidden)]
-    fn questionnaire_items_with_context(
-        prefix: &str,
-        inherited_controllers: &[(&'static str, String)],
-    ) -> Vec<Item> {
-        let _ = inherited_controllers;
-        Self::questionnaire_items(prefix)
     }
 
     /// Fill this type from answers rooted at `prefix`.

@@ -2,7 +2,9 @@ use standout_macros::{Questionnaire, QuestionnaireChoices};
 
 #[derive(QuestionnaireChoices)]
 enum Mode {
+    #[question(rename = "local")]
     Local,
+    #[question(rename = "docker")]
     Docker,
 }
 

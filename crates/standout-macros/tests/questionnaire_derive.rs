@@ -156,16 +156,6 @@ struct CommandQuestionnaire {
     /// Command inputs?
     #[question(min = 2, max = 3)]
     inputs: Vec<CommandInput>,
-
-    /// Tags?
-    tags: Vec<String>,
-
-    /// Include paths?
-    include_paths: Vec<PathBuf>,
-
-    /// Flags?
-    #[question(repeated, min = 2, max = 3)]
-    flags: Vec<String>,
 }
 
 #[derive(Debug, PartialEq, Eq, Questionnaire)]
@@ -214,25 +204,6 @@ fn hand_built_command_questionnaire() -> RuntimeQuestionnaire {
                 .repeatable(2)
                 .max_occurrences(3),
             ),
-            Item::from(ScalarField::new("tags", "Tags?", ScalarKind::String)),
-            Item::from(ScalarField::new(
-                "include_paths",
-                "Include paths?",
-                ScalarKind::Path,
-            )),
-            Item::from(
-                Group::new(
-                    "flags",
-                    "Flags?",
-                    vec![ScalarField::new(
-                        "flags.value",
-                        "Flags?",
-                        ScalarKind::String,
-                    )],
-                )
-                .repeatable(2)
-                .max_occurrences(3),
-            ),
         ],
     )
     .unwrap()
@@ -243,11 +214,7 @@ fn edited_command_sheet(questionnaire: &RuntimeQuestionnaire) -> String {
     let sheet = answer(&sheet, "metadata.owner", "platform");
     let sheet = answer_occurrence(&sheet, "inputs.name", 0, "source");
     let sheet = answer_occurrence(&sheet, "inputs.required", 0, "yes");
-    let sheet = answer_occurrence(&sheet, "inputs.name", 1, "target");
-    let sheet = answer(&sheet, "tags", "server, worker");
-    let sheet = answer(&sheet, "include_paths", "src, /tmp/data");
-    let sheet = answer_occurrence(&sheet, "flags.value", 0, "--verbose");
-    answer_occurrence(&sheet, "flags.value", 1, "--dry-run")
+    answer_occurrence(&sheet, "inputs.name", 1, "target")
 }
 
 fn expected_command() -> CommandQuestionnaire {
@@ -265,9 +232,6 @@ fn expected_command() -> CommandQuestionnaire {
                 required: false,
             },
         ],
-        tags: vec!["server".to_string(), "worker".to_string()],
-        include_paths: vec![PathBuf::from("src"), PathBuf::from("/tmp/data")],
-        flags: vec!["--verbose".to_string(), "--dry-run".to_string()],
     }
 }
 
@@ -341,7 +305,7 @@ fn rendered_sheet_round_trips_to_the_typed_struct() {
 }
 
 #[test]
-fn nested_repeatable_and_scalar_vec_sheet_round_trips_to_the_typed_struct() {
+fn nested_repeatable_sheet_round_trips_to_the_typed_struct() {
     let questionnaire = CommandQuestionnaire::questionnaire().unwrap();
     let raw = questionnaire
         .parse_answer_sheet(&edited_command_sheet(&questionnaire))
@@ -556,9 +520,11 @@ fn stale_fingerprint_rejects_the_round_trip() {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, QuestionnaireChoices)]
 enum PackageKind {
+    #[question(rename = "cli-app")]
     CliApp,
     #[question(rename = "library")]
     LibraryCrate,
+    #[question(rename = "internal-tool")]
     InternalTool,
 }
 
@@ -648,23 +614,31 @@ fn enum_choice_defaults_must_name_a_declared_choice() {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, QuestionnaireChoices)]
 enum ChoiceOrderA {
+    #[question(rename = "alpha")]
     Alpha,
+    #[question(rename = "beta")]
     Beta,
+    #[question(rename = "gamma")]
     Gamma,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, QuestionnaireChoices)]
 enum ChoiceOrderB {
+    #[question(rename = "gamma")]
     Gamma,
+    #[question(rename = "alpha")]
     Alpha,
+    #[question(rename = "beta")]
     Beta,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, QuestionnaireChoices)]
 enum ChoiceRenamed {
+    #[question(rename = "alpha")]
     Alpha,
     #[question(rename = "release")]
     Beta,
+    #[question(rename = "gamma")]
     Gamma,
 }
 
@@ -707,7 +681,9 @@ fn choice_order_is_cosmetic_but_renaming_is_semantic_for_fingerprints() {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, QuestionnaireChoices)]
 enum RuntimeMode {
+    #[question(rename = "local")]
     Local,
+    #[question(rename = "docker")]
     Docker,
 }
 
@@ -942,10 +918,6 @@ fn inactive_optional_conditional_scalar_and_choice_fields_fill_as_none() {
 #[derive(Debug, PartialEq, Eq, Questionnaire)]
 #[question(id = "demo.nested.controllers")]
 struct NestedControllerPlan {
-    /// Global runtime?
-    #[question(id = "global.runtime", choice)]
-    global_runtime: RuntimeMode,
-
     /// Services?
     #[question(min = 2, max = 2)]
     services: Vec<NestedControllerService>,
@@ -958,20 +930,9 @@ struct NestedControllerService {
     #[question(id = "service.runtime", choice)]
     runtime: RuntimeMode,
 
-    /// Details?
-    details: NestedControllerDetails,
-}
-
-#[derive(Debug, PartialEq, Eq, Questionnaire)]
-#[question(id = "demo.nested.controllers.details")]
-struct NestedControllerDetails {
-    /// Image inherited from the global runtime?
-    #[question(active_when(field = "global_runtime", is = "docker"))]
-    inherited_image: Option<String>,
-
-    /// Image inherited from the current service runtime?
+    /// Container image?
     #[question(active_when(field = "runtime", is = "docker"))]
-    service_image: Option<String>,
+    image: Option<String>,
 }
 
 fn hand_built_nested_controller_plan() -> RuntimeQuestionnaire {
@@ -979,56 +940,35 @@ fn hand_built_nested_controller_plan() -> RuntimeQuestionnaire {
 
     RuntimeQuestionnaire::new(
         "demo.nested.controllers",
-        vec![
-            Item::from(
-                ScalarField::new("global.runtime", "Global runtime?", ScalarKind::String)
-                    .one_of(["local", "docker"]),
-            ),
-            Item::from(
-                Group::new(
-                    "services",
-                    "Services?",
-                    vec![
-                        Item::from(
-                            ScalarField::new(
-                                "services.service.runtime",
-                                "Service runtime?",
-                                ScalarKind::String,
-                            )
-                            .one_of(["local", "docker"]),
-                        ),
-                        Item::from(Group::new(
-                            "services.details",
-                            "Details?",
-                            vec![
-                                ScalarField::new(
-                                    "services.details.inherited_image",
-                                    "Image inherited from the global runtime?",
-                                    ScalarKind::String,
-                                )
-                                .optional()
-                                .active_when("global.runtime", "docker"),
-                                ScalarField::new(
-                                    "services.details.service_image",
-                                    "Image inherited from the current service runtime?",
-                                    ScalarKind::String,
-                                )
-                                .optional()
-                                .active_when("services.service.runtime", "docker"),
-                            ],
-                        )),
-                    ],
-                )
-                .repeatable(2)
-                .max_occurrences(2),
-            ),
-        ],
+        vec![Item::from(
+            Group::new(
+                "services",
+                "Services?",
+                vec![
+                    Item::from(
+                        ScalarField::new(
+                            "services.service.runtime",
+                            "Service runtime?",
+                            ScalarKind::String,
+                        )
+                        .one_of(["local", "docker"]),
+                    ),
+                    Item::from(
+                        ScalarField::new("services.image", "Container image?", ScalarKind::String)
+                            .optional()
+                            .active_when("services.service.runtime", "docker"),
+                    ),
+                ],
+            )
+            .repeatable(2)
+            .max_occurrences(2),
+        )],
     )
     .unwrap()
 }
 
 #[test]
-fn nested_active_when_resolves_enclosing_rust_field_names_to_stable_ids() {
+fn nested_active_when_resolves_same_struct_rust_field_names_to_stable_ids() {
     let derived = NestedControllerPlan::questionnaire().unwrap();
     let hand_built = hand_built_nested_controller_plan();
 
@@ -1039,36 +979,23 @@ fn nested_active_when_resolves_enclosing_rust_field_names_to_stable_ids() {
 #[test]
 fn nested_active_when_uses_the_current_repeated_group_occurrence() {
     let questionnaire = NestedControllerPlan::questionnaire().unwrap();
-    let sheet = answer(
-        &questionnaire.render_answer_sheet(),
-        "global.runtime",
-        "docker",
-    );
+    let sheet = questionnaire.render_answer_sheet();
     let sheet = answer_occurrence(&sheet, "services.service.runtime", 0, "docker");
-    let sheet = answer_occurrence(&sheet, "services.details.inherited_image", 0, "global-one");
-    let sheet = answer_occurrence(&sheet, "services.details.service_image", 0, "service-one");
+    let sheet = answer_occurrence(&sheet, "services.image", 0, "debian:stable");
     let sheet = answer_occurrence(&sheet, "services.service.runtime", 1, "local");
-    let sheet = answer_occurrence(&sheet, "services.details.inherited_image", 1, "global-two");
     let raw = questionnaire.parse_answer_sheet(&sheet).unwrap();
 
     assert_eq!(
         NestedControllerPlan::from_raw_answers(&raw).unwrap(),
         NestedControllerPlan {
-            global_runtime: RuntimeMode::Docker,
             services: vec![
                 NestedControllerService {
                     runtime: RuntimeMode::Docker,
-                    details: NestedControllerDetails {
-                        inherited_image: Some("global-one".to_string()),
-                        service_image: Some("service-one".to_string()),
-                    },
+                    image: Some("debian:stable".to_string()),
                 },
                 NestedControllerService {
                     runtime: RuntimeMode::Local,
-                    details: NestedControllerDetails {
-                        inherited_image: Some("global-two".to_string()),
-                        service_image: None,
-                    },
+                    image: None,
                 },
             ],
         }
@@ -1085,9 +1012,6 @@ mod shadowed_string_hygiene {
     #[question(id = "demo.shadowed-string")]
     #[allow(dead_code)]
     struct ShadowedRoot {
-        /// Enabled?
-        enabled: bool,
-
         /// Child?
         child: ShadowedChild,
     }
@@ -1096,6 +1020,9 @@ mod shadowed_string_hygiene {
     #[question(id = "demo.shadowed-string.child")]
     #[allow(dead_code)]
     struct ShadowedChild {
+        /// Enabled?
+        enabled: bool,
+
         /// Visible?
         #[question(active_when(field = "enabled", is = "yes"))]
         visible: Option<bool>,
@@ -1140,15 +1067,6 @@ fn empty_hook_revisions_are_rejected_by_the_builder() {
 }
 
 #[derive(Questionnaire)]
-#[question(id = "demo.unknown-controller")]
-#[allow(dead_code)]
-struct UnknownController {
-    /// Name?
-    #[question(active_when(field = "ghost", is = "yes"))]
-    name: Option<String>,
-}
-
-#[derive(Questionnaire)]
 #[question(id = "demo.later-controller")]
 #[allow(dead_code)]
 struct LaterController {
@@ -1158,34 +1076,6 @@ struct LaterController {
 
     /// Enabled?
     enabled: bool,
-}
-
-#[derive(Questionnaire)]
-#[question(id = "demo.scope")]
-#[allow(dead_code)]
-struct ScopedController {
-    /// First?
-    first: ScopedFirst,
-
-    /// Second?
-    second: ScopedSecond,
-}
-
-#[derive(Questionnaire)]
-#[question(id = "demo.scope.first")]
-#[allow(dead_code)]
-struct ScopedFirst {
-    /// Enabled?
-    enabled: bool,
-}
-
-#[derive(Questionnaire)]
-#[question(id = "demo.scope.second")]
-#[allow(dead_code)]
-struct ScopedSecond {
-    /// Name?
-    #[question(active_when(field = "first.enabled", is = "yes"))]
-    name: Option<String>,
 }
 
 #[derive(Questionnaire)]
@@ -1204,16 +1094,8 @@ struct NeverMatchingController {
 #[test]
 fn active_when_surfaces_builder_controller_diagnostics() {
     assert!(matches!(
-        UnknownController::questionnaire().unwrap_err(),
-        QuestionnaireError::UnknownConditionController { controller, .. } if controller == "ghost"
-    ));
-    assert!(matches!(
         LaterController::questionnaire().unwrap_err(),
         QuestionnaireError::ConditionOrder { controller, .. } if controller == "enabled"
-    ));
-    assert!(matches!(
-        ScopedController::questionnaire().unwrap_err(),
-        QuestionnaireError::ConditionScope { controller, .. } if controller == "first.enabled"
     ));
     assert!(matches!(
         NeverMatchingController::questionnaire().unwrap_err(),

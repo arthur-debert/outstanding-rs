@@ -1,5 +1,0 @@
-error: active_when is not supported on Vec<T> fields because inactive answers are omitted and Option<Vec<T>> questionnaire fields are not supported
-  --> tests/ui/questionnaire/active_when_repeated_scalar_vec.rs:10:26
-   |
-10 |     #[question(repeated, active_when(field = "enabled", is = "yes"))]
-   |                          ^^^^^^^^^^^

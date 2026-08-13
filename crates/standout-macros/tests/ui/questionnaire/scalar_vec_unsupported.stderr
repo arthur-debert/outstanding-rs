@@ -1,0 +1,5 @@
+error: unsupported Vec element type; Vec<T> is only supported when T is a nested Questionnaire type (collect a list as a String field and split it in application code)
+ --> tests/ui/questionnaire/scalar_vec_unsupported.rs:7:15
+  |
+7 |     tags: Vec<String>,
+  |               ^^^^^^
