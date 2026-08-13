@@ -1,0 +1,338 @@
+//! Collection-adapter tests through the real abstractions: named files,
+//! explicit stdin (via the injectable stdin reader), and interactive
+//! prompting (via the prompt-responder seam and the mock terminal) — no real
+//! terminal required. Covers EOF, cancellation, malformed documents,
+//! defaults, conditions, retry-without-loss, and cross-source equivalence.
+
+use std::sync::Arc;
+
+use serial_test::serial;
+use standout_input::env::{reset_default_stdin_reader, set_default_stdin_reader, MockStdin};
+use standout_input::questionnaire::{
+    AnswerSheetDiagnostic, Questionnaire, ScalarField, ScalarKind,
+};
+use standout_input::{
+    reset_default_prompt_responder, set_default_prompt_responder, InputError, MockTerminal,
+    PromptResponse, ScriptedResponder,
+};
+
+fn questionnaire() -> Questionnaire {
+    Questionnaire::new(
+        "demo.collect",
+        vec![
+            ScalarField::new("project.name", "Project name?", ScalarKind::String),
+            ScalarField::new("project.docker", "Use Docker?", ScalarKind::Bool).with_default("no"),
+            ScalarField::new("project.docker_image", "Base image?", ScalarKind::String)
+                .active_when("project.docker", "yes"),
+            ScalarField::new("project.notes", "Notes?", ScalarKind::Text).optional(),
+        ],
+    )
+    .unwrap()
+}
+
+/// Replace a field's rendered marker (bare or pre-filled) with `answer`.
+fn answer(sheet: &str, id: &str, answer: &str) -> String {
+    let needle = format!("[{id}]");
+    let mut out = String::new();
+    let mut lines = sheet.lines().peekable();
+    while let Some(line) = lines.next() {
+        out.push_str(line);
+        out.push('\n');
+        if line.contains(&needle) {
+            let marker = lines.next().expect("marker follows header");
+            assert!(marker.starts_with("->"), "expected a marker line");
+            out.push_str("-> ");
+            out.push_str(answer);
+            out.push('\n');
+        }
+    }
+    out
+}
+
+/// An edited sheet: name answered, docker default kept, notes blank.
+fn edited_sheet(q: &Questionnaire) -> String {
+    answer(&q.render_answer_sheet(), "project.name", "demo")
+}
+
+struct ResponderGuard;
+impl ResponderGuard {
+    fn install(responses: impl IntoIterator<Item = PromptResponse>) -> Self {
+        set_default_prompt_responder(Arc::new(ScriptedResponder::new(responses)));
+        Self
+    }
+}
+impl Drop for ResponderGuard {
+    fn drop(&mut self) {
+        reset_default_prompt_responder();
+    }
+}
+
+struct StdinGuard;
+impl StdinGuard {
+    fn install(mock: MockStdin) -> Self {
+        set_default_stdin_reader(Arc::new(mock));
+        Self
+    }
+}
+impl Drop for StdinGuard {
+    fn drop(&mut self) {
+        reset_default_stdin_reader();
+    }
+}
+
+// ============================================================================
+// Named-file adapter
+// ============================================================================
+
+#[test]
+fn file_adapter_reads_one_complete_sheet() {
+    let q = questionnaire();
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("answers.txt");
+    std::fs::write(&path, edited_sheet(&q)).unwrap();
+
+    let raw = q.read_answer_sheet_file(&path).unwrap();
+    let answers = q.decode_answers(&raw).unwrap();
+    assert_eq!(answers.get_text("project.name"), Some("demo"));
+    assert_eq!(answers.get_bool("project.docker"), Some(false));
+}
+
+#[test]
+fn unreadable_file_is_a_diagnostic_not_a_panic() {
+    let q = questionnaire();
+    let diagnostics = q
+        .read_answer_sheet_file("/nonexistent/answers.txt")
+        .unwrap_err();
+    assert!(matches!(
+        &diagnostics[..],
+        [AnswerSheetDiagnostic::UnreadableDocument { .. }]
+    ));
+}
+
+#[test]
+fn malformed_file_reports_parse_diagnostics() {
+    let q = questionnaire();
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("answers.txt");
+    std::fs::write(&path, "not an answer sheet").unwrap();
+
+    let diagnostics = q.read_answer_sheet_file(&path).unwrap_err();
+    assert!(matches!(
+        &diagnostics[..],
+        [AnswerSheetDiagnostic::MalformedPreamble { .. }, ..]
+    ));
+}
+
+// ============================================================================
+// Explicit-stdin adapter
+// ============================================================================
+
+#[test]
+fn stdin_adapter_reads_one_complete_sheet() {
+    let q = questionnaire();
+    let raw = q
+        .read_answer_sheet_stdin_with(&MockStdin::piped(edited_sheet(&q)))
+        .unwrap();
+    let answers = q.decode_answers(&raw).unwrap();
+    assert_eq!(answers.get_text("project.name"), Some("demo"));
+}
+
+#[test]
+fn stdin_adapter_rejects_an_interactive_terminal() {
+    let q = questionnaire();
+    let diagnostics = q
+        .read_answer_sheet_stdin_with(&MockStdin::terminal())
+        .unwrap_err();
+    assert!(matches!(
+        &diagnostics[..],
+        [AnswerSheetDiagnostic::UnreadableDocument { .. }]
+    ));
+}
+
+#[test]
+#[serial(default_stdin)]
+fn stdin_adapter_honors_the_process_default_reader() {
+    let q = questionnaire();
+    let _guard = StdinGuard::install(MockStdin::piped(edited_sheet(&q)));
+    let raw = q.read_answer_sheet_stdin().unwrap();
+    assert_eq!(raw.get("project.name"), Some("demo"));
+}
+
+#[test]
+fn stale_fingerprint_reaches_the_adapter_caller() {
+    let q = questionnaire();
+    let sheet = edited_sheet(&q).replace("sha256:", "sha256:0000");
+    let diagnostics = q
+        .read_answer_sheet_stdin_with(&MockStdin::piped(sheet))
+        .unwrap_err();
+    assert!(matches!(
+        &diagnostics[..],
+        [AnswerSheetDiagnostic::FingerprintMismatch { .. }]
+    ));
+}
+
+// ============================================================================
+// Interactive adapter (prompt-responder seam)
+// ============================================================================
+
+#[test]
+#[serial(prompt_responder)]
+fn interactive_collection_walks_active_fields_in_order() {
+    let q = questionnaire();
+    // name, docker=yes, image, notes — all four prompts fire.
+    let _guard = ResponderGuard::install([
+        PromptResponse::text("demo"),
+        PromptResponse::text("yes"),
+        PromptResponse::text("debian:stable"),
+        PromptResponse::text("multi word notes"),
+    ]);
+    let raw = q.collect_interactive().unwrap();
+    let answers = q.decode_answers(&raw).unwrap();
+    assert_eq!(answers.get_text("project.name"), Some("demo"));
+    assert_eq!(answers.get_bool("project.docker"), Some(true));
+    assert_eq!(
+        answers.get_text("project.docker_image"),
+        Some("debian:stable")
+    );
+    assert_eq!(answers.get_text("project.notes"), Some("multi word notes"));
+}
+
+#[test]
+#[serial(prompt_responder)]
+fn interactive_collection_skips_inactive_fields_without_prompting() {
+    let q = questionnaire();
+    // Three prompts only: name, docker=no, notes. No image prompt — the
+    // ScriptedResponder would panic on a fourth request.
+    let _guard = ResponderGuard::install([
+        PromptResponse::text("demo"),
+        PromptResponse::text("no"),
+        PromptResponse::Skip,
+    ]);
+    let raw = q.collect_interactive().unwrap();
+    assert_eq!(raw.get("project.docker_image"), None);
+    let answers = q.decode_answers(&raw).unwrap();
+    assert_eq!(answers.get("project.docker_image"), None);
+    assert_eq!(answers.get("project.notes"), None);
+}
+
+#[test]
+#[serial(prompt_responder)]
+fn interactive_blank_resolves_defaults_and_omission() {
+    let q = questionnaire();
+    // Skip = blank entry: docker resolves its default, notes is omitted.
+    let _guard = ResponderGuard::install([
+        PromptResponse::text("demo"),
+        PromptResponse::Skip,
+        PromptResponse::Skip,
+    ]);
+    let raw = q.collect_interactive().unwrap();
+    let answers = q.decode_answers(&raw).unwrap();
+    assert_eq!(answers.get_bool("project.docker"), Some(false));
+    assert_eq!(answers.get("project.notes"), None);
+}
+
+#[test]
+#[serial(prompt_responder)]
+fn interactive_failures_retry_locally_without_losing_earlier_answers() {
+    let q = questionnaire();
+    // The docker question fails twice (bad bool, then a required blank has a
+    // default so blank *succeeds* — use the name question instead for the
+    // required-blank retry) before the loop accepts an answer.
+    let _guard = ResponderGuard::install([
+        PromptResponse::Skip,          // name: blank, required, no default -> retry
+        PromptResponse::text("demo"),  // name: accepted
+        PromptResponse::text("maybe"), // docker: not a bool -> retry
+        PromptResponse::text("yes"),   // docker: accepted
+        PromptResponse::text("debian:stable"), // image
+        PromptResponse::Skip,          // notes
+    ]);
+    let raw = q.collect_interactive().unwrap();
+    let answers = q.decode_answers(&raw).unwrap();
+    // The earlier accepted answer survived the later retries.
+    assert_eq!(answers.get_text("project.name"), Some("demo"));
+    assert_eq!(answers.get_bool("project.docker"), Some(true));
+}
+
+#[test]
+#[serial(prompt_responder)]
+fn interactive_cancellation_aborts_collection() {
+    let q = questionnaire();
+    let _guard = ResponderGuard::install([PromptResponse::text("demo"), PromptResponse::Cancel]);
+    let err = q.collect_interactive().unwrap_err();
+    assert!(matches!(err, InputError::PromptCancelled));
+}
+
+// ============================================================================
+// Interactive adapter (mock terminal)
+// ============================================================================
+
+#[test]
+#[serial(prompt_responder)]
+fn interactive_collection_runs_over_an_injected_terminal() {
+    let q = questionnaire();
+    let terminal = Arc::new(MockTerminal::with_responses([
+        "demo",
+        "yes",
+        "debian:stable",
+        "some notes",
+    ]));
+    let raw = q.collect_interactive_with_terminal(terminal).unwrap();
+    let answers = q.decode_answers(&raw).unwrap();
+    assert_eq!(answers.get_text("project.name"), Some("demo"));
+    assert_eq!(
+        answers.get_text("project.docker_image"),
+        Some("debian:stable")
+    );
+}
+
+#[test]
+#[serial(prompt_responder)]
+fn interactive_eof_is_cancellation() {
+    let q = questionnaire();
+    let err = q
+        .collect_interactive_with_terminal(Arc::new(MockTerminal::eof()))
+        .unwrap_err();
+    assert!(matches!(err, InputError::PromptCancelled));
+}
+
+#[test]
+#[serial(prompt_responder)]
+fn interactive_collection_refuses_a_non_terminal_without_a_responder() {
+    let q = questionnaire();
+    let err = q
+        .collect_interactive_with_terminal(Arc::new(MockTerminal::non_terminal()))
+        .unwrap_err();
+    assert!(matches!(err, InputError::NoInput));
+}
+
+// ============================================================================
+// Cross-source equivalence
+// ============================================================================
+
+#[test]
+#[serial(prompt_responder)]
+fn interactive_and_sheet_submissions_decode_identically() {
+    let q = questionnaire();
+
+    let _guard = ResponderGuard::install([
+        PromptResponse::text("demo"),
+        PromptResponse::text("yes"),
+        PromptResponse::text("debian:stable"),
+        PromptResponse::Skip,
+    ]);
+    let interactive = q.decode_answers(&q.collect_interactive().unwrap()).unwrap();
+
+    let sheet = answer(
+        &answer(&edited_sheet(&q), "project.docker", "yes"),
+        "project.docker_image",
+        "debian:stable",
+    );
+    let batch = q
+        .decode_answers(
+            &q.read_answer_sheet_stdin_with(&MockStdin::piped(sheet))
+                .unwrap(),
+        )
+        .unwrap();
+
+    assert_eq!(interactive, batch);
+}

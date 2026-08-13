@@ -2,8 +2,9 @@
 //!
 //! Rendering writes the prose document described in the
 //! [module documentation](crate::questionnaire): a three-line `#!` metadata
-//! preamble followed by one numbered question block per field. The same
-//! definition always renders byte-identical output.
+//! preamble followed by one numbered question block per field, with declared
+//! defaults pre-filled on their answer marker lines. The same definition
+//! always renders byte-identical output.
 
 use std::fmt::Write as _;
 
@@ -25,7 +26,9 @@ impl Questionnaire {
     /// produces the same document, including the fingerprint in the preamble.
     /// Each field renders as a header line — cosmetic display number and
     /// wording, the bracketed stable ID, and a parenthesized type hint —
-    /// followed by a bare `->` answer marker awaiting the answer.
+    /// followed by the `->` answer marker. A field with a declared default
+    /// renders the default pre-filled on the marker line; every other field
+    /// renders a bare marker awaiting the answer.
     pub fn render_answer_sheet(&self) -> String {
         let mut out = String::new();
         out.push_str(FORMAT_LINE);
@@ -42,8 +45,15 @@ impl Questionnaire {
                 field.id(),
                 field.type_hint()
             );
-            out.push_str(ANSWER_MARKER);
-            out.push('\n');
+            match field.default() {
+                Some(default) => {
+                    let _ = writeln!(out, "{ANSWER_MARKER} {default}");
+                }
+                None => {
+                    out.push_str(ANSWER_MARKER);
+                    out.push('\n');
+                }
+            }
         }
         out
     }

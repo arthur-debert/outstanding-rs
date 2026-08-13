@@ -29,6 +29,14 @@ pub struct RawAnswers {
 }
 
 impl RawAnswers {
+    /// Build raw answers directly, for collection paths (interactive
+    /// prompting) that never see a document. Keys are stable field IDs;
+    /// values are trimmed answer text.
+    #[cfg(feature = "simple-prompts")]
+    pub(crate) fn from_values(values: BTreeMap<String, String>) -> Self {
+        Self { values }
+    }
+
     /// The raw answer text for a stable field ID, if the field appeared.
     pub fn get(&self, field_id: &str) -> Option<&str> {
         self.values.get(field_id).map(String::as_str)
@@ -109,6 +117,14 @@ pub enum AnswerSheetDiagnostic {
         id: String,
         /// 1-based line number of the second occurrence.
         line: usize,
+    },
+
+    /// The answer-sheet document could not be read at all (unreadable file,
+    /// terminal stdin, or an I/O failure), so no content was parsed.
+    #[error("Could not read the answer sheet: {detail}")]
+    UnreadableDocument {
+        /// What prevented reading, without any document content.
+        detail: String,
     },
 }
 
