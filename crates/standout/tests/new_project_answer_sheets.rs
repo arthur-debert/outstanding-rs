@@ -132,6 +132,18 @@ fn completed_sheet(cwd: &Path) -> String {
     fill(&sheet, "command.inputs.name", "name")
 }
 
+/// A valid completed sheet whose answer text contains a suspected tag
+/// fragment. The parser accepts the answer but reports a warning so users
+/// can catch accidentally mangled question tags.
+fn completed_sheet_with_suspected_tag(cwd: &Path) -> String {
+    let sheet = completed_sheet(cwd);
+    fill(
+        &sheet,
+        "command.description",
+        "Greet one <id:project.name> value",
+    )
+}
+
 #[test]
 fn questions_renders_a_deterministic_sheet_and_generates_nothing() {
     let dir = TempDir::new().unwrap();
@@ -283,6 +295,27 @@ fn stdin_sheet_with_yes_generates_without_any_terminal() {
 }
 
 #[test]
+fn stdin_sheet_surfaces_parse_warnings_without_rejecting_submission() {
+    let dir = TempDir::new().unwrap();
+    let sheet = completed_sheet_with_suspected_tag(dir.path());
+
+    let output = run_standout(
+        dir.path(),
+        &["new-project", "--answers", "-", "--yes"],
+        &sheet,
+    );
+
+    assert!(output.status.success(), "stderr: {}", stderr(&output));
+    assert!(stdout(&output).contains("Created hello-tool"));
+    let warnings = stderr(&output);
+    assert!(warnings.contains("Warning"), "{warnings}");
+    assert!(warnings.contains("answer sheet from stdin"), "{warnings}");
+    assert!(warnings.contains("command.description"), "{warnings}");
+    assert!(dir.path().join("hello-tool/Cargo.toml").is_file());
+    assert_eq!(dir_entries(dir.path()), ["hello-tool"]);
+}
+
+#[test]
 fn named_file_with_yes_generates_without_any_terminal() {
     let dir = TempDir::new().unwrap();
     fs::write(dir.path().join("answers.txt"), completed_sheet(dir.path())).unwrap();
@@ -298,6 +331,30 @@ fn named_file_with_yes_generates_without_any_terminal() {
     assert!(transcript.contains("Review"));
     assert!(!transcript.contains("Continue?"));
     assert!(transcript.contains("Created hello-tool"));
+    assert_eq!(dir_entries(dir.path()), ["answers.txt", "hello-tool"]);
+}
+
+#[test]
+fn named_file_surfaces_parse_warnings_without_rejecting_submission() {
+    let dir = TempDir::new().unwrap();
+    fs::write(
+        dir.path().join("answers.txt"),
+        completed_sheet_with_suspected_tag(dir.path()),
+    )
+    .unwrap();
+
+    let output = run_standout(
+        dir.path(),
+        &["new-project", "--answers", "answers.txt", "--yes"],
+        "",
+    );
+
+    assert!(output.status.success(), "stderr: {}", stderr(&output));
+    assert!(stdout(&output).contains("Created hello-tool"));
+    let warnings = stderr(&output);
+    assert!(warnings.contains("Warning"), "{warnings}");
+    assert!(warnings.contains("answer sheet answers.txt"), "{warnings}");
+    assert!(warnings.contains("command.description"), "{warnings}");
     assert_eq!(dir_entries(dir.path()), ["answers.txt", "hello-tool"]);
 }
 

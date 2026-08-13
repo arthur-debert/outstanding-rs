@@ -4,6 +4,8 @@
 //! the app builder (`--answers`, `--yes`, and a `questions` subcommand). The
 //! handler then reads the filled application type from
 //! [`CommandContextInput::questionnaire`](crate::cli::CommandContextInput::questionnaire).
+//! File and stdin sheets keep non-fatal parse diagnostics visible by queuing
+//! their `RawAnswers` warnings for the framework warning flush.
 
 use std::io::{self, BufRead, Write};
 use std::path::{Path, PathBuf};
@@ -139,6 +141,7 @@ where
         let raw = source.raw_answers(&questionnaire).map_err(|diagnostics| {
             InputError::validation(format_diagnostics(source.label(), &diagnostics))
         })?;
+        push_raw_answer_warnings(source.label(), raw.warnings());
         let value = T::from_raw_answers_with(&raw, form).map_err(questionnaire_input_error)?;
         return Ok(ResolvedInput {
             value,
@@ -199,6 +202,12 @@ fn format_diagnostics(label: String, diagnostics: &[AnswerSheetDiagnostic]) -> S
         "answer sheet {label} has {} problem(s): {details}",
         diagnostics.len()
     )
+}
+
+fn push_raw_answer_warnings(label: String, diagnostics: &[AnswerSheetDiagnostic]) {
+    for diagnostic in diagnostics {
+        standout_render::warnings::push_warning(format!("answer sheet {label}: {diagnostic}"));
+    }
 }
 
 trait AttendedTerminal {
