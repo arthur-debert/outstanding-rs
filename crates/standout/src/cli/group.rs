@@ -15,7 +15,8 @@ use super::dispatch::{render_handler_output, DispatchFn};
 use crate::cli::handler::{CommandContext, FnHandler, Handler, HandlerResult};
 use crate::cli::hooks::{Hooks, RenderedOutput, TextOutput};
 use crate::cli::questionnaire::{
-    questionnaire_pre_dispatch, questionnaire_pre_dispatch_with, QuestionnaireCommand,
+    questionnaire_pre_dispatch, questionnaire_pre_dispatch_with,
+    questionnaire_pre_dispatch_with_review, QuestionnaireCommand,
 };
 use crate::StructuredOutputProjection;
 use standout_dispatch::verify::ExpectedArg;
@@ -497,10 +498,12 @@ impl<H> CommandConfig<H> {
     /// command at parse time: `--answers FILE|-`, `--yes`, and the
     /// side-effect-free `questions` subcommand. Before the handler runs, the
     /// framework resolves exactly one answer source (answer sheet file,
-    /// explicit stdin, or interactive prompts), decodes it through the shared
-    /// questionnaire pipeline, runs the attended confirmation gate unless
-    /// `--yes` was supplied, and stores the typed value in the command
-    /// context. Handlers read it with
+    /// explicit stdin, or interactive prompts), decodes it through the
+    /// shared questionnaire pipeline, optionally renders an application
+    /// review configured with
+    /// [`questionnaire_with_form_and_review`](Self::questionnaire_with_form_and_review),
+    /// runs the attended confirmation gate unless `--yes` was supplied, and
+    /// stores the typed value in the command context. Handlers read it with
     /// [`CommandContextInput::questionnaire`](crate::cli::CommandContextInput::questionnaire).
     pub fn questionnaire<T>(mut self) -> Self
     where
@@ -524,6 +527,31 @@ impl<H> CommandConfig<H> {
         self.questionnaire = Some(QuestionnaireCommand::new::<T>());
         self.pre_dispatch(move |matches, ctx| {
             questionnaire_pre_dispatch_with::<T, _>(matches, ctx, form.clone())
+        })
+    }
+
+    /// Attaches a derived questionnaire with whole-form rules and a
+    /// pre-confirmation application review.
+    ///
+    /// The framework first resolves and decodes the questionnaire, then calls
+    /// `review` with the typed answers and stdout before it asks for attended
+    /// confirmation. A declined or missing confirmation prevents the handler
+    /// from running, so applications can show the exact operation that would
+    /// happen while keeping side effects behind the confirmation gate.
+    pub fn questionnaire_with_form_and_review<T, F, R>(mut self, form: F, review: R) -> Self
+    where
+        T: QuestionnaireInput + Clone + Send + Sync + 'static,
+        F: Fn(&T) -> Vec<FormError> + Clone + 'static,
+        R: Fn(&T, &mut dyn std::io::Write) -> anyhow::Result<()> + Clone + 'static,
+    {
+        self.questionnaire = Some(QuestionnaireCommand::new::<T>());
+        self.pre_dispatch(move |matches, ctx| {
+            questionnaire_pre_dispatch_with_review::<T, _, _>(
+                matches,
+                ctx,
+                form.clone(),
+                review.clone(),
+            )
         })
     }
 

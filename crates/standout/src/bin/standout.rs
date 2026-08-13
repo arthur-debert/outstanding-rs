@@ -39,16 +39,19 @@ fn build_app() -> Result<App> {
         .command_with("new-project", run_new_project, |config| {
             config
                 .template("{{ transcript }}")
-                .questionnaire_with_form::<NewProjectAnswers, _>(new_project_form_rules)
+                .questionnaire_with_form_and_review::<NewProjectAnswers, _, _>(
+                    new_project_form_rules,
+                    write_new_project_review,
+                )
         })?
         .build()?)
 }
 
 /// Generate a project from the typed questionnaire value collected by the
 /// framework-injected `new-project` surface. The framework owns collection,
-/// `--answers`/`questions`, dynamic defaults, and the attended confirmation
-/// gate before this handler runs; the binary owns review text, final
-/// publication, and project-specific validation.
+/// `--answers`/`questions`, dynamic defaults, the binary's pre-confirmation
+/// review callback, and the attended confirmation gate before this handler
+/// runs; the handler owns final publication.
 fn run_new_project(
     _matches: &clap::ArgMatches,
     ctx: &CommandContext,
@@ -56,13 +59,20 @@ fn run_new_project(
     let answers: &NewProjectAnswers = ctx.questionnaire()?;
     let spec = ProjectSpec::from_answers(answers.clone())?;
     let mut transcript = Vec::new();
-    write_review(&spec, &mut transcript)?;
     publish_project(&spec)?;
     writeln!(transcript, "Created {}", spec.destination.display())?;
     Ok(HandlerOutput::Render(json!({
         "transcript": String::from_utf8(transcript)
             .expect("wizard transcript is generated from UTF-8 literals and paths"),
     })))
+}
+
+fn write_new_project_review(
+    answers: &NewProjectAnswers,
+    output: &mut dyn Write,
+) -> anyhow::Result<()> {
+    let spec = ProjectSpec::from_answers(answers.clone())?;
+    write_review(&spec, output)
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, standout::Questionnaire)]
@@ -2157,8 +2167,8 @@ mod tests {
     use super::*;
     use serial_test::serial;
     use standout_input::{
-        reset_default_prompt_responder, set_default_prompt_responder, PromptResponse,
-        ScriptedResponder,
+        questionnaire::QuestionnaireInput, reset_default_prompt_responder,
+        set_default_prompt_responder, PromptResponse, ScriptedResponder,
     };
     use std::process::Command;
     use std::sync::Arc;
@@ -3244,13 +3254,147 @@ mod tests {
     }
 
     fn questionnaire() -> standout_input::questionnaire::Questionnaire {
-        use standout_input::questionnaire::QuestionnaireInput;
         NewProjectAnswers::questionnaire().unwrap()
     }
 
-    fn decode_sheet(sheet: &str) -> Result<NewProjectAnswers, Vec<String>> {
-        use standout_input::questionnaire::QuestionnaireInput;
+    fn hand_built_questionnaire() -> standout_input::questionnaire::Questionnaire {
+        use standout_input::questionnaire::{
+            DynamicDefault, FieldValidator, Group, Item, QuestionnaireChoices as _, ScalarField,
+            ScalarKind,
+        };
 
+        standout_input::questionnaire::Questionnaire::new(
+            "standout.new-project",
+            vec![
+                Item::from(Group::new(
+                    "project",
+                    "Project identity.",
+                    vec![
+                        ScalarField::new(
+                            "project.name",
+                            "What is the project name? It is also the destination directory.",
+                            ScalarKind::String,
+                        )
+                        .with_validator(FieldValidator::new(
+                            "crate-name.v1",
+                            validate_project_name,
+                        )),
+                        ScalarField::new(
+                            "project.executable",
+                            "What is the executable name? Leave blank to reuse the project name.",
+                            ScalarKind::String,
+                        )
+                        .with_dynamic_default(DynamicDefault::new(
+                            "crate-name.v2",
+                            executable_default,
+                        ))
+                        .with_validator(FieldValidator::new(
+                            "crate-name.v2",
+                            validate_executable_name,
+                        )),
+                    ],
+                )),
+                Item::from(Group::new(
+                    "command",
+                    "Initial command.",
+                    vec![
+                        Item::from(
+                            ScalarField::new(
+                                "command.name",
+                                "What is the command name?",
+                                ScalarKind::String,
+                            )
+                            .with_validator(FieldValidator::new(
+                                "command-name.v1",
+                                validate_command_answer,
+                            )),
+                        ),
+                        Item::from(ScalarField::new(
+                            "command.description",
+                            "Describe the command in a sentence or two.",
+                            ScalarKind::Text,
+                        )),
+                        Item::from(
+                            Group::new(
+                                "command.inputs",
+                                "Describe a command input.",
+                                vec![
+                                    ScalarField::new(
+                                        "command.inputs.name",
+                                        "What is its name?",
+                                        ScalarKind::String,
+                                    )
+                                    .with_validator(FieldValidator::new(
+                                        "input-name.v1",
+                                        validate_input_name,
+                                    )),
+                                    ScalarField::new(
+                                        "command.inputs.value_type",
+                                        "What type of value is it?",
+                                        ScalarKind::String,
+                                    )
+                                    .one_of(InputValueType::choices().iter().copied())
+                                    .with_default("string"),
+                                    ScalarField::new(
+                                        "command.inputs.cardinality",
+                                        "How many values does it take?",
+                                        ScalarKind::String,
+                                    )
+                                    .one_of(InputCardinality::choices().iter().copied())
+                                    .with_dynamic_default(DynamicDefault::new(
+                                        "input-cardinality-default.v1",
+                                        cardinality_default,
+                                    )),
+                                    ScalarField::new(
+                                        "command.inputs.sources",
+                                        "Where can its value come from, in precedence order (comma-separated: argument, file, stdin)?",
+                                        ScalarKind::String,
+                                    )
+                                    .with_dynamic_default(DynamicDefault::new(
+                                        "input-sources.v2",
+                                        sources_default,
+                                    ))
+                                    .with_validator(FieldValidator::new(
+                                        "input-sources.v2",
+                                        validate_sources_answer,
+                                    )),
+                                ],
+                            )
+                            .repeatable(1),
+                        ),
+                    ],
+                )),
+                Item::from(Group::new(
+                    "result",
+                    "Result shape.",
+                    vec![
+                        ScalarField::new(
+                            "result.shape",
+                            "Should the result be a message or a record?",
+                            ScalarKind::String,
+                        )
+                        .one_of(ResultShape::choices().iter().copied())
+                        .with_default("record"),
+                        ScalarField::new(
+                            "result.fields",
+                            "Which fields should the record carry (comma-separated)?",
+                            ScalarKind::String,
+                        )
+                        .optional()
+                        .with_default("summary,count")
+                        .active_when("result.shape", "record")
+                        .with_validator(FieldValidator::new(
+                            "record-fields.v1",
+                            validate_record_fields_answer,
+                        )),
+                    ],
+                )),
+            ],
+        )
+        .unwrap()
+    }
+
+    fn decode_sheet(sheet: &str) -> Result<NewProjectAnswers, Vec<String>> {
         let questionnaire = questionnaire();
         let raw = questionnaire
             .parse_answer_sheet(sheet)
@@ -3295,6 +3439,15 @@ mod tests {
         assert!(sheet.contains("string, bool, or path"));
         assert!(sheet.contains("required, optional, repeated, or boolean"));
         assert!(sheet.contains("message or record"));
+    }
+
+    #[test]
+    fn derived_wizard_schema_matches_hand_built_definition_and_fingerprint() {
+        let derived = questionnaire();
+        let hand_built = hand_built_questionnaire();
+
+        assert_eq!(derived, hand_built);
+        assert_eq!(derived.fingerprint(), hand_built.fingerprint());
     }
 
     #[test]
@@ -3415,8 +3568,6 @@ mod tests {
 
     #[test]
     fn file_and_stdin_sheets_decode_to_identical_answers_and_specs() {
-        use standout_input::questionnaire::QuestionnaireInput;
-
         let sheet = minimal_sheet();
         let dir = TempDir::new().unwrap();
         let path = dir.path().join("answers.txt");
@@ -3444,8 +3595,6 @@ mod tests {
     #[test]
     #[serial(prompt_responder)]
     fn interactive_file_and_stdin_decode_to_identical_answers_and_specs() {
-        use standout_input::questionnaire::QuestionnaireInput;
-
         let sheet = minimal_sheet();
         let dir = TempDir::new().unwrap();
         let path = dir.path().join("answers.txt");
