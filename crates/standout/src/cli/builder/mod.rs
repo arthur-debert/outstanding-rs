@@ -50,6 +50,7 @@ use super::group::CommandRecipe;
 use super::handler::{CommandContext, Extensions, HandlerResult, Output as HandlerOutput};
 use super::help::{render_help, render_help_with_topics, CommandGroup, HelpConfig};
 use super::hooks::{ArtifactOutput, HookError, Hooks, RenderedOutput, TextOutput};
+use super::questionnaire::QuestionnaireCommand;
 use super::result::HelpResult;
 use standout_dispatch::verify::ExpectedArg;
 
@@ -117,6 +118,7 @@ pub struct AppBuilder {
     /// Finalized dispatch functions (lazily created from pending_commands)
     finalized_commands: RefCell<Option<HashMap<String, DispatchFn>>>,
     pub(crate) command_hooks: HashMap<String, Hooks>,
+    pub(crate) questionnaire_commands: HashMap<String, QuestionnaireCommand>,
     pub(crate) context_registry: ContextRegistry,
     pub(crate) template_dir: Option<PathBuf>,
     pub(crate) template_ext: String,
@@ -176,6 +178,7 @@ impl AppBuilder {
             pending_commands: RefCell::new(HashMap::new()),
             finalized_commands: RefCell::new(None),
             command_hooks: HashMap::new(),
+            questionnaire_commands: HashMap::new(),
             context_registry: ContextRegistry::new(),
             template_dir: None,
             template_ext: ".j2".to_string(),
@@ -958,6 +961,7 @@ impl AppBuilder {
     /// Checks that all required arguments expected by handlers are present
     /// in the clap Command definition with compatible types.
     pub fn verify_command(&self, cmd: &Command) -> Result<(), SetupError> {
+        self.validate_questionnaire_surfaces(cmd)?;
         let expected_args: HashMap<String, Vec<ExpectedArg>> = self
             .pending_commands
             .borrow()
