@@ -68,8 +68,11 @@ impl ScalarKind {
 pub enum Constraint {
     /// The decoded answer must equal one of these values exactly.
     ///
-    /// Choice order is presentation-only (the fingerprint sorts it); the set
-    /// of choices is semantic.
+    /// Choices must be unique, non-blank single lines with no outer
+    /// whitespace (answers are trimmed before matching, so anything else is
+    /// unsatisfiable); [`Questionnaire::new`] rejects violations. Choice
+    /// order is presentation-only (the fingerprint sorts it); the set of
+    /// choices is semantic.
     OneOf(Vec<String>),
 }
 
@@ -213,9 +216,9 @@ impl ScalarField {
     ///
     /// The renderer pre-fills the default on the answer marker line, and
     /// during decoding any blank answer resolves to the default *before*
-    /// optionality is considered. Defaults must be a single line and must
-    /// themselves decode cleanly. Defaults are semantic: they change the
-    /// fingerprint.
+    /// optionality is considered. Defaults must be a single line with no
+    /// outer whitespace (parsed answers are trimmed) and must themselves
+    /// decode cleanly. Defaults are semantic: they change the fingerprint.
     pub fn with_default(mut self, default: impl Into<String>) -> Self {
         self.default = Some(default.into());
         self
@@ -554,6 +557,11 @@ fn validate_constraint(field: &ScalarField) -> Result<(), QuestionnaireError> {
         if choice.trim().is_empty() || choice.contains('\n') {
             return Err(invalid("choices must be non-blank single lines"));
         }
+        if choice != choice.trim() {
+            return Err(invalid(
+                "choices must carry no outer whitespace (answers are trimmed before matching, so such a choice is unsatisfiable)",
+            ));
+        }
         if !unique.insert(choice.as_str()) {
             return Err(invalid("choices must be unique"));
         }
@@ -605,12 +613,21 @@ fn canonicalize_condition(
                 ),
             });
         }
+    } else if condition.expected.is_empty() || condition.expected != condition.expected.trim() {
+        return Err(QuestionnaireError::InvalidCondition {
+            id: field_id.to_string(),
+            reason: format!(
+                "controller '{}' never decodes to the expected value (decoded answers are non-blank and carry no outer whitespace)",
+                condition.controller
+            ),
+        });
     }
     Ok(())
 }
 
-/// Reject defaults that could not survive the shared decoder or the
-/// single-line marker rendering.
+/// Reject defaults that could not survive the shared decoder, the
+/// single-line marker rendering, or the render/parse round trip (outer
+/// whitespace is trimmed away at parse time).
 fn validate_default(field: &ScalarField) -> Result<(), QuestionnaireError> {
     let Some(default) = &field.default else {
         return Ok(());
@@ -621,6 +638,12 @@ fn validate_default(field: &ScalarField) -> Result<(), QuestionnaireError> {
     };
     if default.trim().is_empty() {
         return Err(invalid("a default must be non-blank".to_string()));
+    }
+    if default != default.trim() {
+        return Err(invalid(
+            "a default must carry no outer whitespace (parsed answers are trimmed, so it could never survive a render/parse round trip)"
+                .to_string(),
+        ));
     }
     if default.contains('\n') {
         return Err(invalid(

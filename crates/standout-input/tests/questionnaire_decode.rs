@@ -80,7 +80,9 @@ fn choices_on_bool_field_are_rejected() {
 
 #[test]
 fn empty_and_duplicate_choices_are_rejected() {
-    for choices in [vec![], vec!["x", "x"]] {
+    // Answers are trimmed before matching, so a choice with outer whitespace
+    // is unsatisfiable (and would shadow its trimmed twin in dup detection).
+    for choices in [vec![], vec!["x", "x"], vec![" x", "y"], vec!["x", "x "]] {
         let err = Questionnaire::new(
             "demo.q",
             vec![ScalarField::new("a", "A?", ScalarKind::String).one_of(choices)],
@@ -114,6 +116,15 @@ fn default_must_decode_cleanly() {
     let err = Questionnaire::new(
         "demo.q",
         vec![ScalarField::new("a", "A?", ScalarKind::Text).with_default("one\ntwo")],
+    )
+    .unwrap_err();
+    assert!(matches!(err, QuestionnaireError::InvalidDefault { .. }));
+
+    // A default with outer whitespace could never survive the render/parse
+    // round trip (parsed answers are trimmed).
+    let err = Questionnaire::new(
+        "demo.q",
+        vec![ScalarField::new("a", "A?", ScalarKind::String).with_default(" x ")],
     )
     .unwrap_err();
     assert!(matches!(err, QuestionnaireError::InvalidDefault { .. }));
@@ -166,6 +177,20 @@ fn condition_expected_value_must_be_reachable() {
     )
     .unwrap_err();
     assert!(matches!(err, QuestionnaireError::InvalidCondition { .. }));
+
+    // An unconstrained controller never decodes to a blank value or one with
+    // outer whitespace (answers are trimmed, blanks resolve to omission).
+    for expected in ["", " x "] {
+        let err = Questionnaire::new(
+            "demo.q",
+            vec![
+                ScalarField::new("a", "A?", ScalarKind::String),
+                ScalarField::new("b", "B?", ScalarKind::String).active_when("a", expected),
+            ],
+        )
+        .unwrap_err();
+        assert!(matches!(err, QuestionnaireError::InvalidCondition { .. }));
+    }
 }
 
 #[test]
