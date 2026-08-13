@@ -1,0 +1,5 @@
+error: repeated is only supported on scalar Vec fields
+ --> tests/ui/questionnaire/repeated_on_non_vec_scalar.rs:7:16
+  |
+7 |     #[question(repeated)]
+  |                ^^^^^^^^

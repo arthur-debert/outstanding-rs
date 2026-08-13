@@ -1,5 +1,5 @@
-error: unsupported questionnaire field type; expected String, PathBuf, bool, Option<T>, or a QuestionnaireChoices enum
- --> tests/ui/questionnaire/unsupported_generic_type.rs:7:11
-  |
-7 |     tags: Vec<String>,
-  |           ^^^
+error: choice is only supported on QuestionnaireChoices enum fields
+  --> tests/ui/questionnaire/unsupported_generic_type.rs:10:12
+   |
+10 |     stage: GenericChoice<String>,
+   |            ^^^^^^^^^^^^^

@@ -1,0 +1,5 @@
+error: unsupported Vec element type
+ --> tests/ui/questionnaire/unsupported_vec_element.rs:7:17
+  |
+7 |     counts: Vec<usize>,
+  |                 ^^^^^

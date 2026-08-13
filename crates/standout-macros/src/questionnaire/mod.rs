@@ -1,9 +1,10 @@
 //! Implementation of the questionnaire derive macros.
 //!
-//! `Questionnaire` lowers a flat struct of scalar and enum-choice fields to
-//! `standout-input`'s public questionnaire builder and emits direct typed
-//! filling from decoded answers. `QuestionnaireChoices` lowers a unit-variant
-//! enum to the choice vocabulary consumed by that field lowering.
+//! `Questionnaire` lowers scalar fields, marked enum-choice fields, nested
+//! questionnaire structs, and repeatable groups to `standout-input`'s public
+//! questionnaire builder, then emits direct typed filling from decoded answers.
+//! `QuestionnaireChoices` lowers a unit-variant enum to the choice vocabulary
+//! consumed by `#[question(choice)]` fields.
 
 use std::collections::HashSet;
 
@@ -23,6 +24,10 @@ struct QuestionAttr {
     id: Option<(String, Span)>,
     default: Option<(String, Span)>,
     prose: Option<Span>,
+    choice: Option<Span>,
+    repeated: Option<Span>,
+    min: Option<(usize, Span)>,
+    max: Option<(usize, Span)>,
 }
 
 #[derive(Debug, Default)]
@@ -63,10 +68,44 @@ impl Parse for QuestionAttr {
                         ));
                     }
                 }
+                Meta::Path(path) if path.is_ident("choice") => {
+                    if attr.choice.replace(path.span()).is_some() {
+                        return Err(Error::new(
+                            path.span(),
+                            "duplicate question choice attribute",
+                        ));
+                    }
+                }
+                Meta::Path(path) if path.is_ident("repeated") => {
+                    if attr.repeated.replace(path.span()).is_some() {
+                        return Err(Error::new(
+                            path.span(),
+                            "duplicate question repeated attribute",
+                        ));
+                    }
+                }
+                Meta::NameValue(nv) if nv.path.is_ident("min") => {
+                    let (value, span) = usize_lit(&nv.value, "min must be an integer literal")?;
+                    if attr.min.replace((value, span)).is_some() {
+                        return Err(Error::new(
+                            nv.path.span(),
+                            "duplicate question min attribute",
+                        ));
+                    }
+                }
+                Meta::NameValue(nv) if nv.path.is_ident("max") => {
+                    let (value, span) = usize_lit(&nv.value, "max must be an integer literal")?;
+                    if attr.max.replace((value, span)).is_some() {
+                        return Err(Error::new(
+                            nv.path.span(),
+                            "duplicate question max attribute",
+                        ));
+                    }
+                }
                 other => {
                     return Err(Error::new(
                         other.span(),
-                        "unknown question attribute: expected id, default, or prose",
+                        "unknown question attribute: expected id, default, prose, choice, repeated, min, or max",
                     ));
                 }
             }
@@ -116,7 +155,13 @@ pub fn questionnaire_derive_impl(input: DeriveInput) -> Result<TokenStream> {
         .ok_or_else(|| Error::new(input.ident.span(), "missing #[question(id = \"...\")]"))?
         .0
         .clone();
-    if container.default.is_some() || container.prose.is_some() {
+    if container.default.is_some()
+        || container.prose.is_some()
+        || container.choice.is_some()
+        || container.repeated.is_some()
+        || container.min.is_some()
+        || container.max.is_some()
+    {
         return Err(Error::new(
             input.span(),
             "container #[question(...)] only supports id",
@@ -165,14 +210,28 @@ pub fn questionnaire_derive_impl(input: DeriveInput) -> Result<TokenStream> {
             > {
                 ::standout_input::questionnaire::Questionnaire::new(
                     #questionnaire_id,
-                    vec![
-                        #(#builder_fields),*
-                    ],
+                    <Self as ::standout_input::questionnaire::QuestionnaireInput>::questionnaire_items(""),
                 )
             }
 
             fn from_decoded_answers(
                 answers: &::standout_input::questionnaire::Answers,
+            ) -> Self {
+                <Self as ::standout_input::questionnaire::QuestionnaireInput>::from_decoded_answers_at(
+                    answers,
+                    "",
+                )
+            }
+
+            fn questionnaire_items(__prefix: &str) -> ::std::vec::Vec<::standout_input::questionnaire::Item> {
+                vec![
+                    #(#builder_fields),*
+                ]
+            }
+
+            fn from_decoded_answers_at(
+                answers: &::standout_input::questionnaire::Answers,
+                __prefix: &str,
             ) -> Self {
                 Self {
                     #(#fill_fields),*
@@ -192,6 +251,8 @@ struct FieldInfo {
     default: Option<String>,
     kind: FieldKind,
     optional: bool,
+    min: Option<usize>,
+    max: Option<usize>,
 }
 
 impl FieldInfo {
@@ -202,23 +263,100 @@ impl FieldInfo {
             .ok_or_else(|| Error::new(field.span(), "expected named field"))?;
         let attrs = parse_question_attrs(&field.attrs)?;
         let (base_ty, optional) = option_inner(&field.ty).unwrap_or((&field.ty, false));
-        let mut kind = FieldKind::from_type(base_ty)?;
+        let mut kind = FieldKind::from_type(base_ty, &attrs, optional)?;
+
+        if let Some(repeated_span) = attrs.repeated {
+            if !matches!(kind, FieldKind::ScalarVec { .. }) {
+                return Err(Error::new(
+                    repeated_span,
+                    "repeated is only supported on scalar Vec fields",
+                ));
+            }
+            kind = kind.into_repeated_scalar_vec();
+        }
 
         if let Some(prose_span) = attrs.prose {
-            if !matches!(kind, FieldKind::Scalar(ScalarKind::String)) {
+            if !matches!(
+                kind,
+                FieldKind::Scalar {
+                    scalar: ScalarKind::String
+                }
+            ) {
                 return Err(Error::new(
                     prose_span,
                     "prose is only supported on String fields",
                 ));
             }
+            kind = FieldKind::Scalar {
+                scalar: ScalarKind::Text,
+            };
         }
 
         if let Some((default, span)) = attrs.default.as_ref() {
-            if matches!(kind, FieldKind::Scalar(ScalarKind::Bool)) && parse_bool(default).is_none()
-            {
+            match kind {
+                FieldKind::Scalar {
+                    scalar: ScalarKind::Bool,
+                } if parse_bool(default).is_none() => {
+                    return Err(Error::new(
+                        *span,
+                        "bool defaults must be one of true, false, yes, no, y, or n",
+                    ));
+                }
+                FieldKind::Scalar { .. }
+                | FieldKind::ScalarVec { .. }
+                | FieldKind::Choice { .. } => {}
+                _ => {
+                    return Err(Error::new(
+                        *span,
+                        "default is only supported on scalar fields, flat scalar Vec fields, and choice fields",
+                    ));
+                }
+            }
+        }
+
+        if optional && !matches!(kind, FieldKind::Scalar { .. } | FieldKind::Choice { .. }) {
+            return Err(Error::new(
+                field.ty.span(),
+                "Option<T> is only supported for scalar questionnaire fields and choice fields",
+            ));
+        }
+
+        if (attrs.min.is_some() || attrs.max.is_some()) && !kind.is_repeatable_group() {
+            let span = attrs
+                .min
+                .as_ref()
+                .map(|(_, span)| *span)
+                .or_else(|| attrs.max.as_ref().map(|(_, span)| *span))
+                .expect("checked an existing min or max");
+            return Err(Error::new(
+                span,
+                "min and max are only supported on repeatable Vec fields",
+            ));
+        }
+
+        if let Some((min, span)) = attrs.min.as_ref() {
+            if *min == 0 {
                 return Err(Error::new(
                     *span,
-                    "bool defaults must be one of true, false, yes, no, y, or n",
+                    "min must be at least 1 for repeatable questionnaire groups",
+                ));
+            }
+        }
+
+        if let Some((max, span)) = attrs.max.as_ref() {
+            if *max == 0 {
+                return Err(Error::new(
+                    *span,
+                    "max must be at least 1 for repeatable questionnaire groups",
+                ));
+            }
+        }
+
+        if let (Some((min, _)), Some((max, span))) = (attrs.min.as_ref(), attrs.max.as_ref()) {
+            if max < min {
+                return Err(Error::new(
+                    *span,
+                    "max must be greater than or equal to min for repeatable questionnaire groups",
                 ));
             }
         }
@@ -234,9 +372,6 @@ impl FieldInfo {
             .map(|(_, span)| *span)
             .unwrap_or(ident.span());
         let prompt = doc_prompt(&field.attrs);
-        if attrs.prose.is_some() {
-            kind = FieldKind::Scalar(ScalarKind::Text);
-        }
 
         Ok(Self {
             ident,
@@ -246,131 +381,264 @@ impl FieldInfo {
             default: attrs.default.map(|(default, _)| default),
             kind,
             optional,
+            min: attrs.min.map(|(min, _)| min),
+            max: attrs.max.map(|(max, _)| max),
         })
     }
 
     fn builder_tokens(&self) -> TokenStream {
-        let id = &self.id;
+        let id = prefixed_id_tokens(&self.id);
         let prompt = &self.prompt;
-        let kind = self.kind.scalar_kind_tokens();
-        let optional = self.optional.then(|| quote! { .optional() });
-        let default = self
-            .default
-            .as_ref()
-            .map(|default| quote! { .with_default(#default) });
-        let choices = self.kind.choice_tokens();
+        match &self.kind {
+            FieldKind::Scalar { scalar } | FieldKind::ScalarVec { scalar } => {
+                let kind = scalar.tokens();
+                let optional = self.optional.then(|| quote! { .optional() });
+                let default = self
+                    .default
+                    .as_ref()
+                    .map(|default| quote! { .with_default(#default) });
 
-        quote! {
-            ::standout_input::questionnaire::ScalarField::new(
-                #id,
-                #prompt,
-                #kind,
-            )
-            #optional
-            #choices
-            #default
+                quote! {
+                    {
+                        let __id = #id;
+                        ::standout_input::questionnaire::ScalarField::new(
+                            __id,
+                            #prompt,
+                            #kind,
+                        )
+                        #optional
+                        #default
+                        .into()
+                    }
+                }
+            }
+            FieldKind::Choice { ty } => {
+                let optional = self.optional.then(|| quote! { .optional() });
+                let default = self
+                    .default
+                    .as_ref()
+                    .map(|default| quote! { .with_default(#default) });
+
+                quote! {
+                    {
+                        let __id = #id;
+                        ::standout_input::questionnaire::ScalarField::new(
+                            __id,
+                            #prompt,
+                            ::standout_input::questionnaire::ScalarKind::String,
+                        )
+                        #optional
+                        .one_of(
+                            <#ty as ::standout_input::questionnaire::QuestionnaireChoices>::choices()
+                                .iter()
+                                .copied()
+                        )
+                        #default
+                        .into()
+                    }
+                }
+            }
+            FieldKind::Nested { ty } => quote! {
+                {
+                    let __group_id = #id;
+                    ::standout_input::questionnaire::Group::new(
+                        __group_id.clone(),
+                        #prompt,
+                        <#ty as ::standout_input::questionnaire::QuestionnaireInput>::questionnaire_items(&__group_id),
+                    )
+                    .into()
+                }
+            },
+            FieldKind::RepeatedNested { ty } => {
+                let repeat = self.repeat_tokens();
+                quote! {
+                    {
+                        let __group_id = #id;
+                        ::standout_input::questionnaire::Group::new(
+                            __group_id.clone(),
+                            #prompt,
+                            <#ty as ::standout_input::questionnaire::QuestionnaireInput>::questionnaire_items(&__group_id),
+                        )
+                        #repeat
+                        .into()
+                    }
+                }
+            }
+            FieldKind::RepeatedScalarVec { scalar } => {
+                let kind = scalar.tokens();
+                let repeat = self.repeat_tokens();
+                quote! {
+                    {
+                        let __group_id = #id;
+                        let __value_id = ::std::format!("{}.value", __group_id);
+                        ::standout_input::questionnaire::Group::new(
+                            __group_id,
+                            #prompt,
+                            vec![
+                                ::standout_input::questionnaire::ScalarField::new(
+                                    __value_id,
+                                    #prompt,
+                                    #kind,
+                                )
+                            ],
+                        )
+                        #repeat
+                        .into()
+                    }
+                }
+            }
         }
     }
 
     fn fill_tokens(&self) -> TokenStream {
         let ident = &self.ident;
-        let id = &self.id;
+        let id = prefixed_id_tokens(&self.id);
         let missing = format!("decoded answers are missing required field '{}'", self.id);
-        let value = match (&self.kind, self.optional) {
-            (FieldKind::Scalar(ScalarKind::Bool), false) => quote! {
-                answers.get_bool(#id).unwrap_or_else(|| unreachable!(#missing))
-            },
-            (FieldKind::Scalar(ScalarKind::Bool), true) => quote! {
-                answers.get_bool(#id)
-            },
-            (FieldKind::Scalar(ScalarKind::Path), false) => quote! {
-                ::std::path::PathBuf::from(
-                    answers.get_text(#id).unwrap_or_else(|| unreachable!(#missing))
-                )
-            },
-            (FieldKind::Scalar(ScalarKind::Path), true) => quote! {
-                answers.get_text(#id).map(::std::path::PathBuf::from)
-            },
-            (FieldKind::Scalar(ScalarKind::String | ScalarKind::Text), false) => quote! {
-                answers
-                    .get_text(#id)
-                    .unwrap_or_else(|| unreachable!(#missing))
-                    .to_string()
-            },
-            (FieldKind::Scalar(ScalarKind::String | ScalarKind::Text), true) => quote! {
-                answers.get_text(#id).map(|value| value.to_string())
-            },
-            (FieldKind::Choice(ty), false) => {
-                let ty = ty.as_ref();
-                let parse_failure = format!(
-                    "decoded answers carried an undeclared choice for field '{}'",
-                    self.id
-                );
-                quote! {
-                    answers
-                        .get_text(#id)
-                        .unwrap_or_else(|| unreachable!(#missing))
-                        .parse::<#ty>()
-                        .unwrap_or_else(|_| unreachable!(#parse_failure))
-                }
+        let value = match &self.kind {
+            FieldKind::Scalar { scalar } => {
+                scalar_value_tokens(*scalar, self.optional, id, missing)
             }
-            (FieldKind::Choice(ty), true) => {
-                let ty = ty.as_ref();
-                let parse_failure = format!(
-                    "decoded answers carried an undeclared choice for field '{}'",
-                    self.id
-                );
+            FieldKind::Choice { ty } => {
+                choice_value_tokens(ty, self.optional, id, missing, &self.id)
+            }
+            FieldKind::ScalarVec { scalar } => scalar_list_tokens(*scalar, id, missing),
+            FieldKind::Nested { ty } => quote! {
+                {
+                    let __id = #id;
+                    <#ty as ::standout_input::questionnaire::QuestionnaireInput>::from_decoded_answers_at(
+                        answers,
+                        &__id,
+                    )
+                }
+            },
+            FieldKind::RepeatedNested { ty } => quote! {
+                {
+                    let __group_id = #id;
+                    let __count = answers.occurrence_count(&__group_id);
+                    (0..__count)
+                        .map(|__index| {
+                            let __occurrence = ::std::format!("{}[{}]", __group_id, __index);
+                            <#ty as ::standout_input::questionnaire::QuestionnaireInput>::from_decoded_answers_at(
+                                answers,
+                                &__occurrence,
+                            )
+                        })
+                        .collect()
+                }
+            },
+            FieldKind::RepeatedScalarVec { scalar } => {
+                let item = repeated_scalar_value_tokens(*scalar);
                 quote! {
-                    answers.get_text(#id).map(|value| {
-                        value
-                            .parse::<#ty>()
-                            .unwrap_or_else(|_| unreachable!(#parse_failure))
-                    })
+                    {
+                        let __group_id = #id;
+                        let __count = answers.occurrence_count(&__group_id);
+                        (0..__count)
+                            .map(|__index| {
+                                let __value_id = ::std::format!("{}[{}].value", __group_id, __index);
+                                #item
+                            })
+                            .collect()
+                    }
                 }
             }
         };
         quote! { #ident: #value }
     }
+
+    fn repeat_tokens(&self) -> TokenStream {
+        let min = self.min.unwrap_or(1);
+        let max = self.max.map(|max| quote! { .max_occurrences(#max) });
+        quote! {
+            .repeatable(#min)
+            #max
+        }
+    }
 }
 
-#[derive(Clone)]
 enum FieldKind {
-    Scalar(ScalarKind),
-    Choice(Box<Type>),
+    Scalar { scalar: ScalarKind },
+    Choice { ty: Type },
+    ScalarVec { scalar: ScalarKind },
+    RepeatedScalarVec { scalar: ScalarKind },
+    Nested { ty: Type },
+    RepeatedNested { ty: Type },
 }
 
 impl FieldKind {
-    fn from_type(ty: &Type) -> Result<Self> {
-        if let Some(kind) = ScalarKind::from_type(ty)? {
-            return Ok(Self::Scalar(kind));
-        }
-        if is_known_unsupported_primitive(ty) || !can_be_choice_type(ty) {
-            return Err(unsupported_type_error(ty));
-        }
-        Ok(Self::Choice(Box::new(ty.clone())))
-    }
-
-    fn scalar_kind_tokens(&self) -> TokenStream {
-        match self {
-            Self::Scalar(kind) => kind.tokens(),
-            Self::Choice(_) => quote! { ::standout_input::questionnaire::ScalarKind::String },
-        }
-    }
-
-    fn choice_tokens(&self) -> Option<TokenStream> {
-        match self {
-            Self::Scalar(_) => None,
-            Self::Choice(ty) => {
-                let ty = ty.as_ref();
-                Some(quote! {
-                .one_of(
-                    <#ty as ::standout_input::questionnaire::QuestionnaireChoices>::choices()
-                        .iter()
-                        .copied()
-                )
-                })
+    fn from_type(ty: &Type, attrs: &QuestionAttr, optional: bool) -> Result<Self> {
+        if optional {
+            if let Some(scalar) = ScalarKind::from_type(ty) {
+                return Ok(Self::Scalar { scalar });
             }
+            if attrs.choice.is_some() {
+                return choice_kind(ty);
+            }
+            return Err(Error::new(
+                ty.span(),
+                "Option<T> is only supported for String, PathBuf, bool, and #[question(choice)] enum fields",
+            ));
         }
+
+        if let Some(inner) = vec_inner(ty) {
+            if let Some(span) = attrs.choice {
+                return Err(Error::new(
+                    span,
+                    "choice is only supported on non-Vec enum fields",
+                ));
+            }
+            if let Some(scalar) = ScalarKind::from_type(inner) {
+                return match scalar {
+                    ScalarKind::String | ScalarKind::Path => Ok(Self::ScalarVec { scalar }),
+                    ScalarKind::Bool | ScalarKind::Text => Err(Error::new(
+                        inner.span(),
+                        "unsupported scalar Vec element type; expected String or PathBuf",
+                    )),
+                };
+            }
+            reject_known_non_questionnaire_type(inner, "unsupported Vec element type")?;
+            if attrs.default.is_some() {
+                let span = attrs
+                    .default
+                    .as_ref()
+                    .map(|(_, span)| *span)
+                    .unwrap_or(ty.span());
+                return Err(Error::new(
+                    span,
+                    "default is only supported on scalar fields and flat scalar Vec fields",
+                ));
+            }
+            Ok(Self::RepeatedNested { ty: inner.clone() })
+        } else if let Some(scalar) = ScalarKind::from_type(ty) {
+            if let Some(span) = attrs.choice {
+                return Err(Error::new(
+                    span,
+                    "choice is only supported on enum choice fields",
+                ));
+            }
+            Ok(Self::Scalar { scalar })
+        } else if attrs.choice.is_some() {
+            choice_kind(ty)
+        } else {
+            reject_known_non_questionnaire_type(
+                ty,
+                "unsupported questionnaire field type; expected String, PathBuf, bool, Option<T>, Vec<String>, Vec<PathBuf>, a nested Questionnaire type, or #[question(choice)] enum field",
+            )?;
+            Ok(Self::Nested { ty: ty.clone() })
+        }
+    }
+
+    fn into_repeated_scalar_vec(self) -> Self {
+        match self {
+            Self::ScalarVec { scalar } => Self::RepeatedScalarVec { scalar },
+            other => other,
+        }
+    }
+
+    fn is_repeatable_group(&self) -> bool {
+        matches!(
+            self,
+            Self::RepeatedScalarVec { .. } | Self::RepeatedNested { .. }
+        )
     }
 }
 
@@ -383,22 +651,16 @@ enum ScalarKind {
 }
 
 impl ScalarKind {
-    fn from_type(ty: &Type) -> Result<Option<Self>> {
+    fn from_type(ty: &Type) -> Option<Self> {
         let Type::Path(type_path) = ty else {
-            return Err(unsupported_type_error(ty));
+            return None;
         };
-        let ident = type_path
-            .path
-            .segments
-            .last()
-            .ok_or_else(|| Error::new(ty.span(), "unsupported questionnaire field type"))?
-            .ident
-            .to_string();
+        let ident = type_path.path.segments.last()?.ident.to_string();
         match ident.as_str() {
-            "String" => Ok(Some(Self::String)),
-            "PathBuf" => Ok(Some(Self::Path)),
-            "bool" => Ok(Some(Self::Bool)),
-            _ => Ok(None),
+            "String" => Some(Self::String),
+            "PathBuf" => Some(Self::Path),
+            "bool" => Some(Self::Bool),
+            _ => None,
         }
     }
 
@@ -410,6 +672,164 @@ impl ScalarKind {
             Self::Path => quote! { ::standout_input::questionnaire::ScalarKind::Path },
         }
     }
+}
+
+fn scalar_value_tokens(
+    kind: ScalarKind,
+    optional: bool,
+    id: TokenStream,
+    missing: String,
+) -> TokenStream {
+    match (kind, optional) {
+        (ScalarKind::Bool, false) => quote! {
+            {
+                let __id = #id;
+                answers.get_bool(&__id).unwrap_or_else(|| unreachable!(#missing))
+            }
+        },
+        (ScalarKind::Bool, true) => quote! {
+            {
+                let __id = #id;
+                answers.get_bool(&__id)
+            }
+        },
+        (ScalarKind::Path, false) => quote! {
+            {
+                let __id = #id;
+                ::std::path::PathBuf::from(
+                    answers.get_text(&__id).unwrap_or_else(|| unreachable!(#missing))
+                )
+            }
+        },
+        (ScalarKind::Path, true) => quote! {
+            {
+                let __id = #id;
+                answers.get_text(&__id).map(::std::path::PathBuf::from)
+            }
+        },
+        (ScalarKind::String | ScalarKind::Text, false) => quote! {
+            {
+                let __id = #id;
+                answers
+                    .get_text(&__id)
+                    .unwrap_or_else(|| unreachable!(#missing))
+                    .to_string()
+            }
+        },
+        (ScalarKind::String | ScalarKind::Text, true) => quote! {
+            {
+                let __id = #id;
+                answers.get_text(&__id).map(|value| value.to_string())
+            }
+        },
+    }
+}
+
+fn choice_value_tokens(
+    ty: &Type,
+    optional: bool,
+    id: TokenStream,
+    missing: String,
+    field_id: &str,
+) -> TokenStream {
+    let parse_failure = format!(
+        "decoded answers carried an undeclared choice for field '{}'",
+        field_id
+    );
+    if optional {
+        quote! {
+            {
+                let __id = #id;
+                answers.get_text(&__id).map(|value| {
+                    value
+                        .parse::<#ty>()
+                        .unwrap_or_else(|_| unreachable!(#parse_failure))
+                })
+            }
+        }
+    } else {
+        quote! {
+            {
+                let __id = #id;
+                answers
+                    .get_text(&__id)
+                    .unwrap_or_else(|| unreachable!(#missing))
+                    .parse::<#ty>()
+                    .unwrap_or_else(|_| unreachable!(#parse_failure))
+            }
+        }
+    }
+}
+
+fn scalar_list_tokens(kind: ScalarKind, id: TokenStream, missing: String) -> TokenStream {
+    match kind {
+        ScalarKind::String => quote! {
+            {
+                let __id = #id;
+                answers
+                    .get_text(&__id)
+                    .unwrap_or_else(|| unreachable!(#missing))
+                    .split(',')
+                    .map(str::trim)
+                    .filter(|value| !value.is_empty())
+                    .map(str::to_string)
+                    .collect()
+            }
+        },
+        ScalarKind::Path => quote! {
+            {
+                let __id = #id;
+                answers
+                    .get_text(&__id)
+                    .unwrap_or_else(|| unreachable!(#missing))
+                    .split(',')
+                    .map(str::trim)
+                    .filter(|value| !value.is_empty())
+                    .map(::std::path::PathBuf::from)
+                    .collect()
+            }
+        },
+        ScalarKind::Bool | ScalarKind::Text => unreachable!("unsupported scalar list kind"),
+    }
+}
+
+fn repeated_scalar_value_tokens(kind: ScalarKind) -> TokenStream {
+    match kind {
+        ScalarKind::String => quote! {
+            answers
+                .get_text(&__value_id)
+                .unwrap_or_else(|| unreachable!("decoded answers are missing repeated scalar value"))
+                .to_string()
+        },
+        ScalarKind::Path => quote! {
+            ::std::path::PathBuf::from(
+                answers
+                    .get_text(&__value_id)
+                    .unwrap_or_else(|| unreachable!("decoded answers are missing repeated scalar value"))
+            )
+        },
+        ScalarKind::Bool | ScalarKind::Text => unreachable!("unsupported repeated scalar kind"),
+    }
+}
+
+fn prefixed_id_tokens(id: &str) -> TokenStream {
+    quote! {
+        if __prefix.is_empty() {
+            #id.to_string()
+        } else {
+            ::std::format!("{}.{}", __prefix, #id)
+        }
+    }
+}
+
+fn choice_kind(ty: &Type) -> Result<FieldKind> {
+    if is_known_unsupported_primitive(ty) || !can_be_plain_named_type(ty) {
+        return Err(Error::new(
+            ty.span(),
+            "choice is only supported on QuestionnaireChoices enum fields",
+        ));
+    }
+    Ok(FieldKind::Choice { ty: ty.clone() })
 }
 
 fn is_known_unsupported_primitive(ty: &Type) -> bool {
@@ -440,7 +860,7 @@ fn is_known_unsupported_primitive(ty: &Type) -> bool {
     )
 }
 
-fn can_be_choice_type(ty: &Type) -> bool {
+fn can_be_plain_named_type(ty: &Type) -> bool {
     let Type::Path(type_path) = ty else {
         return false;
     };
@@ -450,13 +870,6 @@ fn can_be_choice_type(ty: &Type) -> bool {
             .segments
             .iter()
             .all(|segment| matches!(segment.arguments, PathArguments::None))
-}
-
-fn unsupported_type_error(ty: &Type) -> Error {
-    Error::new(
-        ty.span(),
-        "unsupported questionnaire field type; expected String, PathBuf, bool, Option<T>, or a QuestionnaireChoices enum",
-    )
 }
 
 fn option_inner(ty: &Type) -> Option<(&Type, bool)> {
@@ -474,6 +887,59 @@ fn option_inner(ty: &Type) -> Option<(&Type, bool)> {
         GenericArgument::Type(inner) => Some((inner, true)),
         _ => None,
     }
+}
+
+fn vec_inner(ty: &Type) -> Option<&Type> {
+    let Type::Path(type_path) = ty else {
+        return None;
+    };
+    let segment = type_path.path.segments.last()?;
+    if segment.ident != "Vec" {
+        return None;
+    }
+    let PathArguments::AngleBracketed(args) = &segment.arguments else {
+        return None;
+    };
+    match args.args.first()? {
+        GenericArgument::Type(inner) => Some(inner),
+        _ => None,
+    }
+}
+
+fn reject_known_non_questionnaire_type(ty: &Type, message: &str) -> Result<()> {
+    let Type::Path(type_path) = ty else {
+        return Err(Error::new(ty.span(), message));
+    };
+    let Some(segment) = type_path.path.segments.last() else {
+        return Err(Error::new(ty.span(), message));
+    };
+    let ident = segment.ident.to_string();
+    if matches!(
+        ident.as_str(),
+        "bool"
+            | "char"
+            | "f32"
+            | "f64"
+            | "i8"
+            | "i16"
+            | "i32"
+            | "i64"
+            | "i128"
+            | "isize"
+            | "u8"
+            | "u16"
+            | "u32"
+            | "u64"
+            | "u128"
+            | "usize"
+            | "Option"
+            | "Vec"
+            | "String"
+            | "PathBuf"
+    ) {
+        return Err(Error::new(ty.span(), message));
+    }
+    Ok(())
 }
 
 fn parse_question_attrs(attrs: &[Attribute]) -> Result<QuestionAttr> {
@@ -497,6 +963,18 @@ fn merge_question_attrs(out: &mut QuestionAttr, next: QuestionAttr, span: Span) 
     if next.prose.is_some() && out.prose.replace(next.prose.unwrap()).is_some() {
         return Err(Error::new(span, "duplicate question prose attribute"));
     }
+    if next.choice.is_some() && out.choice.replace(next.choice.unwrap()).is_some() {
+        return Err(Error::new(span, "duplicate question choice attribute"));
+    }
+    if next.repeated.is_some() && out.repeated.replace(next.repeated.unwrap()).is_some() {
+        return Err(Error::new(span, "duplicate question repeated attribute"));
+    }
+    if next.min.is_some() && out.min.replace(next.min.unwrap()).is_some() {
+        return Err(Error::new(span, "duplicate question min attribute"));
+    }
+    if next.max.is_some() && out.max.replace(next.max.unwrap()).is_some() {
+        return Err(Error::new(span, "duplicate question max attribute"));
+    }
     Ok(())
 }
 
@@ -505,6 +983,15 @@ fn string_lit(expr: &Expr, message: &str) -> Result<(String, Span)> {
         Expr::Lit(ExprLit {
             lit: Lit::Str(lit), ..
         }) => Ok((lit.value(), lit.span())),
+        _ => Err(Error::new(expr.span(), message)),
+    }
+}
+
+fn usize_lit(expr: &Expr, message: &str) -> Result<(usize, Span)> {
+    match expr {
+        Expr::Lit(ExprLit {
+            lit: Lit::Int(lit), ..
+        }) => Ok((lit.base10_parse()?, lit.span())),
         _ => Err(Error::new(expr.span(), message)),
     }
 }

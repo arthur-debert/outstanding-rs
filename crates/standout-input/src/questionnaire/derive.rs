@@ -5,15 +5,16 @@
 //! [`Answers`]. This keeps derived questionnaires on the same validation,
 //! rendering, parsing, and fingerprinting path as hand-built definitions.
 
-use super::{Answers, Questionnaire, QuestionnaireError, RawAnswers, ValidationDiagnostic};
+use super::{Answers, Item, Questionnaire, QuestionnaireError, RawAnswers, ValidationDiagnostic};
 
 /// A Rust enum-backed choice vocabulary for derived questionnaires.
 ///
 /// Implemented by `standout-macros` for enums that derive
 /// `QuestionnaireChoices`. The enum is then the single source for the
 /// accepted answer strings, rendered hints, parsing, and display: a derived
-/// questionnaire field of this enum type lowers to a string field constrained
-/// with [`ScalarField::one_of`](super::ScalarField::one_of), and typed filling
+/// questionnaire field of this enum type marked `#[question(choice)]` lowers
+/// to a string field constrained with
+/// [`ScalarField::one_of`](super::ScalarField::one_of), and typed filling
 /// parses the validated answer back into the enum.
 pub trait QuestionnaireChoices:
     Sized + std::str::FromStr<Err = QuestionnaireChoiceParseError> + std::fmt::Display
@@ -63,6 +64,10 @@ impl std::error::Error for QuestionnaireChoiceParseError {}
 /// - [`from_decoded_answers`](Self::from_decoded_answers), which directly
 ///   materializes the struct from successfully decoded [`Answers`] without
 ///   involving serde or stringly application conversion code.
+///
+/// The derive also emits hidden, prefix-aware helpers used to lower and fill
+/// nested questionnaire structs. They keep nested fields on the same stable
+/// group-prefix and occurrence-path model as the public runtime definition.
 pub trait QuestionnaireInput: Sized {
     /// Construct the runtime questionnaire definition for this type.
     ///
@@ -73,12 +78,48 @@ pub trait QuestionnaireInput: Sized {
     /// Fill this type from answers decoded by its own questionnaire.
     ///
     /// This method is generated code for the closed questionnaire type
-    /// universe: scalars, `Option<T>`, and enum choices. Call
+    /// universe: scalars, `Option<T>`, scalar `Vec<T>`, enum choices, nested
+    /// structs, and repeatable groups. Call
     /// [`from_raw_answers`](Self::from_raw_answers) for the public checked
     /// path: it decodes with the generated definition first, then fills only
     /// after field validation succeeds.
     #[doc(hidden)]
     fn from_decoded_answers(answers: &Answers) -> Self;
+
+    /// Build this type's items under `prefix`.
+    ///
+    /// Generated implementations use `prefix` to make nested struct field IDs
+    /// extend their enclosing group ID. Manual implementations may keep the
+    /// default root-only behavior unless they need nested reuse. The default
+    /// implementation panics for non-empty prefixes so accidental nested reuse
+    /// fails at the call site instead of constructing root-scoped items.
+    #[doc(hidden)]
+    fn questionnaire_items(prefix: &str) -> Vec<Item> {
+        assert!(
+            prefix.is_empty(),
+            "manual QuestionnaireInput implementation cannot be nested unless questionnaire_items is overridden"
+        );
+        Self::questionnaire()
+            .expect("manual QuestionnaireInput implementation cannot be nested unless questionnaire_items is overridden")
+            .items()
+            .to_vec()
+    }
+
+    /// Fill this type from answers rooted at `prefix`.
+    ///
+    /// Generated implementations use `prefix` to read fields inside nested and
+    /// repeatable group occurrences. Manual implementations may keep the
+    /// default root-only behavior unless they need nested reuse. The default
+    /// implementation panics for non-empty prefixes so accidental nested reuse
+    /// fails at the call site instead of reading root-scoped answers.
+    #[doc(hidden)]
+    fn from_decoded_answers_at(answers: &Answers, prefix: &str) -> Self {
+        assert!(
+            prefix.is_empty(),
+            "manual QuestionnaireInput implementation cannot be nested unless from_decoded_answers_at is overridden"
+        );
+        Self::from_decoded_answers(answers)
+    }
 
     /// Decode raw answers with this type's generated definition and return
     /// the filled struct.
