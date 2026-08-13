@@ -33,9 +33,9 @@ The boundary is deliberate and narrow:
 | Collection adapters (interactive, file, stdin)     | Field-validator rule *content* (with a revision)  |
 | Shared field decoding, constraints, blank rules    | Interactive flow, review, confirmation            |
 | Compatibility checking (version, ID, fingerprint)  | All side effects (file writes, generation, etc.)  |
-| Diagnostics with stable IDs and line numbers       |                                                   |
+| Diagnostics with occurrence paths and line numbers |                                                   |
 
-Every collection path stops at the same two waypoints: `RawAnswers` (trimmed answer text keyed by stable field ID) and, after `decode_answers`, typed `Answers`. The library never sees your domain model, and your domain model never leaks into the format.
+Every collection path stops at the same two waypoints: `RawAnswers` (trimmed answer text keyed by *occurrence path* — the stable field ID, with a zero-based index per enclosing repeatable-group occurrence, as in `command.inputs[1].name`) and, after `decode_answers`, typed `Answers`. The library never sees your domain model, and your domain model never leaks into the format.
 
 ## Defining scalar fields
 
@@ -60,7 +60,7 @@ Three adapters, one representation — every path normalizes to `RawAnswers` and
 
 `decode_answers` (or `decode_answers_with`, which also runs your whole-form closure) applies one blank rule everywhere: blank → declared default → otherwise omission if optional, missing-value error if required. Conditional fields must be answered when active; an inactive field may stay blank (or keep its untouched pre-filled default), while a *populated* inactive field is an error — stale intent is never silently discarded.
 
-Batch submissions accumulate every independent diagnostic — syntax and identity problems from parsing, then missing values, conversion failures, constraint violations, field-validator rejections, and your whole-form errors — so a sheet can be repaired in one editing pass. Diagnostics identify fields by stable ID and never echo submitted values.
+Batch submissions accumulate every independent diagnostic — syntax and identity problems from parsing, then missing values, conversion failures, constraint violations, field-validator rejections, and your whole-form errors — so a sheet can be repaired in one editing pass. Diagnostics identify fields by occurrence path — the stable ID, indexed per repeatable-group occurrence — and never echo submitted values.
 
 ## Stable identity
 
@@ -86,7 +86,7 @@ The fingerprint covers every semantic property that changes which answers are ac
 
 ## Sensitive content
 
-Answer sheets are plain text files holding whatever your questions ask for — possibly credentials, internal names, or personal data. Treat a saved sheet with the same care as the answers themselves: keep it out of version control and world-readable locations, and delete it when no longer needed. Diagnostics identify fields by stable ID and line number without echoing answer values; your validator and form messages should follow the same rule.
+Answer sheets are plain text files holding whatever your questions ask for — possibly credentials, internal names, or personal data. Treat a saved sheet with the same care as the answers themselves: keep it out of version control and world-readable locations, and delete it when no longer needed. Diagnostics identify fields by occurrence path and line number without echoing answer values; your validator and form messages should follow the same rule.
 
 ## Example
 
@@ -161,4 +161,4 @@ Rendering is deterministic: the same definition always produces the same bytes, 
 
 ## Current scope
 
-This slice covers scalar fields end to end: definition, rendering with defaults, interactive / file / stdin collection, shared decoding with constraints, conditions, and application validators, and accumulated batch diagnostics. Nested and repeatable groups build on this same identity and compatibility model.
+This topic walks scalar fields end to end: definition, rendering with defaults, interactive / file / stdin collection, shared decoding with constraints, conditions, and application validators, and accumulated batch diagnostics. Questionnaires also support nested and repeatable groups on this same compatibility model; a submitted item inside a repeatable group is addressed by its occurrence path — the stable ID with a zero-based index per enclosing occurrence, as in `command.inputs[1].name` — never by numbering or wording. See the `questionnaire` module documentation for the group format and copy-the-block editing.

@@ -484,9 +484,13 @@ impl Questionnaire {
     }
 
     /// The group-header contract beyond the ID itself: the next
-    /// header-shaped, non-marker line must carry a *direct child* of this
-    /// group — a child field followed by its own `->` marker, or a child
-    /// group. Anything else leaves the line as ordinary prose.
+    /// header-shaped, non-marker line *whose ID the definition recognizes*
+    /// must carry a *direct child* of this group — a child field followed
+    /// by its own `->` marker, or a child group. Header-shaped lines with
+    /// unknown IDs are ordinary prose (they cannot speak to the contract)
+    /// and are skipped like any other non-header line. A recognized ID that
+    /// is not a direct child fails the contract, leaving the group line as
+    /// ordinary prose.
     fn group_contract_holds(&self, group_id: &str, lines: &[&str], at: usize) -> bool {
         for (offset, line) in lines[at + 1..].iter().enumerate() {
             if is_marker_line(line) {
