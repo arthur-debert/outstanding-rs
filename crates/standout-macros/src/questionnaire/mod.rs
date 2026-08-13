@@ -344,7 +344,7 @@ impl FieldKind {
         if let Some(kind) = ScalarKind::from_type(ty)? {
             return Ok(Self::Scalar(kind));
         }
-        if is_known_unsupported_primitive(ty) {
+        if is_known_unsupported_primitive(ty) || !can_be_choice_type(ty) {
             return Err(unsupported_type_error(ty));
         }
         Ok(Self::Choice(Box::new(ty.clone())))
@@ -438,6 +438,18 @@ fn is_known_unsupported_primitive(ty: &Type) -> bool {
             | "f32"
             | "f64"
     )
+}
+
+fn can_be_choice_type(ty: &Type) -> bool {
+    let Type::Path(type_path) = ty else {
+        return false;
+    };
+    type_path.qself.is_none()
+        && type_path
+            .path
+            .segments
+            .iter()
+            .all(|segment| matches!(segment.arguments, PathArguments::None))
 }
 
 fn unsupported_type_error(ty: &Type) -> Error {

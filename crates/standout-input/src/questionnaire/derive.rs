@@ -46,7 +46,7 @@ impl QuestionnaireChoiceParseError {
 
 impl std::fmt::Display for QuestionnaireChoiceParseError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "expected one of: {}", self.choices.to_vec().join(", "))
+        write!(f, "expected one of: {}", self.choices.join(", "))
     }
 }
 
