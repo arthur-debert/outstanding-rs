@@ -49,8 +49,11 @@ impl Questionnaire {
     /// Each field renders as one question line — cosmetic display number and
     /// wording, a parenthesized type hint, and the line-terminal
     /// `<id:...>` tag — with the answer expected on the following lines. A
-    /// field with a declared default renders the default pre-filled as its
-    /// answer text; every other field leaves the answer area blank. A group
+    /// field with a declared static default renders the default pre-filled
+    /// as its answer text; every other field — including one with a
+    /// [dynamic default](super::DynamicDefault), whose value depends on
+    /// other answers a static sheet cannot see — leaves the answer area
+    /// blank. A group
     /// renders its heading line (ending with the group's tag) and its
     /// children with nested cosmetic numbering; a repeatable group renders
     /// exactly its declared minimum number of occurrence blocks and concise

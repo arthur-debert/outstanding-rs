@@ -114,8 +114,24 @@
 //! (or keep its untouched pre-filled default), while a *populated* inactive
 //! field is an error — stale intent is never silently discarded.
 //!
-//! Interactive collection gives immediate feedback: a failed answer
-//! re-prompts that one question, keeping earlier answers. Batch collection
+//! A default may also be *dynamic* ([`ScalarField::with_dynamic_default`]):
+//! a closure computing the default from earlier decoded answers in the same
+//! scope chain, paired with a mandatory declared revision that enters the
+//! fingerprint in place of a static value (closures cannot be hashed — the
+//! [`DynamicDefault`] revision contract mirrors [`FieldValidator`]'s).
+//! Dynamic-default fields render with an empty answer region — a sheet
+//! cannot pre-fill a value that depends on other answers — and a blank
+//! answer resolves through the computed default identically across
+//! interactive, file, and stdin collection; interactive prompts show the
+//! computed default. Like a condition, a dynamic default may only depend on
+//! earlier-declared fields ([`DynamicDefault`] documents the contract).
+//!
+//! Interactive collection gives immediate feedback: a failed *entered*
+//! answer re-prompts that one question, keeping earlier answers. A
+//! non-input outcome (a responder `Skip`, or mid-collection terminal loss)
+//! is not an entry: blank resolution still applies, but on a required field
+//! without a default it terminates the pass with an error instead of
+//! re-prompting a source that will never answer. Batch collection
 //! (file / stdin) reads the whole document and accumulates every
 //! independent diagnostic — syntax, identity, missing values, conversion,
 //! field validation, and the application's whole-form rules — in one pass,
@@ -128,8 +144,9 @@
 //! matches of all three; a stale sheet gets a diagnostic asking for a
 //! freshly rendered one, never a guessed field mapping. The fingerprint
 //! covers every semantic property that changes accepted answers — IDs,
-//! kinds, optionality, defaults, constraints, conditions, and declared
-//! validator revisions — and ignores wording, numbering, and ordering. Copy
+//! kinds, optionality, defaults (static values and declared dynamic-default
+//! revisions), constraints, conditions, and declared validator revisions —
+//! and ignores wording, numbering, and ordering. Copy
 //! edits keep old sheets valid; semantic changes reliably invalidate them.
 //!
 //! The fingerprint is a compatibility checksum only. It does not
@@ -239,9 +256,9 @@ mod fingerprint;
 mod parse;
 mod render;
 
-pub use decode::{AnswerValue, Answers, FormError, ValidationDiagnostic};
+pub use decode::{AnswerValue, Answers, EarlierAnswers, FormError, ValidationDiagnostic};
 pub use definition::{
-    Condition, Constraint, FieldValidator, Group, Item, Questionnaire, QuestionnaireError, Repeat,
-    ScalarField, ScalarKind,
+    Condition, Constraint, DynamicDefault, FieldValidator, Group, Item, Questionnaire,
+    QuestionnaireError, Repeat, ScalarField, ScalarKind,
 };
 pub use parse::{AnswerSheetDiagnostic, RawAnswers};

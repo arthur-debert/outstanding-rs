@@ -8,9 +8,10 @@
 //!
 //! - **Semantic** (identity-bearing): the questionnaire ID, each field's and
 //!   group's stable ID, group structure and [`Repeat`] bounds, each field's
-//!   [`ScalarKind`], its optionality, its declared default, its
-//!   [`Constraint`], its conditional-applicability [`Condition`], and the
-//!   revision of any attached [`FieldValidator`]. These feed the
+//!   [`ScalarKind`], its optionality, its declared default (a static value,
+//!   or the revision of a [`DynamicDefault`]), its [`Constraint`], its
+//!   conditional-applicability [`Condition`], and the revision of any
+//!   attached [`FieldValidator`]. These feed the
 //!   [fingerprint](Questionnaire::fingerprint) and determine how answers are
 //!   decoded and validated.
 //! - **Cosmetic** (presentation-only): question wording and item order.
@@ -38,7 +39,7 @@
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
-use super::decode::{check_field_text, AnswerValue};
+use super::decode::{check_field_text, AnswerValue, EarlierAnswers};
 use super::fingerprint::compute_fingerprint;
 
 /// The kind of value a scalar field collects.
@@ -182,13 +183,94 @@ impl PartialEq for FieldValidator {
 
 impl Eq for FieldValidator {}
 
+/// The shared closure type behind a [`DynamicDefault`]: computes a default
+/// value from the earlier decoded answers in the same scope chain.
+type DefaultCompute = Arc<dyn Fn(&EarlierAnswers<'_>) -> String + Send + Sync>;
+
+/// An application-supplied dynamic default with an explicit semantic
+/// revision, computed from earlier answers instead of declared statically.
+///
+/// Real interactive flows need context-dependent defaults — a field whose
+/// sensible default depends on how an earlier question was answered. The
+/// closure receives an [`EarlierAnswers`] view of the decoded answers that
+/// precede this field in the same scope chain and returns the default text,
+/// which then runs through the exact same kind / constraint / validator
+/// pipeline as any submitted answer, identically across interactive, file,
+/// and stdin collection.
+///
+/// Because closure semantics cannot be fingerprinted, the application
+/// declares an explicit `revision` string that enters the
+/// [fingerprint](Questionnaire::fingerprint) *in place of* a static default
+/// value — exactly the [`FieldValidator`] revision contract: bump the
+/// revision whenever the computed defaults change, and previously rendered
+/// sheets are invalidated like any other semantic change. The closure itself
+/// never affects the fingerprint.
+///
+/// # Dependency contract
+///
+/// Like a [condition](ScalarField::active_when), a dynamic default may only
+/// depend on fields declared *before* its own field, in the same group or an
+/// enclosing one. Construction cannot introspect the closure to enforce
+/// this, so the walk order defines the failure behavior instead: the
+/// [`EarlierAnswers`] view resolves lookups against the answers decoded so
+/// far, and a later-declared, out-of-scope, unknown, unanswered, or inactive
+/// field simply reads as `None`. The closure must return a usable default
+/// for every combination of `None`s it can observe.
+#[derive(Clone)]
+pub struct DynamicDefault {
+    revision: String,
+    compute: DefaultCompute,
+}
+
+impl DynamicDefault {
+    /// Create a dynamic default with a semantic `revision` and a `compute`
+    /// closure that derives the default text from earlier answers.
+    pub fn new(
+        revision: impl Into<String>,
+        compute: impl Fn(&EarlierAnswers<'_>) -> String + Send + Sync + 'static,
+    ) -> Self {
+        Self {
+            revision: revision.into(),
+            compute: Arc::new(compute),
+        }
+    }
+
+    /// The semantic revision that participates in the fingerprint.
+    pub fn revision(&self) -> &str {
+        &self.revision
+    }
+
+    /// Compute the default from the earlier decoded answers.
+    pub(crate) fn compute(&self, earlier: &EarlierAnswers<'_>) -> String {
+        (self.compute)(earlier)
+    }
+}
+
+impl std::fmt::Debug for DynamicDefault {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("DynamicDefault")
+            .field("revision", &self.revision)
+            .finish_non_exhaustive()
+    }
+}
+
+/// Equality compares the semantic revision only; the closure itself is not
+/// comparable, and the revision is the declared semantic identity.
+impl PartialEq for DynamicDefault {
+    fn eq(&self, other: &Self) -> bool {
+        self.revision == other.revision
+    }
+}
+
+impl Eq for DynamicDefault {}
+
 /// One scalar question in a questionnaire.
 ///
 /// The `id` is the stable machine identity rendered as the line-terminal
 /// tag (`<id:project.name>`); the `prompt` is human wording and may be
 /// edited freely without affecting compatibility. Everything else — kind,
-/// optionality, default, constraint, condition, and validator revision — is
-/// semantic.
+/// optionality, default (static value or dynamic-default revision),
+/// constraint, condition, and validator revision — is semantic.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ScalarField {
     pub(crate) id: String,
@@ -196,6 +278,7 @@ pub struct ScalarField {
     pub(crate) kind: ScalarKind,
     pub(crate) optional: bool,
     pub(crate) default: Option<String>,
+    pub(crate) dynamic_default: Option<DynamicDefault>,
     pub(crate) constraint: Option<Constraint>,
     pub(crate) condition: Option<Condition>,
     pub(crate) validator: Option<FieldValidator>,
@@ -214,6 +297,7 @@ impl ScalarField {
             kind,
             optional: false,
             default: None,
+            dynamic_default: None,
             constraint: None,
             condition: None,
             validator: None,
@@ -229,16 +313,34 @@ impl ScalarField {
         self
     }
 
-    /// Declare a default value.
+    /// Declare a static default value.
     ///
     /// The renderer pre-fills the default as the answer text below the
     /// question line, and during decoding any blank answer resolves to the
     /// default *before* optionality is considered. Defaults must be a
     /// single line with no outer whitespace (parsed answers are trimmed)
     /// and must themselves decode cleanly. Defaults are semantic: they
-    /// change the fingerprint.
+    /// change the fingerprint. A field declares either a static default or
+    /// a [dynamic one](Self::with_dynamic_default), never both.
     pub fn with_default(mut self, default: impl Into<String>) -> Self {
         self.default = Some(default.into());
+        self
+    }
+
+    /// Declare a dynamic default, computed from earlier decoded answers.
+    ///
+    /// The same blank rule applies as for a static default — a blank answer
+    /// resolves through the *computed* default before optionality,
+    /// identically across interactive, file, and stdin collection — but the
+    /// rendered sheet leaves the answer region empty (a sheet cannot
+    /// pre-fill a value that depends on other answers), and interactive
+    /// prompting shows the computed default in the prompt message. The
+    /// declared revision is semantic and enters the fingerprint in place of
+    /// a static value; see [`DynamicDefault`] for the revision and
+    /// dependency contracts. A field declares either a static default or a
+    /// dynamic one, never both.
+    pub fn with_dynamic_default(mut self, dynamic_default: DynamicDefault) -> Self {
+        self.dynamic_default = Some(dynamic_default);
         self
     }
 
@@ -304,9 +406,14 @@ impl ScalarField {
         self.optional
     }
 
-    /// The declared default, if any (semantic).
+    /// The declared static default, if any (semantic).
     pub fn default(&self) -> Option<&str> {
         self.default.as_deref()
+    }
+
+    /// The declared dynamic default, if any (its revision is semantic).
+    pub fn dynamic_default(&self) -> Option<&DynamicDefault> {
+        self.dynamic_default.as_ref()
     }
 
     /// The declared constraint, if any (semantic).
@@ -657,6 +764,20 @@ pub enum QuestionnaireError {
         /// The field carrying the validator.
         id: String,
     },
+
+    /// A field declares both a static and a dynamic default.
+    #[error("Field '{id}' declares both a static and a dynamic default: a field takes one or the other, never both.")]
+    ConflictingDefaults {
+        /// The field carrying both defaults.
+        id: String,
+    },
+
+    /// An attached dynamic default declares an empty semantic revision.
+    #[error("Field '{id}' attaches a dynamic default with an empty revision: the revision is the dynamic default's semantic identity and must be non-empty.")]
+    EmptyDefaultRevision {
+        /// The field carrying the dynamic default.
+        id: String,
+    },
 }
 
 /// An application-owned questionnaire definition.
@@ -722,8 +843,10 @@ impl Questionnaire {
     ///
     /// Returns a [`QuestionnaireError`] for an invalid questionnaire or item
     /// ID, a duplicate ID, an empty item list, an empty group, invalid
-    /// repeat bounds, a child ID that does not extend its group's ID, or an
-    /// invalid default, constraint, condition, or validator revision.
+    /// repeat bounds, a child ID that does not extend its group's ID, a
+    /// field declaring both a static and a dynamic default, or an invalid
+    /// default, constraint, condition, validator revision, or
+    /// dynamic-default revision.
     pub fn new(
         id: impl Into<String>,
         items: Vec<impl Into<Item>>,
@@ -1038,8 +1161,24 @@ fn validate_condition(
 
 /// Reject defaults that could not survive the shared decoder, the
 /// single-line pre-filled rendering, or the render/parse round trip (outer
-/// whitespace is trimmed away at parse time).
+/// whitespace is trimmed away at parse time) — and default declarations
+/// that conflict (static and dynamic together) or carry an empty
+/// dynamic-default revision. A dynamic default's *computed* values cannot
+/// be validated here (the closure runs against answers that do not exist
+/// yet); they are checked by the shared decoder at decode time instead.
 fn validate_default(field: &ScalarField) -> Result<(), QuestionnaireError> {
+    if let Some(dynamic) = &field.dynamic_default {
+        if field.default.is_some() {
+            return Err(QuestionnaireError::ConflictingDefaults {
+                id: field.id.clone(),
+            });
+        }
+        if dynamic.revision().is_empty() {
+            return Err(QuestionnaireError::EmptyDefaultRevision {
+                id: field.id.clone(),
+            });
+        }
+    }
     let Some(default) = &field.default else {
         return Ok(());
     };
