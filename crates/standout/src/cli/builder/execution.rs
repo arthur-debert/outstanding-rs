@@ -421,10 +421,11 @@ impl AppBuilder {
     /// and exits with its typed status: Clap usage errors use 2, runtime
     /// failures use 1, and an application-declared `ExternalFailure` preserves
     /// its exact nonzero status and verbatim diagnostic. Final text and binary
-    /// writes are framework-owned; a write failure is diagnosed on stderr and exits 1.
-    /// Callers needing fine-grained control over exit codes should use
-    /// [`Self::run_to_string`] or [`Self::dispatch_from`] and match on
-    /// `RunResult` themselves.
+    /// writes are framework-owned; a write failure is diagnosed on stderr and exits 1,
+    /// except that a text stdout `BrokenPipe` is treated as successful early
+    /// consumer termination. Callers needing fine-grained control over exit
+    /// codes should use [`Self::run_to_string`] or [`Self::dispatch_from`] and
+    /// match on `RunResult` themselves.
     ///
     /// # Example
     ///
@@ -479,6 +480,10 @@ impl AppBuilder {
     ///
     /// Similar to `run()`, but returns the output instead of printing it.
     /// Useful for testing or when you need to capture and process the output.
+    /// Framework warnings queued during the run are drained into
+    /// [`standout_render::warnings::take_captured_warnings`] instead of
+    /// printing to stderr, so consecutive in-process runs do not leak warnings
+    /// into each other.
     ///
     /// # Returns
     ///
@@ -515,7 +520,9 @@ impl AppBuilder {
         I: IntoIterator<Item = T>,
         T: Into<std::ffi::OsString> + Clone,
     {
-        self.dispatch_from(cmd, args)
+        let result = self.dispatch_from(cmd, args);
+        standout_render::warnings::capture_warnings_for_run();
+        result
     }
 
     /// Augments a command for dispatch (adds --output flag without help subcommand).
@@ -776,12 +783,7 @@ fn emit_run_result<W: Write, E: Write>(
         RunResult::Handled(output) => writeln!(stdout, "{}", output)
             .and_then(|()| stdout.flush())
             .err()
-            .map(|error| {
-                RunError::new(
-                    format!("Error writing stdout: {}", error),
-                    RunErrorKind::FinalWrite(OutputKind::Text),
-                )
-            }),
+            .and_then(|error| final_write_error_unless_broken_pipe(error, OutputKind::Text)),
         RunResult::Binary(bytes, _) => stdout
             .write_all(bytes)
             .and_then(|()| stdout.flush())
@@ -818,6 +820,20 @@ fn emit_run_result<W: Write, E: Write>(
         let _ = writeln!(stderr, "{}", error).and_then(|()| stderr.flush());
     }
     (true, failure)
+}
+
+fn final_write_error_unless_broken_pipe(
+    error: std::io::Error,
+    kind: OutputKind,
+) -> Option<RunError> {
+    if kind == OutputKind::Text && error.kind() == std::io::ErrorKind::BrokenPipe {
+        None
+    } else {
+        Some(RunError::new(
+            format!("Error writing stdout: {}", error),
+            RunErrorKind::FinalWrite(kind),
+        ))
+    }
 }
 
 #[cfg(test)]
@@ -2754,21 +2770,20 @@ header:
     }
 
     #[test]
-    fn final_text_and_binary_write_failures_keep_payload_kind() {
+    fn final_text_broken_pipe_is_successful_early_termination() {
         let mut stderr = Vec::new();
         let (_, text_failure) = emit_run_result(
             &RunResult::Handled(RunOutput::command("hello")),
             &mut FailingWriter,
             &mut stderr,
         );
-        let text_failure = text_failure.unwrap();
-        assert_eq!(
-            text_failure.kind(),
-            RunErrorKind::FinalWrite(OutputKind::Text)
-        );
-        assert_eq!(text_failure.exit_status(), crate::cli::ExitStatus::FAILURE);
+        assert!(text_failure.is_none());
+        assert!(stderr.is_empty());
+    }
 
-        stderr.clear();
+    #[test]
+    fn final_binary_write_failures_keep_payload_kind() {
+        let mut stderr = Vec::new();
         let (_, binary_failure) = emit_run_result(
             &RunResult::Binary(vec![0, 1], "data.bin".into()),
             &mut FailingWriter,
@@ -2786,7 +2801,7 @@ header:
     }
 
     #[test]
-    fn final_text_and_binary_flush_failures_keep_payload_kind() {
+    fn final_text_broken_pipe_flush_is_successful_early_termination() {
         let mut text_stdout = FlushFailingWriter::default();
         let (_, text_failure) = emit_run_result(
             &RunResult::Handled(RunOutput::command("hello")),
@@ -2794,11 +2809,11 @@ header:
             &mut Vec::new(),
         );
         assert_eq!(text_stdout.bytes, b"hello\n");
-        assert_eq!(
-            text_failure.unwrap().kind(),
-            RunErrorKind::FinalWrite(OutputKind::Text)
-        );
+        assert!(text_failure.is_none());
+    }
 
+    #[test]
+    fn final_binary_flush_failures_keep_payload_kind() {
         let mut binary_stdout = FlushFailingWriter::default();
         let (_, binary_failure) = emit_run_result(
             &RunResult::Binary(vec![0, 1], "data.bin".into()),

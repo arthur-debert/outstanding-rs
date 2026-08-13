@@ -162,6 +162,26 @@ fn questions_renders_a_deterministic_sheet_and_generates_nothing() {
 }
 
 #[test]
+fn questions_stdout_broken_pipe_is_successful_early_termination() {
+    let dir = TempDir::new().unwrap();
+    let mut child = Command::new(env!("CARGO_BIN_EXE_standout"))
+        .current_dir(dir.path())
+        .arg("new-project")
+        .arg("questions")
+        .env(TERMINAL_SEAM_VAR, "absent")
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .unwrap();
+    drop(child.stdout.take());
+    let output = child.wait_with_output().unwrap();
+
+    assert!(output.status.success(), "stderr: {}", stderr(&output));
+    assert!(stderr(&output).is_empty());
+    assert!(dir_entries(dir.path()).is_empty());
+}
+
+#[test]
 fn questions_writes_the_same_sheet_to_a_named_file() {
     let dir = TempDir::new().unwrap();
 

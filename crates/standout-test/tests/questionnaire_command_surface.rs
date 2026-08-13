@@ -156,6 +156,37 @@ fn stdin_answers_decode_through_shared_pipeline() {
 
 #[test]
 #[serial(questionnaire)]
+fn answer_sheet_warnings_are_captured_and_do_not_leak() {
+    let calls = Arc::new(AtomicUsize::new(0));
+    let app = derived_app(calls);
+
+    let warned = TestHarness::new()
+        .fixture(
+            "answers.txt",
+            answered_sheet("name with <id:fragment> suffix"),
+        )
+        .run(
+            &app,
+            command(),
+            ["fixture", "collect", "--answers", "answers.txt", "--yes"],
+        );
+
+    warned.assert_success();
+    warned.assert_warning_contains("answer sheet answers.txt");
+    warned.assert_warning_contains("name");
+
+    let clean = TestHarness::new()
+        .prompts(Arc::new(ScriptedResponder::new([PromptResponse::text(
+            "interactive",
+        )])))
+        .run(&app, command(), ["fixture", "collect", "--yes"]);
+
+    clean.assert_success();
+    assert!(clean.warnings().is_empty(), "{:?}", clean.warnings());
+}
+
+#[test]
+#[serial(questionnaire)]
 fn terminal_stdin_is_rejected_for_explicit_answers_dash() {
     let calls = Arc::new(AtomicUsize::new(0));
     let app = derived_app(calls.clone());
