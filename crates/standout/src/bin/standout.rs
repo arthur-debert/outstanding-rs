@@ -7,9 +7,10 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use anyhow::{anyhow, bail, Context, Result};
 use clap::{Parser, Subcommand};
 use minijinja::context;
+use standout_input::env::{DefaultStdin, StdinReader};
 use standout_input::questionnaire::{
-    AnswerValue, Answers, FieldValidator, FormError, Group, Item, Questionnaire, ScalarField,
-    ScalarKind,
+    AnswerSheetDiagnostic, AnswerValue, Answers, FieldValidator, FormError, Group, Item,
+    Questionnaire, RawAnswers, ScalarField, ScalarKind,
 };
 use standout_render::template::new_environment;
 
@@ -25,10 +26,18 @@ enum Commands {
     /// Generate the smallest runnable Standout workspace.
     NewProject {
         /// Generate from a completed answer sheet instead of interactive
-        /// prompts. The named file replaces question collection entirely;
-        /// the review and confirmation gate still follows.
+        /// prompts: a named file, or `-` to read exactly one complete sheet
+        /// from piped stdin. Either form replaces question collection
+        /// entirely; the review and confirmation gate still follows, and
+        /// submitting a sheet never implies consent to generate.
         #[arg(long, value_name = "FILE")]
         answers: Option<PathBuf>,
+
+        /// Skip the confirmation prompt (for automation). Parsing,
+        /// validation, the review output, and atomic publication all still
+        /// run; only the final "type 'yes'" gate is bypassed.
+        #[arg(long)]
+        yes: bool,
 
         #[command(subcommand)]
         command: Option<NewProjectCommand>,
@@ -48,31 +57,78 @@ enum NewProjectCommand {
 
 fn main() -> Result<()> {
     match Cli::parse().command {
-        Commands::NewProject { answers, command } => match (command, answers) {
-            (Some(NewProjectCommand::Questions { file }), None) => {
+        Commands::NewProject {
+            answers,
+            yes,
+            command,
+        } => match (command, answers, yes) {
+            (Some(NewProjectCommand::Questions { file }), None, false) => {
                 render_questions(file.as_deref())
             }
-            (Some(NewProjectCommand::Questions { .. }), Some(_)) => {
+            (Some(NewProjectCommand::Questions { .. }), _, _) => {
                 bail!(
                     "`questions` renders the blank answer sheet and cannot be combined \
-                     with --answers; run `standout new-project --answers FILE` to \
-                     generate from a completed sheet"
+                     with --answers or --yes; run `standout new-project --answers FILE` \
+                     to generate from a completed sheet"
                 )
             }
-            (None, answers) => run_new_project(answers.as_deref()),
+            (None, answers, yes) => run_new_project(answers.as_deref(), yes),
         },
+    }
+}
+
+/// The answer-sheet source an `--answers` value selects: a named file, or
+/// exactly one complete sheet read from piped stdin (`--answers -`). Sheets
+/// never merge with prompts or with each other.
+enum SheetSource {
+    File(PathBuf),
+    Stdin,
+}
+
+impl SheetSource {
+    fn from_flag(value: &Path) -> Self {
+        if value == Path::new("-") {
+            Self::Stdin
+        } else {
+            Self::File(value.to_path_buf())
+        }
+    }
+
+    /// The source's name in diagnostics ("answer sheet <label> has …").
+    fn label(&self) -> String {
+        match self {
+            Self::File(path) => path.display().to_string(),
+            Self::Stdin => "from stdin".to_string(),
+        }
+    }
+
+    fn answers(&self) -> Result<WizardAnswers, Vec<String>> {
+        match self {
+            Self::File(path) => sheet_answers(path),
+            Self::Stdin => stdin_sheet_answers(&DefaultStdin),
+        }
     }
 }
 
 /// Run the wizard end to end: collect [`WizardAnswers`] from exactly one
 /// source — interactive prompts, or a completed answer sheet named by
-/// `answers_file` (sources never merge) — then take both through the same
-/// review, confirmation, and atomic publication gate. Every collection or
-/// validation failure, a rejected confirmation, and cancellation all return
+/// `answers_file` (a file path, or `-` for piped stdin; sources never
+/// merge) — then take every mode through the same review, confirmation,
+/// and atomic publication gate.
+///
+/// Confirmation policy: submitting a sheet never implies consent, and no
+/// stdin byte or EOF can ever confirm. Interactive runs confirm on the
+/// prompt stream they were already attending. Sheet runs without
+/// `assume_yes` confirm through the attended-terminal seam
+/// ([`AttendedTerminal`]) — independent of stdin by construction — and fail
+/// with guidance when no attended terminal exists. `assume_yes` (`--yes`)
+/// skips only that final gate. Every collection or validation failure, a
+/// missing terminal, a rejected confirmation, and cancellation all return
 /// before any destination file is written.
-fn run_new_project(answers_file: Option<&Path>) -> Result<()> {
-    let answers = match answers_file {
-        Some(path) => match sheet_answers(path) {
+fn run_new_project(answers_file: Option<&Path>, assume_yes: bool) -> Result<()> {
+    let source = answers_file.map(SheetSource::from_flag);
+    let answers = match &source {
+        Some(sheet) => match sheet.answers() {
             Ok(answers) => answers,
             Err(diagnostics) => {
                 for diagnostic in &diagnostics {
@@ -80,7 +136,7 @@ fn run_new_project(answers_file: Option<&Path>) -> Result<()> {
                 }
                 bail!(
                     "answer sheet {} has {} problem(s); nothing was generated",
-                    path.display(),
+                    sheet.label(),
                     diagnostics.len()
                 );
             }
@@ -96,7 +152,14 @@ fn run_new_project(answers_file: Option<&Path>) -> Result<()> {
     };
     let spec = ProjectSpec::from_answers(answers)?;
     write_review(&spec, &mut io::stdout())?;
-    if !confirm(&mut io::stdin().lock(), &mut io::stdout())? {
+    let confirmed = if assume_yes {
+        true
+    } else if source.is_some() {
+        confirm_attended(attended_terminal_from_env()?.as_mut())?
+    } else {
+        confirm(&mut io::stdin().lock(), &mut io::stdout())?
+    };
+    if !confirmed {
         println!("Generation cancelled.");
         return Ok(());
     }
@@ -531,12 +594,160 @@ fn prompt_command_input(input: &mut dyn BufRead, output: &mut dyn Write) -> Resu
     })
 }
 
+/// The confirmation question every mode asks; only an exact trimmed `yes`
+/// reply confirms, everything else — including EOF — cancels.
+const CONFIRM_QUESTION: &str = "Generate this project? Type 'yes' to continue: ";
+
+/// Interactive-mode confirmation on the prompt stream the user is already
+/// attending. Answer-sheet runs never come here — they confirm through
+/// [`confirm_attended`], independent of stdin.
 fn confirm(input: &mut dyn BufRead, output: &mut dyn Write) -> Result<bool> {
-    write!(output, "Generate this project? Type 'yes' to continue: ")?;
+    write!(output, "{CONFIRM_QUESTION}")?;
     output.flush()?;
     let mut line = String::new();
     input.read_line(&mut line)?;
     Ok(line.trim() == "yes")
+}
+
+/// The attended-terminal seam answer-sheet runs confirm through.
+///
+/// By construction it is independent of stdin: the production
+/// implementation talks to the controlling terminal device, so nothing an
+/// answer sheet pipes in — content, trailing bytes, or EOF — can ever reach
+/// the confirmation gate.
+trait AttendedTerminal {
+    /// Whether a human-attended terminal is present to prompt.
+    fn is_attended(&self) -> bool;
+
+    /// Show `question` on the terminal and read one reply line.
+    /// `Ok(None)` is end of input — the caller treats it as a rejection,
+    /// never as consent.
+    fn ask(&mut self, question: &str) -> Result<Option<String>>;
+}
+
+/// Ask the attended confirmation question through `terminal`. Fails with
+/// actionable guidance when no attended terminal exists — an absent
+/// terminal is an error, never implicit approval — and confirms only on an
+/// exact trimmed `yes` reply.
+fn confirm_attended(terminal: &mut dyn AttendedTerminal) -> Result<bool> {
+    if !terminal.is_attended() {
+        bail!(
+            "confirmation requires an attended terminal, but none is available; \
+             rerun in a terminal to review and confirm, or pass --yes to generate \
+             without a confirmation prompt; nothing was generated"
+        );
+    }
+    let reply = terminal.ask(CONFIRM_QUESTION)?;
+    Ok(reply.is_some_and(|line| line.trim() == "yes"))
+}
+
+/// The production [`AttendedTerminal`]: the process's controlling terminal
+/// device (`/dev/tty` on Unix, `CONIN$`/`CONOUT$` on Windows), opened at
+/// confirmation time. Opening the device fails exactly when no attended
+/// terminal exists, whatever stdin/stdout are redirected to.
+struct ControllingTerminal;
+
+#[cfg(unix)]
+fn open_controlling_terminal() -> Option<(fs::File, fs::File)> {
+    let read = fs::OpenOptions::new().read(true).open("/dev/tty").ok()?;
+    let write = fs::OpenOptions::new().write(true).open("/dev/tty").ok()?;
+    Some((read, write))
+}
+
+#[cfg(windows)]
+fn open_controlling_terminal() -> Option<(fs::File, fs::File)> {
+    let read = fs::OpenOptions::new()
+        .read(true)
+        .write(true)
+        .open("CONIN$")
+        .ok()?;
+    let write = fs::OpenOptions::new()
+        .read(true)
+        .write(true)
+        .open("CONOUT$")
+        .ok()?;
+    Some((read, write))
+}
+
+impl AttendedTerminal for ControllingTerminal {
+    fn is_attended(&self) -> bool {
+        open_controlling_terminal().is_some()
+    }
+
+    fn ask(&mut self, question: &str) -> Result<Option<String>> {
+        let (read, mut write) = open_controlling_terminal()
+            .ok_or_else(|| anyhow!("the controlling terminal is no longer available"))?;
+        write.write_all(question.as_bytes())?;
+        write.flush()?;
+        let mut line = String::new();
+        if io::BufReader::new(read).read_line(&mut line)? == 0 {
+            return Ok(None);
+        }
+        Ok(Some(line))
+    }
+}
+
+/// A scripted [`AttendedTerminal`] for tests that must run the production
+/// binary without a real terminal: either no terminal at all, or a fixed
+/// reply script. Questions echo to stdout so CLI transcripts can assert the
+/// prompt appeared without a terminal device in the loop.
+struct ScriptedTerminal {
+    attended: bool,
+    replies: std::collections::VecDeque<String>,
+}
+
+impl ScriptedTerminal {
+    fn absent() -> Self {
+        Self {
+            attended: false,
+            replies: std::collections::VecDeque::new(),
+        }
+    }
+
+    fn from_replies(replies: impl IntoIterator<Item = String>) -> Self {
+        Self {
+            attended: true,
+            replies: replies.into_iter().collect(),
+        }
+    }
+}
+
+impl AttendedTerminal for ScriptedTerminal {
+    fn is_attended(&self) -> bool {
+        self.attended
+    }
+
+    fn ask(&mut self, question: &str) -> Result<Option<String>> {
+        print!("{question}");
+        io::stdout().flush()?;
+        Ok(self.replies.pop_front())
+    }
+}
+
+/// The env var that swaps the attended-terminal seam for tests. This is a
+/// TEST SEAM, not user configuration: unset means the real controlling
+/// terminal; `absent` simulates a missing terminal; any other value names a
+/// file whose lines are the scripted terminal replies.
+const TERMINAL_SEAM_VAR: &str = "STANDOUT_NEW_PROJECT_TERMINAL";
+
+/// Resolve the [`AttendedTerminal`] the confirmation gate uses, honoring
+/// the [`TERMINAL_SEAM_VAR`] test seam.
+fn attended_terminal_from_env() -> Result<Box<dyn AttendedTerminal>> {
+    match std::env::var_os(TERMINAL_SEAM_VAR) {
+        None => Ok(Box::new(ControllingTerminal)),
+        Some(value) if value == "absent" => Ok(Box::new(ScriptedTerminal::absent())),
+        Some(path) => {
+            let script = fs::read_to_string(&path).with_context(|| {
+                format!(
+                    "failed to read the scripted terminal replies from {}",
+                    Path::new(&path).display()
+                )
+            })?;
+            Ok(Box::new(ScriptedTerminal::from_replies(
+                script.lines().map(ToOwned::to_owned),
+            )))
+        }
+    }
 }
 
 fn prompt_result_shape(input: &mut dyn BufRead, output: &mut dyn Write) -> Result<ResultShape> {
@@ -1135,31 +1346,47 @@ fn wizard_answers_from(answers: &Answers) -> WizardAnswers {
     }
 }
 
-/// Collect [`WizardAnswers`] from one completed answer sheet.
+/// Collect [`WizardAnswers`] from one completed answer sheet named by path.
 ///
 /// Reading, parsing, decoding, and the wizard's whole-form rules all run
 /// before anything else happens; failures return every accumulated
 /// diagnostic, already rendered for display. This path never merges other
 /// sources and performs no generation itself — the caller still runs the
-/// review, confirmation, and publication gate.
+/// review, confirmation, and publication gate ([`stdin_sheet_answers`] is
+/// the `--answers -` counterpart sharing the same [`decode_sheet`] tail).
 fn sheet_answers(path: &Path) -> Result<WizardAnswers, Vec<String>> {
     let questionnaire = wizard_questionnaire();
-    let raw = questionnaire
-        .read_answer_sheet_file(path)
-        .map_err(|diagnostics| {
-            diagnostics
-                .iter()
-                .map(ToString::to_string)
-                .collect::<Vec<_>>()
-        })?;
+    let raw = questionnaire.read_answer_sheet_file(path);
+    decode_sheet(&questionnaire, raw)
+}
+
+/// [`sheet_answers`] for `--answers -`: read exactly one complete answer
+/// sheet from `reader` (piped stdin in production, an injected
+/// [`StdinReader`] in tests) to end of input, then decode it through the
+/// identical parse, decode, and whole-form pipeline as a named file — the
+/// two sources produce identical validated answers for identical documents.
+/// Interactive-terminal stdin is a collection error, and nothing read here
+/// ever reaches the confirmation gate.
+fn stdin_sheet_answers(reader: &dyn StdinReader) -> Result<WizardAnswers, Vec<String>> {
+    let questionnaire = wizard_questionnaire();
+    let raw = questionnaire.read_answer_sheet_stdin_with(reader);
+    decode_sheet(&questionnaire, raw)
+}
+
+/// The collection-source-independent tail of sheet reading: decode raw
+/// sheet answers with the wizard's whole-form rules and convert them to
+/// [`WizardAnswers`], rendering any accumulated diagnostics for display.
+fn decode_sheet(
+    questionnaire: &Questionnaire,
+    raw: Result<RawAnswers, Vec<AnswerSheetDiagnostic>>,
+) -> Result<WizardAnswers, Vec<String>> {
+    fn rendered(diagnostics: Vec<impl ToString>) -> Vec<String> {
+        diagnostics.iter().map(ToString::to_string).collect()
+    }
+    let raw = raw.map_err(rendered)?;
     let answers = questionnaire
         .decode_answers_with(&raw, wizard_form_rules)
-        .map_err(|diagnostics| {
-            diagnostics
-                .iter()
-                .map(ToString::to_string)
-                .collect::<Vec<_>>()
-        })?;
+        .map_err(rendered)?;
     Ok(wizard_answers_from(&answers))
 }
 
@@ -3778,13 +4005,8 @@ mod tests {
     /// parse, shared decoding, wizard whole-form rules, domain conversion.
     fn decode_sheet(sheet: &str) -> Result<WizardAnswers, Vec<String>> {
         let questionnaire = wizard_questionnaire();
-        let raw = questionnaire
-            .parse_answer_sheet(sheet)
-            .map_err(|d| d.iter().map(ToString::to_string).collect::<Vec<_>>())?;
-        let answers = questionnaire
-            .decode_answers_with(&raw, wizard_form_rules)
-            .map_err(|d| d.iter().map(ToString::to_string).collect::<Vec<_>>())?;
-        Ok(wizard_answers_from(&answers))
+        let raw = questionnaire.parse_answer_sheet(sheet);
+        super::decode_sheet(&questionnaire, raw)
     }
 
     #[test]
@@ -3994,5 +4216,69 @@ mod tests {
 
         assert_eq!(errors.len(), 1);
         assert!(errors[0].contains("render a fresh answer sheet"));
+    }
+
+    /// One minimal valid `hello-tool` sheet for source-equivalence tests.
+    fn minimal_sheet() -> String {
+        let sheet = wizard_questionnaire().render_answer_sheet();
+        let sheet = fill(&sheet, "project.name", "hello-tool");
+        let sheet = fill(&sheet, "command.name", "greet");
+        let sheet = fill(&sheet, "command.description", "Greet one value");
+        fill(&sheet, "command.inputs.name", "name")
+    }
+
+    #[test]
+    fn file_and_stdin_sheets_decode_to_identical_answers_and_specs() {
+        let sheet = minimal_sheet();
+        let dir = TempDir::new().unwrap();
+        let path = dir.path().join("answers.txt");
+        fs::write(&path, &sheet).unwrap();
+
+        let from_file = sheet_answers(&path).unwrap();
+        let from_stdin = stdin_sheet_answers(&standout_input::MockStdin::piped(&sheet)).unwrap();
+
+        assert_eq!(from_file, from_stdin);
+        assert_eq!(
+            ProjectSpec::from_answers(from_file).unwrap(),
+            ProjectSpec::from_answers(from_stdin).unwrap()
+        );
+    }
+
+    #[test]
+    fn terminal_stdin_cannot_supply_an_answer_sheet() {
+        let errors = stdin_sheet_answers(&standout_input::MockStdin::terminal()).unwrap_err();
+
+        assert_eq!(errors.len(), 1);
+        assert!(errors[0].contains("interactive terminal"));
+    }
+
+    #[test]
+    fn attended_confirmation_accepts_only_an_exact_yes() {
+        let confirmed = |reply: &str| {
+            confirm_attended(&mut ScriptedTerminal::from_replies([reply.to_string()])).unwrap()
+        };
+
+        assert!(confirmed("yes"));
+        assert!(confirmed("  yes  "));
+        assert!(!confirmed("no"));
+        assert!(!confirmed("YES please"));
+        assert!(!confirmed(""));
+    }
+
+    #[test]
+    fn attended_end_of_input_is_a_rejection_not_consent() {
+        let mut terminal = ScriptedTerminal::from_replies(Vec::<String>::new());
+
+        assert!(!confirm_attended(&mut terminal).unwrap());
+    }
+
+    #[test]
+    fn missing_attended_terminal_fails_with_guidance() {
+        let error = confirm_attended(&mut ScriptedTerminal::absent()).unwrap_err();
+
+        let message = error.to_string();
+        assert!(message.contains("attended terminal"));
+        assert!(message.contains("--yes"));
+        assert!(message.contains("nothing was generated"));
     }
 }
