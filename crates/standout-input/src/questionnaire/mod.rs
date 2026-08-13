@@ -63,11 +63,11 @@
 //! 2.1 What is the command name? [command.name] (string)
 //! ->
 //!
-//! 3. Describe a command input. [command.inputs] (repeatable section, minimum 1)
+//! 2.2 Describe a command input. [command.inputs] (repeatable section, minimum 1)
 //! (Add an item by copying one complete block - its heading line and its
 //! questions - below the last block, then answering the copy.)
 //!
-//! 3.1 What is its name? [command.inputs.name] (string)
+//! 2.2.1 What is its name? [command.inputs.name] (string)
 //! ->
 //! ```
 //!
@@ -75,7 +75,7 @@
 //! repeatable group. Adding an item is *copy-the-block* editing: copy one
 //! complete block — the group heading line and its questions — paste it
 //! below the last block, and answer the copy. Display numbers stay purely
-//! decorative: every copy may keep saying `3.1`, because the parser counts
+//! decorative: every copy may keep saying `2.2.1`, because the parser counts
 //! *occurrences of the stable group header* and nothing else — never
 //! numbering, wording, or any count written in prose.
 //!

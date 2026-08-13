@@ -570,7 +570,7 @@ pub enum QuestionnaireError {
     DuplicateId(String),
 
     /// The questionnaire declares no items.
-    #[error("A questionnaire must declare at least one field.")]
+    #[error("A questionnaire must declare at least one item (field or group).")]
     NoFields,
 
     /// A group declares no children.
