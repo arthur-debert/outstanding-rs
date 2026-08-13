@@ -939,6 +939,142 @@ fn inactive_optional_conditional_scalar_and_choice_fields_fill_as_none() {
     );
 }
 
+#[derive(Debug, PartialEq, Eq, Questionnaire)]
+#[question(id = "demo.nested.controllers")]
+struct NestedControllerPlan {
+    /// Global runtime?
+    #[question(id = "global.runtime", choice)]
+    global_runtime: RuntimeMode,
+
+    /// Services?
+    #[question(min = 2, max = 2)]
+    services: Vec<NestedControllerService>,
+}
+
+#[derive(Debug, PartialEq, Eq, Questionnaire)]
+#[question(id = "demo.nested.controllers.service")]
+struct NestedControllerService {
+    /// Service runtime?
+    #[question(id = "service.runtime", choice)]
+    runtime: RuntimeMode,
+
+    /// Details?
+    details: NestedControllerDetails,
+}
+
+#[derive(Debug, PartialEq, Eq, Questionnaire)]
+#[question(id = "demo.nested.controllers.details")]
+struct NestedControllerDetails {
+    /// Image inherited from the global runtime?
+    #[question(active_when(field = "global_runtime", is = "docker"))]
+    inherited_image: Option<String>,
+
+    /// Image inherited from the current service runtime?
+    #[question(active_when(field = "runtime", is = "docker"))]
+    service_image: Option<String>,
+}
+
+fn hand_built_nested_controller_plan() -> RuntimeQuestionnaire {
+    use standout_input::questionnaire::{Group, Item};
+
+    RuntimeQuestionnaire::new(
+        "demo.nested.controllers",
+        vec![
+            Item::from(
+                ScalarField::new("global.runtime", "Global runtime?", ScalarKind::String)
+                    .one_of(["local", "docker"]),
+            ),
+            Item::from(
+                Group::new(
+                    "services",
+                    "Services?",
+                    vec![
+                        Item::from(
+                            ScalarField::new(
+                                "services.service.runtime",
+                                "Service runtime?",
+                                ScalarKind::String,
+                            )
+                            .one_of(["local", "docker"]),
+                        ),
+                        Item::from(Group::new(
+                            "services.details",
+                            "Details?",
+                            vec![
+                                ScalarField::new(
+                                    "services.details.inherited_image",
+                                    "Image inherited from the global runtime?",
+                                    ScalarKind::String,
+                                )
+                                .optional()
+                                .active_when("global.runtime", "docker"),
+                                ScalarField::new(
+                                    "services.details.service_image",
+                                    "Image inherited from the current service runtime?",
+                                    ScalarKind::String,
+                                )
+                                .optional()
+                                .active_when("services.service.runtime", "docker"),
+                            ],
+                        )),
+                    ],
+                )
+                .repeatable(2)
+                .max_occurrences(2),
+            ),
+        ],
+    )
+    .unwrap()
+}
+
+#[test]
+fn nested_active_when_resolves_enclosing_rust_field_names_to_stable_ids() {
+    let derived = NestedControllerPlan::questionnaire().unwrap();
+    let hand_built = hand_built_nested_controller_plan();
+
+    assert_eq!(derived, hand_built);
+    assert_eq!(derived.fingerprint(), hand_built.fingerprint());
+}
+
+#[test]
+fn nested_active_when_uses_the_current_repeated_group_occurrence() {
+    let questionnaire = NestedControllerPlan::questionnaire().unwrap();
+    let sheet = answer(
+        &questionnaire.render_answer_sheet(),
+        "global.runtime",
+        "docker",
+    );
+    let sheet = answer_occurrence(&sheet, "services.service.runtime", 0, "docker");
+    let sheet = answer_occurrence(&sheet, "services.details.inherited_image", 0, "global-one");
+    let sheet = answer_occurrence(&sheet, "services.details.service_image", 0, "service-one");
+    let sheet = answer_occurrence(&sheet, "services.service.runtime", 1, "local");
+    let sheet = answer_occurrence(&sheet, "services.details.inherited_image", 1, "global-two");
+    let raw = questionnaire.parse_answer_sheet(&sheet).unwrap();
+
+    assert_eq!(
+        NestedControllerPlan::from_raw_answers(&raw).unwrap(),
+        NestedControllerPlan {
+            global_runtime: RuntimeMode::Docker,
+            services: vec![
+                NestedControllerService {
+                    runtime: RuntimeMode::Docker,
+                    details: NestedControllerDetails {
+                        inherited_image: Some("global-one".to_string()),
+                        service_image: Some("service-one".to_string()),
+                    },
+                },
+                NestedControllerService {
+                    runtime: RuntimeMode::Local,
+                    details: NestedControllerDetails {
+                        inherited_image: Some("global-two".to_string()),
+                        service_image: None,
+                    },
+                },
+            ],
+        }
+    );
+}
+
 #[derive(Questionnaire)]
 #[question(id = "demo.empty-default-revision")]
 #[allow(dead_code)]
