@@ -119,7 +119,8 @@ impl Questionnaire {
     /// entered answer is a *local, retryable* error — the question
     /// re-prompts with the diagnostic and all previously accepted answers
     /// are kept. A blank entry follows the shared blank rule (default —
-    /// static or computed — first, then omission), a field with a
+    /// static or computed — first, then omission, then a required-answer
+    /// re-prompt), a field with a
     /// [`DynamicDefault`](super::DynamicDefault) shows its computed default
     /// in the prompt message, and inactive conditional fields are skipped
     /// without prompting.
@@ -240,11 +241,13 @@ impl<T: TerminalIO + 'static> Collector<'_, T> {
 
     /// Prompt for one field occurrence, retrying locally until an answer
     /// decodes (inactive occurrences are skipped without prompting). A
-    /// non-input outcome — a responder `Skip`, a blank entry, or
-    /// mid-collection terminal loss — follows the shared blank rule; when
-    /// the blank rule cannot resolve it (a required field without a
-    /// default), collection terminates with [`InputError::NoInput`] instead
-    /// of re-prompting a source that produced no input.
+    /// blank *entry* follows the shared blank rule — default, then
+    /// omission — and re-prompts when the rule cannot resolve it (a
+    /// required field without a default). A non-input outcome — a
+    /// responder `Skip`, or mid-collection terminal loss — resolves
+    /// through the same blank rule, but when the rule cannot absorb it,
+    /// collection terminates with [`InputError::NoInput`] instead of
+    /// re-prompting a source that produced no input.
     fn collect_field(&mut self, field: &ScalarField, chain: &[ScopeCtx]) -> Result<(), InputError> {
         let path = chain
             .last()
@@ -270,9 +273,11 @@ impl<T: TerminalIO + 'static> Collector<'_, T> {
         let base = interactive_message(field, computed.as_deref());
         let mut message = base.clone();
         loop {
-            // A blank entry (or a responder `Skip`) resolves to an empty
-            // string: the shared blank rule then decides between default,
-            // omission, and termination.
+            // A blank entry and a non-input outcome both resolve to an
+            // empty string: the shared blank rule then decides between
+            // default and omission. Where it cannot (required, no
+            // default), the decode error below re-prompts an entry but
+            // ends the pass on non-input.
             let response = self.prompt(message.clone())?;
             let entered = response.clone().unwrap_or_default();
             match decode_field(field, &path, Some(&entered), computed.as_deref()) {
@@ -302,7 +307,8 @@ impl<T: TerminalIO + 'static> Collector<'_, T> {
     }
 
     /// Ask whether to collect one more occurrence of a repeatable group.
-    /// Blank means no; a non-yes/no entry re-asks with the diagnostic.
+    /// Blank (an empty entry or a non-input outcome) means no; a non-yes/no
+    /// entry re-asks with the diagnostic.
     fn ask_add_another(&mut self, group: &Group) -> Result<bool, InputError> {
         let base = format!("Add another? {} (yes/no) ", group.prompt());
         let mut message = base.clone();
@@ -311,6 +317,7 @@ impl<T: TerminalIO + 'static> Collector<'_, T> {
                 None => return Ok(false),
                 Some(entered) => match parse_bool(&entered) {
                     Some(answer) => return Ok(answer),
+                    None if entered.trim().is_empty() => return Ok(false),
                     None => {
                         message = format!(
                             "Expected a yes/no answer (true, false, yes, no, y, or n). Try again: {base}"
@@ -321,15 +328,12 @@ impl<T: TerminalIO + 'static> Collector<'_, T> {
         }
     }
 
-    /// One prompt round trip: `Ok(None)` is a blank entry, cancellation and
-    /// I/O failures propagate.
+    /// One prompt round trip: `Ok(Some(text))` is an entered answer (a
+    /// blank line arrives as `Some("")`), `Ok(None)` is a non-input outcome
+    /// (a responder `Skip`, or a lost terminal); cancellation and I/O
+    /// failures propagate.
     fn prompt(&self, message: String) -> Result<Option<String>, InputError> {
-        let source = TextPromptSource::with_terminal(message, self.terminal.clone());
-        match source.prompt() {
-            Ok(text) => Ok(Some(text)),
-            Err(InputError::NoInput) => Ok(None),
-            Err(error) => Err(error),
-        }
+        TextPromptSource::with_terminal(message, self.terminal.clone()).prompt_entry()
     }
 }
 

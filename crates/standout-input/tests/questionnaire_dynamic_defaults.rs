@@ -67,7 +67,11 @@ fn answer(sheet: &str, id: &str, answer: &str) -> String {
 struct ResponderGuard;
 impl ResponderGuard {
     fn install(responses: impl IntoIterator<Item = PromptResponse>) -> Self {
-        set_default_prompt_responder(Arc::new(ScriptedResponder::new(responses)));
+        Self::install_with(Arc::new(ScriptedResponder::new(responses)))
+    }
+
+    fn install_with(responder: Arc<dyn PromptResponder>) -> Self {
+        set_default_prompt_responder(responder);
         Self
     }
 }
@@ -383,10 +387,8 @@ fn the_interactive_prompt_displays_the_computed_default() {
                 .collect(),
         ),
     });
-    set_default_prompt_responder(responder.clone());
-    let result = q.collect_interactive();
-    reset_default_prompt_responder();
-    result.unwrap();
+    let _guard = ResponderGuard::install_with(responder.clone());
+    q.collect_interactive().unwrap();
 
     let messages = responder.messages.lock().unwrap();
     let cardinality_prompt = messages
