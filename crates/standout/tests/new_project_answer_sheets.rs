@@ -1,11 +1,17 @@
 //! Real CLI flows for the bootstrap wizard's answer sheets: questionnaire
 //! rendering to stdout and a file, successful and failing `--answers FILE`
-//! submissions through the review and confirmation gate, stale fingerprints,
-//! accumulated batch errors, and the no-partial-write guarantee.
+//! and `--answers -` submissions through the review and confirmation gate,
+//! attended and rejected terminal confirmation, missing-terminal failure,
+//! automated `--yes` runs, stale fingerprints, accumulated batch errors, and
+//! the no-partial-write guarantee.
 //!
 //! Every test runs the production `standout` binary in a fresh temporary
-//! working directory without a real terminal; confirmation answers arrive on
-//! piped stdin, exactly as the wizard reads them in production.
+//! working directory without a real terminal. Confirmation never reads
+//! stdin — stdin only ever carries an answer sheet — so every run pins the
+//! binary's attended-terminal seam (`STANDOUT_NEW_PROJECT_TERMINAL`): to
+//! `absent` by default (a regression that reaches the confirmation gate
+//! fails fast instead of prompting the developer's terminal), or to a
+//! scripted replies file for attended flows.
 
 use std::fs;
 use std::io::Write as _;
@@ -14,15 +20,27 @@ use std::process::{Command, Output, Stdio};
 
 use tempfile::TempDir;
 
-/// Run the production wizard binary in `cwd` with `stdin` piped in. A run
-/// that fails fast (a missing answers file, a rejected sheet) may exit
-/// before reading stdin; the broken pipe that write then reports is an
-/// expected outcome, so the helper still returns the child's output for
-/// failure-mode assertions.
-fn run_standout(cwd: &Path, args: &[&str], stdin: &str) -> Output {
+/// The binary's attended-terminal test seam (see `ScriptedTerminal` in the
+/// binary): `absent` simulates no terminal; any other value names a file of
+/// scripted reply lines.
+const TERMINAL_SEAM_VAR: &str = "STANDOUT_NEW_PROJECT_TERMINAL";
+
+/// Run the production wizard binary in `cwd` with `stdin` piped in and the
+/// attended-terminal seam pinned to `terminal_seam`. A run that fails fast
+/// (a missing answers file, a rejected sheet) may exit before reading
+/// stdin; the broken pipe that write then reports is an expected outcome,
+/// so the helper still returns the child's output for failure-mode
+/// assertions.
+fn run_seamed(
+    cwd: &Path,
+    args: &[&str],
+    stdin: &str,
+    terminal_seam: impl AsRef<std::ffi::OsStr>,
+) -> Output {
     let mut child = Command::new(env!("CARGO_BIN_EXE_standout"))
         .current_dir(cwd)
         .args(args)
+        .env(TERMINAL_SEAM_VAR, terminal_seam)
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
@@ -36,6 +54,22 @@ fn run_standout(cwd: &Path, args: &[&str], stdin: &str) -> Output {
         );
     }
     child.wait_with_output().unwrap()
+}
+
+/// [`run_seamed`] with no attended terminal — the default, so any run that
+/// unexpectedly reaches the confirmation gate fails fast.
+fn run_standout(cwd: &Path, args: &[&str], stdin: &str) -> Output {
+    run_seamed(cwd, args, stdin, "absent")
+}
+
+/// [`run_seamed`] with an attended terminal scripted to answer `replies`
+/// (one line per prompt). The replies file lives outside `cwd`, keeping
+/// whole-directory no-partial-write assertions exact.
+fn run_attended(cwd: &Path, args: &[&str], stdin: &str, replies: &str) -> Output {
+    let terminal = TempDir::new().unwrap();
+    let script = terminal.path().join("replies.txt");
+    fs::write(&script, replies).unwrap();
+    run_seamed(cwd, args, stdin, &script)
 }
 
 fn stdout(output: &Output) -> String {
@@ -125,13 +159,14 @@ fn questions_writes_the_same_sheet_to_a_named_file() {
 }
 
 #[test]
-fn answers_file_generates_after_review_and_confirmation() {
+fn answers_file_generates_after_review_and_attended_confirmation() {
     let dir = TempDir::new().unwrap();
     fs::write(dir.path().join("answers.txt"), completed_sheet(dir.path())).unwrap();
 
-    let output = run_standout(
+    let output = run_attended(
         dir.path(),
         &["new-project", "--answers", "answers.txt"],
+        "",
         "yes\n",
     );
 
@@ -151,15 +186,195 @@ fn rejected_confirmation_leaves_the_destination_unwritten() {
     let dir = TempDir::new().unwrap();
     fs::write(dir.path().join("answers.txt"), completed_sheet(dir.path())).unwrap();
 
-    let output = run_standout(
+    let output = run_attended(
         dir.path(),
         &["new-project", "--answers", "answers.txt"],
+        "",
         "no\n",
     );
 
     assert!(output.status.success());
     assert!(stdout(&output).contains("Generation cancelled."));
     assert_eq!(dir_entries(dir.path()), ["answers.txt"]);
+}
+
+#[test]
+fn stdin_sheet_generates_after_review_and_attended_confirmation() {
+    let dir = TempDir::new().unwrap();
+    let sheet = completed_sheet(dir.path());
+
+    let output = run_attended(
+        dir.path(),
+        &["new-project", "--answers", "-"],
+        &sheet,
+        "yes\n",
+    );
+
+    assert!(output.status.success(), "stderr: {}", stderr(&output));
+    let transcript = stdout(&output);
+    assert!(transcript.contains("Review"));
+    assert!(transcript.contains("Generate this project? Type 'yes' to continue:"));
+    assert!(transcript.contains("Created hello-tool"));
+    assert!(dir.path().join("hello-tool/Cargo.toml").is_file());
+    assert_eq!(dir_entries(dir.path()), ["hello-tool"]);
+}
+
+#[test]
+fn stdin_sheet_rejected_on_the_terminal_writes_nothing() {
+    let dir = TempDir::new().unwrap();
+    let sheet = completed_sheet(dir.path());
+
+    let output = run_attended(
+        dir.path(),
+        &["new-project", "--answers", "-"],
+        &sheet,
+        "no\n",
+    );
+
+    assert!(output.status.success());
+    assert!(stdout(&output).contains("Generation cancelled."));
+    assert!(dir_entries(dir.path()).is_empty());
+}
+
+#[test]
+fn stdin_sheet_without_a_terminal_fails_before_publication_with_guidance() {
+    let dir = TempDir::new().unwrap();
+    let sheet = completed_sheet(dir.path());
+
+    let output = run_standout(dir.path(), &["new-project", "--answers", "-"], &sheet);
+
+    assert!(!output.status.success());
+    let errors = stderr(&output);
+    assert!(errors.contains("attended terminal"));
+    assert!(errors.contains("--yes"));
+    assert!(errors.contains("nothing was generated"));
+    assert!(dir_entries(dir.path()).is_empty());
+}
+
+#[test]
+fn stdin_sheet_with_yes_generates_without_any_terminal() {
+    let dir = TempDir::new().unwrap();
+    let sheet = completed_sheet(dir.path());
+
+    let output = run_standout(
+        dir.path(),
+        &["new-project", "--answers", "-", "--yes"],
+        &sheet,
+    );
+
+    assert!(output.status.success(), "stderr: {}", stderr(&output));
+    let transcript = stdout(&output);
+    assert!(transcript.contains("Review"));
+    assert!(!transcript.contains("Generate this project?"));
+    assert!(transcript.contains("Created hello-tool"));
+    assert!(dir.path().join("hello-tool/Cargo.toml").is_file());
+    assert_eq!(dir_entries(dir.path()), ["hello-tool"]);
+}
+
+#[test]
+fn named_file_with_yes_generates_without_any_terminal() {
+    let dir = TempDir::new().unwrap();
+    fs::write(dir.path().join("answers.txt"), completed_sheet(dir.path())).unwrap();
+
+    let output = run_standout(
+        dir.path(),
+        &["new-project", "--answers", "answers.txt", "--yes"],
+        "",
+    );
+
+    assert!(output.status.success(), "stderr: {}", stderr(&output));
+    let transcript = stdout(&output);
+    assert!(transcript.contains("Review"));
+    assert!(!transcript.contains("Generate this project?"));
+    assert!(transcript.contains("Created hello-tool"));
+    assert_eq!(dir_entries(dir.path()), ["answers.txt", "hello-tool"]);
+}
+
+#[test]
+fn attended_end_of_terminal_input_cancels_instead_of_confirming() {
+    let dir = TempDir::new().unwrap();
+    let sheet = completed_sheet(dir.path());
+
+    let output = run_attended(dir.path(), &["new-project", "--answers", "-"], &sheet, "");
+
+    assert!(output.status.success());
+    assert!(stdout(&output).contains("Generation cancelled."));
+    assert!(dir_entries(dir.path()).is_empty());
+}
+
+#[test]
+fn stdin_trailing_yes_never_confirms_and_writes_nothing() {
+    let dir = TempDir::new().unwrap();
+    let mut sheet = completed_sheet(dir.path());
+    sheet.push_str("yes\n");
+
+    let output = run_standout(dir.path(), &["new-project", "--answers", "-"], &sheet);
+
+    assert!(!output.status.success());
+    assert!(stderr(&output).contains("nothing was generated"));
+    assert!(dir_entries(dir.path()).is_empty());
+}
+
+#[test]
+fn stdin_stale_fingerprint_is_rejected_before_any_write() {
+    let dir = TempDir::new().unwrap();
+    let stale = completed_sheet(dir.path()).replacen(
+        "#! fingerprint: sha256:",
+        "#! fingerprint: sha256:00",
+        1,
+    );
+
+    let output = run_standout(
+        dir.path(),
+        &["new-project", "--answers", "-", "--yes"],
+        &stale,
+    );
+
+    assert!(!output.status.success());
+    let errors = stderr(&output);
+    assert!(errors.contains("render a fresh answer sheet"));
+    assert!(errors.contains("answer sheet from stdin"));
+    assert!(errors.contains("nothing was generated"));
+    assert!(dir_entries(dir.path()).is_empty());
+}
+
+#[test]
+fn stdin_sheet_accumulates_errors_and_writes_nothing() {
+    let dir = TempDir::new().unwrap();
+    let rendered = run_standout(dir.path(), &["new-project", "questions"], "");
+    let sheet = stdout(&rendered);
+    let sheet = fill(&sheet, "project.name", "9bad");
+    let sheet = fill(&sheet, "command.name", "greet");
+    let sheet = fill(&sheet, "command.description", "Greet one value");
+    let sheet = fill(&sheet, "command.inputs.name", "name");
+    let sheet = fill(&sheet, "command.inputs.sources", "argument,teleport");
+
+    let output = run_standout(
+        dir.path(),
+        &["new-project", "--answers", "-", "--yes"],
+        &sheet,
+    );
+
+    assert!(!output.status.success());
+    let errors = stderr(&output);
+    assert!(errors.contains("[project.name]"));
+    assert!(errors.contains("[command.inputs[0].sources]"));
+    assert!(errors.contains("2 problem(s)"));
+    assert!(dir_entries(dir.path()).is_empty());
+}
+
+#[test]
+fn interactive_stdin_cannot_supply_the_dash_answer_sheet() {
+    // Piped-but-empty stdin is the closest a real CLI test can get to the
+    // no-document case; the unit tests cover the interactive-terminal
+    // refusal through the injected reader.
+    let dir = TempDir::new().unwrap();
+
+    let output = run_standout(dir.path(), &["new-project", "--answers", "-", "--yes"], "");
+
+    assert!(!output.status.success());
+    assert!(stderr(&output).contains("nothing was generated"));
+    assert!(dir_entries(dir.path()).is_empty());
 }
 
 #[test]

@@ -60,6 +60,15 @@ standout new-project questions --file answers.txt
 
 # Generate from the completed file.
 standout new-project --answers answers.txt
+
+# Generate from an answer sheet on stdin, with attended confirmation.
+standout new-project --answers - < answers.txt
+
+# Generate from stdin without prompting for confirmation.
+standout new-project --answers - --yes < answers.txt
+
+# Automate a named-file run the same way.
+standout new-project --answers answers.txt --yes
 ```
 
 Each question renders with a cosmetic number, its wording, a bracketed stable
@@ -76,19 +85,33 @@ it means.
 `--answers` replaces question collection entirely — it never merges file
 answers with prompts — but everything after collection is the interactive
 experience: the same validation, the same review, and the same `yes`
-confirmation before anything is published. A sheet that fails to parse or
-validate reports every independent problem in one pass, each identified by
-its stable ID (for repeated inputs, an indexed path such as
+confirmation before anything is published. `--answers -` reads exactly one
+complete sheet from piped standard input instead of a file; both sources
+produce identical results for identical documents. A sheet that fails to
+parse or validate reports every independent problem in one pass, each
+identified by its stable ID (for repeated inputs, an indexed path such as
 `command.inputs[1].sources`), and publishes nothing; the same no-partial-write
 guarantee as the interactive wizard applies to every failure and rejection.
+
+Submitting a sheet is not consent to generate. Piping a file — or reaching
+its end — never confirms anything: without `--yes`, the wizard shows the
+review and asks for confirmation on your terminal, independent of the answer
+stream, and only an exact `yes` reply publishes the project. If confirmation
+is required but no attended terminal is available (a CI job, a redirected
+shell), the run fails before publishing anything and says so. Automation
+opts out of the prompt explicitly with `--yes`, which skips only the
+confirmation gate — parsing, validation, the review output, and atomic
+publication all still run.
 
 The sheet's `#!` preamble pins the answer format, the questionnaire ID, and a
 fingerprint of the questionnaire's semantics. A sheet rendered by an older
 `standout` whose questionnaire has since changed is rejected with a
 compatibility error rather than reinterpreted; render a fresh sheet with
 `standout new-project questions` and copy your answers into it. Answer sheets
-are plain text and hold whatever you answered — keep them out of version
-control and shared locations, and delete them when done.
+are plain text and hold whatever you answered — including any sensitive
+values — so keep them out of version control, shared locations, and shell
+history (piping with `< answers.txt` beats inlining a heredoc), and delete
+them when done.
 
 ## Supported inputs
 
