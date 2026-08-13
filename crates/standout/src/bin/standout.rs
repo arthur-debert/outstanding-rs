@@ -1165,10 +1165,18 @@ fn sheet_answers(path: &Path) -> Result<WizardAnswers, Vec<String>> {
 
 /// Render the blank bootstrap answer sheet to stdout, or to `file` when one
 /// is named. Rendering is deterministic and never generates project files.
+/// A stdout consumer that closes the pipe early (`… | head`) ends rendering
+/// successfully rather than failing the command.
 fn render_questions(file: Option<&Path>) -> Result<()> {
     let sheet = wizard_questionnaire().render_answer_sheet();
     match file {
-        None => io::stdout().write_all(sheet.as_bytes())?,
+        None => {
+            if let Err(error) = io::stdout().write_all(sheet.as_bytes()) {
+                if error.kind() != io::ErrorKind::BrokenPipe {
+                    return Err(error).context("failed to write the answer sheet to stdout");
+                }
+            }
+        }
         Some(path) => fs::write(path, &sheet)
             .with_context(|| format!("failed to write the answer sheet to {}", path.display()))?,
     }

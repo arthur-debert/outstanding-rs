@@ -14,7 +14,11 @@ use std::process::{Command, Output, Stdio};
 
 use tempfile::TempDir;
 
-/// Run the production wizard binary in `cwd` with `stdin` piped in.
+/// Run the production wizard binary in `cwd` with `stdin` piped in. A run
+/// that fails fast (a missing answers file, a rejected sheet) may exit
+/// before reading stdin; the broken pipe that write then reports is an
+/// expected outcome, so the helper still returns the child's output for
+/// failure-mode assertions.
 fn run_standout(cwd: &Path, args: &[&str], stdin: &str) -> Output {
     let mut child = Command::new(env!("CARGO_BIN_EXE_standout"))
         .current_dir(cwd)
@@ -24,12 +28,13 @@ fn run_standout(cwd: &Path, args: &[&str], stdin: &str) -> Output {
         .stderr(Stdio::piped())
         .spawn()
         .unwrap();
-    child
-        .stdin
-        .as_mut()
-        .unwrap()
-        .write_all(stdin.as_bytes())
-        .unwrap();
+    if let Err(error) = child.stdin.as_mut().unwrap().write_all(stdin.as_bytes()) {
+        assert_eq!(
+            error.kind(),
+            std::io::ErrorKind::BrokenPipe,
+            "writing the child's stdin failed: {error}"
+        );
+    }
     child.wait_with_output().unwrap()
 }
 
