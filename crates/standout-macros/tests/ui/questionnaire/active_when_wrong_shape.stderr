@@ -1,0 +1,5 @@
+error: unknown question attribute: expected id, default, prose, choice, repeated, min, max, active_when, default_with, validate, or revision
+  --> tests/ui/questionnaire/active_when_wrong_shape.rs:10:16
+   |
+10 |     #[question(active_when = "enabled")]
+   |                ^^^^^^^^^^^

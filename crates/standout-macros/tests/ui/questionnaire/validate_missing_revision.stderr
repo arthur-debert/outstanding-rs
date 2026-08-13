@@ -1,0 +1,5 @@
+error: default_with and validate require revision = "..."
+  --> tests/ui/questionnaire/validate_missing_revision.rs:12:27
+   |
+12 |     #[question(validate = validate)]
+   |                           ^^^^^^^^

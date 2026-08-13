@@ -5,8 +5,9 @@ use serial_test::serial;
 use standout_input::env::MockStdin;
 use standout_input::questionnaire::QuestionnaireChoices as _;
 use standout_input::questionnaire::{
-    AnswerSheetDiagnostic, Questionnaire as RuntimeQuestionnaire, QuestionnaireError,
-    QuestionnaireInput, QuestionnaireInputError, ScalarField, ScalarKind, ValidationDiagnostic,
+    AnswerSheetDiagnostic, AnswerValue, DynamicDefault, EarlierAnswers, FieldValidator,
+    Questionnaire as RuntimeQuestionnaire, QuestionnaireError, QuestionnaireInput,
+    QuestionnaireInputError, ScalarField, ScalarKind, ValidationDiagnostic,
 };
 use standout_input::{
     reset_default_prompt_responder, set_default_prompt_responder, PromptResponse, ScriptedResponder,
@@ -702,6 +703,305 @@ fn choice_order_is_cosmetic_but_renaming_is_semantic_for_fingerprints() {
 
     assert_eq!(a.fingerprint(), b.fingerprint());
     assert_ne!(a.fingerprint(), renamed.fingerprint());
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, QuestionnaireChoices)]
+enum RuntimeMode {
+    Local,
+    Docker,
+}
+
+fn image_default(earlier: &EarlierAnswers<'_>) -> String {
+    match earlier.get_text("runtime") {
+        Some("docker") => "debian:stable".to_string(),
+        _ => "localhost".to_string(),
+    }
+}
+
+fn image_default_v2(_: &EarlierAnswers<'_>) -> String {
+    "debian:bookworm".to_string()
+}
+
+fn validate_image(value: &AnswerValue) -> Result<(), String> {
+    let Some(text) = value.as_text() else {
+        return Ok(());
+    };
+    if text.contains(':') {
+        Ok(())
+    } else {
+        Err("the image must include a tag".to_string())
+    }
+}
+
+fn validate_image_v2(_: &AnswerValue) -> Result<(), String> {
+    Ok(())
+}
+
+#[derive(Debug, PartialEq, Eq, Questionnaire)]
+#[question(id = "demo.hooks")]
+struct HookedProfile {
+    /// Runtime?
+    #[question(choice)]
+    runtime: RuntimeMode,
+
+    /// Container image?
+    #[question(
+        active_when(field = "runtime", is = "docker"),
+        default_with = image_default,
+        validate = validate_image,
+        revision = "image-hooks-v1"
+    )]
+    image: Option<String>,
+}
+
+fn hand_built_hooked_profile() -> RuntimeQuestionnaire {
+    RuntimeQuestionnaire::new(
+        "demo.hooks",
+        vec![
+            ScalarField::new("runtime", "Runtime?", ScalarKind::String).one_of(["local", "docker"]),
+            ScalarField::new("image", "Container image?", ScalarKind::String)
+                .optional()
+                .with_dynamic_default(DynamicDefault::new("image-hooks-v1", image_default))
+                .active_when("runtime", "docker")
+                .with_validator(FieldValidator::new("image-hooks-v1", validate_image)),
+        ],
+    )
+    .unwrap()
+}
+
+#[test]
+fn behavior_hooks_match_hand_built_definition_and_fingerprint() {
+    let derived = HookedProfile::questionnaire().unwrap();
+    let hand_built = hand_built_hooked_profile();
+
+    assert_eq!(derived, hand_built);
+    assert_eq!(derived.fingerprint(), hand_built.fingerprint());
+}
+
+#[test]
+fn behavior_hooks_round_trip_through_sheet_decode() {
+    let questionnaire = HookedProfile::questionnaire().unwrap();
+
+    let sheet = answer(&questionnaire.render_answer_sheet(), "runtime", "docker");
+    let raw = questionnaire.parse_answer_sheet(&sheet).unwrap();
+    assert_eq!(
+        HookedProfile::from_raw_answers(&raw).unwrap(),
+        HookedProfile {
+            runtime: RuntimeMode::Docker,
+            image: Some("debian:stable".to_string()),
+        }
+    );
+
+    let sheet = answer(&questionnaire.render_answer_sheet(), "runtime", "local");
+    let raw = questionnaire.parse_answer_sheet(&sheet).unwrap();
+    assert_eq!(
+        HookedProfile::from_raw_answers(&raw).unwrap(),
+        HookedProfile {
+            runtime: RuntimeMode::Local,
+            image: None,
+        }
+    );
+
+    let sheet = answer(&sheet, "image", "debian:stable");
+    let raw = questionnaire.parse_answer_sheet(&sheet).unwrap();
+    assert!(matches!(
+        HookedProfile::from_raw_answers(&raw).unwrap_err(),
+        QuestionnaireInputError::Validation(diagnostics)
+            if diagnostics.iter().any(|diagnostic| matches!(
+                diagnostic,
+                ValidationDiagnostic::InactiveAnswered { id, .. } if id == "image"
+            ))
+    ));
+
+    let sheet = answer(&questionnaire.render_answer_sheet(), "runtime", "docker");
+    let sheet = answer(&sheet, "image", "debian");
+    let raw = questionnaire.parse_answer_sheet(&sheet).unwrap();
+    assert!(matches!(
+        HookedProfile::from_raw_answers(&raw).unwrap_err(),
+        QuestionnaireInputError::Validation(diagnostics)
+            if diagnostics.iter().any(|diagnostic| matches!(
+                diagnostic,
+                ValidationDiagnostic::FieldValidation { id, message }
+                    if id == "image" && message == "the image must include a tag"
+            ))
+    ));
+}
+
+#[test]
+#[serial(prompt_responder)]
+fn behavior_hooks_round_trip_through_interactive_decode() {
+    let questionnaire = HookedProfile::questionnaire().unwrap();
+    let _guard = ResponderGuard::install([
+        PromptResponse::text("docker"),
+        PromptResponse::Skip, // image: blank -> computed default
+    ]);
+    let raw = questionnaire.collect_interactive().unwrap();
+
+    assert_eq!(
+        HookedProfile::from_raw_answers(&raw).unwrap(),
+        HookedProfile {
+            runtime: RuntimeMode::Docker,
+            image: Some("debian:stable".to_string()),
+        }
+    );
+}
+
+#[derive(Debug, Questionnaire)]
+#[question(id = "demo.hooks")]
+#[allow(dead_code)]
+struct HookedProfileRevisionV2 {
+    /// Runtime?
+    #[question(choice)]
+    runtime: RuntimeMode,
+
+    /// Container image?
+    #[question(
+        active_when(field = "runtime", is = "docker"),
+        default_with = image_default_v2,
+        validate = validate_image,
+        revision = "image-hooks-v2"
+    )]
+    image: Option<String>,
+}
+
+#[derive(Debug, Questionnaire)]
+#[question(id = "demo.hooks")]
+#[allow(dead_code)]
+struct HookedProfileValidatorRevisionV2 {
+    /// Runtime?
+    #[question(choice)]
+    runtime: RuntimeMode,
+
+    /// Container image?
+    #[question(
+        active_when(field = "runtime", is = "docker"),
+        default_with = image_default,
+        validate = validate_image_v2,
+        revision = "validator-v2"
+    )]
+    image: Option<String>,
+}
+
+#[test]
+fn hook_revisions_participate_in_the_fingerprint() {
+    let base = HookedProfile::questionnaire().unwrap();
+    let default_revision = HookedProfileRevisionV2::questionnaire().unwrap();
+    let validator_revision = HookedProfileValidatorRevisionV2::questionnaire().unwrap();
+
+    assert_ne!(base.fingerprint(), default_revision.fingerprint());
+    assert_ne!(base.fingerprint(), validator_revision.fingerprint());
+}
+
+#[derive(Questionnaire)]
+#[question(id = "demo.empty-default-revision")]
+#[allow(dead_code)]
+struct EmptyDefaultRevision {
+    /// Name?
+    #[question(default_with = image_default, revision = "")]
+    name: String,
+}
+
+#[derive(Questionnaire)]
+#[question(id = "demo.empty-validator-revision")]
+#[allow(dead_code)]
+struct EmptyValidatorRevision {
+    /// Name?
+    #[question(validate = validate_image, revision = "")]
+    name: String,
+}
+
+#[test]
+fn empty_hook_revisions_are_rejected_by_the_builder() {
+    assert!(matches!(
+        EmptyDefaultRevision::questionnaire().unwrap_err(),
+        QuestionnaireError::EmptyDefaultRevision { id } if id == "name"
+    ));
+    assert!(matches!(
+        EmptyValidatorRevision::questionnaire().unwrap_err(),
+        QuestionnaireError::EmptyValidatorRevision { id } if id == "name"
+    ));
+}
+
+#[derive(Questionnaire)]
+#[question(id = "demo.unknown-controller")]
+#[allow(dead_code)]
+struct UnknownController {
+    /// Name?
+    #[question(active_when(field = "ghost", is = "yes"))]
+    name: String,
+}
+
+#[derive(Questionnaire)]
+#[question(id = "demo.later-controller")]
+#[allow(dead_code)]
+struct LaterController {
+    /// Name?
+    #[question(active_when(field = "enabled", is = "yes"))]
+    name: String,
+
+    /// Enabled?
+    enabled: bool,
+}
+
+#[derive(Questionnaire)]
+#[question(id = "demo.scope")]
+#[allow(dead_code)]
+struct ScopedController {
+    /// First?
+    first: ScopedFirst,
+
+    /// Second?
+    second: ScopedSecond,
+}
+
+#[derive(Questionnaire)]
+#[question(id = "demo.scope.first")]
+#[allow(dead_code)]
+struct ScopedFirst {
+    /// Enabled?
+    enabled: bool,
+}
+
+#[derive(Questionnaire)]
+#[question(id = "demo.scope.second")]
+#[allow(dead_code)]
+struct ScopedSecond {
+    /// Name?
+    #[question(active_when(field = "first.enabled", is = "yes"))]
+    name: String,
+}
+
+#[derive(Questionnaire)]
+#[question(id = "demo.never")]
+#[allow(dead_code)]
+struct NeverMatchingController {
+    /// Runtime?
+    #[question(choice)]
+    runtime: RuntimeMode,
+
+    /// Image?
+    #[question(active_when(field = "runtime", is = "podman"))]
+    image: String,
+}
+
+#[test]
+fn active_when_surfaces_builder_controller_diagnostics() {
+    assert!(matches!(
+        UnknownController::questionnaire().unwrap_err(),
+        QuestionnaireError::UnknownConditionController { controller, .. } if controller == "ghost"
+    ));
+    assert!(matches!(
+        LaterController::questionnaire().unwrap_err(),
+        QuestionnaireError::ConditionOrder { controller, .. } if controller == "enabled"
+    ));
+    assert!(matches!(
+        ScopedController::questionnaire().unwrap_err(),
+        QuestionnaireError::ConditionScope { controller, .. } if controller == "first.enabled"
+    ));
+    assert!(matches!(
+        NeverMatchingController::questionnaire().unwrap_err(),
+        QuestionnaireError::InvalidCondition { id, .. } if id == "image"
+    ));
 }
 
 #[test]

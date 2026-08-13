@@ -423,7 +423,11 @@ pub fn seekable_derive(input: TokenStream) -> TokenStream {
 /// `Vec<PathBuf>` lower to a single comma-separated scalar answer unless
 /// `#[question(repeated)]` opts them into a single-field repeatable group.
 /// `#[question(default = "...")]` declares a static default, and
-/// `#[question(prose)]` opts a `String` field into multi-line text.
+/// `#[question(default_with = path::to::fn, revision = "...")]` declares a
+/// dynamic default. `#[question(validate = path::to::fn, revision = "...")]`
+/// attaches a field validator, `#[question(active_when(field = "...", is =
+/// "..."))]` declares conditional applicability, and `#[question(prose)]`
+/// opts a `String` field into multi-line text.
 #[proc_macro_derive(Questionnaire, attributes(question))]
 pub fn questionnaire_derive(input: TokenStream) -> TokenStream {
     let input = parse_macro_input!(input as DeriveInput);
