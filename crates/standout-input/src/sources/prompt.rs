@@ -23,6 +23,24 @@ pub trait TerminalIO: Send + Sync {
     fn read_line(&self) -> io::Result<String>;
 }
 
+/// Sharing one terminal across several prompt sources: an `Arc<T>` delegates
+/// to the wrapped terminal, so a single (possibly stateful mock) terminal can
+/// back a sequence of [`TextPromptSource`] / [`ConfirmPromptSource`] values —
+/// e.g. one prompt per questionnaire field.
+impl<T: TerminalIO + ?Sized> TerminalIO for Arc<T> {
+    fn is_terminal(&self) -> bool {
+        (**self).is_terminal()
+    }
+
+    fn write_prompt(&self, prompt: &str) -> io::Result<()> {
+        (**self).write_prompt(prompt)
+    }
+
+    fn read_line(&self) -> io::Result<String> {
+        (**self).read_line()
+    }
+}
+
 /// Real terminal I/O.
 #[derive(Debug, Default, Clone, Copy)]
 pub struct RealTerminal;

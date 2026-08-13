@@ -35,7 +35,7 @@ pub use stdin::{read_if_piped, StdinSource};
 pub use editor::{EditorRunner, EditorSource, MockEditorResult, MockEditorRunner};
 
 #[cfg(feature = "simple-prompts")]
-pub use prompt::{ConfirmPromptSource, MockTerminal, TerminalIO, TextPromptSource};
+pub use prompt::{ConfirmPromptSource, MockTerminal, RealTerminal, TerminalIO, TextPromptSource};
 
 #[cfg(feature = "inquire")]
 pub use inquire_adapters::{

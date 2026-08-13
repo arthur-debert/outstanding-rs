@@ -40,10 +40,11 @@
 //! # Questionnaire answer sheets
 //!
 //! The [`questionnaire`] module renders an application-defined questionnaire
-//! as an editable prose answer sheet and parses the edited document back into
-//! raw answers by stable field identity. See the module documentation for the
-//! format, the application/library ownership boundary, and the exact-match
-//! compatibility contract.
+//! as an editable prose answer sheet, collects answers interactively or from
+//! a named file or explicit stdin, and decodes every submission through one
+//! shared validation pipeline keyed by stable field identity. See the module
+//! documentation for the format, the application/library ownership boundary,
+//! and the exact-match compatibility contract.
 //!
 //! # Testing
 //!
