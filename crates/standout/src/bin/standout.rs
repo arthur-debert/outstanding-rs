@@ -625,17 +625,23 @@ trait AttendedTerminal {
     fn ask(&mut self, question: &str) -> Result<Option<String>>;
 }
 
+/// The guidance for a missing attended terminal at confirmation time —
+/// shared by [`confirm_attended`]'s upfront check and
+/// [`ControllingTerminal::ask`] (the terminal can disappear between the
+/// two), so the same user-visible condition always gets the same
+/// rerun-or-`--yes` advice.
+const NO_ATTENDED_TERMINAL: &str =
+    "confirmation requires an attended terminal, but none is available; \
+     rerun in a terminal to review and confirm, or pass --yes to generate \
+     without a confirmation prompt; nothing was generated";
+
 /// Ask the attended confirmation question through `terminal`. Fails with
 /// actionable guidance when no attended terminal exists — an absent
 /// terminal is an error, never implicit approval — and confirms only on an
 /// exact trimmed `yes` reply.
 fn confirm_attended(terminal: &mut dyn AttendedTerminal) -> Result<bool> {
     if !terminal.is_attended() {
-        bail!(
-            "confirmation requires an attended terminal, but none is available; \
-             rerun in a terminal to review and confirm, or pass --yes to generate \
-             without a confirmation prompt; nothing was generated"
-        );
+        bail!(NO_ATTENDED_TERMINAL);
     }
     let reply = terminal.ask(CONFIRM_QUESTION)?;
     Ok(reply.is_some_and(|line| line.trim() == "yes"))
@@ -656,16 +662,11 @@ fn open_controlling_terminal() -> Option<(fs::File, fs::File)> {
 
 #[cfg(windows)]
 fn open_controlling_terminal() -> Option<(fs::File, fs::File)> {
-    let read = fs::OpenOptions::new()
-        .read(true)
-        .write(true)
-        .open("CONIN$")
-        .ok()?;
-    let write = fs::OpenOptions::new()
-        .read(true)
-        .write(true)
-        .open("CONOUT$")
-        .ok()?;
+    // Minimal access only: broader access (e.g. GENERIC_WRITE on CONIN$) is
+    // needed solely for console-mode changes this gate never makes, and
+    // requesting it can fail on consoles a read/write-only open accepts.
+    let read = fs::OpenOptions::new().read(true).open("CONIN$").ok()?;
+    let write = fs::OpenOptions::new().write(true).open("CONOUT$").ok()?;
     Some((read, write))
 }
 
@@ -675,8 +676,8 @@ impl AttendedTerminal for ControllingTerminal {
     }
 
     fn ask(&mut self, question: &str) -> Result<Option<String>> {
-        let (read, mut write) = open_controlling_terminal()
-            .ok_or_else(|| anyhow!("the controlling terminal is no longer available"))?;
+        let (read, mut write) =
+            open_controlling_terminal().ok_or_else(|| anyhow!(NO_ATTENDED_TERMINAL))?;
         write.write_all(question.as_bytes())?;
         write.flush()?;
         let mut line = String::new();

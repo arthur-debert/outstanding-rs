@@ -31,7 +31,12 @@ const TERMINAL_SEAM_VAR: &str = "STANDOUT_NEW_PROJECT_TERMINAL";
 /// stdin; the broken pipe that write then reports is an expected outcome,
 /// so the helper still returns the child's output for failure-mode
 /// assertions.
-fn run_seamed(cwd: &Path, args: &[&str], stdin: &str, terminal_seam: &str) -> Output {
+fn run_seamed(
+    cwd: &Path,
+    args: &[&str],
+    stdin: &str,
+    terminal_seam: impl AsRef<std::ffi::OsStr>,
+) -> Output {
     let mut child = Command::new(env!("CARGO_BIN_EXE_standout"))
         .current_dir(cwd)
         .args(args)
@@ -64,7 +69,7 @@ fn run_attended(cwd: &Path, args: &[&str], stdin: &str, replies: &str) -> Output
     let terminal = TempDir::new().unwrap();
     let script = terminal.path().join("replies.txt");
     fs::write(&script, replies).unwrap();
-    run_seamed(cwd, args, stdin, script.to_str().unwrap())
+    run_seamed(cwd, args, stdin, &script)
 }
 
 fn stdout(output: &Output) -> String {
