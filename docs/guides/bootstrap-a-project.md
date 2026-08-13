@@ -45,6 +45,51 @@ Answer an exact uppercase `X` at any questionnaire prompt to cancel the wizard.
 Cancellation is not an error: the wizard publishes no files and reports that
 generation was cancelled.
 
+## Work from an answer sheet
+
+Long or repeated questionnaires are easier to complete in an editor than one
+prompt at a time. The wizard can render its complete questionnaire as a prose
+*answer sheet* and later generate the project from the completed file:
+
+```sh
+# Print the blank questionnaire; nothing is generated.
+standout new-project questions
+
+# Write the same deterministic sheet to a file.
+standout new-project questions --file answers.txt
+
+# Generate from the completed file.
+standout new-project --answers answers.txt
+```
+
+Each question renders with a cosmetic number, its wording, a bracketed stable
+ID such as `[project.name]`, and a `->` marker line for the answer. Write the
+answer on the marker line; a `text` answer such as the command description may
+continue over the following lines. Declared defaults are pre-filled — leave
+them untouched to accept them, and leave the executable name blank to reuse
+the project name. The repeatable input section renders one block; add another
+input by copying the complete block — its heading line and its questions —
+below the last block and answering the copy. Only the bracketed IDs carry
+meaning: rewording, renumbering, or re-indenting a sheet does not change what
+it means.
+
+`--answers` replaces question collection entirely — it never merges file
+answers with prompts — but everything after collection is the interactive
+experience: the same validation, the same review, and the same `yes`
+confirmation before anything is published. A sheet that fails to parse or
+validate reports every independent problem in one pass, each identified by
+its stable ID (for repeated inputs, an indexed path such as
+`command.inputs[1].sources`), and publishes nothing; the same no-partial-write
+guarantee as the interactive wizard applies to every failure and rejection.
+
+The sheet's `#!` preamble pins the answer format, the questionnaire ID, and a
+fingerprint of the questionnaire's semantics. A sheet rendered by an older
+`standout` whose questionnaire has since changed is rejected with a
+compatibility error rather than reinterpreted; render a fresh sheet with
+`standout new-project questions` and copy your answers into it. Answer sheets
+are plain text and hold whatever you answered — keep them out of version
+control and shared locations, and delete them when done.
+
 ## Supported inputs
 
 The first release deliberately supports a small, explicit matrix:
