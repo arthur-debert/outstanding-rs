@@ -14,12 +14,12 @@ use syn::{
     parse::{Parse, ParseStream},
     punctuated::Punctuated,
     spanned::Spanned,
-    Attribute, Data, DeriveInput, Error, Expr, ExprLit, Field, Fields, GenericArgument, Lit, Meta,
-    PathArguments, Result, Token, Type, Variant,
+    Attribute, Data, DeriveInput, Error, Expr, ExprLit, ExprPath, Field, Fields, GenericArgument,
+    Lit, Meta, Path, PathArguments, Result, Token, Type, Variant,
 };
 
 /// Parsed `#[question(...)]` attributes.
-#[derive(Debug, Default)]
+#[derive(Default)]
 struct QuestionAttr {
     id: Option<(String, Span)>,
     default: Option<(String, Span)>,
@@ -28,11 +28,75 @@ struct QuestionAttr {
     repeated: Option<Span>,
     min: Option<(usize, Span)>,
     max: Option<(usize, Span)>,
+    active_when: Option<ActiveWhenAttr>,
+    default_with: Option<(Path, Span)>,
+    validate: Option<(Path, Span)>,
+    revision: Option<(String, Span)>,
 }
 
-#[derive(Debug, Default)]
+#[derive(Default)]
 struct ChoiceAttr {
     rename: Option<(String, Span)>,
+}
+
+#[derive(Clone)]
+struct ActiveWhenAttr {
+    field: String,
+    expected: String,
+}
+
+impl Parse for ActiveWhenAttr {
+    fn parse(input: ParseStream) -> Result<Self> {
+        let content: Punctuated<Meta, Token![,]> = Punctuated::parse_terminated(input)?;
+        let mut field = None;
+        let mut expected = None;
+
+        for meta in content {
+            match meta {
+                Meta::NameValue(nv) if nv.path.is_ident("field") => {
+                    let (value, span) =
+                        string_lit(&nv.value, "active_when field must be a string literal")?;
+                    if field.replace((value, span)).is_some() {
+                        return Err(Error::new(
+                            nv.path.span(),
+                            "duplicate active_when field attribute",
+                        ));
+                    }
+                }
+                Meta::NameValue(nv) if nv.path.is_ident("is") => {
+                    let (value, span) =
+                        string_lit(&nv.value, "active_when is must be a string literal")?;
+                    if expected.replace((value, span)).is_some() {
+                        return Err(Error::new(
+                            nv.path.span(),
+                            "duplicate active_when is attribute",
+                        ));
+                    }
+                }
+                other => {
+                    return Err(Error::new(
+                        other.span(),
+                        "unknown active_when attribute: expected field or is",
+                    ));
+                }
+            }
+        }
+
+        let (field, _) = field.ok_or_else(|| {
+            Error::new(
+                input.span(),
+                "active_when requires field = \"...\" and is = \"...\"",
+            )
+        })?;
+        let (expected, _) = expected.ok_or_else(|| {
+            Error::new(
+                input.span(),
+                "active_when requires field = \"...\" and is = \"...\"",
+            )
+        })?;
+
+        Ok(Self { field, expected })
+    }
 }
 
 impl Parse for QuestionAttr {
@@ -102,10 +166,47 @@ impl Parse for QuestionAttr {
                         ));
                     }
                 }
+                Meta::List(list) if list.path.is_ident("active_when") => {
+                    let parsed = list.parse_args::<ActiveWhenAttr>()?;
+                    if attr.active_when.replace(parsed).is_some() {
+                        return Err(Error::new(
+                            list.path.span(),
+                            "duplicate question active_when attribute",
+                        ));
+                    }
+                }
+                Meta::NameValue(nv) if nv.path.is_ident("default_with") => {
+                    let (path, span) =
+                        path_expr(&nv.value, "default_with must be a function path")?;
+                    if attr.default_with.replace((path, span)).is_some() {
+                        return Err(Error::new(
+                            nv.path.span(),
+                            "duplicate question default_with attribute",
+                        ));
+                    }
+                }
+                Meta::NameValue(nv) if nv.path.is_ident("validate") => {
+                    let (path, span) = path_expr(&nv.value, "validate must be a function path")?;
+                    if attr.validate.replace((path, span)).is_some() {
+                        return Err(Error::new(
+                            nv.path.span(),
+                            "duplicate question validate attribute",
+                        ));
+                    }
+                }
+                Meta::NameValue(nv) if nv.path.is_ident("revision") => {
+                    let (value, span) = string_lit(&nv.value, "revision must be a string literal")?;
+                    if attr.revision.replace((value, span)).is_some() {
+                        return Err(Error::new(
+                            nv.path.span(),
+                            "duplicate question revision attribute",
+                        ));
+                    }
+                }
                 other => {
                     return Err(Error::new(
                         other.span(),
-                        "unknown question attribute: expected id, default, prose, choice, repeated, min, or max",
+                        "unknown question attribute: expected id, default, prose, choice, repeated, min, max, active_when, default_with, validate, or revision",
                     ));
                 }
             }
@@ -161,6 +262,10 @@ pub fn questionnaire_derive_impl(input: DeriveInput) -> Result<TokenStream> {
         || container.repeated.is_some()
         || container.min.is_some()
         || container.max.is_some()
+        || container.active_when.is_some()
+        || container.default_with.is_some()
+        || container.validate.is_some()
+        || container.revision.is_some()
     {
         return Err(Error::new(
             input.span(),
@@ -190,6 +295,23 @@ pub fn questionnaire_derive_impl(input: DeriveInput) -> Result<TokenStream> {
     let mut builder_fields = Vec::new();
     let mut fill_fields = Vec::new();
 
+    let field_ids = fields
+        .iter()
+        .map(|field| {
+            let ident = field
+                .ident
+                .clone()
+                .ok_or_else(|| Error::new(field.span(), "expected named field"))?;
+            let attrs = parse_question_attrs(&field.attrs)?;
+            let id = attrs
+                .id
+                .as_ref()
+                .map(|(id, _)| id.clone())
+                .unwrap_or_else(|| ident.to_string());
+            Ok((ident.to_string(), id))
+        })
+        .collect::<Result<Vec<_>>>()?;
+
     for field in fields {
         let info = FieldInfo::new(field)?;
         if !seen_ids.insert(info.id.clone()) {
@@ -198,7 +320,7 @@ pub fn questionnaire_derive_impl(input: DeriveInput) -> Result<TokenStream> {
                 format!("duplicate question id '{}'", info.id),
             ));
         }
-        builder_fields.push(info.builder_tokens());
+        builder_fields.push(info.builder_tokens(&field_ids));
         fill_fields.push(info.fill_tokens());
     }
 
@@ -253,6 +375,10 @@ struct FieldInfo {
     optional: bool,
     min: Option<usize>,
     max: Option<usize>,
+    active_when: Option<ActiveWhenAttr>,
+    default_with: Option<Path>,
+    validate: Option<Path>,
+    revision: Option<String>,
 }
 
 impl FieldInfo {
@@ -292,6 +418,18 @@ impl FieldInfo {
             };
         }
 
+        if attrs.default.is_some() && attrs.default_with.is_some() {
+            let span = attrs
+                .default_with
+                .as_ref()
+                .map(|(_, span)| *span)
+                .expect("checked existing default_with");
+            return Err(Error::new(
+                span,
+                "default and default_with cannot be declared on the same field",
+            ));
+        }
+
         if let Some((default, span)) = attrs.default.as_ref() {
             match kind {
                 FieldKind::Scalar {
@@ -312,6 +450,55 @@ impl FieldInfo {
                     ));
                 }
             }
+        }
+
+        if let Some((_, span)) = attrs.default_with.as_ref() {
+            if !matches!(
+                kind,
+                FieldKind::Scalar { .. } | FieldKind::ScalarVec { .. } | FieldKind::Choice { .. }
+            ) {
+                return Err(Error::new(
+                    *span,
+                    "default_with is only supported on scalar fields, flat scalar Vec fields, and choice fields",
+                ));
+            }
+        }
+
+        if let Some((_, span)) = attrs.validate.as_ref() {
+            if !matches!(
+                kind,
+                FieldKind::Scalar { .. } | FieldKind::ScalarVec { .. } | FieldKind::Choice { .. }
+            ) {
+                return Err(Error::new(
+                    *span,
+                    "validate is only supported on scalar fields, flat scalar Vec fields, and choice fields",
+                ));
+            }
+        }
+
+        if (attrs.default_with.is_some() || attrs.validate.is_some()) && attrs.revision.is_none() {
+            let span = attrs
+                .default_with
+                .as_ref()
+                .map(|(_, span)| *span)
+                .or_else(|| attrs.validate.as_ref().map(|(_, span)| *span))
+                .expect("checked existing hook");
+            return Err(Error::new(
+                span,
+                "default_with and validate require revision = \"...\"",
+            ));
+        }
+
+        if attrs.revision.is_some() && attrs.default_with.is_none() && attrs.validate.is_none() {
+            let span = attrs
+                .revision
+                .as_ref()
+                .map(|(_, span)| *span)
+                .expect("checked existing revision");
+            return Err(Error::new(
+                span,
+                "revision is only supported with default_with or validate",
+            ));
         }
 
         if optional && !matches!(kind, FieldKind::Scalar { .. } | FieldKind::Choice { .. }) {
@@ -383,12 +570,37 @@ impl FieldInfo {
             optional,
             min: attrs.min.map(|(min, _)| min),
             max: attrs.max.map(|(max, _)| max),
+            active_when: attrs.active_when,
+            default_with: attrs.default_with.map(|(path, _)| path),
+            validate: attrs.validate.map(|(path, _)| path),
+            revision: attrs.revision.map(|(revision, _)| revision),
         })
     }
 
-    fn builder_tokens(&self) -> TokenStream {
+    fn builder_tokens(&self, field_ids: &[(String, String)]) -> TokenStream {
         let id = prefixed_id_tokens(&self.id);
         let prompt = &self.prompt;
+        let active_when = self.active_when.as_ref().map(|active_when| {
+            let controller = controller_id_tokens(active_when, field_ids);
+            let expected = &active_when.expected;
+            quote! { .active_when(#controller, #expected) }
+        });
+        let dynamic_default = self.default_with.as_ref().map(|path| {
+            let revision = self.revision.as_deref().unwrap_or_default();
+            quote! {
+                .with_dynamic_default(
+                    ::standout_input::questionnaire::DynamicDefault::new(#revision, #path)
+                )
+            }
+        });
+        let validator = self.validate.as_ref().map(|path| {
+            let revision = self.revision.as_deref().unwrap_or_default();
+            quote! {
+                .with_validator(
+                    ::standout_input::questionnaire::FieldValidator::new(#revision, #path)
+                )
+            }
+        });
         match &self.kind {
             FieldKind::Scalar { scalar } | FieldKind::ScalarVec { scalar } => {
                 let kind = scalar.tokens();
@@ -408,6 +620,9 @@ impl FieldInfo {
                         )
                         #optional
                         #default
+                        #dynamic_default
+                        #active_when
+                        #validator
                         .into()
                     }
                 }
@@ -434,6 +649,9 @@ impl FieldInfo {
                                 .copied()
                         )
                         #default
+                        #dynamic_default
+                        #active_when
+                        #validator
                         .into()
                     }
                 }
@@ -822,6 +1040,22 @@ fn prefixed_id_tokens(id: &str) -> TokenStream {
     }
 }
 
+fn controller_id_tokens(
+    active_when: &ActiveWhenAttr,
+    field_ids: &[(String, String)],
+) -> TokenStream {
+    let controller = field_ids
+        .iter()
+        .find_map(|(name, id)| (name == &active_when.field).then_some(id.as_str()));
+    match controller {
+        Some(id) => prefixed_id_tokens(id),
+        None => {
+            let controller = &active_when.field;
+            quote! { #controller.to_string() }
+        }
+    }
+}
+
 fn choice_kind(ty: &Type) -> Result<FieldKind> {
     if is_known_unsupported_primitive(ty) || !can_be_plain_named_type(ty) {
         return Err(Error::new(
@@ -975,6 +1209,26 @@ fn merge_question_attrs(out: &mut QuestionAttr, next: QuestionAttr, span: Span) 
     if next.max.is_some() && out.max.replace(next.max.unwrap()).is_some() {
         return Err(Error::new(span, "duplicate question max attribute"));
     }
+    if next.active_when.is_some() && out.active_when.replace(next.active_when.unwrap()).is_some() {
+        return Err(Error::new(span, "duplicate question active_when attribute"));
+    }
+    if next.default_with.is_some()
+        && out
+            .default_with
+            .replace(next.default_with.unwrap())
+            .is_some()
+    {
+        return Err(Error::new(
+            span,
+            "duplicate question default_with attribute",
+        ));
+    }
+    if next.validate.is_some() && out.validate.replace(next.validate.unwrap()).is_some() {
+        return Err(Error::new(span, "duplicate question validate attribute"));
+    }
+    if next.revision.is_some() && out.revision.replace(next.revision.unwrap()).is_some() {
+        return Err(Error::new(span, "duplicate question revision attribute"));
+    }
     Ok(())
 }
 
@@ -992,6 +1246,13 @@ fn usize_lit(expr: &Expr, message: &str) -> Result<(usize, Span)> {
         Expr::Lit(ExprLit {
             lit: Lit::Int(lit), ..
         }) => Ok((lit.base10_parse()?, lit.span())),
+        _ => Err(Error::new(expr.span(), message)),
+    }
+}
+
+fn path_expr(expr: &Expr, message: &str) -> Result<(Path, Span)> {
+    match expr {
+        Expr::Path(ExprPath { path, .. }) => Ok((path.clone(), path.span())),
         _ => Err(Error::new(expr.span(), message)),
     }
 }

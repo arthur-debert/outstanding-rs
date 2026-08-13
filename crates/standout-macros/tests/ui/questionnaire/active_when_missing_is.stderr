@@ -1,0 +1,5 @@
+error: active_when requires field = "..." and is = "..."
+  --> tests/ui/questionnaire/active_when_missing_is.rs:10:45
+   |
+10 |     #[question(active_when(field = "enabled"))]
+   |                                             ^

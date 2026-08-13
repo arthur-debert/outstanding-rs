@@ -1,0 +1,5 @@
+error: default and default_with cannot be declared on the same field
+  --> tests/ui/questionnaire/both_defaults.rs:12:51
+   |
+12 |     #[question(default = "static", default_with = dynamic_default, revision = "1")]
+   |                                                   ^^^^^^^^^^^^^^^
