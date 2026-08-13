@@ -4,6 +4,8 @@
 //! the app builder (`--answers`, `--yes`, and a `questions` subcommand). The
 //! handler then reads the filled application type from
 //! [`CommandContextInput::questionnaire`](crate::cli::CommandContextInput::questionnaire).
+//! File and stdin sheets keep non-fatal parse diagnostics visible by queuing
+//! their `RawAnswers` warnings for the framework warning flush.
 
 use std::io::{self, BufRead, Write};
 use std::path::{Path, PathBuf};
@@ -12,7 +14,8 @@ use std::rc::Rc;
 use clap::{Arg, ArgAction, ArgMatches, Command};
 use standout_input::env::DefaultStdin;
 use standout_input::questionnaire::{
-    AnswerSheetDiagnostic, Questionnaire, QuestionnaireInput, QuestionnaireInputError, RawAnswers,
+    AnswerSheetDiagnostic, FormError, Questionnaire, QuestionnaireInput, QuestionnaireInputError,
+    RawAnswers,
 };
 use standout_input::{InputError, InputSourceKind, Inputs, ResolvedInput};
 
@@ -73,8 +76,20 @@ pub(crate) fn questionnaire_pre_dispatch<T>(
 where
     T: QuestionnaireInput + Clone + Send + Sync + 'static,
 {
+    questionnaire_pre_dispatch_with::<T, _>(matches, ctx, |_| Vec::new())
+}
+
+pub(crate) fn questionnaire_pre_dispatch_with<T, F>(
+    matches: &ArgMatches,
+    ctx: &mut CommandContext,
+    form: F,
+) -> Result<(), HookError>
+where
+    T: QuestionnaireInput + Clone + Send + Sync + 'static,
+    F: FnOnce(&T) -> Vec<FormError>,
+{
     let sub_matches = get_deepest_matches(matches);
-    let resolved = collect_questionnaire::<T>(sub_matches).map_err(|error| {
+    let resolved = collect_questionnaire_with::<T, F>(sub_matches, form).map_err(|error| {
         HookError::pre_dispatch(format!(
             "questionnaire input `{QUESTIONNAIRE_INPUT_NAME}`: {error}"
         ))
@@ -106,9 +121,13 @@ where
     Ok(())
 }
 
-fn collect_questionnaire<T>(matches: &ArgMatches) -> Result<ResolvedInput<T>, InputError>
+fn collect_questionnaire_with<T, F>(
+    matches: &ArgMatches,
+    form: F,
+) -> Result<ResolvedInput<T>, InputError>
 where
     T: QuestionnaireInput + Clone + Send + Sync + 'static,
+    F: FnOnce(&T) -> Vec<FormError>,
 {
     let questionnaire = T::questionnaire()
         .map_err(|error| InputError::validation(format!("definition is invalid: {error}")))?;
@@ -122,7 +141,8 @@ where
         let raw = source.raw_answers(&questionnaire).map_err(|diagnostics| {
             InputError::validation(format_diagnostics(source.label(), &diagnostics))
         })?;
-        let value = T::from_raw_answers(&raw).map_err(questionnaire_input_error)?;
+        push_raw_answer_warnings(source.label(), raw.warnings());
+        let value = T::from_raw_answers_with(&raw, form).map_err(questionnaire_input_error)?;
         return Ok(ResolvedInput {
             value,
             source: source.kind(),
@@ -130,7 +150,7 @@ where
     }
 
     let raw = questionnaire.collect_interactive()?;
-    let value = T::from_raw_answers(&raw).map_err(questionnaire_input_error)?;
+    let value = T::from_raw_answers_with(&raw, form).map_err(questionnaire_input_error)?;
     Ok(ResolvedInput {
         value,
         source: InputSourceKind::Prompt,
@@ -182,6 +202,12 @@ fn format_diagnostics(label: String, diagnostics: &[AnswerSheetDiagnostic]) -> S
         "answer sheet {label} has {} problem(s): {details}",
         diagnostics.len()
     )
+}
+
+fn push_raw_answer_warnings(label: String, diagnostics: &[AnswerSheetDiagnostic]) {
+    for diagnostic in diagnostics {
+        standout_render::warnings::push_warning(format!("answer sheet {label}: {diagnostic}"));
+    }
 }
 
 trait AttendedTerminal {
