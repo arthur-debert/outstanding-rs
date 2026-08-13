@@ -416,18 +416,29 @@ pub fn seekable_derive(input: TokenStream) -> TokenStream {
 /// or group IDs unless overridden with `#[question(id = "...")]`; supported
 /// scalar field types are `String`, `PathBuf`, `bool`, and `Option<T>` over
 /// scalar or `#[question(choice)]` enum fields. Nested questionnaire structs
-/// lower to groups, `#[question(choice)]` enum fields lower to `one_of`,
-/// `Vec<NestedStruct>` lowers to a repeatable group, and repeat bounds come
-/// from `#[question(min = N, max = M)]`; omitted `min` defaults to `1` because
-/// the runtime renderer needs one complete block to copy. `Vec<String>` and
-/// `Vec<PathBuf>` lower to a single comma-separated scalar answer unless
-/// `#[question(repeated)]` opts them into a single-field repeatable group.
+/// lower to groups; child paths inherit parent `id` remapping. `#[question(choice)]`
+/// enum fields lower to `one_of`, `Vec<NestedStruct>` lowers to a repeatable
+/// group, and repeat bounds come from `#[question(min = N, max = M)]`; omitted
+/// `min` defaults to `1` because the runtime renderer needs one complete block
+/// to copy. `Vec<String>` and `Vec<PathBuf>` lower to a single comma-separated
+/// scalar answer unless `#[question(repeated)]` opts them into a single-field
+/// repeatable group.
+///
 /// `#[question(default = "...")]` declares a static default, and
 /// `#[question(default_with = path::to::fn, revision = "...")]` declares a
-/// dynamic default. `#[question(validate = path::to::fn, revision = "...")]`
-/// attaches a field validator, `#[question(active_when(field = "...", is =
-/// "..."))]` declares conditional applicability on an `Option<T>` field, and
-/// `#[question(prose)]` opts a `String` field into multi-line text.
+/// dynamic default whose function is `fn(&EarlierAnswers<'_>) -> String`.
+/// `#[question(validate = path::to::fn, revision = "...")]` attaches a field
+/// validator whose function is `fn(&AnswerValue) -> Result<(), String>`.
+/// A non-empty revision is required for either hook and enters the
+/// questionnaire fingerprint; when both hooks are attached to one field, the
+/// same revision identifies both hook contracts.
+///
+/// `#[question(active_when(field = "...", is = "..."))]` declares conditional
+/// applicability on an `Option<T>` field. The controller must be an earlier
+/// scalar or choice field in the same group or an enclosing group; the derive
+/// resolves Rust field names through any explicit `id` remapping before the
+/// runtime builder validates scope and order. `#[question(prose)]` opts a
+/// `String` field into multi-line text.
 #[proc_macro_derive(Questionnaire, attributes(question))]
 pub fn questionnaire_derive(input: TokenStream) -> TokenStream {
     let input = parse_macro_input!(input as DeriveInput);

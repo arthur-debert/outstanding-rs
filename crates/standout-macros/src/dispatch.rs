@@ -37,7 +37,7 @@
 //! | `pre_dispatch = fn` | Pre-dispatch hook | None |
 //! | `post_dispatch = fn` | Post-dispatch hook | None |
 //! | `post_output = fn` | Post-output hook | None |
-//! | `questionnaire = path::Type` | Inject questionnaire CLI surface and resolved typed input | None |
+//! | `questionnaire = path::Type` | Inject `questions`, `--answers`, `--yes`, and resolved typed input | None |
 //! | `nested` | Treat variant as nested subcommand | false |
 //! | `skip` | Skip this variant | false |
 //! | `default` | Use as default command when no subcommand specified | false |
@@ -49,6 +49,11 @@
 //!
 //! The macro generates a `dispatch_config()` method returning a closure for
 //! use with `App::builder().commands()`.
+//! A variant with `#[dispatch(questionnaire = path::Type)]` applies the same
+//! wiring as `CommandConfig::questionnaire::<path::Type>()`: the command gets
+//! the reserved answer-sheet surface, the framework resolves file/stdin or
+//! interactive answers before the handler runs, and the handler reads the
+//! filled value with `CommandContextInput::questionnaire()`.
 
 use proc_macro2::TokenStream;
 use quote::{format_ident, quote};
