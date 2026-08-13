@@ -24,7 +24,7 @@
 
 use std::path::Path;
 
-use crate::env::{DefaultStdin, StdinReader};
+use crate::env::StdinReader;
 
 use super::definition::Questionnaire;
 use super::parse::{AnswerSheetDiagnostic, RawAnswers};
@@ -71,11 +71,12 @@ impl Questionnaire {
     }
 
     /// Read one complete answer sheet from explicitly requested stdin
-    /// (e.g. an `--answers -` style flag).
+    /// (e.g. an `--answers -` style flag), against an explicit
+    /// [`StdinReader`] — [`DefaultStdin`](crate::env::DefaultStdin) for the
+    /// process's real stdin (which honors a test override installed via
+    /// [`set_default_stdin_reader`](crate::env::set_default_stdin_reader)),
+    /// or an injected reader in tests.
     ///
-    /// Reads through the process-default stdin reader, which honors a test
-    /// override installed via
-    /// [`set_default_stdin_reader`](crate::env::set_default_stdin_reader).
     /// Selecting stdin is an explicit caller decision — this adapter never
     /// merges stdin answers with any other source.
     ///
@@ -84,12 +85,6 @@ impl Questionnaire {
     /// [`AnswerSheetDiagnostic::UnreadableDocument`] when stdin is an
     /// interactive terminal (there is no piped document to read) or fails to
     /// read, otherwise the parser's accumulated diagnostics.
-    pub fn read_answer_sheet_stdin(&self) -> Result<RawAnswers, Vec<AnswerSheetDiagnostic>> {
-        self.read_answer_sheet_stdin_with(&DefaultStdin)
-    }
-
-    /// [`read_answer_sheet_stdin`](Self::read_answer_sheet_stdin) against an
-    /// explicit [`StdinReader`], for callers and tests that inject their own.
     pub fn read_answer_sheet_stdin_with(
         &self,
         reader: &dyn StdinReader,

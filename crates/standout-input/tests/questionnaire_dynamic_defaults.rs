@@ -94,10 +94,10 @@ fn declaring_both_a_static_and_a_dynamic_default_is_an_error() {
             .with_dynamic_default(DynamicDefault::new("1", |_| "dynamic".to_string()))],
     )
     .unwrap_err();
-    assert_eq!(
-        err,
-        QuestionnaireError::ConflictingDefaults { id: "a".into() }
-    );
+    assert!(matches!(&err, QuestionnaireError::Item { id, .. } if id == "a"));
+    assert!(err
+        .to_string()
+        .contains("declares both a static and a dynamic default"));
 }
 
 #[test]
@@ -108,10 +108,10 @@ fn an_empty_dynamic_default_revision_is_an_error() {
             .with_dynamic_default(DynamicDefault::new("", |_| "x".to_string()))],
     )
     .unwrap_err();
-    assert_eq!(
-        err,
-        QuestionnaireError::EmptyDefaultRevision { id: "a".into() }
-    );
+    assert!(matches!(&err, QuestionnaireError::Item { id, .. } if id == "a"));
+    assert!(err
+        .to_string()
+        .contains("attaches a dynamic default with an empty revision"));
 }
 
 // ============================================================================
@@ -163,7 +163,7 @@ fn a_revision_bump_invalidates_previously_rendered_sheets() {
     let diagnostics = new.parse_answer_sheet(&sheet).unwrap_err();
     assert!(matches!(
         &diagnostics[..],
-        [AnswerSheetDiagnostic::FingerprintMismatch { .. }]
+        [AnswerSheetDiagnostic::Incompatible { message }] if message.contains("fingerprint")
     ));
 }
 
@@ -272,7 +272,8 @@ fn a_computed_default_that_violates_a_constraint_is_a_diagnostic() {
     let diagnostics = q.decode_answers(&raw).unwrap_err();
     assert!(matches!(
         &diagnostics[..],
-        [ValidationDiagnostic::ConstraintViolation { id, .. }] if id == "a"
+        [ValidationDiagnostic::Field { id, message }]
+            if id == "a" && message.contains("must be one of")
     ));
 }
 

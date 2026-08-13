@@ -99,21 +99,6 @@ impl RawAnswers {
     pub fn warnings(&self) -> &[AnswerSheetDiagnostic] {
         &self.warnings
     }
-
-    /// Iterate over `(occurrence_path, raw_answer)` pairs, ordered by path.
-    pub fn iter(&self) -> impl Iterator<Item = (&str, &str)> {
-        self.values.iter().map(|(k, v)| (k.as_str(), v.as_str()))
-    }
-
-    /// Number of answered occurrence paths in the document.
-    pub fn len(&self) -> usize {
-        self.values.len()
-    }
-
-    /// Whether no fields appeared in the document.
-    pub fn is_empty(&self) -> bool {
-        self.values.is_empty()
-    }
 }
 
 /// One problem found while parsing an answer sheet.
@@ -125,77 +110,26 @@ impl RawAnswers {
 /// instead of migrating them.
 #[derive(Debug, Clone, thiserror::Error, PartialEq, Eq)]
 pub enum AnswerSheetDiagnostic {
-    /// The `#!` metadata preamble is missing or malformed.
-    #[error("Line {line}: malformed answer-sheet preamble: {detail}. Render a fresh answer sheet and copy your answers into it.")]
-    MalformedPreamble {
-        /// 1-based line number of the malformed or missing preamble line.
+    /// The document is incompatible with the parsing definition: a missing
+    /// or malformed `#!` preamble line, an unsupported answer-format
+    /// version, or a questionnaire-ID or fingerprint mismatch. The message
+    /// points at rendering a fresh sheet; version 1 rejects instead of
+    /// migrating.
+    #[error("{message}")]
+    Incompatible {
+        /// What is incompatible, and what to do about it.
+        message: String,
+    },
+
+    /// A question or group tag line could not be accepted: its terminal
+    /// `<id:...>` tag is unknown to the schema, duplicated, or outside the
+    /// scope its definition allows.
+    #[error("Line {line}: {message}")]
+    Tag {
+        /// 1-based line number of the rejected tag line.
         line: usize,
-        /// What was expected at that line.
-        detail: String,
-    },
-
-    /// The sheet declares an answer-format version other than 1.
-    #[error("Unsupported answer-format version '{found}' (this release reads only version 1). Render a fresh answer sheet; old sheets are not migrated.")]
-    UnsupportedAnswerFormat {
-        /// The version token found in the document.
-        found: String,
-    },
-
-    /// The sheet was rendered for a different questionnaire.
-    #[error("This answer sheet is for questionnaire '{found}', not '{expected}'. Render a fresh answer sheet for '{expected}'.")]
-    QuestionnaireMismatch {
-        /// The questionnaire ID this parser expects.
-        expected: String,
-        /// The questionnaire ID found in the document.
-        found: String,
-    },
-
-    /// The sheet was rendered from a semantically different definition.
-    #[error("This answer sheet was rendered from a different version of questionnaire semantics (fingerprint '{found}', expected '{expected}'). The questionnaire changed since this sheet was rendered; render a fresh answer sheet and copy your answers into it. Answers are not migrated.")]
-    FingerprintMismatch {
-        /// The fingerprint of the parsing definition.
-        expected: String,
-        /// The fingerprint found in the document.
-        found: String,
-    },
-
-    /// A question line's tag carries an ID the schema does not know.
-    #[error("Line {line}: unknown question tag '<id:{id}>'. This questionnaire does not define that ID; if the line is prose, add any character after the tag, otherwise render a fresh answer sheet.")]
-    UnknownTag {
-        /// The unrecognized tag ID.
-        id: String,
-        /// 1-based line number of the question line.
-        line: usize,
-    },
-
-    /// A field's question line appears more than once at the same
-    /// occurrence path.
-    #[error("Line {line}: duplicate question '<id:{path}>'. Each question may be answered once per occurrence; remove the extra question line or copy the complete group block instead.")]
-    DuplicateField {
-        /// The duplicated occurrence path.
-        path: String,
-        /// 1-based line number of the second occurrence.
-        line: usize,
-    },
-
-    /// A non-repeatable group's tag line appears more than once.
-    #[error("Line {line}: duplicate group '<id:{id}>'. This group is answered once; remove the extra block (only repeatable sections take copied blocks).")]
-    DuplicateGroup {
-        /// The duplicated stable group ID.
-        id: String,
-        /// 1-based line number of the second tag line.
-        line: usize,
-    },
-
-    /// A known field or group tag appeared outside the scope its definition
-    /// allows (e.g. a group's child without its group tag line, or another
-    /// group's child inside this group's block).
-    #[error("Line {line}: misplaced '<id:{id}>'. That ID is not valid at this point of the sheet; keep each question inside its own group block, or render a fresh answer sheet to restore the structure.")]
-    MisplacedId {
-        /// The known-but-misplaced stable ID.
-        id: String,
-        /// 1-based line number of the question line.
-        line: usize,
+        /// Which tag was rejected, and why.
+        message: String,
     },
 
     /// Warning: accepted answer text contains `<id:` — a mid-line tag
@@ -217,6 +151,30 @@ pub enum AnswerSheetDiagnostic {
         /// What prevented reading, without any document content.
         detail: String,
     },
+}
+
+impl AnswerSheetDiagnostic {
+    /// An incompatible-document diagnostic.
+    fn incompatible(message: impl Into<String>) -> Self {
+        Self::Incompatible {
+            message: message.into(),
+        }
+    }
+
+    /// A rejected tag line at a 1-based line number.
+    fn tag(line: usize, message: impl Into<String>) -> Self {
+        Self::Tag {
+            line,
+            message: message.into(),
+        }
+    }
+
+    /// A malformed-preamble diagnostic at a 1-based line number.
+    fn malformed_preamble(line: usize, detail: impl std::fmt::Display) -> Self {
+        Self::incompatible(format!(
+            "Line {line}: malformed answer-sheet preamble: {detail}. Render a fresh answer sheet and copy your answers into it."
+        ))
+    }
 }
 
 /// The field (or discard sink) currently accumulating answer lines.
@@ -394,17 +352,17 @@ impl Questionnaire {
     ) -> Option<String> {
         let line = line_index + 1;
         let Some(meta) = self.node_meta(id) else {
-            diagnostics.push(AnswerSheetDiagnostic::UnknownTag {
-                id: id.to_string(),
+            diagnostics.push(AnswerSheetDiagnostic::tag(
                 line,
-            });
+                format!("unknown question tag '<id:{id}>'. This questionnaire does not define that ID; if the line is prose, add any character after the tag, otherwise render a fresh answer sheet."),
+            ));
             return None;
         };
         let Some(keep) = resolve_scope(stack, meta.parent.as_deref()) else {
-            diagnostics.push(AnswerSheetDiagnostic::MisplacedId {
-                id: id.to_string(),
+            diagnostics.push(AnswerSheetDiagnostic::tag(
                 line,
-            });
+                format!("misplaced '<id:{id}>'. That ID is not valid at this point of the sheet; keep each question inside its own group block, or render a fresh answer sheet to restore the structure."),
+            ));
             return None;
         };
         stack.truncate(keep);
@@ -421,7 +379,10 @@ impl Questionnaire {
         }
         let path = path_join(path_prefix, child_segment(def_prefix, id));
         if values.contains_key(&path) {
-            diagnostics.push(AnswerSheetDiagnostic::DuplicateField { path, line });
+            diagnostics.push(AnswerSheetDiagnostic::tag(
+                line,
+                format!("duplicate question '<id:{path}>'. Each question may be answered once per occurrence; remove the extra question line or copy the complete group block instead."),
+            ));
             return None;
         }
         Some(path)
@@ -458,10 +419,10 @@ impl Questionnaire {
         };
 
         let Some(keep) = resolve_scope(stack, parent.as_deref()) else {
-            diagnostics.push(AnswerSheetDiagnostic::MisplacedId {
-                id: id.to_string(),
+            diagnostics.push(AnswerSheetDiagnostic::tag(
                 line,
-            });
+                format!("misplaced '<id:{id}>'. That ID is not valid at this point of the sheet; keep each question inside its own group block, or render a fresh answer sheet to restore the structure."),
+            ));
             stack.push(discard_scope(true));
             return;
         };
@@ -488,10 +449,10 @@ impl Questionnaire {
             }
             None => {
                 if !seen_sections.insert(base.clone()) {
-                    diagnostics.push(AnswerSheetDiagnostic::DuplicateGroup {
-                        id: id.to_string(),
+                    diagnostics.push(AnswerSheetDiagnostic::tag(
                         line,
-                    });
+                        format!("duplicate group '<id:{id}>'. This group is answered once; remove the extra block (only repeatable sections take copied blocks)."),
+                    ));
                     stack.push(discard_scope(true));
                     return;
                 }
@@ -532,21 +493,22 @@ impl Questionnaire {
                 if line != FORMAT_LINE {
                     match line.strip_prefix("#! standout-answers ") {
                         Some(version) => {
-                            diagnostics.push(AnswerSheetDiagnostic::UnsupportedAnswerFormat {
-                                found: version.trim().to_string(),
-                            })
+                            diagnostics.push(AnswerSheetDiagnostic::incompatible(format!(
+                                "Unsupported answer-format version '{}' (this release reads only version 1). Render a fresh answer sheet; old sheets are not migrated.",
+                                version.trim()
+                            )))
                         }
-                        None => diagnostics.push(AnswerSheetDiagnostic::MalformedPreamble {
-                            line: at + 1,
-                            detail: format!("expected '{FORMAT_LINE}'"),
-                        }),
+                        None => diagnostics.push(AnswerSheetDiagnostic::malformed_preamble(
+                            at + 1,
+                            format!("expected '{FORMAT_LINE}'"),
+                        )),
                     }
                 }
             }
-            None => diagnostics.push(AnswerSheetDiagnostic::MalformedPreamble {
-                line: lines.len() + 1,
-                detail: format!("expected '{FORMAT_LINE}'"),
-            }),
+            None => diagnostics.push(AnswerSheetDiagnostic::malformed_preamble(
+                lines.len() + 1,
+                format!("expected '{FORMAT_LINE}'"),
+            )),
         }
 
         let expect_keyed = |i: &mut usize,
@@ -557,18 +519,18 @@ impl Questionnaire {
                 Some(at) => match lines[at].trim().strip_prefix(prefix) {
                     Some(value) => Some(value.trim().to_string()),
                     None => {
-                        diagnostics.push(AnswerSheetDiagnostic::MalformedPreamble {
-                            line: at + 1,
-                            detail: format!("expected '{prefix} ...'"),
-                        });
+                        diagnostics.push(AnswerSheetDiagnostic::malformed_preamble(
+                            at + 1,
+                            format!("expected '{prefix} ...'"),
+                        ));
                         None
                     }
                 },
                 None => {
-                    diagnostics.push(AnswerSheetDiagnostic::MalformedPreamble {
-                        line: lines.len() + 1,
-                        detail: format!("expected '{prefix} ...'"),
-                    });
+                    diagnostics.push(AnswerSheetDiagnostic::malformed_preamble(
+                        lines.len() + 1,
+                        format!("expected '{prefix} ...'"),
+                    ));
                     None
                 }
             }
@@ -576,18 +538,18 @@ impl Questionnaire {
 
         if let Some(found) = expect_keyed(&mut i, QUESTIONNAIRE_PREFIX, &mut diagnostics) {
             if found != self.id() {
-                diagnostics.push(AnswerSheetDiagnostic::QuestionnaireMismatch {
-                    expected: self.id().to_string(),
-                    found,
-                });
+                diagnostics.push(AnswerSheetDiagnostic::incompatible(format!(
+                    "This answer sheet is for questionnaire '{found}', not '{expected}'. Render a fresh answer sheet for '{expected}'.",
+                    expected = self.id()
+                )));
             }
         }
         if let Some(found) = expect_keyed(&mut i, FINGERPRINT_PREFIX, &mut diagnostics) {
             if found != self.fingerprint() {
-                diagnostics.push(AnswerSheetDiagnostic::FingerprintMismatch {
-                    expected: self.fingerprint().to_string(),
-                    found,
-                });
+                diagnostics.push(AnswerSheetDiagnostic::incompatible(format!(
+                    "This answer sheet was rendered from a different version of questionnaire semantics (fingerprint '{found}', expected '{expected}'). The questionnaire changed since this sheet was rendered; render a fresh answer sheet and copy your answers into it. Answers are not migrated.",
+                    expected = self.fingerprint()
+                )));
             }
         }
 

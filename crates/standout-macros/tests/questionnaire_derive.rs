@@ -289,8 +289,8 @@ struct InvalidFieldId {
 fn derived_definitions_surface_public_builder_errors() {
     let err = InvalidFieldId::questionnaire().unwrap_err();
 
-    assert_eq!(err, QuestionnaireError::InvalidId("Project.Name".into()));
-    assert!(err.to_string().contains("Project.Name"));
+    assert!(matches!(err, QuestionnaireError::Structure { .. }));
+    assert!(err.to_string().contains("Invalid ID 'Project.Name'"));
 }
 
 #[test]
@@ -358,8 +358,8 @@ fn derived_repeatable_groups_surface_occurrence_bound_diagnostics() {
         QuestionnaireInputError::Validation(diagnostics)
             if matches!(
                 diagnostics.as_slice(),
-                [ValidationDiagnostic::TooFewOccurrences { path, minimum: 1, found: 0 }]
-                    if path == "inputs"
+                [ValidationDiagnostic::Field { id, message }]
+                    if id == "inputs" && message.contains("of at least 1 required item(s)")
             )
     ));
 
@@ -378,8 +378,8 @@ fn derived_repeatable_groups_surface_occurrence_bound_diagnostics() {
         QuestionnaireInputError::Validation(diagnostics)
             if diagnostics.iter().any(|diagnostic| matches!(
                 diagnostic,
-                ValidationDiagnostic::TooManyOccurrences { path, maximum: 2, found: 3 }
-                    if path == "inputs"
+                ValidationDiagnostic::Field { id, message }
+                    if id == "inputs" && message.contains("at most 2 are accepted")
             ))
     ));
 }
@@ -499,7 +499,8 @@ fn prose_accepts_multiline_while_unmarked_strings_reject_it() {
         QuestionnaireInputError::Validation(diagnostics)
             if matches!(
                 diagnostics.as_slice(),
-                [ValidationDiagnostic::InvalidValue { id, .. }] if id == "value"
+                [ValidationDiagnostic::Field { id, message }]
+            if id == "value" && message.contains("must be a single line")
             )
     ));
     let message = err.to_string();
@@ -514,7 +515,7 @@ fn stale_fingerprint_rejects_the_round_trip() {
     let diagnostics = questionnaire.parse_answer_sheet(&sheet).unwrap_err();
     assert!(matches!(
         diagnostics.as_slice(),
-        [AnswerSheetDiagnostic::FingerprintMismatch { .. }]
+        [AnswerSheetDiagnostic::Incompatible { message }] if message.contains("fingerprint")
     ));
 }
 
@@ -607,8 +608,9 @@ fn enum_choice_defaults_must_name_a_declared_choice() {
 
     assert!(matches!(
         err,
-        QuestionnaireError::InvalidDefault { ref id, .. } if id == "kind"
+        QuestionnaireError::Item { ref id, .. } if id == "kind"
     ));
+    assert!(err.to_string().contains("Invalid default on field 'kind'"));
     assert!(err.to_string().contains("cli-app, library, internal-tool"));
 }
 
@@ -785,7 +787,8 @@ fn behavior_hooks_round_trip_through_sheet_decode() {
         QuestionnaireInputError::Validation(diagnostics)
             if diagnostics.iter().any(|diagnostic| matches!(
                 diagnostic,
-                ValidationDiagnostic::InactiveAnswered { id, .. } if id == "image"
+                ValidationDiagnostic::Field { id, message }
+                    if id == "image" && message.contains("does not apply")
             ))
     ));
 
@@ -797,7 +800,7 @@ fn behavior_hooks_round_trip_through_sheet_decode() {
         QuestionnaireInputError::Validation(diagnostics)
             if diagnostics.iter().any(|diagnostic| matches!(
                 diagnostic,
-                ValidationDiagnostic::FieldValidation { id, message }
+                ValidationDiagnostic::Field { id, message }
                     if id == "image" && message == "the image must include a tag"
             ))
     ));
@@ -1056,14 +1059,16 @@ struct EmptyValidatorRevision {
 
 #[test]
 fn empty_hook_revisions_are_rejected_by_the_builder() {
-    assert!(matches!(
-        EmptyDefaultRevision::questionnaire().unwrap_err(),
-        QuestionnaireError::EmptyDefaultRevision { id } if id == "name"
-    ));
-    assert!(matches!(
-        EmptyValidatorRevision::questionnaire().unwrap_err(),
-        QuestionnaireError::EmptyValidatorRevision { id } if id == "name"
-    ));
+    let err = EmptyDefaultRevision::questionnaire().unwrap_err();
+    assert!(matches!(&err, QuestionnaireError::Item { id, .. } if id == "name"));
+    assert!(err
+        .to_string()
+        .contains("attaches a dynamic default with an empty revision"));
+    let err = EmptyValidatorRevision::questionnaire().unwrap_err();
+    assert!(matches!(&err, QuestionnaireError::Item { id, .. } if id == "name"));
+    assert!(err
+        .to_string()
+        .contains("attaches a validator with an empty revision"));
 }
 
 #[derive(Questionnaire)]
@@ -1093,14 +1098,16 @@ struct NeverMatchingController {
 
 #[test]
 fn active_when_surfaces_builder_controller_diagnostics() {
-    assert!(matches!(
-        LaterController::questionnaire().unwrap_err(),
-        QuestionnaireError::ConditionOrder { controller, .. } if controller == "enabled"
-    ));
-    assert!(matches!(
-        NeverMatchingController::questionnaire().unwrap_err(),
-        QuestionnaireError::InvalidCondition { id, .. } if id == "image"
-    ));
+    let err = LaterController::questionnaire().unwrap_err();
+    assert!(matches!(&err, QuestionnaireError::Item { id, .. } if id == "name"));
+    assert!(err
+        .to_string()
+        .contains("conditioned on 'enabled', which is declared after it"));
+    let err = NeverMatchingController::questionnaire().unwrap_err();
+    assert!(matches!(&err, QuestionnaireError::Item { id, .. } if id == "image"));
+    assert!(err
+        .to_string()
+        .contains("Invalid condition on field 'image'"));
 }
 
 #[test]

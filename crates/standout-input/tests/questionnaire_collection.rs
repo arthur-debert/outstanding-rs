@@ -130,7 +130,8 @@ fn malformed_file_reports_parse_diagnostics() {
     let diagnostics = q.read_answer_sheet_file(&path).unwrap_err();
     assert!(matches!(
         &diagnostics[..],
-        [AnswerSheetDiagnostic::MalformedPreamble { .. }, ..]
+        [AnswerSheetDiagnostic::Incompatible { message }, ..]
+            if message.contains("malformed answer-sheet preamble")
     ));
 }
 
@@ -165,7 +166,9 @@ fn stdin_adapter_rejects_an_interactive_terminal() {
 fn stdin_adapter_honors_the_process_default_reader() {
     let q = questionnaire();
     let _guard = StdinGuard::install(MockStdin::piped(edited_sheet(&q)));
-    let raw = q.read_answer_sheet_stdin().unwrap();
+    let raw = q
+        .read_answer_sheet_stdin_with(&standout_input::env::DefaultStdin)
+        .unwrap();
     assert_eq!(raw.get("project.name"), Some("demo"));
 }
 
@@ -178,7 +181,7 @@ fn stale_fingerprint_reaches_the_adapter_caller() {
         .unwrap_err();
     assert!(matches!(
         &diagnostics[..],
-        [AnswerSheetDiagnostic::FingerprintMismatch { .. }]
+        [AnswerSheetDiagnostic::Incompatible { message }] if message.contains("fingerprint")
     ));
 }
 
