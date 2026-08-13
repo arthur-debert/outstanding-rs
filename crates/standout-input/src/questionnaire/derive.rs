@@ -7,6 +7,51 @@
 
 use super::{Answers, Questionnaire, QuestionnaireError, RawAnswers, ValidationDiagnostic};
 
+/// A Rust enum-backed choice vocabulary for derived questionnaires.
+///
+/// Implemented by `standout-macros` for enums that derive
+/// `QuestionnaireChoices`. The enum is then the single source for the
+/// accepted answer strings, rendered hints, parsing, and display: a derived
+/// questionnaire field of this enum type lowers to a string field constrained
+/// with [`ScalarField::one_of`](super::ScalarField::one_of), and typed filling
+/// parses the validated answer back into the enum.
+pub trait QuestionnaireChoices:
+    Sized + std::str::FromStr<Err = QuestionnaireChoiceParseError> + std::fmt::Display
+{
+    /// The declared user-facing choices for this enum.
+    fn choices() -> &'static [&'static str];
+}
+
+/// Error returned when parsing an undeclared enum choice.
+///
+/// The invalid submitted value is intentionally not retained or displayed;
+/// diagnostics elsewhere in the questionnaire pipeline follow the same
+/// no-echo rule for answer values.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct QuestionnaireChoiceParseError {
+    choices: &'static [&'static str],
+}
+
+impl QuestionnaireChoiceParseError {
+    /// Create an error for a vocabulary with the given declared choices.
+    pub const fn new(choices: &'static [&'static str]) -> Self {
+        Self { choices }
+    }
+
+    /// The choices accepted by the enum parser.
+    pub fn choices(&self) -> &'static [&'static str] {
+        self.choices
+    }
+}
+
+impl std::fmt::Display for QuestionnaireChoiceParseError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "expected one of: {}", self.choices.join(", "))
+    }
+}
+
+impl std::error::Error for QuestionnaireChoiceParseError {}
+
 /// A derived questionnaire definition and typed filler.
 ///
 /// Implemented by `standout-macros` for structs that derive
@@ -28,9 +73,10 @@ pub trait QuestionnaireInput: Sized {
     /// Fill this type from answers decoded by its own questionnaire.
     ///
     /// This method is generated code for the closed questionnaire type
-    /// universe. Call [`from_raw_answers`](Self::from_raw_answers) for the
-    /// public checked path: it decodes with the generated definition first,
-    /// then fills only after field validation succeeds.
+    /// universe: scalars, `Option<T>`, and enum choices. Call
+    /// [`from_raw_answers`](Self::from_raw_answers) for the public checked
+    /// path: it decodes with the generated definition first, then fills only
+    /// after field validation succeeds.
     #[doc(hidden)]
     fn from_decoded_answers(answers: &Answers) -> Self;
 

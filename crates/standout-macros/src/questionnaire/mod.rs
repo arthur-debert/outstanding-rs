@@ -1,7 +1,9 @@
-//! Implementation of the `#[derive(Questionnaire)]` macro.
+//! Implementation of the questionnaire derive macros.
 //!
-//! The derive lowers a flat scalar struct to `standout-input`'s public
-//! questionnaire builder and emits direct typed filling from decoded answers.
+//! `Questionnaire` lowers a flat struct of scalar and enum-choice fields to
+//! `standout-input`'s public questionnaire builder and emits direct typed
+//! filling from decoded answers. `QuestionnaireChoices` lowers a unit-variant
+//! enum to the choice vocabulary consumed by that field lowering.
 
 use std::collections::HashSet;
 
@@ -12,7 +14,7 @@ use syn::{
     punctuated::Punctuated,
     spanned::Spanned,
     Attribute, Data, DeriveInput, Error, Expr, ExprLit, Field, Fields, GenericArgument, Lit, Meta,
-    PathArguments, Result, Token, Type,
+    PathArguments, Result, Token, Type, Variant,
 };
 
 /// Parsed `#[question(...)]` attributes.
@@ -21,6 +23,11 @@ struct QuestionAttr {
     id: Option<(String, Span)>,
     default: Option<(String, Span)>,
     prose: Option<Span>,
+}
+
+#[derive(Debug, Default)]
+struct ChoiceAttr {
+    rename: Option<(String, Span)>,
 }
 
 impl Parse for QuestionAttr {
@@ -60,6 +67,35 @@ impl Parse for QuestionAttr {
                     return Err(Error::new(
                         other.span(),
                         "unknown question attribute: expected id, default, or prose",
+                    ));
+                }
+            }
+        }
+
+        Ok(attr)
+    }
+}
+
+impl Parse for ChoiceAttr {
+    fn parse(input: ParseStream) -> Result<Self> {
+        let mut attr = ChoiceAttr::default();
+        let content: Punctuated<Meta, Token![,]> = Punctuated::parse_terminated(input)?;
+
+        for meta in content {
+            match meta {
+                Meta::NameValue(nv) if nv.path.is_ident("rename") => {
+                    let (value, span) = string_lit(&nv.value, "rename must be a string literal")?;
+                    if attr.rename.replace((value, span)).is_some() {
+                        return Err(Error::new(
+                            nv.path.span(),
+                            "duplicate question rename attribute",
+                        ));
+                    }
+                }
+                other => {
+                    return Err(Error::new(
+                        other.span(),
+                        "unknown question attribute: expected rename",
                     ));
                 }
             }
@@ -148,14 +184,13 @@ pub fn questionnaire_derive_impl(input: DeriveInput) -> Result<TokenStream> {
     Ok(expanded)
 }
 
-#[derive(Debug)]
 struct FieldInfo {
     ident: syn::Ident,
     id: String,
     id_span: Span,
     prompt: String,
     default: Option<String>,
-    kind: ScalarKind,
+    kind: FieldKind,
     optional: bool,
 }
 
@@ -167,10 +202,10 @@ impl FieldInfo {
             .ok_or_else(|| Error::new(field.span(), "expected named field"))?;
         let attrs = parse_question_attrs(&field.attrs)?;
         let (base_ty, optional) = option_inner(&field.ty).unwrap_or((&field.ty, false));
-        let kind = ScalarKind::from_type(base_ty)?;
+        let mut kind = FieldKind::from_type(base_ty)?;
 
         if let Some(prose_span) = attrs.prose {
-            if kind != ScalarKind::String {
+            if !matches!(kind, FieldKind::Scalar(ScalarKind::String)) {
                 return Err(Error::new(
                     prose_span,
                     "prose is only supported on String fields",
@@ -179,7 +214,8 @@ impl FieldInfo {
         }
 
         if let Some((default, span)) = attrs.default.as_ref() {
-            if kind == ScalarKind::Bool && parse_bool(default).is_none() {
+            if matches!(kind, FieldKind::Scalar(ScalarKind::Bool)) && parse_bool(default).is_none()
+            {
                 return Err(Error::new(
                     *span,
                     "bool defaults must be one of true, false, yes, no, y, or n",
@@ -198,11 +234,9 @@ impl FieldInfo {
             .map(|(_, span)| *span)
             .unwrap_or(ident.span());
         let prompt = doc_prompt(&field.attrs);
-        let kind = if attrs.prose.is_some() {
-            ScalarKind::Text
-        } else {
-            kind
-        };
+        if attrs.prose.is_some() {
+            kind = FieldKind::Scalar(ScalarKind::Text);
+        }
 
         Ok(Self {
             ident,
@@ -218,12 +252,13 @@ impl FieldInfo {
     fn builder_tokens(&self) -> TokenStream {
         let id = &self.id;
         let prompt = &self.prompt;
-        let kind = self.kind.tokens();
+        let kind = self.kind.scalar_kind_tokens();
         let optional = self.optional.then(|| quote! { .optional() });
         let default = self
             .default
             .as_ref()
             .map(|default| quote! { .with_default(#default) });
+        let choices = self.kind.choice_tokens();
 
         quote! {
             ::standout_input::questionnaire::ScalarField::new(
@@ -232,6 +267,7 @@ impl FieldInfo {
                 #kind,
             )
             #optional
+            #choices
             #default
         }
     }
@@ -240,32 +276,101 @@ impl FieldInfo {
         let ident = &self.ident;
         let id = &self.id;
         let missing = format!("decoded answers are missing required field '{}'", self.id);
-        let value = match (self.kind, self.optional) {
-            (ScalarKind::Bool, false) => quote! {
+        let value = match (&self.kind, self.optional) {
+            (FieldKind::Scalar(ScalarKind::Bool), false) => quote! {
                 answers.get_bool(#id).unwrap_or_else(|| unreachable!(#missing))
             },
-            (ScalarKind::Bool, true) => quote! {
+            (FieldKind::Scalar(ScalarKind::Bool), true) => quote! {
                 answers.get_bool(#id)
             },
-            (ScalarKind::Path, false) => quote! {
+            (FieldKind::Scalar(ScalarKind::Path), false) => quote! {
                 ::std::path::PathBuf::from(
                     answers.get_text(#id).unwrap_or_else(|| unreachable!(#missing))
                 )
             },
-            (ScalarKind::Path, true) => quote! {
+            (FieldKind::Scalar(ScalarKind::Path), true) => quote! {
                 answers.get_text(#id).map(::std::path::PathBuf::from)
             },
-            (ScalarKind::String | ScalarKind::Text, false) => quote! {
+            (FieldKind::Scalar(ScalarKind::String | ScalarKind::Text), false) => quote! {
                 answers
                     .get_text(#id)
                     .unwrap_or_else(|| unreachable!(#missing))
                     .to_string()
             },
-            (ScalarKind::String | ScalarKind::Text, true) => quote! {
+            (FieldKind::Scalar(ScalarKind::String | ScalarKind::Text), true) => quote! {
                 answers.get_text(#id).map(|value| value.to_string())
             },
+            (FieldKind::Choice(ty), false) => {
+                let ty = ty.as_ref();
+                let parse_failure = format!(
+                    "decoded answers carried an undeclared choice for field '{}'",
+                    self.id
+                );
+                quote! {
+                    answers
+                        .get_text(#id)
+                        .unwrap_or_else(|| unreachable!(#missing))
+                        .parse::<#ty>()
+                        .unwrap_or_else(|_| unreachable!(#parse_failure))
+                }
+            }
+            (FieldKind::Choice(ty), true) => {
+                let ty = ty.as_ref();
+                let parse_failure = format!(
+                    "decoded answers carried an undeclared choice for field '{}'",
+                    self.id
+                );
+                quote! {
+                    answers.get_text(#id).map(|value| {
+                        value
+                            .parse::<#ty>()
+                            .unwrap_or_else(|_| unreachable!(#parse_failure))
+                    })
+                }
+            }
         };
         quote! { #ident: #value }
+    }
+}
+
+#[derive(Clone)]
+enum FieldKind {
+    Scalar(ScalarKind),
+    Choice(Box<Type>),
+}
+
+impl FieldKind {
+    fn from_type(ty: &Type) -> Result<Self> {
+        if let Some(kind) = ScalarKind::from_type(ty)? {
+            return Ok(Self::Scalar(kind));
+        }
+        if is_known_unsupported_primitive(ty) || !can_be_choice_type(ty) {
+            return Err(unsupported_type_error(ty));
+        }
+        Ok(Self::Choice(Box::new(ty.clone())))
+    }
+
+    fn scalar_kind_tokens(&self) -> TokenStream {
+        match self {
+            Self::Scalar(kind) => kind.tokens(),
+            Self::Choice(_) => quote! { ::standout_input::questionnaire::ScalarKind::String },
+        }
+    }
+
+    fn choice_tokens(&self) -> Option<TokenStream> {
+        match self {
+            Self::Scalar(_) => None,
+            Self::Choice(ty) => {
+                let ty = ty.as_ref();
+                Some(quote! {
+                .one_of(
+                    <#ty as ::standout_input::questionnaire::QuestionnaireChoices>::choices()
+                        .iter()
+                        .copied()
+                )
+                })
+            }
+        }
     }
 }
 
@@ -278,12 +383,9 @@ enum ScalarKind {
 }
 
 impl ScalarKind {
-    fn from_type(ty: &Type) -> Result<Self> {
+    fn from_type(ty: &Type) -> Result<Option<Self>> {
         let Type::Path(type_path) = ty else {
-            return Err(Error::new(
-                ty.span(),
-                "unsupported questionnaire field type; expected String, PathBuf, bool, or Option<T>",
-            ));
+            return Err(unsupported_type_error(ty));
         };
         let ident = type_path
             .path
@@ -293,13 +395,10 @@ impl ScalarKind {
             .ident
             .to_string();
         match ident.as_str() {
-            "String" => Ok(Self::String),
-            "PathBuf" => Ok(Self::Path),
-            "bool" => Ok(Self::Bool),
-            _ => Err(Error::new(
-                ty.span(),
-                "unsupported questionnaire field type; expected String, PathBuf, bool, or Option<T>",
-            )),
+            "String" => Ok(Some(Self::String)),
+            "PathBuf" => Ok(Some(Self::Path)),
+            "bool" => Ok(Some(Self::Bool)),
+            _ => Ok(None),
         }
     }
 
@@ -311,6 +410,53 @@ impl ScalarKind {
             Self::Path => quote! { ::standout_input::questionnaire::ScalarKind::Path },
         }
     }
+}
+
+fn is_known_unsupported_primitive(ty: &Type) -> bool {
+    let Type::Path(type_path) = ty else {
+        return false;
+    };
+    let Some(segment) = type_path.path.segments.last() else {
+        return false;
+    };
+    matches!(
+        segment.ident.to_string().as_str(),
+        "char"
+            | "str"
+            | "u8"
+            | "u16"
+            | "u32"
+            | "u64"
+            | "u128"
+            | "usize"
+            | "i8"
+            | "i16"
+            | "i32"
+            | "i64"
+            | "i128"
+            | "isize"
+            | "f32"
+            | "f64"
+    )
+}
+
+fn can_be_choice_type(ty: &Type) -> bool {
+    let Type::Path(type_path) = ty else {
+        return false;
+    };
+    type_path.qself.is_none()
+        && type_path
+            .path
+            .segments
+            .iter()
+            .all(|segment| matches!(segment.arguments, PathArguments::None))
+}
+
+fn unsupported_type_error(ty: &Type) -> Error {
+    Error::new(
+        ty.span(),
+        "unsupported questionnaire field type; expected String, PathBuf, bool, Option<T>, or a QuestionnaireChoices enum",
+    )
 }
 
 fn option_inner(ty: &Type) -> Option<(&Type, bool)> {
@@ -393,4 +539,149 @@ fn parse_bool(text: &str) -> Option<bool> {
         "false" | "no" | "n" => Some(false),
         _ => None,
     }
+}
+
+/// Main implementation of the QuestionnaireChoices derive macro.
+pub fn questionnaire_choices_derive_impl(input: DeriveInput) -> Result<TokenStream> {
+    let enum_name = &input.ident;
+    if !input.generics.params.is_empty() {
+        return Err(Error::new(
+            input.generics.span(),
+            "QuestionnaireChoices can only be derived for enums without generics",
+        ));
+    }
+
+    let variants = match &input.data {
+        Data::Enum(data) => &data.variants,
+        _ => {
+            return Err(Error::new(
+                input.span(),
+                "QuestionnaireChoices can only be derived for enums",
+            ))
+        }
+    };
+
+    let mut seen_choices = HashSet::new();
+    let mut choice_literals = Vec::new();
+    let mut parse_arms = Vec::new();
+    let mut display_arms = Vec::new();
+
+    for variant in variants {
+        let info = ChoiceVariant::new(variant)?;
+        if !seen_choices.insert(info.choice.clone()) {
+            return Err(Error::new(
+                info.choice_span,
+                format!("duplicate questionnaire choice '{}'", info.choice),
+            ));
+        }
+        let ident = &info.ident;
+        let choice = &info.choice;
+        choice_literals.push(quote! { #choice });
+        parse_arms.push(quote! { #choice => ::core::result::Result::Ok(Self::#ident) });
+        display_arms.push(quote! { Self::#ident => #choice });
+    }
+
+    let expanded = quote! {
+        impl ::standout_input::questionnaire::QuestionnaireChoices for #enum_name {
+            fn choices() -> &'static [&'static str] {
+                &[#(#choice_literals),*]
+            }
+        }
+
+        impl ::core::str::FromStr for #enum_name {
+            type Err = ::standout_input::questionnaire::QuestionnaireChoiceParseError;
+
+            fn from_str(value: &str) -> ::core::result::Result<Self, Self::Err> {
+                match value.trim() {
+                    #(#parse_arms,)*
+                    _ => ::core::result::Result::Err(
+                        ::standout_input::questionnaire::QuestionnaireChoiceParseError::new(
+                            <Self as ::standout_input::questionnaire::QuestionnaireChoices>::choices()
+                        )
+                    ),
+                }
+            }
+        }
+
+        impl ::core::fmt::Display for #enum_name {
+            fn fmt(&self, f: &mut ::core::fmt::Formatter<'_>) -> ::core::fmt::Result {
+                f.write_str(match self {
+                    #(#display_arms,)*
+                })
+            }
+        }
+    };
+
+    Ok(expanded)
+}
+
+struct ChoiceVariant {
+    ident: syn::Ident,
+    choice: String,
+    choice_span: Span,
+}
+
+impl ChoiceVariant {
+    fn new(variant: &Variant) -> Result<Self> {
+        if !matches!(variant.fields, Fields::Unit) {
+            return Err(Error::new(
+                variant.fields.span(),
+                "QuestionnaireChoices variants must be unit variants",
+            ));
+        }
+        let attrs = parse_choice_attrs(&variant.attrs)?;
+        let (choice, choice_span) = attrs.rename.unwrap_or_else(|| {
+            (
+                to_kebab_case(&variant.ident.to_string()),
+                variant.ident.span(),
+            )
+        });
+        Ok(Self {
+            ident: variant.ident.clone(),
+            choice,
+            choice_span,
+        })
+    }
+}
+
+fn parse_choice_attrs(attrs: &[Attribute]) -> Result<ChoiceAttr> {
+    let mut out = ChoiceAttr::default();
+    for attr in attrs {
+        if attr.path().is_ident("question") {
+            let parsed = attr.parse_args::<ChoiceAttr>()?;
+            if parsed.rename.is_some() && out.rename.replace(parsed.rename.unwrap()).is_some() {
+                return Err(Error::new(
+                    attr.span(),
+                    "duplicate question rename attribute",
+                ));
+            }
+        }
+    }
+    Ok(out)
+}
+
+fn to_kebab_case(name: &str) -> String {
+    let mut out = String::new();
+    let mut prev_was_separator = true;
+    for ch in name.chars() {
+        if ch == '_' || ch == '-' || ch.is_whitespace() {
+            if !out.is_empty() && !prev_was_separator {
+                out.push('-');
+            }
+            prev_was_separator = true;
+            continue;
+        }
+        if ch.is_uppercase() {
+            if !out.is_empty() && !prev_was_separator {
+                out.push('-');
+            }
+            for lower in ch.to_lowercase() {
+                out.push(lower);
+            }
+        } else {
+            out.push(ch);
+        }
+        prev_was_separator = false;
+    }
+    out.trim_matches('-').to_string()
 }

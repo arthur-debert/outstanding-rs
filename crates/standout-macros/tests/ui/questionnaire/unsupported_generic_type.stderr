@@ -1,5 +1,5 @@
 error: unsupported questionnaire field type; expected String, PathBuf, bool, Option<T>, or a QuestionnaireChoices enum
- --> tests/ui/questionnaire/unsupported_type.rs:7:12
+ --> tests/ui/questionnaire/unsupported_generic_type.rs:7:11
   |
-7 |     count: u32,
-  |            ^^^
+7 |     tags: Vec<String>,
+  |           ^^^
