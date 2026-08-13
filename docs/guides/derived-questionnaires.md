@@ -177,7 +177,7 @@ use standout::cli::{CommandContext, CommandContextInput, HandlerResult, Output};
 fn import(_matches: &clap::ArgMatches, ctx: &CommandContext) -> HandlerResult<serde_json::Value> {
     let answers: &ImportAnswers = ctx.questionnaire()?;
     Ok(Output::Render(serde_json::json!({
-        "project": answers.project_name,
+        "project": answers.project_name.as_str(),
     })))
 }
 ```
