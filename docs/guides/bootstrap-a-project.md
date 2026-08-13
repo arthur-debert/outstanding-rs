@@ -71,16 +71,19 @@ standout new-project --answers - --yes < answers.txt
 standout new-project --answers answers.txt --yes
 ```
 
-Each question renders with a cosmetic number, its wording, a bracketed stable
-ID such as `[project.name]`, and a `->` marker line for the answer. Write the
-answer on the marker line; a `text` answer such as the command description may
-continue over the following lines. Declared defaults are pre-filled — leave
-them untouched to accept them, and leave the executable name blank to reuse
-the project name. The repeatable input section renders one block; add another
-input by copying the complete block — its heading line and its questions —
-below the last block and answering the copy. Only the bracketed IDs carry
-meaning: rewording, renumbering, or re-indenting a sheet does not change what
-it means.
+Each question renders as one line — a cosmetic number, its wording, a type
+hint, and a stable ID tag such as `<id:project.name>` at the end of the line.
+Write the answer on the line (or lines) below the question; a `text` answer
+such as the command description may span several lines, and everything up to
+the next question line belongs to it. Declared defaults are pre-filled as the
+answer text — leave them untouched to accept them, and leave the executable
+name blank to reuse the project name. The repeatable input section renders
+one block; add another input by copying the complete block — its heading line
+and its questions — below the last block and answering the copy. Only the
+line-ending `<id:...>` tags carry meaning: rewording, renumbering, or
+re-indenting a sheet does not change what it means, and a tag only counts
+when it ends its line, so mentioning one mid-prose is harmless (the wizard
+prints a warning when an answer contains `<id:`, in case a tag was mangled).
 
 `--answers` replaces question collection entirely — it never merges file
 answers with prompts — but everything after collection is the interactive

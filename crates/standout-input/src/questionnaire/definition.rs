@@ -184,10 +184,11 @@ impl Eq for FieldValidator {}
 
 /// One scalar question in a questionnaire.
 ///
-/// The `id` is the stable machine identity rendered as the bracketed token
-/// (`[project.name]`); the `prompt` is human wording and may be edited freely
-/// without affecting compatibility. Everything else — kind, optionality,
-/// default, constraint, condition, and validator revision — is semantic.
+/// The `id` is the stable machine identity rendered as the line-terminal
+/// tag (`<id:project.name>`); the `prompt` is human wording and may be
+/// edited freely without affecting compatibility. Everything else — kind,
+/// optionality, default, constraint, condition, and validator revision — is
+/// semantic.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ScalarField {
     pub(crate) id: String,
@@ -230,11 +231,12 @@ impl ScalarField {
 
     /// Declare a default value.
     ///
-    /// The renderer pre-fills the default on the answer marker line, and
-    /// during decoding any blank answer resolves to the default *before*
-    /// optionality is considered. Defaults must be a single line with no
-    /// outer whitespace (parsed answers are trimmed) and must themselves
-    /// decode cleanly. Defaults are semantic: they change the fingerprint.
+    /// The renderer pre-fills the default as the answer text below the
+    /// question line, and during decoding any blank answer resolves to the
+    /// default *before* optionality is considered. Defaults must be a
+    /// single line with no outer whitespace (parsed answers are trimmed)
+    /// and must themselves decode cleanly. Defaults are semantic: they
+    /// change the fingerprint.
     pub fn with_default(mut self, default: impl Into<String>) -> Self {
         self.default = Some(default.into());
         self
@@ -323,12 +325,12 @@ impl ScalarField {
         self.validator.as_ref()
     }
 
-    /// The cosmetic type hint rendered after the bracketed ID.
+    /// The cosmetic type hint rendered before the question tag.
     ///
-    /// Presentation-only: choices render in "a, b, or c" style, optionality
-    /// and conditions are spelled out, and any square brackets in condition
-    /// values are stripped so a hint can never look like a field header to
-    /// the parser.
+    /// Presentation-only: choices render in "a, b, or c" style, and
+    /// optionality and conditions are spelled out. Hints may contain any
+    /// characters — only the line-terminal tag structures a sheet, so a
+    /// hint can never look like a question tag to the parser.
     pub(crate) fn type_hint(&self) -> String {
         let mut hint = match &self.constraint {
             Some(Constraint::OneOf(choices)) => join_or(choices),
@@ -338,14 +340,9 @@ impl ScalarField {
             hint.push_str(", optional");
         }
         if let Some(condition) = &self.condition {
-            let expected: String = condition
-                .expected
-                .chars()
-                .filter(|c| !matches!(c, '[' | ']'))
-                .collect();
             hint.push_str(&format!(
                 "; only when {} is {}",
-                condition.controller, expected
+                condition.controller, condition.expected
             ));
         }
         hint
@@ -391,9 +388,9 @@ impl Repeat {
 
 /// A named group of nested questionnaire items.
 ///
-/// The `id` is the stable machine identity rendered as the bracketed token
-/// (`[command.inputs]`); the `prompt` is human wording and may be edited
-/// freely. Every child's ID must extend the group's ID with a `.` segment
+/// The `id` is the stable machine identity rendered as the line-terminal
+/// tag (`<id:command.inputs>`); the `prompt` is human wording and may be
+/// edited freely. Every child's ID must extend the group's ID with a `.` segment
 /// (`command.inputs` → `command.inputs.name`), which keeps submitted
 /// occurrence paths derivable from definition IDs.
 ///
@@ -486,7 +483,7 @@ impl Group {
         format!("{}.", self.id)
     }
 
-    /// The cosmetic type hint rendered after the bracketed ID.
+    /// The cosmetic type hint rendered before the question tag.
     pub(crate) fn type_hint(&self) -> String {
         match self.repeat {
             None => "section".to_string(),
@@ -1040,7 +1037,7 @@ fn validate_condition(
 }
 
 /// Reject defaults that could not survive the shared decoder, the
-/// single-line marker rendering, or the render/parse round trip (outer
+/// single-line pre-filled rendering, or the render/parse round trip (outer
 /// whitespace is trimmed away at parse time).
 fn validate_default(field: &ScalarField) -> Result<(), QuestionnaireError> {
     let Some(default) = &field.default else {
@@ -1061,7 +1058,8 @@ fn validate_default(field: &ScalarField) -> Result<(), QuestionnaireError> {
     }
     if default.contains('\n') {
         return Err(invalid(
-            "a default must be a single line (it renders on the answer marker line)".to_string(),
+            "a default must be a single line (it renders pre-filled below the question line)"
+                .to_string(),
         ));
     }
     if let Err(diagnostic) = check_field_text(field, field.id(), default) {

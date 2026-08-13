@@ -1,6 +1,7 @@
 //! Pure answer-sheet engine tests: deterministic rendering, round trips,
-//! multiline and whitespace behavior, cosmetic edits, malformed headers,
-//! unknown or duplicate IDs, and compatibility failures.
+//! multiline and whitespace behavior, cosmetic edits, demoted question
+//! lines, unknown or duplicate tags, tag-fragment warnings, and
+//! compatibility failures.
 
 use standout_input::questionnaire::{
     AnswerSheetDiagnostic, Questionnaire, QuestionnaireError, ScalarField, ScalarKind,
@@ -33,23 +34,30 @@ fn two_fields() -> Questionnaire {
     .unwrap()
 }
 
-/// Replace a field's bare marker with a marker carrying `answer`.
+/// Set `answer` as the answer text directly below the question line tagged
+/// `id`, replacing a rendered pre-filled default line when one is present.
 fn answer(sheet: &str, id: &str, answer: &str) -> String {
-    let needle = format!("[{id}]");
-    let mut out = String::new();
-    let mut lines = sheet.lines().peekable();
-    while let Some(line) = lines.next() {
-        out.push_str(line);
-        out.push('\n');
-        if line.contains(&needle) {
-            let marker = lines.next().expect("marker follows header");
-            assert_eq!(marker, "->");
-            out.push_str("-> ");
-            out.push_str(answer);
-            out.push('\n');
+    let tag = format!("<id:{id}>");
+    let lines: Vec<&str> = sheet.lines().collect();
+    let mut out: Vec<String> = Vec::new();
+    let mut found = false;
+    let mut i = 0;
+    while i < lines.len() {
+        let line = lines[i];
+        out.push(line.to_string());
+        i += 1;
+        if !found && line.trim_end().ends_with(&tag) {
+            found = true;
+            // A non-blank line right below the question is a pre-filled
+            // default: the answer replaces it.
+            if lines.get(i).is_some_and(|next| !next.trim().is_empty()) {
+                i += 1;
+            }
+            out.push(answer.to_string());
         }
     }
-    out
+    assert!(found, "answer sheet has no question line for {tag}");
+    out.join("\n") + "\n"
 }
 
 // ============================================================================
@@ -121,11 +129,9 @@ fn rendering_is_deterministic_and_carries_all_declared_parts() {
          #! questionnaire: demo.profile\n\
          #! fingerprint: {}\n\
          \n\
-         1. What is the project name? [project.name] (string)\n\
-         ->\n\
+         1. What is the project name? (string) <id:project.name>\n\
          \n\
-         2. Add any notes. [project.notes] (text, optional)\n\
-         ->\n",
+         2. Add any notes. (text, optional) <id:project.notes>\n",
         q.fingerprint()
     );
     assert_eq!(sheet, expected);
@@ -143,6 +149,7 @@ fn blank_sheet_round_trips_to_empty_answers() {
     assert_eq!(answers.get("project.name"), Some(""));
     assert_eq!(answers.get("project.notes"), Some(""));
     assert_eq!(answers.len(), 2);
+    assert!(answers.warnings().is_empty());
 }
 
 #[test]
@@ -169,29 +176,34 @@ fn multiline_answer_preserves_internal_breaks_and_trims_outer_whitespace() {
 }
 
 #[test]
-fn bracketed_prose_inside_answer_is_not_a_field() {
+fn a_blank_line_between_question_and_answer_still_binds_the_answer() {
+    // Regression: the old format's header/marker adjacency rule silently
+    // swallowed a header separated from its answer by a blank line. The
+    // answer is simply everything up to the next question line.
+    let q = one_field();
+    let edited = q
+        .render_answer_sheet()
+        .replace("<id:project.name>\n", "<id:project.name>\n\nwizard\n");
+    let answers = q.parse_answer_sheet(&edited).unwrap();
+    assert_eq!(answers.get("project.name"), Some("wizard"));
+}
+
+#[test]
+fn bracketed_prose_and_marker_bullets_inside_an_answer_are_inert() {
+    // Regression: under the old format, bracketed IDs and `->` lines were
+    // structural. Both are now ordinary answer text.
     let q = two_fields();
-    // Contains a bracketed known ID and a bracketed unknown token, neither
-    // followed by a marker line: both are ordinary answer text.
     let edited = answer(
         &q.render_answer_sheet(),
         "project.notes",
-        "see [project.name] above\nand [some prose] too",
+        "see [project.name] above\n-> a bullet, not a marker\nand [some prose] too",
     );
     let answers = q.parse_answer_sheet(&edited).unwrap();
     assert_eq!(
         answers.get("project.notes"),
-        Some("see [project.name] above\nand [some prose] too")
+        Some("see [project.name] above\n-> a bullet, not a marker\nand [some prose] too")
     );
-}
-
-#[test]
-fn answer_on_marker_line_and_following_lines_belong_together() {
-    let q = one_field();
-    let sheet = q.render_answer_sheet();
-    let edited = sheet.replace("->\n", "->   spaced out   \n");
-    let answers = q.parse_answer_sheet(&edited).unwrap();
-    assert_eq!(answers.get("project.name"), Some("spaced out"));
+    assert!(answers.warnings().is_empty());
 }
 
 // ============================================================================
@@ -208,11 +220,11 @@ fn display_edits_do_not_change_parsing() {
          \n\
          Some guidance prose the renderer never wrote.\n\
          \n\
-         99. Totally reworded question! [project.name] (whatever hint)\n\
-         -> demo\n\
+         99. Totally reworded question! (whatever [hint], with -> and brackets) <id:project.name>\n\
+         demo\n\
          \n\
-         \t 1.1 Indented and renumbered. [project.notes]\n\
-         \t -> noted\n",
+         \t 1.1 Indented and renumbered. <id:project.notes>\n\
+         \t noted\n",
         q.fingerprint()
     );
     let answers = q.parse_answer_sheet(&cosmetic).unwrap();
@@ -228,16 +240,90 @@ fn field_order_in_document_is_cosmetic() {
          #! questionnaire: demo.profile\n\
          #! fingerprint: {}\n\
          \n\
-         2. Add any notes. [project.notes] (text, optional)\n\
-         -> noted\n\
+         2. Add any notes. (text, optional) <id:project.notes>\n\
+         noted\n\
          \n\
-         1. What is the project name? [project.name] (string)\n\
-         -> demo\n",
+         1. What is the project name? (string) <id:project.name>\n\
+         demo\n",
         q.fingerprint()
     );
     let answers = q.parse_answer_sheet(&reordered).unwrap();
     assert_eq!(answers.get("project.name"), Some("demo"));
     assert_eq!(answers.get("project.notes"), Some("noted"));
+}
+
+// ============================================================================
+// Demotion and the accepted misparse limitation
+// ============================================================================
+
+#[test]
+fn trailing_text_after_the_tag_demotes_the_line_to_prose() {
+    // Regression: a trailing annotation after the ID must not
+    // half-recognize the line; any non-blank character after the tag makes
+    // the whole line ordinary prose (which then trips the tag-fragment
+    // warning as a hint that a tag may have been mangled).
+    let q = two_fields();
+    let edited = answer(
+        &q.render_answer_sheet(),
+        "project.notes",
+        "quoting a question line:\n1. What is the project name? <id:project.name> (see above)\ndone",
+    );
+    let answers = q.parse_answer_sheet(&edited).unwrap();
+    assert_eq!(
+        answers.get("project.notes"),
+        Some("quoting a question line:\n1. What is the project name? <id:project.name> (see above)\ndone")
+    );
+    assert_eq!(answers.get("project.name"), Some(""));
+    assert_eq!(answers.warnings().len(), 1);
+}
+
+#[test]
+fn an_answer_line_ending_with_a_valid_tag_is_misparsed_by_design() {
+    // The documented limitation: there is no escaping, so an answer line
+    // that itself ends with a schema-valid tag reads as a question line.
+    let q = two_fields();
+    let sheet = format!(
+        "#! standout-answers 1\n\
+         #! questionnaire: demo.profile\n\
+         #! fingerprint: {}\n\
+         \n\
+         1. What is the project name? (string) <id:project.name>\n\
+         this prose line ends with <id:project.notes>\n",
+        q.fingerprint()
+    );
+    let answers = q.parse_answer_sheet(&sheet).unwrap();
+    assert_eq!(answers.get("project.name"), Some(""));
+    assert_eq!(answers.get("project.notes"), Some(""));
+}
+
+// ============================================================================
+// Tag-fragment warnings
+// ============================================================================
+
+#[test]
+fn a_tag_fragment_inside_an_answer_raises_a_warning() {
+    let q = two_fields();
+    let edited = answer(
+        &q.render_answer_sheet(),
+        "project.notes",
+        "mentions <id:project.name> mid-line\nand a mangled <id:project.na",
+    );
+    let answers = q.parse_answer_sheet(&edited).unwrap();
+    assert_eq!(
+        answers.get("project.notes"),
+        Some("mentions <id:project.name> mid-line\nand a mangled <id:project.na")
+    );
+    assert_eq!(answers.warnings().len(), 2, "{:?}", answers.warnings());
+    assert!(answers.warnings().iter().all(|w| matches!(
+        w,
+        AnswerSheetDiagnostic::SuspectedTagInAnswer { path, .. } if path == "project.notes"
+    )));
+    let message = answers.warnings()[0].to_string();
+    assert!(message.contains("warning"), "{message}");
+    assert!(
+        !message.contains("mid-line"),
+        "warnings never echo answer text: {message}"
+    );
 }
 
 // ============================================================================
@@ -420,7 +506,7 @@ fn compatibility_failure_skips_body_parsing() {
     let sheet = q
         .render_answer_sheet()
         .replace("#! standout-answers 1", "#! standout-answers 9")
-        .replace("[project.name]", "[unknown.field]");
+        .replace("<id:project.name>", "<id:unknown.field>");
     let diags = q.parse_answer_sheet(&sheet).unwrap_err();
     // Only the compatibility diagnostic: the body is never interpreted.
     assert_eq!(
@@ -430,31 +516,31 @@ fn compatibility_failure_skips_body_parsing() {
 }
 
 // ============================================================================
-// Unknown and duplicate IDs
+// Unknown and duplicate tags
 // ============================================================================
 
 #[test]
-fn unknown_id_in_header_shaped_line_is_a_diagnostic() {
+fn unknown_tag_on_a_question_line_is_a_diagnostic() {
     let q = one_field();
     let sheet = format!(
-        "{}\n3. Bonus question? [project.bonus] (string)\n-> surprise\n",
+        "{}\n3. Bonus question? (string) <id:project.bonus>\nsurprise\n",
         q.render_answer_sheet()
     );
     let diags = q.parse_answer_sheet(&sheet).unwrap_err();
     assert_eq!(
         diags,
-        vec![AnswerSheetDiagnostic::UnknownFieldId {
+        vec![AnswerSheetDiagnostic::UnknownTag {
             id: "project.bonus".into(),
-            line: 8,
+            line: 7,
         }]
     );
 }
 
 #[test]
-fn duplicate_field_header_is_a_diagnostic() {
+fn duplicate_question_line_is_a_diagnostic() {
     let q = one_field();
     let sheet = format!(
-        "{}\n1. What is the project name? [project.name] (string)\n-> again\n",
+        "{}\n1. What is the project name? (string) <id:project.name>\nagain\n",
         q.render_answer_sheet()
     );
     let diags = q.parse_answer_sheet(&sheet).unwrap_err();
@@ -462,7 +548,7 @@ fn duplicate_field_header_is_a_diagnostic() {
         diags,
         vec![AnswerSheetDiagnostic::DuplicateField {
             path: "project.name".into(),
-            line: 8,
+            line: 7,
         }]
     );
 }
@@ -472,39 +558,18 @@ fn diagnostics_accumulate_across_the_body() {
     let q = two_fields();
     let sheet = format!(
         "{}\n\
-         9. Mystery. [who.knows] (string)\n\
-         -> x\n\
+         9. Mystery. (string) <id:who.knows>\n\
+         x\n\
          \n\
-         1. Again. [project.name] (string)\n\
-         -> y\n",
+         1. Again. (string) <id:project.name>\n\
+         y\n",
         answer(&q.render_answer_sheet(), "project.name", "first")
     );
     let diags = q.parse_answer_sheet(&sheet).unwrap_err();
     assert_eq!(diags.len(), 2, "both problems reported: {diags:?}");
-    assert!(matches!(
-        diags[0],
-        AnswerSheetDiagnostic::UnknownFieldId { .. }
-    ));
+    assert!(matches!(diags[0], AnswerSheetDiagnostic::UnknownTag { .. }));
     assert!(matches!(
         diags[1],
         AnswerSheetDiagnostic::DuplicateField { .. }
     ));
-}
-
-#[test]
-fn header_without_marker_is_ordinary_text() {
-    let q = two_fields();
-    // A known-ID, header-shaped-looking line with no following marker line is
-    // absorbed into the surrounding answer, not treated as a field.
-    let edited = answer(
-        &q.render_answer_sheet(),
-        "project.notes",
-        "quoting the header:\n1. What is the project name? [project.name] (string)\ndone",
-    );
-    let answers = q.parse_answer_sheet(&edited).unwrap();
-    assert_eq!(
-        answers.get("project.notes"),
-        Some("quoting the header:\n1. What is the project name? [project.name] (string)\ndone")
-    );
-    assert_eq!(answers.get("project.name"), Some(""));
 }

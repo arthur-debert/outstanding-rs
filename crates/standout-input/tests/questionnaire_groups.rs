@@ -87,44 +87,46 @@ fn conditional_inputs() -> Questionnaire {
     .unwrap()
 }
 
-/// Replace the `n`th (0-based) rendered marker following a header of `id`.
+/// Set `answer` below the `n`th (0-based) question line tagged `id`,
+/// replacing a rendered pre-filled default line when one is present.
 fn answer_nth(sheet: &str, id: &str, n: usize, answer: &str) -> String {
-    let needle = format!("[{id}]");
-    let mut out = String::new();
+    let tag = format!("<id:{id}>");
+    let lines: Vec<&str> = sheet.lines().collect();
+    let mut out: Vec<String> = Vec::new();
     let mut seen = 0;
-    let mut lines = sheet.lines().peekable();
-    while let Some(line) = lines.next() {
-        out.push_str(line);
-        out.push('\n');
-        if line.contains(&needle) {
-            let marker = lines.next().expect("marker follows header");
-            assert!(marker.starts_with("->"), "expected a marker line");
+    let mut i = 0;
+    while i < lines.len() {
+        let line = lines[i];
+        out.push(line.to_string());
+        i += 1;
+        if line.trim_end().ends_with(&tag) {
             if seen == n {
-                out.push_str("-> ");
-                out.push_str(answer);
-            } else {
-                out.push_str(marker);
+                // A non-blank line right below the question is a pre-filled
+                // default: the answer replaces it.
+                if lines.get(i).is_some_and(|next| !next.trim().is_empty()) {
+                    i += 1;
+                }
+                out.push(answer.to_string());
             }
-            out.push('\n');
             seen += 1;
         }
     }
-    assert!(seen > n, "found only {seen} markers for {id}");
-    out
+    assert!(seen > n, "found only {seen} question lines for {tag}");
+    out.join("\n") + "\n"
 }
 
-/// Split a sheet at the first header line of `id`: everything before it,
-/// and the block from the header line to the end of the sheet.
-fn split_at_header(sheet: &str, id: &str) -> (String, String) {
-    let needle = format!("[{id}]");
+/// Split a sheet at the first question line tagged `id`: everything before
+/// it, and the block from that line to the end of the sheet.
+fn split_at_tag(sheet: &str, id: &str) -> (String, String) {
+    let tag = format!("<id:{id}>");
     let mut offset = 0;
     for line in sheet.lines() {
-        if line.contains(&needle) {
+        if line.trim_end().ends_with(&tag) {
             return (sheet[..offset].to_string(), sheet[offset..].to_string());
         }
         offset += line.len() + 1;
     }
-    panic!("no header found for {id}");
+    panic!("no question line found for {id}");
 }
 
 /// The `commands()` sheet with every scalar answered and one input block.
@@ -304,10 +306,10 @@ fn render_emits_exactly_the_declared_minimum_of_blocks() {
     .unwrap();
     let sheet = q.render_answer_sheet();
     let headers = sheet
-        .matches("[items] (repeatable section, minimum 2)")
+        .matches("(repeatable section, minimum 2) <id:items>")
         .count();
     assert_eq!(headers, 2, "exactly the minimum number of blocks: {sheet}");
-    assert_eq!(sheet.matches("[items.name]").count(), 2);
+    assert_eq!(sheet.matches("<id:items.name>").count(), 2);
 }
 
 #[test]
@@ -325,12 +327,12 @@ fn render_includes_copy_the_block_guidance_once_per_group() {
 fn render_numbers_nested_items_cosmetically() {
     let q = commands();
     let sheet = q.render_answer_sheet();
-    assert!(sheet.contains("2. Describe the initial command. [command] (section)"));
-    assert!(sheet.contains("2.1 What is the command name? [command.name] (string)"));
+    assert!(sheet.contains("2. Describe the initial command. (section) <id:command>"));
+    assert!(sheet.contains("2.1 What is the command name? (string) <id:command.name>"));
     assert!(sheet.contains(
-        "2.2 Describe a command input. [command.inputs] (repeatable section, minimum 1, maximum 3)"
+        "2.2 Describe a command input. (repeatable section, minimum 1, maximum 3) <id:command.inputs>"
     ));
-    assert!(sheet.contains("2.2.1 What is its name? [command.inputs.name] (string)"));
+    assert!(sheet.contains("2.2.1 What is its name? (string) <id:command.inputs.name>"));
 }
 
 #[test]
@@ -349,7 +351,7 @@ fn render_prefills_defaults_in_every_occurrence() {
     )
     .unwrap();
     let sheet = q.render_answer_sheet();
-    assert_eq!(sheet.matches("-> basic").count(), 2);
+    assert_eq!(sheet.matches("<id:items.kind>\nbasic\n").count(), 2);
 }
 
 #[test]
@@ -386,8 +388,8 @@ fn minimum_sheet_round_trips_with_occurrence_paths() {
 fn copying_a_complete_block_adds_an_occurrence() {
     let q = commands();
     let sheet = answered_commands_sheet(&q);
-    let (_, block) = split_at_header(&sheet, "command.inputs");
-    let copied = format!("{sheet}\n{}", block.replace("-> definition", "-> output"));
+    let (_, block) = split_at_tag(&sheet, "command.inputs");
+    let copied = format!("{sheet}\n{}", block.replace("\ndefinition\n", "\noutput\n"));
 
     let answers = q
         .decode_answers(&q.parse_answer_sheet(&copied).unwrap())
@@ -401,10 +403,10 @@ fn copying_a_complete_block_adds_an_occurrence() {
 }
 
 #[test]
-fn occurrence_counts_come_from_headers_not_numbers_or_wording() {
+fn occurrence_counts_come_from_tag_lines_not_numbers_or_wording() {
     let q = commands();
     let sheet = answered_commands_sheet(&q);
-    let (_, block) = split_at_header(&sheet, "command.inputs");
+    let (_, block) = split_at_tag(&sheet, "command.inputs");
     // The copied block keeps the same display numbers, gets reworded, and
     // even claims a count in prose — none of which means anything.
     let copy = block
@@ -413,7 +415,7 @@ fn occurrence_counts_come_from_headers_not_numbers_or_wording() {
             "One more input (this is the 9th of 12).",
         )
         .replace("What is its name?", "Name for this one?")
-        .replace("-> definition", "-> output");
+        .replace("\ndefinition\n", "\noutput\n");
     let copied = format!("{sheet}\n{copy}");
 
     let answers = q
@@ -450,7 +452,10 @@ fn a_root_field_after_a_group_block_closes_the_group_scope() {
 // ============================================================================
 
 #[test]
-fn group_prose_without_a_valid_child_is_answer_content() {
+fn a_group_tag_mentioned_inside_answer_prose_is_inert() {
+    // Regression: under the old format a group ID mentioned in prose could
+    // satisfy the group contract. A mid-line tag mention is now inert
+    // answer content — flagged only by the tag-fragment warning.
     let q = Questionnaire::new(
         "demo",
         vec![
@@ -465,26 +470,30 @@ fn group_prose_without_a_valid_child_is_answer_content() {
     .unwrap();
     let sheet = q.render_answer_sheet();
     let sheet = answer_nth(&sheet, "g.a", 0, "inside");
-    // A known group ID inside prose, with no valid child following: the
-    // header contract fails, so it stays answer content.
-    let sheet = answer_nth(&sheet, "notes", 0, "see [g] for details\nand more prose");
+    let sheet = answer_nth(
+        &sheet,
+        "notes",
+        0,
+        "see <id:g> mentioned mid-line\nand more prose",
+    );
     let raw = q.parse_answer_sheet(&sheet).unwrap();
     assert_eq!(
         raw.get("notes"),
-        Some("see [g] for details\nand more prose")
+        Some("see <id:g> mentioned mid-line\nand more prose")
     );
-    assert_eq!(raw.occurrence_count("g"), 0, "sections are not counted");
+    assert_eq!(raw.get("g.a"), Some("inside"));
+    assert_eq!(raw.warnings().len(), 1, "{:?}", raw.warnings());
 }
 
 #[test]
-fn a_child_without_its_group_header_is_misplaced() {
+fn a_child_without_its_group_tag_line_is_misplaced() {
     let q = commands();
     let sheet = answered_commands_sheet(&q);
-    // Delete the group header line: its children now sit in the enclosing
+    // Delete the group tag line: its children now sit in the enclosing
     // scope, where they are not valid.
     let sheet: String = sheet
         .lines()
-        .filter(|line| !line.contains("[command.inputs]"))
+        .filter(|line| !line.contains("<id:command.inputs>"))
         .map(|line| format!("{line}\n"))
         .collect();
     let diags = q.parse_answer_sheet(&sheet).unwrap_err();
@@ -492,16 +501,16 @@ fn a_child_without_its_group_header_is_misplaced() {
         diags
             .iter()
             .all(|d| matches!(d, AnswerSheetDiagnostic::MisplacedId { id, .. } if id.starts_with("command.inputs."))),
-        "children without their group header are misplaced: {diags:?}"
+        "children without their group tag line are misplaced: {diags:?}"
     );
     assert_eq!(diags.len(), 2);
 }
 
 #[test]
-fn a_duplicate_section_header_is_a_diagnostic() {
+fn a_duplicate_section_tag_line_is_a_diagnostic() {
     let q = commands();
     let sheet = answered_commands_sheet(&q);
-    let (_, block) = split_at_header(&sheet, "command");
+    let (_, block) = split_at_tag(&sheet, "command");
     let copied = format!("{sheet}\n{block}");
     let diags = q.parse_answer_sheet(&copied).unwrap_err();
     assert_eq!(
@@ -519,7 +528,7 @@ fn a_duplicate_section_header_is_a_diagnostic() {
 fn a_duplicate_child_in_one_occurrence_reports_the_indexed_path() {
     let q = commands();
     let sheet = answered_commands_sheet(&q);
-    let extra = "9. Name again? [command.inputs.name] (string)\n-> twice\n";
+    let extra = "9. Name again? (string) <id:command.inputs.name>\ntwice\n";
     let sheet = format!("{sheet}{extra}");
     let diags = q.parse_answer_sheet(&sheet).unwrap_err();
     assert_eq!(diags.len(), 1);
@@ -533,18 +542,21 @@ fn a_duplicate_child_in_one_occurrence_reports_the_indexed_path() {
 }
 
 #[test]
-fn a_group_header_with_an_answer_marker_is_a_diagnostic() {
+fn a_bare_group_tag_line_opens_one_more_occurrence() {
+    // Occurrence counting is exactly counting the group's tag lines: a
+    // stray tag line opens an (empty) occurrence, whose missing required
+    // children then surface as decode diagnostics — never silently.
     let q = commands();
     let sheet = answered_commands_sheet(&q);
-    let sheet = format!("{sheet}\n9. Inputs? [command.inputs] (section)\n-> nope\n");
-    let diags = q.parse_answer_sheet(&sheet).unwrap_err();
-    assert_eq!(diags.len(), 1);
-    assert!(
-        matches!(
-            &diags[0],
-            AnswerSheetDiagnostic::GroupAnswerMarker { id, .. } if id == "command.inputs"
-        ),
-        "{diags:?}"
+    let sheet = format!("{sheet}\n9. Inputs again. <id:command.inputs>\n");
+    let raw = q.parse_answer_sheet(&sheet).unwrap();
+    assert_eq!(raw.occurrence_count("command.inputs"), 2);
+    let diags = q.decode_answers(&raw).unwrap_err();
+    assert_eq!(
+        diags,
+        vec![ValidationDiagnostic::MissingAnswer {
+            id: "command.inputs[1].name".into(),
+        }]
     );
 }
 
@@ -553,13 +565,13 @@ fn an_unknown_child_inside_a_block_is_a_diagnostic() {
     let q = conditional_inputs();
     let sheet = q.render_answer_sheet();
     let sheet = answer_nth(&sheet, "inputs.name", 0, "alpha");
-    // A header-shaped line with a marker but an ID the schema never
-    // declared, inside a group block: diagnosed, not silently swallowed.
-    let sheet = format!("{sheet}9. Ghost? [inputs.ghost] (string)\n-> boo\n");
+    // A question line with an ID the schema never declared, inside a group
+    // block: diagnosed, not silently swallowed.
+    let sheet = format!("{sheet}9. Ghost? (string) <id:inputs.ghost>\nboo\n");
     let diags = q.parse_answer_sheet(&sheet).unwrap_err();
     assert_eq!(diags.len(), 1);
     assert!(
-        matches!(&diags[0], AnswerSheetDiagnostic::UnknownFieldId { id, .. } if id == "inputs.ghost"),
+        matches!(&diags[0], AnswerSheetDiagnostic::UnknownTag { id, .. } if id == "inputs.ghost"),
         "{diags:?}"
     );
 }
@@ -572,7 +584,7 @@ fn an_unknown_child_inside_a_block_is_a_diagnostic() {
 fn under_minimum_occurrences_is_a_structural_diagnostic() {
     let q = commands();
     let sheet = answered_commands_sheet(&q);
-    let (head, _) = split_at_header(&sheet, "command.inputs");
+    let (head, _) = split_at_tag(&sheet, "command.inputs");
     let raw = q.parse_answer_sheet(&head).unwrap();
     assert_eq!(raw.occurrence_count("command.inputs"), 0);
     let diags = q.decode_answers(&raw).unwrap_err();
@@ -591,12 +603,12 @@ fn under_minimum_occurrences_is_a_structural_diagnostic() {
 fn over_maximum_occurrences_is_a_structural_diagnostic() {
     let q = commands();
     let sheet = answered_commands_sheet(&q);
-    let (_, block) = split_at_header(&sheet, "command.inputs");
+    let (_, block) = split_at_tag(&sheet, "command.inputs");
     let mut copied = sheet.clone();
     for n in 1..=3 {
         copied = format!(
             "{copied}\n{}",
-            block.replace("-> definition", &format!("-> in{n}"))
+            block.replace("\ndefinition\n", &format!("\nin{n}\n"))
         );
     }
     let diags = q
@@ -616,9 +628,9 @@ fn over_maximum_occurrences_is_a_structural_diagnostic() {
 fn missing_required_answers_use_indexed_occurrence_paths() {
     let q = commands();
     let sheet = answered_commands_sheet(&q);
-    let (_, block) = split_at_header(&sheet, "command.inputs");
+    let (_, block) = split_at_tag(&sheet, "command.inputs");
     // The copied block's name is left blank.
-    let copied = format!("{sheet}\n{}", block.replace("-> definition", "->"));
+    let copied = format!("{sheet}\n{}", block.replace("\ndefinition\n", "\n\n"));
     let diags = q
         .decode_answers(&q.parse_answer_sheet(&copied).unwrap())
         .unwrap_err();
@@ -637,13 +649,13 @@ fn a_condition_inside_a_repeatable_group_controls_per_occurrence() {
     let sheet = answer_nth(&sheet, "inputs.name", 0, "alpha");
     let sheet = answer_nth(&sheet, "inputs.flag", 0, "yes");
     let sheet = answer_nth(&sheet, "inputs.flag_name", 0, "alpha-flag");
-    let (_, block) = split_at_header(&sheet, "inputs");
+    let (_, block) = split_at_tag(&sheet, "inputs");
     // Second occurrence keeps flag=no (the default), so its flag_name must
     // stay blank — and does.
     let copy = block
-        .replace("-> alpha-flag", "->")
-        .replace("-> yes", "-> no")
-        .replace("-> alpha", "-> beta");
+        .replace("\nalpha-flag\n", "\n\n")
+        .replace("\nyes\n", "\nno\n")
+        .replace("\nalpha\n", "\nbeta\n");
     let copied = format!("{sheet}\n{copy}");
 
     let answers = q
@@ -708,9 +720,9 @@ fn diagnostics_accumulate_across_occurrences() {
     let q = conditional_inputs();
     let sheet = q.render_answer_sheet();
     // Occurrence 0: name blank (missing). Occurrence 1: flag not a bool.
-    let (_, block) = split_at_header(&sheet, "inputs");
+    let (_, block) = split_at_tag(&sheet, "inputs");
     let copy = block
-        .replace("-> no", "-> maybe")
+        .replace("\nno\n", "\nmaybe\n")
         .replace("Name?", "Name for the second one?");
     let copy = answer_nth(&copy, "inputs.name", 0, "beta");
     let copied = format!("{sheet}\n{copy}");
@@ -732,7 +744,7 @@ fn whole_form_rules_run_over_indexed_answers() {
     let q = commands();
     let sheet = answered_commands_sheet(&q);
     // The copied block keeps the same name answer, violating the app rule.
-    let (_, block) = split_at_header(&sheet, "command.inputs");
+    let (_, block) = split_at_tag(&sheet, "command.inputs");
     let copied = format!("{sheet}\n{block}");
     let raw = q.parse_answer_sheet(&copied).unwrap();
     let diags = q

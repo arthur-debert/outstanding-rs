@@ -7,14 +7,13 @@ Long questionnaires are awkward as a sequence of terminal prompts: you cannot se
 #! questionnaire: demo.profile
 #! fingerprint: sha256:2a4c…
 
-1. What is your project called? [project.name] (string)
--> wizard-question-generator
+1. What is your project called? (string) <id:project.name>
+wizard-question-generator
 
-2. License. [project.license] (mit, bsd, or gpl)
--> mit
+2. License. (mit, bsd, or gpl) <id:project.license>
+mit
 
-3. Add any notes. [project.notes] (text, optional)
-->
+3. Add any notes. (text, optional) <id:project.notes>
 This answer may span several lines.
 Internal line breaks remain part of the answer.
 ```
@@ -43,7 +42,7 @@ A `ScalarField` declares everything semantic about one question:
 
 - **Kind** — `String` (single line), `Text` (multiline), `Bool` (decodes `true`/`false`/`yes`/`no`/`y`/`n`, case-insensitive), `Path` (single line, no filesystem checks at decode time).
 - **Optionality** — `.optional()`: a blank answer without a default means omission rather than an error.
-- **Default** — `.with_default("mit")`: rendered pre-filled on the marker line; during decoding, any blank answer resolves to the default *before* optionality is considered. Defaults must decode cleanly themselves.
+- **Default** — `.with_default("mit")`: rendered pre-filled as the answer text below the question line; during decoding, any blank answer resolves to the default *before* optionality is considered. Defaults must decode cleanly themselves.
 - **Constraint** — `.one_of(["mit", "bsd", "gpl"])`: the decoded answer must be one of the choices. Enforced by the shared decoder on every path.
 - **Conditional applicability** — `.active_when("project.docker", "yes")`: the field is asked and enforced only while the (earlier-declared) controller holds the expected value.
 - **Application validator** — `.with_validator(FieldValidator::new("name-rules-1", …))`: your closure runs inside the shared decode stage; the *revision string* is its semantic identity (see fingerprinting below).
@@ -64,11 +63,13 @@ Batch submissions accumulate every independent diagnostic — syntax and identit
 
 ## Stable identity
 
-The bracketed token (`[project.name]`) is the *only* machine identity in a question block. Display numbers, wording, indentation, and the parenthesized type hint are cosmetic — a user may reword, renumber, or re-indent a sheet freely, and a later release of your application may copy-edit its questions without invalidating sheets already in the wild.
+The line-terminal tag (`<id:project.name>`) is the *only* machine identity in a question block. Display numbers, wording, indentation, and the parenthesized type hint are cosmetic — a user may reword, renumber, or re-indent a sheet freely (hints may contain any characters), and a later release of your application may copy-edit its questions without invalidating sheets already in the wild.
 
-A field is recognized by the full header contract: a schema-recognized bracketed ID whose **next line begins with the `->` answer marker**. Everything after the marker, down to the next recognized header or end of file, is that field's answer — outer whitespace trimmed, internal line breaks preserved. Ordinary bracketed prose inside an answer (`see [project.name] above`) never opens a field, because it does not satisfy the header contract.
+Recognition is one rule: a line is a **question line if and only if it ends with a schema-known `<id:...>` tag** — the tag must be the last non-whitespace content on the line, and any trailing non-blank character (even a period) demotes the line to ordinary prose. Everything between a question line and the next question line (or end of file) is that field's answer — outer whitespace trimmed, internal line breaks preserved. Bracketed prose, `->` bullets, and mid-line tag mentions inside an answer (`see <id:project.name> above`) are inert answer content.
 
-Header-shaped lines that carry an *unknown* ID, or repeat a known one, are diagnostics rather than silently ignored text.
+Question lines that carry an *unknown* tag ID, or repeat a known one, are diagnostics rather than silently ignored text.
+
+One limitation is accepted by design: an answer line that itself **ends** with a schema-valid `<id:...>` tag is read as a question line — there is no escaping mechanism, because the shape is rare in real prose. As a guard, accepted answer text containing `<id:` anywhere raises a warning-level diagnostic (`RawAnswers::warnings`), which also catches mangled or half-deleted tags, without failing the submission.
 
 ## Compatibility: exact match, no migration
 
@@ -120,8 +121,8 @@ let sheet = questionnaire.render_answer_sheet();
 // stdin, or interactive prompts — then decode through the shared pipeline
 // plus your whole-form rules.
 let edited_text = sheet.replace(
-    "[project.name] (string)\n->",
-    "[project.name] (string)\n-> wizard-question-generator",
+    "<id:project.name>\n",
+    "<id:project.name>\nwizard-question-generator\n",
 );
 
 // Stage 1: document → raw answers (syntax, identity, compatibility).

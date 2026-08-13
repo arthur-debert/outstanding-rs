@@ -55,42 +55,43 @@ The rendered artifact is an answer sheet, not a configuration file. A representa
 #! questionnaire: standout.new-project
 #! fingerprint: sha256:7a81c1d8...
 
-1. What is the project name? [project.name] (string)
--> wizard-question-generator
+1. What is the project name? (string) <id:project.name>
+wizard-question-generator
 
-2. Describe the initial command. [command] (section)
+2. Describe the initial command. (section) <id:command>
 
-2.1 What is the command name? [command.name] (string)
--> generate
+2.1 What is the command name? (string) <id:command.name>
+generate
 
-3. Describe a command input. [command.inputs] (repeatable section, minimum 1)
+3. Describe a command input. (repeatable section, minimum 1) <id:command.inputs>
 
-3.1 What is its name? [command.inputs.name] (string)
--> definition
+3.1 What is its name? (string) <id:command.inputs.name>
+definition
 
-3.2 What type of value is it? [command.inputs.value_type] (string, bool, or path)
--> path
+3.2 What type of value is it? (string, bool, or path) <id:command.inputs.value_type>
+path
 
-3.3 Where can its value come from? [command.inputs.sources] (list)
--> argument
+3.3 Where can its value come from? (list) <id:command.inputs.sources>
+argument
 
-4. Add any notes. [project.notes] (text, optional)
-->
+4. Add any notes. (text, optional) <id:project.notes>
 This answer may span several lines.
 Internal line breaks remain part of the answer.
 ```
 
-The bracketed token is the stable machine identity. Visible numbers, prose, type hints, whitespace, and indentation are cosmetic and may change without changing answer identity. The schema, not the cosmetic type hint, determines decoding.
+The line-terminal `<id:...>` tag is the stable machine identity. Visible numbers, prose, type hints, whitespace, and indentation are cosmetic and may change without changing answer identity — hints may contain any characters, including brackets. The schema, not the cosmetic type hint, determines decoding.
 
-A field header is recognized by a bracketed ID together with its following `->` answer marker. The schema must recognize that ID as a field in the current scope. Content on the marker line and subsequent lines belongs to that answer until the next recognized field or group header or end of file. Leading and trailing whitespace around the complete answer is removed, while internal line breaks are preserved.
+Recognition is one rule. A line is a question line if and only if it ends with a schema-known `<id:...>` tag — the tag is the last non-whitespace content on the line, and its ID uses the stable-ID character set. Any non-blank character after the tag, even a period, demotes the whole line to ordinary prose. The answer is all text between a question line and the next question line or end of file; leading and trailing whitespace around the complete answer is removed, while internal line breaks are preserved.
 
-A group occurrence header is recognized separately: its bracketed ID must name a group allowed in the current schema scope, it does not use an answer marker, and it is followed by a recognized child field or group permitted by that group's definition. Unknown IDs and duplicate or misnested known IDs in header-shaped lines are diagnostics rather than ignored text. Merely writing ordinary prose containing brackets or a known ID inside an answer does not open a field or group; it must satisfy the corresponding header contract, including the following `->` marker for a field and the schema-valid child header for a group.
+A group occurrence is a line ending with a group-ID tag; there is no child-lookahead contract, so occurrence counting is exactly counting the group's tag lines. Unknown tag IDs and duplicate or misnested known IDs on question lines are diagnostics rather than ignored text. Bracketed prose, `->` bullets, and mid-line tag mentions inside an answer are inert answer content.
 
-The renderer pre-fills every declared default. During collection, any blank field resolves to its declared default first. When no default exists, a blank optional field means omission and a blank required field produces a missing-value error. Interactive and batch collection apply this same rule.
+One limitation is accepted by design and not hardened further: an answer whose own line ends with a schema-valid `<id:...>` tag is misparsed as a question line. This shape is rare enough in prose that no escaping mechanism exists. As a cheap guard, accepted answer text containing `<id:` anywhere raises a warning-level diagnostic — which also catches mangled or half-deleted tags — without failing the submission.
 
-A repeatable-group header opens one occurrence, and its child field IDs are scoped to that occurrence. Additional occurrences are expressed by copying the complete rendered group block. A submitted value can therefore be diagnosed as `command.inputs[1].name` while the stable definition ID remains `command.inputs.name`; array indexes belong to an answer instance, not to the definition.
+The renderer pre-fills every declared default as the answer text below its question line. During collection, any blank field resolves to its declared default first. When no default exists, a blank optional field means omission and a blank required field produces a missing-value error. Interactive and batch collection apply this same rule.
 
-The renderer emits exactly the declared minimum number of repeatable-group blocks. It includes short editing guidance for copying a whole block when more items are wanted. Nested numbering such as `3.2` helps people understand structure but has no parsing or compatibility meaning. Variable item counts are inferred from occurrences of the stable repeatable-group header, never from display numbers or heuristics over question wording.
+A repeatable group's tag line opens one occurrence, and its child field IDs are scoped to that occurrence. Additional occurrences are expressed by copying the complete rendered group block. A submitted value can therefore be diagnosed as `command.inputs[1].name` while the stable definition ID remains `command.inputs.name`; array indexes belong to an answer instance, not to the definition.
+
+The renderer emits exactly the declared minimum number of repeatable-group blocks. It includes short editing guidance for copying a whole block when more items are wanted. Nested numbering such as `3.2` helps people understand structure but has no parsing or compatibility meaning. Variable item counts are inferred from occurrences of the stable group tag, never from display numbers or heuristics over question wording.
 
 The metadata preamble is deliberately small and visually separate from the questions. It carries an answer-format version, questionnaire ID, and semantic fingerprint under the unambiguous `fingerprint` key. The first release accepts only the expected answer-format version, exact questionnaire ID, and exact fingerprint. A mismatch produces a diagnostic telling the user to render a fresh answer sheet; it never guesses which old field maps to which new field.
 
@@ -145,7 +146,7 @@ After successful conversion, every collection mode uses the existing project rev
 
 ## Risks And Rabbit Holes
 
-- Treating visible numbers or wording as identity would make harmless copy edits incompatible and would renumber every later answer after an insertion. Only stable bracketed IDs carry identity.
+- Treating visible numbers or wording as identity would make harmless copy edits incompatible and would renumber every later answer after an insertion. Only stable `<id:...>` tags carry identity.
 - Treating the answer sheet as TOML, YAML, or another general configuration language would optimize for machine structure at the expense of the intended question-and-answer experience.
 - Letting the parser infer renamed or reordered semantics from similar text would make migrations unpredictable. Version 1 rejects an incompatible fingerprint and asks for a fresh sheet.
 - Putting application types or `ProjectSpec` into the public library would couple a general input capability to one generator. The library stops at validated questionnaire values and diagnostics.
@@ -153,7 +154,7 @@ After successful conversion, every collection mode uses the existing project rev
 - Reporting only the first batch error would force repeated edit-run cycles. Batch diagnostics must accumulate without allowing invalid partial state to reach project generation.
 - Silently discarding populated inactive fields would hide stale or contradictory intent. They are validation errors.
 - Adding a full migration engine, arbitrary conditional language, or general form-rendering system would delay the useful file/stdin path and create contracts not yet justified by real consumers.
-- Header-like bracketed IDs inside free-form answers require an unambiguous parser contract and focused tests; cosmetic freedom must not make document boundaries guesswork.
+- Tag-like text inside free-form answers requires an unambiguous parser contract and focused tests; cosmetic freedom must not make document boundaries guesswork. The line-terminal rule keeps recognition single-pass and deterministic, and the accepted prose-ending-in-valid-tag misparse is documented and guarded by a warning rather than an escaping mechanism.
 - Consuming stdin for the answer sheet and then trying to confirm on the same stream would either fail or accidentally treat answer content as confirmation. Confirmation must use an attended-terminal seam independent of the answer stream.
 
 ## Cross-Cutting Concerns

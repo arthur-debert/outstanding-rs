@@ -30,23 +30,30 @@ fn questionnaire() -> Questionnaire {
     .unwrap()
 }
 
-/// Replace a field's rendered marker (bare or pre-filled) with `answer`.
+/// Set `answer` as the answer text directly below the question line tagged
+/// `id`, replacing a rendered pre-filled default line when one is present.
 fn answer(sheet: &str, id: &str, answer: &str) -> String {
-    let needle = format!("[{id}]");
-    let mut out = String::new();
-    let mut lines = sheet.lines().peekable();
-    while let Some(line) = lines.next() {
-        out.push_str(line);
-        out.push('\n');
-        if line.contains(&needle) {
-            let marker = lines.next().expect("marker follows header");
-            assert!(marker.starts_with("->"), "expected a marker line");
-            out.push_str("-> ");
-            out.push_str(answer);
-            out.push('\n');
+    let tag = format!("<id:{id}>");
+    let lines: Vec<&str> = sheet.lines().collect();
+    let mut out: Vec<String> = Vec::new();
+    let mut found = false;
+    let mut i = 0;
+    while i < lines.len() {
+        let line = lines[i];
+        out.push(line.to_string());
+        i += 1;
+        if !found && line.trim_end().ends_with(&tag) {
+            found = true;
+            // A non-blank line right below the question is a pre-filled
+            // default: the answer replaces it.
+            if lines.get(i).is_some_and(|next| !next.trim().is_empty()) {
+                i += 1;
+            }
+            out.push(answer.to_string());
         }
     }
-    out
+    assert!(found, "answer sheet has no question line for {tag}");
+    out.join("\n") + "\n"
 }
 
 /// An edited sheet: name answered, docker default kept, notes blank.
@@ -446,19 +453,13 @@ fn nested_interactive_and_sheet_submissions_decode_identically() {
     let block_start = sheet.find("Describe an input.").unwrap();
     let block = sheet[block_start..].to_string();
     let first = sheet
+        .replace("<id:inputs.name>\n", "<id:inputs.name>\nalpha\n")
+        .replace("<id:inputs.flag>\nno\n", "<id:inputs.flag>\nyes\n")
         .replace(
-            "[inputs.name] (string)\n->",
-            "[inputs.name] (string)\n-> alpha",
-        )
-        .replace("-> no", "-> yes")
-        .replace(
-            "[inputs.flag_name] (string; only when inputs.flag is true)\n->",
-            "[inputs.flag_name] (string; only when inputs.flag is true)\n-> alpha-flag",
+            "<id:inputs.flag_name>\n",
+            "<id:inputs.flag_name>\nalpha-flag\n",
         );
-    let second = block.replace(
-        "[inputs.name] (string)\n->",
-        "[inputs.name] (string)\n-> beta",
-    );
+    let second = block.replace("<id:inputs.name>\n", "<id:inputs.name>\nbeta\n");
     let document = format!("{first}\n{second}");
     let batch = q
         .decode_answers(
