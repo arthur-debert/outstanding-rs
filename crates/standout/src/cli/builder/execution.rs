@@ -422,10 +422,10 @@ impl AppBuilder {
     /// failures use 1, and an application-declared `ExternalFailure` preserves
     /// its exact nonzero status and verbatim diagnostic. Final text and binary
     /// writes are framework-owned; a write failure is diagnosed on stderr and exits 1,
-    /// except that a text stdout `BrokenPipe` is treated as successful early
-    /// consumer termination. Callers needing fine-grained control over exit
-    /// codes should use [`Self::run_to_string`] or [`Self::dispatch_from`] and
-    /// match on `RunResult` themselves.
+    /// except that `BrokenPipe` while writing final rendered command text to stdout
+    /// is treated as successful early consumer termination. Callers needing
+    /// fine-grained control over exit codes should use [`Self::run_to_string`] or
+    /// [`Self::dispatch_from`] and match on `RunResult` themselves.
     ///
     /// # Example
     ///
