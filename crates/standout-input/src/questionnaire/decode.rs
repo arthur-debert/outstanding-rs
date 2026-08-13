@@ -6,10 +6,12 @@
 //! diagnostics. There are no adapter-specific conversions or messages.
 //!
 //! Decoding one field applies, in order: blank resolution (a blank answer
-//! resolves to the declared default first; an optional blank without a
-//! default is an omission; a required blank without a default is a
-//! missing-value error), kind conversion, constraint checking, and the
-//! application's [`FieldValidator`](super::FieldValidator). Whole-document
+//! resolves to the declared default first — the static value, or a
+//! [`DynamicDefault`](super::DynamicDefault) computed from earlier decoded
+//! answers via [`EarlierAnswers`]; an optional blank without a default is
+//! an omission; a required blank without a default is a missing-value
+//! error), kind conversion, constraint checking, and the application's
+//! [`FieldValidator`](super::FieldValidator). Whole-document
 //! decoding ([`Questionnaire::decode_answers`]) additionally evaluates
 //! conditional applicability and accumulates every independent diagnostic
 //! instead of stopping at the first; the application's whole-form rules
@@ -320,16 +322,23 @@ pub(crate) fn check_field_text(
 /// occurrence `path`.
 ///
 /// `raw` is the trimmed answer text, or `None` when the field is absent from
-/// the submission. Blank resolves through the declared default first; a
-/// blank without a default is an omission (`Ok(None)`) when optional and a
-/// [`ValidationDiagnostic::MissingAnswer`] when required.
+/// the submission. `computed` is the field's computed dynamic default, when
+/// it declares one (the caller evaluates the closure against its
+/// earlier-outcomes view; static and dynamic defaults are mutually
+/// exclusive by construction). Blank resolves through the declared —
+/// static or computed — default first; a blank without a default is an
+/// omission (`Ok(None)`) when optional and a
+/// [`ValidationDiagnostic::MissingAnswer`] when required. A computed
+/// default runs through the same kind / constraint / validator pipeline as
+/// any answer.
 pub(crate) fn decode_field(
     field: &ScalarField,
     path: &str,
     raw: Option<&str>,
+    computed: Option<&str>,
 ) -> Result<Option<AnswerValue>, ValidationDiagnostic> {
     let submitted = raw.map(str::trim).filter(|t| !t.is_empty());
-    let effective = submitted.or(field.default());
+    let effective = submitted.or(field.default()).or(computed);
     match effective {
         Some(text) => check_field_text(field, path, text).map(Some),
         None if field.is_optional() => Ok(None),
@@ -380,6 +389,69 @@ impl ScopeCtx {
     /// The occurrence path of a direct child of this scope.
     pub(crate) fn child_path(&self, id: &str) -> String {
         path_join(&self.path_prefix, child_segment(&self.def_prefix, id))
+    }
+}
+
+/// A read-only view of the answers decoded *before* the current field in
+/// the same scope chain, handed to a
+/// [`DynamicDefault`](super::DynamicDefault) closure.
+///
+/// Lookups take a stable *definition ID* (`command.inputs.value_type`) and
+/// resolve it against the walk's open scope chain, exactly like a condition
+/// controller: a field inside a repeatable group resolves to the occurrence
+/// currently being collected. The view is deliberately forgiving where
+/// construction cannot check the closure's dependencies: an unknown,
+/// out-of-scope, later-declared (not yet walked), omitted, inactive, or
+/// errored field reads as `None` — depending on such a field is a contract
+/// violation, and the closure must still return a usable default.
+pub struct EarlierAnswers<'a> {
+    questionnaire: &'a Questionnaire,
+    chain: &'a [ScopeCtx],
+    outcomes: &'a BTreeMap<String, FieldOutcome>,
+}
+
+impl<'a> EarlierAnswers<'a> {
+    /// Build the view over the walk state at one field occurrence.
+    pub(crate) fn new(
+        questionnaire: &'a Questionnaire,
+        chain: &'a [ScopeCtx],
+        outcomes: &'a BTreeMap<String, FieldOutcome>,
+    ) -> Self {
+        Self {
+            questionnaire,
+            chain,
+            outcomes,
+        }
+    }
+
+    /// The decoded value of the earlier field with the given stable
+    /// definition ID, resolved in the current scope chain, or `None` when
+    /// the field has no decoded value (see the type-level contract).
+    pub fn get(&self, field_id: &str) -> Option<&AnswerValue> {
+        let meta = self.questionnaire.node_meta(field_id)?;
+        if meta.group {
+            return None;
+        }
+        let scope = self
+            .chain
+            .iter()
+            .rev()
+            .find(|scope| scope.group_id.as_deref() == meta.parent.as_deref())?;
+        match self.outcomes.get(&scope.child_path(field_id)) {
+            Some(FieldOutcome::Answered(value)) => Some(value),
+            _ => None,
+        }
+    }
+
+    /// The text value of an earlier `String` / `Text` / `Path` field, if
+    /// answered.
+    pub fn get_text(&self, field_id: &str) -> Option<&str> {
+        self.get(field_id).and_then(AnswerValue::as_text)
+    }
+
+    /// The boolean value of an earlier `Bool` field, if answered.
+    pub fn get_bool(&self, field_id: &str) -> Option<bool> {
+        self.get(field_id).and_then(AnswerValue::as_bool)
     }
 }
 
@@ -520,14 +592,19 @@ impl Questionnaire {
                                 FieldOutcome::Errored
                             }
                         }
-                        Some(true) => match decode_field(field, &path, raw_value) {
-                            Ok(Some(value)) => FieldOutcome::Answered(value),
-                            Ok(None) => FieldOutcome::Omitted,
-                            Err(diagnostic) => {
-                                diagnostics.push(diagnostic);
-                                FieldOutcome::Errored
+                        Some(true) => {
+                            let computed = field.dynamic_default().map(|dynamic| {
+                                dynamic.compute(&EarlierAnswers::new(self, chain, outcomes))
+                            });
+                            match decode_field(field, &path, raw_value, computed.as_deref()) {
+                                Ok(Some(value)) => FieldOutcome::Answered(value),
+                                Ok(None) => FieldOutcome::Omitted,
+                                Err(diagnostic) => {
+                                    diagnostics.push(diagnostic);
+                                    FieldOutcome::Errored
+                                }
                             }
-                        },
+                        }
                     };
                     outcomes.insert(path, outcome);
                 }

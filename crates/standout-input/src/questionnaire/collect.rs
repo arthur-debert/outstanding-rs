@@ -12,10 +12,15 @@
 //! comes from exactly one source.
 //!
 //! Interactive collection keeps the immediate feedback loop: a decode or
-//! field-validation failure re-prompts the current question with the
-//! diagnostic, keeping every previously accepted answer. Cancellation (EOF /
-//! Ctrl+D or a responder `Cancel`) aborts the whole collection with
-//! [`InputError::PromptCancelled`].
+//! field-validation failure on an *entered* answer re-prompts the current
+//! question with the diagnostic, keeping every previously accepted answer.
+//! Cancellation (EOF / Ctrl+D or a responder `Cancel`) aborts the whole
+//! collection with [`InputError::PromptCancelled`]. A non-input outcome (a
+//! responder `Skip`, or mid-collection terminal loss) is not an entry: it
+//! follows the shared blank rule where blank resolves — default or omission
+//! — but on a required field without a default it terminates the pass with
+//! [`InputError::NoInput`] instead of re-prompting a source that will never
+//! answer.
 
 use std::path::Path;
 
@@ -38,7 +43,7 @@ use crate::sources::{RealTerminal, TerminalIO, TextPromptSource};
 use crate::InputError;
 
 #[cfg(feature = "simple-prompts")]
-use super::decode::{decode_field, is_active, parse_bool, FieldOutcome, ScopeCtx};
+use super::decode::{decode_field, is_active, parse_bool, EarlierAnswers, FieldOutcome, ScopeCtx};
 
 impl Questionnaire {
     /// Read one complete answer sheet from a named file.
@@ -110,11 +115,14 @@ impl Questionnaire {
     /// therefore through any installed
     /// [`PromptResponder`](crate::PromptResponder), which is how tests drive
     /// this without a TTY. Every entered answer runs through the same field
-    /// decoders and validators as file and stdin answers; a failure is a
-    /// *local, retryable* error — the question re-prompts with the
-    /// diagnostic and all previously accepted answers are kept. A blank
-    /// entry follows the shared blank rule (default first, then omission or
-    /// a required-answer retry), and inactive conditional fields are skipped
+    /// decoders and validators as file and stdin answers; a failure on an
+    /// entered answer is a *local, retryable* error — the question
+    /// re-prompts with the diagnostic and all previously accepted answers
+    /// are kept. A blank entry follows the shared blank rule (default —
+    /// static or computed — first, then omission, then a required-answer
+    /// re-prompt), a field with a
+    /// [`DynamicDefault`](super::DynamicDefault) shows its computed default
+    /// in the prompt message, and inactive conditional fields are skipped
     /// without prompting.
     ///
     /// Groups walk their children in place. A repeatable group collects its
@@ -135,7 +143,11 @@ impl Questionnaire {
     /// - [`InputError::PromptCancelled`] when the user cancels (EOF/Ctrl+D).
     /// - [`InputError::NoInput`] when stdin is not a terminal and no
     ///   responder is installed (interactive collection needs one or the
-    ///   other; it never silently reads a piped document).
+    ///   other; it never silently reads a piped document), or when a
+    ///   non-input outcome (a responder `Skip`, or mid-collection terminal
+    ///   loss) lands on a required field without a default — the pass
+    ///   terminates rather than re-prompting a source that produced no
+    ///   input.
     /// - Any terminal I/O failure from the underlying prompt source.
     #[cfg(feature = "simple-prompts")]
     pub fn collect_interactive(&self) -> Result<RawAnswers, InputError> {
@@ -228,27 +240,47 @@ impl<T: TerminalIO + 'static> Collector<'_, T> {
     }
 
     /// Prompt for one field occurrence, retrying locally until an answer
-    /// decodes (inactive occurrences are skipped without prompting).
+    /// decodes (inactive occurrences are skipped without prompting). A
+    /// blank *entry* follows the shared blank rule — default, then
+    /// omission — and re-prompts when the rule cannot resolve it (a
+    /// required field without a default). A non-input outcome — a
+    /// responder `Skip`, or mid-collection terminal loss — resolves
+    /// through the same blank rule, but when the rule cannot absorb it,
+    /// collection terminates with [`InputError::NoInput`] instead of
+    /// re-prompting a source that produced no input.
     fn collect_field(&mut self, field: &ScalarField, chain: &[ScopeCtx]) -> Result<(), InputError> {
         let path = chain
             .last()
             .expect("chain starts rooted")
             .child_path(field.id());
-        // Interactive fields either decode or retry, so controllers are
-        // never in an errored state and applicability is always known.
+        // Interactive fields either decode or terminate the pass, so
+        // controllers are never in an errored state and applicability is
+        // always known.
         if is_active(self.questionnaire, field, chain, &self.outcomes) != Some(true) {
             self.outcomes.insert(path, FieldOutcome::Inactive);
             return Ok(());
         }
 
-        let base = interactive_message(field);
+        // Earlier fields in the walk are final by now, so the dynamic
+        // default is computed once and shown in the prompt message.
+        let computed = field.dynamic_default().map(|dynamic| {
+            dynamic.compute(&EarlierAnswers::new(
+                self.questionnaire,
+                chain,
+                &self.outcomes,
+            ))
+        });
+        let base = interactive_message(field, computed.as_deref());
         let mut message = base.clone();
         loop {
-            // A blank entry (or a responder `Skip`) resolves to an empty
-            // string: the shared blank rule then decides between default,
-            // omission, and retry.
-            let entered: String = self.prompt(message.clone())?.unwrap_or_default();
-            match decode_field(field, &path, Some(&entered)) {
+            // A blank entry and a non-input outcome both resolve to an
+            // empty string: the shared blank rule then decides between
+            // default and omission. Where it cannot (required, no
+            // default), the decode error below re-prompts an entry but
+            // ends the pass on non-input.
+            let response = self.prompt(message.clone())?;
+            let entered = response.clone().unwrap_or_default();
+            match decode_field(field, &path, Some(&entered), computed.as_deref()) {
                 Ok(outcome) => {
                     self.raw.insert(path.clone(), entered.trim().to_string());
                     self.outcomes.insert(
@@ -261,6 +293,13 @@ impl<T: TerminalIO + 'static> Collector<'_, T> {
                     return Ok(());
                 }
                 Err(diagnostic) => {
+                    // No input arrived at all (a responder `Skip` or a lost
+                    // terminal — not an entry): re-prompting would spin
+                    // forever against a source that will never answer, so
+                    // the pass ends cleanly instead.
+                    if response.is_none() {
+                        return Err(InputError::NoInput);
+                    }
                     message = format!("{diagnostic} Try again: {base}");
                 }
             }
@@ -268,7 +307,8 @@ impl<T: TerminalIO + 'static> Collector<'_, T> {
     }
 
     /// Ask whether to collect one more occurrence of a repeatable group.
-    /// Blank means no; a non-yes/no entry re-asks with the diagnostic.
+    /// Blank (an empty entry or a non-input outcome) means no; a non-yes/no
+    /// entry re-asks with the diagnostic.
     fn ask_add_another(&mut self, group: &Group) -> Result<bool, InputError> {
         let base = format!("Add another? {} (yes/no) ", group.prompt());
         let mut message = base.clone();
@@ -277,6 +317,7 @@ impl<T: TerminalIO + 'static> Collector<'_, T> {
                 None => return Ok(false),
                 Some(entered) => match parse_bool(&entered) {
                     Some(answer) => return Ok(answer),
+                    None if entered.trim().is_empty() => return Ok(false),
                     None => {
                         message = format!(
                             "Expected a yes/no answer (true, false, yes, no, y, or n). Try again: {base}"
@@ -287,15 +328,12 @@ impl<T: TerminalIO + 'static> Collector<'_, T> {
         }
     }
 
-    /// One prompt round trip: `Ok(None)` is a blank entry, cancellation and
-    /// I/O failures propagate.
+    /// One prompt round trip: `Ok(Some(text))` is an entered answer (a
+    /// blank line arrives as `Some("")`), `Ok(None)` is a non-input outcome
+    /// (a responder `Skip`, or a lost terminal); cancellation and I/O
+    /// failures propagate.
     fn prompt(&self, message: String) -> Result<Option<String>, InputError> {
-        let source = TextPromptSource::with_terminal(message, self.terminal.clone());
-        match source.prompt() {
-            Ok(text) => Ok(Some(text)),
-            Err(InputError::NoInput) => Ok(None),
-            Err(error) => Err(error),
-        }
+        TextPromptSource::with_terminal(message, self.terminal.clone()).prompt_entry()
     }
 }
 
@@ -310,16 +348,17 @@ fn scope_for(group: &Group, path_prefix: String) -> ScopeCtx {
 }
 
 /// The cosmetic prompt message for one field: its wording plus entry hints
-/// (choices, the yes/no vocabulary, the pre-filled default).
+/// (choices, the yes/no vocabulary, and the default — static, or the
+/// `computed` dynamic default for this occurrence).
 #[cfg(feature = "simple-prompts")]
-fn interactive_message(field: &ScalarField) -> String {
+fn interactive_message(field: &ScalarField, computed: Option<&str>) -> String {
     let mut message = field.prompt().to_string();
     if let Some(Constraint::OneOf(choices)) = field.constraint() {
         message.push_str(&format!(" ({})", choices.join(" / ")));
     } else if field.kind() == ScalarKind::Bool {
         message.push_str(" (yes/no)");
     }
-    if let Some(default) = field.default() {
+    if let Some(default) = field.default().or(computed) {
         message.push_str(&format!(" [default: {default}]"));
     }
     message.push(' ');

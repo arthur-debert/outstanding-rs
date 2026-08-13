@@ -141,6 +141,30 @@ impl<T: TerminalIO + 'static> TextPromptSource<T> {
         }
         self.collect(matches)?.ok_or(InputError::NoInput)
     }
+
+    /// One prompt round trip preserving the entry / non-input distinction
+    /// that [`prompt`](Self::prompt) collapses into [`InputError::NoInput`]:
+    /// `Ok(Some(text))` is an entered answer — a blank line arrives as
+    /// `Some("")` — while `Ok(None)` is a non-input outcome (a responder
+    /// `Skip`, or no terminal to ask). Cancellation and I/O failures
+    /// propagate as errors. Callers that must react differently to "the
+    /// user entered nothing" versus "no input can ever arrive" (e.g.
+    /// questionnaire collection's retry-or-terminate rule) use this instead
+    /// of [`prompt`](Self::prompt).
+    pub fn prompt_entry(&self) -> Result<Option<String>, InputError> {
+        match crate::responder::intercept_text(crate::PromptKind::Text, &self.prompt) {
+            Ok(Some(value)) => return Ok(Some(value)),
+            Ok(None) => {}
+            Err(InputError::NoInput) => return Ok(None),
+            Err(error) => return Err(error),
+        }
+        let matches = crate::collector::empty_matches();
+        if !self.is_available(matches) {
+            return Ok(None);
+        }
+        // `collect` yields `None` for a blank line — still an entry.
+        Ok(Some(self.collect(matches)?.unwrap_or_default()))
+    }
 }
 
 impl<T: TerminalIO + 'static> InputCollector<String> for TextPromptSource<T> {

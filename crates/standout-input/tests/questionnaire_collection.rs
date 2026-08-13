@@ -64,7 +64,11 @@ fn edited_sheet(q: &Questionnaire) -> String {
 struct ResponderGuard;
 impl ResponderGuard {
     fn install(responses: impl IntoIterator<Item = PromptResponse>) -> Self {
-        set_default_prompt_responder(Arc::new(ScriptedResponder::new(responses)));
+        Self::install_with(Arc::new(ScriptedResponder::new(responses)))
+    }
+
+    fn install_with(responder: Arc<dyn standout_input::PromptResponder>) -> Self {
+        set_default_prompt_responder(responder);
         Self
     }
 }
@@ -226,7 +230,8 @@ fn interactive_collection_skips_inactive_fields_without_prompting() {
 #[serial(prompt_responder)]
 fn interactive_blank_resolves_defaults_and_omission() {
     let q = questionnaire();
-    // Skip = blank entry: docker resolves its default, notes is omitted.
+    // A non-input Skip resolves like a blank where the rule can absorb it:
+    // docker resolves its default, notes is omitted.
     let _guard = ResponderGuard::install([
         PromptResponse::text("demo"),
         PromptResponse::Skip,
@@ -242,22 +247,101 @@ fn interactive_blank_resolves_defaults_and_omission() {
 #[serial(prompt_responder)]
 fn interactive_failures_retry_locally_without_losing_earlier_answers() {
     let q = questionnaire();
-    // The docker question fails twice (bad bool, then a required blank has a
-    // default so blank *succeeds* — use the name question instead for the
-    // required-blank retry) before the loop accepts an answer.
+    // An *entered* answer that fails to decode retries locally; a
+    // non-input Skip on a required, no-default field terminates instead
+    // (covered by the persistent-skip tests below).
     let _guard = ResponderGuard::install([
-        PromptResponse::Skip,          // name: blank, required, no default -> retry
-        PromptResponse::text("demo"),  // name: accepted
-        PromptResponse::text("maybe"), // docker: not a bool -> retry
-        PromptResponse::text("yes"),   // docker: accepted
+        PromptResponse::text("demo"),          // name: accepted
+        PromptResponse::text("maybe"),         // docker: not a bool -> retry
+        PromptResponse::text("yes"),           // docker: accepted
         PromptResponse::text("debian:stable"), // image
-        PromptResponse::Skip,          // notes
+        PromptResponse::Skip,                  // notes
     ]);
     let raw = q.collect_interactive().unwrap();
     let answers = q.decode_answers(&raw).unwrap();
-    // The earlier accepted answer survived the later retries.
+    // The earlier accepted answer survived the later retry.
     assert_eq!(answers.get_text("project.name"), Some("demo"));
     assert_eq!(answers.get_bool("project.docker"), Some(true));
+}
+
+#[test]
+#[serial(prompt_responder)]
+fn skip_on_a_required_no_default_field_terminates_collection() {
+    let q = questionnaire();
+    // A responder that skips the required, no-default name question: the
+    // pass must end with an error, not re-prompt in a hot spin (a
+    // persistently skipping responder would loop forever).
+    let _guard = ResponderGuard::install([PromptResponse::Skip]);
+    let err = q.collect_interactive().unwrap_err();
+    assert!(matches!(err, InputError::NoInput));
+}
+
+#[test]
+#[serial(prompt_responder)]
+fn a_blank_entry_on_a_required_no_default_field_reprompts() {
+    let q = questionnaire();
+    // A blank *entry* is not a lost source: the required, no-default name
+    // question re-prompts and the corrected answer is kept.
+    let _guard = ResponderGuard::install([
+        PromptResponse::text(""),     // name: blank -> missing-value retry
+        PromptResponse::text("demo"), // name: accepted
+        PromptResponse::text("no"),   // docker
+        PromptResponse::Skip,         // notes
+    ]);
+    let raw = q.collect_interactive().unwrap();
+    let answers = q.decode_answers(&raw).unwrap();
+    assert_eq!(answers.get_text("project.name"), Some("demo"));
+}
+
+#[test]
+#[serial(prompt_responder)]
+fn a_blank_line_typed_at_the_terminal_reprompts_like_any_entry() {
+    let q = questionnaire();
+    // Same rule through the terminal path: a typed blank line arrives as an
+    // entry, so a required, no-default field re-prompts instead of ending
+    // the pass with NoInput.
+    let raw = q
+        .collect_interactive_with_terminal(Arc::new(MockTerminal::with_responses([
+            "",     // name: blank -> missing-value retry
+            "demo", // name: accepted
+            "no",   // docker
+            "",     // notes: blank -> omitted
+        ])))
+        .unwrap();
+    let answers = q.decode_answers(&raw).unwrap();
+    assert_eq!(answers.get_text("project.name"), Some("demo"));
+    assert_eq!(answers.get("project.notes"), None);
+}
+
+/// A responder that skips every prompt, however many times it is asked —
+/// the persistent-skip regression shape (a `ScriptedResponder` would panic
+/// on exhaustion instead of exposing an infinite retry loop).
+struct AlwaysSkip;
+impl standout_input::PromptResponder for AlwaysSkip {
+    fn respond(&self, _ctx: standout_input::PromptContext<'_>) -> PromptResponse {
+        PromptResponse::Skip
+    }
+}
+
+#[test]
+#[serial(prompt_responder)]
+fn a_persistently_skipping_responder_ends_the_pass_cleanly() {
+    let q = questionnaire();
+    let _guard = ResponderGuard::install_with(Arc::new(AlwaysSkip));
+    let result = q.collect_interactive();
+    assert!(matches!(result, Err(InputError::NoInput)));
+}
+
+#[test]
+#[serial(prompt_responder)]
+fn mid_collection_terminal_loss_ends_the_pass_cleanly() {
+    let q = questionnaire();
+    // One answer, then the terminal reports EOF forever: the first prompt
+    // succeeds and the loss surfaces as cancellation, not a spin.
+    let err = q
+        .collect_interactive_with_terminal(Arc::new(MockTerminal::with_responses(["demo"])))
+        .unwrap_err();
+    assert!(matches!(err, InputError::PromptCancelled));
 }
 
 #[test]
