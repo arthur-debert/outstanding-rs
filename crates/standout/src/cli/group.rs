@@ -14,10 +14,12 @@ use std::rc::Rc;
 use super::dispatch::{render_handler_output, DispatchFn};
 use crate::cli::handler::{CommandContext, FnHandler, Handler, HandlerResult};
 use crate::cli::hooks::{Hooks, RenderedOutput, TextOutput};
-use crate::cli::questionnaire::{questionnaire_pre_dispatch, QuestionnaireCommand};
+use crate::cli::questionnaire::{
+    questionnaire_pre_dispatch, questionnaire_pre_dispatch_with, QuestionnaireCommand,
+};
 use crate::StructuredOutputProjection;
 use standout_dispatch::verify::ExpectedArg;
-use standout_input::questionnaire::QuestionnaireInput;
+use standout_input::questionnaire::{FormError, QuestionnaireInput};
 use standout_pipe::PipeTarget;
 
 // ============================================================================
@@ -506,6 +508,23 @@ impl<H> CommandConfig<H> {
     {
         self.questionnaire = Some(QuestionnaireCommand::new::<T>());
         self.pre_dispatch(questionnaire_pre_dispatch::<T>)
+    }
+
+    /// Attaches a derived questionnaire input with typed whole-form rules.
+    ///
+    /// This is the same injected CLI surface as [`questionnaire`](Self::questionnaire),
+    /// but after field decoding fills the derived struct, `form` can reject
+    /// combinations that only make sense across multiple answers. The returned
+    /// [`FormError`] values join the shared questionnaire validation diagnostics.
+    pub fn questionnaire_with_form<T, F>(mut self, form: F) -> Self
+    where
+        T: QuestionnaireInput + Clone + Send + Sync + 'static,
+        F: Fn(&T) -> Vec<FormError> + Clone + 'static,
+    {
+        self.questionnaire = Some(QuestionnaireCommand::new::<T>());
+        self.pre_dispatch(move |matches, ctx| {
+            questionnaire_pre_dispatch_with::<T, _>(matches, ctx, form.clone())
+        })
     }
 
     /// Attaches a presentation-layer projection for structured output.

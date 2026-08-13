@@ -5,7 +5,9 @@
 //! [`Answers`]. This keeps derived questionnaires on the same validation,
 //! rendering, parsing, and fingerprinting path as hand-built definitions.
 
-use super::{Answers, Item, Questionnaire, QuestionnaireError, RawAnswers, ValidationDiagnostic};
+use super::{
+    Answers, FormError, Item, Questionnaire, QuestionnaireError, RawAnswers, ValidationDiagnostic,
+};
 
 /// A Rust enum-backed choice vocabulary for derived questionnaires.
 ///
@@ -64,6 +66,10 @@ impl std::error::Error for QuestionnaireChoiceParseError {}
 /// - [`from_decoded_answers`](Self::from_decoded_answers), which directly
 ///   materializes the struct from successfully decoded [`Answers`] without
 ///   involving serde or stringly application conversion code.
+/// - [`from_raw_answers_with`](Self::from_raw_answers_with), which lets an
+///   application add whole-form rules over the filled struct while keeping
+///   field decoding, defaults, conditions, and validators on the shared
+///   runtime path.
 ///
 /// The derive also emits hidden, prefix-aware helpers used to lower and fill
 /// nested questionnaire structs. They keep nested fields on the same stable
@@ -134,6 +140,37 @@ pub trait QuestionnaireInput: Sized {
             .decode_answers(raw)
             .map_err(QuestionnaireInputError::Validation)?;
         Ok(Self::from_decoded_answers(&answers))
+    }
+
+    /// Decode raw answers, fill the struct, then run typed whole-form rules.
+    ///
+    /// Use this when a questionnaire has constraints that span fields after
+    /// the field-level stage has already produced typed values. The `form`
+    /// closure receives the filled struct and returns [`FormError`] values
+    /// that are reported as normal validation diagnostics. The form closure
+    /// does not run when field decoding fails.
+    fn from_raw_answers_with<F>(raw: &RawAnswers, form: F) -> Result<Self, QuestionnaireInputError>
+    where
+        F: FnOnce(&Self) -> Vec<FormError>,
+    {
+        let questionnaire = Self::questionnaire().map_err(QuestionnaireInputError::Definition)?;
+        let answers = questionnaire
+            .decode_answers(raw)
+            .map_err(QuestionnaireInputError::Validation)?;
+        let value = Self::from_decoded_answers(&answers);
+        let form_errors = form(&value);
+        if form_errors.is_empty() {
+            return Ok(value);
+        }
+        Err(QuestionnaireInputError::Validation(
+            form_errors
+                .into_iter()
+                .map(|error| ValidationDiagnostic::Form {
+                    fields: error.fields,
+                    message: error.message,
+                })
+                .collect(),
+        ))
     }
 }
 

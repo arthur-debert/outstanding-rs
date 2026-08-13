@@ -318,7 +318,7 @@ pub use standout_seeker as seeker;
 pub use standout_input as input;
 
 // Declarative derive macros
-pub use standout_macros::{Questionnaire, Seekable};
+pub use standout_macros::{Questionnaire, QuestionnaireChoices, Seekable};
 
 // CLI integration
 pub mod cli;

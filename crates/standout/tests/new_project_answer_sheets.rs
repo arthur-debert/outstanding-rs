@@ -8,7 +8,7 @@
 //! Every test runs the production `standout` binary in a fresh temporary
 //! working directory without a real terminal. Confirmation never reads
 //! stdin — stdin only ever carries an answer sheet — so every run pins the
-//! binary's attended-terminal seam (`STANDOUT_NEW_PROJECT_TERMINAL`): to
+//! framework's attended-terminal seam (`STANDOUT_QUESTIONNAIRE_TERMINAL`): to
 //! `absent` by default (a regression that reaches the confirmation gate
 //! fails fast instead of prompting the developer's terminal), or to a
 //! scripted replies file for attended flows.
@@ -20,11 +20,11 @@ use std::process::{Command, Output, Stdio};
 
 use tempfile::TempDir;
 
-/// The binary's attended-terminal test seam (see `ScriptedTerminal` in the
-/// binary): `absent` simulates no terminal; any other value names a file of
-/// scripted reply lines. Debug builds only — these tests exercise the
-/// debug-profile binary; a release binary never reads the variable.
-const TERMINAL_SEAM_VAR: &str = "STANDOUT_NEW_PROJECT_TERMINAL";
+/// The framework's attended-terminal test seam: `absent` simulates no
+/// terminal; any other value names a file of scripted reply lines. Debug
+/// builds only — these tests exercise the debug-profile binary; a release
+/// binary never reads the variable.
+const TERMINAL_SEAM_VAR: &str = "STANDOUT_QUESTIONNAIRE_TERMINAL";
 
 /// Run the production wizard binary in `cwd` with `stdin` piped in and the
 /// attended-terminal seam pinned to `terminal_seam`. A run that fails fast
@@ -161,9 +161,10 @@ fn questions_writes_the_same_sheet_to_a_named_file() {
     );
 
     assert!(to_file.status.success());
+    assert!(stdout(&to_file).is_empty());
     assert_eq!(
         fs::read_to_string(dir.path().join("answers.txt")).unwrap(),
-        stdout(&to_stdout)
+        stdout(&to_stdout).trim_end_matches('\n').to_string() + "\n"
     );
     assert_eq!(dir_entries(dir.path()), ["answers.txt"]);
 }
@@ -182,8 +183,8 @@ fn answers_file_generates_after_review_and_attended_confirmation() {
 
     assert!(output.status.success(), "stderr: {}", stderr(&output));
     let transcript = stdout(&output);
+    assert!(transcript.contains("Continue? Type 'yes' to continue:"));
     assert!(transcript.contains("Review"));
-    assert!(transcript.contains("Generate this project? Type 'yes' to continue:"));
     assert!(transcript.contains("Created hello-tool"));
     let destination = dir.path().join("hello-tool");
     assert!(destination.join("Cargo.toml").is_file());
@@ -203,8 +204,8 @@ fn rejected_confirmation_leaves_the_destination_unwritten() {
         "no\n",
     );
 
-    assert!(output.status.success());
-    assert!(stdout(&output).contains("Generation cancelled."));
+    assert!(!output.status.success());
+    assert!(stderr(&output).contains("confirmation declined; nothing was run"));
     assert_eq!(dir_entries(dir.path()), ["answers.txt"]);
 }
 
@@ -222,8 +223,8 @@ fn stdin_sheet_generates_after_review_and_attended_confirmation() {
 
     assert!(output.status.success(), "stderr: {}", stderr(&output));
     let transcript = stdout(&output);
+    assert!(transcript.contains("Continue? Type 'yes' to continue:"));
     assert!(transcript.contains("Review"));
-    assert!(transcript.contains("Generate this project? Type 'yes' to continue:"));
     assert!(transcript.contains("Created hello-tool"));
     assert!(dir.path().join("hello-tool/Cargo.toml").is_file());
     assert_eq!(dir_entries(dir.path()), ["hello-tool"]);
@@ -241,8 +242,8 @@ fn stdin_sheet_rejected_on_the_terminal_writes_nothing() {
         "no\n",
     );
 
-    assert!(output.status.success());
-    assert!(stdout(&output).contains("Generation cancelled."));
+    assert!(!output.status.success());
+    assert!(stderr(&output).contains("confirmation declined; nothing was run"));
     assert!(dir_entries(dir.path()).is_empty());
 }
 
@@ -257,7 +258,7 @@ fn stdin_sheet_without_a_terminal_fails_before_publication_with_guidance() {
     let errors = stderr(&output);
     assert!(errors.contains("attended terminal"));
     assert!(errors.contains("--yes"));
-    assert!(errors.contains("nothing was generated"));
+    assert!(errors.contains("nothing was run"));
     assert!(dir_entries(dir.path()).is_empty());
 }
 
@@ -275,7 +276,7 @@ fn stdin_sheet_with_yes_generates_without_any_terminal() {
     assert!(output.status.success(), "stderr: {}", stderr(&output));
     let transcript = stdout(&output);
     assert!(transcript.contains("Review"));
-    assert!(!transcript.contains("Generate this project?"));
+    assert!(!transcript.contains("Continue?"));
     assert!(transcript.contains("Created hello-tool"));
     assert!(dir.path().join("hello-tool/Cargo.toml").is_file());
     assert_eq!(dir_entries(dir.path()), ["hello-tool"]);
@@ -295,7 +296,7 @@ fn named_file_with_yes_generates_without_any_terminal() {
     assert!(output.status.success(), "stderr: {}", stderr(&output));
     let transcript = stdout(&output);
     assert!(transcript.contains("Review"));
-    assert!(!transcript.contains("Generate this project?"));
+    assert!(!transcript.contains("Continue?"));
     assert!(transcript.contains("Created hello-tool"));
     assert_eq!(dir_entries(dir.path()), ["answers.txt", "hello-tool"]);
 }
@@ -307,8 +308,8 @@ fn attended_end_of_terminal_input_cancels_instead_of_confirming() {
 
     let output = run_attended(dir.path(), &["new-project", "--answers", "-"], &sheet, "");
 
-    assert!(output.status.success());
-    assert!(stdout(&output).contains("Generation cancelled."));
+    assert!(!output.status.success());
+    assert!(stderr(&output).contains("confirmation declined; nothing was run"));
     assert!(dir_entries(dir.path()).is_empty());
 }
 
@@ -321,7 +322,7 @@ fn stdin_trailing_yes_never_confirms_and_writes_nothing() {
     let output = run_standout(dir.path(), &["new-project", "--answers", "-"], &sheet);
 
     assert!(!output.status.success());
-    assert!(stderr(&output).contains("nothing was generated"));
+    assert!(stderr(&output).contains("questionnaire input"));
     assert!(dir_entries(dir.path()).is_empty());
 }
 
@@ -344,7 +345,6 @@ fn stdin_stale_fingerprint_is_rejected_before_any_write() {
     let errors = stderr(&output);
     assert!(errors.contains("render a fresh answer sheet"));
     assert!(errors.contains("answer sheet from stdin"));
-    assert!(errors.contains("nothing was generated"));
     assert!(dir_entries(dir.path()).is_empty());
 }
 
@@ -369,7 +369,7 @@ fn stdin_sheet_accumulates_errors_and_writes_nothing() {
     let errors = stderr(&output);
     assert!(errors.contains("[project.name]"));
     assert!(errors.contains("[command.inputs[0].sources]"));
-    assert!(errors.contains("2 problem(s)"));
+    assert!(errors.contains("derived questionnaire answers are invalid"));
     assert!(dir_entries(dir.path()).is_empty());
 }
 
@@ -383,7 +383,7 @@ fn interactive_stdin_cannot_supply_the_dash_answer_sheet() {
     let output = run_standout(dir.path(), &["new-project", "--answers", "-", "--yes"], "");
 
     assert!(!output.status.success());
-    assert!(stderr(&output).contains("nothing was generated"));
+    assert!(stderr(&output).contains("questionnaire input"));
     assert!(dir_entries(dir.path()).is_empty());
 }
 
@@ -406,7 +406,6 @@ fn stale_fingerprint_is_rejected_before_any_write() {
     assert!(!output.status.success());
     let errors = stderr(&output);
     assert!(errors.contains("render a fresh answer sheet"));
-    assert!(errors.contains("nothing was generated"));
     assert_eq!(dir_entries(dir.path()), ["answers.txt"]);
 }
 
@@ -435,7 +434,7 @@ fn invalid_sheet_accumulates_errors_and_writes_nothing() {
     assert!(errors.contains("[project.name]"));
     assert!(errors.contains("[command.inputs[0].sources]"));
     assert!(errors.contains("[result.fields]"));
-    assert!(errors.contains("3 problem(s)"));
+    assert!(errors.contains("derived questionnaire answers are invalid"));
     assert_eq!(dir_entries(dir.path()), ["answers.txt"]);
 }
 
