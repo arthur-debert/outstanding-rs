@@ -43,6 +43,7 @@ struct ChoiceAttr {
 struct ActiveWhenAttr {
     field: String,
     expected: String,
+    span: Span,
 }
 
 impl Parse for ActiveWhenAttr {
@@ -95,7 +96,11 @@ impl Parse for ActiveWhenAttr {
             )
         })?;
 
-        Ok(Self { field, expected })
+        Ok(Self {
+            field,
+            expected,
+            span: input.span(),
+        })
     }
 }
 
@@ -167,7 +172,8 @@ impl Parse for QuestionAttr {
                     }
                 }
                 Meta::List(list) if list.path.is_ident("active_when") => {
-                    let parsed = list.parse_args::<ActiveWhenAttr>()?;
+                    let mut parsed = list.parse_args::<ActiveWhenAttr>()?;
+                    parsed.span = list.path.span();
                     if attr.active_when.replace(parsed).is_some() {
                         return Err(Error::new(
                             list.path.span(),
@@ -506,6 +512,22 @@ impl FieldInfo {
                 field.ty.span(),
                 "Option<T> is only supported for scalar questionnaire fields and choice fields",
             ));
+        }
+
+        if let Some(active_when) = attrs.active_when.as_ref() {
+            if !optional
+                && matches!(
+                    kind,
+                    FieldKind::Scalar { .. }
+                        | FieldKind::ScalarVec { .. }
+                        | FieldKind::Choice { .. }
+                )
+            {
+                return Err(Error::new(
+                    active_when.span,
+                    "active_when is only supported on Option<T> fields because inactive answers are omitted during decode",
+                ));
+            }
         }
 
         if (attrs.min.is_some() || attrs.max.is_some()) && !kind.is_repeatable_group() {

@@ -1,0 +1,5 @@
+error: active_when is only supported on Option<T> fields because inactive answers are omitted during decode
+  --> tests/ui/questionnaire/active_when_required_choice.rs:16:24
+   |
+16 |     #[question(choice, active_when(field = "enabled", is = "yes"))]
+   |                        ^^^^^^^^^^^

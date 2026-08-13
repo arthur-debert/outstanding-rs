@@ -85,7 +85,8 @@ pub trait QuestionnaireInput: Sized {
     ///
     /// This method is generated code for the closed questionnaire type
     /// universe: scalars, `Option<T>`, scalar `Vec<T>`, enum choices, nested
-    /// structs, and repeatable groups. Call
+    /// structs, and repeatable groups. Conditional fields are represented as
+    /// `Option<T>` because inactive decoded answers are absent. Call
     /// [`from_raw_answers`](Self::from_raw_answers) for the public checked
     /// path: it decodes with the generated definition first, then fills only
     /// after field validation succeeds.
