@@ -1,0 +1,5 @@
+error: unknown question attribute: expected rename
+ --> tests/ui/questionnaire/choices_unknown_attr.rs:5:16
+  |
+5 |     #[question(id = "custom")]
+  |                ^^

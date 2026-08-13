@@ -17,6 +17,7 @@
 //! - [`TabularRow`] - Generate optimized row extraction without JSON serialization
 //! - [`Seekable`] - Generate query-enabled accessor functions for Seeker
 //! - [`Questionnaire`] - Generate questionnaire definitions and typed filling
+//! - [`QuestionnaireChoices`] - Generate enum-backed questionnaire vocabularies
 //!
 //! ## Attribute Macros
 //!
@@ -414,7 +415,8 @@ pub fn seekable_derive(input: TokenStream) -> TokenStream {
 /// field doc comments become prompts; field identifiers become stable field
 /// or group IDs unless overridden with `#[question(id = "...")]`; supported
 /// scalar field types are `String`, `PathBuf`, `bool`, and `Option<T>` over
-/// those scalar types. Nested questionnaire structs lower to groups,
+/// scalar or `#[question(choice)]` enum fields. Nested questionnaire structs
+/// lower to groups, `#[question(choice)]` enum fields lower to `one_of`,
 /// `Vec<NestedStruct>` lowers to a repeatable group, and repeat bounds come
 /// from `#[question(min = N, max = M)]`; omitted `min` defaults to `1` because
 /// the runtime renderer needs one complete block to copy. `Vec<String>` and
@@ -426,6 +428,18 @@ pub fn seekable_derive(input: TokenStream) -> TokenStream {
 pub fn questionnaire_derive(input: TokenStream) -> TokenStream {
     let input = parse_macro_input!(input as DeriveInput);
     questionnaire::questionnaire_derive_impl(input)
+        .unwrap_or_else(|e| e.to_compile_error())
+        .into()
+}
+
+/// Derives a questionnaire choice vocabulary from a unit-variant enum.
+///
+/// Variant names render as kebab-case by default. A variant can override its
+/// user-facing spelling with `#[question(rename = "...")]`.
+#[proc_macro_derive(QuestionnaireChoices, attributes(question))]
+pub fn questionnaire_choices_derive(input: TokenStream) -> TokenStream {
+    let input = parse_macro_input!(input as DeriveInput);
+    questionnaire::questionnaire_choices_derive_impl(input)
         .unwrap_or_else(|e| e.to_compile_error())
         .into()
 }

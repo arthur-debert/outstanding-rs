@@ -1,0 +1,5 @@
+error: choice is only supported on QuestionnaireChoices enum fields
+  --> tests/ui/questionnaire/unsupported_generic_type.rs:10:12
+   |
+10 |     stage: GenericChoice<String>,
+   |            ^^^^^^^^^^^^^

@@ -1,0 +1,5 @@
+error: duplicate questionnaire choice 'one'
+ --> tests/ui/questionnaire/choices_duplicate.rs:6:25
+  |
+6 |     #[question(rename = "one")]
+  |                         ^^^^^
