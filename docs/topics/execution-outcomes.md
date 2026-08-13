@@ -22,7 +22,8 @@ runtime failure.
 
 Warning flushing happens after the primary output and does not replace its
 status. A final text or binary write failure does replace a successful status
-with `1`.
+with `1`, except that `BrokenPipe` while writing final rendered command text to
+stdout is successful early consumer termination.
 
 ## Capturing typed metadata
 
@@ -70,7 +71,10 @@ command and its eventual status.
 ## Framework-owned final writes
 
 `run()` writes successful text and binary bytes to stdout, diagnostics to
-stderr, and exits with the typed non-zero status when execution fails. The
+stderr, and exits with the typed non-zero status when execution fails. A closed
+downstream pipe is not an error only for final rendered command text:
+`BrokenPipe` there means the consumer stopped reading early. Binary stdout
+writes and artifact report writes keep their typed final-write failures. The
 suggested filename on binary output remains available to capture callers; use
 `--output-file-path` when the framework should write either text or binary to a
 file instead of stdout.

@@ -17,7 +17,9 @@ use standout_input::questionnaire::{
     AnswerSheetDiagnostic, FormError, Questionnaire, QuestionnaireInput, QuestionnaireInputError,
     RawAnswers,
 };
-use standout_input::{InputError, InputSourceKind, Inputs, ResolvedInput};
+use standout_input::{
+    InputChain, InputCollector, InputError, InputSourceKind, Inputs, ResolvedInput,
+};
 
 use crate::cli::dispatch::get_deepest_matches;
 use crate::cli::handler::{CommandContext, RunError, RunErrorKind};
@@ -132,59 +134,142 @@ where
     let questionnaire = T::questionnaire()
         .map_err(|error| InputError::validation(format!("definition is invalid: {error}")))?;
 
-    if let Some(path) = matches.get_one::<String>(ANSWERS_ARG_ID) {
-        let source = if path == "-" {
-            AnswerSource::Stdin
-        } else {
-            AnswerSource::File(PathBuf::from(path))
-        };
-        let raw = source.raw_answers(&questionnaire).map_err(|diagnostics| {
-            InputError::validation(format_diagnostics(source.label(), &diagnostics))
-        })?;
-        push_raw_answer_warnings(source.label(), raw.warnings());
-        let value = T::from_raw_answers_with(&raw, form).map_err(questionnaire_input_error)?;
-        return Ok(ResolvedInput {
-            value,
-            source: source.kind(),
-        });
-    }
+    let submission = InputChain::new()
+        .try_source_with_kind(
+            QuestionnaireFileSource::new(questionnaire.clone()),
+            InputSourceKind::Flag,
+        )
+        .try_source(QuestionnaireStdinSource::new(questionnaire.clone()))
+        .try_source(InteractiveQuestionnaireSource::new(questionnaire))
+        .resolve_with_source(matches)?;
 
-    let raw = questionnaire.collect_interactive()?;
-    let value = T::from_raw_answers_with(&raw, form).map_err(questionnaire_input_error)?;
+    if let Some(label) = &submission.value.warning_label {
+        push_raw_answer_warnings(label.clone(), submission.value.raw.warnings());
+    }
+    let value =
+        T::from_raw_answers_with(&submission.value.raw, form).map_err(questionnaire_input_error)?;
     Ok(ResolvedInput {
         value,
-        source: InputSourceKind::Prompt,
+        source: submission.source,
     })
 }
 
-enum AnswerSource {
-    File(PathBuf),
-    Stdin,
+#[derive(Clone)]
+struct QuestionnaireSubmission {
+    raw: RawAnswers,
+    warning_label: Option<String>,
 }
 
-impl AnswerSource {
-    fn label(&self) -> String {
-        match self {
-            Self::File(path) => path.display().to_string(),
-            Self::Stdin => "from stdin".to_string(),
-        }
+struct QuestionnaireFileSource {
+    questionnaire: Questionnaire,
+}
+
+impl QuestionnaireFileSource {
+    fn new(questionnaire: Questionnaire) -> Self {
+        Self { questionnaire }
+    }
+}
+
+impl InputCollector<QuestionnaireSubmission> for QuestionnaireFileSource {
+    fn name(&self) -> &'static str {
+        "flag"
     }
 
-    fn kind(&self) -> InputSourceKind {
-        match self {
-            Self::File(_) => InputSourceKind::Flag,
-            Self::Stdin => InputSourceKind::Stdin,
-        }
+    fn is_available(&self, matches: &ArgMatches) -> bool {
+        matches
+            .get_one::<String>(ANSWERS_ARG_ID)
+            .is_some_and(|path| path != "-")
     }
 
-    fn raw_answers(
-        &self,
-        questionnaire: &Questionnaire,
-    ) -> Result<RawAnswers, Vec<AnswerSheetDiagnostic>> {
-        match self {
-            Self::File(path) => questionnaire.read_answer_sheet_file(path),
-            Self::Stdin => questionnaire.read_answer_sheet_stdin_with(&DefaultStdin),
+    fn collect(&self, matches: &ArgMatches) -> Result<Option<QuestionnaireSubmission>, InputError> {
+        let Some(path) = matches.get_one::<String>(ANSWERS_ARG_ID) else {
+            return Ok(None);
+        };
+        if path == "-" {
+            return Ok(None);
         }
+        let path = PathBuf::from(path);
+        let label = path.display().to_string();
+        let raw = self
+            .questionnaire
+            .read_answer_sheet_file(&path)
+            .map_err(|diagnostics| {
+                InputError::validation(format_diagnostics(label.clone(), &diagnostics))
+            })?;
+        Ok(Some(QuestionnaireSubmission {
+            raw,
+            warning_label: Some(label),
+        }))
+    }
+}
+
+struct QuestionnaireStdinSource {
+    questionnaire: Questionnaire,
+}
+
+impl QuestionnaireStdinSource {
+    fn new(questionnaire: Questionnaire) -> Self {
+        Self { questionnaire }
+    }
+}
+
+impl InputCollector<QuestionnaireSubmission> for QuestionnaireStdinSource {
+    fn name(&self) -> &'static str {
+        "stdin"
+    }
+
+    fn is_available(&self, matches: &ArgMatches) -> bool {
+        matches
+            .get_one::<String>(ANSWERS_ARG_ID)
+            .is_some_and(|path| path == "-")
+    }
+
+    fn collect(&self, matches: &ArgMatches) -> Result<Option<QuestionnaireSubmission>, InputError> {
+        if !self.is_available(matches) {
+            return Ok(None);
+        }
+        let label = "from stdin".to_string();
+        let raw = self
+            .questionnaire
+            .read_answer_sheet_stdin_with(&DefaultStdin)
+            .map_err(|diagnostics| {
+                InputError::validation(format_diagnostics(label.clone(), &diagnostics))
+            })?;
+        Ok(Some(QuestionnaireSubmission {
+            raw,
+            warning_label: Some(label),
+        }))
+    }
+}
+
+struct InteractiveQuestionnaireSource {
+    questionnaire: Questionnaire,
+}
+
+impl InteractiveQuestionnaireSource {
+    fn new(questionnaire: Questionnaire) -> Self {
+        Self { questionnaire }
+    }
+}
+
+impl InputCollector<QuestionnaireSubmission> for InteractiveQuestionnaireSource {
+    fn name(&self) -> &'static str {
+        "prompt"
+    }
+
+    fn is_available(&self, matches: &ArgMatches) -> bool {
+        matches.get_one::<String>(ANSWERS_ARG_ID).is_none()
+    }
+
+    fn collect(&self, matches: &ArgMatches) -> Result<Option<QuestionnaireSubmission>, InputError> {
+        if !self.is_available(matches) {
+            return Ok(None);
+        }
+        let raw = self.questionnaire.collect_interactive()?;
+        Ok(Some(QuestionnaireSubmission {
+            raw,
+            warning_label: None,
+        }))
     }
 }
 
