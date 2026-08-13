@@ -5,7 +5,7 @@ use serial_test::serial;
 use standout_input::env::MockStdin;
 use standout_input::questionnaire::{
     AnswerSheetDiagnostic, Questionnaire as RuntimeQuestionnaire, QuestionnaireError,
-    QuestionnaireInput, ScalarField, ScalarKind, ValidationDiagnostic,
+    QuestionnaireInput, QuestionnaireInputError, ScalarField, ScalarKind, ValidationDiagnostic,
 };
 use standout_input::{
     reset_default_prompt_responder, set_default_prompt_responder, PromptResponse, ScriptedResponder,
@@ -262,13 +262,16 @@ fn prose_accepts_multiline_while_unmarked_strings_reject_it() {
         SingleLineDefault::from_raw_answers(&questionnaire.parse_answer_sheet(&bad_sheet).unwrap())
             .unwrap_err();
     assert!(matches!(
-        err,
-        standout_input::questionnaire::QuestionnaireInputError::Validation(diagnostics)
+        &err,
+        QuestionnaireInputError::Validation(diagnostics)
             if matches!(
                 diagnostics.as_slice(),
                 [ValidationDiagnostic::InvalidValue { id, .. }] if id == "value"
             )
     ));
+    let message = err.to_string();
+    assert!(message.contains("derived questionnaire answers are invalid"));
+    assert!(message.contains("[value]: a string answer must be a single line"));
 }
 
 #[test]

@@ -57,7 +57,20 @@ pub enum QuestionnaireInputError {
     #[error("derived questionnaire definition is invalid: {0}")]
     Definition(QuestionnaireError),
 
-    /// The submitted answers failed the shared validation pipeline.
-    #[error("derived questionnaire answers are invalid")]
+    /// The submitted answers failed the shared validation pipeline; the
+    /// display message includes value-safe diagnostics from that pipeline.
+    #[error("derived questionnaire answers are invalid: {}", validation_diagnostics_display(.0))]
     Validation(Vec<ValidationDiagnostic>),
+}
+
+fn validation_diagnostics_display(diagnostics: &[ValidationDiagnostic]) -> String {
+    if diagnostics.is_empty() {
+        return "no diagnostics reported".to_string();
+    }
+
+    diagnostics
+        .iter()
+        .map(ToString::to_string)
+        .collect::<Vec<_>>()
+        .join("; ")
 }
