@@ -1,4 +1,4 @@
-error: unsupported questionnaire field type; expected String, PathBuf, bool, Option<T>, Vec<String>, Vec<PathBuf>, a nested Questionnaire type, or #[question(choice)] enum field
+error: unsupported questionnaire field type; expected String, PathBuf, bool, Option<T>, a nested Questionnaire type, a Vec of a nested Questionnaire type, or #[question(choice)] enum field
  --> tests/ui/questionnaire/unsupported_type.rs:7:12
   |
 7 |     count: u32,

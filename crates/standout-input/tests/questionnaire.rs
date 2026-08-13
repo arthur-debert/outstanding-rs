@@ -4,7 +4,7 @@
 //! compatibility failures.
 
 use standout_input::questionnaire::{
-    AnswerSheetDiagnostic, Questionnaire, QuestionnaireError, ScalarField, ScalarKind,
+    AnswerSheetDiagnostic, Questionnaire, ScalarField, ScalarKind,
 };
 
 fn one_field() -> Questionnaire {
@@ -71,14 +71,13 @@ fn definition_rejects_invalid_questionnaire_id() {
         vec![ScalarField::new("a", "A?", ScalarKind::String)],
     )
     .unwrap_err();
-    assert_eq!(
-        err,
-        QuestionnaireError::InvalidQuestionnaireId("Has Spaces".into())
-    );
+    assert!(err
+        .to_string()
+        .contains("Invalid questionnaire ID 'Has Spaces'"));
 
     let err =
         Questionnaire::new("", vec![ScalarField::new("a", "A?", ScalarKind::String)]).unwrap_err();
-    assert_eq!(err, QuestionnaireError::InvalidQuestionnaireId("".into()));
+    assert!(err.to_string().contains("Invalid questionnaire ID ''"));
 }
 
 #[test]
@@ -88,7 +87,7 @@ fn definition_rejects_invalid_field_id() {
         vec![ScalarField::new("Project.Name", "A?", ScalarKind::String)],
     )
     .unwrap_err();
-    assert_eq!(err, QuestionnaireError::InvalidId("Project.Name".into()));
+    assert!(err.to_string().contains("Invalid ID 'Project.Name'"));
 }
 
 #[test]
@@ -101,13 +100,15 @@ fn definition_rejects_duplicate_field_ids() {
         ],
     )
     .unwrap_err();
-    assert_eq!(err, QuestionnaireError::DuplicateId("a".into()));
+    assert!(err.to_string().contains("Duplicate ID 'a'"));
 }
 
 #[test]
 fn definition_rejects_empty_field_list() {
     let err = Questionnaire::new("demo", Vec::<ScalarField>::new()).unwrap_err();
-    assert_eq!(err, QuestionnaireError::NoFields);
+    assert!(err
+        .to_string()
+        .contains("must declare at least one item (field or group)"));
 }
 
 // ============================================================================
@@ -148,7 +149,6 @@ fn blank_sheet_round_trips_to_empty_answers() {
     let answers = q.parse_answer_sheet(&q.render_answer_sheet()).unwrap();
     assert_eq!(answers.get("project.name"), Some(""));
     assert_eq!(answers.get("project.notes"), Some(""));
-    assert_eq!(answers.len(), 2);
     assert!(answers.warnings().is_empty());
 }
 
@@ -432,7 +432,11 @@ fn wrong_answer_format_version_is_rejected() {
     let diags = q.parse_answer_sheet(&sheet).unwrap_err();
     assert_eq!(
         diags,
-        vec![AnswerSheetDiagnostic::UnsupportedAnswerFormat { found: "2".into() }]
+        vec![AnswerSheetDiagnostic::Incompatible {
+            message: "Unsupported answer-format version '2' (this release reads only version 1). \
+                      Render a fresh answer sheet; old sheets are not migrated."
+                .replace("  ", "")
+        }]
     );
     assert!(diags[0].to_string().contains("Render a fresh answer sheet"));
 }
@@ -444,14 +448,14 @@ fn wrong_questionnaire_id_is_rejected() {
         .render_answer_sheet()
         .replace("questionnaire: demo.profile", "questionnaire: other.app");
     let diags = q.parse_answer_sheet(&sheet).unwrap_err();
-    assert_eq!(
-        diags,
-        vec![AnswerSheetDiagnostic::QuestionnaireMismatch {
-            expected: "demo.profile".into(),
-            found: "other.app".into(),
-        }]
-    );
-    assert!(diags[0].to_string().contains("Render a fresh answer sheet"));
+    assert!(matches!(
+        &diags[..],
+        [AnswerSheetDiagnostic::Incompatible { message }]
+            if message.contains("for questionnaire 'other.app', not 'demo.profile'")
+    ));
+    assert!(diags[0]
+        .to_string()
+        .contains("Render a fresh answer sheet for 'demo.profile'"));
 }
 
 #[test]
@@ -469,14 +473,10 @@ fn stale_fingerprint_is_rejected_not_migrated() {
     )
     .unwrap();
     let diags = new.parse_answer_sheet(&sheet).unwrap_err();
-    assert_eq!(
-        diags,
-        vec![AnswerSheetDiagnostic::FingerprintMismatch {
-            expected: new.fingerprint().to_string(),
-            found: old.fingerprint().to_string(),
-        }]
-    );
     let message = diags[0].to_string();
+    assert_eq!(diags.len(), 1);
+    assert!(message.contains(&format!("fingerprint '{}'", old.fingerprint())));
+    assert!(message.contains(&format!("expected '{}'", new.fingerprint())));
     assert!(message.contains("render a fresh answer sheet"));
     assert!(message.contains("not migrated"));
 }
@@ -487,17 +487,20 @@ fn malformed_preamble_is_diagnosed_per_line() {
 
     let diags = q.parse_answer_sheet("").unwrap_err();
     assert!(matches!(
-        diags[0],
-        AnswerSheetDiagnostic::MalformedPreamble { line: 1, .. }
+        &diags[0],
+        AnswerSheetDiagnostic::Incompatible { message }
+            if message.starts_with("Line 1: malformed answer-sheet preamble")
     ));
 
     let diags = q
         .parse_answer_sheet("not a preamble\nstill not\nnope\n")
         .unwrap_err();
     assert_eq!(diags.len(), 3, "each preamble line diagnosed: {diags:?}");
-    assert!(diags
-        .iter()
-        .all(|d| matches!(d, AnswerSheetDiagnostic::MalformedPreamble { .. })));
+    assert!(diags.iter().all(|d| matches!(
+        d,
+        AnswerSheetDiagnostic::Incompatible { message }
+            if message.contains("malformed answer-sheet preamble")
+    )));
 }
 
 #[test]
@@ -509,10 +512,11 @@ fn compatibility_failure_skips_body_parsing() {
         .replace("<id:project.name>", "<id:unknown.field>");
     let diags = q.parse_answer_sheet(&sheet).unwrap_err();
     // Only the compatibility diagnostic: the body is never interpreted.
-    assert_eq!(
-        diags,
-        vec![AnswerSheetDiagnostic::UnsupportedAnswerFormat { found: "9".into() }]
-    );
+    assert!(matches!(
+        &diags[..],
+        [AnswerSheetDiagnostic::Incompatible { message }]
+            if message.contains("Unsupported answer-format version '9'")
+    ));
 }
 
 // ============================================================================
@@ -527,13 +531,11 @@ fn unknown_tag_on_a_question_line_is_a_diagnostic() {
         q.render_answer_sheet()
     );
     let diags = q.parse_answer_sheet(&sheet).unwrap_err();
-    assert_eq!(
-        diags,
-        vec![AnswerSheetDiagnostic::UnknownTag {
-            id: "project.bonus".into(),
-            line: 7,
-        }]
-    );
+    assert!(matches!(
+        &diags[..],
+        [AnswerSheetDiagnostic::Tag { line: 7, message }]
+            if message.contains("unknown question tag '<id:project.bonus>'")
+    ));
 }
 
 #[test]
@@ -544,13 +546,11 @@ fn duplicate_question_line_is_a_diagnostic() {
         q.render_answer_sheet()
     );
     let diags = q.parse_answer_sheet(&sheet).unwrap_err();
-    assert_eq!(
-        diags,
-        vec![AnswerSheetDiagnostic::DuplicateField {
-            path: "project.name".into(),
-            line: 7,
-        }]
-    );
+    assert!(matches!(
+        &diags[..],
+        [AnswerSheetDiagnostic::Tag { line: 7, message }]
+            if message.contains("duplicate question '<id:project.name>'")
+    ));
 }
 
 #[test]
@@ -567,9 +567,12 @@ fn diagnostics_accumulate_across_the_body() {
     );
     let diags = q.parse_answer_sheet(&sheet).unwrap_err();
     assert_eq!(diags.len(), 2, "both problems reported: {diags:?}");
-    assert!(matches!(diags[0], AnswerSheetDiagnostic::UnknownTag { .. }));
     assert!(matches!(
-        diags[1],
-        AnswerSheetDiagnostic::DuplicateField { .. }
+        &diags[0],
+        AnswerSheetDiagnostic::Tag { message, .. } if message.contains("unknown question tag")
+    ));
+    assert!(matches!(
+        &diags[1],
+        AnswerSheetDiagnostic::Tag { message, .. } if message.contains("duplicate question")
     ));
 }

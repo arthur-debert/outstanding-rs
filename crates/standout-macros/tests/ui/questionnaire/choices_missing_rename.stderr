@@ -1,0 +1,5 @@
+error: missing #[question(rename = "...")]: every QuestionnaireChoices variant declares its user-facing choice string explicitly
+ --> tests/ui/questionnaire/choices_missing_rename.rs:7:5
+  |
+7 |     LibraryCrate,
+  |     ^^^^^^^^^^^^

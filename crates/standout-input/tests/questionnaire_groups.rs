@@ -148,7 +148,7 @@ fn definition_rejects_empty_group() {
         vec![Item::from(Group::new("g", "?", Vec::<Item>::new()))],
     )
     .unwrap_err();
-    assert_eq!(err, QuestionnaireError::EmptyGroup("g".into()));
+    assert!(err.to_string().contains("Group 'g' declares no children"));
 }
 
 #[test]
@@ -162,13 +162,9 @@ fn definition_rejects_child_id_that_does_not_extend_the_group() {
         ))],
     )
     .unwrap_err();
-    assert_eq!(
-        err,
-        QuestionnaireError::GroupChildId {
-            group: "cmd".into(),
-            child: "name".into(),
-        }
-    );
+    assert!(err
+        .to_string()
+        .contains("Item 'name' inside group 'cmd' must extend the group's ID ('cmd.<segment>')"));
 }
 
 #[test]
@@ -185,7 +181,10 @@ fn definition_rejects_a_zero_minimum() {
         )],
     )
     .unwrap_err();
-    assert!(matches!(err, QuestionnaireError::InvalidRepeat { id, .. } if id == "g"));
+    assert!(matches!(&err, QuestionnaireError::Item { id, .. } if id == "g"));
+    assert!(err
+        .to_string()
+        .contains("Invalid repeat bounds on group 'g'"));
 }
 
 #[test]
@@ -203,7 +202,10 @@ fn definition_rejects_a_maximum_below_the_minimum() {
         )],
     )
     .unwrap_err();
-    assert!(matches!(err, QuestionnaireError::InvalidRepeat { id, .. } if id == "g"));
+    assert!(matches!(&err, QuestionnaireError::Item { id, .. } if id == "g"));
+    assert!(err
+        .to_string()
+        .contains("Invalid repeat bounds on group 'g'"));
 }
 
 #[test]
@@ -220,7 +222,10 @@ fn definition_rejects_a_maximum_without_repeatable() {
         )],
     )
     .unwrap_err();
-    assert!(matches!(err, QuestionnaireError::InvalidRepeat { id, .. } if id == "g"));
+    assert!(matches!(&err, QuestionnaireError::Item { id, .. } if id == "g"));
+    assert!(err
+        .to_string()
+        .contains("Invalid repeat bounds on group 'g'"));
 }
 
 #[test]
@@ -237,7 +242,7 @@ fn definition_rejects_duplicate_ids_across_fields_and_groups() {
         ],
     )
     .unwrap_err();
-    assert_eq!(err, QuestionnaireError::DuplicateId("a.b".into()));
+    assert!(err.to_string().contains("Duplicate ID 'a.b'"));
 }
 
 #[test]
@@ -260,13 +265,10 @@ fn definition_rejects_a_condition_into_a_sibling_group() {
         ],
     )
     .unwrap_err();
-    assert_eq!(
-        err,
-        QuestionnaireError::ConditionScope {
-            id: "g2.b".into(),
-            controller: "g1.a".into(),
-        }
-    );
+    assert!(matches!(&err, QuestionnaireError::Item { id, .. } if id == "g2.b"));
+    assert!(err
+        .to_string()
+        .contains("Field 'g2.b' is conditioned on 'g1.a', which is not in an enclosing scope."));
 }
 
 #[test]
@@ -283,7 +285,8 @@ fn definition_rejects_a_condition_on_a_group() {
         ],
     )
     .unwrap_err();
-    assert!(matches!(err, QuestionnaireError::InvalidCondition { id, .. } if id == "b"));
+    assert!(matches!(&err, QuestionnaireError::Item { id, .. } if id == "b"));
+    assert!(err.to_string().contains("Invalid condition on field 'b'"));
 }
 
 // ============================================================================
@@ -500,7 +503,7 @@ fn a_child_without_its_group_tag_line_is_misplaced() {
     assert!(
         diags
             .iter()
-            .all(|d| matches!(d, AnswerSheetDiagnostic::MisplacedId { id, .. } if id.starts_with("command.inputs."))),
+            .all(|d| matches!(d, AnswerSheetDiagnostic::Tag { message, .. } if message.contains("misplaced '<id:command.inputs."))),
         "children without their group tag line are misplaced: {diags:?}"
     );
     assert_eq!(diags.len(), 2);
@@ -519,7 +522,7 @@ fn a_duplicate_section_tag_line_is_a_diagnostic() {
         "no cascade from the discarded copy: {diags:?}"
     );
     assert!(
-        matches!(&diags[0], AnswerSheetDiagnostic::DuplicateGroup { id, .. } if id == "command"),
+        matches!(&diags[0], AnswerSheetDiagnostic::Tag { message, .. } if message.contains("duplicate group '<id:command>'")),
         "{diags:?}"
     );
 }
@@ -535,7 +538,8 @@ fn a_duplicate_child_in_one_occurrence_reports_the_indexed_path() {
     assert!(
         matches!(
             &diags[0],
-            AnswerSheetDiagnostic::DuplicateField { path, .. } if path == "command.inputs[0].name"
+            AnswerSheetDiagnostic::Tag { message, .. }
+                if message.contains("duplicate question '<id:command.inputs[0].name>'")
         ),
         "duplicate within an occurrence is indexed: {diags:?}"
     );
@@ -554,8 +558,9 @@ fn a_bare_group_tag_line_opens_one_more_occurrence() {
     let diags = q.decode_answers(&raw).unwrap_err();
     assert_eq!(
         diags,
-        vec![ValidationDiagnostic::MissingAnswer {
+        vec![ValidationDiagnostic::Field {
             id: "command.inputs[1].name".into(),
+            message: "this question requires an answer.".into(),
         }]
     );
 }
@@ -571,7 +576,7 @@ fn an_unknown_child_inside_a_block_is_a_diagnostic() {
     let diags = q.parse_answer_sheet(&sheet).unwrap_err();
     assert_eq!(diags.len(), 1);
     assert!(
-        matches!(&diags[0], AnswerSheetDiagnostic::UnknownTag { id, .. } if id == "inputs.ghost"),
+        matches!(&diags[0], AnswerSheetDiagnostic::Tag { message, .. } if message.contains("unknown question tag '<id:inputs.ghost>'")),
         "{diags:?}"
     );
 }
@@ -590,10 +595,9 @@ fn under_minimum_occurrences_is_a_structural_diagnostic() {
     let diags = q.decode_answers(&raw).unwrap_err();
     assert_eq!(
         diags,
-        vec![ValidationDiagnostic::TooFewOccurrences {
-            path: "command.inputs".into(),
-            minimum: 1,
-            found: 0,
+        vec![ValidationDiagnostic::Field {
+            id: "command.inputs".into(),
+            message: "0 of at least 1 required item(s) submitted. Copy a complete group block - its heading line and its questions - for each missing item.".into(),
         }],
         "no speculative missing-field errors for absent occurrences: {diags:?}"
     );
@@ -616,10 +620,11 @@ fn over_maximum_occurrences_is_a_structural_diagnostic() {
         .unwrap_err();
     assert_eq!(
         diags,
-        vec![ValidationDiagnostic::TooManyOccurrences {
-            path: "command.inputs".into(),
-            maximum: 3,
-            found: 4,
+        vec![ValidationDiagnostic::Field {
+            id: "command.inputs".into(),
+            message:
+                "4 items submitted, but at most 3 are accepted. Remove the extra group block(s)."
+                    .into(),
         }]
     );
 }
@@ -636,8 +641,9 @@ fn missing_required_answers_use_indexed_occurrence_paths() {
         .unwrap_err();
     assert_eq!(
         diags,
-        vec![ValidationDiagnostic::MissingAnswer {
+        vec![ValidationDiagnostic::Field {
             id: "command.inputs[1].name".into(),
+            message: "this question requires an answer.".into(),
         }]
     );
 }
@@ -678,10 +684,9 @@ fn a_populated_inactive_field_in_an_occurrence_is_indexed() {
         .unwrap_err();
     assert_eq!(
         diags,
-        vec![ValidationDiagnostic::InactiveAnswered {
+        vec![ValidationDiagnostic::Field {
             id: "inputs[0].flag_name".into(),
-            controller: "inputs.flag".into(),
-            expected: "true".into(),
+            message: "this question does not apply (it is asked only when inputs.flag is true); remove its answer or change the controlling answer.".into(),
         }]
     );
 }
@@ -707,10 +712,9 @@ fn a_root_controller_gates_fields_in_every_occurrence() {
         .unwrap_err();
     assert_eq!(
         diags,
-        vec![ValidationDiagnostic::InactiveAnswered {
+        vec![ValidationDiagnostic::Field {
             id: "inputs[0].doc".into(),
-            controller: "advanced".into(),
-            expected: "true".into(),
+            message: "this question does not apply (it is asked only when advanced is true); remove its answer or change the controlling answer.".into(),
         }]
     );
 }
@@ -732,10 +736,10 @@ fn diagnostics_accumulate_across_occurrences() {
         .unwrap_err();
     assert_eq!(diags.len(), 2, "{diags:?}");
     assert!(diags.iter().any(
-        |d| matches!(d, ValidationDiagnostic::MissingAnswer { id } if id == "inputs[0].name")
+        |d| matches!(d, ValidationDiagnostic::Field { id, message } if id == "inputs[0].name" && message.contains("requires an answer"))
     ));
     assert!(diags.iter().any(
-        |d| matches!(d, ValidationDiagnostic::InvalidValue { id, .. } if id == "inputs[1].flag")
+        |d| matches!(d, ValidationDiagnostic::Field { id, message } if id == "inputs[1].flag" && message.contains("yes/no"))
     ));
 }
 
@@ -917,6 +921,6 @@ fn a_sheet_from_changed_bounds_is_stale() {
     let diags = two.parse_answer_sheet(&sheet).unwrap_err();
     assert!(matches!(
         &diags[..],
-        [AnswerSheetDiagnostic::FingerprintMismatch { .. }]
+        [AnswerSheetDiagnostic::Incompatible { message }] if message.contains("fingerprint")
     ));
 }

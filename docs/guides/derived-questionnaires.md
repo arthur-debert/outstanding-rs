@@ -50,15 +50,18 @@ Derive `QuestionnaireChoices` on unit-variant enums used by
 ```rust
 #[derive(Debug, Clone, Copy, PartialEq, Eq, standout::QuestionnaireChoices)]
 enum OutputFormat {
+    #[question(rename = "json")]
     Json,
+    #[question(rename = "yaml")]
     Yaml,
     #[question(rename = "plain-text")]
     PlainText,
 }
 ```
 
-Variant names render and parse as kebab-case by default. A variant-level
-`#[question(rename = "...")]` changes the user-facing spelling. The enum is the
+Every variant declares its user-facing spelling with
+`#[question(rename = "...")]`; a variant without one is a compile error, so
+the accepted answer strings are always explicit in the source. The enum is the
 single source for the rendered hint, allowed choices, `FromStr`, and `Display`.
 
 ## Field Shapes
@@ -67,9 +70,9 @@ Supported scalar field types are `String`, `PathBuf`, and `bool`.
 `Option<T>` makes a scalar or choice field optional. A nested questionnaire
 struct lowers to a group, and `Vec<NestedStruct>` lowers to a repeatable group.
 
-`Vec<String>` and `Vec<PathBuf>` default to one comma-separated scalar answer.
-Use `#[question(repeated)]` when a scalar vector should render as repeated
-single-field blocks instead.
+`Vec<T>` over a scalar element type (for example `Vec<String>`) is a compile
+error: collect a list as a `String` field and split it in application code, or
+model the items as a `Vec` of a nested questionnaire struct.
 
 Useful field attributes:
 
@@ -79,7 +82,7 @@ Useful field attributes:
 | `default = "..."` | Static default answer text. |
 | `default_with = path, revision = "..."` | Dynamic default from earlier answers. |
 | `validate = path, revision = "..."` | Field validator hook. |
-| `active_when(field = "...", is = "...")` | Conditional `Option<T>` field. |
+| `active_when(field = "...", is = "...")` | Conditional `Option<T>` field; the controller names a field of the same struct. |
 | `choice` | Treat an enum as a choice field, not a nested struct. |
 | `prose` | Treat a `String` as multiline text. |
 | `min = N, max = M` | Bounds for repeatable groups. |
@@ -108,11 +111,11 @@ fn validate_name(value: &AnswerValue) -> Result<(), String> {
 ```
 
 `active_when` is intentionally bounded. It only applies to `Option<T>` fields,
-and its controller must be an earlier scalar or choice field in the same group
-or an enclosing group. The attribute names the controller by the Rust field name
-or by its explicit `id`; nested IDs inherit any parent `id` remapping, so
-renaming a group with `#[question(id = "project")]` also remaps children to
-paths such as `project.name`.
+and its controller must be an earlier scalar or choice field of the same
+derived struct, named by its Rust field name; a name that does not resolve
+within the struct is a compile error. The derive resolves the name through any
+explicit `id` remapping, so renaming a group with `#[question(id = "project")]`
+also remaps children to paths such as `project.name`.
 
 ## Wire a Command
 

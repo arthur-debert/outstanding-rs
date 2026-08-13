@@ -82,7 +82,8 @@ fn choices_on_bool_field_are_rejected() {
         vec![ScalarField::new("a", "A?", ScalarKind::Bool).one_of(["x", "y"])],
     )
     .unwrap_err();
-    assert!(matches!(err, QuestionnaireError::InvalidConstraint { id, .. } if id == "a"));
+    assert!(matches!(&err, QuestionnaireError::Item { id, .. } if id == "a"));
+    assert!(err.to_string().contains("Invalid constraint on field 'a'"));
 }
 
 #[test]
@@ -95,7 +96,7 @@ fn empty_and_duplicate_choices_are_rejected() {
             vec![ScalarField::new("a", "A?", ScalarKind::String).one_of(choices)],
         )
         .unwrap_err();
-        assert!(matches!(err, QuestionnaireError::InvalidConstraint { .. }));
+        assert!(err.to_string().contains("Invalid constraint on field 'a'"));
     }
 }
 
@@ -107,7 +108,8 @@ fn default_must_decode_cleanly() {
         vec![ScalarField::new("a", "A?", ScalarKind::Bool).with_default("maybe")],
     )
     .unwrap_err();
-    assert!(matches!(err, QuestionnaireError::InvalidDefault { id, .. } if id == "a"));
+    assert!(matches!(&err, QuestionnaireError::Item { id, .. } if id == "a"));
+    assert!(err.to_string().contains("Invalid default on field 'a'"));
 
     // A default outside the declared choices.
     let err = Questionnaire::new(
@@ -117,7 +119,7 @@ fn default_must_decode_cleanly() {
             .with_default("z")],
     )
     .unwrap_err();
-    assert!(matches!(err, QuestionnaireError::InvalidDefault { .. }));
+    assert!(err.to_string().contains("Invalid default on field 'a'"));
 
     // A multiline default cannot render as a single pre-filled line.
     let err = Questionnaire::new(
@@ -125,7 +127,7 @@ fn default_must_decode_cleanly() {
         vec![ScalarField::new("a", "A?", ScalarKind::Text).with_default("one\ntwo")],
     )
     .unwrap_err();
-    assert!(matches!(err, QuestionnaireError::InvalidDefault { .. }));
+    assert!(err.to_string().contains("Invalid default on field 'a'"));
 
     // A default with outer whitespace could never survive the render/parse
     // round trip (parsed answers are trimmed).
@@ -134,7 +136,7 @@ fn default_must_decode_cleanly() {
         vec![ScalarField::new("a", "A?", ScalarKind::String).with_default(" x ")],
     )
     .unwrap_err();
-    assert!(matches!(err, QuestionnaireError::InvalidDefault { .. }));
+    assert!(err.to_string().contains("Invalid default on field 'a'"));
 }
 
 #[test]
@@ -144,9 +146,9 @@ fn condition_must_reference_an_earlier_known_field() {
         vec![ScalarField::new("a", "A?", ScalarKind::String).active_when("ghost", "x")],
     )
     .unwrap_err();
-    assert!(
-        matches!(err, QuestionnaireError::UnknownConditionController { controller, .. } if controller == "ghost")
-    );
+    assert!(err
+        .to_string()
+        .contains("Field 'a' is conditioned on unknown field 'ghost'."));
 
     let err = Questionnaire::new(
         "demo.q",
@@ -156,9 +158,9 @@ fn condition_must_reference_an_earlier_known_field() {
         ],
     )
     .unwrap_err();
-    assert!(
-        matches!(err, QuestionnaireError::ConditionOrder { controller, .. } if controller == "b")
-    );
+    assert!(err
+        .to_string()
+        .contains("Field 'a' is conditioned on 'b', which is declared after it."));
 }
 
 #[test]
@@ -172,7 +174,7 @@ fn condition_expected_value_must_be_reachable() {
         ],
     )
     .unwrap_err();
-    assert!(matches!(err, QuestionnaireError::InvalidCondition { .. }));
+    assert!(err.to_string().contains("Invalid condition on field 'b'"));
 
     // A constrained controller whose choices never include the expected value.
     let err = Questionnaire::new(
@@ -183,7 +185,7 @@ fn condition_expected_value_must_be_reachable() {
         ],
     )
     .unwrap_err();
-    assert!(matches!(err, QuestionnaireError::InvalidCondition { .. }));
+    assert!(err.to_string().contains("Invalid condition on field 'b'"));
 
     // An unconstrained controller never decodes to a blank value or one with
     // outer whitespace (answers are trimmed, blanks resolve to omission).
@@ -196,7 +198,7 @@ fn condition_expected_value_must_be_reachable() {
             ],
         )
         .unwrap_err();
-        assert!(matches!(err, QuestionnaireError::InvalidCondition { .. }));
+        assert!(err.to_string().contains("Invalid condition on field 'b'"));
     }
 }
 
@@ -208,7 +210,10 @@ fn validator_revision_must_be_non_empty() {
             .with_validator(FieldValidator::new("", |_| Ok(())))],
     )
     .unwrap_err();
-    assert!(matches!(err, QuestionnaireError::EmptyValidatorRevision { id } if id == "a"));
+    assert!(matches!(&err, QuestionnaireError::Item { id, .. } if id == "a"));
+    assert!(err
+        .to_string()
+        .contains("Field 'a' attaches a validator with an empty revision"));
 }
 
 // ============================================================================
@@ -341,8 +346,9 @@ fn required_blank_without_default_is_missing() {
     let diagnostics = decode(&q, &sheet).unwrap_err();
     assert_eq!(
         diagnostics,
-        vec![ValidationDiagnostic::MissingAnswer {
-            id: "project.name".to_string()
+        vec![ValidationDiagnostic::Field {
+            id: "project.name".to_string(),
+            message: "this question requires an answer.".to_string(),
         }]
     );
 }
@@ -365,8 +371,9 @@ fn bool_vocabulary_is_shared_and_case_insensitive() {
                 assert!(expected, "false must not activate the image question");
                 assert_eq!(
                     d,
-                    vec![ValidationDiagnostic::MissingAnswer {
-                        id: "project.docker_image".to_string()
+                    vec![ValidationDiagnostic::Field {
+                        id: "project.docker_image".to_string(),
+                        message: "this question requires an answer.".to_string(),
                     }]
                 );
             }
@@ -381,13 +388,15 @@ fn invalid_bool_and_multiline_string_are_conversion_errors() {
     let diagnostics = decode(&q, &answer(&sheet, "project.docker", "maybe")).unwrap_err();
     assert!(matches!(
         &diagnostics[..],
-        [ValidationDiagnostic::InvalidValue { id, .. }] if id == "project.docker"
+        [ValidationDiagnostic::Field { id, message }]
+            if id == "project.docker" && message.contains("expected a yes/no answer")
     ));
 
     let diagnostics = decode(&q, &answer(&sheet, "project.name", "two\nlines")).unwrap_err();
     assert!(matches!(
         &diagnostics[..],
-        [ValidationDiagnostic::InvalidValue { id, .. }] if id == "project.name"
+        [ValidationDiagnostic::Field { id, message }]
+            if id == "project.name" && message.contains("must be a single line")
     ));
 }
 
@@ -398,9 +407,9 @@ fn constraint_violations_report_the_choices_not_the_value() {
     let diagnostics = decode(&q, &answer(&sheet, "project.license", "wtfpl")).unwrap_err();
     assert_eq!(
         diagnostics,
-        vec![ValidationDiagnostic::ConstraintViolation {
+        vec![ValidationDiagnostic::Field {
             id: "project.license".to_string(),
-            allowed: vec!["mit".to_string(), "bsd".to_string(), "gpl".to_string()],
+            message: "the answer must be one of: mit, bsd, gpl.".to_string(),
         }]
     );
     assert!(!diagnostics[0].to_string().contains("wtfpl"));
@@ -413,7 +422,7 @@ fn application_validator_runs_in_the_shared_pipeline() {
     let diagnostics = decode(&q, &sheet).unwrap_err();
     assert_eq!(
         diagnostics,
-        vec![ValidationDiagnostic::FieldValidation {
+        vec![ValidationDiagnostic::Field {
             id: "project.name".to_string(),
             message: "the name must not contain spaces".to_string(),
         }]
@@ -431,8 +440,9 @@ fn active_required_conditional_field_must_be_answered() {
     let diagnostics = decode(&q, &answer(&sheet, "project.docker", "yes")).unwrap_err();
     assert_eq!(
         diagnostics,
-        vec![ValidationDiagnostic::MissingAnswer {
-            id: "project.docker_image".to_string()
+        vec![ValidationDiagnostic::Field {
+            id: "project.docker_image".to_string(),
+            message: "this question requires an answer.".to_string(),
         }]
     );
 
@@ -457,10 +467,9 @@ fn populated_inactive_field_is_an_error() {
     let diagnostics = decode(&q, &stale).unwrap_err();
     assert_eq!(
         diagnostics,
-        vec![ValidationDiagnostic::InactiveAnswered {
+        vec![ValidationDiagnostic::Field {
             id: "project.docker_image".to_string(),
-            controller: "project.docker".to_string(),
-            expected: "true".to_string(),
+            message: "this question does not apply (it is asked only when project.docker is true); remove its answer or change the controlling answer.".to_string(),
         }]
     );
 }
@@ -502,12 +511,16 @@ fn independent_diagnostics_accumulate_in_one_pass() {
     let bad = answer(&sheet, "project.license", "wtfpl"); // constraint violation
     let diagnostics = decode(&q, &bad).unwrap_err();
     assert_eq!(diagnostics.len(), 2);
-    assert!(diagnostics
-        .iter()
-        .any(|d| matches!(d, ValidationDiagnostic::MissingAnswer { id } if id == "project.name")));
-    assert!(diagnostics.iter().any(
-        |d| matches!(d, ValidationDiagnostic::ConstraintViolation { id, .. } if id == "project.license")
-    ));
+    assert!(diagnostics.iter().any(|d| matches!(
+        d,
+        ValidationDiagnostic::Field { id, message }
+            if id == "project.name" && message.contains("requires an answer")
+    )));
+    assert!(diagnostics.iter().any(|d| matches!(
+        d,
+        ValidationDiagnostic::Field { id, message }
+            if id == "project.license" && message.contains("must be one of")
+    )));
 }
 
 #[test]
@@ -552,7 +565,7 @@ fn form_validation_does_not_run_over_broken_fields() {
         .unwrap_err();
     assert!(matches!(
         &diagnostics[..],
-        [ValidationDiagnostic::MissingAnswer { .. }]
+        [ValidationDiagnostic::Field { message, .. }] if message.contains("requires an answer")
     ));
 }
 

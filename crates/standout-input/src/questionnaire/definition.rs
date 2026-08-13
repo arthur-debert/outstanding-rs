@@ -656,128 +656,47 @@ pub(crate) fn child_segment<'a>(def_prefix: &str, id: &'a str) -> &'a str {
 /// A definition-time validation error.
 ///
 /// Produced by [`Questionnaire::new`]; a constructed questionnaire is always
-/// internally consistent.
+/// internally consistent. These are developer-time errors — an application
+/// with a valid definition never sees them — so they carry a rendered
+/// `reason` rather than per-rule structure.
 #[derive(Debug, thiserror::Error, PartialEq, Eq)]
 pub enum QuestionnaireError {
-    /// The questionnaire ID is empty or contains characters outside
-    /// `a-z`, `0-9`, `.`, `_`, `-`.
-    #[error("Invalid questionnaire ID '{0}': IDs must be non-empty and use only a-z, 0-9, '.', '_', '-'.")]
-    InvalidQuestionnaireId(String),
-
-    /// A field or group ID is empty or contains characters outside
-    /// `a-z`, `0-9`, `.`, `_`, `-`.
-    #[error("Invalid ID '{0}': IDs must be non-empty and use only a-z, 0-9, '.', '_', '-'.")]
-    InvalidId(String),
-
-    /// Two items (fields or groups) declare the same stable ID.
-    #[error("Duplicate ID '{0}': stable IDs must be unique within a questionnaire.")]
-    DuplicateId(String),
-
-    /// The questionnaire declares no items.
-    #[error("A questionnaire must declare at least one item (field or group).")]
-    NoFields,
-
-    /// A group declares no children.
-    #[error("Group '{0}' declares no children: a group must contain at least one field or group.")]
-    EmptyGroup(String),
-
-    /// A group child's ID does not extend the group's ID.
-    #[error("Item '{child}' inside group '{group}' must extend the group's ID ('{group}.<segment>') so submitted occurrence paths stay derivable from definition IDs.")]
-    GroupChildId {
-        /// The enclosing group.
-        group: String,
-        /// The offending child ID.
-        child: String,
-    },
-
-    /// A group declares impossible repeat bounds.
-    #[error("Invalid repeat bounds on group '{id}': {reason}")]
-    InvalidRepeat {
-        /// The group carrying the bounds.
-        id: String,
-        /// Why the bounds are invalid.
+    /// The definition's overall structure is invalid: a malformed or
+    /// duplicate ID, an empty questionnaire or group, or a group child
+    /// whose ID does not extend its group's ID.
+    #[error("{reason}")]
+    Structure {
+        /// The violated construction rule.
         reason: String,
     },
 
-    /// A condition references a field outside the dependent field's own
-    /// scope chain. A controller must live in the same group occurrence or
-    /// an enclosing one, so that every submitted occurrence can resolve it
-    /// unambiguously.
-    #[error("Field '{id}' is conditioned on '{controller}', which is not in an enclosing scope. A controller must be declared in the same group as the dependent field or in one of its enclosing groups.")]
-    ConditionScope {
-        /// The dependent field.
+    /// One field's or group's declared semantics are invalid: repeat
+    /// bounds, a default, a constraint, a condition, or a hook revision.
+    #[error("{reason}")]
+    Item {
+        /// The stable ID of the field or group carrying the invalid
+        /// declaration.
         id: String,
-        /// The out-of-scope controller ID.
-        controller: String,
-    },
-
-    /// A declared constraint is invalid for its field.
-    #[error("Invalid constraint on field '{id}': {reason}")]
-    InvalidConstraint {
-        /// The field carrying the constraint.
-        id: String,
-        /// Why the constraint is invalid.
+        /// The violated construction rule.
         reason: String,
     },
+}
 
-    /// A declared default is invalid for its field.
-    #[error("Invalid default on field '{id}': {reason}")]
-    InvalidDefault {
-        /// The field carrying the default.
-        id: String,
-        /// Why the default is invalid.
-        reason: String,
-    },
+impl QuestionnaireError {
+    /// A whole-definition structure error.
+    pub(crate) fn structure(reason: impl Into<String>) -> Self {
+        Self::Structure {
+            reason: reason.into(),
+        }
+    }
 
-    /// A condition references a field the questionnaire does not declare.
-    #[error("Field '{id}' is conditioned on unknown field '{controller}'.")]
-    UnknownConditionController {
-        /// The dependent field.
-        id: String,
-        /// The missing controller ID.
-        controller: String,
-    },
-
-    /// A condition references a field declared after the dependent field.
-    /// Controllers must be declared first so answers can be collected and
-    /// decoded in a single pass.
-    #[error("Field '{id}' is conditioned on '{controller}', which is declared after it. Declare the controlling field first.")]
-    ConditionOrder {
-        /// The dependent field.
-        id: String,
-        /// The later-declared controller ID.
-        controller: String,
-    },
-
-    /// A condition's expected value can never match its controller.
-    #[error("Invalid condition on field '{id}': {reason}")]
-    InvalidCondition {
-        /// The dependent field.
-        id: String,
-        /// Why the expected value can never match.
-        reason: String,
-    },
-
-    /// An attached validator declares an empty semantic revision.
-    #[error("Field '{id}' attaches a validator with an empty revision: the revision is the validator's semantic identity and must be non-empty.")]
-    EmptyValidatorRevision {
-        /// The field carrying the validator.
-        id: String,
-    },
-
-    /// A field declares both a static and a dynamic default.
-    #[error("Field '{id}' declares both a static and a dynamic default: a field takes one or the other, never both.")]
-    ConflictingDefaults {
-        /// The field carrying both defaults.
-        id: String,
-    },
-
-    /// An attached dynamic default declares an empty semantic revision.
-    #[error("Field '{id}' attaches a dynamic default with an empty revision: the revision is the dynamic default's semantic identity and must be non-empty.")]
-    EmptyDefaultRevision {
-        /// The field carrying the dynamic default.
-        id: String,
-    },
+    /// An error in one field's or group's declaration.
+    pub(crate) fn item(id: impl Into<String>, reason: impl Into<String>) -> Self {
+        Self::Item {
+            id: id.into(),
+            reason: reason.into(),
+        }
+    }
 }
 
 /// An application-owned questionnaire definition.
@@ -853,11 +772,15 @@ impl Questionnaire {
     ) -> Result<Self, QuestionnaireError> {
         let id = id.into();
         if !valid_id(&id) {
-            return Err(QuestionnaireError::InvalidQuestionnaireId(id));
+            return Err(QuestionnaireError::structure(format!(
+                "Invalid questionnaire ID '{id}': IDs must be non-empty and use only a-z, 0-9, '.', '_', '-'."
+            )));
         }
         let mut items: Vec<Item> = items.into_iter().map(Into::into).collect();
         if items.is_empty() {
-            return Err(QuestionnaireError::NoFields);
+            return Err(QuestionnaireError::structure(
+                "A questionnaire must declare at least one item (field or group).",
+            ));
         }
 
         // Structural pass: IDs, duplicates, group shape, repeat bounds.
@@ -942,18 +865,21 @@ fn collect_structure(
     for item in items {
         let item_id = item.id();
         if !valid_id(item_id) {
-            return Err(QuestionnaireError::InvalidId(item_id.to_string()));
+            return Err(QuestionnaireError::structure(format!(
+                "Invalid ID '{item_id}': IDs must be non-empty and use only a-z, 0-9, '.', '_', '-'."
+            )));
         }
         if meta.contains_key(item_id) {
-            return Err(QuestionnaireError::DuplicateId(item_id.to_string()));
+            return Err(QuestionnaireError::structure(format!(
+                "Duplicate ID '{item_id}': stable IDs must be unique within a questionnaire."
+            )));
         }
         if let Some(parent) = parent {
             let prefix = format!("{parent}.");
             if !item_id.starts_with(&prefix) || item_id.len() == prefix.len() {
-                return Err(QuestionnaireError::GroupChildId {
-                    group: parent.to_string(),
-                    child: item_id.to_string(),
-                });
+                return Err(QuestionnaireError::structure(format!(
+                    "Item '{item_id}' inside group '{parent}' must extend the group's ID ('{parent}.<segment>') so submitted occurrence paths stay derivable from definition IDs."
+                )));
             }
         }
         meta.insert(
@@ -978,24 +904,27 @@ fn collect_structure(
             }
             Item::Group(group) => {
                 if group.children.is_empty() {
-                    return Err(QuestionnaireError::EmptyGroup(group.id.clone()));
+                    return Err(QuestionnaireError::structure(format!(
+                        "Group '{}' declares no children: a group must contain at least one field or group.",
+                        group.id
+                    )));
                 }
                 if let Some(repeat) = group.repeat {
                     if repeat.min == 0 {
-                        return Err(QuestionnaireError::InvalidRepeat {
-                            id: group.id.clone(),
-                            reason: "the minimum must be at least 1 — rendering emits exactly the minimum number of blocks, and a sheet needs one complete block to copy (declare repeatable(min) before max_occurrences)".to_string(),
-                        });
+                        return Err(QuestionnaireError::item(
+                            group.id.clone(),
+                            format!("Invalid repeat bounds on group '{}': the minimum must be at least 1 — rendering emits exactly the minimum number of blocks, and a sheet needs one complete block to copy (declare repeatable(min) before max_occurrences)", group.id),
+                        ));
                     }
                     if let Some(max) = repeat.max {
                         if max < repeat.min {
-                            return Err(QuestionnaireError::InvalidRepeat {
-                                id: group.id.clone(),
-                                reason: format!(
-                                    "the maximum ({max}) is below the minimum ({})",
-                                    repeat.min
+                            return Err(QuestionnaireError::item(
+                                group.id.clone(),
+                                format!(
+                                    "Invalid repeat bounds on group '{}': the maximum ({max}) is below the minimum ({})",
+                                    group.id, repeat.min
                                 ),
-                            });
+                            ));
                         }
                     }
                 }
@@ -1033,9 +962,10 @@ fn validate_fields(
                 }
                 if let Some(validator) = &field.validator {
                     if validator.revision().is_empty() {
-                        return Err(QuestionnaireError::EmptyValidatorRevision {
-                            id: field.id.clone(),
-                        });
+                        return Err(QuestionnaireError::item(
+                            field.id.clone(),
+                            format!("Field '{}' attaches a validator with an empty revision: the revision is the validator's semantic identity and must be non-empty.", field.id),
+                        ));
                     }
                 }
                 validate_default(field)?;
@@ -1053,9 +983,11 @@ fn validate_constraint(field: &ScalarField) -> Result<(), QuestionnaireError> {
     let Some(Constraint::OneOf(choices)) = &field.constraint else {
         return Ok(());
     };
-    let invalid = |reason: &str| QuestionnaireError::InvalidConstraint {
-        id: field.id.clone(),
-        reason: reason.to_string(),
+    let invalid = |reason: &str| {
+        QuestionnaireError::item(
+            field.id.clone(),
+            format!("Invalid constraint on field '{}': {reason}", field.id),
+        )
     };
     if field.kind == ScalarKind::Bool {
         return Err(invalid("a bool field cannot declare choices"));
@@ -1089,37 +1021,49 @@ fn validate_condition(
     meta: &HashMap<String, NodeMeta>,
     field_info: &HashMap<String, FieldInfo>,
 ) -> Result<(), QuestionnaireError> {
+    let invalid = |reason: String| {
+        QuestionnaireError::item(
+            field_id,
+            format!("Invalid condition on field '{field_id}': {reason}"),
+        )
+    };
     let dependent = &field_info[field_id];
     let Some(controller) = field_info.get(&condition.controller) else {
         if meta.contains_key(&condition.controller) {
-            return Err(QuestionnaireError::InvalidCondition {
-                id: field_id.to_string(),
-                reason: format!(
-                    "controller '{}' is a group; a controller must be a scalar field",
-                    condition.controller
-                ),
-            });
+            return Err(invalid(format!(
+                "controller '{}' is a group; a controller must be a scalar field",
+                condition.controller
+            )));
         }
-        return Err(QuestionnaireError::UnknownConditionController {
-            id: field_id.to_string(),
-            controller: condition.controller.clone(),
-        });
+        return Err(QuestionnaireError::item(
+            field_id,
+            format!(
+                "Field '{field_id}' is conditioned on unknown field '{}'.",
+                condition.controller
+            ),
+        ));
     };
     // The controller's scope chain must enclose (or equal) the dependent's,
     // so every submitted occurrence resolves the controller unambiguously.
     let enclosing = controller.chain.len() <= dependent.chain.len()
         && dependent.chain[..controller.chain.len()] == controller.chain[..];
     if !enclosing {
-        return Err(QuestionnaireError::ConditionScope {
-            id: field_id.to_string(),
-            controller: condition.controller.clone(),
-        });
+        return Err(QuestionnaireError::item(
+            field_id,
+            format!(
+                "Field '{field_id}' is conditioned on '{}', which is not in an enclosing scope. A controller must be declared in the same group as the dependent field or in one of its enclosing groups.",
+                condition.controller
+            ),
+        ));
     }
     if controller.dfs > dependent.dfs {
-        return Err(QuestionnaireError::ConditionOrder {
-            id: field_id.to_string(),
-            controller: condition.controller.clone(),
-        });
+        return Err(QuestionnaireError::item(
+            field_id,
+            format!(
+                "Field '{field_id}' is conditioned on '{}', which is declared after it. Declare the controlling field first.",
+                condition.controller
+            ),
+        ));
     }
     let controller_kind = &controller.kind;
     let controller_constraint = &controller.constraint;
@@ -1127,34 +1071,25 @@ fn validate_condition(
         match super::decode::parse_bool(&condition.expected) {
             Some(value) => condition.expected = if value { "true" } else { "false" }.to_string(),
             None => {
-                return Err(QuestionnaireError::InvalidCondition {
-                    id: field_id.to_string(),
-                    reason: format!(
-                        "controller '{}' is a bool, but the expected value is not a yes/no value",
-                        condition.controller
-                    ),
-                })
+                return Err(invalid(format!(
+                    "controller '{}' is a bool, but the expected value is not a yes/no value",
+                    condition.controller
+                )))
             }
         }
     } else if let Some(Constraint::OneOf(choices)) = controller_constraint {
         if !choices.contains(&condition.expected) {
-            return Err(QuestionnaireError::InvalidCondition {
-                id: field_id.to_string(),
-                reason: format!(
-                    "controller '{}' never accepts the expected value (its choices are: {})",
-                    condition.controller,
-                    choices.join(", ")
-                ),
-            });
+            return Err(invalid(format!(
+                "controller '{}' never accepts the expected value (its choices are: {})",
+                condition.controller,
+                choices.join(", ")
+            )));
         }
     } else if condition.expected.is_empty() || condition.expected != condition.expected.trim() {
-        return Err(QuestionnaireError::InvalidCondition {
-            id: field_id.to_string(),
-            reason: format!(
-                "controller '{}' never decodes to the expected value (decoded answers are non-blank and carry no outer whitespace)",
-                condition.controller
-            ),
-        });
+        return Err(invalid(format!(
+            "controller '{}' never decodes to the expected value (decoded answers are non-blank and carry no outer whitespace)",
+            condition.controller
+        )));
     }
     Ok(())
 }
@@ -1169,22 +1104,26 @@ fn validate_condition(
 fn validate_default(field: &ScalarField) -> Result<(), QuestionnaireError> {
     if let Some(dynamic) = &field.dynamic_default {
         if field.default.is_some() {
-            return Err(QuestionnaireError::ConflictingDefaults {
-                id: field.id.clone(),
-            });
+            return Err(QuestionnaireError::item(
+                field.id.clone(),
+                format!("Field '{}' declares both a static and a dynamic default: a field takes one or the other, never both.", field.id),
+            ));
         }
         if dynamic.revision().is_empty() {
-            return Err(QuestionnaireError::EmptyDefaultRevision {
-                id: field.id.clone(),
-            });
+            return Err(QuestionnaireError::item(
+                field.id.clone(),
+                format!("Field '{}' attaches a dynamic default with an empty revision: the revision is the dynamic default's semantic identity and must be non-empty.", field.id),
+            ));
         }
     }
     let Some(default) = &field.default else {
         return Ok(());
     };
-    let invalid = |reason: String| QuestionnaireError::InvalidDefault {
-        id: field.id.clone(),
-        reason,
+    let invalid = |reason: String| {
+        QuestionnaireError::item(
+            field.id.clone(),
+            format!("Invalid default on field '{}': {reason}", field.id),
+        )
     };
     if default.trim().is_empty() {
         return Err(invalid("a default must be non-blank".to_string()));
