@@ -16,6 +16,7 @@
 //! - [`Tabular`] - Generate `TabularSpec` from struct field annotations
 //! - [`TabularRow`] - Generate optimized row extraction without JSON serialization
 //! - [`Seekable`] - Generate query-enabled accessor functions for Seeker
+//! - [`Questionnaire`] - Generate questionnaire definitions and typed filling
 //!
 //! ## Attribute Macros
 //!
@@ -46,6 +47,7 @@ mod command;
 mod dispatch;
 mod embed;
 mod handler;
+mod questionnaire;
 mod seeker;
 mod tabular;
 
@@ -401,6 +403,23 @@ pub fn tabular_row_derive(input: TokenStream) -> TokenStream {
 pub fn seekable_derive(input: TokenStream) -> TokenStream {
     let input = parse_macro_input!(input as DeriveInput);
     seeker::seekable_derive_impl(input)
+        .unwrap_or_else(|e| e.to_compile_error())
+        .into()
+}
+
+/// Derives a questionnaire definition and typed filling for a flat scalar struct.
+///
+/// The generated implementation lowers through `standout-input`'s public
+/// builder. Container `#[question(id = "...")]` declares the questionnaire ID;
+/// field doc comments become prompts; field identifiers become stable field
+/// IDs unless overridden with `#[question(id = "...")]`; supported field types
+/// are `String`, `PathBuf`, `bool`, and `Option<T>` over those scalar types.
+/// `#[question(default = "...")]` declares a static default, and
+/// `#[question(prose)]` opts a `String` field into multi-line text.
+#[proc_macro_derive(Questionnaire, attributes(question))]
+pub fn questionnaire_derive(input: TokenStream) -> TokenStream {
+    let input = parse_macro_input!(input as DeriveInput);
+    questionnaire::questionnaire_derive_impl(input)
         .unwrap_or_else(|e| e.to_compile_error())
         .into()
 }

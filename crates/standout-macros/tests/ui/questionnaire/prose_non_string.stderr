@@ -1,0 +1,5 @@
+error: prose is only supported on String fields
+ --> tests/ui/questionnaire/prose_non_string.rs:9:16
+  |
+9 |     #[question(prose)]
+  |                ^^^^^
