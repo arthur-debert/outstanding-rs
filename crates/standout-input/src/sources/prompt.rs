@@ -23,6 +23,24 @@ pub trait TerminalIO: Send + Sync {
     fn read_line(&self) -> io::Result<String>;
 }
 
+/// Sharing one terminal across several prompt sources: an `Arc<T>` delegates
+/// to the wrapped terminal, so a single (possibly stateful mock) terminal can
+/// back a sequence of [`TextPromptSource`] / [`ConfirmPromptSource`] values —
+/// e.g. one prompt per questionnaire field.
+impl<T: TerminalIO + ?Sized> TerminalIO for Arc<T> {
+    fn is_terminal(&self) -> bool {
+        (**self).is_terminal()
+    }
+
+    fn write_prompt(&self, prompt: &str) -> io::Result<()> {
+        (**self).write_prompt(prompt)
+    }
+
+    fn read_line(&self) -> io::Result<String> {
+        (**self).read_line()
+    }
+}
+
 /// Real terminal I/O.
 #[derive(Debug, Default, Clone, Copy)]
 pub struct RealTerminal;
@@ -122,6 +140,30 @@ impl<T: TerminalIO + 'static> TextPromptSource<T> {
             return Err(InputError::NoInput);
         }
         self.collect(matches)?.ok_or(InputError::NoInput)
+    }
+
+    /// One prompt round trip preserving the entry / non-input distinction
+    /// that [`prompt`](Self::prompt) collapses into [`InputError::NoInput`]:
+    /// `Ok(Some(text))` is an entered answer — a blank line arrives as
+    /// `Some("")` — while `Ok(None)` is a non-input outcome (a responder
+    /// `Skip`, or no terminal to ask). Cancellation and I/O failures
+    /// propagate as errors. Callers that must react differently to "the
+    /// user entered nothing" versus "no input can ever arrive" (e.g.
+    /// questionnaire collection's retry-or-terminate rule) use this instead
+    /// of [`prompt`](Self::prompt).
+    pub fn prompt_entry(&self) -> Result<Option<String>, InputError> {
+        match crate::responder::intercept_text(crate::PromptKind::Text, &self.prompt) {
+            Ok(Some(value)) => return Ok(Some(value)),
+            Ok(None) => {}
+            Err(InputError::NoInput) => return Ok(None),
+            Err(error) => return Err(error),
+        }
+        let matches = crate::collector::empty_matches();
+        if !self.is_available(matches) {
+            return Ok(None);
+        }
+        // `collect` yields `None` for a blank line — still an entry.
+        Ok(Some(self.collect(matches)?.unwrap_or_default()))
     }
 }
 
