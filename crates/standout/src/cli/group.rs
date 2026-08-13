@@ -587,7 +587,9 @@ impl<H> CommandConfig<H> {
     ///     .build()?;
     /// ```
     ///
-    /// Multiple `.input(...)` calls on the same command accumulate; each
+    /// Multiple `.input(...)` calls on the same command accumulate under unique
+    /// names; duplicate names fail during pre-dispatch instead of overwriting
+    /// an earlier resolved value. Each
     /// registers a pre-dispatch hook that writes into the shared bag, so
     /// commands can declare several named inputs of any types.
     ///
@@ -618,6 +620,12 @@ impl<H> CommandConfig<H> {
                 .extensions
                 .get_mut::<standout_input::Inputs>()
                 .expect("Inputs just inserted");
+            if let Some(source) = bag.source_of(name.as_ref()) {
+                return Err(crate::cli::hooks::HookError::pre_dispatch(format!(
+                    "input `{}` is already resolved from {}; duplicate input names are not supported",
+                    name, source
+                )));
+            }
             bag.insert(name.clone(), resolved);
             Ok(())
         })

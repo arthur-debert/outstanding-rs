@@ -97,6 +97,11 @@ where
         .extensions
         .get_mut::<Inputs>()
         .expect("Inputs just inserted");
+    if let Some(source) = bag.source_of(QUESTIONNAIRE_INPUT_NAME) {
+        return Err(HookError::pre_dispatch(format!(
+            "questionnaire input `{QUESTIONNAIRE_INPUT_NAME}` conflicts with an input already resolved from {source}; `{QUESTIONNAIRE_INPUT_NAME}` is reserved for command questionnaires"
+        )));
+    }
     bag.insert(QUESTIONNAIRE_INPUT_NAME, resolved);
     Ok(())
 }
@@ -326,23 +331,28 @@ pub(crate) fn augment_questionnaire_command(mut cmd: Command) -> Command {
 
 pub(crate) fn validate_questionnaire_surface(cmd: &Command, path: &str) -> Result<(), SetupError> {
     let mut conflicts = Vec::new();
-    if cmd.get_arguments().any(|arg| {
-        arg.get_long()
-            .is_some_and(|name| name == "answers" || name == "yes")
-    }) {
-        for arg in cmd.get_arguments() {
-            if let Some(long) = arg.get_long() {
-                if long == "answers" || long == "yes" {
-                    conflicts.push(format!("--{long}"));
+    for arg in cmd.get_arguments() {
+        if let Some(long) = arg.get_long() {
+            if long == "answers" || long == "yes" {
+                conflicts.push(format!("--{long}"));
+            }
+        }
+        if let Some(aliases) = arg.get_all_aliases() {
+            for alias in aliases {
+                if alias == "answers" || alias == "yes" {
+                    conflicts.push(format!("--{alias}"));
                 }
             }
         }
     }
-    if cmd
-        .get_subcommands()
-        .any(|subcommand| subcommand.get_name() == QUESTIONS_SUBCOMMAND)
-    {
-        conflicts.push(QUESTIONS_SUBCOMMAND.to_string());
+    for subcommand in cmd.get_subcommands() {
+        if subcommand.get_name() == QUESTIONS_SUBCOMMAND
+            || subcommand
+                .get_all_aliases()
+                .any(|alias| alias == QUESTIONS_SUBCOMMAND)
+        {
+            conflicts.push(QUESTIONS_SUBCOMMAND.to_string());
+        }
     }
 
     if conflicts.is_empty() {

@@ -10,7 +10,7 @@ use standout::cli::{
     App, CommandContext, CommandContextInput, Dispatch, HandlerResult, Output, RunResult,
 };
 use standout::input::questionnaire::QuestionnaireInput;
-use standout::input::{PromptResponse, ScriptedResponder};
+use standout::input::{DefaultSource, InputChain, PromptResponse, ScriptedResponder};
 use standout_test::{TestHarness, TestResult};
 
 #[derive(Debug, Clone, PartialEq, Eq, standout::Questionnaire)]
@@ -354,4 +354,102 @@ fn reserved_answers_collision_fails_verification() {
     let error = app.verify_command(&cmd).unwrap_err().to_string();
     assert!(error.contains("reserved name"), "{error}");
     assert!(error.contains("--answers"), "{error}");
+}
+
+#[test]
+fn reserved_answer_alias_collision_fails_verification() {
+    let app = App::builder()
+        .command_with("collect", handlers::collect, |cfg| {
+            cfg.template("{{ name }}").questionnaire::<FixtureAnswers>()
+        })
+        .unwrap();
+    let cmd = Command::new("fixture")
+        .subcommand(Command::new("collect").arg(Arg::new("other").long("other").alias("answers")));
+
+    let error = app.verify_command(&cmd).unwrap_err().to_string();
+    assert!(error.contains("reserved name"), "{error}");
+    assert!(error.contains("--answers"), "{error}");
+}
+
+#[test]
+fn reserved_questions_alias_collision_fails_verification() {
+    let app = App::builder()
+        .command_with("collect", handlers::collect, |cfg| {
+            cfg.template("{{ name }}").questionnaire::<FixtureAnswers>()
+        })
+        .unwrap();
+    let cmd = Command::new("fixture")
+        .subcommand(Command::new("collect").subcommand(Command::new("local").alias("questions")));
+
+    let error = app.verify_command(&cmd).unwrap_err().to_string();
+    assert!(error.contains("reserved name"), "{error}");
+    assert!(error.contains("questions"), "{error}");
+}
+
+#[test]
+#[serial(questionnaire)]
+fn questionnaire_rejects_existing_input_name() {
+    let calls = Arc::new(AtomicUsize::new(0));
+    let app = App::builder()
+        .app_state(Calls(calls.clone()))
+        .command_with("collect", handlers::collect, |cfg| {
+            cfg.template("{{ name }}")
+                .input(
+                    "questionnaire",
+                    InputChain::new().try_source(DefaultSource::new("already-taken".to_string())),
+                )
+                .questionnaire::<FixtureAnswers>()
+        })
+        .unwrap()
+        .build()
+        .unwrap();
+
+    let result = TestHarness::new()
+        .fixture("answers.txt", answered_sheet("from-file"))
+        .run(
+            &app,
+            command(),
+            ["fixture", "collect", "--answers", "answers.txt", "--yes"],
+        );
+
+    let error = error_text(&result);
+    assert!(
+        error.contains("reserved for command questionnaires"),
+        "{error}"
+    );
+    assert_eq!(calls.load(Ordering::SeqCst), 0);
+}
+
+#[test]
+#[serial(questionnaire)]
+fn generic_input_rejects_questionnaire_name_after_questionnaire() {
+    let calls = Arc::new(AtomicUsize::new(0));
+    let app = App::builder()
+        .app_state(Calls(calls.clone()))
+        .command_with("collect", handlers::collect, |cfg| {
+            cfg.template("{{ name }}")
+                .questionnaire::<FixtureAnswers>()
+                .input(
+                    "questionnaire",
+                    InputChain::new().try_source(DefaultSource::new("already-taken".to_string())),
+                )
+        })
+        .unwrap()
+        .build()
+        .unwrap();
+
+    let result = TestHarness::new()
+        .fixture("answers.txt", answered_sheet("from-file"))
+        .run(
+            &app,
+            command(),
+            ["fixture", "collect", "--answers", "answers.txt", "--yes"],
+        );
+
+    let error = error_text(&result);
+    assert!(
+        error.contains("duplicate input names are not supported"),
+        "{error}"
+    );
+    assert_eq!(calls.load(Ordering::SeqCst), 0);
 }
