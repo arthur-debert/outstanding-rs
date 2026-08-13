@@ -1,12 +1,13 @@
 //! Framework warning collection and deferred rendering.
 //!
-//! Some parts of standout-render (notably the embedded-resource hot-reload
-//! path in [`crate::embedded`]) can encounter non-fatal problems during
-//! application startup — e.g. a stylesheet fails to parse and the framework
-//! silently falls back to the compile-time embedded copy. Historically these
-//! were emitted via `eprintln!` *during* initialization, which meant they
-//! printed *before* the command's own output and as plain text, even when
-//! rendering into a rich terminal.
+//! Some framework paths can encounter non-fatal problems during application
+//! startup or pre-dispatch. Examples include embedded-resource hot reload in
+//! [`crate::embedded`] falling back to a compile-time copy, or an accepted
+//! questionnaire answer sheet containing a suspicious tag-like fragment that
+//! should be shown to the user without rejecting the run. Historically these
+//! were emitted via `eprintln!` at the discovery site, which meant they printed
+//! *before* the command's own output and as plain text, even when rendering into
+//! a rich terminal.
 //!
 //! This module routes those messages through a process-local collector so
 //! the CLI layer can render them *after* the command output, styled through
@@ -15,10 +16,11 @@
 //!
 //! # Scope
 //!
-//! Only *framework warnings* (problems with standout's own setup / resource
-//! loading) should go through this module. User-facing diagnostics that are
-//! part of a handler's legitimate output — clipboard access failures, input
-//! validation feedback, handler-generated I/O errors — stay on stderr as
+//! Only *framework warnings* should go through this module: non-fatal
+//! framework-owned setup, resource-loading, or accepted-input diagnostics whose
+//! ordering belongs to the run boundary. User-facing diagnostics that are part
+//! of a handler's legitimate output - clipboard access failures, input
+//! validation feedback, handler-generated I/O errors - stay on stderr as
 //! before; interleaving them with other output is the correct behavior.
 //!
 //! # Usage

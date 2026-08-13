@@ -87,7 +87,7 @@ No subprocess. No stdout plumbing. Env vars, cwd, stdin, clipboard, terminal wid
 - **MiniJinja templates** — Familiar syntax with partials, filters, and hot reload
 - **CSS/YAML styling** — Semantic styles with light/dark mode support
 - **Tabular layouts** — Declarative columns with alignment, truncation, wrapping
-- **Clap integration** — Automatic dispatch via derive macros
+- **Clap integration** — Automatic dispatch via derive macros, including questionnaire-backed command surfaces
 - **Incremental adoption** — Migrate one command at a time
 
 ## Installation
@@ -141,6 +141,7 @@ You can find comprehensive documentation in our book: **[standout.magik.works](h
 
 - [Introduction to Testing](https://standout.magik.works/guides/intro-to-testing.html) — The primary value prop: why Standout CLIs are testable end-to-end, in-process, without subprocess spawning
 - [Bootstrap a Standout project](https://standout.magik.works/guides/bootstrap-a-project.html) — Generate a production-shaped two-crate starter with one runnable command and layered tests
+- [Derived Questionnaires](https://standout.magik.works/guides/derived-questionnaires.html) — Declare typed answer sheets and inject `questions`, `--answers`, and `--yes` into commands
 - [Introduction to Standout](https://standout.magik.works/guides/intro-to-standout.html) — Adopting the framework in an existing CLI
 - [Rendering System](https://standout.magik.works/topics/rendering-system.html) — Templates and styles
 - [Tabular Layouts](https://standout.magik.works/topics/tabular.html) — Tables and alignment

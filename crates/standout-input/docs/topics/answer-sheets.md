@@ -36,6 +36,13 @@ The boundary is deliberate and narrow:
 
 Every collection path stops at the same two waypoints: `RawAnswers` (trimmed answer text keyed by *occurrence path* — the stable field ID, with a zero-based index per enclosing repeatable-group occurrence, as in `command.inputs[1].name`) and, after `decode_answers`, typed `Answers`. The library never sees your domain model, and your domain model never leaks into the format.
 
+The table above describes the standalone `standout-input` boundary. When a
+questionnaire is attached to a `standout` command, the framework also owns the
+standard command surface (`questions`, `--answers`, `--yes`), typed
+pre-dispatch resolution, optional review callback, and attended confirmation
+gate. See [Derived Questionnaires](../../../guides/derived-questionnaires.md)
+for that command-integration path.
+
 ## Defining scalar fields
 
 A `ScalarField` declares everything semantic about one question:

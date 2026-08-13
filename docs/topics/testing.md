@@ -71,6 +71,7 @@ verbatim diagnostic, `error_kind()` is `RunErrorKind::External`, and
 - Clipboard reader (same mechanism for `ClipboardSource::new()`)
 - Interactive prompt responder (process-global override consulted by every interactive source's `.prompt()` shortcut, so wizard handlers are testable in process — see [Interactive Flows → Testing Wizards](../crates/input/topics/interactive-flows.md#testing-wizards))
 - Forced `OutputMode` (injected as `--output=<mode>` into argv)
+- Framework warnings captured from the run boundary, including accepted answer-sheet parse warnings queued by questionnaire commands
 
 A `RestoreState` held inside the returned `TestResult` runs on drop — on both normal exit and panic unwind — and tears down every override, so a failing assertion never leaks state into sibling tests. Two nuances worth knowing:
 
@@ -80,6 +81,15 @@ A `RestoreState` held inside the returned `TestResult` runs on drop — on both 
 The harness is `#[must_use]`: a `TestHarness::new()` without a `.run(...)` does nothing and gets flagged by the compiler.
 
 See [Introduction to Testing](../guides/intro-to-testing.md) for the full builder tour.
+
+### Captured warnings
+
+`App::run` renders framework warnings to stderr after the primary command
+output. `TestHarness` uses the capture path instead: each `TestResult` owns the
+warnings produced by that run and exposes them through `warnings()` plus
+assertion helpers such as `assert_warning_contains(...)`. This covers
+resource-loading warnings and accepted questionnaire answer-sheet warnings,
+without leaking a warning batch into the next in-process run.
 
 ## Environment seams exposed by the framework
 
