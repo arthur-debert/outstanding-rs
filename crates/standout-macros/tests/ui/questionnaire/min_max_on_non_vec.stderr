@@ -1,0 +1,5 @@
+error: min and max are only supported on repeatable Vec fields
+ --> tests/ui/questionnaire/min_max_on_non_vec.rs:7:22
+  |
+7 |     #[question(min = 1, max = 2)]
+  |                      ^

@@ -5,7 +5,7 @@
 //! [`Answers`]. This keeps derived questionnaires on the same validation,
 //! rendering, parsing, and fingerprinting path as hand-built definitions.
 
-use super::{Answers, Questionnaire, QuestionnaireError, RawAnswers, ValidationDiagnostic};
+use super::{Answers, Item, Questionnaire, QuestionnaireError, RawAnswers, ValidationDiagnostic};
 
 /// A derived questionnaire definition and typed filler.
 ///
@@ -18,6 +18,10 @@ use super::{Answers, Questionnaire, QuestionnaireError, RawAnswers, ValidationDi
 /// - [`from_decoded_answers`](Self::from_decoded_answers), which directly
 ///   materializes the struct from successfully decoded [`Answers`] without
 ///   involving serde or stringly application conversion code.
+///
+/// The derive also emits hidden, prefix-aware helpers used to lower and fill
+/// nested questionnaire structs. They keep nested fields on the same stable
+/// group-prefix and occurrence-path model as the public runtime definition.
 pub trait QuestionnaireInput: Sized {
     /// Construct the runtime questionnaire definition for this type.
     ///
@@ -33,6 +37,31 @@ pub trait QuestionnaireInput: Sized {
     /// then fills only after field validation succeeds.
     #[doc(hidden)]
     fn from_decoded_answers(answers: &Answers) -> Self;
+
+    /// Build this type's items under `prefix`.
+    ///
+    /// Generated implementations use `prefix` to make nested struct field IDs
+    /// extend their enclosing group ID. Manual implementations may keep the
+    /// default root-only behavior unless they need nested reuse.
+    #[doc(hidden)]
+    fn questionnaire_items(prefix: &str) -> Vec<Item> {
+        let _ = prefix;
+        Self::questionnaire()
+            .expect("manual QuestionnaireInput implementation cannot be nested unless questionnaire_items is overridden")
+            .items()
+            .to_vec()
+    }
+
+    /// Fill this type from answers rooted at `prefix`.
+    ///
+    /// Generated implementations use `prefix` to read fields inside nested and
+    /// repeatable group occurrences. Manual implementations may keep the
+    /// default root-only behavior unless they need nested reuse.
+    #[doc(hidden)]
+    fn from_decoded_answers_at(answers: &Answers, prefix: &str) -> Self {
+        let _ = prefix;
+        Self::from_decoded_answers(answers)
+    }
 
     /// Decode raw answers with this type's generated definition and return
     /// the filled struct.

@@ -1,4 +1,4 @@
-error: unsupported questionnaire field type; expected String, PathBuf, bool, or Option<T>
+error: unsupported questionnaire field type; expected String, PathBuf, bool, Option<T>, Vec<String>, Vec<PathBuf>, or a nested Questionnaire type
  --> tests/ui/questionnaire/unsupported_type.rs:7:12
   |
 7 |     count: u32,

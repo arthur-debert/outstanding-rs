@@ -407,13 +407,19 @@ pub fn seekable_derive(input: TokenStream) -> TokenStream {
         .into()
 }
 
-/// Derives a questionnaire definition and typed filling for a flat scalar struct.
+/// Derives a questionnaire definition and typed filling for a questionnaire struct.
 ///
 /// The generated implementation lowers through `standout-input`'s public
 /// builder. Container `#[question(id = "...")]` declares the questionnaire ID;
 /// field doc comments become prompts; field identifiers become stable field
-/// IDs unless overridden with `#[question(id = "...")]`; supported field types
-/// are `String`, `PathBuf`, `bool`, and `Option<T>` over those scalar types.
+/// or group IDs unless overridden with `#[question(id = "...")]`; supported
+/// scalar field types are `String`, `PathBuf`, `bool`, and `Option<T>` over
+/// those scalar types. Nested questionnaire structs lower to groups,
+/// `Vec<NestedStruct>` lowers to a repeatable group, and repeat bounds come
+/// from `#[question(min = N, max = M)]`; omitted `min` defaults to `1` because
+/// the runtime renderer needs one complete block to copy. `Vec<String>` and
+/// `Vec<PathBuf>` lower to a single comma-separated scalar answer unless
+/// `#[question(repeated)]` opts them into a single-field repeatable group.
 /// `#[question(default = "...")]` declares a static default, and
 /// `#[question(prose)]` opts a `String` field into multi-line text.
 #[proc_macro_derive(Questionnaire, attributes(question))]
