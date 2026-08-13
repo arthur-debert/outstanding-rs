@@ -515,18 +515,26 @@ impl FieldInfo {
         }
 
         if let Some(active_when) = attrs.active_when.as_ref() {
-            if !optional
-                && matches!(
-                    kind,
-                    FieldKind::Scalar { .. }
-                        | FieldKind::ScalarVec { .. }
-                        | FieldKind::Choice { .. }
-                )
-            {
-                return Err(Error::new(
-                    active_when.span,
-                    "active_when is only supported on Option<T> fields because inactive answers are omitted during decode",
-                ));
+            match (&kind, optional) {
+                (FieldKind::Scalar { .. } | FieldKind::Choice { .. }, true) => {}
+                (FieldKind::Scalar { .. } | FieldKind::Choice { .. }, false) => {
+                    return Err(Error::new(
+                        active_when.span,
+                        "active_when is only supported on Option<T> fields because inactive answers are omitted during decode",
+                    ));
+                }
+                (FieldKind::ScalarVec { .. } | FieldKind::RepeatedScalarVec { .. }, _) => {
+                    return Err(Error::new(
+                        active_when.span,
+                        "active_when is not supported on Vec<T> fields because inactive answers are omitted and Option<Vec<T>> questionnaire fields are not supported",
+                    ));
+                }
+                (FieldKind::Nested { .. } | FieldKind::RepeatedNested { .. }, _) => {
+                    return Err(Error::new(
+                        active_when.span,
+                        "active_when is only supported on scalar Option<T> fields and #[question(choice)] Option<T> fields",
+                    ));
+                }
             }
         }
 
