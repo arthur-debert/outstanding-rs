@@ -112,21 +112,6 @@ impl Answers {
     pub fn occurrence_count(&self, group_path: &str) -> usize {
         self.occurrences.get(group_path).copied().unwrap_or(0)
     }
-
-    /// Iterate over `(occurrence_path, value)` pairs, ordered by path.
-    pub fn iter(&self) -> impl Iterator<Item = (&str, &AnswerValue)> {
-        self.values.iter().map(|(k, v)| (k.as_str(), v))
-    }
-
-    /// Number of answered fields.
-    pub fn len(&self) -> usize {
-        self.values.len()
-    }
-
-    /// Whether no field was answered.
-    pub fn is_empty(&self) -> bool {
-        self.values.is_empty()
-    }
 }
 
 /// One whole-form error returned by an application form validator.
@@ -164,73 +149,19 @@ impl FormError {
 /// actionable in one pass.
 #[derive(Debug, Clone, thiserror::Error, PartialEq, Eq)]
 pub enum ValidationDiagnostic {
-    /// A required, active field has no answer (blank or absent, no default).
-    #[error("[{id}]: this question requires an answer.")]
-    MissingAnswer {
-        /// The unanswered field's occurrence path.
-        id: String,
-    },
-
-    /// An inactive conditional field was populated.
-    #[error("[{id}]: this question does not apply (it is asked only when {controller} is {expected}); remove its answer or change the controlling answer.")]
-    InactiveAnswered {
-        /// The populated inactive field's occurrence path.
-        id: String,
-        /// Its controlling field.
-        controller: String,
-        /// The canonical value that would activate it.
-        expected: String,
-    },
-
-    /// The answer text does not convert to the field's kind.
-    #[error("[{id}]: {reason}")]
-    InvalidValue {
-        /// The occurrence path of the field whose answer failed conversion.
-        id: String,
-        /// What the kind expects (never the submitted value).
-        reason: String,
-    },
-
-    /// The converted answer is not one of the declared choices.
-    #[error("[{id}]: the answer must be one of: {}.", allowed.join(", "))]
-    ConstraintViolation {
-        /// The constrained field's occurrence path.
-        id: String,
-        /// The declared choices (definition data, safe to echo).
-        allowed: Vec<String>,
-    },
-
-    /// The application's field validator rejected the converted answer.
+    /// One field occurrence — or one repeatable group's occurrence count —
+    /// violates the definition: a missing required answer, a populated
+    /// inactive field, a failed kind conversion, a constraint violation, a
+    /// rejected validator, or an occurrence count outside the declared
+    /// bounds. `message` describes the violated rule without echoing the
+    /// submitted value.
     #[error("[{id}]: {message}")]
-    FieldValidation {
-        /// The rejected field's occurrence path.
+    Field {
+        /// The occurrence path of the violating field (the group's
+        /// occurrence path base for occurrence-bound violations).
         id: String,
-        /// The validator's user-facing message.
+        /// The violated rule, user-facing.
         message: String,
-    },
-
-    /// A repeatable group has fewer submitted occurrences than its declared
-    /// minimum.
-    #[error("[{path}]: {found} of at least {minimum} required item(s) submitted. Copy a complete group block - its heading line and its questions - for each missing item.")]
-    TooFewOccurrences {
-        /// The group's occurrence path base.
-        path: String,
-        /// The declared minimum.
-        minimum: usize,
-        /// The submitted occurrence count.
-        found: usize,
-    },
-
-    /// A repeatable group has more submitted occurrences than its declared
-    /// maximum.
-    #[error("[{path}]: {found} items submitted, but at most {maximum} are accepted. Remove the extra group block(s).")]
-    TooManyOccurrences {
-        /// The group's occurrence path base.
-        path: String,
-        /// The declared maximum.
-        maximum: usize,
-        /// The submitted occurrence count.
-        found: usize,
     },
 
     /// An application whole-form rule was violated.
@@ -241,6 +172,16 @@ pub enum ValidationDiagnostic {
         /// The rule's user-facing message.
         message: String,
     },
+}
+
+impl ValidationDiagnostic {
+    /// A field-level diagnostic at an occurrence path.
+    pub(crate) fn field(id: impl Into<String>, message: impl Into<String>) -> Self {
+        Self::Field {
+            id: id.into(),
+            message: message.into(),
+        }
+    }
 }
 
 /// Render a whole-form diagnostic: the rule's message, plus the involved
@@ -279,20 +220,20 @@ pub(crate) fn check_field_text(
         ScalarKind::Text => AnswerValue::Text(text.to_string()),
         ScalarKind::String | ScalarKind::Path => {
             if text.contains('\n') {
-                return Err(ValidationDiagnostic::InvalidValue {
-                    id: path.to_string(),
-                    reason: format!("a {} answer must be a single line", field.kind().name()),
-                });
+                return Err(ValidationDiagnostic::field(
+                    path,
+                    format!("a {} answer must be a single line", field.kind().name()),
+                ));
             }
             AnswerValue::Text(text.to_string())
         }
         ScalarKind::Bool => match parse_bool(text) {
             Some(b) => AnswerValue::Bool(b),
             None => {
-                return Err(ValidationDiagnostic::InvalidValue {
-                    id: path.to_string(),
-                    reason: "expected a yes/no answer (true, false, yes, no, y, or n)".to_string(),
-                })
+                return Err(ValidationDiagnostic::field(
+                    path,
+                    "expected a yes/no answer (true, false, yes, no, y, or n)",
+                ))
             }
         },
     };
@@ -301,18 +242,15 @@ pub(crate) fn check_field_text(
             .as_text()
             .is_some_and(|t| choices.iter().any(|c| c == t));
         if !matches {
-            return Err(ValidationDiagnostic::ConstraintViolation {
-                id: path.to_string(),
-                allowed: choices.clone(),
-            });
+            return Err(ValidationDiagnostic::field(
+                path,
+                format!("the answer must be one of: {}.", choices.join(", ")),
+            ));
         }
     }
     if let Some(validator) = field.validator() {
         if let Err(message) = validator.check(&value) {
-            return Err(ValidationDiagnostic::FieldValidation {
-                id: path.to_string(),
-                message,
-            });
+            return Err(ValidationDiagnostic::field(path, message));
         }
     }
     Ok(value)
@@ -328,7 +266,7 @@ pub(crate) fn check_field_text(
 /// exclusive by construction). Blank resolves through the declared —
 /// static or computed — default first; a blank without a default is an
 /// omission (`Ok(None)`) when optional and a
-/// [`ValidationDiagnostic::MissingAnswer`] when required. A computed
+/// missing-answer [`ValidationDiagnostic`] when required. A computed
 /// default runs through the same kind / constraint / validator pipeline as
 /// any answer.
 pub(crate) fn decode_field(
@@ -342,9 +280,10 @@ pub(crate) fn decode_field(
     match effective {
         Some(text) => check_field_text(field, path, text).map(Some),
         None if field.is_optional() => Ok(None),
-        None => Err(ValidationDiagnostic::MissingAnswer {
-            id: path.to_string(),
-        }),
+        None => Err(ValidationDiagnostic::field(
+            path,
+            "this question requires an answer.",
+        )),
     }
 }
 
@@ -584,11 +523,14 @@ impl Questionnaire {
                             } else {
                                 let condition =
                                     field.condition().expect("inactive implies condition");
-                                diagnostics.push(ValidationDiagnostic::InactiveAnswered {
-                                    id: path.clone(),
-                                    controller: condition.controller().to_string(),
-                                    expected: condition.expected().to_string(),
-                                });
+                                diagnostics.push(ValidationDiagnostic::field(
+                                    path.clone(),
+                                    format!(
+                                        "this question does not apply (it is asked only when {} is {}); remove its answer or change the controlling answer.",
+                                        condition.controller(),
+                                        condition.expected()
+                                    ),
+                                ));
                                 FieldOutcome::Errored
                             }
                         }
@@ -633,19 +575,22 @@ impl Questionnaire {
                         Some(repeat) => {
                             let count = raw.occurrence_count(&base);
                             if count < repeat.min() {
-                                diagnostics.push(ValidationDiagnostic::TooFewOccurrences {
-                                    path: base.clone(),
-                                    minimum: repeat.min(),
-                                    found: count,
-                                });
+                                diagnostics.push(ValidationDiagnostic::field(
+                                    base.clone(),
+                                    format!(
+                                        "{count} of at least {} required item(s) submitted. Copy a complete group block - its heading line and its questions - for each missing item.",
+                                        repeat.min()
+                                    ),
+                                ));
                             }
                             if let Some(max) = repeat.max() {
                                 if count > max {
-                                    diagnostics.push(ValidationDiagnostic::TooManyOccurrences {
-                                        path: base.clone(),
-                                        maximum: max,
-                                        found: count,
-                                    });
+                                    diagnostics.push(ValidationDiagnostic::field(
+                                        base.clone(),
+                                        format!(
+                                            "{count} items submitted, but at most {max} are accepted. Remove the extra group block(s)."
+                                        ),
+                                    ));
                                 }
                             }
                             if count > 0 {

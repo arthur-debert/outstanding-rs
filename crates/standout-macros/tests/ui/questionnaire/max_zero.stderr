@@ -1,0 +1,5 @@
+error: max must be at least 1 for repeatable questionnaire groups
+ --> tests/ui/questionnaire/max_zero.rs:7:22
+  |
+7 |     #[question(max = 0)]
+  |                      ^

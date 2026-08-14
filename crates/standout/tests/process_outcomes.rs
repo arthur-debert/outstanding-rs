@@ -211,22 +211,31 @@ fn real_process_status_and_stream_matrix() {
 }
 
 #[test]
-fn real_process_reports_broken_text_and_binary_stdout() {
+fn real_process_accepts_broken_text_stdout_but_reports_binary_stdout() {
     let binary = fixture_binary();
-    for command in ["huge", "binary-huge"] {
-        let mut child = Command::new(&binary)
-            .arg(command)
-            .stdout(Stdio::piped())
-            .stderr(Stdio::piped())
-            .spawn()
-            .unwrap();
-        drop(child.stdout.take());
-        let output = child.wait_with_output().unwrap();
-        assert_eq!(output.status.code(), Some(1), "command: {command}");
-        assert!(
-            String::from_utf8_lossy(&output.stderr).contains("Error writing"),
-            "command: {command}, stderr: {}",
-            String::from_utf8_lossy(&output.stderr)
-        );
-    }
+    let mut text_child = Command::new(&binary)
+        .arg("huge")
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .unwrap();
+    drop(text_child.stdout.take());
+    let text_output = text_child.wait_with_output().unwrap();
+    assert_eq!(text_output.status.code(), Some(0));
+    assert!(text_output.stderr.is_empty());
+
+    let mut binary_child = Command::new(&binary)
+        .arg("binary-huge")
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .unwrap();
+    drop(binary_child.stdout.take());
+    let binary_output = binary_child.wait_with_output().unwrap();
+    assert_eq!(binary_output.status.code(), Some(1));
+    assert!(
+        String::from_utf8_lossy(&binary_output.stderr).contains("Error writing"),
+        "stderr: {}",
+        String::from_utf8_lossy(&binary_output.stderr)
+    );
 }

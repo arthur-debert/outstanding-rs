@@ -23,6 +23,10 @@ use crate::cli::handler::{
     RunErrorKind, RunOutput, RunResult,
 };
 use crate::cli::hooks::{ArtifactOutput, RenderedOutput, TextOutput};
+use crate::cli::questionnaire::{
+    augment_questionnaire_command, render_questions_result, validate_questionnaire_surface,
+    ANSWERS_ARG_ID, QUESTIONS_SUBCOMMAND, YES_ARG_ID,
+};
 use crate::SetupError;
 
 impl AppBuilder {
@@ -70,6 +74,10 @@ impl AppBuilder {
 
                     if let Some(hooks) = handler.take_hooks() {
                         self.command_hooks.insert(name.clone(), hooks);
+                    }
+                    if let Some(questionnaire) = handler.take_questionnaire() {
+                        self.questionnaire_commands
+                            .insert(name.clone(), questionnaire);
                     }
 
                     // Create a recipe for deferred closure creation
@@ -290,7 +298,11 @@ impl AppBuilder {
             .map(|a| a.into().to_string_lossy().into_owned())
             .collect();
 
-        // Augment command with --output flag
+        if let Err(error) = self.validate_questionnaire_surfaces(&cmd) {
+            return RunResult::Error(RunError::new(error.to_string(), RunErrorKind::ClapUsage));
+        }
+
+        // Augment command with framework-owned flags and questionnaire command surface.
         let augmented_cmd = self.augment_command_for_dispatch(cmd.clone());
 
         // Parse arguments. Clap's "errors" include `--help` and `--version`,
@@ -348,6 +360,28 @@ impl AppBuilder {
             }
         };
 
+        if let Some((path, questionnaire)) = self.questionnaire_questions_invocation(&matches) {
+            if let Some(parent_matches) =
+                command_matches_for_path(&matches, &path.split('.').collect::<Vec<_>>())
+            {
+                let has_answers = parent_matches
+                    .try_get_one::<String>(ANSWERS_ARG_ID)
+                    .unwrap_or(None)
+                    .is_some();
+                let has_yes = parent_matches
+                    .try_get_one::<bool>(YES_ARG_ID)
+                    .unwrap_or(None)
+                    == Some(&true);
+                if has_answers || has_yes {
+                    return RunResult::Error(RunError::new(
+                        "`questions` renders the blank answer sheet and cannot be combined with --answers or --yes",
+                        RunErrorKind::ClapUsage,
+                    ));
+                }
+            }
+            return render_questions_result(questionnaire, &matches);
+        }
+
         // Extract output mode
         let output_mode = if self.output_flag.is_some() {
             match matches
@@ -387,10 +421,11 @@ impl AppBuilder {
     /// and exits with its typed status: Clap usage errors use 2, runtime
     /// failures use 1, and an application-declared `ExternalFailure` preserves
     /// its exact nonzero status and verbatim diagnostic. Final text and binary
-    /// writes are framework-owned; a write failure is diagnosed on stderr and exits 1.
-    /// Callers needing fine-grained control over exit codes should use
-    /// [`Self::run_to_string`] or [`Self::dispatch_from`] and match on
-    /// `RunResult` themselves.
+    /// writes are framework-owned; a write failure is diagnosed on stderr and exits 1,
+    /// except that `BrokenPipe` while writing final rendered command text to stdout
+    /// is treated as successful early consumer termination. Callers needing
+    /// fine-grained control over exit codes should use [`Self::run_to_string`] or
+    /// [`Self::dispatch_from`] and match on `RunResult` themselves.
     ///
     /// # Example
     ///
@@ -445,6 +480,10 @@ impl AppBuilder {
     ///
     /// Similar to `run()`, but returns the output instead of printing it.
     /// Useful for testing or when you need to capture and process the output.
+    /// Framework warnings queued during the run are drained into
+    /// [`standout_render::warnings::take_captured_warnings`] instead of
+    /// printing to stderr, so consecutive in-process runs do not leak warnings
+    /// into each other.
     ///
     /// # Returns
     ///
@@ -481,11 +520,15 @@ impl AppBuilder {
         I: IntoIterator<Item = T>,
         T: Into<std::ffi::OsString> + Clone,
     {
-        self.dispatch_from(cmd, args)
+        let result = self.dispatch_from(cmd, args);
+        standout_render::warnings::capture_warnings_for_run();
+        result
     }
 
     /// Augments a command for dispatch (adds --output flag without help subcommand).
     pub(crate) fn augment_command_for_dispatch(&self, mut cmd: Command) -> Command {
+        self.augment_questionnaire_commands(&mut cmd, &[]);
+
         if let Some(ref flag_name) = self.output_flag {
             let flag: &'static str = Box::leak(flag_name.clone().into_boxed_str());
             cmd = cmd.arg(
@@ -523,6 +566,53 @@ impl AppBuilder {
 
         cmd
     }
+
+    fn augment_questionnaire_commands(&self, cmd: &mut Command, path: &[String]) {
+        let path_str = path.join(".");
+        if self.questionnaire_commands.contains_key(&path_str) {
+            *cmd = augment_questionnaire_command(cmd.clone());
+        }
+
+        for subcommand in cmd.get_subcommands_mut() {
+            let mut child_path = path.to_vec();
+            child_path.push(subcommand.get_name().to_string());
+            self.augment_questionnaire_commands(subcommand, &child_path);
+        }
+    }
+
+    pub(crate) fn validate_questionnaire_surfaces(&self, cmd: &Command) -> Result<(), SetupError> {
+        for path in self.questionnaire_commands.keys() {
+            let parts = path.split('.').collect::<Vec<_>>();
+            let Some(command) = crate::cli::app::find_subcommand_recursive(cmd, &parts) else {
+                continue;
+            };
+            validate_questionnaire_surface(command, path)?;
+        }
+        Ok(())
+    }
+
+    fn questionnaire_questions_invocation(
+        &self,
+        matches: &ArgMatches,
+    ) -> Option<(&str, &crate::cli::questionnaire::QuestionnaireCommand)> {
+        let path = extract_command_path(matches);
+        let (last, parent) = path.split_last()?;
+        if last.as_str() != QUESTIONS_SUBCOMMAND || parent.is_empty() {
+            return None;
+        }
+        let parent_path = parent.join(".");
+        self.questionnaire_commands
+            .get_key_value(&parent_path)
+            .map(|(path, command)| (path.as_str(), command))
+    }
+}
+
+fn command_matches_for_path<'a>(matches: &'a ArgMatches, path: &[&str]) -> Option<&'a ArgMatches> {
+    let mut current = matches;
+    for segment in path {
+        current = current.subcommand_matches(segment)?;
+    }
+    Some(current)
 }
 
 /// Selects the destination for an artifact, deterministically.
@@ -693,12 +783,7 @@ fn emit_run_result<W: Write, E: Write>(
         RunResult::Handled(output) => writeln!(stdout, "{}", output)
             .and_then(|()| stdout.flush())
             .err()
-            .map(|error| {
-                RunError::new(
-                    format!("Error writing stdout: {}", error),
-                    RunErrorKind::FinalWrite(OutputKind::Text),
-                )
-            }),
+            .and_then(|error| final_write_error_unless_broken_pipe(error, OutputKind::Text)),
         RunResult::Binary(bytes, _) => stdout
             .write_all(bytes)
             .and_then(|()| stdout.flush())
@@ -735,6 +820,20 @@ fn emit_run_result<W: Write, E: Write>(
         let _ = writeln!(stderr, "{}", error).and_then(|()| stderr.flush());
     }
     (true, failure)
+}
+
+fn final_write_error_unless_broken_pipe(
+    error: std::io::Error,
+    kind: OutputKind,
+) -> Option<RunError> {
+    if kind == OutputKind::Text && error.kind() == std::io::ErrorKind::BrokenPipe {
+        None
+    } else {
+        Some(RunError::new(
+            format!("Error writing stdout: {}", error),
+            RunErrorKind::FinalWrite(kind),
+        ))
+    }
 }
 
 #[cfg(test)]
@@ -2671,21 +2770,20 @@ header:
     }
 
     #[test]
-    fn final_text_and_binary_write_failures_keep_payload_kind() {
+    fn final_text_broken_pipe_is_successful_early_termination() {
         let mut stderr = Vec::new();
         let (_, text_failure) = emit_run_result(
             &RunResult::Handled(RunOutput::command("hello")),
             &mut FailingWriter,
             &mut stderr,
         );
-        let text_failure = text_failure.unwrap();
-        assert_eq!(
-            text_failure.kind(),
-            RunErrorKind::FinalWrite(OutputKind::Text)
-        );
-        assert_eq!(text_failure.exit_status(), crate::cli::ExitStatus::FAILURE);
+        assert!(text_failure.is_none());
+        assert!(stderr.is_empty());
+    }
 
-        stderr.clear();
+    #[test]
+    fn final_binary_write_failures_keep_payload_kind() {
+        let mut stderr = Vec::new();
         let (_, binary_failure) = emit_run_result(
             &RunResult::Binary(vec![0, 1], "data.bin".into()),
             &mut FailingWriter,
@@ -2703,7 +2801,7 @@ header:
     }
 
     #[test]
-    fn final_text_and_binary_flush_failures_keep_payload_kind() {
+    fn final_text_broken_pipe_flush_is_successful_early_termination() {
         let mut text_stdout = FlushFailingWriter::default();
         let (_, text_failure) = emit_run_result(
             &RunResult::Handled(RunOutput::command("hello")),
@@ -2711,11 +2809,11 @@ header:
             &mut Vec::new(),
         );
         assert_eq!(text_stdout.bytes, b"hello\n");
-        assert_eq!(
-            text_failure.unwrap().kind(),
-            RunErrorKind::FinalWrite(OutputKind::Text)
-        );
+        assert!(text_failure.is_none());
+    }
 
+    #[test]
+    fn final_binary_flush_failures_keep_payload_kind() {
         let mut binary_stdout = FlushFailingWriter::default();
         let (_, binary_failure) = emit_run_result(
             &RunResult::Binary(vec![0, 1], "data.bin".into()),

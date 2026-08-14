@@ -63,6 +63,8 @@ pub use standout_dispatch::{
 
 use standout_input::{InputSourceKind, Inputs, MissingInput};
 
+use crate::cli::questionnaire::QUESTIONNAIRE_INPUT_NAME;
+
 /// Extension trait for [`CommandContext`] that exposes inputs registered with
 /// [`CommandConfig::input`](crate::cli::CommandConfig::input).
 ///
@@ -83,6 +85,15 @@ pub trait CommandContextInput {
     /// Returns the resolved value for `name`, or an error if no input with
     /// that name and type was registered.
     fn input<T: 'static>(&self, name: &str) -> Result<&T, MissingInput>;
+
+    /// Returns the typed questionnaire value resolved for this command.
+    ///
+    /// Commands opt into this with
+    /// [`CommandConfig::questionnaire`](crate::cli::CommandConfig::questionnaire),
+    /// which injects the answer-sheet CLI surface, resolves the submitted or
+    /// interactive answers before the handler runs, and stores the filled
+    /// derived questionnaire struct in the command context.
+    fn questionnaire<T: 'static>(&self) -> Result<&T, MissingInput>;
 
     /// Returns the source that provided `name`, if it was resolved.
     ///
@@ -105,6 +116,10 @@ impl CommandContextInput for CommandContext {
                 name: name.to_string(),
             }),
         }
+    }
+
+    fn questionnaire<T: 'static>(&self) -> Result<&T, MissingInput> {
+        self.input(QUESTIONNAIRE_INPUT_NAME)
     }
 
     fn input_source(&self, name: &str) -> Option<InputSourceKind> {

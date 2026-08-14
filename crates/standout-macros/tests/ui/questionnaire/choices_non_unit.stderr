@@ -1,0 +1,5 @@
+error: QuestionnaireChoices variants must be unit variants
+ --> tests/ui/questionnaire/choices_non_unit.rs:8:10
+  |
+8 |     Tuple(String),
+  |          ^^^^^^^^

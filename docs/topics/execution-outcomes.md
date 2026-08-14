@@ -20,9 +20,12 @@ runtime failure.
 | Handler, hook, render, pipe, or write failure | stderr | `1` |
 | Application-declared external failure | stderr | exact declared nonzero status |
 
-Warning flushing happens after the primary output and does not replace its
-status. A final text or binary write failure does replace a successful status
-with `1`.
+Framework warning flushing happens after the primary output and does not replace
+its status. Warnings cover non-fatal framework-owned setup, resource-loading,
+and accepted-input diagnostics, including answer-sheet parse warnings that do
+not reject a questionnaire submission. A final text or binary write failure does
+replace a successful status with `1`, except that `BrokenPipe` while writing
+final rendered command text to stdout is successful early consumer termination.
 
 ## Capturing typed metadata
 
@@ -70,7 +73,10 @@ command and its eventual status.
 ## Framework-owned final writes
 
 `run()` writes successful text and binary bytes to stdout, diagnostics to
-stderr, and exits with the typed non-zero status when execution fails. The
+stderr, and exits with the typed non-zero status when execution fails. A closed
+downstream pipe is not an error only for final rendered command text:
+`BrokenPipe` there means the consumer stopped reading early. Binary stdout
+writes and artifact report writes keep their typed final-write failures. The
 suggested filename on binary output remains available to capture callers; use
 `--output-file-path` when the framework should write either text or binary to a
 file instead of stdout.
@@ -79,6 +85,11 @@ Capture APIs do not perform the final stdout/stderr write, but file redirection
 is part of dispatch and therefore reports typed `FinalWrite` failures directly.
 External failures are never redirected to an output file: they remain stderr
 diagnostics when `run()` performs the final write.
+
+Capture-mode runs drain framework warnings instead of rendering them. The raw
+capture path stores the batch in `standout-render`'s warning collector, and
+`standout-test::TestHarness` exposes the batch through `TestResult::warnings()`
+so tests can assert warning content deterministically.
 
 ## Compound artifacts
 

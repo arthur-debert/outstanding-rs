@@ -9,6 +9,7 @@
 - [Bootstrap a Standout project](./guides/bootstrap-a-project.md)
 - [Minimal single-crate example](./guides/minimal-single-crate.md)
 - [Production-shaped application](./guides/production-shaped-example.md)
+- [Derived Questionnaires](./guides/derived-questionnaires.md)
 - [Leveraging Standout checklist](./guides/leveraging-standout.md)
 - [Quick Start](./guides/tldr-intro-to-standout.md)
 - [Introduction to Standout](./guides/intro-to-standout.md)

@@ -40,7 +40,7 @@ Standout combines two standalone libraries into a cohesive framework:
 - **[standout-dispatch](https://crates.io/crates/standout-dispatch)** — Execution pattern where handlers return data, renderers produce output
 - **[standout-render](https://crates.io/crates/standout-render)** — Terminal rendering with templates, themes, and adaptive styles
 
-The framework provides the glue: clap integration, `--output` flag handling, auto-dispatch from derive macros, and the `AppBuilder` configuration API.
+The framework provides the glue: clap integration, `--output` flag handling, auto-dispatch from derive macros, questionnaire-backed command surfaces, and the `AppBuilder` configuration API.
 
 ## Why Standout?
 
@@ -112,6 +112,7 @@ myapp list --output json    # JSON for scripting
 ### Framework Topics
 
 - [App Configuration](https://standout.magik.works/topics/app-configuration.html) — AppBuilder API
+- [Derived Questionnaires](https://standout.magik.works/guides/derived-questionnaires.html) — Typed answer sheets and questionnaire command wiring
 - [Output Modes](https://standout.magik.works/topics/output-modes.html) — --output flag and format handling
 
 ### Crate Documentation

@@ -31,19 +31,14 @@ The questionnaire asks for the project and executable names, one initial
 command, its inputs, and a message or record result. It then prints the
 destination, generated files, command syntax, source precedence, core
 operation, output shape, and generated test seams. No files are published until
-you type `yes` at the confirmation prompt.
+you type `yes` at the final confirmation prompt.
 
-An invalid answer does not abort the questionnaire. The wizard prints the
-validation error and asks again, keeping every earlier valid answer. It retries
-the smallest coherent unit: the current question for an invalid scalar answer,
-the whole comma-separated list for an invalid record field, and the whole
-current input block when a combination of answers is unsupported — for
-example a `path` input with a `file` source, or an input whose generated flag
-collides with an earlier input's.
-
-Answer an exact uppercase `X` at any questionnaire prompt to cancel the wizard.
-Cancellation is not an error: the wizard publishes no files and reports that
-generation was cancelled.
+An invalid field answer does not publish anything. Interactive collection asks
+again for the current question when the entered answer fails validation, keeping
+earlier valid answers. Whole-form rules still run after collection: unsupported
+input combinations — for example a `path` input with a `file` source, or an
+input whose generated flag collides with an earlier input's — are reported
+before publication and leave the destination untouched.
 
 ## Work from an answer sheet
 
@@ -75,15 +70,19 @@ Each question renders as one line — a cosmetic number, its wording, a type
 hint, and a stable ID tag such as `<id:project.name>` at the end of the line.
 Write the answer on the line (or lines) below the question; a `text` answer
 such as the command description may span several lines, and everything up to
-the next question line belongs to it. Declared defaults are pre-filled as the
-answer text — leave them untouched to accept them, and leave the executable
-name blank to reuse the project name. The repeatable input section renders
-one block; add another input by copying the complete block — its heading line
-and its questions — below the last block and answering the copy. Only the
-line-ending `<id:...>` tags carry meaning: rewording, renumbering, or
-re-indenting a sheet does not change what it means, and a tag only counts
-when it ends its line, so mentioning one mid-prose is harmless (the wizard
-prints a warning when an answer contains `<id:`, in case a tag was mangled).
+the next question line belongs to it. Static defaults are pre-filled as the
+answer text — leave them untouched to accept them. Dynamic defaults render
+blank because they depend on earlier answers, but leaving them blank still
+resolves them the same way in prompts, files, and stdin: the executable name
+defaults to the project name, bool inputs default to `boolean` cardinality,
+string required/optional inputs default to `argument,file,stdin` sources, and
+the other input shapes default to `argument`. The repeatable input section
+renders one block; add another input by copying the complete block — its
+heading line and its questions — below the last block and answering the copy.
+Only the line-ending `<id:...>` tags carry meaning: rewording, renumbering, or
+re-indenting a sheet does not change what it means, and a tag only counts when
+it ends its line, so mentioning one mid-prose is harmless (the wizard prints a
+warning when an answer contains `<id:`, in case a tag was mangled).
 
 `--answers` replaces question collection entirely — it never merges file
 answers with prompts — but everything after collection is the interactive

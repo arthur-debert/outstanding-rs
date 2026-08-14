@@ -85,6 +85,10 @@ impl AppBuilder {
         if let Some(hooks) = config.hooks.take() {
             self.command_hooks.insert(path.to_string(), hooks);
         }
+        if let Some(questionnaire) = config.questionnaire.take() {
+            self.questionnaire_commands
+                .insert(path.to_string(), questionnaire);
+        }
 
         // Create a recipe for deferred closure creation using the handler
         let mut recipe = ClosureRecipe::new(config.handler);
@@ -128,6 +132,10 @@ impl AppBuilder {
                     // Extract and register hooks
                     if let Some(hooks) = handler.take_hooks() {
                         self.command_hooks.insert(path.clone(), hooks);
+                    }
+                    if let Some(questionnaire) = handler.take_questionnaire() {
+                        self.questionnaire_commands
+                            .insert(path.clone(), questionnaire);
                     }
 
                     // Create a recipe for deferred closure creation

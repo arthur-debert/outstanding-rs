@@ -467,11 +467,13 @@ impl TestHarness {
         }
 
         let outcome = app.run_to_string(cmd, argv);
+        let warnings = standout_render::warnings::take_captured_warnings();
 
         // `self` (and its tempdir) move into TestResult so the fixture dir
         // survives until the test is finished with the result.
         TestResult {
             outcome,
+            warnings,
             _tempdir: self.tempdir.take(),
             _restore: restore,
         }
@@ -570,6 +572,7 @@ impl Drop for RestoreState {
 /// accessors and assertion helpers oriented at text output.
 pub struct TestResult {
     outcome: RunResult,
+    warnings: Vec<String>,
     // Kept alive so fixture files remain readable while the test inspects
     // the result; dropped after restore state is torn down.
     _tempdir: Option<TempDir>,
@@ -581,6 +584,16 @@ impl TestResult {
     /// accessors aren't enough.
     pub fn outcome(&self) -> &RunResult {
         &self.outcome
+    }
+
+    /// Returns framework warnings captured during the run.
+    ///
+    /// These are warnings that `App::run` would render to stderr after the
+    /// primary output. The harness drains and stores them per run so warning
+    /// assertions are deterministic and cannot leak into a later test on the
+    /// same thread.
+    pub fn warnings(&self) -> &[String] {
+        &self.warnings
     }
 
     /// Returns the completed run's typed shell status.
@@ -853,6 +866,19 @@ impl TestResult {
                 expected, out
             );
         }
+    }
+
+    /// Panics unless the captured framework warnings contain `needle`.
+    #[track_caller]
+    pub fn assert_warning_contains(&self, needle: &str) {
+        if self.warnings.iter().any(|warning| warning.contains(needle)) {
+            return;
+        }
+        panic!(
+            "warnings did not contain {:?}\n--- warnings ---\n{}\n----------------",
+            needle,
+            self.warnings.join("\n")
+        );
     }
 }
 

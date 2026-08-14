@@ -16,6 +16,8 @@
 //! - [`Tabular`] - Generate `TabularSpec` from struct field annotations
 //! - [`TabularRow`] - Generate optimized row extraction without JSON serialization
 //! - [`Seekable`] - Generate query-enabled accessor functions for Seeker
+//! - [`Questionnaire`] - Generate questionnaire definitions and typed filling
+//! - [`QuestionnaireChoices`] - Generate enum-backed questionnaire vocabularies
 //!
 //! ## Attribute Macros
 //!
@@ -46,6 +48,7 @@ mod command;
 mod dispatch;
 mod embed;
 mod handler;
+mod questionnaire;
 mod seeker;
 mod tabular;
 
@@ -401,6 +404,58 @@ pub fn tabular_row_derive(input: TokenStream) -> TokenStream {
 pub fn seekable_derive(input: TokenStream) -> TokenStream {
     let input = parse_macro_input!(input as DeriveInput);
     seeker::seekable_derive_impl(input)
+        .unwrap_or_else(|e| e.to_compile_error())
+        .into()
+}
+
+/// Derives a questionnaire definition and typed filling for a questionnaire struct.
+///
+/// The generated implementation lowers through `standout-input`'s public
+/// builder. Container `#[question(id = "...")]` declares the questionnaire ID;
+/// field doc comments become prompts; field identifiers become stable field
+/// or group IDs unless overridden with `#[question(id = "...")]`; supported
+/// scalar field types are `String`, `PathBuf`, `bool`, and `Option<T>` over
+/// scalar or `#[question(choice)]` enum fields. Nested questionnaire structs
+/// lower to groups; child paths inherit parent `id` remapping. `#[question(choice)]`
+/// enum fields lower to `one_of`, `Vec<NestedStruct>` lowers to a repeatable
+/// group, and repeat bounds come from `#[question(min = N, max = M)]`; omitted
+/// `min` defaults to `1` because the runtime renderer needs one complete block
+/// to copy. `Vec<T>` over a scalar element type is a compile error: collect a
+/// list as a `String` field (splitting in application code) or as a `Vec` of
+/// a nested questionnaire struct.
+///
+/// `#[question(default = "...")]` declares a static default, and
+/// `#[question(default_with = path::to::fn, revision = "...")]` declares a
+/// dynamic default whose function is `fn(&EarlierAnswers<'_>) -> String`.
+/// `#[question(validate = path::to::fn, revision = "...")]` attaches a field
+/// validator whose function is `fn(&AnswerValue) -> Result<(), String>`.
+/// A non-empty revision is required for either hook and enters the
+/// questionnaire fingerprint; when both hooks are attached to one field, the
+/// same revision identifies both hook contracts.
+///
+/// `#[question(active_when(field = "...", is = "..."))]` declares conditional
+/// applicability on an `Option<T>` field. The controller must name an
+/// earlier scalar or choice field of the same derived struct (a name that
+/// does not resolve within the struct is a compile error); the derive
+/// resolves the Rust field name through any explicit `id` remapping before
+/// the runtime builder validates order. `#[question(prose)]` opts a
+/// `String` field into multi-line text.
+#[proc_macro_derive(Questionnaire, attributes(question))]
+pub fn questionnaire_derive(input: TokenStream) -> TokenStream {
+    let input = parse_macro_input!(input as DeriveInput);
+    questionnaire::questionnaire_derive_impl(input)
+        .unwrap_or_else(|e| e.to_compile_error())
+        .into()
+}
+
+/// Derives a questionnaire choice vocabulary from a unit-variant enum.
+///
+/// Every variant declares its user-facing spelling explicitly with
+/// `#[question(rename = "...")]`; a variant without one is a compile error.
+#[proc_macro_derive(QuestionnaireChoices, attributes(question))]
+pub fn questionnaire_choices_derive(input: TokenStream) -> TokenStream {
+    let input = parse_macro_input!(input as DeriveInput);
+    questionnaire::questionnaire_choices_derive_impl(input)
         .unwrap_or_else(|e| e.to_compile_error())
         .into()
 }

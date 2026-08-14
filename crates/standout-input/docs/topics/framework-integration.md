@@ -2,6 +2,12 @@
 
 This page describes how `standout-input` plugs into the [`standout`](https://crates.io/crates/standout) CLI framework so that input chains become a declarative part of your command configuration. If you only want to use `standout-input` standalone, see [Introduction to Input](../guides/intro-to-input.md) — the framework integration is purely additive.
 
+Questionnaire commands use the same pre-dispatch integration model but get a
+larger generated surface: `questions`, `--answers`, `--yes`, typed filling, and
+the attended confirmation gate. See
+[Derived Questionnaires](../../../guides/derived-questionnaires.md) for that
+path.
+
 ---
 
 ## The Picture

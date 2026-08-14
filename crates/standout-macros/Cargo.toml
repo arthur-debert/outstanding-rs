@@ -17,4 +17,7 @@ quote = "1"
 syn = { version = "2", features = ["full", "parsing"] }
 
 [dev-dependencies]
+serial_test = "3"
+standout-input = { version = "7.10.1", path = "../standout-input" }
 tempfile = "3"
+trybuild = "1"

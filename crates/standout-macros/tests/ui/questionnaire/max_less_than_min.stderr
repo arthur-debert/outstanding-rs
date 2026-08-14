@@ -1,0 +1,5 @@
+error: max must be greater than or equal to min for repeatable questionnaire groups
+ --> tests/ui/questionnaire/max_less_than_min.rs:7:31
+  |
+7 |     #[question(min = 3, max = 2)]
+  |                               ^

@@ -1,0 +1,5 @@
+error: QuestionnaireChoices can only be derived for enums
+ --> tests/ui/questionnaire/choices_non_enum.rs:4:1
+  |
+4 | struct NotAnEnum {
+  | ^^^^^^

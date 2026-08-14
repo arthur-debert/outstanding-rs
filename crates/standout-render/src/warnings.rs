@@ -1,12 +1,13 @@
 //! Framework warning collection and deferred rendering.
 //!
-//! Some parts of standout-render (notably the embedded-resource hot-reload
-//! path in [`crate::embedded`]) can encounter non-fatal problems during
-//! application startup — e.g. a stylesheet fails to parse and the framework
-//! silently falls back to the compile-time embedded copy. Historically these
-//! were emitted via `eprintln!` *during* initialization, which meant they
-//! printed *before* the command's own output and as plain text, even when
-//! rendering into a rich terminal.
+//! Some framework paths can encounter non-fatal problems during application
+//! startup or pre-dispatch. Examples include embedded-resource hot reload in
+//! [`crate::embedded`] falling back to a compile-time copy, or an accepted
+//! questionnaire answer sheet containing a suspicious tag-like fragment that
+//! should be shown to the user without rejecting the run. Historically these
+//! were emitted via `eprintln!` at the discovery site, which meant they printed
+//! *before* the command's own output and as plain text, even when rendering into
+//! a rich terminal.
 //!
 //! This module routes those messages through a process-local collector so
 //! the CLI layer can render them *after* the command output, styled through
@@ -15,10 +16,11 @@
 //!
 //! # Scope
 //!
-//! Only *framework warnings* (problems with standout's own setup / resource
-//! loading) should go through this module. User-facing diagnostics that are
-//! part of a handler's legitimate output — clipboard access failures, input
-//! validation feedback, handler-generated I/O errors — stay on stderr as
+//! Only *framework warnings* should go through this module: non-fatal
+//! framework-owned setup, resource-loading, or accepted-input diagnostics whose
+//! ordering belongs to the run boundary. User-facing diagnostics that are part
+//! of a handler's legitimate output - clipboard access failures, input
+//! validation feedback, handler-generated I/O errors - stay on stderr as
 //! before; interleaving them with other output is the correct behavior.
 //!
 //! # Usage
@@ -48,6 +50,14 @@ thread_local! {
     /// warnings come from the main-thread setup path), so a thread-local
     /// is sufficient and avoids the overhead of a mutex.
     static WARNINGS: RefCell<Vec<String>> = const { RefCell::new(Vec::new()) };
+
+    /// Warnings drained by the most recent capture-oriented run.
+    ///
+    /// `App::run_to_string` cannot print the warning block, but it still owns
+    /// the run boundary. Stashing the drained batch here makes warnings
+    /// observable to test/capture APIs without letting them leak into the next
+    /// run on the same thread.
+    static CAPTURED_WARNINGS: RefCell<Vec<String>> = const { RefCell::new(Vec::new()) };
 }
 
 /// Appends a framework warning to the thread-local collector.
@@ -65,6 +75,25 @@ pub fn push_warning(message: impl Into<String>) {
 /// at the end of `App::run` to render the batch.
 pub fn drain_warnings() -> Vec<String> {
     WARNINGS.with(|w| std::mem::take(&mut *w.borrow_mut()))
+}
+
+/// Drains pending framework warnings into the captured-run buffer.
+///
+/// This is the capture-mode counterpart to [`flush_to_stderr`]: it ends the
+/// current run's warning batch without writing to stderr. The next call
+/// replaces the previous captured batch, so stale warnings cannot bleed across
+/// consecutive in-process runs.
+pub fn capture_warnings_for_run() {
+    let warnings = drain_warnings();
+    CAPTURED_WARNINGS.with(|captured| {
+        *captured.borrow_mut() = warnings;
+    });
+}
+
+/// Returns and clears the warning batch captured by the most recent
+/// capture-oriented run on this thread.
+pub fn take_captured_warnings() -> Vec<String> {
+    CAPTURED_WARNINGS.with(|captured| std::mem::take(&mut *captured.borrow_mut()))
 }
 
 /// Returns `true` if any warnings are currently buffered for this thread.
@@ -195,6 +224,22 @@ mod tests {
         assert!(!has_warnings());
 
         // Draining again yields nothing.
+        assert!(drain_warnings().is_empty());
+    }
+
+    #[test]
+    fn capture_replaces_previous_batch_and_drains_pending_warnings() {
+        reset();
+        push_warning("first");
+        capture_warnings_for_run();
+        assert_eq!(take_captured_warnings(), vec!["first".to_string()]);
+        assert!(drain_warnings().is_empty());
+
+        push_warning("second");
+        capture_warnings_for_run();
+        push_warning("pending");
+        capture_warnings_for_run();
+        assert_eq!(take_captured_warnings(), vec!["pending".to_string()]);
         assert!(drain_warnings().is_empty());
     }
 

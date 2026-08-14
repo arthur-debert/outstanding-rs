@@ -1,17 +1,17 @@
 use std::collections::BTreeMap;
 use std::fs;
-use std::io::{self, BufRead, Write};
+use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use anyhow::{anyhow, bail, Context, Result};
-use clap::{Parser, Subcommand};
+use clap::{CommandFactory, Parser, Subcommand};
 use minijinja::context;
-use standout_input::env::{DefaultStdin, StdinReader};
-use standout_input::questionnaire::{
-    AnswerSheetDiagnostic, AnswerValue, Answers, FieldValidator, FormError, Group, Item,
-    Questionnaire, RawAnswers, ScalarField, ScalarKind,
+use serde_json::json;
+use standout::cli::{
+    App, CommandContext, CommandContextInput, HandlerResult, Output as HandlerOutput,
 };
+use standout_input::questionnaire::{AnswerValue, EarlierAnswers, FormError};
 use standout_render::template::new_environment;
 
 #[derive(Parser)]
@@ -24,159 +24,160 @@ struct Cli {
 #[derive(Subcommand)]
 enum Commands {
     /// Generate the smallest runnable Standout workspace.
-    NewProject {
-        /// Generate from a completed answer sheet instead of interactive
-        /// prompts: a named file, or `-` to read exactly one complete sheet
-        /// from piped stdin. Either form replaces question collection
-        /// entirely; the review and confirmation gate still follows, and
-        /// submitting a sheet never implies consent to generate.
-        #[arg(long, value_name = "FILE")]
-        answers: Option<PathBuf>,
-
-        /// Skip the confirmation prompt (for automation). Parsing,
-        /// validation, the review output, and atomic publication all still
-        /// run; only the final "type 'yes'" gate is bypassed.
-        #[arg(long)]
-        yes: bool,
-
-        #[command(subcommand)]
-        command: Option<NewProjectCommand>,
-    },
-}
-
-/// `new-project` subcommands that never generate a project.
-#[derive(Subcommand)]
-enum NewProjectCommand {
-    /// Render the blank questionnaire answer sheet to stdout (or --file).
-    Questions {
-        /// Write the answer sheet to this file instead of stdout.
-        #[arg(long, value_name = "FILE")]
-        file: Option<PathBuf>,
-    },
+    NewProject,
 }
 
 fn main() -> Result<()> {
-    match Cli::parse().command {
-        Commands::NewProject {
-            answers,
-            yes,
-            command,
-        } => match (command, answers, yes) {
-            (Some(NewProjectCommand::Questions { file }), None, false) => {
-                render_questions(file.as_deref())
-            }
-            (Some(NewProjectCommand::Questions { .. }), _, _) => {
-                bail!(
-                    "`questions` renders the blank answer sheet and cannot be combined \
-                     with --answers or --yes; run `standout new-project --answers FILE` \
-                     to generate from a completed sheet"
-                )
-            }
-            (None, answers, yes) => run_new_project(answers.as_deref(), yes),
-        },
-    }
-}
-
-/// The answer-sheet source an `--answers` value selects: a named file, or
-/// exactly one complete sheet read from piped stdin (`--answers -`). Sheets
-/// never merge with prompts or with each other.
-enum SheetSource {
-    File(PathBuf),
-    Stdin,
-}
-
-impl SheetSource {
-    fn from_flag(value: &Path) -> Self {
-        if value == Path::new("-") {
-            Self::Stdin
-        } else {
-            Self::File(value.to_path_buf())
-        }
-    }
-
-    /// The source's name in diagnostics ("answer sheet <label> has …").
-    fn label(&self) -> String {
-        match self {
-            Self::File(path) => path.display().to_string(),
-            Self::Stdin => "from stdin".to_string(),
-        }
-    }
-
-    fn answers(&self) -> Result<WizardAnswers, Vec<String>> {
-        match self {
-            Self::File(path) => sheet_answers(path),
-            Self::Stdin => stdin_sheet_answers(&DefaultStdin),
-        }
-    }
-}
-
-/// Run the wizard end to end: collect [`WizardAnswers`] from exactly one
-/// source — interactive prompts, or a completed answer sheet named by
-/// `answers_file` (a file path, or `-` for piped stdin; sources never
-/// merge) — then take every mode through the same review, confirmation,
-/// and atomic publication gate.
-///
-/// Confirmation policy: submitting a sheet never implies consent, and no
-/// stdin byte or EOF can ever confirm. Interactive runs confirm on the
-/// prompt stream they were already attending. Sheet runs without
-/// `assume_yes` confirm through the attended-terminal seam
-/// ([`AttendedTerminal`]) — independent of stdin by construction — and fail
-/// with guidance when no attended terminal exists. `assume_yes` (`--yes`)
-/// skips only that final gate. Every collection or validation failure, a
-/// missing terminal, a rejected confirmation, and cancellation all return
-/// before any destination file is written.
-fn run_new_project(answers_file: Option<&Path>, assume_yes: bool) -> Result<()> {
-    let source = answers_file.map(SheetSource::from_flag);
-    let answers = match &source {
-        Some(sheet) => match sheet.answers() {
-            Ok(answers) => answers,
-            Err(diagnostics) => {
-                for diagnostic in &diagnostics {
-                    eprintln!("{diagnostic}");
-                }
-                bail!(
-                    "answer sheet {} has {} problem(s); nothing was generated",
-                    sheet.label(),
-                    diagnostics.len()
-                );
-            }
-        },
-        None => match prompt_answers(&mut io::stdin().lock(), &mut io::stdout()) {
-            Ok(answers) => answers,
-            Err(error) if error.is::<Cancelled>() => {
-                println!("Generation cancelled.");
-                return Ok(());
-            }
-            Err(error) => return Err(error),
-        },
-    };
-    let spec = ProjectSpec::from_answers(answers)?;
-    write_review(&spec, &mut io::stdout())?;
-    let confirmed = if assume_yes {
-        true
-    } else if source.is_some() {
-        confirm_attended(attended_terminal_from_env()?.as_mut())?
-    } else {
-        confirm(&mut io::stdin().lock(), &mut io::stdout())?
-    };
-    if !confirmed {
-        println!("Generation cancelled.");
-        return Ok(());
-    }
-    publish_project(&spec)?;
-    println!("Created {}", spec.destination.display());
+    build_app()?.run(Cli::command(), std::env::args());
     Ok(())
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
-struct WizardAnswers {
-    project_name: String,
+fn build_app() -> Result<App> {
+    Ok(App::builder()
+        .no_output_flag()
+        .no_output_file_flag()
+        .command_with("new-project", run_new_project, |config| {
+            config
+                .template("{{ transcript }}")
+                .questionnaire_with_form_and_review::<NewProjectAnswers, _, _>(
+                    new_project_form_rules,
+                    write_new_project_review,
+                )
+        })?
+        .build()?)
+}
+
+/// Generate a project from the typed questionnaire value collected by the
+/// framework-injected `new-project` surface. The framework owns collection,
+/// `--answers`/`questions`, dynamic defaults, the binary's pre-confirmation
+/// review callback, and the attended confirmation gate before this handler
+/// runs; the handler owns final publication.
+fn run_new_project(
+    _matches: &clap::ArgMatches,
+    ctx: &CommandContext,
+) -> HandlerResult<serde_json::Value> {
+    let answers: &NewProjectAnswers = ctx.questionnaire()?;
+    let spec = ProjectSpec::from_answers(answers.clone())?;
+    let mut transcript = Vec::new();
+    publish_project(&spec)?;
+    writeln!(transcript, "Created {}", spec.destination.display())?;
+    Ok(HandlerOutput::Render(json!({
+        "transcript": String::from_utf8(transcript)
+            .expect("wizard transcript is generated from UTF-8 literals and paths"),
+    })))
+}
+
+fn write_new_project_review(
+    answers: &NewProjectAnswers,
+    output: &mut dyn Write,
+) -> anyhow::Result<()> {
+    let spec = ProjectSpec::from_answers(answers.clone())?;
+    write_review(&spec, output)
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, standout::Questionnaire)]
+#[question(id = "standout.new-project")]
+struct NewProjectAnswers {
+    /// Project identity.
+    #[question(id = "project")]
+    project: ProjectAnswers,
+
+    /// Initial command.
+    #[question(id = "command")]
+    command: CommandAnswers,
+
+    /// Result shape.
+    #[question(id = "result")]
+    result: ResultAnswers,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, standout::Questionnaire)]
+#[question(id = "standout.new-project.project")]
+struct ProjectAnswers {
+    /// What is the project name? It is also the destination directory.
+    #[question(id = "name", validate = validate_project_name, revision = "crate-name.v1")]
+    name: String,
+
+    /// What is the executable name? Leave blank to reuse the project name.
+    #[question(
+        id = "executable",
+        default_with = executable_default,
+        validate = validate_executable_name,
+        revision = "crate-name.v2"
+    )]
     executable_name: String,
-    command_name: String,
-    command_description: String,
-    inputs: Vec<CommandInput>,
-    result_shape: ResultShape,
-    record_fields: Vec<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, standout::Questionnaire)]
+#[question(id = "standout.new-project.command")]
+struct CommandAnswers {
+    /// What is the command name?
+    #[question(id = "name", validate = validate_command_answer, revision = "command-name.v1")]
+    name: String,
+
+    /// Describe the command in a sentence or two.
+    #[question(id = "description", prose)]
+    description: String,
+
+    /// Describe a command input.
+    #[question(id = "inputs", min = 1)]
+    inputs: Vec<CommandInputAnswers>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, standout::Questionnaire)]
+#[question(id = "standout.new-project.input")]
+struct CommandInputAnswers {
+    /// What is its name?
+    #[question(id = "name", validate = validate_input_name, revision = "input-name.v1")]
+    name: String,
+
+    /// What type of value is it?
+    #[question(id = "value_type", choice, default = "string")]
+    value_type: InputValueType,
+
+    /// How many values does it take?
+    #[question(
+        id = "cardinality",
+        choice,
+        default_with = cardinality_default,
+        revision = "input-cardinality-default.v1"
+    )]
+    cardinality: InputCardinality,
+
+    /// Where can its value come from, in precedence order (comma-separated: argument, file, stdin)?
+    #[question(
+        id = "sources",
+        default_with = sources_default,
+        validate = validate_sources_answer,
+        revision = "input-sources.v2"
+    )]
+    sources: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, standout::Questionnaire)]
+#[question(id = "standout.new-project.result")]
+struct ResultAnswers {
+    /// Should the result be a message or a record?
+    #[question(id = "shape", choice, default = "record")]
+    shape: ResultShape,
+
+    /// Which fields should the record carry (comma-separated)?
+    #[question(
+        id = "fields",
+        default = "summary,count",
+        active_when(field = "shape", is = "record"),
+        validate = validate_record_fields_answer,
+        revision = "record-fields.v1"
+    )]
+    fields: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct CommandInput {
+    name: String,
+    value_type: InputValueType,
+    cardinality: InputCardinality,
+    sources: Vec<InputSource>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -196,28 +197,25 @@ struct ProjectSpec {
     local_patch_root: Option<PathBuf>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
-struct CommandInput {
-    name: String,
-    value_type: InputValueType,
-    cardinality: InputCardinality,
-    sources: Vec<InputSource>,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-#[allow(dead_code)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, standout::QuestionnaireChoices)]
 enum InputValueType {
+    #[question(rename = "string")]
     String,
+    #[question(rename = "bool")]
     Bool,
+    #[question(rename = "path")]
     Path,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-#[allow(dead_code)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, standout::QuestionnaireChoices)]
 enum InputCardinality {
+    #[question(rename = "required")]
     Required,
+    #[question(rename = "optional")]
     Optional,
+    #[question(rename = "repeated")]
     Repeated,
+    #[question(rename = "boolean")]
     Boolean,
 }
 
@@ -228,9 +226,22 @@ enum InputSource {
     Stdin,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg(test)]
+impl InputSource {
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::Argument => "argument",
+            Self::File => "file",
+            Self::Stdin => "stdin",
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, standout::QuestionnaireChoices)]
 enum ResultShape {
+    #[question(rename = "message")]
     Message,
+    #[question(rename = "record")]
     Record,
 }
 
@@ -244,35 +255,38 @@ impl ResultShape {
 }
 
 impl ProjectSpec {
-    fn from_answers(answers: WizardAnswers) -> Result<Self> {
-        validate_crate_name(&answers.project_name, "project name")?;
-        validate_crate_name(&answers.executable_name, "executable name")?;
-        validate_ident(&answers.command_name.replace('-', "_"), "command name")?;
-        if answers.inputs.is_empty() {
+    fn from_answers(answers: impl Into<NewProjectAnswers>) -> Result<Self> {
+        let answers = answers.into();
+        validate_crate_name(&answers.project.name, "project name")?;
+        validate_crate_name(&answers.project.executable_name, "executable name")?;
+        validate_ident(&answers.command.name.replace('-', "_"), "command name")?;
+        if answers.command.inputs.is_empty() {
             bail!("at least one command input is required");
         }
-        for input in &answers.inputs {
+        let inputs = command_inputs_from_answers(&answers.command.inputs)?;
+        for input in &inputs {
             input.validate()?;
         }
-        validate_generated_flags(&answers.inputs)?;
-        validate_result_fields(answers.result_shape, &answers.record_fields)?;
-        if answers.command_description.trim().is_empty() {
+        validate_generated_flags(&inputs)?;
+        let record_fields = record_fields_from_answers(&answers.result)?;
+        validate_result_fields(answers.result.shape, &record_fields)?;
+        if answers.command.description.trim().is_empty() {
             bail!("command description cannot be empty");
         }
 
-        let lib_crate = format!("{}lib", answers.project_name.replace('-', "_"));
-        let command_ident = answers.command_name.replace('-', "_");
+        let lib_crate = format!("{}lib", answers.project.name.replace('-', "_"));
+        let command_ident = answers.command.name.replace('-', "_");
         let operation_name = format!("process_{command_ident}");
         let view_name = format!("{}View", pascal_case(&command_ident));
         Ok(Self {
-            destination: PathBuf::from(&answers.project_name),
-            project_name: answers.project_name,
-            executable_name: answers.executable_name,
-            command_name: answers.command_name,
-            command_description: answers.command_description,
-            inputs: answers.inputs,
-            result_shape: answers.result_shape,
-            record_fields: answers.record_fields,
+            destination: PathBuf::from(&answers.project.name),
+            project_name: answers.project.name,
+            executable_name: answers.project.executable_name,
+            command_name: answers.command.name,
+            command_description: answers.command.description,
+            inputs,
+            result_shape: answers.result.shape,
+            record_fields,
             lib_crate,
             operation_name,
             view_name,
@@ -387,404 +401,173 @@ impl GeneratedFiles {
     }
 }
 
-/// Control-flow marker raised when the user answers an exact uppercase `X`
-/// at any questionnaire prompt. The caller reports a successful,
-/// non-mutating cancellation instead of surfacing an error.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-struct Cancelled;
-
-impl std::fmt::Display for Cancelled {
-    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        formatter.write_str("generation cancelled")
-    }
+fn executable_default(answers: &EarlierAnswers<'_>) -> String {
+    answers
+        .get_text("project.name")
+        .unwrap_or_default()
+        .to_string()
 }
 
-impl std::error::Error for Cancelled {}
-
-/// The exact answer that cancels the questionnaire at any prompt.
-const CANCEL_ANSWER: &str = "X";
-
-/// Collects and validates every questionnaire answer, re-prompting the
-/// smallest coherent unit — the current scalar question, the record-field
-/// list, or the current input block — on an invalid answer instead of
-/// discarding the session. An exact uppercase `X` at any prompt raises
-/// [`Cancelled`]; exhausted input aborts with an error.
-fn prompt_answers(input: &mut dyn BufRead, output: &mut dyn Write) -> Result<WizardAnswers> {
-    let project_name = prompt_retrying(input, output, "Project name", None, |value| {
-        validate_crate_name(value, "project name")?;
-        Ok(value.to_string())
-    })?;
-
-    let executable_name = prompt_retrying(
-        input,
-        output,
-        "Executable name",
-        Some(&project_name),
-        |value| {
-            validate_crate_name(value, "executable name")?;
-            Ok(value.to_string())
-        },
-    )?;
-
-    let command_name = prompt_retrying(input, output, "Initial command name", None, |value| {
-        validate_ident(&value.replace('-', "_"), "command name")?;
-        Ok(value.to_string())
-    })?;
-
-    let command_description = prompt_retrying(
-        input,
-        output,
-        "One-sentence command description",
-        None,
-        |value| Ok(value.to_string()),
-    )?;
-
-    let inputs = prompt_command_inputs(input, output)?;
-    let result_shape = prompt_result_shape(input, output)?;
-    let record_fields = match result_shape {
-        ResultShape::Message => Vec::new(),
-        ResultShape::Record => prompt_record_fields(input, output)?,
-    };
-
-    Ok(WizardAnswers {
-        project_name,
-        executable_name,
-        command_name,
-        command_description,
-        inputs,
-        result_shape,
-        record_fields,
-    })
-}
-
-/// Asks one question until the answer parses, printing each validation
-/// error before re-prompting. An empty answer takes `default` when one
-/// exists and otherwise re-prompts. Cancellation ([`CANCEL_ANSWER`]) and
-/// end of input abort the questionnaire instead of retrying.
-fn prompt_retrying<T>(
-    input: &mut dyn BufRead,
-    output: &mut dyn Write,
-    label: &str,
-    default: Option<&str>,
-    parse: impl Fn(&str) -> Result<T>,
-) -> Result<T> {
-    loop {
-        match default {
-            Some(default) => write!(output, "{label} [{default}]: ")?,
-            None => write!(output, "{label}: ")?,
-        }
-        output.flush()?;
-        let mut line = String::new();
-        if input.read_line(&mut line)? == 0 {
-            bail!("input ended before the questionnaire completed");
-        }
-        let mut value = line.trim();
-        if value == CANCEL_ANSWER {
-            return Err(Cancelled.into());
-        }
-        if value.is_empty() {
-            match default {
-                Some(default) => value = default,
-                None => {
-                    writeln!(output, "{label} cannot be empty")?;
-                    continue;
-                }
-            }
-        }
-        match parse(value) {
-            Ok(parsed) => return Ok(parsed),
-            Err(error) => writeln!(output, "{error}")?,
-        }
-    }
-}
-
-/// Collects the requested number of command inputs. Scalar answers inside
-/// a block retry individually; a cross-answer constraint failure — an
-/// unsupported type/cardinality/source combination or a generated-flag
-/// collision with an earlier input — retries the whole current block.
-fn prompt_command_inputs(
-    input: &mut dyn BufRead,
-    output: &mut dyn Write,
-) -> Result<Vec<CommandInput>> {
-    let count = prompt_retrying(
-        input,
-        output,
-        "Number of command inputs",
-        Some("1"),
-        |value| {
-            let count: usize = value
-                .parse()
-                .context("number of command inputs must be an integer")?;
-            if count == 0 {
-                bail!("at least one command input is required");
-            }
-            Ok(count)
-        },
-    )?;
-
-    let mut inputs: Vec<CommandInput> = Vec::with_capacity(count);
-    for index in 1..=count {
-        loop {
-            writeln!(output, "Input {index}:")?;
-            let candidate = prompt_command_input(input, output)?;
-            let cross_answer_check = candidate.validate().and_then(|()| {
-                let mut trial = inputs.clone();
-                trial.push(candidate.clone());
-                validate_generated_flags(&trial)
-            });
-            if let Err(error) = cross_answer_check {
-                writeln!(output, "{error}")?;
-                continue;
-            }
-            inputs.push(candidate);
-            break;
-        }
-    }
-    Ok(inputs)
-}
-
-/// Collects one input block: name, value type, cardinality, and sources.
-/// Each scalar answer validates and retries on its own; cross-answer
-/// constraints are enforced by the caller, which retries the whole block.
-fn prompt_command_input(input: &mut dyn BufRead, output: &mut dyn Write) -> Result<CommandInput> {
-    let name = prompt_retrying(input, output, "  Name", None, |value| {
-        validate_ident(value, "input name")?;
-        Ok(value.to_string())
-    })?;
-    let value_type = prompt_retrying(
-        input,
-        output,
-        "  Type (string/bool/path)",
-        Some("string"),
-        parse_value_type,
-    )?;
-    let cardinality_default = if value_type == InputValueType::Bool {
+fn cardinality_default(answers: &EarlierAnswers<'_>) -> String {
+    if answers.get_text("command.inputs.value_type") == Some("bool") {
         "boolean"
     } else {
         "required"
-    };
-    let cardinality = prompt_retrying(
-        input,
-        output,
-        "  Cardinality (required/optional/repeated/boolean)",
-        Some(cardinality_default),
-        parse_cardinality,
-    )?;
-    let sources_default = if value_type == InputValueType::String
-        && matches!(
-            cardinality,
-            InputCardinality::Required | InputCardinality::Optional
-        ) {
+    }
+    .to_string()
+}
+
+fn sources_default(answers: &EarlierAnswers<'_>) -> String {
+    let value_type = answers.get_text("command.inputs.value_type");
+    let cardinality = answers.get_text("command.inputs.cardinality");
+    if value_type == Some("string") && matches!(cardinality, Some("required") | Some("optional")) {
         "argument,file,stdin"
     } else {
         "argument"
+    }
+    .to_string()
+}
+
+fn validate_project_name(value: &AnswerValue) -> Result<(), String> {
+    validate_crate_name(value.as_text().unwrap_or_default(), "project name")
+        .map_err(|error| error.to_string())
+}
+
+fn validate_executable_name(value: &AnswerValue) -> Result<(), String> {
+    validate_crate_name(value.as_text().unwrap_or_default(), "executable name")
+        .map_err(|error| error.to_string())
+}
+
+fn validate_command_answer(value: &AnswerValue) -> Result<(), String> {
+    validate_ident(
+        &value.as_text().unwrap_or_default().replace('-', "_"),
+        "command name",
+    )
+    .map_err(|error| error.to_string())
+}
+
+fn validate_input_name(value: &AnswerValue) -> Result<(), String> {
+    validate_ident(value.as_text().unwrap_or_default(), "input name")
+        .map_err(|error| error.to_string())
+}
+
+fn validate_sources_answer(value: &AnswerValue) -> Result<(), String> {
+    parse_input_sources(value.as_text().unwrap_or_default())
+        .map(|_| ())
+        .map_err(|error| error.to_string())
+}
+
+fn validate_record_fields_answer(value: &AnswerValue) -> Result<(), String> {
+    parse_record_fields(value.as_text().unwrap_or_default())
+        .map(|_| ())
+        .map_err(|error| error.to_string())
+}
+
+fn new_project_form_rules(answers: &NewProjectAnswers) -> Vec<FormError> {
+    let mut errors = Vec::new();
+    let inputs = match command_inputs_from_answers(&answers.command.inputs) {
+        Ok(inputs) => inputs,
+        Err(error) => {
+            errors.push(FormError::new(
+                ["command.inputs.sources"],
+                error.to_string(),
+            ));
+            return errors;
+        }
     };
-    let sources = prompt_retrying(
-        input,
-        output,
-        "  Sources in precedence order (argument,file,stdin)",
-        Some(sources_default),
-        parse_input_sources,
-    )?;
-    Ok(CommandInput {
-        name,
-        value_type,
-        cardinality,
-        sources,
-    })
-}
-
-/// The confirmation question every mode asks; only an exact trimmed `yes`
-/// reply confirms, everything else — including EOF — cancels.
-const CONFIRM_QUESTION: &str = "Generate this project? Type 'yes' to continue: ";
-
-/// Interactive-mode confirmation on the prompt stream the user is already
-/// attending. Answer-sheet runs never come here — they confirm through
-/// [`confirm_attended`], independent of stdin.
-fn confirm(input: &mut dyn BufRead, output: &mut dyn Write) -> Result<bool> {
-    write!(output, "{CONFIRM_QUESTION}")?;
-    output.flush()?;
-    let mut line = String::new();
-    input.read_line(&mut line)?;
-    Ok(line.trim() == "yes")
-}
-
-/// The attended-terminal seam answer-sheet runs confirm through.
-///
-/// By construction it is independent of stdin: the production
-/// implementation talks to the controlling terminal device, so nothing an
-/// answer sheet pipes in — content, trailing bytes, or EOF — can ever reach
-/// the confirmation gate.
-trait AttendedTerminal {
-    /// Whether a human-attended terminal is present to prompt.
-    fn is_attended(&self) -> bool;
-
-    /// Show `question` on the terminal and read one reply line.
-    /// `Ok(None)` is end of input — the caller treats it as a rejection,
-    /// never as consent.
-    fn ask(&mut self, question: &str) -> Result<Option<String>>;
-}
-
-/// The guidance for a missing attended terminal at confirmation time —
-/// shared by [`confirm_attended`]'s upfront check and
-/// [`ControllingTerminal::ask`] (the terminal can disappear between the
-/// two), so the same user-visible condition always gets the same
-/// rerun-or-`--yes` advice.
-const NO_ATTENDED_TERMINAL: &str =
-    "confirmation requires an attended terminal, but none is available; \
-     rerun in a terminal to review and confirm, or pass --yes to generate \
-     without a confirmation prompt; nothing was generated";
-
-/// Ask the attended confirmation question through `terminal`. Fails with
-/// actionable guidance when no attended terminal exists — an absent
-/// terminal is an error, never implicit approval — and confirms only on an
-/// exact trimmed `yes` reply.
-fn confirm_attended(terminal: &mut dyn AttendedTerminal) -> Result<bool> {
-    if !terminal.is_attended() {
-        bail!(NO_ATTENDED_TERMINAL);
-    }
-    let reply = terminal.ask(CONFIRM_QUESTION)?;
-    Ok(reply.is_some_and(|line| line.trim() == "yes"))
-}
-
-/// The production [`AttendedTerminal`]: the process's controlling terminal
-/// device (`/dev/tty` on Unix, `CONIN$`/`CONOUT$` on Windows), opened at
-/// confirmation time. Opening the device fails exactly when no attended
-/// terminal exists, whatever stdin/stdout are redirected to.
-struct ControllingTerminal;
-
-#[cfg(unix)]
-fn open_controlling_terminal() -> Option<(fs::File, fs::File)> {
-    let read = fs::OpenOptions::new().read(true).open("/dev/tty").ok()?;
-    let write = fs::OpenOptions::new().write(true).open("/dev/tty").ok()?;
-    Some((read, write))
-}
-
-#[cfg(windows)]
-fn open_controlling_terminal() -> Option<(fs::File, fs::File)> {
-    // Minimal access only: broader access (e.g. GENERIC_WRITE on CONIN$) is
-    // needed solely for console-mode changes this gate never makes, and
-    // requesting it can fail on consoles a read/write-only open accepts.
-    let read = fs::OpenOptions::new().read(true).open("CONIN$").ok()?;
-    let write = fs::OpenOptions::new().write(true).open("CONOUT$").ok()?;
-    Some((read, write))
-}
-
-impl AttendedTerminal for ControllingTerminal {
-    fn is_attended(&self) -> bool {
-        open_controlling_terminal().is_some()
-    }
-
-    fn ask(&mut self, question: &str) -> Result<Option<String>> {
-        let (read, mut write) =
-            open_controlling_terminal().ok_or_else(|| anyhow!(NO_ATTENDED_TERMINAL))?;
-        write.write_all(question.as_bytes())?;
-        write.flush()?;
-        let mut line = String::new();
-        if io::BufReader::new(read).read_line(&mut line)? == 0 {
-            return Ok(None);
+    for (index, input) in inputs.iter().enumerate() {
+        if let Err(error) = input.validate() {
+            errors.push(FormError::new(
+                [format!("command.inputs[{index}]")],
+                error.to_string(),
+            ));
         }
-        Ok(Some(line))
+    }
+    if let Err(error) = validate_generated_flags(&inputs) {
+        errors.push(FormError::new(["command.inputs.name"], error.to_string()));
+    }
+    if let Err(error) = record_fields_from_answers(&answers.result) {
+        errors.push(FormError::new(["result.fields"], error.to_string()));
+    }
+    errors
+}
+
+fn command_inputs_from_answers(inputs: &[CommandInputAnswers]) -> Result<Vec<CommandInput>> {
+    inputs
+        .iter()
+        .map(|input| {
+            Ok(CommandInput {
+                name: input.name.clone(),
+                value_type: input.value_type,
+                cardinality: input.cardinality,
+                sources: parse_input_sources(&input.sources)?,
+            })
+        })
+        .collect()
+}
+
+fn record_fields_from_answers(result: &ResultAnswers) -> Result<Vec<String>> {
+    match result.shape {
+        ResultShape::Message => Ok(Vec::new()),
+        ResultShape::Record => parse_record_fields(result.fields.as_deref().unwrap_or_default()),
     }
 }
 
-/// A scripted [`AttendedTerminal`] for tests that must run the production
-/// binary without a real terminal: either no terminal at all, or a fixed
-/// reply script. Questions echo to stdout so CLI transcripts can assert the
-/// prompt appeared without a terminal device in the loop. Compiled for
-/// debug builds (which honor the [`TERMINAL_SEAM_VAR`] seam) and tests
-/// only — a release binary carries no scripted terminal.
-#[cfg(any(test, debug_assertions))]
-struct ScriptedTerminal {
-    attended: bool,
-    replies: std::collections::VecDeque<String>,
+#[cfg(test)]
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct TestProjectAnswers {
+    project_name: String,
+    executable_name: String,
+    command_name: String,
+    command_description: String,
+    inputs: Vec<CommandInput>,
+    result_shape: ResultShape,
+    record_fields: Vec<String>,
 }
 
-#[cfg(any(test, debug_assertions))]
-impl ScriptedTerminal {
-    fn absent() -> Self {
+#[cfg(test)]
+impl From<TestProjectAnswers> for NewProjectAnswers {
+    fn from(answers: TestProjectAnswers) -> Self {
         Self {
-            attended: false,
-            replies: std::collections::VecDeque::new(),
+            project: ProjectAnswers {
+                name: answers.project_name,
+                executable_name: answers.executable_name,
+            },
+            command: CommandAnswers {
+                name: answers.command_name,
+                description: answers.command_description,
+                inputs: answers
+                    .inputs
+                    .into_iter()
+                    .map(CommandInputAnswers::from)
+                    .collect(),
+            },
+            result: ResultAnswers {
+                shape: answers.result_shape,
+                fields: match answers.record_fields.is_empty() {
+                    true => None,
+                    false => Some(answers.record_fields.join(",")),
+                },
+            },
         }
     }
+}
 
-    fn from_replies(replies: impl IntoIterator<Item = String>) -> Self {
+#[cfg(test)]
+impl From<CommandInput> for CommandInputAnswers {
+    fn from(input: CommandInput) -> Self {
         Self {
-            attended: true,
-            replies: replies.into_iter().collect(),
+            name: input.name,
+            value_type: input.value_type,
+            cardinality: input.cardinality,
+            sources: input
+                .sources
+                .into_iter()
+                .map(InputSource::as_str)
+                .collect::<Vec<_>>()
+                .join(","),
         }
     }
-}
-
-#[cfg(any(test, debug_assertions))]
-impl AttendedTerminal for ScriptedTerminal {
-    fn is_attended(&self) -> bool {
-        self.attended
-    }
-
-    fn ask(&mut self, question: &str) -> Result<Option<String>> {
-        print!("{question}");
-        io::stdout().flush()?;
-        Ok(self.replies.pop_front())
-    }
-}
-
-/// The env var that swaps the attended-terminal seam for tests. This is a
-/// TEST SEAM, not user configuration: unset means the real controlling
-/// terminal; `absent` simulates a missing terminal; any other value names a
-/// file whose lines are the scripted terminal replies. Debug builds only —
-/// a release binary never consults it, so an inherited environment cannot
-/// auto-confirm or block generation in production.
-#[cfg(debug_assertions)]
-const TERMINAL_SEAM_VAR: &str = "STANDOUT_NEW_PROJECT_TERMINAL";
-
-/// Resolve the [`AttendedTerminal`] the confirmation gate uses.
-///
-/// Debug builds honor the [`TERMINAL_SEAM_VAR`] test seam (integration
-/// tests exercise the debug-profile binary); release builds always use the
-/// real controlling terminal and never read the env var.
-fn attended_terminal_from_env() -> Result<Box<dyn AttendedTerminal>> {
-    #[cfg(debug_assertions)]
-    match std::env::var_os(TERMINAL_SEAM_VAR) {
-        None => Ok(Box::new(ControllingTerminal)),
-        Some(value) if value == "absent" => Ok(Box::new(ScriptedTerminal::absent())),
-        Some(path) => {
-            let script = fs::read_to_string(&path).with_context(|| {
-                format!(
-                    "failed to read the scripted terminal replies from {}",
-                    Path::new(&path).display()
-                )
-            })?;
-            Ok(Box::new(ScriptedTerminal::from_replies(
-                script.lines().map(ToOwned::to_owned),
-            )))
-        }
-    }
-    #[cfg(not(debug_assertions))]
-    Ok(Box::new(ControllingTerminal))
-}
-
-fn prompt_result_shape(input: &mut dyn BufRead, output: &mut dyn Write) -> Result<ResultShape> {
-    prompt_retrying(
-        input,
-        output,
-        "Result shape (message/record)",
-        Some("record"),
-        parse_result_shape,
-    )
-}
-
-/// Asks for the record-field list, retrying the whole comma-separated list
-/// when any field is invalid or duplicated.
-fn prompt_record_fields(input: &mut dyn BufRead, output: &mut dyn Write) -> Result<Vec<String>> {
-    prompt_retrying(
-        input,
-        output,
-        "Record fields (comma-separated)",
-        Some("summary,count"),
-        parse_record_fields,
-    )
 }
 
 fn write_review(spec: &ProjectSpec, output: &mut dyn Write) -> Result<()> {
@@ -1001,39 +784,6 @@ fn is_rust_keyword(value: &str) -> bool {
     )
 }
 
-/// Decode a value-type answer. Shared by the interactive prompt and the
-/// answer-sheet path so both accept exactly the same vocabulary.
-fn parse_value_type(value: &str) -> Result<InputValueType> {
-    match value {
-        "string" => Ok(InputValueType::String),
-        "bool" => Ok(InputValueType::Bool),
-        "path" => Ok(InputValueType::Path),
-        _ => bail!("input type must be string, bool, or path"),
-    }
-}
-
-/// Decode a cardinality answer. Shared by the interactive prompt and the
-/// answer-sheet path so both accept exactly the same vocabulary.
-fn parse_cardinality(value: &str) -> Result<InputCardinality> {
-    match value {
-        "required" => Ok(InputCardinality::Required),
-        "optional" => Ok(InputCardinality::Optional),
-        "repeated" => Ok(InputCardinality::Repeated),
-        "boolean" => Ok(InputCardinality::Boolean),
-        _ => bail!("input cardinality must be required, optional, repeated, or boolean"),
-    }
-}
-
-/// Decode a result-shape answer. Shared by the interactive prompt and the
-/// answer-sheet path so both accept exactly the same vocabulary.
-fn parse_result_shape(value: &str) -> Result<ResultShape> {
-    match value {
-        "message" => Ok(ResultShape::Message),
-        "record" => Ok(ResultShape::Record),
-        _ => bail!("result shape must be message or record"),
-    }
-}
-
 fn parse_record_fields(value: &str) -> Result<Vec<String>> {
     let fields: Vec<_> = value
         .split(',')
@@ -1124,308 +874,6 @@ fn validate_generated_flags(inputs: &[CommandInput]) -> Result<()> {
                 );
             }
         }
-    }
-    Ok(())
-}
-
-/// The bootstrap questionnaire's stable identity, pinned in every rendered
-/// answer sheet's preamble. Together with the semantic fingerprint it makes
-/// stale sheets fail with a regeneration message instead of guessed answers.
-const QUESTIONNAIRE_ID: &str = "standout.new-project";
-
-/// Wrap an application text rule as a questionnaire field validator.
-///
-/// The rule runs in `standout-input`'s shared decode stage, so interactive
-/// and answer-sheet submissions are judged by the same functions. `revision`
-/// enters the sheet fingerprint: bump it whenever the rule's accepted values
-/// change so previously rendered sheets are invalidated like any other
-/// semantic change.
-fn text_rule(
-    revision: &str,
-    check: impl Fn(&str) -> Result<()> + Send + Sync + 'static,
-) -> FieldValidator {
-    FieldValidator::new(revision, move |value: &AnswerValue| {
-        check(value.as_text().unwrap_or_default()).map_err(|error| error.to_string())
-    })
-}
-
-/// The wizard's complete static questionnaire.
-///
-/// The bracketed IDs are the stable contract: prompts, numbering, and type
-/// hints on a rendered sheet are cosmetic, while renaming an ID or changing
-/// kinds, defaults, constraints, conditions, or validator revisions is a
-/// semantic change that invalidates previously rendered sheets. Field
-/// validators reuse the exact functions the interactive prompts run, so both
-/// collection paths accept the same values; cross-answer rules that span
-/// several fields live in [`wizard_form_rules`].
-fn wizard_questionnaire() -> Questionnaire {
-    Questionnaire::new(
-        QUESTIONNAIRE_ID,
-        vec![
-            Item::from(
-                ScalarField::new(
-                    "project.name",
-                    "What is the project name? It is also the destination directory.",
-                    ScalarKind::String,
-                )
-                .with_validator(text_rule("crate-name.v1", |text| {
-                    validate_crate_name(text, "project name")
-                })),
-            ),
-            Item::from(
-                ScalarField::new(
-                    "project.executable",
-                    "What is the executable name? Leave blank to reuse the project name.",
-                    ScalarKind::String,
-                )
-                .optional()
-                .with_validator(text_rule("crate-name.v1", |text| {
-                    validate_crate_name(text, "executable name")
-                })),
-            ),
-            Item::from(Group::new(
-                "command",
-                "Describe the initial command.",
-                vec![
-                    Item::from(
-                        ScalarField::new(
-                            "command.name",
-                            "What is the command name?",
-                            ScalarKind::String,
-                        )
-                        .with_validator(text_rule("command-name.v1", |text| {
-                            validate_ident(&text.replace('-', "_"), "command name")
-                        })),
-                    ),
-                    Item::from(ScalarField::new(
-                        "command.description",
-                        "Describe the command in a sentence or two.",
-                        ScalarKind::Text,
-                    )),
-                    Item::from(
-                        Group::new(
-                            "command.inputs",
-                            "Describe a command input.",
-                            vec![
-                                ScalarField::new(
-                                    "command.inputs.name",
-                                    "What is its name?",
-                                    ScalarKind::String,
-                                )
-                                .with_validator(text_rule("input-name.v1", |text| {
-                                    validate_ident(text, "input name")
-                                })),
-                                ScalarField::new(
-                                    "command.inputs.value_type",
-                                    "What type of value is it?",
-                                    ScalarKind::String,
-                                )
-                                .one_of(["string", "bool", "path"])
-                                .with_default("string"),
-                                ScalarField::new(
-                                    "command.inputs.cardinality",
-                                    "How many values does it take?",
-                                    ScalarKind::String,
-                                )
-                                .one_of(["required", "optional", "repeated", "boolean"])
-                                .with_default("required"),
-                                ScalarField::new(
-                                    "command.inputs.sources",
-                                    "Where can its value come from, in precedence order \
-                                     (comma-separated: argument, file, stdin)?",
-                                    ScalarKind::String,
-                                )
-                                .with_default("argument")
-                                .with_validator(text_rule("input-sources.v1", |text| {
-                                    parse_input_sources(text).map(|_| ())
-                                })),
-                            ],
-                        )
-                        .repeatable(1),
-                    ),
-                ],
-            )),
-            Item::from(
-                ScalarField::new(
-                    "result.shape",
-                    "Should the result be a message or a record?",
-                    ScalarKind::String,
-                )
-                .one_of(["message", "record"])
-                .with_default("record"),
-            ),
-            Item::from(
-                ScalarField::new(
-                    "result.fields",
-                    "Which fields should the record carry (comma-separated)?",
-                    ScalarKind::String,
-                )
-                .with_default("summary,count")
-                .active_when("result.shape", "record")
-                .with_validator(text_rule("record-fields.v1", |text| {
-                    parse_record_fields(text).map(|_| ())
-                })),
-            ),
-        ],
-    )
-    .expect("the bootstrap questionnaire definition is statically valid")
-}
-
-/// The wizard's whole-form rules for an answer-sheet submission: the same
-/// cross-answer constraints the interactive flow enforces per input block —
-/// unsupported type/cardinality/source combinations and generated-flag
-/// collisions or reservations. Independent violations accumulate, each
-/// pointing at the occurrence block it came from.
-fn wizard_form_rules(answers: &Answers) -> Vec<FormError> {
-    let mut errors = Vec::new();
-    let inputs = sheet_inputs(answers);
-    for (index, input) in inputs.iter().enumerate() {
-        if let Err(error) = input.validate() {
-            errors.push(FormError::new(
-                [format!("command.inputs[{index}]")],
-                error.to_string(),
-            ));
-        }
-    }
-    if let Err(error) = validate_generated_flags(&inputs) {
-        errors.push(FormError::new(["command.inputs.name"], error.to_string()));
-    }
-    errors
-}
-
-/// Rebuild the wizard's [`CommandInput`] blocks from decoded answer-sheet
-/// values. Field-level decoding already succeeded, so per-field conversion
-/// cannot fail here; cross-answer rules run in [`wizard_form_rules`].
-fn sheet_inputs(answers: &Answers) -> Vec<CommandInput> {
-    (0..answers.occurrence_count("command.inputs"))
-        .map(|index| {
-            let text = |field: &str| {
-                answers
-                    .get_text(&format!("command.inputs[{index}].{field}"))
-                    .expect("decoded input fields are answered or defaulted")
-            };
-            CommandInput {
-                name: text("name").to_string(),
-                value_type: parse_value_type(text("value_type"))
-                    .expect("value_type is constrained to its choices"),
-                cardinality: parse_cardinality(text("cardinality"))
-                    .expect("cardinality is constrained to its choices"),
-                sources: parse_input_sources(text("sources"))
-                    .expect("sources passed field validation"),
-            }
-        })
-        .collect()
-}
-
-/// Convert a fully decoded and form-validated submission into the same
-/// [`WizardAnswers`] the interactive flow produces. A blank executable name
-/// reuses the project name, exactly like the interactive default.
-fn wizard_answers_from(answers: &Answers) -> WizardAnswers {
-    let project_name = answers
-        .get_text("project.name")
-        .expect("project.name is required")
-        .to_string();
-    let executable_name = answers
-        .get_text("project.executable")
-        .unwrap_or(&project_name)
-        .to_string();
-    let result_shape = parse_result_shape(
-        answers
-            .get_text("result.shape")
-            .expect("result.shape is defaulted"),
-    )
-    .expect("result.shape is constrained to its choices");
-    let record_fields = match result_shape {
-        ResultShape::Message => Vec::new(),
-        ResultShape::Record => parse_record_fields(
-            answers
-                .get_text("result.fields")
-                .expect("result.fields is required while the record shape is active"),
-        )
-        .expect("result.fields passed field validation"),
-    };
-    WizardAnswers {
-        command_name: answers
-            .get_text("command.name")
-            .expect("command.name is required")
-            .to_string(),
-        command_description: answers
-            .get_text("command.description")
-            .expect("command.description is required")
-            .to_string(),
-        inputs: sheet_inputs(answers),
-        project_name,
-        executable_name,
-        result_shape,
-        record_fields,
-    }
-}
-
-/// Collect [`WizardAnswers`] from one completed answer sheet named by path.
-///
-/// Reading, parsing, decoding, and the wizard's whole-form rules all run
-/// before anything else happens; failures return every accumulated
-/// diagnostic, already rendered for display. This path never merges other
-/// sources and performs no generation itself — the caller still runs the
-/// review, confirmation, and publication gate ([`stdin_sheet_answers`] is
-/// the `--answers -` counterpart sharing the same [`decode_sheet`] tail).
-fn sheet_answers(path: &Path) -> Result<WizardAnswers, Vec<String>> {
-    let questionnaire = wizard_questionnaire();
-    let raw = questionnaire.read_answer_sheet_file(path);
-    decode_sheet(&questionnaire, raw)
-}
-
-/// [`sheet_answers`] for `--answers -`: read exactly one complete answer
-/// sheet from `reader` (piped stdin in production, an injected
-/// [`StdinReader`] in tests) to end of input, then decode it through the
-/// identical parse, decode, and whole-form pipeline as a named file — the
-/// two sources produce identical validated answers for identical documents.
-/// Interactive-terminal stdin is a collection error, and nothing read here
-/// ever reaches the confirmation gate.
-fn stdin_sheet_answers(reader: &dyn StdinReader) -> Result<WizardAnswers, Vec<String>> {
-    let questionnaire = wizard_questionnaire();
-    let raw = questionnaire.read_answer_sheet_stdin_with(reader);
-    decode_sheet(&questionnaire, raw)
-}
-
-/// The collection-source-independent tail of sheet reading: decode raw
-/// sheet answers with the wizard's whole-form rules and convert them to
-/// [`WizardAnswers`], rendering any accumulated diagnostics for display.
-/// Parser warnings (answer text containing a `<id:` tag fragment) print to
-/// stderr without failing the submission.
-fn decode_sheet(
-    questionnaire: &Questionnaire,
-    raw: Result<RawAnswers, Vec<AnswerSheetDiagnostic>>,
-) -> Result<WizardAnswers, Vec<String>> {
-    fn rendered(diagnostics: Vec<impl ToString>) -> Vec<String> {
-        diagnostics.iter().map(ToString::to_string).collect()
-    }
-    let raw = raw.map_err(rendered)?;
-    for warning in raw.warnings() {
-        eprintln!("{warning}");
-    }
-    let answers = questionnaire
-        .decode_answers_with(&raw, wizard_form_rules)
-        .map_err(rendered)?;
-    Ok(wizard_answers_from(&answers))
-}
-
-/// Render the blank bootstrap answer sheet to stdout, or to `file` when one
-/// is named. Rendering is deterministic and never generates project files.
-/// A stdout consumer that closes the pipe early (`… | head`) ends rendering
-/// successfully rather than failing the command.
-fn render_questions(file: Option<&Path>) -> Result<()> {
-    let sheet = wizard_questionnaire().render_answer_sheet();
-    match file {
-        None => {
-            if let Err(error) = io::stdout().write_all(sheet.as_bytes()) {
-                if error.kind() != io::ErrorKind::BrokenPipe {
-                    return Err(error).context("failed to write the answer sheet to stdout");
-                }
-            }
-        }
-        Some(path) => fs::write(path, &sheet)
-            .with_context(|| format!("failed to write the answer sheet to {}", path.display()))?,
     }
     Ok(())
 }
@@ -2717,8 +2165,29 @@ cargo test --workspace
 #[cfg(test)]
 mod tests {
     use super::*;
+    use serial_test::serial;
+    use standout_input::{
+        questionnaire::QuestionnaireInput, reset_default_prompt_responder,
+        set_default_prompt_responder, PromptResponse, ScriptedResponder,
+    };
     use std::process::Command;
+    use std::sync::Arc;
     use tempfile::TempDir;
+
+    struct PromptResponderGuard;
+
+    impl PromptResponderGuard {
+        fn install(responses: impl IntoIterator<Item = PromptResponse>) -> Self {
+            set_default_prompt_responder(Arc::new(ScriptedResponder::new(responses)));
+            Self
+        }
+    }
+
+    impl Drop for PromptResponderGuard {
+        fn drop(&mut self) {
+            reset_default_prompt_responder();
+        }
+    }
 
     fn required_string(name: impl Into<String>) -> CommandInput {
         CommandInput {
@@ -2730,7 +2199,7 @@ mod tests {
     }
 
     fn sample_spec(root: &Path) -> ProjectSpec {
-        let mut spec = ProjectSpec::from_answers(WizardAnswers {
+        let mut spec = ProjectSpec::from_answers(TestProjectAnswers {
             project_name: "hello-tool".into(),
             executable_name: "hello-tool".into(),
             command_name: "greet".into(),
@@ -2754,226 +2223,6 @@ mod tests {
     }
 
     #[test]
-    fn exhausted_input_aborts_instead_of_looping() {
-        let mut input = io::Cursor::new("1bad\n");
-        let mut output = Vec::new();
-
-        let error = prompt_answers(&mut input, &mut output).unwrap_err();
-
-        let transcript = String::from_utf8(output).unwrap();
-        assert!(transcript.contains("project name must start"));
-        assert!(error
-            .to_string()
-            .contains("input ended before the questionnaire completed"));
-    }
-
-    #[test]
-    fn invalid_scalar_answers_reprompt_the_current_question() {
-        let answers = [
-            "1bad",
-            "hello-tool",
-            "",
-            "fn",
-            "greet",
-            "Greet one value",
-            "two",
-            "0",
-            "1",
-            "name",
-            "strang",
-            "string",
-            "sometimes",
-            "required",
-            "carrier,argument",
-            "argument",
-            "list",
-            "message",
-        ]
-        .join("\n")
-            + "\n";
-        let mut input = io::Cursor::new(answers);
-        let mut output = Vec::new();
-
-        let answers = prompt_answers(&mut input, &mut output).unwrap();
-
-        assert_eq!(answers.project_name, "hello-tool");
-        assert_eq!(answers.command_name, "greet");
-        assert_eq!(answers.inputs.len(), 1);
-        assert_eq!(answers.result_shape, ResultShape::Message);
-        let transcript = String::from_utf8(output).unwrap();
-        assert!(transcript.contains("project name must start"));
-        assert!(transcript.contains("reserved Rust keyword"));
-        assert!(transcript.contains("number of command inputs must be an integer"));
-        assert!(transcript.contains("at least one command input is required"));
-        assert!(transcript.contains("input type must be string, bool, or path"));
-        assert!(transcript.contains("input cardinality must be required"));
-        assert!(transcript.contains("input source must be argument, file, or stdin"));
-        assert!(transcript.contains("result shape must be message or record"));
-    }
-
-    #[test]
-    fn invalid_record_field_answers_reprompt_without_discarding_progress() {
-        let answers = [
-            "hello-tool",
-            "",
-            "greet",
-            "Greet one value",
-            "1",
-            "name",
-            "string",
-            "required",
-            "argument",
-            "record",
-            "docker-volume,summary",
-            "docker_volume,summary",
-        ]
-        .join("\n")
-            + "\n";
-        let mut input = io::Cursor::new(answers);
-        let mut output = Vec::new();
-
-        let answers = prompt_answers(&mut input, &mut output).unwrap();
-
-        assert_eq!(answers.record_fields, vec!["docker_volume", "summary"]);
-        let transcript = String::from_utf8(output).unwrap();
-        assert!(
-            transcript.contains("record field may only contain letters, numbers, or underscores")
-        );
-        assert_eq!(
-            transcript
-                .matches("Record fields (comma-separated)")
-                .count(),
-            2
-        );
-    }
-
-    #[test]
-    fn cross_answer_input_constraint_retries_the_input_block() {
-        let answers = [
-            "demo",
-            "",
-            "inspect",
-            "Inspect one value",
-            "1",
-            "config",
-            "path",
-            "required",
-            "argument,file",
-            "config",
-            "path",
-            "required",
-            "argument",
-            "message",
-        ]
-        .join("\n")
-            + "\n";
-        let mut input = io::Cursor::new(answers);
-        let mut output = Vec::new();
-
-        let answers = prompt_answers(&mut input, &mut output).unwrap();
-
-        assert_eq!(answers.inputs.len(), 1);
-        assert_eq!(answers.inputs[0].sources, vec![InputSource::Argument]);
-        let transcript = String::from_utf8(output).unwrap();
-        assert!(transcript.contains("path inputs only support argument source"));
-        assert_eq!(transcript.matches("Input 1:").count(), 2);
-    }
-
-    #[test]
-    fn colliding_generated_flags_retry_the_conflicting_input_block() {
-        let answers = [
-            "demo",
-            "",
-            "inspect",
-            "Inspect one value",
-            "2",
-            "document",
-            "string",
-            "required",
-            "argument,file",
-            "document_file",
-            "path",
-            "optional",
-            "argument",
-            "note",
-            "string",
-            "optional",
-            "argument",
-            "message",
-        ]
-        .join("\n")
-            + "\n";
-        let mut input = io::Cursor::new(answers);
-        let mut output = Vec::new();
-
-        let answers = prompt_answers(&mut input, &mut output).unwrap();
-
-        assert_eq!(answers.inputs.len(), 2);
-        assert_eq!(answers.inputs[1].name, "note");
-        let transcript = String::from_utf8(output).unwrap();
-        assert!(transcript.contains("--document-file"));
-        assert!(transcript.contains("conflicts"));
-        assert_eq!(transcript.matches("Input 2:").count(), 2);
-    }
-
-    #[test]
-    fn uppercase_x_cancels_after_earlier_valid_answers() {
-        let answers = ["hello-tool", "", "greet", "X"].join("\n") + "\n";
-        let mut input = io::Cursor::new(answers);
-        let mut output = Vec::new();
-
-        let error = prompt_answers(&mut input, &mut output).unwrap_err();
-
-        assert!(error.is::<Cancelled>());
-    }
-
-    #[test]
-    fn questionnaire_collects_supported_input_matrix() {
-        let answers = [
-            "inspect-tool",
-            "",
-            "inspect",
-            "Inspect document input",
-            "4",
-            "document",
-            "string",
-            "required",
-            "argument,file,stdin",
-            "verbose",
-            "bool",
-            "boolean",
-            "argument",
-            "tag",
-            "string",
-            "repeated",
-            "argument",
-            "config",
-            "path",
-            "optional",
-            "argument",
-            "record",
-            "summary,count,echo",
-        ]
-        .join("\n")
-            + "\n";
-        let mut input = io::Cursor::new(answers);
-        let mut output = Vec::new();
-
-        let answers = prompt_answers(&mut input, &mut output).unwrap();
-        let spec = ProjectSpec::from_answers(answers).unwrap();
-
-        assert_eq!(spec.executable_name, "inspect-tool");
-        assert_eq!(spec.inputs.len(), 4);
-        assert_eq!(
-            spec.inputs[0].sources,
-            vec![InputSource::Argument, InputSource::File, InputSource::Stdin,]
-        );
-        assert_eq!(spec.inputs[1].value_type, InputValueType::Bool);
-        assert_eq!(spec.inputs[2].cardinality, InputCardinality::Repeated);
-        assert_eq!(spec.inputs[3].value_type, InputValueType::Path);
-    }
-
-    #[test]
     fn input_source_aliases_cannot_declare_the_same_source_twice() {
         let duplicate = parse_input_sources("argument,arg").unwrap_err();
 
@@ -2982,7 +2231,7 @@ mod tests {
 
     #[test]
     fn project_spec_is_private_validated_model() {
-        let spec = ProjectSpec::from_answers(WizardAnswers {
+        let spec = ProjectSpec::from_answers(TestProjectAnswers {
             project_name: "demo".into(),
             executable_name: "demo".into(),
             command_name: "inspect".into(),
@@ -3047,7 +2296,7 @@ mod tests {
 
     #[test]
     fn result_fields_and_generated_identifiers_are_validated() {
-        let duplicate = ProjectSpec::from_answers(WizardAnswers {
+        let duplicate = ProjectSpec::from_answers(TestProjectAnswers {
             project_name: "demo".into(),
             executable_name: "demo".into(),
             command_name: "inspect".into(),
@@ -3057,7 +2306,7 @@ mod tests {
             record_fields: vec!["summary".into(), "summary".into()],
         })
         .unwrap_err();
-        let keyword = ProjectSpec::from_answers(WizardAnswers {
+        let keyword = ProjectSpec::from_answers(TestProjectAnswers {
             project_name: "demo".into(),
             executable_name: "demo".into(),
             command_name: "match".into(),
@@ -3074,7 +2323,7 @@ mod tests {
 
     #[test]
     fn generated_flags_cannot_collide_across_inputs() {
-        let answers_with = |inputs| WizardAnswers {
+        let answers_with = |inputs| TestProjectAnswers {
             project_name: "demo".into(),
             executable_name: "demo".into(),
             command_name: "inspect".into(),
@@ -3105,36 +2354,11 @@ mod tests {
         .unwrap_err();
         assert!(derived_collision.to_string().contains("--document-file"));
         assert!(derived_collision.to_string().contains("conflicts"));
-
-        let questionnaire = [
-            "reserved-tool",
-            "",
-            "inspect",
-            "Inspect one value",
-            "1",
-            "output",
-            "string",
-            "required",
-            "argument",
-            "document",
-            "string",
-            "required",
-            "argument",
-            "message",
-        ]
-        .join("\n")
-            + "\n";
-        let mut input = io::Cursor::new(questionnaire);
-        let mut output = Vec::new();
-        let answers = prompt_answers(&mut input, &mut output).unwrap();
-        assert_eq!(answers.inputs[0].name, "document");
-        let transcript = String::from_utf8(output).unwrap();
-        assert!(transcript.contains("reserved framework/Clap flag --output"));
     }
 
     #[test]
     fn render_omits_local_patch_paths_by_default() {
-        let spec = ProjectSpec::from_answers(WizardAnswers {
+        let spec = ProjectSpec::from_answers(TestProjectAnswers {
             project_name: "demo".into(),
             executable_name: "demo".into(),
             command_name: "inspect".into(),
@@ -3154,7 +2378,7 @@ mod tests {
 
     #[test]
     fn local_patch_paths_are_escaped_as_toml_basic_string_content() {
-        let mut spec = ProjectSpec::from_answers(WizardAnswers {
+        let mut spec = ProjectSpec::from_answers(TestProjectAnswers {
             project_name: "demo".into(),
             executable_name: "demo".into(),
             command_name: "inspect".into(),
@@ -3197,7 +2421,7 @@ mod tests {
             },
         ];
 
-        let spec = ProjectSpec::from_answers(WizardAnswers {
+        let spec = ProjectSpec::from_answers(TestProjectAnswers {
             project_name: "demo".into(),
             executable_name: "demo".into(),
             command_name: "inspect".into(),
@@ -3236,7 +2460,7 @@ mod tests {
             "[--tag <tag>]..."
         );
 
-        let spec = ProjectSpec::from_answers(WizardAnswers {
+        let spec = ProjectSpec::from_answers(TestProjectAnswers {
             project_name: "demo".into(),
             executable_name: "demo".into(),
             command_name: "send_email".into(),
@@ -3286,7 +2510,7 @@ mod tests {
 
     #[test]
     fn rejects_unsupported_input_combinations_before_rendering() {
-        let error = ProjectSpec::from_answers(WizardAnswers {
+        let error = ProjectSpec::from_answers(TestProjectAnswers {
             project_name: "demo".into(),
             executable_name: "demo".into(),
             command_name: "inspect".into(),
@@ -3306,7 +2530,7 @@ mod tests {
             .to_string()
             .contains("bool inputs must use boolean cardinality"));
 
-        let error = ProjectSpec::from_answers(WizardAnswers {
+        let error = ProjectSpec::from_answers(TestProjectAnswers {
             project_name: "demo".into(),
             executable_name: "demo".into(),
             command_name: "inspect".into(),
@@ -3329,7 +2553,7 @@ mod tests {
 
     #[test]
     fn path_input_rendering_does_not_emit_string_validation() {
-        let spec = ProjectSpec::from_answers(WizardAnswers {
+        let spec = ProjectSpec::from_answers(TestProjectAnswers {
             project_name: "demo".into(),
             executable_name: "demo".into(),
             command_name: "inspect".into(),
@@ -3395,16 +2619,8 @@ mod tests {
         assert!(staged.is_empty());
     }
 
-    #[test]
-    fn declined_confirmation_is_a_non_mutating_cancel() {
-        let mut input = io::Cursor::new("no\n");
-        let mut output = Vec::new();
-
-        assert!(!confirm(&mut input, &mut output).unwrap());
-    }
-
     fn spec_with_description(description: &str) -> ProjectSpec {
-        ProjectSpec::from_answers(WizardAnswers {
+        ProjectSpec::from_answers(TestProjectAnswers {
             project_name: "demo".into(),
             executable_name: "demo".into(),
             command_name: "inspect".into(),
@@ -3469,7 +2685,7 @@ mod tests {
     #[test]
     fn long_description_generated_project_is_rustfmt_clean() {
         let dir = TempDir::new().unwrap();
-        let mut spec = ProjectSpec::from_answers(WizardAnswers {
+        let mut spec = ProjectSpec::from_answers(TestProjectAnswers {
             project_name: "provisioning-tool".into(),
             executable_name: "provisioning-tool".into(),
             command_name: "provision".into(),
@@ -3494,44 +2710,48 @@ mod tests {
     }
 
     fn rich_questionnaire_spec(root: &Path) -> ProjectSpec {
-        let answers = [
-            "inspect-tool",
-            "",
-            "inspect",
-            "Inspect document input",
-            "4",
-            "document",
-            "string",
-            "required",
-            "argument,file,stdin",
-            "verbose",
-            "bool",
-            "boolean",
-            "argument",
-            "tag",
-            "string",
-            "repeated",
-            "argument",
-            "config",
-            "path",
-            "optional",
-            "argument",
-            "record",
-            "summary,count,echo",
-        ]
-        .join("\n")
-            + "\n";
-        let mut input = io::Cursor::new(answers);
-        let mut review = Vec::new();
-        let answers = prompt_answers(&mut input, &mut review).unwrap();
-        let mut spec = ProjectSpec::from_answers(answers).unwrap();
+        let mut spec = ProjectSpec::from_answers(TestProjectAnswers {
+            project_name: "inspect-tool".into(),
+            executable_name: "inspect-tool".into(),
+            command_name: "inspect".into(),
+            command_description: "Inspect document input".into(),
+            inputs: vec![
+                CommandInput {
+                    name: "document".into(),
+                    value_type: InputValueType::String,
+                    cardinality: InputCardinality::Required,
+                    sources: vec![InputSource::Argument, InputSource::File, InputSource::Stdin],
+                },
+                CommandInput {
+                    name: "verbose".into(),
+                    value_type: InputValueType::Bool,
+                    cardinality: InputCardinality::Boolean,
+                    sources: vec![InputSource::Argument],
+                },
+                CommandInput {
+                    name: "tag".into(),
+                    value_type: InputValueType::String,
+                    cardinality: InputCardinality::Repeated,
+                    sources: vec![InputSource::Argument],
+                },
+                CommandInput {
+                    name: "config".into(),
+                    value_type: InputValueType::Path,
+                    cardinality: InputCardinality::Optional,
+                    sources: vec![InputSource::Argument],
+                },
+            ],
+            result_shape: ResultShape::Record,
+            record_fields: vec!["summary".into(), "count".into(), "echo".into()],
+        })
+        .unwrap();
         spec.destination = root.join("inspect-tool");
         spec.local_patch_root = Some(workspace_root());
         spec
     }
 
     fn file_only_spec(root: &Path) -> ProjectSpec {
-        let mut spec = ProjectSpec::from_answers(WizardAnswers {
+        let mut spec = ProjectSpec::from_answers(TestProjectAnswers {
             project_name: "file-tool".into(),
             executable_name: "file-tool".into(),
             command_name: "inspect".into(),
@@ -3552,7 +2772,7 @@ mod tests {
     }
 
     fn single_input_spec(root: &Path, project_name: &str, input: CommandInput) -> ProjectSpec {
-        let mut spec = ProjectSpec::from_answers(WizardAnswers {
+        let mut spec = ProjectSpec::from_answers(TestProjectAnswers {
             project_name: project_name.into(),
             executable_name: project_name.into(),
             command_name: "inspect".into(),
@@ -3568,7 +2788,7 @@ mod tests {
     }
 
     fn path_first_spec(root: &Path) -> ProjectSpec {
-        let mut spec = ProjectSpec::from_answers(WizardAnswers {
+        let mut spec = ProjectSpec::from_answers(TestProjectAnswers {
             project_name: "config-tool".into(),
             executable_name: "config-tool".into(),
             command_name: "inspect".into(),
@@ -4033,107 +3253,250 @@ mod tests {
         copied.join("\n") + "\n"
     }
 
-    /// Decode one completed sheet through the exact production pipeline —
-    /// parse, shared decoding, wizard whole-form rules, domain conversion.
-    fn decode_sheet(sheet: &str) -> Result<WizardAnswers, Vec<String>> {
-        let questionnaire = wizard_questionnaire();
-        let raw = questionnaire.parse_answer_sheet(sheet);
-        super::decode_sheet(&questionnaire, raw)
+    fn questionnaire() -> standout_input::questionnaire::Questionnaire {
+        NewProjectAnswers::questionnaire().unwrap()
+    }
+
+    fn hand_built_questionnaire() -> standout_input::questionnaire::Questionnaire {
+        use standout_input::questionnaire::{
+            DynamicDefault, FieldValidator, Group, Item, QuestionnaireChoices as _, ScalarField,
+            ScalarKind,
+        };
+
+        standout_input::questionnaire::Questionnaire::new(
+            "standout.new-project",
+            vec![
+                Item::from(Group::new(
+                    "project",
+                    "Project identity.",
+                    vec![
+                        ScalarField::new(
+                            "project.name",
+                            "What is the project name? It is also the destination directory.",
+                            ScalarKind::String,
+                        )
+                        .with_validator(FieldValidator::new(
+                            "crate-name.v1",
+                            validate_project_name,
+                        )),
+                        ScalarField::new(
+                            "project.executable",
+                            "What is the executable name? Leave blank to reuse the project name.",
+                            ScalarKind::String,
+                        )
+                        .with_dynamic_default(DynamicDefault::new(
+                            "crate-name.v2",
+                            executable_default,
+                        ))
+                        .with_validator(FieldValidator::new(
+                            "crate-name.v2",
+                            validate_executable_name,
+                        )),
+                    ],
+                )),
+                Item::from(Group::new(
+                    "command",
+                    "Initial command.",
+                    vec![
+                        Item::from(
+                            ScalarField::new(
+                                "command.name",
+                                "What is the command name?",
+                                ScalarKind::String,
+                            )
+                            .with_validator(FieldValidator::new(
+                                "command-name.v1",
+                                validate_command_answer,
+                            )),
+                        ),
+                        Item::from(ScalarField::new(
+                            "command.description",
+                            "Describe the command in a sentence or two.",
+                            ScalarKind::Text,
+                        )),
+                        Item::from(
+                            Group::new(
+                                "command.inputs",
+                                "Describe a command input.",
+                                vec![
+                                    ScalarField::new(
+                                        "command.inputs.name",
+                                        "What is its name?",
+                                        ScalarKind::String,
+                                    )
+                                    .with_validator(FieldValidator::new(
+                                        "input-name.v1",
+                                        validate_input_name,
+                                    )),
+                                    ScalarField::new(
+                                        "command.inputs.value_type",
+                                        "What type of value is it?",
+                                        ScalarKind::String,
+                                    )
+                                    .one_of(InputValueType::choices().iter().copied())
+                                    .with_default("string"),
+                                    ScalarField::new(
+                                        "command.inputs.cardinality",
+                                        "How many values does it take?",
+                                        ScalarKind::String,
+                                    )
+                                    .one_of(InputCardinality::choices().iter().copied())
+                                    .with_dynamic_default(DynamicDefault::new(
+                                        "input-cardinality-default.v1",
+                                        cardinality_default,
+                                    )),
+                                    ScalarField::new(
+                                        "command.inputs.sources",
+                                        "Where can its value come from, in precedence order (comma-separated: argument, file, stdin)?",
+                                        ScalarKind::String,
+                                    )
+                                    .with_dynamic_default(DynamicDefault::new(
+                                        "input-sources.v2",
+                                        sources_default,
+                                    ))
+                                    .with_validator(FieldValidator::new(
+                                        "input-sources.v2",
+                                        validate_sources_answer,
+                                    )),
+                                ],
+                            )
+                            .repeatable(1),
+                        ),
+                    ],
+                )),
+                Item::from(Group::new(
+                    "result",
+                    "Result shape.",
+                    vec![
+                        ScalarField::new(
+                            "result.shape",
+                            "Should the result be a message or a record?",
+                            ScalarKind::String,
+                        )
+                        .one_of(ResultShape::choices().iter().copied())
+                        .with_default("record"),
+                        ScalarField::new(
+                            "result.fields",
+                            "Which fields should the record carry (comma-separated)?",
+                            ScalarKind::String,
+                        )
+                        .optional()
+                        .with_default("summary,count")
+                        .active_when("result.shape", "record")
+                        .with_validator(FieldValidator::new(
+                            "record-fields.v1",
+                            validate_record_fields_answer,
+                        )),
+                    ],
+                )),
+            ],
+        )
+        .unwrap()
+    }
+
+    fn decode_sheet(sheet: &str) -> Result<NewProjectAnswers, Vec<String>> {
+        let questionnaire = questionnaire();
+        let raw = questionnaire
+            .parse_answer_sheet(sheet)
+            .map_err(|diagnostics| {
+                diagnostics
+                    .iter()
+                    .map(ToString::to_string)
+                    .collect::<Vec<_>>()
+            })?;
+        NewProjectAnswers::from_raw_answers_with(&raw, new_project_form_rules)
+            .map_err(|error| vec![error.to_string()])
+    }
+
+    fn minimal_sheet() -> String {
+        let sheet = questionnaire().render_answer_sheet();
+        let sheet = fill(&sheet, "project.name", "hello-tool");
+        let sheet = fill(&sheet, "command.name", "greet");
+        let sheet = fill(&sheet, "command.description", "Greet one value");
+        fill(&sheet, "command.inputs.name", "name")
     }
 
     #[test]
-    fn answer_sheet_and_interactive_submissions_decode_identically() {
-        // Nested (command group), repeated (two input blocks), defaulted
-        // (result.shape stays "record"), and a blank executable reusing the
-        // project name — answered once through the sheet and once through
-        // the interactive prompts.
-        let sheet = wizard_questionnaire().render_answer_sheet();
+    fn derived_questionnaire_preserves_stable_ids_and_typed_vocabularies() {
+        let sheet = questionnaire().render_answer_sheet();
+
+        assert!(sheet.contains("#! questionnaire: standout.new-project"));
+        for id in [
+            "project.name",
+            "project.executable",
+            "command.name",
+            "command.description",
+            "command.inputs",
+            "command.inputs.name",
+            "command.inputs.value_type",
+            "command.inputs.cardinality",
+            "command.inputs.sources",
+            "result.shape",
+            "result.fields",
+        ] {
+            assert!(sheet.contains(&format!("<id:{id}>")), "missing {id}");
+        }
+        assert!(sheet.contains("string, bool, or path"));
+        assert!(sheet.contains("required, optional, repeated, or boolean"));
+        assert!(sheet.contains("message or record"));
+    }
+
+    #[test]
+    fn derived_wizard_schema_matches_hand_built_definition_and_fingerprint() {
+        let derived = questionnaire();
+        let hand_built = hand_built_questionnaire();
+
+        assert_eq!(derived, hand_built);
+        assert_eq!(derived.fingerprint(), hand_built.fingerprint());
+    }
+
+    #[test]
+    fn answer_sheet_decodes_to_typed_struct_and_project_spec() {
+        let sheet = questionnaire().render_answer_sheet();
         let sheet = fill(&sheet, "project.name", "inspect-tool");
         let sheet = fill(&sheet, "command.name", "inspect");
         let sheet = fill(&sheet, "command.description", "Inspect document input");
         let sheet = fill(&sheet, "command.inputs.name", "document");
-        let sheet = fill(&sheet, "command.inputs.sources", "argument,file,stdin");
         let sheet = duplicate_inputs_block(&sheet);
         let sheet = fill_nth(&sheet, "command.inputs.name", "verbose", 1);
         let sheet = fill_nth(&sheet, "command.inputs.value_type", "bool", 1);
-        let sheet = fill_nth(&sheet, "command.inputs.cardinality", "boolean", 1);
-        let sheet = fill_nth(&sheet, "command.inputs.sources", "argument", 1);
         let sheet = fill(&sheet, "result.fields", "summary,count,echo");
 
-        let from_sheet = decode_sheet(&sheet).unwrap();
+        let answers = decode_sheet(&sheet).unwrap();
+        let spec = ProjectSpec::from_answers(answers).unwrap();
 
-        let script = [
-            "inspect-tool",
-            "",
-            "inspect",
-            "Inspect document input",
-            "2",
-            "document",
-            "string",
-            "required",
-            "argument,file,stdin",
-            "verbose",
-            "bool",
-            "boolean",
-            "argument",
-            "record",
-            "summary,count,echo",
-        ]
-        .join("\n")
-            + "\n";
-        let mut input = io::Cursor::new(script);
-        let mut output = Vec::new();
-        let from_prompts = prompt_answers(&mut input, &mut output).unwrap();
-
-        assert_eq!(from_sheet, from_prompts);
+        assert_eq!(spec.executable_name, "inspect-tool");
+        assert_eq!(spec.inputs.len(), 2);
         assert_eq!(
-            ProjectSpec::from_answers(from_sheet).unwrap(),
-            ProjectSpec::from_answers(from_prompts).unwrap()
+            spec.inputs[0].sources,
+            vec![InputSource::Argument, InputSource::File, InputSource::Stdin]
         );
+        assert_eq!(spec.inputs[1].value_type, InputValueType::Bool);
+        assert_eq!(spec.inputs[1].cardinality, InputCardinality::Boolean);
+        assert_eq!(spec.record_fields, vec!["summary", "count", "echo"]);
     }
 
     #[test]
-    fn sheet_defaults_resolve_like_interactive_defaults() {
-        // Untouched pre-filled defaults on the sheet (value type,
-        // cardinality, result shape, record fields) and blank interactive
-        // answers taking the same defaults produce equal answers; the
-        // sources answer is explicit on both sides because its interactive
-        // default is context-dependent while the sheet default is static.
-        let sheet = wizard_questionnaire().render_answer_sheet();
+    fn dynamic_defaults_apply_in_sheet_decode() {
+        let sheet = questionnaire().render_answer_sheet();
         let sheet = fill(&sheet, "project.name", "demo");
         let sheet = fill(&sheet, "command.name", "greet");
         let sheet = fill(&sheet, "command.description", "Greet one value");
-        let sheet = fill(&sheet, "command.inputs.name", "name");
+        let sheet = fill(&sheet, "command.inputs.name", "verbose");
+        let sheet = fill(&sheet, "command.inputs.value_type", "bool");
+        let sheet = fill(&sheet, "result.shape", "message");
 
-        let from_sheet = decode_sheet(&sheet).unwrap();
+        let spec = ProjectSpec::from_answers(decode_sheet(&sheet).unwrap()).unwrap();
 
-        let script = [
-            "demo",
-            "",
-            "greet",
-            "Greet one value",
-            "1",
-            "name",
-            "",
-            "",
-            "argument",
-            "",
-            "",
-        ]
-        .join("\n")
-            + "\n";
-        let mut input = io::Cursor::new(script);
-        let mut output = Vec::new();
-        let from_prompts = prompt_answers(&mut input, &mut output).unwrap();
-
-        assert_eq!(from_sheet, from_prompts);
-        assert_eq!(from_sheet.executable_name, "demo");
-        assert_eq!(from_sheet.record_fields, vec!["summary", "count"]);
+        assert_eq!(spec.executable_name, "demo");
+        assert_eq!(spec.inputs[0].cardinality, InputCardinality::Boolean);
+        assert_eq!(spec.inputs[0].sources, vec![InputSource::Argument]);
+        assert_eq!(spec.record_fields, Vec::<String>::new());
     }
 
     #[test]
     fn multiline_description_keeps_internal_line_breaks() {
-        let sheet = wizard_questionnaire().render_answer_sheet();
+        let sheet = questionnaire().render_answer_sheet();
         let sheet = fill(&sheet, "project.name", "demo");
         let sheet = fill(&sheet, "command.name", "greet");
         let sheet = fill(
@@ -4146,48 +3509,15 @@ mod tests {
         let answers = decode_sheet(&sheet).unwrap();
 
         assert_eq!(
-            answers.command_description,
+            answers.command.description,
             "Greet one value.\nIt spans two lines."
         );
         assert!(ProjectSpec::from_answers(answers).is_ok());
     }
 
     #[test]
-    fn populated_inactive_record_fields_are_rejected() {
-        let sheet = wizard_questionnaire().render_answer_sheet();
-        let sheet = fill(&sheet, "project.name", "demo");
-        let sheet = fill(&sheet, "command.name", "greet");
-        let sheet = fill(&sheet, "command.description", "Greet one value");
-        let sheet = fill(&sheet, "command.inputs.name", "name");
-        let sheet = fill(&sheet, "result.shape", "message");
-        let sheet = fill(&sheet, "result.fields", "summary,extra");
-
-        let errors = decode_sheet(&sheet).unwrap_err();
-
-        assert_eq!(errors.len(), 1);
-        assert!(errors[0].contains("[result.fields]"));
-        assert!(errors[0].contains("does not apply"));
-    }
-
-    #[test]
-    fn inactive_record_fields_may_keep_their_untouched_default() {
-        let sheet = wizard_questionnaire().render_answer_sheet();
-        let sheet = fill(&sheet, "project.name", "demo");
-        let sheet = fill(&sheet, "command.name", "greet");
-        let sheet = fill(&sheet, "command.description", "Greet one value");
-        let sheet = fill(&sheet, "command.inputs.name", "name");
-        let sheet = fill(&sheet, "result.shape", "message");
-
-        let answers = decode_sheet(&sheet).unwrap();
-
-        assert_eq!(answers.result_shape, ResultShape::Message);
-        assert_eq!(answers.record_fields, Vec::<String>::new());
-    }
-
-    #[test]
-    fn sheet_field_and_form_failures_accumulate_per_stage() {
-        // Field stage: every independent field diagnostic reports together.
-        let sheet = wizard_questionnaire().render_answer_sheet();
+    fn field_and_typed_form_failures_accumulate_per_stage() {
+        let sheet = questionnaire().render_answer_sheet();
         let sheet = fill(&sheet, "project.name", "9bad");
         let sheet = fill(&sheet, "command.name", "greet");
         let sheet = fill(&sheet, "command.description", "Greet one value");
@@ -4196,19 +3526,13 @@ mod tests {
         let sheet = fill(&sheet, "command.inputs.sources", "argument,teleport");
 
         let errors = decode_sheet(&sheet).unwrap_err();
+        let error = errors.join("\n");
 
-        assert_eq!(errors.len(), 3, "unexpected diagnostics: {errors:?}");
-        assert!(errors.iter().any(|e| e.contains("[project.name]")));
-        assert!(errors
-            .iter()
-            .any(|e| e.contains("[command.inputs[0].value_type]")));
-        assert!(errors
-            .iter()
-            .any(|e| e.contains("[command.inputs[0].sources]")));
+        assert!(error.contains("[project.name]"), "{error}");
+        assert!(error.contains("[command.inputs[0].value_type]"), "{error}");
+        assert!(error.contains("[command.inputs[0].sources]"), "{error}");
 
-        // Form stage: cross-answer rules over field-valid values accumulate
-        // too — an unsupported combination and a generated-flag collision.
-        let sheet = wizard_questionnaire().render_answer_sheet();
+        let sheet = questionnaire().render_answer_sheet();
         let sheet = fill(&sheet, "project.name", "demo");
         let sheet = fill(&sheet, "command.name", "greet");
         let sheet = fill(&sheet, "command.description", "Greet one value");
@@ -4216,32 +3540,24 @@ mod tests {
         let sheet = fill(&sheet, "command.inputs.value_type", "path");
         let sheet = fill(&sheet, "command.inputs.sources", "file");
         let sheet = duplicate_inputs_block(&sheet);
-        let sheet = fill_nth(&sheet, "command.inputs.name", "tag", 1);
-        let sheet = fill_nth(&sheet, "command.inputs.value_type", "string", 1);
+        let sheet = fill_nth(&sheet, "command.inputs.name", "document_file", 1);
+        let sheet = fill_nth(&sheet, "command.inputs.value_type", "path", 1);
         let sheet = fill_nth(&sheet, "command.inputs.sources", "argument", 1);
-        let mut sheet = duplicate_inputs_block(&sheet);
-        // The third block collides with the second's generated --tag flag.
-        for (id, value) in [
-            ("command.inputs.name", "tag"),
-            ("command.inputs.value_type", "string"),
-            ("command.inputs.sources", "argument"),
-        ] {
-            sheet = fill_nth(&sheet, id, value, 2);
-        }
 
         let errors = decode_sheet(&sheet).unwrap_err();
+        let error = errors.join("\n");
 
-        assert_eq!(errors.len(), 2, "unexpected diagnostics: {errors:?}");
-        assert!(errors
-            .iter()
-            .any(|e| e.contains("path inputs only support argument source")
-                && e.contains("command.inputs[0]")));
-        assert!(errors.iter().any(|e| e.contains("conflicts with input")));
+        assert!(
+            error.contains("path inputs only support argument source")
+                && error.contains("command.inputs[0]"),
+            "{error}"
+        );
+        assert!(error.contains("conflicts with input"), "{error}");
     }
 
     #[test]
     fn stale_fingerprint_rejects_with_regeneration_guidance() {
-        let sheet = wizard_questionnaire().render_answer_sheet();
+        let sheet = questionnaire().render_answer_sheet();
         let stale = sheet.replacen("#! fingerprint: sha256:", "#! fingerprint: sha256:00", 1);
 
         let errors = decode_sheet(&stale).unwrap_err();
@@ -4250,24 +3566,24 @@ mod tests {
         assert!(errors[0].contains("render a fresh answer sheet"));
     }
 
-    /// One minimal valid `hello-tool` sheet for source-equivalence tests.
-    fn minimal_sheet() -> String {
-        let sheet = wizard_questionnaire().render_answer_sheet();
-        let sheet = fill(&sheet, "project.name", "hello-tool");
-        let sheet = fill(&sheet, "command.name", "greet");
-        let sheet = fill(&sheet, "command.description", "Greet one value");
-        fill(&sheet, "command.inputs.name", "name")
-    }
-
     #[test]
     fn file_and_stdin_sheets_decode_to_identical_answers_and_specs() {
         let sheet = minimal_sheet();
         let dir = TempDir::new().unwrap();
         let path = dir.path().join("answers.txt");
         fs::write(&path, &sheet).unwrap();
+        let questionnaire = questionnaire();
 
-        let from_file = sheet_answers(&path).unwrap();
-        let from_stdin = stdin_sheet_answers(&standout_input::MockStdin::piped(&sheet)).unwrap();
+        let from_file_raw = questionnaire.read_answer_sheet_file(&path).unwrap();
+        let from_stdin_raw = questionnaire
+            .read_answer_sheet_stdin_with(&standout_input::MockStdin::piped(&sheet))
+            .unwrap();
+        let from_file =
+            NewProjectAnswers::from_raw_answers_with(&from_file_raw, new_project_form_rules)
+                .unwrap();
+        let from_stdin =
+            NewProjectAnswers::from_raw_answers_with(&from_stdin_raw, new_project_form_rules)
+                .unwrap();
 
         assert_eq!(from_file, from_stdin);
         assert_eq!(
@@ -4277,40 +3593,51 @@ mod tests {
     }
 
     #[test]
-    fn terminal_stdin_cannot_supply_an_answer_sheet() {
-        let errors = stdin_sheet_answers(&standout_input::MockStdin::terminal()).unwrap_err();
+    #[serial(prompt_responder)]
+    fn interactive_file_and_stdin_decode_to_identical_answers_and_specs() {
+        let sheet = minimal_sheet();
+        let dir = TempDir::new().unwrap();
+        let path = dir.path().join("answers.txt");
+        fs::write(&path, &sheet).unwrap();
+        let questionnaire = questionnaire();
 
-        assert_eq!(errors.len(), 1);
-        assert!(errors[0].contains("interactive terminal"));
-    }
+        let _guard = PromptResponderGuard::install([
+            PromptResponse::text("hello-tool"),
+            PromptResponse::Skip,
+            PromptResponse::text("greet"),
+            PromptResponse::text("Greet one value"),
+            PromptResponse::text("name"),
+            PromptResponse::Skip,
+            PromptResponse::Skip,
+            PromptResponse::Skip,
+            PromptResponse::Skip,
+            PromptResponse::Skip,
+            PromptResponse::Skip,
+        ]);
+        let interactive_raw = questionnaire.collect_interactive().unwrap();
+        let from_file_raw = questionnaire.read_answer_sheet_file(&path).unwrap();
+        let from_stdin_raw = questionnaire
+            .read_answer_sheet_stdin_with(&standout_input::MockStdin::piped(&sheet))
+            .unwrap();
 
-    #[test]
-    fn attended_confirmation_accepts_only_an_exact_yes() {
-        let confirmed = |reply: &str| {
-            confirm_attended(&mut ScriptedTerminal::from_replies([reply.to_string()])).unwrap()
-        };
+        let from_interactive =
+            NewProjectAnswers::from_raw_answers_with(&interactive_raw, new_project_form_rules)
+                .unwrap();
+        let from_file =
+            NewProjectAnswers::from_raw_answers_with(&from_file_raw, new_project_form_rules)
+                .unwrap();
+        let from_stdin =
+            NewProjectAnswers::from_raw_answers_with(&from_stdin_raw, new_project_form_rules)
+                .unwrap();
 
-        assert!(confirmed("yes"));
-        assert!(confirmed("  yes  "));
-        assert!(!confirmed("no"));
-        assert!(!confirmed("YES please"));
-        assert!(!confirmed(""));
-    }
-
-    #[test]
-    fn attended_end_of_input_is_a_rejection_not_consent() {
-        let mut terminal = ScriptedTerminal::from_replies(Vec::<String>::new());
-
-        assert!(!confirm_attended(&mut terminal).unwrap());
-    }
-
-    #[test]
-    fn missing_attended_terminal_fails_with_guidance() {
-        let error = confirm_attended(&mut ScriptedTerminal::absent()).unwrap_err();
-
-        let message = error.to_string();
-        assert!(message.contains("attended terminal"));
-        assert!(message.contains("--yes"));
-        assert!(message.contains("nothing was generated"));
+        assert_eq!(from_interactive, from_file);
+        assert_eq!(from_interactive, from_stdin);
+        let spec = ProjectSpec::from_answers(from_interactive).unwrap();
+        assert_eq!(spec, ProjectSpec::from_answers(from_file).unwrap());
+        assert_eq!(spec, ProjectSpec::from_answers(from_stdin).unwrap());
+        assert_eq!(
+            spec.inputs[0].sources,
+            vec![InputSource::Argument, InputSource::File, InputSource::Stdin,]
+        );
     }
 }
