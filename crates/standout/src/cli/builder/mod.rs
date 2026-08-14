@@ -753,14 +753,17 @@ impl AppBuilder {
     ///
     /// Walks the original args to determine which subcommand `--help` was
     /// requested for, then renders standout help for that command.
+    ///
+    /// The walk is the same lexical scan selection uses
+    /// ([`default_command::command_path`]), so the command a help request
+    /// targets is read the way the command a line means is read: option values
+    /// are option values, and the scan stops where the help request is.
     fn render_help_for_display_help_error(
         &self,
         cmd: &mut Command,
         args: &[String],
     ) -> HelpDisplay {
-        // Walk args (skip program name) to find the subcommand chain.
-        // Stop at the first arg that isn't a known subcommand or is a flag.
-        let subcommand_path = Self::extract_subcommand_path(cmd, args);
+        let subcommand_path = default_command::command_path(cmd, args);
 
         let config = HelpConfig {
             theme: self.theme.clone(),
@@ -774,34 +777,6 @@ impl AppBuilder {
 
         let keywords: Vec<&str> = subcommand_path.iter().map(|s| s.as_str()).collect();
         self.handle_help_request(cmd, &keywords, false, Some(config))
-    }
-
-    /// Extracts the subcommand chain from raw args by matching against known subcommands.
-    fn extract_subcommand_path(cmd: &Command, args: &[String]) -> Vec<String> {
-        let mut path = vec![];
-        let mut current_cmd = cmd.clone();
-
-        // Skip program name (first arg)
-        for arg_str in args.iter().skip(1) {
-            // Skip flags
-            if arg_str.starts_with('-') {
-                continue;
-            }
-
-            // Check if this arg is a known subcommand at the current level
-            let found = current_cmd
-                .get_subcommands()
-                .find(|s| s.get_name() == arg_str.as_str())
-                .cloned();
-
-            if let Some(sub) = found {
-                path.push(sub.get_name().to_string());
-                current_cmd = sub;
-            } else {
-                break;
-            }
-        }
-        path
     }
 
     /// Handles a request for specific help e.g. `help foo`

@@ -15,6 +15,13 @@
 //! that parse first and build dispatch state afterwards therefore see the same
 //! command a naked `run()` would have selected.
 //!
+//! The module also owns the lexical scan that ordering rests on, because more
+//! than resolution needs it: [`select`] reads one level — what does the token
+//! in command position name? — and [`command_path`] walks the whole chain for
+//! callers that need the command a line *targets*, help rendering among them.
+//! One scan, so an option's value, an alias, and a help request cannot be read
+//! one way for selection and another way for help.
+//!
 //! # Facts, not input
 //!
 //! [`DefaultCommandContext`] exposes only what is needed to choose a command:
@@ -223,6 +230,46 @@ pub(crate) fn select<'a>(cmd: &'a Command, args: &[String]) -> Selection<'a> {
     }
 
     Selection::Naked
+}
+
+/// Reads the whole command chain off the raw argument list, without parsing.
+///
+/// [`select`] answers one level; this walks them, descending into each command
+/// it names and reading the next level against *that* command's options.
+/// `myapp db migrate --help` yields `["db", "migrate"]`; a line that names
+/// nothing yields an empty path, which is the root.
+///
+/// Sharing the scan with [`select`] is the whole point. A walk that merely
+/// skipped anything starting with `-` would read an option's *value* as a
+/// command name — `myapp --output-file-path list --help` would render `list`'s
+/// help instead of the root's — and would stride straight past the help request
+/// that provoked the walk in the first place.
+///
+/// The command is built first so that global arguments declared on the root are
+/// visible at every level: `--output json` has to eat its value wherever it is
+/// written. Building is done on a copy, leaving the caller's command untouched.
+pub(crate) fn command_path(cmd: &Command, args: &[String]) -> Vec<String> {
+    let mut built = cmd.clone();
+    built.build();
+
+    let mut path = Vec::new();
+    let mut current = &built;
+    let mut rest = args;
+
+    while let Selection::Named { name, index } = select(current, rest) {
+        // `select` read this name off `current`, so the lookup answers; a
+        // graceful stop is still cheaper than an invariant that can panic.
+        let Some(sub) = find_subcommand(current, name) else {
+            break;
+        };
+        path.push(name.to_string());
+        current = sub;
+        // The name sits at `index`, so the next level starts after it. `index`
+        // is at least 1, which is what makes the walk terminate.
+        rest = &rest[index..];
+    }
+
+    path
 }
 
 /// Whether `cmd` still answers `--version` / `-V` itself.
@@ -505,6 +552,111 @@ mod tests {
                 name: "list",
                 index: 1
             }
+        );
+    }
+
+    // --- the whole command chain -------------------------------------------
+
+    /// A nested CLI with the two option shapes a naive scan gets wrong: a
+    /// global long option that takes a value, and a short one that takes a
+    /// value.
+    fn nested_cmd() -> Command {
+        Command::new("myapp")
+            .version("1.0")
+            .arg(
+                clap::Arg::new("out")
+                    .long("output")
+                    .global(true)
+                    .action(clap::ArgAction::Set),
+            )
+            .arg(
+                clap::Arg::new("file")
+                    .short('f')
+                    .action(clap::ArgAction::Set),
+            )
+            .subcommand(Command::new("list").alias("ls"))
+            .subcommand(Command::new("db").subcommand(Command::new("migrate")))
+    }
+
+    #[test]
+    fn the_chain_is_read_one_level_at_a_time() {
+        assert_eq!(
+            command_path(&nested_cmd(), &argv(&["myapp", "db", "migrate", "--help"])),
+            vec!["db".to_string(), "migrate".to_string()]
+        );
+    }
+
+    #[test]
+    fn a_chain_step_resolves_an_alias_to_its_command() {
+        assert_eq!(
+            command_path(&nested_cmd(), &argv(&["myapp", "ls", "--help"])),
+            vec!["list".to_string()]
+        );
+    }
+
+    #[test]
+    fn an_option_value_is_never_read_as_a_step_in_the_chain() {
+        // `--output list` names no command: `list` is the option's value, so
+        // the help request is the root's. A scan that only skipped tokens
+        // starting with `-` would answer `list` here.
+        assert!(command_path(
+            &nested_cmd(),
+            &argv(&["myapp", "--output", "list", "--help"])
+        )
+        .is_empty());
+
+        // The same for a short option that takes a value.
+        assert!(command_path(&nested_cmd(), &argv(&["myapp", "-f", "list", "--help"])).is_empty());
+
+        // An attached value leaves the token self-contained, so what follows is
+        // read as a command again.
+        assert_eq!(
+            command_path(
+                &nested_cmd(),
+                &argv(&["myapp", "--output=json", "list", "--help"])
+            ),
+            vec!["list".to_string()]
+        );
+    }
+
+    #[test]
+    fn a_global_option_keeps_its_value_at_every_level() {
+        // `--output` is declared on the root and reaches `db`, so `migrate` is
+        // its value and the help request is `db`'s — not `db migrate`'s.
+        assert_eq!(
+            command_path(
+                &nested_cmd(),
+                &argv(&["myapp", "db", "--output", "migrate", "--help"])
+            ),
+            vec!["db".to_string()]
+        );
+    }
+
+    #[test]
+    fn the_walk_stops_where_the_help_request_is() {
+        // Help was asked for before any command was named, so it is the root's;
+        // a scan that skipped flags would keep walking and answer `list`.
+        for args in [
+            &["myapp", "--help", "list"][..],
+            &["myapp", "-h", "list"][..],
+        ] {
+            assert!(
+                command_path(&nested_cmd(), &argv(args)).is_empty(),
+                "{args:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn nothing_after_the_escape_is_a_step_in_the_chain() {
+        assert!(command_path(&nested_cmd(), &argv(&["myapp", "--", "list", "--help"])).is_empty());
+    }
+
+    #[test]
+    fn a_word_that_names_nothing_ends_the_chain() {
+        assert_eq!(
+            command_path(&nested_cmd(), &argv(&["myapp", "db", "nope", "--help"])),
+            vec!["db".to_string()]
         );
     }
 

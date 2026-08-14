@@ -67,6 +67,12 @@ fn flat_app(help_word: bool) -> App {
 fn subcommand_command() -> Command {
     Command::new("app")
         .about("Subcommand app")
+        .arg(
+            Arg::new("file")
+                .short('f')
+                .action(ArgAction::Set)
+                .help("A file to read"),
+        )
         .subcommand(Command::new("list").about("List the things"))
 }
 
@@ -202,6 +208,65 @@ fn a_pager_request_rides_back_as_a_typed_success() {
     result.assert_success();
     assert_eq!(result.success_kind(), Some(SuccessKind::PagedHelp));
     result.assert_stdout_contains("USAGE");
+}
+
+// --- which command the help request targets ---------------------------------
+
+/// Root help carries the root's own `about`; a subcommand's help carries its
+/// own, so this tells the two renderings apart.
+fn assert_is_root_help(rendered: &str) {
+    assert!(
+        rendered.contains("Subcommand app"),
+        "expected the root's help, got:\n{rendered}"
+    );
+}
+
+#[test]
+#[serial]
+fn an_option_value_is_not_read_as_the_targeted_command() {
+    // `--output-file-path` takes a value, so `list` is that value and the help
+    // request is the root's. A walk that skipped every token starting with `-`
+    // and took the next word would render `list`'s help here.
+    let app = subcommand_app();
+    let args = ["app", "--output-file-path", "list", "--help"];
+
+    let dispatched = TestHarness::new().run(&app, subcommand_command(), args);
+    dispatched.assert_success();
+    assert_is_root_help(dispatched.stdout());
+    drop(dispatched);
+
+    // The two entry points share the walk, so they answer alike.
+    assert_is_root_help(&configured_help(&app, subcommand_command(), &args));
+}
+
+#[test]
+#[serial]
+fn a_short_option_value_is_not_read_as_the_targeted_command() {
+    let result = TestHarness::new().run(
+        &subcommand_app(),
+        subcommand_command(),
+        ["app", "-f", "list", "--help"],
+    );
+
+    result.assert_success();
+    assert_is_root_help(result.stdout());
+}
+
+#[test]
+#[serial]
+fn the_walk_stops_where_the_help_request_is() {
+    // Help was asked for before any command was named, so it is the root's; a
+    // walk that strode past the flag would answer `list`.
+    for flag in ["--help", "-h"] {
+        let result = TestHarness::new().run(
+            &subcommand_app(),
+            subcommand_command(),
+            ["app", flag, "list"],
+        );
+
+        result.assert_success();
+        assert_is_root_help(result.stdout());
+    }
 }
 
 // --- agreement between the two entry points --------------------------------
