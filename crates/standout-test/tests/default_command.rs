@@ -149,33 +149,24 @@ fn globals_survive_the_resolved_default() {
 
 #[test]
 #[serial]
-fn resolver_reads_root_matches_and_app_state() {
+fn resolver_reads_app_state() {
+    // Resolution happens before parsing, so the facts a resolver may consult
+    // are the ones that never went through Clap: app state, the stdin terminal
+    // fact, and the environment.
     struct Fallback(&'static str);
 
     let app = register(
         App::builder()
             .app_state(Fallback("add"))
-            .default_command_with(|ctx| {
-                if ctx.matches().get_flag("loud") {
-                    return Some("list".to_string());
-                }
-                ctx.app_state::<Fallback>().map(|f| f.0.to_string())
-            }),
+            .default_command_with(|ctx| ctx.app_state::<Fallback>().map(|f| f.0.to_string())),
     )
     .build()
     .unwrap();
 
-    let from_flag =
-        TestHarness::new()
-            .interactive_stdin()
-            .run(&app, app_command(), ["app", "--loud"]);
-    from_flag.assert_stdout_eq("list loud=true");
-    drop(from_flag);
-
-    let from_state = TestHarness::new()
+    let result = TestHarness::new()
         .interactive_stdin()
         .run(&app, app_command(), ["app"]);
-    from_state.assert_stdout_eq("add stdin= loud=false");
+    result.assert_stdout_eq("add stdin= loud=false");
 }
 
 // --- what resolution must never touch -------------------------------------
@@ -268,11 +259,11 @@ fn invalid_syntax_stays_a_clap_usage_error() {
 
     result.assert_error();
     result.assert_error_kind(RunErrorKind::ClapUsage);
-    assert_eq!(
-        calls.load(Ordering::SeqCst),
-        0,
-        "resolution runs only after a successful naked parse"
-    );
+    // Selection is name-first, so the resolver does answer for a line that will
+    // not parse — its answer is a function of the command name alone. What it
+    // must never do is change the diagnostic: Clap still reports the usage
+    // error from the single authoritative parse.
+    assert_eq!(calls.load(Ordering::SeqCst), 1);
 }
 
 // --- interaction with the static default ----------------------------------
@@ -480,6 +471,110 @@ fn get_matches_from_leaves_explicit_and_nested_commands_alone() {
             assert_eq!(name, "db");
             assert_eq!(sub.subcommand_name(), Some("migrate"));
         }
+        other => panic!("expected matches, got {other:?}"),
+    }
+}
+
+// --- name-first selection --------------------------------------------------
+
+#[test]
+#[serial]
+fn a_global_flag_before_the_command_does_not_make_the_line_naked() {
+    // Selection reads the token in *command position*, so options written
+    // ahead of the command are skipped rather than mistaken for its absence.
+    let calls = Arc::new(AtomicUsize::new(0));
+    let result = TestHarness::new().piped_stdin("would have meant add").run(
+        &counting_app(calls.clone()),
+        app_command(),
+        ["app", "--loud", "list"],
+    );
+
+    result.assert_success();
+    result.assert_stdout_eq("list loud=true");
+    assert_eq!(calls.load(Ordering::SeqCst), 0, "resolver must not run");
+}
+
+#[test]
+#[serial]
+fn a_required_subcommand_no_longer_blocks_the_default() {
+    // Selection inserts the default before Clap sees the line, so a root that
+    // requires a subcommand — what `#[command(subcommand)] command: Commands`
+    // produces — accepts a naked invocation.
+    let app = register(App::builder().default_command("list"))
+        .build()
+        .unwrap();
+
+    let result = TestHarness::new().interactive_stdin().run(
+        &app,
+        app_command().subcommand_required(true),
+        ["app"],
+    );
+
+    result.assert_success();
+    result.assert_stdout_eq("list loud=false");
+}
+
+#[test]
+#[serial]
+fn both_paths_select_the_same_command_for_a_flagged_line() {
+    let app = piped_aware_app();
+
+    let dispatched =
+        TestHarness::new()
+            .piped_stdin("data")
+            .run(&app, app_command(), ["app", "--loud", "list"]);
+    dispatched.assert_stdout_eq("list loud=true");
+    drop(dispatched);
+
+    with_stdin(MockStdin::piped("data"), || {
+        match app.get_matches_from(app_command(), ["app", "--loud", "list"]) {
+            HelpResult::Matches(m) => assert_eq!(m.subcommand_name(), Some("list")),
+            other => panic!("expected matches, got {other:?}"),
+        }
+    });
+}
+
+// --- the `help` word on a flat command -------------------------------------
+
+/// A flat root whose required group makes the injected `help` word unreachable
+/// under parse-first ordering: `app help` used to be `MissingRequiredArgument`.
+fn flat_required_command() -> Command {
+    Command::new("app")
+        .about("Flat app")
+        .arg(Arg::new("range"))
+        .arg(Arg::new("staged").long("staged").action(ArgAction::SetTrue))
+        .group(
+            clap::ArgGroup::new("target")
+                .args(["range", "staged"])
+                .required(true),
+        )
+}
+
+#[test]
+#[serial]
+fn the_help_word_is_answered_before_the_root_is_parsed() {
+    let app = App::builder()
+        .help_handling(true)
+        .help_word(true)
+        .build()
+        .unwrap();
+
+    match app.get_matches_from(flat_required_command(), ["app", "help"]) {
+        HelpResult::Help(h) => assert!(h.contains("Flat app"), "output:\n{h}"),
+        other => panic!("expected rendered help, got {other:?}"),
+    }
+}
+
+#[test]
+#[serial]
+fn a_flat_command_keeps_the_word_as_data_without_the_opt_in() {
+    let app = App::builder().help_handling(true).build().unwrap();
+
+    match app.get_matches_from(flat_required_command(), ["app", "help"]) {
+        HelpResult::Matches(m) => assert_eq!(
+            m.get_one::<String>("range").map(String::as_str),
+            Some("help")
+        ),
         other => panic!("expected matches, got {other:?}"),
     }
 }

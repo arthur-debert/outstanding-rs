@@ -223,21 +223,23 @@ The resolver receives a `DefaultCommandContext` exposing only the facts needed t
 
 | Method | Fact |
 | --- | --- |
-| `matches()` | The parsed root `ArgMatches` — globals and root flags |
 | `app_state::<T>()` | Read-only app state registered via `.app_state(...)` |
 | `stdin_is_terminal()` / `stdin_is_piped()` | Whether stdin is redirected |
+
+Plus `std::env` for env-derived facts, which never went through clap. There are deliberately no parse results here: resolution runs *before* parsing (see below), so there are none to hand it. A flag that decides which command a naked invocation means wants to be a command.
 
 **Stdin is never read during resolution.** The terminal check is the same non-consuming `StdinReader::is_terminal` seam the input system uses, so a handler's `InputChain` still consumes the pipe normally afterwards. This also means piped-but-empty stdin is a *pipe*, not a terminal — emptiness is only knowable by reading, which resolution never does. If empty input should be an error, that's the receiving command's `InputChain` policy, not the resolver's.
 
 ### Ordering guarantees
 
-Resolution runs only after Clap has already parsed a naked invocation successfully, so Clap stays authoritative:
+Selection is **name-first**: the token in command position is read as a name before anything is parsed. If it names a command, that is what the line means; only a line that names none takes a default command. Clap stays authoritative for everything after selection.
 
-- **Explicit and nested commands** short-circuit resolution — it never runs.
-- **`--help` / `--version`** short-circuit inside Clap before resolution is reached.
-- **Invalid syntax** stays a Clap usage error (exit 2); the resolver never sees it.
+- **Explicit and nested commands** are selected lexically — the resolver never runs, and the root's required arguments never fire before the name is understood.
+- **`--help` / `--version`** are not naked invocations: Clap answers them, and no default is inserted (otherwise `myapp --help` would render *that command's* help).
+- **Invalid syntax** stays a Clap usage error (exit 2), produced by the single authoritative parse. The resolver *does* run for such a line — its answer is a function of the command name alone — but its answer changes nothing about the diagnostic.
+- **`--`** ends the options and hands the rest to the positionals, so nothing after it can name a command.
 
-Note that a naked invocation only *reaches* resolution if it parses. With `#[command(subcommand)] command: Commands`, Clap rejects a bare `myapp` before Standout is involved — make the field `Option<Commands>` to let it through.
+Selection reads command names off your clap definition, so a command Clap does not know is not a name a line can mean. Because the default is inserted *before* Clap sees the line, a root that requires a subcommand — what `#[command(subcommand)] command: Commands` produces — accepts a naked invocation; the field does not have to be `Option<Commands>`. See [ADR-0018](../adr/0018-select-the-command-lexically-before-parsing.md).
 
 ### Combining both
 

@@ -303,13 +303,25 @@ impl AppBuilder {
         }
 
         // Augment command with framework-owned flags and questionnaire command surface.
-        let augmented_cmd = self.augment_command_for_dispatch(cmd.clone());
+        let augmented_cmd = self.augment_command_for_dispatch(cmd);
 
-        // Parse arguments. Clap's "errors" include `--help` and `--version`,
-        // which are successful display paths (stdout, exit 0). Real parse
-        // errors (unknown flag, missing required arg, etc.) get `use_stderr()
-        // == true` and should surface as `RunResult::Error` so they exit
-        // non-zero on stderr.
+        // Selection is name-first: a line that names no command may resolve to
+        // a default one — statically, or per-invocation via
+        // `default_command_with`. Both paths funnel through
+        // `resolve_default_command` so this one and `get_matches_from` agree.
+        let args = match self.resolve_default_command(&augmented_cmd, &args) {
+            Err(e) => {
+                return RunResult::Error(RunError::new(e.to_string(), RunErrorKind::DefaultCommand))
+            }
+            Ok(None) => args,
+            Ok(Some(default_cmd)) => insert_default_command(args, &default_cmd),
+        };
+
+        // One authoritative parse. Clap's "errors" include `--help` and
+        // `--version`, which are successful display paths (stdout, exit 0).
+        // Real parse errors (unknown flag, missing required arg, etc.) get
+        // `use_stderr() == true` and should surface as `RunResult::Error` so
+        // they exit non-zero on stderr.
         let matches = match augmented_cmd.try_get_matches_from(&args) {
             Ok(m) => m,
             Err(e) => {
@@ -323,40 +335,6 @@ impl AppBuilder {
                     _ => RunOutput::clap_help(e.to_string()),
                 };
                 return RunResult::Handled(output);
-            }
-        };
-
-        // A naked invocation may resolve to a default command — statically, or
-        // per-invocation via `default_command_with`. Both funnel through
-        // `resolve_default_command` so this path and `get_matches_from` agree.
-        let matches = match self.resolve_default_command(&cmd, &matches) {
-            Err(e) => {
-                return RunResult::Error(RunError::new(e.to_string(), RunErrorKind::DefaultCommand))
-            }
-            Ok(None) => matches,
-            Ok(Some(default_cmd)) => {
-                let new_args = insert_default_command(args, &default_cmd);
-
-                // Reparse with default command inserted
-                let augmented_cmd = self.augment_command_for_dispatch(cmd);
-                match augmented_cmd.try_get_matches_from(&new_args) {
-                    Ok(m) => m,
-                    Err(e) => {
-                        if e.use_stderr() {
-                            return RunResult::Error(RunError::new(
-                                e.to_string(),
-                                RunErrorKind::ClapUsage,
-                            ));
-                        }
-                        let output = match e.kind() {
-                            clap::error::ErrorKind::DisplayVersion => {
-                                RunOutput::clap_version(e.to_string())
-                            }
-                            _ => RunOutput::clap_help(e.to_string()),
-                        };
-                        return RunResult::Handled(output);
-                    }
-                }
             }
         };
 

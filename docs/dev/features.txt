@@ -173,13 +173,13 @@ Default Command Resolution (naked invocations):
   - .default_command(name): static default
   - .default_command_with(resolver): invocation-aware default
   - DefaultCommandContext: narrow resolver facts
-    - matches(): parsed root ArgMatches
     - app_state::<T>(): read-only app state
     - stdin_is_terminal() / stdin_is_piped(): non-consuming stdin fact
   - Resolver wins over the static default; None declines to it
   - Applies to dispatch_from/run/run_to_string and get_matches_from/parse_from
-  - Runs only after a successful naked parse; explicit/nested commands,
-    help, version, and usage errors are never affected
+  - Name-first: the token in command position is read as a name before
+    parsing; explicit/nested commands and root help/version are never
+    affected, and Clap still owns the usage error (ADR-0018)
 
 Dispatch Derive Macro:
   - #[derive(Dispatch)]: generate dispatch from clap Subcommand enums
@@ -250,6 +250,10 @@ HELP SYSTEM
 -----------
 
 Help Rendering:
+  - .help_handling(true): standout renders help instead of clap
+  - .help_word(true): opt a flat CLI with positionals into the bare `help`
+    word (installed automatically for CLIs with subcommands and for flat
+    CLIs with no positionals)
   - render_help(): render styled help for clap command
   - render_help_with_topics(): help with "Learn More" section
   - HelpConfig: help rendering configuration

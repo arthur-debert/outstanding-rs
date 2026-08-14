@@ -8,15 +8,15 @@ use clap::ArgMatches;
 /// Extracts the command path from ArgMatches by following the subcommand chain.
 ///
 /// For example, `myapp db migrate` produces `["db", "migrate"]`.
+///
+/// No name is privileged. A word the caller answers for itself — a framework
+/// rendering its own `help`, say — never reaches these matches; a command
+/// merely *called* `help` is a command like any other and is returned as one.
 pub fn extract_command_path(matches: &ArgMatches) -> Vec<String> {
     let mut path = Vec::new();
     let mut current = matches;
 
     while let Some((name, sub)) = current.subcommand() {
-        // Skip "help" as it's handled separately
-        if name == "help" {
-            break;
-        }
         path.push(name.to_string());
         current = sub;
     }
@@ -31,24 +31,22 @@ pub fn extract_command_path(matches: &ArgMatches) -> Vec<String> {
 pub fn get_deepest_matches(matches: &ArgMatches) -> &ArgMatches {
     let mut current = matches;
 
-    while let Some((name, sub)) = current.subcommand() {
-        if name == "help" {
-            break;
-        }
+    while let Some((_, sub)) = current.subcommand() {
         current = sub;
     }
 
     current
 }
 
-/// Returns true if the matches contain a subcommand (excluding "help").
+/// Returns true if a subcommand was selected.
 ///
-/// Used to detect "naked" CLI invocations where no command was specified.
+/// Note that this reads a *parse result*, so it cannot answer "was this
+/// invocation naked?" for a line that does not parse — a root with required
+/// arguments rejects the line before this can be asked. Deciding that question
+/// for such a root means reading the command name off the raw arguments
+/// instead.
 pub fn has_subcommand(matches: &ArgMatches) -> bool {
-    matches
-        .subcommand()
-        .map(|(name, _)| name != "help")
-        .unwrap_or(false)
+    matches.subcommand().is_some()
 }
 
 /// Inserts a command name at position 1 (after program name) in the argument list.
@@ -139,13 +137,16 @@ mod tests {
     }
 
     #[test]
-    fn test_has_subcommand_help_excluded() {
+    fn test_no_name_is_privileged() {
+        // A command merely called `help` dispatches like any other; the word is
+        // only special where its caller answers it before dispatch.
         let cmd = Command::new("app")
             .disable_help_subcommand(true)
             .subcommand(Command::new("help"));
 
         let matches = cmd.try_get_matches_from(["app", "help"]).unwrap();
-        assert!(!has_subcommand(&matches));
+        assert!(has_subcommand(&matches));
+        assert_eq!(extract_command_path(&matches), vec!["help"]);
     }
 
     #[test]

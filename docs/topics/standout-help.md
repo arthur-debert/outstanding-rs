@@ -16,13 +16,43 @@ App::builder()
 
 When enabled, standout:
 
-1. Disables clap's default `help` subcommand and `--help`/`-h` flag
-2. Registers its own `help` subcommand (with `--page` for pager support) and a custom `--help`/`-h` flag
-3. Intercepts all help requests (`help`, `--help`, `-h` — at root and subcommand level) and renders them through a MiniJinja template with style tags
+1. Disables clap's default `help` subcommand and registers its own (with `--page` for pager support), subject to the [install policy](#the-help-word) below
+2. **Keeps** clap's native `--help`/`-h` flag, on purpose: clap's flag short-circuits argument validation, so `myapp build --help` renders even when required arguments are missing
+3. Intercepts all help requests and renders them through a MiniJinja template with style tags — the `help` word before parsing, and clap's `DisplayHelp` (from `--help`/`-h`, at root and subcommand level) after
 
-All three invocation forms produce identical output. Subcommand-level help (e.g. `myapp build --help`) also works, rendering that subcommand's help through standout.
+Every form that is available produces identical output. Subcommand-level help (e.g. `myapp build --help`) also works, rendering that subcommand's help through standout.
 
-**Required for features:** `command_groups` and topics require `help_handling(true)`. If you configure either without it, `build()` will panic.
+**Required for features:** `command_groups` and topics require `help_handling(true)`. If you configure either without it, `build()` returns a `SetupError`.
+
+## The `help` Word
+
+`--help` and `-h` are flags: they are always available and can never collide with your data. A bare `help` is different — at the root of a CLI with no subcommands, a bare word is *data*. `echo help`, `grep help`, and `ls help` all treat it as such, and a tool whose positional is a revision range or a file name would be wrong to swallow it.
+
+So standout only installs the word where it knows nothing else can claim it:
+
+| Root shape | `help` word |
+| --- | --- |
+| Has subcommands | Installed — a bare word there is already a command |
+| Flat, no positionals | Installed — nothing to collide with |
+| Flat, with positionals | **Opt-in only** — see below |
+
+For the third shape, only your application knows whether its positional domain excludes the word. Opt in with `.help_word(true)`:
+
+```rust
+// `mytool <RANGE>` — a revision range is never the word "help".
+App::builder()
+    .help_handling(true)
+    .help_word(true)
+    .build()?;
+```
+
+Opting in accepts the cost: the literal word `help` can no longer reach the positional, and `--` becomes the escape for it — `mytool -- help` passes the string through. Without the opt-in, `--help` / `-h` remain the only spelling, and they still render themed help.
+
+`help_word(true)` only ever *adds* the word; it is not a way to suppress `help` on a CLI that has subcommands. It requires `help_handling(true)` — the word is standout's own subcommand, so `build()` returns a `SetupError` without interception.
+
+### Why the word is reachable at all
+
+Standout decides which command a line means **before** parsing it: if the token in command position names a command, that command is what the line means. That ordering is what makes the word work on a flat CLI with required arguments. If the line were parsed first, the root's requirements would fire before anything could decide that `help` meant the help command, and the word would be advertised in help output while being impossible to run. The word's own arguments (`myapp help topics`, `myapp help --page`, `myapp help --output text`) are still parsed; the root's are not, because `help` was never an invocation of the root. See [ADR-0018](../adr/0018-select-the-command-lexically-before-parsing.md).
 
 ## Styling User-Provided Strings
 

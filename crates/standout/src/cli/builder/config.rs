@@ -326,10 +326,11 @@ impl AppBuilder {
 
     /// Sets a default command to use when no subcommand is specified.
     ///
-    /// When the CLI is invoked without a subcommand (a "naked" invocation),
-    /// the default command is automatically inserted and the arguments are reparsed.
-    /// This applies to both the integrated dispatch path (`run` / `dispatch_from`
-    /// / `run_to_string`) and configured parsing (`parse_from` / `get_matches_from`).
+    /// When the token in command position names no command (a "naked"
+    /// invocation), the default command is inserted before the arguments are
+    /// parsed. This applies to both the integrated dispatch path (`run` /
+    /// `dispatch_from` / `run_to_string`) and configured parsing (`parse_from`
+    /// / `get_matches_from`).
     ///
     /// For a default that varies per invocation, see
     /// [`default_command_with`](Self::default_command_with); it is consulted
@@ -359,15 +360,16 @@ impl AppBuilder {
 
     /// Chooses the default command per invocation instead of using one fixed name.
     ///
-    /// The resolver runs only for a naked invocation that Clap already parsed
-    /// successfully, and only after explicit commands, nested commands, help,
-    /// and version have had their say — so it can never override them, and
-    /// invalid syntax stays a Clap usage error the resolver never sees.
+    /// The resolver runs only for a naked invocation — one whose command
+    /// position names no command — and only after explicit commands, nested
+    /// commands, and root help or version have had their say, so it can never
+    /// override them. Selection happens before parsing, so invalid syntax still
+    /// stays a Clap usage error the resolver cannot influence.
     ///
     /// It receives a [`DefaultCommandContext`](crate::cli::DefaultCommandContext)
-    /// exposing the parsed root matches, read-only app state, and whether stdin
-    /// is a terminal. Stdin is never read during resolution, so a handler's
-    /// `InputChain` still consumes the pipe normally.
+    /// exposing read-only app state and whether stdin is a terminal — no parse
+    /// results, since there are none yet. Stdin is never read during
+    /// resolution, so a handler's `InputChain` still consumes the pipe normally.
     ///
     /// Return `Some(name)` to select a command or `None` to decline, which falls
     /// back to [`default_command`](Self::default_command) if one is set. Both
@@ -512,6 +514,43 @@ impl AppBuilder {
     /// ```
     pub fn help_handling(mut self, enabled: bool) -> Self {
         self.help_handling = enabled;
+        self
+    }
+
+    /// Opts a flat CLI with positionals into the bare `help` word.
+    ///
+    /// Standout installs `help` on its own for the shapes where the word cannot
+    /// mean anything else: a CLI that has subcommands, and a flat CLI with no
+    /// positionals. A flat CLI *with* positionals is the one shape only the
+    /// application can decide — at the root of such a CLI a bare word is data
+    /// (`echo help`, `grep help`), so reserving `help` out of that namespace is
+    /// a domain judgement.
+    ///
+    /// Opting in accepts the cost: the literal word `help` can no longer reach
+    /// the positional, and `--` becomes the escape for it (`myapp -- help`).
+    /// Without the opt-in, `--help` / `-h` remain the only spelling and still
+    /// render themed help.
+    ///
+    /// This only ever *adds* the word — `false` is the default policy above,
+    /// not a way to suppress `help` on a CLI that has subcommands.
+    ///
+    /// # Errors
+    ///
+    /// `build()` returns `SetupError::Config` if this is set without
+    /// [`help_handling`](Self::help_handling): the `help` word is standout's
+    /// own subcommand, so there is nothing to install without interception.
+    ///
+    /// # Example
+    ///
+    /// ```rust,ignore
+    /// // `mytool <RANGE>` — a revision range is never the word "help".
+    /// App::builder()
+    ///     .help_handling(true)
+    ///     .help_word(true)
+    ///     .build()?;
+    /// ```
+    pub fn help_word(mut self, enabled: bool) -> Self {
+        self.help_word = enabled;
         self
     }
 }
