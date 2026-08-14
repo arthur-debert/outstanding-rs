@@ -254,6 +254,9 @@ Help Rendering:
   - .help_word(true): opt a flat CLI with positionals into the bare `help`
     word (installed automatically for CLIs with subcommands and for flat
     CLIs with no positionals)
+  - Same policy and rendering on both parse paths: dispatch_from/run/
+    run_to_string and get_matches_from/parse_from; `--page` is honored by
+    the printing entry points and typed back to the capturing ones
   - render_help(): render styled help for clap command
   - render_help_with_topics(): help with "Learn More" section
   - HelpConfig: help rendering configuration

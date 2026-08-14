@@ -497,6 +497,11 @@ impl AppBuilder {
     /// `-h`) and renders its own themed help instead of clap's default. This is
     /// required for `command_groups` and topics to work.
     ///
+    /// Interception is a property of the configuration, not of the entry point:
+    /// `dispatch_from` / `run` / `run_to_string` and `get_matches_from` /
+    /// `parse_from` answer help identically, under the same install policy for
+    /// the [`help` word](Self::help_word).
+    ///
     /// Disabled by default — clap's built-in help is used unless you opt in.
     ///
     /// # Errors

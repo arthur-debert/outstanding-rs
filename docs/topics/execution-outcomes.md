@@ -58,6 +58,10 @@ assert_eq!(result.error_kind(), None);
 
 `RunOutput` and `RunError` dereference to `str`, implement `Display`, and expose
 `as_str()` / `into_string()` for callers that used the tuple payloads as text.
+`RunOutput::kind()` names a success the same way: `Command` for a handler's
+output, `ClapHelp` / `ClapVersion` for a help or version display, and
+`PagedHelp` for a `help --page` display — the text is identical, but the kind
+tells a printing caller the user asked for a pager.
 `RunError::kind()` identifies `ClapUsage`, `Handler`, `Hook(phase)`, `Render`, or
 `FinalWrite(Text|Binary|Artifact)`. `External` identifies the narrow
 application-declared external path; its `exit_status()` is the exact declared
@@ -73,7 +77,10 @@ command and its eventual status.
 ## Framework-owned final writes
 
 `run()` writes successful text and binary bytes to stdout, diagnostics to
-stderr, and exits with the typed non-zero status when execution fails. A closed
+stderr, and exits with the typed non-zero status when execution fails. The one
+exception is a paged help display (`SuccessKind::PagedHelp`), which goes to the
+pager instead; if no pager is available it falls back to stdout, so help is
+never lost. A closed
 downstream pipe is not an error only for final rendered command text:
 `BrokenPipe` there means the consumer stopped reading early. Binary stdout
 writes and artifact report writes keep their typed final-write failures. The

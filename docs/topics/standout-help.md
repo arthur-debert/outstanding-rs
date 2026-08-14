@@ -24,6 +24,12 @@ Every form that is available produces identical output. Subcommand-level help (e
 
 **Required for features:** `command_groups` and topics require `help_handling(true)`. If you configure either without it, `build()` returns a `SetupError`.
 
+### Whichever entry point you use
+
+Help is answered the same way through both parse paths — `run()` / `run_to_string()` / `dispatch_from()` and `get_matches_from()` / `parse_from()`. Same install policy for the word, same interception of `--help` / `-h`, same rendering: an application's entry point is not a fact about what `myapp help` means.
+
+The one thing the two paths cannot share is `--page`, because paging is a terminal side effect and only a *printing* entry point may perform it. `run()` and `parse_from()` hand the text to the pager; the capture APIs return it instead — `run_to_string()` marks it `SuccessKind::PagedHelp`, `get_matches_from()` returns `HelpResult::PagedHelp` — and leave the decision to you.
+
 ## The `help` Word
 
 `--help` and `-h` are flags: they are always available and can never collide with your data. A bare `help` is different — at the root of a CLI with no subcommands, a bare word is *data*. `echo help`, `grep help`, and `ls help` all treat it as such, and a tool whose positional is a revision range or a file name would be wrong to swallow it.
@@ -339,8 +345,10 @@ Style tags like `[header]...[/header]` are resolved against the theme. Unknown t
 
 ## Output Modes
 
-Help respects the `--output` flag. In `Text` mode, style tags are stripped. In `Json` mode, the `HelpData` struct is serialized directly. This means help output is machine-readable when needed:
+Help respects the `--output` flag, but only as far as *styling*. Help is always the rendered template; the mode decides what happens to its style tags — applied in `Term`, stripped in `Text`, left visible as `[header]…[/header]` in `TermDebug`:
 
 ```bash
-myapp help --output json
+myapp help --output text
 ```
+
+The structured modes (`json`, `yaml`, `xml`, `csv`) strip the tags exactly as `Text` does. None of them serializes `HelpData`, so help is themed prose in every mode, not a machine-readable document. If you need help as data, render it yourself: `HelpData` is what a [custom template](#custom-templates) receives, and a template that emits JSON is the seam for it.
