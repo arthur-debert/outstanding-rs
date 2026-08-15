@@ -19,7 +19,7 @@ Trust in the system requires that we cannot rely on manual verification. We must
 
 ## 2. Core Pillars
 
-To manage this complexity, we adhere to three core pillars:
+To manage this complexity, we adhere to four core pillars:
 
 ### I. Configuration Safety (Type-Driven Design)
 
@@ -45,6 +45,14 @@ To manage this complexity, we adhere to three core pillars:
 - **Rule**: Every new configuration option must be added to the `Arbitrary` generation strategy in `tests/property_rendering.rs`.
 - **Rule**: Use **Property-Based Testing** (`proptest`) to verify invariants across the entire configuration matrix (e.g., "Rendering never panics", "JSON output is always valid JSON").
 - **Rule**: Use **Snapshot Testing** (`insta`) to catch visual regressions in terminal output.
+
+### IV. One Parser
+
+**Principle**: The command line is classified by the parser library, never by hand.
+
+- **Rule**: Never inspect raw `argv` to decide what a token is. Options, option values, `--`, short clusters, aliases, and command names are Clap's to distinguish; Standout reads `ArgMatches` and Clap's typed `ErrorKind`.
+- **Rule**: When a parse refuses a line you need to understand, change the `Command` declaration — not the reading of the input. Reaching for a tokenizer means the command is declared wrong.
+- **Rule**: Branch on `clap::error::ErrorKind`, never on an error's message text.
 
 ## 3. Architecture Guide
 

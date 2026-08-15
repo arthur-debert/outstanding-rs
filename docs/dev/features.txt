@@ -173,13 +173,15 @@ Default Command Resolution (naked invocations):
   - .default_command(name): static default
   - .default_command_with(resolver): invocation-aware default
   - DefaultCommandContext: narrow resolver facts
+    - matches(): parsed root ArgMatches
     - app_state::<T>(): read-only app state
     - stdin_is_terminal() / stdin_is_piped(): non-consuming stdin fact
   - Resolver wins over the static default; None declines to it
   - Applies to dispatch_from/run/run_to_string and get_matches_from/parse_from
-  - Name-first: the token in command position is read as a name before
-    parsing; explicit/nested commands and root help/version are never
-    affected, and Clap still owns the usage error (ADR-0018)
+  - Clap classifies the line; a parse selecting no subcommand is naked and
+    takes the default. A refused line is offered to the default too, so a
+    root that requires a subcommand still accepts a naked invocation
+    (ADR-0018)
 
 Dispatch Derive Macro:
   - #[derive(Dispatch)]: generate dispatch from clap Subcommand enums

@@ -1,12 +1,12 @@
 //! Themed help on the `run()` path, on the same terms as `get_matches_from`.
 //!
-//! The motivating application for name-first selection enters through `run()`,
-//! so every form of help has to work there: the `help` word under the same
-//! install policy, `--help` / `-h` through Clap's short-circuit, the word's own
+//! The motivating application for the `help` word enters through `run()`, so
+//! every form of help has to work there: the word under the same install
+//! policy, `--help` / `-h` through Clap's short-circuit, the word's own
 //! arguments, and the pager request. Two entry points that disagree about what
-//! `myapp help` means would be the same defect the ordering change removed,
-//! one layer down — so the tests that matter here assert *agreement*, not just
-//! that something was rendered.
+//! `myapp help` means would be the reported defect one layer down — so the
+//! tests that matter here assert *agreement*, not just that something was
+//! rendered.
 //!
 //! `USAGE` is the discriminator throughout: standout's template renders the
 //! section header uppercase, while Clap's own help says `Usage:`.
@@ -199,10 +199,10 @@ fn the_help_word_honours_the_output_flag_through_run() {
 #[serial]
 fn the_output_flag_reaches_the_word_but_not_the_flags() {
     // A documented asymmetry (`docs/topics/standout-help.md`), pinned so the
-    // doc cannot go stale quietly: the word is answered from its own arm, which
-    // parses the root's globals, while `--help` short-circuits inside clap
-    // before anything is parsed — so its render has no mode to honour and falls
-    // back to `Auto`.
+    // doc cannot go stale quietly: the word is a subcommand, so clap parses its
+    // line in full, globals included, while `--help` short-circuits before the
+    // parse completes — so its render has no mode to honour and falls back to
+    // `Auto`.
     let app = flat_app(true);
 
     let word = TestHarness::new().no_color().run(

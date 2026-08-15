@@ -150,9 +150,8 @@ fn globals_survive_the_resolved_default() {
 #[test]
 #[serial]
 fn resolver_reads_app_state() {
-    // Resolution happens before parsing, so the facts a resolver may consult
-    // are the ones that never went through Clap: app state, the stdin terminal
-    // fact, and the environment.
+    // App state is a fact the resolver may consult alongside the root matches
+    // and the stdin terminal fact.
     struct Fallback(&'static str);
 
     let app = register(
@@ -259,10 +258,11 @@ fn invalid_syntax_stays_a_clap_usage_error() {
 
     result.assert_error();
     result.assert_error_kind(RunErrorKind::ClapUsage);
-    // Selection is name-first, so the resolver does answer for a line that will
-    // not parse — its answer is a function of the command name alone. What it
-    // must never do is change the diagnostic: Clap still reports the usage
-    // error from the single authoritative parse.
+    // A refused line is offered to the default command, so the resolver does
+    // answer here: Clap's probe finds no command in `app --nonexistent`, the
+    // default is substituted, and the amended line is parsed. What that must
+    // never do is turn a usage error into something else — the diagnostic is
+    // still Clap's, from the parse of the line that was actually run.
     assert_eq!(calls.load(Ordering::SeqCst), 1);
 }
 
@@ -475,13 +475,13 @@ fn get_matches_from_leaves_explicit_and_nested_commands_alone() {
     }
 }
 
-// --- name-first selection --------------------------------------------------
+// --- what Clap classifies, resolution does not second-guess ----------------
 
 #[test]
 #[serial]
 fn a_global_flag_before_the_command_does_not_make_the_line_naked() {
-    // Selection reads the token in *command position*, so options written
-    // ahead of the command are skipped rather than mistaken for its absence.
+    // Clap reads the option and still selects `list`, so the line is not naked
+    // and resolution never runs.
     let calls = Arc::new(AtomicUsize::new(0));
     let result = TestHarness::new().piped_stdin("would have meant add").run(
         &counting_app(calls.clone()),
@@ -497,9 +497,9 @@ fn a_global_flag_before_the_command_does_not_make_the_line_naked() {
 #[test]
 #[serial]
 fn a_required_subcommand_no_longer_blocks_the_default() {
-    // Selection inserts the default before Clap sees the line, so a root that
-    // requires a subcommand — what `#[command(subcommand)] command: Commands`
-    // produces — accepts a naked invocation.
+    // Clap refuses the naked line, the default is substituted, and the amended
+    // line parses — so a root that requires a subcommand, which is what
+    // `#[command(subcommand)] command: Commands` produces, accepts one.
     let app = register(App::builder().default_command("list"))
         .build()
         .unwrap();
@@ -537,7 +537,8 @@ fn both_paths_select_the_same_command_for_a_flagged_line() {
 // --- the `help` word on a flat command -------------------------------------
 
 /// A flat root whose required group makes the injected `help` word unreachable
-/// under parse-first ordering: `app help` used to be `MissingRequiredArgument`.
+/// unreachable until the declaration says otherwise: `app help` used to be
+/// `MissingRequiredArgument`.
 fn flat_required_command() -> Command {
     Command::new("app")
         .about("Flat app")
@@ -552,7 +553,7 @@ fn flat_required_command() -> Command {
 
 #[test]
 #[serial]
-fn the_help_word_is_answered_before_the_root_is_parsed() {
+fn the_help_word_is_reachable_on_a_root_that_requires_arguments() {
     let app = App::builder()
         .help_handling(true)
         .help_word(true)

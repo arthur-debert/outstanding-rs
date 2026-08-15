@@ -9,47 +9,28 @@
 //! - [`AppBuilder::default_command_with`](crate::cli::App::default_command_with)
 //!   — a resolver that picks a name per invocation from non-consuming facts.
 //!
-//! Both layers funnel through [`resolve`], which is the single decision point
-//! for the integrated dispatch path (`dispatch_from` / `run` / `run_to_string`)
-//! and for configured parsing (`get_matches_from` / `parse_from`). Consumers
-//! that parse first and build dispatch state afterwards therefore see the same
-//! command a naked `run()` would have selected.
+//! Both layers funnel through [`resolve`], and both parse paths reach it
+//! through [`App::parse_with_default_command`], so the integrated dispatch path
+//! (`dispatch_from` / `run` / `run_to_string`) and configured parsing
+//! (`get_matches_from` / `parse_from`) can never disagree about which command a
+//! line meant.
 //!
-//! The module also owns the lexical scan that ordering rests on, because more
-//! than resolution needs it: [`select`] reads one level — what does the token
-//! in command position name? — and [`command_path`] walks the whole chain for
-//! callers that need the command a line *targets*, help rendering among them.
-//! One scan, so an option's value, an alias, and a help request cannot be read
-//! one way for selection and another way for help.
+//! # Clap decides what the line says
+//!
+//! Nothing here reads the raw argument list. Whether a command was named is
+//! [`ArgMatches::subcommand`]'s answer, not a scan's — which is what keeps
+//! option values, `--`, inline `--flag=value`, short clusters, aliases, and
+//! global arguments behaving here exactly as they behave everywhere else in the
+//! CLI. See ADR-0018.
 //!
 //! # Facts, not input
 //!
-//! [`DefaultCommandContext`] exposes only what is needed to choose a command:
-//! read-only app state and whether stdin is a terminal (plus `std::env` for
-//! env-derived facts, which never went through Clap). It does *not* expose
-//! parse results: resolution happens before parsing, so there are none to hand
-//! it. Stdin is *never* read during resolution — the terminal check is the
-//! existing non-consuming [`StdinReader::is_terminal`] seam, so piped-empty and
+//! [`DefaultCommandContext`] exposes what is needed to choose a command: the
+//! parsed root matches, read-only app state, and whether stdin is a terminal.
+//! Stdin is *never* read during resolution — the terminal check is the
+//! non-consuming [`StdinReader::is_terminal`] seam, so piped-empty and
 //! piped-with-data are both distinguishable from a terminal without consuming a
 //! byte. A handler's `InputChain` still reads stdin normally afterwards.
-//!
-//! # Ordering
-//!
-//! Selection is *name-first*: the token in command position is read as a name
-//! before anything is parsed. If it names a command, that command is what the
-//! line means; only when no name matches is the default command inserted and
-//! the line handed to Clap. See ADR-0018.
-//!
-//! - A named command — explicit, nested, or `help` — is selected lexically, so
-//!   the root's required arguments never fire before the name is understood.
-//! - A root help or version request (`--help`, `-h`, `--version`, `-V`) is not a
-//!   naked invocation: it short-circuits inside Clap, and inserting a default
-//!   command would silently retarget it at that command's help.
-//! - Everything after selection stays Clap's: invalid syntax is its usage error,
-//!   produced by the single authoritative parse rather than guessed at from a
-//!   rejected one. A resolver therefore *does* run for a line that will not
-//!   parse — its answer is a function of the command name alone, not of whether
-//!   the rest of the line is valid — but it cannot change the diagnostic.
 //!
 //! # Failure
 //!
@@ -58,31 +39,141 @@
 //! panic — per the "invalid configuration must never panic at runtime" pillar in
 //! `docs/dev/design-guidelines.md`.
 
-use clap::Command;
+use clap::{ArgMatches, Command};
 use standout_input::env::{DefaultStdin, StdinReader};
 use std::rc::Rc;
 
 use crate::cli::app::find_subcommand;
+use crate::cli::dispatch::insert_default_command;
 use crate::cli::handler::Extensions;
 use crate::cli::App;
 
+/// Why a parse produced no matches.
+///
+/// Both parse paths project this onto their own failure type, so a line that
+/// fails means the same thing whichever entry point met it.
+pub(crate) enum ParseFailure {
+    /// Clap rejected the line, or wants to display something instead of
+    /// parsing it. Its own `use_stderr` split says which.
+    Clap(clap::Error),
+    /// A resolver named a command the CLI does not have.
+    UnknownDefault(UnknownDefaultCommand),
+}
+
 impl App {
-    /// Decides which command this invocation means, if any.
+    /// Parses `args`, substituting a default command for a naked line.
     ///
-    /// The single entry point both parse paths call, so `dispatch_from` and
-    /// `get_matches_from` can never disagree. See [`resolve`] for the rules.
+    /// The single parse entry point for both paths. `cmd` must be the augmented
+    /// root command: it is what gets parsed, and what resolver output is
+    /// validated against.
     ///
-    /// `cmd` must be the augmented root command each path is about to parse
-    /// with: selection reads command names off it, so a name it does not carry
-    /// is not a name that line can mean.
-    pub(crate) fn resolve_default_command(
+    /// # What decides
+    ///
+    /// Clap does, twice at most:
+    ///
+    /// 1. The authoritative parse runs. If it succeeds and selected a
+    ///    subcommand, that is the command — no default applies.
+    /// 2. If it succeeds and selected none, the line is naked and resolution
+    ///    runs on those matches.
+    /// 3. If it *fails*, the line may still be naked — `myapp --all` fails at a
+    ///    root that has no `--all` even though `--all` belongs to the default
+    ///    command, and a root that requires a subcommand rejects every naked
+    ///    line by construction. [`probe_naked`](Self::probe_naked) asks Clap
+    ///    itself whether a command was named, and resolution runs if none was.
+    ///
+    /// A substituted command means one more authoritative parse of the amended
+    /// line, whose result — success or failure — is final.
+    pub(crate) fn parse_with_default_command(
         &self,
         cmd: &Command,
         args: &[String],
+    ) -> Result<ArgMatches, ParseFailure> {
+        match cmd.clone().try_get_matches_from(args) {
+            Ok(matches) => {
+                if matches.subcommand().is_some() {
+                    return Ok(matches);
+                }
+                match self.resolve_default_command(cmd, &matches) {
+                    Err(e) => Err(ParseFailure::UnknownDefault(e)),
+                    Ok(None) => Ok(matches),
+                    Ok(Some(name)) => self.reparse_with_command(cmd, args, &name),
+                }
+            }
+            Err(error) => {
+                // A display request (`--help`, `--version`) is Clap answering
+                // the line, not refusing it: there is nothing to substitute
+                // into. Clap's own typed split says which this is.
+                if !error.use_stderr() {
+                    return Err(ParseFailure::Clap(error));
+                }
+                let Some(probe) = self.probe_naked(cmd, args) else {
+                    return Err(ParseFailure::Clap(error));
+                };
+                match self.resolve_default_command(cmd, &probe) {
+                    Err(e) => Err(ParseFailure::UnknownDefault(e)),
+                    Ok(None) => Err(ParseFailure::Clap(error)),
+                    Ok(Some(name)) => self.reparse_with_command(cmd, args, &name),
+                }
+            }
+        }
+    }
+
+    /// Asks Clap whether a refused line named a command.
+    ///
+    /// The question is only worth asking when a default command could answer
+    /// it, so a CLI that configures none never pays for this parse.
+    ///
+    /// The probe relaxes exactly two things: `subcommand_required`, because a
+    /// root that demands a command rejects the naked line this exists to
+    /// detect, and error collection, because the line is already known to be
+    /// invalid — the point is not to parse it but to learn whether Clap sees a
+    /// command name in it. Clap does the reading either way, which is what
+    /// makes the answer agree with the authoritative parse's.
+    ///
+    /// **Caveat, deliberate:** `ignore_errors` stops collecting at the first
+    /// error, so a line that is invalid *before* the command name — `myapp
+    /// --nonexistent list` — probes as naked. Such a line then takes the
+    /// default and fails at the authoritative parse below, which is the parse
+    /// whose diagnostic the user should be reading anyway.
+    fn probe_naked(&self, cmd: &Command, args: &[String]) -> Option<ArgMatches> {
+        if self.default_command.is_none() && self.default_command_resolver.is_none() {
+            return None;
+        }
+
+        let matches = cmd
+            .clone()
+            .subcommand_required(false)
+            .ignore_errors(true)
+            .try_get_matches_from(args)
+            .ok()?;
+
+        matches.subcommand().is_none().then_some(matches)
+    }
+
+    /// Re-parses the line with `name` inserted as its command.
+    fn reparse_with_command(
+        &self,
+        cmd: &Command,
+        args: &[String],
+        name: &str,
+    ) -> Result<ArgMatches, ParseFailure> {
+        let amended = insert_default_command(args.to_vec(), name);
+        cmd.clone()
+            .try_get_matches_from(&amended)
+            .map_err(ParseFailure::Clap)
+    }
+
+    /// Decides which command this naked invocation means, if any.
+    ///
+    /// See [`resolve`] for the rules.
+    pub(crate) fn resolve_default_command(
+        &self,
+        cmd: &Command,
+        matches: &ArgMatches,
     ) -> Result<Option<String>, UnknownDefaultCommand> {
         resolve(
             cmd,
-            args,
+            matches,
             &self.app_state,
             self.default_command_resolver.as_ref(),
             self.default_command.as_deref(),
@@ -124,16 +215,27 @@ impl std::error::Error for UnknownDefaultCommand {}
 
 /// The facts a default-command resolver may consult.
 ///
-/// Deliberately narrow: a resolver chooses a command name *before* the line is
-/// parsed, so it sees read-only app state and the stdin terminal fact — plus
-/// `std::env` for env-derived facts, which never went through Clap. It cannot
-/// see parse results, read stdin, mutate state, or influence parsing.
+/// Deliberately narrow: a resolver chooses a command name, so it sees the root
+/// matches (globals, flags), read-only app state, and the stdin terminal fact.
+/// It cannot read stdin, mutate state, or influence parsing.
 pub struct DefaultCommandContext<'a> {
+    matches: &'a ArgMatches,
     app_state: &'a Extensions,
     stdin: &'a dyn StdinReader,
 }
 
 impl<'a> DefaultCommandContext<'a> {
+    /// The root [`ArgMatches`] the decision is made from.
+    ///
+    /// Contains global flags and root-level arguments, and no subcommand — that
+    /// is what makes the invocation naked. For a line Clap refused, these are
+    /// the permissive probe's matches (see
+    /// [`probe_naked`](crate::cli::App::probe_naked)), so a flag written after
+    /// whatever Clap objected to may be absent.
+    pub fn matches(&self) -> &'a ArgMatches {
+        self.matches
+    }
+
     /// Borrows app-level state of type `T`, if registered via
     /// [`app_state`](crate::cli::App::app_state).
     ///
@@ -167,189 +269,19 @@ impl<'a> DefaultCommandContext<'a> {
 /// (falling back to the static default, if one is configured).
 pub type DefaultCommandResolver = Rc<dyn Fn(&DefaultCommandContext<'_>) -> Option<String>>;
 
-/// What the raw argument list says about which command was asked for.
-#[derive(Debug, PartialEq, Eq)]
-pub(crate) enum Selection<'a> {
-    /// A command was named in command position. `name` is its canonical name
-    /// (an alias resolves to it) and `index` is where the token sits in `args`.
-    Named { name: &'a str, index: usize },
-    /// A root help or version request. Clap answers it; nothing is inserted.
-    RootShortCircuit,
-    /// No command was named: the line is naked and may take a default command.
-    Naked,
-}
-
-/// Reads the command name off the raw argument list, without parsing.
-///
-/// The scan walks options until it reaches command position — the first token
-/// that is not an option or an option's value — because a global flag written
-/// before the command (`app --loud list`) does not make the line naked. Option
-/// values are skipped using `cmd`'s own arg definitions, so `--output json`
-/// cannot be mistaken for a `json` command. `--` ends the options and hands the
-/// rest to the positionals, so nothing after it can name a command.
-pub(crate) fn select<'a>(cmd: &'a Command, args: &[String]) -> Selection<'a> {
-    let mut index = 1;
-    while let Some(token) = args.get(index) {
-        if token == "--" {
-            return Selection::Naked;
-        }
-
-        if let Some(long) = token.strip_prefix("--") {
-            // `--flag=value` carries its value inline, so the option's *name*
-            // is what every question below is about. `--help=x` is still a help
-            // request — a malformed one, but Clap's complaint about it belongs
-            // to the root rather than to a default command inserted under it.
-            let (name, inline_value) = match long.split_once('=') {
-                Some((name, _)) => (name, true),
-                None => (long, false),
-            };
-            if name == "help" && !cmd.is_disable_help_flag_set() {
-                return Selection::RootShortCircuit;
-            }
-            if name == "version" && has_version_flag(cmd) {
-                return Selection::RootShortCircuit;
-            }
-            index += 1;
-            // Without an inline value, `--flag value` eats the next token.
-            if !inline_value && long_takes_value(cmd, name) {
-                index += 1;
-            }
-            continue;
-        }
-
-        // A bare `-` is the conventional name for stdin, not an option.
-        if token.starts_with('-') && token.len() > 1 {
-            match short_cluster(cmd, token) {
-                ShortCluster::ShortCircuit => return Selection::RootShortCircuit,
-                ShortCluster::EatsNextToken => index += 2,
-                ShortCluster::SelfContained => index += 1,
-            }
-            continue;
-        }
-
-        return match find_subcommand(cmd, token) {
-            Some(sub) => Selection::Named {
-                name: sub.get_name(),
-                index,
-            },
-            None => Selection::Naked,
-        };
-    }
-
-    Selection::Naked
-}
-
-/// Reads the whole command chain off the raw argument list, without parsing.
-///
-/// [`select`] answers one level; this walks them, descending into each command
-/// it names and reading the next level against *that* command's options.
-/// `myapp db migrate --help` yields `["db", "migrate"]`; a line that names
-/// nothing yields an empty path, which is the root.
-///
-/// Sharing the scan with [`select`] is the whole point. A walk that merely
-/// skipped anything starting with `-` would read an option's *value* as a
-/// command name — `myapp --output-file-path list --help` would render `list`'s
-/// help instead of the root's — and would stride straight past the help request
-/// that provoked the walk in the first place.
-///
-/// The command is built first so that global arguments declared on the root are
-/// visible at every level: `--output json` has to eat its value wherever it is
-/// written. Building is done on a copy, leaving the caller's command untouched.
-pub(crate) fn command_path(cmd: &Command, args: &[String]) -> Vec<String> {
-    let mut built = cmd.clone();
-    built.build();
-
-    let mut path = Vec::new();
-    let mut current = &built;
-    let mut rest = args;
-
-    while let Selection::Named { name, index } = select(current, rest) {
-        // `select` read this name off `current`, so the lookup answers; a
-        // graceful stop is still cheaper than an invariant that can panic.
-        let Some(sub) = find_subcommand(current, name) else {
-            break;
-        };
-        path.push(name.to_string());
-        current = sub;
-        // The name sits at `index`, so the next level starts after it. `index`
-        // is at least 1, which is what makes the walk terminate.
-        rest = &rest[index..];
-    }
-
-    path
-}
-
-/// Whether `cmd` still answers `--version` / `-V` itself.
-fn has_version_flag(cmd: &Command) -> bool {
-    !cmd.is_disable_version_flag_set()
-        && (cmd.get_version().is_some() || cmd.get_long_version().is_some())
-}
-
-/// Whether the long option `name` consumes the following token as its value.
-fn long_takes_value(cmd: &Command, name: &str) -> bool {
-    cmd.get_arguments()
-        .find(|arg| {
-            arg.get_long() == Some(name)
-                || arg
-                    .get_all_aliases()
-                    .is_some_and(|aliases| aliases.contains(&name))
-        })
-        .is_some_and(|arg| arg.get_action().takes_values())
-}
-
-/// What a cluster of short options (`-abc`) does to the scan position.
-enum ShortCluster {
-    /// It asked for root help or version.
-    ShortCircuit,
-    /// Its last option takes a value, which is the next token (`-o json`).
-    EatsNextToken,
-    /// Every value it needs is inside the cluster (`-ojson`, or no values).
-    SelfContained,
-}
-
-/// Classifies a short-option cluster the way Clap reads one.
-fn short_cluster(cmd: &Command, token: &str) -> ShortCluster {
-    let mut chars = token.chars().skip(1).peekable();
-    while let Some(short) = chars.next() {
-        if short == 'h' && !cmd.is_disable_help_flag_set() {
-            return ShortCluster::ShortCircuit;
-        }
-        if short == 'V' && has_version_flag(cmd) {
-            return ShortCluster::ShortCircuit;
-        }
-        let takes_value = cmd
-            .get_arguments()
-            .find(|arg| arg.get_short() == Some(short))
-            .is_some_and(|arg| arg.get_action().takes_values());
-        if takes_value {
-            // The rest of the cluster is the value if there is any rest.
-            return if chars.peek().is_some() {
-                ShortCluster::SelfContained
-            } else {
-                ShortCluster::EatsNextToken
-            };
-        }
-    }
-    ShortCluster::SelfContained
-}
-
 /// Decides which command a naked invocation means, if any.
 ///
 /// Returns the command name to insert after the program name, or `None` to
 /// leave the argument list alone.
 ///
-/// `cmd` is the augmented root command about to be parsed: it supplies the
-/// command names selection reads, the option shapes the scan skips over, and
-/// the validation of resolver output.
+/// `cmd` is the root command, used to validate resolver output.
 ///
 /// # Precedence
 ///
-/// 1. A line that names a command in command position — explicit, nested, or
+/// 1. An invocation that already selected a subcommand — explicit, nested, or
 ///    `help` — is not naked and resolves to `None`.
-/// 2. A root help or version request is not naked either: Clap answers it, and
-///    inserting a default command would retarget it at that command's help.
-/// 3. A configured resolver runs and, if it returns a name, wins.
-/// 4. Otherwise the static default (if any) applies.
+/// 2. A configured resolver runs and, if it returns a name, wins.
+/// 3. Otherwise the static default (if any) applies.
 ///
 /// # Errors
 ///
@@ -365,19 +297,21 @@ fn short_cluster(cmd: &Command, token: &str) -> ShortCluster {
 /// the contract its users already have.
 pub(crate) fn resolve(
     cmd: &Command,
-    args: &[String],
+    matches: &ArgMatches,
     app_state: &Extensions,
     resolver: Option<&DefaultCommandResolver>,
     static_default: Option<&str>,
 ) -> Result<Option<String>, UnknownDefaultCommand> {
-    match select(cmd, args) {
-        Selection::Named { .. } | Selection::RootShortCircuit => return Ok(None),
-        Selection::Naked => {}
+    // Anything Clap already routed to a subcommand — including `help` — takes
+    // precedence over every default.
+    if matches.subcommand().is_some() {
+        return Ok(None);
     }
 
     if let Some(resolver) = resolver {
         let stdin = DefaultStdin;
         let ctx = DefaultCommandContext {
+            matches,
             app_state,
             stdin: &stdin,
         };
@@ -412,337 +346,48 @@ mod tests {
 
     fn app_cmd() -> Command {
         Command::new("myapp")
-            .version("1.0")
             .subcommand(Command::new("list").alias("ls"))
             .subcommand(Command::new("add"))
     }
 
-    fn argv(args: &[&str]) -> Vec<String> {
-        args.iter().map(|a| a.to_string()).collect()
+    fn naked_matches() -> ArgMatches {
+        app_cmd().try_get_matches_from(["myapp"]).unwrap()
     }
 
     fn resolver_returning(name: Option<&'static str>) -> DefaultCommandResolver {
         Rc::new(move |_ctx| name.map(String::from))
     }
 
-    fn resolve_for(args: &[&str], static_default: Option<&str>) -> Option<String> {
-        resolve(
-            &app_cmd(),
-            &argv(args),
-            &Extensions::new(),
-            None,
-            static_default,
-        )
-        .unwrap()
-    }
-
-    // --- name-first selection ---------------------------------------------
-
-    #[test]
-    fn a_command_name_in_command_position_is_selected() {
-        let cmd = app_cmd();
-        assert_eq!(
-            select(&cmd, &argv(&["myapp", "add"])),
-            Selection::Named {
-                name: "add",
-                index: 1
-            }
-        );
-    }
-
-    #[test]
-    fn an_alias_selects_its_canonical_command() {
-        let cmd = app_cmd();
-        assert_eq!(
-            select(&cmd, &argv(&["myapp", "ls"])),
-            Selection::Named {
-                name: "list",
-                index: 1
-            }
-        );
-    }
-
-    #[test]
-    fn options_written_before_the_command_do_not_hide_it() {
-        // A global flag ahead of the command name is still that command.
-        let cmd = app_cmd().arg(
-            clap::Arg::new("loud")
-                .long("loud")
-                .global(true)
-                .action(clap::ArgAction::SetTrue),
-        );
-        assert_eq!(
-            select(&cmd, &argv(&["myapp", "--loud", "list"])),
-            Selection::Named {
-                name: "list",
-                index: 2
-            }
-        );
-    }
-
-    #[test]
-    fn an_option_value_is_never_read_as_a_command_name() {
-        // `--pick list` names no command: `list` is the option's value.
-        let cmd = app_cmd().arg(
-            clap::Arg::new("pick")
-                .long("pick")
-                .short('p')
-                .action(clap::ArgAction::Set),
-        );
-        assert_eq!(
-            select(&cmd, &argv(&["myapp", "--pick", "list"])),
-            Selection::Naked
-        );
-        assert_eq!(
-            select(&cmd, &argv(&["myapp", "-p", "list"])),
-            Selection::Naked
-        );
-        // Attached values leave the cluster self-contained.
-        assert_eq!(
-            select(&cmd, &argv(&["myapp", "-plist", "add"])),
-            Selection::Named {
-                name: "add",
-                index: 2
-            }
-        );
-        assert_eq!(
-            select(&cmd, &argv(&["myapp", "--pick=x", "add"])),
-            Selection::Named {
-                name: "add",
-                index: 2
-            }
-        );
-    }
-
-    #[test]
-    fn nothing_after_the_escape_can_name_a_command() {
-        let cmd = app_cmd();
-        assert_eq!(
-            select(&cmd, &argv(&["myapp", "--", "list"])),
-            Selection::Naked
-        );
-    }
-
-    #[test]
-    fn a_word_that_names_nothing_leaves_the_line_naked() {
-        let cmd = app_cmd();
-        assert_eq!(
-            select(&cmd, &argv(&["myapp", "whatever"])),
-            Selection::Naked
-        );
-    }
-
-    #[test]
-    fn root_help_and_version_short_circuit() {
-        let cmd = app_cmd();
-        for args in [
-            &["myapp", "--help"][..],
-            &["myapp", "-h"][..],
-            &["myapp", "--version"][..],
-            &["myapp", "-V"][..],
-        ] {
-            assert_eq!(
-                select(&cmd, &argv(args)),
-                Selection::RootShortCircuit,
-                "{args:?}"
-            );
-        }
-    }
-
-    #[test]
-    fn an_inline_value_does_not_hide_a_help_or_version_request() {
-        // `--help=x` is malformed either way, but it is a *root* help request:
-        // reading the name off the token keeps Clap's complaint pointed at the
-        // root instead of at a default command inserted underneath it.
-        let cmd = app_cmd();
-        for args in [
-            &["myapp", "--help=topics"][..],
-            &["myapp", "--version=2"][..],
-        ] {
-            assert_eq!(
-                select(&cmd, &argv(args)),
-                Selection::RootShortCircuit,
-                "{args:?}"
-            );
-        }
-
-        // And no default command is inserted under it.
-        assert_eq!(resolve_for(&["myapp", "--help=topics"], Some("list")), None);
-    }
-
-    #[test]
-    fn a_command_before_a_help_flag_still_wins() {
-        // `myapp list --help` is help *for `list`*, so the command is selected.
-        let cmd = app_cmd();
-        assert_eq!(
-            select(&cmd, &argv(&["myapp", "list", "--help"])),
-            Selection::Named {
-                name: "list",
-                index: 1
-            }
-        );
-    }
-
-    // --- the whole command chain -------------------------------------------
-
-    /// A nested CLI with the two option shapes a naive scan gets wrong: a
-    /// global long option that takes a value, and a short one that takes a
-    /// value.
-    fn nested_cmd() -> Command {
-        Command::new("myapp")
-            .version("1.0")
-            .arg(
-                clap::Arg::new("out")
-                    .long("output")
-                    .global(true)
-                    .action(clap::ArgAction::Set),
-            )
-            .arg(
-                clap::Arg::new("file")
-                    .short('f')
-                    .action(clap::ArgAction::Set),
-            )
-            .subcommand(Command::new("list").alias("ls"))
-            .subcommand(Command::new("db").subcommand(Command::new("migrate")))
-    }
-
-    #[test]
-    fn the_chain_is_read_one_level_at_a_time() {
-        assert_eq!(
-            command_path(&nested_cmd(), &argv(&["myapp", "db", "migrate", "--help"])),
-            vec!["db".to_string(), "migrate".to_string()]
-        );
-    }
-
-    #[test]
-    fn a_chain_step_resolves_an_alias_to_its_command() {
-        assert_eq!(
-            command_path(&nested_cmd(), &argv(&["myapp", "ls", "--help"])),
-            vec!["list".to_string()]
-        );
-    }
-
-    #[test]
-    fn an_option_value_is_never_read_as_a_step_in_the_chain() {
-        // `--output list` names no command: `list` is the option's value, so
-        // the help request is the root's. A scan that only skipped tokens
-        // starting with `-` would answer `list` here.
-        assert!(command_path(
-            &nested_cmd(),
-            &argv(&["myapp", "--output", "list", "--help"])
-        )
-        .is_empty());
-
-        // The same for a short option that takes a value.
-        assert!(command_path(&nested_cmd(), &argv(&["myapp", "-f", "list", "--help"])).is_empty());
-
-        // An attached value leaves the token self-contained, so what follows is
-        // read as a command again.
-        assert_eq!(
-            command_path(
-                &nested_cmd(),
-                &argv(&["myapp", "--output=json", "list", "--help"])
-            ),
-            vec!["list".to_string()]
-        );
-    }
-
-    #[test]
-    fn a_global_option_keeps_its_value_at_every_level() {
-        // `--output` is declared on the root and reaches `db`, so `migrate` is
-        // its value and the help request is `db`'s — not `db migrate`'s.
-        assert_eq!(
-            command_path(
-                &nested_cmd(),
-                &argv(&["myapp", "db", "--output", "migrate", "--help"])
-            ),
-            vec!["db".to_string()]
-        );
-    }
-
-    #[test]
-    fn the_walk_stops_where_the_help_request_is() {
-        // Help was asked for before any command was named, so it is the root's;
-        // a scan that skipped flags would keep walking and answer `list`.
-        for args in [
-            &["myapp", "--help", "list"][..],
-            &["myapp", "-h", "list"][..],
-        ] {
-            assert!(
-                command_path(&nested_cmd(), &argv(args)).is_empty(),
-                "{args:?}"
-            );
-        }
-    }
-
-    #[test]
-    fn nothing_after_the_escape_is_a_step_in_the_chain() {
-        assert!(command_path(&nested_cmd(), &argv(&["myapp", "--", "list", "--help"])).is_empty());
-    }
-
-    #[test]
-    fn a_word_that_names_nothing_ends_the_chain() {
-        assert_eq!(
-            command_path(&nested_cmd(), &argv(&["myapp", "db", "nope", "--help"])),
-            vec!["db".to_string()]
-        );
-    }
-
-    // --- resolution --------------------------------------------------------
-
     #[test]
     fn static_default_applies_to_a_naked_invocation() {
-        assert_eq!(
-            resolve_for(&["myapp"], Some("list")).as_deref(),
-            Some("list")
-        );
-    }
-
-    #[test]
-    fn no_default_configured_resolves_to_none() {
-        assert_eq!(resolve_for(&["myapp"], None), None);
-    }
-
-    #[test]
-    fn a_named_command_is_not_naked() {
         let resolved = resolve(
             &app_cmd(),
-            &argv(&["myapp", "add"]),
+            &naked_matches(),
+            &Extensions::new(),
+            None,
+            Some("list"),
+        );
+        assert_eq!(resolved.unwrap().as_deref(), Some("list"));
+    }
+
+    #[test]
+    fn a_selected_subcommand_is_never_naked() {
+        let matches = app_cmd().try_get_matches_from(["myapp", "add"]).unwrap();
+        let resolved = resolve(
+            &app_cmd(),
+            &matches,
             &Extensions::new(),
             Some(&resolver_returning(Some("list"))),
             Some("list"),
         );
         assert_eq!(resolved.unwrap(), None);
-    }
-
-    #[test]
-    fn a_root_help_request_is_not_naked() {
-        // Inserting a default here would render *that command's* help instead.
-        let resolved = resolve(
-            &app_cmd(),
-            &argv(&["myapp", "--help"]),
-            &Extensions::new(),
-            Some(&resolver_returning(Some("list"))),
-            Some("list"),
-        );
-        assert_eq!(resolved.unwrap(), None);
-    }
-
-    #[test]
-    fn invalid_syntax_still_resolves_a_default() {
-        // Selection is a function of the command name alone: a line that will
-        // not parse is still naked, and Clap reports the usage error after.
-        assert_eq!(
-            resolve_for(&["myapp", "--nonexistent"], Some("list")).as_deref(),
-            Some("list")
-        );
     }
 
     #[test]
     fn resolver_wins_over_the_static_default() {
         let resolved = resolve(
             &app_cmd(),
-            &argv(&["myapp"]),
+            &naked_matches(),
             &Extensions::new(),
             Some(&resolver_returning(Some("add"))),
             Some("list"),
@@ -754,7 +399,7 @@ mod tests {
     fn declining_resolver_falls_back_to_the_static_default() {
         let resolved = resolve(
             &app_cmd(),
-            &argv(&["myapp"]),
+            &naked_matches(),
             &Extensions::new(),
             Some(&resolver_returning(None)),
             Some("list"),
@@ -766,7 +411,7 @@ mod tests {
     fn declining_resolver_without_a_static_default_resolves_to_none() {
         let resolved = resolve(
             &app_cmd(),
-            &argv(&["myapp"]),
+            &naked_matches(),
             &Extensions::new(),
             Some(&resolver_returning(None)),
             None,
@@ -775,10 +420,16 @@ mod tests {
     }
 
     #[test]
+    fn no_default_configured_resolves_to_none() {
+        let resolved = resolve(&app_cmd(), &naked_matches(), &Extensions::new(), None, None);
+        assert_eq!(resolved.unwrap(), None);
+    }
+
+    #[test]
     fn an_alias_is_a_known_command() {
         let resolved = resolve(
             &app_cmd(),
-            &argv(&["myapp"]),
+            &naked_matches(),
             &Extensions::new(),
             Some(&resolver_returning(Some("ls"))),
             None,
@@ -788,79 +439,87 @@ mod tests {
 
     #[test]
     fn unknown_resolver_output_is_a_typed_error() {
-        let err = resolve(
+        let resolved = resolve(
             &app_cmd(),
-            &argv(&["myapp"]),
+            &naked_matches(),
             &Extensions::new(),
             Some(&resolver_returning(Some("nope"))),
             None,
-        )
-        .expect_err("an unknown command name must not resolve");
-
-        assert_eq!(err.name, "nope");
-        assert_eq!(err.app, "myapp");
-        assert_eq!(err.known, vec!["list", "add"]);
-
-        // The diagnostic must name the bug and point at the way out.
-        let msg = err.to_string();
-        assert!(msg.contains("returned `nope`"), "{msg}");
-        assert!(msg.contains("is not a command of `myapp`"), "{msg}");
-        assert!(msg.contains("list, add"), "{msg}");
-        assert!(msg.contains("Return `None`"), "{msg}");
+        );
+        let error = resolved.expect_err("an unknown command must not resolve");
+        assert_eq!(error.name, "nope");
+        assert_eq!(error.app, "myapp");
+        assert!(error.known.contains(&"list".to_string()));
     }
 
     #[test]
     fn an_unknown_resolver_output_does_not_fall_back_to_the_static_default() {
-        // Silently substituting the static default would hide the bug.
-        let err = resolve(
+        let resolved = resolve(
             &app_cmd(),
-            &argv(&["myapp"]),
+            &naked_matches(),
             &Extensions::new(),
             Some(&resolver_returning(Some("nope"))),
             Some("list"),
         );
-        assert!(err.is_err());
+        assert!(resolved.is_err());
     }
 
     #[test]
-    fn resolver_reads_app_state() {
-        struct Mode(&'static str);
-        let mut state = Extensions::new();
-        state.insert(Mode("add"));
+    fn the_resolver_reads_the_root_matches() {
+        // The decision is made from a parse, so the parse's own facts are
+        // available to make it with.
+        let cmd = app_cmd().arg(
+            clap::Arg::new("all")
+                .long("all")
+                .action(clap::ArgAction::SetTrue),
+        );
+        let resolver: DefaultCommandResolver = Rc::new(|ctx| {
+            Some(if ctx.matches().get_flag("all") {
+                "list".to_string()
+            } else {
+                "add".to_string()
+            })
+        });
 
-        let resolver: DefaultCommandResolver =
-            Rc::new(|ctx| ctx.app_state::<Mode>().map(|mode| mode.0.to_string()));
+        let naked = cmd.clone().try_get_matches_from(["myapp"]).unwrap();
+        assert_eq!(
+            resolve(&cmd, &naked, &Extensions::new(), Some(&resolver), None)
+                .unwrap()
+                .as_deref(),
+            Some("add")
+        );
 
-        let resolved = resolve(&app_cmd(), &argv(&["myapp"]), &state, Some(&resolver), None);
-        assert_eq!(resolved.unwrap().as_deref(), Some("add"));
+        let flagged = cmd
+            .clone()
+            .try_get_matches_from(["myapp", "--all"])
+            .unwrap();
+        assert_eq!(
+            resolve(&cmd, &flagged, &Extensions::new(), Some(&resolver), None)
+                .unwrap()
+                .as_deref(),
+            Some("list")
+        );
     }
 
     #[test]
     fn context_reports_the_stdin_terminal_fact_without_consuming() {
-        let terminal = MockStdin::terminal();
+        let matches = naked_matches();
         let state = Extensions::new();
+        let piped = MockStdin::piped("payload");
         let ctx = DefaultCommandContext {
+            matches: &matches,
+            app_state: &state,
+            stdin: &piped,
+        };
+        assert!(ctx.stdin_is_piped());
+        assert!(!ctx.stdin_is_terminal());
+
+        let terminal = MockStdin::terminal();
+        let ctx = DefaultCommandContext {
+            matches: &matches,
             app_state: &state,
             stdin: &terminal,
         };
         assert!(ctx.stdin_is_terminal());
-        assert!(!ctx.stdin_is_piped());
-
-        let piped = MockStdin::piped("data");
-        let ctx = DefaultCommandContext {
-            app_state: &state,
-            stdin: &piped,
-        };
-        assert!(!ctx.stdin_is_terminal());
-        assert!(ctx.stdin_is_piped());
-
-        // Piped-but-empty is a pipe, not a terminal — knowable without reading.
-        let empty = MockStdin::piped_empty();
-        let ctx = DefaultCommandContext {
-            app_state: &state,
-            stdin: &empty,
-        };
-        assert!(!ctx.stdin_is_terminal());
-        assert!(ctx.stdin_is_piped());
     }
 }

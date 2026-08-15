@@ -1,10 +1,11 @@
 //! Reachability and install policy for the `help` word on flat CLIs.
 //!
 //! The fixture is the shape that surfaced the bug: one optional positional, one
-//! flag, and an [`ArgGroup`] making "one of them" required. A root like that
-//! makes an injected `help` subcommand unreachable under parse-first ordering —
-//! Clap validates the root's requirements before anything can decide that the
-//! word `help` meant the help command.
+//! flag, and an [`ArgGroup`] making "one of them" required. On a root like
+//! that, Clap validates the requirements before routing, so an injected `help`
+//! subcommand is unreachable until the declaration says otherwise — which is
+//! what `subcommand_negates_reqs` does, and standout sets it exactly where it
+//! installs the word.
 
 use clap::{Arg, ArgAction, ArgGroup, Command};
 use standout::cli::{App, CommandContextInput, HelpResult};
@@ -35,9 +36,8 @@ fn help_text(result: HelpResult) -> String {
     }
 }
 
-/// The reported bug: under parse-first ordering this was
-/// `MissingRequiredArgument`, because the root's `target` group fired before
-/// anything could decide that the word `help` meant the help command.
+/// The reported bug: this was `MissingRequiredArgument`, because the root's
+/// `target` group was validated before Clap would route the word.
 #[test]
 fn the_help_word_is_reachable_on_a_flat_command_with_required_args() {
     let app = App::new()

@@ -326,11 +326,10 @@ impl AppBuilder {
 
     /// Sets a default command to use when no subcommand is specified.
     ///
-    /// When the token in command position names no command (a "naked"
-    /// invocation), the default command is inserted before the arguments are
-    /// parsed. This applies to both the integrated dispatch path (`run` /
-    /// `dispatch_from` / `run_to_string`) and configured parsing (`parse_from`
-    /// / `get_matches_from`).
+    /// When a parse selects no subcommand (a "naked" invocation), the default
+    /// command is inserted and the line is parsed again. This applies to both
+    /// the integrated dispatch path (`run` / `dispatch_from` / `run_to_string`)
+    /// and configured parsing (`parse_from` / `get_matches_from`).
     ///
     /// For a default that varies per invocation, see
     /// [`default_command_with`](Self::default_command_with); it is consulted
@@ -360,16 +359,14 @@ impl AppBuilder {
 
     /// Chooses the default command per invocation instead of using one fixed name.
     ///
-    /// The resolver runs only for a naked invocation — one whose command
-    /// position names no command — and only after explicit commands, nested
-    /// commands, and root help or version have had their say, so it can never
-    /// override them. Selection happens before parsing, so invalid syntax still
-    /// stays a Clap usage error the resolver cannot influence.
+    /// The resolver runs only for a naked invocation — a parse that selected no
+    /// subcommand — so explicit commands, nested commands, and root help or
+    /// version have all had their say first and it can never override them.
     ///
     /// It receives a [`DefaultCommandContext`](crate::cli::DefaultCommandContext)
-    /// exposing read-only app state and whether stdin is a terminal — no parse
-    /// results, since there are none yet. Stdin is never read during
-    /// resolution, so a handler's `InputChain` still consumes the pipe normally.
+    /// exposing the root matches, read-only app state, and whether stdin is a
+    /// terminal. Stdin is never read during resolution, so a handler's
+    /// `InputChain` still consumes the pipe normally.
     ///
     /// Return `Some(name)` to select a command or `None` to decline, which falls
     /// back to [`default_command`](Self::default_command) if one is set. Both

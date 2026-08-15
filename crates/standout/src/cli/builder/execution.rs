@@ -13,9 +13,9 @@ use std::io::Write;
 use std::path::PathBuf;
 
 use super::{AppBuilder, PendingCommand};
+use crate::cli::default_command::ParseFailure;
 use crate::cli::dispatch::{
-    dispatch, extract_command_path, get_deepest_matches, insert_default_command, DispatchOutput,
-    Presentation,
+    dispatch, extract_command_path, get_deepest_matches, DispatchOutput, Presentation,
 };
 use crate::cli::group::{ErasedConfigRecipe, GroupBuilder, GroupEntry};
 use crate::cli::handler::{
@@ -319,38 +319,23 @@ impl AppBuilder {
         // this is the same augmentation `get_matches_from` performs.
         let mut augmented_cmd = self.augment_command_with_help(cmd);
 
-        // The `help` word is answered from its own arm, before the root is
-        // parsed. Dispatch shares that arm with `get_matches_from` and projects
-        // its one answer onto `RunResult`.
-        if let Some(display) = self.intercept_help_word(&mut augmented_cmd, &args) {
-            return display.into();
-        }
-
-        // Selection is name-first: a line that names no command may resolve to
-        // a default one — statically, or per-invocation via
-        // `default_command_with`. Both paths funnel through
-        // `resolve_default_command` so this one and `get_matches_from` agree.
-        let args = match self.resolve_default_command(&augmented_cmd, &args) {
-            Err(e) => {
+        // One parse seam for both paths: Clap decides which command the line
+        // named, and a line that named none may take a default command.
+        let matches = match self.parse_with_default_command(&augmented_cmd, &args) {
+            Ok(matches) => matches,
+            Err(ParseFailure::UnknownDefault(e)) => {
                 return RunResult::Error(RunError::new(e.to_string(), RunErrorKind::DefaultCommand))
             }
-            Ok(None) => args,
-            Ok(Some(default_cmd)) => insert_default_command(args, &default_cmd),
-        };
-
-        // One authoritative parse. Clap's "errors" include `--help` and
-        // `--version`, which are successful display paths (stdout, exit 0).
-        // Real parse errors (unknown flag, missing required arg, etc.) get
-        // `use_stderr() == true` and should surface as `RunResult::Error` so
-        // they exit non-zero on stderr.
-        let matches = match augmented_cmd.clone().try_get_matches_from(&args) {
-            Ok(m) => m,
-            Err(e) => {
+            Err(ParseFailure::Clap(e)) => {
                 // Clap's native `--help`/`-h` short-circuits validation and
                 // arrives here; standout renders it when it owns help.
                 if let Some(display) = self.intercept_display_help(&mut augmented_cmd, &args, &e) {
                     return display.into();
                 }
+                // Clap's remaining "errors" include `--version`, a successful
+                // display path (stdout, exit 0). Real parse errors get
+                // `use_stderr() == true` and surface as `RunResult::Error` so
+                // they exit non-zero on stderr.
                 if e.use_stderr() {
                     return RunResult::Error(RunError::new(e.to_string(), RunErrorKind::ClapUsage));
                 }
@@ -363,6 +348,12 @@ impl AppBuilder {
                 return RunResult::Handled(output);
             }
         };
+
+        // The `help` word is a subcommand Clap routed; standout answers it
+        // before dispatch, sharing the arm with `get_matches_from`.
+        if let Some(display) = self.intercept_help_word(&mut augmented_cmd, &matches) {
+            return display.into();
+        }
 
         if let Some((path, questionnaire)) = self.questionnaire_questions_invocation(&matches) {
             if let Some(parent_matches) =
