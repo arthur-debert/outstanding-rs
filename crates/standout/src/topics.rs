@@ -60,10 +60,8 @@ use std::process::{Command as ProcessCommand, Stdio};
 use console::Style;
 use serde::Serialize;
 
+use crate::cli::help::data::name_column_width;
 use crate::{render_with_output, OutputMode, RenderError, Theme};
-
-/// Fixed width for the name column in topic listings.
-const NAME_COLUMN_WIDTH: usize = 14;
 
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub enum TopicType {
@@ -362,11 +360,13 @@ pub fn render_topics_list(
 
     let topics = registry.list_topics();
 
+    // +1 accounts for the colon added in the template; the column widens to
+    // fit the longest topic name (issue #297).
+    let width = name_column_width(topics.iter().map(|t| t.name.len() + 1).max().unwrap_or(0));
     let topic_items: Vec<TopicListItem> = topics
         .iter()
         .map(|t| {
-            // +1 accounts for the colon added in the template
-            let pad = NAME_COLUMN_WIDTH.saturating_sub(t.name.len() + 1);
+            let pad = width - (t.name.len() + 1);
             TopicListItem {
                 name: t.name.clone(),
                 title: t.title.clone(),
@@ -621,6 +621,32 @@ mod tests {
         assert!(output.contains("storage"));
         assert!(output.contains("syntax"));
         assert!(output.contains("myapp help <topic>"));
+    }
+
+    /// Issue #297: a topic name longer than the column floor widens the
+    /// column instead of running into its title.
+    #[test]
+    fn test_render_topics_list_long_name_keeps_separator() {
+        let mut registry = TopicRegistry::new();
+        registry.add_topic(Topic::new(
+            "A Very Long Topic Name Here",
+            "content",
+            TopicType::Text,
+            None,
+        ));
+        registry.add_topic(Topic::new("Short", "content", TopicType::Text, None));
+
+        let config = TopicRenderConfig {
+            output_mode: Some(crate::OutputMode::Text),
+            ..Default::default()
+        };
+
+        let output = render_topics_list(&registry, "myapp help", Some(config)).unwrap();
+        assert!(
+            output.contains("a-very-long-topic-name-here: "),
+            "long topic name must keep a separator before its title:\n{}",
+            output
+        );
     }
 
     #[test]

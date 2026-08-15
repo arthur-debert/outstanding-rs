@@ -7,8 +7,38 @@ use std::collections::BTreeMap;
 
 use super::config::CommandGroup;
 
-/// Fixed width for the name column in help output (commands, options, topics).
+/// Minimum width for the name column in help output (commands, options, topics).
+///
+/// This is a floor, not a fixed width: when a list's longest name would
+/// overflow it, the whole column widens via [`name_column_width`].
 pub(crate) const NAME_COLUMN_WIDTH: usize = 14;
+
+/// Minimum gap between a name and its description when the column widens.
+pub(crate) const NAME_COLUMN_GAP: usize = 2;
+
+/// Width of the name column for a list whose longest rendered name (including
+/// any template-added suffix, e.g. the colon after subcommand and topic names)
+/// is `max_name_len`.
+///
+/// At least [`NAME_COLUMN_WIDTH`]; widened to `max_name_len + NAME_COLUMN_GAP`
+/// when a name would otherwise overflow the column, so a long name never runs
+/// into its description (issue #297).
+pub(crate) fn name_column_width(max_name_len: usize) -> usize {
+    NAME_COLUMN_WIDTH.max(max_name_len + NAME_COLUMN_GAP)
+}
+
+/// Column width shared by a set of subcommands.
+///
+/// The `+ 1` accounts for the colon the template appends to each name; all
+/// groups of one help page pass the full subcommand list so they align.
+fn subcommand_column_width(subs: &[&Command]) -> usize {
+    name_column_width(
+        subs.iter()
+            .map(|s| s.get_name().len() + 1)
+            .max()
+            .unwrap_or(0),
+    )
+}
 
 #[derive(Serialize)]
 pub(crate) struct HelpData {
@@ -82,22 +112,30 @@ pub(crate) fn extract_help_data(
     let mut args: Vec<_> = cmd.get_arguments().filter(|a| !a.is_hide_set()).collect();
     args.sort_by_key(|a| a.get_display_order());
 
-    for arg in args {
-        let mut name = String::new();
-        if let Some(short) = arg.get_short() {
-            name.push_str(&format!("-{}", short));
-        }
-        if let Some(long) = arg.get_long() {
-            if !name.is_empty() {
-                name.push_str(", ");
+    let named: Vec<(String, &clap::Arg)> = args
+        .into_iter()
+        .map(|arg| {
+            let mut name = String::new();
+            if let Some(short) = arg.get_short() {
+                name.push_str(&format!("-{}", short));
             }
-            name.push_str(&format!("--{}", long));
-        }
-        if name.is_empty() {
-            name = arg.get_id().to_string();
-        }
+            if let Some(long) = arg.get_long() {
+                if !name.is_empty() {
+                    name.push_str(", ");
+                }
+                name.push_str(&format!("--{}", long));
+            }
+            if name.is_empty() {
+                name = arg.get_id().to_string();
+            }
+            (name, arg)
+        })
+        .collect();
 
-        let pad = NAME_COLUMN_WIDTH.saturating_sub(name.len());
+    let width = name_column_width(named.iter().map(|(n, _)| n.len()).max().unwrap_or(0));
+
+    for (name, arg) in named {
+        let pad = width - name.len();
         let heading = arg.get_help_heading().map(|s| s.to_string());
         let opt_data = OptionData {
             name,
@@ -132,11 +170,12 @@ pub(crate) fn extract_help_data(
 }
 
 fn extract_default_subcommands(subs: &[&Command]) -> Vec<Group<Subcommand>> {
+    let width = subcommand_column_width(subs);
     let sub_cmds: Vec<Subcommand> = subs
         .iter()
         .map(|sub| {
             let name = sub.get_name().to_string();
-            let pad = NAME_COLUMN_WIDTH.saturating_sub(name.len() + 1);
+            let pad = width - (name.len() + 1);
             Subcommand {
                 name,
                 about: sub.get_about().map(|s| s.to_string()).unwrap_or_default(),
@@ -164,6 +203,7 @@ fn extract_grouped_subcommands(
 ) -> Vec<Group<Subcommand>> {
     use std::collections::HashMap;
 
+    let width = subcommand_column_width(subs);
     let mut sub_map: HashMap<&str, &Command> = subs.iter().map(|s| (s.get_name(), *s)).collect();
     let mut result_groups: Vec<Group<Subcommand>> = Vec::new();
 
@@ -182,7 +222,7 @@ fn extract_grouped_subcommands(
                 Some(cmd_name) => {
                     if let Some(sub) = sub_map.remove(cmd_name.as_str()) {
                         let name = sub.get_name().to_string();
-                        let pad = NAME_COLUMN_WIDTH.saturating_sub(name.len() + 1);
+                        let pad = width - (name.len() + 1);
                         group_cmds.push(Subcommand {
                             name,
                             about: sub.get_about().map(|s| s.to_string()).unwrap_or_default(),
@@ -214,7 +254,7 @@ fn extract_grouped_subcommands(
             .iter()
             .map(|sub| {
                 let name = sub.get_name().to_string();
-                let pad = NAME_COLUMN_WIDTH.saturating_sub(name.len() + 1);
+                let pad = width - (name.len() + 1);
                 Subcommand {
                     name,
                     about: sub.get_about().map(|s| s.to_string()).unwrap_or_default(),
@@ -243,10 +283,12 @@ pub(crate) fn extract_help_data_with_topics(
 
     let topics = registry.list_topics();
     if !topics.is_empty() {
+        // +1 accounts for the colon the template appends to each name.
+        let width = name_column_width(topics.iter().map(|t| t.name.len() + 1).max().unwrap_or(0));
         data.learn_more = topics
             .iter()
             .map(|t| {
-                let pad = NAME_COLUMN_WIDTH.saturating_sub(t.name.len() + 1);
+                let pad = width - (t.name.len() + 1);
                 TopicListItem {
                     name: t.name.clone(),
                     title: t.title.clone(),
@@ -435,5 +477,135 @@ mod tests {
         let cmd = Command::new("root");
         let data = extract_help_data(&cmd, None);
         assert!(data.subcommands.is_empty());
+    }
+
+    /// Issue #297: an option name longer than the column floor must widen the
+    /// column (for every option) instead of collapsing its padding to zero.
+    #[test]
+    fn test_long_option_name_widens_column() {
+        let cmd = Command::new("root")
+            .arg(Arg::new("output").long("output").help("Output format"))
+            .arg(
+                Arg::new("output_file_path")
+                    .long("output-file-path")
+                    .help("Write output to file"),
+            );
+
+        let data = extract_help_data(&cmd, None);
+        let opts = &data.options[0].options;
+
+        let long = opts
+            .iter()
+            .find(|o| o.name == "--output-file-path")
+            .unwrap();
+        assert!(
+            !long.padding.is_empty(),
+            "long option name must keep a separator before its description"
+        );
+
+        // Every option's description starts at the same column.
+        let columns: Vec<usize> = opts
+            .iter()
+            .map(|o| o.name.len() + o.padding.len())
+            .collect();
+        assert!(
+            columns.iter().all(|c| *c == columns[0]),
+            "options must align to one column, got {:?}",
+            columns
+        );
+        // The column widened to the longest name plus the gap.
+        assert_eq!(columns[0], long.name.len() + NAME_COLUMN_GAP);
+    }
+
+    #[test]
+    fn test_short_option_names_keep_floor_width() {
+        let cmd = Command::new("root")
+            .disable_help_flag(true)
+            .arg(Arg::new("out").long("out").help("Output"));
+
+        let data = extract_help_data(&cmd, None);
+        let opt = &data.options[0].options[0];
+        assert_eq!(opt.name.len() + opt.padding.len(), NAME_COLUMN_WIDTH);
+    }
+
+    #[test]
+    fn test_long_subcommand_name_widens_column() {
+        let cmd = Command::new("root")
+            .subcommand(Command::new("a-very-long-command-name").about("Long"))
+            .subcommand(Command::new("short").about("Short"));
+
+        let data = extract_help_data(&cmd, None);
+        let cmds = &data.subcommands[0].commands;
+        // +1 accounts for the colon the template appends to the name.
+        let columns: Vec<usize> = cmds
+            .iter()
+            .map(|c| c.name.len() + 1 + c.padding.len())
+            .collect();
+        assert!(
+            columns.iter().all(|c| *c == columns[0]),
+            "subcommands must align to one column, got {:?}",
+            columns
+        );
+        let long = cmds
+            .iter()
+            .find(|c| c.name == "a-very-long-command-name")
+            .unwrap();
+        assert!(!long.padding.is_empty());
+    }
+
+    #[test]
+    fn test_long_grouped_subcommand_widens_all_groups() {
+        let cmd = Command::new("root")
+            .subcommand(Command::new("a-very-long-command-name").about("Long"))
+            .subcommand(Command::new("short").about("Short"));
+
+        let groups = vec![CommandGroup {
+            title: "Main".into(),
+            help: None,
+            commands: vec![Some("a-very-long-command-name".into())],
+        }];
+
+        let data = extract_help_data(&cmd, Some(&groups));
+        // "Main" group + auto "Other" group share one column.
+        let mut columns = Vec::new();
+        for group in &data.subcommands {
+            for c in group.commands.iter().filter(|c| !c.separator) {
+                columns.push(c.name.len() + 1 + c.padding.len());
+            }
+        }
+        assert!(
+            columns.iter().all(|c| *c == columns[0]),
+            "grouped subcommands must share one column, got {:?}",
+            columns
+        );
+        assert!(columns[0] > NAME_COLUMN_WIDTH);
+    }
+
+    #[test]
+    fn test_long_topic_name_widens_column() {
+        use crate::topics::{Topic, TopicType};
+
+        let cmd = Command::new("root");
+        let mut registry = TopicRegistry::new();
+        registry.add_topic(Topic::new(
+            "A Very Long Topic Name Here",
+            "content",
+            TopicType::Text,
+            None,
+        ));
+        registry.add_topic(Topic::new("Short", "content", TopicType::Text, None));
+
+        let data = extract_help_data_with_topics(&cmd, &registry, None);
+        let columns: Vec<usize> = data
+            .learn_more
+            .iter()
+            .map(|t| t.name.len() + 1 + t.padding.len())
+            .collect();
+        assert!(
+            columns.iter().all(|c| *c == columns[0]),
+            "topics must align to one column, got {:?}",
+            columns
+        );
+        assert!(data.learn_more.iter().all(|t| !t.padding.is_empty()));
     }
 }
