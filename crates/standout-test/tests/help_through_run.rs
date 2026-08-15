@@ -14,8 +14,9 @@
 use clap::{Arg, ArgAction, ArgGroup, Command};
 use serde_json::json;
 use serial_test::serial;
-use standout::cli::{App, HelpResult, Output, SuccessKind};
+use standout::cli::{App, ExitStatus, HelpResult, Output, RunErrorKind, SuccessKind};
 use standout::topics::{Topic, TopicType};
+use standout::Theme;
 use standout_test::TestHarness;
 
 /// The shape from the issue: one optional positional, one flag, and a required
@@ -299,6 +300,70 @@ fn the_walk_stops_where_the_help_request_is() {
         result.assert_success();
         assert_is_root_help(result.stdout());
     }
+}
+
+// --- a help that cannot be rendered is the app's bug, not the user's --------
+
+/// A theme whose alias names a style that does not exist: rendering fails
+/// validation. This is the shape a downstream app hits when it loads an
+/// override stylesheet from a directory at runtime and the file is malformed.
+fn broken_theme() -> Theme {
+    Theme::new().add("header", "no-such-style")
+}
+
+fn app_with_a_broken_theme() -> App {
+    App::builder()
+        .help_handling(true)
+        .theme(broken_theme())
+        .command("list", |_m, _ctx| Ok(Output::Render(json!({}))), "listed")
+        .unwrap()
+        .build()
+        .unwrap()
+}
+
+#[test]
+#[serial]
+fn a_help_that_cannot_be_rendered_is_not_a_usage_error() {
+    // The user's line was fine; the application's theme was not. Reporting it
+    // as `ClapUsage` would blame the line and exit with the usage status.
+    for args in [
+        &["app", "help"][..],
+        &["app", "--help"][..],
+        &["app", "-h"][..],
+    ] {
+        let result = TestHarness::new().run(&app_with_a_broken_theme(), subcommand_command(), args);
+
+        result.assert_error();
+        result.assert_error_kind(RunErrorKind::Render);
+        result.assert_exit_status(ExitStatus::FAILURE);
+        result.assert_error_contains("failed to render help");
+    }
+}
+
+#[test]
+#[serial]
+fn a_render_failure_is_not_disguised_as_an_unrecognized_topic() {
+    // `list` is a real command. A render failure used to be swallowed by the
+    // `if let Ok` around each rendering step, so the request fell through to
+    // "the subcommand or topic 'list' wasn't recognized" — a usage error, and
+    // an untrue one.
+    let result = TestHarness::new().run(
+        &app_with_a_broken_theme(),
+        subcommand_command(),
+        ["app", "help", "list"],
+    );
+
+    result.assert_error();
+    result.assert_error_kind(RunErrorKind::Render);
+    result.assert_error_contains("failed to render help");
+    assert!(
+        !result
+            .error()
+            .unwrap_or_default()
+            .contains("wasn't recognized"),
+        "a broken theme is not an unknown topic: {:?}",
+        result.error()
+    );
 }
 
 // --- agreement between the two entry points --------------------------------

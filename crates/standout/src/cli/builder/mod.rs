@@ -671,7 +671,9 @@ impl AppBuilder {
     ) -> HelpDisplay {
         let matches = match self.parse_help_word_args(cmd, tokens, help_index) {
             Ok(matches) => matches,
-            Err(e) => return HelpDisplay::Error(e),
+            // Clap's answer to the word's own arguments: a bad flag on the
+            // word, or a display it wants to make.
+            Err(e) => return HelpDisplay::Clap(e),
         };
 
         let config = HelpConfig {
@@ -727,6 +729,20 @@ impl AppBuilder {
         help_cmd.try_get_matches_from(rest)
     }
 
+    /// Reports a failed help render.
+    ///
+    /// Every rendering step funnels here, because a broken template or theme is
+    /// the application's bug however help was asked for. Reporting it as
+    /// [`HelpDisplay::RenderFailed`] is what keeps it from reaching the user as
+    /// a usage error — or, worse, as "that topic wasn't recognized", which is
+    /// what a swallowed render failure used to look like.
+    fn render_failure(cmd: &Command, error: impl std::fmt::Display) -> HelpDisplay {
+        HelpDisplay::RenderFailed(cmd.clone().error(
+            clap::error::ErrorKind::Io,
+            format!("failed to render help: {error}"),
+        ))
+    }
+
     /// Renders root help, returning an error if rendering fails.
     fn render_root_help(
         &self,
@@ -739,13 +755,7 @@ impl AppBuilder {
                 text,
                 paged: use_pager,
             },
-            Err(e) => {
-                let err = cmd.clone().error(
-                    clap::error::ErrorKind::Io,
-                    format!("failed to render help: {e}"),
-                );
-                HelpDisplay::Error(err)
-            }
+            Err(e) => Self::render_failure(cmd, e),
         }
     }
 
@@ -803,27 +813,29 @@ impl AppBuilder {
                 theme: config.as_ref().and_then(|c| c.theme.clone()),
                 ..Default::default()
             };
-            if let Ok(text) = render_topics_list(
+            return match render_topics_list(
                 &self.registry,
                 &format!("{} help", cmd.get_name()),
                 Some(topic_config),
             ) {
-                return HelpDisplay::Rendered {
+                Ok(text) => HelpDisplay::Rendered {
                     text,
                     paged: use_pager,
-                };
-            }
+                },
+                Err(e) => Self::render_failure(cmd, e),
+            };
         }
 
         // 1. Check if it's a real command
         if super::app::find_subcommand(cmd, sub_name).is_some() {
             if let Some(target) = super::app::find_subcommand_recursive(cmd, keywords) {
-                if let Ok(text) = render_help(target, config.clone()) {
-                    return HelpDisplay::Rendered {
+                return match render_help(target, config.clone()) {
+                    Ok(text) => HelpDisplay::Rendered {
                         text,
                         paged: use_pager,
-                    };
-                }
+                    },
+                    Err(e) => Self::render_failure(cmd, e),
+                };
             }
         }
 
@@ -834,12 +846,13 @@ impl AppBuilder {
                 theme: config.as_ref().and_then(|c| c.theme.clone()),
                 ..Default::default()
             };
-            if let Ok(text) = render_topic(topic, Some(topic_config)) {
-                return HelpDisplay::Rendered {
+            return match render_topic(topic, Some(topic_config)) {
+                Ok(text) => HelpDisplay::Rendered {
                     text,
                     paged: use_pager,
-                };
-            }
+                },
+                Err(e) => Self::render_failure(cmd, e),
+            };
         }
 
         // 3. Not found
@@ -847,7 +860,7 @@ impl AppBuilder {
             clap::error::ErrorKind::InvalidSubcommand,
             format!("The subcommand or topic '{}' wasn't recognized", sub_name),
         );
-        HelpDisplay::Error(err)
+        HelpDisplay::Clap(err)
     }
 
     /// Augments a command with the `help` word and output flags.
@@ -864,24 +877,49 @@ impl AppBuilder {
     ///
     /// Both parse paths augment through here, so the word's install policy is
     /// the command's shape and never the entry point the application chose.
+    ///
+    /// # Ordering: shape-dependent decisions come last
+    ///
+    /// The framework's own surface is augmented **first**, and only then is the
+    /// install policy evaluated. The rule behind that is general, and this is
+    /// the easiest place to break it:
+    ///
+    /// > A decision that branches on the command's *assembled* shape may only
+    /// > be evaluated once all structural augmentation has completed.
+    ///
+    /// [`augment_framework_surface`](Self::augment_framework_surface) is the
+    /// augmentation in question: it injects the questionnaire surface through
+    /// `augment_questionnaire_commands`, which adds a `questions` subcommand at
+    /// every registered questionnaire path — the root included. So a root that
+    /// declares no subcommands of its own can still have one by the time a user
+    /// meets it, and "does this root have subcommands?" asked any earlier
+    /// answers for a shape nobody runs.
+    ///
+    /// [`installs_help_word`](Self::installs_help_word) is the only such
+    /// decision today. A second one belongs below the same line, not above it.
+    ///
+    /// The opposite constraint exists and is not a contradiction: the
+    /// questionnaire *validators* (`validate_questionnaire_surfaces`,
+    /// `validate_command_groups`) read the shape the application author wrote,
+    /// precisely to catch names that collide with what the framework is about
+    /// to inject, so they run before augmentation and must keep doing so.
     pub fn augment_command_with_help(&self, cmd: Command) -> Command {
-        let cmd = if self.help_handling {
-            // Disable clap's help subcommand and replace with standout's.
-            // Keep clap's native --help/-h flag — it short-circuits validation
-            // so `myapp subcmd --help` works even with required args.
-            // The resulting DisplayHelp error is intercepted in get_matches_from.
-            let cmd = cmd.disable_help_subcommand(true);
-            if self.installs_help_word(&cmd) {
-                cmd.subcommand(help_word_command())
-            } else {
-                cmd
-            }
+        let cmd = self.augment_framework_surface(cmd);
+
+        if !self.help_handling {
+            return cmd;
+        }
+
+        // Disable clap's help subcommand and replace with standout's.
+        // Keep clap's native --help/-h flag — it short-circuits validation
+        // so `myapp subcmd --help` works even with required args.
+        // The resulting DisplayHelp error is intercepted by both parse paths.
+        let cmd = cmd.disable_help_subcommand(true);
+        if self.installs_help_word(&cmd) {
+            cmd.subcommand(help_word_command())
         } else {
             cmd
-        };
-
-        // Add output flags
-        self.augment_framework_surface(cmd)
+        }
     }
 
     /// Whether the bare `help` word is installed on this root.
@@ -898,6 +936,17 @@ impl AppBuilder {
     ///
     /// `--help` / `-h` are unaffected either way: they are Clap's flags, always
     /// present, and their `DisplayHelp` is rendered through standout.
+    ///
+    /// # `cmd` must be the assembled command
+    ///
+    /// This branches on the command's shape, so it may only be asked once all
+    /// structural augmentation has run: the framework injects subcommands of
+    /// its own (the questionnaire `questions` command, at the root among other
+    /// paths), and a root that gains one is a root where a bare word is already
+    /// a command. [`augment_command_with_help`](Self::augment_command_with_help)
+    /// is the only caller and orders itself accordingly — see the ordering rule
+    /// on it, which is the general form of this requirement and the thing to
+    /// preserve if a second shape-dependent decision is ever added.
     pub(crate) fn installs_help_word(&self, cmd: &Command) -> bool {
         self.help_word
             || cmd.get_subcommands().next().is_some()

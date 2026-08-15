@@ -7,7 +7,7 @@
 //! word `help` meant the help command.
 
 use clap::{Arg, ArgAction, ArgGroup, Command};
-use standout::cli::{App, HelpResult};
+use standout::cli::{App, CommandContextInput, HelpResult};
 
 /// A flat root with a required arg group over an optional positional and a flag.
 fn flat_required_command() -> Command {
@@ -186,6 +186,52 @@ fn a_missing_required_argument_is_still_a_usage_error() {
         }
         other => panic!("expected a usage error, got: {other:?}"),
     }
+}
+
+/// A questionnaire registered at the root path, which makes the framework
+/// inject a `questions` subcommand onto the root itself.
+#[derive(Debug, Clone, standout::Questionnaire)]
+#[question(id = "flat.profile")]
+struct RootAnswers {
+    /// Project name.
+    name: String,
+}
+
+#[test]
+fn the_policy_reads_the_shape_the_framework_leaves_behind() {
+    // `questions` is injected by the framework, so a root that declares no
+    // subcommands of its own still has one by the time anybody meets it — and a
+    // root with subcommands is a root where a bare word is already a command.
+    // Deciding the install before augmentation answered for a shape that never
+    // reaches the user.
+    let app = App::new()
+        .help_handling(true)
+        .command_with(
+            "",
+            |_m, ctx| {
+                let answers: &RootAnswers = ctx.questionnaire()?;
+                Ok(standout::cli::Output::Render(answers.name.clone()))
+            },
+            |cfg| cfg.template("{{ . }}").questionnaire::<RootAnswers>(),
+        )
+        .unwrap()
+        .build()
+        .unwrap();
+
+    let augmented = app.augment_command_with_help(flat_required_command());
+    assert!(
+        augmented.find_subcommand("questions").is_some(),
+        "the framework should have injected its questionnaire surface"
+    );
+    assert!(
+        augmented.find_subcommand("help").is_some(),
+        "the word belongs on a root that has subcommands, however it got them"
+    );
+
+    // And it is reachable, without the opt-in the flat-with-positionals rule
+    // would otherwise have required.
+    let output = help_text(app.get_matches_from(flat_required_command(), ["app", "help"]));
+    assert!(output.contains("Test app"), "output:\n{output}");
 }
 
 #[test]
