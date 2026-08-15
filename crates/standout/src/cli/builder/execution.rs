@@ -303,11 +303,8 @@ impl AppBuilder {
         I: IntoIterator<Item = T>,
         T: Into<std::ffi::OsString> + Clone,
     {
-        // Collect args to Vec<String> so we can potentially reparse with default command
-        let args: Vec<String> = args
-            .into_iter()
-            .map(|a| a.into().to_string_lossy().into_owned())
-            .collect();
+        // Verbatim, all the way to Clap: a non-UTF8 argument is a real argument.
+        let args: Vec<std::ffi::OsString> = args.into_iter().map(Into::into).collect();
 
         if let Err(error) = self.validate_questionnaire_surfaces(&cmd) {
             return RunResult::Error(RunError::new(error.to_string(), RunErrorKind::ClapUsage));

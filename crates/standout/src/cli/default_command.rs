@@ -41,10 +41,10 @@
 
 use clap::{ArgMatches, Command};
 use standout_input::env::{DefaultStdin, StdinReader};
+use std::ffi::OsString;
 use std::rc::Rc;
 
 use crate::cli::app::find_subcommand;
-use crate::cli::dispatch::insert_default_command;
 use crate::cli::handler::Extensions;
 use crate::cli::App;
 
@@ -83,10 +83,15 @@ impl App {
     ///
     /// A substituted command means one more authoritative parse of the amended
     /// line, whose result — success or failure — is final.
+    ///
+    /// Arguments stay [`OsString`]s from end to end. They are the caller's
+    /// verbatim `args_os()` on their way to Clap, which is the only thing that
+    /// has to understand them; a path that is not valid UTF-8 is a real
+    /// argument on Unix and must reach the handler as it was typed.
     pub(crate) fn parse_with_default_command(
         &self,
         cmd: &Command,
-        args: &[String],
+        args: &[OsString],
     ) -> Result<ArgMatches, ParseFailure> {
         match cmd.clone().try_get_matches_from(args) {
             Ok(matches) => {
@@ -135,7 +140,7 @@ impl App {
     /// --nonexistent list` — probes as naked. Such a line then takes the
     /// default and fails at the authoritative parse below, which is the parse
     /// whose diagnostic the user should be reading anyway.
-    fn probe_naked(&self, cmd: &Command, args: &[String]) -> Option<ArgMatches> {
+    fn probe_naked(&self, cmd: &Command, args: &[OsString]) -> Option<ArgMatches> {
         if self.default_command.is_none() && self.default_command_resolver.is_none() {
             return None;
         }
@@ -151,13 +156,20 @@ impl App {
     }
 
     /// Re-parses the line with `name` inserted as its command.
+    ///
+    /// The name goes in after the program name, which is what
+    /// [`insert_default_command`](crate::cli::insert_default_command) does for
+    /// callers holding `String`s. Done here on the `OsString`s directly, so
+    /// substituting a command cannot mangle the arguments around it.
     fn reparse_with_command(
         &self,
         cmd: &Command,
-        args: &[String],
+        args: &[OsString],
         name: &str,
     ) -> Result<ArgMatches, ParseFailure> {
-        let amended = insert_default_command(args.to_vec(), name);
+        let mut amended = args.to_vec();
+        amended.insert(amended.len().min(1), OsString::from(name));
+
         cmd.clone()
             .try_get_matches_from(&amended)
             .map_err(ParseFailure::Clap)

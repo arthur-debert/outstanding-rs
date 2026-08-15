@@ -40,18 +40,23 @@ pub fn get_deepest_matches(matches: &ArgMatches) -> &ArgMatches {
 
 /// Returns true if a subcommand was selected.
 ///
-/// Note that this reads a *parse result*, so it cannot answer "was this
-/// invocation naked?" for a line that does not parse — a root with required
-/// arguments rejects the line before this can be asked. Deciding that question
-/// for such a root means reading the command name off the raw arguments
-/// instead.
+/// This reads a *parse result*, so there has to be one: a root that rejects the
+/// line — because it requires arguments, or requires a subcommand — never gets
+/// this far. "Was this invocation naked?" is still Clap's question to answer
+/// for such a root, by parsing the line again permissively (see
+/// `App::parse_with_default_command` in `standout`), never by reading the
+/// argument list by hand.
 pub fn has_subcommand(matches: &ArgMatches) -> bool {
     matches.subcommand().is_some()
 }
 
 /// Inserts a command name at position 1 (after program name) in the argument list.
 ///
-/// Used to implement default command support.
+/// For callers driving default-command substitution themselves — a partially
+/// adopted CLI, most often. Standout's own parse path does the same insertion
+/// on `OsString`s instead, so that substituting a command cannot mangle a
+/// non-UTF8 argument beside it; this helper is for the `String`-typed argv a
+/// caller already holds.
 pub fn insert_default_command<I, S>(args: I, command: &str) -> Vec<String>
 where
     I: IntoIterator<Item = S>,

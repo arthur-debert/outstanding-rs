@@ -579,3 +579,101 @@ fn a_flat_command_keeps_the_word_as_data_without_the_opt_in() {
         other => panic!("expected matches, got {other:?}"),
     }
 }
+
+// --- arguments reach Clap verbatim -----------------------------------------
+
+/// A non-UTF8 argument is an ordinary argument on Unix — a path, most often —
+/// and standout must not stand between it and Clap. The parse seam therefore
+/// carries `OsString`s end to end, including across the re-parse that
+/// substitutes a default command.
+#[cfg(unix)]
+mod non_utf8 {
+    use super::*;
+    use std::ffi::OsString;
+    use std::os::unix::ffi::OsStringExt;
+    use std::path::PathBuf;
+
+    /// `fo\x80o` — a byte sequence no UTF-8 decoder accepts.
+    fn wild_path() -> OsString {
+        OsString::from_vec(vec![b'f', b'o', 0x80, b'o'])
+    }
+
+    fn path_command() -> Command {
+        Command::new("app").subcommand(
+            Command::new("list").arg(Arg::new("path").value_parser(clap::value_parser!(PathBuf))),
+        )
+    }
+
+    /// Reports whether the handler received the argument byte for byte.
+    fn path_app(default: bool) -> App {
+        let builder = if default {
+            App::builder().default_command("list")
+        } else {
+            App::builder()
+        };
+        builder
+            .command(
+                "list",
+                |m, _ctx| {
+                    let seen = m
+                        .get_one::<PathBuf>("path")
+                        .map(|p| p.as_os_str().to_owned());
+                    Ok(Output::Render(json!({
+                        "verbatim": seen.as_deref() == Some(wild_path().as_os_str()),
+                    })))
+                },
+                "verbatim={{ verbatim }}",
+            )
+            .unwrap()
+            .build()
+            .unwrap()
+    }
+
+    #[test]
+    #[serial]
+    fn a_non_utf8_argument_reaches_the_handler_unmangled() {
+        let result = TestHarness::new().interactive_stdin().run(
+            &path_app(false),
+            path_command(),
+            [OsString::from("app"), OsString::from("list"), wild_path()],
+        );
+
+        result.assert_success();
+        result.assert_stdout_eq("verbatim=true");
+    }
+
+    #[test]
+    #[serial]
+    fn substituting_a_default_command_does_not_mangle_the_rest() {
+        // The line is naked, so it is re-parsed with `list` inserted — the
+        // amended argument list must still be the user's bytes.
+        let result = TestHarness::new().interactive_stdin().run(
+            &path_app(true),
+            path_command(),
+            [OsString::from("app"), wild_path()],
+        );
+
+        result.assert_success();
+        result.assert_stdout_eq("verbatim=true");
+    }
+
+    #[test]
+    #[serial]
+    fn get_matches_from_hands_back_the_argument_it_was_given() {
+        let app = path_app(false);
+
+        match app.get_matches_from(
+            path_command(),
+            [OsString::from("app"), OsString::from("list"), wild_path()],
+        ) {
+            HelpResult::Matches(m) => {
+                let sub = m.subcommand_matches("list").expect("list");
+                assert_eq!(
+                    sub.get_one::<PathBuf>("path").map(|p| p.as_os_str()),
+                    Some(wild_path().as_os_str())
+                );
+            }
+            other => panic!("expected matches, got {other:?}"),
+        }
+    }
+}

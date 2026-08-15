@@ -574,10 +574,8 @@ impl AppBuilder {
     {
         let mut cmd = self.augment_command_with_help(cmd);
 
-        let args: Vec<String> = itr
-            .into_iter()
-            .map(|a| a.into().to_string_lossy().into_owned())
-            .collect();
+        // Verbatim, all the way to Clap: a non-UTF8 argument is a real argument.
+        let args: Vec<std::ffi::OsString> = itr.into_iter().map(Into::into).collect();
 
         let matches = match self.parse_with_default_command(&cmd, &args) {
             Ok(matches) => matches,
@@ -632,7 +630,7 @@ impl AppBuilder {
     pub(crate) fn intercept_display_help(
         &self,
         cmd: &mut Command,
-        args: &[String],
+        args: &[std::ffi::OsString],
         error: &clap::Error,
     ) -> Option<HelpDisplay> {
         (self.help_handling && error.kind() == clap::error::ErrorKind::DisplayHelp)
@@ -716,7 +714,7 @@ impl AppBuilder {
     fn render_help_for_display_help_error(
         &self,
         cmd: &mut Command,
-        args: &[String],
+        args: &[std::ffi::OsString],
     ) -> HelpDisplay {
         let target = Self::help_target(cmd, args);
 
@@ -739,7 +737,7 @@ impl AppBuilder {
     /// Empty means the root. Disabling the help flag is what lets the parse run
     /// far enough to answer: with it enabled the parse short-circuits again and
     /// reports nothing.
-    fn help_target(cmd: &Command, args: &[String]) -> Vec<String> {
+    fn help_target(cmd: &Command, args: &[std::ffi::OsString]) -> Vec<String> {
         let Ok(matches) = cmd
             .clone()
             .disable_help_flag(true)
