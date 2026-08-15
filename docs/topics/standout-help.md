@@ -20,7 +20,9 @@ When enabled, standout:
 2. **Keeps** clap's native `--help`/`-h` flag, on purpose: clap's flag short-circuits argument validation, so `myapp build --help` renders even when required arguments are missing
 3. Intercepts all help requests and renders them through a MiniJinja template with style tags — the `help` word before parsing, and clap's `DisplayHelp` (from `--help`/`-h`, at root and subcommand level) after
 
-Every form that is available produces identical output. Subcommand-level help (e.g. `myapp build --help`) also works, rendering that subcommand's help through standout.
+Every form that is available renders the same help, through the same template and theme — with one exception, which is about the *form*, not the entry point: `--output` reaches the `help` word but not the flags. `myapp help --output text` renders in text mode; `myapp --help --output text` renders in `Auto` and the mode is ignored. The reason is where each form is answered: the word is answered from its own arm, which parses the root's global flags along with it, while `--help` short-circuits inside clap before anything is parsed, so no mode is available when its `DisplayHelp` is rendered.
+
+Subcommand-level help (e.g. `myapp build --help`) also works, rendering that subcommand's help through standout.
 
 **Required for features:** `command_groups` and topics require `help_handling(true)`. If you configure either without it, `build()` returns a `SetupError`.
 
@@ -345,10 +347,12 @@ Style tags like `[header]...[/header]` are resolved against the theme. Unknown t
 
 ## Output Modes
 
-Help respects the `--output` flag, but only as far as *styling*. Help is always the rendered template; the mode decides what happens to its style tags — applied in `Term`, stripped in `Text`, left visible as `[header]…[/header]` in `TermDebug`:
+The `help` word respects the `--output` flag, but only as far as *styling*. Help is always the rendered template; the mode decides what happens to its style tags — applied in `Term`, stripped in `Text`, left visible as `[header]…[/header]` in `TermDebug`:
 
 ```bash
 myapp help --output text
 ```
+
+`--help` / `-h` do not take the flag with them (see [above](#enabling-help-handling)): they render in `Auto`, which styles for the terminal it finds. Spell the mode with the word when you need it.
 
 The structured modes (`json`, `yaml`, `xml`, `csv`) strip the tags exactly as `Text` does. None of them serializes `HelpData`, so help is themed prose in every mode, not a machine-readable document. If you need help as data, render it yourself: `HelpData` is what a [custom template](#custom-templates) receives, and a template that emits JSON is the seam for it.

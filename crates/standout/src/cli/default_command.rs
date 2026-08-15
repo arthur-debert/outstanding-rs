@@ -195,16 +195,23 @@ pub(crate) fn select<'a>(cmd: &'a Command, args: &[String]) -> Selection<'a> {
         }
 
         if let Some(long) = token.strip_prefix("--") {
-            if long == "help" && !cmd.is_disable_help_flag_set() {
+            // `--flag=value` carries its value inline, so the option's *name*
+            // is what every question below is about. `--help=x` is still a help
+            // request — a malformed one, but Clap's complaint about it belongs
+            // to the root rather than to a default command inserted under it.
+            let (name, inline_value) = match long.split_once('=') {
+                Some((name, _)) => (name, true),
+                None => (long, false),
+            };
+            if name == "help" && !cmd.is_disable_help_flag_set() {
                 return Selection::RootShortCircuit;
             }
-            if long == "version" && has_version_flag(cmd) {
+            if name == "version" && has_version_flag(cmd) {
                 return Selection::RootShortCircuit;
             }
             index += 1;
-            // `--flag=value` carries its value inline; `--flag value` eats the
-            // next token.
-            if !long.contains('=') && long_takes_value(cmd, long) {
+            // Without an inline value, `--flag value` eats the next token.
+            if !inline_value && long_takes_value(cmd, name) {
                 index += 1;
             }
             continue;
@@ -540,6 +547,27 @@ mod tests {
                 "{args:?}"
             );
         }
+    }
+
+    #[test]
+    fn an_inline_value_does_not_hide_a_help_or_version_request() {
+        // `--help=x` is malformed either way, but it is a *root* help request:
+        // reading the name off the token keeps Clap's complaint pointed at the
+        // root instead of at a default command inserted underneath it.
+        let cmd = app_cmd();
+        for args in [
+            &["myapp", "--help=topics"][..],
+            &["myapp", "--version=2"][..],
+        ] {
+            assert_eq!(
+                select(&cmd, &argv(args)),
+                Selection::RootShortCircuit,
+                "{args:?}"
+            );
+        }
+
+        // And no default command is inserted under it.
+        assert_eq!(resolve_for(&["myapp", "--help=topics"], Some("list")), None);
     }
 
     #[test]

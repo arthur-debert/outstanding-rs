@@ -758,6 +758,13 @@ impl AppBuilder {
     /// ([`default_command::command_path`]), so the command a help request
     /// targets is read the way the command a line means is read: option values
     /// are option values, and the scan stops where the help request is.
+    ///
+    /// No output mode is threaded through: Clap short-circuits `--help` before
+    /// anything is parsed, so there are no matches to read `--output` from and
+    /// the render falls back to [`OutputMode::Auto`]. The `help` word does
+    /// honour the flag, because its own arm parses the root's globals — see
+    /// [`render_help_word`](Self::render_help_word). The asymmetry is
+    /// documented in `docs/topics/standout-help.md`.
     fn render_help_for_display_help_error(
         &self,
         cmd: &mut Command,

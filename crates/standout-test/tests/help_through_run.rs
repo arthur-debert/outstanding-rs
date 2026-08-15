@@ -196,6 +196,38 @@ fn the_help_word_honours_the_output_flag_through_run() {
 
 #[test]
 #[serial]
+fn the_output_flag_reaches_the_word_but_not_the_flags() {
+    // A documented asymmetry (`docs/topics/standout-help.md`), pinned so the
+    // doc cannot go stale quietly: the word is answered from its own arm, which
+    // parses the root's globals, while `--help` short-circuits inside clap
+    // before anything is parsed — so its render has no mode to honour and falls
+    // back to `Auto`.
+    let app = flat_app(true);
+
+    let word = TestHarness::new().no_color().run(
+        &app,
+        flat_required_command(),
+        ["app", "help", "--output", "term-debug"],
+    );
+    word.assert_stdout_contains("[header]USAGE[/header]");
+    drop(word);
+
+    let flag = TestHarness::new().no_color().run(
+        &app,
+        flat_required_command(),
+        ["app", "--help", "--output", "term-debug"],
+    );
+    flag.assert_success();
+    flag.assert_stdout_contains("USAGE");
+    assert!(
+        !flag.stdout().contains("[header]"),
+        "`--help` renders in Auto, so the requested mode is not applied:\n{}",
+        flag.stdout()
+    );
+}
+
+#[test]
+#[serial]
 fn a_pager_request_rides_back_as_a_typed_success() {
     // `run()` is the only entry point that may spawn a pager, so the request
     // travels as a kind rather than as a side effect of capturing the text.
