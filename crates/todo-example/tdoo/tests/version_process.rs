@@ -1,7 +1,7 @@
-//! `tdoo --version` as a shell actually meets it.
+//! Runs `tdoo --version` the way a user does — as a real process.
 //!
-//! The harness proves the builder setting reaches the parse; only a real
-//! process proves the compiled binary answers on stdout with status 0.
+//! The harness proves the builder setting reaches the parse; only the
+//! compiled binary proves the answer arrives on stdout with status 0.
 
 use std::process::Command;
 
