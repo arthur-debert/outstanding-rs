@@ -1,6 +1,6 @@
 [package]
 name = "todo-core"
-version = "8.0.1"
+version = "8.0.2"
 edition = "2021"
 description = "CLI-free todo domain and JSON persistence for the Standout worked example"
 license = "MIT"
