@@ -338,6 +338,8 @@ impl AppBuilder {
     /// Returns an error if:
     /// - A `default_theme()` was specified but the theme wasn't found in the stylesheet registry
     /// - `command_groups` or topics are configured without `.help_handling(true)`
+    /// - a command is registered under the root `help` with `.help_handling(true)`,
+    ///   which is the name standout installs its own word under
     ///
     /// # Example
     ///
@@ -428,6 +430,29 @@ impl AppBuilder {
                      help interception"
                         .to_string(),
                 ));
+            }
+        }
+
+        // A command registered under the root `help` is the same collision the
+        // parse paths catch on a declared one, seen one step earlier — and
+        // unconditionally, without the assembled shape the install policy
+        // reads. It needs none: a registered `help` only ever runs if the
+        // application's `Command` declares the word too, and a root with
+        // subcommands always gets standout's (see `installs_help_word`). So the
+        // registration is either shadowed by the word or dead, and both are the
+        // author's to resolve.
+        if self.help_handling {
+            // Lowest path first, so a root carrying several registrations under
+            // `help` names the same one on every run.
+            let claim = self
+                .pending_commands
+                .borrow()
+                .keys()
+                .filter(|path| claims_root_help(path))
+                .min()
+                .cloned();
+            if let Some(path) = claim {
+                return Err(duplicate_help_word(&registered_claim(&path)));
             }
         }
 
@@ -567,12 +592,31 @@ impl AppBuilder {
     /// [`default_command_with`](Self::default_command_with). `dispatch_from`
     /// parses through the same seam, so consumers that parse first and build
     /// dispatch state afterwards see one consistent answer.
+    ///
+    /// A command that declares its own `help` where standout installs the word
+    /// is a configuration standout will not serve: it comes back as
+    /// [`HelpResult::Error`] carrying
+    /// [`SetupError::DuplicateCommand`](crate::SetupError::DuplicateCommand)'s
+    /// report, before anything is parsed.
     pub fn get_matches_from<I, T>(&self, cmd: Command, itr: I) -> HelpResult
     where
         I: IntoIterator<Item = T>,
         T: Into<std::ffi::OsString> + Clone,
     {
         let mut cmd = self.augment_command_with_help(cmd);
+
+        // The application's `Command` is only visible from a parse entry point,
+        // so a `help` it declares is only refusable here — and only before the
+        // parse, which is where Clap's duplicate-subcommand assertion would
+        // fire. It is the application's configuration at fault, not the line,
+        // but this path speaks `clap::Error` for every failure, so the setup
+        // error is raised as one rather than routed around the return type.
+        if let Some(error) = self.help_word_collision(&cmd) {
+            return HelpResult::Error(clap::Error::raw(
+                clap::error::ErrorKind::InvalidSubcommand,
+                format!("{error}\n"),
+            ));
+        }
 
         // Verbatim, all the way to Clap: a non-UTF8 argument is a real argument.
         let args: Vec<std::ffi::OsString> = itr.into_iter().map(Into::into).collect();
@@ -838,6 +882,17 @@ impl AppBuilder {
     /// Both parse paths augment through here, so the word's install policy is
     /// the command's shape and never the entry point the application chose.
     ///
+    /// The word is installed whether or not the application already claims the
+    /// name; what comes back is then a root with two `help` subcommands, which
+    /// is a configuration standout refuses rather than serves. Refusing is the
+    /// caller's move, not this seam's: augmentation has no error currency, and
+    /// Clap's duplicate-subcommand assertion fires when a command is *parsed*,
+    /// not when a subcommand is registered — so both parse entry points read
+    /// the collision off the augmented root (`help_word_collision`) and refuse
+    /// before the parse that would panic. Augmenting by hand and parsing the
+    /// result yourself is the one path standout is not on: there Clap answers
+    /// first, with the assertion, as it always has.
+    ///
     /// # Ordering: shape-dependent decisions come last
     ///
     /// The framework's own surface is augmented **first**, and only then is the
@@ -855,8 +910,10 @@ impl AppBuilder {
     /// meets it, and "does this root have subcommands?" asked any earlier
     /// answers for a shape nobody runs.
     ///
-    /// [`installs_help_word`](Self::installs_help_word) is the only such
-    /// decision today. A second one belongs below the same line, not above it.
+    /// [`installs_help_word`](Self::installs_help_word) is the decision that
+    /// rule exists for, and the duplicate-`help` refusal reads the same
+    /// assembled root one step later, in the callers. A third such decision
+    /// belongs below the same line, not above it.
     ///
     /// The opposite constraint exists and is not a contradiction: the
     /// questionnaire *validators* (`validate_questionnaire_surfaces`,
@@ -888,6 +945,31 @@ impl AppBuilder {
         } else {
             cmd
         }
+    }
+
+    /// The collision, when the application claims `help` on a root standout
+    /// installed its own word on.
+    ///
+    /// Read off the *augmented* root, where standout's word is already there,
+    /// so two claims on the name means one of them is the application's. That
+    /// is the whole reason it is asked here rather than before augmentation: no
+    /// caller re-derives whether the word was installed, or under what policy —
+    /// it reads what the policy left behind. The `help_handling` guard is what
+    /// keeps the report true: with interception off standout claims nothing, so
+    /// two `help`s are both the application's and none of standout's business.
+    ///
+    /// A registration claiming the word is caught earlier, by
+    /// [`build`](Self::build); this is the half that cannot be, since the
+    /// application's `Command` reaches standout only at parse time.
+    pub(crate) fn help_word_collision(&self, augmented: &Command) -> Option<SetupError> {
+        if !self.help_handling {
+            return None;
+        }
+        let claims = augmented
+            .get_subcommands()
+            .filter(|sub| claims_help(sub))
+            .count();
+        (claims > 1).then(|| duplicate_help_word(DECLARED_CLAIM))
     }
 
     /// Whether the bare `help` word is installed on this root.
@@ -1067,6 +1149,56 @@ impl AppBuilder {
             .collect();
         super::app::verify_recursive(cmd, &expected_args, &[], true)
     }
+}
+
+/// Whether this subcommand claims the name `help`.
+///
+/// Aliases count: Clap resolves an alias to its command, so a subcommand
+/// aliased `help` is as much a claim on the word as one named it.
+fn claims_help(cmd: &Command) -> bool {
+    cmd.get_name() == "help" || cmd.get_all_aliases().any(|alias| alias == "help")
+}
+
+/// Whether a registered command path claims the root `help` word.
+///
+/// The first segment is the claim: `help` is the word itself, and `help.topic`
+/// — or anything a `.group("help", …)` registers — hangs a command off it, so
+/// the word standout installs is in its way just the same. Deeper segments are
+/// the application's own: `db.help` sits where the word is never installed.
+fn claims_root_help(path: &str) -> bool {
+    path == "help" || path.starts_with("help.")
+}
+
+/// The clause naming a `help` declared on the application's clap `Command`.
+const DECLARED_CLAIM: &str =
+    "this application's clap `Command` declares `help` (as a subcommand name or alias)";
+
+/// The clause naming a registered claim on the root `help`.
+fn registered_claim(path: &str) -> String {
+    if path == "help" {
+        "this application registers a `help` command".to_string()
+    } else {
+        format!("this application registers `{path}`, hanging a command off the same root word")
+    }
+}
+
+/// The collision report for an application `help` meeting standout's word.
+///
+/// [`SetupError::DuplicateCommand`] renders as `duplicate command: {payload}`,
+/// which is complete guidance when both colliding commands are the author's:
+/// they can see both and delete one. Here one of the two is standout's,
+/// injected by an install policy the author may not know exists — so the
+/// payload carries what the name alone cannot: the setting that installs the
+/// word, and the two ways out. `claim` is the clause naming where the
+/// application's own `help` was found, the one thing the author has to go look
+/// at.
+fn duplicate_help_word(claim: &str) -> SetupError {
+    SetupError::DuplicateCommand(format!(
+        "help — {claim}, and standout installs a `help` word of its own under \
+         .help_handling(true). Rename the application's command, or drop \
+         .help_handling(true) to keep the name (help is then clap's own, and \
+         command_groups and topics become unavailable)"
+    ))
 }
 
 /// Standout's `help` word, the replacement for clap's built-in one.

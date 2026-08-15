@@ -15,6 +15,11 @@ pub enum SetupError {
     /// Configuration error.
     Config(String),
     /// Duplicate command registered.
+    ///
+    /// The payload is the report, not just the name: `Display` renders it as
+    /// `duplicate command: {payload}`, so a collision that needs more than a
+    /// name to act on — the `help` word standout installs for itself — writes
+    /// the guidance into it.
     DuplicateCommand(String),
     /// I/O error during setup (e.g., loading templates/styles).
     Io(std::io::Error),
