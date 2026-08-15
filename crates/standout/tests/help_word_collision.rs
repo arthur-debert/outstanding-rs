@@ -2,9 +2,10 @@
 //!
 //! Under `.help_handling(true)` standout installs a `help` word of its own, so
 //! an application that also claims the name has a configuration that cannot be
-//! served — and the framework says so, in the currency it already uses for two
-//! commands claiming one name (`SetupError`). The failure it replaces was
-//! clap's duplicate-subcommand debug assertion, a runtime panic.
+//! served — and the framework says so with the error it already uses for two
+//! commands claiming one name, `SetupError::DuplicateCommand`, carrying the
+//! guidance a bare name cannot. The failure it replaces was clap's
+//! duplicate-subcommand debug assertion, a runtime panic.
 
 use clap::{Arg, ArgAction, Command};
 use standout::cli::{App, HelpResult, Output, RunResult};
@@ -78,6 +79,23 @@ fn an_aliased_help_subcommand_collides_too() {
 }
 
 #[test]
+fn augmentation_hands_back_the_colliding_root_for_the_caller_to_refuse() {
+    // The premise the entry points rest on: Clap's duplicate-subcommand
+    // assertion fires when a command is parsed, not when a subcommand is
+    // registered. So augmenting a root that already claims `help` yields two
+    // claims on the name — the collision the entry points read and refuse on,
+    // before the parse that would panic.
+    let app = App::new().help_handling(true).build().unwrap();
+    let augmented = app.augment_command_with_help(app_with_its_own_help());
+
+    let claims = augmented
+        .get_subcommands()
+        .filter(|sub| sub.get_name() == "help")
+        .count();
+    assert_eq!(claims, 2, "the application's `help` and standout's own");
+}
+
+#[test]
 fn a_registered_help_command_fails_at_build() {
     let result = App::new()
         .help_handling(true)
@@ -91,6 +109,51 @@ fn a_registered_help_command_fails_at_build() {
             "error: {e}"
         ),
         Ok(_) => panic!("a registered `help` command must not build under help_handling(true)"),
+    }
+}
+
+#[test]
+fn a_command_registered_under_help_fails_at_build_too() {
+    // `help.topic` never runs: the root word standout installs is what `myapp
+    // help …` reaches. Claiming the first segment is claiming the word.
+    let result = App::new()
+        .help_handling(true)
+        .command("help.topic", |_m, _ctx| Ok(Output::Render("mine")), "mine")
+        .unwrap()
+        .build();
+
+    match result {
+        Err(e) => {
+            let message = e.to_string();
+            assert!(
+                message.contains("duplicate command: help"),
+                "error: {message}"
+            );
+            assert!(
+                message.contains("`help.topic`"),
+                "the message must name the registration that collided: {message}"
+            );
+        }
+        Ok(_) => panic!("a command under a root `help` must not build under help_handling(true)"),
+    }
+}
+
+#[test]
+fn a_help_group_fails_at_build_too() {
+    let result = App::new()
+        .help_handling(true)
+        .group("help", |g| {
+            g.command("topic", |_m, _ctx| Ok(Output::Render("mine")))
+        })
+        .unwrap()
+        .build();
+
+    match result {
+        Err(e) => assert!(
+            e.to_string().contains("duplicate command: help"),
+            "error: {e}"
+        ),
+        Ok(_) => panic!("a `help` group must not build under help_handling(true)"),
     }
 }
 

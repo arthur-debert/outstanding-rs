@@ -60,7 +60,7 @@ Opting in accepts the cost: the literal word `help` can no longer reach the posi
 
 ### If your CLI already has a `help`
 
-Where standout installs the word, the name is standout's. An application that claims it too — a clap subcommand called `help` (or aliased to it), or a command registered with `.command("help", …)` — is a configuration standout refuses rather than serves:
+Where standout installs the word, the name is standout's. An application that claims it too — a clap subcommand called `help` (or aliased to it), or a registration whose first path segment is `help` (`.command("help", …)`, `.command("help.topic", …)`, a `.group("help", …)`) — is a configuration standout refuses rather than serves:
 
 ```text
 duplicate command: help — this application's clap `Command` declares `help` (as a
@@ -70,7 +70,7 @@ subcommand name or alias), and standout installs a `help` word of its own under
 command_groups and topics become unavailable)
 ```
 
-Each spelling is caught the moment it becomes visible: a registered `help` fails `build()`, while a clap-declared one is only visible when your `Command` reaches a parse entry point, so it comes back as `HelpResult::Error` / `RunResult::Error` before anything is parsed. Neither reaches clap, whose answer to two subcommands of one name is a debug assertion — a panic on a configuration, which is what `SetupError` exists to prevent.
+Each spelling is caught the moment it becomes visible: a registration under the root `help` fails `build()`, while a clap-declared one is only visible when your `Command` reaches a parse entry point, so it comes back as `HelpResult::Error` / `RunResult::Error` before anything is parsed. Neither reaches clap, whose answer to two subcommands of one name is a debug assertion — a panic on a configuration, which is what `SetupError` exists to prevent.
 
 Standing down — letting your `help` win and rendering nothing itself — is deliberately not offered. `myapp help` would then run your handler while `myapp --help` rendered standout's themed help: one CLI answering the same question two ways.
 

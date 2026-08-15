@@ -277,6 +277,11 @@ impl AppBuilder {
     /// [`SuccessKind::PagedHelp`](crate::cli::SuccessKind::PagedHelp); only
     /// [`run`](Self::run) acts on it, so this stays free of side effects.
     ///
+    /// A command that declares its own `help` where standout installs the word
+    /// is refused on those same terms: `RunResult::Error` carrying
+    /// [`SetupError::DuplicateCommand`](crate::SetupError::DuplicateCommand)'s
+    /// report, before anything is parsed.
+    ///
     /// # Returns
     ///
     /// - `RunResult::Handled(output)` if a registered handler processed the command
@@ -313,14 +318,17 @@ impl AppBuilder {
         // Augment command with framework-owned flags, the questionnaire command
         // surface, and — when standout owns help — the `help` word. The word's
         // install policy is the command's shape, not the entry point used, so
-        // this is the same augmentation `get_matches_from` performs, refusal of
-        // an application-declared `help` included.
-        let mut augmented_cmd = match self.augment_command_with_help(cmd) {
-            Ok(cmd) => cmd,
-            Err(error) => {
-                return RunResult::Error(RunError::new(error.to_string(), RunErrorKind::ClapUsage))
-            }
-        };
+        // this is the same augmentation `get_matches_from` performs.
+        let mut augmented_cmd = self.augment_command_with_help(cmd);
+
+        // And the same refusal: an application that declares `help` where the
+        // word just went has a configuration standout will not serve, and the
+        // parse below is what would meet Clap's duplicate-subcommand assertion.
+        // It is a setup failure, but it surfaces on a run, so it takes the kind
+        // a questionnaire-surface failure takes.
+        if let Some(error) = self.help_word_collision(&augmented_cmd) {
+            return RunResult::Error(RunError::new(error.to_string(), RunErrorKind::ClapUsage));
+        }
 
         // One parse seam for both paths: Clap decides which command the line
         // named, and a line that named none may take a default command.
