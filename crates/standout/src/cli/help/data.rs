@@ -9,8 +9,9 @@ use super::config::CommandGroup;
 
 /// Minimum width for the name column in help output (commands, options, topics).
 ///
-/// This is a floor, not a fixed width: when a list's longest name would
-/// overflow it, the whole column widens via [`name_column_width`].
+/// This is a floor, not a fixed width: whenever a list's longest name plus
+/// [`NAME_COLUMN_GAP`] exceeds it, the whole column widens via
+/// [`name_column_width`].
 pub(crate) const NAME_COLUMN_WIDTH: usize = 14;
 
 /// Minimum gap between a name and its description when the column widens.
@@ -20,9 +21,11 @@ pub(crate) const NAME_COLUMN_GAP: usize = 2;
 /// any template-added suffix, e.g. the colon after subcommand and topic names)
 /// is `max_name_len`.
 ///
-/// At least [`NAME_COLUMN_WIDTH`]; widened to `max_name_len + NAME_COLUMN_GAP`
-/// when a name would otherwise overflow the column, so a long name never runs
-/// into its description (issue #297).
+/// The larger of [`NAME_COLUMN_WIDTH`] and `max_name_len + NAME_COLUMN_GAP`:
+/// the column widens whenever the longest name plus the minimum gap exceeds
+/// the floor — including a name that merely fills the floor — so every name
+/// keeps at least [`NAME_COLUMN_GAP`] spaces before its description (issue
+/// #297).
 pub(crate) fn name_column_width(max_name_len: usize) -> usize {
     NAME_COLUMN_WIDTH.max(max_name_len + NAME_COLUMN_GAP)
 }
