@@ -32,7 +32,7 @@ mod execution;
 mod rendering;
 
 use crate::context::ContextRegistry;
-use crate::setup::SetupError;
+use crate::setup::{HelpWordSource, SetupError};
 use crate::topics::{
     display_with_pager, render_topic, render_topics_list, TopicRegistry, TopicRenderConfig,
 };
@@ -338,6 +338,8 @@ impl AppBuilder {
     /// Returns an error if:
     /// - A `default_theme()` was specified but the theme wasn't found in the stylesheet registry
     /// - `command_groups` or topics are configured without `.help_handling(true)`
+    /// - a command is registered at the root as `help` with `.help_handling(true)`,
+    ///   which is the name standout installs its own word under
     ///
     /// # Example
     ///
@@ -429,6 +431,19 @@ impl AppBuilder {
                         .to_string(),
                 ));
             }
+        }
+
+        // A command registered at the root as `help` is the same collision the
+        // parse paths catch on a declared one, seen one step earlier — and
+        // unconditionally, without the assembled shape the install policy
+        // reads. It needs none: a registered `help` only ever runs if the
+        // application's `Command` declares the word too, and a root with
+        // subcommands always gets standout's (see `installs_help_word`). So the
+        // registration is either shadowed by the word or dead, and both are the
+        // author's to resolve. Only the root is standout's: `db.help` is the
+        // application's own, at a path the word is never installed on.
+        if self.help_handling && self.pending_commands.borrow().contains_key("help") {
+            return Err(SetupError::DuplicateHelpWord(HelpWordSource::Registered));
         }
 
         // Finalize commands (now theme is resolved and will be captured correctly)
@@ -567,12 +582,31 @@ impl AppBuilder {
     /// [`default_command_with`](Self::default_command_with). `dispatch_from`
     /// parses through the same seam, so consumers that parse first and build
     /// dispatch state afterwards see one consistent answer.
+    ///
+    /// A command that declares its own `help` where standout installs the word
+    /// is a configuration standout will not serve: it comes back as
+    /// [`HelpResult::Error`] carrying
+    /// [`SetupError::DuplicateHelpWord`](crate::SetupError::DuplicateHelpWord)'s
+    /// report, before anything is parsed.
     pub fn get_matches_from<I, T>(&self, cmd: Command, itr: I) -> HelpResult
     where
         I: IntoIterator<Item = T>,
         T: Into<std::ffi::OsString> + Clone,
     {
-        let mut cmd = self.augment_command_with_help(cmd);
+        // The application's `Command` is only visible here, so a `help` it
+        // declares is only refusable here. It is the application's
+        // configuration at fault, not the line, but this path speaks
+        // `clap::Error` for every failure — so the setup error is raised as one
+        // rather than routed around the return type.
+        let mut cmd = match self.augment_command_with_help(cmd) {
+            Ok(cmd) => cmd,
+            Err(e) => {
+                return HelpResult::Error(clap::Error::raw(
+                    clap::error::ErrorKind::InvalidSubcommand,
+                    format!("{e}\n"),
+                ))
+            }
+        };
 
         // Verbatim, all the way to Clap: a non-UTF8 argument is a real argument.
         let args: Vec<std::ffi::OsString> = itr.into_iter().map(Into::into).collect();
@@ -838,6 +872,16 @@ impl AppBuilder {
     /// Both parse paths augment through here, so the word's install policy is
     /// the command's shape and never the entry point the application chose.
     ///
+    /// # Errors
+    ///
+    /// [`SetupError::DuplicateHelpWord`] when the command already declares
+    /// `help` — by name or alias — on a root standout installs the word on.
+    /// Fallible for that one reason: the application's `Command` reaches
+    /// standout at parse time, never at `build()`, so this is the earliest
+    /// point at which a declared `help` is visible at all. A registered `help`
+    /// command *is* visible earlier and [`build`](Self::build) rejects it
+    /// there.
+    ///
     /// # Ordering: shape-dependent decisions come last
     ///
     /// The framework's own surface is augmented **first**, and only then is the
@@ -855,19 +899,21 @@ impl AppBuilder {
     /// meets it, and "does this root have subcommands?" asked any earlier
     /// answers for a shape nobody runs.
     ///
-    /// [`installs_help_word`](Self::installs_help_word) is the only such
-    /// decision today. A second one belongs below the same line, not above it.
+    /// [`installs_help_word`](Self::installs_help_word) is the decision that
+    /// rule exists for, and the duplicate-`help` refusal is asked with it: both
+    /// read the assembled root. A third such decision belongs below the same
+    /// line, not above it.
     ///
     /// The opposite constraint exists and is not a contradiction: the
     /// questionnaire *validators* (`validate_questionnaire_surfaces`,
     /// `validate_command_groups`) read the shape the application author wrote,
     /// precisely to catch names that collide with what the framework is about
     /// to inject, so they run before augmentation and must keep doing so.
-    pub fn augment_command_with_help(&self, cmd: Command) -> Command {
+    pub fn augment_command_with_help(&self, cmd: Command) -> Result<Command, SetupError> {
         let cmd = self.augment_framework_surface(cmd);
 
         if !self.help_handling {
-            return cmd;
+            return Ok(cmd);
         }
 
         // Disable clap's help subcommand and replace with standout's.
@@ -875,19 +921,29 @@ impl AppBuilder {
         // so `myapp subcmd --help` works even with required args.
         // The resulting DisplayHelp error is intercepted by both parse paths.
         let cmd = cmd.disable_help_subcommand(true);
-        if self.installs_help_word(&cmd) {
-            // `subcommand_negates_reqs` is what makes the installed word
-            // reachable: without it a root that requires arguments rejects
-            // `myapp help` before Clap can route it, which is the defect this
-            // whole surface exists to fix. It is set *here*, and only here,
-            // because it relaxes the root's requirements for the application's
-            // own subcommands too — a semantic an app that did not get the word
-            // never asked for.
-            cmd.subcommand(help_word_command())
-                .subcommand_negates_reqs(true)
-        } else {
-            cmd
+        if !self.installs_help_word(&cmd) {
+            return Ok(cmd);
         }
+
+        // Standout is about to claim the name, so this is where it has to ask
+        // whether the application already did. Clap's answer to two commands
+        // called `help` is a debug assertion — a runtime panic on a
+        // configuration, which is what the framework's own duplicate-command
+        // error exists to prevent.
+        if declares_help(&cmd) {
+            return Err(SetupError::DuplicateHelpWord(HelpWordSource::Declared));
+        }
+
+        // `subcommand_negates_reqs` is what makes the installed word
+        // reachable: without it a root that requires arguments rejects
+        // `myapp help` before Clap can route it, which is the defect this
+        // whole surface exists to fix. It is set *here*, and only here,
+        // because it relaxes the root's requirements for the application's
+        // own subcommands too — a semantic an app that did not get the word
+        // never asked for.
+        Ok(cmd
+            .subcommand(help_word_command())
+            .subcommand_negates_reqs(true))
     }
 
     /// Whether the bare `help` word is installed on this root.
@@ -1067,6 +1123,15 @@ impl AppBuilder {
             .collect();
         super::app::verify_recursive(cmd, &expected_args, &[], true)
     }
+}
+
+/// Whether the application already claims `help` on this root.
+///
+/// Aliases count: Clap resolves an alias to its command, so a subcommand
+/// aliased `help` is as much a claim on the word as one named it.
+fn declares_help(cmd: &Command) -> bool {
+    cmd.get_subcommands()
+        .any(|sub| sub.get_name() == "help" || sub.get_all_aliases().any(|alias| alias == "help"))
 }
 
 /// Standout's `help` word, the replacement for clap's built-in one.

@@ -16,10 +16,39 @@ pub enum SetupError {
     Config(String),
     /// Duplicate command registered.
     DuplicateCommand(String),
+    /// The application claims `help`, the name standout installs for itself.
+    DuplicateHelpWord(HelpWordSource),
     /// I/O error during setup (e.g., loading templates/styles).
     Io(std::io::Error),
     /// Verification failed (handler vs command mismatch).
     VerificationFailed(HandlerMismatchError),
+}
+
+/// Where the application's own `help` command was found.
+///
+/// The remedy is the same either way; the two differ only in where the author
+/// has to go to apply it, and in when standout can see the claim — a
+/// registration is visible to `build()`, a clap declaration only once the
+/// `Command` reaches a parse entry point.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum HelpWordSource {
+    /// Registered with standout: `.command("help", …)` or a sibling.
+    Registered,
+    /// Declared on the application's clap `Command`, by name or alias.
+    Declared,
+}
+
+impl HelpWordSource {
+    /// The clause naming where the application's `help` was found, written to
+    /// sit inside [`SetupError::DuplicateHelpWord`]'s one-sentence report.
+    fn declaration(self) -> &'static str {
+        match self {
+            HelpWordSource::Registered => "this application registers a `help` command",
+            HelpWordSource::Declared => {
+                "this application's clap `Command` declares `help` (as a subcommand name or alias)"
+            }
+        }
+    }
 }
 
 impl std::fmt::Display for SetupError {
@@ -30,6 +59,14 @@ impl std::fmt::Display for SetupError {
             SetupError::ThemeNotFound(name) => write!(f, "theme not found: {}", name),
             SetupError::Config(msg) => write!(f, "configuration error: {}", msg),
             SetupError::DuplicateCommand(cmd) => write!(f, "duplicate command: {}", cmd),
+            SetupError::DuplicateHelpWord(source) => write!(
+                f,
+                "duplicate command: help — {}, and standout installs a `help` word of \
+                 its own under .help_handling(true). Rename the application's command, \
+                 or drop .help_handling(true) to keep the name (help is then clap's \
+                 own, and command_groups and topics become unavailable)",
+                source.declaration()
+            ),
             SetupError::Io(err) => write!(f, "setup I/O error: {}", err),
             SetupError::VerificationFailed(err) => write!(f, "verification failed:\n{}", err),
         }

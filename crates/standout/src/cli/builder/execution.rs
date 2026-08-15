@@ -313,8 +313,14 @@ impl AppBuilder {
         // Augment command with framework-owned flags, the questionnaire command
         // surface, and — when standout owns help — the `help` word. The word's
         // install policy is the command's shape, not the entry point used, so
-        // this is the same augmentation `get_matches_from` performs.
-        let mut augmented_cmd = self.augment_command_with_help(cmd);
+        // this is the same augmentation `get_matches_from` performs, refusal of
+        // an application-declared `help` included.
+        let mut augmented_cmd = match self.augment_command_with_help(cmd) {
+            Ok(cmd) => cmd,
+            Err(error) => {
+                return RunResult::Error(RunError::new(error.to_string(), RunErrorKind::ClapUsage))
+            }
+        };
 
         // One parse seam for both paths: Clap decides which command the line
         // named, and a line that named none may take a default command.

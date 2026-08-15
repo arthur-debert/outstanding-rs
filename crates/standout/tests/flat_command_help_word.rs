@@ -70,7 +70,9 @@ fn a_flat_command_with_positionals_does_not_get_the_word_by_default() {
 #[test]
 fn the_word_is_not_advertised_without_the_opt_in() {
     let app = App::new().help_handling(true).build().unwrap();
-    let cmd = app.augment_command_with_help(flat_required_command());
+    let cmd = app
+        .augment_command_with_help(flat_required_command())
+        .unwrap();
     assert!(cmd.find_subcommand("help").is_none());
 
     let opted_in = App::new()
@@ -78,7 +80,9 @@ fn the_word_is_not_advertised_without_the_opt_in() {
         .help_word(true)
         .build()
         .unwrap();
-    let cmd = opted_in.augment_command_with_help(flat_required_command());
+    let cmd = opted_in
+        .augment_command_with_help(flat_required_command())
+        .unwrap();
     assert!(cmd.find_subcommand("help").is_some());
 }
 
@@ -218,7 +222,9 @@ fn the_policy_reads_the_shape_the_framework_leaves_behind() {
         .build()
         .unwrap();
 
-    let augmented = app.augment_command_with_help(flat_required_command());
+    let augmented = app
+        .augment_command_with_help(flat_required_command())
+        .unwrap();
     assert!(
         augmented.find_subcommand("questions").is_some(),
         "the framework should have injected its questionnaire surface"

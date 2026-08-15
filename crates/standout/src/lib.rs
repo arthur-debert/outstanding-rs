@@ -303,7 +303,7 @@ pub use standout_render::{
 };
 
 // Setup error type (standout-specific)
-pub use setup::SetupError;
+pub use setup::{HelpWordSource, SetupError};
 
 // Macro re-exports
 pub use standout_macros::{command, embed_styles, embed_templates, handler};

@@ -169,7 +169,7 @@ pub use hooks::{ArtifactOutput, HookError, HookPhase, Hooks, RenderedOutput};
 pub use standout_macros::Dispatch;
 
 // Re-export error types
-pub use crate::setup::SetupError;
+pub use crate::setup::{HelpWordSource, SetupError};
 
 // Re-export dispatch utilities from standout-dispatch
 pub use dispatch::{
