@@ -1753,7 +1753,7 @@ dependencies = [
 
 [[package]]
 name = "standout"
-version = "7.10.2"
+version = "8.0.0"
 dependencies = [
  "anyhow",
  "clap",
@@ -1782,7 +1782,7 @@ dependencies = [
 
 [[package]]
 name = "standout-bbparser"
-version = "7.10.2"
+version = "8.0.0"
 dependencies = [
  "console",
  "proptest",
@@ -1790,7 +1790,7 @@ dependencies = [
 
 [[package]]
 name = "standout-dispatch"
-version = "7.10.2"
+version = "8.0.0"
 dependencies = [
  "anyhow",
  "clap",
@@ -1802,7 +1802,7 @@ dependencies = [
 
 [[package]]
 name = "standout-input"
-version = "7.10.2"
+version = "8.0.0"
 dependencies = [
  "clap",
  "inquire",
@@ -1817,7 +1817,7 @@ dependencies = [
 
 [[package]]
 name = "standout-macros"
-version = "7.10.2"
+version = "8.0.0"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -1830,7 +1830,7 @@ dependencies = [
 
 [[package]]
 name = "standout-pipe"
-version = "7.10.2"
+version = "8.0.0"
 dependencies = [
  "tempfile",
  "thiserror 2.0.20",
@@ -1839,7 +1839,7 @@ dependencies = [
 
 [[package]]
 name = "standout-render"
-version = "7.10.2"
+version = "8.0.0"
 dependencies = [
  "console",
  "cssparser",
@@ -1864,7 +1864,7 @@ dependencies = [
 
 [[package]]
 name = "standout-seeker"
-version = "7.10.2"
+version = "8.0.0"
 dependencies = [
  "proptest",
  "regex",
@@ -1873,7 +1873,7 @@ dependencies = [
 
 [[package]]
 name = "standout-test"
-version = "7.10.2"
+version = "8.0.0"
 dependencies = [
  "clap",
  "serde",
@@ -1938,7 +1938,7 @@ checksum = "c3a6bfce3d99adfa72d24750a61f782f3036a81e7f86d8841ee1326deaebd171"
 
 [[package]]
 name = "tdoo"
-version = "7.10.2"
+version = "8.0.0"
 dependencies = [
  "anyhow",
  "clap",
@@ -2036,7 +2036,7 @@ dependencies = [
 
 [[package]]
 name = "todo-core"
-version = "7.10.2"
+version = "8.0.0"
 dependencies = [
  "anyhow",
  "serde",
