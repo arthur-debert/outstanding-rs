@@ -4,6 +4,8 @@
 
 ## Unreleased
 
+- Let the builder declare the application's version: `App::builder().version(env!("CARGO_PKG_VERSION"))` (issue #304). Standout applies the value to the root clap command in the shared augmentation both parse paths go through, so `myapp --version` is answered identically by `run`, `run_to_string`, `dispatch_from`, `get_matches_from`, and `TestHarness` — clap's own display, on stdout, exit status 0, typed `SuccessKind::ClapVersion`. Clap still owns the spelling, the formatting, and the display short-circuit; leaving `.version()` unset leaves the supplied `clap::Command` exactly as configured, version included. The `tdoo` worked example adopts it, so `tdoo --version` now works.
+
 ## 8.0.2 - 2026-08-15
 
 - Make themed-help section layout Unicode display-width-aware and size each section from its own contents, preserving long option, command, topic, and argument names without truncation or collisions with their descriptions (issue #297, PR #300). Grouped commands remain aligned across the page, and new semantic theme styles cover argument metavars, defaults, and possible values; command and topic rows no longer add a literal colon.

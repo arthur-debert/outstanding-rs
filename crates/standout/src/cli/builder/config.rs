@@ -29,6 +29,37 @@ impl AppBuilder {
         self
     }
 
+    /// Declares the application's version, which clap answers `--version` with.
+    ///
+    /// The value is applied to the root command wherever standout augments and
+    /// parses it, so every entry point — `run`, `run_to_string`,
+    /// `dispatch_from`, `get_matches_from`, and the `TestHarness` — answers
+    /// `<app> --version` alike: clap's own display, on stdout, exit status 0,
+    /// typed as [`SuccessKind::ClapVersion`](crate::cli::SuccessKind::ClapVersion).
+    ///
+    /// Clap keeps owning the spelling, the formatting, and the short-circuit;
+    /// this only says what the version *is*. Leaving it unset leaves the
+    /// supplied `clap::Command` exactly as the application configured it,
+    /// including a version set on clap directly.
+    ///
+    /// # Example
+    ///
+    /// ```rust
+    /// use standout::cli::App;
+    ///
+    /// let app = App::builder()
+    ///     .version(env!("CARGO_PKG_VERSION"))
+    ///     .build()
+    ///     .unwrap();
+    /// ```
+    pub fn version(mut self, version: impl Into<String>) -> Self {
+        // Leaked once here, not per parse: clap's `Str` accepts an owned
+        // `String` only under its `string` feature, and an application's
+        // version is configured once and lives as long as the process.
+        self.version = Some(Box::leak(version.into().into_boxed_str()));
+        self
+    }
+
     /// Adds a static context value available to all templates.
     ///
     /// Static context values are created once and reused for all renders.
