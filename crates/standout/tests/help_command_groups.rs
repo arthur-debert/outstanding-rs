@@ -86,8 +86,16 @@ fn test_separators_produce_blank_lines() {
 
     // The separator produces a blank line between "view" line and "pin" line
     let lines: Vec<&str> = output.lines().collect();
-    let view_idx = lines.iter().position(|l| l.contains("view:")).unwrap();
-    let pin_idx = lines.iter().position(|l| l.contains("pin:")).unwrap();
+    // Match the row's own name at the start of the cell — "pin" is a substring
+    // of "unpin", which a bare `contains` would find first.
+    let row = |name: &str| {
+        lines
+            .iter()
+            .position(|l| l.trim_start().starts_with(name))
+            .unwrap_or_else(|| panic!("no row for {name} in:\n{output}"))
+    };
+    let view_idx = row("view");
+    let pin_idx = row("pin");
     // There should be a blank line between them
     assert!(
         pin_idx > view_idx + 1,

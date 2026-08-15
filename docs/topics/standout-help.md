@@ -58,6 +58,31 @@ Opting in accepts the cost: the literal word `help` can no longer reach the posi
 
 `help_word(true)` only ever *adds* the word; it is not a way to suppress `help` on a CLI that has subcommands. It requires `help_handling(true)` — the word is standout's own subcommand, so `build()` returns a `SetupError` without interception.
 
+### On a flat CLI, the word describes a flat CLI
+
+Clap's `help` is worded for a CLI with subcommands — "Print this message or the
+help of the given subcommand(s)". On a flat CLI that sentence points at a
+namespace that cannot exist, and the flat shape is exactly the one
+`help_word(true)` serves. So the word describes the shape it is installed on:
+
+| Root shape | `help` about |
+| --- | --- |
+| Has subcommands | Print this message or the help of the given subcommand(s) |
+| Flat | Print this message |
+
+A flat CLI also drops the COMMANDS section entirely when `help` would be its
+only entry. The word is machinery standout installs, not part of your surface,
+and a section listing nothing but the command that printed it is noise:
+
+```text
+COMMANDS
+  help          Print this message
+```
+
+Registered topics earn the section back, because `help <topic>` is then a real
+destination and the word is how a reader reaches it. A root with commands of its
+own always keeps its section, `help` included.
+
 ### If your CLI already has a `help`
 
 Where standout installs the word, the name is standout's. An application that claims it too — a clap subcommand called `help` (or aliased to it), or a registration whose first path segment is `help` (`.command("help", …)`, `.command("help.topic", …)`, a `.group("help", …)`) — is a configuration standout refuses rather than serves:
@@ -83,6 +108,77 @@ On a flat CLI whose root arguments are required, an injected `help` subcommand u
 The fix is a declaration, not a parser of standout's own. Where standout installs the word, it also sets clap's `subcommand_negates_reqs`, which suspends the root's requirements once a command is named — so `myapp help` routes to the word, while `myapp` on its own still reports its missing arguments and `myapp <RANGE>` still parses as data. The word's arguments (`myapp help topics`, `myapp help --page`, `myapp help --output text`) are clap's to parse, like any other subcommand's.
 
 The cost is worth naming: `subcommand_negates_reqs` applies to *your* subcommands too, so a root that declares required arguments stops requiring them once any command is named. That is why standout sets it only where it installs the word, and never on a CLI that did not get one. See [ADR-0018](../adr/0018-let-the-parser-classify-the-command-line.md).
+
+## Short and Long Help
+
+Clap gives a command a terse `about` and an optional full `long_about`, and its
+convention is that `-h` shows the first while `--help` shows the second. Themed
+help keeps that distinction:
+
+| Invocation | Renders |
+| --- | --- |
+| `-h` | `about` |
+| `--help` | `long_about`, falling back to `about` |
+| `help` | `long_about`, falling back to `about` — the spelled-out request reads like `--help` |
+
+Standout has to recover the spelling itself: `--help` short-circuits inside clap
+and arrives as a `DisplayHelp` error that names neither the flag that raised it
+nor the command it was raised for. Both are recovered from a *parse*, not from a
+scan of the argument list — the two flags are re-declared as ordinary global
+arguments on a throwaway clone whose own help flag is disabled, and clap
+answers. That keeps `--` termination, `--flag=value`, short-option clusters, and
+option-value consumption (`-o h` is not a help request) the parser's business,
+per [ADR-0018](../adr/0018-let-the-parser-classify-the-command-line.md).
+
+Rendering help yourself with [`render_help`](#standalone-rendering) has no
+invocation to classify, so it defaults to `HelpLength::Short`. Ask for the full
+text with `length`:
+
+```rust
+let config = HelpConfig {
+    length: HelpLength::Long,
+    ..Default::default()
+};
+```
+
+## What an Option Row Shows
+
+Option rows carry the information clap surfaces about an argument — its
+description, its default, and the values it accepts:
+
+```text
+OPTIONS
+  --staged            Diff the staged changes
+  --output            Output format
+                      default: auto
+                      possible values: auto, term, text, term-debug, json, yaml, xml, csv
+  --output-file-path  Write output to file instead of stdout
+```
+
+The default and possible-value lines hang under the description column and
+carry their own `[default]` and `[values]` tags, so a stylesheet can dim or
+recolor them independently. Standout writes them as words rather than clap's
+`[default: auto]` brackets: literal `[` would have to be escaped through the
+style-tag parser, and the emphasis belongs to the theme. Hidden possible values
+(`PossibleValue::hide`) are left out.
+
+### Positionals get their own section
+
+Positionals render in an ARGUMENTS section ahead of OPTIONS, the way clap orders
+them, rather than filed among the flags:
+
+```text
+ARGUMENTS
+  RANGE         Git range to diff, e.g. main..HEAD
+
+OPTIONS
+  --staged      Diff the staged changes
+```
+
+A positional is listed under its `value_name` when it declares one, else its
+argument id, and is tagged `[metavar]`. The two sections size their columns
+independently, so a long flag name does not push the ARGUMENTS column out with
+it.
 
 ## Styling User-Provided Strings
 
@@ -111,13 +207,15 @@ USAGE
   myapp <COMMAND>
 
 COMMANDS
-  init:         Initialize the project
-  list:         List all items
-  delete:       Delete an item
-  config:       Manage configuration
+  init          Initialize the project
+  list          List all items
+  delete        Delete an item
+  config        Manage configuration
 
 OPTIONS
   --output      Output format
+                default: auto
+                possible values: auto, term, text, term-debug, json, yaml, xml, csv
 ```
 
 ## Command Groups
@@ -171,29 +269,29 @@ This produces:
 
 ```text
 COMMANDS
-  init:         Initialize the store
-  create:       Create a new pad
-  list:         List pads
-  search:       Search pads
+  init          Initialize the store
+  create        Create a new pad
+  list          List pads
+  search        Search pads
 
 PER PAD(S)
   These commands accept one or more pad ids: <id> or ranges <id>-<id>
   ex: $ padz view 3 5 7-9  # views pads 3, 5, 7, 8 and 9
 
-  open:         Open a pad in the editor
-  view:         View one or more pads
-  peek:         Peek at pad content previews
+  open          Open a pad in the editor
+  view          View one or more pads
+  peek          Peek at pad content previews
 
-  pin:          Pin one or more pads
-  unpin:        Unpin one or more pads
+  pin           Pin one or more pads
+  unpin         Unpin one or more pads
 
-  complete:     Mark pads as done
-  reopen:       Reopen pads
+  complete      Mark pads as done
+  reopen        Reopen pads
 
 MISC
-  completions:  Generate shell completions
-  help:         Print this message
-  config:       Get or set configuration
+  completions   Generate shell completions
+  help          Print this message
+  config        Get or set configuration
 ```
 
 ### Blank Line Separators
@@ -277,7 +375,10 @@ pub fn default_help_theme() -> Theme {
     Theme::new()
         .add("header", Style::new().bold())   // COMMANDS, OPTIONS, etc.
         .add("item", Style::new().bold())     // Command/option names
+        .add("metavar", Style::new().bold())  // Argument names in ARGUMENTS
         .add("desc", Style::new())            // Descriptions
+        .add("default", Style::new().dim())   // "default: auto"
+        .add("values", Style::new().dim())    // "possible values: ..."
         .add("usage", Style::new())           // Usage line
         .add("example", Style::new())         // Examples section
         .add("about", Style::new())           // About text
@@ -320,12 +421,38 @@ The template receives a `HelpData` struct with these fields:
 
 | Variable | Type | Description |
 | ---------- | ------ | ------------- |
-| `about` | String | Command's about text |
+| `about` | String | The command's `about`, or its `long_about` — see [Short and long help](#short-and-long-help) |
 | `usage` | String | Usage line (without "Usage: " prefix) |
-| `subcommands` | Vec | Command groups (each with `title`, `help`, `commands`) |
-| `options` | Vec | Option groups (each with `title`, `options`) |
+| `subcommands` | Vec | Command groups (each with `title`, `help`, `items`) |
+| `subcommands_width` | usize | Width of the COMMANDS name column |
+| `arguments` | Vec | Positional groups (each with `title`, `help`, `items`) |
+| `arguments_width` | usize | Width of the ARGUMENTS name column |
+| `options` | Vec | Flag groups (each with `title`, `help`, `items`) |
+| `options_width` | usize | Width of the OPTIONS name column |
 | `examples` | String | Examples text |
-| `learn_more` | Vec | Topic list items (each with `name`, `title`, `padding`) |
+| `learn_more` | Vec | Topic list items (each with `name`, `title`) |
+| `learn_more_width` | usize | Width of the LEARN MORE name column |
+
+#### Alignment is the template's job
+
+There are no `padding` fields. A row aligns itself by padding its name to its
+section's width with `pad_right`, one of [standout-render's tabular
+filters](../../crates/standout-render/docs/topics/tabular.md):
+
+```jinja
+{{ ("[item]" ~ opt.name ~ "[/item]") | pad_right(options_width) }}  [desc]{{ opt.help }}[/desc]
+```
+
+Two properties of that filter are the point of doing it this way. It measures
+*display* width, so a CJK name counts the terminal columns it really occupies
+and the style tags around it count for nothing — byte length gets both wrong.
+And it never truncates: a name wider than the column keeps its full text and
+its separator, which is the failure the fixed-width column used to produce.
+
+The widths themselves are resolved from the data, as a `Width::Bounded` column
+that is at least 12 columns wide and otherwise as wide as the section's longest
+name. One width per *section*, not per group, is what keeps a grouped command
+list aligned down the whole page instead of realigning at each header.
 
 ### Group Fields in Templates
 
@@ -333,14 +460,21 @@ Each subcommand group has:
 
 - `group.title` — section header (rendered as `group.title | upper` in the default template)
 - `group.help` — optional help text for the group
-- `group.commands` — list of command entries
+- `group.items` — list of command entries
 
 Each command entry has:
 
 - `cmd.name` — command name
 - `cmd.about` — command description
-- `cmd.padding` — alignment spaces
 - `cmd.separator` — true for blank-line separator entries
+
+Each argument and option entry has:
+
+- `opt.name` — `range` / `RANGE` for a positional, `-o, --output` for a flag
+- `opt.help` — description
+- `opt.short` / `opt.long` — the flag's spellings (both empty for a positional)
+- `opt.default` — the declared default, or nothing
+- `opt.possible_values` — the selectable values, hidden ones left out
 
 ### Example Custom Template
 
@@ -355,11 +489,11 @@ Each command entry has:
 {%- if group.help %}
   [desc]{{ group.help }}[/desc]
 {% endif %}
-{%- for cmd in group.commands %}
+{%- for cmd in group.items %}
 {%- if cmd.separator %}
 
 {%- else %}
-  [item]{{ cmd.name }}[/item]:{{ cmd.padding }}[desc]{{ cmd.about }}[/desc]
+  {{ ("[item]" ~ cmd.name ~ "[/item]") | pad_right(subcommands_width) }}  [desc]{{ cmd.about }}[/desc]
 {%- endif %}
 {%- endfor %}
 {%- endfor %}

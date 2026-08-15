@@ -24,6 +24,27 @@ pub struct CommandGroup {
     pub commands: Vec<Option<String>>,
 }
 
+/// Which of clap's two descriptions a help render uses.
+///
+/// Clap gives a command a terse `about` and an optional full `long_about`, and
+/// its convention is that `-h` shows the first and `--help` the second. Help
+/// interception has to carry that distinction itself, because the request
+/// reaches standout as a `DisplayHelp` error that does not say which spelling
+/// raised it — so the invocation is classified from the raw arguments and the
+/// answer travels here.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub enum HelpLength {
+    /// `-h`: the command's `about`.
+    ///
+    /// The default, so a render with no invocation to classify — a direct
+    /// [`render_help`](super::render_help) call — stays terse.
+    #[default]
+    Short,
+    /// `--help` and the `help` word: the command's `long_about`, falling back
+    /// to `about` when it declares none.
+    Long,
+}
+
 /// Configuration for clap help rendering.
 #[derive(Debug, Clone, Default)]
 pub struct HelpConfig {
@@ -36,14 +57,25 @@ pub struct HelpConfig {
     /// Subcommand grouping for help display. If None, all subcommands
     /// appear in a single "Commands" group (default behavior).
     pub command_groups: Option<Vec<CommandGroup>>,
+    /// Which description to render — see [`HelpLength`]. Defaults to
+    /// [`HelpLength::Short`].
+    pub length: HelpLength,
 }
 
 /// Returns the default theme for help rendering.
+///
+/// Every surface the template can emit has an entry, including the ones that
+/// carry information clap spells with punctuation: standout renders a default
+/// and a possible-value set as `[default]`/`[values]` text and leaves the
+/// emphasis to the theme, rather than baking `[…]` brackets into the template.
 pub fn default_help_theme() -> Theme {
     Theme::new()
         .add("header", Style::new().bold())
         .add("item", Style::new().bold())
+        .add("metavar", Style::new().bold())
         .add("desc", Style::new())
+        .add("default", Style::new().dim())
+        .add("values", Style::new().dim())
         .add("usage", Style::new())
         .add("example", Style::new())
         .add("about", Style::new())
