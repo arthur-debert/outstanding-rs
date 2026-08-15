@@ -4,7 +4,7 @@
 //! result type the calling parse path speaks: [`HelpResult`] for configured
 //! parsing (`get_matches_from` / `parse_from`), [`RunResult`] for dispatch
 //! (`dispatch_from` / `run` / `run_to_string`). Two projections of one decision
-//! is what keeps `myapp help` from meaning one thing through one entry point
+//! are what keep `myapp help` from meaning one thing through one entry point
 //! and something else through the other.
 
 use crate::cli::handler::{RunError, RunErrorKind, RunOutput, RunResult};
