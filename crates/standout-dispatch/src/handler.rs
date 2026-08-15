@@ -548,10 +548,17 @@ impl std::error::Error for ExternalFailure {
 pub enum SuccessKind {
     /// A registered command completed successfully.
     Command,
-    /// Clap requested a help display.
+    /// A help display was requested.
     ClapHelp,
     /// Clap requested a version display.
     ClapVersion,
+    /// A help display was requested *and* asked for a pager (`help --page`).
+    ///
+    /// Distinct from [`ClapHelp`](Self::ClapHelp) because paging is a terminal
+    /// side effect only a printing entry point may perform: `run()` hands the
+    /// text to the pager, while the capture APIs return it like any other help
+    /// text and let the caller decide.
+    PagedHelp,
 }
 
 /// The final payload whose write failed.
@@ -609,6 +616,14 @@ impl RunOutput {
         Self {
             text: text.into(),
             kind: SuccessKind::ClapHelp,
+        }
+    }
+
+    /// Creates a help display the user asked to page.
+    pub fn paged_help(text: impl Into<String>) -> Self {
+        Self {
+            text: text.into(),
+            kind: SuccessKind::PagedHelp,
         }
     }
 

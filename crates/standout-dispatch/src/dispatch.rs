@@ -8,15 +8,15 @@ use clap::ArgMatches;
 /// Extracts the command path from ArgMatches by following the subcommand chain.
 ///
 /// For example, `myapp db migrate` produces `["db", "migrate"]`.
+///
+/// No name is privileged. A word the caller answers for itself — a framework
+/// rendering its own `help`, say — never reaches these matches; a command
+/// merely *called* `help` is a command like any other and is returned as one.
 pub fn extract_command_path(matches: &ArgMatches) -> Vec<String> {
     let mut path = Vec::new();
     let mut current = matches;
 
     while let Some((name, sub)) = current.subcommand() {
-        // Skip "help" as it's handled separately
-        if name == "help" {
-            break;
-        }
         path.push(name.to_string());
         current = sub;
     }
@@ -31,29 +31,32 @@ pub fn extract_command_path(matches: &ArgMatches) -> Vec<String> {
 pub fn get_deepest_matches(matches: &ArgMatches) -> &ArgMatches {
     let mut current = matches;
 
-    while let Some((name, sub)) = current.subcommand() {
-        if name == "help" {
-            break;
-        }
+    while let Some((_, sub)) = current.subcommand() {
         current = sub;
     }
 
     current
 }
 
-/// Returns true if the matches contain a subcommand (excluding "help").
+/// Returns true if a subcommand was selected.
 ///
-/// Used to detect "naked" CLI invocations where no command was specified.
+/// This reads a *parse result*, so there has to be one: a root that rejects the
+/// line — because it requires arguments, or requires a subcommand — never gets
+/// this far. "Was this invocation naked?" is still Clap's question to answer
+/// for such a root, by parsing the line again permissively (see
+/// `App::parse_with_default_command` in `standout`), never by reading the
+/// argument list by hand.
 pub fn has_subcommand(matches: &ArgMatches) -> bool {
-    matches
-        .subcommand()
-        .map(|(name, _)| name != "help")
-        .unwrap_or(false)
+    matches.subcommand().is_some()
 }
 
 /// Inserts a command name at position 1 (after program name) in the argument list.
 ///
-/// Used to implement default command support.
+/// For callers driving default-command substitution themselves — a partially
+/// adopted CLI, most often. Standout's own parse path does the same insertion
+/// on `OsString`s instead, so that substituting a command cannot mangle a
+/// non-UTF8 argument beside it; this helper is for the `String`-typed argv a
+/// caller already holds.
 pub fn insert_default_command<I, S>(args: I, command: &str) -> Vec<String>
 where
     I: IntoIterator<Item = S>,
@@ -139,13 +142,16 @@ mod tests {
     }
 
     #[test]
-    fn test_has_subcommand_help_excluded() {
+    fn test_no_name_is_privileged() {
+        // A command merely called `help` dispatches like any other; the word is
+        // only special where its caller answers it before dispatch.
         let cmd = Command::new("app")
             .disable_help_subcommand(true)
             .subcommand(Command::new("help"));
 
         let matches = cmd.try_get_matches_from(["app", "help"]).unwrap();
-        assert!(!has_subcommand(&matches));
+        assert!(has_subcommand(&matches));
+        assert_eq!(extract_command_path(&matches), vec!["help"]);
     }
 
     #[test]

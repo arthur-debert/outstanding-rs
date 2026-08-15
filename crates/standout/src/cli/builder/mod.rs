@@ -45,13 +45,14 @@ use std::collections::HashMap;
 use std::path::PathBuf;
 use std::rc::Rc;
 
-use super::dispatch::{insert_default_command, DispatchFn};
+use super::default_command::ParseFailure;
+use super::dispatch::DispatchFn;
 use super::group::CommandRecipe;
 use super::handler::{CommandContext, Extensions, HandlerResult, Output as HandlerOutput};
 use super::help::{render_help, render_help_with_topics, CommandGroup, HelpConfig};
 use super::hooks::{ArtifactOutput, HookError, Hooks, RenderedOutput, TextOutput};
 use super::questionnaire::QuestionnaireCommand;
-use super::result::HelpResult;
+use super::result::{HelpDisplay, HelpResult};
 use standout_dispatch::verify::ExpectedArg;
 
 /// Stores a pending command recipe along with its resolved template.
@@ -147,10 +148,18 @@ pub struct AppBuilder {
 
     /// Whether standout intercepts and renders help (default: false).
     ///
-    /// When true, standout disables clap's built-in help and renders its own
-    /// themed, grouped help for all invocation forms (`help`, `--help`, `-h`).
+    /// When true, standout replaces clap's built-in help subcommand with its
+    /// own — where the install policy allows, see `help_word` — and renders
+    /// themed, grouped help for every invocation form (`help`, `--help`, `-h`).
     /// Required when using `command_groups` or topics.
     pub(crate) help_handling: bool,
+
+    /// Whether a flat CLI with positionals opts into the `help` word.
+    ///
+    /// Only consulted for the one shape standout will not decide on its own —
+    /// see [`installs_help_word`](AppBuilder::installs_help_word).
+    pub(crate) help_word: bool,
+
     /// Explicit East Asian Ambiguous width policy.
     pub(crate) ambiguous_width: crate::AmbiguousWidth,
 }
@@ -190,6 +199,7 @@ impl AppBuilder {
             template_engine: Rc::new(Box::new(standout_render::template::MiniJinjaEngine::new())),
             help_command_groups: None,
             help_handling: false,
+            help_word: false,
             ambiguous_width: crate::AmbiguousWidth::Narrow,
         }
     }
@@ -411,6 +421,14 @@ impl AppBuilder {
                      standout cannot render grouped/topic help without intercepting help"
                 )));
             }
+            if self.help_word {
+                return Err(SetupError::Config(
+                    "help_word requires .help_handling(true) — the `help` word is \
+                     standout's own subcommand, so there is nothing to install without \
+                     help interception"
+                        .to_string(),
+                ));
+            }
         }
 
         // Finalize commands (now theme is resolved and will be captured correctly)
@@ -536,16 +554,19 @@ impl AppBuilder {
 
     /// Attempts to get matches from the given arguments, intercepting `help` requests.
     ///
-    /// When `help_handling` is enabled, all help invocations (`help`, `--help`, `-h`)
-    /// are intercepted and rendered through standout. When disabled, only output flags
-    /// are augmented and clap handles help natively.
+    /// When `help_handling` is enabled, every help invocation is intercepted and
+    /// rendered through standout: `--help` / `-h` always, and the bare `help`
+    /// word where the install policy put it (see
+    /// [`help_word`](Self::help_word)). When disabled, only output flags are
+    /// augmented and clap handles help natively.
     ///
-    /// A naked invocation resolves its default command here too — statically via
+    /// Which command a line means is Clap's answer, read off the parse. Only a
+    /// parse that selected no command is naked, and only a naked line resolves
+    /// a default command — statically via
     /// [`default_command`](Self::default_command) or per-invocation via
-    /// [`default_command_with`](Self::default_command_with) — so the returned
-    /// matches name the same command `dispatch_from` would have run. Consumers
-    /// that parse first and build dispatch state afterwards therefore see one
-    /// consistent answer.
+    /// [`default_command_with`](Self::default_command_with). `dispatch_from`
+    /// parses through the same seam, so consumers that parse first and build
+    /// dispatch state afterwards see one consistent answer.
     pub fn get_matches_from<I, T>(&self, cmd: Command, itr: I) -> HelpResult
     where
         I: IntoIterator<Item = T>,
@@ -553,87 +574,110 @@ impl AppBuilder {
     {
         let mut cmd = self.augment_command_with_help(cmd);
 
-        // Collect args so we can inspect them if clap returns DisplayHelp.
+        // Verbatim, all the way to Clap: a non-UTF8 argument is a real argument.
         let args: Vec<std::ffi::OsString> = itr.into_iter().map(Into::into).collect();
 
-        let matches = match cmd.clone().try_get_matches_from(&args) {
-            Ok(m) => m,
-            Err(e) => {
-                if self.help_handling && e.kind() == clap::error::ErrorKind::DisplayHelp {
-                    // Clap's native --help/-h short-circuited parsing.
-                    // Render standout help for the appropriate command.
-                    return self.render_help_for_display_help_error(&mut cmd, &args);
-                }
-                return HelpResult::Error(e);
-            }
-        };
-
-        // Only a successful naked parse can resolve a default command.
-        let matches = match self.resolve_default_command(&cmd, &matches) {
-            Err(e) => {
+        let matches = match self.parse_with_default_command(&cmd, &args) {
+            Ok(matches) => matches,
+            Err(ParseFailure::UnknownDefault(e)) => {
                 return HelpResult::Error(
                     cmd.clone()
                         .error(clap::error::ErrorKind::InvalidSubcommand, e.to_string()),
                 )
             }
-            Ok(None) => matches,
-            Ok(Some(default_cmd)) => {
-                let args: Vec<std::ffi::OsString> = insert_default_command(
-                    args.iter().map(|a| a.to_string_lossy().into_owned()),
-                    &default_cmd,
-                )
-                .into_iter()
-                .map(Into::into)
-                .collect();
-
-                match cmd.clone().try_get_matches_from(&args) {
-                    Ok(m) => m,
-                    Err(e) => {
-                        if self.help_handling && e.kind() == clap::error::ErrorKind::DisplayHelp {
-                            return self.render_help_for_display_help_error(&mut cmd, &args);
-                        }
-                        return HelpResult::Error(e);
-                    }
+            Err(ParseFailure::Clap(e)) => {
+                return match self.intercept_display_help(&mut cmd, &args, &e) {
+                    Some(display) => display.into(),
+                    None => HelpResult::Error(e),
                 }
             }
         };
 
-        if !self.help_handling {
-            return HelpResult::Matches(matches);
+        match self.intercept_help_word(&mut cmd, &matches) {
+            Some(display) => display.into(),
+            None => HelpResult::Matches(matches),
         }
+    }
 
-        // Extract output mode
-        let output_mode = self.extract_output_mode(&matches);
+    /// Answers the `help` word, when Clap routed the line to it.
+    ///
+    /// The word is a declared subcommand, so Clap parses it and its arguments
+    /// like any other; this reads the result. `None` means the line went
+    /// somewhere else, which is when the caller's matches stand.
+    ///
+    /// Both parse paths call this on their parse, so `get_matches_from` and
+    /// `dispatch_from` answer the word identically.
+    pub(crate) fn intercept_help_word(
+        &self,
+        cmd: &mut Command,
+        matches: &ArgMatches,
+    ) -> Option<HelpDisplay> {
+        if !self.help_handling {
+            return None;
+        }
+        let (name, sub_matches) = matches.subcommand()?;
+        (name == "help").then(|| self.render_help_word(cmd, matches, sub_matches))
+    }
 
+    /// Answers Clap's `DisplayHelp` short-circuit, when standout owns help.
+    ///
+    /// Clap's native `--help`/`-h` is kept on purpose — it short-circuits
+    /// argument validation — so the request arrives as an "error" from the
+    /// authoritative parse. Both parse paths hand it here to be rendered
+    /// through standout instead of surfaced as Clap's own text. `None` means
+    /// the error was not a help request (or standout does not own help), and
+    /// belongs to the caller.
+    pub(crate) fn intercept_display_help(
+        &self,
+        cmd: &mut Command,
+        args: &[std::ffi::OsString],
+        error: &clap::Error,
+    ) -> Option<HelpDisplay> {
+        (self.help_handling && error.kind() == clap::error::ErrorKind::DisplayHelp)
+            .then(|| self.render_help_for_display_help_error(cmd, args))
+    }
+
+    /// Renders the help the `help` word asked for.
+    ///
+    /// Its arguments come from Clap: `sub_matches` is the word's own parse
+    /// (`topic`, `--page`), and the output mode is read from the root, where
+    /// the global flag that carries it lives.
+    fn render_help_word(
+        &self,
+        cmd: &mut Command,
+        matches: &ArgMatches,
+        sub_matches: &ArgMatches,
+    ) -> HelpDisplay {
         let config = HelpConfig {
-            output_mode: Some(output_mode),
+            output_mode: Some(self.extract_output_mode(matches)),
             theme: self.theme.clone(),
             command_groups: self.help_command_groups.clone(),
             ..Default::default()
         };
+        let use_pager = sub_matches.get_flag("page");
 
-        // Check for the `help` subcommand (e.g. `myapp help`, `myapp help build`)
-        if let Some((name, sub_matches)) = matches.subcommand() {
-            if name == "help" {
-                let use_pager = sub_matches.get_flag("page");
-
-                if let Some(topic_args) = sub_matches.get_many::<String>("topic") {
-                    let keywords: Vec<_> = topic_args.map(|s| s.as_str()).collect();
-                    if !keywords.is_empty() {
-                        return self.handle_help_request(
-                            &mut cmd,
-                            &keywords,
-                            use_pager,
-                            Some(config),
-                        );
-                    }
-                }
-                // If "help" is called without args, return the root help with topics
-                return self.render_root_help(&cmd, Some(config), use_pager);
+        if let Some(topic_args) = sub_matches.get_many::<String>("topic") {
+            let keywords: Vec<_> = topic_args.map(|s| s.as_str()).collect();
+            if !keywords.is_empty() {
+                return self.handle_help_request(cmd, &keywords, use_pager, Some(config));
             }
         }
 
-        HelpResult::Matches(matches)
+        self.render_root_help(cmd, Some(config), use_pager)
+    }
+
+    /// Reports a failed help render.
+    ///
+    /// Every rendering step funnels here, because a broken template or theme is
+    /// the application's bug however help was asked for. Reporting it as
+    /// [`HelpDisplay::RenderFailed`] is what keeps it from reaching the user as
+    /// a usage error — or, worse, as "that topic wasn't recognized", which is
+    /// what a swallowed render failure used to look like.
+    fn render_failure(cmd: &Command, error: impl std::fmt::Display) -> HelpDisplay {
+        HelpDisplay::RenderFailed(cmd.clone().error(
+            clap::error::ErrorKind::Io,
+            format!("failed to render help: {error}"),
+        ))
     }
 
     /// Renders root help, returning an error if rendering fails.
@@ -642,37 +686,37 @@ impl AppBuilder {
         cmd: &Command,
         config: Option<HelpConfig>,
         use_pager: bool,
-    ) -> HelpResult {
+    ) -> HelpDisplay {
         match render_help_with_topics(cmd, &self.registry, config) {
-            Ok(h) => {
-                if use_pager {
-                    HelpResult::PagedHelp(h)
-                } else {
-                    HelpResult::Help(h)
-                }
-            }
-            Err(e) => {
-                let err = cmd.clone().error(
-                    clap::error::ErrorKind::Io,
-                    format!("failed to render help: {e}"),
-                );
-                HelpResult::Error(err)
-            }
+            Ok(text) => HelpDisplay::Rendered {
+                text,
+                paged: use_pager,
+            },
+            Err(e) => Self::render_failure(cmd, e),
         }
     }
 
     /// Handles a `DisplayHelp` error from clap by rendering standout help.
     ///
-    /// Walks the original args to determine which subcommand `--help` was
-    /// requested for, then renders standout help for that command.
+    /// Which command's help to render is Clap's answer, not a reading of the
+    /// arguments: `--help` short-circuits before producing matches and its
+    /// error does not name the command it was raised for, so the line is handed
+    /// back to Clap with the help flag disabled. Everything that could name a
+    /// command precedes the flag, so `ignore_errors` tolerating the now-unknown
+    /// flag (and whatever follows it) costs nothing here.
+    ///
+    /// No output mode is threaded through: the request short-circuited, so
+    /// `--output` written after it was never parsed, and honouring only the
+    /// half written before it would make the mode depend on where the user put
+    /// it. The render falls back to [`OutputMode::Auto`]; the `help` word does
+    /// honour the flag, because Clap parses the word's line in full. The
+    /// asymmetry is documented in `docs/topics/standout-help.md`.
     fn render_help_for_display_help_error(
         &self,
         cmd: &mut Command,
         args: &[std::ffi::OsString],
-    ) -> HelpResult {
-        // Walk args (skip program name) to find the subcommand chain.
-        // Stop at the first arg that isn't a known subcommand or is a flag.
-        let subcommand_path = Self::extract_subcommand_path(cmd, args);
+    ) -> HelpDisplay {
+        let target = Self::help_target(cmd, args);
 
         let config = HelpConfig {
             theme: self.theme.clone(),
@@ -680,42 +724,36 @@ impl AppBuilder {
             ..Default::default()
         };
 
-        if subcommand_path.is_empty() {
+        if target.is_empty() {
             return self.render_root_help(cmd, Some(config), false);
         }
 
-        let keywords: Vec<&str> = subcommand_path.iter().map(|s| s.as_str()).collect();
+        let keywords: Vec<&str> = target.iter().map(|s| s.as_str()).collect();
         self.handle_help_request(cmd, &keywords, false, Some(config))
     }
 
-    /// Extracts the subcommand chain from raw args by matching against known subcommands.
-    fn extract_subcommand_path(cmd: &Command, args: &[std::ffi::OsString]) -> Vec<String> {
-        let mut path = vec![];
-        let mut current_cmd = cmd.clone();
+    /// The command chain a help request was raised for, as Clap reads it.
+    ///
+    /// Empty means the root. Disabling the help flag is what lets the parse run
+    /// far enough to answer: with it enabled the parse short-circuits again and
+    /// reports nothing.
+    fn help_target(cmd: &Command, args: &[std::ffi::OsString]) -> Vec<String> {
+        let Ok(matches) = cmd
+            .clone()
+            .disable_help_flag(true)
+            .ignore_errors(true)
+            .try_get_matches_from(args)
+        else {
+            return Vec::new();
+        };
 
-        // Skip program name (first arg)
-        for arg in args.iter().skip(1) {
-            let arg_str = arg.to_string_lossy();
-
-            // Skip flags
-            if arg_str.starts_with('-') {
-                continue;
-            }
-
-            // Check if this arg is a known subcommand at the current level
-            let found = current_cmd
-                .get_subcommands()
-                .find(|s| s.get_name() == arg_str.as_ref())
-                .cloned();
-
-            if let Some(sub) = found {
-                path.push(sub.get_name().to_string());
-                current_cmd = sub;
-            } else {
-                break;
-            }
+        let mut chain = Vec::new();
+        let mut current = &matches;
+        while let Some((name, sub)) = current.subcommand() {
+            chain.push(name.to_string());
+            current = sub;
         }
-        path
+        chain
     }
 
     /// Handles a request for specific help e.g. `help foo`
@@ -725,7 +763,7 @@ impl AppBuilder {
         keywords: &[&str],
         use_pager: bool,
         config: Option<HelpConfig>,
-    ) -> HelpResult {
+    ) -> HelpDisplay {
         let sub_name = keywords[0];
 
         // 0. Check for "topics" - list all available topics
@@ -735,29 +773,29 @@ impl AppBuilder {
                 theme: config.as_ref().and_then(|c| c.theme.clone()),
                 ..Default::default()
             };
-            if let Ok(h) = render_topics_list(
+            return match render_topics_list(
                 &self.registry,
                 &format!("{} help", cmd.get_name()),
                 Some(topic_config),
             ) {
-                return if use_pager {
-                    HelpResult::PagedHelp(h)
-                } else {
-                    HelpResult::Help(h)
-                };
-            }
+                Ok(text) => HelpDisplay::Rendered {
+                    text,
+                    paged: use_pager,
+                },
+                Err(e) => Self::render_failure(cmd, e),
+            };
         }
 
         // 1. Check if it's a real command
         if super::app::find_subcommand(cmd, sub_name).is_some() {
             if let Some(target) = super::app::find_subcommand_recursive(cmd, keywords) {
-                if let Ok(h) = render_help(target, config.clone()) {
-                    return if use_pager {
-                        HelpResult::PagedHelp(h)
-                    } else {
-                        HelpResult::Help(h)
-                    };
-                }
+                return match render_help(target, config.clone()) {
+                    Ok(text) => HelpDisplay::Rendered {
+                        text,
+                        paged: use_pager,
+                    },
+                    Err(e) => Self::render_failure(cmd, e),
+                };
             }
         }
 
@@ -768,13 +806,13 @@ impl AppBuilder {
                 theme: config.as_ref().and_then(|c| c.theme.clone()),
                 ..Default::default()
             };
-            if let Ok(h) = render_topic(topic, Some(topic_config)) {
-                return if use_pager {
-                    HelpResult::PagedHelp(h)
-                } else {
-                    HelpResult::Help(h)
-                };
-            }
+            return match render_topic(topic, Some(topic_config)) {
+                Ok(text) => HelpDisplay::Rendered {
+                    text,
+                    paged: use_pager,
+                },
+                Err(e) => Self::render_failure(cmd, e),
+            };
         }
 
         // 3. Not found
@@ -782,46 +820,105 @@ impl AppBuilder {
             clap::error::ErrorKind::InvalidSubcommand,
             format!("The subcommand or topic '{}' wasn't recognized", sub_name),
         );
-        HelpResult::Error(err)
+        HelpDisplay::Clap(err)
     }
 
-    /// Augments a command with help subcommand and output flags.
+    /// Augments a command with the `help` word and output flags.
     ///
     /// When `help_handling` is enabled, this disables clap's built-in help
-    /// subcommand and replaces it with standout's own. Clap's native `--help`/`-h`
-    /// flag is kept so it short-circuits arg validation (showing help even when
-    /// required args are missing), but `DisplayHelp` errors are intercepted in
-    /// `get_matches_from` and rendered through standout.
+    /// subcommand and installs standout's own, where the install policy allows
+    /// it (see [`help_word`](Self::help_word)). Clap's native
+    /// `--help`/`-h` flag is kept so it short-circuits arg validation (showing
+    /// help even when required args are missing), but `DisplayHelp` errors are
+    /// intercepted — by `get_matches_from` and `dispatch_from` alike — and
+    /// rendered through standout.
     ///
     /// When `help_handling` is disabled, clap's built-in help is left intact.
+    ///
+    /// Both parse paths augment through here, so the word's install policy is
+    /// the command's shape and never the entry point the application chose.
+    ///
+    /// # Ordering: shape-dependent decisions come last
+    ///
+    /// The framework's own surface is augmented **first**, and only then is the
+    /// install policy evaluated. The rule behind that is general, and this is
+    /// the easiest place to break it:
+    ///
+    /// > A decision that branches on the command's *assembled* shape may only
+    /// > be evaluated once all structural augmentation has completed.
+    ///
+    /// [`augment_framework_surface`](Self::augment_framework_surface) is the
+    /// augmentation in question: it injects the questionnaire surface through
+    /// `augment_questionnaire_commands`, which adds a `questions` subcommand at
+    /// every registered questionnaire path — the root included. So a root that
+    /// declares no subcommands of its own can still have one by the time a user
+    /// meets it, and "does this root have subcommands?" asked any earlier
+    /// answers for a shape nobody runs.
+    ///
+    /// [`installs_help_word`](Self::installs_help_word) is the only such
+    /// decision today. A second one belongs below the same line, not above it.
+    ///
+    /// The opposite constraint exists and is not a contradiction: the
+    /// questionnaire *validators* (`validate_questionnaire_surfaces`,
+    /// `validate_command_groups`) read the shape the application author wrote,
+    /// precisely to catch names that collide with what the framework is about
+    /// to inject, so they run before augmentation and must keep doing so.
     pub fn augment_command_with_help(&self, cmd: Command) -> Command {
-        let cmd = if self.help_handling {
-            // Disable clap's help subcommand and replace with standout's.
-            // Keep clap's native --help/-h flag — it short-circuits validation
-            // so `myapp subcmd --help` works even with required args.
-            // The resulting DisplayHelp error is intercepted in get_matches_from.
-            cmd.disable_help_subcommand(true).subcommand(
-                Command::new("help")
-                    .about("Print this message or the help of the given subcommand(s)")
-                    .arg(
-                        Arg::new("topic")
-                            .action(ArgAction::Set)
-                            .num_args(1..)
-                            .help("The subcommand or topic to print help for"),
-                    )
-                    .arg(
-                        Arg::new("page")
-                            .long("page")
-                            .action(ArgAction::SetTrue)
-                            .help("Display help through a pager"),
-                    ),
-            )
+        let cmd = self.augment_framework_surface(cmd);
+
+        if !self.help_handling {
+            return cmd;
+        }
+
+        // Disable clap's help subcommand and replace with standout's.
+        // Keep clap's native --help/-h flag — it short-circuits validation
+        // so `myapp subcmd --help` works even with required args.
+        // The resulting DisplayHelp error is intercepted by both parse paths.
+        let cmd = cmd.disable_help_subcommand(true);
+        if self.installs_help_word(&cmd) {
+            // `subcommand_negates_reqs` is what makes the installed word
+            // reachable: without it a root that requires arguments rejects
+            // `myapp help` before Clap can route it, which is the defect this
+            // whole surface exists to fix. It is set *here*, and only here,
+            // because it relaxes the root's requirements for the application's
+            // own subcommands too — a semantic an app that did not get the word
+            // never asked for.
+            cmd.subcommand(help_word_command())
+                .subcommand_negates_reqs(true)
         } else {
             cmd
-        };
+        }
+    }
 
-        // Add output flags
-        self.augment_command_for_dispatch(cmd)
+    /// Whether the bare `help` word is installed on this root.
+    ///
+    /// Installing it reserves the word out of the root's data namespace, which
+    /// is only standout's call to make when nothing else could claim it:
+    ///
+    /// - the root **has subcommands** — a bare word there is already a command;
+    /// - the root is **flat with no positionals** — there is nothing to collide
+    ///   with;
+    /// - the root is **flat with positionals** — a bare word is data
+    ///   (`echo help`), so the word is installed only behind
+    ///   [`help_word(true)`](Self::help_word).
+    ///
+    /// `--help` / `-h` are unaffected either way: they are Clap's flags, always
+    /// present, and their `DisplayHelp` is rendered through standout.
+    ///
+    /// # `cmd` must be the assembled command
+    ///
+    /// This branches on the command's shape, so it may only be asked once all
+    /// structural augmentation has run: the framework injects subcommands of
+    /// its own (the questionnaire `questions` command, at the root among other
+    /// paths), and a root that gains one is a root where a bare word is already
+    /// a command. [`augment_command_with_help`](Self::augment_command_with_help)
+    /// is the only caller and orders itself accordingly — see the ordering rule
+    /// on it, which is the general form of this requirement and the thing to
+    /// preserve if a second shape-dependent decision is ever added.
+    pub(crate) fn installs_help_word(&self, cmd: &Command) -> bool {
+        self.help_word
+            || cmd.get_subcommands().next().is_some()
+            || cmd.get_positionals().next().is_none()
     }
 
     /// Extracts the output mode from parsed ArgMatches.
@@ -970,6 +1067,28 @@ impl AppBuilder {
             .collect();
         super::app::verify_recursive(cmd, &expected_args, &[], true)
     }
+}
+
+/// Standout's `help` word, the replacement for clap's built-in one.
+///
+/// Built in one place because it is both installed on the root and parsed
+/// standalone when the word is dispatched, and the two must agree on what
+/// arguments the word takes.
+fn help_word_command() -> Command {
+    Command::new("help")
+        .about("Print this message or the help of the given subcommand(s)")
+        .arg(
+            Arg::new("topic")
+                .action(ArgAction::Set)
+                .num_args(1..)
+                .help("The subcommand or topic to print help for"),
+        )
+        .arg(
+            Arg::new("page")
+                .long("page")
+                .action(ArgAction::SetTrue)
+                .help("Display help through a pager"),
+        )
 }
 
 #[cfg(test)]

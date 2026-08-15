@@ -227,17 +227,20 @@ The resolver receives a `DefaultCommandContext` exposing only the facts needed t
 | `app_state::<T>()` | Read-only app state registered via `.app_state(...)` |
 | `stdin_is_terminal()` / `stdin_is_piped()` | Whether stdin is redirected |
 
+Plus `std::env` for env-derived facts. The matches are the root's, so global flags and root arguments are all there; there is no subcommand, because that is what makes the invocation naked.
+
 **Stdin is never read during resolution.** The terminal check is the same non-consuming `StdinReader::is_terminal` seam the input system uses, so a handler's `InputChain` still consumes the pipe normally afterwards. This also means piped-but-empty stdin is a *pipe*, not a terminal — emptiness is only knowable by reading, which resolution never does. If empty input should be an error, that's the receiving command's `InputChain` policy, not the resolver's.
 
 ### Ordering guarantees
 
-Resolution runs only after Clap has already parsed a naked invocation successfully, so Clap stays authoritative:
+**Clap decides which command a line named**, and resolution reads that decision. A parse that selected a subcommand is not naked; a parse that selected none is.
 
-- **Explicit and nested commands** short-circuit resolution — it never runs.
-- **`--help` / `--version`** short-circuit inside Clap before resolution is reached.
-- **Invalid syntax** stays a Clap usage error (exit 2); the resolver never sees it.
+- **Explicit and nested commands** short-circuit resolution — the resolver never runs.
+- **`--help` / `--version`** are Clap's own displays: no default is inserted, so `myapp --help` renders the root's help rather than a default command's.
+- **Invalid syntax** stays a Clap usage error (exit 2). If a default command is configured, a refused line is offered to it — `myapp --all` is a naked line at a root that has no `--all`, and becomes `myapp list --all` when `--all` belongs to `list` — and whatever the amended line parses to, success or failure, is what you get.
+- **`--`**, option values, aliases, and short clusters mean exactly what they mean everywhere else, because the same parser reads them.
 
-Note that a naked invocation only *reaches* resolution if it parses. With `#[command(subcommand)] command: Commands`, Clap rejects a bare `myapp` before Standout is involved — make the field `Option<Commands>` to let it through.
+A root that requires a subcommand — what `#[command(subcommand)] command: Commands` produces — still accepts a naked invocation: the line is refused, the default is substituted, and the amended line parses. The field does not have to be `Option<Commands>`. See [ADR-0018](../adr/0018-let-the-parser-classify-the-command-line.md).
 
 ### Combining both
 

@@ -11,8 +11,9 @@ flowchart TB
     subgraph Parsing["Clap Parsing Stage"]
         AUG["augment_command()<br/>Injects --output, --output-file-path"]
         CLAP["clap::Command::try_get_matches_from()"]
+        SEL["Default command<br/>No subcommand selected?<br/>Insert it and parse again"]
         AM["ArgMatches"]
-        AUG --> CLAP --> AM
+        AUG --> CLAP --> SEL --> AM
     end
 
     subgraph Routing["Dispatch Routing"]

@@ -178,8 +178,10 @@ Default Command Resolution (naked invocations):
     - stdin_is_terminal() / stdin_is_piped(): non-consuming stdin fact
   - Resolver wins over the static default; None declines to it
   - Applies to dispatch_from/run/run_to_string and get_matches_from/parse_from
-  - Runs only after a successful naked parse; explicit/nested commands,
-    help, version, and usage errors are never affected
+  - Clap classifies the line; a parse selecting no subcommand is naked and
+    takes the default. A refused line is offered to the default too, so a
+    root that requires a subcommand still accepts a naked invocation
+    (ADR-0018)
 
 Dispatch Derive Macro:
   - #[derive(Dispatch)]: generate dispatch from clap Subcommand enums
@@ -250,6 +252,13 @@ HELP SYSTEM
 -----------
 
 Help Rendering:
+  - .help_handling(true): standout renders help instead of clap
+  - .help_word(true): opt a flat CLI with positionals into the bare `help`
+    word (installed automatically for CLIs with subcommands and for flat
+    CLIs with no positionals)
+  - Same policy and rendering on both parse paths: dispatch_from/run/
+    run_to_string and get_matches_from/parse_from; `--page` is honored by
+    the printing entry points and typed back to the capturing ones
   - render_help(): render styled help for clap command
   - render_help_with_topics(): help with "Learn More" section
   - HelpConfig: help rendering configuration

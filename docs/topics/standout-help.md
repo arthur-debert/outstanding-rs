@@ -16,13 +16,55 @@ App::builder()
 
 When enabled, standout:
 
-1. Disables clap's default `help` subcommand and `--help`/`-h` flag
-2. Registers its own `help` subcommand (with `--page` for pager support) and a custom `--help`/`-h` flag
-3. Intercepts all help requests (`help`, `--help`, `-h` — at root and subcommand level) and renders them through a MiniJinja template with style tags
+1. Disables clap's default `help` subcommand and registers its own (with `--page` for pager support), subject to the [install policy](#the-help-word) below
+2. **Keeps** clap's native `--help`/`-h` flag, on purpose: clap's flag short-circuits argument validation, so `myapp build --help` renders even when required arguments are missing
+3. Intercepts all help requests and renders them through a MiniJinja template with style tags — the `help` word, which clap routes like any other subcommand, and clap's `DisplayHelp` (from `--help`/`-h`, at root and subcommand level)
 
-All three invocation forms produce identical output. Subcommand-level help (e.g. `myapp build --help`) also works, rendering that subcommand's help through standout.
+Every form that is available renders the same help, through the same template and theme — with one exception, which is about the *form*, not the entry point: `--output` reaches the `help` word but not the flags. `myapp help --output text` renders in text mode; `myapp --help --output text` renders in `Auto` and the mode is ignored. The reason is where each form is answered: the word is a subcommand, so clap parses its line in full, globals included, while `--help` short-circuits inside clap before the parse completes — so there are no matches to read a mode from when its `DisplayHelp` is rendered.
 
-**Required for features:** `command_groups` and topics require `help_handling(true)`. If you configure either without it, `build()` will panic.
+Subcommand-level help (e.g. `myapp build --help`) also works, rendering that subcommand's help through standout.
+
+**Required for features:** `command_groups` and topics require `help_handling(true)`. If you configure either without it, `build()` returns a `SetupError`.
+
+### Whichever entry point you use
+
+Help is answered the same way through both parse paths — `run()` / `run_to_string()` / `dispatch_from()` and `get_matches_from()` / `parse_from()`. Same install policy for the word, same interception of `--help` / `-h`, same rendering: an application's entry point is not a fact about what `myapp help` means.
+
+The one thing the two paths cannot share is `--page`, because paging is a terminal side effect and only a *printing* entry point may perform it. `run()` and `parse_from()` hand the text to the pager; the capture APIs return it instead — `run_to_string()` marks it `SuccessKind::PagedHelp`, `get_matches_from()` returns `HelpResult::PagedHelp` — and leave the decision to you.
+
+## The `help` Word
+
+`--help` and `-h` are flags: they are always available and can never collide with your data. A bare `help` is different — at the root of a CLI with no subcommands, a bare word is *data*. `echo help`, `grep help`, and `ls help` all treat it as such, and a tool whose positional is a revision range or a file name would be wrong to swallow it.
+
+So standout only installs the word where it knows nothing else can claim it:
+
+| Root shape | `help` word |
+| --- | --- |
+| Has subcommands | Installed — a bare word there is already a command |
+| Flat, no positionals | Installed — nothing to collide with |
+| Flat, with positionals | **Opt-in only** — see below |
+
+For the third shape, only your application knows whether its positional domain excludes the word. Opt in with `.help_word(true)`:
+
+```rust
+// `mytool <RANGE>` — a revision range is never the word "help".
+App::builder()
+    .help_handling(true)
+    .help_word(true)
+    .build()?;
+```
+
+Opting in accepts the cost: the literal word `help` can no longer reach the positional, and `--` becomes the escape for it — `mytool -- help` passes the string through. Without the opt-in, `--help` / `-h` remain the only spelling, and they still render themed help.
+
+`help_word(true)` only ever *adds* the word; it is not a way to suppress `help` on a CLI that has subcommands. It requires `help_handling(true)` — the word is standout's own subcommand, so `build()` returns a `SetupError` without interception.
+
+### Why the word is reachable at all
+
+On a flat CLI whose root arguments are required, an injected `help` subcommand used to be advertised in help output and impossible to run: clap validates the root's requirements before routing, so `myapp help` failed with "the following required arguments were not provided" instead of printing help.
+
+The fix is a declaration, not a parser of standout's own. Where standout installs the word, it also sets clap's `subcommand_negates_reqs`, which suspends the root's requirements once a command is named — so `myapp help` routes to the word, while `myapp` on its own still reports its missing arguments and `myapp <RANGE>` still parses as data. The word's arguments (`myapp help topics`, `myapp help --page`, `myapp help --output text`) are clap's to parse, like any other subcommand's.
+
+The cost is worth naming: `subcommand_negates_reqs` applies to *your* subcommands too, so a root that declares required arguments stops requiring them once any command is named. That is why standout sets it only where it installs the word, and never on a CLI that did not get one. See [ADR-0018](../adr/0018-let-the-parser-classify-the-command-line.md).
 
 ## Styling User-Provided Strings
 
@@ -309,8 +351,12 @@ Style tags like `[header]...[/header]` are resolved against the theme. Unknown t
 
 ## Output Modes
 
-Help respects the `--output` flag. In `Text` mode, style tags are stripped. In `Json` mode, the `HelpData` struct is serialized directly. This means help output is machine-readable when needed:
+The `help` word respects the `--output` flag, but only as far as *styling*. Help is always the rendered template; the mode decides what happens to its style tags — applied in `Term`, stripped in `Text`, left visible as `[header]…[/header]` in `TermDebug`:
 
 ```bash
-myapp help --output json
+myapp help --output text
 ```
+
+`--help` / `-h` do not take the flag with them (see [above](#enabling-help-handling)): they render in `Auto`, which styles for the terminal it finds. Spell the mode with the word when you need it.
+
+The structured modes (`json`, `yaml`, `xml`, `csv`) strip the tags exactly as `Text` does. None of them serializes `HelpData`, so help is themed prose in every mode, not a machine-readable document. If you need help as data, render it yourself: `HelpData` is what a [custom template](#custom-templates) receives, and a template that emits JSON is the seam for it.

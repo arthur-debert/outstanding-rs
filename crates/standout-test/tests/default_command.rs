@@ -149,33 +149,23 @@ fn globals_survive_the_resolved_default() {
 
 #[test]
 #[serial]
-fn resolver_reads_root_matches_and_app_state() {
+fn resolver_reads_app_state() {
+    // App state is a fact the resolver may consult alongside the root matches
+    // and the stdin terminal fact.
     struct Fallback(&'static str);
 
     let app = register(
         App::builder()
             .app_state(Fallback("add"))
-            .default_command_with(|ctx| {
-                if ctx.matches().get_flag("loud") {
-                    return Some("list".to_string());
-                }
-                ctx.app_state::<Fallback>().map(|f| f.0.to_string())
-            }),
+            .default_command_with(|ctx| ctx.app_state::<Fallback>().map(|f| f.0.to_string())),
     )
     .build()
     .unwrap();
 
-    let from_flag =
-        TestHarness::new()
-            .interactive_stdin()
-            .run(&app, app_command(), ["app", "--loud"]);
-    from_flag.assert_stdout_eq("list loud=true");
-    drop(from_flag);
-
-    let from_state = TestHarness::new()
+    let result = TestHarness::new()
         .interactive_stdin()
         .run(&app, app_command(), ["app"]);
-    from_state.assert_stdout_eq("add stdin= loud=false");
+    result.assert_stdout_eq("add stdin= loud=false");
 }
 
 // --- what resolution must never touch -------------------------------------
@@ -268,11 +258,12 @@ fn invalid_syntax_stays_a_clap_usage_error() {
 
     result.assert_error();
     result.assert_error_kind(RunErrorKind::ClapUsage);
-    assert_eq!(
-        calls.load(Ordering::SeqCst),
-        0,
-        "resolution runs only after a successful naked parse"
-    );
+    // A refused line is offered to the default command, so the resolver does
+    // answer here: Clap's probe finds no command in `app --nonexistent`, the
+    // default is substituted, and the amended line is parsed. What that must
+    // never do is turn a usage error into something else — the diagnostic is
+    // still Clap's, from the parse of the line that was actually run.
+    assert_eq!(calls.load(Ordering::SeqCst), 1);
 }
 
 // --- interaction with the static default ----------------------------------
@@ -481,5 +472,208 @@ fn get_matches_from_leaves_explicit_and_nested_commands_alone() {
             assert_eq!(sub.subcommand_name(), Some("migrate"));
         }
         other => panic!("expected matches, got {other:?}"),
+    }
+}
+
+// --- what Clap classifies, resolution does not second-guess ----------------
+
+#[test]
+#[serial]
+fn a_global_flag_before_the_command_does_not_make_the_line_naked() {
+    // Clap reads the option and still selects `list`, so the line is not naked
+    // and resolution never runs.
+    let calls = Arc::new(AtomicUsize::new(0));
+    let result = TestHarness::new().piped_stdin("would have meant add").run(
+        &counting_app(calls.clone()),
+        app_command(),
+        ["app", "--loud", "list"],
+    );
+
+    result.assert_success();
+    result.assert_stdout_eq("list loud=true");
+    assert_eq!(calls.load(Ordering::SeqCst), 0, "resolver must not run");
+}
+
+#[test]
+#[serial]
+fn a_required_subcommand_no_longer_blocks_the_default() {
+    // Clap refuses the naked line, the default is substituted, and the amended
+    // line parses — so a root that requires a subcommand, which is what
+    // `#[command(subcommand)] command: Commands` produces, accepts one.
+    let app = register(App::builder().default_command("list"))
+        .build()
+        .unwrap();
+
+    let result = TestHarness::new().interactive_stdin().run(
+        &app,
+        app_command().subcommand_required(true),
+        ["app"],
+    );
+
+    result.assert_success();
+    result.assert_stdout_eq("list loud=false");
+}
+
+#[test]
+#[serial]
+fn both_paths_select_the_same_command_for_a_flagged_line() {
+    let app = piped_aware_app();
+
+    let dispatched =
+        TestHarness::new()
+            .piped_stdin("data")
+            .run(&app, app_command(), ["app", "--loud", "list"]);
+    dispatched.assert_stdout_eq("list loud=true");
+    drop(dispatched);
+
+    with_stdin(MockStdin::piped("data"), || {
+        match app.get_matches_from(app_command(), ["app", "--loud", "list"]) {
+            HelpResult::Matches(m) => assert_eq!(m.subcommand_name(), Some("list")),
+            other => panic!("expected matches, got {other:?}"),
+        }
+    });
+}
+
+// --- the `help` word on a flat command -------------------------------------
+
+/// A flat root whose required group makes the injected `help` word unreachable
+/// unreachable until the declaration says otherwise: `app help` used to be
+/// `MissingRequiredArgument`.
+fn flat_required_command() -> Command {
+    Command::new("app")
+        .about("Flat app")
+        .arg(Arg::new("range"))
+        .arg(Arg::new("staged").long("staged").action(ArgAction::SetTrue))
+        .group(
+            clap::ArgGroup::new("target")
+                .args(["range", "staged"])
+                .required(true),
+        )
+}
+
+#[test]
+#[serial]
+fn the_help_word_is_reachable_on_a_root_that_requires_arguments() {
+    let app = App::builder()
+        .help_handling(true)
+        .help_word(true)
+        .build()
+        .unwrap();
+
+    match app.get_matches_from(flat_required_command(), ["app", "help"]) {
+        HelpResult::Help(h) => assert!(h.contains("Flat app"), "output:\n{h}"),
+        other => panic!("expected rendered help, got {other:?}"),
+    }
+}
+
+#[test]
+#[serial]
+fn a_flat_command_keeps_the_word_as_data_without_the_opt_in() {
+    let app = App::builder().help_handling(true).build().unwrap();
+
+    match app.get_matches_from(flat_required_command(), ["app", "help"]) {
+        HelpResult::Matches(m) => assert_eq!(
+            m.get_one::<String>("range").map(String::as_str),
+            Some("help")
+        ),
+        other => panic!("expected matches, got {other:?}"),
+    }
+}
+
+// --- arguments reach Clap verbatim -----------------------------------------
+
+/// A non-UTF8 argument is an ordinary argument on Unix — a path, most often —
+/// and standout must not stand between it and Clap. The parse seam therefore
+/// carries `OsString`s end to end, including across the re-parse that
+/// substitutes a default command.
+#[cfg(unix)]
+mod non_utf8 {
+    use super::*;
+    use std::ffi::OsString;
+    use std::os::unix::ffi::OsStringExt;
+    use std::path::PathBuf;
+
+    /// `fo\x80o` — a byte sequence no UTF-8 decoder accepts.
+    fn wild_path() -> OsString {
+        OsString::from_vec(vec![b'f', b'o', 0x80, b'o'])
+    }
+
+    fn path_command() -> Command {
+        Command::new("app").subcommand(
+            Command::new("list").arg(Arg::new("path").value_parser(clap::value_parser!(PathBuf))),
+        )
+    }
+
+    /// Reports whether the handler received the argument byte for byte.
+    fn path_app(default: bool) -> App {
+        let builder = if default {
+            App::builder().default_command("list")
+        } else {
+            App::builder()
+        };
+        builder
+            .command(
+                "list",
+                |m, _ctx| {
+                    let seen = m
+                        .get_one::<PathBuf>("path")
+                        .map(|p| p.as_os_str().to_owned());
+                    Ok(Output::Render(json!({
+                        "verbatim": seen.as_deref() == Some(wild_path().as_os_str()),
+                    })))
+                },
+                "verbatim={{ verbatim }}",
+            )
+            .unwrap()
+            .build()
+            .unwrap()
+    }
+
+    #[test]
+    #[serial]
+    fn a_non_utf8_argument_reaches_the_handler_unmangled() {
+        let result = TestHarness::new().interactive_stdin().run(
+            &path_app(false),
+            path_command(),
+            [OsString::from("app"), OsString::from("list"), wild_path()],
+        );
+
+        result.assert_success();
+        result.assert_stdout_eq("verbatim=true");
+    }
+
+    #[test]
+    #[serial]
+    fn substituting_a_default_command_does_not_mangle_the_rest() {
+        // The line is naked, so it is re-parsed with `list` inserted — the
+        // amended argument list must still be the user's bytes.
+        let result = TestHarness::new().interactive_stdin().run(
+            &path_app(true),
+            path_command(),
+            [OsString::from("app"), wild_path()],
+        );
+
+        result.assert_success();
+        result.assert_stdout_eq("verbatim=true");
+    }
+
+    #[test]
+    #[serial]
+    fn get_matches_from_hands_back_the_argument_it_was_given() {
+        let app = path_app(false);
+
+        match app.get_matches_from(
+            path_command(),
+            [OsString::from("app"), OsString::from("list"), wild_path()],
+        ) {
+            HelpResult::Matches(m) => {
+                let sub = m.subcommand_matches("list").expect("list");
+                assert_eq!(
+                    sub.get_one::<PathBuf>("path").map(|p| p.as_os_str()),
+                    Some(wild_path().as_os_str())
+                );
+            }
+            other => panic!("expected matches, got {other:?}"),
+        }
     }
 }

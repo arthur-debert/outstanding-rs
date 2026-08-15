@@ -13,20 +13,21 @@ use std::io::Write;
 use std::path::PathBuf;
 
 use super::{AppBuilder, PendingCommand};
+use crate::cli::default_command::ParseFailure;
 use crate::cli::dispatch::{
-    dispatch, extract_command_path, get_deepest_matches, insert_default_command, DispatchOutput,
-    Presentation,
+    dispatch, extract_command_path, get_deepest_matches, DispatchOutput, Presentation,
 };
 use crate::cli::group::{ErasedConfigRecipe, GroupBuilder, GroupEntry};
 use crate::cli::handler::{
     ArtifactDestination, ArtifactReceipt, ArtifactRun, CommandContext, OutputKind, RunError,
-    RunErrorKind, RunOutput, RunResult,
+    RunErrorKind, RunOutput, RunResult, SuccessKind,
 };
 use crate::cli::hooks::{ArtifactOutput, RenderedOutput, TextOutput};
 use crate::cli::questionnaire::{
     augment_questionnaire_command, render_questions_result, validate_questionnaire_surface,
     ANSWERS_ARG_ID, QUESTIONS_SUBCOMMAND, YES_ARG_ID,
 };
+use crate::topics::display_with_pager;
 use crate::SetupError;
 
 impl AppBuilder {
@@ -266,6 +267,16 @@ impl AppBuilder {
     /// It augments the command with `--output` flag, parses arguments, and
     /// dispatches to registered handlers.
     ///
+    /// # Help
+    ///
+    /// When [`help_handling`](Self::help_handling) is on, help is answered here
+    /// on the same terms as [`get_matches_from`](Self::get_matches_from): the
+    /// `help` word where the install policy put it, and `--help` / `-h` through
+    /// Clap's short-circuit, both rendered by standout and returned as
+    /// `RunResult::Handled`. A `--page` request rides back as
+    /// [`SuccessKind::PagedHelp`](crate::cli::SuccessKind::PagedHelp); only
+    /// [`run`](Self::run) acts on it, so this stays free of side effects.
+    ///
     /// # Returns
     ///
     /// - `RunResult::Handled(output)` if a registered handler processed the command
@@ -292,27 +303,36 @@ impl AppBuilder {
         I: IntoIterator<Item = T>,
         T: Into<std::ffi::OsString> + Clone,
     {
-        // Collect args to Vec<String> so we can potentially reparse with default command
-        let args: Vec<String> = args
-            .into_iter()
-            .map(|a| a.into().to_string_lossy().into_owned())
-            .collect();
+        // Verbatim, all the way to Clap: a non-UTF8 argument is a real argument.
+        let args: Vec<std::ffi::OsString> = args.into_iter().map(Into::into).collect();
 
         if let Err(error) = self.validate_questionnaire_surfaces(&cmd) {
             return RunResult::Error(RunError::new(error.to_string(), RunErrorKind::ClapUsage));
         }
 
-        // Augment command with framework-owned flags and questionnaire command surface.
-        let augmented_cmd = self.augment_command_for_dispatch(cmd.clone());
+        // Augment command with framework-owned flags, the questionnaire command
+        // surface, and — when standout owns help — the `help` word. The word's
+        // install policy is the command's shape, not the entry point used, so
+        // this is the same augmentation `get_matches_from` performs.
+        let mut augmented_cmd = self.augment_command_with_help(cmd);
 
-        // Parse arguments. Clap's "errors" include `--help` and `--version`,
-        // which are successful display paths (stdout, exit 0). Real parse
-        // errors (unknown flag, missing required arg, etc.) get `use_stderr()
-        // == true` and should surface as `RunResult::Error` so they exit
-        // non-zero on stderr.
-        let matches = match augmented_cmd.try_get_matches_from(&args) {
-            Ok(m) => m,
-            Err(e) => {
+        // One parse seam for both paths: Clap decides which command the line
+        // named, and a line that named none may take a default command.
+        let matches = match self.parse_with_default_command(&augmented_cmd, &args) {
+            Ok(matches) => matches,
+            Err(ParseFailure::UnknownDefault(e)) => {
+                return RunResult::Error(RunError::new(e.to_string(), RunErrorKind::DefaultCommand))
+            }
+            Err(ParseFailure::Clap(e)) => {
+                // Clap's native `--help`/`-h` short-circuits validation and
+                // arrives here; standout renders it when it owns help.
+                if let Some(display) = self.intercept_display_help(&mut augmented_cmd, &args, &e) {
+                    return display.into();
+                }
+                // Clap's remaining "errors" include `--version`, a successful
+                // display path (stdout, exit 0). Real parse errors get
+                // `use_stderr() == true` and surface as `RunResult::Error` so
+                // they exit non-zero on stderr.
                 if e.use_stderr() {
                     return RunResult::Error(RunError::new(e.to_string(), RunErrorKind::ClapUsage));
                 }
@@ -326,39 +346,11 @@ impl AppBuilder {
             }
         };
 
-        // A naked invocation may resolve to a default command — statically, or
-        // per-invocation via `default_command_with`. Both funnel through
-        // `resolve_default_command` so this path and `get_matches_from` agree.
-        let matches = match self.resolve_default_command(&cmd, &matches) {
-            Err(e) => {
-                return RunResult::Error(RunError::new(e.to_string(), RunErrorKind::DefaultCommand))
-            }
-            Ok(None) => matches,
-            Ok(Some(default_cmd)) => {
-                let new_args = insert_default_command(args, &default_cmd);
-
-                // Reparse with default command inserted
-                let augmented_cmd = self.augment_command_for_dispatch(cmd);
-                match augmented_cmd.try_get_matches_from(&new_args) {
-                    Ok(m) => m,
-                    Err(e) => {
-                        if e.use_stderr() {
-                            return RunResult::Error(RunError::new(
-                                e.to_string(),
-                                RunErrorKind::ClapUsage,
-                            ));
-                        }
-                        let output = match e.kind() {
-                            clap::error::ErrorKind::DisplayVersion => {
-                                RunOutput::clap_version(e.to_string())
-                            }
-                            _ => RunOutput::clap_help(e.to_string()),
-                        };
-                        return RunResult::Handled(output);
-                    }
-                }
-            }
-        };
+        // The `help` word is a subcommand Clap routed; standout answers it
+        // before dispatch, sharing the arm with `get_matches_from`.
+        if let Some(display) = self.intercept_help_word(&mut augmented_cmd, &matches) {
+            return display.into();
+        }
 
         if let Some((path, questionnaire)) = self.questionnaire_questions_invocation(&matches) {
             if let Some(parent_matches) =
@@ -410,6 +402,12 @@ impl AppBuilder {
     /// This is the main entry point for command execution. It handles everything:
     /// parsing, dispatch, rendering, and output.
     ///
+    /// Being the printing entry point, this is also the one that may page: a
+    /// help display the user asked to page
+    /// ([`SuccessKind::PagedHelp`](crate::cli::SuccessKind::PagedHelp)) goes to
+    /// the pager instead of stdout, falling back to the normal writers when no
+    /// pager is available.
+    ///
     /// # Returns
     ///
     /// - `true` if a handler processed and printed output
@@ -448,11 +446,27 @@ impl AppBuilder {
     {
         let result = self.dispatch_from(cmd, args);
         let primary_status = result.exit_status();
+
+        // A `help --page` display is the one output `run()` hands to a pager
+        // instead of writing itself, which is why it happens before the
+        // handles are locked. With no pager available it falls through to the
+        // normal writers, so help is never lost to a missing `less`.
+        let paged = match &result {
+            RunResult::Handled(output) if output.kind() == SuccessKind::PagedHelp => {
+                display_with_pager(output.as_str()).is_ok()
+            }
+            _ => false,
+        };
+
         let stdout = std::io::stdout();
         let stderr = std::io::stderr();
         let mut stdout = stdout.lock();
         let mut stderr = stderr.lock();
-        let (handled, final_write_failure) = emit_run_result(&result, &mut stdout, &mut stderr);
+        let (handled, final_write_failure) = if paged {
+            (true, None)
+        } else {
+            emit_run_result(&result, &mut stdout, &mut stderr)
+        };
         drop(stdout);
         drop(stderr);
 
@@ -525,8 +539,14 @@ impl AppBuilder {
         result
     }
 
-    /// Augments a command for dispatch (adds --output flag without help subcommand).
-    pub(crate) fn augment_command_for_dispatch(&self, mut cmd: Command) -> Command {
+    /// Adds the framework-owned surface every parse path shares: the
+    /// questionnaire command surface and the `--output` / output-file flags.
+    ///
+    /// The `help` word is deliberately not here. Whether it is installed is a
+    /// policy question about the command's shape, which
+    /// [`augment_command_with_help`](Self::augment_command_with_help) owns and
+    /// answers around this.
+    pub(crate) fn augment_framework_surface(&self, mut cmd: Command) -> Command {
         self.augment_questionnaire_commands(&mut cmd, &[]);
 
         if let Some(ref flag_name) = self.output_flag {
