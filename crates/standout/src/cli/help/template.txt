@@ -8,20 +8,41 @@
 {%- if group.help %}
   [desc]{{ group.help }}[/desc]
 {% endif %}
-{%- for cmd in group.commands %}
+{%- for cmd in group.items %}
 {%- if cmd.separator %}
 {{ "" }}
 {%- else %}
-  [item]{{ cmd.name }}[/item]:{{ cmd.padding }}[desc]{{ cmd.about }}[/desc]
+  {{ ("[item]" ~ cmd.name ~ "[/item]") | pad_right(subcommands_width) }}  [desc]{{ cmd.about }}[/desc]
 {%- endif %}
 {%- endfor %}
 {%- endfor %}
+{%- if arguments %}
+
+[header]ARGUMENTS[/header]
+{%- for group in arguments %}
+{%- for arg in group.items %}
+  {{ ("[metavar]" ~ arg.name ~ "[/metavar]") | pad_right(arguments_width) }}  [desc]{{ arg.help }}[/desc]
+{%- if arg.default %}
+  {{ "" | pad_right(arguments_width) }}  [default]default: {{ arg.default }}[/default]
+{%- endif %}
+{%- if arg.possible_values %}
+  {{ "" | pad_right(arguments_width) }}  [values]possible values: {{ arg.possible_values | join(", ") }}[/values]
+{%- endif %}
+{%- endfor %}
+{%- endfor %}
+{%- endif %}
 {%- if options %}
 
 [header]OPTIONS[/header]
 {%- for group in options %}
-{%- for opt in group.options %}
-  [item]{{ opt.name }}[/item]{{ opt.padding }}[desc]{{ opt.help }}[/desc]
+{%- for opt in group.items %}
+  {{ ("[item]" ~ opt.name ~ "[/item]") | pad_right(options_width) }}  [desc]{{ opt.help }}[/desc]
+{%- if opt.default %}
+  {{ "" | pad_right(options_width) }}  [default]default: {{ opt.default }}[/default]
+{%- endif %}
+{%- if opt.possible_values %}
+  {{ "" | pad_right(options_width) }}  [values]possible values: {{ opt.possible_values | join(", ") }}[/values]
+{%- endif %}
 {%- endfor %}
 {%- endfor %}
 {%- endif %}
@@ -34,6 +55,6 @@
 
 [header]LEARN MORE[/header]
 {%- for topic in learn_more %}
-  [item]{{ topic.name }}[/item]:{{ topic.padding }}[desc]{{ topic.title }}[/desc]
+  {{ ("[item]" ~ topic.name ~ "[/item]") | pad_right(learn_more_width) }}  [desc]{{ topic.title }}[/desc]
 {%- endfor %}
 {%- endif %}

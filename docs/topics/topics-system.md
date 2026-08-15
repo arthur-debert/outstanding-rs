@@ -197,7 +197,7 @@ Topics are rendered through templates with style tags:
 
 [header]TOPICS[/header]
 {%- for topic in topics %}
-  [item]{{ topic.name }}[/item]:{{ topic.padding }}[desc]{{ topic.title }}[/desc]
+  {{ ("[item]" ~ topic.name ~ "[/item]") | pad_right(name_width) }}  [desc]{{ topic.title }}[/desc]
 {%- endfor %}
 ```
 

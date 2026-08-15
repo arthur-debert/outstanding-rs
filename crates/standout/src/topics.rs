@@ -60,10 +60,8 @@ use std::process::{Command as ProcessCommand, Stdio};
 use console::Style;
 use serde::Serialize;
 
+use crate::cli::help::data::resolve_name_column;
 use crate::{render_with_output, OutputMode, RenderError, Theme};
-
-/// Fixed width for the name column in topic listings.
-const NAME_COLUMN_WIDTH: usize = 14;
 
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub enum TopicType {
@@ -279,13 +277,15 @@ struct TopicData {
 struct TopicsListData {
     usage: String,
     topics: Vec<TopicListItem>,
+    /// Width of the name column, resolved from the topic names; the template
+    /// aligns each row against it.
+    name_width: usize,
 }
 
 #[derive(Serialize)]
 struct TopicListItem {
     name: String,
     title: String,
-    padding: String,
 }
 
 /// Renders a single topic using standout templating.
@@ -364,20 +364,22 @@ pub fn render_topics_list(
 
     let topic_items: Vec<TopicListItem> = topics
         .iter()
-        .map(|t| {
-            // +1 accounts for the colon added in the template
-            let pad = NAME_COLUMN_WIDTH.saturating_sub(t.name.len() + 1);
-            TopicListItem {
-                name: t.name.clone(),
-                title: t.title.clone(),
-                padding: " ".repeat(pad),
-            }
+        .map(|t| TopicListItem {
+            name: t.name.clone(),
+            title: t.title.clone(),
         })
         .collect();
+    let name_width = resolve_name_column(
+        &topic_items
+            .iter()
+            .map(|topic| topic.name.as_str())
+            .collect::<Vec<_>>(),
+    );
 
     let data = TopicsListData {
         usage: format!("{} <topic>", usage_prefix),
         topics: topic_items,
+        name_width,
     };
 
     render_with_output(template, &data, &theme, mode)
@@ -621,6 +623,53 @@ mod tests {
         assert!(output.contains("storage"));
         assert!(output.contains("syntax"));
         assert!(output.contains("myapp help <topic>"));
+    }
+
+    /// Issue #297: the standalone topics listing carried its own copy of the
+    /// column arithmetic, and its own copy of the bug. A topic name past the
+    /// floor must widen the column for the whole list rather than run into its
+    /// title.
+    #[test]
+    fn test_render_topics_list_long_name_keeps_separator() {
+        let mut registry = TopicRegistry::new();
+        registry.add_topic(Topic::new(
+            "A Very Long Topic Name Here",
+            "content",
+            TopicType::Text,
+            None,
+        ));
+        registry.add_topic(Topic::new("Short", "content", TopicType::Text, None));
+
+        let config = TopicRenderConfig {
+            output_mode: Some(crate::OutputMode::Text),
+            ..Default::default()
+        };
+
+        let output = render_topics_list(&registry, "myapp help", Some(config)).unwrap();
+
+        let long = row_containing(&output, "a-very-long-topic-name-here");
+        assert!(
+            long.contains("here  A Very Long Topic Name Here"),
+            "the longest name must keep the column separator:\n{}",
+            output
+        );
+
+        // Both titles start at the same column.
+        let short = row_containing(&output, "short");
+        assert_eq!(
+            long.find("A Very Long Topic Name Here"),
+            short.find("Short"),
+            "topic titles must align:\n{}",
+            output
+        );
+    }
+
+    /// The first rendered line containing `needle`, for column assertions.
+    fn row_containing<'a>(output: &'a str, needle: &str) -> &'a str {
+        output
+            .lines()
+            .find(|line| line.contains(needle))
+            .unwrap_or_else(|| panic!("no row for {needle} in:\n{output}"))
     }
 
     #[test]

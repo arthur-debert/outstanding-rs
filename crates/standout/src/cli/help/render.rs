@@ -18,7 +18,7 @@ pub fn render_help(cmd: &Command, config: Option<HelpConfig>) -> Result<String, 
     let theme = config.theme.unwrap_or_else(default_help_theme);
     let mode = config.output_mode.unwrap_or(OutputMode::Auto);
 
-    let data = extract_help_data(cmd, config.command_groups.as_deref());
+    let data = extract_help_data(cmd, config.command_groups.as_deref(), config.length);
 
     render_with_output(template, &data, &theme, mode)
 }
@@ -38,7 +38,12 @@ pub fn render_help_with_topics(
     let theme = config.theme.unwrap_or_else(default_help_theme);
     let mode = config.output_mode.unwrap_or(OutputMode::Auto);
 
-    let data = extract_help_data_with_topics(cmd, registry, config.command_groups.as_deref());
+    let data = extract_help_data_with_topics(
+        cmd,
+        registry,
+        config.command_groups.as_deref(),
+        config.length,
+    );
 
     render_with_output(template, &data, &theme, mode)
 }

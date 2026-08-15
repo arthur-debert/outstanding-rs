@@ -1,14 +1,69 @@
 //! Help data extraction from clap commands.
+//!
+//! Extraction answers *what* a help page says: names, descriptions, defaults,
+//! possible values, and the width each section's name column needs. It does not
+//! answer what the page looks like — no padding strings, no style tags, no
+//! punctuation. Laying rows out is the template's job, which aligns them with
+//! `standout-render`'s tabular `pad_right` filter against the widths computed
+//! here.
+//!
+//! The split matters because width is a *display* measurement. Resolving it
+//! through [`crate::tabular`] counts terminal columns, so a CJK name measures
+//! its real width and a name carrying style tags measures its visible text —
+//! neither of which byte length gets right.
 
+use crate::tabular::{Column, FlatDataSpec, Width};
 use crate::topics::TopicRegistry;
 use clap::Command;
 use serde::Serialize;
 use std::collections::BTreeMap;
 
-use super::config::CommandGroup;
+use super::config::{CommandGroup, HelpLength};
 
-/// Fixed width for the name column in help output (commands, options, topics).
-pub(crate) const NAME_COLUMN_WIDTH: usize = 14;
+/// Floor for a section's name column, in display columns.
+///
+/// The `min` of the [`Width::Bounded`] name column: a section whose names all
+/// fit keeps this width, so a small option set renders at a stable indent
+/// instead of hugging its longest name.
+const NAME_COLUMN_MIN: usize = 12;
+
+/// Gap between the name column and the description column.
+///
+/// The tabular spec's separator, and the literal gap the template writes
+/// between the two columns; the two must agree for a row to land where its
+/// width was resolved for.
+const COLUMN_SEPARATOR: &str = "  ";
+
+/// Terminal width assumed when the real one cannot be detected.
+const ASSUMED_TERMINAL_WIDTH: usize = 80;
+
+/// Resolves the width of one section's name column from that section's names.
+///
+/// The layout is two tabular columns — a [`Width::Bounded`] name column and a
+/// [`Width::Fill`] description column — so the name column comes out as wide as
+/// the widest name (never less than [`NAME_COLUMN_MIN`]) and the terminal's
+/// remaining space lands in the description, not in the gap before it.
+///
+/// Callers pass every name a section renders, including names split across
+/// groups: one width per section is what keeps a grouped command list aligned
+/// down the page instead of per group.
+pub(crate) fn resolve_name_column(names: &[&str]) -> usize {
+    let spec = FlatDataSpec::builder()
+        .column(Column::new(Width::Bounded {
+            min: Some(NAME_COLUMN_MIN),
+            max: None,
+        }))
+        .column(Column::new(Width::Fill))
+        .separator(COLUMN_SEPARATOR)
+        .build();
+
+    let rows: Vec<Vec<&str>> = names.iter().map(|name| vec![*name]).collect();
+    let terminal_width = standout_render::detect_terminal_width().unwrap_or(ASSUMED_TERMINAL_WIDTH);
+
+    spec.resolve_widths_from_data(terminal_width, &rows)
+        .get(0)
+        .unwrap_or(NAME_COLUMN_MIN)
+}
 
 #[derive(Serialize)]
 pub(crate) struct HelpData {
@@ -16,49 +71,186 @@ pub(crate) struct HelpData {
     pub about: String,
     pub usage: String,
     pub subcommands: Vec<Group<Subcommand>>,
+    pub subcommands_width: usize,
+    pub arguments: Vec<Group<OptionData>>,
+    pub arguments_width: usize,
     pub options: Vec<Group<OptionData>>,
+    pub options_width: usize,
     pub examples: String,
     pub learn_more: Vec<TopicListItem>,
+    pub learn_more_width: usize,
 }
 
+/// A titled block of rows within a section.
+///
+/// Groups subdivide a section for display; they do not subdivide its column,
+/// whose width lives on [`HelpData`] per section.
 #[derive(Serialize)]
 pub(crate) struct Group<T> {
     pub title: Option<String>,
     pub help: Option<String>,
-    pub commands: Vec<T>,
-    pub options: Vec<T>,
+    pub items: Vec<T>,
 }
 
 #[derive(Serialize)]
 pub(crate) struct Subcommand {
     pub name: String,
     pub about: String,
-    pub padding: String,
     pub separator: bool,
 }
 
+/// A row in the ARGUMENTS or OPTIONS section.
+///
+/// Positionals and flags differ only in how they are named and how the template
+/// tags them, so both are carried by this one shape; a positional leaves
+/// `short` and `long` empty.
 #[derive(Serialize)]
 pub(crate) struct OptionData {
     pub name: String,
     pub help: String,
-    pub padding: String,
     pub short: Option<char>,
     pub long: Option<String>,
+    pub default: Option<String>,
+    pub possible_values: Vec<String>,
 }
 
 #[derive(Serialize)]
 pub(crate) struct TopicListItem {
     pub name: String,
     pub title: String,
-    pub padding: String,
+}
+
+/// The name a flag is listed under: `-s, --long`, or its id when it has neither.
+fn flag_name(arg: &clap::Arg) -> String {
+    let mut name = String::new();
+    if let Some(short) = arg.get_short() {
+        name.push_str(&format!("-{}", short));
+    }
+    if let Some(long) = arg.get_long() {
+        if !name.is_empty() {
+            name.push_str(", ");
+        }
+        name.push_str(&format!("--{}", long));
+    }
+    if name.is_empty() {
+        name = arg.get_id().to_string();
+    }
+    name
+}
+
+/// The name a positional is listed under: its declared value name, else its id.
+///
+/// Clap wraps the value name in `<>` or `[]` to show whether it is required;
+/// standout leaves the brackets off and tags the name `[metavar]` instead, so
+/// the distinction is the theme's to draw rather than punctuation baked into
+/// every row.
+fn positional_name(arg: &clap::Arg) -> String {
+    arg.get_value_names()
+        .and_then(|names| names.first())
+        .map(|name| name.to_string())
+        .unwrap_or_else(|| arg.get_id().to_string())
+}
+
+/// The argument's default, as the row should read it — `None` when it has none.
+fn default_value(arg: &clap::Arg) -> Option<String> {
+    let defaults = arg.get_default_values();
+    if defaults.is_empty() {
+        return None;
+    }
+    Some(
+        defaults
+            .iter()
+            .map(|value| value.to_string_lossy().into_owned())
+            .collect::<Vec<_>>()
+            .join(", "),
+    )
+}
+
+/// The argument's selectable values, hidden ones left out.
+fn possible_values(arg: &clap::Arg) -> Vec<String> {
+    arg.get_possible_values()
+        .iter()
+        .filter(|value| !value.is_hide_set())
+        .map(|value| value.get_name().to_string())
+        .collect()
+}
+
+fn option_row(name: String, arg: &clap::Arg) -> OptionData {
+    OptionData {
+        name,
+        help: arg.get_help().map(|s| s.to_string()).unwrap_or_default(),
+        short: arg.get_short(),
+        long: arg.get_long().map(|s| s.to_string()),
+        default: default_value(arg),
+        possible_values: possible_values(arg),
+    }
+}
+
+/// Splits rows into groups by clap's `help_heading`, preserving argument order.
+fn group_by_heading(rows: Vec<(Option<String>, OptionData)>) -> Vec<Group<OptionData>> {
+    let mut by_heading: BTreeMap<Option<String>, Vec<OptionData>> = BTreeMap::new();
+    for (heading, row) in rows {
+        by_heading.entry(heading).or_default().push(row);
+    }
+    by_heading
+        .into_iter()
+        .map(|(title, items)| Group {
+            title,
+            help: None,
+            items,
+        })
+        .collect()
+}
+
+/// Every name a section renders, for width resolution.
+fn section_names(groups: &[Group<OptionData>]) -> Vec<&str> {
+    groups
+        .iter()
+        .flat_map(|group| group.items.iter().map(|item| item.name.as_str()))
+        .collect()
+}
+
+/// Whether the only command on offer is standout's own `help` word.
+///
+/// The word is machinery standout installs, not part of the application's
+/// surface, so a COMMANDS section listing nothing else is a section about
+/// standout — see [`extract`] for when it is dropped.
+fn only_the_help_word(subs: &[&Command]) -> bool {
+    matches!(subs, [single] if single.get_name() == "help")
 }
 
 pub(crate) fn extract_help_data(
     cmd: &Command,
     command_groups: Option<&[CommandGroup]>,
+    length: HelpLength,
+) -> HelpData {
+    extract(cmd, command_groups, length, None)
+}
+
+pub(crate) fn extract_help_data_with_topics(
+    cmd: &Command,
+    registry: &TopicRegistry,
+    command_groups: Option<&[CommandGroup]>,
+    length: HelpLength,
+) -> HelpData {
+    extract(cmd, command_groups, length, Some(registry))
+}
+
+fn extract(
+    cmd: &Command,
+    command_groups: Option<&[CommandGroup]>,
+    length: HelpLength,
+    registry: Option<&TopicRegistry>,
 ) -> HelpData {
     let name = cmd.get_name().to_string();
-    let about = cmd.get_about().map(|s| s.to_string()).unwrap_or_default();
+
+    let about = match length {
+        HelpLength::Long => cmd.get_long_about().or_else(|| cmd.get_about()),
+        HelpLength::Short => cmd.get_about(),
+    }
+    .map(|s| s.to_string())
+    .unwrap_or_default();
+
     let usage = cmd
         .clone()
         .render_usage()
@@ -67,95 +259,122 @@ pub(crate) fn extract_help_data(
         .unwrap_or(&cmd.clone().render_usage().to_string())
         .to_string();
 
+    let topics = registry
+        .map(|registry| registry.list_topics())
+        .unwrap_or_default();
+
     // Collect visible subcommands
     let mut subs: Vec<_> = cmd.get_subcommands().filter(|s| !s.is_hide_set()).collect();
     subs.sort_by_key(|s| s.get_display_order());
+
+    // A flat CLI's COMMANDS section would list standout's `help` word and
+    // nothing else — a section whose only entry is the machinery printing it.
+    // Registered topics earn it back: there `help <topic>` is a real
+    // destination, and the word is how a reader reaches it.
+    if only_the_help_word(&subs) && topics.is_empty() {
+        subs.clear();
+    }
 
     let subcommands = if let Some(groups) = command_groups {
         extract_grouped_subcommands(&subs, groups)
     } else {
         extract_default_subcommands(&subs)
     };
+    let subcommands_width = resolve_name_column(
+        &subcommands
+            .iter()
+            .flat_map(|group| {
+                group
+                    .items
+                    .iter()
+                    .filter(|item| !item.separator)
+                    .map(|item| item.name.as_str())
+            })
+            .collect::<Vec<_>>(),
+    );
 
-    // Group Options
-    let mut opt_groups: BTreeMap<Option<String>, Vec<OptionData>> = BTreeMap::new();
+    // Positionals get their own section, ahead of the flags, the way clap
+    // orders them: a command's primary argument reads as an afterthought when
+    // it is filed under OPTIONS behind every switch.
     let mut args: Vec<_> = cmd.get_arguments().filter(|a| !a.is_hide_set()).collect();
     args.sort_by_key(|a| a.get_display_order());
+    let (positionals, flags): (Vec<_>, Vec<_>) =
+        args.into_iter().partition(|arg| arg.is_positional());
 
-    for arg in args {
-        let mut name = String::new();
-        if let Some(short) = arg.get_short() {
-            name.push_str(&format!("-{}", short));
-        }
-        if let Some(long) = arg.get_long() {
-            if !name.is_empty() {
-                name.push_str(", ");
-            }
-            name.push_str(&format!("--{}", long));
-        }
-        if name.is_empty() {
-            name = arg.get_id().to_string();
-        }
+    let arguments = group_by_heading(
+        positionals
+            .into_iter()
+            .map(|arg| {
+                (
+                    arg.get_help_heading().map(|s| s.to_string()),
+                    option_row(positional_name(arg), arg),
+                )
+            })
+            .collect(),
+    );
+    let arguments_width = resolve_name_column(&section_names(&arguments));
 
-        let pad = NAME_COLUMN_WIDTH.saturating_sub(name.len());
-        let heading = arg.get_help_heading().map(|s| s.to_string());
-        let opt_data = OptionData {
-            name,
-            help: arg.get_help().map(|s| s.to_string()).unwrap_or_default(),
-            padding: " ".repeat(pad),
-            short: arg.get_short(),
-            long: arg.get_long().map(|s| s.to_string()),
-        };
+    let options = group_by_heading(
+        flags
+            .into_iter()
+            .map(|arg| {
+                (
+                    arg.get_help_heading().map(|s| s.to_string()),
+                    option_row(flag_name(arg), arg),
+                )
+            })
+            .collect(),
+    );
+    let options_width = resolve_name_column(&section_names(&options));
 
-        opt_groups.entry(heading).or_default().push(opt_data);
-    }
-
-    let options = opt_groups
-        .into_iter()
-        .map(|(title, opts)| Group {
-            title,
-            help: None,
-            commands: vec![],
-            options: opts,
+    let learn_more: Vec<TopicListItem> = topics
+        .iter()
+        .map(|topic| TopicListItem {
+            name: topic.name.clone(),
+            title: topic.title.clone(),
         })
         .collect();
+    let learn_more_width = resolve_name_column(
+        &learn_more
+            .iter()
+            .map(|topic| topic.name.as_str())
+            .collect::<Vec<_>>(),
+    );
 
     HelpData {
         name,
         about,
         usage,
         subcommands,
+        subcommands_width,
+        arguments,
+        arguments_width,
         options,
+        options_width,
         examples: String::new(),
-        learn_more: vec![],
+        learn_more,
+        learn_more_width,
+    }
+}
+
+fn subcommand_row(sub: &Command) -> Subcommand {
+    Subcommand {
+        name: sub.get_name().to_string(),
+        about: sub.get_about().map(|s| s.to_string()).unwrap_or_default(),
+        separator: false,
     }
 }
 
 fn extract_default_subcommands(subs: &[&Command]) -> Vec<Group<Subcommand>> {
-    let sub_cmds: Vec<Subcommand> = subs
-        .iter()
-        .map(|sub| {
-            let name = sub.get_name().to_string();
-            let pad = NAME_COLUMN_WIDTH.saturating_sub(name.len() + 1);
-            Subcommand {
-                name,
-                about: sub.get_about().map(|s| s.to_string()).unwrap_or_default(),
-                padding: " ".repeat(pad),
-                separator: false,
-            }
-        })
-        .collect();
-
-    if sub_cmds.is_empty() {
-        vec![]
-    } else {
-        vec![Group {
-            title: Some("Commands".to_string()),
-            help: None,
-            commands: sub_cmds,
-            options: vec![],
-        }]
+    if subs.is_empty() {
+        return vec![];
     }
+
+    vec![Group {
+        title: Some("Commands".to_string()),
+        help: None,
+        items: subs.iter().map(|sub| subcommand_row(sub)).collect(),
+    }]
 }
 
 fn extract_grouped_subcommands(
@@ -175,20 +394,12 @@ fn extract_grouped_subcommands(
                     group_cmds.push(Subcommand {
                         name: String::new(),
                         about: String::new(),
-                        padding: String::new(),
                         separator: true,
                     });
                 }
                 Some(cmd_name) => {
                     if let Some(sub) = sub_map.remove(cmd_name.as_str()) {
-                        let name = sub.get_name().to_string();
-                        let pad = NAME_COLUMN_WIDTH.saturating_sub(name.len() + 1);
-                        group_cmds.push(Subcommand {
-                            name,
-                            about: sub.get_about().map(|s| s.to_string()).unwrap_or_default(),
-                            padding: " ".repeat(pad),
-                            separator: false,
-                        });
+                        group_cmds.push(subcommand_row(sub));
                     }
                     // Unknown names silently skipped here.
                     // validate_command_groups catches phantom references at test time.
@@ -199,8 +410,7 @@ fn extract_grouped_subcommands(
             result_groups.push(Group {
                 title: Some(group.title.clone()),
                 help: group.help.clone(),
-                commands: group_cmds,
-                options: vec![],
+                items: group_cmds,
             });
         }
     }
@@ -210,53 +420,14 @@ fn extract_grouped_subcommands(
         // Preserve display_order for remaining commands
         let mut remaining: Vec<_> = sub_map.into_values().collect();
         remaining.sort_by_key(|s| s.get_display_order());
-        let other_cmds: Vec<Subcommand> = remaining
-            .iter()
-            .map(|sub| {
-                let name = sub.get_name().to_string();
-                let pad = NAME_COLUMN_WIDTH.saturating_sub(name.len() + 1);
-                Subcommand {
-                    name,
-                    about: sub.get_about().map(|s| s.to_string()).unwrap_or_default(),
-                    padding: " ".repeat(pad),
-                    separator: false,
-                }
-            })
-            .collect();
         result_groups.push(Group {
             title: Some("Other".to_string()),
             help: None,
-            commands: other_cmds,
-            options: vec![],
+            items: remaining.iter().map(|sub| subcommand_row(sub)).collect(),
         });
     }
 
     result_groups
-}
-
-pub(crate) fn extract_help_data_with_topics(
-    cmd: &Command,
-    registry: &TopicRegistry,
-    command_groups: Option<&[CommandGroup]>,
-) -> HelpData {
-    let mut data = extract_help_data(cmd, command_groups);
-
-    let topics = registry.list_topics();
-    if !topics.is_empty() {
-        data.learn_more = topics
-            .iter()
-            .map(|t| {
-                let pad = NAME_COLUMN_WIDTH.saturating_sub(t.name.len() + 1);
-                TopicListItem {
-                    name: t.name.clone(),
-                    title: t.title.clone(),
-                    padding: " ".repeat(pad),
-                }
-            })
-            .collect();
-    }
-
-    data
 }
 
 #[cfg(test)]
@@ -264,10 +435,14 @@ mod tests {
     use super::*;
     use clap::Arg;
 
+    fn extract_short(cmd: &Command) -> HelpData {
+        extract_help_data(cmd, None, HelpLength::Short)
+    }
+
     #[test]
     fn test_extract_basic() {
         let cmd = Command::new("test").about("A test command");
-        let data = extract_help_data(&cmd, None);
+        let data = extract_short(&cmd);
         assert_eq!(data.name, "test");
         assert_eq!(data.about, "A test command");
     }
@@ -278,162 +453,240 @@ mod tests {
             .subcommand(Command::new("sub1").about("Sub 1"))
             .subcommand(Command::new("sub2").about("Sub 2"));
 
-        let data = extract_help_data(&cmd, None);
+        let data = extract_short(&cmd);
         assert_eq!(data.subcommands.len(), 1);
-        assert_eq!(data.subcommands[0].commands.len(), 2);
+        assert_eq!(data.subcommands[0].items.len(), 2);
     }
 
+    /// Issue #297: the column is resolved from the section's longest name, so a
+    /// name past the floor widens it for the whole section instead of losing
+    /// its separator.
     #[test]
-    fn test_ordering_declaration() {
+    fn test_long_option_name_widens_column() {
         let cmd = Command::new("root")
-            .subcommand(Command::new("Zoo"))
-            .subcommand(Command::new("Air"));
+            .arg(Arg::new("output").long("output").help("Output format"))
+            .arg(
+                Arg::new("output_file_path")
+                    .long("output-file-path")
+                    .help("Write output to file"),
+            );
 
-        let data = extract_help_data(&cmd, None);
-        assert_eq!(data.subcommands[0].commands[0].name, "Zoo");
-        assert_eq!(data.subcommands[0].commands[1].name, "Air");
+        let data = extract_short(&cmd);
+        assert_eq!(data.options_width, "--output-file-path".len());
     }
 
     #[test]
-    fn test_mixed_headings() {
+    fn test_short_option_names_keep_floor_width() {
         let cmd = Command::new("root")
-            .arg(Arg::new("opt1").long("opt1"))
-            .arg(Arg::new("custom").long("custom").help_heading("Custom"));
+            .disable_help_flag(true)
+            .arg(Arg::new("out").long("out").help("Output"));
 
-        let data = extract_help_data(&cmd, None);
-        assert_eq!(data.options.len(), 2);
+        let data = extract_short(&cmd);
+        assert_eq!(data.options_width, NAME_COLUMN_MIN);
+    }
 
-        let group1 = &data.options[0];
-        let group2 = &data.options[1];
+    /// The name column measures terminal columns, not bytes: a CJK name is
+    /// twice as wide as its character count and nowhere near its byte length.
+    #[test]
+    fn test_name_column_measures_display_width_not_bytes() {
+        let cmd = Command::new("root")
+            .disable_help_flag(true)
+            .arg(Arg::new("wide").long("日本語オプション").help("Wide"));
 
-        assert!(group1.title.is_none());
-        assert_eq!(group1.options[0].name, "--opt1");
+        let data = extract_short(&cmd);
+        // "--" + 8 CJK characters at 2 columns each.
+        assert_eq!(data.options_width, 18);
+    }
 
-        assert_eq!(group2.title.as_deref(), Some("Custom"));
-        assert_eq!(group2.options[0].name, "--custom");
+    /// One column per section, shared across groups, so the auto "Other" group
+    /// lines up with the named ones.
+    #[test]
+    fn test_grouped_subcommands_share_one_column() {
+        let cmd = Command::new("root")
+            .subcommand(Command::new("a-very-long-command-name").about("Long"))
+            .subcommand(Command::new("short").about("Short"));
+
+        let groups = vec![CommandGroup {
+            title: "Main".into(),
+            help: None,
+            commands: vec![Some("short".into())],
+        }];
+
+        let data = extract_help_data(&cmd, Some(&groups), HelpLength::Short);
+        assert_eq!(data.subcommands.len(), 2, "expected a Main and an Other");
+        assert_eq!(data.subcommands_width, "a-very-long-command-name".len());
     }
 
     #[test]
-    fn test_ordering_derive() {
-        use clap::{CommandFactory, Parser};
+    fn test_empty_subcommands() {
+        let cmd = Command::new("root");
+        let data = extract_short(&cmd);
+        assert!(data.subcommands.is_empty());
+    }
 
-        #[derive(Parser, Debug)]
-        struct Cli {
-            #[command(subcommand)]
-            command: Commands,
-        }
+    // --- #298: the information clap surfaces ---
 
-        #[derive(clap::Subcommand, Debug)]
-        enum Commands {
-            #[command(display_order = 2)]
-            First,
-            #[command(display_order = 1)]
-            Second,
-        }
+    #[test]
+    fn test_short_length_uses_about_long_uses_long_about() {
+        let cmd = Command::new("root")
+            .about("Terse")
+            .long_about("The full story");
 
-        let cmd = Cli::command();
-        let data = extract_help_data(&cmd, None);
-
-        assert_eq!(data.subcommands[0].commands[0].name, "second");
-        assert_eq!(data.subcommands[0].commands[1].name, "first");
+        assert_eq!(extract_short(&cmd).about, "Terse");
+        assert_eq!(
+            extract_help_data(&cmd, None, HelpLength::Long).about,
+            "The full story"
+        );
     }
 
     #[test]
-    fn test_extract_with_command_groups() {
+    fn test_long_length_falls_back_to_about() {
+        let cmd = Command::new("root").about("Terse");
+        assert_eq!(
+            extract_help_data(&cmd, None, HelpLength::Long).about,
+            "Terse"
+        );
+    }
+
+    #[test]
+    fn test_option_carries_default_and_possible_values() {
+        let cmd = Command::new("root").disable_help_flag(true).arg(
+            Arg::new("output")
+                .long("output")
+                .default_value("auto")
+                .value_parser(["auto", "term", "text"])
+                .help("Output format"),
+        );
+
+        let data = extract_short(&cmd);
+        let opt = &data.options[0].items[0];
+        assert_eq!(opt.default.as_deref(), Some("auto"));
+        assert_eq!(opt.possible_values, vec!["auto", "term", "text"]);
+    }
+
+    #[test]
+    fn test_hidden_possible_values_left_out() {
+        let cmd = Command::new("root").disable_help_flag(true).arg(
+            Arg::new("mode").long("mode").value_parser([
+                clap::builder::PossibleValue::new("shown"),
+                clap::builder::PossibleValue::new("secret").hide(true),
+            ]),
+        );
+
+        let data = extract_short(&cmd);
+        assert_eq!(data.options[0].items[0].possible_values, vec!["shown"]);
+    }
+
+    #[test]
+    fn test_positionals_land_in_arguments_not_options() {
+        let cmd = Command::new("root")
+            .disable_help_flag(true)
+            .arg(Arg::new("range").help("Git range to diff"))
+            .arg(Arg::new("staged").long("staged").help("Use the index"));
+
+        let data = extract_short(&cmd);
+        assert_eq!(data.arguments[0].items[0].name, "range");
+        assert_eq!(data.options[0].items[0].name, "--staged");
+        assert!(data
+            .options
+            .iter()
+            .all(|group| group.items.iter().all(|item| item.name != "range")));
+    }
+
+    #[test]
+    fn test_positional_uses_declared_value_name() {
+        let cmd = Command::new("root")
+            .disable_help_flag(true)
+            .arg(Arg::new("range").value_name("RANGE").help("A range"));
+
+        let data = extract_short(&cmd);
+        assert_eq!(data.arguments[0].items[0].name, "RANGE");
+    }
+
+    /// The two sections size independently — a long flag must not push the
+    /// ARGUMENTS column out with it.
+    #[test]
+    fn test_arguments_and_options_columns_are_independent() {
+        let cmd = Command::new("root")
+            .disable_help_flag(true)
+            .arg(Arg::new("range").help("A range"))
+            .arg(
+                Arg::new("output_file_path")
+                    .long("output-file-path")
+                    .help("Write output to file"),
+            );
+
+        let data = extract_short(&cmd);
+        assert_eq!(data.arguments_width, NAME_COLUMN_MIN);
+        assert_eq!(data.options_width, "--output-file-path".len());
+    }
+
+    // --- #299: the flat-CLI `help` word ---
+
+    #[test]
+    fn test_help_only_commands_section_is_dropped() {
         let cmd = Command::new("root")
             .disable_help_subcommand(true)
-            .subcommand(Command::new("init").about("Initialize"))
-            .subcommand(Command::new("list").about("List items"))
-            .subcommand(Command::new("delete").about("Delete items"))
-            .subcommand(Command::new("config").about("Configuration"));
+            .subcommand(Command::new("help").about("Print this message"));
 
-        let groups = vec![
-            CommandGroup {
-                title: "Main".into(),
-                help: None,
-                commands: vec![Some("init".into()), Some("list".into())],
-            },
-            CommandGroup {
-                title: "Danger".into(),
-                help: Some("Be careful with these.".into()),
-                commands: vec![Some("delete".into())],
-            },
-        ];
-
-        let data = extract_help_data(&cmd, Some(&groups));
-        assert_eq!(data.subcommands.len(), 3); // Main, Danger, Other (config is ungrouped)
-        assert_eq!(data.subcommands[0].title.as_deref(), Some("Main"));
-        assert_eq!(data.subcommands[0].commands.len(), 2);
-        assert_eq!(data.subcommands[0].commands[0].name, "init");
-        assert_eq!(data.subcommands[0].commands[1].name, "list");
-        assert_eq!(data.subcommands[1].title.as_deref(), Some("Danger"));
-        assert_eq!(
-            data.subcommands[1].help.as_deref(),
-            Some("Be careful with these.")
+        let data = extract_short(&cmd);
+        assert!(
+            data.subcommands.is_empty(),
+            "a COMMANDS section listing only standout's own word is noise"
         );
-        assert_eq!(data.subcommands[1].commands[0].name, "delete");
-        assert_eq!(data.subcommands[2].title.as_deref(), Some("Other"));
-        assert_eq!(data.subcommands[2].commands[0].name, "config");
     }
 
     #[test]
-    fn test_extract_with_separators() {
+    fn test_help_only_commands_section_kept_when_topics_exist() {
+        use crate::topics::{Topic, TopicType};
+
         let cmd = Command::new("root")
-            .subcommand(Command::new("a").about("A"))
-            .subcommand(Command::new("b").about("B"))
-            .subcommand(Command::new("c").about("C"));
+            .disable_help_subcommand(true)
+            .subcommand(Command::new("help").about("Print this message"));
+        let mut registry = TopicRegistry::new();
+        registry.add_topic(Topic::new("Storage", "content", TopicType::Text, None));
 
-        let groups = vec![CommandGroup {
-            title: "All".into(),
-            help: None,
-            commands: vec![
-                Some("a".into()),
-                None, // separator
-                Some("b".into()),
-                Some("c".into()),
-            ],
-        }];
-
-        let data = extract_help_data(&cmd, Some(&groups));
-        assert_eq!(data.subcommands.len(), 1);
-        let cmds = &data.subcommands[0].commands;
-        assert_eq!(cmds.len(), 4); // a, separator, b, c
-        assert!(!cmds[0].separator);
-        assert_eq!(cmds[0].name, "a");
-        assert!(cmds[1].separator);
-        assert!(!cmds[2].separator);
-        assert_eq!(cmds[2].name, "b");
+        let data = extract_help_data_with_topics(&cmd, &registry, None, HelpLength::Short);
+        assert_eq!(
+            data.subcommands[0].items[0].name, "help",
+            "`help <topic>` is a real destination, so the word stays listed"
+        );
     }
 
     #[test]
-    fn test_extract_all_grouped_no_other() {
+    fn test_help_alongside_real_commands_is_kept() {
         let cmd = Command::new("root")
-            .subcommand(Command::new("a").about("A"))
-            .subcommand(Command::new("b").about("B"));
+            .disable_help_subcommand(true)
+            .subcommand(Command::new("help").about("Print this message"))
+            .subcommand(Command::new("build").about("Build it"));
 
-        let groups = vec![CommandGroup {
-            title: "All".into(),
-            help: None,
-            commands: vec![Some("a".into()), Some("b".into())],
-        }];
-
-        let data = extract_help_data(&cmd, Some(&groups));
-        assert_eq!(data.subcommands.len(), 1); // No "Other" group
-        assert_eq!(data.subcommands[0].title.as_deref(), Some("All"));
+        let data = extract_short(&cmd);
+        assert_eq!(data.subcommands[0].items.len(), 2);
     }
 
     #[test]
-    fn test_default_group_title_is_commands() {
-        let cmd = Command::new("root").subcommand(Command::new("foo").about("Foo"));
+    fn test_topics_populate_learn_more() {
+        use crate::topics::{Topic, TopicType};
 
-        let data = extract_help_data(&cmd, None);
-        assert_eq!(data.subcommands[0].title.as_deref(), Some("Commands"));
-    }
-
-    #[test]
-    fn test_no_subcommands_empty_vec() {
         let cmd = Command::new("root");
-        let data = extract_help_data(&cmd, None);
-        assert!(data.subcommands.is_empty());
+        let mut registry = TopicRegistry::new();
+        registry.add_topic(Topic::new(
+            "A Very Long Topic Name Here",
+            "content",
+            TopicType::Text,
+            None,
+        ));
+        registry.add_topic(Topic::new("Short", "content", TopicType::Text, None));
+
+        let data = extract_help_data_with_topics(&cmd, &registry, None, HelpLength::Short);
+        assert_eq!(data.learn_more.len(), 2);
+        assert_eq!(
+            data.learn_more_width,
+            data.learn_more
+                .iter()
+                .map(|topic| topic.name.len())
+                .max()
+                .unwrap()
+        );
     }
 }

@@ -49,7 +49,7 @@ use super::default_command::ParseFailure;
 use super::dispatch::DispatchFn;
 use super::group::CommandRecipe;
 use super::handler::{CommandContext, Extensions, HandlerResult, Output as HandlerOutput};
-use super::help::{render_help, render_help_with_topics, CommandGroup, HelpConfig};
+use super::help::{render_help, render_help_with_topics, CommandGroup, HelpConfig, HelpLength};
 use super::hooks::{ArtifactOutput, HookError, Hooks, RenderedOutput, TextOutput};
 use super::questionnaire::QuestionnaireCommand;
 use super::result::{HelpDisplay, HelpResult};
@@ -696,6 +696,8 @@ impl AppBuilder {
             output_mode: Some(self.extract_output_mode(matches)),
             theme: self.theme.clone(),
             command_groups: self.help_command_groups.clone(),
+            // The word is the spelled-out request, so it reads like `--help`.
+            length: HelpLength::Long,
             ..Default::default()
         };
         let use_pager = sub_matches.get_flag("page");
@@ -755,25 +757,88 @@ impl AppBuilder {
     /// it. The render falls back to [`OutputMode::Auto`]; the `help` word does
     /// honour the flag, because Clap parses the word's line in full. The
     /// asymmetry is documented in `docs/topics/standout-help.md`.
+    ///
+    /// Which *spelling* asked is read off the raw line, by
+    /// [`help_request`], which reads it off the same re-parse that answers
+    /// *which* command was asked about — the error carries neither.
     fn render_help_for_display_help_error(
         &self,
         cmd: &mut Command,
         args: &[std::ffi::OsString],
     ) -> HelpDisplay {
-        let target = Self::help_target(cmd, args);
+        let request = Self::help_request(cmd, args);
 
         let config = HelpConfig {
             theme: self.theme.clone(),
             command_groups: self.help_command_groups.clone(),
+            length: request.length,
             ..Default::default()
         };
 
-        if target.is_empty() {
+        if request.target.is_empty() {
             return self.render_root_help(cmd, Some(config), false);
         }
 
-        let keywords: Vec<&str> = target.iter().map(|s| s.as_str()).collect();
+        let keywords: Vec<&str> = request.target.iter().map(|s| s.as_str()).collect();
         self.handle_help_request(cmd, &keywords, false, Some(config))
+    }
+
+    /// What a `DisplayHelp` line asked for, as Clap reads it.
+    ///
+    /// Two facts Clap's error does not carry: which command the request was
+    /// raised for, and which spelling raised it. Both are read off a parse
+    /// rather than off the argument list, per
+    /// [ADR-0018](../../../../docs/adr/0018-let-the-parser-classify-the-command-line.md)
+    /// — a scan looking for `-h` would have to reimplement `--` termination,
+    /// `--flag=value`, short-option clusters, and which options consume the
+    /// token after them (`-o h` is not a help request), and a scan wrong about
+    /// any of those is a parser with unknown coverage.
+    ///
+    /// It takes *two* parses, because the two questions want opposite
+    /// declarations of the same flag. See [`help_target`](Self::help_target)
+    /// and [`help_length`](Self::help_length).
+    fn help_request(cmd: &Command, args: &[std::ffi::OsString]) -> HelpRequest {
+        HelpRequest {
+            target: Self::help_target(cmd, args),
+            length: Self::help_length(cmd, args),
+        }
+    }
+
+    /// Which spelling raised the request: `--help` (long) or `-h` (short).
+    ///
+    /// The flags are re-declared as ordinary global arguments on a throwaway
+    /// clone whose own help flag is disabled, so Clap classifies them instead
+    /// of short-circuiting on them. Global, so a request raised deep in the
+    /// tree still reports at the root.
+    ///
+    /// `-h` is declared but never read. Its value is not the answer — absence
+    /// of `--help` already is — but declaring it keeps Clap's lexer accurate
+    /// for the rest of the line, rather than leaving an unknown token for
+    /// `ignore_errors` to absorb.
+    fn help_length(cmd: &Command, args: &[std::ffi::OsString]) -> HelpLength {
+        let probe = cmd
+            .clone()
+            .disable_help_flag(true)
+            .ignore_errors(true)
+            .arg(
+                Arg::new(HELP_PROBE_SHORT)
+                    .short('h')
+                    .action(ArgAction::SetTrue)
+                    .global(true)
+                    .hide(true),
+            )
+            .arg(
+                Arg::new(HELP_PROBE_LONG)
+                    .long("help")
+                    .action(ArgAction::SetTrue)
+                    .global(true)
+                    .hide(true),
+            );
+
+        match probe.try_get_matches_from(args) {
+            Ok(matches) if matches.get_flag(HELP_PROBE_LONG) => HelpLength::Long,
+            _ => HelpLength::Short,
+        }
     }
 
     /// The command chain a help request was raised for, as Clap reads it.
@@ -781,6 +846,14 @@ impl AppBuilder {
     /// Empty means the root. Disabling the help flag is what lets the parse run
     /// far enough to answer: with it enabled the parse short-circuits again and
     /// reports nothing.
+    ///
+    /// The help flag is deliberately left *undeclared* here, which is the
+    /// opposite of what [`help_length`](Self::help_length) needs and the reason
+    /// the two are separate parses. An undeclared `--help` is an unknown token,
+    /// so `ignore_errors` truncates the parse where it appears — and that is
+    /// exactly the wanted reading: in `app --help list`, help was asked before
+    /// any command was named, so it is the root's, and the walk has to stop at
+    /// the flag rather than stride past it to `list`.
     fn help_target(cmd: &Command, args: &[std::ffi::OsString]) -> Vec<String> {
         let Ok(matches) = cmd
             .clone()
@@ -933,6 +1006,10 @@ impl AppBuilder {
         // The resulting DisplayHelp error is intercepted by both parse paths.
         let cmd = cmd.disable_help_subcommand(true);
         if self.installs_help_word(&cmd) {
+            // Read before the word is added, so it answers "does the
+            // application have commands of its own?" — the shape the word's
+            // wording has to be true of. Asked after, every root has one.
+            let has_subcommands = cmd.get_subcommands().next().is_some();
             // `subcommand_negates_reqs` is what makes the installed word
             // reachable: without it a root that requires arguments rejects
             // `myapp help` before Clap can route it, which is the defect this
@@ -940,7 +1017,7 @@ impl AppBuilder {
             // because it relaxes the root's requirements for the application's
             // own subcommands too — a semantic an app that did not get the word
             // never asked for.
-            cmd.subcommand(help_word_command())
+            cmd.subcommand(help_word_command(has_subcommands))
                 .subcommand_negates_reqs(true)
         } else {
             cmd
@@ -1201,19 +1278,54 @@ fn duplicate_help_word(claim: &str) -> SetupError {
     ))
 }
 
+/// Argument ids for the flags [`AppBuilder::help_request`] re-declares.
+///
+/// Named out of the application's namespace: they exist only on a throwaway
+/// clone, but a collision with a real argument would silently change what the
+/// probe reports.
+const HELP_PROBE_SHORT: &str = "__standout_help_short";
+const HELP_PROBE_LONG: &str = "__standout_help_long";
+
+/// What a help request named, once Clap has read the line.
+///
+/// Defaults to the root and the terse description, which is what an
+/// unparseable line gets.
+#[derive(Debug, Default, PartialEq, Eq)]
+struct HelpRequest {
+    /// The command chain the request was raised for; empty means the root.
+    target: Vec<String>,
+    /// Which description to render.
+    length: HelpLength,
+}
+
 /// Standout's `help` word, the replacement for clap's built-in one.
 ///
 /// Built in one place because it is both installed on the root and parsed
 /// standalone when the word is dispatched, and the two must agree on what
 /// arguments the word takes.
-fn help_word_command() -> Command {
+///
+/// `has_subcommands` is the root's shape, and it is the whole reason this takes
+/// an argument: clap's wording points at "the given subcommand(s)", which on a
+/// flat CLI names a namespace that cannot exist. The flat shape is the one
+/// [`help_word`](AppBuilder::help_word) exists to serve, so it gets a sentence
+/// that is true of it.
+fn help_word_command(has_subcommands: bool) -> Command {
+    let (about, topic_help) = if has_subcommands {
+        (
+            "Print this message or the help of the given subcommand(s)",
+            "The subcommand or topic to print help for",
+        )
+    } else {
+        ("Print this message", "The topic to print help for")
+    };
+
     Command::new("help")
-        .about("Print this message or the help of the given subcommand(s)")
+        .about(about)
         .arg(
             Arg::new("topic")
                 .action(ArgAction::Set)
                 .num_args(1..)
-                .help("The subcommand or topic to print help for"),
+                .help(topic_help),
         )
         .arg(
             Arg::new("page")
@@ -1226,6 +1338,89 @@ fn help_word_command() -> Command {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A root with a value-taking option, a flag, and a positional — enough
+    /// shape for the lexing the scan would have had to reimplement.
+    fn probe_command() -> Command {
+        Command::new("app")
+            .arg(Arg::new("out").short('o').long("out"))
+            .arg(Arg::new("verbose").short('v').action(ArgAction::SetTrue))
+            .arg(Arg::new("range"))
+            .subcommand(Command::new("build").arg(Arg::new("target")))
+    }
+
+    fn request(args: &[&str]) -> HelpRequest {
+        let args: Vec<std::ffi::OsString> = args.iter().map(Into::into).collect();
+        AppBuilder::help_request(&probe_command(), &args)
+    }
+
+    #[test]
+    fn test_help_request_reads_the_spelling() {
+        assert_eq!(request(&["app", "--help"]).length, HelpLength::Long);
+        assert_eq!(request(&["app", "-h"]).length, HelpLength::Short);
+    }
+
+    #[test]
+    fn test_help_request_reads_the_target_command() {
+        let deep = request(&["app", "build", "--help"]);
+        assert_eq!(deep.target, vec!["build".to_string()]);
+        assert_eq!(deep.length, HelpLength::Long);
+
+        assert!(request(&["app", "--help"]).target.is_empty());
+    }
+
+    /// The two parses answer independently: help was asked before any command
+    /// was named, so the target is the root — while the spelling is still
+    /// long. Reading both off one parse got this wrong, rendering `build`'s
+    /// help for a request that never named it.
+    #[test]
+    fn test_help_request_separates_the_spelling_from_the_target() {
+        let early = request(&["app", "--help", "build"]);
+        assert!(
+            early.target.is_empty(),
+            "the walk must stop at the flag, got {:?}",
+            early.target
+        );
+        assert_eq!(early.length, HelpLength::Long);
+
+        let short = request(&["app", "-h", "build"]);
+        assert!(short.target.is_empty());
+        assert_eq!(short.length, HelpLength::Short);
+    }
+
+    /// `-vh` is a cluster ending in the help flag.
+    #[test]
+    fn test_help_request_reads_short_flag_clusters() {
+        assert_eq!(request(&["app", "-vh"]).length, HelpLength::Short);
+    }
+
+    #[test]
+    fn test_help_request_reads_inline_values() {
+        assert_eq!(
+            request(&["app", "--out=x", "--help"]).length,
+            HelpLength::Long
+        );
+    }
+
+    /// The case a hand-rolled scan gets wrong: `h` here is `-o`'s value, not a
+    /// help request. Clap consumes it as one, so the parse reports no help
+    /// flag and the fallback stands.
+    #[test]
+    fn test_help_request_does_not_mistake_an_option_value_for_a_flag() {
+        assert_eq!(request(&["app", "-o", "h"]).length, HelpLength::Short);
+        assert!(request(&["app", "-o", "h"]).target.is_empty());
+    }
+
+    /// Past `--`, a `--help` is the application's data.
+    #[test]
+    fn test_help_request_respects_the_terminator() {
+        assert_eq!(request(&["app", "--", "--help"]).length, HelpLength::Short);
+    }
+
+    #[test]
+    fn test_help_request_defaults_to_the_root_and_short() {
+        assert_eq!(request(&["app"]), HelpRequest::default());
+    }
 
     #[test]
     fn test_builder_output_flag_enabled_by_default() {
