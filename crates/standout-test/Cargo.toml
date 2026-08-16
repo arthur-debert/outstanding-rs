@@ -13,9 +13,11 @@ standout = { version = "8.1.1", path = "../standout" }
 standout-input = { version = "8.1.1", path = "../standout-input" }
 standout-render = { version = "8.1.1", path = "../standout-render" }
 clap = { version = "4", features = ["derive", "help"] }
+console = "0.16"
 serial_test = "3"
 tempfile = "3"
 
 [dev-dependencies]
+insta = "1.46.1"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"

@@ -1876,6 +1876,8 @@ name = "standout-test"
 version = "8.1.1"
 dependencies = [
  "clap",
+ "console",
+ "insta",
  "serde",
  "serde_json",
  "serial_test",
