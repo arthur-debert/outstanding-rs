@@ -28,6 +28,19 @@ fn app_with(version: Option<&str>) -> App {
     .unwrap()
 }
 
+fn app_with_owned_version(version: String) -> App {
+    App::builder()
+        .command(
+            "go",
+            |_matches, _ctx| Ok(Output::Render(json!({ "message": "ok" }))),
+            "{{ message }}",
+        )
+        .unwrap()
+        .version(version)
+        .build()
+        .unwrap()
+}
+
 #[test]
 fn a_configured_version_is_answered_as_a_clap_display_success() {
     let result = app_with(Some("9.9.9")).run_to_string(versionless_command(), ["app", "--version"]);
@@ -35,6 +48,16 @@ fn a_configured_version_is_answered_as_a_clap_display_success() {
     assert_eq!(result.exit_status(), Some(ExitStatus::SUCCESS));
     assert_eq!(result.success_kind(), Some(SuccessKind::ClapVersion));
     assert_eq!(result.output().unwrap().trim(), "app 9.9.9");
+}
+
+#[test]
+fn an_owned_string_version_is_accepted() {
+    let result = app_with_owned_version(String::from("8.8.8"))
+        .run_to_string(versionless_command(), ["app", "--version"]);
+
+    assert_eq!(result.exit_status(), Some(ExitStatus::SUCCESS));
+    assert_eq!(result.success_kind(), Some(SuccessKind::ClapVersion));
+    assert_eq!(result.output().unwrap().trim(), "app 8.8.8");
 }
 
 #[test]
