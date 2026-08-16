@@ -10,9 +10,13 @@
 //!
 //! A key is also an identity, not just a label: cases that differ in any axis
 //! value get different keys, so two cells can never end up sharing one
-//! snapshot as their oracle. A value that has to be reshaped to be readable in
-//! a filename (`--help`, `dark mode`) carries a digest of the original, which
-//! is what keeps `--help` and `help` apart.
+//! snapshot as their oracle. That holds because the key's punctuation is
+//! disjoint from what a slugified segment can contain: `__` separates axes and
+//! `_` separates an axis name from its value (a slug never contains `_`), and
+//! `--` tags the digest carried by a value that had to be reshaped to be
+//! readable in a filename (a slug never contains `--` either). So `--help`
+//! keys apart from `help`, `group-1`/`test` from `group`/`1-test`, and a
+//! reshaped value from one that merely spells its encoded form.
 //!
 //! ```
 //! use standout_render::OutputMode;
@@ -26,7 +30,7 @@
 //!
 //! assert_eq!(
 //!     case.key(),
-//!     "help__mode-term__tty-on__theme-default__entry-help-7fb28c5c"
+//!     "help__mode_term__tty_on__theme_default__entry_help--7fb28c5c"
 //! );
 //! ```
 
@@ -87,18 +91,24 @@ impl SnapshotCase {
 
     /// Returns the snapshot name for this case.
     ///
-    /// The subject leads; each axis follows as `__<name>-<value>`. Every
+    /// The subject leads; each axis follows as `__<name>_<value>`. Every
     /// segment is slugified — lowercased, with runs of non-alphanumerics
     /// collapsed to a single `-` — so a case built from argv strings like
     /// `--help` still names a file a reviewer can read. A value that reshaping
     /// would make ambiguous (`--help` and `help` both read as `help`) carries
     /// a short digest of the original, so cases that differ always key apart.
+    ///
+    /// The name/value boundary is `_` rather than `-` precisely because `-` is
+    /// what [`slug`] collapses runs into: with a hyphen there, `group-1`/`test`
+    /// and `group`/`1-test` would name one file. `_` cannot occur inside a
+    /// slug, so the boundary is unambiguous — and a single `_` between name and
+    /// value can never spell the `__` that starts the next axis.
     pub fn key(&self) -> String {
         let mut key = slug(&self.subject);
         for (name, value) in &self.axes {
             key.push_str("__");
             key.push_str(&slug(name));
-            key.push('-');
+            key.push('_');
             key.push_str(&slug(value));
         }
         key
@@ -111,6 +121,14 @@ impl fmt::Display for SnapshotCase {
     }
 }
 
+/// Separates a reshaped value's readable form from its [`digest`].
+///
+/// `--` is the one piece of punctuation [`squash`] cannot emit: it collapses
+/// every run of non-alphanumerics to a *single* `-` and trims the ends. That
+/// makes the two forms below structurally disjoint, which is what the fast
+/// path relies on.
+const DIGEST_TAG: &str = "--";
+
 /// Renders `text` as one key segment: readable, and never ambiguous.
 ///
 /// Squashing alone is lossy, and a key is what selects a snapshot file — two
@@ -122,10 +140,17 @@ impl fmt::Display for SnapshotCase {
 /// So a value that is *already* its own squashed form — lowercase
 /// alphanumerics joined by single `-`, no leading or trailing separator — is
 /// used verbatim, and anything else carries a [`digest`] of the original text
-/// after its readable form (`--help` → `help-7fb28c5c`, `""` →
-/// `none-811c9dc5`). Every axis the named builders produce is already
+/// after its readable form and a [`DIGEST_TAG`] (`--help` → `help--7fb28c5c`,
+/// `""` → `none--811c9dc5`). Every axis the named builders produce is already
 /// canonical, so ordinary keys stay clean and only a hand-written value pays
 /// for its own ambiguity.
+///
+/// The tag is what keeps the two forms from meeting in the middle. A verbatim
+/// value can never contain `--`, so it can never spell an encoded one: the
+/// literal `help--7fb28c5c` is not canonical (it squashes to `help-7fb28c5c`)
+/// and so encodes to `help-7fb28c5c--<its own digest>` rather than colliding
+/// with the encoding of `--help`. Distinct values therefore key apart unless
+/// they share both a squashed form and a 32-bit digest.
 fn slug(text: &str) -> String {
     let readable = squash(text);
     if !readable.is_empty() && readable == text {
@@ -137,7 +162,7 @@ fn slug(text: &str) -> String {
     } else {
         &readable
     };
-    format!("{}-{:08x}", base, digest(text))
+    format!("{}{}{:08x}", base, DIGEST_TAG, digest(text))
 }
 
 /// Lowercases `text` and collapses every run of characters that cannot appear
@@ -219,7 +244,7 @@ mod tests {
             .tty(false)
             .theme("default");
 
-        assert_eq!(case.key(), "help__mode-text__tty-off__theme-default");
+        assert_eq!(case.key(), "help__mode_text__tty_off__theme_default");
     }
 
     #[test]
@@ -230,7 +255,7 @@ mod tests {
 
         assert_eq!(
             case.key(),
-            "help-page-f5f24815__entry-help-7fb28c5c__mode-term-debug"
+            "help-page--f5f24815__entry_help--7fb28c5c__mode_term-debug"
         );
     }
 
@@ -246,6 +271,10 @@ mod tests {
     /// The collision this keying exists to prevent: values that read alike
     /// once they are filename-shaped must still name different snapshots, or
     /// two matrix cells silently share one oracle.
+    ///
+    /// The last two pairs are the ones an encoding meets in the middle: a
+    /// value that spells another value's *encoded* form has to key apart from
+    /// it too, or the fast path for canonical values reopens the collision.
     #[test]
     fn values_that_squash_alike_still_key_apart() {
         let pairs = [
@@ -253,6 +282,8 @@ mod tests {
             ("dark mode", "dark-mode"),
             ("", "none"),
             ("-h", "h"),
+            ("--help", "help--7fb28c5c"),
+            ("--help", "help-7fb28c5c"),
         ];
 
         for (left, right) in pairs {
@@ -266,6 +297,36 @@ mod tests {
         }
     }
 
+    /// The other boundary a key has to keep straight: where an axis name ends
+    /// and its value begins. `-` is what [`slug`] collapses runs into, so a
+    /// hyphen there would let `group-1`/`test` and `group`/`1-test` name one
+    /// file — the same shared-oracle failure, one segment over.
+    #[test]
+    fn the_axis_name_value_boundary_is_unambiguous() {
+        let split_in_the_name = SnapshotCase::new("help").axis("group-1", "test").key();
+        let split_in_the_value = SnapshotCase::new("help").axis("group", "1-test").key();
+
+        assert_eq!(split_in_the_name, "help__group-1_test");
+        assert_eq!(split_in_the_value, "help__group_1-test");
+        assert_ne!(split_in_the_name, split_in_the_value);
+    }
+
+    /// A slug's punctuation is disjoint from the key's: the separators cannot
+    /// be forged from inside a segment, which is what makes the boundaries
+    /// above hold for *any* value, not just the pairs enumerated here.
+    #[test]
+    fn a_slug_never_spells_the_keys_punctuation() {
+        for text in ["--help", "dark mode", "", "a__b", "x--y", "Group_1"] {
+            let slugged = slug(text);
+            let readable = slugged
+                .split_once(DIGEST_TAG)
+                .map_or(slugged.as_str(), |(base, _)| base);
+
+            assert!(!readable.contains('_'), "{:?} → {:?}", text, slugged);
+            assert!(!readable.contains(DIGEST_TAG), "{:?} → {:?}", text, slugged);
+        }
+    }
+
     /// A value already in key shape is spent verbatim — the digest is the
     /// price of ambiguity, not a tax on every segment.
     #[test]
@@ -275,14 +336,14 @@ mod tests {
             .tty(true)
             .theme("solarized-dark");
 
-        assert_eq!(case.key(), "help__mode-text__tty-on__theme-solarized-dark");
+        assert_eq!(case.key(), "help__mode_text__tty_on__theme_solarized-dark");
     }
 
     #[test]
     fn an_axis_value_that_slugs_away_keeps_the_key_unambiguous() {
         assert_eq!(
             SnapshotCase::new("help").theme("").key(),
-            "help__theme-none-811c9dc5"
+            "help__theme_none--811c9dc5"
         );
     }
 
