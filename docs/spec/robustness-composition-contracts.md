@@ -95,12 +95,15 @@ is thin enough to only *build* those inputs.
   **But**: the boundary object's target-facts design must not conflate format with color —
   the parity program's `--color` axis and machine-contract error emission plug into the
   seams this epic defines, and the grill must check the shapes against those Specs.
-- Changing rendered output for correctly-configured apps. The unification changes
-  *internal reachability* — help and topics gain access to the pipeline's capabilities —
-  not the bytes users see: externally observable help output stays human-rendered under
-  every mode until the machine-contract epic exposes the versioned structured envelope.
-  The only intended observable deltas are those loud-failures already defined (theme
-  merge). The snapshot matrix arbitrates.
+- Changing help's *semantics* or its human presentation. The unification changes internal
+  reachability — help and topics gain access to the pipeline's capabilities — and
+  externally observable help stays human-rendered under every mode until the
+  machine-contract epic exposes the versioned structured envelope. Byte-level deltas from
+  engine differences are *possible but not licensed*: the snapshot matrix surfaces each
+  one, and every delta must be either justified in review as an improvement standing on
+  its own or fixed so the bytes match. "It changed because the pipeline changed" is not an
+  acceptance rationale. (The theme merge that loud-failures defines is the one delta
+  already accounted for.)
 - Renaming or splitting crates.
 
 ## Proposed Shape
@@ -154,10 +157,10 @@ observable byproduct metric.
 - **This epic is the redesign** — the place where over-abstraction is most tempting. The
   boundary objects encode facts that already exist; they do not grow capability. Any
   field without a current consumer is cut.
-- **Help-through-the-pipeline changes bytes.** Even behavior-preserving unification will
-  perturb help output (engine differences, theme merge). The snapshot matrix must be in
-  place *first* and each perturbation accepted explicitly, or this epic silently becomes
-  a rendering change.
+- **Help-through-the-pipeline can perturb bytes.** Engine differences may shift help
+  output even when semantics are preserved. The snapshot matrix must be in place *first*,
+  and per the Non-Goal above each delta is then justified-or-fixed rather than waved
+  through — otherwise this epic silently becomes a rendering change.
 - **Globals have hidden clients.** `standout-input`'s overrides and the warning
   thread-locals serve the harness; removing globals must land with the harness's
   replacement injection path in the same workstream, or the test suite breaks unfixably

@@ -10,17 +10,17 @@ own dependencies; where any statement disagrees with this graph, this graph wins
 ```text
 test net
 ├── loud failures
-├── corpus PILOT ─────────────────────┐   (3–4 in-capability archetypes;
-│   └── gap-spec suites ──────────┐   │    also authors the red gap-spec suites)
-└── composition contracts         │   │
-    ├── one blessed surface ◄─────│───┘   (consumes the pilot's scorecard)
-    │   └── corpus COMPLETION     │       (full roster on blessed idioms, CI gate,
-    └── parity: config layering   │        real downstreams joined)
-        ├── parity: machine contract ◄─┐  (gated by tflike's diagnostic milestone)
+├── corpus PILOT ────────────────────────────┐   (3–4 in-capability archetypes;
+│   └── gap-spec suites ───────────────┐     │    also authors the red gap-spec suites)
+└── composition contracts              │     │
+    ├── one blessed surface ◄──────────│─────┘   (consumes the pilot's scorecard)
+    │   └── corpus COMPLETION          │         (full roster on blessed idioms, CI gate,
+    └── parity: config layering        │          real downstreams joined)
+        ├── parity: machine contract ◄─┤         (gated by tflike's diagnostic milestone)
         │   └── parity: terminal citizenship
-        └───────────────────────────────┘  (gated by tflike's full suite; also
-                                            depends on machine contract for the
-                                            event model its progress seam emits)
+        └──────────────────────────────┘         (gated by tflike's full suite; also
+                                                  depends on machine contract for the
+                                                  event model its progress seam emits)
 ```
 
 The corpus is deliberately split. Its **pilot** runs early (immediately after the test net,

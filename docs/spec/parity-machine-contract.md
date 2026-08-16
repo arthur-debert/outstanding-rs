@@ -150,9 +150,9 @@ robustness posture): CSV projection requirements, XML fate, the existing
    generate from ground truth.
 5. As an application author using CSV mode, I want nested data to produce a loud error
    pointing at projections, so that I never ship one-row garbage (#108).
-6. As the corpus's `tflike` implementer, I want the NDJSON diagnostic stream and
-   detailed exit codes available from the framework, so that the archetype's acceptance
-   suite passes without hand-rolled plumbing.
+6. As the corpus's `tflike` implementer working its diagnostic milestone, I want the NDJSON
+   diagnostic stream and detailed exit codes available from the framework, so that the
+   milestone's acceptance tests pass without hand-rolled plumbing.
 
 ## Risks And Rabbit Holes
 
@@ -177,8 +177,8 @@ robustness posture): CSV projection requirements, XML fate, the existing
 - Docs: `execution-outcomes` topic (already the repo's most precise doc) extends to the
   diagnostic model and the new code; the stability policy doc from blessed-surface gains
   the mechanism reference.
-- Testing: schema snapshots join the harness; corpus `tflike`/`brewlike` are the
-  external gates.
+- Testing: schema snapshots join the harness; the external gates are `tflike`'s diagnostic
+  milestone and `brewlike`'s full suite.
 - Release: envelope changes to `ListView` output are breaking for scripts reading
   today's shape — coordinated with the version-stamping so the break is the last
   unversioned one.
@@ -187,8 +187,9 @@ robustness posture): CSV projection requirements, XML fate, the existing
 
 Per structured mode: failure-path snapshot (diagnostic shape), success-path schema
 snapshot (versioned envelopes), exit-code table tests (success/empty/failure ×
-human/structured). `tflike` acceptance suite green; `brewlike` version tests green;
-issues #107/#108 closed by the mode-semantics rules with regression tests.
+human/structured). `tflike`'s **diagnostic milestone** green — not its full suite, whose
+progress/apply-lifecycle criteria terminal citizenship owns; `brewlike` version tests
+green; issues #107/#108 closed by the mode-semantics rules with regression tests.
 
 ## Workstream Hints
 
