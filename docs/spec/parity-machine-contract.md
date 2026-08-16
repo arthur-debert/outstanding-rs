@@ -178,7 +178,8 @@ robustness posture): CSV projection requirements, XML fate, the existing
   diagnostic model and the new code; the stability policy doc from blessed-surface gains
   the mechanism reference.
 - Testing: schema snapshots join the harness; the external gates are `tflike`'s diagnostic
-  milestone and `brewlike`'s full suite.
+  milestone and `brewlike`'s schema-version tests. (`brewlike`'s remaining criteria belong
+  to the corpus roster proper, which corpus completion owns.)
 - Release: envelope changes to `ListView` output are breaking for scripts reading
   today's shape — coordinated with the version-stamping so the break is the last
   unversioned one.
@@ -188,8 +189,8 @@ robustness posture): CSV projection requirements, XML fate, the existing
 Per structured mode: failure-path snapshot (diagnostic shape), success-path schema
 snapshot (versioned envelopes), exit-code table tests (success/empty/failure ×
 human/structured). `tflike`'s **diagnostic milestone** green — not its full suite, whose
-progress/apply-lifecycle criteria terminal citizenship owns; `brewlike` version tests
-green; issues #107/#108 closed by the mode-semantics rules with regression tests.
+progress/apply-lifecycle criteria terminal citizenship owns; `brewlike`'s schema-version
+tests green; issues #107/#108 closed by the mode-semantics rules with regression tests.
 
 ## Workstream Hints
 
