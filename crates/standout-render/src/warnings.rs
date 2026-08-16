@@ -34,7 +34,9 @@
 //!
 //! The CLI layer drains the collector at the end of `App::run` and renders
 //! the batch through the theme; see the `standout` crate for the flush
-//! logic.
+//! logic. [`render_block_plain`] exposes that same layout to a caller with no
+//! stderr of its own — the in-process test harness reconstructing what the
+//! error channel carried — so the two cannot drift apart.
 
 use std::cell::RefCell;
 use std::io::Write;
@@ -114,6 +116,43 @@ pub const WARNING_ITEM_STYLE: &str = "standout_warning_item";
 /// room to breathe when the banner is styled with a bg fill.
 const BANNER_TEXT: &str = " Standout :: Warnings ";
 
+/// Renders the warning block — blank line, banner, one tab-indented line per
+/// warning — with each styled span passed through `style`.
+///
+/// The layout lives here alone so every writer of the block shares it:
+/// [`flush_to_stderr`] passes a theme-aware styling closure, and a caller with
+/// no real stderr to write to (the in-process test harness reconstructing the
+/// error channel) passes the identity via [`render_block_plain`]. Returns `""`
+/// for an empty batch, which is what makes "no warnings" add nothing to the
+/// error channel.
+fn render_block(warnings: &[String], style: impl Fn(&str, &str) -> String) -> String {
+    if warnings.is_empty() {
+        return String::new();
+    }
+
+    let mut out = String::new();
+    out.push('\n');
+    out.push_str(&style(WARNING_BANNER_STYLE, BANNER_TEXT));
+    out.push('\n');
+    for w in warnings {
+        out.push('\t');
+        out.push_str(&style(WARNING_ITEM_STYLE, w));
+        out.push('\n');
+    }
+    out
+}
+
+/// Renders the warning block unstyled, exactly as [`flush_to_stderr`] writes it
+/// when the theme carries no warning styles or stderr cannot take color.
+///
+/// Intended for callers that must reconstruct the error channel without owning
+/// a stderr — chiefly `standout-test`, whose `TestResult::stderr()` would
+/// otherwise have to duplicate this layout and drift from it. Returns `""` for
+/// an empty batch.
+pub fn render_block_plain(warnings: &[String]) -> String {
+    render_block(warnings, |_, text| text.to_string())
+}
+
 /// Drains the collector and emits the warnings to stderr.
 ///
 /// Called by the CLI layer at the end of `App::run`, *after* the command
@@ -135,26 +174,15 @@ pub fn flush_to_stderr(theme: &Theme, output_mode: OutputMode) {
 
     let use_color = should_style_stderr(output_mode);
     let styles = theme.resolve_styles(None);
+    let block = render_block(&warnings, |style_name, text| {
+        style_for_stderr(&styles, style_name, text, use_color)
+    });
 
     // Write everything through a single stderr lock so the banner and its
     // items cannot be interleaved with other output on a shared stream.
     let stderr = std::io::stderr();
     let mut out = stderr.lock();
-
-    let _ = writeln!(out);
-    let _ = writeln!(
-        out,
-        "{}",
-        style_for_stderr(&styles, WARNING_BANNER_STYLE, BANNER_TEXT, use_color)
-    );
-
-    for w in warnings {
-        let _ = writeln!(
-            out,
-            "\t{}",
-            style_for_stderr(&styles, WARNING_ITEM_STYLE, &w, use_color)
-        );
-    }
+    let _ = write!(out, "{}", block).and_then(|()| out.flush());
 }
 
 /// Applies `style_name` to `text`, forcing ANSI on/off based on `use_color`
@@ -241,6 +269,19 @@ mod tests {
         capture_warnings_for_run();
         assert_eq!(take_captured_warnings(), vec!["pending".to_string()]);
         assert!(drain_warnings().is_empty());
+    }
+
+    #[test]
+    fn render_block_plain_lays_out_banner_and_indented_items() {
+        assert_eq!(
+            render_block_plain(&["first".to_string(), "second".to_string()]),
+            format!("\n{}\n\tfirst\n\tsecond\n", BANNER_TEXT)
+        );
+    }
+
+    #[test]
+    fn render_block_plain_is_empty_without_warnings() {
+        assert_eq!(render_block_plain(&[]), "");
     }
 
     #[test]

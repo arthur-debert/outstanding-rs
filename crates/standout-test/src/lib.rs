@@ -24,6 +24,24 @@
 //! # }
 //! ```
 //!
+//! # Observing a run
+//!
+//! [`TestResult`] exposes what the run put on each *text* stream, not just the
+//! captured outcome: [`stdout`](TestResult::stdout) and
+//! [`stderr`](TestResult::stderr) are separate channels, each reconstructing
+//! what `App::run`'s writer seam would have sent there,
+//! [`stdout_plain`](TestResult::stdout_plain) is stdout with the ANSI escapes
+//! stripped, and [`assert_page_snapshot!`] pins a whole rendered page under a
+//! name derived from its [`SnapshotCase`]. A whole-page snapshot is what makes
+//! an *extra* wrong line fail a test — the thing a list of `contains`
+//! assertions cannot do.
+//!
+//! Two things those accessors deliberately leave out, because they are not
+//! text: binary output and artifact bytes, which stay on
+//! [`binary`](TestResult::binary) and
+//! [`artifact_bytes`](TestResult::artifact_bytes). Each accessor's docs say
+//! precisely what it does and does not model.
+//!
 //! # Concurrency and restoration
 //!
 //! The harness mutates process-global state (env vars, cwd, environment
@@ -62,7 +80,10 @@ use standout_render::{
 };
 use tempfile::TempDir;
 
+mod snapshot;
+
 pub use serial_test::serial;
+pub use snapshot::SnapshotCase;
 
 /// How stdin should appear to handlers during the run.
 #[derive(Debug, Clone)]
@@ -472,6 +493,8 @@ impl TestHarness {
         // `self` (and its tempdir) move into TestResult so the fixture dir
         // survives until the test is finished with the result.
         TestResult {
+            stdout: render_stdout(&outcome),
+            stderr: render_stderr(&outcome, &warnings),
             outcome,
             warnings,
             _tempdir: self.tempdir.take(),
@@ -511,6 +534,73 @@ fn validate_fixture_path(path: &Path) -> PathBuf {
         }
     }
     path.to_path_buf()
+}
+
+/// Reconstructs the text the framework's standard-output channel would have
+/// carried.
+///
+/// `run_to_string` captures one outcome; the split into stdout and stderr is
+/// made later, by `App::run`'s writer seam. This mirrors that seam's stdout
+/// side so stream routing is assertable in-process:
+///
+/// - handled text is the rendered output itself;
+/// - an artifact written to a file leaves stdout free, so its report goes
+///   here, newline-terminated (an artifact that claimed stdout owns those
+///   bytes and reports on stderr instead);
+/// - every other outcome leaves stdout empty of *text*. Binary bytes are the
+///   deliberate omission: they are not text and stay on
+///   [`TestResult::binary`](TestResult::binary).
+///
+/// One departure from the seam: handled text is returned exactly as captured,
+/// without the newline `App::run` writes after it. That is the shape
+/// `stdout()` has always had and every existing assertion is written against;
+/// modeling the terminator would be a suite-wide rewrite for no oracle this
+/// slice needs.
+fn render_stdout(outcome: &RunResult) -> String {
+    match outcome {
+        RunResult::Handled(text) => text.as_str().to_string(),
+        RunResult::Artifact(run) if !run.destination().is_stdout() => report_line(run),
+        _ => String::new(),
+    }
+}
+
+/// Reconstructs the bytes the framework's error channel would have carried.
+///
+/// The companion to [`render_stdout`], mirroring the same writer seam:
+///
+/// - an error diagnostic goes to stderr, newline-terminated — except an
+///   application-declared external failure, which the framework passes through
+///   verbatim so the wrapped tool's own diagnostic is not reshaped;
+/// - an artifact written to stdout owns stdout, so its report goes to stderr
+///   (an artifact written to a file leaves stdout free and reports there);
+/// - framework warnings close the channel, in the block `App::run` flushes
+///   after the primary output — blank line, banner, one tab-indented line per
+///   warning. The layout is `standout_render`'s own
+///   [`render_block_plain`](standout_render::warnings::render_block_plain), so
+///   the harness cannot drift from what the CLI layer writes. Only the styling
+///   is not modeled: `run` themes that block according to the real stderr's
+///   color capability, which an in-process run has no equivalent of, so the
+///   block appears here as `stderr_plain` would show it. The warnings also
+///   remain individually addressable on
+///   [`TestResult::warnings`](TestResult::warnings).
+fn render_stderr(outcome: &RunResult, warnings: &[String]) -> String {
+    let primary = match outcome {
+        RunResult::Error(error) if error.kind() == RunErrorKind::External => error.to_string(),
+        RunResult::Error(error) => format!("{}\n", error),
+        RunResult::Artifact(run) if run.destination().is_stdout() => report_line(run),
+        _ => String::new(),
+    };
+
+    primary + &standout_render::warnings::render_block_plain(warnings)
+}
+
+/// Returns an artifact's report as the framework writes it — newline-terminated
+/// — or `""` when there is no report to write.
+fn report_line(run: &ArtifactRun) -> String {
+    run.report()
+        .filter(|report| !report.is_empty())
+        .map(|report| format!("{}\n", report))
+        .unwrap_or_default()
 }
 
 fn output_mode_flag(mode: OutputMode) -> &'static str {
@@ -572,6 +662,8 @@ impl Drop for RestoreState {
 /// accessors and assertion helpers oriented at text output.
 pub struct TestResult {
     outcome: RunResult,
+    stdout: String,
+    stderr: String,
     warnings: Vec<String>,
     // Kept alive so fixture files remain readable while the test inspects
     // the result; dropped after restore state is torn down.
@@ -586,12 +678,13 @@ impl TestResult {
         &self.outcome
     }
 
-    /// Returns framework warnings captured during the run.
+    /// Returns framework warnings captured during the run, one per entry.
     ///
-    /// These are warnings that `App::run` would render to stderr after the
-    /// primary output. The harness drains and stores them per run so warning
-    /// assertions are deterministic and cannot leak into a later test on the
-    /// same thread.
+    /// These are the warnings `App::run` renders to stderr after the primary
+    /// output; [`stderr`](Self::stderr) carries that rendered block, while this
+    /// accessor keeps each message addressable without parsing it back out.
+    /// The harness drains and stores them per run so warning assertions are
+    /// deterministic and cannot leak into a later test on the same thread.
     pub fn warnings(&self) -> &[String] {
         &self.warnings
     }
@@ -613,13 +706,54 @@ impl TestResult {
         self.outcome.error_kind()
     }
 
-    /// Returns the rendered text output, or `""` for `Silent` / `Binary` /
-    /// `NoMatch`.
+    /// Returns the text the framework would have written to stdout, or `""`
+    /// when the run put no text there.
+    ///
+    /// That is the rendered output of a handled run, or the report of an
+    /// artifact written to a file — which leaves stdout free, so the framework
+    /// reports there. An artifact that claimed stdout owns those bytes and its
+    /// report goes to [`stderr`](Self::stderr) instead; the bytes themselves,
+    /// like any binary output, are not text and stay on
+    /// [`artifact_bytes`](Self::artifact_bytes) / [`binary`](Self::binary).
+    ///
+    /// Handled text is returned exactly as captured, without the newline
+    /// `App::run` writes after it — the shape this accessor has always had.
     pub fn stdout(&self) -> &str {
-        match &self.outcome {
-            RunResult::Handled(s) => s.as_str(),
-            _ => "",
-        }
+        &self.stdout
+    }
+
+    /// Returns the text the framework would have written to stderr, or `""`
+    /// when the run left the error channel silent.
+    ///
+    /// This is the companion to [`stdout`](Self::stdout): together they say
+    /// which bytes went to which stream, which a single captured outcome
+    /// cannot. It mirrors the routing `App::run` performs — a diagnostic goes
+    /// here newline-terminated, an application-declared external failure
+    /// verbatim, the report of an artifact whose bytes claimed stdout lands
+    /// here rather than corrupting them, and framework warnings close the
+    /// channel in the banner block `run` flushes after the primary output.
+    /// That block appears unstyled: `run` themes it from the real stderr's
+    /// color capability, which an in-process run has no equivalent of. Each
+    /// warning also stays individually addressable on
+    /// [`warnings`](Self::warnings).
+    pub fn stderr(&self) -> &str {
+        &self.stderr
+    }
+
+    /// Returns [`stdout`](Self::stdout) with every ANSI escape removed.
+    ///
+    /// Styled output is compared against unstyled expectations often enough
+    /// that every test file hand-rolling the same regex is a defect source of
+    /// its own. The stripping is `console`'s — the same crate that emits the
+    /// escapes — so what is stripped is exactly what was styled. The raw
+    /// [`stdout`](Self::stdout) is untouched, so a test can assert on both.
+    pub fn stdout_plain(&self) -> String {
+        console::strip_ansi_codes(self.stdout()).into_owned()
+    }
+
+    /// Returns [`stderr`](Self::stderr) with every ANSI escape removed.
+    pub fn stderr_plain(&self) -> String {
+        console::strip_ansi_codes(self.stderr()).into_owned()
     }
 
     /// Returns `true` if the run produced text output.
@@ -864,6 +998,41 @@ impl TestResult {
             panic!(
                 "stdout mismatch\n--- expected ---\n{}\n--- actual -----\n{}\n----------------",
                 expected, out
+            );
+        }
+    }
+
+    /// Panics unless [`stderr`](Self::stderr) contains `needle`.
+    #[track_caller]
+    pub fn assert_stderr_contains(&self, needle: &str) {
+        let err = self.stderr();
+        if !err.contains(needle) {
+            panic!(
+                "stderr did not contain {:?}\n--- stderr ---\n{}\n--------------",
+                needle, err
+            );
+        }
+    }
+
+    /// Panics unless [`stderr`](Self::stderr) equals `expected` exactly.
+    #[track_caller]
+    pub fn assert_stderr_eq(&self, expected: &str) {
+        let err = self.stderr();
+        if err != expected {
+            panic!(
+                "stderr mismatch\n--- expected ---\n{}\n--- actual -----\n{}\n----------------",
+                expected, err
+            );
+        }
+    }
+
+    /// Panics unless the run left the error channel silent.
+    #[track_caller]
+    pub fn assert_stderr_empty(&self) {
+        if !self.stderr().is_empty() {
+            panic!(
+                "expected an empty stderr, got:\n--- stderr ---\n{}\n--------------",
+                self.stderr()
             );
         }
     }
