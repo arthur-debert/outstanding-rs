@@ -554,7 +554,8 @@ impl AppBuilder {
     }
 
     /// Adds the framework-owned surface every parse path shares: the
-    /// questionnaire command surface and the `--output` / output-file flags.
+    /// questionnaire command surface, the configured version metadata, and the
+    /// `--output` / output-file flags.
     ///
     /// The `help` word is deliberately not here. Whether it is installed is a
     /// policy question about the command's shape, which
@@ -562,6 +563,14 @@ impl AppBuilder {
     /// answers around this.
     pub(crate) fn augment_framework_surface(&self, mut cmd: Command) -> Command {
         self.augment_questionnaire_commands(&mut cmd, &[]);
+
+        // A version declared on the builder is the application's, said in the
+        // one place standout can see; clap still owns `--version` itself, so
+        // this hands it the value and nothing else. Unset writes nothing, which
+        // is what leaves a version set on the supplied command alone.
+        if let Some(version) = self.version {
+            cmd = cmd.version(version);
+        }
 
         if let Some(ref flag_name) = self.output_flag {
             let flag: &'static str = Box::leak(flag_name.clone().into_boxed_str());

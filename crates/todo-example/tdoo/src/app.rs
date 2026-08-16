@@ -13,9 +13,13 @@ use todo_core::TodoStore;
 /// `todo-core`: a naked `tdoo` means "add" when something is piped in and
 /// "list" at a terminal. The resolver only reads the terminal fact — the `add`
 /// command's `InputChain` still owns actually reading stdin.
+///
+/// Version metadata is shell configuration too: the builder carries the binary
+/// package's version so `tdoo --version` is answered by clap.
 pub(crate) fn build(store: TodoStore) -> Result<App> {
     Ok(App::builder()
         .app_state(store)
+        .version(env!("CARGO_PKG_VERSION"))
         .default_command_with(|ctx| {
             Some(if ctx.stdin_is_piped() { "add" } else { "list" }.to_string())
         })
@@ -97,6 +101,22 @@ mod tests {
 
         result.assert_success();
         result.assert_stdout_contains("Nothing here yet");
+    }
+
+    #[test]
+    #[serial]
+    fn version_reports_the_binary_packages_version() {
+        let (app, _dir) = fresh_app();
+
+        let result = TestHarness::new()
+            .no_color()
+            .run(&app, cli::command(), ["tdoo", "--version"]);
+
+        result.assert_success();
+        assert_eq!(
+            result.stdout().trim(),
+            format!("tdoo {}", env!("CARGO_PKG_VERSION"))
+        );
     }
 
     #[test]

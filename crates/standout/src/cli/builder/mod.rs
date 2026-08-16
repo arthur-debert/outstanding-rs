@@ -162,6 +162,17 @@ pub struct AppBuilder {
 
     /// Explicit East Asian Ambiguous width policy.
     pub(crate) ambiguous_width: crate::AmbiguousWidth,
+
+    /// Application version metadata, applied to the root clap command.
+    ///
+    /// `None` leaves the supplied command's own version — whatever the
+    /// application configured on clap directly — untouched. See
+    /// [`version`](AppBuilder::version).
+    ///
+    /// Held as `&'static str` because clap's `Str` takes runtime-built strings
+    /// only under its `string` feature; the borrow is leaked once, when the
+    /// builder is configured, rather than on every parse.
+    pub(crate) version: Option<&'static str>,
 }
 
 impl Default for AppBuilder {
@@ -201,6 +212,7 @@ impl AppBuilder {
             help_handling: false,
             help_word: false,
             ambiguous_width: crate::AmbiguousWidth::Narrow,
+            version: None,
         }
     }
 

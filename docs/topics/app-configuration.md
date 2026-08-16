@@ -340,6 +340,31 @@ App::builder()
 
 See [Topics System](topics-system.md) for details.
 
+## Version
+
+Application version metadata belongs on the builder, next to the rest of the
+app's configuration:
+
+```rust
+App::builder()
+    .version(env!("CARGO_PKG_VERSION"))
+```
+
+Standout applies the value to the root command wherever it augments and parses
+it, so every entry point — `run`, `run_to_string`, `dispatch_from`,
+`get_matches_from`, and `TestHarness` — answers `myapp --version` the same way:
+Clap's own display, on stdout, exit status 0, typed as
+`SuccessKind::ClapVersion` (see [Execution
+Outcomes](./execution-outcomes.md)).
+
+Clap keeps owning the spelling and formatting of that output and the display
+short-circuit; the builder only says what the version is. Leave `.version()`
+unset and the supplied `clap::Command` is untouched, including a version
+configured on Clap directly.
+
+This is separate from `.context("version", …)`, which puts a value in *templates*
+(`{{ version }}`); an app that wants both says both.
+
 ## Flag Customization
 
 ### Output Flag
@@ -467,6 +492,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         .templates(embed_templates!("src/templates"))
         .styles(embed_styles!("src/styles"))
         .default_theme("default")
+        .version(env!("CARGO_PKG_VERSION"))
         .context("version", env!("CARGO_PKG_VERSION"))
         .command("list", list_handler, "list.j2")
         .topics_dir("docs/topics")

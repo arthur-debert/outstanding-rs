@@ -208,6 +208,31 @@ fn harness_exposes_typed_clap_and_handler_outcomes() {
 
 #[test]
 #[serial]
+fn harness_answers_a_version_declared_on_the_builder() {
+    // The harness parses through the same augmentation a real run does, so a
+    // version configured on the builder is answered here too — no separate
+    // clap `Command` wiring for tests to keep in sync.
+    let app = App::builder()
+        .version("4.5.6")
+        .command(
+            "echo",
+            |_m, _ctx| Ok(Output::Render(json!({ "msg": "hi" }))),
+            "{{ msg }}",
+        )
+        .unwrap()
+        .build()
+        .unwrap();
+
+    let result = TestHarness::new().run(&app, echo_command(), ["app", "--version"]);
+
+    result.assert_success();
+    result.assert_exit_status(ExitStatus::SUCCESS);
+    assert_eq!(result.success_kind(), Some(SuccessKind::ClapVersion));
+    result.assert_stdout_contains("4.5.6");
+}
+
+#[test]
+#[serial]
 fn harness_exposes_external_failure_payload_status_and_origin() {
     let app = App::builder()
         .command(
