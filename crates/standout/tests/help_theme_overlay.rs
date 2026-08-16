@@ -14,7 +14,10 @@
 //! `[tag?]` markup only when styling is on, so a `Text`-mode test (or piped
 //! manual check) cannot see this defect — which is how it shipped. Term mode
 //! still defers to console's global color switch, so each test flips it on
-//! (`set_colors_enabled(true)`) to get ANSI output without a TTY.
+//! (`set_colors_enabled(true)`) to get ANSI output without a TTY. The switch
+//! is process-global and stays set, which is safe here: every test in this
+//! file wants it on, and each file under `tests/` compiles to its own binary,
+//! so the flag never reaches another test file's process.
 
 use clap::{Arg, ArgAction, Command};
 use console::{set_colors_enabled, Style};
