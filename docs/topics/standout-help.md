@@ -385,7 +385,7 @@ pub fn default_help_theme() -> Theme {
 }
 ```
 
-Override via `HelpConfig`:
+A configured theme *overlays* this default rather than replacing it: per style name, an entry the configured theme defines wins, and every tag it leaves out keeps its default styling. Restyle only what you mean to change:
 
 ```rust
 let config = HelpConfig {
@@ -393,16 +393,12 @@ let config = HelpConfig {
         Theme::new()
             .add("header", Style::new().bold().cyan())
             .add("item", Style::new().green())
-            .add("desc", Style::new())
-            .add("usage", Style::new())
-            .add("example", Style::new().dim())
-            .add("about", Style::new())
     ),
     ..Default::default()
 };
 ```
 
-Or when using `AppBuilder`, set the theme with `.theme()` — it applies to both help and command output.
+Or when using `AppBuilder`, set the theme with `.theme()` — it applies to both help and command output. Because of the overlay, an application theme does not need to define the help vocabulary at all: a theme that only declares the app's own output styles leaves help rendered entirely by the default help theme.
 
 ## Custom Templates
 

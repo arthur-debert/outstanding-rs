@@ -251,13 +251,19 @@ pub struct TopicRenderConfig {
     pub topic_template: Option<String>,
     /// Custom template string for topic list. If None, uses built-in template.
     pub list_template: Option<String>,
-    /// Custom theme. If None, uses the default topic theme.
+    /// Theme overlaid on [`default_topic_theme`]: per style name an entry
+    /// here wins, and tags it leaves undefined keep their default styling.
+    /// If None, the default topic theme alone is used.
     pub theme: Option<Theme>,
     /// Output mode. If None, uses Auto (auto-detects).
     pub output_mode: Option<OutputMode>,
 }
 
 /// Returns the default theme for topic rendering.
+///
+/// Every render starts from this theme; a configured
+/// [`TopicRenderConfig::theme`] overlays it rather than replacing it, so
+/// every tag the templates emit always resolves.
 pub fn default_topic_theme() -> Theme {
     Theme::new()
         .add("header", Style::new().bold())
@@ -265,6 +271,21 @@ pub fn default_topic_theme() -> Theme {
         .add("desc", Style::new())
         .add("usage", Style::new())
         .add("about", Style::new())
+}
+
+/// Resolves the theme a topic render styles with.
+///
+/// [`default_topic_theme`] is the base and the configured theme overlays it —
+/// per style name, a configured entry wins. The help entry points hand the
+/// *application* theme through here, which carries the app's output
+/// vocabulary, not the topic templates'; replacing the default with it would
+/// leave the topic tags unresolved and render as literal `[tag?]` markup in
+/// terminal output.
+fn resolve_topic_theme(configured: Option<Theme>) -> Theme {
+    match configured {
+        Some(theme) => default_topic_theme().merge(theme),
+        None => default_topic_theme(),
+    }
 }
 
 #[derive(Serialize)]
@@ -315,7 +336,7 @@ pub fn render_topic(
         .as_deref()
         .unwrap_or(include_str!("topic_template.txt"));
 
-    let theme = config.theme.unwrap_or_else(default_topic_theme);
+    let theme = resolve_topic_theme(config.theme);
     let mode = config.output_mode.unwrap_or(OutputMode::Auto);
 
     let data = TopicData {
@@ -357,7 +378,7 @@ pub fn render_topics_list(
         .as_deref()
         .unwrap_or(include_str!("topics_list_template.txt"));
 
-    let theme = config.theme.unwrap_or_else(default_topic_theme);
+    let theme = resolve_topic_theme(config.theme);
     let mode = config.output_mode.unwrap_or(OutputMode::Auto);
 
     let topics = registry.list_topics();

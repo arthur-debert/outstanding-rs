@@ -150,7 +150,13 @@ impl AppBuilder {
         Ok(self)
     }
 
-    /// Sets a custom theme for help rendering.
+    /// Sets the application theme, used for command output and help rendering.
+    ///
+    /// For help and topic rendering the theme is an overlay, not a
+    /// replacement: a help tag it defines (`header`, `item`, …) takes its
+    /// style, and every tag it leaves undefined keeps the default help
+    /// styling — so a theme that only declares the app's own output
+    /// vocabulary leaves help fully styled.
     pub fn theme(mut self, theme: Theme) -> Self {
         self.theme = Some(theme);
         self
