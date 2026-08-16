@@ -8,15 +8,18 @@
 //! grows a cell grows a snapshot file whose name already says what it is —
 //! no hand-written labels to drift from the case they describe.
 //!
-//! A key is also an identity, not just a label: cases that differ in any axis
-//! value get different keys, so two cells can never end up sharing one
-//! snapshot as their oracle. That holds because the key's punctuation is
-//! disjoint from what a slugified segment can contain: `__` separates axes and
-//! `_` separates an axis name from its value (a slug never contains `_`), and
-//! `--` tags the digest carried by a value that had to be reshaped to be
-//! readable in a filename (a slug never contains `--` either). So `--help`
-//! keys apart from `help`, `group-1`/`test` from `group`/`1-test`, and a
-//! reshaped value from one that merely spells its encoded form.
+//! A key is also an identity, not just a label: cases that differ in an axis
+//! value get different keys — unless the values share both a squashed form and
+//! a 32-bit digest — so two cells do not silently end up sharing one snapshot
+//! as their oracle. That holds because the key's punctuation cannot be forged
+//! from inside a segment: `__` separates axes and `_` separates an axis name
+//! from its value (a slug never contains `_` anywhere), and `--` is reserved
+//! to tag the digest carried by a value that had to be reshaped to be readable
+//! in a filename. A slug spells `--` only as that tag: the readable content
+//! around it is [`squash`] output, which collapses every run of punctuation to
+//! a single `-`. So `--help` keys apart from `help`, `group-1`/`test` from
+//! `group`/`1-test`, and a reshaped value from one that merely spells its
+//! encoded form.
 //!
 //! ```
 //! use standout_render::OutputMode;
@@ -96,10 +99,11 @@ impl SnapshotCase {
     /// collapsed to a single `-` — so a case built from argv strings like
     /// `--help` still names a file a reviewer can read. A value that reshaping
     /// would make ambiguous (`--help` and `help` both read as `help`) carries
-    /// a short digest of the original, so cases that differ always key apart.
+    /// a short digest of the original, so cases that differ key apart unless
+    /// they share both a slugified form and a 32-bit digest.
     ///
     /// The name/value boundary is `_` rather than `-` precisely because `-` is
-    /// what [`slug`] collapses runs into: with a hyphen there, `group-1`/`test`
+    /// what slugifying collapses runs into: with a hyphen there, `group-1`/`test`
     /// and `group`/`1-test` would name one file. `_` cannot occur inside a
     /// slug, so the boundary is unambiguous — and a single `_` between name and
     /// value can never spell the `__` that starts the next axis.
@@ -311,19 +315,41 @@ mod tests {
         assert_ne!(split_in_the_name, split_in_the_value);
     }
 
-    /// A slug's punctuation is disjoint from the key's: the separators cannot
-    /// be forged from inside a segment, which is what makes the boundaries
-    /// above hold for *any* value, not just the pairs enumerated here.
+    /// The key's punctuation cannot be forged from inside a segment, which is
+    /// what makes the boundaries above hold for *any* value, not just the
+    /// pairs enumerated here. A slug is its readable content — [`squash`]
+    /// output, or `none` where that is empty — either alone or followed by the
+    /// one reserved [`DIGEST_TAG`] and the digest's eight hex digits. So `--`
+    /// occurs in a slug only as that tag, and `_` never occurs at all.
     #[test]
-    fn a_slug_never_spells_the_keys_punctuation() {
-        for text in ["--help", "dark mode", "", "a__b", "x--y", "Group_1"] {
+    fn a_slug_spells_the_keys_punctuation_only_in_its_reserved_tag() {
+        for text in ["--help", "dark mode", "", "a__b", "x--y", "Group_1", "help"] {
             let slugged = slug(text);
-            let readable = slugged
-                .split_once(DIGEST_TAG)
-                .map_or(slugged.as_str(), |(base, _)| base);
+            let squashed = squash(text);
+            let expected_readable = if squashed.is_empty() {
+                "none"
+            } else {
+                &squashed
+            };
 
-            assert!(!readable.contains('_'), "{:?} → {:?}", text, slugged);
-            assert!(!readable.contains(DIGEST_TAG), "{:?} → {:?}", text, slugged);
+            // The whole encoded structure, not just the prefix: splitting on
+            // the first `--` recovers exactly the readable content and the
+            // digest, which is only true if neither can spell the tag itself.
+            let readable = match slugged.split_once(DIGEST_TAG) {
+                Some((readable, tag)) => {
+                    assert_eq!(
+                        tag,
+                        format!("{:08x}", digest(text)),
+                        "{text:?} → {slugged:?}"
+                    );
+                    readable
+                }
+                None => slugged.as_str(),
+            };
+            assert_eq!(readable, expected_readable, "{text:?} → {slugged:?}");
+
+            assert!(!slugged.contains('_'), "{text:?} → {slugged:?}");
+            assert!(!readable.contains(DIGEST_TAG), "{text:?} → {slugged:?}");
         }
     }
 
