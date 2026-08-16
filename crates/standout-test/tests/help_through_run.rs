@@ -18,6 +18,7 @@ use standout::cli::{App, ExitStatus, HelpResult, Output, RunErrorKind, SuccessKi
 use standout::topics::{Topic, TopicType};
 use standout::Theme;
 use standout_test::TestHarness;
+use std::fs;
 
 /// The shape from the issue: one optional positional, one flag, and a required
 /// group over the two — a root whose requirements fire before anything can
@@ -86,12 +87,94 @@ fn subcommand_app() -> App {
         .unwrap()
 }
 
+fn lookma_option_matrix() -> Command {
+    Command::new("lookma")
+        .about("Diff a git range")
+        .arg(
+            Arg::new("range")
+                .value_name("RANGE")
+                .help("Git range to diff, e.g. main..HEAD"),
+        )
+        .arg(
+            Arg::new("staged")
+                .long("staged")
+                .action(ArgAction::SetTrue)
+                .help("Diff the staged changes"),
+        )
+        .arg(
+            Arg::new("threshold")
+                .long("threshold")
+                .value_name("RATIO")
+                .action(ArgAction::Set)
+                .help("Move/rename similarity threshold"),
+        )
+        .arg(
+            Arg::new("color")
+                .short('c')
+                .long("color")
+                .value_name("BOOL")
+                .action(ArgAction::Set)
+                .value_parser(clap::builder::BoolishValueParser::new())
+                .help("Enable ANSI color"),
+        )
+        .arg(
+            Arg::new("pattern")
+                .long("pattern")
+                .action(ArgAction::Set)
+                .help("Fallback metavar"),
+        )
+        .arg(
+            Arg::new("mode")
+                .long("mode")
+                .value_name("MODE")
+                .action(ArgAction::Set)
+                .default_value("auto")
+                .value_parser(["auto", "term", "text"])
+                .help("Output mode"),
+        )
+}
+
+fn app_from_styles_dir(styles_dir: &std::path::Path) -> App {
+    App::builder()
+        .help_handling(true)
+        .help_word(true)
+        .styles_dir(styles_dir)
+        .unwrap()
+        .default_theme("lookma")
+        .command(
+            "",
+            |_m, _ctx| Ok(Output::Render(json!({"status": "ok"}))),
+            "[node]{{ status }}[/node]",
+        )
+        .unwrap()
+        .build()
+        .unwrap()
+}
+
 /// The text `get_matches_from` renders for the same line, for agreement checks.
 fn configured_help(app: &App, cmd: Command, args: &[&str]) -> String {
     match app.get_matches_from(cmd, args) {
         HelpResult::Help(h) | HelpResult::PagedHelp(h) => h,
         other => panic!("expected rendered help, got {other:?}"),
     }
+}
+
+fn strip_ansi_codes(text: &str) -> String {
+    let mut plain = String::new();
+    let mut chars = text.chars().peekable();
+    while let Some(ch) = chars.next() {
+        if ch == '\u{1b}' && chars.peek() == Some(&'[') {
+            chars.next();
+            for code in chars.by_ref() {
+                if code.is_ascii_alphabetic() {
+                    break;
+                }
+            }
+        } else {
+            plain.push(ch);
+        }
+    }
+    plain
 }
 
 // --- the word and the flags ------------------------------------------------
@@ -109,6 +192,55 @@ fn the_help_word_renders_themed_help_through_run() {
     assert_eq!(result.success_kind(), Some(SuccessKind::ClapHelp));
     result.assert_stdout_contains("Flat app");
     result.assert_stdout_contains("USAGE");
+}
+
+#[test]
+#[serial]
+fn downstream_theme_help_preserves_option_cues_through_run() {
+    let styles = tempfile::tempdir().unwrap();
+    fs::write(
+        styles.path().join("lookma.yaml"),
+        "node: { fg: cyan, bold: true }\nadded: { fg: green }\ndeleted: { fg: red }\n",
+    )
+    .unwrap();
+    let app = app_from_styles_dir(styles.path());
+
+    let result = TestHarness::new().is_tty().with_color().run(
+        &app,
+        lookma_option_matrix(),
+        ["lookma", "help"],
+    );
+
+    result.assert_success();
+    assert_eq!(result.success_kind(), Some(SuccessKind::ClapHelp));
+    let output = result.stdout();
+    let plain = strip_ansi_codes(output);
+    assert!(
+        !output.contains("[header?]") && !output.contains("[metavar?]"),
+        "app output themes must not leak unresolved help tags:\n{output}"
+    );
+    assert!(plain.contains("RANGE"), "{plain}");
+    assert!(plain.contains("--threshold <RATIO>"), "{plain}");
+    assert!(plain.contains("-c, --color <BOOL>"), "{plain}");
+    assert!(
+        plain.contains("--pattern <pattern>"),
+        "fallback metavars should survive the App run path:\n{plain}"
+    );
+    assert!(
+        plain.contains("default: auto") && plain.contains("possible values: auto, term, text"),
+        "defaults and enumerated values should survive the App run path:\n{plain}"
+    );
+    let staged = plain
+        .find("--staged")
+        .expect("rendered help should include --staged");
+    let threshold = plain
+        .find("--threshold")
+        .expect("rendered help should include --threshold");
+    let staged_block = &plain[staged..threshold];
+    assert!(
+        !staged_block.contains('<') && !staged_block.contains("possible values:"),
+        "presence flags should not advertise bool values:\n{plain}"
+    );
 }
 
 #[test]

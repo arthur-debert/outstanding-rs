@@ -36,7 +36,11 @@
 [header]OPTIONS[/header]
 {%- for group in options %}
 {%- for opt in group.items %}
-  {{ ("[item]" ~ opt.name ~ "[/item]") | pad_right(options_width) }}  [desc]{{ opt.help }}[/desc]
+{%- set opt_label = "[item]" ~ opt.name ~ "[/item]" -%}
+{%- if opt.value_name %}
+{%- set opt_label = opt_label ~ " [metavar]" ~ opt.value_name ~ "[/metavar]" -%}
+{%- endif %}
+  {{ opt_label | pad_right(options_width) }}  [desc]{{ opt.help }}[/desc]
 {%- if opt.default %}
   {{ "" | pad_right(options_width) }}  [default]default: {{ opt.default }}[/default]
 {%- endif %}
