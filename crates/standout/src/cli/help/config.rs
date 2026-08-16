@@ -50,7 +50,9 @@ pub enum HelpLength {
 pub struct HelpConfig {
     /// Custom template string. If None, uses the default template.
     pub template: Option<String>,
-    /// Custom theme. If None, uses the default theme.
+    /// Theme overlaid on [`default_help_theme`]: per style name an entry
+    /// here wins, and tags it leaves undefined keep their default styling.
+    /// If None, the default help theme alone is used.
     pub theme: Option<Theme>,
     /// Output mode. If None, uses Auto (auto-detects).
     pub output_mode: Option<OutputMode>,
@@ -63,6 +65,11 @@ pub struct HelpConfig {
 }
 
 /// Returns the default theme for help rendering.
+///
+/// Every render starts from this theme; a configured [`HelpConfig::theme`]
+/// — the application theme, on the builder paths — overlays it rather than
+/// replacing it, so every tag the template emits always resolves even when
+/// the configured theme defines none of them.
 ///
 /// Every surface the template can emit has an entry, including the ones that
 /// carry information clap spells with punctuation: standout renders a default

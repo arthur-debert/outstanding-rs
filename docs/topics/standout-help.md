@@ -144,11 +144,13 @@ let config = HelpConfig {
 ## What an Option Row Shows
 
 Option rows carry the information clap surfaces about an argument — its
-description, its default, and the values it accepts:
+value syntax, description, default, and accepted values:
 
 ```text
 OPTIONS
   --staged            Diff the staged changes
+  --threshold <RATIO> Move/rename similarity threshold
+  -c, --color <BOOL>  Enable ANSI color
   --output            Output format
                       default: auto
                       possible values: auto, term, text, term-debug, json, yaml, xml, csv
@@ -161,6 +163,12 @@ recolor them independently. Standout writes them as words rather than clap's
 `[default: auto]` brackets: literal `[` would have to be escaped through the
 style-tag parser, and the emphasis belongs to the theme. Hidden possible values
 (`PossibleValue::hide`) are left out.
+
+Options that take values render their metavar alongside the spelling, using an
+explicit `value_name` when present and clap's fallback display otherwise. Pure
+presence flags such as `ArgAction::SetTrue` and `SetFalse` do not render a
+metavar and do not show parser-derived `true, false` values, because those words
+are not valid command-line values for the flag.
 
 ### Positionals get their own section
 
@@ -385,7 +393,7 @@ pub fn default_help_theme() -> Theme {
 }
 ```
 
-Override via `HelpConfig`:
+A configured theme *overlays* this default rather than replacing it: per style name, an entry the configured theme defines wins, and every tag it leaves out keeps its default styling. Restyle only what you mean to change:
 
 ```rust
 let config = HelpConfig {
@@ -393,16 +401,12 @@ let config = HelpConfig {
         Theme::new()
             .add("header", Style::new().bold().cyan())
             .add("item", Style::new().green())
-            .add("desc", Style::new())
-            .add("usage", Style::new())
-            .add("example", Style::new().dim())
-            .add("about", Style::new())
     ),
     ..Default::default()
 };
 ```
 
-Or when using `AppBuilder`, set the theme with `.theme()` — it applies to both help and command output.
+Or when using `AppBuilder`, set the theme with `.theme()` — it applies to both help and command output. Because of the overlay, an application theme does not need to define the help vocabulary at all: a theme that only declares the app's own output styles leaves help rendered entirely by the default help theme.
 
 ## Custom Templates
 
@@ -440,7 +444,11 @@ section's width with `pad_right`, one of [standout-render's tabular
 filters](../../crates/standout-render/docs/topics/tabular.md):
 
 ```jinja
-{{ ("[item]" ~ opt.name ~ "[/item]") | pad_right(options_width) }}  [desc]{{ opt.help }}[/desc]
+{%- set opt_label = "[item]" ~ opt.name ~ "[/item]" -%}
+{%- if opt.value_name %}
+{%- set opt_label = opt_label ~ " [metavar]" ~ opt.value_name ~ "[/metavar]" -%}
+{%- endif %}
+{{ opt_label | pad_right(options_width) }}  [desc]{{ opt.help }}[/desc]
 ```
 
 Two properties of that filter are the point of doing it this way. It measures
@@ -471,6 +479,7 @@ Each command entry has:
 Each argument and option entry has:
 
 - `opt.name` — `range` / `RANGE` for a positional, `-o, --output` for a flag
+- `opt.value_name` — rendered value syntax for a value-taking flag, such as `<MODE>` or `[<PATH>]`; empty for positionals and presence flags
 - `opt.help` — description
 - `opt.short` / `opt.long` — the flag's spellings (both empty for a positional)
 - `opt.default` — the declared default, or nothing

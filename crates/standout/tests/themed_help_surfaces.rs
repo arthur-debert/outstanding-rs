@@ -32,6 +32,28 @@ fn lookma() -> Command {
                 .action(ArgAction::SetTrue)
                 .help("Diff the staged changes"),
         )
+        .arg(
+            Arg::new("threshold")
+                .long("threshold")
+                .value_name("RATIO")
+                .action(ArgAction::Set)
+                .help("Move/rename similarity threshold"),
+        )
+        .arg(
+            Arg::new("color")
+                .short('c')
+                .long("color")
+                .value_name("BOOL")
+                .action(ArgAction::Set)
+                .value_parser(clap::builder::BoolishValueParser::new())
+                .help("Enable ANSI color"),
+        )
+        .arg(
+            Arg::new("implicit")
+                .long("implicit")
+                .action(ArgAction::Set)
+                .help("Uses clap's fallback metavar"),
+        )
 }
 
 fn app() -> App {
@@ -77,7 +99,7 @@ fn long_option_name_keeps_its_separator() {
     let line = row(&output, "--output-file-path");
 
     assert!(
-        line.contains("--output-file-path  Write output"),
+        line.contains("--output-file-path <PATH>  Write output"),
         "the longest option must keep a gap before its description: {line:?}"
     );
     assert!(
@@ -196,6 +218,33 @@ fn option_rows_carry_defaults_and_possible_values() {
     assert!(
         output.contains("possible values: auto, term, text, term-debug, json, yaml, xml, csv"),
         "{output}"
+    );
+}
+
+#[test]
+fn value_taking_options_render_their_metavars() {
+    let output = help_for(&["lookma", "--help"]);
+
+    assert!(output.contains("--threshold <RATIO>"), "{output}");
+    assert!(output.contains("-c, --color <BOOL>"), "{output}");
+    assert!(
+        output.contains("--implicit <implicit>"),
+        "options without an explicit value_name should keep clap's fallback metavar:\n{output}"
+    );
+}
+
+#[test]
+fn presence_flags_do_not_render_bool_values() {
+    let output = help_for(&["lookma", "--help"]);
+    let staged = row(&output, "--staged");
+
+    assert!(
+        !staged.contains('<'),
+        "presence flags take no value:\n{output}"
+    );
+    assert!(
+        !staged.contains("true") && !staged.contains("false"),
+        "presence flags should not advertise parser-derived bool values:\n{output}"
     );
 }
 

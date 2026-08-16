@@ -1,11 +1,11 @@
 //! Help data extraction from clap commands.
 //!
-//! Extraction answers *what* a help page says: names, descriptions, defaults,
-//! possible values, and the width each section's name column needs. It does not
-//! answer what the page looks like — no padding strings, no style tags, no
-//! punctuation. Laying rows out is the template's job, which aligns them with
-//! `standout-render`'s tabular `pad_right` filter against the widths computed
-//! here.
+//! Extraction answers *what* a help page says: names, value syntax,
+//! descriptions, defaults, possible values, and the width each section's name
+//! column needs. It does not answer what the page looks like — no padding
+//! strings and no style tags. Laying rows out is the template's job, which
+//! aligns them with `standout-render`'s tabular `pad_right` filter against the
+//! widths computed here.
 //!
 //! The split matters because width is a *display* measurement. Resolving it
 //! through [`crate::tabular`] counts terminal columns, so a CJK name measures
@@ -103,10 +103,12 @@ pub(crate) struct Subcommand {
 ///
 /// Positionals and flags differ only in how they are named and how the template
 /// tags them, so both are carried by this one shape; a positional leaves
-/// `short` and `long` empty.
+/// `short`, `long`, and `value_name` empty because its `name` already is the
+/// rendered metavar.
 #[derive(Serialize)]
 pub(crate) struct OptionData {
     pub name: String,
+    pub value_name: Option<String>,
     pub help: String,
     pub short: Option<char>,
     pub long: Option<String>,
@@ -151,6 +153,41 @@ fn positional_name(arg: &clap::Arg) -> String {
         .unwrap_or_else(|| arg.get_id().to_string())
 }
 
+/// Whether the argument consumes command-line values.
+///
+/// Clap's bool presence flags (`SetTrue`/`SetFalse`) still carry a bool value
+/// parser, but they do not accept a value in argv. Help must follow the parse
+/// contract rather than the parser implementation detail.
+fn takes_values(arg: &clap::Arg) -> bool {
+    arg.get_num_args()
+        .map(|range| range.takes_values())
+        .unwrap_or_else(|| arg.get_action().takes_values())
+}
+
+/// The rendered value suffix for an option, without its leading space.
+///
+/// This uses only public, no-build [`clap::Arg`] data because direct
+/// [`render_help`](super::render_help) callers can pass an unbuilt command.
+/// The full clap display formatter requires Clap's internal build step.
+fn flag_value_name(arg: &clap::Arg) -> Option<String> {
+    if !takes_values(arg) {
+        return None;
+    }
+
+    let names = arg
+        .get_value_names()
+        .map(|names| names.iter().map(ToString::to_string).collect::<Vec<_>>())
+        .unwrap_or_else(|| vec![arg.get_id().to_string()]);
+
+    Some(
+        names
+            .iter()
+            .map(|name| format!("<{name}>"))
+            .collect::<Vec<_>>()
+            .join(" "),
+    )
+}
+
 /// The argument's default, as the row should read it — `None` when it has none.
 fn default_value(arg: &clap::Arg) -> Option<String> {
     let defaults = arg.get_default_values();
@@ -168,6 +205,10 @@ fn default_value(arg: &clap::Arg) -> Option<String> {
 
 /// The argument's selectable values, hidden ones left out.
 fn possible_values(arg: &clap::Arg) -> Vec<String> {
+    if !takes_values(arg) {
+        return Vec::new();
+    }
+
     arg.get_possible_values()
         .iter()
         .filter(|value| !value.is_hide_set())
@@ -175,9 +216,10 @@ fn possible_values(arg: &clap::Arg) -> Vec<String> {
         .collect()
 }
 
-fn option_row(name: String, arg: &clap::Arg) -> OptionData {
+fn option_row(name: String, value_name: Option<String>, arg: &clap::Arg) -> OptionData {
     OptionData {
         name,
+        value_name,
         help: arg.get_help().map(|s| s.to_string()).unwrap_or_default(),
         short: arg.get_short(),
         long: arg.get_long().map(|s| s.to_string()),
@@ -207,6 +249,19 @@ fn section_names(groups: &[Group<OptionData>]) -> Vec<&str> {
     groups
         .iter()
         .flat_map(|group| group.items.iter().map(|item| item.name.as_str()))
+        .collect()
+}
+
+/// Every visible label an option section renders, including value syntax.
+fn option_section_names(groups: &[Group<OptionData>]) -> Vec<String> {
+    groups
+        .iter()
+        .flat_map(|group| {
+            group.items.iter().map(|item| match &item.value_name {
+                Some(value_name) => format!("{} {}", item.name, value_name),
+                None => item.name.clone(),
+            })
+        })
         .collect()
 }
 
@@ -307,7 +362,7 @@ fn extract(
             .map(|arg| {
                 (
                     arg.get_help_heading().map(|s| s.to_string()),
-                    option_row(positional_name(arg), arg),
+                    option_row(positional_name(arg), None, arg),
                 )
             })
             .collect(),
@@ -320,12 +375,14 @@ fn extract(
             .map(|arg| {
                 (
                     arg.get_help_heading().map(|s| s.to_string()),
-                    option_row(flag_name(arg), arg),
+                    option_row(flag_name(arg), flag_value_name(arg), arg),
                 )
             })
             .collect(),
     );
-    let options_width = resolve_name_column(&section_names(&options));
+    let option_names = option_section_names(&options);
+    let options_width =
+        resolve_name_column(&option_names.iter().map(String::as_str).collect::<Vec<_>>());
 
     let learn_more: Vec<TopicListItem> = topics
         .iter()
@@ -472,14 +529,20 @@ mod tests {
             );
 
         let data = extract_short(&cmd);
-        assert_eq!(data.options_width, "--output-file-path".len());
+        assert_eq!(
+            data.options_width,
+            "--output-file-path <output_file_path>".len()
+        );
     }
 
     #[test]
     fn test_short_option_names_keep_floor_width() {
-        let cmd = Command::new("root")
-            .disable_help_flag(true)
-            .arg(Arg::new("out").long("out").help("Output"));
+        let cmd = Command::new("root").disable_help_flag(true).arg(
+            Arg::new("out")
+                .long("out")
+                .action(clap::ArgAction::SetTrue)
+                .help("Output"),
+        );
 
         let data = extract_short(&cmd);
         assert_eq!(data.options_width, NAME_COLUMN_MIN);
@@ -489,9 +552,12 @@ mod tests {
     /// twice as wide as its character count and nowhere near its byte length.
     #[test]
     fn test_name_column_measures_display_width_not_bytes() {
-        let cmd = Command::new("root")
-            .disable_help_flag(true)
-            .arg(Arg::new("wide").long("日本語オプション").help("Wide"));
+        let cmd = Command::new("root").disable_help_flag(true).arg(
+            Arg::new("wide")
+                .long("日本語オプション")
+                .action(clap::ArgAction::SetTrue)
+                .help("Wide"),
+        );
 
         let data = extract_short(&cmd);
         // "--" + 8 CJK characters at 2 columns each.
@@ -578,6 +644,54 @@ mod tests {
     }
 
     #[test]
+    fn test_presence_bool_has_no_value_name_or_possible_values() {
+        let cmd = Command::new("root").disable_help_flag(true).arg(
+            Arg::new("staged")
+                .long("staged")
+                .action(clap::ArgAction::SetTrue)
+                .value_parser(clap::builder::BoolishValueParser::new()),
+        );
+
+        let data = extract_short(&cmd);
+        let opt = &data.options[0].items[0];
+        assert_eq!(opt.name, "--staged");
+        assert_eq!(opt.value_name, None);
+        assert!(opt.possible_values.is_empty());
+    }
+
+    #[test]
+    fn test_value_taking_bool_keeps_value_name_and_possible_values() {
+        let cmd = Command::new("root").disable_help_flag(true).arg(
+            Arg::new("color")
+                .long("color")
+                .value_name("BOOL")
+                .action(clap::ArgAction::Set)
+                .value_parser(clap::builder::BoolishValueParser::new()),
+        );
+
+        let data = extract_short(&cmd);
+        let opt = &data.options[0].items[0];
+        assert_eq!(opt.name, "--color");
+        assert_eq!(opt.value_name.as_deref(), Some("<BOOL>"));
+        assert_eq!(opt.possible_values, vec!["true", "false"]);
+    }
+
+    #[test]
+    fn test_value_taking_option_uses_clap_fallback_metavar() {
+        let cmd = Command::new("root").disable_help_flag(true).arg(
+            Arg::new("threshold")
+                .long("threshold")
+                .action(clap::ArgAction::Set),
+        );
+
+        let data = extract_short(&cmd);
+        assert_eq!(
+            data.options[0].items[0].value_name.as_deref(),
+            Some("<threshold>")
+        );
+    }
+
+    #[test]
     fn test_positionals_land_in_arguments_not_options() {
         let cmd = Command::new("root")
             .disable_help_flag(true)
@@ -618,7 +732,10 @@ mod tests {
 
         let data = extract_short(&cmd);
         assert_eq!(data.arguments_width, NAME_COLUMN_MIN);
-        assert_eq!(data.options_width, "--output-file-path".len());
+        assert_eq!(
+            data.options_width,
+            "--output-file-path <output_file_path>".len()
+        );
     }
 
     // --- #299: the flat-CLI `help` word ---
