@@ -17,7 +17,7 @@ triangulate exactly this gap because each surveyed tool's merge rule catches dif
 bugs (walk-up merge with per-type semantics; first-file-wins env lists; named
 configuration sets).
 
-The sibling project **clapfig** (`../clapfig`, built on confique) already is this
+The sibling project **clapfig** (<https://github.com/arthur-debert/clapfig>, built on confique) already is this
 capability, mature and framework-agnostic: struct-as-source-of-truth with doc-comment
 templates, layered sparse merge (defaults < files < env < overrides, customizable
 precedence), multi-path search with ancestor walk and boundary control, tree-walk
@@ -173,7 +173,7 @@ migrations.
 
 ## Further Notes
 
-clapfig README and docs (`../clapfig`) are the capability inventory; standout ADR 0017
+The clapfig repository's README and docs are the capability inventory; standout ADR 0017
 (injected questionnaire surface) is the injection precedent. Expected ADRs: the
 config/argv resolution order; the precedence ladder; the reserved framework section;
 scope policy for execution-adjacent settings. Links to be added by the grill.

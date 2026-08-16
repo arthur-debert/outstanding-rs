@@ -162,7 +162,7 @@ robustness posture): CSV projection requirements, XML fate, the existing
 Per structured mode: failure-path snapshot (diagnostic shape), success-path schema
 snapshot (versioned envelopes), exit-code table tests (success/empty/failure ×
 human/structured). `tflike` acceptance suite green; `brewlike` version tests green;
-#107/#108 closed by the mode-semantics rules with regression tests.
+issues #107/#108 closed by the mode-semantics rules with regression tests.
 
 ## Workstream Hints
 

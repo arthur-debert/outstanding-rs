@@ -172,13 +172,13 @@ postconditions + env-convention pins. (2) and (3) parallelize after (1).
 ## Out Of Scope
 
 Behavioral fixes (loud-failures Spec), pipeline consolidation (composition-contracts
-Spec), corpus construction (downstream-corpus Spec), test de-serialization.
+Spec), corpus construction (`docs/spec/robustness-corpus.md`), test de-serialization.
 
 ## Further Notes
 
 Assessment evidence lives in the session record of 2026-08-15/16; key file:line citations:
 help tests' modes (`crates/standout/tests/themed_help_surfaces.rs:10`,
-`crates/standout-test/tests/help_through_run.rs:102`), dead TTY seam
+`crates/standout-test/tests/help_through_run.rs:185`), dead TTY seam
 (`crates/standout-test/src/lib.rs:160-179`), property postcondition
 (`crates/standout/tests/property_rendering.rs:139-143`), fixture gap
 (`crates/todo-example/tdoo/src/app.rs:19-51`). ADRs from the grill to be linked here.

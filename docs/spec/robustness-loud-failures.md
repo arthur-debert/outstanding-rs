@@ -158,8 +158,8 @@ misconfiguration now fails with the intended message.
 ## Testing / Verification
 
 Per-path pairs: (misconfigured fixture → asserted error message) and (correct fixture →
-snapshot unchanged). The four template faces each get a named regression test. #303 and
-#141-class tests flip from red (net) to green here. The property test's theme strategy
+snapshot unchanged). The four template faces each get a named regression test. Tests for
+the #303 and #141 classes flip from red (net) to green here. The property test's theme strategy
 gains incomplete-theme cases and must stay green under the degrade-to-text rule.
 
 ## Workstream Hints

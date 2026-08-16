@@ -55,8 +55,8 @@ is thin enough to only *build* those inputs.
 
 - **One boundary object per seam.** Each leaf crate's entry point takes an explicit
   request/context value and behaves as a pure function of it. For rendering, the shape to
-  design (grill decides the exact form): data + typed template reference + resolved theme
-  + output mode + target facts (tty, width, color, ambiguous-width policy). No leaf reads
+  design (grill decides the exact form): data, typed template reference, resolved theme,
+  output mode, and target facts (tty, width, color, ambiguous-width policy). No leaf reads
   a process global to answer a question its input can carry.
 - **One rendering pipeline.** Help and topics become ordinary registry templates rendered
   through the same path as dispatch — structured modes, the app's engine and filters, and

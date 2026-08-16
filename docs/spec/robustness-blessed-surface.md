@@ -40,7 +40,7 @@ session picks (or invents) a variant, reference clients diverge, tests cover the
 diagonal of a growing matrix, and every additional path multiplies the interaction
 surface the robustness program exists to shrink. A framework whose own examples disagree
 with each other, and whose flagship feature is off everywhere, cannot be adopted from its
-documentation — which the corpus experiment (downstream-corpus Spec) will measure
+documentation — which the corpus experiment (`docs/spec/robustness-corpus.md`) will measure
 directly.
 
 ## Goals
@@ -107,7 +107,7 @@ final harness).
 ## Risks And Rabbit Holes
 
 - **Premature blessing.** If the corpus pilot hasn't run, idiom choices lean on taste.
-  Mitigation: sequence the pilot (downstream-corpus Spec) before this epic's ADR round
+  Mitigation: sequence the pilot (`docs/spec/robustness-corpus.md`) before this epic's ADR round
   where feasible; where not, mark low-confidence choices as revisitable in the ADR.
 - **Deletion cascade.** Removing a path can strand a real capability that only it
   exposed (e.g. struct handlers for stateful commands). The redundancy catalogue lists
