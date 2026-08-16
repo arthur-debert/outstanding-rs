@@ -71,15 +71,16 @@ directly.
 
 - New capabilities or new idioms — this epic chooses among what exists post-contracts.
 - Machine-output schema versioning (parity: machine contract).
-- The corpus (own Spec) — though its pilot findings, if available, feed the idiom choices.
+- Building the corpus (own Spec). Its **pilot** is a predecessor of this epic, not part of
+  it: the pilot's scorecard is an input to the choosing below.
 - Preserving source compatibility for deleted paths.
 
 ## Proposed Shape
 
 **1. The choosing.** A short ADR round settles the blessed set — informed by the DX
-audit's redundancy catalogue, the corpus pilot's friction reports if available, and the
-post-contracts shapes. Each surviving secondary path gets a one-line justification in the
-ADR; unlisted = deleted.
+audit's redundancy catalogue, the corpus pilot's friction reports, and the post-contracts
+shapes. Each surviving secondary path gets a one-line justification in the ADR; unlisted =
+deleted.
 
 **2. The pruning.** Delete unblessed paths and their tests; shrink re-exports; visibility
 sweep. Mechanical once (1) is fixed.
@@ -106,9 +107,10 @@ final harness).
 
 ## Risks And Rabbit Holes
 
-- **Premature blessing.** If the corpus pilot hasn't run, idiom choices lean on taste.
-  Mitigation: sequence the pilot (`docs/spec/robustness-corpus.md`) before this epic's ADR round
-  where feasible; where not, mark low-confidence choices as revisitable in the ADR.
+- **Premature blessing.** Without the corpus pilot's scorecard, idiom choices lean on
+  taste. The dependency graph makes the pilot a predecessor for exactly this reason; if it
+  is ever short-circuited, low-confidence choices must be marked revisitable in the ADR
+  rather than presented as settled.
 - **Deletion cascade.** Removing a path can strand a real capability that only it
   exposed (e.g. struct handlers for stateful commands). The redundancy catalogue lists
   paths, not capabilities; the ADR round must map capabilities → surviving paths before

@@ -69,7 +69,10 @@ output modes, which is why adopter-side fixes are reliably wrong.
   (machine modes: verbosity governs the diagnostic stream's detail, never breaks the
   document).
 - Corpus archetypes exercising these conventions (`systemdlike` color/pager env
-  discipline, `gitlike` pager behavior, `pnpmlike` reporter/quiet matrix) pass.
+  discipline, `gitlike` pager behavior, `pnpmlike` reporter/quiet matrix) pass — and
+  `tflike`'s **full** acceptance suite closes here: the machine-contract epic gates its
+  diagnostic milestone, while the progress/apply-lifecycle events that complete it are
+  this epic's progress seam.
 
 ## Non-Goals
 

@@ -1,9 +1,12 @@
 # Robustness: The Downstream Corpus
 
-Fifth Spec in the **Robustness program**. Depends on the test net (its invariants are the
-corpus's oracles); runs alongside loud failures and composition contracts as their
-acceptance environment; informs one-blessed-surface. Long-lived: the corpus outlives the
-program.
+Fifth Spec in the **Robustness program**, and the one that ships in two phases (see the
+authoritative dependency graph in `docs/spec/robustness-test-net.md`). The **pilot** phase
+depends only on the test net (whose invariants are the corpus's oracles) and runs alongside
+loud failures and composition contracts, so its scorecard reaches the blessed-surface ADR
+round in time to inform it. The **completion** phase — full roster, CI gate, gap-spec
+archetypes, real downstreams joined — follows the blessed surface, because corpus apps pin
+idioms that epic deliberately breaks. Long-lived: the corpus outlives the program.
 
 ## Context
 
@@ -150,11 +153,17 @@ agents don't hit the known sharp edges, the archetypes are too gentle).
 
 ## Workstream Hints
 
-(1) Roster refinement: survey archetypes → repo-form specs with acceptance tests (the
-in-capability ten first); (2) runner walking skeleton + smoke archetype; (3) pilot
-execution + scorecard; (4) corpus repo + CI wiring + real downstreams joined; (5)
-gap-spec archetypes landed as expected-fail suites. (1) and (2) parallelize; (3) gates
-nothing downstream except the blessed-surface ADR round preferring its scorecard.
+**Pilot phase** (after the test net): (1) roster refinement for the pilot archetypes —
+survey archetypes → repo-form specs with acceptance tests; (2) runner walking skeleton +
+smoke archetype; (3) pilot execution + scorecard. (1) and (2) parallelize; (3) feeds the
+blessed-surface ADR round.
+
+**Completion phase** (after the blessed surface): (4) remaining in-capability archetypes
+on the blessed idioms; (5) corpus repo + CI wiring + real downstreams joined; (6) gap-spec
+archetypes landed as expected-fail suites, `tflike`'s in its two milestone groups.
+
+Splitting the epic at that boundary is expected — the two phases are far apart in the
+dependency graph and may reasonably be minted as two epics.
 
 ## Out Of Scope
 
@@ -167,5 +176,8 @@ The twelve archetypes with acceptance-test sketches are in the session record of
 2026-08-16 (survey Part C): C1 gitlike, C2 ghlike, C3 kubelike, C4 tflike (gap), C5
 systemdlike, C6 cargolike, C7 gcloudlike, C8 dockerlike, C9 jjlike (gap), C10 brewlike,
 C11 pnpmlike, C12 formlike. C1/C6/C7 deliberately triangulate config layering ahead of
-the parity config epic. Expected ADRs: corpus/CI integration mechanics; blindness
-protocol; run-report schema. Links to be added by the grill.
+the parity config epic. `tflike` (C4) is milestoned rather than all-or-nothing: its
+diagnostic criteria gate the machine-contract epic, its progress/lifecycle criteria gate
+terminal citizenship — the acceptance suite is authored in those two groups from the
+start. Expected ADRs: corpus/CI integration mechanics; blindness protocol; run-report
+schema. Links to be added by the grill.

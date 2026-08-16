@@ -59,9 +59,16 @@ is thin enough to only *build* those inputs.
   output mode, and target facts (tty, width, color, ambiguous-width policy). No leaf reads
   a process global to answer a question its input can carry.
 - **One rendering pipeline.** Help and topics become ordinary registry templates rendered
-  through the same path as dispatch — structured modes, the app's engine and filters, and
-  theme merging then apply to help/topics for free, closing the `help --output=json` hole
-  structurally. `render_inline` becomes a convenience wrapper over the same path.
+  through the same path as dispatch — the app's engine and filters, theme merging, and the
+  structured-mode branch all become reachable for help/topics instead of being absent by
+  construction. `render_inline` becomes a convenience wrapper over the same path.
+  **Structured help output stays unexposed here**: this epic removes the structural
+  obstacle, but `help --output=json` is not published as a user-facing surface until the
+  machine-contract Spec defines and versions the help envelope. Shipping it earlier would
+  publish an unversioned public format that the very next program must break, contradicting
+  that Spec's "framework-owned envelopes are versioned from day one." The grill picks the
+  mechanism for holding it back (falling back to human rendering for help under structured
+  modes, or an unstable-surface gate) and records it in the ownership table.
 - **One resolution point.** `build()` produces a `ResolvedConfig` (working name): theme
   merged once, output-mode default defined once, template registry finalized once. The
   five theme defaults and ~ten output-mode defaults are deleted in favor of references to
@@ -126,8 +133,10 @@ observable byproduct metric.
 2. As a standalone `standout-render` user, I want to render with an explicit request
    object and no ambient state, so that my GUI/server use of the crate is deterministic
    and test-parallel.
-3. As an application author, I want `myapp help --output=json` to emit structured help
-   data like any other command, so that machine consumers can read my CLI's own surface.
+3. As a maintainer, I want help and topics to render through the same pipeline as every
+   other command, so that a capability added to rendering reaches them by construction
+   instead of needing a fourth implementation (structured help output itself ships,
+   versioned, in the machine-contract epic).
 4. As a framework test author, I want rendering tests to run in parallel without
    `#[serial]`, so that the suite is fast and cross-test contamination is impossible.
 5. As a future agent session, I want a lint to reject a serializer dependency or a fresh

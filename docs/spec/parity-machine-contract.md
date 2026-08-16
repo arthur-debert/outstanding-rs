@@ -58,16 +58,31 @@ to. Today it does none of it, and the gap undermines the framework's core pitch.
   while human modes keep today's prose. One emission point (the composition-contracts
   seam), covering handler errors, hook errors, render errors, and usage errors
   consistently.
+- **A defined bootstrap rule for pre-parse failures.** Usage errors are the hard case:
+  clap returns `ClapUsage` before `ArgMatches` exists, so the emission seam cannot ask
+  the parsed line which mode was requested — the same structural shape as the open #295
+  (`--output` reaches the `help` word but not `--help`/`-h`, because clap short-circuits
+  first). Without an explicit rule, an implementation can satisfy every other goal here
+  and still emit prose for a malformed command line. This Spec therefore requires one of
+  two grilled outcomes, stated in an ADR: a **parse-independent mode-selection stage**
+  that resolves the output mode from raw argv before clap runs (and defines behavior for
+  malformed, repeated, and differently-positioned `--output` arguments, including a
+  malformed mode value itself), or an **explicit, documented exclusion** of pre-parse
+  failures from the structured contract. Either way the rule is tested directly —
+  `myapp --output json --bad-flag` and `myapp --bad-flag --output json` must agree with
+  it — and #295 is resolved or restated by the same decision.
 - **A stability mechanism for structured output.** Apps can mark a view type (or the
   framework marks its own, e.g. `ListView`'s envelope) as a *contract surface* with a
   schema version; the version is addressable from the CLI (flag or key in the
   envelope — grill decides), and `standout-test` can snapshot the JSON shape so an
   unmarked breaking change fails the app's own tests. Framework-owned envelopes
   (diagnostics, `ListView`, help data) are versioned from day one.
-- **`help --output=json` returns structured help data** — the composition-contracts
-  epic makes help ride the pipeline; this Spec defines the help document's schema as a
-  versioned framework surface (also unblocking completions/manpage generation from
-  standout's own model, per the blessed-surface stability policy).
+- **`help --output=json` returns structured help data, and this is where it is first
+  exposed.** The composition-contracts epic makes help ride the pipeline but deliberately
+  withholds the machine surface; this Spec defines and versions the help document's schema
+  and turns it on — so the format is public and versioned in the same release (also
+  unblocking completions/manpage generation from standout's own model, per the
+  blessed-surface stability policy).
 - **One opt-in "empty/negative result" exit code**, consistently defined
   (`ExitStatus`-level, `ListView`-integrated, handler-signalable), documented in the
   execution-outcomes topic beside the existing 0/1/2 — deliberately *one* code, not a
@@ -76,9 +91,13 @@ to. Today it does none of it, and the gap undermines the framework's core pitch.
   with nested data (project-or-error, not silent garbage); XML's mapping is defined or
   the mode is dropped (grill decides — an 8th untested mode may cost more than it
   serves); the decision closes #107/#108.
-- The corpus `tflike` archetype's acceptance suite (NDJSON diagnostic stream, severity
-  entries, `-detailed-exitcode` behavior) turns green, and `brewlike`'s schema-version
-  tests pass.
+- The corpus `tflike` archetype's **diagnostic milestone** turns green — the NDJSON
+  diagnostic stream, severity entries, and `-detailed-exitcode` behavior — and
+  `brewlike`'s schema-version tests pass. `tflike`'s remaining acceptance criteria cover
+  progress/apply-lifecycle events, which the terminal-citizenship epic owns; the archetype
+  is therefore split into a diagnostic milestone (gated here) and a full-suite gate
+  (terminal citizenship). The corpus Spec carries the same split, so neither epic claims a
+  gate it cannot close.
 
 ## Non-Goals
 

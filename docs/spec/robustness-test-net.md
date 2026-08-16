@@ -1,9 +1,30 @@
 # Robustness: The Test Net
 
-First of five Specs in the **Robustness program** (test net → loud failures → composition
-contracts → one blessed surface → downstream corpus), produced by the August 2026
-robustness assessment. This Spec is the program's entry point: it changes no runtime
-behavior and everything after it depends on it.
+First of five Specs in the **Robustness program**, produced by the August 2026 robustness
+assessment. This Spec is the program's entry point: it changes no runtime behavior and
+everything after it depends on it.
+
+**Authoritative dependency graph for both programs.** Every other Spec's header states its
+own dependencies; where any statement disagrees with this graph, this graph wins.
+
+```text
+test net
+├── loud failures
+├── corpus PILOT ─────────────────────┐   (3–4 in-capability archetypes)
+└── composition contracts             │
+    ├── one blessed surface ◄─────────┘   (consumes the pilot's scorecard)
+    │   └── corpus COMPLETION             (full roster, CI gate, real downstreams)
+    └── parity: config layering
+        ├── parity: machine contract
+        └── parity: terminal citizenship
+```
+
+The corpus is deliberately split: its **pilot** runs early (immediately after the test net,
+alongside loud failures and composition contracts) precisely so its findings reach the
+blessed-surface decisions; its **completion** — the full archetype roster, the CI gate, and
+the gap-spec archetypes — lands after the blessed surface, since corpus apps pin idioms
+that epic deliberately breaks. Ordering is by dependency, not calendar: siblings under one
+parent may run concurrently.
 
 ## Context
 
