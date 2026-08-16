@@ -1,10 +1,13 @@
 # Parity: Terminal Citizenship
 
 Third Spec of the **Capability-parity program**. Depends on composition contracts (color,
-pager, progress, and verbosity all read the target-facts/`ResolvedConfig` seams) and on
-config layering (their settings ride the config ladder). Quiet/verbose was part of
-standout's original goal and was missed; this Spec restores it alongside the terminal
-conventions the survey found standout violating.
+pager, progress, and verbosity all read the target-facts/`ResolvedConfig` seams), on config
+layering (their settings ride the config ladder), and on the machine contract — the
+progress seam emits machine events into the model that epic defines, so building it first
+would mean inventing a second event vocabulary. It is also gated by `tflike`'s full
+acceptance suite, authored in the corpus pilot. Quiet/verbose was part of standout's
+original goal and was missed; this Spec restores it alongside the terminal conventions the
+survey found standout violating.
 
 ## Context
 

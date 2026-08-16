@@ -1,8 +1,10 @@
 # Parity: The Machine Contract
 
 Second Spec of the **Capability-parity program**. Depends on composition contracts (error
-emission and serialization live at seams that epic defines); the corpus gap archetype
-`tflike` is its executable definition-of-done.
+emission and serialization live at seams that epic defines) and on config layering; its
+executable definition-of-done is the **diagnostic milestone** of the corpus gap archetype
+`tflike`, authored as an expected-fail suite in the corpus pilot before this epic starts
+(`tflike`'s progress criteria belong to terminal citizenship, which depends on this epic).
 
 ## Context
 
@@ -63,14 +65,19 @@ to. Today it does none of it, and the gap undermines the framework's core pitch.
   the parsed line which mode was requested — the same structural shape as the open #295
   (`--output` reaches the `help` word but not `--help`/`-h`, because clap short-circuits
   first). Without an explicit rule, an implementation can satisfy every other goal here
-  and still emit prose for a malformed command line. This Spec therefore requires one of
-  two grilled outcomes, stated in an ADR: a **parse-independent mode-selection stage**
-  that resolves the output mode from raw argv before clap runs (and defines behavior for
-  malformed, repeated, and differently-positioned `--output` arguments, including a
-  malformed mode value itself), or an **explicit, documented exclusion** of pre-parse
-  failures from the structured contract. Either way the rule is tested directly —
-  `myapp --output json --bad-flag` and `myapp --bad-flag --output json` must agree with
-  it — and #295 is resolved or restated by the same decision.
+  and still emit prose for a malformed command line. This Spec therefore **requires a
+  parse-independent mode-selection stage**: whenever raw argv contains a recognizable
+  structured-mode request, that mode governs failure emission even when parsing never
+  succeeds. A documentation-only exclusion is not an acceptable alternative — it would
+  contradict the consistency the goal above claims. The ADR fixes the recognizer's
+  precedence rules (repeated `--output` occurrences, position relative to the failing
+  token, `--output=x` versus `--output x`, `--` termination, and a malformed mode value,
+  which must itself produce a structured usage diagnostic when the surrounding request is
+  recognizably structured) and the deliberately narrow scope of the recognizer, so it does
+  not become a second parser (the One Parser pillar constrains this: it scans for one
+  known flag, it does not classify the command line). Tested directly —
+  `myapp --output json --bad-flag` and `myapp --bad-flag --output json` must both produce
+  structured diagnostics — and #295 is resolved by the same decision.
 - **A stability mechanism for structured output.** Apps can mark a view type (or the
   framework marks its own, e.g. `ListView`'s envelope) as a *contract surface* with a
   schema version; the version is addressable from the CLI (flag or key in the

@@ -95,9 +95,12 @@ is thin enough to only *build* those inputs.
   **But**: the boundary object's target-facts design must not conflate format with color —
   the parity program's `--color` axis and machine-contract error emission plug into the
   seams this epic defines, and the grill must check the shapes against those Specs.
-- Changing rendered output for correctly-configured apps. The pipeline unification is
-  behavior-preserving modulo the holes it closes (help under structured modes, theme
-  merge already defined by loud-failures); the snapshot matrix arbitrates.
+- Changing rendered output for correctly-configured apps. The unification changes
+  *internal reachability* — help and topics gain access to the pipeline's capabilities —
+  not the bytes users see: externally observable help output stays human-rendered under
+  every mode until the machine-contract epic exposes the versioned structured envelope.
+  The only intended observable deltas are those loud-failures already defined (theme
+  merge). The snapshot matrix arbitrates.
 - Renaming or splitting crates.
 
 ## Proposed Shape

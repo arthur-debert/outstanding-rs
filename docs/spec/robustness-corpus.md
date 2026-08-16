@@ -4,9 +4,11 @@ Fifth Spec in the **Robustness program**, and the one that ships in two phases (
 authoritative dependency graph in `docs/spec/robustness-test-net.md`). The **pilot** phase
 depends only on the test net (whose invariants are the corpus's oracles) and runs alongside
 loud failures and composition contracts, so its scorecard reaches the blessed-surface ADR
-round in time to inform it. The **completion** phase — full roster, CI gate, gap-spec
-archetypes, real downstreams joined — follows the blessed surface, because corpus apps pin
-idioms that epic deliberately breaks. Long-lived: the corpus outlives the program.
+round in time to inform it. The pilot also authors the **gap-spec acceptance suites** as
+expected-fail, because each parity epic must hold its executable definition-of-done before
+it starts. The **completion** phase — the full archetype roster implemented on the blessed
+idioms, the CI gate, real downstreams joined — follows the blessed surface, because corpus
+apps pin idioms that epic deliberately breaks. Long-lived: the corpus outlives the program.
 
 ## Context
 
@@ -155,12 +157,14 @@ agents don't hit the known sharp edges, the archetypes are too gentle).
 
 **Pilot phase** (after the test net): (1) roster refinement for the pilot archetypes —
 survey archetypes → repo-form specs with acceptance tests; (2) runner walking skeleton +
-smoke archetype; (3) pilot execution + scorecard. (1) and (2) parallelize; (3) feeds the
-blessed-surface ADR round.
+smoke archetype; (3) pilot execution + scorecard; (4) gap-spec archetypes landed as
+expected-fail suites, `tflike`'s split into its two milestone groups — black-box
+assertions on a produced binary, so they depend on neither the blessed idioms nor the
+capabilities they describe. (1), (2) and (4) parallelize; (3) feeds the blessed-surface
+ADR round; (4) must precede the parity epics it gates.
 
-**Completion phase** (after the blessed surface): (4) remaining in-capability archetypes
-on the blessed idioms; (5) corpus repo + CI wiring + real downstreams joined; (6) gap-spec
-archetypes landed as expected-fail suites, `tflike`'s in its two milestone groups.
+**Completion phase** (after the blessed surface): (5) remaining in-capability archetypes
+implemented on the blessed idioms; (6) corpus repo + CI wiring + real downstreams joined.
 
 Splitting the epic at that boundary is expected — the two phases are far apart in the
 dependency graph and may reasonably be minted as two epics.
