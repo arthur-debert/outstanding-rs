@@ -182,24 +182,24 @@ workstream issues predate these ADRs and must be read together with them.
 
 The grill produced three ADRs, which are authoritative where they sharpen this Spec:
 
-- `docs/adr/0019-carry-a-template-as-a-typed-reference-resolved-at-render.md` — the
+- [`docs/adr/0019-carry-a-template-as-a-typed-reference-resolved-at-render.md`](../adr/0019-carry-a-template-as-a-typed-reference-resolved-at-render.md) — the
   `TemplateRef` shape (a named reference survives to render; `build()` validates it),
   typed absence carrying its reason, `StructuredOnly` serializing in human modes, and the
   removal of `.template_dir()`. Ordering independence is a consequence of late resolution
   rather than a separate mechanism, which narrows WS01: the Spec offered "late-bind or
   make misordering a build error", and the decision is late-bind.
-- `docs/adr/0020-resolve-one-theme-at-build-over-a-single-framework-base.md` — one
+- [`docs/adr/0020-resolve-one-theme-at-build-over-a-single-framework-base.md`](../adr/0020-resolve-one-theme-at-build-over-a-single-framework-base.md) — one
   resolved theme computed in `build()`, replacing the five scattered defaults; every
   registered template validated against it at build; hot-reloaded latecomers degrading to
   unstyled inner text with a warning. This also folds `FRAMEWORK_STYLES` into the base,
   which resolves part of WS04 inside WS02.
-- `docs/adr/0021-split-the-configuring-builder-from-the-executable-app.md` — `AppBuilder`
+- [`docs/adr/0021-split-the-configuring-builder-from-the-executable-app.md`](../adr/0021-split-the-configuring-builder-from-the-executable-app.md) — `AppBuilder`
   configures, `build(self)` returns `App`, which executes; the four uniqueness panics
   become structural.
 
 Two findings from the grill's codebase exploration, recorded so they are not
-re-researched: `Theme::merge` already exists with the wanted semantics (`theme.rs`, the
-argument wins per tag), so WS02 is a wiring change rather than new merge machinery; and
+re-researched: `Theme::merge` already exists with the wanted semantics
+(`crates/standout-render/src/theme/theme.rs`, the argument wins per tag), so WS02 is a wiring change rather than new merge machinery; and
 hot reload is delivered by the template registry's file entries plus `embed_templates!`
 storing absolute source paths, not by `.template_dir()`, which is why removing the latter
 costs no capability.
