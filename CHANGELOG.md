@@ -4,6 +4,11 @@
 
 ## Unreleased
 
+## 8.1.1 - 2026-08-16
+
+- Overlay the application theme on the default help theme instead of replacing it (issue #303). An app that set its own theme (`.theme(..)` / `.default_theme(..)`) lost all help styling: the theme carries the app's output vocabulary, not help's, so every help tag went unresolved and a terminal reader saw literal `[about?]…[/about?]` markup across the whole page. Help and topic renders now start from `default_help_theme()` / `default_topic_theme()` and merge the configured theme over it — a tag the app names takes the app's style, and every tag it leaves alone keeps its default — so deliberate restyling keeps working and an app theme never has to duplicate the framework's help vocabulary.
+- Restore clap-compatible value cues in themed help (issues #301 and #302): value-taking options now render their metavars, including short+long spellings, and presence-only bool flags no longer advertise `true, false` as accepted command-line values.
+
 ## 8.1.0 - 2026-08-16
 
 - Let the builder declare the application's version: `App::builder().version(env!("CARGO_PKG_VERSION"))` (issue #304). Standout applies the value to the root clap command in the shared augmentation both parse paths go through, so `myapp --version` is answered identically by `run`, `run_to_string`, `dispatch_from`, `get_matches_from`, and `TestHarness` — clap's own display, on stdout, exit status 0, typed `SuccessKind::ClapVersion`. Clap still owns the spelling, the formatting, and the display short-circuit; leaving `.version()` unset leaves the supplied `clap::Command` exactly as configured, version included. The `tdoo` worked example adopts it, so `tdoo --version` now works.
