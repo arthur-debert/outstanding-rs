@@ -8,6 +8,12 @@
 //! grows a cell grows a snapshot file whose name already says what it is —
 //! no hand-written labels to drift from the case they describe.
 //!
+//! A key is also an identity, not just a label: cases that differ in any axis
+//! value get different keys, so two cells can never end up sharing one
+//! snapshot as their oracle. A value that has to be reshaped to be readable in
+//! a filename (`--help`, `dark mode`) carries a digest of the original, which
+//! is what keeps `--help` and `help` apart.
+//!
 //! ```
 //! use standout_render::OutputMode;
 //! use standout_test::SnapshotCase;
@@ -18,7 +24,10 @@
 //!     .theme("default")
 //!     .entry_point("--help");
 //!
-//! assert_eq!(case.key(), "help__mode-term__tty-on__theme-default__entry-help");
+//! assert_eq!(
+//!     case.key(),
+//!     "help__mode-term__tty-on__theme-default__entry-help-7fb28c5c"
+//! );
 //! ```
 
 use std::fmt;
@@ -79,9 +88,11 @@ impl SnapshotCase {
     /// Returns the snapshot name for this case.
     ///
     /// The subject leads; each axis follows as `__<name>-<value>`. Every
-    /// segment is slugified (lowercased, runs of non-alphanumerics collapsed
-    /// to a single `-`), so a case built from argv strings like `--help`
-    /// still names a file a reviewer can read.
+    /// segment is slugified — lowercased, with runs of non-alphanumerics
+    /// collapsed to a single `-` — so a case built from argv strings like
+    /// `--help` still names a file a reviewer can read. A value that reshaping
+    /// would make ambiguous (`--help` and `help` both read as `help`) carries
+    /// a short digest of the original, so cases that differ always key apart.
     pub fn key(&self) -> String {
         let mut key = slug(&self.subject);
         for (name, value) in &self.axes {
@@ -100,26 +111,65 @@ impl fmt::Display for SnapshotCase {
     }
 }
 
-/// Lowercases `text` and collapses every run of non-alphanumeric characters
-/// into a single `-`, with no leading or trailing separator.
+/// Renders `text` as one key segment: readable, and never ambiguous.
 ///
-/// A segment that slugs away to nothing becomes `none`, so a key never grows
-/// an empty component that would make two different cases share a name.
+/// Squashing alone is lossy, and a key is what selects a snapshot file — two
+/// cases that squash alike would silently share one oracle, the exact failure
+/// this type exists to prevent. `--help` and `help` both squash to `help`; so
+/// do `dark mode` and `dark-mode`; and an empty value squashes to nothing,
+/// which reads like the literal `none`.
+///
+/// So a value that is *already* its own squashed form — lowercase
+/// alphanumerics joined by single `-`, no leading or trailing separator — is
+/// used verbatim, and anything else carries a [`digest`] of the original text
+/// after its readable form (`--help` → `help-7fb28c5c`, `""` →
+/// `none-811c9dc5`). Every axis the named builders produce is already
+/// canonical, so ordinary keys stay clean and only a hand-written value pays
+/// for its own ambiguity.
 fn slug(text: &str) -> String {
+    let readable = squash(text);
+    if !readable.is_empty() && readable == text {
+        return readable;
+    }
+
+    let base = if readable.is_empty() {
+        "none"
+    } else {
+        &readable
+    };
+    format!("{}-{:08x}", base, digest(text))
+}
+
+/// Lowercases `text` and collapses every run of characters that cannot appear
+/// in a key into a single `-`, with no leading or trailing separator.
+fn squash(text: &str) -> String {
     let mut out = String::with_capacity(text.len());
     for ch in text.chars() {
         if ch.is_ascii_alphanumeric() {
-            out.extend(ch.to_lowercase());
+            out.push(ch.to_ascii_lowercase());
         } else if !out.ends_with('-') {
             out.push('-');
         }
     }
-    let trimmed = out.trim_matches('-');
-    if trimmed.is_empty() {
-        "none".to_string()
-    } else {
-        trimmed.to_string()
+    out.trim_matches('-').to_string()
+}
+
+/// Returns the FNV-1a hash of `text`.
+///
+/// Hand-rolled rather than reached for from `std`: a snapshot name has to stay
+/// identical across toolchains and releases, and `DefaultHasher`'s output is
+/// explicitly not a stable value. A key that shifted under a new compiler would
+/// orphan every committed snapshot at once.
+fn digest(text: &str) -> u32 {
+    const OFFSET_BASIS: u32 = 0x811c_9dc5;
+    const PRIME: u32 = 0x0100_0193;
+
+    let mut hash = OFFSET_BASIS;
+    for byte in text.as_bytes() {
+        hash ^= u32::from(*byte);
+        hash = hash.wrapping_mul(PRIME);
     }
+    hash
 }
 
 /// Asserts the result's ANSI-stripped stdout against the snapshot named by a
@@ -133,7 +183,11 @@ fn slug(text: &str) -> String {
 ///
 /// Calling crates need `insta` as a dev-dependency; the macro expands to
 /// `insta::assert_snapshot!` at the call site so snapshots land in the
-/// calling crate's own `snapshots/` directory.
+/// calling crate's own `snapshots/` directory. Re-exporting `insta` from here
+/// would spare the caller that line, but only by making `insta` a regular
+/// dependency of `standout-test` — a runtime dependency for every consumer, to
+/// save one dev-dependency entry in the crates that actually snapshot. It
+/// stays a dev-dependency.
 ///
 /// ```no_run
 /// # use standout_test::{assert_page_snapshot, SnapshotCase, TestResult};
@@ -174,7 +228,10 @@ mod tests {
             .entry_point("--help")
             .output_mode(OutputMode::TermDebug);
 
-        assert_eq!(case.key(), "help-page__entry-help__mode-term-debug");
+        assert_eq!(
+            case.key(),
+            "help-page-f5f24815__entry-help-7fb28c5c__mode-term-debug"
+        );
     }
 
     #[test]
@@ -186,12 +243,55 @@ mod tests {
         assert_eq!(dark.replace("dark", "light"), light);
     }
 
+    /// The collision this keying exists to prevent: values that read alike
+    /// once they are filename-shaped must still name different snapshots, or
+    /// two matrix cells silently share one oracle.
+    #[test]
+    fn values_that_squash_alike_still_key_apart() {
+        let pairs = [
+            ("--help", "help"),
+            ("dark mode", "dark-mode"),
+            ("", "none"),
+            ("-h", "h"),
+        ];
+
+        for (left, right) in pairs {
+            let left_key = SnapshotCase::new("help").entry_point(left).key();
+            let right_key = SnapshotCase::new("help").entry_point(right).key();
+            assert_ne!(
+                left_key, right_key,
+                "{:?} and {:?} must not share a snapshot name",
+                left, right
+            );
+        }
+    }
+
+    /// A value already in key shape is spent verbatim — the digest is the
+    /// price of ambiguity, not a tax on every segment.
+    #[test]
+    fn a_canonical_value_keys_without_a_digest() {
+        let case = SnapshotCase::new("help")
+            .output_mode(OutputMode::Text)
+            .tty(true)
+            .theme("solarized-dark");
+
+        assert_eq!(case.key(), "help__mode-text__tty-on__theme-solarized-dark");
+    }
+
     #[test]
     fn an_axis_value_that_slugs_away_keeps_the_key_unambiguous() {
         assert_eq!(
             SnapshotCase::new("help").theme("").key(),
-            "help__theme-none"
+            "help__theme-none-811c9dc5"
         );
+    }
+
+    /// The digest is baked into committed snapshot filenames, so it has to be
+    /// the same number on every toolchain, forever.
+    #[test]
+    fn the_digest_is_a_fixed_value_not_a_toolchain_detail() {
+        assert_eq!(digest(""), 0x811c_9dc5);
+        assert_eq!(format!("{:08x}", digest("--help")), "7fb28c5c");
     }
 
     #[test]

@@ -93,6 +93,11 @@ fn stdout_and_stderr_carry_different_content() {
         !String::from_utf8_lossy(stdout_payload).contains("Wrote 1 entries"),
         "the report must not ride the stdout byte stream"
     );
+    assert_eq!(
+        result.stdout(),
+        "",
+        "the artifact owns stdout, so nothing textual joins its bytes there"
+    );
 }
 
 /// The mirror case: a file destination leaves stdout free, so the report goes
@@ -109,6 +114,7 @@ fn a_file_artifact_reports_on_stdout_and_leaves_stderr_silent() {
     result.assert_success();
     result.assert_artifact_written_to(&path);
     result.assert_artifact_report_contains("Wrote 1 entries to");
+    result.assert_stdout_contains("Wrote 1 entries to");
     result.assert_stderr_empty();
 }
 
@@ -175,6 +181,57 @@ fn an_external_failure_reaches_stderr_verbatim() {
 
     result.assert_error();
     result.assert_stderr_eq("fatal: not a git repository");
+}
+
+/// A handler that succeeds and still leaves the framework something to say.
+/// `App::run` flushes that warning block to stderr after the primary output,
+/// so a "clean run" oracle that ignored it would pass a run the user sees
+/// warnings from.
+fn warning_app() -> App {
+    App::builder()
+        .command(
+            "say",
+            |_m, _ctx| {
+                standout::warnings::push_warning("stylesheet fell back to the compiled copy");
+                Ok(Output::Render(json!({})))
+            },
+            "hello",
+        )
+        .unwrap()
+        .build()
+        .unwrap()
+}
+
+#[test]
+#[serial]
+fn framework_warnings_land_on_stderr_and_defeat_the_silent_assertion() {
+    let app = warning_app();
+    let cmd = Command::new("app").subcommand(Command::new("say"));
+
+    let result = TestHarness::new().run(&app, cmd, ["app", "say"]);
+
+    result.assert_success();
+    result.assert_stdout_contains("hello");
+    result.assert_stderr_contains("stylesheet fell back to the compiled copy");
+    result.assert_stderr_contains("Standout :: Warnings");
+    assert!(
+        result.stderr().starts_with('\n'),
+        "the block opens with the blank line `run` writes: {:?}",
+        result.stderr()
+    );
+    assert_eq!(
+        result.warnings(),
+        ["stylesheet fell back to the compiled copy"],
+        "each warning stays individually addressable"
+    );
+
+    let empty = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        result.assert_stderr_empty()
+    }));
+    assert!(
+        empty.is_err(),
+        "a warning-producing run must not read as a silent error channel"
+    );
 }
 
 #[test]
