@@ -51,20 +51,32 @@ impl<'a> Row<'a> {
         normalize(&self.block().copied().collect::<Vec<_>>().join(" "))
     }
 
-    /// The block's lines that carry `label` (`default`, `possible values`),
-    /// with everything up to and including the label dropped.
+    /// The values the row states under `label` (`default:`), decoded under
+    /// the grammar the stating line is written in.
     ///
     /// A fact like a default value is stated *under a label* on both pages —
-    /// `default: brief` and `[default: brief]` — so matching the value inside
-    /// the labelled remainder is what separates "the row says this is the
-    /// default" from "the word `brief` appears somewhere in the row".
-    pub(crate) fn labelled(&self, label: &str) -> Vec<String> {
-        self.block()
-            .filter_map(|line| {
-                let offset = find_label(line, label)?;
-                Some(line[offset + label.len()..].to_string())
-            })
-            .collect()
+    /// standout's `default: brief` and clap's `[default: brief]` — so reading
+    /// the labelled clause is what separates "the row says this is the
+    /// default" from "the word `brief` appears somewhere in the row". And the
+    /// same bytes mean different values under the two grammars: clap
+    /// space-joins a defaults list and quotes a value that is empty or
+    /// carries whitespace, while standout comma-joins and never quotes, so a
+    /// value's whitespace is part of its name. As in
+    /// [`Row::possible_value_names`], the bracket the label sits in is what
+    /// says whose grammar the clause is.
+    pub(crate) fn labelled_values(&self, label: &str) -> Vec<String> {
+        let mut values = Vec::new();
+        for line in self.block() {
+            if let Some(offset) = find_label(line, label) {
+                let remainder = &line[offset + label.len()..];
+                if line[..offset].trim_end().ends_with('[') {
+                    values.extend(list_values(value_clause(remainder)));
+                } else {
+                    values.extend(comma_values(remainder));
+                }
+            }
+        }
+        values
     }
 
     /// The value names the row's possible-values list states, however the
@@ -390,10 +402,13 @@ pub(crate) fn flag_spellings(arg: &Arg) -> Vec<String> {
 /// Whether `haystack` contains `token` delimited by whitespace, a comma, or
 /// the punctuation a formatter wraps a value in — so `--all` does not match
 /// the row for `--all-files`, and `[aliases: -t, --thr]` yields `--thr`.
+///
+/// A repetition ellipsis is punctuation too: clap spells a counted flag
+/// `-v...`, and the marker is about arity, not part of the spelling.
 pub(crate) fn contains_token(haystack: &str, token: &str) -> bool {
     haystack
         .split(|c: char| c.is_whitespace() || matches!(c, ',' | '[' | ']' | '<' | '>' | '='))
-        .any(|word| word == token)
+        .any(|word| word.trim_end_matches("...") == token)
 }
 
 /// The arguments a help page is expected to render.
@@ -532,7 +547,32 @@ Options:
             "Notes file to read [default: notes.txt]",
             "the block reads as one line whichever way it was wrapped"
         );
-        assert_eq!(file.labelled("default"), [": notes.txt]"]);
+        assert_eq!(file.labelled_values("default:"), ["notes.txt"]);
+    }
+
+    /// The labelled decode follows the line's grammar: clap's bracketed
+    /// clause space-joins and quotes, standout's unbracketed one is a raw
+    /// comma list whose values keep their whitespace — and their brackets.
+    #[test]
+    fn labelled_values_decodes_under_the_stating_lines_grammar() {
+        const CLAP: &str = "\
+Options:
+  -f, --file <PATH>
+          Notes file to read
+
+          [default: \"plain text\" json]
+";
+        assert_eq!(
+            rows(CLAP)[0].labelled_values("default:"),
+            ["plain text", "json"]
+        );
+
+        const STANDOUT: &str = "\
+OPTIONS
+  -f, --file <PATH>  Notes file to read
+                     default: [a b]
+";
+        assert_eq!(rows(STANDOUT)[0].labelled_values("default:"), ["[a b]"]);
     }
 
     /// Clap indents a short-only flag by two and a long-only flag by six;
@@ -566,7 +606,7 @@ OPTIONS
   --file <PATH>  İİİİ file İİ Default: notes.txt
 ";
         let rows = rows(PAGE);
-        assert_eq!(rows[0].labelled("default:"), [" notes.txt"]);
+        assert_eq!(rows[0].labelled_values("default:"), ["notes.txt"]);
     }
 
     #[test]
@@ -694,6 +734,14 @@ Options:
         assert!(
             !contains_token("--threshold <RATIO>", "-t"),
             "a short alias must not be found inside a long flag's spelling"
+        );
+        assert!(
+            contains_token("-v...", "-v"),
+            "clap's repetition ellipsis on a counted flag is arity, not spelling"
+        );
+        assert!(
+            !contains_token("-v...", "-w"),
+            "the trimmed word still has to be the token"
         );
     }
 }

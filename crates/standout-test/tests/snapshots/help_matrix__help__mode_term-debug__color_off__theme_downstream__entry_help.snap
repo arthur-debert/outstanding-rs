@@ -21,6 +21,7 @@ Names a change the way a human would.[/about]
 
 [header]OPTIONS[/header]
   [item]--staged[/item]                   [desc]Diff the staged changes[/desc]
+  [item]-v[/item]                         [desc]Raise the detail level[/desc]
   [item]--threshold[/item] [metavar]<RATIO>[/metavar]        [desc]Move/rename similarity threshold[/desc]
   [item]-c, --color[/item] [metavar]<BOOL>[/metavar]         [desc]Enable ANSI color[/desc]
                              [values]possible values: true, false[/values]
