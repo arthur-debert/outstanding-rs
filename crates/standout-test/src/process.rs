@@ -295,7 +295,7 @@ impl TestHarness {
 
 /// The pty plumbing behind [`TestHarness::run_pty`]: one function that opens
 /// a configured master/slave pair, and the only unsafe code in the crate —
-/// three C calls (`openpty`, `tcgetattr`/`tcsetattr`, `ioctl`) wrapped
+/// three C calls (`openpty`, `tcgetattr`, `tcsetattr`) wrapped
 /// straight into owned fds.
 #[cfg(unix)]
 mod pty {
@@ -320,14 +320,17 @@ mod pty {
         };
         // SAFETY: openpty only writes the two fd out-parameters and reads
         // the winsize; the name and termios parameters are documented to
-        // accept null.
+        // accept null. The winsize argument is a raw borrow because libc
+        // declares `winp` as `*mut` on Apple and `*const` on Linux — `&raw
+        // mut` satisfies both, where `&mut` trips Linux clippy's
+        // `unnecessary_mut_passed` and `&` fails the Apple build.
         let rc = unsafe {
             libc::openpty(
                 &mut master,
                 &mut slave,
                 std::ptr::null_mut(),
                 std::ptr::null_mut(),
-                &mut winsize,
+                &raw mut winsize,
             )
         };
         assert_eq!(
