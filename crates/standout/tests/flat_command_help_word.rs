@@ -1,32 +1,20 @@
 //! Reachability and install policy for the `help` word on flat CLIs.
 //!
-//! The fixture is the shape that surfaced the bug: one optional positional, one
-//! flag, and an [`ArgGroup`] making "one of them" required. On a root like
-//! that, Clap validates the requirements before routing, so an injected `help`
+//! The shape that surfaced the bug is the shared fixture's flat form
+//! ([`standout_fixtures`]): one optional positional, one flag, and an
+//! `ArgGroup` making "one of them" required. On a root like that, Clap
+//! validates the requirements before routing, so an injected `help`
 //! subcommand is unreachable until the declaration says otherwise — which is
 //! what `subcommand_negates_reqs` does, and standout sets it exactly where it
 //! installs the word.
+//!
+//! Two commands here are still built by hand, because their shape *is* the
+//! test: a root with no positional at all, and an app whose questionnaire
+//! makes the framework inject a subcommand of its own.
 
-use clap::{Arg, ArgAction, ArgGroup, Command};
+use clap::{Arg, ArgAction, Command};
 use standout::cli::{App, CommandContextInput, HelpResult};
-
-/// A flat root with a required arg group over an optional positional and a flag.
-fn flat_required_command() -> Command {
-    Command::new("app")
-        .about("Test app")
-        .arg(Arg::new("range").help("A revision range"))
-        .arg(
-            Arg::new("staged")
-                .long("staged")
-                .action(ArgAction::SetTrue)
-                .help("Use the staged diff"),
-        )
-        .group(
-            ArgGroup::new("target")
-                .args(["range", "staged"])
-                .required(true),
-        )
-}
+use standout_fixtures::downstream;
 
 fn help_text(result: HelpResult) -> String {
     match result {
@@ -40,23 +28,26 @@ fn help_text(result: HelpResult) -> String {
 /// `target` group was validated before Clap would route the word.
 #[test]
 fn the_help_word_is_reachable_on_a_flat_command_with_required_args() {
-    let app = App::new()
-        .help_handling(true)
-        .help_word(true)
-        .build()
-        .unwrap();
+    let fixture = downstream().flat().build();
 
-    let output = help_text(app.get_matches_from(flat_required_command(), ["app", "help"]));
-    assert!(output.contains("Test app"), "output:\n{output}");
+    let output = help_text(
+        fixture
+            .app()
+            .get_matches_from(fixture.command(), ["lookma", "help"]),
+    );
+    assert!(output.contains("Diff a git range"), "output:\n{output}");
 }
 
 #[test]
 fn a_flat_command_with_positionals_does_not_get_the_word_by_default() {
-    let app = App::new().help_handling(true).build().unwrap();
+    let fixture = downstream().flat().without_help_word().build();
 
     // Not installed, so `help` is data: it reaches the positional and the
     // required group is satisfied by it.
-    match app.get_matches_from(flat_required_command(), ["app", "help"]) {
+    match fixture
+        .app()
+        .get_matches_from(fixture.command(), ["lookma", "help"])
+    {
         HelpResult::Matches(m) => {
             assert_eq!(
                 m.get_one::<String>("range").map(String::as_str),
@@ -69,29 +60,35 @@ fn a_flat_command_with_positionals_does_not_get_the_word_by_default() {
 
 #[test]
 fn the_word_is_not_advertised_without_the_opt_in() {
-    let app = App::new().help_handling(true).build().unwrap();
-    let cmd = app.augment_command_with_help(flat_required_command());
+    let left_out = downstream().flat().without_help_word().build();
+    let cmd = left_out.app().augment_command_with_help(left_out.command());
     assert!(cmd.find_subcommand("help").is_none());
 
-    let opted_in = App::new()
-        .help_handling(true)
-        .help_word(true)
-        .build()
-        .unwrap();
-    let cmd = opted_in.augment_command_with_help(flat_required_command());
+    let opted_in = downstream().flat().build();
+    let cmd = opted_in.app().augment_command_with_help(opted_in.command());
     assert!(cmd.find_subcommand("help").is_some());
 }
 
 #[test]
 fn help_flags_still_render_themed_help_without_the_opt_in() {
-    let app = App::new().help_handling(true).build().unwrap();
+    let fixture = downstream().flat().without_help_word().build();
 
     for flag in ["--help", "-h"] {
-        let output = help_text(app.get_matches_from(flat_required_command(), ["app", flag]));
-        assert!(output.contains("Test app"), "{flag} output:\n{output}");
+        let output = help_text(
+            fixture
+                .app()
+                .get_matches_from(fixture.command(), ["lookma", flag]),
+        );
+        assert!(
+            output.contains("Diff a git range"),
+            "{flag} output:\n{output}"
+        );
     }
 }
 
+/// A root with nothing for a bare word to be mistaken for: the word installs
+/// itself, no opt-in asked. Built by hand because the fixture always carries
+/// a positional.
 #[test]
 fn a_flat_command_with_no_positionals_gets_the_word_automatically() {
     let app = App::new().help_handling(true).build().unwrap();
@@ -108,13 +105,12 @@ fn a_flat_command_with_no_positionals_gets_the_word_automatically() {
 
 #[test]
 fn the_escape_delivers_the_literal_word_to_the_positional() {
-    let app = App::new()
-        .help_handling(true)
-        .help_word(true)
-        .build()
-        .unwrap();
+    let fixture = downstream().flat().build();
 
-    match app.get_matches_from(flat_required_command(), ["app", "--", "help"]) {
+    match fixture
+        .app()
+        .get_matches_from(fixture.command(), ["lookma", "--", "help"])
+    {
         HelpResult::Matches(m) => {
             assert_eq!(
                 m.get_one::<String>("range").map(String::as_str),
@@ -127,18 +123,16 @@ fn the_escape_delivers_the_literal_word_to_the_positional() {
 
 #[test]
 fn the_help_word_parses_its_own_arguments() {
-    let app = App::new()
-        .help_handling(true)
-        .help_word(true)
-        .build()
-        .unwrap();
+    let fixture = downstream().flat().build();
 
     // `--output` is a root global; the help arm still has to honour it.
     // `term-debug` leaves style tags visible, which is only true if the mode
-    // reached the renderer.
-    let tagged = help_text(app.get_matches_from(
-        flat_required_command(),
-        ["app", "help", "--output", "term-debug"],
+    // reached the renderer. The fixture's app theme defines none of those
+    // tags, so a resolved `[header]` is also the overlay working: an app theme
+    // that replaced the help theme would leave the tag unresolved.
+    let tagged = help_text(fixture.app().get_matches_from(
+        fixture.command(),
+        ["lookma", "help", "--output", "term-debug"],
     ));
     assert!(
         tagged.contains("[header]USAGE[/header]"),
@@ -146,7 +140,9 @@ fn the_help_word_parses_its_own_arguments() {
     );
 
     // `--page` routes the same rendering through the pager.
-    let paged = app.get_matches_from(flat_required_command(), ["app", "help", "--page"]);
+    let paged = fixture
+        .app()
+        .get_matches_from(fixture.command(), ["lookma", "help", "--page"]);
     assert!(
         matches!(paged, HelpResult::PagedHelp(_)),
         "expected paged help, got: {paged:?}"
@@ -155,13 +151,12 @@ fn the_help_word_parses_its_own_arguments() {
 
 #[test]
 fn a_normal_invocation_is_untouched() {
-    let app = App::new()
-        .help_handling(true)
-        .help_word(true)
-        .build()
-        .unwrap();
+    let fixture = downstream().flat().build();
 
-    match app.get_matches_from(flat_required_command(), ["app", "main..HEAD"]) {
+    match fixture
+        .app()
+        .get_matches_from(fixture.command(), ["lookma", "main..HEAD"])
+    {
         HelpResult::Matches(m) => {
             assert_eq!(
                 m.get_one::<String>("range").map(String::as_str),
@@ -174,13 +169,12 @@ fn a_normal_invocation_is_untouched() {
 
 #[test]
 fn a_missing_required_argument_is_still_a_usage_error() {
-    let app = App::new()
-        .help_handling(true)
-        .help_word(true)
-        .build()
-        .unwrap();
+    let fixture = downstream().flat().build();
 
-    match app.get_matches_from(flat_required_command(), ["app"]) {
+    match fixture
+        .app()
+        .get_matches_from(fixture.command(), ["lookma"])
+    {
         HelpResult::Error(e) => {
             assert_eq!(e.kind(), clap::error::ErrorKind::MissingRequiredArgument);
         }
@@ -204,6 +198,9 @@ fn the_policy_reads_the_shape_the_framework_leaves_behind() {
     // root with subcommands is a root where a bare word is already a command.
     // Deciding the install before augmentation answered for a shape that never
     // reaches the user.
+    //
+    // The app is bespoke because the questionnaire is the subject; the command
+    // is the fixture's flat root, so the shape under test is the shared one.
     let app = App::new()
         .help_handling(true)
         .command_with(
@@ -217,8 +214,9 @@ fn the_policy_reads_the_shape_the_framework_leaves_behind() {
         .unwrap()
         .build()
         .unwrap();
+    let flat_root = downstream().flat().build();
 
-    let augmented = app.augment_command_with_help(flat_required_command());
+    let augmented = app.augment_command_with_help(flat_root.command());
     assert!(
         augmented.find_subcommand("questions").is_some(),
         "the framework should have injected its questionnaire surface"
@@ -230,8 +228,8 @@ fn the_policy_reads_the_shape_the_framework_leaves_behind() {
 
     // And it is reachable, without the opt-in the flat-with-positionals rule
     // would otherwise have required.
-    let output = help_text(app.get_matches_from(flat_required_command(), ["app", "help"]));
-    assert!(output.contains("Test app"), "output:\n{output}");
+    let output = help_text(app.get_matches_from(flat_root.command(), ["lookma", "help"]));
+    assert!(output.contains("Diff a git range"), "output:\n{output}");
 }
 
 #[test]

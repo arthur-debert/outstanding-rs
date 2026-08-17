@@ -7,68 +7,40 @@
 //! (#299). They are one test file because they are one page: each is only
 //! visible in what the reader ends up seeing.
 //!
+//! The page comes from the shared downstream fixture
+//! ([`standout_fixtures`]), so the shape these assertions read is the same
+//! shape every other help suite reads — and the app and the `clap::Command`
+//! behind it cannot drift apart, which is what a per-file copy allowed. The
+//! two bespoke commands below are deliberate: a floor-width probe needs an
+//! option set narrower than the fixture's, and a fallback probe needs a
+//! command that declares no `long_about` at all.
+//!
 //! Assertions run in `Text` mode, so a row is its final characters and column
 //! positions are directly comparable.
 
-use clap::{Arg, ArgAction, Command};
-use standout::cli::{render_help, App, HelpConfig, HelpLength, HelpResult};
-use standout::topics::{Topic, TopicRegistry, TopicType};
+use clap::{Arg, Command};
+use standout::cli::{render_help, HelpConfig, HelpLength, HelpResult};
 use standout::OutputMode;
+use standout_fixtures::{downstream, Fixture};
 
-/// The reported shape: a flat CLI whose option set includes standout's own
-/// `--output-file-path`, which is longer than the old fixed column.
-fn lookma() -> Command {
-    Command::new("lookma")
-        .about("Diff a git range")
-        .long_about("Diff a git range.\n\nNames a change the way a human would.")
-        .arg(
-            Arg::new("range")
-                .value_name("RANGE")
-                .help("Git range to diff, e.g. main..HEAD"),
-        )
-        .arg(
-            Arg::new("staged")
-                .long("staged")
-                .action(ArgAction::SetTrue)
-                .help("Diff the staged changes"),
-        )
-        .arg(
-            Arg::new("threshold")
-                .long("threshold")
-                .value_name("RATIO")
-                .action(ArgAction::Set)
-                .help("Move/rename similarity threshold"),
-        )
-        .arg(
-            Arg::new("color")
-                .short('c')
-                .long("color")
-                .value_name("BOOL")
-                .action(ArgAction::Set)
-                .value_parser(clap::builder::BoolishValueParser::new())
-                .help("Enable ANSI color"),
-        )
-        .arg(
-            Arg::new("implicit")
-                .long("implicit")
-                .action(ArgAction::Set)
-                .help("Uses clap's fallback metavar"),
-        )
-}
-
-fn app() -> App {
-    App::new()
-        .help_handling(true)
-        .help_word(true)
-        .build()
-        .unwrap()
-}
-
-fn help_for(args: &[&str]) -> String {
-    match app().get_matches_from(lookma(), args) {
+/// The page the fixture renders for `args`.
+fn page(fixture: &Fixture, args: &[&str]) -> String {
+    match fixture.app().get_matches_from(fixture.command(), args) {
         HelpResult::Help(text) | HelpResult::PagedHelp(text) => text,
         other => panic!("expected rendered help, got: {other:?}"),
     }
+}
+
+/// The full downstream shape: subcommands, a positional, presence flags,
+/// valued options, an enumerated option, a theme, and topics.
+fn help_for(args: &[&str]) -> String {
+    page(&downstream().build(), args)
+}
+
+/// The same declaration without the subcommands: the flat CLI whose `help`
+/// word has no namespace to describe.
+fn flat_help_for(args: &[&str]) -> String {
+    page(&downstream().flat().build(), args)
 }
 
 /// The row whose name cell starts with `name`.
@@ -142,6 +114,8 @@ fn arguments_and_options_columns_are_independent() {
 }
 
 /// A short option set keeps the layout it had before the column could widen.
+/// Bespoke by design: the fixture's longest option is what widens the column,
+/// so the floor is only observable on a command narrower than it.
 #[test]
 fn short_names_keep_the_floor_width() {
     let cmd = Command::new("app")
@@ -193,6 +167,8 @@ fn help_word_renders_long_about() {
     );
 }
 
+/// Bespoke by design: the fixture declares a `long_about`, so the fallback is
+/// only observable on a command that declares none.
 #[test]
 fn long_help_falls_back_to_about_when_no_long_about() {
     let cmd = Command::new("app")
@@ -221,6 +197,19 @@ fn option_rows_carry_defaults_and_possible_values() {
     );
 }
 
+/// The app's own enumerated option, spelled in a vocabulary of its own so this
+/// cannot pass on `--output`'s rows.
+#[test]
+fn an_apps_own_enumerated_option_carries_its_default_and_values() {
+    let output = help_for(&["lookma", "--help"]);
+
+    assert!(output.contains("default: brief"), "{output}");
+    assert!(
+        output.contains("possible values: brief, full, none"),
+        "{output}"
+    );
+}
+
 #[test]
 fn value_taking_options_render_their_metavars() {
     let output = help_for(&["lookma", "--help"]);
@@ -228,7 +217,7 @@ fn value_taking_options_render_their_metavars() {
     assert!(output.contains("--threshold <RATIO>"), "{output}");
     assert!(output.contains("-c, --color <BOOL>"), "{output}");
     assert!(
-        output.contains("--implicit <implicit>"),
+        output.contains("--pattern <pattern>"),
         "options without an explicit value_name should keep clap's fallback metavar:\n{output}"
     );
 }
@@ -299,10 +288,16 @@ fn positionals_get_their_own_section_before_options() {
 // #299 — the flat-CLI `help` word
 // ---------------------------------------------------------------------------
 
-/// A COMMANDS section whose only entry is the machinery printing it.
+/// A COMMANDS section whose only entry is the machinery printing it. The
+/// fixture drops its topics here, since a registered topic is precisely what
+/// gives the word somewhere to go.
 #[test]
 fn flat_cli_suppresses_a_help_only_commands_section() {
-    let output = help_for(&["lookma", "--help"]);
+    let output = page(
+        &downstream().flat().without_topics().build(),
+        &["lookma", "--help"],
+    );
+
     assert!(
         !output.lines().any(|line| line.trim() == "COMMANDS"),
         "a flat CLI has no commands to list:\n{output}"
@@ -313,24 +308,7 @@ fn flat_cli_suppresses_a_help_only_commands_section() {
 /// destination, and the word is how a reader reaches it.
 #[test]
 fn registered_topics_keep_the_help_word_listed() {
-    let mut registry = TopicRegistry::new();
-    registry.add_topic(Topic::new(
-        "Storage",
-        "Where data is stored",
-        TopicType::Text,
-        None,
-    ));
-
-    let mut app = App::new().help_handling(true).help_word(true);
-    for topic in registry.list_topics() {
-        app = app.add_topic(topic.clone());
-    }
-    let app = app.build().unwrap();
-
-    let output = match app.get_matches_from(lookma(), ["lookma", "--help"]) {
-        HelpResult::Help(text) | HelpResult::PagedHelp(text) => text,
-        other => panic!("expected rendered help, got: {other:?}"),
-    };
+    let output = flat_help_for(&["lookma", "--help"]);
 
     section_line(&output, "COMMANDS");
     assert!(
@@ -342,7 +320,8 @@ fn registered_topics_keep_the_help_word_listed() {
 /// The wording clap ships points at a namespace a flat CLI does not have.
 #[test]
 fn flat_cli_help_word_does_not_mention_subcommands() {
-    let augmented = app().augment_command_with_help(lookma());
+    let fixture = downstream().flat().build();
+    let augmented = fixture.app().augment_command_with_help(fixture.command());
     let word = augmented
         .get_subcommands()
         .find(|sub| sub.get_name() == "help")
@@ -356,11 +335,8 @@ fn flat_cli_help_word_does_not_mention_subcommands() {
 
 #[test]
 fn nested_cli_help_word_still_mentions_subcommands() {
-    let cmd = Command::new("app")
-        .about("App")
-        .subcommand(Command::new("build").about("Build it"));
-
-    let augmented = app().augment_command_with_help(cmd);
+    let fixture = downstream().build();
+    let augmented = fixture.app().augment_command_with_help(fixture.command());
     let word = augmented
         .get_subcommands()
         .find(|sub| sub.get_name() == "help")
@@ -376,15 +352,11 @@ fn nested_cli_help_word_still_mentions_subcommands() {
 /// included.
 #[test]
 fn nested_cli_keeps_its_commands_section() {
-    let cmd = Command::new("app")
-        .about("App")
-        .subcommand(Command::new("build").about("Build it"));
-
-    let output = match app().get_matches_from(cmd, ["app", "--help"]) {
-        HelpResult::Help(text) | HelpResult::PagedHelp(text) => text,
-        other => panic!("expected rendered help, got: {other:?}"),
-    };
+    let output = help_for(&["lookma", "--help"]);
 
     section_line(&output, "COMMANDS");
-    assert!(row(&output, "build").contains("Build it"), "{output}");
+    assert!(
+        row(&output, "review").contains("Review a range hunk by hunk"),
+        "{output}"
+    );
 }
