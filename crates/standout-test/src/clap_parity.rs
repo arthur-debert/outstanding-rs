@@ -53,8 +53,9 @@ use clap::{Arg, Command};
 use standout::cli::HelpLength;
 
 use crate::page::{
-    candidate_metavars, contains_token, declared_metavars, find_row, flag_spellings, metavar_text,
-    normalize, rows, takes_values, value_placeholders, Row,
+    candidate_metavars, contains_flag_token, contains_token, declared_metavars, find_row,
+    flag_spellings, metavar_text, normalize, rows, takes_values, value_placeholders, ClapJoint,
+    Row,
 };
 use crate::TestResult;
 
@@ -688,10 +689,12 @@ fn argument_check(fact: &Fact, built: &Command, rows: &[Row<'_>]) -> Result<(), 
 
     // A spelling is what identifies a row, so it is checked against every
     // row's label rather than through the row lookup it would otherwise be
-    // assumed by.
+    // assumed by. The flag-aware match lets a counted flag's label wear
+    // clap's repetition ellipsis (`-v...`) without loosening any other
+    // argument's comparison.
     if fact.kind == FactKind::ArgSpelling {
         let listed = rows.iter().any(|row| {
-            contains_token(row.label, &fact.expected)
+            contains_flag_token(row.label, &fact.expected, arg)
                 || row
                     .label
                     .split_whitespace()
@@ -745,7 +748,7 @@ fn argument_check(fact: &Fact, built: &Command, rows: &[Row<'_>]) -> Result<(), 
             // standout's unquoted comma list is read by its commas. The decode
             // is bounded by whole values, so a page that states `briefly`
             // still does not state `brief`.
-            let stated = row.labelled_values("default:");
+            let stated = row.labelled_values("default:", ClapJoint::Spaces);
             present(
                 stated.contains(&fact.expected),
                 fact,
