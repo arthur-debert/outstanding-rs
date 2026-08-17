@@ -17,6 +17,10 @@ console = "0.16"
 serial_test = "3"
 tempfile = "3"
 
+# run_pty's openpty/termios/ioctl calls; a pty is a Unix object.
+[target.'cfg(unix)'.dependencies]
+libc = "0.2"
+
 [dev-dependencies]
 standout-fixtures = { path = "../standout-fixtures" }
 insta = "1.46.1"
