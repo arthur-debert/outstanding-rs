@@ -146,9 +146,17 @@ fn find_label(line: &str, label: &str) -> Option<usize> {
 /// The bracket that closes the clause is the first one *outside* quotes:
 /// clap quotes a value that needs it, so `[default: "[notes.txt]"]` is a
 /// one-value clause whose brackets belong to the value, not to the clause.
+///
+/// Quotes only open at the start of a value token. Clap quotes a value only
+/// when it is empty or carries whitespace, so a mid-word `"` is a literal
+/// character of an unquoted value — `[default: foo"bar]` — and reading it as
+/// an opening quote would swallow the `]` that ends the clause.
 pub(crate) fn value_clause(remainder: &str) -> &str {
     let mut in_quotes = false;
     let mut escaped = false;
+    // Whether the next character sits at the start of a value token — the
+    // only place a `"` reads as clap's quoting.
+    let mut word_start = true;
     for (index, c) in remainder.char_indices() {
         if in_quotes {
             if escaped {
@@ -158,11 +166,12 @@ pub(crate) fn value_clause(remainder: &str) -> &str {
             } else if c == '"' {
                 in_quotes = false;
             }
-        } else if c == '"' {
+        } else if c == '"' && word_start {
             in_quotes = true;
         } else if c == ']' {
             return &remainder[..index];
         }
+        word_start = !in_quotes && (c.is_whitespace() || c == ',');
     }
     remainder
 }
@@ -186,9 +195,12 @@ pub(crate) fn comma_values(clause: &str) -> Vec<String> {
 /// Clap separates values with `, ` in a possible-values clause and a bare
 /// space in a defaults list, so both separators split here — which is safe
 /// precisely because clap wraps a value in Rust-debug quotes when it is empty
-/// or carries either (`[default: "plain text"]`). Standout's lists never
-/// quote, so they must decode through [`comma_values`] instead: this decoder
-/// would shear `plain text` apart at its space.
+/// or carries either (`[default: "plain text"]`). Those are the *only* values
+/// clap quotes, so a `"` opens a quoted value only at the start of a token; a
+/// mid-word `"` is a literal character of an unquoted value (`foo"bar`), not a
+/// quote to enter. Standout's lists never quote, so they must decode through
+/// [`comma_values`] instead: this decoder would shear `plain text` apart at
+/// its space.
 pub(crate) fn list_values(clause: &str) -> Vec<String> {
     let mut values = Vec::new();
     let mut current = String::new();
@@ -209,7 +221,7 @@ pub(crate) fn list_values(clause: &str) -> Vec<String> {
             } else {
                 current.push(c);
             }
-        } else if c == '"' {
+        } else if c == '"' && current.is_empty() && !quoted {
             in_quotes = true;
             quoted = true;
         } else if c == ',' || c.is_whitespace() {
@@ -566,6 +578,14 @@ OPTIONS
         assert_eq!(list_values(" \"say \\\"hi\\\"\""), ["say \"hi\""]);
     }
 
+    /// Clap quotes only a value that is empty or carries whitespace, so a
+    /// mid-word `"` is a literal character of an unquoted value — not a quote
+    /// to enter, which would swallow the separators after it.
+    #[test]
+    fn list_values_keeps_a_mid_word_quote_literal() {
+        assert_eq!(list_values(" foo\"bar, json"), ["foo\"bar", "json"]);
+    }
+
     /// Standout never quotes, so its commas are the only separators and a
     /// value keeps its whitespace.
     #[test]
@@ -584,6 +604,14 @@ OPTIONS
         );
         assert_eq!(value_clause(" brief] [aliases: -t]"), " brief");
         assert_eq!(value_clause(" brief"), " brief");
+    }
+
+    /// A mid-word `"` belongs to an unquoted value — clap quotes only a value
+    /// that is empty or carries whitespace — so it must not open quote mode
+    /// and swallow the `]` that ends the clause.
+    #[test]
+    fn value_clause_treats_a_mid_word_quote_as_literal() {
+        assert_eq!(value_clause(" foo\"bar] [aliases: -t]"), " foo\"bar");
     }
 
     /// Clap's long-help region: a heading, one bullet per value — named up to
