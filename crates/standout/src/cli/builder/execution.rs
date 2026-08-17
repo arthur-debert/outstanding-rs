@@ -12,7 +12,7 @@ use clap::{Arg, ArgAction, ArgMatches, Command};
 use std::io::Write;
 use std::path::PathBuf;
 
-use super::{AppBuilder, PendingCommand};
+use super::{AppBuilder, PendingCommand, TemplateRef};
 use crate::cli::default_command::ParseFailure;
 use crate::cli::dispatch::{
     dispatch, extract_command_path, get_deepest_matches, DispatchOutput, Presentation,
@@ -40,7 +40,7 @@ impl AppBuilder {
     /// use standout::cli::{dispatch, App};
     ///
     /// App::builder()
-    ///     .template_dir("templates")
+    ///     .templates_dir("templates")?
     ///     .commands(dispatch! {
     ///         db: {
     ///             migrate => db::migrate,
@@ -69,9 +69,16 @@ impl AppBuilder {
             match entry {
                 GroupEntry::Command { mut handler } => {
                     let template = handler
-                        .template()
-                        .map(String::from)
-                        .unwrap_or_else(|| self.resolve_template(&name));
+                        .template_absence()
+                        .map(TemplateRef::Absent)
+                        .or_else(|| {
+                            handler
+                                .template_name()
+                                .map(String::from)
+                                .map(TemplateRef::Named)
+                        })
+                        .or_else(|| handler.template().map(TemplateRef::explicit))
+                        .unwrap_or_else(|| TemplateRef::convention(&name, &self.template_ext));
 
                     if let Some(hooks) = handler.take_hooks() {
                         self.command_hooks.insert(name.clone(), hooks);

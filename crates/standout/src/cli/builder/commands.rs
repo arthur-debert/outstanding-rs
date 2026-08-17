@@ -9,7 +9,7 @@
 use clap::ArgMatches;
 use serde::Serialize;
 
-use super::{AppBuilder, PendingCommand};
+use super::{AppBuilder, PendingCommand, TemplateAbsence, TemplateRef};
 use crate::cli::group::{
     ClosureRecipe, CommandConfig, ErasedConfigRecipe, GroupBuilder, GroupEntry, PassthroughRecipe,
     StructRecipe,
@@ -25,7 +25,7 @@ impl AppBuilder {
     ///
     /// ```rust,ignore
     /// App::builder()
-    ///     .template_dir("templates")
+    ///     .templates_dir("templates")?
     ///     .group("db", |g| g
     ///         .command("migrate", db::migrate)
     ///         .command("backup", db::backup))
@@ -75,11 +75,12 @@ impl AppBuilder {
         let config = CommandConfig::new(FnHandler::new(handler));
         let mut config = configure(config);
 
-        // Resolve template
         let template = config
-            .template
-            .clone()
-            .unwrap_or_else(|| self.resolve_template(path));
+            .template_absence
+            .map(TemplateRef::Absent)
+            .or_else(|| config.template_name.clone().map(TemplateRef::Named))
+            .or_else(|| config.template.clone().map(TemplateRef::explicit))
+            .unwrap_or_else(|| TemplateRef::convention(path, &self.template_ext));
 
         // Register hooks if present
         if let Some(hooks) = config.hooks.take() {
@@ -123,11 +124,17 @@ impl AppBuilder {
 
             match entry {
                 GroupEntry::Command { mut handler } => {
-                    // Resolve template
                     let template = handler
-                        .template()
-                        .map(String::from)
-                        .unwrap_or_else(|| self.resolve_template(&path));
+                        .template_absence()
+                        .map(TemplateRef::Absent)
+                        .or_else(|| {
+                            handler
+                                .template_name()
+                                .map(String::from)
+                                .map(TemplateRef::Named)
+                        })
+                        .or_else(|| handler.template().map(TemplateRef::explicit))
+                        .unwrap_or_else(|| TemplateRef::convention(&path, &self.template_ext));
 
                     // Extract and register hooks
                     if let Some(hooks) = handler.take_hooks() {
@@ -161,32 +168,6 @@ impl AppBuilder {
             }
         }
         Ok(())
-    }
-
-    /// Resolves a template from a command path using conventions.
-    ///
-    /// Resolution order:
-    /// 1. If template_registry is set, look up by command path (e.g., "db/migrate.j2")
-    /// 2. If template_dir is set, return the file path for runtime loading
-    /// 3. Otherwise return empty string (JSON serialization fallback)
-    pub(crate) fn resolve_template(&self, command_path: &str) -> String {
-        let file_path = command_path.replace('.', "/");
-        let template_name = format!("{}{}", file_path, self.template_ext);
-
-        // First, try to get content from embedded templates
-        if let Some(ref registry) = self.template_registry {
-            if let Ok(content) = registry.get_content(&template_name) {
-                return content;
-            }
-        }
-
-        // Fall back to file path if template_dir is configured
-        if let Some(ref dir) = self.template_dir {
-            return format!("{}/{}", dir.display(), template_name);
-        }
-
-        // No template found - will use JSON serialization in structured modes
-        String::new()
     }
 
     /// Registers a command handler (closure) with a template.
@@ -263,7 +244,7 @@ impl AppBuilder {
         H: Handler<Output = T> + 'static,
         T: Serialize + 'static,
     {
-        let template = template.to_string();
+        let template = TemplateRef::explicit(template);
 
         // Create a recipe for deferred closure creation
         let recipe = StructRecipe::new(handler);
@@ -322,7 +303,7 @@ impl AppBuilder {
             path.to_string(),
             PendingCommand {
                 recipe: Box::new(recipe),
-                template: String::new(),
+                template: TemplateRef::Absent(TemplateAbsence::Silent),
             },
         );
 

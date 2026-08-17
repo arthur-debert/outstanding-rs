@@ -634,7 +634,11 @@ fn rustloc_fixture_uses_configured_csv_projection() {
                     "skipped": 1
                 })))
             },
-            |config| config.structured_output_projection(projection),
+            |config| {
+                config
+                    .structured_only()
+                    .structured_output_projection(projection)
+            },
         )
         .unwrap()
         .build()

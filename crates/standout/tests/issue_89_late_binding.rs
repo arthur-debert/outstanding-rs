@@ -98,9 +98,11 @@ fn test_late_binding_with_nested_groups() {
     // Nested group commands registered BEFORE .theme()
     let app = App::builder()
         .group("db", |g| {
-            g.command("migrate", |_m, _ctx| {
-                Ok(Output::Render(json!({"status": "migrated"})))
-            })
+            g.command_with(
+                "migrate",
+                |_m, _ctx| Ok(Output::Render(json!({"status": "migrated"}))),
+                |c| c.structured_only(),
+            )
         })
         .unwrap()
         .group("app", |g| {

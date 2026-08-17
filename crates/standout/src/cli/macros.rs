@@ -9,7 +9,7 @@
 //! use standout::cli::{dispatch, App};
 //!
 //! let builder = App::builder()
-//!     .template_dir("templates")
+//!     .templates_dir("templates")?
 //!     .commands(dispatch! {
 //!         db: {
 //!             migrate => db::migrate,
@@ -81,7 +81,7 @@
 /// }
 ///
 /// let builder = App::builder()
-///     .template_dir("templates")
+///     .templates_dir("templates")?
 ///     .commands(dispatch! {
 ///         db: {
 ///             migrate => migrate_handler,

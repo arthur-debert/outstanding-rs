@@ -14,7 +14,6 @@ use crate::topics::Topic;
 use crate::TemplateRegistry;
 use crate::{EmbeddedStyles, EmbeddedTemplates, Theme};
 use minijinja::Value;
-use std::path::PathBuf;
 use std::rc::Rc;
 
 use super::AppBuilder;
@@ -168,9 +167,9 @@ impl AppBuilder {
     /// if the source path exists, templates are loaded from disk for hot-reload.
     /// In release mode, embedded content is used.
     ///
-    /// Templates set here will be used to resolve template paths when registering
-    /// commands. Call this method *before* `.commands()` or `.group()` to ensure
-    /// templates are available for resolution.
+    /// Templates set here resolve command template names during `build()`, so
+    /// call order with `.commands()` and `.group()` does not affect template
+    /// lookup.
     ///
     /// # Example
     ///
@@ -252,33 +251,13 @@ impl AppBuilder {
         self
     }
 
-    /// Sets the base directory for convention-based template resolution.
-    ///
-    /// When a command is registered without an explicit template, the template
-    /// path is derived from the command path:
-    /// - Command `db.migrate` → `{template_dir}/db/migrate{template_ext}`
-    ///
-    /// This is for file-based template loading at render time. For embedded
-    /// templates, use `.templates()` instead.
-    ///
-    /// # Example
-    ///
-    /// ```rust,ignore
-    /// App::builder()
-    ///     .template_dir("templates")
-    ///     .group("db", |g| g
-    ///         .command("migrate", handler))  // uses "templates/db/migrate.j2"
-    /// ```
-    pub fn template_dir(mut self, path: impl Into<PathBuf>) -> Self {
-        self.template_dir = Some(path.into());
-        self
-    }
-
     /// Adds a template directory to the registry for runtime loading.
     ///
-    /// Templates from directories are loaded immediately and merged with any
-    /// embedded templates. Directory templates take precedence over embedded
-    /// templates with the same name.
+    /// Templates from directories are registered for runtime loading and
+    /// merged with any embedded templates. File-backed entries are reread
+    /// during named renders, so edits are visible inside the same debug
+    /// process. Directory templates take precedence over embedded templates
+    /// with the same name.
     ///
     /// # Example
     ///
@@ -296,6 +275,7 @@ impl AppBuilder {
         match Rc::get_mut(arc) {
             Some(registry) => {
                 registry.add_template_dir(path)?;
+                registry.refresh()?;
             }
             None => {
                 panic!("Cannot modify template registry after commands have been dispatched/finalized.");
@@ -312,10 +292,10 @@ impl AppBuilder {
     ///
     /// ```rust,ignore
     /// App::builder()
-    ///     .template_dir("templates")
+    ///     .templates_dir("templates")?
     ///     .template_ext(".jinja2")
     ///     .group("db", |g| g
-    ///         .command("migrate", handler))  // uses "templates/db/migrate.jinja2"
+    ///         .command("migrate", handler))  // resolves "db/migrate.jinja2"
     /// ```
     pub fn template_ext(mut self, ext: impl Into<String>) -> Self {
         self.template_ext = ext.into();
@@ -851,22 +831,29 @@ mod tests {
     }
 
     #[test]
-    fn test_template_dir_convention() {
+    fn test_templates_dir_convention() {
         use serde_json::json;
+        let temp_dir = tempfile::tempdir().unwrap();
+        std::fs::create_dir_all(temp_dir.path().join("db")).unwrap();
+        std::fs::write(temp_dir.path().join("db/migrate.jinja2"), "{{ ok }}").unwrap();
 
         let builder = AppBuilder::new()
-            .template_dir("templates")
+            .templates_dir(temp_dir.path())
+            .unwrap()
             .template_ext(".jinja2")
             .group("db", |g| {
-                // No explicit template - should resolve to "templates/db/migrate.jinja2"
                 g.command("migrate", |_m, _ctx| {
                     Ok(HandlerOutput::Render(json!({"ok": true})))
                 })
             });
 
-        let builder = builder.unwrap();
+        let builder = builder.unwrap().build().unwrap();
 
-        // Verify the builder has the commands registered
-        assert!(builder.has_command("db.migrate"));
+        let cmd =
+            Command::new("app").subcommand(Command::new("db").subcommand(Command::new("migrate")));
+        let matches = cmd.try_get_matches_from(["app", "db", "migrate"]).unwrap();
+        let result = builder.dispatch(matches, OutputMode::Text);
+
+        assert_eq!(result.output(), Some("true"));
     }
 }

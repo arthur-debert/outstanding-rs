@@ -123,6 +123,7 @@ impl AppBuilder {
         // Pass 1: Template rendering via engine
         let minijinja_output = self
             .template_engine
+            .borrow()
             .render_template_with_render_widths(
                 template,
                 &serde_json::Value::Object(combined_json_map),
