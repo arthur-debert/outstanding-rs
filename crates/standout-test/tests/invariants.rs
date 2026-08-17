@@ -12,16 +12,20 @@
 //! the framework no longer produces a page that breaks them — which is exactly
 //! why the oracle must be provable against a page that does.
 //!
-//! The fixture below is downstream-shaped but local to this file. The epic's
-//! shared fixture (WS03) is not on this branch yet; when it lands, these
-//! `notes_*` functions are what it replaces.
+//! The passing pages come from the epic's shared downstream fixture
+//! ([`standout_fixtures::downstream`]): one definition of the
+//! downstream shape, shared with the clap-parity differential, so this file
+//! cannot drift from the shape the rest of the suite asserts against. The
+//! purpose-built apps below (an undefined tag, a nested run) stay local
+//! because their shape *is* the test.
 
-use clap::{Arg, ArgAction, Command};
+use clap::{Arg, Command};
 use console::Style;
 use serde_json::json;
 use serial_test::serial;
 use standout::cli::{App, Output, RunResult};
 use standout::Theme;
+use standout_fixtures::downstream;
 use standout_render::{OutputMode, TagResolution};
 use standout_test::invariants::{
     assert_descriptions_aligned, assert_descriptions_aligned_in_page, assert_every_tag_resolved,
@@ -62,78 +66,25 @@ fn fails_naming(needle: &str, assertion: impl FnOnce()) {
 }
 
 // ---------------------------------------------------------------------------
-// The fixture: downstream-shaped, with a theme that knows nothing of help
+// The fixture: the shared downstream shape, one definition for every suite
 // ---------------------------------------------------------------------------
 
-/// An app with its own output vocabulary and help turned on — the combination
-/// no fixture in the suite had before, and the one #303 needed.
-fn notes_app() -> App {
-    App::builder()
-        .help_handling(true)
-        .theme(Theme::new().add("node", Style::new().cyan()))
-        .command("list", |_m, _ctx| Ok(Output::Render(json!({}))), "listed")
-        .unwrap()
-        .command("add", |_m, _ctx| Ok(Output::Render(json!({}))), "added")
-        .unwrap()
-        .command(
-            "archive",
-            |_m, _ctx| Ok(Output::Render(json!({}))),
-            "archived",
-        )
-        .unwrap()
-        .build()
-        .unwrap()
+/// The shared fixture's clap surface: a positional with a value name, a
+/// presence flag, a counted flag, an enum option with a default, and a
+/// free-form valued option with no enumerable set — the shape whose metavar
+/// #302 dropped.
+fn fixture_command() -> Command {
+    downstream().build().command()
 }
 
-/// The fixture's clap surface: a positional with a value name, a presence
-/// flag, a counted flag, an enum option with a default, and a free-form valued
-/// option with no enumerable set — the shape whose metavar #302 dropped.
-fn notes_command() -> Command {
-    Command::new("notes")
-        .about("Keep short notes")
-        .arg(
-            Arg::new("range")
-                .value_name("RANGE")
-                .help("Range of notes to act on"),
-        )
-        .arg(
-            Arg::new("all")
-                .long("all")
-                .action(ArgAction::SetTrue)
-                .help("Include archived notes"),
-        )
-        .arg(
-            Arg::new("verbose")
-                .short('v')
-                .action(ArgAction::Count)
-                .help("Raise the detail level"),
-        )
-        .arg(
-            Arg::new("format")
-                .long("format")
-                .value_name("FORMAT")
-                .value_parser(["text", "json"])
-                .default_value("text")
-                .help("How to print the notes"),
-        )
-        .arg(
-            Arg::new("threshold")
-                .long("threshold")
-                .value_name("RATIO")
-                .help("Similarity threshold, from 0.0 to 1.0"),
-        )
-        .subcommand(Command::new("list").about("List the notes"))
-        .subcommand(Command::new("add").about("Add a note"))
-        .subcommand(Command::new("archive").about("Archive a note"))
-}
-
-/// Renders the fixture's help page in `mode`.
-fn notes_help(mode: OutputMode) -> TestResult {
+/// Renders the shared fixture's help page in `mode`.
+fn fixture_help(mode: OutputMode) -> TestResult {
+    let fixture = downstream().build();
     TestHarness::new()
         .terminal_width(80)
         .no_color()
         .output_mode(mode)
-        .run(&notes_app(), notes_command(), ["notes", "--help"])
+        .run(fixture.app(), fixture.command(), ["lookma", "--help"])
 }
 
 // ---------------------------------------------------------------------------
@@ -147,7 +98,7 @@ fn notes_help(mode: OutputMode) -> TestResult {
 #[serial]
 fn the_fixture_page_resolves_every_tag_in_both_modes() {
     for mode in [OutputMode::Text, OutputMode::Term] {
-        let result = notes_help(mode);
+        let result = fixture_help(mode);
         result.assert_success();
         assert!(
             !result.tag_resolutions().is_empty(),
@@ -233,7 +184,7 @@ fn standalone_renders_neither_accumulate_nor_reach_a_later_run() {
             .expect("the standalone render succeeds");
     }
 
-    let result = notes_help(OutputMode::Text);
+    let result = fixture_help(OutputMode::Text);
     result.assert_success();
 
     assert!(
@@ -450,8 +401,8 @@ fn a_discarded_nested_run_is_reported_and_distinguishable() {
 #[test]
 #[serial]
 fn the_styled_fixture_page_strips_back_to_the_plain_one() {
-    let styled = notes_help(OutputMode::Term);
-    let plain = notes_help(OutputMode::Text);
+    let styled = fixture_help(OutputMode::Term);
+    let plain = fixture_help(OutputMode::Text);
 
     assert_styling_preserves_layout(&styled, &plain);
 }
@@ -529,34 +480,50 @@ fn a_styled_page_that_lost_a_line_names_the_line_number() {
 #[test]
 #[serial]
 fn the_fixture_page_lists_no_possible_values_for_its_presence_flags() {
-    let result = notes_help(OutputMode::Text);
+    let result = fixture_help(OutputMode::Text);
 
     // Non-vacuity: the invariant is about rows that exist, so the page must
     // carry both the presence flag it exempts and a real possible-values row
     // it must not confuse with one.
-    result.assert_stdout_contains("--all");
-    result.assert_stdout_contains("possible values: text, json");
+    result.assert_stdout_contains("--staged");
+    result.assert_stdout_contains("possible values: brief, full, none");
 
-    assert_no_possible_values_for_valueless_args(&result, &notes_command());
+    assert_no_possible_values_for_valueless_args(&result, &fixture_command());
 }
 
-/// #301, reconstructed: `--all` is a `SetTrue` flag whose bool parser carries
-/// `true`/`false`, and a row that lists them tells the user to type
-/// `--all true`, which the parser rejects.
+/// #301, reconstructed: `--staged` is a `SetTrue` flag whose bool parser
+/// carries `true`/`false`, and a row that lists them tells the user to type
+/// `--staged true`, which the parser rejects.
 #[test]
 fn a_possible_values_row_on_a_presence_flag_names_the_flag() {
     let page = "\
 OPTIONS
-  --all              Include archived notes
+  --staged           Diff the staged changes
                      possible values: true, false
-  --format <FORMAT>  How to print the notes
+  --summary <STYLE>  How much of each change to describe
 ";
 
-    fails_naming("all", || {
-        assert_no_possible_values_for_valueless_args_in_page(page, &notes_command())
+    fails_naming("staged", || {
+        assert_no_possible_values_for_valueless_args_in_page(page, &fixture_command())
     });
     fails_naming("possible values: true, false", || {
-        assert_no_possible_values_for_valueless_args_in_page(page, &notes_command())
+        assert_no_possible_values_for_valueless_args_in_page(page, &fixture_command())
+    });
+}
+
+/// The fixture's *other* valueless argument: `-v` is `ArgAction::Count`, which
+/// takes no value either — an invariant that special-cased `SetTrue` would
+/// pass a page that renders a set for the counter.
+#[test]
+fn a_possible_values_row_on_a_counted_flag_names_the_flag() {
+    let page = "\
+OPTIONS
+  -v                 Raise the detail level
+                     possible values: 0, 1, 2
+";
+
+    fails_naming("verbose", || {
+        assert_no_possible_values_for_valueless_args_in_page(page, &fixture_command())
     });
 }
 
@@ -566,12 +533,12 @@ OPTIONS
 fn a_possible_values_row_on_a_valued_option_is_left_alone() {
     let page = "\
 OPTIONS
-  --all              Include archived notes
-  --format <FORMAT>  How to print the notes
-                     possible values: text, json
+  --staged           Diff the staged changes
+  --summary <STYLE>  How much of each change to describe
+                     possible values: brief, full, none
 ";
 
-    assert_no_possible_values_for_valueless_args_in_page(page, &notes_command());
+    assert_no_possible_values_for_valueless_args_in_page(page, &fixture_command());
 }
 
 // ---------------------------------------------------------------------------
@@ -581,13 +548,13 @@ OPTIONS
 #[test]
 #[serial]
 fn the_fixture_page_shows_a_metavar_for_every_valued_argument() {
-    let result = notes_help(OutputMode::Text);
+    let result = fixture_help(OutputMode::Text);
 
     // Non-vacuity: `--threshold` is the row #302 left with no hint at all, so
     // the page must actually be listing it for this assertion to mean anything.
     result.assert_stdout_contains("--threshold");
 
-    assert_metavar_for_valued_args(&result, &notes_command());
+    assert_metavar_for_valued_args(&result, &fixture_command());
 }
 
 /// #302, reconstructed: `--threshold` is a free-form ratio with no enumerable
@@ -598,19 +565,19 @@ fn the_fixture_page_shows_a_metavar_for_every_valued_argument() {
 fn a_dropped_metavar_names_the_argument_that_lost_it() {
     let page = "\
 ARGUMENTS
-  RANGE              Range of notes to act on
+  RANGE              Git range to diff, e.g. main..HEAD
 
 OPTIONS
-  --all              Include archived notes
-  --format <FORMAT>  How to print the notes
-  --threshold        Similarity threshold, from 0.0 to 1.0
+  --staged           Diff the staged changes
+  --summary <STYLE>  How much of each change to describe
+  --threshold        Move/rename similarity threshold
 ";
 
     fails_naming("threshold", || {
-        assert_metavar_for_valued_args_in_page(page, &notes_command())
+        assert_metavar_for_valued_args_in_page(page, &fixture_command())
     });
     fails_naming("RATIO", || {
-        assert_metavar_for_valued_args_in_page(page, &notes_command())
+        assert_metavar_for_valued_args_in_page(page, &fixture_command())
     });
 }
 
@@ -621,16 +588,16 @@ OPTIONS
 fn a_positional_listed_under_its_id_instead_of_its_metavar_fails() {
     let page = "\
 ARGUMENTS
-  range              Range of notes to act on
+  range              Git range to diff, e.g. main..HEAD
 
 OPTIONS
-  --all                  Include archived notes
-  --format <FORMAT>      How to print the notes
-  --threshold <RATIO>    Similarity threshold
+  --staged               Diff the staged changes
+  --summary <STYLE>      How much of each change to describe
+  --threshold <RATIO>    Move/rename similarity threshold
 ";
 
     fails_naming("RANGE", || {
-        assert_metavar_for_valued_args_in_page(page, &notes_command())
+        assert_metavar_for_valued_args_in_page(page, &fixture_command())
     });
 }
 
@@ -648,7 +615,7 @@ ARGUMENTS
   {label:<18} Range of notes to act on
 "
         );
-        assert_metavar_for_valued_args_in_page(&page, &notes_command());
+        assert_metavar_for_valued_args_in_page(&page, &fixture_command());
     }
 
     // …and the row is genuinely being read, not skipped: the same shapes filed
@@ -661,7 +628,7 @@ ARGUMENTS
 "
         );
         fails_naming("RANGE", || {
-            assert_metavar_for_valued_args_in_page(&page, &notes_command())
+            assert_metavar_for_valued_args_in_page(&page, &fixture_command())
         });
     }
 }
@@ -711,7 +678,7 @@ OPTIONS
 #[serial]
 fn the_fixture_page_aligns_every_section() {
     for mode in [OutputMode::Text, OutputMode::Term] {
-        let result = notes_help(mode);
+        let result = fixture_help(mode);
 
         // Non-vacuity: the sections whose columns are being compared have to
         // hold more than one row each, or "they all agree" says nothing.

@@ -21,6 +21,9 @@
 //! - **A positional with an explicit value name** (`RANGE`) and **a `SetTrue`
 //!   flag** (`--staged`), the pair whose rows must not look alike: a presence
 //!   flag takes no value and advertises no possible values (#301).
+//! - **A short-only `Count` flag** (`-v`), the *other* kind of valueless
+//!   argument: it carries a counter rather than a bool, so an invariant that
+//!   special-cased `SetTrue` would pass a page that renders values for it.
 //! - **A valued option with a metavar** (`--threshold <RATIO>`) and **a valued
 //!   option without one** (`--pattern`), which must still show clap's fallback
 //!   metavar (#302).
@@ -222,6 +225,12 @@ impl Downstream {
                     .help("Diff the staged changes"),
             )
             .arg(
+                Arg::new("verbose")
+                    .short('v')
+                    .action(ArgAction::Count)
+                    .help("Raise the detail level"),
+            )
+            .arg(
                 Arg::new("threshold")
                     .long("threshold")
                     .value_name("RATIO")
@@ -363,6 +372,10 @@ mod tests {
         assert!(
             matches!(arg("staged").get_action(), ArgAction::SetTrue),
             "the presence flag is what must not render a value"
+        );
+        assert!(
+            matches!(arg("verbose").get_action(), ArgAction::Count),
+            "the counted flag is the valueless argument that is not SetTrue"
         );
 
         assert_eq!(

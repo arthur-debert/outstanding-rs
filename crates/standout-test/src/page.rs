@@ -15,7 +15,7 @@
 //! expectations against clap's formatter to prove they are clap's facts and
 //! not standout's habits.
 
-use clap::{Arg, Command};
+use clap::{Arg, ArgAction, Command};
 
 /// One rendered row: its label, its description, the continuation lines filed
 /// under it, and the section it sits in.
@@ -51,20 +51,33 @@ impl<'a> Row<'a> {
         normalize(&self.block().copied().collect::<Vec<_>>().join(" "))
     }
 
-    /// The block's lines that carry `label` (`default`, `possible values`),
-    /// with everything up to and including the label dropped.
+    /// The values the row states under `label` (`default:`), decoded under
+    /// the grammar the stating line is written in.
     ///
     /// A fact like a default value is stated *under a label* on both pages —
-    /// `default: brief` and `[default: brief]` — so matching the value inside
-    /// the labelled remainder is what separates "the row says this is the
-    /// default" from "the word `brief` appears somewhere in the row".
-    pub(crate) fn labelled(&self, label: &str) -> Vec<String> {
-        self.block()
-            .filter_map(|line| {
-                let offset = find_label(line, label)?;
-                Some(line[offset + label.len()..].to_string())
-            })
-            .collect()
+    /// standout's `default: brief` and clap's `[default: brief]` — so reading
+    /// the labelled clause is what separates "the row says this is the
+    /// default" from "the word `brief` appears somewhere in the row". And the
+    /// same bytes mean different values under the two grammars: clap quotes a
+    /// value that is empty or carries whitespace, while standout comma-joins
+    /// and never quotes, so a value's whitespace is part of its name. The
+    /// bracket the label sits in is what says whose grammar the clause is,
+    /// as in [`Row::possible_value_names`]; `joint` says how clap joins this
+    /// label's list — a defaults clause is space-joined — which is the
+    /// caller's knowledge because the label and its joint go together.
+    pub(crate) fn labelled_values(&self, label: &str, joint: ClapJoint) -> Vec<String> {
+        let mut values = Vec::new();
+        for line in self.block() {
+            if let Some(offset) = find_label(line, label) {
+                let remainder = &line[offset + label.len()..];
+                if line[..offset].trim_end().ends_with('[') {
+                    values.extend(list_values(value_clause(remainder), joint));
+                } else {
+                    values.extend(comma_values(remainder));
+                }
+            }
+        }
+        values
     }
 
     /// The value names the row's possible-values list states, however the
@@ -93,7 +106,7 @@ impl<'a> Row<'a> {
                 in_region = true;
                 let remainder = &line[offset + LABEL.len()..];
                 if line[..offset].trim_end().ends_with('[') {
-                    names.extend(list_values(value_clause(remainder)));
+                    names.extend(list_values(value_clause(remainder), ClapJoint::CommaSpace));
                 } else {
                     names.extend(comma_values(remainder));
                 }
@@ -147,15 +160,18 @@ fn find_label(line: &str, label: &str) -> Option<usize> {
 /// clap quotes a value that needs it, so `[default: "[notes.txt]"]` is a
 /// one-value clause whose brackets belong to the value, not to the clause.
 ///
-/// Quotes only open at the start of a value token. Clap quotes a value only
-/// when it is empty or carries whitespace, so a mid-word `"` is a literal
-/// character of an unquoted value — `[default: foo"bar]` — and reading it as
-/// an opening quote would swallow the `]` that ends the clause.
+/// Quotes only open where clap can have opened one. Clap quotes a value only
+/// when it is empty or carries whitespace, and its separators always put a
+/// space before a quoted value, so a `"` reads as clap's quoting only after
+/// whitespace: a mid-word `"` is a literal character of an unquoted value
+/// (`[default: foo"bar]`), and so is one directly after a comma (`a,"b` is
+/// one value — a separator comma is always followed by a space). Reading
+/// either as an opening quote would swallow the `]` that ends the clause.
 pub(crate) fn value_clause(remainder: &str) -> &str {
     let mut in_quotes = false;
     let mut escaped = false;
-    // Whether the next character sits at the start of a value token — the
-    // only place a `"` reads as clap's quoting.
+    // Whether the next character sits where a value can start — the only
+    // place a `"` reads as clap's quoting.
     let mut word_start = true;
     for (index, c) in remainder.char_indices() {
         if in_quotes {
@@ -171,7 +187,7 @@ pub(crate) fn value_clause(remainder: &str) -> &str {
         } else if c == ']' {
             return &remainder[..index];
         }
-        word_start = !in_quotes && (c.is_whitespace() || c == ',');
+        word_start = !in_quotes && c.is_whitespace();
     }
     remainder
 }
@@ -190,32 +206,50 @@ pub(crate) fn comma_values(clause: &str) -> Vec<String> {
         .collect()
 }
 
+/// The joint one of *clap's* list clauses is written with, which decides what
+/// a bare `,` means.
+///
+/// Clap joins a defaults list with a space (`[default: "plain text" b]`) and
+/// a possible-values clause with `", "`. Under the space joint every comma is
+/// a value's own character (`[default: a,b]` is one value). Under the
+/// comma-space joint a `,` directly followed by whitespace is the separator
+/// and any other comma belongs to the value — `a,b` is one value and `a,, b`
+/// is `a,` then `b` — because clap would have quoted any value carrying the
+/// whitespace half of the separator. The label a clause is stated under says
+/// which joint clap wrote it with, so the caller passes it.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(crate) enum ClapJoint {
+    /// A space-joined list: clap's defaults clause.
+    Spaces,
+    /// A `", "`-joined list: clap's possible-values clause.
+    CommaSpace,
+}
+
 /// The values one of *clap's* list clauses states, with its quoting undone.
 ///
-/// Clap separates values with `, ` in a possible-values clause and a bare
-/// space in a defaults list, so both separators split here — which is safe
-/// precisely because clap wraps a value in Rust-debug quotes when it is empty
-/// or carries either (`[default: "plain text"]`). Those are the *only* values
-/// clap quotes, so a `"` opens a quoted value only at the start of a token; a
-/// mid-word `"` is a literal character of an unquoted value (`foo"bar`), not a
-/// quote to enter. Standout's lists never quote, so they must decode through
+/// Whitespace always separates — clap wraps a value in Rust-debug quotes
+/// (`format!("{:?}")`) when it is empty or carries whitespace
+/// (`[default: "plain text"]`), so bare whitespace is never a value's own —
+/// and `joint` says what a comma means. Quoting is undone exactly, escapes
+/// included: `"line\nbreak"` decodes back to the newline it renders, not to
+/// the letter `n`. Those are the *only* values clap quotes, so a `"` opens a
+/// quoted value only at the start of a token; a mid-word `"` is a literal
+/// character of an unquoted value (`foo"bar`), not a quote to enter.
+/// Standout's lists never quote, so they must decode through
 /// [`comma_values`] instead: this decoder would shear `plain text` apart at
 /// its space.
-pub(crate) fn list_values(clause: &str) -> Vec<String> {
+pub(crate) fn list_values(clause: &str, joint: ClapJoint) -> Vec<String> {
     let mut values = Vec::new();
     let mut current = String::new();
     // Whether `current` came from quotes: a quoted value may be empty, and
     // clap quotes an empty value for exactly that reason.
     let mut quoted = false;
     let mut in_quotes = false;
-    let mut escaped = false;
-    for c in clause.chars() {
+    let mut chars = clause.chars().peekable();
+    while let Some(c) = chars.next() {
         if in_quotes {
-            if escaped {
-                current.push(c);
-                escaped = false;
-            } else if c == '\\' {
-                escaped = true;
+            if c == '\\' {
+                current.push(unescape(&mut chars));
             } else if c == '"' {
                 in_quotes = false;
             } else {
@@ -224,7 +258,11 @@ pub(crate) fn list_values(clause: &str) -> Vec<String> {
         } else if c == '"' && current.is_empty() && !quoted {
             in_quotes = true;
             quoted = true;
-        } else if c == ',' || c.is_whitespace() {
+        } else if c.is_whitespace()
+            || (c == ','
+                && joint == ClapJoint::CommaSpace
+                && chars.peek().is_some_and(|next| next.is_whitespace()))
+        {
             if !current.is_empty() || quoted {
                 values.push(std::mem::take(&mut current));
                 quoted = false;
@@ -237,6 +275,39 @@ pub(crate) fn list_values(clause: &str) -> Vec<String> {
         values.push(current);
     }
     values
+}
+
+/// Reverses one character of the Rust-debug escaping clap quotes with: the
+/// named escapes (`\n`, `\r`, `\t`, `\0`), the self-escapes (`\"`, `\\`),
+/// and the `\u{…}` spelling Debug gives every other control or non-printable
+/// character. Called with the iterator sitting just past the backslash.
+fn unescape(chars: &mut std::iter::Peekable<std::str::Chars>) -> char {
+    match chars.next() {
+        Some('n') => '\n',
+        Some('r') => '\r',
+        Some('t') => '\t',
+        Some('0') => '\0',
+        Some('u') => {
+            let mut hex = String::new();
+            for c in chars.by_ref() {
+                match c {
+                    '{' => {}
+                    '}' => break,
+                    c => hex.push(c),
+                }
+            }
+            u32::from_str_radix(&hex, 16)
+                .ok()
+                .and_then(char::from_u32)
+                // Debug formatting cannot produce a malformed `\u{…}`; the
+                // replacement character keeps a misread visible in the
+                // failing equality rather than panicking the parser.
+                .unwrap_or(char::REPLACEMENT_CHARACTER)
+        }
+        // `\"` and `\\` decode to the character behind the backslash.
+        Some(other) => other,
+        None => '\\',
+    }
 }
 
 /// Parses every two-column row on the page, with its continuation lines.
@@ -367,7 +438,7 @@ pub(crate) fn find_row<'a>(rows: &'a [Row<'a>], arg: &Arg) -> Option<&'a Row<'a>
     rows.iter().find(|row| {
         flag_spellings(arg)
             .iter()
-            .any(|spelling| contains_token(row.label, spelling))
+            .any(|spelling| contains_flag_token(row.label, spelling, arg))
     })
 }
 
@@ -390,10 +461,29 @@ pub(crate) fn flag_spellings(arg: &Arg) -> Vec<String> {
 /// Whether `haystack` contains `token` delimited by whitespace, a comma, or
 /// the punctuation a formatter wraps a value in — so `--all` does not match
 /// the row for `--all-files`, and `[aliases: -t, --thr]` yields `--thr`.
+///
+/// The comparison is exact: this matcher is shared by subcommand names,
+/// aliases, and flag spellings, so it must not read anything extra off a
+/// word — prose ending in `go...` does not state a name `go`. The one
+/// formatter decoration a spelling can wear, clap's repetition ellipsis on a
+/// counted flag, is accepted only by [`contains_flag_token`], where the
+/// caller knows the argument that earns it.
 pub(crate) fn contains_token(haystack: &str, token: &str) -> bool {
     haystack
         .split(|c: char| c.is_whitespace() || matches!(c, ',' | '[' | ']' | '<' | '>' | '='))
         .any(|word| word == token)
+}
+
+/// Whether `haystack` lists `spelling` as a flag of `arg`: the exact token,
+/// or — only for a counted argument — the token wearing clap's repetition
+/// ellipsis, which spells a counted flag `-v...` to state its arity, not its
+/// name. Gating the ellipsis on `ArgAction::Count` keeps it from satisfying
+/// anything else: a missing alias `go` must not be answered by prose that
+/// happens to end in `go...`.
+pub(crate) fn contains_flag_token(haystack: &str, spelling: &str, arg: &Arg) -> bool {
+    contains_token(haystack, spelling)
+        || (matches!(arg.get_action(), ArgAction::Count)
+            && contains_token(haystack, &format!("{spelling}...")))
 }
 
 /// The arguments a help page is expected to render.
@@ -532,7 +622,38 @@ Options:
             "Notes file to read [default: notes.txt]",
             "the block reads as one line whichever way it was wrapped"
         );
-        assert_eq!(file.labelled("default"), [": notes.txt]"]);
+        assert_eq!(
+            file.labelled_values("default:", ClapJoint::Spaces),
+            ["notes.txt"]
+        );
+    }
+
+    /// The labelled decode follows the line's grammar: clap's bracketed
+    /// clause space-joins and quotes, standout's unbracketed one is a raw
+    /// comma list whose values keep their whitespace — and their brackets.
+    #[test]
+    fn labelled_values_decodes_under_the_stating_lines_grammar() {
+        const CLAP: &str = "\
+Options:
+  -f, --file <PATH>
+          Notes file to read
+
+          [default: \"plain text\" json]
+";
+        assert_eq!(
+            rows(CLAP)[0].labelled_values("default:", ClapJoint::Spaces),
+            ["plain text", "json"]
+        );
+
+        const STANDOUT: &str = "\
+OPTIONS
+  -f, --file <PATH>  Notes file to read
+                     default: [a b]
+";
+        assert_eq!(
+            rows(STANDOUT)[0].labelled_values("default:", ClapJoint::Spaces),
+            ["[a b]"]
+        );
     }
 
     /// Clap indents a short-only flag by two and a long-only flag by six;
@@ -566,16 +687,52 @@ OPTIONS
   --file <PATH>  İİİİ file İİ Default: notes.txt
 ";
         let rows = rows(PAGE);
-        assert_eq!(rows[0].labelled("default:"), [" notes.txt"]);
+        assert_eq!(
+            rows[0].labelled_values("default:", ClapJoint::Spaces),
+            ["notes.txt"]
+        );
     }
 
     #[test]
     fn list_values_undoes_claps_quoting() {
-        assert_eq!(list_values(" brief, full, none"), ["brief", "full", "none"]);
-        assert_eq!(list_values(" \"plain text\", json"), ["plain text", "json"]);
-        assert_eq!(list_values(" \"a b\" c"), ["a b", "c"]);
-        assert_eq!(list_values("\"\""), [""]);
-        assert_eq!(list_values(" \"say \\\"hi\\\"\""), ["say \"hi\""]);
+        assert_eq!(
+            list_values(" brief, full, none", ClapJoint::CommaSpace),
+            ["brief", "full", "none"]
+        );
+        assert_eq!(
+            list_values(" \"plain text\", json", ClapJoint::CommaSpace),
+            ["plain text", "json"]
+        );
+        assert_eq!(list_values(" \"a b\" c", ClapJoint::Spaces), ["a b", "c"]);
+        assert_eq!(list_values("\"\"", ClapJoint::Spaces), [""]);
+        assert_eq!(
+            list_values(" \"say \\\"hi\\\"\"", ClapJoint::Spaces),
+            ["say \"hi\""]
+        );
+    }
+
+    /// Clap quotes with Rust-debug formatting, so the escapes it writes are
+    /// exactly Debug's: the named ones, the self-escapes, and `\u{…}` for
+    /// every other control character. Each decodes back to the character it
+    /// renders — `\n` is a newline, not the letter `n`.
+    #[test]
+    fn list_values_undoes_claps_debug_escapes() {
+        assert_eq!(
+            list_values(" \"line\\nbreak\" \"tab\\tstop\"", ClapJoint::Spaces),
+            ["line\nbreak", "tab\tstop"]
+        );
+        assert_eq!(
+            list_values(" \"back\\\\slash here\"", ClapJoint::Spaces),
+            ["back\\slash here"]
+        );
+        assert_eq!(
+            list_values(" \"esc \\u{1b}del\\u{7f}\"", ClapJoint::Spaces),
+            ["esc \u{1b}del\u{7f}"]
+        );
+        assert_eq!(
+            list_values(" \"cr\\r\\0end\"", ClapJoint::Spaces),
+            ["cr\r\0end"]
+        );
     }
 
     /// Clap quotes only a value that is empty or carries whitespace, so a
@@ -583,7 +740,31 @@ OPTIONS
     /// to enter, which would swallow the separators after it.
     #[test]
     fn list_values_keeps_a_mid_word_quote_literal() {
-        assert_eq!(list_values(" foo\"bar, json"), ["foo\"bar", "json"]);
+        assert_eq!(
+            list_values(" foo\"bar, json", ClapJoint::CommaSpace),
+            ["foo\"bar", "json"]
+        );
+    }
+
+    /// The joint decides what a bare comma means. A `", "`-joined clause
+    /// separates only at comma-then-whitespace, so `a,b` is one value and a
+    /// trailing comma is a value's own (`a,, b` is `a,` then `b`); a
+    /// space-joined defaults clause never separates at a comma at all.
+    #[test]
+    fn list_values_reads_a_bare_comma_by_the_joint() {
+        assert_eq!(
+            list_values(" a,b, other", ClapJoint::CommaSpace),
+            ["a,b", "other"]
+        );
+        assert_eq!(
+            list_values(" a,, other", ClapJoint::CommaSpace),
+            ["a,", "other"]
+        );
+        assert_eq!(
+            list_values(" other, a,", ClapJoint::CommaSpace),
+            ["other", "a,"]
+        );
+        assert_eq!(list_values(" a,b c,", ClapJoint::Spaces), ["a,b", "c,"]);
     }
 
     /// Standout never quotes, so its commas are the only separators and a
@@ -608,10 +789,13 @@ OPTIONS
 
     /// A mid-word `"` belongs to an unquoted value — clap quotes only a value
     /// that is empty or carries whitespace — so it must not open quote mode
-    /// and swallow the `]` that ends the clause.
+    /// and swallow the `]` that ends the clause. Neither must a `"` directly
+    /// after a comma: clap's separators always put a space before a quoted
+    /// value, so `a,"b` is an unquoted value's own characters.
     #[test]
     fn value_clause_treats_a_mid_word_quote_as_literal() {
         assert_eq!(value_clause(" foo\"bar] [aliases: -t]"), " foo\"bar");
+        assert_eq!(value_clause(" a,\"b] [aliases: -t]"), " a,\"b");
     }
 
     /// Clap's long-help region: a heading, one bullet per value — named up to
@@ -695,5 +879,33 @@ Options:
             !contains_token("--threshold <RATIO>", "-t"),
             "a short alias must not be found inside a long flag's spelling"
         );
+    }
+
+    /// The shared matcher is exact: an ellipsis-wearing word states nothing
+    /// shorter than itself, so prose, a subcommand name, or an alias spelled
+    /// `go...` never answers for a missing `go`.
+    #[test]
+    fn token_matching_does_not_read_through_an_ellipsis() {
+        assert!(!contains_token("go...", "go"));
+        assert!(!contains_token("try `go...` to continue", "go"));
+        assert!(!contains_token("[aliases: go...]", "go"));
+    }
+
+    /// Only a counted flag earns the ellipsis read: clap spells its row
+    /// `-v...`, and the marker is about arity, not part of the spelling. Any
+    /// other argument's match stays exact.
+    #[test]
+    fn only_a_counted_flag_matches_through_its_ellipsis() {
+        let counted = Arg::new("verbose").short('v').action(ArgAction::Count);
+        assert!(contains_flag_token("-v...", "-v", &counted));
+        assert!(contains_flag_token("-v", "-v", &counted));
+        assert!(
+            !contains_flag_token("-v...", "-w", &counted),
+            "the word behind the ellipsis still has to be the spelling"
+        );
+
+        let plain = Arg::new("verbose").short('v').action(ArgAction::SetTrue);
+        assert!(contains_flag_token("-v", "-v", &plain));
+        assert!(!contains_flag_token("-v...", "-v", &plain));
     }
 }

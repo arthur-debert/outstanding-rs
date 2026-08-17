@@ -19,6 +19,7 @@ ARGUMENTS
 
 OPTIONS
   --staged                   Diff the staged changes
+  -v                         Raise the detail level
   --threshold <RATIO>        Move/rename similarity threshold
   -c, --color <BOOL>         Enable ANSI color
                              possible values: true, false

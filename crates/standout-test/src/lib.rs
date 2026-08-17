@@ -123,6 +123,8 @@ use standout_render::{
 use tempfile::TempDir;
 
 pub mod clap_parity;
+#[cfg(test)]
+mod decoder_roundtrip;
 pub mod invariants;
 mod matrix;
 mod page;

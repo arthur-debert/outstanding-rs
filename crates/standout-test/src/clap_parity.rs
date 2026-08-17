@@ -53,8 +53,8 @@ use clap::{Arg, Command};
 use standout::cli::HelpLength;
 
 use crate::page::{
-    candidate_metavars, comma_values, contains_token, declared_metavars, find_row, flag_spellings,
-    list_values, metavar_text, normalize, rows, takes_values, value_clause, value_placeholders,
+    candidate_metavars, contains_flag_token, contains_token, declared_metavars, find_row,
+    flag_spellings, metavar_text, normalize, rows, takes_values, value_placeholders, ClapJoint,
     Row,
 };
 use crate::TestResult;
@@ -689,10 +689,12 @@ fn argument_check(fact: &Fact, built: &Command, rows: &[Row<'_>]) -> Result<(), 
 
     // A spelling is what identifies a row, so it is checked against every
     // row's label rather than through the row lookup it would otherwise be
-    // assumed by.
+    // assumed by. The flag-aware match lets a counted flag's label wear
+    // clap's repetition ellipsis (`-v...`) without loosening any other
+    // argument's comparison.
     if fact.kind == FactKind::ArgSpelling {
         let listed = rows.iter().any(|row| {
-            contains_token(row.label, &fact.expected)
+            contains_flag_token(row.label, &fact.expected, arg)
                 || row
                     .label
                     .split_whitespace()
@@ -739,21 +741,27 @@ fn argument_check(fact: &Fact, built: &Command, rows: &[Row<'_>]) -> Result<(), 
                 &format!("the row reads {text:?}"),
             )
         }
-        FactKind::ArgDefault => labelled(row, "default:", fact, |line| {
-            // The clause is compared whole and value by value under both
-            // grammars: whole because standout does not quote a default that
-            // carries whitespace, by `list_values` because clap space-joins a
-            // defaults list and quotes the values that need it, by
-            // `comma_values` because standout comma-joins its list and quotes
-            // nothing — there `plain text, json` is two values, and the
-            // quote-aware split would shear the first apart. Every reading is
-            // bounded by whole values, so a page that states `briefly` still
-            // does not state `brief`.
-            let clause = value_clause(line);
-            clause.trim() == fact.expected
-                || list_values(clause).contains(&fact.expected)
-                || comma_values(clause).contains(&fact.expected)
-        }),
+        FactKind::ArgDefault => {
+            // The row's stated defaults, decoded under the grammar of the line
+            // that states them — [`Row::labelled_values`] dispatches on the
+            // bracket, so clap's quoting is undone on clap's clause and
+            // standout's unquoted comma list is read by its commas. The decode
+            // is bounded by whole values, so a page that states `briefly`
+            // still does not state `brief`.
+            let stated = row.labelled_values("default:", ClapJoint::Spaces);
+            present(
+                stated.contains(&fact.expected),
+                fact,
+                &if stated.is_empty() {
+                    format!(
+                        "the row states no `default:` at all: {:?}",
+                        row.block_text()
+                    )
+                } else {
+                    format!("the row's stated default(s) are {stated:?}")
+                },
+            )
+        }
         FactKind::ArgPossibleValue => {
             let names = row.possible_value_names();
             present(
@@ -776,34 +784,6 @@ fn argument_check(fact: &Fact, built: &Command, rows: &[Row<'_>]) -> Result<(), 
         ),
         kind => Err(format!("no check is defined for {}", kind.label())),
     }
-}
-
-/// Checks a fact stated under a label in the row's block (`default: brief`,
-/// `[default: notes.txt]`).
-///
-/// Reading the labelled remainder rather than the whole row is what keeps the
-/// check honest in both directions: it cannot pass because the word appears in
-/// the description, and it cannot fail because the page spells its label
-/// differently from clap's `[default: …]`. The label carries its colon for the
-/// same reason — a description that says "the default profile" is prose about
-/// a default, not the row stating one.
-fn labelled(
-    row: &Row<'_>,
-    label: &str,
-    fact: &Fact,
-    matches: impl Fn(&str) -> bool,
-) -> Result<(), String> {
-    let lines = row.labelled(label);
-    let found = lines.iter().any(|line| matches(line));
-    present(
-        found,
-        fact,
-        &if lines.is_empty() {
-            format!("the row states no `{label}` at all: {:?}", row.block_text())
-        } else {
-            format!("the row's `{label}` reads {lines:?}")
-        },
-    )
 }
 
 /// Turns a boolean observation into a result, respecting the fact's polarity.
