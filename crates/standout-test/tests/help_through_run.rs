@@ -61,11 +61,10 @@ fn the_help_word_renders_themed_help_through_run() {
 #[serial]
 fn downstream_theme_help_preserves_option_cues_through_run() {
     let fixture = downstream().build();
-    let result = TestHarness::new().is_tty().with_color().run(
-        fixture.app(),
-        fixture.command(),
-        ["lookma", "help"],
-    );
+    let result =
+        TestHarness::new()
+            .with_color()
+            .run(fixture.app(), fixture.command(), ["lookma", "help"]);
 
     result.assert_success();
     assert_eq!(result.success_kind(), Some(SuccessKind::ClapHelp));
