@@ -328,6 +328,36 @@ If your app renamed the flag via `AppBuilder::output_flag(Some("format"))`, tell
 .output_flag_name("format")
 ```
 
+### 4.8 Invariant assertions
+
+`assert_stdout_contains("default: auto")` is an *existential* claim: this string
+is somewhere on the page. Most rendering defects are not that shape. They are
+universals ("every value-taking option shows a metavar") and negatives ("no
+presence flag lists possible values") — and a list of strings that should be
+present says nothing about a wrong line rendered beside them.
+
+`standout_test::invariants` holds those as reusable assertions, each naming the
+offending element when it fails:
+
+```rust
+use standout_test::invariants::*;
+
+let page = TestHarness::new().text_output().run(&app, cmd(), ["notes", "--help"]);
+
+assert_every_tag_resolved(&page);                        // the theme defines every tag rendered
+assert_no_unresolved_tag_markers(&page);                 // no `[tag?]` reached the page
+assert_metavar_for_valued_args(&page, &cmd());           // clap's metadata is the oracle
+assert_no_possible_values_for_valueless_args(&page, &cmd());
+assert_descriptions_aligned(&page);                      // every section's column, not two rows by hand
+```
+
+`assert_every_tag_resolved` reads structured data — `TestResult::tag_resolutions()`,
+what each style-tag pass could not resolve — so it holds in every output mode
+and names the tag. The `[tag?]` marker only appears in `Term`, so the two
+assertions catch the same defect from different directions and both are worth
+running. Each assertion also has an `*_in_page` form taking the rendered page
+directly, for asserting on a page the harness did not produce.
+
 ### Intermezzo B: A full-pipeline test, in-process
 
 **What you achieved:** Your integration tests run in the same process, in microseconds, with complete environment control.
@@ -522,6 +552,8 @@ result.binary();                        // Option<(&[u8], &str)> for Binary
 result.exit_status();                   // Option<ExitStatus>; None for NoMatch
 result.success_kind();                  // command / Clap help / Clap version
 result.error_kind();                    // typed failure origin
+result.tag_resolutions();               // what each style-tag pass resolved
+result.unresolved_tag_names();          // the tags the theme did not define
 ```
 
 The harness captures the pipeline before the real stdout/stderr write. Use it

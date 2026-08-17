@@ -493,6 +493,12 @@ impl AppBuilder {
         let theme = self.theme.as_ref().unwrap_or(&default_theme);
         standout_render::warnings::flush_to_stderr(theme, OutputMode::Auto);
 
+        // Ends this run's batch of render diagnostics. Nothing prints them —
+        // the framework does not react to an unresolved tag — but closing the
+        // batch here keeps a long-lived embedding's collector bounded by one
+        // run, exactly as the warning collector is.
+        standout_render::diagnostics::capture_for_run();
+
         let status = final_write_failure
             .as_ref()
             .map(RunError::exit_status)
@@ -550,6 +556,7 @@ impl AppBuilder {
     {
         let result = self.dispatch_from(cmd, args);
         standout_render::warnings::capture_warnings_for_run();
+        standout_render::diagnostics::capture_for_run();
         result
     }
 

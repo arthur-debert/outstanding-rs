@@ -82,7 +82,7 @@ impl AppBuilder {
         data: &T,
         mode: OutputMode,
     ) -> Result<String, SetupError> {
-        use standout_bbparser::{BBParser, TagTransform, UnknownTagBehavior};
+        use standout_bbparser::{TagTransform, UnknownTagBehavior};
 
         let color_mode = detect_color_mode();
         let theme = self.theme.clone().unwrap_or_default();
@@ -137,10 +137,12 @@ impl AppBuilder {
             OutputMode::TermDebug => TagTransform::Keep,
             _ => TagTransform::Remove,
         };
-        let resolved_styles = styles.to_resolved_map();
-        let parser = BBParser::new(resolved_styles, transform)
-            .unknown_behavior(UnknownTagBehavior::Passthrough);
-        let final_output = parser.parse(&minijinja_output);
+        let final_output = standout_render::diagnostics::resolve_tags(
+            &minijinja_output,
+            styles.to_resolved_map(),
+            transform,
+            UnknownTagBehavior::Passthrough,
+        );
 
         Ok(final_output)
     }

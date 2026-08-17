@@ -34,7 +34,7 @@ use std::collections::HashMap;
 use std::path::Path;
 
 use serde::Serialize;
-use standout_bbparser::{BBParser, TagTransform, UnknownTagBehavior};
+use standout_bbparser::{TagTransform, UnknownTagBehavior};
 
 use super::engine::{MiniJinjaEngine, TemplateEngine};
 use super::registry::{walk_template_dir, ResolvedTemplate, TemplateRegistry};
@@ -539,6 +539,9 @@ impl Renderer {
     }
 
     /// Applies BBParser style tag post-processing.
+    ///
+    /// The pass runs through [`crate::diagnostics::resolve_tags`]: same bytes,
+    /// plus a record of the tags this renderer's theme could not resolve.
     fn apply_style_tags(&self, output: &str) -> String {
         let transform = match self.output_mode {
             OutputMode::Auto => {
@@ -556,10 +559,12 @@ impl Renderer {
             }
         };
 
-        let resolved_styles = self.styles.to_resolved_map();
-        let parser = BBParser::new(resolved_styles, transform)
-            .unknown_behavior(UnknownTagBehavior::Passthrough);
-        parser.parse(output)
+        crate::diagnostics::resolve_tags(
+            output,
+            self.styles.to_resolved_map(),
+            transform,
+            UnknownTagBehavior::Passthrough,
+        )
     }
 
     /// Gets template content, re-reading from disk in debug mode.
