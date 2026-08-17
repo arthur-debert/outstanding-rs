@@ -167,9 +167,9 @@ impl TestHarness {
     /// see it.
     ///
     /// This does **not** reach variables a dependency read before the run
-    /// started. `console` initializes its color global lazily from `CLICOLOR`
-    /// / `CLICOLOR_FORCE`, and the harness latches that global before applying
-    /// this map (see [`with_color`](Self::with_color)); `NO_COLOR` and
+    /// started. `console` initializes its color globals lazily from `CLICOLOR`
+    /// / `CLICOLOR_FORCE`, and **every** run latches them before applying this
+    /// map (see [`with_color`](Self::with_color)); `NO_COLOR` and
     /// `TERM=dumb` land the same way. Setting them here changes what handler
     /// code reads, not what `console` decided — pin those conventions with
     /// [`run_process`](Self::run_process), where the child does its own
@@ -233,11 +233,14 @@ impl TestHarness {
     ///
     /// # The harness owns gate 2, so in-process env cannot reach it
     ///
-    /// `console` initializes its process-global lazily, on the first *read*,
-    /// from `CLICOLOR` / `CLICOLOR_FORCE`. The harness captures that global
-    /// before applying [`env`](Self::env) / [`env_remove`](Self::env_remove),
-    /// so the value it restores on drop is the real pre-test baseline rather
-    /// than one this run's own environment just latched.
+    /// `console` initializes its process-globals lazily, on the first *read*,
+    /// from `CLICOLOR` / `CLICOLOR_FORCE` (and `COLORTERM`, for the true-color
+    /// pair). **Every** run reads them before applying [`env`](Self::env) /
+    /// [`env_remove`](Self::env_remove) — including runs that set no color
+    /// knob, since the first read in a binary can just as easily come from
+    /// app code under test — so the one initialization is always spent on the
+    /// real environment. A run that also *writes* the switch restores the
+    /// pre-run value on drop.
     ///
     /// The consequence: by the time a run applies environment variables,
     /// `console` has already initialized, and a test's `.env("CLICOLOR_FORCE",
@@ -423,16 +426,33 @@ impl TestHarness {
         // it can overwrite any of them.
         let mut restore = RestoreState::default();
 
-        // `console::colors_enabled()` initializes its process-global lazily,
-        // on the first *read* in the process, from `CLICOLOR` /
-        // `CLICOLOR_FORCE`. Reading it after step 2 applied this run's `.env`
-        // overrides would therefore latch a value this run itself caused —
-        // `.env("CLICOLOR_FORCE", "1")` would record `true` — and Drop would
-        // write that harness-made value back permanently, leaving later tests
-        // in the binary emitting ANSI without asking for it. Reading it here
-        // latches the value the real environment implies.
+        // `console`'s four color decisions are process-globals that
+        // initialize *lazily*, on the first read in the process, from the
+        // environment (`CLICOLOR` / `CLICOLOR_FORCE` for the color switches,
+        // `COLORTERM` by way of `Term::features()` for the true-color ones).
+        // Whichever run causes that first read decides them for the whole
+        // test binary — so a read taken after step 2 installed this run's
+        // `.env` overrides would latch a value this run itself caused
+        // (`.env("CLICOLOR_FORCE", "1")` latching `true`) for every later
+        // test. Reading them all here, before any override exists, spends the
+        // one initialization on the real environment.
+        //
+        // Unconditional on purpose: the first read need not be the harness's.
+        // A run with no color knob at all still installs `.env`, and any code
+        // it runs that styles output reads these globals — so gating this on
+        // `color_capable` would leave exactly that case initializing `console`
+        // from the harness's temporary environment, with nothing recorded to
+        // restore.
+        let ambient_console_colors = console::colors_enabled();
+        let _ = console::colors_enabled_stderr();
+        let _ = console::true_colors_enabled();
+        let _ = console::true_colors_enabled_stderr();
+
+        // Only the stdout switch is ever written (step 3, by `with_color` /
+        // `no_color`), so it is the only one with anything to restore. The
+        // other three are initialized above and then left alone.
         if self.color_capable.is_some() {
-            restore.console_colors = Some(console::colors_enabled());
+            restore.console_colors = Some(ambient_console_colors);
         }
 
         // 1. Materialize fixtures + cwd.
@@ -695,11 +715,13 @@ struct RestoreState {
     original_cwd: Option<PathBuf>,
     reset_env_detectors: bool,
     /// `console`'s process-global color switch as it read *before* `run()`
-    /// applied any of this run's overrides, when the run overrode it — read
-    /// that early because the switch initializes lazily from the environment
-    /// the run is about to change. Restoring writes the *value* back — the
-    /// switch has no "return to auto-detection" setter — which in a test
-    /// process is the same thing, since detection there is a constant.
+    /// applied any of this run's overrides — read that early, on every run,
+    /// because the switch initializes lazily from the environment the run is
+    /// about to change. Recorded here only when the run also *writes* the
+    /// switch (`with_color` / `no_color`); a run that merely forced the
+    /// initialization has nothing to put back. Restoring writes the *value*
+    /// back — the switch has no "return to auto-detection" setter — which in
+    /// a test process is the same thing, since detection there is a constant.
     console_colors: Option<bool>,
     reset_stdin: bool,
     reset_clipboard: bool,

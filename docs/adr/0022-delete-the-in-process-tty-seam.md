@@ -75,13 +75,23 @@ Opening gate 2 forces a decision about *when* the harness reads `console`'s
 switch, and the answer constrains what an in-process test can measure at all.
 
 `console::colors_enabled()` initializes its process-global lazily, on the first
-*read* in the process, from `CLICOLOR` / `CLICOLOR_FORCE`. The harness captures
-the pre-run value before applying `env_set` / `env_remove`, because capturing
-after would read a global that this run's own `.env("CLICOLOR_FORCE", "1")` had
-just latched, and the value restored on drop would be the harness's own
-invention rather than the real baseline.
+*read* in the process, from `CLICOLOR` / `CLICOLOR_FORCE`. The harness reads it
+before applying `env_set` / `env_remove`, because reading after would take a
+global that this run's own `.env("CLICOLOR_FORCE", "1")` had just latched, and
+the value restored on drop would be the harness's own invention rather than the
+real baseline.
 
-Capturing early necessarily *forces* that lazy initialization under the
+That read happens on **every** run, not only on runs that override the switch.
+The first read in a binary need not be the harness's: app code under test that
+styles anything reads the same global, and it runs with the harness's temporary
+environment installed — so a knobless run would latch `CLICOLOR_FORCE=1` from
+an environment that exists for one run, with nothing recorded to put back. The
+same holds for `console`'s other three color globals (stderr, and the two
+true-color ones, which initialize from `COLORTERM` by way of `Term::features()`),
+so all four are read up front. Only the stdout switch is ever *written*
+(`with_color()` / `no_color()`), so it is the only one with a value to restore.
+
+Reading early necessarily *forces* that lazy initialization under the
 pre-test environment. That is the correct baseline, and it has a consequence
 worth stating plainly: **a test's in-process `.env()` can no longer reach
 `console`'s initialization.** By the time the run applies environment

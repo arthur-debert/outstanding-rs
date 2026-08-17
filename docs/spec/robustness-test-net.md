@@ -227,6 +227,6 @@ for its one named future consumer, which had already routed around it), how ANSI
 assertions became possible in-process anyway (`with_color()` now opens `console`'s color
 gate as well as Standout's), and why the epic's tag-resolution invariants never depended on
 the outcome. It also records the constraint that follows for the environment-conventions
-goal above: the harness latches `console`'s color global before a run's `.env()` is
-applied, so `NO_COLOR` / `TERM=dumb` / `CLICOLOR_FORCE` are only observable through
+goal above: every in-process run latches `console`'s color globals before its `.env()`
+is applied, so `NO_COLOR` / `TERM=dumb` / `CLICOLOR_FORCE` are only observable through
 `run_process()`.

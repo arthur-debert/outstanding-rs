@@ -8,6 +8,9 @@
 //! every later test in the binary. The bug is only observable when the first
 //! color read in the process happens inside a harness run, which is why this
 //! is the only test in its own test binary.
+//!
+//! Sibling: `color_gate_env_only_restoration.rs` covers the case where the
+//! run sets no color knob at all and app code triggers the first read.
 
 use serde_json::json;
 use standout::cli::{App, Output};
@@ -40,10 +43,14 @@ fn console_color_state_restores_to_the_pre_run_environment() {
 
         // The first color read in this process happens inside this run —
         // with `CLICOLOR_FORCE=1` installed by the harness itself.
-        let _result = TestHarness::new()
+        // Argv carries the program name in slot 0, as clap parses it, so the
+        // subcommand actually dispatches rather than the run quietly doing
+        // nothing.
+        let result = TestHarness::new()
             .env("CLICOLOR_FORCE", "1")
             .no_color()
-            .run(&app, cmd, ["say"]);
+            .run(&app, cmd, ["app", "say"]);
+        assert_eq!(result.stdout_plain().trim_end(), "hello");
     }
 
     assert_eq!(
