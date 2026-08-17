@@ -1890,6 +1890,7 @@ dependencies = [
  "clap",
  "console",
  "insta",
+ "libc",
  "serde",
  "serde_json",
  "serial_test",

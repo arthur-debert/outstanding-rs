@@ -20,22 +20,26 @@
 //! conventions are genuinely observable — and a `run_process` test needs no
 //! `#[serial]`.
 //!
-//! # What a pipe can and cannot show
+//! # Two boundaries, two kinds of pin
 //!
-//! The child's stdout is a real pipe, so `colors_supported` is `false` before
-//! `NO_COLOR` or `TERM` are ever consulted. Two consequences, stated so
-//! nobody mistakes the coverage:
+//! The **piped** tests (`run_process`) assert the outcome a redirecting user
+//! gets. On a pipe, `colors_supported` is `false` before `NO_COLOR` or
+//! `TERM` are ever consulted, so the suppression runs and the plain `Auto`
+//! baseline share one observable — a plain page. Those tests state the piped
+//! *outcome contract*; on their own they could not catch a `console` upgrade
+//! dropping a convention, because on a pipe the TTY check alone already
+//! produces the page they assert.
 //!
-//! - The suppression pins (`NO_COLOR`, `TERM=dumb`, and plain `Auto`) all
-//!   assert the same observable — a plain page — and on a pipe the TTY check
-//!   alone would produce it. What they pin is the *outcome contract* a piped
-//!   user gets, and the force-path pins below are what would go red if a
-//!   `console` upgrade rerouted the initialization.
-//! - The TTY-side path — `NO_COLOR` suppressing color on a real terminal —
-//!   needs a PTY, which `run_process` deliberately does not fake. That gap is
-//!   known and owned: the parity program's terminal-citizenship Spec
-//!   (`docs/spec/parity-terminal-citizenship.md`) is where the conventions
-//!   become deliberate, implemented behavior instead of an inherited accident.
+//! The **pty** tests (`run_pty`) are the pins that can. There the child's
+//! stdout is a real pseudo-terminal, where a color-capable `TERM` makes the
+//! `Auto` baseline emit ANSI — proven by its own test — so on that boundary
+//! `NO_COLOR` and `TERM=dumb` are the only thing standing between a run and
+//! color. A `console` upgrade that dropped either convention turns that
+//! test's plain page back into ANSI: red, not silently green. Making the
+//! conventions *deliberate* standout behavior instead of an inherited
+//! accident remains parity-program work
+//! (`docs/spec/parity-terminal-citizenship.md`); pinning them no longer
+//! waits on it.
 //!
 //! # The known `CLICOLOR_FORCE` gap
 //!
@@ -114,8 +118,8 @@ fn auto_through_a_pipe_renders_plain() {
 }
 
 /// `NO_COLOR` set: plain. On a pipe the TTY check already decides this — the
-/// convention's TTY-side effect is the PTY gap the module doc records — but
-/// the outcome a `NO_COLOR` user is promised is pinned here.
+/// convention's own suppression is pinned on the pty below — but the outcome
+/// a `NO_COLOR` user is promised when piping is pinned here.
 #[test]
 fn no_color_keeps_a_piped_run_plain() {
     let result = conventions(&[("NO_COLOR", "1")])
@@ -130,6 +134,48 @@ fn term_dumb_keeps_a_piped_run_plain() {
     let result = conventions(&[("TERM", "dumb")])
         .output_mode(OutputMode::Auto)
         .run_process(env!("CARGO_BIN_EXE_tdoo"), ["list"]);
+    assert_plain(&result);
+}
+
+// ---------------------------------------------------------------------------
+// The suppression conventions on a real terminal, via a pty
+// ---------------------------------------------------------------------------
+
+/// The color-capable baseline: `Auto` on a pty with a color-capable `TERM`
+/// emits ANSI. This is the proof the two pins below lean on — on this
+/// boundary color is otherwise *on*, so each convention is the only thing
+/// standing between its run and ANSI, and deleting it goes red below
+/// instead of staying green.
+#[cfg(unix)]
+#[test]
+fn auto_on_a_pty_renders_with_ansi() {
+    let result = conventions(&[("TERM", "xterm-256color")])
+        .output_mode(OutputMode::Auto)
+        .run_pty(env!("CARGO_BIN_EXE_tdoo"), ["list"]);
+    assert_ansi(&result);
+}
+
+/// `NO_COLOR` set on the color-capable pty: plain. This is the convention's
+/// actual pin — the one run where `NO_COLOR` itself, not the TTY check,
+/// suppresses the color the baseline proves would otherwise appear.
+#[cfg(unix)]
+#[test]
+fn no_color_suppresses_ansi_on_a_pty() {
+    let result = conventions(&[("TERM", "xterm-256color"), ("NO_COLOR", "1")])
+        .output_mode(OutputMode::Auto)
+        .run_pty(env!("CARGO_BIN_EXE_tdoo"), ["list"]);
+    assert_plain(&result);
+}
+
+/// `TERM=dumb` on the pty: plain, same standing as `NO_COLOR` above — the
+/// terminal is real, so only the `TERM` value stands between this run and
+/// the baseline's ANSI.
+#[cfg(unix)]
+#[test]
+fn term_dumb_suppresses_ansi_on_a_pty() {
+    let result = conventions(&[("TERM", "dumb")])
+        .output_mode(OutputMode::Auto)
+        .run_pty(env!("CARGO_BIN_EXE_tdoo"), ["list"]);
     assert_plain(&result);
 }
 

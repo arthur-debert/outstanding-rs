@@ -14,8 +14,12 @@
 //! all of it. That lets the postconditions be real:
 //!
 //! - A valid template over generated data must **render**, not error, in the
-//!   template modes; structured modes may still refuse a data shape (#107 is
-//!   the known XML case), so there the postcondition stays handled-or-error.
+//!   template modes.
+//! - Structured modes see the *raw* generated value — top-level scalars and
+//!   arrays included, not just objects. JSON and YAML serialize every JSON
+//!   value, so they must **render**; XML and CSV may refuse a shape (#107 is
+//!   the known XML case), but only as a `Render`-kind error — any other
+//!   failure is a dispatch defect, not a serializer refusal.
 //! - Structured output must parse as what it claims to be.
 //! - Where the theme defines every tag the template emits, the WS04
 //!   invariants hold unconditionally: no `[tag?]` marker reaches the page,
@@ -34,7 +38,7 @@ use clap::Command;
 use console::Style;
 use proptest::prelude::*;
 use serde_json::{json, Value};
-use standout::cli::{App, Output, RunResult};
+use standout::cli::{App, Output, RunErrorKind, RunResult};
 use standout::{OutputMode, Theme};
 use standout_test::invariants::{
     assert_no_unresolved_tag_markers_in_page, assert_styling_preserves_layout_in_pages,
@@ -137,8 +141,10 @@ fn theme_strategy() -> impl Strategy<Value = ThemeCase> {
     ]
 }
 
-/// Arbitrary JSON data, wrapped by the caller as `{"data": …}` so the
-/// templates have a name to reference.
+/// Arbitrary JSON data. [`dispatch`] hands it to structured modes as-is —
+/// so serializers meet top-level scalars and arrays, not just objects — and
+/// wraps it as `{"data": …}` for template modes, so the templates have a
+/// name to reference.
 fn json_data_strategy() -> impl Strategy<Value = Value> {
     let leaf = prop_oneof![
         Just(Value::Null),
@@ -165,13 +171,23 @@ fn json_data_strategy() -> impl Strategy<Value = Value> {
 // ---------------------------------------------------------------------------
 
 /// Builds the generated app and dispatches `test` under `mode`.
+///
+/// Structured modes serialize the handler's value directly and never read
+/// the template, so they get the generated value untouched — wrapping it
+/// would hide every top-level scalar and array from the serializers.
+/// Template modes get it wrapped as `{"data": …}`, the name the templates
+/// reference.
 fn dispatch(
     mode: OutputMode,
     theme: &ThemeCase,
     template: &TemplateCase,
     data: &Value,
 ) -> RunResult {
-    let payload = json!({ "data": data });
+    let payload = if mode.is_structured() {
+        data.clone()
+    } else {
+        json!({ "data": data })
+    };
     let builder = App::builder()
         .command(
             "test",
@@ -211,31 +227,51 @@ fn validate_structured_output(output: &str, mode: OutputMode) {
             );
         }
         OutputMode::Xml => {
-            // XML output must be non-empty and contain a root element
+            // XML output must be non-empty and parse as XML: quick-xml (the
+            // emitting crate) must read it back event by event without error.
             assert!(!output.is_empty(), "XML output should not be empty");
-            assert!(
-                output.contains('<') && output.contains('>'),
-                "XML output should contain tags: {}",
-                output
-            );
+            let mut reader = quick_xml::Reader::from_str(output);
+            loop {
+                match reader.read_event() {
+                    Ok(quick_xml::events::Event::Eof) => break,
+                    Ok(_) => {}
+                    Err(err) => panic!("XML output should parse: {err}\n{output}"),
+                }
+            }
         }
         OutputMode::Csv => {
-            // CSV output must be non-empty
+            // CSV output must be non-empty and parse as CSV: every record
+            // reads cleanly and carries the header's width.
             assert!(!output.is_empty(), "CSV output should not be empty");
+            let mut reader = csv::ReaderBuilder::new()
+                .has_headers(false)
+                .flexible(false)
+                .from_reader(output.as_bytes());
+            for record in reader.records() {
+                record.unwrap_or_else(|err| panic!("CSV output should parse: {err}\n{output}"));
+            }
         }
         _ => {}
     }
 }
 
-/// The `Term`/`Text` agreement invariant for one generated input: the `Term`
-/// page with its escapes stripped is exactly the `Text` page.
-fn assert_modes_agree(theme: &ThemeCase, template: &TemplateCase, data: &Value) {
-    let term = dispatch(OutputMode::Term, theme, template, data);
+/// The mode-agreement invariant for one already-rendered page: `styled_page`
+/// with its escapes stripped is exactly the `Text` page over the same input.
+///
+/// Takes the caller's page instead of re-dispatching it — the property case
+/// already holds the `Term` (or `Auto`) render it is making a claim about,
+/// so the only extra dispatch is the `Text` side of the comparison.
+fn assert_agrees_with_text_mode(
+    styled_page: &str,
+    theme: &ThemeCase,
+    template: &TemplateCase,
+    data: &Value,
+) {
     let text = dispatch(OutputMode::Text, theme, template, data);
-    let (Some(term_page), Some(text_page)) = (term.output(), text.output()) else {
-        panic!("both text modes must render the same input: term={term:?} text={text:?}");
+    let Some(text_page) = text.output() else {
+        panic!("Text mode must render the same input: {text:?}");
     };
-    assert_styling_preserves_layout_in_pages(&console::strip_ansi_codes(term_page), text_page);
+    assert_styling_preserves_layout_in_pages(&console::strip_ansi_codes(styled_page), text_page);
 }
 
 // ---------------------------------------------------------------------------
@@ -250,7 +286,9 @@ proptest! {
     /// template's vocabulary, because an *uncovered* tag currently leaks a
     /// marker by design of `UnknownTagBehavior::Passthrough`; the
     /// unconditional form is the `#[ignore]`d test below. Everything else is
-    /// unconditional: a valid template renders, structured output parses.
+    /// unconditional: a valid template renders, JSON/YAML serialize any
+    /// value, XML/CSV refuse a shape only as a `Render` error, and whatever
+    /// a serializer emits parses.
     #[test]
     fn rendering_upholds_the_invariants(
         mode in output_mode_strategy(),
@@ -268,8 +306,33 @@ proptest! {
         );
 
         if mode.is_structured() {
-            // Structured serialization may refuse a data shape (#107 tracks
-            // the XML case), but what it emits must parse.
+            match mode {
+                // JSON and YAML serialize every JSON value: an error here
+                // is a regression, not a refusal.
+                OutputMode::Json | OutputMode::Yaml => {
+                    prop_assert!(
+                        result.is_handled(),
+                        "{:?} must serialize any generated value, got {:?}",
+                        mode,
+                        result
+                    );
+                }
+                // XML (#107: quick-xml's root/shape limits) and CSV (shapes
+                // that flatten to no columns) may refuse a shape — but only
+                // as a Render error, the serializer-refusal kind. Any other
+                // outcome is a dispatch defect hiding behind "structured
+                // modes may error".
+                _ => {
+                    prop_assert!(
+                        result.is_handled()
+                            || result.error_kind() == Some(RunErrorKind::Render),
+                        "{:?} must serialize or refuse with a Render error, got {:?}",
+                        mode,
+                        result
+                    );
+                }
+            }
+            // What a serializer does emit must parse as what it claims.
             if let Some(output) = result.output() {
                 validate_structured_output(output, mode);
             }
@@ -286,7 +349,7 @@ proptest! {
                 let output = result.output().expect("a handled render has output");
                 assert_no_unresolved_tag_markers_in_page(output);
                 if matches!(mode, OutputMode::Term | OutputMode::Auto) {
-                    assert_modes_agree(&theme, &template, &data);
+                    assert_agrees_with_text_mode(output, &theme, &template, &data);
                 }
             }
         }
@@ -311,7 +374,8 @@ proptest! {
     ) {
         let term = dispatch(OutputMode::Term, &theme, &template, &data);
         prop_assert!(term.is_handled(), "expected a render, got {:?}", term);
-        assert_no_unresolved_tag_markers_in_page(term.output().unwrap());
-        assert_modes_agree(&theme, &template, &data);
+        let term_page = term.output().unwrap();
+        assert_no_unresolved_tag_markers_in_page(term_page);
+        assert_agrees_with_text_mode(term_page, &theme, &template, &data);
     }
 }

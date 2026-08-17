@@ -68,11 +68,15 @@
 //! cannot give — stream separation as the program performed it, a real exit
 //! status, behavior that keys off stdout not being a terminal — and it is a
 //! fork per call, so it is the exception, not the default.
+//! [`TestHarness::run_pty`] (Unix only) is its TTY-positive twin: the same
+//! run with the child's stdout on a real pseudo-terminal, for behavior that
+//! only happens when `isatty(STDOUT)` says yes — the environment color
+//! conventions above all.
 //!
 //! The harness does not simulate a TTY in-process. It once offered
 //! `is_tty()`/`no_tty()`, which drove a detector nothing consulted; the seam
 //! is deleted (see `docs/adr/0022-delete-the-in-process-tty-seam.md`) and
-//! terminal-shaped questions belong to `run_process`. What the harness does
+//! terminal-shaped questions belong to `run_process`/`run_pty`. What the harness does
 //! control is *color*: [`with_color`](TestHarness::with_color) opens both
 //! gates between a styled template and ANSI bytes, so an ANSI-positive
 //! assertion works in-process.
@@ -82,9 +86,9 @@
 //! [`TestHarness::run`] mutates process-global state (env vars, cwd,
 //! environment detectors, `console`'s color switch, default input readers).
 //! Tests that call it must be annotated `#[serial]` (from the re-exported
-//! `serial_test` crate). [`TestHarness::run_process`] mutates none of it —
-//! the child gets its own environment — so a process test needs no
-//! annotation.
+//! `serial_test` crate). [`TestHarness::run_process`] and
+//! [`TestHarness::run_pty`] mutate none of it — the child gets its own
+//! environment — so a process test needs no annotation.
 //!
 //! A `Drop` impl restores every override on both normal exit and panic
 //! unwind, with two nuances:

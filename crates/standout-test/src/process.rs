@@ -1,12 +1,12 @@
-//! The process escape hatch: [`TestHarness::run_process`] and its
-//! [`ProcessResult`].
+//! The process escape hatch: [`TestHarness::run_process`],
+//! [`TestHarness::run_pty`], and their [`ProcessResult`].
 //!
-//! Private, like `snapshot`: the two public items are re-exported from the
+//! Private, like `snapshot`: the public items are re-exported from the
 //! crate root, and their own docs carry the story — this module is only
 //! where the code lives.
 
 use std::ffi::{OsStr, OsString};
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::process::{Command, ExitStatus, Stdio};
 
 use tempfile::TempDir;
@@ -32,7 +32,9 @@ impl TestHarness {
     ///   equivalent at all.
     /// - **Not being a terminal.** The child's stdout is a pipe, exactly as
     ///   it is when a user redirects to a file, so behavior that keys off
-    ///   "am I a TTY" is exercised as shipped rather than as simulated.
+    ///   "am I a TTY" is exercised as shipped rather than as simulated. The
+    ///   TTY-positive counterpart is [`run_pty`](Self::run_pty), whose child
+    ///   writes to a real pseudo-terminal.
     ///
     /// It is the expensive option — a compile and a fork per call — so it is
     /// for evidence in-process capture cannot produce, not for coverage.
@@ -87,7 +89,130 @@ impl TestHarness {
         T: Into<OsString>,
     {
         self.reject_in_process_only_settings();
+        let (mut command, cwd) = self.prepare_command(program.as_ref(), args);
+        command
+            .stdin(Stdio::null())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped());
 
+        let output = command.output().unwrap_or_else(|err| {
+            panic!(
+                "TestHarness::run_process: failed to spawn {:?} (cwd {:?}): {err}",
+                program.as_ref(),
+                cwd.as_deref().unwrap_or_else(|| Path::new(".")),
+            )
+        });
+
+        ProcessResult {
+            stdout: String::from_utf8_lossy(&output.stdout).into_owned(),
+            stderr: String::from_utf8_lossy(&output.stderr).into_owned(),
+            stdout_bytes: output.stdout,
+            stderr_bytes: output.stderr,
+            status: output.status,
+            _tempdir: self.tempdir.take(),
+        }
+    }
+
+    /// Runs `program` as a real child process with its stdout on a
+    /// pseudo-terminal, and returns what the OS saw.
+    ///
+    /// [`run_process`](Self::run_process)'s pipe answers "am I a TTY?" with
+    /// *no* — which is the right boundary for redirection behavior and the
+    /// wrong one for everything that only happens on a terminal. This is the
+    /// other answer: the child's stdout is the slave side of a real pty
+    /// (opened via `openpty(3)`, 80×24), so `isatty(STDOUT)` is true and the
+    /// child's own lazy color detection runs the TTY-positive path from a
+    /// real environment. That makes it the one place the suppression
+    /// conventions (`NO_COLOR`, `TERM=dumb`) are genuinely observable:
+    /// against a color-capable pty baseline, deleting a convention turns a
+    /// plain page back into ANSI.
+    ///
+    /// Everything else matches `run_process`: the same builder settings
+    /// carry over, the same in-process-only settings panic, stdin is null,
+    /// and stderr stays an ordinary pipe so the streams remain separable.
+    /// One pty-specific note: the slave's `ONLCR` post-processing is
+    /// disabled, so the recorded bytes are what the child wrote rather than
+    /// the line discipline's `\r\n` rewrite of them.
+    ///
+    /// Unix only: a pty is a Unix object, and the conventions it exists to
+    /// observe are Unix terminal conventions.
+    #[cfg(unix)]
+    pub fn run_pty<I, T>(mut self, program: impl AsRef<OsStr>, args: I) -> ProcessResult
+    where
+        I: IntoIterator<Item = T>,
+        T: Into<OsString>,
+    {
+        use std::io::Read;
+
+        self.reject_in_process_only_settings();
+        let (mut command, cwd) = self.prepare_command(program.as_ref(), args);
+
+        let (master, slave) = pty::open_pair();
+        command
+            .stdin(Stdio::null())
+            .stdout(Stdio::from(slave))
+            .stderr(Stdio::piped());
+
+        let mut child = command.spawn().unwrap_or_else(|err| {
+            panic!(
+                "TestHarness::run_pty: failed to spawn {:?} (cwd {:?}): {err}",
+                program.as_ref(),
+                cwd.as_deref().unwrap_or_else(|| Path::new(".")),
+            )
+        });
+        // A `Command` is re-spawnable, so it keeps the slave `Stdio` it was
+        // given even after `spawn`. Drop it: the child holds the only other
+        // slave fd, and reading the master only ends once every slave fd is
+        // closed — a retained one deadlocks the read below forever.
+        drop(command);
+
+        // Drain stderr on its own thread so a filling pipe can never block
+        // the child while this thread is waiting on the master.
+        let mut stderr_pipe = child.stderr.take().expect("stderr was piped");
+        let stderr_reader = std::thread::spawn(move || {
+            let mut bytes = Vec::new();
+            let _ = stderr_pipe.read_to_end(&mut bytes);
+            bytes
+        });
+
+        // Read the master until the child's slave side closes. Linux
+        // reports that as EIO rather than EOF; both mean "no more output",
+        // and `read_to_end` keeps what was read before the error.
+        let mut stdout_bytes = Vec::new();
+        let mut master_read = std::fs::File::from(master);
+        if let Err(err) = master_read.read_to_end(&mut stdout_bytes) {
+            if err.raw_os_error() != Some(libc::EIO) {
+                panic!("TestHarness::run_pty: reading the pty master failed: {err}");
+            }
+        }
+
+        let status = child
+            .wait()
+            .expect("TestHarness::run_pty: waiting for the child failed");
+        let stderr_bytes = stderr_reader
+            .join()
+            .expect("TestHarness::run_pty: the stderr reader thread panicked");
+
+        ProcessResult {
+            stdout: String::from_utf8_lossy(&stdout_bytes).into_owned(),
+            stderr: String::from_utf8_lossy(&stderr_bytes).into_owned(),
+            stdout_bytes,
+            stderr_bytes,
+            status,
+            _tempdir: self.tempdir.take(),
+        }
+    }
+
+    /// The setup [`run_process`](Self::run_process) and
+    /// [`run_pty`](Self::run_pty) share: fixtures materialized, the child's
+    /// working directory resolved, [`output_mode`](Self::output_mode)
+    /// appended to argv, and the environment applied. Stdio is the one thing
+    /// left to the caller — it is the difference between the two runners.
+    fn prepare_command<I, T>(&mut self, program: &OsStr, args: I) -> (Command, Option<PathBuf>)
+    where
+        I: IntoIterator<Item = T>,
+        T: Into<OsString>,
+    {
         // Fixtures + working directory, without moving the test's own cwd:
         // the child gets `current_dir`, so parallel tests can't collide.
         if let Some(dir) = self.tempdir.as_ref() {
@@ -110,12 +235,8 @@ impl TestHarness {
             argv.push(format!("--{}={}", self.output_flag_name, output_mode_flag(mode)).into());
         }
 
-        let mut command = Command::new(program.as_ref());
-        command
-            .args(&argv)
-            .stdin(Stdio::null())
-            .stdout(Stdio::piped())
-            .stderr(Stdio::piped());
+        let mut command = Command::new(program);
+        command.args(&argv);
         for (key, value) in &self.env_set {
             command.env(key, value);
         }
@@ -126,22 +247,7 @@ impl TestHarness {
             command.current_dir(dir);
         }
 
-        let output = command.output().unwrap_or_else(|err| {
-            panic!(
-                "TestHarness::run_process: failed to spawn {:?} (cwd {:?}): {err}",
-                program.as_ref(),
-                cwd.as_deref().unwrap_or_else(|| Path::new(".")),
-            )
-        });
-
-        ProcessResult {
-            stdout: String::from_utf8_lossy(&output.stdout).into_owned(),
-            stderr: String::from_utf8_lossy(&output.stderr).into_owned(),
-            stdout_bytes: output.stdout,
-            stderr_bytes: output.stderr,
-            status: output.status,
-            _tempdir: self.tempdir.take(),
-        }
+        (command, cwd)
     }
 
     /// Panics with a message naming every declared setting that only a
@@ -184,6 +290,79 @@ impl TestHarness {
                 },
             );
         }
+    }
+}
+
+/// The pty plumbing behind [`TestHarness::run_pty`]: one function that opens
+/// a configured master/slave pair, and the only unsafe code in the crate —
+/// three C calls (`openpty`, `tcgetattr`/`tcsetattr`, `ioctl`) wrapped
+/// straight into owned fds.
+#[cfg(unix)]
+mod pty {
+    use std::os::fd::{AsRawFd, FromRawFd, OwnedFd};
+
+    /// Opens a pty pair sized 80×24 with `ONLCR` off, returning
+    /// `(master, slave)`.
+    ///
+    /// `ONLCR` is the line discipline's `\n` → `\r\n` output rewrite; with
+    /// it on, the master would record a translation of the child's bytes
+    /// instead of the bytes, and [`ProcessResult`](super::ProcessResult)
+    /// promises a recording. The fixed window size keeps width-sensitive
+    /// rendering deterministic instead of inheriting a 0×0 window.
+    pub(super) fn open_pair() -> (OwnedFd, OwnedFd) {
+        let mut master: libc::c_int = -1;
+        let mut slave: libc::c_int = -1;
+        let mut winsize = libc::winsize {
+            ws_row: 24,
+            ws_col: 80,
+            ws_xpixel: 0,
+            ws_ypixel: 0,
+        };
+        // SAFETY: openpty only writes the two fd out-parameters and reads
+        // the winsize; the name and termios parameters are documented to
+        // accept null.
+        let rc = unsafe {
+            libc::openpty(
+                &mut master,
+                &mut slave,
+                std::ptr::null_mut(),
+                std::ptr::null_mut(),
+                &mut winsize,
+            )
+        };
+        assert_eq!(
+            rc,
+            0,
+            "TestHarness::run_pty: openpty failed: {}",
+            std::io::Error::last_os_error()
+        );
+        // SAFETY: on success both fds are freshly opened and unowned; these
+        // OwnedFds are their sole owners from here on.
+        let (master, slave) =
+            unsafe { (OwnedFd::from_raw_fd(master), OwnedFd::from_raw_fd(slave)) };
+
+        // SAFETY: tcgetattr/tcsetattr read and write the termios
+        // out-parameter for an fd this function owns.
+        unsafe {
+            let mut termios: libc::termios = std::mem::zeroed();
+            let rc = libc::tcgetattr(slave.as_raw_fd(), &mut termios);
+            assert_eq!(
+                rc,
+                0,
+                "TestHarness::run_pty: tcgetattr failed: {}",
+                std::io::Error::last_os_error()
+            );
+            termios.c_oflag &= !(libc::ONLCR as libc::tcflag_t);
+            let rc = libc::tcsetattr(slave.as_raw_fd(), libc::TCSANOW, &termios);
+            assert_eq!(
+                rc,
+                0,
+                "TestHarness::run_pty: tcsetattr failed: {}",
+                std::io::Error::last_os_error()
+            );
+        }
+
+        (master, slave)
     }
 }
 
