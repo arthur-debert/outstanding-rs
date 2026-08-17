@@ -50,12 +50,33 @@
 //! recording once it closes.
 //!
 //! Closing an inner window publishes its batch to [`take_captured`] — that run
-//! observed itself — *and* folds it into the enclosing window. Folding it in is
-//! the deliberate half: the inner run's output is normally embedded in the
-//! outer page, so a tag the inner run could not resolve is corruption on the
-//! outer page too. An outer batch blind to it would let an oracle like
-//! `assert_every_tag_resolved` pass on a page that carries it, and a false pass
-//! is the one failure mode an oracle must not have.
+//! observed itself — *and* folds it into the enclosing window, one deeper on
+//! [`TagResolution::nesting_depth`].
+//!
+//! The fold is **unconditional**, which is a choice worth stating because the
+//! obvious alternative — fold only when the inner run's output actually reaches
+//! the outer page — is not implementable here and would be the wrong default if
+//! it were:
+//!
+//! - **This layer cannot see the difference.** An inner run hands its handler a
+//!   `String`. Whether that string is rendered into the outer page, logged,
+//!   compared and thrown away, or replaced is a fact about the handler's
+//!   control flow, and nothing about the string carries it. Distinguishing the
+//!   two would mean either tainting the returned value — a breaking change to
+//!   the run entry points, to sharpen an oracle in a rare shape — or asking the
+//!   app under test to declare when a child batch counts, which would make the
+//!   oracle's correctness depend on the subject's cooperation. An oracle the
+//!   code under test can opt out of is not an oracle.
+//! - **The two errors are not symmetric.** Folding a discarded run's batch in
+//!   over-reports: the failure names a tag that genuinely was rendered during
+//!   the run, from a theme that genuinely lacks it, and it goes away by fixing
+//!   that. Leaving an embedded run's batch out under-reports: the outer page
+//!   carries corruption and the oracle says nothing. In `Text` mode — the mode
+//!   this structured channel exists for — the embedded page keeps no evidence
+//!   at all, so nothing downstream can recover the miss.
+//!
+//! A caller that genuinely wants only the observing run's own renders has the
+//! provenance to do it: [`TagResolution::nesting_depth`] is `0` for those.
 //!
 //! # Consumer
 //!
@@ -146,6 +167,7 @@ pub struct TagResolution {
     unresolved: Vec<UnknownTagError>,
     malformed: Vec<UnknownTagError>,
     defined_tags: Vec<String>,
+    nesting_depth: usize,
 }
 
 impl TagResolution {
@@ -209,6 +231,28 @@ impl TagResolution {
         &self.defined_tags
     }
 
+    /// How many run boundaries this pass was folded outward across to reach the
+    /// batch it is being read from.
+    ///
+    /// `0` means the run reading this batch rendered the pass itself. `1` means
+    /// a run its handler drove rendered it, `2` a run that one drove, and so on.
+    ///
+    /// Every pass a run met is reported, at whatever depth it happened —
+    /// including one from a nested run whose output the handler discarded, for
+    /// the reasons in the module's nesting section. This is what to filter on
+    /// when only the observing run's own renders are wanted:
+    ///
+    /// ```rust
+    /// # use standout_render::TagResolution;
+    /// # fn f(passes: &[TagResolution]) {
+    /// let own = passes.iter().filter(|pass| pass.nesting_depth() == 0);
+    /// # let _ = own;
+    /// # }
+    /// ```
+    pub fn nesting_depth(&self) -> usize {
+        self.nesting_depth
+    }
+
     /// Whether every tag this pass met was defined in the resolved theme.
     ///
     /// This is a statement about the theme's vocabulary only. A pass that met
@@ -263,6 +307,9 @@ pub fn resolve_tags(
         unresolved,
         malformed,
         defined_tags,
+        // The window recording it is the one that rendered it; the fold
+        // deepens it on the way out.
+        nesting_depth: 0,
     });
 
     output
@@ -276,7 +323,11 @@ pub fn resolve_tags(
 /// it does with the enclosing window.
 ///
 /// Deliberately neither `Send` nor `Sync`. The window stack is thread-local, so
-/// a guard dropped on another thread would pop a window it never opened.
+/// a guard dropped on another thread would pop a window it never opened. The
+/// `PhantomData<*const ()>` field is what withholds both: a raw pointer is
+/// itself `!Send` and `!Sync`, and an auto trait holds for a struct only when
+/// it holds for every field. `the_guard_is_neither_send_nor_sync` pins it, so
+/// this stays a compiler-checked property rather than a comment.
 #[must_use = "the window closes when the guard drops; bind it across the run it bounds"]
 pub struct CaptureWindow {
     _not_send: PhantomData<*const ()>,
@@ -285,16 +336,22 @@ pub struct CaptureWindow {
 impl Drop for CaptureWindow {
     /// Closes this window: its batch becomes the captured batch, and — if this
     /// window was nested inside another — is also folded into the enclosing
-    /// one, which stays open and keeps recording.
+    /// one, a level deeper on [`TagResolution::nesting_depth`]. The enclosing
+    /// window stays open and keeps recording.
     fn drop(&mut self) {
         let batch = WINDOWS.with(|windows| windows.borrow_mut().pop().unwrap_or_default());
 
-        // The enclosing run's page normally embeds this one's output, so its
-        // batch has to account for what this run rendered. Cloning is paid only
-        // when runs actually nest, which no ordinary CLI run does.
+        // Unconditionally, because this layer cannot tell an embedded child
+        // render from a discarded one and the two errors are not symmetric —
+        // see the module's nesting section. The depth is what a caller reads to
+        // tell them apart afterwards. Cloning is paid only when runs actually
+        // nest, which no ordinary CLI run does.
         WINDOWS.with(|windows| {
             if let Some(enclosing) = windows.borrow_mut().last_mut() {
-                enclosing.extend(batch.iter().cloned());
+                enclosing.extend(batch.iter().cloned().map(|mut pass| {
+                    pass.nesting_depth += 1;
+                    pass
+                }));
             }
         });
 
@@ -383,6 +440,11 @@ mod tests {
             .iter()
             .flat_map(TagResolution::unresolved_tag_names)
             .collect()
+    }
+
+    /// How far each pass in `batch` travelled to get there, in order.
+    fn depths(batch: &[TagResolution]) -> Vec<usize> {
+        batch.iter().map(TagResolution::nesting_depth).collect()
     }
 
     #[test]
@@ -679,5 +741,130 @@ mod tests {
             ["during_the_panicking_run"],
             "and the batch it had collected is still ended, not lost"
         );
+    }
+
+    /// Provenance survives the fold, which is what lets a caller that wants
+    /// page scope rather than run scope filter for it.
+    #[test]
+    fn the_fold_records_how_far_a_pass_travelled() {
+        let outer = reset();
+        render_unresolvable("outer_own");
+
+        let middle = begin_capture();
+        render_unresolvable("middle_own");
+
+        let inner = begin_capture();
+        render_unresolvable("inner_own");
+        drop(inner);
+        assert_eq!(
+            depths(&take_captured()),
+            [0],
+            "a run's own pass is at depth zero in its own batch"
+        );
+
+        drop(middle);
+        assert_eq!(
+            depths(&take_captured()),
+            [0, 1],
+            "the middle run's own pass, then the one it drove"
+        );
+
+        drop(outer);
+        assert_eq!(
+            depths(&take_captured()),
+            [0, 1, 2],
+            "depth accumulates with every boundary a pass is folded across"
+        );
+    }
+
+    /// The fold is unconditional, and this is the case that costs: the handler
+    /// throws the nested run's output away, so nothing it rendered reaches the
+    /// enclosing page — and the enclosing batch reports it anyway.
+    ///
+    /// Deliberate, not an oversight. This layer sees a `String` handed back to a
+    /// handler and cannot know whether it was embedded or dropped, so the choice
+    /// is between two total policies. Reporting it names a tag that really was
+    /// rendered from a theme that really lacks it; not reporting it would also
+    /// silence the embedded case, where the enclosing page carries corruption
+    /// and — in `Text` mode — keeps no evidence of it. The depth is how a caller
+    /// that wants only its own page tells the two apart.
+    #[test]
+    fn a_discarded_nested_run_is_reported_by_the_enclosing_one_at_depth_one() {
+        let outer = reset();
+
+        let discarded = begin_capture();
+        render_unresolvable("never_embedded");
+        drop(discarded);
+        take_captured(); // the handler throws the nested output away
+
+        render_unresolvable("outer_own");
+        drop(outer);
+
+        let batch = take_captured();
+        assert_eq!(
+            unresolved_across(&batch),
+            ["never_embedded", "outer_own"],
+            "the enclosing run reports every pass rendered inside it"
+        );
+        assert_eq!(depths(&batch), [1, 0]);
+        assert_eq!(
+            unresolved_across(
+                &batch
+                    .iter()
+                    .filter(|pass| pass.nesting_depth() == 0)
+                    .cloned()
+                    .collect::<Vec<_>>()
+            ),
+            ["outer_own"],
+            "and page scope is one filter away for a caller that wants it"
+        );
+    }
+
+    /// The guard's thread-affinity is a claim its docstring makes, so the
+    /// compiler is made to check it: the window stack is thread-local, and a
+    /// guard sent elsewhere would pop a window that thread never opened.
+    ///
+    /// `Probe`'s inherent method exists only when `T: Send`, and an inherent
+    /// method wins over a trait method of the same name — so resolution lands on
+    /// the trait's `false` exactly when the bound does not hold.
+    #[test]
+    fn the_guard_is_neither_send_nor_sync() {
+        struct Probe<T>(PhantomData<T>);
+
+        trait NotSend {
+            fn is_send(&self) -> bool {
+                false
+            }
+        }
+        impl<T> NotSend for Probe<T> {}
+        impl<T: Send> Probe<T> {
+            fn is_send(&self) -> bool {
+                true
+            }
+        }
+
+        trait NotSync {
+            fn is_sync(&self) -> bool {
+                false
+            }
+        }
+        impl<T> NotSync for Probe<T> {}
+        impl<T: Sync> Probe<T> {
+            fn is_sync(&self) -> bool {
+                true
+            }
+        }
+
+        assert!(
+            Probe::<String>(PhantomData).is_send(),
+            "the probe detects a Send type, so a false below means something"
+        );
+        assert!(Probe::<String>(PhantomData).is_sync());
+
+        assert!(
+            !Probe::<CaptureWindow>(PhantomData).is_send(),
+            "a guard moved to another thread would pop a window it never opened"
+        );
+        assert!(!Probe::<CaptureWindow>(PhantomData).is_sync());
     }
 }

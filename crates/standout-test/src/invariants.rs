@@ -67,6 +67,14 @@ use crate::TestResult;
 /// This is the structural form: it reads what the style-tag pass recorded, so
 /// it holds in `Text` and `TermDebug` as strongly as in `Term`, needs no ANSI
 /// and no TTY, and names the tag rather than a substring of the page.
+///
+/// "The run's renders" includes a run the handler itself drove — an app
+/// invoking another app — whatever it then did with that run's output, because
+/// the capture layer cannot see whether the output was embedded or discarded
+/// and the safe total policy is the one with no false pass. The failure marks
+/// those offenders as coming from a nested run, and
+/// [`TagResolution::nesting_depth`](standout_render::TagResolution::nesting_depth)
+/// is what to filter on to state the narrower property.
 #[track_caller]
 pub fn assert_every_tag_resolved(result: &TestResult) {
     let offenders: Vec<String> = result
@@ -74,12 +82,17 @@ pub fn assert_every_tag_resolved(result: &TestResult) {
         .iter()
         .filter(|pass| !pass.is_clean())
         .flat_map(|pass| {
+            let origin = match pass.nesting_depth() {
+                0 => String::new(),
+                depth => format!(", rendered by a nested run {depth} level(s) in"),
+            };
             pass.unresolved().iter().map(move |error| {
                 format!(
-                    "  - {} (transform: {:?}, unknown-tag policy: {:?})",
+                    "  - {} (transform: {:?}, unknown-tag policy: {:?}{})",
                     error,
                     pass.transform(),
-                    pass.unknown_behavior()
+                    pass.unknown_behavior(),
+                    origin
                 )
             })
         })

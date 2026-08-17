@@ -22,7 +22,7 @@ use serde_json::json;
 use serial_test::serial;
 use standout::cli::{App, Output, RunResult};
 use standout::Theme;
-use standout_render::OutputMode;
+use standout_render::{OutputMode, TagResolution};
 use standout_test::invariants::{
     assert_descriptions_aligned, assert_descriptions_aligned_in_page, assert_every_tag_resolved,
     assert_metavar_for_valued_args, assert_metavar_for_valued_args_in_page,
@@ -346,6 +346,94 @@ fn a_nested_run_cannot_hide_its_unresolved_tags_from_the_outer_one() {
     );
     fails_naming("inner_missing", || assert_every_tag_resolved(&result));
     fails_naming("headline", || assert_every_tag_resolved(&result));
+
+    assert_eq!(
+        result
+            .tag_resolutions()
+            .iter()
+            .map(TagResolution::nesting_depth)
+            .collect::<Vec<_>>(),
+        [1, 1, 0, 0],
+        "the inner run's passes are marked as having come from one level in, \
+         and each run's page is rendered twice"
+    );
+}
+
+/// The other nesting shape: the handler drives an app and throws the result
+/// away, so nothing it rendered reaches the outer page.
+fn discarding_app() -> App {
+    App::builder()
+        .theme(Theme::new().add("headline", Style::new().bold()))
+        .command(
+            "say",
+            |_m, _ctx| {
+                let discarded = embedded_app().run_to_string(
+                    Command::new("inner").subcommand(Command::new("emit")),
+                    ["inner", "emit"],
+                );
+                assert!(
+                    matches!(discarded, RunResult::Handled(_)),
+                    "the inner run must succeed"
+                );
+                // …and its output goes no further.
+                Ok(Output::Render(json!({})))
+            },
+            "[headline]nothing from the inner run[/headline]",
+        )
+        .unwrap()
+        .build()
+        .unwrap()
+}
+
+/// A nested run the handler discarded is still the outer run's business.
+///
+/// This is the price of the unconditional fold, pinned rather than papered
+/// over. The capture layer sees a `String` handed back to a handler; whether it
+/// was embedded or dropped is a fact about the handler's control flow that no
+/// part of the render path can observe. So the choice is between two total
+/// policies, and they fail in opposite directions: reporting a discarded run's
+/// tags over-reports — the failure names a tag genuinely rendered from a theme
+/// genuinely lacking it — while not reporting them would equally silence
+/// `a_nested_run_cannot_hide_its_unresolved_tags_from_the_outer_one` above,
+/// where the corruption *is* on the outer page and, in `Text` mode, leaves the
+/// page no evidence anyone could recover it from. A false pass is the one
+/// failure mode an oracle must not have; a false failure names a real defect.
+///
+/// The depth is what makes the over-report legible and filterable: everything
+/// the outer run rendered itself sits at `0`.
+#[test]
+#[serial]
+fn a_discarded_nested_run_is_reported_and_distinguishable() {
+    let result =
+        TestHarness::new()
+            .text_output()
+            .run(&discarding_app(), say_command(), ["app", "say"]);
+
+    result.assert_success();
+    assert_eq!(
+        result.stdout(),
+        "nothing from the inner run",
+        "the discarded run left nothing on this page"
+    );
+
+    assert_eq!(
+        result.unresolved_tag_names(),
+        ["inner_missing"],
+        "the run is still reported as having rendered a tag its theme lacks"
+    );
+    fails_naming("inner_missing", || assert_every_tag_resolved(&result));
+    fails_naming("nested run", || assert_every_tag_resolved(&result));
+
+    let own: Vec<&str> = result
+        .tag_resolutions()
+        .iter()
+        .filter(|pass| pass.nesting_depth() == 0)
+        .flat_map(TagResolution::unresolved_tag_names)
+        .collect();
+    assert!(
+        own.is_empty(),
+        "and page scope is one filter away: this run's own renders are clean"
+    );
 }
 
 // ---------------------------------------------------------------------------

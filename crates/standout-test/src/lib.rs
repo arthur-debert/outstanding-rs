@@ -728,9 +728,16 @@ impl TestResult {
     /// output mode) records no passes. Only what this run rendered is here: the
     /// collector records only inside the window the run boundary opens, so a
     /// standalone render before or between runs is neither kept nor blamed on
-    /// a run that follows it. A run the handler itself drove — an app invoking
-    /// another app — counts as part of this run, because its output lands on
-    /// this run's page; those passes appear here too.
+    /// a run that follows it.
+    ///
+    /// A run the handler itself drove — an app invoking another app — counts as
+    /// part of this run, and its passes appear here at
+    /// [`TagResolution::nesting_depth`](standout_render::TagResolution::nesting_depth)
+    /// `1` or deeper. That holds whatever the handler did with the nested run's
+    /// output: the render path is handed a `String` and cannot see whether it
+    /// was embedded in this page or thrown away, so it reports it either way
+    /// rather than risk saying nothing about a page that carries corruption.
+    /// Filter on depth `0` for the passes this run rendered itself.
     ///
     /// "Could not resolve" means the theme has no such tag. A tag the theme
     /// *does* define whose markup the template got wrong — an unbalanced open,
