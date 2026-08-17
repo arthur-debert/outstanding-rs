@@ -484,17 +484,23 @@ pub(crate) fn find_row<'a>(rows: &'a [Row<'a>], arg: &Arg) -> Option<&'a Row<'a>
     })
 }
 
-/// Whether a row lists a positional: its label is value placeholders and
-/// nothing else.
+/// Whether a row lists a positional: its label is value placeholders and the
+/// decoration a formatter puts on them, and nothing else.
 ///
 /// Two other labels carry placeholders and must not be mistaken for one. An
 /// option's label spells its flags first (`-f, --file <PATH>`), so a flag
 /// token rules the row out — otherwise `--into <DEST>` would answer for a
 /// positional named `DEST` that has no row at all. A usage line is a row too
 /// on a page whose usage sits under a heading (`notes [OPTIONS] [RANGE]`), and
-/// it is ruled out by the bare word outside its brackets: a positional row has
-/// none, and standout's own unbracketed label (`RANGE`) is the placeholder
+/// it is ruled out by the bare *word* outside its brackets: a positional row
+/// has none, and standout's own unbracketed label (`RANGE`) is the placeholder
 /// itself.
+///
+/// The repetition ellipsis is decoration, not a word. Clap marks a repeating
+/// positional `[FILE]...` or `<FILE>...` — the ellipsis states arity, the way
+/// the brackets state requiredness — so it sits outside the bracketed group
+/// and must not be read as text that makes the row something other than a
+/// positional's.
 pub(crate) fn positional_row(label: &str) -> bool {
     if label.split_whitespace().any(|token| token.starts_with('-')) {
         return false;
@@ -502,8 +508,18 @@ pub(crate) fn positional_row(label: &str) -> bool {
     if !label.contains(['<', '[']) {
         return !label.trim().is_empty();
     }
-    split_brackets(label).1.trim().is_empty()
+    undecorated(&split_brackets(label).1).is_empty()
 }
+
+/// A label's text with the repetition ellipsis and the whitespace around it
+/// taken off — what is left is the label's own words, if it has any.
+fn undecorated(text: &str) -> String {
+    text.replace(ELLIPSIS, " ").trim().to_string()
+}
+
+/// Clap's repetition marker, which it appends to a repeating argument's
+/// spelling (`-v...`) or value placeholder (`[FILE]...`) to state arity.
+pub(crate) const ELLIPSIS: &str = "...";
 
 /// Every spelling a flag row lists the argument under: `-c`, `--color`, or its
 /// id when it has neither.
@@ -546,7 +562,7 @@ pub(crate) fn contains_token(haystack: &str, token: &str) -> bool {
 pub(crate) fn contains_flag_token(haystack: &str, spelling: &str, arg: &Arg) -> bool {
     contains_token(haystack, spelling)
         || (matches!(arg.get_action(), ArgAction::Count)
-            && contains_token(haystack, &format!("{spelling}...")))
+            && contains_token(haystack, &format!("{spelling}{ELLIPSIS}")))
 }
 
 /// The arguments a help page is expected to render.
@@ -655,7 +671,7 @@ fn split_brackets(label: &str) -> (Vec<&str>, String) {
 /// the assertion passes by asserting nothing.
 pub(crate) fn metavar_text(token: &str) -> &str {
     token
-        .trim_end_matches("...")
+        .trim_end_matches(ELLIPSIS)
         .trim_matches(|c| matches!(c, '<' | '>' | '[' | ']'))
 }
 
@@ -1027,10 +1043,10 @@ Options:
         assert_eq!(value_placeholders("--all"), Vec::<&str>::new());
     }
 
-    /// A positional row is placeholders and nothing else. A flag row spells
-    /// its flags first, and a usage line filed under a heading — which is a
-    /// row like any other to the parser — carries the program name outside
-    /// its brackets.
+    /// A positional row is placeholders and their decoration and nothing else.
+    /// A flag row spells its flags first, and a usage line filed under a
+    /// heading — which is a row like any other to the parser — carries the
+    /// program name outside its brackets.
     #[test]
     fn a_positional_row_is_told_from_a_flag_row_and_a_usage_line() {
         assert!(positional_row("[SRC] [DEST]"));
@@ -1040,6 +1056,27 @@ Options:
         assert!(!positional_row("--into <DEST>"));
         assert!(!positional_row("notes [OPTIONS] [RANGE]"));
         assert!(!positional_row(""));
+    }
+
+    /// Clap's repetition ellipsis states a repeating positional's arity, not
+    /// that the row is something other than a positional's — and it sits
+    /// outside the brackets, where a program name would.
+    #[test]
+    fn a_repeating_positional_row_keeps_its_ellipsis() {
+        assert!(positional_row("[FILE]..."));
+        assert!(positional_row("<FILE>..."));
+        assert!(positional_row("<SRC>... <DEST>"));
+        assert!(positional_row("FILE..."));
+        assert_eq!(value_placeholders("[FILE]..."), ["FILE"]);
+        assert_eq!(value_placeholders("FILE..."), ["FILE"]);
+        assert!(
+            !positional_row("notes [OPTIONS] <FILE>..."),
+            "a usage line still carries the program name outside its brackets"
+        );
+        // The ellipsis is only decoration where clap puts it: outside the
+        // group. A declared name is read whole, dots and all.
+        assert!(positional_row("[A...B]"));
+        assert_eq!(value_placeholders("[A...B]"), ["A...B"]);
     }
 
     #[test]

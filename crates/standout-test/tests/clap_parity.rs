@@ -720,6 +720,40 @@ fn an_options_placeholder_does_not_answer_for_a_positional() {
     });
 }
 
+/// Clap marks a repeating positional with its repetition ellipsis — `[FILE]...`
+/// when the argument is optional, `<FILE>...` when it is required. The ellipsis
+/// states arity, the way the brackets state requiredness, so a row wearing it
+/// is an ordinary positional row.
+#[test]
+fn a_repeating_positional_grounds_against_clap() {
+    for cmd in [optional_repeating(), required_repeating()] {
+        for length in [HelpLength::Short, HelpLength::Long] {
+            let page = clap_page(cmd.clone(), length);
+            assert_page_states_clap_facts_with(&page, &cmd, length, &[]);
+        }
+    }
+}
+
+/// And the row is genuinely being read, not skipped: a repeating positional
+/// filed under its id instead of its declared value name fails, naming it.
+///
+/// This is the direction that matters. A row the parser cannot classify makes
+/// `find_row` return `None`, and an argument with no row is silently passed
+/// over by every check that reads one — so the parity failure above could be
+/// answered by making the oracle blind rather than by making it right.
+#[test]
+fn a_repeating_positional_filed_under_its_id_fails() {
+    for (cmd, label) in [
+        (optional_repeating(), "[FILE]..."),
+        (required_repeating(), "<FILE>..."),
+    ] {
+        let page = clap_page(cmd.clone(), HelpLength::Long).replace(label, "[files]...");
+        fails_naming(&["argument `files` metavar \"FILE\""], || {
+            assert_page_states_clap_facts_with(&page, &cmd, HelpLength::Long, &[])
+        });
+    }
+}
+
 /// A declared value name may carry a space. Clap wraps it in the same
 /// brackets as any other (`<P Q>`, `[A B]`), so the brackets are what say
 /// where the placeholder ends — reading the label's whitespace instead
@@ -870,6 +904,47 @@ fn multi_name_positional() -> Command {
                 .long("force")
                 .action(ArgAction::SetTrue)
                 .help("Overwrite the destination"),
+        )
+}
+
+/// A command whose repeating positional is optional, which clap renders
+/// `[FILE]...`.
+fn optional_repeating() -> Command {
+    Command::new("notes")
+        .about("Keep short notes")
+        .term_width(0)
+        .arg(
+            Arg::new("files")
+                .value_name("FILE")
+                .num_args(1..)
+                .help("Files to read"),
+        )
+        .arg(
+            Arg::new("force")
+                .long("force")
+                .action(ArgAction::SetTrue)
+                .help("Overwrite the destination"),
+        )
+}
+
+/// The same positional required, which clap renders `<FILE>...` — beside a
+/// counted flag, whose own `-v...` is the other place the ellipsis appears.
+fn required_repeating() -> Command {
+    Command::new("notes")
+        .about("Keep short notes")
+        .term_width(0)
+        .arg(
+            Arg::new("files")
+                .value_name("FILE")
+                .num_args(1..)
+                .required(true)
+                .help("Files to read"),
+        )
+        .arg(
+            Arg::new("verbose")
+                .short('v')
+                .action(ArgAction::Count)
+                .help("Say more"),
         )
 }
 

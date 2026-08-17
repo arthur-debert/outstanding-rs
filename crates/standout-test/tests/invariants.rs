@@ -608,7 +608,7 @@ OPTIONS
 /// one failure mode an oracle must not have.
 #[test]
 fn a_positional_row_is_found_however_its_metavar_is_bracketed() {
-    for label in ["RANGE", "<RANGE>", "[RANGE]", "<RANGE>..."] {
+    for label in ["RANGE", "<RANGE>", "[RANGE]", "<RANGE>...", "[RANGE]..."] {
         let page = format!(
             "\
 ARGUMENTS
@@ -619,8 +619,18 @@ ARGUMENTS
     }
 
     // …and the row is genuinely being read, not skipped: the same shapes filed
-    // under the id instead of the metavar still fail.
-    for label in ["range", "<range>", "[range]"] {
+    // under the id instead of the metavar still fail. Every spelling above has
+    // its counterpart here, because a green from a row the parser could not
+    // find is indistinguishable from a green from a row that spells the
+    // metavar — the silent pass this whole library exists to rule out.
+    for label in [
+        "range",
+        "<range>",
+        "[range]",
+        "<range>...",
+        "[range]...",
+        "range...",
+    ] {
         let page = format!(
             "\
 ARGUMENTS
