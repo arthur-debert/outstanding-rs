@@ -1,9 +1,15 @@
 //! Injectable environment detection.
 //!
 //! This module centralizes process-global detection of terminal properties
-//! — width, TTY status, and ANSI color capability — behind overridable
-//! function pointers so tests can force specific values without touching
-//! real environment state.
+//! — width and ANSI color capability — behind overridable function pointers
+//! so tests can force specific values without touching real environment
+//! state.
+//!
+//! There is deliberately no TTY detector. One existed and was removed: it
+//! reported only on stdout, which is the wrong shape for the callers that
+//! would want it (a pager gates on stdout, a progress display writes to
+//! stderr), and the one in-repo caller that needed a terminal fact went
+//! around it. See `docs/adr/0019-delete-the-in-process-tty-seam.md`.
 //!
 //! It follows the same pattern used by
 //! [`set_theme_detector`](crate::set_theme_detector) and
@@ -15,10 +21,9 @@
 //! process and terminal state by default:
 //!
 //! ```rust
-//! use standout_render::{detect_terminal_width, detect_is_tty, detect_color_capability};
+//! use standout_render::{detect_terminal_width, detect_color_capability};
 //!
 //! let _width = detect_terminal_width();
-//! let _tty = detect_is_tty();
 //! let _color = detect_color_capability();
 //! ```
 //!
@@ -45,13 +50,11 @@ use once_cell::sync::Lazy;
 use std::sync::Mutex;
 
 type WidthDetector = fn() -> Option<usize>;
-type TtyDetector = fn() -> bool;
 type ColorDetector = fn() -> bool;
 type AmbiguousWidthDetector = fn() -> Option<AmbiguousWidth>;
 
 static WIDTH_DETECTOR: Lazy<Mutex<WidthDetector>> =
     Lazy::new(|| Mutex::new(default_width_detector));
-static TTY_DETECTOR: Lazy<Mutex<TtyDetector>> = Lazy::new(|| Mutex::new(default_tty_detector));
 static COLOR_DETECTOR: Lazy<Mutex<ColorDetector>> =
     Lazy::new(|| Mutex::new(default_color_detector));
 static AMBIGUOUS_WIDTH_DETECTOR: Lazy<Mutex<AmbiguousWidthDetector>> =
@@ -66,13 +69,6 @@ static AMBIGUOUS_WIDTH_DETECTOR: Lazy<Mutex<AmbiguousWidthDetector>> =
 /// width in tests.
 pub fn set_terminal_width_detector(detector: WidthDetector) {
     *WIDTH_DETECTOR.lock().unwrap() = detector;
-}
-
-/// Overrides the detector used to check whether stdout is a TTY.
-///
-/// Accepts a `fn` pointer or a non-capturing closure.
-pub fn set_tty_detector(detector: TtyDetector) {
-    *TTY_DETECTOR.lock().unwrap() = detector;
 }
 
 /// Overrides the detector used to check whether ANSI color is supported on
@@ -108,12 +104,6 @@ pub fn detect_terminal_width() -> Option<usize> {
     detector()
 }
 
-/// Returns `true` when stdout is attached to a terminal.
-pub fn detect_is_tty() -> bool {
-    let detector = *TTY_DETECTOR.lock().unwrap();
-    detector()
-}
-
 /// Returns `true` when ANSI color output is supported on stdout.
 pub fn detect_color_capability() -> bool {
     let detector = *COLOR_DETECTOR.lock().unwrap();
@@ -143,10 +133,6 @@ fn resolve_terminal_width(
         .or_else(probe_terminal)
 }
 
-fn default_tty_detector() -> bool {
-    Term::stdout().is_term()
-}
-
 fn default_color_detector() -> bool {
     Term::stdout().features().colors_supported()
 }
@@ -163,7 +149,6 @@ fn default_ambiguous_width_detector() -> Option<AmbiguousWidth> {
 /// [`DetectorGuard`] instead of calling this manually.
 pub fn reset_detectors() {
     set_terminal_width_detector(default_width_detector);
-    set_tty_detector(default_tty_detector);
     set_color_capability_detector(default_color_detector);
     set_ambiguous_width_detector(default_ambiguous_width_detector);
 }
@@ -255,16 +240,6 @@ mod tests {
 
     #[test]
     #[serial]
-    fn tty_override_is_honored() {
-        let _guard = DetectorGuard::new();
-        set_tty_detector(|| true);
-        assert!(detect_is_tty());
-        set_tty_detector(|| false);
-        assert!(!detect_is_tty());
-    }
-
-    #[test]
-    #[serial]
     fn color_override_is_honored() {
         let _guard = DetectorGuard::new();
         set_color_capability_detector(|| true);
@@ -286,7 +261,6 @@ mod tests {
         }
 
         set_terminal_width_detector(boom_width);
-        set_tty_detector(boom_bool);
         set_color_capability_detector(boom_bool);
 
         reset_detectors();
@@ -294,7 +268,6 @@ mod tests {
         // If reset were a no-op the panicking detectors would still be
         // installed and these calls would unwind.
         let _ = detect_terminal_width();
-        let _ = detect_is_tty();
         let _ = detect_color_capability();
     }
 
@@ -304,7 +277,6 @@ mod tests {
         {
             let _guard = DetectorGuard::new();
             set_terminal_width_detector(|| Some(1));
-            set_tty_detector(|| true);
             set_color_capability_detector(|| true);
             assert_eq!(detect_terminal_width(), Some(1));
         }

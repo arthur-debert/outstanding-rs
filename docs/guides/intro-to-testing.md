@@ -291,17 +291,29 @@ Open prompts (`Text`/`Password`/`Editor`) take `PromptResponse::Text(...)`; fini
 
 ### 4.6 Terminal state
 
-Three orthogonal knobs, all routed through Phase 1's environment detectors:
+Two orthogonal knobs, routed through Phase 1's environment detectors:
 
 ```rust
 .terminal_width(80)     // forces a fixed width for tabular layouts
 .no_color()             // forces OutputMode::Auto to behave like Text
 .with_color()           // forces Auto to behave like Term even when piped
-.no_tty()               // stdout reports as not-a-TTY
-.is_tty()               // stdout reports as a TTY
 ```
 
 Useful for snapshot testing: pin the width, turn off color, and the rendered string is deterministic across developer machines and CI.
+
+`with_color()` is also what makes an *ANSI-positive* assertion possible in-process. Two switches stand between a styled template and escape bytes: Standout's own color decision, and `console`'s process-global color switch, which `Style::apply_to` consults and which is off in a non-TTY process — and a test binary is never a TTY. `with_color()` sets both (and restores the second on drop), so a `Term` render in a test emits the escapes a terminal user would see, with no `force_styling` needed in the theme:
+
+```rust
+let result = TestHarness::new()
+    .with_color()
+    .output_mode(OutputMode::Term)
+    .run(&app(), command(), ["myapp", "list"]);
+
+assert!(result.stdout().contains('\x1b'));    // really styled
+assert_eq!(result.stdout_plain(), expected);  // and strippable
+```
+
+There is no TTY knob. The harness once offered `.is_tty()` / `.no_tty()`, driving a detector no production code ever read; both are gone, along with `standout_render::detect_is_tty`. Questions that genuinely depend on being (or not being) a terminal belong to a real process — see [`run_process`](#48-running-the-real-binary) — and a future terminal-citizenship seam will be stream-aware rather than a single stdout-wide global. The reasoning is recorded in `docs/adr/0019-delete-the-in-process-tty-seam.md`.
 
 ### 4.7 Forcing an output mode
 
@@ -327,6 +339,30 @@ If your app renamed the flag via `AppBuilder::output_flag(Some("format"))`, tell
 ```rust
 .output_flag_name("format")
 ```
+
+### 4.8 Running the real binary
+
+`run()` calls into your app inside the test process, so the two text streams it reports are a faithful *reconstruction* of what `App::run`'s writer seam would have emitted — not a recording of what the OS carried. For the handful of facts only the real boundary settles, `run_process()` runs the compiled binary instead and returns what the kernel saw:
+
+```rust
+#[test]  // no #[serial]: nothing process-global is touched
+fn a_usage_error_goes_to_stderr_and_leaves_stdout_clean() {
+    let result = TestHarness::new()
+        .fixture("todos.json", STORE)
+        .env("TODO_FILE", "todos.json")
+        .run_process(env!("CARGO_BIN_EXE_mycli"), ["bogus-command"]);
+
+    result.assert_exit_code(2);
+    result.assert_stdout_empty();               // real pipe, not a model of one
+    result.assert_stderr_contains("unexpected argument");
+}
+```
+
+`ProcessResult` carries `stdout()` / `stderr()` (and `stdout_bytes()` / `stderr_bytes()` when the output isn't text), the ANSI-stripping `stdout_plain()` / `stderr_plain()`, `status()` / `code()` / `success()`, and the assertion helpers above. `tempdir()` returns the directory the child ran in, so a command's effect on disk is assertable too.
+
+The builder settings that describe a *process* carry over — `env()` / `env_remove()`, `cwd()`, `fixture()` (whose tempdir becomes the child's working directory), and `output_mode()`, which is the same argv edit `run()` makes. The settings that describe an *in-process injection seam* cannot: a child resolves width, color, stdin, clipboard, and prompts from its own environment, so declaring one and then calling `run_process()` panics rather than quietly asking the CI machine's terminal instead. Express those through something the child can see — an environment variable, a fixture file, argv.
+
+It costs a compile and a fork per call. Use it for evidence, not for coverage.
 
 ### Intermezzo B: A full-pipeline test, in-process
 
@@ -453,7 +489,7 @@ Be honest about the boundaries. There are things you shouldn't try to test in-pr
 
 **Subprocess fan-out from your app.** If your handler shells out to `git`, `rg`, `$EDITOR`, or any other external program, the harness can't intercept that call. *This is the focus of Phase 3 of the test-tooling work — a `ProcessRunner` abstraction that routes through `CommandContext`, with a mock variant for tests. It's not yet shipped; until it is, shell-outs remain a boundary.* In the meantime, structure handlers so the shell-out is a trait you can swap for a mock in the handler's tests directly.
 
-**Binary-level concerns.** If you're testing that the compiled binary has the right linkage, exits with the right code, or handles `--version` through a specific path — that's genuinely integration-of-the-build, and a small `assert_cmd` suite is the right tool.
+**Binary-level concerns.** Linkage, the real exit code, which stream a byte actually went to, behavior that keys off stdout not being a terminal — that's integration-of-the-build. [`run_process()`](#48-running-the-real-binary) covers it from the same builder; reach for `assert_cmd` only if you want its matcher vocabulary.
 
 The goal isn't to replace subprocess tests entirely. It's to reduce them to the small set of cases where they're actually earning their keep.
 
@@ -473,8 +509,7 @@ TestHarness::new()
     // terminal detectors (see standout-render::environment)
     .terminal_width(80)
     .no_terminal_width()
-    .is_tty()                                 // or .no_tty()
-    .with_color()                             // or .no_color()
+    .with_color()                             // or .no_color(); opens console's gate too
 
     // forced output mode (injects --output=<mode> into argv)
     .output_mode(OutputMode::Json)
@@ -495,8 +530,12 @@ TestHarness::new()
         PromptResponse::Choice(2),     // -> options[2]
     ])))
 
-    // execute
+    // execute in-process...
     .run(&app, cmd, ["binname", "subcommand", "--flag"])
+
+    // ...or as the real binary (ProcessResult; rejects the detector,
+    // stdin, clipboard, and prompt settings a child can't inherit)
+    .run_process(env!("CARGO_BIN_EXE_binname"), ["subcommand", "--flag"])
 
 // TestResult: choose the assertion group that matches the observed outcome.
 
@@ -526,7 +565,7 @@ result.error_kind();                    // typed failure origin
 
 The harness captures the pipeline before the real stdout/stderr write. Use it
 for typed parser, handler, hook, render, pipe, and output-file outcomes. Keep a
-small process-level test for OS exit codes, stream routing, and broken final
+small `run_process()` suite for OS exit codes, stream routing, and broken final
 writers.
 
 ## Appendix: common pitfalls

@@ -213,3 +213,10 @@ help tests' modes (`crates/standout/tests/themed_help_surfaces.rs:10`,
 (`crates/standout-test/src/lib.rs:160-179`), property postcondition
 (`crates/standout/tests/property_rendering.rs:139-143`), fixture gap
 (`crates/todo-example/tdoo/src/app.rs:19-51`). ADRs from the grill to be linked here.
+
+The TTY-axis goal above resolved to *gone*: `docs/adr/0019-delete-the-in-process-tty-seam.md`
+records why the seam was deleted rather than wired (a stdout-only global is the wrong shape
+for its one named future consumer, which had already routed around it), how ANSI-positive
+assertions became possible in-process anyway (`with_color()` now opens `console`'s color
+gate as well as Standout's), and why the epic's tag-resolution invariants never depended on
+the outcome.

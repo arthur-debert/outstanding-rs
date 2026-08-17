@@ -205,11 +205,10 @@ fn downstream_theme_help_preserves_option_cues_through_run() {
     .unwrap();
     let app = app_from_styles_dir(styles.path());
 
-    let result = TestHarness::new().is_tty().with_color().run(
-        &app,
-        lookma_option_matrix(),
-        ["lookma", "help"],
-    );
+    let result =
+        TestHarness::new()
+            .with_color()
+            .run(&app, lookma_option_matrix(), ["lookma", "help"]);
 
     result.assert_success();
     assert_eq!(result.success_kind(), Some(SuccessKind::ClapHelp));

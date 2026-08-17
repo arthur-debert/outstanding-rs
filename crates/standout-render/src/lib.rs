@@ -186,9 +186,9 @@ pub use width::{AmbiguousWidth, WidthCalculator};
 
 // Environment detection exports
 pub use environment::{
-    detect_ambiguous_width_override, detect_color_capability, detect_is_tty, detect_terminal_width,
+    detect_ambiguous_width_override, detect_color_capability, detect_terminal_width,
     reset_detectors as reset_environment_detectors, set_ambiguous_width_detector,
-    set_color_capability_detector, set_terminal_width_detector, set_tty_detector, DetectorGuard,
+    set_color_capability_detector, set_terminal_width_detector, DetectorGuard,
 };
 
 // Render module exports

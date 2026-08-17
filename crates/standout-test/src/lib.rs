@@ -42,17 +42,37 @@
 //! [`artifact_bytes`](TestResult::artifact_bytes). Each accessor's docs say
 //! precisely what it does and does not model.
 //!
+//! # Crossing the process boundary
+//!
+//! [`TestHarness::run_process`] runs a real binary instead of calling into
+//! the app in-process, and returns the [`ProcessResult`] the OS produced:
+//! two pipes and an exit status. It is for the evidence an in-process run
+//! cannot give — stream separation as the program performed it, a real exit
+//! status, behavior that keys off stdout not being a terminal — and it is a
+//! fork per call, so it is the exception, not the default.
+//!
+//! The harness does not simulate a TTY in-process. It once offered
+//! `is_tty()`/`no_tty()`, which drove a detector nothing consulted; the seam
+//! is deleted (see `docs/adr/0019-delete-the-in-process-tty-seam.md`) and
+//! terminal-shaped questions belong to `run_process`. What the harness does
+//! control is *color*: [`with_color`](TestHarness::with_color) opens both
+//! gates between a styled template and ANSI bytes, so an ANSI-positive
+//! assertion works in-process.
+//!
 //! # Concurrency and restoration
 //!
-//! The harness mutates process-global state (env vars, cwd, environment
-//! detectors, default input readers). Tests that instantiate a
-//! `TestHarness` must be annotated `#[serial]` (from the re-exported
-//! `serial_test` crate).
+//! [`TestHarness::run`] mutates process-global state (env vars, cwd,
+//! environment detectors, `console`'s color switch, default input readers).
+//! Tests that call it must be annotated `#[serial]` (from the re-exported
+//! `serial_test` crate). [`TestHarness::run_process`] mutates none of it —
+//! the child gets its own environment — so a process test needs no
+//! annotation.
 //!
 //! A `Drop` impl restores every override on both normal exit and panic
 //! unwind, with two nuances:
 //!
-//! - Env vars and cwd are restored to the values captured at `run()` time.
+//! - Env vars, cwd, and `console`'s color switch are restored to the values
+//!   captured at `run()` time.
 //! - Terminal detectors and default input readers are reset to the
 //!   library defaults, not to whatever was installed before `run()`. This
 //!   matches the behavior of [`standout_render::DetectorGuard`]. Don't
@@ -76,12 +96,14 @@ use standout_input::{
 };
 use standout_render::{
     reset_environment_detectors, set_ambiguous_width_detector, set_color_capability_detector,
-    set_terminal_width_detector, set_tty_detector, AmbiguousWidth, OutputMode,
+    set_terminal_width_detector, AmbiguousWidth, OutputMode,
 };
 use tempfile::TempDir;
 
+mod process;
 mod snapshot;
 
+pub use process::ProcessResult;
 pub use serial_test::serial;
 pub use snapshot::SnapshotCase;
 
@@ -110,7 +132,6 @@ pub struct TestHarness {
     fixtures: Vec<(PathBuf, Vec<u8>)>,
     terminal_width: Option<Option<usize>>,
     ambiguous_width: Option<AmbiguousWidth>,
-    is_tty: Option<bool>,
     color_capable: Option<bool>,
     output_mode: Option<OutputMode>,
     output_flag_name: String,
@@ -130,7 +151,6 @@ impl TestHarness {
             fixtures: Vec::new(),
             terminal_width: None,
             ambiguous_width: None,
-            is_tty: None,
             color_capable: None,
             output_mode: None,
             output_flag_name: "output".to_string(),
@@ -177,26 +197,43 @@ impl TestHarness {
         self
     }
 
-    /// Claims stdout is attached to a TTY.
-    pub fn is_tty(mut self) -> Self {
-        self.is_tty = Some(true);
-        self
-    }
-
-    /// Claims stdout is not a TTY (piped, redirected, …).
-    pub fn no_tty(mut self) -> Self {
-        self.is_tty = Some(false);
-        self
-    }
-
-    /// Declares that the output target supports ANSI color.
+    /// Declares that the output target supports ANSI color, at both of the
+    /// gates that decide whether escapes reach the output.
+    ///
+    /// Two independent switches stand between a styled template and ANSI
+    /// bytes, and opening one alone produces nothing:
+    ///
+    /// 1. Standout's own color decision — [`OutputMode::Auto`] consults
+    ///    `detect_color_capability()` to choose between applying and
+    ///    stripping style tags. This is the harness's
+    ///    [`set_color_capability_detector`] override.
+    /// 2. `console`'s process-global color switch, which
+    ///    `Style::apply_to` reads before emitting any escape. It is off in
+    ///    a non-TTY process, and a test binary is never a TTY — so a
+    ///    styled `Term` render in a test emits plain text unless this is
+    ///    turned on.
+    ///
+    /// Gate 2 is what made "ANSI-positive" untestable in-process before:
+    /// forcing gate 1 open left gate 2 shut and the render silent. So
+    /// `with_color()` sets both, and the original value of `console`'s
+    /// switch is restored on drop with every other override.
+    ///
+    /// This is test-only. No production code path sets `console`'s switch;
+    /// the harness sets it to model the terminal the test claims to be
+    /// writing to.
     pub fn with_color(mut self) -> Self {
         self.color_capable = Some(true);
         self
     }
 
-    /// Declares that the output target does not support ANSI color. When
-    /// `--output=auto` is used, this forces the `Text` render path.
+    /// Declares that the output target does not support ANSI color, at both
+    /// gates [`with_color`](Self::with_color) describes. When `--output=auto`
+    /// is used, this forces the `Text` render path.
+    ///
+    /// A test process already has `console`'s switch off, so this changes
+    /// nothing for the common case; it exists so the two methods stay exact
+    /// opposites, and so a run cannot inherit an earlier `set_colors_enabled(true)`
+    /// from the same test binary.
     pub fn no_color(mut self) -> Self {
         self.color_capable = Some(false);
         self
@@ -431,20 +468,6 @@ impl TestHarness {
             });
             restore.reset_env_detectors = true;
         }
-        if let Some(flag) = self.is_tty {
-            static TTY_SLOT: std::sync::OnceLock<std::sync::Mutex<bool>> =
-                std::sync::OnceLock::new();
-            let slot = TTY_SLOT.get_or_init(|| std::sync::Mutex::new(false));
-            *slot.lock().unwrap() = flag;
-            set_tty_detector(|| {
-                *TTY_SLOT
-                    .get()
-                    .expect("tty slot initialized above")
-                    .lock()
-                    .unwrap()
-            });
-            restore.reset_env_detectors = true;
-        }
         if let Some(flag) = self.color_capable {
             static COLOR_SLOT: std::sync::OnceLock<std::sync::Mutex<bool>> =
                 std::sync::OnceLock::new();
@@ -458,6 +481,12 @@ impl TestHarness {
                     .unwrap()
             });
             restore.reset_env_detectors = true;
+
+            // Gate 2: `console`'s process-global switch, which
+            // `Style::apply_to` reads before emitting an escape. Standout's
+            // detector alone cannot produce ANSI in a non-TTY test process.
+            restore.console_colors = Some(console::colors_enabled());
+            console::set_colors_enabled(flag);
         }
 
         // 4. Stdin / clipboard overrides.
@@ -625,6 +654,11 @@ struct RestoreState {
     env_originals: HashMap<String, Option<String>>,
     original_cwd: Option<PathBuf>,
     reset_env_detectors: bool,
+    /// `console`'s process-global color switch as it read at `run()` time,
+    /// when the run overrode it. Restoring writes the *value* back — the
+    /// switch has no "return to auto-detection" setter — which in a test
+    /// process is the same thing, since detection there is a constant.
+    console_colors: Option<bool>,
     reset_stdin: bool,
     reset_clipboard: bool,
     reset_prompts: bool,
@@ -643,6 +677,9 @@ impl Drop for RestoreState {
         }
         if self.reset_env_detectors {
             reset_environment_detectors();
+        }
+        if let Some(enabled) = self.console_colors.take() {
+            console::set_colors_enabled(enabled);
         }
         if self.reset_stdin {
             reset_default_stdin_reader();
