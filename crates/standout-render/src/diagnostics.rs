@@ -29,11 +29,33 @@
 //! [`resolve_tags`] sits on every render path, including the standalone
 //! [`Renderer`](crate::Renderer) and `render*` helpers a long-lived embedding
 //! may call millions of times. So the collector is **off by default**:
-//! [`record`] keeps nothing until [`begin_capture`] opens a window, and
-//! [`capture_for_run`] closes it again. A run boundary opens the window before
-//! dispatch and closes it after, which both bounds the collector by one run and
-//! stops one run's passes from contaminating the next. A caller outside a
-//! window renders exactly as before, storing nothing.
+//! [`record`] keeps nothing until [`begin_capture`] opens a window, and the
+//! [`CaptureWindow`] guard it returns closes that window when it drops. A run
+//! boundary holds one across dispatch, which both bounds the collector by one
+//! run and stops one run's passes from contaminating the next. A caller outside
+//! a window renders exactly as before, storing nothing.
+//!
+//! The window is a guard rather than a `begin`/`end` pair because the thing it
+//! bounds can fail: a handler that panics between the two calls would leave the
+//! window open forever, and every later run on that thread would then record
+//! into a collector nothing ever closes — the unbounded growth the window
+//! exists to prevent. Unwinding drops the guard.
+//!
+//! # Nesting
+//!
+//! Windows **nest, because runs do**: a handler is free to drive another app
+//! through `run_to_string`, and that inner run opens a window of its own inside
+//! the outer one. Each open window owns its own batch, so an inner run neither
+//! clears what the outer has already recorded nor stops the outer from
+//! recording once it closes.
+//!
+//! Closing an inner window publishes its batch to [`take_captured`] — that run
+//! observed itself — *and* folds it into the enclosing window. Folding it in is
+//! the deliberate half: the inner run's output is normally embedded in the
+//! outer page, so a tag the inner run could not resolve is corruption on the
+//! outer page too. An outer batch blind to it would let an oracle like
+//! `assert_every_tag_resolved` pass on a page that carries it, and a false pass
+//! is the one failure mode an oracle must not have.
 //!
 //! # Consumer
 //!
@@ -48,16 +70,17 @@
 //! # Usage
 //!
 //! Render paths call [`resolve_tags`] in place of building a [`BBParser`] and
-//! calling `parse`. The run boundary calls [`begin_capture`] before dispatch
-//! and [`capture_for_run`] after it, and [`take_captured`] then hands the batch
-//! to whoever is observing the run:
+//! calling `parse`. The run boundary opens a window with [`begin_capture`]
+//! before dispatch and holds the guard across it; dropping the guard ends that
+//! run's batch, and [`take_captured`] then hands it to whoever is observing the
+//! run:
 //!
 //! ```rust
 //! use standout_bbparser::{TagTransform, UnknownTagBehavior};
 //! use standout_render::diagnostics;
 //! use std::collections::HashMap;
 //!
-//! diagnostics::begin_capture();
+//! let window = diagnostics::begin_capture();
 //! let output = diagnostics::resolve_tags(
 //!     "[nope]hi[/nope]",
 //!     HashMap::new(),
@@ -66,34 +89,38 @@
 //! );
 //! assert_eq!(output, "hi"); // Remove mode: no marker reaches the page…
 //!
-//! diagnostics::capture_for_run();
+//! drop(window); // the run boundary ends the batch
 //! let passes = diagnostics::take_captured();
 //! // …but the pass still names the tag the theme did not define.
 //! assert_eq!(passes[0].unresolved_tag_names(), ["nope"]);
 //! ```
+//!
+//! Bind the guard to a name. `let _ = diagnostics::begin_capture();` drops it
+//! on the spot and closes the window before anything renders into it.
 
-use std::cell::{Cell, RefCell};
+use std::cell::RefCell;
 use std::collections::HashMap;
+use std::marker::PhantomData;
 
 use console::Style;
 use standout_bbparser::{BBParser, TagTransform, UnknownTagBehavior, UnknownTagError};
 
 thread_local! {
-    /// Whether a capture window is open on this thread.
+    /// The capture windows open on this thread, innermost last — one batch of
+    /// tag resolutions per window.
     ///
-    /// Off by default: [`resolve_tags`] runs on every render, so a collector
-    /// that recorded unconditionally would grow without bound in any embedding
-    /// that renders outside a run boundary.
-    static CAPTURING: Cell<bool> = const { Cell::new(false) };
-
-    /// Tag resolutions recorded by the current run on this thread.
+    /// Empty by default, and an empty stack *is* "not capturing": [`resolve_tags`]
+    /// runs on every render, so a collector that recorded unconditionally would
+    /// grow without bound in any embedding that renders outside a run boundary.
+    /// A stack rather than a single batch because runs nest — see the module's
+    /// nesting section.
     ///
     /// Thread-local for the same reason [`crate::warnings`] is: a CLI process
     /// is effectively single-threaded across the run boundary, so this avoids
     /// a mutex on the render path.
-    static RESOLUTIONS: RefCell<Vec<TagResolution>> = const { RefCell::new(Vec::new()) };
+    static WINDOWS: RefCell<Vec<Vec<TagResolution>>> = const { RefCell::new(Vec::new()) };
 
-    /// The batch ended by the most recent [`capture_for_run`] call.
+    /// The batch ended by the most recently closed [`CaptureWindow`].
     static CAPTURED: RefCell<Vec<TagResolution>> = const { RefCell::new(Vec::new()) };
 }
 
@@ -241,53 +268,92 @@ pub fn resolve_tags(
     output
 }
 
-/// Opens a capture window on this thread, discarding anything left in the
-/// collector.
+/// An open capture window, owning the batch recorded inside it.
 ///
-/// The run boundary calls this before dispatch. Outside a window nothing is
-/// recorded at all, which is what keeps [`resolve_tags`] — a function on every
-/// render path, including the standalone [`Renderer`](crate::Renderer) — from
-/// accumulating a record per render forever in a long-lived process.
-pub fn begin_capture() {
-    RESOLUTIONS.with(|r| r.borrow_mut().clear());
-    CAPTURING.with(|capturing| capturing.set(true));
+/// Held by a run boundary across dispatch and closed by dropping it. Closing is
+/// the whole of its behaviour, so there is no method to call: see [`Drop`] for
+/// what closing does with the batch, and the module's nesting section for what
+/// it does with the enclosing window.
+///
+/// Deliberately neither `Send` nor `Sync`. The window stack is thread-local, so
+/// a guard dropped on another thread would pop a window it never opened.
+#[must_use = "the window closes when the guard drops; bind it across the run it bounds"]
+pub struct CaptureWindow {
+    _not_send: PhantomData<*const ()>,
+}
+
+impl Drop for CaptureWindow {
+    /// Closes this window: its batch becomes the captured batch, and — if this
+    /// window was nested inside another — is also folded into the enclosing
+    /// one, which stays open and keeps recording.
+    fn drop(&mut self) {
+        let batch = WINDOWS.with(|windows| windows.borrow_mut().pop().unwrap_or_default());
+
+        // The enclosing run's page normally embeds this one's output, so its
+        // batch has to account for what this run rendered. Cloning is paid only
+        // when runs actually nest, which no ordinary CLI run does.
+        WINDOWS.with(|windows| {
+            if let Some(enclosing) = windows.borrow_mut().last_mut() {
+                enclosing.extend(batch.iter().cloned());
+            }
+        });
+
+        CAPTURED.with(|captured| {
+            *captured.borrow_mut() = batch;
+        });
+    }
+}
+
+/// Opens a capture window on this thread, returning the guard that closes it.
+///
+/// The run boundary calls this before dispatch and holds the guard across it.
+/// Outside a window nothing is recorded at all, which is what keeps
+/// [`resolve_tags`] — a function on every render path, including the standalone
+/// [`Renderer`](crate::Renderer) — from accumulating a record per render
+/// forever in a long-lived process.
+///
+/// Opening a window inside another nests rather than replaces: the new window
+/// starts empty, and the enclosing one keeps everything it has recorded so far.
+pub fn begin_capture() -> CaptureWindow {
+    WINDOWS.with(|windows| windows.borrow_mut().push(Vec::new()));
+    CaptureWindow {
+        _not_send: PhantomData,
+    }
 }
 
 /// Whether a capture window is currently open on this thread.
 pub fn is_capturing() -> bool {
-    CAPTURING.with(Cell::get)
+    WINDOWS.with(|windows| !windows.borrow().is_empty())
 }
 
-/// Appends a tag resolution to the thread-local collector.
+/// Appends a tag resolution to the innermost open capture window.
 ///
-/// A no-op outside a capture window opened by [`begin_capture`].
+/// A no-op outside a window opened by [`begin_capture`].
 pub fn record(resolution: TagResolution) {
-    if !is_capturing() {
-        return;
-    }
-    RESOLUTIONS.with(|r| r.borrow_mut().push(resolution));
-}
-
-/// Removes and returns the tag resolutions collected on this thread.
-pub fn drain() -> Vec<TagResolution> {
-    RESOLUTIONS.with(|r| std::mem::take(&mut *r.borrow_mut()))
-}
-
-/// Closes the capture window, moving its batch to the captured slot.
-///
-/// The run boundary calls this — both the printing and the capturing entry
-/// point — so a run's resolutions are bounded by that run and cannot bleed
-/// into the next one on the same thread. The next call replaces the previous
-/// captured batch, and recording stays off until the next [`begin_capture`].
-pub fn capture_for_run() {
-    let resolutions = drain();
-    CAPTURING.with(|capturing| capturing.set(false));
-    CAPTURED.with(|captured| {
-        *captured.borrow_mut() = resolutions;
+    WINDOWS.with(|windows| {
+        if let Some(current) = windows.borrow_mut().last_mut() {
+            current.push(resolution);
+        }
     });
 }
 
-/// Returns and clears the batch ended by the most recent [`capture_for_run`].
+/// Removes and returns the tag resolutions recorded in the innermost open
+/// window, leaving that window open.
+///
+/// Empty when no window is open. This is the observe-mid-run form; closing a
+/// window is [`CaptureWindow`]'s job.
+pub fn drain() -> Vec<TagResolution> {
+    WINDOWS.with(|windows| {
+        windows
+            .borrow_mut()
+            .last_mut()
+            .map(std::mem::take)
+            .unwrap_or_default()
+    })
+}
+
+/// Returns and clears the batch ended by the most recently closed
+/// [`CaptureWindow`] on this thread.
 pub fn take_captured() -> Vec<TagResolution> {
     CAPTURED.with(|captured| std::mem::take(&mut *captured.borrow_mut()))
 }
@@ -302,16 +368,26 @@ mod tests {
         styles
     }
 
-    /// Clears both slots and opens a capture window, so a test starts from a
-    /// known state regardless of what ran before it on this thread.
-    fn reset() {
+    /// Abandons any window left open on this thread, clears the captured slot,
+    /// and opens a fresh window, so a test starts from a known state regardless
+    /// of what ran before it.
+    fn reset() -> CaptureWindow {
+        WINDOWS.with(|windows| windows.borrow_mut().clear());
         take_captured();
-        begin_capture();
+        begin_capture()
+    }
+
+    /// Every unresolved tag named by `batch`, pass by pass, in order.
+    fn unresolved_across(batch: &[TagResolution]) -> Vec<&str> {
+        batch
+            .iter()
+            .flat_map(TagResolution::unresolved_tag_names)
+            .collect()
     }
 
     #[test]
     fn a_clean_pass_is_recorded_and_names_nothing() {
-        reset();
+        let _window = reset();
         let output = resolve_tags(
             "[ok]done[/ok]",
             theme_with("ok"),
@@ -339,7 +415,7 @@ mod tests {
             TagTransform::Keep,
             TagTransform::Remove,
         ] {
-            reset();
+            let _window = reset();
             let output = resolve_tags(
                 "[nope]hi[/nope]",
                 theme_with("ok"),
@@ -362,7 +438,7 @@ mod tests {
 
     #[test]
     fn the_strip_behavior_is_recorded_alongside_the_tags() {
-        reset();
+        let _window = reset();
         resolve_tags(
             "[nope]hi[/nope]",
             HashMap::new(),
@@ -375,15 +451,15 @@ mod tests {
     }
 
     #[test]
-    fn capture_ends_the_batch_so_runs_cannot_bleed_together() {
-        reset();
+    fn closing_the_window_ends_the_batch_so_runs_cannot_bleed_together() {
+        let window = reset();
         resolve_tags(
             "[nope]hi[/nope]",
             HashMap::new(),
             TagTransform::Remove,
             UnknownTagBehavior::Passthrough,
         );
-        capture_for_run();
+        drop(window);
 
         let first = take_captured();
         assert_eq!(first.len(), 1);
@@ -392,8 +468,7 @@ mod tests {
             "taking a captured batch clears it"
         );
 
-        begin_capture();
-        capture_for_run();
+        drop(begin_capture());
         assert!(
             take_captured().is_empty(),
             "a run that rendered nothing captures nothing"
@@ -405,8 +480,7 @@ mod tests {
     /// a record per render, forever, in a long-lived process.
     #[test]
     fn renders_outside_a_capture_window_accumulate_nothing() {
-        reset();
-        capture_for_run();
+        drop(reset());
         take_captured();
 
         for _ in 0..1000 {
@@ -429,8 +503,7 @@ mod tests {
     /// whatever run captures next on the same thread.
     #[test]
     fn a_render_before_a_run_cannot_contaminate_it() {
-        reset();
-        capture_for_run();
+        drop(reset());
         take_captured();
 
         resolve_tags(
@@ -440,14 +513,14 @@ mod tests {
             UnknownTagBehavior::Passthrough,
         );
 
-        begin_capture();
+        let window = begin_capture();
         resolve_tags(
             "[ok]during the run[/ok]",
             theme_with("ok"),
             TagTransform::Remove,
             UnknownTagBehavior::Passthrough,
         );
-        capture_for_run();
+        drop(window);
 
         let captured = take_captured();
         assert_eq!(captured.len(), 1, "only the run's own pass is captured");
@@ -460,7 +533,7 @@ mod tests {
     #[test]
     fn malformed_markup_on_a_defined_tag_is_not_an_unresolved_tag() {
         for input in ["[ok]unbalanced", "closed but never opened[/ok]"] {
-            reset();
+            let _window = reset();
             resolve_tags(
                 input,
                 theme_with("ok"),
@@ -493,7 +566,7 @@ mod tests {
     /// unresolved however malformed its markup also is.
     #[test]
     fn an_undefined_tag_is_unresolved_even_when_its_markup_is_broken() {
-        reset();
+        let _window = reset();
         resolve_tags(
             "[nope]unbalanced",
             theme_with("ok"),
@@ -506,6 +579,105 @@ mod tests {
         assert!(
             passes[0].malformed().is_empty(),
             "a tag the theme never defined is reported as missing, not as mis-nested"
+        );
+    }
+
+    /// Renders one unresolvable tag by that name into the innermost window.
+    fn render_unresolvable(tag: &str) {
+        resolve_tags(
+            &format!("[{tag}]x[/{tag}]"),
+            HashMap::new(),
+            TagTransform::Remove,
+            UnknownTagBehavior::Passthrough,
+        );
+    }
+
+    /// Reentrancy, which a single on/off flag and one shared batch could not
+    /// survive: a handler drives another app, so an inner window opens inside
+    /// the outer one and closes while the outer run is still going. The inner
+    /// window must not clear what the outer already recorded, must not turn
+    /// recording off behind it, and must not overwrite the outer batch when the
+    /// outer closes in turn.
+    #[test]
+    fn an_inner_window_neither_clears_nor_closes_the_outer_one() {
+        let outer = reset();
+        render_unresolvable("before_inner");
+
+        let inner = begin_capture();
+        render_unresolvable("inner");
+        drop(inner);
+
+        let inner_batch = take_captured();
+        assert_eq!(
+            unresolved_across(&inner_batch),
+            ["inner"],
+            "the inner run observes itself, and only itself"
+        );
+        assert!(
+            is_capturing(),
+            "the outer window is still open once the inner one closes"
+        );
+
+        render_unresolvable("after_inner");
+        drop(outer);
+
+        assert_eq!(
+            unresolved_across(&take_captured()),
+            ["before_inner", "inner", "after_inner"],
+            "the outer batch keeps what it recorded on both sides of the nested \
+             run, and accounts for the nested run's own passes in between"
+        );
+    }
+
+    /// The same property at depth, because a handler that drives an app is not
+    /// barred from driving one that does the same.
+    #[test]
+    fn windows_nest_to_any_depth() {
+        let outer = reset();
+        render_unresolvable("depth_one");
+
+        let middle = begin_capture();
+        render_unresolvable("depth_two");
+
+        let inner = begin_capture();
+        render_unresolvable("depth_three");
+        drop(inner);
+        assert_eq!(unresolved_across(&take_captured()), ["depth_three"]);
+
+        drop(middle);
+        assert_eq!(
+            unresolved_across(&take_captured()),
+            ["depth_two", "depth_three"]
+        );
+
+        drop(outer);
+        assert_eq!(
+            unresolved_across(&take_captured()),
+            ["depth_one", "depth_two", "depth_three"]
+        );
+        assert!(!is_capturing(), "every window closed");
+    }
+
+    /// The window is a guard so that a handler panicking mid-run cannot leave
+    /// it open: an abandoned window would keep collecting every later render on
+    /// the thread, which is the unbounded growth the window exists to prevent.
+    #[test]
+    fn a_panic_inside_a_window_still_closes_it() {
+        drop(reset());
+        take_captured();
+
+        let outcome = std::panic::catch_unwind(|| {
+            let _window = begin_capture();
+            render_unresolvable("during_the_panicking_run");
+            panic!("the handler blew up");
+        });
+
+        assert!(outcome.is_err(), "the panic is not swallowed");
+        assert!(!is_capturing(), "unwinding closed the window");
+        assert_eq!(
+            unresolved_across(&take_captured()),
+            ["during_the_panicking_run"],
+            "and the batch it had collected is still ended, not lost"
         );
     }
 }

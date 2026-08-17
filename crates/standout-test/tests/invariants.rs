@@ -20,7 +20,7 @@ use clap::{Arg, ArgAction, Command};
 use console::Style;
 use serde_json::json;
 use serial_test::serial;
-use standout::cli::{App, Output};
+use standout::cli::{App, Output, RunResult};
 use standout::Theme;
 use standout_render::OutputMode;
 use standout_test::invariants::{
@@ -271,6 +271,81 @@ fn the_marker_check_catches_the_corruption_that_reaches_the_page() {
 #[test]
 fn the_marker_check_passes_a_clean_page() {
     assert_no_unresolved_tag_markers_in_page("USAGE\n  notes [OPTIONS]\n");
+}
+
+/// An app whose own theme is complete, run by the handler below.
+///
+/// Its template emits a tag *it* never defines, so the corruption is the inner
+/// run's — and the text it produces is embedded in the outer page.
+fn embedded_app() -> App {
+    App::builder()
+        .theme(Theme::new().add("node", Style::new().cyan()))
+        .command(
+            "emit",
+            |_m, _ctx| Ok(Output::Render(json!({}))),
+            "[inner_missing]from the inner run[/inner_missing]",
+        )
+        .unwrap()
+        .build()
+        .unwrap()
+}
+
+/// The reentrant shape: a handler that drives another app and renders its
+/// output into its own page. Both renders leave a tag unresolved.
+fn nesting_app() -> App {
+    App::builder()
+        .theme(Theme::new().add("node", Style::new().cyan()))
+        .command(
+            "say",
+            |_m, _ctx| {
+                let inner = embedded_app().run_to_string(
+                    Command::new("inner").subcommand(Command::new("emit")),
+                    ["inner", "emit"],
+                );
+                let embedded = match inner {
+                    RunResult::Handled(output) => output.as_str().to_string(),
+                    other => panic!("the inner run must succeed, got {:?}", other),
+                };
+                Ok(Output::Render(json!({ "embedded": embedded })))
+            },
+            "[headline]{{ embedded }}[/headline]",
+        )
+        .unwrap()
+        .build()
+        .unwrap()
+}
+
+/// A run nested inside another run is one page, so it must be one verdict.
+///
+/// The inner run opens a diagnostics window inside the outer one and closes it
+/// while the outer run is still going. If closing it ended the outer window —
+/// or handed the outer run an empty batch — `assert_every_tag_resolved` would
+/// pass on a page carrying the inner run's unresolved tag, which is an oracle
+/// silently asserting nothing. It sees both tags instead.
+#[test]
+#[serial]
+fn a_nested_run_cannot_hide_its_unresolved_tags_from_the_outer_one() {
+    let result =
+        TestHarness::new()
+            .text_output()
+            .run(&nesting_app(), say_command(), ["app", "say"]);
+
+    result.assert_success();
+    assert_eq!(
+        result.stdout(),
+        "from the inner run",
+        "Text mode erases both tags, so neither page carries evidence"
+    );
+    assert_no_unresolved_tag_markers(&result);
+
+    assert_eq!(
+        result.unresolved_tag_names(),
+        ["inner_missing", "headline"],
+        "the outer run accounts for the nested run's passes as well as its own, \
+         in the order they ran"
+    );
+    fails_naming("inner_missing", || assert_every_tag_resolved(&result));
+    fails_naming("headline", || assert_every_tag_resolved(&result));
 }
 
 // ---------------------------------------------------------------------------

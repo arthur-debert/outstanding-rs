@@ -725,10 +725,12 @@ impl TestResult {
     /// the flattened view.
     ///
     /// A run that rendered nothing (an error before dispatch, a structured
-    /// output mode) records no passes. Only the run's own passes are here: the
+    /// output mode) records no passes. Only what this run rendered is here: the
     /// collector records only inside the window the run boundary opens, so a
     /// standalone render before or between runs is neither kept nor blamed on
-    /// a run that follows it.
+    /// a run that follows it. A run the handler itself drove — an app invoking
+    /// another app — counts as part of this run, because its output lands on
+    /// this run's page; those passes appear here too.
     ///
     /// "Could not resolve" means the theme has no such tag. A tag the theme
     /// *does* define whose markup the template got wrong — an unbalanced open,
