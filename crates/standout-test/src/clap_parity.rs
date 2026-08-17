@@ -53,8 +53,9 @@ use clap::{Arg, Command};
 use standout::cli::HelpLength;
 
 use crate::page::{
-    candidate_metavars, contains_token, declared_metavars, find_row, flag_spellings, list_values,
-    metavar_text, normalize, rows, takes_values, value_clause, value_placeholders, Row,
+    candidate_metavars, comma_values, contains_token, declared_metavars, find_row, flag_spellings,
+    list_values, metavar_text, normalize, rows, takes_values, value_clause, value_placeholders,
+    Row,
 };
 use crate::TestResult;
 
@@ -739,13 +740,19 @@ fn argument_check(fact: &Fact, built: &Command, rows: &[Row<'_>]) -> Result<(), 
             )
         }
         FactKind::ArgDefault => labelled(row, "default:", fact, |line| {
-            // The clause is compared whole and value by value: whole because
-            // standout does not quote a default that carries whitespace, by
-            // value because clap space-joins a list of defaults and quotes
-            // the values that need it. Either way the match is bounded — a
-            // page that states `briefly` no longer states `brief`.
+            // The clause is compared whole and value by value under both
+            // grammars: whole because standout does not quote a default that
+            // carries whitespace, by `list_values` because clap space-joins a
+            // defaults list and quotes the values that need it, by
+            // `comma_values` because standout comma-joins its list and quotes
+            // nothing — there `plain text, json` is two values, and the
+            // quote-aware split would shear the first apart. Every reading is
+            // bounded by whole values, so a page that states `briefly` still
+            // does not state `brief`.
             let clause = value_clause(line);
-            clause.trim() == fact.expected || list_values(clause).contains(&fact.expected)
+            clause.trim() == fact.expected
+                || list_values(clause).contains(&fact.expected)
+                || comma_values(clause).contains(&fact.expected)
         }),
         FactKind::ArgPossibleValue => {
             let names = row.possible_value_names();

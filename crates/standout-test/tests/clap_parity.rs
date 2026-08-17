@@ -618,6 +618,28 @@ fn a_dropped_quoted_possible_value_fails() {
     });
 }
 
+/// Standout spells the same list its own way — comma-joined and never quoted,
+/// `possible values: plain text, json` — and the decoder must read it by its
+/// commas: under clap's grammar those bytes are three values, so the
+/// quote-aware split would shear `plain text` apart and fail a page that
+/// states exactly what clap declared.
+#[test]
+#[serial]
+fn a_whitespace_value_on_standouts_page_is_one_value() {
+    let (app, cmd) = whitespace_valued();
+    let result = TestHarness::new()
+        .text_output()
+        .run(&app, cmd.clone(), ["notes", "--help"]);
+    result.assert_success();
+    let page = result.stdout_plain();
+
+    assert!(
+        page.contains("possible values: plain text, json"),
+        "the page only tests the decoder if it spells the list unquoted:\n{page}"
+    );
+    assert_page_states_clap_facts(&page, &cmd, HelpLength::Long);
+}
+
 // ---------------------------------------------------------------------------
 // Fixtures and helpers
 // ---------------------------------------------------------------------------
@@ -673,6 +695,15 @@ fn quoted_and_helped() -> Command {
             ])
             .help("How to print the notes"),
     )
+}
+
+/// `quoted_and_helped`'s metadata rendered by standout instead of by clap: an
+/// app pair whose page spells the whitespace-carrying value in standout's
+/// unquoted comma-joined list. The subcommand exists only because the app
+/// carries a `stat` handler.
+fn whitespace_valued() -> (App, Command) {
+    let cmd = quoted_and_helped().subcommand(Command::new("stat").about("Summarize the notes"));
+    (notes_app(), cmd)
 }
 
 /// The shared fixture's nested page for one entry point, as plain text.

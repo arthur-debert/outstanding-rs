@@ -71,13 +71,19 @@ impl<'a> Row<'a> {
     /// page spells the list.
     ///
     /// Three spellings exist across the two formatters this parser reads:
-    /// standout's labelled line (`possible values: brief, full, none`),
-    /// clap's bracketed clause (`[possible values: "plain text", json]`, a
-    /// value quoted when it carries whitespace), and clap's long-help region —
-    /// a `Possible values:` heading with a `- value: description` bullet per
-    /// value, which clap switches to when any value has help text. The
-    /// differential asks whether a value is *stated*, so every spelling
-    /// decodes to the same list of names.
+    /// standout's labelled line (`possible values: plain text, json` —
+    /// comma-joined and never quoted, so a value's whitespace is part of its
+    /// name), clap's bracketed clause (`[possible values: "plain text",
+    /// json]`, a value quoted when it carries whitespace), and clap's
+    /// long-help region — a `Possible values:` heading with a
+    /// `- value: description` bullet per value, which clap switches to when
+    /// any value has help text. The differential asks whether a value is
+    /// *stated*, so every spelling decodes to the same list of names — which
+    /// takes two decoders, because the same bytes mean different values under
+    /// the two grammars: `plain text, json` is two values in standout's
+    /// spelling and three in clap's, where whitespace separates and a
+    /// space-carrying value would have arrived quoted. The bracket the label
+    /// sits in is what says whose grammar the clause is.
     pub(crate) fn possible_value_names(&self) -> Vec<String> {
         const LABEL: &str = "possible values:";
         let mut names = Vec::new();
@@ -85,14 +91,21 @@ impl<'a> Row<'a> {
         for line in self.block() {
             if let Some(offset) = find_label(line, LABEL) {
                 in_region = true;
-                names.extend(list_values(value_clause(&line[offset + LABEL.len()..])));
+                let remainder = &line[offset + LABEL.len()..];
+                if line[..offset].trim_end().ends_with('[') {
+                    names.extend(list_values(value_clause(remainder)));
+                } else {
+                    names.extend(comma_values(remainder));
+                }
             } else if in_region {
                 // A bullet under the heading states one value, named up to
-                // the colon that introduces its description. Anything else —
-                // a wrapped bullet description, a `[default: …]` clause — is
-                // not a value name and is passed over.
+                // the `: ` that introduces its description — clap always puts
+                // the space there, so a bare colon inside a name (`foo:bar`)
+                // is the name's own. Anything else — a wrapped bullet
+                // description, a `[default: …]` clause — is not a value name
+                // and is passed over.
                 if let Some(bullet) = line.trim_start().strip_prefix("- ") {
-                    let name = match bullet.split_once(':') {
+                    let name = match bullet.split_once(": ") {
                         Some((name, _)) => name,
                         None => bullet,
                     }
@@ -129,21 +142,53 @@ fn find_label(line: &str, label: &str) -> Option<usize> {
 /// closing bracket (`[default: brief] [aliases: -t]` must not read the alias
 /// as a second default), or the whole remainder on a page that does not
 /// bracket its clauses (`default: brief`).
+///
+/// The bracket that closes the clause is the first one *outside* quotes:
+/// clap quotes a value that needs it, so `[default: "[notes.txt]"]` is a
+/// one-value clause whose brackets belong to the value, not to the clause.
 pub(crate) fn value_clause(remainder: &str) -> &str {
+    let mut in_quotes = false;
+    let mut escaped = false;
+    for (index, c) in remainder.char_indices() {
+        if in_quotes {
+            if escaped {
+                escaped = false;
+            } else if c == '\\' {
+                escaped = true;
+            } else if c == '"' {
+                in_quotes = false;
+            }
+        } else if c == '"' {
+            in_quotes = true;
+        } else if c == ']' {
+            return &remainder[..index];
+        }
+    }
     remainder
-        .find(']')
-        .map_or(remainder, |end| &remainder[..end])
 }
 
-/// The values a comma- or space-separated list clause states, with clap's
-/// quoting undone.
+/// The values standout's labelled list states: comma-joined and never quoted,
+/// so the commas are the only separators and a value's whitespace is part of
+/// its name — `plain text, json` is two values. Clap's clauses must not
+/// decode here: under clap's grammar bare whitespace separates too, and only
+/// [`list_values`] knows its quoting.
+pub(crate) fn comma_values(clause: &str) -> Vec<String> {
+    clause
+        .split(',')
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(ToString::to_string)
+        .collect()
+}
+
+/// The values one of *clap's* list clauses states, with its quoting undone.
 ///
-/// Clap wraps a value in Rust-debug quotes when it is empty or carries
-/// whitespace (`[default: "plain text"]`), so splitting the clause naively
-/// would shear such a value apart. Standout separates values with `, ` where
-/// clap's default list uses a bare space, so both separators split here —
-/// which is safe precisely because a value that carries either arrives
-/// quoted.
+/// Clap separates values with `, ` in a possible-values clause and a bare
+/// space in a defaults list, so both separators split here — which is safe
+/// precisely because clap wraps a value in Rust-debug quotes when it is empty
+/// or carries either (`[default: "plain text"]`). Standout's lists never
+/// quote, so they must decode through [`comma_values`] instead: this decoder
+/// would shear `plain text` apart at its space.
 pub(crate) fn list_values(clause: &str) -> Vec<String> {
     let mut values = Vec::new();
     let mut current = String::new();
@@ -521,8 +566,29 @@ OPTIONS
         assert_eq!(list_values(" \"say \\\"hi\\\"\""), ["say \"hi\""]);
     }
 
+    /// Standout never quotes, so its commas are the only separators and a
+    /// value keeps its whitespace.
+    #[test]
+    fn comma_values_keeps_a_values_whitespace() {
+        assert_eq!(comma_values(" plain text, json"), ["plain text", "json"]);
+        assert_eq!(comma_values(""), Vec::<String>::new());
+    }
+
+    /// A quoted value owns its brackets: the clause ends at the first `]`
+    /// *outside* quotes, not at the first `]` clap happened to print.
+    #[test]
+    fn value_clause_skips_a_bracket_inside_quotes() {
+        assert_eq!(
+            value_clause(" \"[notes.txt]\"] [aliases: -t]"),
+            " \"[notes.txt]\""
+        );
+        assert_eq!(value_clause(" brief] [aliases: -t]"), " brief");
+        assert_eq!(value_clause(" brief"), " brief");
+    }
+
     /// Clap's long-help region: a heading, one bullet per value — named up to
-    /// the colon, quoted nowhere — and a spec clause after the bullets that
+    /// the `: ` that introduces its description, quoted nowhere, a bare colon
+    /// belonging to the name — and a spec clause after the bullets that
     /// states no value name at all.
     #[test]
     fn possible_value_names_reads_the_bullet_region() {
@@ -533,13 +599,17 @@ Options:
 
           Possible values:
           - plain text
+          - key:value
           - json: One note per line
 
           [default: \"plain text\"]
 ";
         let rows = rows(CLAP_LONG);
         assert_eq!(rows.len(), 1, "one option row");
-        assert_eq!(rows[0].possible_value_names(), ["plain text", "json"]);
+        assert_eq!(
+            rows[0].possible_value_names(),
+            ["plain text", "key:value", "json"]
+        );
     }
 
     #[test]
@@ -552,6 +622,35 @@ OPTIONS
         assert_eq!(
             rows(INLINE)[0].possible_value_names(),
             ["brief", "full", "none"]
+        );
+    }
+
+    /// Standout's inline list is comma-joined and unquoted: a value carrying
+    /// whitespace is one value, where clap's grammar would read three.
+    #[test]
+    fn possible_value_names_reads_standouts_unquoted_list() {
+        const INLINE: &str = "\
+OPTIONS
+  --format <FORMAT>  How to print the notes
+                     possible values: plain text, json
+";
+        assert_eq!(
+            rows(INLINE)[0].possible_value_names(),
+            ["plain text", "json"]
+        );
+    }
+
+    /// Clap's bracketed clause keeps clap's grammar: quotes undone, bare
+    /// whitespace separating.
+    #[test]
+    fn possible_value_names_reads_claps_bracketed_clause() {
+        const CLAP_SHORT: &str = "\
+Options:
+  --format <FORMAT>  How to print the notes [possible values: \"plain text\", json]
+";
+        assert_eq!(
+            rows(CLAP_SHORT)[0].possible_value_names(),
+            ["plain text", "json"]
         );
     }
 
