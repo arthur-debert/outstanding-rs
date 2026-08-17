@@ -69,6 +69,39 @@ prompts), because a `run_process` call that silently dropped
 `terminal_width(80)` would read as a pinned terminal and in fact ask the CI
 machine's.
 
+## Consequence: environment conventions are pinned at the process boundary
+
+Opening gate 2 forces a decision about *when* the harness reads `console`'s
+switch, and the answer constrains what an in-process test can measure at all.
+
+`console::colors_enabled()` initializes its process-global lazily, on the first
+*read* in the process, from `CLICOLOR` / `CLICOLOR_FORCE`. The harness captures
+the pre-run value before applying `env_set` / `env_remove`, because capturing
+after would read a global that this run's own `.env("CLICOLOR_FORCE", "1")` had
+just latched, and the value restored on drop would be the harness's own
+invention rather than the real baseline.
+
+Capturing early necessarily *forces* that lazy initialization under the
+pre-test environment. That is the correct baseline, and it has a consequence
+worth stating plainly: **a test's in-process `.env()` can no longer reach
+`console`'s initialization.** By the time the run applies environment
+variables, the harness has already latched the global; `console` will not read
+`CLICOLOR_FORCE` again in that process.
+
+So the environment conventions this epic wants pinned — `NO_COLOR`,
+`TERM=dumb`, and the `CLICOLOR_FORCE` gap — **cannot be pinned in-process.**
+An in-process test that sets `NO_COLOR` and asserts on suppression would be
+measuring the harness's own gate-2 handling, not the framework's response to
+the convention: it can pass on a build where the convention is entirely
+unimplemented. That is a false negative of exactly the kind this Spec exists to
+remove.
+
+Those pins belong at the process boundary, through `TestHarness::run_process`.
+A child process reads the real environment and performs its own lazy
+initialization, so `NO_COLOR` and `TERM=dumb` are genuinely observable there
+and nowhere else. This is a decision the environment-conventions workstream
+(#315) inherits, not one for it to rediscover.
+
 ## What this does not affect
 
 The epic's central invariant does not depend on any of this. The `[tag?]`

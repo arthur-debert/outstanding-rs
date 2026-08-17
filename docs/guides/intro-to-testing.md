@@ -313,7 +313,7 @@ assert!(result.stdout().contains('\x1b'));    // really styled
 assert_eq!(result.stdout_plain(), expected);  // and strippable
 ```
 
-There is no TTY knob. The harness once offered `.is_tty()` / `.no_tty()`, driving a detector no production code ever read; both are gone, along with `standout_render::detect_is_tty`. Questions that genuinely depend on being (or not being) a terminal belong to a real process — see [`run_process`](#48-running-the-real-binary) — and a future terminal-citizenship seam will be stream-aware rather than a single stdout-wide global. The reasoning is recorded in `docs/adr/0019-delete-the-in-process-tty-seam.md`.
+There is no TTY knob. The harness once offered `.is_tty()` / `.no_tty()`, driving a detector no production code ever read; both are gone, along with `standout_render::detect_is_tty`. Questions that genuinely depend on being (or not being) a terminal belong to a real process — see [`run_process`](#48-running-the-real-binary) — and a future terminal-citizenship seam will be stream-aware rather than a single stdout-wide global. The reasoning is recorded in `docs/adr/0022-delete-the-in-process-tty-seam.md`.
 
 ### 4.7 Forcing an output mode
 

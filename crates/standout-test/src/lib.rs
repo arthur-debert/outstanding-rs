@@ -53,7 +53,7 @@
 //!
 //! The harness does not simulate a TTY in-process. It once offered
 //! `is_tty()`/`no_tty()`, which drove a detector nothing consulted; the seam
-//! is deleted (see `docs/adr/0019-delete-the-in-process-tty-seam.md`) and
+//! is deleted (see `docs/adr/0022-delete-the-in-process-tty-seam.md`) and
 //! terminal-shaped questions belong to `run_process`. What the harness does
 //! control is *color*: [`with_color`](TestHarness::with_color) opens both
 //! gates between a styled template and ANSI bytes, so an ANSI-positive
@@ -165,6 +165,15 @@ impl TestHarness {
     /// Sets `key=value` as a real environment variable for the duration of
     /// the run. Handlers that use `EnvSource::new` / `std::env::var` will
     /// see it.
+    ///
+    /// This does **not** reach variables a dependency read before the run
+    /// started. `console` initializes its color global lazily from `CLICOLOR`
+    /// / `CLICOLOR_FORCE`, and the harness latches that global before applying
+    /// this map (see [`with_color`](Self::with_color)); `NO_COLOR` and
+    /// `TERM=dumb` land the same way. Setting them here changes what handler
+    /// code reads, not what `console` decided — pin those conventions with
+    /// [`run_process`](Self::run_process), where the child does its own
+    /// initialization against the real environment.
     pub fn env(mut self, key: impl Into<String>, value: impl Into<String>) -> Self {
         self.env_set.insert(key.into(), value.into());
         self
@@ -221,6 +230,22 @@ impl TestHarness {
     /// This is test-only. No production code path sets `console`'s switch;
     /// the harness sets it to model the terminal the test claims to be
     /// writing to.
+    ///
+    /// # The harness owns gate 2, so in-process env cannot reach it
+    ///
+    /// `console` initializes its process-global lazily, on the first *read*,
+    /// from `CLICOLOR` / `CLICOLOR_FORCE`. The harness captures that global
+    /// before applying [`env`](Self::env) / [`env_remove`](Self::env_remove),
+    /// so the value it restores on drop is the real pre-test baseline rather
+    /// than one this run's own environment just latched.
+    ///
+    /// The consequence: by the time a run applies environment variables,
+    /// `console` has already initialized, and a test's `.env("CLICOLOR_FORCE",
+    /// …)` no longer influences it. Environment conventions that `console`
+    /// reads — `NO_COLOR`, `TERM=dumb`, `CLICOLOR_FORCE` — are therefore only
+    /// observable in a child process; assert them through
+    /// [`run_process`](Self::run_process), not here. See
+    /// `docs/adr/0022-delete-the-in-process-tty-seam.md`.
     pub fn with_color(mut self) -> Self {
         self.color_capable = Some(true);
         self

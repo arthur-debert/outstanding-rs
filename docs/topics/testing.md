@@ -108,7 +108,7 @@ use standout_render::{
 
 Each takes a `fn() -> T` (function pointer or non-capturing closure). `DetectorGuard` is a RAII helper that resets all of them on drop.
 
-There is no TTY detector: one existed, nothing in production ever read it, and it was removed rather than left as a seam that answers only about stdout (`docs/adr/0019-delete-the-in-process-tty-seam.md`). Terminal-dependent behavior is tested against a real process via `TestHarness::run_process`.
+There is no TTY detector: one existed, nothing in production ever read it, and it was removed rather than left as a seam that answers only about stdout (`docs/adr/0022-delete-the-in-process-tty-seam.md`). Terminal-dependent behavior is tested against a real process via `TestHarness::run_process`.
 
 These drive `OutputMode::Auto`'s color decision and the render context's terminal width. By default, terminal width resolves from a valid positive `$COLUMNS` value before probing the terminal. Installing a width detector replaces that full resolution, so an override keeps snapshot tests deterministic regardless of the process environment.
 

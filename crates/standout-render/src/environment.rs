@@ -9,7 +9,7 @@
 //! reported only on stdout, which is the wrong shape for the callers that
 //! would want it (a pager gates on stdout, a progress display writes to
 //! stderr), and the one in-repo caller that needed a terminal fact went
-//! around it. See `docs/adr/0019-delete-the-in-process-tty-seam.md`.
+//! around it. See `docs/adr/0022-delete-the-in-process-tty-seam.md`.
 //!
 //! It follows the same pattern used by
 //! [`set_theme_detector`](crate::set_theme_detector) and
