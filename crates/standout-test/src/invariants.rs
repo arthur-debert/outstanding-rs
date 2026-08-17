@@ -50,11 +50,16 @@
 //! # What these do not do
 //!
 //! They do not check that a row exists for every argument — that is the
-//! clap-parity differential's job. These state properties of the rows that
-//! *are* rendered; an argument with no row at all is simply not their subject.
+//! [clap-parity differential](crate::clap_parity)'s job. These state
+//! properties of the rows that *are* rendered; an argument with no row at all
+//! is simply not their subject. Both read the page through the same parser
+//! ([`crate::page`]), so "the row for `--summary`" means one thing to both.
 
-use clap::{Arg, Command};
+use clap::Command;
 
+use crate::page::{
+    declared_metavars, find_row, rows, takes_values, value_placeholders, visible_args,
+};
 use crate::TestResult;
 
 // ---------------------------------------------------------------------------
@@ -364,113 +369,6 @@ pub fn assert_metavar_for_valued_args_in_page(page: &str, cmd: &Command) {
     }
 }
 
-/// The arguments a help page is expected to render.
-fn visible_args(cmd: &Command) -> impl Iterator<Item = &Arg> {
-    cmd.get_arguments().filter(|arg| !arg.is_hide_set())
-}
-
-/// Whether the argument consumes command-line values.
-///
-/// This asks clap, not standout: a bool presence flag still carries a bool
-/// value parser, but it accepts no value in argv, and it is the parse contract
-/// help must follow. `get_num_args` is only populated on a built command, so
-/// the action is the fallback for a command passed in unbuilt.
-fn takes_values(arg: &Arg) -> bool {
-    arg.get_num_args()
-        .map(|range| range.takes_values())
-        .unwrap_or_else(|| arg.get_action().takes_values())
-}
-
-/// The value names the argument declared, or `None` when it declared none and
-/// clap would fall back to its id.
-fn declared_metavars(arg: &Arg) -> Option<Vec<String>> {
-    arg.get_value_names()
-        .map(|names| names.iter().map(ToString::to_string).collect::<Vec<_>>())
-        .filter(|names: &Vec<String>| !names.is_empty())
-}
-
-/// Every spelling a row might list this argument's value under — the declared
-/// names, else its id. Used to *find* a row, where the match is deliberately
-/// loose; whether the row spells the name correctly is the assertion's job.
-fn candidate_metavars(arg: &Arg) -> Vec<String> {
-    declared_metavars(arg).unwrap_or_else(|| vec![arg.get_id().to_string()])
-}
-
-/// The value placeholders a row's label offers, with brackets and a repetition
-/// ellipsis trimmed off.
-///
-/// A label is the argument's flag spellings followed by its value placeholders
-/// (`-f, --file <PATH>`), or — for a positional — the placeholder alone. Only
-/// the placeholders say the argument takes a value, so the flag spellings are
-/// dropped: were they kept, a row reduced to `--output` would "show" the
-/// metavar of an `output` argument by spelling its own flag.
-fn value_placeholders(label: &str) -> Vec<&str> {
-    label
-        .split(|c: char| c.is_whitespace() || c == ',')
-        // `--file=<PATH>` carries the placeholder on the flag's own token.
-        .map(|token| token.rsplit('=').next().unwrap_or(token))
-        .filter(|token| !token.starts_with('-'))
-        .map(metavar_text)
-        .filter(|token| !token.is_empty())
-        .collect()
-}
-
-/// A placeholder's name, without the punctuation a formatter wraps it in.
-///
-/// Clap brackets a value name to show whether it is required (`<RANGE>`,
-/// `[RANGE]`) and marks a repeating one with an ellipsis (`<RANGE>...`);
-/// standout's own help leaves the brackets off and tags the metavar instead.
-/// The invariant is about the name, so every spelling of the punctuation
-/// reduces to it — otherwise a clap-rendered page silently matches no row and
-/// the assertion passes by asserting nothing.
-fn metavar_text(token: &str) -> &str {
-    token
-        .trim_end_matches("...")
-        .trim_matches(|c| matches!(c, '<' | '>' | '[' | ']'))
-}
-
-/// Finds the rendered row for `arg`: the one whose label carries its flag
-/// spelling, or — for a positional, which is listed under its metavar — whose
-/// label opens with its value name.
-fn find_row<'a>(rows: &'a [Row<'a>], arg: &Arg) -> Option<&'a Row<'a>> {
-    if arg.is_positional() {
-        let mut names = candidate_metavars(arg);
-        names.push(arg.get_id().to_string());
-        return rows.iter().find(|row| {
-            row.label
-                .split_whitespace()
-                .next()
-                .map(metavar_text)
-                .is_some_and(|first| names.iter().any(|name| first.eq_ignore_ascii_case(name)))
-        });
-    }
-
-    let mut spellings: Vec<String> = Vec::new();
-    if let Some(long) = arg.get_long() {
-        spellings.push(format!("--{}", long));
-    }
-    if let Some(short) = arg.get_short() {
-        spellings.push(format!("-{}", short));
-    }
-    if spellings.is_empty() {
-        spellings.push(arg.get_id().to_string());
-    }
-
-    rows.iter().find(|row| {
-        spellings
-            .iter()
-            .any(|spelling| contains_token(row.label, spelling))
-    })
-}
-
-/// Whether `haystack` contains `token` delimited by whitespace or a comma —
-/// so `--all` does not match the row for `--all-files`.
-fn contains_token(haystack: &str, token: &str) -> bool {
-    haystack
-        .split(|c: char| c.is_whitespace() || c == ',')
-        .any(|word| word == token)
-}
-
 // ---------------------------------------------------------------------------
 // Whole-page column alignment
 // ---------------------------------------------------------------------------
@@ -579,58 +477,6 @@ fn description_column(line: &str) -> Option<usize> {
     Some(line[..line.len() - after_gap.len()].chars().count())
 }
 
-/// One rendered row: its label, its description, and the continuation lines
-/// filed under it.
-struct Row<'a> {
-    label: &'a str,
-    description: &'a str,
-    continuations: Vec<&'a str>,
-    line: &'a str,
-}
-
-impl<'a> Row<'a> {
-    /// The row's description and every continuation line under it.
-    fn block(&self) -> impl Iterator<Item = &&'a str> {
-        std::iter::once(&self.description).chain(self.continuations.iter())
-    }
-}
-
-/// Parses every two-column row on the page, with its continuation lines.
-fn rows(page: &str) -> Vec<Row<'_>> {
-    let mut rows: Vec<Row<'_>> = Vec::new();
-
-    for line in page.lines() {
-        if line.trim().is_empty() {
-            continue;
-        }
-        let indent = line.len() - line.trim_start().len();
-
-        if indent > 2 {
-            if let Some(row) = rows.last_mut() {
-                row.continuations.push(line.trim());
-            }
-            continue;
-        }
-        if indent < 2 {
-            continue;
-        }
-
-        let rest = &line[indent..];
-        let (label, description) = match rest.find("  ") {
-            Some(gap) => (rest[..gap].trim_end(), rest[gap..].trim()),
-            None => (rest.trim_end(), ""),
-        };
-        rows.push(Row {
-            label,
-            description,
-            continuations: Vec::new(),
-            line,
-        });
-    }
-
-    rows
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -649,19 +495,6 @@ OPTIONS
                      default: notes.txt
   --all              Include archived notes
 ";
-
-    #[test]
-    fn a_row_carries_its_continuation_lines() {
-        let rows = rows(PAGE);
-        let file = rows
-            .iter()
-            .find(|row| row.label.starts_with("-f"))
-            .expect("the --file row");
-
-        assert_eq!(file.label, "-f, --file <PATH>");
-        assert_eq!(file.description, "Notes file to read");
-        assert_eq!(file.continuations, ["default: notes.txt"]);
-    }
 
     #[test]
     fn a_bare_line_has_no_description_column() {
@@ -683,12 +516,5 @@ OPTIONS
     #[test]
     fn a_clean_page_names_no_markers() {
         assert!(unresolved_tag_markers(PAGE).is_empty());
-    }
-
-    #[test]
-    fn token_matching_does_not_confuse_a_prefix_for_a_flag() {
-        assert!(contains_token("--all", "--all"));
-        assert!(contains_token("-a, --all <N>", "--all"));
-        assert!(!contains_token("--all-files", "--all"));
     }
 }
