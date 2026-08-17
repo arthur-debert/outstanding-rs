@@ -313,7 +313,7 @@ assert!(result.stdout().contains('\x1b'));    // really styled
 assert_eq!(result.stdout_plain(), expected);  // and strippable
 ```
 
-There is no TTY knob. The harness once offered `.is_tty()` / `.no_tty()`, driving a detector no production code ever read; both are gone, along with `standout_render::detect_is_tty`. Questions that genuinely depend on being (or not being) a terminal belong to a real process — see [`run_process`](#49-running-the-real-binary) — and a future terminal-citizenship seam will be stream-aware rather than a single stdout-wide global. The reasoning is recorded in `docs/adr/0022-delete-the-in-process-tty-seam.md`.
+There is no TTY knob. The harness once offered `.is_tty()` / `.no_tty()`, driving a detector no production code ever read; both are gone, along with `standout_render::detect_is_tty`. Questions that genuinely depend on being (or not being) a terminal belong to a real process — see [`run_process`](#410-running-the-real-binary) — and a future terminal-citizenship seam will be stream-aware rather than a single stdout-wide global. The reasoning is recorded in `docs/adr/0022-delete-the-in-process-tty-seam.md`.
 
 ### 4.7 Forcing an output mode
 
@@ -374,7 +374,43 @@ compares), for asserting on a page the harness did not produce.
 `TestResult::tag_resolutions()`, which no page carries — that is exactly why it
 can name a tag in a mode where the page shows nothing.
 
-### 4.9 Running the real binary
+### 4.9 Clap-parity: the differential oracle
+
+The invariants above state properties of the rows a page *does* render. They say
+nothing about a row that was never rendered at all — and a field the help data
+extractor forgot to copy has no row, no wrong line, and nothing for an
+existential assertion to trip over. That is the shape of every defect in the
+themed-help cluster: `long_about`, defaults, possible values and metavars were
+all things clap knew and the page did not say.
+
+`standout_test::clap_parity` closes that hole by asserting against an oracle
+outside standout — clap's own metadata:
+
+```rust
+use standout::cli::HelpLength;
+use standout_test::clap_parity::assert_states_clap_facts;
+
+let page = TestHarness::new().text_output().run(&app, cmd(), ["notes", "--help"]);
+
+// `--help` and the `help` word owe `long_about`; `-h` owes `about`.
+assert_states_clap_facts(&page, &cmd(), HelpLength::Long);
+```
+
+It walks the command — subcommands, arguments, value names, help texts,
+defaults and possible values with clap's own suppression rules, hidden metadata
+respected — and requires each fact to appear in the row that owns it, naming
+the argument and the value when one is missing. It asserts **presence of
+facts, never layout**: themed help is meant to look different from clap's, so
+`default: brief` and `[default: brief]` satisfy it equally.
+
+Facts standout deliberately does not render live in one allowlist,
+`clap_parity::DELIBERATE_OMISSIONS`, each with its reason — an unexplained
+exemption is indistinguishable from a forgotten field, which is the failure
+mode the differential exists to end. Pass your own list to
+`assert_page_states_clap_facts_with` when a page is deliberately narrower;
+`&[]` asserts full parity.
+
+### 4.10 Running the real binary
 
 `run()` calls into your app inside the test process, so the two text streams it reports are a faithful *reconstruction* of what `App::run`'s writer seam would have emitted — not a recording of what the OS carried. For the handful of facts only the real boundary settles, `run_process()` runs the compiled binary instead and returns what the kernel saw:
 
@@ -523,7 +559,7 @@ Be honest about the boundaries. There are things you shouldn't try to test in-pr
 
 **Subprocess fan-out from your app.** If your handler shells out to `git`, `rg`, `$EDITOR`, or any other external program, the harness can't intercept that call. *This is the focus of Phase 3 of the test-tooling work — a `ProcessRunner` abstraction that routes through `CommandContext`, with a mock variant for tests. It's not yet shipped; until it is, shell-outs remain a boundary.* In the meantime, structure handlers so the shell-out is a trait you can swap for a mock in the handler's tests directly.
 
-**Binary-level concerns.** Linkage, the real exit code, which stream a byte actually went to, behavior that keys off stdout not being a terminal — that's integration-of-the-build. [`run_process()`](#49-running-the-real-binary) covers it from the same builder; reach for `assert_cmd` only if you want its matcher vocabulary.
+**Binary-level concerns.** Linkage, the real exit code, which stream a byte actually went to, behavior that keys off stdout not being a terminal — that's integration-of-the-build. [`run_process()`](#410-running-the-real-binary) covers it from the same builder; reach for `assert_cmd` only if you want its matcher vocabulary.
 
 The goal isn't to replace subprocess tests entirely. It's to reduce them to the small set of cases where they're actually earning their keep.
 

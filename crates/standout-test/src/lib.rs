@@ -115,7 +115,9 @@ use standout_render::{
 };
 use tempfile::TempDir;
 
+pub mod clap_parity;
 pub mod invariants;
+mod page;
 mod process;
 mod snapshot;
 
