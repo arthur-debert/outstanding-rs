@@ -34,7 +34,10 @@
 //! stripped, and [`assert_page_snapshot!`] pins a whole rendered page under a
 //! name derived from its [`SnapshotCase`]. A whole-page snapshot is what makes
 //! an *extra* wrong line fail a test — the thing a list of `contains`
-//! assertions cannot do.
+//! assertions cannot do. To pin a page across every (output mode × color ×
+//! theme) cell rather than in one hand-picked configuration, [`matrix`]
+//! yields the cells and each [`MatrixCell`] configures its own harness and
+//! names its own snapshot.
 //!
 //! Two things those accessors deliberately leave out, because they are not
 //! text: binary output and artifact bytes, which stay on
@@ -117,10 +120,12 @@ use tempfile::TempDir;
 
 pub mod clap_parity;
 pub mod invariants;
+mod matrix;
 mod page;
 mod process;
 mod snapshot;
 
+pub use matrix::{matrix, MatrixCell};
 pub use process::ProcessResult;
 pub use serial_test::serial;
 pub use snapshot::SnapshotCase;

@@ -81,6 +81,13 @@ impl SnapshotCase {
         self.axis("tty", if is_tty { "on" } else { "off" })
     }
 
+    /// Records the `color` axis as `on` / `off` — the axis the in-process TTY
+    /// seam resolved into (ADR-0022), matching the harness's
+    /// `with_color()` / `no_color()` pair.
+    pub fn color(self, color: bool) -> Self {
+        self.axis("color", if color { "on" } else { "off" })
+    }
+
     /// Records the `theme` axis under the theme's name.
     pub fn theme(self, name: impl Into<String>) -> Self {
         self.axis("theme", name)

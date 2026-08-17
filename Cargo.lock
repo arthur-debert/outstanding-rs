@@ -1776,6 +1776,7 @@ dependencies = [
  "standout-pipe",
  "standout-render",
  "standout-seeker",
+ "standout-test",
  "tempfile",
  "thiserror 2.0.20",
  "unicode-width 0.2.2",

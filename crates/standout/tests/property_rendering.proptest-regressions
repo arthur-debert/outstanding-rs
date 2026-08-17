@@ -4,4 +4,4 @@
 #
 # It is recommended to check this file in to source control so that
 # everyone who runs the test benefits from these saved cases.
-cc 0ab2c8ab8695c4b8e33d158b4eb3f2a0a984e3ce5175e6f6373da34b23fee999 # shrinks to mode = Auto, theme = None, template = "{{ . }}", data = Null
+cc dbea9ac280efc7d2a0d9e42005ce02cefa40ad73598e2bf4d6a86fb3c919e2f0 # shrinks to theme = ThemeCase { theme: None, defines: [] }, template = TemplateCase { source: "[title]{{ data }}[/title]", tags: ["title"] }, data = Null
