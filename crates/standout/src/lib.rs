@@ -231,6 +231,7 @@ pub mod views;
 // Re-export everything from standout-render
 // This provides the rendering layer without CLI knowledge
 pub use standout_render::context;
+pub use standout_render::diagnostics;
 pub use standout_render::file_loader;
 pub use standout_render::style;
 pub use standout_render::tabular;
@@ -284,7 +285,12 @@ pub use standout_render::{
 };
 
 // Re-export BBParser types for template validation
-pub use standout_bbparser::{UnknownTagError, UnknownTagErrors, UnknownTagKind};
+pub use standout_bbparser::{
+    TagTransform, UnknownTagBehavior, UnknownTagError, UnknownTagErrors, UnknownTagKind,
+};
+
+// What a run's style-tag passes resolved (from standout-render)
+pub use standout_render::TagResolution;
 
 // Utility exports (from standout-render)
 pub use standout_render::{

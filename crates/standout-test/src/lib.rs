@@ -42,6 +42,21 @@
 //! [`artifact_bytes`](TestResult::artifact_bytes). Each accessor's docs say
 //! precisely what it does and does not model.
 //!
+//! Not everything worth asserting is text at all.
+//! [`tag_resolutions`](TestResult::tag_resolutions) carries what the run's
+//! style-tag passes resolved — which tags the theme could not define, under
+//! which transform and unknown-tag policy — so "this page is corrupt" is a
+//! fact about structured data in every output mode, rather than a search for
+//! the `[tag?]` marker in the one mode that emits it.
+//!
+//! # Invariants
+//!
+//! [`invariants`] holds the universal and negative assertions the existential
+//! `contains` style cannot state: no unresolved tag, no possible-values row on
+//! a valueless argument, a metavar on every value-taking one, styling that
+//! changes no layout, aligned description columns. Each names the offending
+//! element when it fails.
+//!
 //! # Crossing the process boundary
 //!
 //! [`TestHarness::run_process`] runs a real binary instead of calling into
@@ -100,12 +115,14 @@ use standout_render::{
 };
 use tempfile::TempDir;
 
+pub mod invariants;
 mod process;
 mod snapshot;
 
 pub use process::ProcessResult;
 pub use serial_test::serial;
 pub use snapshot::SnapshotCase;
+pub use standout_render::TagResolution;
 
 /// How stdin should appear to handlers during the run.
 #[derive(Debug, Clone)]
@@ -578,6 +595,7 @@ impl TestHarness {
 
         let outcome = app.run_to_string(cmd, argv);
         let warnings = standout_render::warnings::take_captured_warnings();
+        let tag_resolutions = standout_render::diagnostics::take_captured();
 
         // `self` (and its tempdir) move into TestResult so the fixture dir
         // survives until the test is finished with the result.
@@ -586,6 +604,7 @@ impl TestHarness {
             stderr: render_stderr(&outcome, &warnings),
             outcome,
             warnings,
+            tag_resolutions,
             _tempdir: self.tempdir.take(),
             _restore: restore,
         }
@@ -766,6 +785,7 @@ pub struct TestResult {
     stdout: String,
     stderr: String,
     warnings: Vec<String>,
+    tag_resolutions: Vec<TagResolution>,
     // Kept alive so fixture files remain readable while the test inspects
     // the result; dropped after restore state is torn down.
     _tempdir: Option<TempDir>,
@@ -788,6 +808,78 @@ impl TestResult {
     /// deterministic and cannot leak into a later test on the same thread.
     pub fn warnings(&self) -> &[String] {
         &self.warnings
+    }
+
+    /// Returns what each style-tag pass of the run resolved, in render order.
+    ///
+    /// A page's tags are resolved against the theme in a second pass after the
+    /// template renders; this is that pass's record — the tags it could not
+    /// resolve, and the transform and unknown-tag policy that were in effect.
+    /// The framework computes this on every render and, until it was carried
+    /// out here, discarded it.
+    ///
+    /// It is the *structural* form of "the theme is complete": it holds in
+    /// every output mode, needs no ANSI and no TTY, and names the tag — where
+    /// searching the page for the `[tag?]` marker only works in the one mode
+    /// that emits it. [`invariants::assert_every_tag_resolved`] is the
+    /// assertion written on it; [`unresolved_tags`](Self::unresolved_tags) is
+    /// the flattened view.
+    ///
+    /// A run that rendered nothing (an error before dispatch, a structured
+    /// output mode) records no passes. Only what this run rendered is here: the
+    /// collector records only inside the window the run boundary opens, so a
+    /// standalone render before or between runs is neither kept nor blamed on
+    /// a run that follows it.
+    ///
+    /// A run the handler itself drove — an app invoking another app — counts as
+    /// part of this run, and its passes appear here at
+    /// [`TagResolution::nesting_depth`](standout_render::TagResolution::nesting_depth)
+    /// `1` or deeper. That holds whatever the handler did with the nested run's
+    /// output: the render path is handed a `String` and cannot see whether it
+    /// was embedded in this page or thrown away, so it reports it either way
+    /// rather than risk saying nothing about a page that carries corruption.
+    /// Filter on depth `0` for the passes this run rendered itself.
+    ///
+    /// "Could not resolve" means the theme has no such tag. A tag the theme
+    /// *does* define whose markup the template got wrong — an unbalanced open,
+    /// an unexpected close — is
+    /// [`TagResolution::malformed`](standout_render::TagResolution::malformed)
+    /// instead, so an assertion about the theme's vocabulary never names a tag
+    /// the theme has.
+    pub fn tag_resolutions(&self) -> &[TagResolution] {
+        &self.tag_resolutions
+    }
+
+    /// Returns every tag the run's renders could not resolve, across all passes.
+    ///
+    /// A tag used as a matched pair appears twice — once for the open, once for
+    /// the close — since each carries its own position in the template output,
+    /// and once more per pass: a run that renders a page for the terminal and
+    /// again unstyled for a pipe applies the style-tag pass twice over the same
+    /// template output. [`unresolved_tag_names`](Self::unresolved_tag_names) is
+    /// the collapsed view.
+    pub fn unresolved_tags(&self) -> Vec<&standout_render::UnknownTagError> {
+        self.tag_resolutions
+            .iter()
+            .flat_map(TagResolution::unresolved)
+            .collect()
+    }
+
+    /// Returns the distinct names of the tags the run could not resolve, in
+    /// first-seen order.
+    ///
+    /// This is the form a failure message or an assertion wants: one entry per
+    /// offending tag, with the open/close and per-pass repetitions of
+    /// [`unresolved_tags`](Self::unresolved_tags) collapsed away.
+    pub fn unresolved_tag_names(&self) -> Vec<&str> {
+        let mut names: Vec<&str> = Vec::new();
+        for error in self.unresolved_tags() {
+            let name = error.tag.as_str();
+            if !names.contains(&name) {
+                names.push(name);
+            }
+        }
+        names
     }
 
     /// Returns the completed run's typed shell status.

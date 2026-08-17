@@ -105,13 +105,18 @@ fn output_mode_to_transform(mode: OutputMode) -> TagTransform {
 
 /// Post-processes rendered output with BBParser to apply style tags.
 ///
-/// This is the second pass of the two-pass rendering system.
+/// This is the second pass of the two-pass rendering system. The pass runs
+/// through [`crate::diagnostics::resolve_tags`], which produces the same bytes
+/// and additionally records which tags the theme could not resolve — see that
+/// module for why the result is kept rather than discarded.
 pub fn apply_style_tags(output: &str, styles: &Styles, mode: OutputMode) -> String {
     let transform = output_mode_to_transform(mode);
-    let resolved_styles = styles.to_resolved_map();
-    let parser =
-        BBParser::new(resolved_styles, transform).unknown_behavior(UnknownTagBehavior::Passthrough);
-    parser.parse(output)
+    crate::diagnostics::resolve_tags(
+        output,
+        styles.to_resolved_map(),
+        transform,
+        UnknownTagBehavior::Passthrough,
+    )
 }
 
 /// Result of rendering that includes both formatted and raw output.

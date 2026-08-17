@@ -146,6 +146,7 @@
 // Internal modules
 pub mod colorspace;
 pub mod context;
+pub mod diagnostics;
 mod embedded;
 pub mod environment;
 mod error;
@@ -217,7 +218,12 @@ pub use template::{
 };
 
 // Re-export BBParser types for template validation
-pub use standout_bbparser::{UnknownTagError, UnknownTagErrors, UnknownTagKind};
+pub use standout_bbparser::{
+    TagTransform, UnknownTagBehavior, UnknownTagError, UnknownTagErrors, UnknownTagKind,
+};
+
+// What the style-tag pass observed, for callers observing a run
+pub use diagnostics::TagResolution;
 
 // Utility exports
 pub use util::{

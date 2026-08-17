@@ -313,7 +313,7 @@ assert!(result.stdout().contains('\x1b'));    // really styled
 assert_eq!(result.stdout_plain(), expected);  // and strippable
 ```
 
-There is no TTY knob. The harness once offered `.is_tty()` / `.no_tty()`, driving a detector no production code ever read; both are gone, along with `standout_render::detect_is_tty`. Questions that genuinely depend on being (or not being) a terminal belong to a real process — see [`run_process`](#48-running-the-real-binary) — and a future terminal-citizenship seam will be stream-aware rather than a single stdout-wide global. The reasoning is recorded in `docs/adr/0022-delete-the-in-process-tty-seam.md`.
+There is no TTY knob. The harness once offered `.is_tty()` / `.no_tty()`, driving a detector no production code ever read; both are gone, along with `standout_render::detect_is_tty`. Questions that genuinely depend on being (or not being) a terminal belong to a real process — see [`run_process`](#49-running-the-real-binary) — and a future terminal-citizenship seam will be stream-aware rather than a single stdout-wide global. The reasoning is recorded in `docs/adr/0022-delete-the-in-process-tty-seam.md`.
 
 ### 4.7 Forcing an output mode
 
@@ -340,7 +340,41 @@ If your app renamed the flag via `AppBuilder::output_flag(Some("format"))`, tell
 .output_flag_name("format")
 ```
 
-### 4.8 Running the real binary
+### 4.8 Invariant assertions
+
+`assert_stdout_contains("default: auto")` is an *existential* claim: this string
+is somewhere on the page. Most rendering defects are not that shape. They are
+universals ("every value-taking option shows a metavar") and negatives ("no
+presence flag lists possible values") — and a list of strings that should be
+present says nothing about a wrong line rendered beside them.
+
+`standout_test::invariants` holds those as reusable assertions, each naming the
+offending element when it fails:
+
+```rust
+use standout_test::invariants::*;
+
+let page = TestHarness::new().text_output().run(&app, cmd(), ["notes", "--help"]);
+
+assert_every_tag_resolved(&page);                        // the theme defines every tag rendered
+assert_no_unresolved_tag_markers(&page);                 // no `[tag?]` reached the page
+assert_metavar_for_valued_args(&page, &cmd());           // clap's metadata is the oracle
+assert_no_possible_values_for_valueless_args(&page, &cmd());
+assert_descriptions_aligned(&page);                      // every section's column, not two rows by hand
+```
+
+`assert_every_tag_resolved` reads structured data — `TestResult::tag_resolutions()`,
+what each style-tag pass could not resolve — so it holds in every output mode
+and names the tag. The `[tag?]` marker only appears in `Term`, so the two
+assertions catch the same defect from different directions and both are worth
+running. Each *text* assertion also has an `*_in_page` form taking the rendered
+page directly (`assert_styling_preserves_layout_in_pages` takes the two it
+compares), for asserting on a page the harness did not produce.
+`assert_every_tag_resolved` is the exception: what it reads is
+`TestResult::tag_resolutions()`, which no page carries — that is exactly why it
+can name a tag in a mode where the page shows nothing.
+
+### 4.9 Running the real binary
 
 `run()` calls into your app inside the test process, so the two text streams it reports are a faithful *reconstruction* of what `App::run`'s writer seam would have emitted — not a recording of what the OS carried. For the handful of facts only the real boundary settles, `run_process()` runs the compiled binary instead and returns what the kernel saw:
 
@@ -489,7 +523,7 @@ Be honest about the boundaries. There are things you shouldn't try to test in-pr
 
 **Subprocess fan-out from your app.** If your handler shells out to `git`, `rg`, `$EDITOR`, or any other external program, the harness can't intercept that call. *This is the focus of Phase 3 of the test-tooling work — a `ProcessRunner` abstraction that routes through `CommandContext`, with a mock variant for tests. It's not yet shipped; until it is, shell-outs remain a boundary.* In the meantime, structure handlers so the shell-out is a trait you can swap for a mock in the handler's tests directly.
 
-**Binary-level concerns.** Linkage, the real exit code, which stream a byte actually went to, behavior that keys off stdout not being a terminal — that's integration-of-the-build. [`run_process()`](#48-running-the-real-binary) covers it from the same builder; reach for `assert_cmd` only if you want its matcher vocabulary.
+**Binary-level concerns.** Linkage, the real exit code, which stream a byte actually went to, behavior that keys off stdout not being a terminal — that's integration-of-the-build. [`run_process()`](#49-running-the-real-binary) covers it from the same builder; reach for `assert_cmd` only if you want its matcher vocabulary.
 
 The goal isn't to replace subprocess tests entirely. It's to reduce them to the small set of cases where they're actually earning their keep.
 
@@ -561,6 +595,8 @@ result.binary();                        // Option<(&[u8], &str)> for Binary
 result.exit_status();                   // Option<ExitStatus>; None for NoMatch
 result.success_kind();                  // command / Clap help / Clap version
 result.error_kind();                    // typed failure origin
+result.tag_resolutions();               // what each style-tag pass resolved
+result.unresolved_tag_names();          // the tags the theme did not define
 ```
 
 The harness captures the pipeline before the real stdout/stderr write. Use it
