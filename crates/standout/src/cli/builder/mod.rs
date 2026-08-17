@@ -41,7 +41,7 @@ use crate::{render_auto, OutputMode, Theme};
 use clap::{Arg, ArgAction, ArgMatches, Command};
 use serde::Serialize;
 use std::cell::RefCell;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::rc::Rc;
 
 use super::default_command::ParseFailure;
@@ -62,6 +62,11 @@ pub(crate) type SharedTemplateEngine =
 pub(crate) enum TemplateRef {
     /// A named template that must resolve through the template registry.
     Named(String),
+    /// A convention-derived template name.
+    ///
+    /// These are checked when the application configured templates, but do not
+    /// force structured-only CLIs to annotate every command.
+    Convention(String),
     /// Inline MiniJinja source carried directly on the command.
     Inline(String),
     /// A command that deliberately has no human template.
@@ -80,53 +85,171 @@ pub(crate) enum TemplateAbsence {
 }
 
 impl TemplateRef {
-    pub(crate) fn explicit(template: impl Into<String>) -> Self {
-        let template = template.into();
-        if template.is_empty() {
-            return Self::Absent(TemplateAbsence::Silent);
-        }
-        if looks_like_inline_template(&template) {
-            return Self::Inline(template);
-        }
-        if looks_like_template_name(&template) {
-            Self::Named(template)
-        } else {
-            Self::Inline(template)
-        }
+    pub(crate) fn inline(template: impl Into<String>) -> Self {
+        Self::Inline(template.into())
     }
 
     pub(crate) fn convention(command_path: &str, template_ext: &str) -> Self {
         let file_path = command_path.replace('.', "/");
-        Self::Named(format!("{}{}", file_path, template_ext))
+        Self::Convention(format!("{}{}", file_path, template_ext))
     }
 }
 
-fn looks_like_inline_template(template: &str) -> bool {
-    template.contains("{{")
-        || template.contains("{%")
-        || template.contains("{#")
-        || template.contains("[/")
-        || template.contains('\n')
+pub(crate) fn inline_template_ref(
+    template: impl Into<String>,
+    api: &str,
+) -> Result<TemplateRef, SetupError> {
+    let template = template.into();
+    if template.is_empty() {
+        return Err(SetupError::Config(format!(
+            "{api} received an empty template; use .silent(), .structured_only(), or .binary() to declare template absence"
+        )));
+    }
+    Ok(TemplateRef::inline(template))
 }
 
-fn looks_like_template_name(template: &str) -> bool {
-    template.contains('/')
-        || standout_render::template::TEMPLATE_EXTENSIONS
-            .iter()
-            .any(|extension| template.ends_with(extension))
+#[derive(Debug, Clone)]
+pub(crate) struct TemplateRefreshError {
+    name: String,
+    location: String,
+    message: String,
+}
+
+impl TemplateRefreshError {
+    fn new(
+        name: impl Into<String>,
+        registry: &TemplateRegistry,
+        message: impl Into<String>,
+    ) -> Self {
+        let name = name.into();
+        Self {
+            location: template_location(registry, &name),
+            name,
+            message: message.into(),
+        }
+    }
+}
+
+impl std::fmt::Display for TemplateRefreshError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "template `{}`{} could not be refreshed: {}",
+            self.name, self.location, self.message
+        )
+    }
+}
+
+impl std::error::Error for TemplateRefreshError {}
+
+pub(crate) fn template_location(registry: &TemplateRegistry, name: &str) -> String {
+    match registry.get(name) {
+        Ok(standout_render::template::ResolvedTemplate::File(path)) => {
+            format!(" at `{}`", path.display())
+        }
+        Ok(standout_render::template::ResolvedTemplate::Inline(_)) | Err(_) => String::new(),
+    }
 }
 
 pub(crate) fn refresh_engine_templates(
     engine: &mut dyn standout_render::template::TemplateEngine,
     registry: &TemplateRegistry,
-) -> Result<(), standout_render::RenderError> {
+) -> Result<(), TemplateRefreshError> {
     for name in registry.names() {
         let content = registry
             .get_content(name)
-            .map_err(|error| standout_render::RenderError::OperationError(error.to_string()))?;
-        engine.add_template(name, &content)?;
+            .map_err(|error| TemplateRefreshError::new(name, registry, error.to_string()))?;
+        engine
+            .add_template(name, &content)
+            .map_err(|error| TemplateRefreshError::new(name, registry, error.to_string()))?;
     }
     Ok(())
+}
+
+pub(crate) fn refresh_named_template(
+    engine: &mut dyn standout_render::template::TemplateEngine,
+    registry: &TemplateRegistry,
+    name: &str,
+) -> Result<(), TemplateRefreshError> {
+    let mut seen = HashSet::new();
+    refresh_template_tree(engine, registry, name, &mut seen)
+}
+
+fn refresh_template_tree(
+    engine: &mut dyn standout_render::template::TemplateEngine,
+    registry: &TemplateRegistry,
+    name: &str,
+    seen: &mut HashSet<String>,
+) -> Result<(), TemplateRefreshError> {
+    if !seen.insert(name.to_string()) {
+        return Ok(());
+    }
+
+    let content = registry
+        .get_content(name)
+        .map_err(|error| TemplateRefreshError::new(name, registry, error.to_string()))?;
+    engine
+        .add_template(name, &content)
+        .map_err(|error| TemplateRefreshError::new(name, registry, error.to_string()))?;
+
+    for include in literal_includes(&content) {
+        refresh_template_tree(engine, registry, &include, seen)?;
+    }
+
+    Ok(())
+}
+
+fn literal_includes(source: &str) -> Vec<String> {
+    let mut includes = Vec::new();
+    let mut rest = source;
+
+    while let Some(tag_start) = rest.find("{%") {
+        let after_start = &rest[tag_start + 2..];
+        let Some(tag_end) = after_start.find("%}") else {
+            break;
+        };
+        let tag = after_start[..tag_end].trim();
+        if let Some(include) = tag.strip_prefix("include") {
+            includes.extend(quoted_strings(include));
+        }
+        rest = &after_start[tag_end + 2..];
+    }
+
+    includes
+}
+
+fn quoted_strings(input: &str) -> Vec<String> {
+    let mut quoted = Vec::new();
+    let mut chars = input.char_indices().peekable();
+
+    while let Some((start, quote)) = chars.next() {
+        if quote != '\'' && quote != '"' {
+            continue;
+        }
+
+        let mut escaped = false;
+        let mut end = None;
+        for (index, ch) in chars.by_ref() {
+            if escaped {
+                escaped = false;
+                continue;
+            }
+            if ch == '\\' {
+                escaped = true;
+                continue;
+            }
+            if ch == quote {
+                end = Some(index);
+                break;
+            }
+        }
+
+        if let Some(end) = end {
+            quoted.push(input[start + quote.len_utf8()..end].to_string());
+        }
+    }
+
+    quoted
 }
 
 fn missing_template_message(
@@ -369,11 +492,11 @@ impl AppBuilder {
     ///
     /// let app = App::new()
     ///     .app_state(Metrics { requests: AtomicUsize::new(0) })
-    ///     .command("test", |_m, ctx| {
+    ///     .command_with("test", |_m, ctx| {
     ///         let metrics = ctx.app_state.get_required::<Metrics>()?;
     ///         metrics.requests.fetch_add(1, Ordering::SeqCst);
     ///         Ok(Output::<()>::Silent)
-    ///     }, "").unwrap()
+    ///     }, |cfg| cfg.silent()).unwrap()
     ///     .build()
     ///     .unwrap();
     /// ```
@@ -606,13 +729,35 @@ impl AppBuilder {
 
     fn validate_command_templates(&self) -> Result<(), SetupError> {
         for (path, pending) in self.pending_commands.borrow().iter() {
-            if let TemplateRef::Named(name) = &pending.template {
-                let registry = self.template_registry.as_ref().ok_or_else(|| {
-                    SetupError::Template(missing_template_message(path, name, None))
-                })?;
-                registry.get_content(name).map_err(|_| {
-                    SetupError::Template(missing_template_message(path, name, Some(registry)))
-                })?;
+            let (name, allow_missing_without_templates) = match &pending.template {
+                TemplateRef::Named(name) => (name, false),
+                TemplateRef::Convention(name) => (name, true),
+                TemplateRef::Inline(_) | TemplateRef::Absent(_) => continue,
+            };
+            let Some(registry) = self.template_registry.as_ref() else {
+                if allow_missing_without_templates {
+                    continue;
+                }
+                return Err(SetupError::Template(missing_template_message(
+                    path, name, None,
+                )));
+            };
+            if allow_missing_without_templates && !registry.has_application_templates() {
+                continue;
+            }
+            registry.get_content(name).map_err(|error| {
+                let message = match error {
+                    standout_render::RegistryError::NotFound { .. } => {
+                        missing_template_message(path, name, Some(registry))
+                    }
+                    _ => TemplateRefreshError::new(name, registry, error.to_string()).to_string(),
+                };
+                SetupError::Template(message)
+            })?;
+            if allow_missing_without_templates {
+                let mut engine = self.template_engine.borrow_mut();
+                refresh_named_template(&mut **engine, registry, name)
+                    .map_err(|error| SetupError::Template(error.to_string()))?;
             }
         }
         Ok(())

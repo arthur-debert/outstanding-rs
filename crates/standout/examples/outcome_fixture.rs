@@ -39,13 +39,13 @@ fn app() -> App {
             |_, _| -> HandlerResult<serde_json::Value> {
                 Err(anyhow::anyhow!("fixture handler failed"))
             },
-            "",
+            "unused",
         )
         .unwrap()
         .command(
             "silent",
             |_, _| -> HandlerResult<()> { Ok(Output::Silent) },
-            "",
+            "unused",
         )
         .unwrap()
         .command(
@@ -56,7 +56,7 @@ fn app() -> App {
                     filename: "fixture.bin".into(),
                 })
             },
-            "",
+            "unused",
         )
         .unwrap()
         .command(
@@ -77,7 +77,7 @@ fn app() -> App {
                     filename: "fixture.bin".into(),
                 })
             },
-            "",
+            "unused",
         )
         .unwrap()
         .command(
@@ -95,7 +95,7 @@ fn app() -> App {
                 standout::warnings::push_warning("fixture warning");
                 Err(anyhow::anyhow!("fixture handler failed"))
             },
-            "",
+            "unused",
         )
         .unwrap()
         .command(
@@ -105,7 +105,7 @@ fn app() -> App {
                     .unwrap()
                     .into())
             },
-            "",
+            "unused",
         )
         .unwrap()
         .command(

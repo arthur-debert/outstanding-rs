@@ -125,7 +125,7 @@ fn failing_app() -> App {
             |_m, _ctx| -> HandlerResult<serde_json::Value> {
                 Err(std::io::Error::other("the handler refused").into())
             },
-            "",
+            "unused",
         )
         .unwrap()
         .build()
@@ -144,7 +144,7 @@ fn external_failure_app() -> App {
                     .unwrap()
                     .into())
             },
-            "",
+            "unused",
         )
         .unwrap()
         .build()

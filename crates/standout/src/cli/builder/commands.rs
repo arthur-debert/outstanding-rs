@@ -9,7 +9,7 @@
 use clap::ArgMatches;
 use serde::Serialize;
 
-use super::{AppBuilder, PendingCommand, TemplateAbsence, TemplateRef};
+use super::{inline_template_ref, AppBuilder, PendingCommand, TemplateAbsence, TemplateRef};
 use crate::cli::group::{
     ClosureRecipe, CommandConfig, ErasedConfigRecipe, GroupBuilder, GroupEntry, PassthroughRecipe,
     StructRecipe,
@@ -56,7 +56,7 @@ impl AppBuilder {
     /// ```rust,ignore
     /// App::builder()
     ///     .command_with("list", handler, |cfg| cfg
-    ///         .template("custom/list.j2")
+    ///         .template_name("custom/list")
     ///         .pre_dispatch(validate_auth)
     ///         .post_output(copy_to_clipboard))
     ///     .build()
@@ -75,12 +75,15 @@ impl AppBuilder {
         let config = CommandConfig::new(FnHandler::new(handler));
         let mut config = configure(config);
 
-        let template = config
-            .template_absence
-            .map(TemplateRef::Absent)
-            .or_else(|| config.template_name.clone().map(TemplateRef::Named))
-            .or_else(|| config.template.clone().map(TemplateRef::explicit))
-            .unwrap_or_else(|| TemplateRef::convention(path, &self.template_ext));
+        let template = if let Some(absence) = config.template_absence {
+            TemplateRef::Absent(absence)
+        } else if let Some(name) = config.template_name.clone() {
+            TemplateRef::Named(name)
+        } else if let Some(template) = config.template.clone() {
+            inline_template_ref(template, "CommandConfig::template")?
+        } else {
+            TemplateRef::convention(path, &self.template_ext)
+        };
 
         // Register hooks if present
         if let Some(hooks) = config.hooks.take() {
@@ -124,17 +127,15 @@ impl AppBuilder {
 
             match entry {
                 GroupEntry::Command { mut handler } => {
-                    let template = handler
-                        .template_absence()
-                        .map(TemplateRef::Absent)
-                        .or_else(|| {
-                            handler
-                                .template_name()
-                                .map(String::from)
-                                .map(TemplateRef::Named)
-                        })
-                        .or_else(|| handler.template().map(TemplateRef::explicit))
-                        .unwrap_or_else(|| TemplateRef::convention(&path, &self.template_ext));
+                    let template = if let Some(absence) = handler.template_absence() {
+                        TemplateRef::Absent(absence)
+                    } else if let Some(name) = handler.template_name() {
+                        TemplateRef::Named(name.to_string())
+                    } else if let Some(template) = handler.template() {
+                        inline_template_ref(template, "CommandConfig::template")?
+                    } else {
+                        TemplateRef::convention(&path, &self.template_ext)
+                    };
 
                     // Extract and register hooks
                     if let Some(hooks) = handler.take_hooks() {
@@ -244,7 +245,7 @@ impl AppBuilder {
         H: Handler<Output = T> + 'static,
         T: Serialize + 'static,
     {
-        let template = TemplateRef::explicit(template);
+        let template = inline_template_ref(template, "AppBuilder::command")?;
 
         // Create a recipe for deferred closure creation
         let recipe = StructRecipe::new(handler);

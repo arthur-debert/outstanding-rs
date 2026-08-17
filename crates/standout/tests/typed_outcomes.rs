@@ -56,7 +56,7 @@ fn command_silent_and_binary_success_are_status_zero() {
         .command(
             "go",
             |_matches, _ctx| -> HandlerResult<()> { Ok(Output::Silent) },
-            "",
+            "unused",
         )
         .unwrap()
         .build()
@@ -74,7 +74,7 @@ fn command_silent_and_binary_success_are_status_zero() {
                     filename: "data.bin".into(),
                 })
             },
-            "",
+            "unused",
         )
         .unwrap()
         .build()
@@ -92,7 +92,7 @@ fn handler_and_each_hook_phase_keep_their_origin() {
             |_matches, _ctx| -> HandlerResult<serde_json::Value> {
                 Err(anyhow::anyhow!("handler failed"))
             },
-            "",
+            "unused",
         )
         .unwrap()
         .build()
@@ -144,7 +144,7 @@ fn external_failure_metadata_crosses_handler_and_pre_dispatch_seams() {
                 )
                 .context("delegated Git invocation"))
             },
-            "",
+            "unused",
         )
         .unwrap()
         .build()
@@ -261,7 +261,7 @@ fn render_and_output_file_write_failures_are_typed() {
                     filename: "data.bin".into(),
                 })
             },
-            "",
+            "unused",
         )
         .unwrap()
         .build()

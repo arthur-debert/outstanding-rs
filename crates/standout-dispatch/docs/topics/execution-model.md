@@ -201,17 +201,17 @@ use standout::cli::App;
 let app = App::builder()
     .commands(|g| {
         g.command_with("export", handlers::export, |cfg| {
-            cfg.template("export.jinja")
+            cfg.template_name("export")
                // Filter through jq (capture mode)
                .pipe_through("jq '.items'")
         })
         .command_with("copy", handlers::copy, |cfg| {
-            cfg.template("copy.jinja")
+            cfg.template_name("copy")
                // Send to clipboard (consume mode)
                .pipe_to_clipboard()
         })
         .command_with("debug", handlers::debug, |cfg| {
-            cfg.template("debug.jinja")
+            cfg.template_name("debug")
                // Log to file while displaying (passthrough mode)
                .pipe_to("tee /tmp/debug.log")
         })

@@ -12,7 +12,7 @@ use clap::{Arg, ArgAction, ArgMatches, Command};
 use std::io::Write;
 use std::path::PathBuf;
 
-use super::{AppBuilder, PendingCommand, TemplateRef};
+use super::{inline_template_ref, AppBuilder, PendingCommand, TemplateRef};
 use crate::cli::default_command::ParseFailure;
 use crate::cli::dispatch::{
     dispatch, extract_command_path, get_deepest_matches, DispatchOutput, Presentation,
@@ -68,17 +68,15 @@ impl AppBuilder {
         for (name, entry) in builder.entries {
             match entry {
                 GroupEntry::Command { mut handler } => {
-                    let template = handler
-                        .template_absence()
-                        .map(TemplateRef::Absent)
-                        .or_else(|| {
-                            handler
-                                .template_name()
-                                .map(String::from)
-                                .map(TemplateRef::Named)
-                        })
-                        .or_else(|| handler.template().map(TemplateRef::explicit))
-                        .unwrap_or_else(|| TemplateRef::convention(&name, &self.template_ext));
+                    let template = if let Some(absence) = handler.template_absence() {
+                        TemplateRef::Absent(absence)
+                    } else if let Some(name) = handler.template_name() {
+                        TemplateRef::Named(name.to_string())
+                    } else if let Some(template) = handler.template() {
+                        inline_template_ref(template, "CommandConfig::template")?
+                    } else {
+                        TemplateRef::convention(&name, &self.template_ext)
+                    };
 
                     if let Some(hooks) = handler.take_hooks() {
                         self.command_hooks.insert(name.clone(), hooks);
@@ -1086,7 +1084,11 @@ mod tests {
         use serde_json::json;
 
         let builder = AppBuilder::new()
-            .command("list", |_m, _ctx| Ok(HandlerOutput::Render(json!({}))), "")
+            .command(
+                "list",
+                |_m, _ctx| Ok(HandlerOutput::Render(json!({}))),
+                "unused",
+            )
             .unwrap();
 
         let cmd = Command::new("app")
@@ -1148,7 +1150,11 @@ mod tests {
     #[test]
     fn test_dispatch_silent_result() {
         let builder = AppBuilder::new()
-            .command("quiet", |_m, _ctx| Ok(HandlerOutput::<()>::Silent), "")
+            .command(
+                "quiet",
+                |_m, _ctx| Ok(HandlerOutput::<()>::Silent),
+                "unused",
+            )
             .unwrap();
 
         let cmd = Command::new("app").subcommand(Command::new("quiet"));
@@ -1166,7 +1172,7 @@ mod tests {
             .command(
                 "fail",
                 |_m, _ctx| Err::<HandlerOutput<()>, _>(anyhow::anyhow!("something went wrong")),
-                "",
+                "unused",
             )
             .unwrap();
 
@@ -1227,7 +1233,11 @@ mod tests {
         use serde_json::json;
 
         let builder = AppBuilder::new()
-            .command("list", |_m, _ctx| Ok(HandlerOutput::Render(json!({}))), "")
+            .command(
+                "list",
+                |_m, _ctx| Ok(HandlerOutput::Render(json!({}))),
+                "unused",
+            )
             .unwrap();
 
         let cmd = Command::new("app")
@@ -1285,7 +1295,7 @@ mod tests {
                 |_m, _ctx| -> HandlerResult<()> {
                     panic!("Handler should not be called");
                 },
-                "",
+                "unused",
             )
             .unwrap()
             .hooks(
@@ -1492,7 +1502,7 @@ mod tests {
                         filename: "out.bin".into(),
                     })
                 },
-                "",
+                "unused",
             )
             .unwrap()
             .hooks(
@@ -1591,7 +1601,7 @@ mod tests {
             |_m, _ctx| {
                 panic!("Handler should not be called");
             },
-            "",
+            "unused",
         );
 
         assert!(result.is_err());
@@ -1640,7 +1650,7 @@ mod tests {
             "test",
             sub_matches,
             |_m, _ctx| Ok(HandlerOutput::Silent),
-            "",
+            "unused",
         );
 
         assert!(result.is_ok());
@@ -1674,7 +1684,7 @@ mod tests {
                     filename: "data.bin".into(),
                 })
             },
-            "",
+            "unused",
         );
 
         assert!(result.is_ok());
@@ -2646,7 +2656,7 @@ header:
                     let _missing = ctx.app_state.get_required::<NotProvided>()?;
                     Ok(HandlerOutput::Render(json!({})))
                 },
-                "",
+                "unused",
             )
             .unwrap();
 

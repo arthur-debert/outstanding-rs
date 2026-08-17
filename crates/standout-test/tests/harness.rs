@@ -47,7 +47,7 @@ struct WidthSensitiveItem {
 
 fn build_framework_list_view_app() -> App {
     App::builder()
-        .command(
+        .command_with(
             "list",
             |_matches, _ctx| {
                 let spec = standout::tabular::TabularSpec::builder()
@@ -59,7 +59,7 @@ fn build_framework_list_view_app() -> App {
                         .build(),
                 ))
             },
-            "standout/list-view",
+            |config| config.template_name("standout/list-view"),
         )
         .unwrap()
         .build()
@@ -194,7 +194,7 @@ fn harness_exposes_typed_clap_and_handler_outcomes() {
             |_matches, _ctx| -> HandlerResult<serde_json::Value> {
                 Err(std::io::Error::other("boom").into())
             },
-            "",
+            "unused",
         )
         .unwrap()
         .build()
@@ -244,7 +244,7 @@ fn harness_exposes_external_failure_payload_status_and_origin() {
                         .into(),
                 )
             },
-            "",
+            "unused",
         )
         .unwrap()
         .command(

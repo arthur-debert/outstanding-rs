@@ -11,7 +11,7 @@ use std::cell::RefCell;
 use std::rc::Rc;
 
 use crate::cli::builder::{
-    refresh_engine_templates, SharedTemplateEngine, TemplateAbsence, TemplateRef,
+    refresh_named_template, SharedTemplateEngine, TemplateAbsence, TemplateRef,
 };
 use crate::cli::handler::Output as HandlerOutput;
 use crate::cli::handler::{CommandContext, ExternalFailure, RunError, RunErrorKind};
@@ -20,7 +20,6 @@ use crate::context::{ContextRegistry, RenderContext};
 use crate::StructuredOutputProjection;
 use crate::Theme;
 use serde::Serialize;
-use standout_render::template::ResolvedTemplate;
 
 // Re-export pure dispatch utilities from standout-dispatch
 pub use standout_dispatch::{
@@ -166,7 +165,7 @@ impl Presentation {
 
         match &self.template {
             TemplateRef::Inline(source) => {
-                standout_render::template::render_auto_with_engine_split(
+                standout_render::template::render_auto_with_engine_split_inline(
                     &**self.template_engine.borrow(),
                     source,
                     json_data,
@@ -187,31 +186,46 @@ impl Presentation {
                         RunErrorKind::Render,
                     )
                 })?;
-                registry.get_content(name).map_err(|error| {
+                {
+                    let mut engine = self.template_engine.borrow_mut();
+                    refresh_named_template(&mut **engine, registry, name).map_err(|error| {
+                        RunError::new(
+                            format!("{} while rendering command `{}`", error, self.command_path),
+                            RunErrorKind::Render,
+                        )
+                    })?;
+                }
+                standout_render::template::render_auto_with_engine_split_named(
+                    &**self.template_engine.borrow(),
+                    name,
+                    json_data,
+                    &self.theme,
+                    self.output_mode,
+                    &self.context_registry,
+                    render_ctx,
+                )
+                .map_err(render_error)
+            }
+            TemplateRef::Convention(name) => {
+                let registry = self.template_registry.as_ref().ok_or_else(|| {
                     RunError::new(
                         format!(
-                            "template `{}` for command `{}` could not be loaded: {}",
-                            name, self.command_path, error
+                            "command `{}` expects convention template `{}`, but no template registry is configured",
+                            self.command_path, name
                         ),
                         RunErrorKind::Render,
                     )
                 })?;
                 {
                     let mut engine = self.template_engine.borrow_mut();
-                    refresh_engine_templates(&mut **engine, registry).map_err(|error| {
+                    refresh_named_template(&mut **engine, registry, name).map_err(|error| {
                         RunError::new(
-                            format!(
-                                "template `{}`{} for command `{}` could not be compiled: {}",
-                                name,
-                                template_location(registry, name),
-                                self.command_path,
-                                error
-                            ),
+                            format!("{} while rendering command `{}`", error, self.command_path),
                             RunErrorKind::Render,
                         )
                     })?;
                 }
-                standout_render::template::render_auto_with_engine_split(
+                standout_render::template::render_auto_with_engine_split_named(
                     &**self.template_engine.borrow(),
                     name,
                     json_data,
@@ -224,13 +238,6 @@ impl Presentation {
             }
             TemplateRef::Absent(_) => unreachable!("absence handled before template rendering"),
         }
-    }
-}
-
-fn template_location(registry: &crate::TemplateRegistry, name: &str) -> String {
-    match registry.get(name) {
-        Ok(ResolvedTemplate::File(path)) => format!(" at `{}`", path.display()),
-        Ok(ResolvedTemplate::Inline(_)) | Err(_) => String::new(),
     }
 }
 
@@ -250,7 +257,7 @@ fn absent_template_render_error(
     };
     RunError::new(
         format!(
-            "command `{command_path}` is declared {reason} and cannot render data in --output {output_mode:?}; configure a template with .template(...) or return the matching Output variant"
+            "command `{command_path}` is declared {reason} and cannot render data in --output {output_mode:?}; configure a template with .template(...) or .template_name(...) or return the matching Output variant"
         ),
         RunErrorKind::Render,
     )

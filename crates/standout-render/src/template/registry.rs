@@ -730,6 +730,15 @@ impl TemplateRegistry {
         !self.framework.is_empty()
     }
 
+    /// Returns true when the application registered non-framework templates.
+    ///
+    /// Framework templates are defaults in the `standout/` namespace. They
+    /// should not make convention-derived application templates mandatory for
+    /// structured-only CLIs that never configured their own template registry.
+    pub fn has_application_templates(&self) -> bool {
+        !self.inline.is_empty() || !self.files.is_empty() || !self.inner.is_empty()
+    }
+
     /// Returns an iterator over framework template names.
     pub fn framework_names(&self) -> impl Iterator<Item = &str> {
         self.framework.keys().map(|s| s.as_str())

@@ -35,11 +35,11 @@
 //!
 //! // FnMut handlers can capture mutable state
 //! App::new()
-//!     .command("add", |m, ctx| {
+//!     .command_with("add", |m, ctx| {
 //!         let item = Item::from(m);
 //!         api.add(item);  // &mut self works!
 //!         Ok(Output::Silent)
-//!     }, "")?
+//!     }, |cfg| cfg.silent())?
 //!     .build()?
 //!     .run(cmd, args);
 //! ```

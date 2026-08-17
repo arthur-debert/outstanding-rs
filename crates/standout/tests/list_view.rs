@@ -83,15 +83,14 @@ fn test_list_view_with_filter_info() {
 fn test_list_view_renders_with_framework_template() {
     // Create an app with a list command using the framework template
     let app = App::builder()
-        .command(
+        .command_with(
             "list",
             |_m, _ctx| {
                 let tasks = test_tasks();
                 let result = list_view(tasks).intro("Tasks:").build();
                 Ok(Output::Render(result))
             },
-            // Use the framework template
-            "standout/list-view",
+            |config| config.template_name("standout/list-view"),
         )
         .unwrap()
         .build()
@@ -121,13 +120,13 @@ fn test_list_view_renders_with_framework_template() {
 #[test]
 fn test_list_view_empty_list() {
     let app = App::builder()
-        .command(
+        .command_with(
             "list",
             |_m, _ctx| {
                 let result: ListViewResult<Task> = list_view(vec![]).build();
                 Ok(Output::Render(result))
             },
-            "standout/list-view",
+            |config| config.template_name("standout/list-view"),
         )
         .unwrap()
         .build()
@@ -149,7 +148,7 @@ fn test_list_view_empty_list() {
 #[test]
 fn test_list_view_with_filter_summary_renders() {
     let app = App::builder()
-        .command(
+        .command_with(
             "list",
             |_m, _ctx| {
                 let tasks = vec![test_tasks()[0].clone()]; // Just one task
@@ -159,7 +158,7 @@ fn test_list_view_with_filter_summary_renders() {
                     .build();
                 Ok(Output::Render(result))
             },
-            "standout/list-view",
+            |config| config.template_name("standout/list-view"),
         )
         .unwrap()
         .build()
@@ -188,18 +187,18 @@ fn test_list_view_with_filter_summary_renders() {
 #[test]
 fn test_framework_template_can_be_disabled() {
     // Build an app without framework templates
-    let result = App::builder().include_framework_templates(false).command(
-        "list",
-        |_m, _ctx| {
-            let tasks = test_tasks();
-            Ok(Output::Render(list_view(tasks).build()))
-        },
-        // This template won't exist
-        "standout/list-view",
-    );
+    let result = App::builder()
+        .include_framework_templates(false)
+        .command_with(
+            "list",
+            |_m, _ctx| {
+                let tasks = test_tasks();
+                Ok(Output::Render(list_view(tasks).build()))
+            },
+            |config| config.template_name("standout/list-view"),
+        )
+        .unwrap()
+        .build();
 
-    // The command registration might succeed but the template won't be found
-    // This depends on when template resolution happens
-    // For now, just verify we can disable framework templates
-    assert!(result.is_ok() || result.is_err());
+    assert!(result.is_err());
 }

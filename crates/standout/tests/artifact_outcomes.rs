@@ -465,7 +465,7 @@ fn a_binary_filename_still_authorizes_no_write() {
                     filename: "data.bin".into(),
                 })
             },
-            "",
+            "unused",
         )
         .unwrap()
         .build()
@@ -494,7 +494,7 @@ fn binary_output_still_honors_the_explicit_override() {
                     filename: "data.bin".into(),
                 })
             },
-            "",
+            "unused",
         )
         .unwrap()
         .build()

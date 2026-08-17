@@ -27,7 +27,7 @@ fn test_verification_success() {
 
     // Register handler using the generated struct "my_verified_handler_Handler"
     let app = App::builder()
-        .command_handler("test", my_verified_handler_Handler, "")
+        .command_handler("test", my_verified_handler_Handler, "unused")
         .unwrap()
         .build()
         .unwrap();
@@ -42,7 +42,7 @@ fn test_verification_failure_missing_arg() {
     let cmd_def = Command::new("app").subcommand(Command::new("test"));
 
     let app = App::builder()
-        .command_handler("test", my_verified_handler_Handler, "")
+        .command_handler("test", my_verified_handler_Handler, "unused")
         .unwrap()
         .build()
         .unwrap();
@@ -65,7 +65,7 @@ fn test_verification_failure_wrong_type() {
     );
 
     let app = App::builder()
-        .command_handler("test", my_verified_handler_Handler, "")
+        .command_handler("test", my_verified_handler_Handler, "unused")
         .unwrap()
         .build()
         .unwrap();
@@ -102,7 +102,7 @@ fn test_verification_nested_command_success() {
 
     // Register handler at nested path "db.migrate"
     let app = App::builder()
-        .command_handler("db.migrate", nested_handler_Handler, "")
+        .command_handler("db.migrate", nested_handler_Handler, "unused")
         .unwrap()
         .build()
         .unwrap();
@@ -118,7 +118,7 @@ fn test_verification_nested_command_failure() {
         Command::new("app").subcommand(Command::new("db").subcommand(Command::new("migrate")));
 
     let app = App::builder()
-        .command_handler("db.migrate", nested_handler_Handler, "")
+        .command_handler("db.migrate", nested_handler_Handler, "unused")
         .unwrap()
         .build()
         .unwrap();
@@ -137,7 +137,7 @@ fn test_verification_preserves_structured_error() {
     let cmd_def = Command::new("app").subcommand(Command::new("test"));
 
     let app = App::builder()
-        .command_handler("test", my_verified_handler_Handler, "")
+        .command_handler("test", my_verified_handler_Handler, "unused")
         .unwrap()
         .build()
         .unwrap();

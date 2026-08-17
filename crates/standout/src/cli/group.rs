@@ -516,10 +516,10 @@ impl<H> CommandConfig<H> {
         }
     }
 
-    /// Sets an explicit template for this command.
+    /// Sets explicit inline template source for this command.
     ///
-    /// If not set, the template name will be derived from the command path
-    /// and configured extension, then resolved through the template registry.
+    /// This value is always rendered as MiniJinja source text. Use
+    /// [`template_name`](Self::template_name) to reference a registry entry.
     pub fn template(mut self, template: impl Into<String>) -> Self {
         self.template = Some(template.into());
         self.template_name = None;
@@ -528,6 +528,9 @@ impl<H> CommandConfig<H> {
     }
 
     /// Sets an explicit registry template name for this command.
+    ///
+    /// The name resolves through templates registered with `.templates(...)` or
+    /// `.templates_dir(...)`, including extension fallback.
     pub fn template_name(mut self, name: impl Into<String>) -> Self {
         self.template = None;
         self.template_name = Some(name.into());
@@ -702,7 +705,7 @@ impl<H> CommandConfig<H> {
     ///         let body: &String = ctx.input("body")?;
     ///         Ok(Output::Render(serde_json::json!({ "body": body })))
     ///     }, |cfg| {
-    ///         cfg.template("create.jinja")
+    ///         cfg.template_name("create")
     ///            .input("body", InputChain::<String>::new()
     ///                .try_source(ArgSource::new("body"))
     ///                .try_source(StdinSource::new())
@@ -1022,7 +1025,7 @@ impl GroupBuilder {
     /// ```rust,ignore
     /// .group("db", |g| g
     ///     .command_with("migrate", handler, |cfg| cfg
-    ///         .template("custom/migrate.j2")
+    ///         .template_name("custom/migrate")
     ///         .pre_dispatch(validate_db)))
     /// ```
     pub fn command_with<F, T, C>(mut self, name: &str, handler: F, configure: C) -> Self
@@ -1447,9 +1450,9 @@ mod tests {
             CommandConfig::new(FnHandler::new(|_m: &ArgMatches, _ctx: &CommandContext| {
                 Ok(HandlerOutput::Render(json!({})))
             }))
-            .template("custom.j2");
+            .template("custom {{ value }}");
 
-        assert_eq!(config.template, Some("custom.j2".to_string()));
+        assert_eq!(config.template, Some("custom {{ value }}".to_string()));
     }
 
     #[test]

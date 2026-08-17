@@ -67,7 +67,7 @@ fn test_snapshots_error_handling() {
             |_m, _ctx| -> standout::cli::HandlerResult<()> {
                 Err(anyhow::anyhow!("Critical failure in operation"))
             },
-            "",
+            "unused",
         )
         .unwrap()
         .build()

@@ -30,7 +30,7 @@ fn build_fails_for_missing_named_template_with_near_match() {
             .command_with(
                 "show",
                 |_m, _ctx| Ok(Output::Render(json!({"name": "Ada"}))),
-                |cfg| cfg.template("shoe.jinja"),
+                |cfg| cfg.template_name("shoe.jinja"),
             )
             .unwrap(),
     );
@@ -50,7 +50,7 @@ fn templates_after_commands_resolve_at_build() {
             g.command_with(
                 "show",
                 |_m, _ctx| Ok(Output::Render(json!({"name": "Ada"}))),
-                |cfg| cfg.template("show.jinja"),
+                |cfg| cfg.template_name("show.jinja"),
             )
         })
         .unwrap()
@@ -80,12 +80,96 @@ fn build_fails_when_registered_template_does_not_compile() {
             .command_with(
                 "show",
                 |_m, _ctx| Ok(Output::Render(json!({"name": "Ada"}))),
-                |cfg| cfg.template("show.jinja"),
+                |cfg| cfg.template_name("show.jinja"),
             )
             .unwrap(),
     );
 
     assert!(error.contains("template error"));
+}
+
+#[test]
+fn named_template_renders_through_extension_fallback() {
+    let app = App::builder()
+        .templates(EmbeddedSource::<TemplateResource>::new(
+            ORDERED_TEMPLATES,
+            "/path/that/does/not/exist",
+        ))
+        .command_with(
+            "show",
+            |_m, _ctx| Ok(Output::Render(json!({"name": "Ada"}))),
+            |cfg| cfg.template_name("show.j2"),
+        )
+        .unwrap()
+        .build()
+        .unwrap();
+
+    let result = TestHarness::new()
+        .text_output()
+        .run(&app, command(), ["app", "show"]);
+
+    result.assert_success();
+    assert_eq!(result.stdout(), "Hello Ada");
+}
+
+#[test]
+fn inline_template_does_not_render_registered_template_with_same_name() {
+    let app = App::builder()
+        .templates(EmbeddedSource::<TemplateResource>::new(
+            ORDERED_TEMPLATES,
+            "/path/that/does/not/exist",
+        ))
+        .command_with(
+            "show",
+            |_m, _ctx| Ok(Output::Render(json!({"name": "Ada"}))),
+            |cfg| cfg.template("show"),
+        )
+        .unwrap()
+        .build()
+        .unwrap();
+
+    let result = TestHarness::new()
+        .text_output()
+        .run(&app, command(), ["app", "show"]);
+
+    result.assert_success();
+    assert_eq!(result.stdout(), "show");
+}
+
+#[test]
+fn empty_inline_template_is_rejected() {
+    let error = match App::builder().command_with(
+        "show",
+        |_m, _ctx| Ok(Output::Render(json!({"name": "Ada"}))),
+        |cfg| cfg.template(""),
+    ) {
+        Ok(_) => panic!("expected empty inline template to fail"),
+        Err(error) => error.to_string(),
+    };
+
+    assert!(error.contains("empty template"));
+    assert!(error.contains(".structured_only()"));
+}
+
+#[test]
+fn convention_template_without_application_registry_allows_structured_output() {
+    let app = App::builder()
+        .command_with(
+            "show",
+            |_m, _ctx| Ok(Output::Render(json!({"name": "Ada"}))),
+            |cfg| cfg,
+        )
+        .unwrap()
+        .build()
+        .unwrap();
+
+    let result =
+        TestHarness::new()
+            .output_mode(OutputMode::Json)
+            .run(&app, command(), ["app", "show"]);
+
+    result.assert_success();
+    assert_eq!(result.stdout(), "{\n  \"name\": \"Ada\"\n}");
 }
 
 #[test]
@@ -175,6 +259,36 @@ fn corrupted_file_backed_template_errors_at_render() {
         .run(&app, command(), ["app", "show"]);
     result.assert_error_contains("template `show`");
     result.assert_error_contains(&template_path.display().to_string());
+}
+
+#[test]
+#[serial]
+fn corrupted_file_backed_include_names_include_path_at_render() {
+    let dir = tempfile::tempdir().unwrap();
+    let template_path = dir.path().join("show.jinja");
+    let partial_path = dir.path().join("_partial.jinja");
+    std::fs::write(&template_path, "Hello {% include '_partial' %}").unwrap();
+    std::fs::write(&partial_path, "{{ name }}").unwrap();
+
+    let app = App::builder()
+        .templates_dir(dir.path())
+        .unwrap()
+        .command_with(
+            "show",
+            |_m, _ctx| Ok(Output::Render(json!({"name": "Ada"}))),
+            |cfg| cfg.template_name("show"),
+        )
+        .unwrap()
+        .build()
+        .unwrap();
+
+    std::fs::write(&partial_path, "{% if").unwrap();
+
+    let result = TestHarness::new()
+        .text_output()
+        .run(&app, command(), ["app", "show"]);
+    result.assert_error_contains("template `_partial`");
+    result.assert_error_contains(&partial_path.display().to_string());
 }
 
 #[test]

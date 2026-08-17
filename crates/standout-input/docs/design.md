@@ -439,7 +439,7 @@ When used with the standout framework:
 ```rust
 let app = App::builder()
     .command_with("create", handlers::create, |cfg| {
-        cfg.template("create.jinja")
+        cfg.template_name("create")
            .input("body", InputChain::<String>::new()
                .try_source(ArgSource::new("body"))
                .try_source(StdinSource)
