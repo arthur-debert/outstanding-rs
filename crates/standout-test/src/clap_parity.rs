@@ -53,8 +53,8 @@ use clap::{Arg, Command};
 use standout::cli::HelpLength;
 
 use crate::page::{
-    candidate_metavars, contains_token, declared_metavars, find_row, flag_spellings, metavar_text,
-    normalize, rows, takes_values, value_placeholders, Row,
+    candidate_metavars, contains_token, declared_metavars, find_row, flag_spellings, list_values,
+    metavar_text, normalize, rows, takes_values, value_clause, value_placeholders, Row,
 };
 use crate::TestResult;
 
@@ -147,8 +147,9 @@ impl fmt::Display for Subject {
 /// Clap's formatter suppresses as deliberately as it prints: no possible
 /// values and no default for an argument that takes no value (`--staged true`
 /// is not syntax the user may type — #301), nothing at all for a hidden
-/// argument or a hidden possible value. A differential that only checked
-/// presence would call a page that prints all of them parity-clean.
+/// argument — hidden outright, or from the requested help length — or a
+/// hidden possible value. A differential that only checked presence would
+/// call a page that prints all of them parity-clean.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Presence {
     /// Clap's formatter would print this; themed help must too.
@@ -370,7 +371,7 @@ pub fn clap_facts(cmd: &Command, length: HelpLength) -> Vec<Fact> {
         );
     }
 
-    if classifiable(&built, &declared) {
+    if classifiable(&built, &declared, length) {
         facts.push(Fact::new(
             FactKind::Classification,
             Subject::Command(name),
@@ -412,7 +413,9 @@ fn subcommand_facts(sub: &Command) -> Vec<Fact> {
 fn argument_facts(arg: &Arg, length: HelpLength) -> Vec<Fact> {
     let subject = Subject::Argument(arg.get_id().to_string());
 
-    if arg.is_hide_set() {
+    // Hidden means hidden *from this page*: `hide` outright, or the
+    // length-specific hide clap applies to the entry point being rendered.
+    if !visible_at(arg, length) {
         return spellings(arg)
             .into_iter()
             .map(|spelling| {
@@ -499,6 +502,21 @@ fn argument_facts(arg: &Arg, length: HelpLength) -> Vec<Fact> {
     facts
 }
 
+/// Whether clap's formatter lists `arg` on the page for `length` — clap's
+/// `should_show_arg` semantics: `hide` suppresses the argument everywhere,
+/// each length then has its own hide (`hide_short_help` for `-h`,
+/// `hide_long_help` for `--help`), and `next_line_help` forces the argument
+/// back onto both pages.
+fn visible_at(arg: &Arg, length: HelpLength) -> bool {
+    if arg.is_hide_set() {
+        return false;
+    }
+    let long = matches!(length, HelpLength::Long);
+    (long && !arg.is_hide_long_help_set())
+        || (!long && !arg.is_hide_short_help_set())
+        || arg.is_next_line_help_set()
+}
+
 /// Every spelling the page may list an argument under: a positional's value
 /// name, or a flag's short and long forms.
 fn spellings(arg: &Arg) -> Vec<String> {
@@ -509,12 +527,12 @@ fn spellings(arg: &Arg) -> Vec<String> {
     }
 }
 
-/// Whether the command has both a visible positional and a visible declared
-/// option, which is what makes "listed apart" a statement about it at all.
-fn classifiable(built: &Command, declared: &HashSet<String>) -> bool {
+/// Whether the command has both a positional and a declared option visible at
+/// `length`, which is what makes "listed apart" a statement about it at all.
+fn classifiable(built: &Command, declared: &HashSet<String>, length: HelpLength) -> bool {
     let mut positionals = false;
     let mut options = false;
-    for arg in built.get_arguments().filter(|arg| !arg.is_hide_set()) {
+    for arg in built.get_arguments().filter(|arg| visible_at(arg, length)) {
         if !declared.contains(arg.get_id().as_str()) {
             continue;
         }
@@ -537,7 +555,9 @@ fn classifiable(built: &Command, declared: &HashSet<String>) -> bool {
 /// `length` is the help length the entry point asked for: [`HelpLength::Short`]
 /// for `-h`, [`HelpLength::Long`] for `--help` and the `help` word. It is not
 /// a cosmetic axis — it decides whether the page owes `about` or `long_about`,
-/// which is one of the facts the extractor could drop unnoticed.
+/// and which arguments the page owes rows at all: clap hides
+/// `hide_short_help` arguments from `-h` and `hide_long_help` arguments from
+/// `--help`.
 #[track_caller]
 pub fn assert_states_clap_facts(result: &TestResult, cmd: &Command, length: HelpLength) {
     assert_page_states_clap_facts(&result.stdout_plain(), cmd, length);
@@ -574,7 +594,7 @@ pub fn assert_page_states_clap_facts_with(
             exempted += 1;
             continue;
         }
-        if let Err(detail) = check(fact, &built, &rows, page) {
+        if let Err(detail) = check(fact, &built, &rows, page, length) {
             failures.push(format!("  - {fact}: {detail}"));
         }
     }
@@ -601,9 +621,15 @@ pub fn assert_page_states_clap_facts_with(
 /// page, everything else to the row that lists its owner. Reading an
 /// argument's default off the whole page would let another argument's row
 /// satisfy it.
-fn check(fact: &Fact, built: &Command, rows: &[Row<'_>], page: &str) -> Result<(), String> {
+fn check(
+    fact: &Fact,
+    built: &Command,
+    rows: &[Row<'_>],
+    page: &str,
+    length: HelpLength,
+) -> Result<(), String> {
     match (&fact.subject, fact.kind) {
-        (_, FactKind::Classification) => classification(built, rows),
+        (_, FactKind::Classification) => classification(built, rows, length),
         (Subject::Command(_), FactKind::Purpose) => present(
             normalize(page).contains(&normalize(&fact.expected)),
             fact,
@@ -712,12 +738,30 @@ fn argument_check(fact: &Fact, built: &Command, rows: &[Row<'_>]) -> Result<(), 
                 &format!("the row reads {text:?}"),
             )
         }
-        FactKind::ArgDefault => {
-            labelled(row, "default:", fact, |line| line.contains(&fact.expected))
-        }
-        FactKind::ArgPossibleValue => labelled(row, "possible values:", fact, |line| {
-            contains_token(line, &fact.expected)
+        FactKind::ArgDefault => labelled(row, "default:", fact, |line| {
+            // The clause is compared whole and value by value: whole because
+            // standout does not quote a default that carries whitespace, by
+            // value because clap space-joins a list of defaults and quotes
+            // the values that need it. Either way the match is bounded — a
+            // page that states `briefly` no longer states `brief`.
+            let clause = value_clause(line);
+            clause.trim() == fact.expected || list_values(clause).contains(&fact.expected)
         }),
+        FactKind::ArgPossibleValue => {
+            let names = row.possible_value_names();
+            present(
+                names.contains(&fact.expected),
+                fact,
+                &if names.is_empty() {
+                    format!(
+                        "the row states no possible values at all: {:?}",
+                        row.block_text()
+                    )
+                } else {
+                    format!("the row's possible values are {names:?}")
+                },
+            )
+        }
         FactKind::ArgAlias => present(
             contains_token(&row.block_text(), &fact.expected),
             fact,
@@ -728,7 +772,7 @@ fn argument_check(fact: &Fact, built: &Command, rows: &[Row<'_>]) -> Result<(), 
 }
 
 /// Checks a fact stated under a label in the row's block (`default: brief`,
-/// `possible values: brief, full, none`).
+/// `[default: notes.txt]`).
 ///
 /// Reading the labelled remainder rather than the whole row is what keeps the
 /// check honest in both directions: it cannot pass because the word appears in
@@ -775,11 +819,11 @@ fn present(found: bool, fact: &Fact, detail: &str) -> Result<(), String> {
 /// either spelling would be asserting layout. What has to hold is that a
 /// reader can tell which arguments are typed by position and which by flag —
 /// the distinction a single merged list destroys.
-fn classification(built: &Command, rows: &[Row<'_>]) -> Result<(), String> {
+fn classification(built: &Command, rows: &[Row<'_>], length: HelpLength) -> Result<(), String> {
     let mut positional_sections: Vec<(String, &str)> = Vec::new();
     let mut option_sections: Vec<(String, &str)> = Vec::new();
 
-    for arg in built.get_arguments().filter(|arg| !arg.is_hide_set()) {
+    for arg in built.get_arguments().filter(|arg| visible_at(arg, length)) {
         let Some(row) = find_row(rows, arg) else {
             continue;
         };

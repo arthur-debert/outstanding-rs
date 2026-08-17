@@ -33,7 +33,7 @@ use standout::cli::{App, HelpLength, Output};
 use standout_fixtures::downstream;
 use standout_test::clap_parity::{
     assert_page_states_clap_facts, assert_page_states_clap_facts_with, assert_states_clap_facts,
-    clap_facts, Exemption, FactKind, Omission, Presence, Subject, DELIBERATE_OMISSIONS,
+    clap_facts, Exemption, Fact, FactKind, Omission, Presence, Subject, DELIBERATE_OMISSIONS,
 };
 use standout_test::invariants::{
     assert_descriptions_aligned, assert_every_tag_resolved, assert_metavar_for_valued_args,
@@ -275,6 +275,18 @@ fn a_dropped_default_fails() {
     });
 }
 
+/// A default replaced by a strict superstring fails: a page that states
+/// `briefly` no longer states that `brief` is the default, and a substring
+/// match would have called it parity-clean.
+#[test]
+#[serial]
+fn a_default_replaced_by_a_superstring_fails() {
+    let page = rendered("--help").replace("default: brief", "default: briefly");
+    fails_naming(&["summary", "brief"], || {
+        assert_page_states_clap_facts(&page, &downstream().build().command(), HelpLength::Long)
+    });
+}
+
 /// A possible value dropped from the list fails, naming the value — the row
 /// still exists and still says `possible values`, which is what makes this the
 /// case a substring search for the label would miss.
@@ -487,8 +499,181 @@ fn hidden_metadata_stays_off_the_page() {
 }
 
 // ---------------------------------------------------------------------------
+// Length-specific hides follow clap's own visibility rules
+// ---------------------------------------------------------------------------
+
+/// The derivation says what each length hides: a `hide_short_help` argument
+/// is suppressed at `-h` and stated at `--help`, `hide_long_help` the other
+/// way around, and `next_line_help` overrides the length hide — clap's
+/// `should_show_arg`, fact by fact.
+#[test]
+fn the_derivation_follows_length_specific_hides() {
+    let cmd = length_concealing();
+    let short = clap_facts(&cmd, HelpLength::Short);
+    let long = clap_facts(&cmd, HelpLength::Long);
+
+    let spelling = |facts: &[Fact], id: &str, presence: Presence| {
+        assert!(
+            facts.iter().any(|fact| fact.kind() == FactKind::ArgSpelling
+                && *fact.subject() == Subject::Argument(id.to_string())
+                && fact.presence() == presence),
+            "`{id}` should have a {presence:?} spelling fact"
+        );
+    };
+
+    spelling(&short, "verbose", Presence::Suppressed);
+    spelling(&long, "verbose", Presence::Stated);
+    spelling(&short, "terse", Presence::Stated);
+    spelling(&long, "terse", Presence::Suppressed);
+    spelling(&short, "insistent", Presence::Stated);
+    spelling(&long, "insistent", Presence::Stated);
+}
+
+/// Clap's own pages ground the length rules: at each length, the page states
+/// the arguments clap shows there and none it hides there, under an empty
+/// allowlist. An oracle that ignored the length hides would demand a row
+/// clap's own formatter refuses to print.
+#[test]
+fn length_specific_hides_ground_against_clap() {
+    let cmd = length_concealing();
+    for length in [HelpLength::Short, HelpLength::Long] {
+        let page = clap_page(cmd.clone(), length);
+        assert_page_states_clap_facts_with(&page, &cmd, length, &[]);
+    }
+}
+
+/// An argument clap hides from the long page, leaking onto it anyway, fails —
+/// the suppressed direction of the length rules.
+#[test]
+fn an_argument_hidden_from_one_length_leaking_onto_that_page_fails() {
+    let cmd = length_concealing();
+    let leaked = clap_page(cmd.clone(), HelpLength::Long).replace(
+        "Options:",
+        "Options:\n      --terse\n          Only the short page lists this\n",
+    );
+    fails_naming(&["--terse"], || {
+        assert_page_states_clap_facts_with(&leaked, &cmd, HelpLength::Long, &[])
+    });
+}
+
+/// A help-less short flag must not swallow the long flag clap renders below
+/// it: `-f` sits at two columns and `--long-only` at six, so a parser that
+/// filed "deeper indent" as "same row" would leave `--long-only` rowless and
+/// fail clap's own page.
+#[test]
+fn a_help_less_short_flag_does_not_swallow_the_long_flag_below_it() {
+    let cmd = Command::new("notes")
+        .about("Keep short notes")
+        .arg(Arg::new("force").short('f').action(ArgAction::SetTrue))
+        .arg(
+            Arg::new("long-only")
+                .long("long-only")
+                .action(ArgAction::SetTrue)
+                .help("Spelled out in full"),
+        );
+    for length in [HelpLength::Short, HelpLength::Long] {
+        let page = clap_page(cmd.clone(), length);
+        assert_page_states_clap_facts_with(&page, &cmd, length, &[]);
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Clap's value-list spellings all decode to the same names
+// ---------------------------------------------------------------------------
+
+/// Clap's other value-list spellings ground the decoder: a value with help
+/// turns the long page's list into a `Possible values:` bullet region, a
+/// value with whitespace renders quoted, and a quoted default decodes back to
+/// the value clap would parse.
+#[test]
+fn helped_and_quoted_values_ground_against_clap() {
+    let cmd = quoted_and_helped();
+    for length in [HelpLength::Short, HelpLength::Long] {
+        let page = clap_page(cmd.clone(), length);
+        assert_page_states_clap_facts_with(&page, &cmd, length, &[]);
+    }
+}
+
+/// A value dropped from the bullet region fails, naming the value — the
+/// region's names live on bullet lines the labelled heading itself never
+/// carries.
+#[test]
+fn a_dropped_possible_value_bullet_fails() {
+    let cmd = quoted_and_helped();
+    let page = drop_lines(&clap_page(cmd.clone(), HelpLength::Long), "- json");
+    fails_naming(&["format", "json"], || {
+        assert_page_states_clap_facts_with(&page, &cmd, HelpLength::Long, &[])
+    });
+}
+
+/// A quoted value dropped from the inline list fails: recognizing
+/// `"plain text"` as one value is the decoder's job, and a whitespace split
+/// would never have stated it in the first place.
+#[test]
+fn a_dropped_quoted_possible_value_fails() {
+    let cmd = quoted_and_helped();
+    let page = clap_page(cmd.clone(), HelpLength::Short).replace("\"plain text\", ", "");
+    fails_naming(&["format", "plain text"], || {
+        assert_page_states_clap_facts_with(&page, &cmd, HelpLength::Short, &[])
+    });
+}
+
+// ---------------------------------------------------------------------------
 // Fixtures and helpers
 // ---------------------------------------------------------------------------
+
+/// A command whose arguments hide from one help length only: one absent from
+/// `-h`, one absent from `--help`, and one whose `next_line_help` forces it
+/// back onto both pages the way clap's `should_show_arg` says it must be.
+///
+/// Only clap's own pages render this command: standout's extractor honours
+/// `hide` alone today, so a standout page would leak the length-hidden rows —
+/// a finding for the framework work, not a fixture for this suite.
+fn length_concealing() -> Command {
+    Command::new("notes")
+        .about("Keep short notes")
+        .arg(Arg::new("range").value_name("RANGE").help("A range"))
+        .arg(
+            Arg::new("verbose")
+                .long("verbose")
+                .action(ArgAction::SetTrue)
+                .hide_short_help(true)
+                .help("Only the long page lists this"),
+        )
+        .arg(
+            Arg::new("terse")
+                .long("terse")
+                .action(ArgAction::SetTrue)
+                .hide_long_help(true)
+                .help("Only the short page lists this"),
+        )
+        .arg(
+            Arg::new("insistent")
+                .long("insistent")
+                .action(ArgAction::SetTrue)
+                .hide_long_help(true)
+                .next_line_help(true)
+                .help("Next-line help overrides the length hide"),
+        )
+}
+
+/// A command whose value lists exercise clap's other spellings: a possible
+/// value with whitespace (quoted inline), one with help text (which turns the
+/// long page's list into a bullet region), and a default that renders quoted.
+fn quoted_and_helped() -> Command {
+    Command::new("notes").about("Keep short notes").arg(
+        Arg::new("format")
+            .long("format")
+            .value_name("FORMAT")
+            .action(ArgAction::Set)
+            .default_value("plain text")
+            .value_parser([
+                clap::builder::PossibleValue::new("plain text"),
+                clap::builder::PossibleValue::new("json").help("One note per line"),
+            ])
+            .help("How to print the notes"),
+    )
+}
 
 /// The shared fixture's nested page for one entry point, as plain text.
 fn rendered(entry: &str) -> String {

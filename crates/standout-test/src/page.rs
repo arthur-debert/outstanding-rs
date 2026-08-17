@@ -61,12 +61,125 @@ impl<'a> Row<'a> {
     pub(crate) fn labelled(&self, label: &str) -> Vec<String> {
         self.block()
             .filter_map(|line| {
-                let lowered = line.to_lowercase();
-                let offset = lowered.find(label)?;
+                let offset = find_label(line, label)?;
                 Some(line[offset + label.len()..].to_string())
             })
             .collect()
     }
+
+    /// The value names the row's possible-values list states, however the
+    /// page spells the list.
+    ///
+    /// Three spellings exist across the two formatters this parser reads:
+    /// standout's labelled line (`possible values: brief, full, none`),
+    /// clap's bracketed clause (`[possible values: "plain text", json]`, a
+    /// value quoted when it carries whitespace), and clap's long-help region —
+    /// a `Possible values:` heading with a `- value: description` bullet per
+    /// value, which clap switches to when any value has help text. The
+    /// differential asks whether a value is *stated*, so every spelling
+    /// decodes to the same list of names.
+    pub(crate) fn possible_value_names(&self) -> Vec<String> {
+        const LABEL: &str = "possible values:";
+        let mut names = Vec::new();
+        let mut in_region = false;
+        for line in self.block() {
+            if let Some(offset) = find_label(line, LABEL) {
+                in_region = true;
+                names.extend(list_values(value_clause(&line[offset + LABEL.len()..])));
+            } else if in_region {
+                // A bullet under the heading states one value, named up to
+                // the colon that introduces its description. Anything else —
+                // a wrapped bullet description, a `[default: …]` clause — is
+                // not a value name and is passed over.
+                if let Some(bullet) = line.trim_start().strip_prefix("- ") {
+                    let name = match bullet.split_once(':') {
+                        Some((name, _)) => name,
+                        None => bullet,
+                    }
+                    .trim();
+                    if !name.is_empty() {
+                        names.push(name.to_string());
+                    }
+                }
+            }
+        }
+        names
+    }
+}
+
+/// The byte offset of `label` in `line`, matched ASCII-case-insensitively.
+///
+/// The match runs over bytes rather than over a lowercased copy because
+/// lowercasing can change a character's byte length ('İ' lowers to two
+/// characters), so an offset found in the copy can point past — or into the
+/// middle of — a character of the original. A label is ASCII, and a byte only
+/// matches an ASCII byte case-insensitively, so an offset found this way
+/// always sits on a character boundary of `line`.
+fn find_label(line: &str, label: &str) -> Option<usize> {
+    debug_assert!(
+        !label.is_empty() && label.is_ascii(),
+        "labels are non-empty ASCII by construction"
+    );
+    line.as_bytes()
+        .windows(label.len())
+        .position(|window| window.eq_ignore_ascii_case(label.as_bytes()))
+}
+
+/// The part of a labelled remainder the label owns: everything up to clap's
+/// closing bracket (`[default: brief] [aliases: -t]` must not read the alias
+/// as a second default), or the whole remainder on a page that does not
+/// bracket its clauses (`default: brief`).
+pub(crate) fn value_clause(remainder: &str) -> &str {
+    remainder
+        .find(']')
+        .map_or(remainder, |end| &remainder[..end])
+}
+
+/// The values a comma- or space-separated list clause states, with clap's
+/// quoting undone.
+///
+/// Clap wraps a value in Rust-debug quotes when it is empty or carries
+/// whitespace (`[default: "plain text"]`), so splitting the clause naively
+/// would shear such a value apart. Standout separates values with `, ` where
+/// clap's default list uses a bare space, so both separators split here —
+/// which is safe precisely because a value that carries either arrives
+/// quoted.
+pub(crate) fn list_values(clause: &str) -> Vec<String> {
+    let mut values = Vec::new();
+    let mut current = String::new();
+    // Whether `current` came from quotes: a quoted value may be empty, and
+    // clap quotes an empty value for exactly that reason.
+    let mut quoted = false;
+    let mut in_quotes = false;
+    let mut escaped = false;
+    for c in clause.chars() {
+        if in_quotes {
+            if escaped {
+                current.push(c);
+                escaped = false;
+            } else if c == '\\' {
+                escaped = true;
+            } else if c == '"' {
+                in_quotes = false;
+            } else {
+                current.push(c);
+            }
+        } else if c == '"' {
+            in_quotes = true;
+            quoted = true;
+        } else if c == ',' || c.is_whitespace() {
+            if !current.is_empty() || quoted {
+                values.push(std::mem::take(&mut current));
+                quoted = false;
+            }
+        } else {
+            current.push(c);
+        }
+    }
+    if !current.is_empty() || quoted {
+        values.push(current);
+    }
+    values
 }
 
 /// Parses every two-column row on the page, with its continuation lines.
@@ -81,7 +194,9 @@ impl<'a> Row<'a> {
 /// with a short by two and one without by six, so `--summary` is indented
 /// further than the `-p, --pattern` row above it while plainly being its own
 /// row. A row whose label sits alone on its line — clap's long help — has no
-/// description column yet, and there any deeper indent is its description.
+/// description column yet, and there a deeper indent is its description —
+/// unless the line itself spells a flag, which is the next row: a help-less
+/// `-f` must not swallow the `--long-only` clap indents past it.
 pub(crate) fn rows(page: &str) -> Vec<Row<'_>> {
     let mut rows: Vec<Row<'_>> = Vec::new();
     let mut section = "";
@@ -104,7 +219,13 @@ pub(crate) fn rows(page: &str) -> Vec<Row<'_>> {
         }
 
         if let Some((index, continuation_column, known)) = open {
-            if indent >= continuation_column {
+            // While the description column is still a guess, a deeper line
+            // that spells a flag is the next row, not this row's description:
+            // clap indents a short-only flag by two and a long-only flag by
+            // six, so "deeper than the label" would swallow the long flag
+            // whenever the short one above it has no help text.
+            let next_label = !known && looks_like_flag_label(line);
+            if indent >= continuation_column && !next_label {
                 rows[index].continuations.push(line.trim());
                 // A label-only row learns its description column from the
                 // first line that continues it. Until then any deeper indent
@@ -149,6 +270,20 @@ pub(crate) fn rows(page: &str) -> Vec<Row<'_>> {
     }
 
     rows
+}
+
+/// Whether a line reads as a new flag row's label rather than as text: a dash
+/// followed directly by more of a spelling (`-f`, `--long-only`). A prose dash
+/// and clap's `- value: description` bullet put a space after the dash, so
+/// neither is mistaken for a flag. Description text that *opens* with a
+/// literal flag spelling is — that trade is what keeps the parser free of the
+/// command it is parsing, and it only arises while a row's description column
+/// is still unknown.
+fn looks_like_flag_label(line: &str) -> bool {
+    line.trim_start().strip_prefix('-').is_some_and(|tail| {
+        tail.trim_start_matches('-')
+            .starts_with(|c: char| !c.is_whitespace())
+    })
 }
 
 /// Collapses every run of whitespace to a single space and trims the ends.
@@ -341,6 +476,83 @@ Options:
             "the block reads as one line whichever way it was wrapped"
         );
         assert_eq!(file.labelled("default"), [": notes.txt]"]);
+    }
+
+    /// Clap indents a short-only flag by two and a long-only flag by six;
+    /// when the short flag has no help text, the deeper long flag must open
+    /// its own row rather than reading as the first continuation of the row
+    /// above it.
+    #[test]
+    fn a_help_less_row_does_not_swallow_the_next_label() {
+        const PAGE: &str = "\
+Options:
+  -f
+
+      --long-only
+          Spelled out in full
+";
+        let rows = rows(PAGE);
+        assert_eq!(rows.len(), 2, "two flags, two rows");
+        assert_eq!(rows[0].label, "-f");
+        assert_eq!(rows[1].label, "--long-only");
+        assert_eq!(rows[1].block_text(), "Spelled out in full");
+    }
+
+    /// The label match must not slice the line at an offset found in a
+    /// lowercased copy: lowercasing 'İ' grows it by a byte, and the shifted
+    /// offset returns the wrong remainder — or splits a character. The text
+    /// is application metadata, so the parser has no say in what it contains.
+    #[test]
+    fn labelled_survives_text_whose_lowercase_shifts_byte_offsets() {
+        const PAGE: &str = "\
+OPTIONS
+  --file <PATH>  İİİİ file İİ Default: notes.txt
+";
+        let rows = rows(PAGE);
+        assert_eq!(rows[0].labelled("default:"), [" notes.txt"]);
+    }
+
+    #[test]
+    fn list_values_undoes_claps_quoting() {
+        assert_eq!(list_values(" brief, full, none"), ["brief", "full", "none"]);
+        assert_eq!(list_values(" \"plain text\", json"), ["plain text", "json"]);
+        assert_eq!(list_values(" \"a b\" c"), ["a b", "c"]);
+        assert_eq!(list_values("\"\""), [""]);
+        assert_eq!(list_values(" \"say \\\"hi\\\"\""), ["say \"hi\""]);
+    }
+
+    /// Clap's long-help region: a heading, one bullet per value — named up to
+    /// the colon, quoted nowhere — and a spec clause after the bullets that
+    /// states no value name at all.
+    #[test]
+    fn possible_value_names_reads_the_bullet_region() {
+        const CLAP_LONG: &str = "\
+Options:
+      --format <FORMAT>
+          How to print the notes
+
+          Possible values:
+          - plain text
+          - json: One note per line
+
+          [default: \"plain text\"]
+";
+        let rows = rows(CLAP_LONG);
+        assert_eq!(rows.len(), 1, "one option row");
+        assert_eq!(rows[0].possible_value_names(), ["plain text", "json"]);
+    }
+
+    #[test]
+    fn possible_value_names_reads_the_inline_list() {
+        const INLINE: &str = "\
+OPTIONS
+  --summary <STYLE>  How much detail
+                     possible values: brief, full, none
+";
+        assert_eq!(
+            rows(INLINE)[0].possible_value_names(),
+            ["brief", "full", "none"]
+        );
     }
 
     #[test]
