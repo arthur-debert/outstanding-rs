@@ -21,6 +21,19 @@
 //!   an unresolved tag because this module saw it. Surfacing is not reacting;
 //!   what the framework should *do* about a corrupt page is the loud-failures
 //!   Spec's decision.
+//! - **Nothing is collected unless someone asked.** Recording happens only
+//!   inside a capture window — see below.
+//!
+//! # The capture window
+//!
+//! [`resolve_tags`] sits on every render path, including the standalone
+//! [`Renderer`](crate::Renderer) and `render*` helpers a long-lived embedding
+//! may call millions of times. So the collector is **off by default**:
+//! [`record`] keeps nothing until [`begin_capture`] opens a window, and
+//! [`capture_for_run`] closes it again. A run boundary opens the window before
+//! dispatch and closes it after, which both bounds the collector by one run and
+//! stops one run's passes from contaminating the next. A caller outside a
+//! window renders exactly as before, storing nothing.
 //!
 //! # Consumer
 //!
@@ -35,14 +48,16 @@
 //! # Usage
 //!
 //! Render paths call [`resolve_tags`] in place of building a [`BBParser`] and
-//! calling `parse`. The run boundary calls [`capture_for_run`], after which
-//! [`take_captured`] hands the batch to whoever is observing the run:
+//! calling `parse`. The run boundary calls [`begin_capture`] before dispatch
+//! and [`capture_for_run`] after it, and [`take_captured`] then hands the batch
+//! to whoever is observing the run:
 //!
 //! ```rust
 //! use standout_bbparser::{TagTransform, UnknownTagBehavior};
 //! use standout_render::diagnostics;
 //! use std::collections::HashMap;
 //!
+//! diagnostics::begin_capture();
 //! let output = diagnostics::resolve_tags(
 //!     "[nope]hi[/nope]",
 //!     HashMap::new(),
@@ -57,13 +72,20 @@
 //! assert_eq!(passes[0].unresolved_tag_names(), ["nope"]);
 //! ```
 
-use std::cell::RefCell;
+use std::cell::{Cell, RefCell};
 use std::collections::HashMap;
 
 use console::Style;
 use standout_bbparser::{BBParser, TagTransform, UnknownTagBehavior, UnknownTagError};
 
 thread_local! {
+    /// Whether a capture window is open on this thread.
+    ///
+    /// Off by default: [`resolve_tags`] runs on every render, so a collector
+    /// that recorded unconditionally would grow without bound in any embedding
+    /// that renders outside a run boundary.
+    static CAPTURING: Cell<bool> = const { Cell::new(false) };
+
     /// Tag resolutions recorded by the current run on this thread.
     ///
     /// Thread-local for the same reason [`crate::warnings`] is: a CLI process
@@ -83,11 +105,19 @@ thread_local! {
 /// combination: [`TagTransform`] says whether tags became ANSI, stayed as
 /// brackets, or vanished, and [`UnknownTagBehavior`] says what an unresolved
 /// tag did to the page.
+///
+/// The parser's diagnostics are split in two, because they answer different
+/// questions and only one of them is about the theme: a diagnostic whose tag
+/// the theme does not define is [`unresolved`](Self::unresolved), and one
+/// naming a tag the theme *does* define is [`malformed`](Self::malformed) —
+/// markup the template got wrong (an unbalanced open, an unexpected close)
+/// rather than a hole in the theme's vocabulary.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct TagResolution {
     transform: TagTransform,
     unknown_behavior: UnknownTagBehavior,
     unresolved: Vec<UnknownTagError>,
+    malformed: Vec<UnknownTagError>,
     defined_tags: Vec<String>,
 }
 
@@ -106,8 +136,24 @@ impl TagResolution {
     ///
     /// A tag used as a matched pair and unresolved appears twice — once for
     /// the open, once for the close — since each carries its own position.
+    ///
+    /// These are exactly the diagnostics whose tag is absent from
+    /// [`defined_tags`](Self::defined_tags); markup errors on a tag the theme
+    /// does define are [`malformed`](Self::malformed) instead, so a caller
+    /// reporting "the theme does not define this tag" can never name a tag it
+    /// does.
     pub fn unresolved(&self) -> &[UnknownTagError] {
         &self.unresolved
+    }
+
+    /// Every markup error this pass met on a tag the theme *does* define.
+    ///
+    /// An unbalanced open (`[b]` with no `[/b]`) or an unexpected close
+    /// (`[/b]` with no `[b]`) is a defect in the template, not in the theme.
+    /// The parser reports both alongside unknown tags; this is where they are
+    /// kept, so [`unresolved`](Self::unresolved) means one thing only.
+    pub fn malformed(&self) -> &[UnknownTagError] {
+        &self.malformed
     }
 
     /// The distinct names of the tags this pass could not resolve.
@@ -137,6 +183,10 @@ impl TagResolution {
     }
 
     /// Whether every tag this pass met was defined in the resolved theme.
+    ///
+    /// This is a statement about the theme's vocabulary only. A pass that met
+    /// [`malformed`](Self::malformed) markup on defined tags is clean by this
+    /// measure, because the theme is not what is wrong with it.
     pub fn is_clean(&self) -> bool {
         self.unresolved.is_empty()
     }
@@ -146,7 +196,8 @@ impl TagResolution {
 ///
 /// This is the render path's replacement for building a [`BBParser`] and
 /// calling `parse`: byte-for-byte the same output, with the error list `parse`
-/// discarded kept in the thread-local collector instead.
+/// discarded kept in the thread-local collector instead — and kept only while
+/// a capture window is open, so a standalone render costs no memory.
 pub fn resolve_tags(
     input: &str,
     styles: HashMap<String, Style>,
@@ -156,7 +207,21 @@ pub fn resolve_tags(
     let parser = BBParser::new(styles, transform).unknown_behavior(unknown_behavior);
     let (output, errors) = parser.parse_with_diagnostics(input);
 
-    let unresolved = errors.errors;
+    if !is_capturing() {
+        return output;
+    }
+
+    // The parser reports two different failures through one vector: a tag the
+    // theme has no style for, and markup it could not balance. Only the first
+    // is what "unresolved" means, so the split is by whether the theme defines
+    // the tag — otherwise a malformed `[b]` on a theme that *does* define `b`
+    // would be reported as a missing tag, and listed under `defined_tags` in
+    // the same breath.
+    let (unresolved, malformed): (Vec<UnknownTagError>, Vec<UnknownTagError>) = errors
+        .errors
+        .into_iter()
+        .partition(|error| !parser.styles().contains_key(&error.tag));
+
     let defined_tags = if unresolved.is_empty() {
         Vec::new()
     } else {
@@ -169,14 +234,37 @@ pub fn resolve_tags(
         transform,
         unknown_behavior,
         unresolved,
+        malformed,
         defined_tags,
     });
 
     output
 }
 
+/// Opens a capture window on this thread, discarding anything left in the
+/// collector.
+///
+/// The run boundary calls this before dispatch. Outside a window nothing is
+/// recorded at all, which is what keeps [`resolve_tags`] — a function on every
+/// render path, including the standalone [`Renderer`](crate::Renderer) — from
+/// accumulating a record per render forever in a long-lived process.
+pub fn begin_capture() {
+    RESOLUTIONS.with(|r| r.borrow_mut().clear());
+    CAPTURING.with(|capturing| capturing.set(true));
+}
+
+/// Whether a capture window is currently open on this thread.
+pub fn is_capturing() -> bool {
+    CAPTURING.with(Cell::get)
+}
+
 /// Appends a tag resolution to the thread-local collector.
+///
+/// A no-op outside a capture window opened by [`begin_capture`].
 pub fn record(resolution: TagResolution) {
+    if !is_capturing() {
+        return;
+    }
     RESOLUTIONS.with(|r| r.borrow_mut().push(resolution));
 }
 
@@ -185,14 +273,15 @@ pub fn drain() -> Vec<TagResolution> {
     RESOLUTIONS.with(|r| std::mem::take(&mut *r.borrow_mut()))
 }
 
-/// Ends the current run's batch, moving it to the captured slot.
+/// Closes the capture window, moving its batch to the captured slot.
 ///
 /// The run boundary calls this — both the printing and the capturing entry
 /// point — so a run's resolutions are bounded by that run and cannot bleed
 /// into the next one on the same thread. The next call replaces the previous
-/// captured batch.
+/// captured batch, and recording stays off until the next [`begin_capture`].
 pub fn capture_for_run() {
     let resolutions = drain();
+    CAPTURING.with(|capturing| capturing.set(false));
     CAPTURED.with(|captured| {
         *captured.borrow_mut() = resolutions;
     });
@@ -213,11 +302,11 @@ mod tests {
         styles
     }
 
-    /// Clears both slots so a test starts from a known state regardless of
-    /// what ran before it on this thread.
+    /// Clears both slots and opens a capture window, so a test starts from a
+    /// known state regardless of what ran before it on this thread.
     fn reset() {
-        drain();
         take_captured();
+        begin_capture();
     }
 
     #[test]
@@ -303,10 +392,120 @@ mod tests {
             "taking a captured batch clears it"
         );
 
+        begin_capture();
         capture_for_run();
         assert!(
             take_captured().is_empty(),
             "a run that rendered nothing captures nothing"
+        );
+    }
+
+    /// The regression the capture window exists for: `resolve_tags` is on every
+    /// render path, so a standalone renderer outside a run would otherwise add
+    /// a record per render, forever, in a long-lived process.
+    #[test]
+    fn renders_outside_a_capture_window_accumulate_nothing() {
+        reset();
+        capture_for_run();
+        take_captured();
+
+        for _ in 0..1000 {
+            resolve_tags(
+                "[nope]hi[/nope]",
+                HashMap::new(),
+                TagTransform::Remove,
+                UnknownTagBehavior::Passthrough,
+            );
+        }
+
+        assert!(!is_capturing(), "the window closed with the run");
+        assert!(
+            drain().is_empty(),
+            "a render outside a capture window records nothing"
+        );
+    }
+
+    /// …and the second half of that defect: those renders must not turn up in
+    /// whatever run captures next on the same thread.
+    #[test]
+    fn a_render_before_a_run_cannot_contaminate_it() {
+        reset();
+        capture_for_run();
+        take_captured();
+
+        resolve_tags(
+            "[stray]before the run[/stray]",
+            HashMap::new(),
+            TagTransform::Remove,
+            UnknownTagBehavior::Passthrough,
+        );
+
+        begin_capture();
+        resolve_tags(
+            "[ok]during the run[/ok]",
+            theme_with("ok"),
+            TagTransform::Remove,
+            UnknownTagBehavior::Passthrough,
+        );
+        capture_for_run();
+
+        let captured = take_captured();
+        assert_eq!(captured.len(), 1, "only the run's own pass is captured");
+        assert!(captured[0].is_clean());
+    }
+
+    /// Markup the theme *does* define is a template defect, not a hole in the
+    /// theme — and reporting it as one would blame a tag the same record lists
+    /// as defined.
+    #[test]
+    fn malformed_markup_on_a_defined_tag_is_not_an_unresolved_tag() {
+        for input in ["[ok]unbalanced", "closed but never opened[/ok]"] {
+            reset();
+            resolve_tags(
+                input,
+                theme_with("ok"),
+                TagTransform::Remove,
+                UnknownTagBehavior::Passthrough,
+            );
+
+            let passes = drain();
+            assert!(
+                passes[0].is_clean(),
+                "{input:?}: the theme defines `ok`, so nothing is unresolved"
+            );
+            assert!(
+                passes[0].defined_tags().is_empty(),
+                "{input:?}: a pass with nothing unresolved names no vocabulary"
+            );
+            assert_eq!(
+                passes[0]
+                    .malformed()
+                    .iter()
+                    .map(|error| error.tag.as_str())
+                    .collect::<Vec<_>>(),
+                ["ok"],
+                "{input:?}: the markup error is kept, under its own name"
+            );
+        }
+    }
+
+    /// The other side of the split: a tag the theme does not define is
+    /// unresolved however malformed its markup also is.
+    #[test]
+    fn an_undefined_tag_is_unresolved_even_when_its_markup_is_broken() {
+        reset();
+        resolve_tags(
+            "[nope]unbalanced",
+            theme_with("ok"),
+            TagTransform::Remove,
+            UnknownTagBehavior::Passthrough,
+        );
+
+        let passes = drain();
+        assert_eq!(passes[0].unresolved_tag_names(), ["nope"]);
+        assert!(
+            passes[0].malformed().is_empty(),
+            "a tag the theme never defined is reported as missing, not as mis-nested"
         );
     }
 }

@@ -725,7 +725,17 @@ impl TestResult {
     /// the flattened view.
     ///
     /// A run that rendered nothing (an error before dispatch, a structured
-    /// output mode) records no passes.
+    /// output mode) records no passes. Only the run's own passes are here: the
+    /// collector records only inside the window the run boundary opens, so a
+    /// standalone render before or between runs is neither kept nor blamed on
+    /// a run that follows it.
+    ///
+    /// "Could not resolve" means the theme has no such tag. A tag the theme
+    /// *does* define whose markup the template got wrong — an unbalanced open,
+    /// an unexpected close — is
+    /// [`TagResolution::malformed`](standout_render::TagResolution::malformed)
+    /// instead, so an assertion about the theme's vocabulary never names a tag
+    /// the theme has.
     pub fn tag_resolutions(&self) -> &[TagResolution] {
         &self.tag_resolutions
     }

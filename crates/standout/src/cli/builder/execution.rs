@@ -458,6 +458,10 @@ impl AppBuilder {
         I: IntoIterator<Item = T>,
         T: Into<std::ffi::OsString> + Clone,
     {
+        // Opens this run's window for render diagnostics; the collector is off
+        // outside one, so a standalone render never accumulates.
+        standout_render::diagnostics::begin_capture();
+
         let result = self.dispatch_from(cmd, args);
         let primary_status = result.exit_status();
 
@@ -493,9 +497,9 @@ impl AppBuilder {
         let theme = self.theme.as_ref().unwrap_or(&default_theme);
         standout_render::warnings::flush_to_stderr(theme, OutputMode::Auto);
 
-        // Ends this run's batch of render diagnostics. Nothing prints them —
-        // the framework does not react to an unresolved tag — but closing the
-        // batch here keeps a long-lived embedding's collector bounded by one
+        // Closes this run's window for render diagnostics. Nothing prints them
+        // — the framework does not react to an unresolved tag — but closing the
+        // window here keeps a long-lived embedding's collector bounded by one
         // run, exactly as the warning collector is.
         standout_render::diagnostics::capture_for_run();
 
@@ -554,6 +558,7 @@ impl AppBuilder {
         I: IntoIterator<Item = T>,
         T: Into<std::ffi::OsString> + Clone,
     {
+        standout_render::diagnostics::begin_capture();
         let result = self.dispatch_from(cmd, args);
         standout_render::warnings::capture_warnings_for_run();
         standout_render::diagnostics::capture_for_run();

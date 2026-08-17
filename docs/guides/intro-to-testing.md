@@ -355,8 +355,12 @@ assert_descriptions_aligned(&page);                      // every section's colu
 what each style-tag pass could not resolve — so it holds in every output mode
 and names the tag. The `[tag?]` marker only appears in `Term`, so the two
 assertions catch the same defect from different directions and both are worth
-running. Each assertion also has an `*_in_page` form taking the rendered page
-directly, for asserting on a page the harness did not produce.
+running. Each *text* assertion also has an `*_in_page` form taking the rendered
+page directly (`assert_styling_preserves_layout_in_pages` takes the two it
+compares), for asserting on a page the harness did not produce.
+`assert_every_tag_resolved` is the exception: what it reads is
+`TestResult::tag_resolutions()`, which no page carries — that is exactly why it
+can name a tag in a mode where the page shows nothing.
 
 ### Intermezzo B: A full-pipeline test, in-process
 

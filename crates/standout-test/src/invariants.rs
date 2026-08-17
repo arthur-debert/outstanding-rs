@@ -15,11 +15,12 @@
 //!
 //! # The two forms
 //!
-//! Every invariant comes in two functions:
+//! Every invariant *about the text of a page* comes in two functions:
 //!
 //! - `assert_*(result, …)` takes a [`TestResult`] and is what tests call.
 //! - `assert_*_in_page(page, …)` takes the rendered page (and any oracle it
-//!   needs) directly.
+//!   needs) directly — `assert_styling_preserves_layout_in_pages` takes the
+//!   two pages it compares.
 //!
 //! The page form exists because an oracle that cannot fail is worse than none:
 //! it lets the assertion library's own tests feed it a page that violates the
@@ -27,12 +28,18 @@
 //! also what a caller with a page from somewhere else — a process run, a
 //! snapshot file — reaches for.
 //!
+//! [`assert_every_tag_resolved`] is the one exception, and necessarily so: it
+//! reads the run's structured render diagnostics, which a rendered page does
+//! not carry — that is the whole reason it can name a tag in a mode where the
+//! page shows no evidence at all. Its page-shaped counterpart is
+//! [`assert_no_unresolved_tag_markers_in_page`], which proves the weaker thing
+//! a page *can* state.
+//!
 //! # The two forms of "no unresolved tag"
 //!
 //! [`assert_every_tag_resolved`] and [`assert_no_unresolved_tag_markers`] look
 //! like the same check and are not. The first reads the structured record of
-//! what the style-tag pass resolved
-//! ([`standout::diagnostics`](standout_render::diagnostics)) and proves *the
+//! what the style-tag pass resolved ([`standout::diagnostics`]) and proves *the
 //! theme is incomplete*, in every output mode, naming the tag. The second
 //! searches the page for the `[tag?]` marker and proves *the corruption
 //! reached the page a user sees*, which only happens under
@@ -187,17 +194,30 @@ pub fn assert_styling_preserves_layout_in_pages(styled_stripped: &str, plain: &s
         return;
     }
 
-    let (line_number, styled_line, plain_line) = first_difference(styled_stripped, plain);
+    let detail = match first_difference(styled_stripped, plain) {
+        Some((line_number, styled_line, plain_line)) => format!(
+            "first difference at line {}:\n  styled (stripped): {:?}\n  plain            : {:?}",
+            line_number, styled_line, plain_line
+        ),
+        None => "every rendered line matches; the pages differ only in trailing \
+                 line-ending bytes"
+            .to_string(),
+    };
+
     panic!(
-        "styling changed the page beyond color; first difference at line {}:\n  \
-         styled (stripped): {:?}\n  plain            : {:?}\n\
+        "styling changed the page beyond color; {}\n\
          --- styled (stripped) ---\n{}\n--- plain ---\n{}\n-------------",
-        line_number, styled_line, plain_line, styled_stripped, plain
+        detail, styled_stripped, plain
     );
 }
 
 /// The 1-based line number of the first differing line, with both sides.
-fn first_difference(left: &str, right: &str) -> (usize, String, String) {
+///
+/// `None` when the two pages have the same lines and differ only in bytes
+/// [`str::lines`] does not yield — a trailing newline, a `\r` before one. The
+/// caller says so rather than reporting a difference at a line that does not
+/// exist.
+fn first_difference(left: &str, right: &str) -> Option<(usize, String, String)> {
     let mut left_lines = left.lines();
     let mut right_lines = right.lines();
     let mut line_number = 0;
@@ -205,13 +225,13 @@ fn first_difference(left: &str, right: &str) -> (usize, String, String) {
     loop {
         line_number += 1;
         match (left_lines.next(), right_lines.next()) {
-            (None, None) => return (line_number, String::new(), String::new()),
+            (None, None) => return None,
             (l, r) if l != r => {
-                return (
+                return Some((
                     line_number,
                     l.unwrap_or("<end of page>").to_string(),
                     r.unwrap_or("<end of page>").to_string(),
-                )
+                ))
             }
             _ => {}
         }
@@ -275,6 +295,11 @@ pub fn assert_no_possible_values_for_valueless_args_in_page(page: &str, cmd: &Co
 /// reads `RATIO` — while an argument that declared none is matched against its
 /// id case-insensitively, since clap's fallback uppercases the id and
 /// standout's does not.
+///
+/// It is matched against the row's *value placeholders* alone, never against
+/// the whole label: `--output` spells its own id, so a row that lost its
+/// metavar entirely would satisfy a substring search of the label while telling
+/// the user nothing about the value it takes.
 #[track_caller]
 pub fn assert_metavar_for_valued_args(result: &TestResult, cmd: &Command) {
     assert_metavar_for_valued_args_in_page(&result.stdout_plain(), cmd);
@@ -293,14 +318,18 @@ pub fn assert_metavar_for_valued_args_in_page(page: &str, cmd: &Command) {
             continue;
         };
 
+        let placeholders = value_placeholders(row.label);
         let missing: Vec<String> = match declared_metavars(arg) {
             Some(declared) => declared
                 .into_iter()
-                .filter(|name| !row.label.contains(name.as_str()))
+                .filter(|name| !placeholders.contains(&name.as_str()))
                 .collect(),
             None => {
                 let id = arg.get_id().to_string();
-                if row.label.to_lowercase().contains(&id.to_lowercase()) {
+                if placeholders
+                    .iter()
+                    .any(|shown| shown.eq_ignore_ascii_case(&id))
+                {
                     Vec::new()
                 } else {
                     vec![id]
@@ -311,9 +340,10 @@ pub fn assert_metavar_for_valued_args_in_page(page: &str, cmd: &Command) {
         if !missing.is_empty() {
             panic!(
                 "`{}` takes a value, so its row must show the value name(s) {:?}; \
-                 the row does not:\n  row  : {:?}\n  label: {:?}",
+                 the row shows {:?}:\n  row  : {:?}\n  label: {:?}",
                 arg.get_id(),
                 missing,
+                placeholders,
                 row.line,
                 row.label
             );
@@ -353,6 +383,39 @@ fn candidate_metavars(arg: &Arg) -> Vec<String> {
     declared_metavars(arg).unwrap_or_else(|| vec![arg.get_id().to_string()])
 }
 
+/// The value placeholders a row's label offers, with brackets and a repetition
+/// ellipsis trimmed off.
+///
+/// A label is the argument's flag spellings followed by its value placeholders
+/// (`-f, --file <PATH>`), or — for a positional — the placeholder alone. Only
+/// the placeholders say the argument takes a value, so the flag spellings are
+/// dropped: were they kept, a row reduced to `--output` would "show" the
+/// metavar of an `output` argument by spelling its own flag.
+fn value_placeholders(label: &str) -> Vec<&str> {
+    label
+        .split(|c: char| c.is_whitespace() || c == ',')
+        // `--file=<PATH>` carries the placeholder on the flag's own token.
+        .map(|token| token.rsplit('=').next().unwrap_or(token))
+        .filter(|token| !token.starts_with('-'))
+        .map(metavar_text)
+        .filter(|token| !token.is_empty())
+        .collect()
+}
+
+/// A placeholder's name, without the punctuation a formatter wraps it in.
+///
+/// Clap brackets a value name to show whether it is required (`<RANGE>`,
+/// `[RANGE]`) and marks a repeating one with an ellipsis (`<RANGE>...`);
+/// standout's own help leaves the brackets off and tags the metavar instead.
+/// The invariant is about the name, so every spelling of the punctuation
+/// reduces to it — otherwise a clap-rendered page silently matches no row and
+/// the assertion passes by asserting nothing.
+fn metavar_text(token: &str) -> &str {
+    token
+        .trim_end_matches("...")
+        .trim_matches(|c| matches!(c, '<' | '>' | '[' | ']'))
+}
+
 /// Finds the rendered row for `arg`: the one whose label carries its flag
 /// spelling, or — for a positional, which is listed under its metavar — whose
 /// label opens with its value name.
@@ -364,6 +427,7 @@ fn find_row<'a>(rows: &'a [Row<'a>], arg: &Arg) -> Option<&'a Row<'a>> {
             row.label
                 .split_whitespace()
                 .next()
+                .map(metavar_text)
                 .is_some_and(|first| names.iter().any(|name| first.eq_ignore_ascii_case(name)))
         });
     }

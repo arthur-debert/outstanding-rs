@@ -221,6 +221,35 @@ fn the_structural_check_names_a_tag_no_marker_would_reveal() {
     );
 }
 
+/// The collector is bounded by a run, not by the process. `standout_render`'s
+/// standalone helpers run the same style-tag pass, and a long-lived embedding
+/// calls them outside any run boundary — where a record per render would grow
+/// without bound and, worse, be read as the *next* run's evidence.
+#[test]
+#[serial]
+fn standalone_renders_neither_accumulate_nor_reach_a_later_run() {
+    let theme = Theme::new().add("node", Style::new().cyan());
+    for _ in 0..100 {
+        standout_render::render("[headline]hello[/headline]", &json!({}), &theme)
+            .expect("the standalone render succeeds");
+    }
+
+    let result = notes_help(OutputMode::Text);
+    result.assert_success();
+
+    assert!(
+        !result.tag_resolutions().is_empty(),
+        "the run's own passes are still recorded"
+    );
+    assert!(
+        result.unresolved_tag_names().is_empty(),
+        "the standalone renders' unresolved `headline` must not be read as this \
+         run's, got {:?}",
+        result.unresolved_tag_names()
+    );
+    assert_every_tag_resolved(&result);
+}
+
 /// The other direction: under `Term` the corruption reaches the page, and the
 /// marker scan is what proves a user would have seen it. No real ANSI is
 /// needed — `Term` applies the transform regardless of whether color bytes are
@@ -308,6 +337,16 @@ fn a_styled_page_that_gained_markup_fails_and_points_at_the_line() {
             "[header?]USAGE[/header?]\n  notes [OPTIONS]\n",
             "USAGE\n  notes [OPTIONS]\n",
         )
+    });
+}
+
+/// Two pages whose lines all match can still differ — in a trailing newline,
+/// which `str::lines()` does not yield. The failure has to say so instead of
+/// pointing at a line past the end of both pages and quoting two empty strings.
+#[test]
+fn a_trailing_newline_difference_says_what_it_is() {
+    fails_naming("trailing line-ending bytes", || {
+        assert_styling_preserves_layout_in_pages("USAGE\n  notes\n", "USAGE\n  notes")
     });
 }
 
@@ -431,6 +470,75 @@ OPTIONS
     fails_naming("RANGE", || {
         assert_metavar_for_valued_args_in_page(page, &notes_command())
     });
+}
+
+/// Standout's own help leaves a positional's metavar unbracketed and tags it;
+/// clap's formatter wraps it in `<>` or `[]` and marks a repeating one with an
+/// ellipsis. The assertion takes a page from either — a bracket spelling it did
+/// not recognise would match no row and pass by asserting nothing, which is the
+/// one failure mode an oracle must not have.
+#[test]
+fn a_positional_row_is_found_however_its_metavar_is_bracketed() {
+    for label in ["RANGE", "<RANGE>", "[RANGE]", "<RANGE>..."] {
+        let page = format!(
+            "\
+ARGUMENTS
+  {label:<18} Range of notes to act on
+"
+        );
+        assert_metavar_for_valued_args_in_page(&page, &notes_command());
+    }
+
+    // …and the row is genuinely being read, not skipped: the same shapes filed
+    // under the id instead of the metavar still fail.
+    for label in ["range", "<range>", "[range]"] {
+        let page = format!(
+            "\
+ARGUMENTS
+  {label:<18} Range of notes to act on
+"
+        );
+        fails_naming("RANGE", || {
+            assert_metavar_for_valued_args_in_page(&page, &notes_command())
+        });
+    }
+}
+
+/// The false negative a substring search of the label cannot avoid: an option
+/// whose flag spells its own value name. `--output` contains `output`, so a row
+/// that lost its metavar entirely "shows" it — the assertion has to read the
+/// row's value placeholders, not its whole label.
+#[test]
+fn an_option_whose_flag_spells_its_value_name_still_needs_a_metavar() {
+    let implicit = Command::new("notes").arg(
+        Arg::new("output")
+            .long("output")
+            .help("Where to write the notes"),
+    );
+    let declared = Command::new("notes").arg(
+        Arg::new("out")
+            .long("output")
+            .value_name("output")
+            .help("Where to write the notes"),
+    );
+
+    let stripped = "\
+OPTIONS
+  --output           Where to write the notes
+";
+    fails_naming("output", || {
+        assert_metavar_for_valued_args_in_page(stripped, &implicit)
+    });
+    fails_naming("output", || {
+        assert_metavar_for_valued_args_in_page(stripped, &declared)
+    });
+
+    let intact = "\
+OPTIONS
+  --output <output>  Where to write the notes
+";
+    assert_metavar_for_valued_args_in_page(intact, &implicit);
+    assert_metavar_for_valued_args_in_page(intact, &declared);
 }
 
 // ---------------------------------------------------------------------------
