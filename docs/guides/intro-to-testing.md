@@ -358,7 +358,7 @@ fn a_usage_error_goes_to_stderr_and_leaves_stdout_clean() {
 }
 ```
 
-`ProcessResult` carries `stdout()` / `stderr()` (and `stdout_bytes()` / `stderr_bytes()` when the output isn't text), the ANSI-stripping `stdout_plain()` / `stderr_plain()`, `status()` / `code()` / `success()`, and the assertion helpers above. `tempdir()` returns the directory the child ran in, so a command's effect on disk is assertable too.
+`ProcessResult` carries `stdout()` / `stderr()` (and `stdout_bytes()` / `stderr_bytes()` when the output isn't text), the ANSI-stripping `stdout_plain()` / `stderr_plain()`, `status()` / `code()` / `success()`, and the assertion helpers above. `tempdir()` returns the fixture tempdir — the child's working directory too, unless you passed an explicit `cwd()`, which wins — so a command's effect on disk is assertable.
 
 The builder settings that describe a *process* carry over — `env()` / `env_remove()`, `cwd()`, `fixture()` (whose tempdir becomes the child's working directory), and `output_mode()`, which is the same argv edit `run()` makes. The settings that describe an *in-process injection seam* cannot: a child resolves width, color, stdin, clipboard, and prompts from its own environment, so declaring one and then calling `run_process()` panics rather than quietly asking the CI machine's terminal instead. Express those through something the child can see — an environment variable, a fixture file, argv.
 

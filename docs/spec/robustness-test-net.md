@@ -97,7 +97,10 @@ distinguished from a regression.
   accessor, a matrix combinator over (output mode × TTY × theme), insta snapshot
   integration, and a process-level escape hatch for the cases only a real pipe/pty proves.
 - **The TTY axis is real or gone**: `.is_tty()`/`.with_color()` either work end to end
-  through the help path with a worked example, or are deleted.
+  through the help path with a worked example, or are deleted. *Resolved per method, not
+  as one seam (see Further Notes): `.is_tty()` and the TTY axis it named are deleted;
+  `.with_color()` stays and works end to end through the help path with a worked example,
+  as the color axis it always was.*
 - The still-open help bugs (#295 aside — it is a design decision) are caught by the new
   net: a test exists that fails on #302 and #303 before their fixes land.
 - Existing environment-convention behavior that works by accident is pinned: `NO_COLOR`

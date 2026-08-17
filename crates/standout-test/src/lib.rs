@@ -392,11 +392,25 @@ impl TestHarness {
     pub fn run<I, T>(mut self, app: &App, cmd: Command, args: I) -> TestResult
     where
         I: IntoIterator<Item = T>,
-        T: Into<OsString> + Clone,
+        T: Into<OsString>,
     {
-        // 1. Materialize fixtures + cwd.
+        // 0. Read every pre-run value this run is about to overwrite, before
+        // it can overwrite any of them.
         let mut restore = RestoreState::default();
 
+        // `console::colors_enabled()` initializes its process-global lazily,
+        // on the first *read* in the process, from `CLICOLOR` /
+        // `CLICOLOR_FORCE`. Reading it after step 2 applied this run's `.env`
+        // overrides would therefore latch a value this run itself caused —
+        // `.env("CLICOLOR_FORCE", "1")` would record `true` — and Drop would
+        // write that harness-made value back permanently, leaving later tests
+        // in the binary emitting ANSI without asking for it. Reading it here
+        // latches the value the real environment implies.
+        if self.color_capable.is_some() {
+            restore.console_colors = Some(console::colors_enabled());
+        }
+
+        // 1. Materialize fixtures + cwd.
         if let Some(dir) = self.tempdir.as_ref() {
             for (rel, content) in &self.fixtures {
                 let abs = dir.path().join(rel);
@@ -485,7 +499,8 @@ impl TestHarness {
             // Gate 2: `console`'s process-global switch, which
             // `Style::apply_to` reads before emitting an escape. Standout's
             // detector alone cannot produce ANSI in a non-TTY test process.
-            restore.console_colors = Some(console::colors_enabled());
+            // Its pre-run value was captured in step 0, before this run's
+            // environment existed.
             console::set_colors_enabled(flag);
         }
 
@@ -654,8 +669,10 @@ struct RestoreState {
     env_originals: HashMap<String, Option<String>>,
     original_cwd: Option<PathBuf>,
     reset_env_detectors: bool,
-    /// `console`'s process-global color switch as it read at `run()` time,
-    /// when the run overrode it. Restoring writes the *value* back — the
+    /// `console`'s process-global color switch as it read *before* `run()`
+    /// applied any of this run's overrides, when the run overrode it — read
+    /// that early because the switch initializes lazily from the environment
+    /// the run is about to change. Restoring writes the *value* back — the
     /// switch has no "return to auto-detection" setter — which in a test
     /// process is the same thing, since detection there is a constant.
     console_colors: Option<bool>,

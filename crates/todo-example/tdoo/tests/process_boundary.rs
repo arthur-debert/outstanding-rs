@@ -1,6 +1,6 @@
-//! `tdoo` run the way a user runs it: as a real process.
+//! `tdoo` exercised the way a user runs it: as a real process.
 //!
-//! These assert the facts an in-process `TestHarness::run` cannot reach. It
+//! These assert the facts an in-process `TestHarness::run` cannot reach: it
 //! reconstructs the two text channels from one `RunResult` by mirroring
 //! `App::run`'s writer seam — a faithful model, but a model: it cannot show
 //! that the compiled binary wrote the diagnostic to the *OS's* stderr, left

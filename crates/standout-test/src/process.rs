@@ -57,7 +57,7 @@ impl TestHarness {
     /// [`env`](Self::env) / [`env_remove`](Self::env_remove) become the
     /// child's environment, [`fixture`](Self::fixture) files are
     /// materialized and their tempdir becomes the child's working directory
-    /// (as does an explicit [`cwd`](Self::cwd)), and
+    /// unless an explicit [`cwd`](Self::cwd) overrides it, and
     /// [`output_mode`](Self::output_mode) is appended to `args` as
     /// `--<flag>=<mode>`, the same argv edit `run` makes. Nothing
     /// process-global is touched in the *test's* process, so a
@@ -84,7 +84,7 @@ impl TestHarness {
     pub fn run_process<I, T>(mut self, program: impl AsRef<OsStr>, args: I) -> ProcessResult
     where
         I: IntoIterator<Item = T>,
-        T: Into<OsString> + Clone,
+        T: Into<OsString>,
     {
         self.reject_in_process_only_settings();
 
@@ -262,7 +262,11 @@ impl ProcessResult {
 
     /// Returns the fixture tempdir, if the harness allocated one.
     ///
-    /// This is where the child ran, so a file it wrote is under this path.
+    /// This is where [`fixture`](TestHarness::fixture) files were
+    /// materialized. It is also the directory the child ran in — so a file
+    /// the child wrote is under this path — *unless* the harness also
+    /// declared an explicit [`cwd`](TestHarness::cwd), which wins as the
+    /// child's working directory and is where its relative writes land.
     pub fn tempdir(&self) -> Option<&Path> {
         self._tempdir.as_ref().map(TempDir::path)
     }
