@@ -1770,6 +1770,7 @@ dependencies = [
  "serial_test",
  "standout-bbparser",
  "standout-dispatch",
+ "standout-fixtures",
  "standout-input",
  "standout-macros",
  "standout-pipe",
@@ -1798,6 +1799,16 @@ dependencies = [
  "serde_json",
  "tempfile",
  "thiserror 2.0.20",
+]
+
+[[package]]
+name = "standout-fixtures"
+version = "8.1.1"
+dependencies = [
+ "clap",
+ "console",
+ "serde_json",
+ "standout",
 ]
 
 [[package]]
@@ -1882,6 +1893,7 @@ dependencies = [
  "serde_json",
  "serial_test",
  "standout",
+ "standout-fixtures",
  "standout-input",
  "standout-render",
  "tempfile",

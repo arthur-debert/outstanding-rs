@@ -358,7 +358,6 @@ fn the_help_page_is_pinned_by_snapshot() {
     let app = help_app();
     let result = TestHarness::new()
         .terminal_width(80)
-        .no_tty()
         .no_color()
         .text_output()
         .run(&app, help_command(), ["notes", "--help"]);

@@ -131,7 +131,6 @@ fn notes_command() -> Command {
 fn notes_help(mode: OutputMode) -> TestResult {
     TestHarness::new()
         .terminal_width(80)
-        .no_tty()
         .no_color()
         .output_mode(mode)
         .run(&notes_app(), notes_command(), ["notes", "--help"])
