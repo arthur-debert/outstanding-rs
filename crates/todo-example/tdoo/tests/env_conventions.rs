@@ -17,8 +17,9 @@
 //! than the framework: every in-process run latches `console`'s globals
 //! before applying its env map. A child process performs its own lazy
 //! initialization from a real environment, so `run_process` is where these
-//! conventions are genuinely observable — and a `run_process` test needs no
-//! `#[serial]`.
+//! conventions are genuinely observable. No `#[serial]` here: this binary
+//! runs no in-process `run()`, whose env and cwd overrides a spawned child
+//! would otherwise be free to inherit.
 //!
 //! # Two boundaries, two kinds of pin
 //!

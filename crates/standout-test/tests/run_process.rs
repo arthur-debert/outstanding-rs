@@ -15,7 +15,9 @@
 //! run.
 //!
 //! No `#[serial]` here, deliberately: `run_process` mutates nothing
-//! process-global in the test's own process.
+//! process-global in the test's own process, and this binary runs no
+//! in-process `run()` whose env and cwd overrides a spawned child could
+//! otherwise inherit.
 
 use standout_input::{PromptResponse, ScriptedResponder};
 use standout_render::AmbiguousWidth;

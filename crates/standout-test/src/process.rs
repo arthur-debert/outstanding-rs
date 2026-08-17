@@ -61,9 +61,21 @@ impl TestHarness {
     /// materialized and their tempdir becomes the child's working directory
     /// unless an explicit [`cwd`](Self::cwd) overrides it, and
     /// [`output_mode`](Self::output_mode) is appended to `args` as
-    /// `--<flag>=<mode>`, the same argv edit `run` makes. Nothing
-    /// process-global is touched in the *test's* process, so a
-    /// `run_process` test needs no `#[serial]`.
+    /// `--<flag>=<mode>`, the same argv edit `run` makes.
+    ///
+    /// # Serialization
+    ///
+    /// Nothing process-global is touched in the *test's* process, so a binary
+    /// of process tests alone needs no `#[serial]`. What the child does is
+    /// *inherit*: it starts from the test process's ambient environment, and
+    /// — absent a [`cwd`](Self::cwd) or a fixture tempdir — from its working
+    /// directory, with the per-call settings layered on top of that. Both are
+    /// what [`run`](Self::run) rewrites for the length of an in-process run,
+    /// and `serial_test` orders annotated tests only against each other, so
+    /// an unannotated spawn can land inside one. **A test binary holding both
+    /// kinds therefore annotates both**: one serialization key across `run`,
+    /// `run_process` and `run_pty` is what keeps a child from reading another
+    /// test's overrides.
     ///
     /// # Panics
     ///
@@ -128,8 +140,10 @@ impl TestHarness {
     /// plain page back into ANSI.
     ///
     /// Everything else matches `run_process`: the same builder settings
-    /// carry over, the same in-process-only settings panic, stdin is null,
-    /// and stderr stays an ordinary pipe so the streams remain separable.
+    /// carry over, the same in-process-only settings panic, the same
+    /// serialization requirement applies in a binary that also runs
+    /// [`run`](Self::run), stdin is null, and stderr stays an ordinary pipe
+    /// so the streams remain separable.
     /// One pty-specific note: the slave's `ONLCR` post-processing is
     /// disabled, so the recorded bytes are what the child wrote rather than
     /// the line discipline's `\r\n` rewrite of them.

@@ -87,8 +87,16 @@
 //! environment detectors, `console`'s color switch, default input readers).
 //! Tests that call it must be annotated `#[serial]` (from the re-exported
 //! `serial_test` crate). [`TestHarness::run_process`] and
-//! [`TestHarness::run_pty`] mutate none of it — the child gets its own
-//! environment — so a process test needs no annotation.
+//! [`TestHarness::run_pty`] mutate none of it, so a binary of process tests
+//! alone needs no annotation.
+//!
+//! They do *inherit* it, though: a child starts from the test process's
+//! ambient environment and — unless the harness names a `cwd` or materializes
+//! fixtures — from its working directory, both of which a concurrent `run()`
+//! has temporarily rewritten. `serial_test` orders annotated tests only
+//! against each other, so in a binary that mixes the two kinds the process
+//! tests take `#[serial]` as well; otherwise a spawn can land inside an
+//! in-process run and the child reads that test's overrides.
 //!
 //! A `Drop` impl restores every override on both normal exit and panic
 //! unwind, with two nuances:
