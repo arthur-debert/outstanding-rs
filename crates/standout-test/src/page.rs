@@ -97,8 +97,20 @@ impl<'a> Row<'a> {
     /// spelling and three in clap's, where whitespace separates and a
     /// space-carrying value would have arrived quoted. The bracket the label
     /// sits in is what says whose grammar the clause is.
-    pub(crate) fn possible_value_names(&self) -> Vec<String> {
+    ///
+    /// The bullet region is the one spelling that quotes nothing at all — clap
+    /// prints a value's name raw and separates it from its description with
+    /// `": "` — so `arg` is what says where a name ends: a declared name may
+    /// itself contain `": "` (`PossibleValue::new("key: value")`), and reading
+    /// the punctuation instead of the declaration would decode that bullet as
+    /// `key` and reject clap's own page.
+    pub(crate) fn possible_value_names(&self, arg: &Arg) -> Vec<String> {
         const LABEL: &str = "possible values:";
+        let declared: Vec<String> = arg
+            .get_possible_values()
+            .iter()
+            .map(|value| value.get_name().to_string())
+            .collect();
         let mut names = Vec::new();
         let mut in_region = false;
         for line in self.block() {
@@ -111,18 +123,24 @@ impl<'a> Row<'a> {
                     names.extend(comma_values(remainder));
                 }
             } else if in_region {
-                // A bullet under the heading states one value, named up to
-                // the `: ` that introduces its description — clap always puts
-                // the space there, so a bare colon inside a name (`foo:bar`)
-                // is the name's own. Anything else — a wrapped bullet
-                // description, a `[default: …]` clause — is not a value name
-                // and is passed over.
+                // A bullet under the heading states one value. Anything else —
+                // a wrapped bullet description, a `[default: …]` clause — is
+                // not a value name and is passed over.
                 if let Some(bullet) = line.trim_start().strip_prefix("- ") {
-                    let name = match bullet.split_once(": ") {
-                        Some((name, _)) => name,
-                        None => bullet,
-                    }
-                    .trim();
+                    let bullet = bullet.trim_end();
+                    let name = declared_name_at(bullet, &declared).unwrap_or_else(|| {
+                        // The page states a value the argument does not
+                        // declare, so there is no declaration to read it
+                        // against. Falling back to clap's separator keeps the
+                        // failure legible — the caller reports the decoded
+                        // names, and a truncated one still names the row —
+                        // where dropping the bullet would report the value as
+                        // simply absent.
+                        match bullet.split_once(": ") {
+                            Some((name, _)) => name.trim(),
+                            None => bullet,
+                        }
+                    });
                     if !name.is_empty() {
                         names.push(name.to_string());
                     }
@@ -131,6 +149,25 @@ impl<'a> Row<'a> {
         }
         names
     }
+}
+
+/// The declared possible value a long-help bullet states: the longest declared
+/// name the bullet opens with, where what follows is either nothing or the
+/// `": "` clap introduces a value's description with.
+///
+/// Longest wins because both readings can be declared at once — an argument
+/// offering `key` and `key: value` renders the second as a bullet the first is
+/// a prefix of, and clap's own page cannot tell them apart either.
+fn declared_name_at<'a>(bullet: &str, declared: &'a [String]) -> Option<&'a str> {
+    declared
+        .iter()
+        .filter(|name| {
+            bullet
+                .strip_prefix(name.as_str())
+                .is_some_and(|rest| rest.is_empty() || rest.starts_with(": "))
+        })
+        .max_by_key(|name| name.len())
+        .map(String::as_str)
 }
 
 /// The byte offset of `label` in `line`, matched ASCII-case-insensitively.
@@ -421,18 +458,23 @@ pub(crate) fn normalize(text: &str) -> String {
 
 /// Finds the rendered row for `arg`: the one whose label carries its flag
 /// spelling, or — for a positional, which is listed under its metavar — whose
-/// label opens with its value name.
+/// label offers its value name as a placeholder.
+///
+/// A positional is looked for among the positional rows alone: an option's
+/// label carries placeholders too, and `--into <DEST>` is not the row for a
+/// positional named `DEST`.
 pub(crate) fn find_row<'a>(rows: &'a [Row<'a>], arg: &Arg) -> Option<&'a Row<'a>> {
     if arg.is_positional() {
         let mut names = candidate_metavars(arg);
         names.push(arg.get_id().to_string());
-        return rows.iter().find(|row| {
-            row.label
-                .split_whitespace()
-                .next()
-                .map(metavar_text)
-                .is_some_and(|first| names.iter().any(|name| first.eq_ignore_ascii_case(name)))
-        });
+        return rows
+            .iter()
+            .filter(|row| positional_row(row.label))
+            .find(|row| {
+                value_placeholders(row.label)
+                    .iter()
+                    .any(|shown| names.iter().any(|name| shown.eq_ignore_ascii_case(name)))
+            });
     }
 
     rows.iter().find(|row| {
@@ -440,6 +482,27 @@ pub(crate) fn find_row<'a>(rows: &'a [Row<'a>], arg: &Arg) -> Option<&'a Row<'a>
             .iter()
             .any(|spelling| contains_flag_token(row.label, spelling, arg))
     })
+}
+
+/// Whether a row lists a positional: its label is value placeholders and
+/// nothing else.
+///
+/// Two other labels carry placeholders and must not be mistaken for one. An
+/// option's label spells its flags first (`-f, --file <PATH>`), so a flag
+/// token rules the row out — otherwise `--into <DEST>` would answer for a
+/// positional named `DEST` that has no row at all. A usage line is a row too
+/// on a page whose usage sits under a heading (`notes [OPTIONS] [RANGE]`), and
+/// it is ruled out by the bare word outside its brackets: a positional row has
+/// none, and standout's own unbracketed label (`RANGE`) is the placeholder
+/// itself.
+pub(crate) fn positional_row(label: &str) -> bool {
+    if label.split_whitespace().any(|token| token.starts_with('-')) {
+        return false;
+    }
+    if !label.contains(['<', '[']) {
+        return !label.trim().is_empty();
+    }
+    split_brackets(label).1.trim().is_empty()
 }
 
 /// Every spelling a flag row lists the argument under: `-c`, `--color`, or its
@@ -526,7 +589,19 @@ pub(crate) fn candidate_metavars(arg: &Arg) -> Vec<String> {
 /// the placeholders say the argument takes a value, so the flag spellings are
 /// dropped: were they kept, a row reduced to `--output` would "show" the
 /// metavar of an `output` argument by spelling its own flag.
+///
+/// The brackets, where the label has them, are the placeholder boundary rather
+/// than decoration to strip: clap wraps every value name in `<…>` or `[…]`,
+/// and a declared name is free to carry a space (`value_name("A B")` renders
+/// `<A B>`), which a whitespace split would report as two placeholders and
+/// neither of them the declared one. A label with no brackets is standout's
+/// own, where the placeholder is a bare word in the name column — there a
+/// space-carrying name is unstatable, the same page limit standout's unquoted
+/// value lists have, and the tokens are all there is to read.
 pub(crate) fn value_placeholders(label: &str) -> Vec<&str> {
+    if label.contains(['<', '[']) {
+        return split_brackets(label).0;
+    }
     label
         .split(|c: char| c.is_whitespace() || c == ',')
         // `--file=<PATH>` carries the placeholder on the flag's own token.
@@ -535,6 +610,39 @@ pub(crate) fn value_placeholders(label: &str) -> Vec<&str> {
         .map(metavar_text)
         .filter(|token| !token.is_empty())
         .collect()
+}
+
+/// Splits a bracketing label into its groups and everything between them.
+///
+/// A group is the text between a `<` or `[` and its matching closer, which is
+/// the value name exactly as declared — a name is free to carry a space, and
+/// the bracket is the only thing that says where it ends. What falls outside
+/// is the rest of the label: flag spellings, their separators, a repetition
+/// ellipsis. An unclosed bracket ends the walk, so a label the formatter
+/// truncated yields the groups it did close.
+fn split_brackets(label: &str) -> (Vec<&str>, String) {
+    let mut groups = Vec::new();
+    let mut outside = String::new();
+    let mut rest = label;
+    while let Some(open) = rest.find(['<', '[']) {
+        let closer = if rest.as_bytes()[open] == b'<' {
+            '>'
+        } else {
+            ']'
+        };
+        let Some(offset) = rest[open + 1..].find(closer) else {
+            break;
+        };
+        outside.push_str(&rest[..open]);
+        let close = open + 1 + offset;
+        let name = &rest[open + 1..close];
+        if !name.is_empty() {
+            groups.push(name);
+        }
+        rest = &rest[close + 1..];
+    }
+    outside.push_str(rest);
+    (groups, outside)
 }
 
 /// A placeholder's name, without the punctuation a formatter wraps it in.
@@ -798,10 +906,24 @@ OPTIONS
         assert_eq!(value_clause(" a,\"b] [aliases: -t]"), " a,\"b");
     }
 
-    /// Clap's long-help region: a heading, one bullet per value — named up to
-    /// the `: ` that introduces its description, quoted nowhere, a bare colon
-    /// belonging to the name — and a spec clause after the bullets that
-    /// states no value name at all.
+    /// An argument declaring `values` as its possible values — the metadata
+    /// the bullet decoder reads a name's end against.
+    fn valued(values: &[&str]) -> Arg {
+        Arg::new("format")
+            .long("format")
+            .value_parser(clap::builder::PossibleValuesParser::new(
+                values
+                    .iter()
+                    .map(|value| value.to_string())
+                    .collect::<Vec<_>>(),
+            ))
+    }
+
+    /// Clap's long-help region: a heading, one bullet per value — printed raw
+    /// and quoted nowhere, with `": "` before a description clap pads into its
+    /// own column — and a spec clause after the bullets that states no value
+    /// name at all. A name carrying the separator (`key: value`) ends where
+    /// the declaration says it does, not where the punctuation first appears.
     #[test]
     fn possible_value_names_reads_the_bullet_region() {
         const CLAP_LONG: &str = "\
@@ -812,15 +934,40 @@ Options:
           Possible values:
           - plain text
           - key:value
-          - json: One note per line
+          - key: value
+          - json:       One note per line
 
           [default: \"plain text\"]
 ";
         let rows = rows(CLAP_LONG);
         assert_eq!(rows.len(), 1, "one option row");
         assert_eq!(
-            rows[0].possible_value_names(),
-            ["plain text", "key:value", "json"]
+            rows[0].possible_value_names(&valued(&[
+                "plain text",
+                "key:value",
+                "key: value",
+                "json"
+            ])),
+            ["plain text", "key:value", "key: value", "json"]
+        );
+    }
+
+    /// A bullet the argument does not declare is still reported — decoded at
+    /// clap's separator, which is all there is to go on — so the caller's
+    /// failure names the row rather than calling the value absent.
+    #[test]
+    fn possible_value_names_reports_an_undeclared_bullet() {
+        const CLAP_LONG: &str = "\
+Options:
+      --format <FORMAT>
+          How to print the notes
+
+          Possible values:
+          - json: One note per line
+";
+        assert_eq!(
+            rows(CLAP_LONG)[0].possible_value_names(&valued(&["yaml"])),
+            ["json"]
         );
     }
 
@@ -832,7 +979,7 @@ OPTIONS
                      possible values: brief, full, none
 ";
         assert_eq!(
-            rows(INLINE)[0].possible_value_names(),
+            rows(INLINE)[0].possible_value_names(&valued(&["brief", "full", "none"])),
             ["brief", "full", "none"]
         );
     }
@@ -847,7 +994,7 @@ OPTIONS
                      possible values: plain text, json
 ";
         assert_eq!(
-            rows(INLINE)[0].possible_value_names(),
+            rows(INLINE)[0].possible_value_names(&valued(&["plain text", "json"])),
             ["plain text", "json"]
         );
     }
@@ -861,9 +1008,38 @@ Options:
   --format <FORMAT>  How to print the notes [possible values: \"plain text\", json]
 ";
         assert_eq!(
-            rows(CLAP_SHORT)[0].possible_value_names(),
+            rows(CLAP_SHORT)[0].possible_value_names(&valued(&["plain text", "json"])),
             ["plain text", "json"]
         );
+    }
+
+    /// A bracket is where a placeholder ends, so a declared name carrying a
+    /// space stays one placeholder. Where a label brackets nothing — standout
+    /// spells its name column bare — the tokens are all there is to read.
+    #[test]
+    fn value_placeholders_read_a_bracketed_name_whole() {
+        assert_eq!(value_placeholders("[A B]"), ["A B"]);
+        assert_eq!(value_placeholders("-f, --file <P Q>"), ["P Q"]);
+        assert_eq!(value_placeholders("[SRC] [DEST]"), ["SRC", "DEST"]);
+        assert_eq!(value_placeholders("--file=<PATH>"), ["PATH"]);
+        assert_eq!(value_placeholders("<RANGE>..."), ["RANGE"]);
+        assert_eq!(value_placeholders("--file P"), ["P"]);
+        assert_eq!(value_placeholders("--all"), Vec::<&str>::new());
+    }
+
+    /// A positional row is placeholders and nothing else. A flag row spells
+    /// its flags first, and a usage line filed under a heading — which is a
+    /// row like any other to the parser — carries the program name outside
+    /// its brackets.
+    #[test]
+    fn a_positional_row_is_told_from_a_flag_row_and_a_usage_line() {
+        assert!(positional_row("[SRC] [DEST]"));
+        assert!(positional_row("[A B]"));
+        assert!(positional_row("RANGE"));
+        assert!(!positional_row("-f, --file <PATH>"));
+        assert!(!positional_row("--into <DEST>"));
+        assert!(!positional_row("notes [OPTIONS] [RANGE]"));
+        assert!(!positional_row(""));
     }
 
     #[test]

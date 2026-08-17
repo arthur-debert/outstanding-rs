@@ -45,11 +45,14 @@ use crate::TestHarness;
 /// a colon a `split_once(':')` would truncate at, a value carrying the list
 /// separator (clap quotes it, and the decoder must not split inside the
 /// quotes), bare whitespace (clap's other separator), a quoted value whose
-/// `]` must not end the clause, a mid-word `"` that must stay a literal, and
-/// an unquoted comma that is the value's own (`a,b` — clap separates with
-/// comma-*space*, and would have quoted a value carrying the space).
-const ADVERSARIAL: [&str; 6] = [
+/// `]` must not end the clause, a mid-word `"` that must stay a literal, an
+/// unquoted comma that is the value's own (`a,b` — clap separates with
+/// comma-*space*, and would have quoted a value carrying the space), and a
+/// name carrying the `": "` the long-help bullet region introduces a
+/// description with, which only the declaration can tell from a description.
+const ADVERSARIAL: [&str; 7] = [
     "key:value",
+    "key: value",
     "a, b",
     "plain text",
     "[a b]",
@@ -115,7 +118,7 @@ fn assert_page_roundtrips(page: &str, cmd: &Command) {
             .unwrap_or_else(|| panic!("no row for `{}` on the page:\n{page}", arg.get_id()));
 
         assert_eq!(
-            sorted(row.possible_value_names()),
+            sorted(row.possible_value_names(arg)),
             sorted(known_possible_values(arg)),
             "`{}`: the decoded possible values must equal clap's own set \
              exactly\n--- page ---\n{page}\n------------",

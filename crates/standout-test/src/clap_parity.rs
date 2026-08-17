@@ -54,7 +54,7 @@ use standout::cli::HelpLength;
 
 use crate::page::{
     candidate_metavars, contains_flag_token, contains_token, declared_metavars, find_row,
-    flag_spellings, metavar_text, normalize, rows, takes_values, value_placeholders, ClapJoint,
+    flag_spellings, normalize, positional_row, rows, takes_values, value_placeholders, ClapJoint,
     Row,
 };
 use crate::TestResult;
@@ -97,7 +97,10 @@ pub enum FactKind {
     ArgAlias,
     /// Positionals are listed apart from options, the way clap splits
     /// `Arguments:` from `Options:` — the classification #302's cluster made
-    /// invisible by rendering a valued option as if it were a flag.
+    /// invisible by rendering a valued option as if it were a flag. The fact
+    /// is about the arguments under clap's default headings only, since an
+    /// application's own `help_heading` is what clap files an argument by
+    /// instead.
     Classification,
 }
 
@@ -529,11 +532,18 @@ fn spellings(arg: &Arg) -> Vec<String> {
 }
 
 /// Whether the command has both a positional and a declared option visible at
-/// `length`, which is what makes "listed apart" a statement about it at all.
+/// `length` *under clap's default headings*, which is what makes "listed
+/// apart" a statement about it at all.
+///
+/// An argument carrying an explicit `help_heading` is not counted: see
+/// [`classification`] for why clap makes it no promise.
 fn classifiable(built: &Command, declared: &HashSet<String>, length: HelpLength) -> bool {
     let mut positionals = false;
     let mut options = false;
-    for arg in built.get_arguments().filter(|arg| visible_at(arg, length)) {
+    for arg in built
+        .get_arguments()
+        .filter(|arg| visible_at(arg, length) && default_headed(arg))
+    {
         if !declared.contains(arg.get_id().as_str()) {
             continue;
         }
@@ -544,6 +554,13 @@ fn classifiable(built: &Command, declared: &HashSet<String>, length: HelpLength)
         }
     }
     positionals && options
+}
+
+/// Whether clap files the argument under one of its own default headings
+/// (`Arguments:` / `Options:`) rather than under a heading the application
+/// named with `Arg::help_heading`.
+fn default_headed(arg: &Arg) -> bool {
+    arg.get_help_heading().is_none()
 }
 
 // ---------------------------------------------------------------------------
@@ -689,19 +706,29 @@ fn argument_check(fact: &Fact, built: &Command, rows: &[Row<'_>]) -> Result<(), 
 
     // A spelling is what identifies a row, so it is checked against every
     // row's label rather than through the row lookup it would otherwise be
-    // assumed by. The flag-aware match lets a counted flag's label wear
-    // clap's repetition ellipsis (`-v...`) without loosening any other
-    // argument's comparison.
+    // assumed by — and against the labels of the right *kind* of row, since
+    // the two kinds spell an argument differently. A flag is listed under its
+    // flag token, matched flag-aware so a counted flag's label may wear clap's
+    // repetition ellipsis (`-v...`) without loosening any other argument's
+    // comparison. A positional is listed under its value names, of which it
+    // may declare several: `.num_args(2)` with `value_names(["SRC", "DEST"])`
+    // renders one row labelled `[SRC] [DEST]`, so every placeholder of a
+    // positional row answers, not only the first. Searching every label for
+    // the bare token instead would let `--into <DEST>` state that a positional
+    // named `DEST` is listed.
     if fact.kind == FactKind::ArgSpelling {
-        let listed = rows.iter().any(|row| {
-            contains_flag_token(row.label, &fact.expected, arg)
-                || row
-                    .label
-                    .split_whitespace()
-                    .next()
-                    .map(metavar_text)
-                    .is_some_and(|first| first.eq_ignore_ascii_case(&fact.expected))
-        });
+        let listed = if arg.is_positional() {
+            rows.iter()
+                .filter(|row| positional_row(row.label))
+                .any(|row| {
+                    value_placeholders(row.label)
+                        .iter()
+                        .any(|shown| shown.eq_ignore_ascii_case(&fact.expected))
+                })
+        } else {
+            rows.iter()
+                .any(|row| contains_flag_token(row.label, &fact.expected, arg))
+        };
         return present(listed, fact, "no row is listed under that spelling");
     }
 
@@ -763,7 +790,7 @@ fn argument_check(fact: &Fact, built: &Command, rows: &[Row<'_>]) -> Result<(), 
             )
         }
         FactKind::ArgPossibleValue => {
-            let names = row.possible_value_names();
+            let names = row.possible_value_names(arg);
             present(
                 names.contains(&fact.expected),
                 fact,
@@ -806,11 +833,21 @@ fn present(found: bool, fact: &Fact, detail: &str) -> Result<(), String> {
 /// either spelling would be asserting layout. What has to hold is that a
 /// reader can tell which arguments are typed by position and which by flag —
 /// the distinction a single merged list destroys.
+///
+/// Only arguments under clap's *default* headings are the subject. An
+/// application may name a heading with `Arg::help_heading`, and clap then
+/// files whatever carries it under that name — a positional and an option
+/// together, or options split across several headings. Both break the
+/// default split, and clap's own page does it, so asserting the split over
+/// custom-headed arguments would reject clap's own correct rendering.
 fn classification(built: &Command, rows: &[Row<'_>], length: HelpLength) -> Result<(), String> {
     let mut positional_sections: Vec<(String, &str)> = Vec::new();
     let mut option_sections: Vec<(String, &str)> = Vec::new();
 
-    for arg in built.get_arguments().filter(|arg| visible_at(arg, length)) {
+    for arg in built
+        .get_arguments()
+        .filter(|arg| visible_at(arg, length) && default_headed(arg))
+    {
         let Some(row) = find_row(rows, arg) else {
             continue;
         };

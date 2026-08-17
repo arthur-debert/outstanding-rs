@@ -641,6 +641,136 @@ fn a_whitespace_value_on_standouts_page_is_one_value() {
 }
 
 // ---------------------------------------------------------------------------
+// The oracle accepts clap's own correct page
+// ---------------------------------------------------------------------------
+//
+// An oracle that rejects a page clap itself renders is worse than a missing
+// one: the epics downstream of this suite are meant to trust it, and a check
+// that fires on valid output gets suppressed rather than believed. Each shape
+// below is a clap page the derivation once rejected, asserted with an **empty**
+// allowlist — and each is paired with a mutation proving the check still bites.
+
+/// A possible value whose *name* carries the `": "` clap introduces a bullet's
+/// description with. Clap prints `- key: value` beside `- json: One note per
+/// line`, and only the argument's declared values say which of the two is a
+/// name with a description and which is a name containing a separator.
+#[test]
+fn a_possible_value_naming_a_separator_grounds_against_clap() {
+    let cmd = colon_valued();
+    for length in [HelpLength::Short, HelpLength::Long] {
+        let page = clap_page(cmd.clone(), length);
+        assert_page_states_clap_facts_with(&page, &cmd, length, &[]);
+    }
+}
+
+/// And the bullet region still binds on that shape: the separator-carrying
+/// value dropped from it fails, naming the whole value rather than the part
+/// before its colon.
+#[test]
+fn a_dropped_separator_carrying_bullet_fails() {
+    let cmd = colon_valued();
+    let page = drop_lines(&clap_page(cmd.clone(), HelpLength::Long), "- key: value");
+    fails_naming(&["format", "key: value"], || {
+        assert_page_states_clap_facts_with(&page, &cmd, HelpLength::Long, &[])
+    });
+}
+
+/// A positional declaring several value names renders them in **one** row
+/// (`[SRC] [DEST]`) rather than as a row each, and every name is a spelling
+/// the page owes the reader.
+#[test]
+fn a_multi_name_positional_grounds_against_clap() {
+    let cmd = multi_name_positional();
+    for length in [HelpLength::Short, HelpLength::Long] {
+        let page = clap_page(cmd.clone(), length);
+        assert_page_states_clap_facts_with(&page, &cmd, length, &[]);
+    }
+}
+
+/// And the spelling check still binds on that shape: a row that loses the
+/// second value name fails, naming it.
+#[test]
+fn a_positional_losing_its_second_value_name_fails() {
+    let cmd = multi_name_positional();
+    let page = clap_page(cmd.clone(), HelpLength::Long).replace("[SRC] [DEST]", "[SRC]");
+    fails_naming(&["paths", "DEST"], || {
+        assert_page_states_clap_facts_with(&page, &cmd, HelpLength::Long, &[])
+    });
+}
+
+/// A positional's spelling is answered by a positional row, never by some
+/// option that happens to take a value of the same name.
+///
+/// The page here lists `--into <DEST>` and a positional row that lost `DEST`,
+/// so a search of every label for the bare token finds one and calls the
+/// spelling stated. The failure has to name the spelling itself, not only the
+/// metavar the same row also drops.
+#[test]
+fn an_options_placeholder_does_not_answer_for_a_positional() {
+    let cmd = multi_name_positional().arg(
+        Arg::new("into")
+            .long("into")
+            .value_name("DEST")
+            .action(ArgAction::Set)
+            .help("Where to copy"),
+    );
+    let page = clap_page(cmd.clone(), HelpLength::Long).replace("[SRC] [DEST]", "[SRC] [TARGET]");
+    fails_naming(&["argument `paths` spelling \"DEST\""], || {
+        assert_page_states_clap_facts_with(&page, &cmd, HelpLength::Long, &[])
+    });
+}
+
+/// A declared value name may carry a space. Clap wraps it in the same
+/// brackets as any other (`<P Q>`, `[A B]`), so the brackets are what say
+/// where the placeholder ends — reading the label's whitespace instead
+/// reports two placeholders, neither of them the name the app declared.
+#[test]
+fn a_spaced_value_name_grounds_against_clap() {
+    let cmd = spaced_value_names();
+    for length in [HelpLength::Short, HelpLength::Long] {
+        let page = clap_page(cmd.clone(), length);
+        assert_page_states_clap_facts_with(&page, &cmd, length, &[]);
+    }
+}
+
+/// And the metavar check still binds on that shape: a row whose placeholder
+/// keeps only half the declared name fails, naming the whole name.
+#[test]
+fn a_spaced_value_name_rendered_by_halves_fails() {
+    let cmd = spaced_value_names();
+    let page = clap_page(cmd.clone(), HelpLength::Long).replace("--file <P Q>", "--file <P>");
+    fails_naming(&["argument `file` metavar \"P Q\""], || {
+        assert_page_states_clap_facts_with(&page, &cmd, HelpLength::Long, &[])
+    });
+}
+
+/// `Arg::help_heading` is clap's own way of filing an argument somewhere else,
+/// and clap honours it: it lists a positional and an option together under one
+/// custom heading, and splits the options across two. Both break the default
+/// `Arguments:`/`Options:` split, so the classification fact is about the
+/// arguments left under clap's default headings.
+#[test]
+fn custom_help_headings_ground_against_clap() {
+    let cmd = custom_headed();
+    for length in [HelpLength::Short, HelpLength::Long] {
+        let page = clap_page(cmd.clone(), length);
+        assert_page_states_clap_facts_with(&page, &cmd, length, &[]);
+    }
+}
+
+/// And the classification check still binds on that page: the *default-headed*
+/// positional folded in with the default-headed options fails, custom headings
+/// on the same page notwithstanding.
+#[test]
+fn merging_the_default_headed_sections_fails_beside_custom_headings() {
+    let cmd = custom_headed();
+    let page = clap_page(cmd.clone(), HelpLength::Long).replace("\nArguments:\n", "\nOptions:\n");
+    fails_naming(&["classification"], || {
+        assert_page_states_clap_facts_with(&page, &cmd, HelpLength::Long, &[])
+    });
+}
+
+// ---------------------------------------------------------------------------
 // Fixtures and helpers
 // ---------------------------------------------------------------------------
 
@@ -695,6 +825,106 @@ fn quoted_and_helped() -> Command {
             ])
             .help("How to print the notes"),
     )
+}
+
+/// A command whose possible-value *names* carry clap's own bullet separator,
+/// with a helped sibling to force the long page into the bullet region: clap
+/// prints `- key: value` and `- json: One note per line` side by side, and the
+/// declaration is the only thing that says where each name ends.
+///
+/// The width is unbounded because clap otherwise wraps at 100 columns off a
+/// tty, and a bullet wrapped mid-name is a different limitation than the
+/// decoding this grounds.
+fn colon_valued() -> Command {
+    Command::new("notes")
+        .about("Keep short notes")
+        .term_width(0)
+        .arg(
+            Arg::new("format")
+                .long("format")
+                .value_name("FORMAT")
+                .action(ArgAction::Set)
+                .value_parser([
+                    clap::builder::PossibleValue::new("key: value"),
+                    clap::builder::PossibleValue::new("plain"),
+                    clap::builder::PossibleValue::new("json").help("One note per line"),
+                ])
+                .help("How to print the notes"),
+        )
+}
+
+/// A command whose positional declares two value names, which clap renders as
+/// one row labelled `[SRC] [DEST]` rather than as a row each.
+fn multi_name_positional() -> Command {
+    Command::new("notes")
+        .about("Keep short notes")
+        .term_width(0)
+        .arg(
+            Arg::new("paths")
+                .value_names(["SRC", "DEST"])
+                .num_args(2)
+                .help("Copy from SRC to DEST"),
+        )
+        .arg(
+            Arg::new("force")
+                .long("force")
+                .action(ArgAction::SetTrue)
+                .help("Overwrite the destination"),
+        )
+}
+
+/// A command whose declared value names carry a space, on both a positional
+/// and an option: clap renders `[A B]` and `<P Q>`, one placeholder each.
+fn spaced_value_names() -> Command {
+    Command::new("notes")
+        .about("Keep short notes")
+        .term_width(0)
+        .arg(Arg::new("range").value_name("A B").help("A range"))
+        .arg(
+            Arg::new("file")
+                .long("file")
+                .value_name("P Q")
+                .action(ArgAction::Set)
+                .help("Notes file to read"),
+        )
+}
+
+/// A command whose custom headings break both halves of the default split — a
+/// positional filed beside an option under `Selection`, and the options spread
+/// over `Selection` and `Output` — while keeping one default-headed positional
+/// and one default-headed option, so the invariant still has a subject.
+fn custom_headed() -> Command {
+    Command::new("notes")
+        .about("Keep short notes")
+        .term_width(0)
+        .arg(Arg::new("range").value_name("RANGE").help("A range"))
+        .arg(
+            Arg::new("force")
+                .long("force")
+                .action(ArgAction::SetTrue)
+                .help("Overwrite the destination"),
+        )
+        .arg(
+            Arg::new("path")
+                .value_name("PATH")
+                .help("A path")
+                .help_heading("Selection"),
+        )
+        .arg(
+            Arg::new("since")
+                .long("since")
+                .value_name("WHEN")
+                .action(ArgAction::Set)
+                .help("Only notes since then")
+                .help_heading("Selection"),
+        )
+        .arg(
+            Arg::new("quiet")
+                .long("quiet")
+                .action(ArgAction::SetTrue)
+                .help("Say less")
+                .help_heading("Output"),
+        )
 }
 
 /// `quoted_and_helped`'s metadata rendered by standout instead of by clap: an
