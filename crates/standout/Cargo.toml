@@ -52,6 +52,8 @@ input-editor = ["standout-input/editor"]
 input-inquire = ["standout-input/inquire"]
 
 [dev-dependencies]
+standout-fixtures = { path = "../standout-fixtures" }
+standout-test = { path = "../standout-test" }
 proptest = "1"
 tempfile = "3.24.0"
 serial_test = "3"

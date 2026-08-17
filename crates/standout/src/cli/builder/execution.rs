@@ -458,6 +458,13 @@ impl AppBuilder {
         I: IntoIterator<Item = T>,
         T: Into<std::ffi::OsString> + Clone,
     {
+        // Opens this run's window for render diagnostics; the collector is off
+        // outside one, so a standalone render never accumulates. The guard is
+        // held across dispatch: a run nested inside this one gets a window of
+        // its own, and a panicking handler closes this one by unwinding rather
+        // than leaving it open for every later run on the thread.
+        let capture_window = standout_render::diagnostics::begin_capture();
+
         let result = self.dispatch_from(cmd, args);
         let primary_status = result.exit_status();
 
@@ -493,6 +500,13 @@ impl AppBuilder {
         let theme = self.theme.as_ref().unwrap_or(&default_theme);
         standout_render::warnings::flush_to_stderr(theme, OutputMode::Auto);
 
+        // Closes this run's window for render diagnostics. Nothing prints them
+        // — the framework does not react to an unresolved tag — but closing the
+        // window here keeps a long-lived embedding's collector bounded by one
+        // run, exactly as the warning collector is. Explicit rather than
+        // scope-end because the exit below never unwinds.
+        drop(capture_window);
+
         let status = final_write_failure
             .as_ref()
             .map(RunError::exit_status)
@@ -511,7 +525,13 @@ impl AppBuilder {
     /// Framework warnings queued during the run are drained into
     /// [`standout_render::warnings::take_captured_warnings`] instead of
     /// printing to stderr, so consecutive in-process runs do not leak warnings
-    /// into each other.
+    /// into each other. The run's style-tag passes are likewise ended into
+    /// [`standout_render::diagnostics::take_captured`].
+    ///
+    /// Reentrant: a handler may drive another app through this entry point, and
+    /// the inner run's diagnostics window nests inside the outer one's rather
+    /// than ending it — the inner run observes itself, and the outer batch
+    /// still accounts for everything rendered inside it.
     ///
     /// # Returns
     ///
@@ -548,8 +568,13 @@ impl AppBuilder {
         I: IntoIterator<Item = T>,
         T: Into<std::ffi::OsString> + Clone,
     {
+        // Held across dispatch, so a handler that drives another app through
+        // this same entry point nests a window inside this one instead of
+        // ending it. See `standout_render::diagnostics` on nesting.
+        let capture_window = standout_render::diagnostics::begin_capture();
         let result = self.dispatch_from(cmd, args);
         standout_render::warnings::capture_warnings_for_run();
+        drop(capture_window);
         result
     }
 

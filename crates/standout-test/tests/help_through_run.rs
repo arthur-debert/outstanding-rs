@@ -8,148 +8,24 @@
 //! tests that matter here assert *agreement*, not just that something was
 //! rendered.
 //!
+//! Both shapes come from the shared downstream fixture
+//! ([`standout_fixtures`]): its flat form for the word's install policy, its
+//! nested form for the walk that decides which command a help request targets.
+//! The fixture also carries the app theme, which is what lets this file assert
+//! the themed path through `run()` without a stylesheet on disk. The one app
+//! still built here is the broken-theme one, because a theme that cannot
+//! resolve is that test's subject.
+//!
 //! `USAGE` is the discriminator throughout: standout's template renders the
 //! section header uppercase, while Clap's own help says `Usage:`.
 
-use clap::{Arg, ArgAction, ArgGroup, Command};
+use clap::Command;
 use serde_json::json;
 use serial_test::serial;
 use standout::cli::{App, ExitStatus, HelpResult, Output, RunErrorKind, SuccessKind};
-use standout::topics::{Topic, TopicType};
 use standout::Theme;
+use standout_fixtures::downstream;
 use standout_test::TestHarness;
-use std::fs;
-
-/// The shape from the issue: one optional positional, one flag, and a required
-/// group over the two — a root whose requirements fire before anything can
-/// decide what a bare word meant.
-fn flat_required_command() -> Command {
-    Command::new("app")
-        .about("Flat app")
-        .arg(Arg::new("range").help("A revision range"))
-        .arg(
-            Arg::new("staged")
-                .long("staged")
-                .action(ArgAction::SetTrue)
-                .help("Use the staged diff"),
-        )
-        .group(
-            ArgGroup::new("target")
-                .args(["range", "staged"])
-                .required(true),
-        )
-}
-
-/// A flat app whose only handler is the root's, as `command_with("", …)` apps
-/// are shaped. `help_word` toggles the opt-in the install policy asks for.
-fn flat_app(help_word: bool) -> App {
-    App::builder()
-        .help_handling(true)
-        .help_word(help_word)
-        .add_topic(Topic::new(
-            "Ranges",
-            "A range is two revisions separated by two dots.",
-            TopicType::Text,
-            Some("ranges".to_string()),
-        ))
-        .command(
-            "",
-            |m, _ctx| {
-                Ok(Output::Render(json!({
-                    "range": m.get_one::<String>("range").cloned().unwrap_or_default(),
-                })))
-            },
-            "range={{ range }}",
-        )
-        .unwrap()
-        .build()
-        .unwrap()
-}
-
-fn subcommand_command() -> Command {
-    Command::new("app")
-        .about("Subcommand app")
-        .arg(
-            Arg::new("file")
-                .short('f')
-                .action(ArgAction::Set)
-                .help("A file to read"),
-        )
-        .subcommand(Command::new("list").about("List the things"))
-}
-
-fn subcommand_app() -> App {
-    App::builder()
-        .help_handling(true)
-        .command("list", |_m, _ctx| Ok(Output::Render(json!({}))), "listed")
-        .unwrap()
-        .build()
-        .unwrap()
-}
-
-fn lookma_option_matrix() -> Command {
-    Command::new("lookma")
-        .about("Diff a git range")
-        .arg(
-            Arg::new("range")
-                .value_name("RANGE")
-                .help("Git range to diff, e.g. main..HEAD"),
-        )
-        .arg(
-            Arg::new("staged")
-                .long("staged")
-                .action(ArgAction::SetTrue)
-                .help("Diff the staged changes"),
-        )
-        .arg(
-            Arg::new("threshold")
-                .long("threshold")
-                .value_name("RATIO")
-                .action(ArgAction::Set)
-                .help("Move/rename similarity threshold"),
-        )
-        .arg(
-            Arg::new("color")
-                .short('c')
-                .long("color")
-                .value_name("BOOL")
-                .action(ArgAction::Set)
-                .value_parser(clap::builder::BoolishValueParser::new())
-                .help("Enable ANSI color"),
-        )
-        .arg(
-            Arg::new("pattern")
-                .long("pattern")
-                .action(ArgAction::Set)
-                .help("Fallback metavar"),
-        )
-        .arg(
-            Arg::new("mode")
-                .long("mode")
-                .value_name("MODE")
-                .action(ArgAction::Set)
-                .default_value("auto")
-                .value_parser(["auto", "term", "text"])
-                .help("Output mode"),
-        )
-}
-
-fn app_from_styles_dir(styles_dir: &std::path::Path) -> App {
-    App::builder()
-        .help_handling(true)
-        .help_word(true)
-        .styles_dir(styles_dir)
-        .unwrap()
-        .default_theme("lookma")
-        .command(
-            "",
-            |_m, _ctx| Ok(Output::Render(json!({"status": "ok"}))),
-            "[node]{{ status }}[/node]",
-        )
-        .unwrap()
-        .build()
-        .unwrap()
-}
 
 /// The text `get_matches_from` renders for the same line, for agreement checks.
 fn configured_help(app: &App, cmd: Command, args: &[&str]) -> String {
@@ -159,62 +35,41 @@ fn configured_help(app: &App, cmd: Command, args: &[&str]) -> String {
     }
 }
 
-fn strip_ansi_codes(text: &str) -> String {
-    let mut plain = String::new();
-    let mut chars = text.chars().peekable();
-    while let Some(ch) = chars.next() {
-        if ch == '\u{1b}' && chars.peek() == Some(&'[') {
-            chars.next();
-            for code in chars.by_ref() {
-                if code.is_ascii_alphabetic() {
-                    break;
-                }
-            }
-        } else {
-            plain.push(ch);
-        }
-    }
-    plain
-}
-
 // --- the word and the flags ------------------------------------------------
 
 #[test]
 #[serial]
 fn the_help_word_renders_themed_help_through_run() {
-    let result = TestHarness::new().text_output().run(
-        &flat_app(true),
-        flat_required_command(),
-        ["app", "help"],
-    );
+    let fixture = downstream().flat().build();
+    let result =
+        TestHarness::new()
+            .text_output()
+            .run(fixture.app(), fixture.command(), ["lookma", "help"]);
 
     result.assert_success();
     assert_eq!(result.success_kind(), Some(SuccessKind::ClapHelp));
-    result.assert_stdout_contains("Flat app");
+    result.assert_stdout_contains("Diff a git range");
     result.assert_stdout_contains("USAGE");
 }
 
+/// The combination no fixture used to carry: an app theme *and* enabled help
+/// handling, rendered on the path that applies style tags. An app theme knows
+/// nothing of the help template's vocabulary, so a theme that replaced the
+/// help theme rather than overlaying it would leave `[header?]` markers on the
+/// page — and the option cues would be the first casualties.
 #[test]
 #[serial]
 fn downstream_theme_help_preserves_option_cues_through_run() {
-    let styles = tempfile::tempdir().unwrap();
-    fs::write(
-        styles.path().join("lookma.yaml"),
-        "node: { fg: cyan, bold: true }\nadded: { fg: green }\ndeleted: { fg: red }\n",
-    )
-    .unwrap();
-    let app = app_from_styles_dir(styles.path());
-
-    let result = TestHarness::new().is_tty().with_color().run(
-        &app,
-        lookma_option_matrix(),
-        ["lookma", "help"],
-    );
+    let fixture = downstream().build();
+    let result =
+        TestHarness::new()
+            .with_color()
+            .run(fixture.app(), fixture.command(), ["lookma", "help"]);
 
     result.assert_success();
     assert_eq!(result.success_kind(), Some(SuccessKind::ClapHelp));
     let output = result.stdout();
-    let plain = strip_ansi_codes(output);
+    let plain = result.stdout_plain();
     assert!(
         !output.contains("[header?]") && !output.contains("[metavar?]"),
         "app output themes must not leak unresolved help tags:\n{output}"
@@ -227,7 +82,7 @@ fn downstream_theme_help_preserves_option_cues_through_run() {
         "fallback metavars should survive the App run path:\n{plain}"
     );
     assert!(
-        plain.contains("default: auto") && plain.contains("possible values: auto, term, text"),
+        plain.contains("default: brief") && plain.contains("possible values: brief, full, none"),
         "defaults and enumerated values should survive the App run path:\n{plain}"
     );
     let staged = plain
@@ -246,11 +101,13 @@ fn downstream_theme_help_preserves_option_cues_through_run() {
 #[test]
 #[serial]
 fn the_help_flags_render_themed_help_through_run() {
+    let fixture = downstream().flat().without_help_word().build();
+
     for flag in ["--help", "-h"] {
         let result = TestHarness::new().text_output().run(
-            &flat_app(false),
-            flat_required_command(),
-            ["app", flag],
+            fixture.app(),
+            fixture.command(),
+            ["lookma", flag],
         );
 
         result.assert_success();
@@ -265,10 +122,11 @@ fn the_help_flags_render_themed_help_through_run() {
 #[test]
 #[serial]
 fn the_help_word_renders_a_topic_through_run() {
+    let fixture = downstream().flat().build();
     let result = TestHarness::new().text_output().run(
-        &flat_app(true),
-        flat_required_command(),
-        ["app", "help", "ranges"],
+        fixture.app(),
+        fixture.command(),
+        ["lookma", "help", "ranges"],
     );
 
     result.assert_success();
@@ -278,22 +136,24 @@ fn the_help_word_renders_a_topic_through_run() {
 #[test]
 #[serial]
 fn the_help_word_renders_a_subcommands_help_through_run() {
-    let app = subcommand_app();
+    let fixture = downstream().build();
 
-    let word =
-        TestHarness::new()
-            .text_output()
-            .run(&app, subcommand_command(), ["app", "help", "list"]);
+    let word = TestHarness::new().text_output().run(
+        fixture.app(),
+        fixture.command(),
+        ["lookma", "help", "review"],
+    );
     word.assert_success();
-    word.assert_stdout_contains("List the things");
+    word.assert_stdout_contains("Review a range hunk by hunk");
     drop(word);
 
-    let flag =
-        TestHarness::new()
-            .text_output()
-            .run(&app, subcommand_command(), ["app", "list", "--help"]);
+    let flag = TestHarness::new().text_output().run(
+        fixture.app(),
+        fixture.command(),
+        ["lookma", "review", "--help"],
+    );
     flag.assert_success();
-    flag.assert_stdout_contains("List the things");
+    flag.assert_stdout_contains("Review a range hunk by hunk");
 }
 
 // --- the word's own arguments ----------------------------------------------
@@ -301,11 +161,13 @@ fn the_help_word_renders_a_subcommands_help_through_run() {
 #[test]
 #[serial]
 fn the_help_word_honours_the_output_flag_through_run() {
+    let fixture = downstream().flat().build();
+
     // The mode reaches the renderer: `term-debug` leaves style tags visible.
     let tagged = TestHarness::new().run(
-        &flat_app(true),
-        flat_required_command(),
-        ["app", "help", "--output", "term-debug"],
+        fixture.app(),
+        fixture.command(),
+        ["lookma", "help", "--output", "term-debug"],
     );
     tagged.assert_success();
     tagged.assert_stdout_contains("[header]USAGE[/header]");
@@ -314,9 +176,9 @@ fn the_help_word_honours_the_output_flag_through_run() {
     // `json` is not a serialization of help — like every structured mode it
     // strips the style tags off the same rendered template.
     let json = TestHarness::new().run(
-        &flat_app(true),
-        flat_required_command(),
-        ["app", "help", "--output", "json"],
+        fixture.app(),
+        fixture.command(),
+        ["lookma", "help", "--output", "json"],
     );
     json.assert_success();
     json.assert_stdout_contains("USAGE");
@@ -335,20 +197,20 @@ fn the_output_flag_reaches_the_word_but_not_the_flags() {
     // line in full, globals included, while `--help` short-circuits before the
     // parse completes — so its render has no mode to honour and falls back to
     // `Auto`.
-    let app = flat_app(true);
+    let fixture = downstream().flat().build();
 
     let word = TestHarness::new().no_color().run(
-        &app,
-        flat_required_command(),
-        ["app", "help", "--output", "term-debug"],
+        fixture.app(),
+        fixture.command(),
+        ["lookma", "help", "--output", "term-debug"],
     );
     word.assert_stdout_contains("[header]USAGE[/header]");
     drop(word);
 
     let flag = TestHarness::new().no_color().run(
-        &app,
-        flat_required_command(),
-        ["app", "--help", "--output", "term-debug"],
+        fixture.app(),
+        fixture.command(),
+        ["lookma", "--help", "--output", "term-debug"],
     );
     flag.assert_success();
     flag.assert_stdout_contains("USAGE");
@@ -364,10 +226,11 @@ fn the_output_flag_reaches_the_word_but_not_the_flags() {
 fn a_pager_request_rides_back_as_a_typed_success() {
     // `run()` is the only entry point that may spawn a pager, so the request
     // travels as a kind rather than as a side effect of capturing the text.
+    let fixture = downstream().flat().build();
     let result = TestHarness::new().text_output().run(
-        &flat_app(true),
-        flat_required_command(),
-        ["app", "help", "--page"],
+        fixture.app(),
+        fixture.command(),
+        ["lookma", "help", "--page"],
     );
 
     result.assert_success();
@@ -377,11 +240,11 @@ fn a_pager_request_rides_back_as_a_typed_success() {
 
 // --- which command the help request targets ---------------------------------
 
-/// Root help carries the root's own `about`; a subcommand's help carries its
-/// own, so this tells the two renderings apart.
+/// Root help carries the root's own arguments; a subcommand's help carries its
+/// own, so this tells the two renderings apart on `-h` and `--help` alike.
 fn assert_is_root_help(rendered: &str) {
     assert!(
-        rendered.contains("Subcommand app"),
+        rendered.contains("Git range to diff"),
         "expected the root's help, got:\n{rendered}"
     );
 }
@@ -389,28 +252,29 @@ fn assert_is_root_help(rendered: &str) {
 #[test]
 #[serial]
 fn an_option_value_is_not_read_as_the_targeted_command() {
-    // `--output-file-path` takes a value, so `list` is that value and the help
-    // request is the root's. A walk that skipped every token starting with `-`
-    // and took the next word would render `list`'s help here.
-    let app = subcommand_app();
-    let args = ["app", "--output-file-path", "list", "--help"];
+    // `--output-file-path` takes a value, so `review` is that value and the
+    // help request is the root's. A walk that skipped every token starting
+    // with `-` and took the next word would render `review`'s help here.
+    let fixture = downstream().build();
+    let args = ["lookma", "--output-file-path", "review", "--help"];
 
-    let dispatched = TestHarness::new().run(&app, subcommand_command(), args);
+    let dispatched = TestHarness::new().run(fixture.app(), fixture.command(), args);
     dispatched.assert_success();
     assert_is_root_help(dispatched.stdout());
     drop(dispatched);
 
     // The two entry points share the walk, so they answer alike.
-    assert_is_root_help(&configured_help(&app, subcommand_command(), &args));
+    assert_is_root_help(&configured_help(fixture.app(), fixture.command(), &args));
 }
 
 #[test]
 #[serial]
 fn a_short_option_value_is_not_read_as_the_targeted_command() {
+    let fixture = downstream().build();
     let result = TestHarness::new().run(
-        &subcommand_app(),
-        subcommand_command(),
-        ["app", "-f", "list", "--help"],
+        fixture.app(),
+        fixture.command(),
+        ["lookma", "-p", "review", "--help"],
     );
 
     result.assert_success();
@@ -421,13 +285,12 @@ fn a_short_option_value_is_not_read_as_the_targeted_command() {
 #[serial]
 fn the_walk_stops_where_the_help_request_is() {
     // Help was asked for before any command was named, so it is the root's; a
-    // walk that strode past the flag would answer `list`.
+    // walk that strode past the flag would answer `review`.
+    let fixture = downstream().build();
+
     for flag in ["--help", "-h"] {
-        let result = TestHarness::new().run(
-            &subcommand_app(),
-            subcommand_command(),
-            ["app", flag, "list"],
-        );
+        let result =
+            TestHarness::new().run(fixture.app(), fixture.command(), ["lookma", flag, "review"]);
 
         result.assert_success();
         assert_is_root_help(result.stdout());
@@ -438,7 +301,9 @@ fn the_walk_stops_where_the_help_request_is() {
 
 /// A theme whose alias names a style that does not exist: rendering fails
 /// validation. This is the shape a downstream app hits when it loads an
-/// override stylesheet from a directory at runtime and the file is malformed.
+/// override stylesheet from a directory at runtime and the file is malformed —
+/// and it is the opposite failure from the fixture's own theme, which resolves
+/// fine and is merely incomplete.
 fn broken_theme() -> Theme {
     Theme::new().add("header", "no-such-style")
 }
@@ -447,7 +312,7 @@ fn app_with_a_broken_theme() -> App {
     App::builder()
         .help_handling(true)
         .theme(broken_theme())
-        .command("list", |_m, _ctx| Ok(Output::Render(json!({}))), "listed")
+        .command("review", |_m, _ctx| Ok(Output::Render(json!({}))), "listed")
         .unwrap()
         .build()
         .unwrap()
@@ -458,12 +323,14 @@ fn app_with_a_broken_theme() -> App {
 fn a_help_that_cannot_be_rendered_is_not_a_usage_error() {
     // The user's line was fine; the application's theme was not. Reporting it
     // as `ClapUsage` would blame the line and exit with the usage status.
+    let fixture = downstream().build();
+
     for args in [
-        &["app", "help"][..],
-        &["app", "--help"][..],
-        &["app", "-h"][..],
+        &["lookma", "help"][..],
+        &["lookma", "--help"][..],
+        &["lookma", "-h"][..],
     ] {
-        let result = TestHarness::new().run(&app_with_a_broken_theme(), subcommand_command(), args);
+        let result = TestHarness::new().run(&app_with_a_broken_theme(), fixture.command(), args);
 
         result.assert_error();
         result.assert_error_kind(RunErrorKind::Render);
@@ -475,14 +342,15 @@ fn a_help_that_cannot_be_rendered_is_not_a_usage_error() {
 #[test]
 #[serial]
 fn a_render_failure_is_not_disguised_as_an_unrecognized_topic() {
-    // `list` is a real command. A render failure used to be swallowed by the
+    // `review` is a real command. A render failure used to be swallowed by the
     // `if let Ok` around each rendering step, so the request fell through to
-    // "the subcommand or topic 'list' wasn't recognized" — a usage error, and
+    // "the subcommand or topic 'review' wasn't recognized" — a usage error, and
     // an untrue one.
+    let fixture = downstream().build();
     let result = TestHarness::new().run(
         &app_with_a_broken_theme(),
-        subcommand_command(),
-        ["app", "help", "list"],
+        fixture.command(),
+        ["lookma", "help", "review"],
     );
 
     result.assert_error();
@@ -503,15 +371,15 @@ fn a_render_failure_is_not_disguised_as_an_unrecognized_topic() {
 #[test]
 #[serial]
 fn both_entry_points_render_the_same_help() {
-    let app = flat_app(true);
+    let fixture = downstream().flat().build();
 
     for args in [
-        ["app", "help", "--output", "text"],
-        ["app", "--help", "--output", "text"],
+        ["lookma", "help", "--output", "text"],
+        ["lookma", "--help", "--output", "text"],
     ] {
-        let dispatched = TestHarness::new().run(&app, flat_required_command(), args);
+        let dispatched = TestHarness::new().run(fixture.app(), fixture.command(), args);
         dispatched.assert_success();
-        let configured = configured_help(&app, flat_required_command(), &args);
+        let configured = configured_help(fixture.app(), fixture.command(), &args);
         assert_eq!(
             dispatched.stdout(),
             configured,
@@ -527,11 +395,11 @@ fn both_entry_points_render_the_same_help() {
 fn a_flat_command_keeps_the_word_as_data_through_run_without_the_opt_in() {
     // No opt-in, so nothing is installed and `help` is what it looks like on a
     // root whose positional is free text: data, reaching the handler.
-    let result = TestHarness::new().text_output().run(
-        &flat_app(false),
-        flat_required_command(),
-        ["app", "help"],
-    );
+    let fixture = downstream().flat().without_help_word().build();
+    let result =
+        TestHarness::new()
+            .text_output()
+            .run(fixture.app(), fixture.command(), ["lookma", "help"]);
 
     result.assert_success();
     result.assert_stdout_eq("range=help");
@@ -542,11 +410,8 @@ fn a_flat_command_keeps_the_word_as_data_through_run_without_the_opt_in() {
 fn the_escape_delivers_the_literal_word_through_run() {
     // No forced output mode here: the harness appends its `--output` flag to
     // the end of the line, and everything after `--` is a positional.
-    let result = TestHarness::new().run(
-        &flat_app(true),
-        flat_required_command(),
-        ["app", "--", "help"],
-    );
+    let fixture = downstream().flat().build();
+    let result = TestHarness::new().run(fixture.app(), fixture.command(), ["lookma", "--", "help"]);
 
     result.assert_success();
     result.assert_stdout_eq("range=help");
@@ -555,10 +420,11 @@ fn the_escape_delivers_the_literal_word_through_run() {
 #[test]
 #[serial]
 fn a_normal_invocation_is_untouched_through_run() {
+    let fixture = downstream().flat().build();
     let result = TestHarness::new().text_output().run(
-        &flat_app(true),
-        flat_required_command(),
-        ["app", "main..HEAD"],
+        fixture.app(),
+        fixture.command(),
+        ["lookma", "main..HEAD"],
     );
 
     result.assert_success();

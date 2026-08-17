@@ -499,6 +499,15 @@ impl BBParser {
         }
     }
 
+    /// Returns the tag vocabulary this parser resolves against.
+    ///
+    /// The map's keys are exactly the tags that will *not* be reported as
+    /// unknown. A caller reporting an [`UnknownTagError`] reads this to say
+    /// what was on offer instead.
+    pub fn styles(&self) -> &HashMap<String, Style> {
+        &self.styles
+    }
+
     /// Sets the behavior for unknown tags.
     ///
     /// # Example

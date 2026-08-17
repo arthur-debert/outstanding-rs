@@ -1770,11 +1770,13 @@ dependencies = [
  "serial_test",
  "standout-bbparser",
  "standout-dispatch",
+ "standout-fixtures",
  "standout-input",
  "standout-macros",
  "standout-pipe",
  "standout-render",
  "standout-seeker",
+ "standout-test",
  "tempfile",
  "thiserror 2.0.20",
  "unicode-width 0.2.2",
@@ -1798,6 +1800,16 @@ dependencies = [
  "serde_json",
  "tempfile",
  "thiserror 2.0.20",
+]
+
+[[package]]
+name = "standout-fixtures"
+version = "8.1.1"
+dependencies = [
+ "clap",
+ "console",
+ "serde_json",
+ "standout",
 ]
 
 [[package]]
@@ -1876,10 +1888,15 @@ name = "standout-test"
 version = "8.1.1"
 dependencies = [
  "clap",
+ "console",
+ "insta",
+ "libc",
+ "proptest",
  "serde",
  "serde_json",
  "serial_test",
  "standout",
+ "standout-fixtures",
  "standout-input",
  "standout-render",
  "tempfile",

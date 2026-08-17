@@ -97,16 +97,18 @@ The harness doesn't invent new mechanisms; it wires together seams that Standout
 
 ### `standout-render::environment`
 
-The render crate exposes three overridable detectors:
+The render crate exposes overridable detectors:
 
 ```rust
 use standout_render::{
-    set_terminal_width_detector, set_tty_detector, set_color_capability_detector,
-    reset_environment_detectors, DetectorGuard,
+    set_terminal_width_detector, set_color_capability_detector,
+    set_ambiguous_width_detector, reset_environment_detectors, DetectorGuard,
 };
 ```
 
-Each takes a `fn() -> T` (function pointer or non-capturing closure). `DetectorGuard` is a RAII helper that resets all three on drop.
+Each takes a `fn() -> T` (function pointer or non-capturing closure). `DetectorGuard` is a RAII helper that resets all of them on drop.
+
+There is no TTY detector: one existed, nothing in production ever read it, and it was removed rather than left as a seam that answers only about stdout (`docs/adr/0022-delete-the-in-process-tty-seam.md`). Terminal-dependent behavior is tested against a real process via `TestHarness::run_process`.
 
 These drive `OutputMode::Auto`'s color decision and the render context's terminal width. By default, terminal width resolves from a valid positive `$COLUMNS` value before probing the terminal. Installing a width detector replaces that full resolution, so an override keeps snapshot tests deterministic regardless of the process environment.
 

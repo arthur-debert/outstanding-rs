@@ -146,6 +146,7 @@
 // Internal modules
 pub mod colorspace;
 pub mod context;
+pub mod diagnostics;
 mod embedded;
 pub mod environment;
 mod error;
@@ -186,9 +187,9 @@ pub use width::{AmbiguousWidth, WidthCalculator};
 
 // Environment detection exports
 pub use environment::{
-    detect_ambiguous_width_override, detect_color_capability, detect_is_tty, detect_terminal_width,
+    detect_ambiguous_width_override, detect_color_capability, detect_terminal_width,
     reset_detectors as reset_environment_detectors, set_ambiguous_width_detector,
-    set_color_capability_detector, set_terminal_width_detector, set_tty_detector, DetectorGuard,
+    set_color_capability_detector, set_terminal_width_detector, DetectorGuard,
 };
 
 // Render module exports
@@ -217,7 +218,12 @@ pub use template::{
 };
 
 // Re-export BBParser types for template validation
-pub use standout_bbparser::{UnknownTagError, UnknownTagErrors, UnknownTagKind};
+pub use standout_bbparser::{
+    TagTransform, UnknownTagBehavior, UnknownTagError, UnknownTagErrors, UnknownTagKind,
+};
+
+// What the style-tag pass observed, for callers observing a run
+pub use diagnostics::TagResolution;
 
 // Utility exports
 pub use util::{
