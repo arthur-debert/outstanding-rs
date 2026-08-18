@@ -1,9 +1,9 @@
-//! The full `run()` orchestration over a roster-schema archetype,
-//! hermetically: the same fake-`cargo` seam as `hermetic_loop.rs`, but the
-//! acceptance phase dispatches to the case executor — proving the
-//! `Suite::Cases` path end to end: case results (pass, fail, expected-fail)
-//! in the report, per-case sandboxes under the run directory, and the
-//! invariant matrix swept under the cases' scrubbed baseline env.
+//! The full `run()` orchestration over a fixture archetype, hermetically:
+//! the same fake-`cargo` seam as `hermetic_loop.rs`, but with a suite
+//! authored to exercise the expected-fail mapping — proving case results
+//! (pass, fail, expected-fail) in the report, per-case sandboxes under the
+//! run directory, and the invariant matrix swept under the cases' scrubbed
+//! baseline env.
 //!
 //! Runs in its own test binary because it prepends to the process-wide
 //! PATH.
@@ -138,7 +138,6 @@ fn roster_archetype_completes_the_loop_with_case_results() {
         "{:?}",
         report.acceptance.build_detail
     );
-    assert!(report.acceptance.checks.is_empty());
 
     // One result per case, expected-fail mapping applied.
     let outcomes: Vec<CaseOutcome> = report.acceptance.cases.iter().map(|c| c.outcome).collect();

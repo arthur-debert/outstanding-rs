@@ -5,9 +5,14 @@
 //! (acceptance, invariants) and the agent's self-assessment (questionnaire)
 //! are deliberately separate sections, and the `pins` block is what makes two
 //! runs comparable: same spec hash + same framework version + same docs
-//! commit means the same experiment. Version 3 replaced the single
-//! `isolation_backend` word with the per-capability [`IsolationRecord`] and
-//! dropped the producerless `session.attempts` counter.
+//! commit means the same experiment. Version 3 is one bump carrying every
+//! shape change over version 2: it replaced the single `isolation_backend`
+//! word with the per-capability [`IsolationRecord`], dropped the
+//! producerless `session.attempts` counter, and removed the retired check
+//! schema's parallel `checks` vector. Committed v2 reports (the preserved
+//! pilot evidence) still deserialize: the historical path accepts
+//! [`HISTORICAL_SCHEMA_MIN`]`..=`[`SCHEMA_VERSION`], and retired keys are
+//! ignored where present.
 
 use std::collections::BTreeMap;
 use std::path::Path;
@@ -151,16 +156,12 @@ pub struct SessionReport {
 }
 
 /// Objective results: did the produced app build, and did the pre-written
-/// suite pass against its binary. `checks` is the runner check schema's
-/// result list (the smoke path); `cases` is the roster case schema's — one
-/// suite fills exactly one of them.
+/// suite's cases pass against its binary.
 #[derive(Debug, Serialize, Deserialize)]
 pub struct AcceptanceReport {
     pub built: bool,
     /// Build stderr tail when the build failed.
     pub build_detail: Option<String>,
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub checks: Vec<CheckResult>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub cases: Vec<CaseResult>,
 }
@@ -171,19 +172,9 @@ impl AcceptanceReport {
         Self {
             built: false,
             build_detail: Some(detail),
-            checks: Vec::new(),
             cases: Vec::new(),
         }
     }
-}
-
-/// One acceptance check's outcome (runner check schema).
-#[derive(Debug, Serialize, Deserialize)]
-pub struct CheckResult {
-    pub name: String,
-    pub passed: bool,
-    /// Why it failed; `None` on a pass.
-    pub detail: Option<String>,
 }
 
 /// One roster acceptance case's outcome, carrying the case's own metadata

@@ -21,11 +21,11 @@ use std::path::Path;
 
 use corpus_runner::{run, RunConfig, Timeouts};
 
-/// A canned `smoketable` implementation as a shell-script body: the star
+/// A canned `smoke` implementation as a shell-script body: the star
 /// table in text/term, the catalog as JSON rows, and an about line — enough
 /// to satisfy the smoke archetype's full acceptance suite and invariant
 /// matrix.
-const SMOKETABLE: &str = r#"cmd="$1"
+const SMOKE: &str = r#"cmd="$1"
 mode=text
 prev=""
 for a in "$@"; do
@@ -34,8 +34,8 @@ for a in "$@"; do
 done
 if [ "$cmd" = "about" ]; then
   case "$mode" in
-    json) echo '{"name":"smoketable","purpose":"a tiny fixed star catalog"}' ;;
-    *) echo 'smoketable — a tiny fixed star catalog' ;;
+    json) echo '{"name":"smoke","purpose":"a tiny fixed star catalog"}' ;;
+    *) echo 'smoke — a tiny fixed star catalog' ;;
   esac
 else
   case "$mode" in
@@ -53,7 +53,7 @@ fn full_loop_completes_hermetically_with_a_fake_build() {
     // The fake toolchain: `cargo` installs the canned binary into the
     // --target-dir the runner passes (also proving that plumbing).
     let bin_dir = scratch.path().join("bin");
-    common::install_fake_cargo(&bin_dir, "smoketable", SMOKETABLE);
+    common::install_fake_cargo(&bin_dir, "smoke", SMOKE);
 
     // The scripted agent: answer the questionnaire in place and emit a
     // stream-json result event (the fake cargo makes app/ contents moot).
@@ -62,7 +62,7 @@ fn full_loop_completes_hermetically_with_a_fake_build() {
         "agent.sh",
         "",
         &[
-            ("summary", "Implemented smoketable from SPEC.md."),
+            ("summary", "Implemented smoke from SPEC.md."),
             ("sources.docs", "docs/guides/minimal-single-crate.md"),
             ("sources.external", "none"),
             ("confidence", "high"),
@@ -92,18 +92,19 @@ fn full_loop_completes_hermetically_with_a_fake_build() {
     assert!(report.questionnaire.collected);
 
     // Objective: the fake build produced the binary where the runner looks,
-    // and the strengthened acceptance suite (row + JSON-row association)
-    // passes end to end, as does the invariant matrix.
+    // and the case suite (substring, row, and JSON-row association) passes
+    // end to end, as does the invariant matrix.
     assert!(
         report.acceptance.built,
         "{:?}",
         report.acceptance.build_detail
     );
+    assert!(!report.acceptance.cases.is_empty());
     let failed: Vec<_> = report
         .acceptance
-        .checks
+        .cases
         .iter()
-        .filter(|c| !c.passed)
+        .filter(|c| !c.outcome.is_expected())
         .collect();
     assert!(failed.is_empty(), "{failed:?}");
     let failed: Vec<_> = report

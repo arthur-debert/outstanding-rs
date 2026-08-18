@@ -25,7 +25,7 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use anyhow::Context;
 
-use crate::archetype::{Archetype, Suite};
+use crate::archetype::Archetype;
 use crate::report::{
     AcceptanceReport, ArchetypeStamp, Blindness, EvaluationStamp, HistoricalRun, InvariantCell,
     IsolationRecord, NetworkEnforcement, Pins, RunReport, HISTORICAL_SCHEMA_MIN, SCHEMA_VERSION,
@@ -74,7 +74,8 @@ pub struct Timeouts {
     pub agent: Duration,
     /// The cargo build of the produced app.
     pub build: Duration,
-    /// Each acceptance check / invariant-cell invocation.
+    /// Each invariant-cell invocation (acceptance cases carry their own
+    /// per-case `timeout_seconds`).
     pub check: Duration,
 }
 
@@ -97,7 +98,7 @@ const BLINDNESS_POLICY: &str = "workspace contains spec + published docs + crate
 /// Runs the full loop and returns the written report plus the run directory.
 ///
 /// A run that completes the loop always writes `report.json`, even when the
-/// app never built or every check failed — those are findings. Errors are
+/// app never built or every case failed — those are findings. Errors are
 /// reserved for the runner's own failures (unloadable archetype, unwritable
 /// run directory, unspawnable agent).
 pub fn run(config: &RunConfig) -> anyhow::Result<(RunReport, PathBuf)> {
@@ -396,6 +397,8 @@ struct Evaluation {
 /// Runs the archetype's suite and the ROB01 matrix against the outcome of a
 /// build. A build failure is a finding — it becomes a build-failed
 /// acceptance report with the full not-run matrix — never a runner error.
+/// `check_timeout` bounds only the invariant cells; each case runs under its
+/// own authored `timeout_seconds`.
 fn evaluate_binary(
     archetype: &Archetype,
     binary: Result<PathBuf, String>,
@@ -405,14 +408,7 @@ fn evaluate_binary(
 ) -> Evaluation {
     match binary {
         Ok(binary) => Evaluation {
-            acceptance: match &archetype.suite {
-                Suite::Checks(suite) => {
-                    acceptance::run_checks(&binary, &suite.checks, check_timeout, isolation)
-                }
-                Suite::Cases(suite) => {
-                    cases::run_cases(&binary, &suite.cases, cases_dir, isolation)
-                }
-            },
+            acceptance: cases::run_cases(&binary, &archetype.suite.cases, cases_dir, isolation),
             invariants: acceptance::run_invariants(
                 &binary,
                 archetype.invariants(),
@@ -433,14 +429,13 @@ fn evaluate_binary(
 /// Prints a human summary of the report to stderr.
 pub fn print_summary(report: &RunReport) {
     use crate::report::CaseOutcome;
-    let passed = report.acceptance.checks.iter().filter(|c| c.passed).count()
-        + report
-            .acceptance
-            .cases
-            .iter()
-            .filter(|c| c.outcome.is_expected())
-            .count();
-    let total = report.acceptance.checks.len() + report.acceptance.cases.len();
+    let passed = report
+        .acceptance
+        .cases
+        .iter()
+        .filter(|c| c.outcome.is_expected())
+        .count();
+    let total = report.acceptance.cases.len();
     let inv_passed = report
         .invariants
         .iter()
@@ -460,9 +455,6 @@ pub fn print_summary(report: &RunReport) {
             "NOT collected"
         },
     );
-    for check in report.acceptance.checks.iter().filter(|c| !c.passed) {
-        eprintln!("[corpus]   FAIL acceptance: {}", check.name);
-    }
     for case in &report.acceptance.cases {
         match case.outcome {
             CaseOutcome::Fail => eprintln!("[corpus]   FAIL case: {}", case.name),

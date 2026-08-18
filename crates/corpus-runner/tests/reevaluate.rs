@@ -17,7 +17,7 @@ use std::path::PathBuf;
 
 use corpus_runner::{reevaluate, ReevaluationConfig, Timeouts};
 
-/// One check-schema archetype plus an external workspace and a produced
+/// One case-schema archetype plus an external workspace and a produced
 /// binary, mirroring a preserved run. `docs_dir` is the real repo's docs
 /// directory: re-evaluation derives the denied source root from it, and the
 /// checkout is the one source-shaped path guaranteed not to sit beneath an
@@ -42,11 +42,17 @@ fn fixture(report_json: &str) -> Fixture {
     fs::write(
         archetype_dir.join("acceptance.toml"),
         r#"
-binary = "fake"
+schema = 1
+archetype = "fake"
 
-[[check]]
+[[case]]
 name = "greets"
-args = []
+stresses = "greeting output"
+expected = "pass"
+[case.run]
+argv = []
+timeout_seconds = 5
+[case.expect]
 stdout_contains = ["hello"]
 "#,
     )
@@ -197,8 +203,11 @@ fn reevaluation_preserves_history_and_regenerates_objective_sections() {
 
     // Regenerated objective results: the provided binary ran the suite.
     assert!(report.acceptance.built);
-    assert_eq!(report.acceptance.checks.len(), 1);
-    assert!(report.acceptance.checks[0].passed);
+    assert_eq!(report.acceptance.cases.len(), 1);
+    assert_eq!(
+        report.acceptance.cases[0].outcome,
+        corpus_runner::report::CaseOutcome::Pass
+    );
     assert_eq!(
         report.evaluation.binary_sha256.as_deref().map(str::len),
         Some(64)

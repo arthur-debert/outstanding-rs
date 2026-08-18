@@ -1,12 +1,12 @@
-//! Objective evaluation of the produced binary: build it, run the archetype's
-//! pre-written acceptance checks, and sweep the ROB01 invariant matrix.
+//! Objective evaluation of the produced binary: build it and sweep the ROB01
+//! invariant matrix (the archetype's acceptance cases run in `cases`).
 //!
 //! Everything here is black-box — the binary is spawned as a real process,
 //! exactly as an adopter's user would run it — and nothing here consults the
 //! agent's self-assessment. The produced code is untrusted: the build and
 //! every binary invocation run env-cleared to the recorded allowlist and
-//! under a hard deadline (via `exec`). Check failures, build failures, and
-//! timeouts are findings recorded in the report, never runner errors.
+//! under a hard deadline (via `exec`). Invariant failures, build failures,
+//! and timeouts are findings recorded in the report, never runner errors.
 
 use std::collections::BTreeMap;
 use std::panic::{catch_unwind, AssertUnwindSafe};
@@ -20,11 +20,10 @@ use standout_test::invariants::{
 };
 
 use crate::archetype::{
-    Check, ColorState, InvariantCommand, InvariantContract, InvariantMode, InvariantTheme,
-    Invariants,
+    ColorState, InvariantCommand, InvariantContract, InvariantMode, InvariantTheme, Invariants,
 };
 use crate::exec;
-use crate::report::{AcceptanceReport, CheckResult, InvariantCell, InvariantStatus};
+use crate::report::{InvariantCell, InvariantStatus};
 use crate::workspace;
 
 /// Builds the workspace app with cargo; returns the produced binary path.
@@ -70,138 +69,6 @@ pub fn build_app(
         ));
     }
     Ok(path)
-}
-
-/// Runs every acceptance check against the binary, each under `timeout`.
-pub fn run_checks(
-    binary: &Path,
-    checks: &[Check],
-    timeout: Duration,
-    isolation: &workspace::Isolation,
-) -> AcceptanceReport {
-    let results = checks
-        .iter()
-        .map(|check| {
-            let (passed, detail) = evaluate_check(binary, check, timeout, isolation);
-            CheckResult {
-                name: check.name.clone(),
-                passed,
-                detail,
-            }
-        })
-        .collect();
-    AcceptanceReport {
-        built: true,
-        build_detail: None,
-        checks: results,
-        cases: Vec::new(),
-    }
-}
-
-/// One check: spawn, compare exit code, stdout substrings, row-scoped
-/// substrings, JSON shape, and JSON row groups.
-fn evaluate_check(
-    binary: &Path,
-    check: &Check,
-    timeout: Duration,
-    isolation: &workspace::Isolation,
-) -> (bool, Option<String>) {
-    let home = isolation.check_home.join("smoke-checks");
-    let (exit, stdout) = match run_binary(binary, &check.args, timeout, isolation, &home, &[]) {
-        Ok(pair) => pair,
-        Err(detail) => return (false, Some(detail)),
-    };
-    let mut failures = Vec::new();
-
-    if exit != Some(check.expect_exit) {
-        failures.push(format!("expected exit {}, got {exit:?}", check.expect_exit));
-    }
-    for needle in &check.stdout_contains {
-        if !stdout.contains(needle) {
-            failures.push(format!("stdout does not contain {needle:?}"));
-        }
-    }
-    for row in &check.stdout_row_contains {
-        if !stdout
-            .lines()
-            .any(|line| row.iter().all(|cell| line.contains(cell.as_str())))
-        {
-            failures.push(format!("no single stdout line contains all of {row:?}"));
-        }
-    }
-    if check.stdout_is_json || !check.stdout_json_rows.is_empty() {
-        match serde_json::from_str::<serde_json::Value>(&stdout) {
-            Ok(value) => {
-                for row in &check.stdout_json_rows {
-                    if !json_has_row(&value, row) {
-                        failures.push(format!("no single JSON element carries all of {row:?}"));
-                    }
-                }
-            }
-            Err(err) => failures.push(format!("stdout is not valid JSON: {err}")),
-        }
-    }
-
-    if failures.is_empty() {
-        (true, None)
-    } else {
-        failures.push(format!("--- stdout ---\n{stdout}"));
-        (false, Some(failures.join("\n")))
-    }
-}
-
-/// True when some single array element anywhere in `value` (a "row") carries
-/// every value in `row` among its scalars — the association check that keeps
-/// e.g. a star bound to its own constellation and magnitude, which flat
-/// substring matching cannot express.
-fn json_has_row(value: &serde_json::Value, row: &[String]) -> bool {
-    let mut candidates = Vec::new();
-    collect_array_elements(value, &mut candidates);
-    candidates.iter().any(|element| {
-        let mut scalars = Vec::new();
-        collect_scalars(element, &mut scalars);
-        row.iter().all(|cell| scalars.iter().any(|s| s == cell))
-    })
-}
-
-/// Collects every element of every array in `value`, at any depth.
-fn collect_array_elements<'a>(value: &'a serde_json::Value, out: &mut Vec<&'a serde_json::Value>) {
-    match value {
-        serde_json::Value::Array(items) => {
-            for item in items {
-                out.push(item);
-                collect_array_elements(item, out);
-            }
-        }
-        serde_json::Value::Object(map) => {
-            for item in map.values() {
-                collect_array_elements(item, out);
-            }
-        }
-        _ => {}
-    }
-}
-
-/// Collects every scalar under `value` as its canonical string form
-/// (numbers via their shortest decimal representation, so `0.86` matches
-/// the literal "0.86" whether the producer emitted a number or a string).
-fn collect_scalars(value: &serde_json::Value, out: &mut Vec<String>) {
-    match value {
-        serde_json::Value::String(s) => out.push(s.clone()),
-        serde_json::Value::Number(n) => out.push(n.to_string()),
-        serde_json::Value::Bool(b) => out.push(b.to_string()),
-        serde_json::Value::Null => {}
-        serde_json::Value::Array(items) => {
-            for item in items {
-                collect_scalars(item, out);
-            }
-        }
-        serde_json::Value::Object(map) => {
-            for item in map.values() {
-                collect_scalars(item, out);
-            }
-        }
-    }
 }
 
 const MATRIX_CHECKS: [&str; 5] = [

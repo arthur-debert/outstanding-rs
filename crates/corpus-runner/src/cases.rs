@@ -69,7 +69,6 @@ pub fn run_cases(
     AcceptanceReport {
         built: true,
         build_detail: None,
-        checks: Vec::new(),
         cases: results,
     }
 }
@@ -250,6 +249,60 @@ fn execute(
     })
 }
 
+/// True when some single array element anywhere in `value` (a "row") carries
+/// every value in `row` among its scalars — the association check that keeps
+/// e.g. a star bound to its own constellation and magnitude, which flat
+/// substring matching cannot express.
+fn json_has_row(value: &serde_json::Value, row: &[String]) -> bool {
+    let mut candidates = Vec::new();
+    collect_array_elements(value, &mut candidates);
+    candidates.iter().any(|element| {
+        let mut scalars = Vec::new();
+        collect_scalars(element, &mut scalars);
+        row.iter().all(|cell| scalars.iter().any(|s| s == cell))
+    })
+}
+
+/// Collects every element of every array in `value`, at any depth.
+fn collect_array_elements<'a>(value: &'a serde_json::Value, out: &mut Vec<&'a serde_json::Value>) {
+    match value {
+        serde_json::Value::Array(items) => {
+            for item in items {
+                out.push(item);
+                collect_array_elements(item, out);
+            }
+        }
+        serde_json::Value::Object(map) => {
+            for item in map.values() {
+                collect_array_elements(item, out);
+            }
+        }
+        _ => {}
+    }
+}
+
+/// Collects every scalar under `value` as its canonical string form
+/// (numbers via their shortest decimal representation, so `0.86` matches
+/// the literal "0.86" whether the producer emitted a number or a string).
+fn collect_scalars(value: &serde_json::Value, out: &mut Vec<String>) {
+    match value {
+        serde_json::Value::String(s) => out.push(s.clone()),
+        serde_json::Value::Number(n) => out.push(n.to_string()),
+        serde_json::Value::Bool(b) => out.push(b.to_string()),
+        serde_json::Value::Null => {}
+        serde_json::Value::Array(items) => {
+            for item in items {
+                collect_scalars(item, out);
+            }
+        }
+        serde_json::Value::Object(map) => {
+            for item in map.values() {
+                collect_scalars(item, out);
+            }
+        }
+    }
+}
+
 /// Resolves a case-relative path inside the sandbox, refusing absolute
 /// paths and parent traversal — a case must not reach outside its sandbox.
 fn sandbox_path(sandbox: &Path, rel: &str) -> Result<PathBuf, String> {
@@ -339,6 +392,27 @@ fn apply_expectations(expect: &CaseExpect, execution: &Execution, failures: &mut
     for needle in &expect.stderr_contains {
         if !execution.stderr.contains(needle) {
             failures.push(format!("stderr does not contain {needle:?}"));
+        }
+    }
+    for row in &expect.stdout_row_contains {
+        if !execution
+            .stdout
+            .lines()
+            .any(|line| row.iter().all(|cell| line.contains(cell.as_str())))
+        {
+            failures.push(format!("no single stdout line contains all of {row:?}"));
+        }
+    }
+    if !expect.stdout_json_rows.is_empty() {
+        match serde_json::from_str::<serde_json::Value>(&execution.stdout) {
+            Ok(value) => {
+                for row in &expect.stdout_json_rows {
+                    if !json_has_row(&value, row) {
+                        failures.push(format!("no single JSON element carries all of {row:?}"));
+                    }
+                }
+            }
+            Err(err) => failures.push(format!("stdout is not valid JSON: {err}")),
         }
     }
     for needle in &expect.stdout_not_contains {

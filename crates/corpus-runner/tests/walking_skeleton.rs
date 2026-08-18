@@ -40,7 +40,7 @@ fn smoke_archetype_completes_the_loop() {
         &[
             (
                 "summary",
-                "Implemented smoketable from SPEC.md; cargo build succeeds.",
+                "Implemented smoke from SPEC.md; cargo build succeeds.",
             ),
             ("sources.docs", "docs/guides/minimal-single-crate.md"),
             ("sources.external", "none"),
@@ -82,18 +82,19 @@ fn smoke_archetype_completes_the_loop() {
         Some("none")
     );
 
-    // Objective: the produced binary built, and every acceptance check and
+    // Objective: the produced binary built, and every acceptance case and
     // invariant cell passed.
     assert!(
         report.acceptance.built,
         "{:?}",
         report.acceptance.build_detail
     );
+    assert!(!report.acceptance.cases.is_empty());
     let failed: Vec<_> = report
         .acceptance
-        .checks
+        .cases
         .iter()
-        .filter(|c| !c.passed)
+        .filter(|c| !c.outcome.is_expected())
         .collect();
     assert!(failed.is_empty(), "{failed:?}");
     let failed: Vec<_> = report

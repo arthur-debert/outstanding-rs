@@ -3,18 +3,14 @@
 //! An archetype is a directory under `corpus/archetypes/<name>/` holding
 //! `spec.md` (the agent-facing behavioral spec) and `acceptance.toml` —
 //! authored before any implementation, so "did it work" is never judged by
-//! the implementer. Two acceptance schemas exist (`corpus/README.md`):
+//! the implementer. There is one acceptance schema (`corpus/README.md`): the
+//! **roster case schema** (`schema = 1`, `[[case]]` tables) — black-box
+//! cases with full run semantics — scrubbed baseline env, sandbox files,
+//! pty attachment, scripted stdin, per-case timeout — and the documented
+//! assertion vocabulary, including `expected = "fail"` gap markers. The
+//! binary name is the archetype name (the roster's naming rule).
 //!
-//! - The **roster case schema** (`schema = 1`, `[[case]]` tables): black-box
-//!   cases with full run semantics — scrubbed baseline env, sandbox files,
-//!   pty attachment, scripted stdin, per-case timeout — and the documented
-//!   assertion vocabulary, including `expected = "fail"` gap markers. The
-//!   binary name is the archetype name (the roster's naming rule).
-//! - The **runner check schema** (`binary` + `[[check]]`): the walking
-//!   skeleton's own simpler vocabulary, used by the `smoke` archetype (whose
-//!   binary name deliberately differs from its directory name).
-//!
-//! Both may carry an `[invariants]` table naming the commands the ROB01
+//! A suite may carry an `[invariants]` table naming the commands the ROB01
 //! invariant matrix sweeps.
 
 use std::collections::{BTreeMap, HashSet};
@@ -31,56 +27,8 @@ pub struct Archetype {
     pub name: String,
     /// The exact spec text the agent will receive.
     pub spec: String,
-    pub suite: Suite,
+    pub suite: CaseSuite,
     acceptance_sha256: String,
-}
-
-/// The acceptance suite, in whichever schema the archetype carries.
-#[derive(Debug)]
-pub enum Suite {
-    /// The runner check schema (`binary` + `[[check]]`) — the smoke path.
-    Checks(ChecksConfig),
-    /// The roster case schema (`schema = 1`, `[[case]]`).
-    Cases(CaseSuite),
-}
-
-/// The runner check schema: what to run against the produced binary.
-#[derive(Debug, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct ChecksConfig {
-    /// The binary the scaffold's package produces.
-    pub binary: String,
-    #[serde(rename = "check", default)]
-    pub checks: Vec<Check>,
-    #[serde(default)]
-    pub invariants: Invariants,
-}
-
-/// One black-box acceptance check.
-#[derive(Debug, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct Check {
-    pub name: String,
-    pub args: Vec<String>,
-    /// Expected exit code (default 0).
-    #[serde(default)]
-    pub expect_exit: i32,
-    /// Substrings that must each appear on stdout.
-    #[serde(default)]
-    pub stdout_contains: Vec<String>,
-    /// Row-association groups: every value in a group must co-occur on one
-    /// single stdout line (e.g. a star with *its* constellation and
-    /// magnitude), which flat `stdout_contains` cannot express.
-    #[serde(default)]
-    pub stdout_row_contains: Vec<Vec<String>>,
-    /// When true, stdout must parse as JSON.
-    #[serde(default)]
-    pub stdout_is_json: bool,
-    /// JSON row-association groups: stdout must parse as JSON and every
-    /// value in a group must co-occur among the scalars of one single JSON
-    /// array element (numbers match their decimal literal).
-    #[serde(default)]
-    pub stdout_json_rows: Vec<Vec<String>>,
 }
 
 /// Declarative ROB01 matrix plan. The global axes define the stable planned
@@ -278,6 +226,16 @@ pub struct CaseExpect {
     pub stdout_contains: Vec<String>,
     #[serde(default)]
     pub stderr_contains: Vec<String>,
+    /// Row-association groups: every value in a group must co-occur on one
+    /// single stdout line (e.g. a star with *its* constellation and
+    /// magnitude), which flat `stdout_contains` cannot express.
+    #[serde(default)]
+    pub stdout_row_contains: Vec<Vec<String>>,
+    /// JSON row-association groups: stdout must parse as JSON and every
+    /// value in a group must co-occur among the scalars of one single JSON
+    /// array element (numbers match their decimal literal).
+    #[serde(default)]
+    pub stdout_json_rows: Vec<Vec<String>>,
     #[serde(default)]
     pub stdout_not_contains: Vec<String>,
     #[serde(default)]
@@ -298,6 +256,8 @@ impl CaseExpect {
             && self.stdout_json.is_none()
             && self.stdout_contains.is_empty()
             && self.stderr_contains.is_empty()
+            && self.stdout_row_contains.is_empty()
+            && self.stdout_json_rows.is_empty()
             && self.stdout_not_contains.is_empty()
             && self.stderr_not_contains.is_empty()
             && self.stdout_lines_end_with_once.is_empty()
@@ -305,8 +265,7 @@ impl CaseExpect {
 }
 
 impl Archetype {
-    /// Loads `archetypes_dir/<name>/{spec.md,acceptance.toml}`, detecting
-    /// which acceptance schema the file speaks by its tables.
+    /// Loads `archetypes_dir/<name>/{spec.md,acceptance.toml}`.
     pub fn load(archetypes_dir: &Path, name: &str) -> anyhow::Result<Self> {
         let dir = archetypes_dir.join(name);
         let spec_path = dir.join("spec.md");
@@ -315,18 +274,7 @@ impl Archetype {
         let acceptance_path = dir.join("acceptance.toml");
         let acceptance_text = std::fs::read_to_string(&acceptance_path)
             .with_context(|| format!("reading {}", acceptance_path.display()))?;
-        let value: toml::Value = acceptance_text
-            .parse()
-            .with_context(|| format!("parsing {}", acceptance_path.display()))?;
-        let suite = if value.get("case").is_some() || value.get("schema").is_some() {
-            Suite::Cases(CaseSuite::parse(&acceptance_text, name, &acceptance_path)?)
-        } else {
-            Suite::Checks(
-                value
-                    .try_into()
-                    .with_context(|| format!("parsing {}", acceptance_path.display()))?,
-            )
-        };
+        let suite = CaseSuite::parse(&acceptance_text, name, &acceptance_path)?;
         Ok(Self {
             name: name.to_string(),
             spec,
@@ -336,21 +284,14 @@ impl Archetype {
     }
 
     /// The binary the produced app must build: the roster rule is that
-    /// archetype names double as binary names; the check schema names its
-    /// binary explicitly (smoke's `smoketable`).
+    /// archetype names double as binary names.
     pub fn binary(&self) -> &str {
-        match &self.suite {
-            Suite::Checks(config) => &config.binary,
-            Suite::Cases(_) => &self.name,
-        }
+        &self.name
     }
 
     /// The commands the ROB01 invariant matrix sweeps.
     pub fn invariants(&self) -> &Invariants {
-        match &self.suite {
-            Suite::Checks(config) => &config.invariants,
-            Suite::Cases(suite) => &suite.invariants,
-        }
+        &self.suite.invariants
     }
 
     /// sha256 (hex) of the spec text, pinning the run to spec content.
@@ -379,9 +320,11 @@ impl CaseSuite {
 /// The semantic rules the case schema carries beyond its shape: version 1,
 /// archetype/directory agreement, a non-empty suite of uniquely named
 /// kebab-case cases, a non-empty `stresses` line, a positive timeout, at
-/// least one assertion per case, no exact-`stdout` + semantic-`stdout_json`
-/// contradiction, `stdout_json` that parses as JSON, and non-empty
-/// `gap`/`reason` exactly on expected-fail cases.
+/// least one assertion per case, no vacuous assertion elements (an empty
+/// row group or an empty string in a substring/row/suffix list matches any
+/// output), no exact-`stdout` + semantic-`stdout_json` contradiction,
+/// `stdout_json` that parses as JSON, and non-empty `gap`/`reason` exactly
+/// on expected-fail cases.
 fn validate_case_suite(suite: &CaseSuite, name: &str, path: &Path) -> anyhow::Result<()> {
     if suite.schema != 1 {
         bail!(
@@ -434,6 +377,47 @@ fn validate_case_suite(suite: &CaseSuite, name: &str, path: &Path) -> anyhow::Re
         }
         if case.expect.is_empty() {
             bail!("{}: case {:?} asserts nothing", path.display(), case.name);
+        }
+        // A vacuous element asserts nothing while counting as an assertion:
+        // an empty row group is satisfied by any output, and an empty
+        // string is a substring of everything. Reject both at load time so
+        // a malformed case cannot silently pass.
+        for (key, rows) in [
+            ("stdout_row_contains", &case.expect.stdout_row_contains),
+            ("stdout_json_rows", &case.expect.stdout_json_rows),
+        ] {
+            if rows.iter().any(|row| row.is_empty()) {
+                bail!(
+                    "{}: case {:?} — {key} groups must be non-empty",
+                    path.display(),
+                    case.name
+                );
+            }
+            if rows.iter().flatten().any(|cell| cell.is_empty()) {
+                bail!(
+                    "{}: case {:?} — {key} cells must be non-empty",
+                    path.display(),
+                    case.name
+                );
+            }
+        }
+        for (key, entries) in [
+            ("stdout_contains", &case.expect.stdout_contains),
+            ("stderr_contains", &case.expect.stderr_contains),
+            ("stdout_not_contains", &case.expect.stdout_not_contains),
+            ("stderr_not_contains", &case.expect.stderr_not_contains),
+            (
+                "stdout_lines_end_with_once",
+                &case.expect.stdout_lines_end_with_once,
+            ),
+        ] {
+            if entries.iter().any(|entry| entry.is_empty()) {
+                bail!(
+                    "{}: case {:?} — {key} entries must be non-empty",
+                    path.display(),
+                    case.name
+                );
+            }
         }
         // Exact-stdout and semantic-JSON assertions on the same stream
         // contradict each other's reason to exist; a case picks one.
@@ -580,11 +564,81 @@ exit_code = 0
     /// must not satisfy the at-least-one-assertion rule.
     #[test]
     fn empty_assertion_lists_do_not_count() {
-        let err = parse(&suite(
-            &VALID_CASE.replace("exit_code = 0", "stdout_contains = []"),
-        ))
-        .unwrap_err();
-        assert!(err.to_string().contains("asserts nothing"), "{err:#}");
+        for key in ["stdout_contains", "stdout_row_contains", "stdout_json_rows"] {
+            let err = parse(&suite(
+                &VALID_CASE.replace("exit_code = 0", &format!("{key} = []")),
+            ))
+            .unwrap_err();
+            assert!(err.to_string().contains("asserts nothing"), "{err:#}");
+        }
+    }
+
+    /// `[[]]` counts as a present assertion but is satisfied by any
+    /// output; the vacuous-element rule must reject it.
+    #[test]
+    fn empty_row_groups_are_rejected() {
+        for key in ["stdout_row_contains", "stdout_json_rows"] {
+            let err = parse(&suite(
+                &VALID_CASE.replace("exit_code = 0", &format!("{key} = [[]]")),
+            ))
+            .unwrap_err();
+            assert!(
+                err.to_string().contains("groups must be non-empty"),
+                "{err:#}"
+            );
+        }
+    }
+
+    /// An empty cell is a substring of every line (and matching an empty
+    /// scalar is `stdout_json` territory); the rule rejects it.
+    #[test]
+    fn empty_row_cells_are_rejected() {
+        for key in ["stdout_row_contains", "stdout_json_rows"] {
+            let err = parse(&suite(
+                &VALID_CASE.replace("exit_code = 0", &format!("{key} = [[\"\"]]")),
+            ))
+            .unwrap_err();
+            assert!(
+                err.to_string().contains("cells must be non-empty"),
+                "{err:#}"
+            );
+        }
+    }
+
+    /// The empty string is a substring (and suffix) of everything, so an
+    /// empty entry in any flat assertion list is equally vacuous.
+    #[test]
+    fn empty_list_entries_are_rejected() {
+        for key in [
+            "stdout_contains",
+            "stderr_contains",
+            "stdout_not_contains",
+            "stderr_not_contains",
+            "stdout_lines_end_with_once",
+        ] {
+            let err = parse(&suite(
+                &VALID_CASE.replace("exit_code = 0", &format!("{key} = [\"\"]")),
+            ))
+            .unwrap_err();
+            assert!(
+                err.to_string().contains("entries must be non-empty"),
+                "{err:#}"
+            );
+        }
+    }
+
+    /// The two row-association kinds ported from the retired check schema
+    /// parse and each satisfies the at-least-one-assertion rule alone.
+    #[test]
+    fn row_association_assertions_parse_and_count() {
+        for key in ["stdout_row_contains", "stdout_json_rows"] {
+            let suite = parse(&suite(&VALID_CASE.replace(
+                "exit_code = 0",
+                &format!("{key} = [[\"Aldebaran\", \"Taurus\", \"0.86\"]]"),
+            )))
+            .unwrap();
+            assert_eq!(suite.cases.len(), 1);
+        }
     }
 
     #[test]

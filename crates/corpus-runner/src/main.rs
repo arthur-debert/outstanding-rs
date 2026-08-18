@@ -51,7 +51,9 @@ enum Commands {
         /// Seconds before the cargo build of the produced app is killed.
         #[arg(long)]
         build_timeout: Option<u64>,
-        /// Seconds before each acceptance/invariant invocation is killed.
+        /// Seconds before each invariant invocation is killed. Acceptance
+        /// cases are not affected: each carries its own authored
+        /// `timeout_seconds`.
         #[arg(long)]
         check_timeout: Option<u64>,
     },
@@ -77,6 +79,9 @@ enum Commands {
         binary: Option<PathBuf>,
         #[arg(long)]
         build_timeout: Option<u64>,
+        /// Seconds before each invariant invocation is killed. Acceptance
+        /// cases are not affected: each carries its own authored
+        /// `timeout_seconds`.
         #[arg(long)]
         check_timeout: Option<u64>,
     },
