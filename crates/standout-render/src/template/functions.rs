@@ -115,7 +115,7 @@ pub fn apply_style_tags(output: &str, styles: &Styles, mode: OutputMode) -> Stri
         output,
         styles.to_resolved_map(),
         transform,
-        UnknownTagBehavior::Passthrough,
+        UnknownTagBehavior::Strip,
     )
 }
 
@@ -1182,7 +1182,7 @@ mod tests {
     }
 
     #[test]
-    fn test_render_unknown_style_shows_indicator() {
+    fn test_render_unknown_style_degrades_to_text() {
         let theme = Theme::new();
         let data = SimpleData {
             message: "hello".into(),
@@ -1196,8 +1196,7 @@ mod tests {
         )
         .unwrap();
 
-        // Unknown tags in passthrough mode get ? marker on both open and close tags
-        assert_eq!(output, "[unknown?]hello[/unknown?]");
+        assert_eq!(output, "hello");
     }
 
     #[test]
@@ -2098,8 +2097,7 @@ mod tests {
     }
 
     #[test]
-    fn test_tag_syntax_unknown_tag_passthrough() {
-        // Passthrough with ? marker only applies in Apply mode (Term)
+    fn test_tag_syntax_unknown_tag_degrades_to_text() {
         let theme = Theme::new().add("known", Style::new().bold());
 
         #[derive(Serialize)]
@@ -2107,7 +2105,6 @@ mod tests {
             name: String,
         }
 
-        // In Term mode, unknown tags get ? marker
         let output = render_with_output(
             "[unknown]{{ name }}[/unknown]",
             &Data {
@@ -2118,12 +2115,8 @@ mod tests {
         )
         .unwrap();
 
-        // Unknown tags get ? marker in passthrough mode
-        assert!(output.contains("[unknown?]"));
-        assert!(output.contains("[/unknown?]"));
-        assert!(output.contains("Hello"));
+        assert_eq!(output, "Hello");
 
-        // In Text mode, all tags are stripped (Remove transform)
         let text_output = render_with_output(
             "[unknown]{{ name }}[/unknown]",
             &Data {
@@ -2134,7 +2127,6 @@ mod tests {
         )
         .unwrap();
 
-        // Text mode strips all tags
         assert_eq!(text_output, "Hello");
     }
 

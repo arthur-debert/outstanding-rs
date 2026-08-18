@@ -35,7 +35,8 @@ mod rendering;
 use crate::context::ContextRegistry;
 use crate::setup::SetupError;
 use crate::topics::{
-    display_with_pager, render_topic, render_topics_list, TopicRegistry, TopicRenderConfig,
+    default_topic_theme, display_with_pager, render_topic, render_topics_list, TopicRegistry,
+    TopicRenderConfig,
 };
 use crate::TemplateRegistry;
 use crate::{render_auto, OutputMode, Theme};
@@ -49,7 +50,9 @@ use super::default_command::ParseFailure;
 use super::dispatch::DispatchFn;
 use super::group::CommandRecipe;
 use super::handler::{CommandContext, Extensions, HandlerResult, Output as HandlerOutput};
-use super::help::{render_help, render_help_with_topics, CommandGroup, HelpConfig, HelpLength};
+use super::help::{
+    default_help_theme, render_help, render_help_with_topics, CommandGroup, HelpConfig, HelpLength,
+};
 use super::hooks::{ArtifactOutput, HookError, HookPhase, Hooks, RenderedOutput, TextOutput};
 use super::questionnaire::QuestionnaireCommand;
 use super::result::{HelpDisplay, HelpResult};
@@ -364,6 +367,55 @@ fn edit_distance(left: &str, right: &str) -> usize {
     costs[right.len()]
 }
 
+fn unique_unknown_tag_names<'a>(
+    errors: impl IntoIterator<Item = &'a standout_bbparser::UnknownTagError>,
+) -> Vec<String> {
+    let mut names: Vec<String> = errors.into_iter().map(|error| error.tag.clone()).collect();
+    names.sort_unstable();
+    names.dedup();
+    names
+}
+
+fn validate_framework_template_content(
+    name: &str,
+    content: &str,
+    parser: &standout_bbparser::BBParser,
+) -> Result<(), SetupError> {
+    use standout_bbparser::UnknownTagKind;
+
+    let Err(errors) = parser.validate(content) else {
+        return Ok(());
+    };
+
+    let malformed = unique_unknown_tag_names(errors.errors.iter().filter(|error| {
+        matches!(
+            error.kind,
+            UnknownTagKind::Unbalanced | UnknownTagKind::UnexpectedClose
+        )
+    }));
+    if !malformed.is_empty() {
+        return Err(SetupError::Template(format!(
+            "framework template `{name}` contains malformed style markup involving tag(s): {}",
+            malformed.join(", ")
+        )));
+    }
+
+    let missing = unique_unknown_tag_names(
+        errors
+            .errors
+            .iter()
+            .filter(|error| !parser.styles().contains_key(&error.tag)),
+    );
+    if !missing.is_empty() {
+        return Err(SetupError::Template(format!(
+            "framework template `{name}` emits style tag(s) not defined by the resolved theme: {}",
+            missing.join(", ")
+        )));
+    }
+
+    Ok(())
+}
+
 /// Stores a pending command recipe along with its typed template declaration.
 struct PendingCommand {
     recipe: Box<dyn CommandRecipe>,
@@ -652,9 +704,9 @@ impl AppBuilder {
         self.pending_commands.borrow().contains_key(path)
     }
 
-    /// Finalizes the builder into an executable App, resolving themes, validating typed template
-    /// declarations, loading templates, and preparing for dispatch and
-    /// rendering.
+    /// Finalizes the builder into an executable App, resolving one
+    /// framework-base-plus-application theme, validating typed template
+    /// declarations, loading templates, and preparing for dispatch and rendering.
     ///
     /// # Errors
     ///
@@ -697,26 +749,11 @@ impl AppBuilder {
         }
 
         // Resolve theme BEFORE finalization
-        // Theme resolution: explicit .theme() takes precedence, then .default_theme() from stylesheet registry
-        if self.theme.is_none() {
-            if let Some(ref mut registry) = self.stylesheet_registry {
-                let resolved = if let Some(name) = &self.default_theme_name {
-                    Some(
-                        registry
-                            .get(name)
-                            .map_err(|_| SetupError::ThemeNotFound(name.to_string()))?,
-                    )
-                } else {
-                    // Try defaults in order: default, theme, base
-                    registry
-                        .get("default")
-                        .or_else(|_| registry.get("theme"))
-                        .or_else(|_| registry.get("base"))
-                        .ok()
-                };
-                self.theme = resolved;
-            }
-        }
+        let app_theme = self.resolve_configured_theme()?;
+        self.theme = Some(
+            self.framework_base_theme()?
+                .merge(app_theme.unwrap_or_else(Theme::new)),
+        );
 
         // Validate help configuration: features that require help interception
         // must not be used without enabling it.
@@ -768,6 +805,7 @@ impl AppBuilder {
         }
 
         self.validate_command_templates()?;
+        self.validate_framework_template_styles()?;
 
         // Populate engine with templates from the registry and keep the compile
         // result. Named renders refresh this cache again so file-backed
@@ -839,6 +877,72 @@ impl AppBuilder {
                     .map_err(|error| SetupError::Template(error.to_string()))?;
             }
         }
+        Ok(())
+    }
+
+    fn resolve_configured_theme(&mut self) -> Result<Option<Theme>, SetupError> {
+        if self.theme.is_some() {
+            return Ok(self.theme.take());
+        }
+
+        let Some(ref mut registry) = self.stylesheet_registry else {
+            return Ok(None);
+        };
+
+        let resolved = if let Some(name) = &self.default_theme_name {
+            Some(
+                registry
+                    .get(name)
+                    .map_err(|_| SetupError::ThemeNotFound(name.to_string()))?,
+            )
+        } else {
+            registry
+                .get("default")
+                .or_else(|_| registry.get("theme"))
+                .or_else(|_| registry.get("base"))
+                .ok()
+        };
+        Ok(resolved)
+    }
+
+    fn framework_base_theme(&self) -> Result<Theme, SetupError> {
+        let mut theme = Theme::default()
+            .merge(default_help_theme())
+            .merge(default_topic_theme());
+
+        if self.include_framework_styles {
+            let framework_styles =
+                Theme::from_yaml(crate::assets::FRAMEWORK_STYLES).map_err(|error| {
+                    SetupError::Stylesheet(format!("failed to parse framework styles: {error}"))
+                })?;
+            theme = theme.merge(framework_styles);
+        }
+
+        Ok(theme)
+    }
+
+    fn validate_framework_template_styles(&self) -> Result<(), SetupError> {
+        use standout_bbparser::{BBParser, TagTransform};
+
+        let Some(registry) = &self.template_registry else {
+            return Ok(());
+        };
+        let Some(theme) = &self.theme else {
+            return Ok(());
+        };
+
+        let styles = theme.resolve_styles(None).to_resolved_map();
+        let parser = BBParser::new(styles, TagTransform::Remove);
+
+        for name in registry.framework_names() {
+            let content = registry.get_content(name).map_err(|error| {
+                SetupError::Template(
+                    TemplateRefreshError::new(name, registry, error.to_string()).to_string(),
+                )
+            })?;
+            validate_framework_template_content(name, &content, &parser)?;
+        }
+
         Ok(())
     }
 }
@@ -1745,6 +1849,7 @@ fn help_word_command(has_subcommands: bool) -> Command {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use console::Style;
 
     #[test]
     fn template_dependencies_support_whitespace_controls() {
@@ -1762,6 +1867,49 @@ mod tests {
 
         assert!(dependencies.names.is_empty());
         assert!(dependencies.dynamic);
+    }
+
+    #[test]
+    fn framework_template_validation_reports_malformed_markup_separately() {
+        let parser = standout_bbparser::BBParser::new(
+            HashMap::from([("known".to_string(), Style::new())]),
+            standout_bbparser::TagTransform::Remove,
+        );
+
+        let error =
+            validate_framework_template_content("standout/broken", "[known]unclosed", &parser)
+                .unwrap_err()
+                .to_string();
+
+        assert!(error.contains("malformed style markup"), "{error}");
+        assert!(error.contains("known"), "{error}");
+        assert!(
+            !error.contains("not defined by the resolved theme"),
+            "{error}"
+        );
+    }
+
+    #[test]
+    fn framework_template_validation_reports_only_missing_styles() {
+        let parser = standout_bbparser::BBParser::new(
+            HashMap::from([("known".to_string(), Style::new())]),
+            standout_bbparser::TagTransform::Remove,
+        );
+
+        let error = validate_framework_template_content(
+            "standout/missing",
+            "[missing]text[/missing]",
+            &parser,
+        )
+        .unwrap_err()
+        .to_string();
+
+        assert!(
+            error.contains("not defined by the resolved theme"),
+            "{error}"
+        );
+        assert!(error.contains("missing"), "{error}");
+        assert!(!error.contains("malformed style markup"), "{error}");
     }
 
     /// A root with a value-taking option, a flag, and a positional — enough

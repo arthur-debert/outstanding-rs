@@ -71,6 +71,17 @@ pub fn push_warning(message: impl Into<String>) {
     WARNINGS.with(|w| w.borrow_mut().push(message.into()));
 }
 
+/// Appends a framework warning unless the same message is already pending.
+pub(crate) fn push_warning_once(message: impl Into<String>) {
+    let message = message.into();
+    WARNINGS.with(|warnings| {
+        let mut warnings = warnings.borrow_mut();
+        if !warnings.contains(&message) {
+            warnings.push(message);
+        }
+    });
+}
+
 /// Removes and returns all collected warnings for the current thread.
 ///
 /// After this call the collector is empty. The CLI layer calls this once
@@ -253,6 +264,16 @@ mod tests {
 
         // Draining again yields nothing.
         assert!(drain_warnings().is_empty());
+    }
+
+    #[test]
+    fn push_warning_once_deduplicates_pending_messages() {
+        reset();
+
+        push_warning_once("same warning");
+        push_warning_once("same warning");
+
+        assert_eq!(drain_warnings(), ["same warning"]);
     }
 
     #[test]
