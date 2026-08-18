@@ -1,0 +1,66 @@
+# Acceptance suite for the smoke archetype, written before any implementation
+# (spec-first: "did it work" is never judged by the implementer). The runner
+# executes each check against the produced binary and records pass/fail in the
+# run report, separate from the agent's self-assessment.
+
+binary = "smoketable"
+
+[[check]]
+name = "list renders the heading and every star row"
+args = ["list", "--output", "text"]
+stdout_contains = [
+    "Star Catalog",
+    "Aldebaran",
+    "Taurus",
+    "Rigel",
+    "Orion",
+    "Vega",
+    "Lyra",
+]
+
+[[check]]
+name = "list binds each star to its own constellation and magnitude"
+args = ["list", "--output", "text"]
+# Row association, not a bag of substrings: each group must co-occur on one
+# single output line, so a table that shuffles columns across rows fails.
+stdout_row_contains = [
+    ["Aldebaran", "Taurus", "0.86"],
+    ["Rigel", "Orion", "0.13"],
+    ["Vega", "Lyra", "0.03"],
+]
+
+[[check]]
+name = "list emits the catalog as JSON with complete star rows"
+args = ["list", "--output", "json"]
+stdout_is_json = true
+# Each group must co-occur inside one single JSON array element (numbers
+# match their decimal literal), so `["Aldebaran","Rigel","Vega"]` alone —
+# names without constellations or magnitudes — fails.
+stdout_json_rows = [
+    ["Aldebaran", "Taurus", "0.86"],
+    ["Rigel", "Orion", "0.13"],
+    ["Vega", "Lyra", "0.03"],
+]
+
+[[check]]
+name = "about names the tool"
+args = ["about", "--output", "text"]
+stdout_contains = ["smoketable"]
+
+# The ROB01 invariant matrix runs each listed command across output modes
+# (text, term, json): exit 0 everywhere, no unresolved [tag?] markers, term
+# stripped of escapes must equal text byte-for-byte, json must parse.
+[invariants]
+modes = ["text", "term", "json"]
+colors = ["off", "on"]
+
+[[invariants.theme]]
+name = "application"
+
+[[invariants.command]]
+argv = ["list"]
+contract = "rendered"
+
+[[invariants.command]]
+argv = ["about"]
+contract = "rendered"

@@ -1,0 +1,314 @@
+# Acceptance suite for the `gitlike` archetype. Format: corpus/README.md.
+# Written spec-first, before any implementation exists (ROB03-WS02).
+schema = 1
+archetype = "gitlike"
+
+# --- porcelain ---------------------------------------------------------------
+
+[[case]]
+name = "log-plain-when-piped"
+stresses = "Auto output mode degrades to plain text on a piped stdout"
+expected = "pass"
+[case.run]
+argv = ["log"]
+timeout_seconds = 10
+[case.expect]
+exit_code = 0
+stdout = "a3f4 Fix off-by-one (alice)\nb7e2 Add parser (bob)\nc1a9 Initial import (alice)\n"
+stderr = ""
+
+[[case]]
+name = "log-honors-flag-limit"
+stresses = "per-invocation flag caps the list"
+expected = "pass"
+[case.run]
+argv = ["log", "--limit", "1"]
+timeout_seconds = 10
+[case.expect]
+exit_code = 0
+stdout = "a3f4 Fix off-by-one (alice)\n"
+
+[[case]]
+name = "status-exact"
+stresses = "templated two-line summary, plain under pipe"
+expected = "pass"
+[case.run]
+argv = ["status"]
+timeout_seconds = 10
+[case.expect]
+exit_code = 0
+stdout = "On branch main\nHEAD at a3f4 Fix off-by-one\n"
+stderr = ""
+
+# --- plumbing stability ------------------------------------------------------
+
+[[case]]
+name = "ref-list-stable-bytes"
+group = "plumbing-stability"
+stresses = "plumbing surface is byte-stable under pipe"
+expected = "pass"
+[case.run]
+argv = ["ref-list"]
+timeout_seconds = 10
+[case.expect]
+exit_code = 0
+stdout = "b7e2 refs/heads/dev\na3f4 refs/heads/main\n"
+stderr = ""
+
+[[case]]
+name = "ref-list-identical-under-forced-term"
+group = "plumbing-stability"
+stresses = "plumbing bytes vs a forced-ANSI global output flag"
+expected = "pass"
+[case.run]
+argv = ["ref-list", "--output", "term"]
+timeout_seconds = 10
+[case.expect]
+exit_code = 0
+stdout = "b7e2 refs/heads/dev\na3f4 refs/heads/main\n"
+stdout_not_contains = ["\u001b["]
+
+[[case]]
+name = "ref-list-identical-under-theme-and-tty"
+group = "plumbing-stability"
+stresses = "plumbing bytes vs theme selection on an attended terminal"
+expected = "pass"
+[case.run]
+argv = ["ref-list"]
+env = { GITLIKE_THEME = "default" }
+tty = ["stdout"]
+timeout_seconds = 10
+[case.expect]
+exit_code = 0
+stdout = "b7e2 refs/heads/dev\na3f4 refs/heads/main\n"
+
+[[case]]
+name = "cat-object-known"
+group = "plumbing-stability"
+stresses = "plumbing object body is exact"
+expected = "pass"
+[case.run]
+argv = ["cat-object", "c1a9"]
+timeout_seconds = 10
+[case.expect]
+exit_code = 0
+stdout = "author alice\nmessage Initial import\n"
+stderr = ""
+
+[[case]]
+name = "cat-object-unknown-exit-3"
+group = "plumbing-stability"
+stresses = "domain error routes to stderr with a distinct exit code, stdout stays empty"
+expected = "pass"
+[case.run]
+argv = ["cat-object", "zzzz"]
+timeout_seconds = 10
+[case.expect]
+exit_code = 3
+stdout = ""
+stderr = "gitlike: no such object: zzzz\n"
+
+# --- paging ------------------------------------------------------------------
+
+[[case]]
+name = "log-pages-on-tty"
+group = "paging"
+stresses = "pager spawn on an attended stdout, observed through the pager's own filtering"
+expected = "pass"
+[case.run]
+argv = ["log"]
+env = { GITLIKE_PAGER = "sed -n 1p", NO_COLOR = "1" }
+tty = ["stdout"]
+timeout_seconds = 10
+[case.expect]
+exit_code = 0
+stdout = "a3f4 Fix off-by-one (alice)\n"
+
+[[case]]
+name = "log-tool-pager-var-beats-generic"
+group = "paging"
+stresses = "GITLIKE_PAGER wins over PAGER"
+expected = "pass"
+[case.run]
+argv = ["log"]
+env = { GITLIKE_PAGER = "sed -n 1p", PAGER = "sed -n 2p", NO_COLOR = "1" }
+tty = ["stdout"]
+timeout_seconds = 10
+[case.expect]
+exit_code = 0
+stdout = "a3f4 Fix off-by-one (alice)\n"
+
+[[case]]
+name = "log-no-pager-flag"
+group = "paging"
+stresses = "--no-pager suppresses a configured pager on a TTY"
+expected = "pass"
+[case.run]
+argv = ["log", "--no-pager"]
+env = { GITLIKE_PAGER = "sed -n 1p", NO_COLOR = "1" }
+tty = ["stdout"]
+timeout_seconds = 10
+[case.expect]
+exit_code = 0
+stdout = "a3f4 Fix off-by-one (alice)\nb7e2 Add parser (bob)\nc1a9 Initial import (alice)\n"
+
+[[case]]
+name = "log-piped-never-pages"
+group = "paging"
+stresses = "captured (piped) stdout must not spawn the pager"
+expected = "pass"
+[case.run]
+argv = ["log"]
+env = { GITLIKE_PAGER = "sed -n 1p", PAGER = "sed -n 1p" }
+timeout_seconds = 10
+[case.expect]
+exit_code = 0
+stdout = "a3f4 Fix off-by-one (alice)\nb7e2 Add parser (bob)\nc1a9 Initial import (alice)\n"
+
+[[case]]
+name = "plumbing-never-pages"
+group = "paging"
+stresses = "pager discipline vs the porcelain/plumbing split on a TTY"
+expected = "pass"
+[case.run]
+argv = ["ref-list"]
+env = { GITLIKE_PAGER = "sed -n 1p", PAGER = "sed -n 1p" }
+tty = ["stdout"]
+timeout_seconds = 10
+[case.expect]
+exit_code = 0
+stdout = "b7e2 refs/heads/dev\na3f4 refs/heads/main\n"
+
+# --- config layering (specced past current capability; signal for PAR01) -----
+# Standout has no config-file layering feature today; the spec asks for the
+# git shape anyway. A blind implementer may hand-roll it (the workaround is
+# itself instrumentation signal); a failure here reads as a framework gap for
+# the parity-config-layering epic, not a spec defect.
+
+[[case]]
+name = "config-walkup-nearest-wins"
+group = "config-layering"
+stresses = "config discovery by cwd walk-up vs the harness's cwd control"
+expected = "fail"
+gap = "PAR01"
+reason = "config layering with cwd walk-up is specced past current framework capability (docs/spec/parity-config-layering.md)"
+[case.run]
+argv = ["config", "get", "log.limit"]
+cwd = "project/sub"
+timeout_seconds = 10
+[case.run.files]
+".gitlike.toml" = "log.limit = 3\n"
+"project/sub/.gitlike.toml" = "log.limit = 1\n"
+[case.expect]
+exit_code = 0
+stdout = "1\n"
+
+[[case]]
+name = "config-walkup-stops-at-first-file"
+group = "config-layering"
+stresses = "nearest file wins whole; ancestor files are not merged"
+expected = "fail"
+gap = "PAR01"
+reason = "config layering with cwd walk-up is specced past current framework capability (docs/spec/parity-config-layering.md)"
+[case.run]
+argv = ["config", "get", "user.name"]
+cwd = "project/sub"
+timeout_seconds = 10
+[case.run.files]
+".gitlike.toml" = "user.name = \"root-alice\"\n"
+"project/sub/.gitlike.toml" = "log.limit = 1\n"
+[case.expect]
+exit_code = 1
+stdout = ""
+stderr = ""
+
+[[case]]
+name = "config-repo-overrides-user"
+group = "config-layering"
+stresses = "walk-up file layer over the user config layer"
+expected = "fail"
+gap = "PAR01"
+reason = "config layering with cwd walk-up is specced past current framework capability (docs/spec/parity-config-layering.md)"
+[case.run]
+argv = ["config", "get", "log.limit"]
+env = { GITLIKE_CONFIG_HOME = "confhome" }
+timeout_seconds = 10
+[case.run.files]
+"confhome/config.toml" = "log.limit = 3\n"
+".gitlike.toml" = "log.limit = 2\n"
+[case.expect]
+exit_code = 0
+stdout = "2\n"
+
+[[case]]
+name = "config-user-level-fallback"
+group = "config-layering"
+stresses = "user config applies when no walk-up file exists"
+expected = "fail"
+gap = "PAR01"
+reason = "config layering is specced past current framework capability (docs/spec/parity-config-layering.md)"
+[case.run]
+argv = ["config", "get", "user.name"]
+env = { GITLIKE_CONFIG_HOME = "confhome" }
+timeout_seconds = 10
+[case.run.files]
+"confhome/config.toml" = "user.name = \"alice\"\n"
+[case.expect]
+exit_code = 0
+stdout = "alice\n"
+
+[[case]]
+name = "config-get-unset-key"
+group = "config-layering"
+stresses = "unset key is a quiet exit-1, both streams empty"
+expected = "pass"
+[case.run]
+argv = ["config", "get", "user.name"]
+timeout_seconds = 10
+[case.expect]
+exit_code = 1
+stdout = ""
+stderr = ""
+
+[[case]]
+name = "log-flag-beats-user-config"
+group = "config-layering"
+stresses = "flag layer over user config layer feeding a view"
+expected = "pass"
+[case.run]
+argv = ["log", "--limit", "1"]
+env = { GITLIKE_CONFIG_HOME = "confhome" }
+timeout_seconds = 10
+[case.run.files]
+"confhome/config.toml" = "log.limit = 3\n"
+[case.expect]
+exit_code = 0
+stdout = "a3f4 Fix off-by-one (alice)\n"
+
+# --- ROB01 invariant matrix --------------------------------------------------
+# Read-only commands the runner sweeps across output modes (text/term/json),
+# piped, on top of the case suite (format: corpus/README.md, Manifest/Run
+# semantics). Failures here are framework findings by default.
+
+[invariants]
+modes = ["text", "term", "json"]
+colors = ["off", "on"]
+
+[[invariants.theme]]
+name = "application"
+
+[[invariants.command]]
+argv = ["log"]
+contract = "rendered"
+
+[[invariants.command]]
+argv = ["status"]
+contract = "rendered"
+
+[[invariants.command]]
+argv = ["ref-list"]
+contract = "opaque-bytes"
+
+[[invariants.command]]
+argv = ["cat-object", "c1a9"]
+contract = "opaque-bytes"

@@ -1,0 +1,178 @@
+# Acceptance suite for the `tflike` archetype. Format: corpus/README.md.
+# Written spec-first (ROB03-WS03). Gap-only archetype: every case is
+# expected-fail, owned by PAR02 (diagnostic group) or PAR03 (progress group).
+# The byte-precise form of these assertions — per-line NDJSON parseability,
+# lifecycle ordering, state-file rewrites — lives in `corpus/gap-suites`
+# (tests/tflike_diagnostic.rs, tests/tflike_progress.rs) and runs today under
+# plain `pixi run test`; the cases here are the runner-facing statement of the
+# same criteria in the roster's assertion vocabulary.
+schema = 1
+archetype = "tflike"
+
+# --- diagnostic milestone (PAR02, machine contract) --------------------------
+
+[[case]]
+name = "plan-streams-version-changes-and-summary"
+group = "diagnostic"
+stresses = "successful plan emits the version/planned_change/change_summary NDJSON stream on stdout"
+expected = "fail"
+gap = "PAR02"
+reason = "no NDJSON stream mode exists"
+[case.run]
+argv = ["plan", "--config", "main.tfl", "--output", "ndjson"]
+timeout_seconds = 10
+[case.run.files]
+"main.tfl" = "resource web present\nresource db present\n"
+[case.expect]
+exit_code = 0
+stdout_contains = ["version", "planned_change", "web", "db", "change_summary"]
+
+[[case]]
+name = "plan-deletion-with-explicit-state-streams-a-delete"
+group = "diagnostic"
+stresses = "--state is honored over the <config>.state default and a removal plans as a delete"
+expected = "fail"
+gap = "PAR02"
+reason = "no NDJSON stream mode exists"
+[case.run]
+argv = ["plan", "--config", "main.tfl", "--state", "recorded.state", "--output", "ndjson"]
+timeout_seconds = 10
+[case.run.files]
+"main.tfl" = "resource web absent\n"
+"recorded.state" = "web\n"
+[case.expect]
+exit_code = 0
+stdout_contains = ["planned_change", "delete", "change_summary"]
+
+[[case]]
+name = "config-error-yields-one-error-diagnostic-with-range"
+group = "diagnostic"
+stresses = "a config grammar error becomes a stream diagnostic whose range names the file as given"
+expected = "fail"
+gap = "PAR02"
+reason = "failures are prose, not stream diagnostics"
+[case.run]
+argv = ["plan", "--config", "main.tfl", "--output", "ndjson"]
+timeout_seconds = 10
+[case.run.files]
+"main.tfl" = "resource web present\nresurce db present\n"
+[case.expect]
+exit_code = 1
+stdout_contains = ["diagnostic", "error", "main.tfl"]
+
+[[case]]
+name = "detailed-exitcode-zero-on-empty-plan"
+group = "diagnostic"
+stresses = "-detailed-exitcode exits 0 when desired state matches recorded state"
+expected = "fail"
+gap = "PAR02"
+reason = "no empty/changed/failed exit-code vocabulary"
+[case.run]
+argv = ["plan", "-detailed-exitcode", "--config", "main.tfl", "--output", "ndjson"]
+timeout_seconds = 10
+[case.run.files]
+"main.tfl" = "resource web present\n"
+"main.tfl.state" = "web\n"
+[case.expect]
+exit_code = 0
+stdout_contains = ["change_summary"]
+
+[[case]]
+name = "detailed-exitcode-two-on-changes"
+group = "diagnostic"
+stresses = "-detailed-exitcode exits 2 (not 0) when the plan carries changes"
+expected = "fail"
+gap = "PAR02"
+reason = "no empty/changed/failed exit-code vocabulary"
+[case.run]
+argv = ["plan", "-detailed-exitcode", "--config", "main.tfl", "--output", "ndjson"]
+timeout_seconds = 10
+[case.run.files]
+"main.tfl" = "resource web present\nresource db present\n"
+[case.expect]
+exit_code = 2
+
+[[case]]
+name = "detailed-exitcode-one-on-error"
+group = "diagnostic"
+stresses = "-detailed-exitcode exits 1 on a config error, with the diagnostic still in the stream"
+expected = "fail"
+gap = "PAR02"
+reason = "no empty/changed/failed exit-code vocabulary"
+[case.run]
+argv = ["plan", "-detailed-exitcode", "--config", "main.tfl", "--output", "ndjson"]
+timeout_seconds = 10
+[case.run.files]
+"main.tfl" = "resource web present\nresurce db present\n"
+[case.expect]
+exit_code = 1
+stdout_contains = ["diagnostic"]
+
+[[case]]
+name = "handler-error-yields-stream-diagnostic-not-prose"
+group = "diagnostic"
+stresses = "an apply-time handler failure serializes as a stream diagnostic; no prose leaks onto stderr"
+expected = "fail"
+gap = "PAR02"
+reason = "handler errors leak prose into machine output"
+[case.run]
+argv = ["apply", "--config", "main.tfl", "--output", "ndjson"]
+timeout_seconds = 10
+[case.run.files]
+"main.tfl" = "resource fail:web present\n"
+[case.expect]
+exit_code = 1
+stdout_contains = ["diagnostic", "error"]
+stderr = ""
+
+# --- progress milestone (PAR03, terminal citizenship) ------------------------
+
+[[case]]
+name = "apply-lifecycle-events-ride-the-stream"
+group = "progress"
+stresses = "apply emits an apply_start/apply_complete pair per changed resource in the stream"
+expected = "fail"
+gap = "PAR03"
+reason = "no progress seam emits lifecycle events"
+[case.run]
+argv = ["apply", "--config", "main.tfl", "--output", "ndjson"]
+timeout_seconds = 10
+[case.run.files]
+"main.tfl" = "resource web present\nresource db present\n"
+[case.expect]
+exit_code = 0
+stdout_contains = ["apply_start", "apply_complete", "web", "db", "change_summary"]
+
+[[case]]
+name = "apply-deletion-emits-lifecycle-and-summary"
+group = "progress"
+stresses = "a deletion apply carries the same lifecycle events and terminal summary"
+expected = "fail"
+gap = "PAR03"
+reason = "no progress seam emits lifecycle events"
+[case.run]
+argv = ["apply", "--config", "main.tfl", "--output", "ndjson"]
+timeout_seconds = 10
+[case.run.files]
+"main.tfl" = "resource web absent\n"
+"main.tfl.state" = "web\n"
+[case.expect]
+exit_code = 0
+stdout_contains = ["apply_start", "apply_complete", "change_summary"]
+
+[[case]]
+name = "progress-silent-under-structured-mode"
+group = "progress"
+stresses = "structured mode suppresses progress entirely: no ANSI on stdout, nothing at all on stderr"
+expected = "fail"
+gap = "PAR03"
+reason = "no mode-aware progress suppression exists"
+[case.run]
+argv = ["apply", "--config", "main.tfl", "--output", "ndjson"]
+timeout_seconds = 10
+[case.run.files]
+"main.tfl" = "resource web present\nresource db present\n"
+[case.expect]
+exit_code = 0
+stdout_not_contains = ["\u001b["]
+stderr = ""

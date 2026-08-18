@@ -1,0 +1,428 @@
+{
+  "schema_version": 2,
+  "run_id": "formlike-1787048043",
+  "archetype": {
+    "name": "formlike",
+    "spec_sha256": "b0b7d8a4ce6c32eccb1a2bc6bfc4feb84e6fef3d3c26de6f1eb79a2829228d08"
+  },
+  "pins": {
+    "framework_version": "8.1.1",
+    "docs_commit": "c9d7198c173a986756876994431a3174366bdef6",
+    "docs_sha256": "49489f0d5fb49e8c277ce49efce51e414166338aa7adb7626c4e6328e0b0ae73",
+    "acceptance_sha256": "0dc7f735f8288084af3b1cdf1a37ee65b8188d0615eee79442c624dd8948ff75",
+    "questionnaire_fingerprint": "sha256:64291870245510dad73ca960fd4024db9b9c161113a3dcc9c7e57a30973663fc"
+  },
+  "evaluation": {
+    "origin": "isolated-re-evaluation",
+    "isolation_backend": "macos-seatbelt",
+    "binary_sha256": "a226aa4f8692f6e619bdab4e0d6df22865ce70e2f3b6be68e0cd6d831dee4876"
+  },
+  "blindness": {
+    "policy": "historical session was partially blind: its workspace was nested beneath a source checkout and inherited host homes; acceptance and ROB01 matrix results were later regenerated from an external workspace under the recorded evaluation sandbox",
+    "env_allowlist": [
+      "PATH",
+      "HOME",
+      "USER",
+      "SHELL",
+      "TERM",
+      "LANG",
+      "LC_ALL",
+      "TMPDIR",
+      "CARGO_HOME",
+      "RUSTUP_HOME"
+    ],
+    "framework_source_excluded": false,
+    "isolation_backend": "historical-partial",
+    "credential_exceptions": [
+      "historical agent session inherited host HOME, CARGO_HOME, and RUSTUP_HOME"
+    ],
+    "agent_reported_docs": "Read in full:\n\n- docs/index.md\n- docs/intro.md\n- docs/guides/tldr-intro-to-standout.md\n- docs/guides/minimal-single-crate.md\n- docs/guides/production-shaped-example.md\n- docs/guides/upgrading-from-5.0.md\n- docs/guides/derived-questionnaires.md\n- docs/crates/input/guides/intro-to-input.md\n- docs/crates/input/topics/answer-sheets.md\n- docs/crates/input/topics/framework-integration.md\n- docs/crates/input/topics/interactive-flows.md\n- docs/crates/input/topics/input-sources.md\n- docs/crates/dispatch/topics/handler-contract.md\n- docs/crates/dispatch/topics/execution-model.md\n- docs/topics/error-handling.md\n- docs/topics/execution-outcomes.md\n\nRead in part:\n\n- docs/topics/output-modes.md (first section)\n- docs/topics/app-configuration.md (first half)\n\nThe most load-bearing pages were derived-questionnaires.md, answer-sheets.md,\nhandler-contract.md, and error-handling.md / execution-outcomes.md for the exit\nstatus table.",
+    "agent_reported_external_sources": "No web search, and I did not open the standout sources or repository. Two things\nstill went beyond docs/, and both matter:\n\n- Runtime introspection of the framework's own CLI surface. The docs give no\n  public name for the `--answers` argument the questionnaire integration\n  injects, so I temporarily printed `ArgMatches::ids()` from a hook and found\n  the reserved id `_standout_questionnaire_answers`. The shipped code matches\n  the suffix `questionnaire_answers` and falls back to scanning argv, so it\n  does not hard-code the full internal id, but the knowledge came from probing\n  rather than from docs/.\n- Compiler diagnostics that quote framework source. rustc errors displayed the\n  `GroupBuilder::command_with` bound from standout-8.1.1/src/cli/group.rs and\n  the signature of `AnswerValue::as_text` from\n  standout-input-8.1.1/src/questionnaire/decode.rs. I did not open those files,\n  but the error text told me things docs/ did not.\n\nEverything else is general Rust, clap, and MiniJinja knowledge, plus behavior\nobserved by running the binary."
+  },
+  "session": {
+    "agent_cmd": "claude --dangerously-skip-permissions --setting-sources '' --strict-mcp-config -p \"Read INSTRUCTIONS.md in the current directory and carry it out completely.\" --output-format stream-json --verbose",
+    "wall_seconds": 734.335521875,
+    "exit_code": 0,
+    "timed_out": false,
+    "attempts": 1,
+    "turns": 59,
+    "input_tokens": 118,
+    "output_tokens": 53294,
+    "transcript": "transcript.jsonl"
+  },
+  "acceptance": {
+    "built": true,
+    "build_detail": null,
+    "cases": [
+      {
+        "name": "questions-prints-sheet-with-stable-ids",
+        "group": "answer-sheet",
+        "stresses": "blank sheet rendering carries the stable question ids",
+        "expected": "pass",
+        "outcome": "pass"
+      },
+      {
+        "name": "answers-file-full-noninteractive",
+        "group": "answer-sheet",
+        "stresses": "sheet from file + --yes: a complete run with no terminal at all, stderr silent",
+        "expected": "pass",
+        "outcome": "fail",
+        "detail": "expected exit 0, got Some(1)\nstdout differs from expected \"provisioned demo-site in us (public: yes)\\n\"\nstderr differs from expected \"\"\n--- stdout ---\n\n--- stderr ---\nHook error: hook error (pre-dispatch): questionnaire input `questionnaire`: Validation failed: answer sheet answers.txt has 3 problem(s): Line 1: malformed answer-sheet preamble: expected '#! standout-answers 1'. Render a fresh answer sheet and copy your answers into it.; Line 2: malformed answer-sheet preamble: expected '#! questionnaire: ...'. Render a fresh answer sheet and copy your answers into it.; Line 4: malformed answer-sheet preamble: expected '#! fingerprint: ...'. Render a fresh answer sheet and copy your answers into it.\n"
+      },
+      {
+        "name": "answers-from-stdin-dash",
+        "group": "answer-sheet",
+        "stresses": "--answers - reads the sheet from piped stdin",
+        "expected": "pass",
+        "outcome": "fail",
+        "detail": "expected exit 0, got Some(1)\nstdout differs from expected \"provisioned pipe-site in eu (public: no)\\n\"\n--- stdout ---\n\n--- stderr ---\nHook error: hook error (pre-dispatch): questionnaire input `questionnaire`: Validation failed: answer sheet from stdin has 3 problem(s): Line 1: malformed answer-sheet preamble: expected '#! standout-answers 1'. Render a fresh answer sheet and copy your answers into it.; Line 2: malformed answer-sheet preamble: expected '#! questionnaire: ...'. Render a fresh answer sheet and copy your answers into it.; Line 4: malformed answer-sheet preamble: expected '#! fingerprint: ...'. Render a fresh answer sheet and copy your answers into it.\n"
+      },
+      {
+        "name": "blank-answers-take-defaults",
+        "group": "answer-sheet",
+        "stresses": "blank sheet answers resolve to declared defaults",
+        "expected": "pass",
+        "outcome": "fail",
+        "detail": "expected exit 0, got Some(1)\nstdout differs from expected \"provisioned demo-site in eu (public: no)\\n\"\n--- stdout ---\n\n--- stderr ---\nHook error: hook error (pre-dispatch): questionnaire input `questionnaire`: Validation failed: answer sheet answers.txt has 3 problem(s): Line 1: malformed answer-sheet preamble: expected '#! standout-answers 1'. Render a fresh answer sheet and copy your answers into it.; Line 2: malformed answer-sheet preamble: expected '#! questionnaire: ...'. Render a fresh answer sheet and copy your answers into it.; Line 4: malformed answer-sheet preamble: expected '#! fingerprint: ...'. Render a fresh answer sheet and copy your answers into it.\n"
+      },
+      {
+        "name": "interactive-collection-and-confirmation-on-tty",
+        "group": "answer-sheet",
+        "stresses": "no --answers, no --yes: attended stdin drives collection and confirmation to success",
+        "expected": "pass",
+        "outcome": "pass"
+      },
+      {
+        "name": "validation-failure-names-field",
+        "group": "validation",
+        "stresses": "field validator rejection routes to stderr, names the field, exits 1",
+        "expected": "pass",
+        "outcome": "fail",
+        "detail": "stderr does not contain \"name\"\n--- stdout ---\n\n--- stderr ---\nHook error: hook error (pre-dispatch): questionnaire input `questionnaire`: Validation failed: answer sheet answers.txt has 3 problem(s): Line 1: malformed answer-sheet preamble: expected '#! standout-answers 1'. Render a fresh answer sheet and copy your answers into it.; Line 2: malformed answer-sheet preamble: expected '#! questionnaire: ...'. Render a fresh answer sheet and copy your answers into it.; Line 4: malformed answer-sheet preamble: expected '#! fingerprint: ...'. Render a fresh answer sheet and copy your answers into it.\n"
+      },
+      {
+        "name": "invalid-choice-names-field",
+        "group": "validation",
+        "stresses": "choice decoding rejection names the field and exits 1",
+        "expected": "pass",
+        "outcome": "fail",
+        "detail": "stderr does not contain \"region\"\n--- stdout ---\n\n--- stderr ---\nHook error: hook error (pre-dispatch): questionnaire input `questionnaire`: Validation failed: answer sheet answers.txt has 3 problem(s): Line 1: malformed answer-sheet preamble: expected '#! standout-answers 1'. Render a fresh answer sheet and copy your answers into it.; Line 2: malformed answer-sheet preamble: expected '#! questionnaire: ...'. Render a fresh answer sheet and copy your answers into it.; Line 4: malformed answer-sheet preamble: expected '#! fingerprint: ...'. Render a fresh answer sheet and copy your answers into it.\n"
+      },
+      {
+        "name": "missing-required-answer-under-closed-stdin-fails-fast",
+        "group": "bounded-non-interactive",
+        "stresses": "no sheet + piped-EOF stdin: interactive collection is impossible and must fail within bounds, not block",
+        "expected": "pass",
+        "outcome": "pass"
+      },
+      {
+        "name": "missing-required-answer-in-sheet-fails-fast",
+        "group": "bounded-non-interactive",
+        "stresses": "sheet with a blank required answer fails naming the question id, without falling back to prompting",
+        "expected": "pass",
+        "outcome": "fail",
+        "detail": "stderr does not contain \"name\"\n--- stdout ---\n\n--- stderr ---\nHook error: hook error (pre-dispatch): questionnaire input `questionnaire`: Validation failed: answer sheet answers.txt has 3 problem(s): Line 1: malformed answer-sheet preamble: expected '#! standout-answers 1'. Render a fresh answer sheet and copy your answers into it.; Line 3: malformed answer-sheet preamble: expected '#! questionnaire: ...'. Render a fresh answer sheet and copy your answers into it.; Line 5: malformed answer-sheet preamble: expected '#! fingerprint: ...'. Render a fresh answer sheet and copy your answers into it.\n"
+      },
+      {
+        "name": "confirmation-impossible-under-piped-stdin",
+        "group": "bounded-non-interactive",
+        "stresses": "valid sheet without --yes: piped stdin never confirms, EOF never confirms, and the failure points at --yes",
+        "expected": "pass",
+        "outcome": "fail",
+        "detail": "stderr does not contain \"--yes\"\n--- stdout ---\n\n--- stderr ---\nHook error: hook error (pre-dispatch): questionnaire input `questionnaire`: Validation failed: answer sheet answers.txt has 3 problem(s): Line 1: malformed answer-sheet preamble: expected '#! standout-answers 1'. Render a fresh answer sheet and copy your answers into it.; Line 2: malformed answer-sheet preamble: expected '#! questionnaire: ...'. Render a fresh answer sheet and copy your answers into it.; Line 4: malformed answer-sheet preamble: expected '#! fingerprint: ...'. Render a fresh answer sheet and copy your answers into it.\n"
+      },
+      {
+        "name": "yes-does-not-invent-required-answers",
+        "group": "bounded-non-interactive",
+        "stresses": "--yes skips confirmation only; with no sheet and no terminal the run still fails fast",
+        "expected": "pass",
+        "outcome": "pass"
+      }
+    ]
+  },
+  "invariants": [
+    {
+      "command": "provision questions",
+      "mode": "text",
+      "color": "off",
+      "theme": "application",
+      "check": "exits 0",
+      "status": "pass",
+      "detail": null
+    },
+    {
+      "command": "provision questions",
+      "mode": "text",
+      "color": "off",
+      "theme": "application",
+      "check": "no unresolved tag markers",
+      "status": "pass",
+      "detail": null
+    },
+    {
+      "command": "provision questions",
+      "mode": "text",
+      "color": "off",
+      "theme": "application",
+      "check": "stdout parses as JSON",
+      "status": "not-applicable",
+      "detail": "check does not apply to text mode"
+    },
+    {
+      "command": "provision questions",
+      "mode": "text",
+      "color": "off",
+      "theme": "application",
+      "check": "styling preserves text layout",
+      "status": "not-applicable",
+      "detail": "check does not apply to text mode"
+    },
+    {
+      "command": "provision questions",
+      "mode": "text",
+      "color": "off",
+      "theme": "application",
+      "check": "opaque output preserves text bytes",
+      "status": "not-applicable",
+      "detail": "rendered command uses render invariants"
+    },
+    {
+      "command": "provision questions",
+      "mode": "term",
+      "color": "off",
+      "theme": "application",
+      "check": "exits 0",
+      "status": "pass",
+      "detail": null
+    },
+    {
+      "command": "provision questions",
+      "mode": "term",
+      "color": "off",
+      "theme": "application",
+      "check": "no unresolved tag markers",
+      "status": "pass",
+      "detail": null
+    },
+    {
+      "command": "provision questions",
+      "mode": "term",
+      "color": "off",
+      "theme": "application",
+      "check": "stdout parses as JSON",
+      "status": "not-applicable",
+      "detail": "check does not apply to term mode"
+    },
+    {
+      "command": "provision questions",
+      "mode": "term",
+      "color": "off",
+      "theme": "application",
+      "check": "styling preserves text layout",
+      "status": "pass",
+      "detail": null
+    },
+    {
+      "command": "provision questions",
+      "mode": "term",
+      "color": "off",
+      "theme": "application",
+      "check": "opaque output preserves text bytes",
+      "status": "not-applicable",
+      "detail": "rendered command uses render invariants"
+    },
+    {
+      "command": "provision questions",
+      "mode": "json",
+      "color": "off",
+      "theme": "application",
+      "check": "exits 0",
+      "status": "pass",
+      "detail": null
+    },
+    {
+      "command": "provision questions",
+      "mode": "json",
+      "color": "off",
+      "theme": "application",
+      "check": "no unresolved tag markers",
+      "status": "not-applicable",
+      "detail": "check does not apply to json mode"
+    },
+    {
+      "command": "provision questions",
+      "mode": "json",
+      "color": "off",
+      "theme": "application",
+      "check": "stdout parses as JSON",
+      "status": "fail",
+      "detail": "expected value at line 1 column 1"
+    },
+    {
+      "command": "provision questions",
+      "mode": "json",
+      "color": "off",
+      "theme": "application",
+      "check": "styling preserves text layout",
+      "status": "not-applicable",
+      "detail": "check does not apply to json mode"
+    },
+    {
+      "command": "provision questions",
+      "mode": "json",
+      "color": "off",
+      "theme": "application",
+      "check": "opaque output preserves text bytes",
+      "status": "not-applicable",
+      "detail": "rendered command uses render invariants"
+    },
+    {
+      "command": "provision questions",
+      "mode": "text",
+      "color": "on",
+      "theme": "application",
+      "check": "exits 0",
+      "status": "pass",
+      "detail": null
+    },
+    {
+      "command": "provision questions",
+      "mode": "text",
+      "color": "on",
+      "theme": "application",
+      "check": "no unresolved tag markers",
+      "status": "pass",
+      "detail": null
+    },
+    {
+      "command": "provision questions",
+      "mode": "text",
+      "color": "on",
+      "theme": "application",
+      "check": "stdout parses as JSON",
+      "status": "not-applicable",
+      "detail": "check does not apply to text mode"
+    },
+    {
+      "command": "provision questions",
+      "mode": "text",
+      "color": "on",
+      "theme": "application",
+      "check": "styling preserves text layout",
+      "status": "not-applicable",
+      "detail": "check does not apply to text mode"
+    },
+    {
+      "command": "provision questions",
+      "mode": "text",
+      "color": "on",
+      "theme": "application",
+      "check": "opaque output preserves text bytes",
+      "status": "not-applicable",
+      "detail": "rendered command uses render invariants"
+    },
+    {
+      "command": "provision questions",
+      "mode": "term",
+      "color": "on",
+      "theme": "application",
+      "check": "exits 0",
+      "status": "pass",
+      "detail": null
+    },
+    {
+      "command": "provision questions",
+      "mode": "term",
+      "color": "on",
+      "theme": "application",
+      "check": "no unresolved tag markers",
+      "status": "pass",
+      "detail": null
+    },
+    {
+      "command": "provision questions",
+      "mode": "term",
+      "color": "on",
+      "theme": "application",
+      "check": "stdout parses as JSON",
+      "status": "not-applicable",
+      "detail": "check does not apply to term mode"
+    },
+    {
+      "command": "provision questions",
+      "mode": "term",
+      "color": "on",
+      "theme": "application",
+      "check": "styling preserves text layout",
+      "status": "pass",
+      "detail": null
+    },
+    {
+      "command": "provision questions",
+      "mode": "term",
+      "color": "on",
+      "theme": "application",
+      "check": "opaque output preserves text bytes",
+      "status": "not-applicable",
+      "detail": "rendered command uses render invariants"
+    },
+    {
+      "command": "provision questions",
+      "mode": "json",
+      "color": "on",
+      "theme": "application",
+      "check": "exits 0",
+      "status": "pass",
+      "detail": null
+    },
+    {
+      "command": "provision questions",
+      "mode": "json",
+      "color": "on",
+      "theme": "application",
+      "check": "no unresolved tag markers",
+      "status": "not-applicable",
+      "detail": "check does not apply to json mode"
+    },
+    {
+      "command": "provision questions",
+      "mode": "json",
+      "color": "on",
+      "theme": "application",
+      "check": "stdout parses as JSON",
+      "status": "fail",
+      "detail": "expected value at line 1 column 1"
+    },
+    {
+      "command": "provision questions",
+      "mode": "json",
+      "color": "on",
+      "theme": "application",
+      "check": "styling preserves text layout",
+      "status": "not-applicable",
+      "detail": "check does not apply to json mode"
+    },
+    {
+      "command": "provision questions",
+      "mode": "json",
+      "color": "on",
+      "theme": "application",
+      "check": "opaque output preserves text bytes",
+      "status": "not-applicable",
+      "detail": "rendered command uses render invariants"
+    }
+  ],
+  "questionnaire": {
+    "collected": true,
+    "diagnostics": [],
+    "answers": {
+      "confidence": "high",
+      "docs.gaps": "1. Wrong. docs/crates/input/topics/framework-integration.md says: \"`standout`\n   re-exports `standout-input` as `standout::input`, so a single dependency on\n   `standout` is enough\". With only `standout` in Cargo.toml, the\n   `standout::Questionnaire` and `standout::QuestionnaireChoices` derives fail\n   to compile because their expansion names the `standout_input` crate\n   directly. A direct `standout-input` dependency is required.\n\n2. Missing. docs/guides/derived-questionnaires.md shows the wired handler as a\n   plain `fn import(_matches: &clap::ArgMatches, ctx: &CommandContext)`, but\n   never says that the `#[handler]` macro — the shape every other guide leads\n   with — cannot be used for a questionnaire command. The failure surfaces as a\n   confusing arity error inside the `Dispatch` derive.\n\n3. Missing. Nothing documents that hook order inside `CommandConfig` decides\n   whether a `pre_dispatch` hook runs before or after questionnaire resolution.\n   It does: a hook registered before `.questionnaire::<T>()` runs before\n   collection, and one registered after it runs after, with the typed answers\n   already readable via `ctx.questionnaire()`. I established this by\n   experiment; the whole design of the two guards depends on it.\n\n4. Missing. `AppBuilder::hooks(path, hooks)` is presented in\n   docs/topics/app-configuration.md and execution-model.md as the way to attach\n   hooks to a command path, with no warning that for a questionnaire command it\n   displaces the framework's own pre-dispatch resolution and breaks the command.\n\n5. Missing. docs/guides/derived-questionnaires.md documents the gate only as\n   \"Standout asks for an exact `yes` on an attended controlling terminal\" and\n   offers no way to reword it, relax it, or turn it off, even though\n   `questionnaire_with_form_and_review` shows the surrounding steps are\n   customizable. There is likewise no public constant or accessor for the\n   reserved `--answers` / `--yes` arguments the integration injects, so a hook\n   that needs to know whether a sheet was supplied has to inspect\n   `ArgMatches::ids()` for a framework-internal id.\n\n6. Stale. The docs pin older versions than the workspace does:\n   framework-integration.md says `standout = \"7\"`, intro-to-input.md says\n   `standout-input = \"0.1\"`, and minimal-single-crate.md says `standout = \"7\"`,\n   while the app builds against 8.1.1. docs/crates/input/topics/input-sources.md\n   is stale in a stronger sense — its whole `InputSource::chain()` /\n   `InputSource::arg(\"name\")` API disagrees with the `InputChain` /\n   `ArgSource::new` API in intro-to-input.md. I did not need either, but a\n   reader following input-sources.md would be writing code that does not exist.",
+      "friction": "1. The questionnaire derives do not work with only a `standout` dependency.\n   `cargo build` failed with:\n   \"error[E0433]: cannot find `standout_input` in the crate root ... this error\n   originates in the derive macro `standout::Questionnaire`\". I added\n   `standout-input = \"=8.1.1\"` to Cargo.toml to fix it.\n\n2. `#[handler]` and a questionnaire command do not compose. With\n   `#[dispatch(questionnaire = ProvisionAnswers, template = \"provision.jinja\")]`\n   over a `#[handler]`-annotated function, the build failed with:\n   \"error[E0593]: function is expected to take 2 arguments, but it takes 1\n   argument ... required by a bound in `GroupBuilder::command_with`\". The fix\n   was the plain `fn(&ArgMatches, &CommandContext) -> HandlerResult<T>` shape\n   that derived-questionnaires.md shows.\n\n3. `AppBuilder::hooks(...)` silently replaced the questionnaire's own\n   pre-dispatch resolution. After adding\n   `.hooks(\"provision\", Hooks::new().pre_dispatch(require_answer_source))`,\n   a previously working sheet run failed at runtime with:\n   \"Error: no input named `questionnaire` was registered for this command\".\n   Registering the hook inside `command_with`'s `CommandConfig` instead works.\n   Separately, `.hooks(...)` there produced\n   \"error[E0277]: the `?` operator cannot be applied to type `App`\", so unlike\n   the neighbouring builder calls it is not fallible.\n\n4. A plain `pre_dispatch` hook receives the root `ArgMatches`, not the\n   subcommand's. Reading the flag directly panicked with:\n   \"Mismatch between definition and access of `answers`. Unknown argument or\n   group id.\" framework-integration.md promises this walk only for `.input(...)`\n   (\"Walks to the deepest subcommand's `ArgMatches` (so chains see the same args\n   the handler does)\"); for a hand-written hook I had to call\n   `get_deepest_matches` myself.\n\n5. The built-in confirmation gate contradicts this app's spec. Under a pty,\n   answering `y` produced:\n   \"Continue? Type 'yes' to continue: y\n    Hook error: hook error (pre-dispatch): questionnaire confirmation declined;\n    nothing was run\"\n   while SPEC.md requires \"`yes` or `y` (case-insensitive) confirms\". See the\n   workarounds answer for how that is resolved.\n\n6. Error text is doubled up: every guard failure is reported as\n   \"Hook error: hook error (pre-dispatch): ...\". The message content is right\n   and the exit status is 1, but the prefix is noisier than an application would\n   choose, and there is no documented way to shape it.",
+      "sources.docs": "Read in full:\n\n- docs/index.md\n- docs/intro.md\n- docs/guides/tldr-intro-to-standout.md\n- docs/guides/minimal-single-crate.md\n- docs/guides/production-shaped-example.md\n- docs/guides/upgrading-from-5.0.md\n- docs/guides/derived-questionnaires.md\n- docs/crates/input/guides/intro-to-input.md\n- docs/crates/input/topics/answer-sheets.md\n- docs/crates/input/topics/framework-integration.md\n- docs/crates/input/topics/interactive-flows.md\n- docs/crates/input/topics/input-sources.md\n- docs/crates/dispatch/topics/handler-contract.md\n- docs/crates/dispatch/topics/execution-model.md\n- docs/topics/error-handling.md\n- docs/topics/execution-outcomes.md\n\nRead in part:\n\n- docs/topics/output-modes.md (first section)\n- docs/topics/app-configuration.md (first half)\n\nThe most load-bearing pages were derived-questionnaires.md, answer-sheets.md,\nhandler-contract.md, and error-handling.md / execution-outcomes.md for the exit\nstatus table.",
+      "sources.external": "No web search, and I did not open the standout sources or repository. Two things\nstill went beyond docs/, and both matter:\n\n- Runtime introspection of the framework's own CLI surface. The docs give no\n  public name for the `--answers` argument the questionnaire integration\n  injects, so I temporarily printed `ArgMatches::ids()` from a hook and found\n  the reserved id `_standout_questionnaire_answers`. The shipped code matches\n  the suffix `questionnaire_answers` and falls back to scanning argv, so it\n  does not hard-code the full internal id, but the knowledge came from probing\n  rather than from docs/.\n- Compiler diagnostics that quote framework source. rustc errors displayed the\n  `GroupBuilder::command_with` bound from standout-8.1.1/src/cli/group.rs and\n  the signature of `AnswerValue::as_text` from\n  standout-input-8.1.1/src/questionnaire/decode.rs. I did not open those files,\n  but the error text told me things docs/ did not.\n\nEverything else is general Rust, clap, and MiniJinja knowledge, plus behavior\nobserved by running the binary.",
+      "summary": "`formlike` is complete and behaves to spec; `cargo build` and `cargo test` both\npass and I verified every path by running the binary (including interactive and\nconfirmation paths under a real pty).\n\nThe three questions are a standout questionnaire derived from a Rust struct\n(`ProvisionAnswers`, questionnaire id `formlike.provision`), with a\n`QuestionnaireChoices` enum for `region` and a field validator for `name`. That\ngives the framework-generated surface for free: `provision questions` renders\nthe blank sheet with the stable id tags, `--answers FILE` / `--answers -` read\none completed sheet, blank answers take defaults, and every source decodes\nthrough the same pipeline. The handler is a thin adapter that renders one line,\n`provisioned NAME in REGION (public: yes|no)`.\n\nTwo guards on top of the framework make unattended runs fail promptly rather\nthan block or under-explain:\n\n- a pre-dispatch hook that runs before questionnaire resolution and rejects a\n  run with no sheet and no attended terminal, naming the three question ids and\n  the `--answers` flag that would have unblocked it;\n- this program's own confirmation gate, because the spec accepts `y` as well as\n  `yes` (case-insensitive) and the framework's built-in gate accepts only an\n  exact `yes`.\n\nExit codes are as specified: 0 on success, 1 for every input error (missing\nrequired answer, validation failure, impossible collection, impossible or\ndeclined confirmation), 2 for clap usage errors. A non-interactive successful\nrun writes exactly one line to stdout and nothing to stderr.",
+      "workarounds": "1. Synthesized `--yes`. Because the framework's confirmation gate accepts only\n   an exact `yes` and the spec also accepts `y`, `dispatch_args` appends `--yes`\n   to the arguments handed to `App::run` for a bare `provision` run, which turns\n   the framework gate off, and `confirm_gate` then asks the question itself with\n   the spec's rule. The hook distinguishes a user-supplied `--yes` from the\n   synthesized one by reading the real `std::env::args()`. `dispatch_args`\n   deliberately does not touch `provision questions`, `help provision`, or any\n   `--help` run, and it skips flag values so a sheet named `questions` is not\n   mistaken for the subcommand; the three cases are unit-tested.\n\n2. Framework-internal argument id. `has_answer_sheet` decides whether a sheet\n   was supplied by looking for a parsed argument id ending in\n   `questionnaire_answers`, with a scan of argv for `--answers` as a fallback.\n   A public accessor for the injected flag would replace both halves.\n\n3. Prompt stream split. The framework writes its interactive question prompts to\n   stdout, so an attended collection run has prompt text on stdout ahead of the\n   success line; SPEC.md calls interactive prompt layout cosmetic, and I found\n   no way to redirect it. This app's own confirmation prompt goes to stderr\n   instead, which keeps stdout to exactly the one success line for every\n   non-interactive run."
+    }
+  }
+}

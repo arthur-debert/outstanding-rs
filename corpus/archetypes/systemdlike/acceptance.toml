@@ -1,0 +1,278 @@
+# Acceptance suite for the `systemdlike` archetype. Format: corpus/README.md.
+# Written spec-first, before any implementation exists (ROB03-WS02).
+schema = 1
+archetype = "systemdlike"
+
+# --- naked default command ---------------------------------------------------
+
+[[case]]
+name = "naked-default-lists-units"
+group = "naked-default"
+stresses = "naked invocation resolves to the default command with full ListView framing"
+expected = "pass"
+[case.run]
+argv = []
+timeout_seconds = 10
+[case.expect]
+exit_code = 0
+stdout = "UNIT          LOAD   ACTIVE   SUB\ncore.service  loaded active   running\nweb.service   loaded active   running\ncache.service loaded inactive dead\nbackup.timer  loaded active   waiting\n\n4 units listed.\n"
+stderr = ""
+
+[[case]]
+name = "explicit-list-units-identical"
+group = "naked-default"
+stresses = "the spelled-out command and the naked line are the same command"
+expected = "pass"
+[case.run]
+argv = ["list-units"]
+timeout_seconds = 10
+[case.expect]
+exit_code = 0
+stdout = "UNIT          LOAD   ACTIVE   SUB\ncore.service  loaded active   running\nweb.service   loaded active   running\ncache.service loaded inactive dead\nbackup.timer  loaded active   waiting\n\n4 units listed.\n"
+
+[[case]]
+name = "naked-invocation-carries-flags"
+group = "naked-default"
+stresses = "flags on a naked line reach the default command (refused-line handoff)"
+expected = "pass"
+[case.run]
+argv = ["--no-legend"]
+timeout_seconds = 10
+[case.expect]
+exit_code = 0
+stdout = "core.service  loaded active   running\nweb.service   loaded active   running\ncache.service loaded inactive dead\nbackup.timer  loaded active   waiting\n"
+
+# --- legend and filtering ----------------------------------------------------
+
+[[case]]
+name = "state-filter-recomputes-widths-and-count"
+group = "legend"
+stresses = "filter summary vs total count vs column widths recomputed over rendered rows"
+expected = "pass"
+[case.run]
+argv = ["list-units", "--state", "active"]
+timeout_seconds = 10
+[case.expect]
+exit_code = 0
+stdout = "UNIT         LOAD   ACTIVE SUB\ncore.service loaded active running\nweb.service  loaded active running\nbackup.timer loaded active waiting\n\n3 units listed.\n"
+
+[[case]]
+name = "state-inactive-no-legend"
+group = "legend"
+stresses = "legend suppression composes with filtering down to a single undecorated row"
+expected = "pass"
+[case.run]
+argv = ["list-units", "--state", "inactive", "--no-legend"]
+timeout_seconds = 10
+[case.expect]
+exit_code = 0
+stdout = "cache.service loaded inactive dead\n"
+
+[[case]]
+name = "plain-piped-identical-to-default"
+group = "legend"
+stresses = "--plain on a pipe is byte-identical to default piped output"
+expected = "pass"
+[case.run]
+argv = ["list-units", "--plain"]
+timeout_seconds = 10
+[case.expect]
+exit_code = 0
+stdout = "UNIT          LOAD   ACTIVE   SUB\ncore.service  loaded active   running\nweb.service   loaded active   running\ncache.service loaded inactive dead\nbackup.timer  loaded active   waiting\n\n4 units listed.\n"
+
+# --- color precedence --------------------------------------------------------
+
+[[case]]
+name = "color-on-capable-tty"
+group = "color-precedence"
+stresses = "auto mode styles on an attended capable terminal"
+expected = "pass"
+[case.run]
+argv = ["list-units"]
+env = { TERM = "xterm-256color" }
+tty = ["stdout"]
+timeout_seconds = 10
+[case.expect]
+exit_code = 0
+stdout_contains = ["\u001b["]
+
+[[case]]
+name = "no-color-var-suppresses-on-tty"
+group = "color-precedence"
+stresses = "NO_COLOR beats terminal capability"
+expected = "pass"
+[case.run]
+argv = ["list-units"]
+env = { TERM = "xterm-256color", NO_COLOR = "1" }
+tty = ["stdout"]
+timeout_seconds = 10
+[case.expect]
+exit_code = 0
+stdout = "UNIT          LOAD   ACTIVE   SUB\ncore.service  loaded active   running\nweb.service   loaded active   running\ncache.service loaded inactive dead\nbackup.timer  loaded active   waiting\n\n4 units listed.\n"
+
+[[case]]
+name = "tool-var-beats-no-color"
+group = "color-precedence"
+stresses = "tool-specific color variable outranks NO_COLOR"
+expected = "pass"
+[case.run]
+argv = ["list-units"]
+env = { TERM = "xterm-256color", NO_COLOR = "1", SYSTEMDLIKE_COLORS = "1" }
+tty = ["stdout"]
+timeout_seconds = 10
+[case.expect]
+exit_code = 0
+stdout_contains = ["\u001b["]
+
+[[case]]
+name = "tool-var-forces-color-when-piped"
+group = "color-precedence"
+stresses = "tool-specific color variable outranks pipe autodetection"
+expected = "pass"
+[case.run]
+argv = ["list-units"]
+env = { SYSTEMDLIKE_COLORS = "1" }
+timeout_seconds = 10
+[case.expect]
+exit_code = 0
+stdout_contains = ["\u001b["]
+
+[[case]]
+name = "tool-var-zero-beats-capable-tty"
+group = "color-precedence"
+stresses = "tool-specific disable outranks terminal capability"
+expected = "pass"
+[case.run]
+argv = ["list-units"]
+env = { TERM = "xterm-256color", SYSTEMDLIKE_COLORS = "0" }
+tty = ["stdout"]
+timeout_seconds = 10
+[case.expect]
+exit_code = 0
+stdout = "UNIT          LOAD   ACTIVE   SUB\ncore.service  loaded active   running\nweb.service   loaded active   running\ncache.service loaded inactive dead\nbackup.timer  loaded active   waiting\n\n4 units listed.\n"
+
+[[case]]
+name = "output-text-beats-tool-var"
+group = "color-precedence"
+stresses = "explicit --output mode outranks the tool color variable"
+expected = "pass"
+[case.run]
+argv = ["list-units", "--output", "text"]
+env = { TERM = "xterm-256color", SYSTEMDLIKE_COLORS = "1" }
+tty = ["stdout"]
+timeout_seconds = 10
+[case.expect]
+exit_code = 0
+stdout = "UNIT          LOAD   ACTIVE   SUB\ncore.service  loaded active   running\nweb.service   loaded active   running\ncache.service loaded inactive dead\nbackup.timer  loaded active   waiting\n\n4 units listed.\n"
+
+[[case]]
+name = "output-term-beats-everything-when-piped"
+group = "color-precedence"
+stresses = "explicit --output term forces ANSI over the tool disable, NO_COLOR, and pipe autodetection at once"
+expected = "pass"
+[case.run]
+argv = ["list-units", "--output", "term"]
+env = { NO_COLOR = "1", SYSTEMDLIKE_COLORS = "0" }
+timeout_seconds = 10
+[case.expect]
+exit_code = 0
+stdout_contains = ["\u001b["]
+
+[[case]]
+name = "plain-beats-tool-var"
+group = "color-precedence"
+stresses = "--plain outranks the tool color variable"
+expected = "pass"
+[case.run]
+argv = ["list-units", "--plain"]
+env = { TERM = "xterm-256color", SYSTEMDLIKE_COLORS = "1" }
+tty = ["stdout"]
+timeout_seconds = 10
+[case.expect]
+exit_code = 0
+stdout = "UNIT          LOAD   ACTIVE   SUB\ncore.service  loaded active   running\nweb.service   loaded active   running\ncache.service loaded inactive dead\nbackup.timer  loaded active   waiting\n\n4 units listed.\n"
+
+# --- pager discipline --------------------------------------------------------
+
+[[case]]
+name = "pager-on-tty"
+group = "pager"
+stresses = "pager spawn on attended stdout, observed through the pager's filtering"
+expected = "pass"
+[case.run]
+argv = ["list-units"]
+env = { SYSTEMDLIKE_PAGER = "sed -n 1p", NO_COLOR = "1" }
+tty = ["stdout"]
+timeout_seconds = 10
+[case.expect]
+exit_code = 0
+stdout = "UNIT          LOAD   ACTIVE   SUB\n"
+
+[[case]]
+name = "no-pager-flag"
+group = "pager"
+stresses = "--no-pager suppresses a configured pager on a TTY"
+expected = "pass"
+[case.run]
+argv = ["list-units", "--no-pager"]
+env = { SYSTEMDLIKE_PAGER = "sed -n 1p", NO_COLOR = "1" }
+tty = ["stdout"]
+timeout_seconds = 10
+[case.expect]
+exit_code = 0
+stdout = "UNIT          LOAD   ACTIVE   SUB\ncore.service  loaded active   running\nweb.service   loaded active   running\ncache.service loaded inactive dead\nbackup.timer  loaded active   waiting\n\n4 units listed.\n"
+
+[[case]]
+name = "piped-never-pages"
+group = "pager"
+stresses = "captured (piped) stdout must not spawn the pager"
+expected = "pass"
+[case.run]
+argv = ["list-units"]
+env = { PAGER = "sed -n 1p" }
+timeout_seconds = 10
+[case.expect]
+exit_code = 0
+stdout = "UNIT          LOAD   ACTIVE   SUB\ncore.service  loaded active   running\nweb.service   loaded active   running\ncache.service loaded inactive dead\nbackup.timer  loaded active   waiting\n\n4 units listed.\n"
+
+# --- usage errors ------------------------------------------------------------
+
+[[case]]
+name = "bad-state-value-usage-error"
+stresses = "bad enum value is a usage error: exit 2, stderr only"
+expected = "pass"
+[case.run]
+argv = ["list-units", "--state", "bogus"]
+timeout_seconds = 10
+[case.expect]
+exit_code = 2
+stdout = ""
+stderr_contains = ["Usage"]
+
+# --- ROB01 invariant matrix --------------------------------------------------
+# Read-only commands the runner sweeps across output modes (text/term/json),
+# piped. The empty command is the naked invocation. Failures here are
+# framework findings by default.
+
+[invariants]
+modes = ["text", "term", "json"]
+colors = ["off", "on"]
+
+[[invariants.theme]]
+name = "application"
+
+[[invariants.command]]
+argv = []
+contract = "rendered"
+
+[[invariants.command]]
+argv = ["list-units"]
+contract = "rendered"
+
+[[invariants.command]]
+argv = ["list-units", "--state", "active"]
+contract = "rendered"
+
+[[invariants.command]]
+argv = ["list-units", "--no-legend"]
+contract = "rendered"
