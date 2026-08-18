@@ -3,6 +3,11 @@
 //! whole loop end to end lives in `hermetic_loop.rs` (fake build, always
 //! on) and `walking_skeleton.rs` (real crates.io build, ignored).
 
+// Unix-only: scripted agents rely on `sh` + `PermissionsExt`, and the
+// symlink-refusal test builds its fixture with `std::os::unix::fs::symlink`;
+// gating keeps the workspace buildable elsewhere.
+#![cfg(unix)]
+
 use std::fs;
 use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};

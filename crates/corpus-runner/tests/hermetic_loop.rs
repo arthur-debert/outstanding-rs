@@ -10,6 +10,11 @@
 //! Runs in its own test binary because it prepends to the process-wide
 //! PATH.
 
+// Unix-only: the fake `cargo` and scripted agent are `sh` scripts made
+// executable via `PermissionsExt`; gating keeps the workspace buildable
+// elsewhere.
+#![cfg(unix)]
+
 use std::fs;
 use std::os::unix::fs::PermissionsExt;
 use std::path::Path;

@@ -13,6 +13,10 @@
 //! cargo test -p corpus-runner --test walking_skeleton -- --ignored
 //! ```
 
+// Unix-only: the scripted agent is a `sh` script made executable via
+// `PermissionsExt`; gating keeps the workspace buildable elsewhere.
+#![cfg(unix)]
+
 use std::fs;
 use std::os::unix::fs::PermissionsExt;
 use std::path::Path;
