@@ -19,8 +19,10 @@
 //!   [`Strip`](UnknownTagBehavior::Strip), so an app-template tag the resolved
 //!   theme lacks degrades to unstyled inner text instead of leaking `[tag?]`
 //!   markup.
-//! - Unresolved tags become framework warnings on every render path. The
-//!   warning is the user-facing signal.
+//! - Unresolved tags become framework warnings on every render path. Run-bound
+//!   renders leave them for the run to flush; standalone renders expose them
+//!   through [`crate::warnings::take_captured_warnings`] so they cannot leak
+//!   into a later command.
 //! - **Nothing is recorded unless someone asked.** Structured records are kept
 //!   only inside a capture window — see below.
 //!
@@ -325,10 +327,15 @@ fn warn_unresolved_tags(unresolved: &[UnknownTagError]) {
     names.dedup();
 
     if !names.is_empty() {
-        crate::warnings::push_warning_once(format!(
+        let warning = format!(
             "Unresolved style tag(s) degraded to unstyled text: {}",
             names.join(", ")
-        ));
+        );
+        if is_capturing() {
+            crate::warnings::push_warning_once(warning);
+        } else {
+            crate::warnings::capture_warning_once(warning);
+        }
     }
 }
 
@@ -562,6 +569,7 @@ mod tests {
         drop(reset());
         take_captured();
         crate::warnings::drain_warnings();
+        crate::warnings::take_captured_warnings();
 
         for _ in 0..1000 {
             resolve_tags(
@@ -578,9 +586,13 @@ mod tests {
             "a render outside a capture window records nothing"
         );
         assert_eq!(
-            crate::warnings::drain_warnings(),
+            crate::warnings::take_captured_warnings(),
             vec!["Unresolved style tag(s) degraded to unstyled text: nope".to_string()],
-            "a render outside a capture window still emits the framework warning"
+            "a render outside a capture window exposes its framework warning"
+        );
+        assert!(
+            crate::warnings::drain_warnings().is_empty(),
+            "a standalone warning cannot remain pending for a later run"
         );
     }
 
@@ -591,6 +603,7 @@ mod tests {
         drop(reset());
         take_captured();
         crate::warnings::drain_warnings();
+        crate::warnings::take_captured_warnings();
 
         resolve_tags(
             "[stray]before the run[/stray]",
@@ -612,9 +625,13 @@ mod tests {
         assert_eq!(captured.len(), 1, "only the run's own pass is captured");
         assert!(captured[0].is_clean());
         assert_eq!(
-            crate::warnings::drain_warnings(),
+            crate::warnings::take_captured_warnings(),
             vec!["Unresolved style tag(s) degraded to unstyled text: stray".to_string()],
-            "warnings remain independent from diagnostic capture windows"
+            "the standalone warning remains observable"
+        );
+        assert!(
+            crate::warnings::drain_warnings().is_empty(),
+            "the next run has no pending standalone warning to inherit"
         );
     }
 

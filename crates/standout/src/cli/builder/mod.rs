@@ -252,10 +252,11 @@ fn template_dependencies(source: &str) -> TemplateDependencies {
         }
 
         if source[open..].starts_with("{{") {
-            let Some(close) = source[open + 2..].find("}}") else {
+            let after_start = open + 2;
+            let Some(close) = find_closing_delimiter(source, after_start, b"}}") else {
                 break;
             };
-            cursor = open + 2 + close + 2;
+            cursor = close + 2;
             continue;
         }
 
@@ -301,12 +302,44 @@ fn read_tag(source: &str, open: usize) -> Option<(String, usize)> {
         return None;
     }
     let after_start = open + 2;
-    let tag_end = source[after_start..].find("%}")?;
-    let close = after_start + tag_end + 2;
-    Some((
-        normalize_tag(&source[after_start..after_start + tag_end]),
-        close,
-    ))
+    let tag_end = find_closing_delimiter(source, after_start, b"%}")?;
+    let close = tag_end + 2;
+    Some((normalize_tag(&source[after_start..tag_end]), close))
+}
+
+fn find_closing_delimiter(source: &str, start: usize, delimiter: &[u8]) -> Option<usize> {
+    let bytes = source.as_bytes();
+    let mut cursor = start;
+    let mut quote = None;
+    let mut escaped = false;
+
+    while cursor < bytes.len() {
+        let byte = bytes[cursor];
+        if let Some(active_quote) = quote {
+            if escaped {
+                escaped = false;
+            } else if byte == b'\\' {
+                escaped = true;
+            } else if byte == active_quote {
+                quote = None;
+            }
+            cursor += 1;
+            continue;
+        }
+
+        if matches!(byte, b'\'' | b'"') {
+            quote = Some(byte);
+            cursor += 1;
+            continue;
+        }
+
+        if bytes[cursor..].starts_with(delimiter) {
+            return Some(cursor);
+        }
+        cursor += 1;
+    }
+
+    None
 }
 
 fn normalize_tag(tag: &str) -> String {
@@ -2023,6 +2056,21 @@ mod tests {
 
         assert!(dependencies.names.is_empty());
         assert!(dependencies.dynamic);
+    }
+
+    #[test]
+    fn template_dependencies_ignore_delimiters_inside_quoted_strings() {
+        let dependencies = template_dependencies(concat!(
+            r#"{{ "}} {% include 'variable-double' %}" }}"#,
+            r#"{{ '}} {% import "variable-single" as dep %}' }}"#,
+            r#"{% set marker = "%} {% from 'statement-double' import dep %}" %}"#,
+            r#"{% set marker = '%} {% include "statement-single" %}' %}"#,
+            r#"{{ "escaped quote: \" }} {% include 'escaped' %}" }}"#,
+            r#"{% include 'actual' %}"#,
+        ));
+
+        assert_eq!(dependencies.names, ["actual"]);
+        assert!(!dependencies.dynamic);
     }
 
     #[test]

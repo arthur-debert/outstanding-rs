@@ -864,7 +864,52 @@ fn app_render_reports_corrupted_dependency() {
 
 #[test]
 #[serial]
-fn dependency_scanner_ignores_comment_raw_and_variable_blocks() {
+fn standalone_app_render_warning_cannot_leak_into_a_later_run() {
+    standout_render::warnings::drain_warnings();
+    standout_render::warnings::take_captured_warnings();
+
+    let dir = tempfile::tempdir().unwrap();
+    let template_path = dir.path().join("show.jinja");
+    std::fs::write(&template_path, "Hello {{ name }}").unwrap();
+
+    let app = App::builder()
+        .templates_dir(dir.path())
+        .unwrap()
+        .command_with(
+            "show",
+            |_m, _ctx| Ok(Output::Render(json!({"name": "Ada"}))),
+            |cfg| cfg.template_name("show"),
+        )
+        .unwrap()
+        .build()
+        .unwrap();
+
+    std::fs::write(&template_path, "[missing]Hello {{ name }}[/missing]").unwrap();
+    assert_eq!(
+        app.render("show", &json!({"name": "Ada"}), OutputMode::Text)
+            .unwrap(),
+        "Hello Ada"
+    );
+    assert!(
+        !standout_render::warnings::has_warnings(),
+        "the standalone warning must not remain queued for a command run"
+    );
+    assert_eq!(
+        standout_render::warnings::take_captured_warnings(),
+        ["Unresolved style tag(s) degraded to unstyled text: missing"]
+    );
+
+    std::fs::write(&template_path, "Hello {{ name }}").unwrap();
+    let result = TestHarness::new()
+        .text_output()
+        .run(&app, command(), ["app", "show"]);
+    result.assert_success();
+    assert!(result.warnings().is_empty(), "{:?}", result.warnings());
+}
+
+#[test]
+#[serial]
+fn dependency_scanner_ignores_non_tag_syntax_and_quoted_delimiters() {
     let dir = tempfile::tempdir().unwrap();
     std::fs::write(dir.path().join("_partial.jinja"), "Hello {{ name }}").unwrap();
     std::fs::write(
@@ -872,6 +917,9 @@ fn dependency_scanner_ignores_comment_raw_and_variable_blocks() {
         concat!(
             "{# example: {% include 'missing-comment' %} #}",
             "{{ \"{% include 'missing-variable' %}\" }}",
+            "{{ \"}} {% include 'missing-variable-delimiter' %}\" }}",
+            "{% set marker = \"%} {% include 'missing-statement-delimiter' %}\" %}",
+            "{{ marker }}",
             "{% raw %}{% include 'missing-raw' %}{% endraw %}",
             "{% include '_partial' %}",
         ),
@@ -887,7 +935,13 @@ fn dependency_scanner_ignores_comment_raw_and_variable_blocks() {
     assert_eq!(
         app.render("show", &json!({"name": "Ada"}), OutputMode::Text)
             .unwrap(),
-        "{% include 'missing-variable' %}{% include 'missing-raw' %}Hello Ada"
+        concat!(
+            "{% include 'missing-variable' %}",
+            "}} {% include 'missing-variable-delimiter' %}",
+            "%} {% include 'missing-statement-delimiter' %}",
+            "{% include 'missing-raw' %}",
+            "Hello Ada",
+        )
     );
 }
 
