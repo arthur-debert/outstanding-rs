@@ -519,6 +519,12 @@ pub struct AppBuilder {
     pub(crate) version: Option<&'static str>,
 }
 
+impl Default for AppBuilder {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl AppBuilder {
     /// Creates a new builder with default settings.
     ///
@@ -926,6 +932,13 @@ impl App {
     // =========================================================================
     // Parsing & Help
     // =========================================================================
+
+    /// Parses CLI arguments with this built App instance.
+    ///
+    /// This compatibility entry point is equivalent to [`parse_with`](Self::parse_with).
+    pub fn parse(&self, cmd: Command) -> clap::ArgMatches {
+        self.parse_with(cmd)
+    }
 
     /// Parses CLI arguments with this built App instance.
     pub fn parse_with(&self, cmd: Command) -> clap::ArgMatches {

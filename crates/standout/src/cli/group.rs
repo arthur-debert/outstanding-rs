@@ -40,7 +40,7 @@ use standout_pipe::PipeTarget;
 /// times since they clone their Rc-wrapped handlers. However, `ErasedConfigRecipe`
 /// is single-use due to type erasure constraints - it will panic if called twice.
 /// This is acceptable because `ensure_commands_finalized()` is guarded to run
-/// only once per builder.
+/// only once per built app.
 pub(crate) trait CommandRecipe {
     /// Returns the template for this command, if explicitly set.
     #[allow(dead_code)]
@@ -328,9 +328,9 @@ where
 /// have `create_dispatch` called once. This is because `ErasedCommandConfig::register`
 /// consumes `Box<Self>`, so we must use `.take()` to extract it from the RefCell.
 ///
-/// This constraint is safe because `ensure_commands_finalized()` in `AppBuilder`
+/// This constraint is safe because `ensure_commands_finalized()` in `App`
 /// is guarded to run only once, so each recipe's `create_dispatch` is called
-/// exactly once during the builder's lifecycle.
+/// exactly once during the built app's lifecycle.
 pub(crate) struct ErasedConfigRecipe {
     config: RefCell<Option<Box<dyn ErasedCommandConfig>>>,
     #[allow(dead_code)]
