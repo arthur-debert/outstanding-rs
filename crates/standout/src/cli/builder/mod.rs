@@ -52,7 +52,7 @@ use super::handler::{CommandContext, Extensions, HandlerResult, Output as Handle
 use super::help::{
     default_help_theme, render_help, render_help_with_topics, CommandGroup, HelpConfig, HelpLength,
 };
-use super::hooks::{ArtifactOutput, HookError, Hooks, RenderedOutput, TextOutput};
+use super::hooks::{ArtifactOutput, HookError, HookPhase, Hooks, RenderedOutput, TextOutput};
 use super::questionnaire::QuestionnaireCommand;
 use super::result::{HelpDisplay, HelpResult};
 use standout_dispatch::verify::ExpectedArg;
@@ -421,6 +421,12 @@ struct PendingCommand {
     template: TemplateRef,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum HookRegistrationSource {
+    AppBuilderHooks,
+    CommandConfig,
+}
+
 /// Main entry point for standout-clap integration.
 ///
 /// `AppBuilder` is re-exported as `App` in the public API. It serves as both
@@ -479,6 +485,8 @@ pub struct AppBuilder {
     /// Finalized dispatch functions (lazily created from pending_commands)
     finalized_commands: RefCell<Option<HashMap<String, DispatchFn>>>,
     pub(crate) command_hooks: HashMap<String, Hooks>,
+    pub(crate) hook_phase_sources: HashMap<(String, HookPhase), HookRegistrationSource>,
+    pub(crate) setup_errors: Vec<SetupError>,
     pub(crate) questionnaire_commands: HashMap<String, QuestionnaireCommand>,
     pub(crate) context_registry: ContextRegistry,
     pub(crate) template_ext: String,
@@ -557,6 +565,8 @@ impl AppBuilder {
             pending_commands: RefCell::new(HashMap::new()),
             finalized_commands: RefCell::new(None),
             command_hooks: HashMap::new(),
+            hook_phase_sources: HashMap::new(),
+            setup_errors: Vec::new(),
             questionnaire_commands: HashMap::new(),
             context_registry: ContextRegistry::new(),
             template_ext: ".j2".to_string(),
@@ -716,6 +726,8 @@ impl AppBuilder {
     /// - `command_groups` or topics are configured without `.help_handling(true)`
     /// - a command is registered under the root `help` with `.help_handling(true)`,
     ///   which is the name standout installs its own word under
+    /// - the same command path and hook phase are configured through both
+    ///   `CommandConfig` and [`hooks`](Self::hooks)
     ///
     /// # Example
     ///
@@ -727,6 +739,10 @@ impl AppBuilder {
     /// ```
     pub fn build(mut self) -> Result<Self, SetupError> {
         use crate::assets::FRAMEWORK_TEMPLATES;
+
+        if !self.setup_errors.is_empty() {
+            return Err(self.setup_errors.remove(0));
+        }
 
         // Add framework templates if enabled (BEFORE finalizing commands)
         if self.include_framework_templates {
@@ -946,12 +962,6 @@ impl AppBuilder {
     /// Returns a mutable reference to the topic registry.
     pub fn registry_mut(&mut self) -> &mut TopicRegistry {
         &mut self.registry
-    }
-
-    /// Returns the current output mode (always Auto for the App itself;
-    /// per-render mode is passed as a parameter).
-    pub fn output_mode(&self) -> OutputMode {
-        OutputMode::Auto
     }
 
     /// Returns the hooks registered for a specific command path.

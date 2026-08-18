@@ -567,6 +567,11 @@ impl<H> CommandConfig<H> {
     }
 
     /// Sets hooks for this command.
+    ///
+    /// If the parent `AppBuilder` also registers hooks for this command path
+    /// through `.hooks()`, the same hook phase can appear in only one place.
+    /// `build()` returns a configuration error naming the path and phase when
+    /// both APIs configure the same phase.
     pub fn hooks(mut self, hooks: Hooks) -> Self {
         self.hooks = Some(hooks);
         self

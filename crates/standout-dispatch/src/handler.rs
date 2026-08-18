@@ -9,12 +9,12 @@
 //!
 //! - Receive parsed CLI arguments (`&ArgMatches`) and execution context
 //! - Call a CLI-free application library
-//! - Map library results into serializable CLI view data for the render handler
+//! - Map library results into serializable CLI view data for the presentation layer
 //!
 //! Handlers explicitly do not handle:
-//! - Output formatting (that's the render handler's job)
+//! - Output formatting (that's the consuming framework's job)
 //! - Template selection (that's configured at the framework level)
-//! - Theme/style decisions (that's the render handler's job)
+//! - Theme/style decisions (that's the consuming framework's job)
 //!
 //! This separation keeps handlers focused and testable - you can unit test
 //! a handler by checking the data it returns, without worrying about rendering.
@@ -223,7 +223,7 @@ impl Clone for Extensions {
 /// - **`extensions`**: Mutable, per-request state (UserScope, RequestId)
 ///
 /// Note that output format is deliberately not included here - format decisions
-/// are made by the render handler, not by logic handlers.
+/// are made by the consuming framework, not by logic handlers.
 ///
 /// # App State (Immutable, Shared)
 ///

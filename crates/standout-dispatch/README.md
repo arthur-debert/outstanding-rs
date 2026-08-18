@@ -1,18 +1,15 @@
 # standout-dispatch
 
-Command dispatch with strict separation of logic and presentation for CLI applications.
+Command dispatch with strict separation of command logic and presentation for CLI applications.
 
-```rust
-use standout_dispatch::{Handler, Output, CommandContext, from_fn};
+```rust,ignore
+use standout_dispatch::{CommandContext, HandlerResult, Output};
 
 // Handler returns data, not strings
 fn list_handler(_m: &ArgMatches, _ctx: &CommandContext) -> HandlerResult<Vec<Task>> {
     let tasks = db::fetch_tasks()?;
     Ok(Output::Render(tasks))
 }
-
-// Renderer is pluggable—you decide how to format
-let render = from_fn(|data| Ok(serde_json::to_string_pretty(data)?));
 ```
 
 ## Why standout-dispatch?
@@ -22,17 +19,16 @@ CLI commands typically mix business logic with output formatting: database queri
 **standout-dispatch** enforces a clean separation:
 
 ```text
-CLI args → Handler (adapter) → View data → Renderer (presentation) → Output
+CLI args → Handler (adapter) → View data → consuming framework
 ```
 
 - **Handlers** receive parsed arguments, return serializable data
-- **Renderers** are pluggable callbacks you provide
 - **Hooks** intercept execution at defined points
 
 This isn't just architectural nicety—it unlocks:
 
 - **Testable handlers** — Typed adapters with explicit inputs and outputs
-- **Swappable renderers** — JSON, templates, plain text from the same handler
+- **Reusable results** — JSON, templates, and plain text can all start from the same handler data
 - **Cross-cutting concerns** — Auth, logging, transformation via hooks
 - **Incremental adoption** — Migrate one command at a time
 
@@ -60,31 +56,6 @@ impl Handler for MyCache {
     }
 }
 ```
-
-### Pluggable Render Handlers
-
-Dispatch doesn't know how rendering works—you provide a closure:
-
-```rust
-use standout_dispatch::from_fn;
-
-// JSON output
-let json_render = from_fn(|data| Ok(serde_json::to_string_pretty(data)?));
-
-// Custom formatting
-let custom_render = from_fn(|data| {
-    let name = data["name"].as_str().unwrap_or("unknown");
-    Ok(format!("Result: {}", name))
-});
-
-// Template-based (with standout-render or any engine)
-let format = OutputFormat::from_cli_args(&matches);
-let template_render = from_fn(move |data| {
-    my_renderer::render(data, format)
-});
-```
-
-This design means dispatch orchestrates execution without coupling to any rendering implementation.
 
 ### Hook System
 
@@ -167,7 +138,7 @@ anyhow = "1"
 ```rust
 use standout_dispatch::{
     FnHandler, HandlerResult, Output, CommandContext,
-    Hooks, from_fn, extract_command_path, path_to_string,
+    extract_command_path, path_to_string,
 };
 use clap::{Command, Arg};
 use serde::Serialize;
@@ -188,10 +159,7 @@ fn main() -> anyhow::Result<()> {
         }))
     });
 
-    // 3. Create render function
-    let render = from_fn(|data| Ok(serde_json::to_string_pretty(data)?));
-
-    // 4. Build registry and dispatch
+    // 3. Dispatch and let the caller choose how to present the data
     let matches = cmd.get_matches();
     let path = extract_command_path(&matches);
 
@@ -200,9 +168,7 @@ fn main() -> anyhow::Result<()> {
         let result = list_handler.handle(&matches, &ctx)?;
 
         if let Output::Render(data) = result {
-            let json = serde_json::to_value(&data)?;
-            let output = render(&json)?;
-            println!("{}", output);
+            println!("{}", serde_json::to_string_pretty(&data)?);
         }
     }
 

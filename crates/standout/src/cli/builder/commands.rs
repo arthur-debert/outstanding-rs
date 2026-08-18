@@ -9,7 +9,10 @@
 use clap::ArgMatches;
 use serde::Serialize;
 
-use super::{inline_template_ref, AppBuilder, PendingCommand, TemplateAbsence, TemplateRef};
+use super::{
+    inline_template_ref, AppBuilder, HookRegistrationSource, PendingCommand, TemplateAbsence,
+    TemplateRef,
+};
 use crate::cli::group::{
     ClosureRecipe, CommandConfig, ErasedConfigRecipe, GroupBuilder, GroupEntry, PassthroughRecipe,
     StructRecipe,
@@ -85,9 +88,8 @@ impl AppBuilder {
             TemplateRef::convention(path, &self.template_ext)
         };
 
-        // Register hooks if present
         if let Some(hooks) = config.hooks.take() {
-            self.command_hooks.insert(path.to_string(), hooks);
+            self.register_command_hooks(path, hooks, HookRegistrationSource::CommandConfig)?;
         }
         if let Some(questionnaire) = config.questionnaire.take() {
             self.questionnaire_commands
@@ -137,9 +139,12 @@ impl AppBuilder {
                         TemplateRef::convention(&path, &self.template_ext)
                     };
 
-                    // Extract and register hooks
                     if let Some(hooks) = handler.take_hooks() {
-                        self.command_hooks.insert(path.clone(), hooks);
+                        self.register_command_hooks(
+                            &path,
+                            hooks,
+                            HookRegistrationSource::CommandConfig,
+                        )?;
                     }
                     if let Some(questionnaire) = handler.take_questionnaire() {
                         self.questionnaire_commands
@@ -300,7 +305,7 @@ impl AppBuilder {
         };
 
         if let Some(hooks) = config.hooks.take() {
-            self.command_hooks.insert(path.to_string(), hooks);
+            self.register_command_hooks(path, hooks, HookRegistrationSource::CommandConfig)?;
         }
         if let Some(questionnaire) = config.questionnaire.take() {
             self.questionnaire_commands
@@ -383,6 +388,11 @@ impl AppBuilder {
     /// Multiple hooks at the same phase are chained in registration order.
     /// Hooks abort on first error.
     ///
+    /// A command path can collect different phases from `CommandConfig` and
+    /// `.hooks()`, but the same phase cannot be registered through both APIs:
+    /// `build()` returns a configuration error naming the command path and
+    /// phase. Keep same-phase hooks together in one `Hooks` value.
+    ///
     /// # Arguments
     ///
     /// * `path` - Command path using dot notation (e.g., "list" or "config.get")
@@ -418,8 +428,47 @@ impl AppBuilder {
     ///     .run(cmd, args);
     /// ```
     pub fn hooks(mut self, path: &str, hooks: Hooks) -> Self {
-        self.command_hooks.insert(path.to_string(), hooks);
+        if let Err(error) =
+            self.register_command_hooks(path, hooks, HookRegistrationSource::AppBuilderHooks)
+        {
+            self.setup_errors.push(error);
+        }
         self
+    }
+
+    pub(super) fn register_command_hooks(
+        &mut self,
+        path: &str,
+        hooks: Hooks,
+        source: HookRegistrationSource,
+    ) -> Result<(), SetupError> {
+        let phases: Vec<_> = hooks.phases().collect();
+        if phases.is_empty() {
+            return Ok(());
+        }
+
+        for phase in &phases {
+            let key = (path.to_string(), *phase);
+            if let Some(existing_source) = self.hook_phase_sources.get(&key) {
+                if *existing_source != source {
+                    return Err(SetupError::Config(format!(
+                        "command `{path}` registers {phase} hooks through both CommandConfig and AppBuilder::hooks; keep each (path, phase) in one registration path"
+                    )));
+                }
+            }
+        }
+
+        for phase in phases {
+            self.hook_phase_sources
+                .insert((path.to_string(), phase), source);
+        }
+
+        let (key, hooks) = match self.command_hooks.remove_entry(path) {
+            Some((key, existing)) => (key, existing.append(hooks)),
+            None => (path.to_string(), hooks),
+        };
+        self.command_hooks.insert(key, hooks);
+        Ok(())
     }
 }
 
@@ -485,6 +534,186 @@ mod tests {
         assert!(result.is_handled());
         assert_eq!(result.output(), Some("Items: 2"));
         assert_eq!(counter.load(Ordering::SeqCst), 1);
+    }
+
+    #[test]
+    fn test_command_config_and_builder_hooks_same_phase_errors() {
+        use crate::cli::hooks::Hooks;
+        use serde_json::json;
+
+        let builder = AppBuilder::new()
+            .command_with(
+                "list",
+                |_m, _ctx| Ok(HandlerOutput::Render(json!({"ok": true}))),
+                |cfg| cfg.template("{{ ok }}").pre_dispatch(|_, _| Ok(())),
+            )
+            .unwrap()
+            .hooks("list", Hooks::new().pre_dispatch(|_, _| Ok(())));
+
+        let error = match builder.build() {
+            Ok(_) => panic!("expected duplicate hook registration to fail"),
+            Err(error) => error.to_string(),
+        };
+
+        assert!(error.contains("command `list`"));
+        assert!(error.contains("pre-dispatch"));
+        assert!(error.contains("CommandConfig"));
+        assert!(error.contains("AppBuilder::hooks"));
+    }
+
+    #[test]
+    fn test_builder_and_command_config_hooks_same_phase_errors_in_either_order() {
+        use crate::cli::hooks::{Hooks, RenderedOutput};
+        use serde_json::json;
+
+        let error = match AppBuilder::new()
+            .hooks("list", Hooks::new().post_output(|_, _, output| Ok(output)))
+            .command_with(
+                "list",
+                |_m, _ctx| Ok(HandlerOutput::Render(json!({"ok": true}))),
+                |cfg| {
+                    cfg.template("{{ ok }}")
+                        .post_output(|_, _, output: RenderedOutput| Ok(output))
+                },
+            ) {
+            Ok(_) => panic!("expected duplicate hook registration to fail"),
+            Err(error) => error.to_string(),
+        };
+
+        assert!(error.contains("command `list`"));
+        assert!(error.contains("post-output"));
+    }
+
+    #[test]
+    fn test_builder_and_command_config_hooks_different_phases_are_combined() {
+        use crate::cli::hooks::{Hooks, RenderedOutput};
+        use serde_json::json;
+        use std::sync::atomic::{AtomicUsize, Ordering};
+        use std::sync::Arc;
+
+        let calls = Arc::new(AtomicUsize::new(0));
+        let pre_calls = calls.clone();
+        let post_calls = calls.clone();
+
+        let builder = AppBuilder::new()
+            .hooks(
+                "list",
+                Hooks::new().post_output(move |_, _, output: RenderedOutput| {
+                    post_calls.fetch_add(1, Ordering::SeqCst);
+                    Ok(output)
+                }),
+            )
+            .command_with(
+                "list",
+                |_m, _ctx| Ok(HandlerOutput::Render(json!({"ok": true}))),
+                move |cfg| {
+                    cfg.template("{{ ok }}").pre_dispatch(move |_, _| {
+                        pre_calls.fetch_add(1, Ordering::SeqCst);
+                        Ok(())
+                    })
+                },
+            )
+            .unwrap()
+            .build()
+            .unwrap();
+
+        let cmd = Command::new("app").subcommand(Command::new("list"));
+        let matches = cmd.try_get_matches_from(["app", "list"]).unwrap();
+        let result = builder.dispatch(matches, OutputMode::Text);
+
+        assert!(result.is_handled());
+        assert_eq!(result.output(), Some("true"));
+        assert_eq!(calls.load(Ordering::SeqCst), 2);
+    }
+
+    #[test]
+    fn test_commands_and_builder_hooks_same_phase_errors_in_either_order() {
+        use crate::cli::hooks::{Hooks, RenderedOutput};
+        use serde_json::json;
+
+        let error = match AppBuilder::new()
+            .hooks("list", Hooks::new().pre_dispatch(|_, _| Ok(())))
+            .commands(|g| {
+                g.command_with(
+                    "list",
+                    |_m, _ctx| Ok(HandlerOutput::Render(json!({"ok": true}))),
+                    |cfg| cfg.template("{{ ok }}").pre_dispatch(|_, _| Ok(())),
+                )
+            }) {
+            Ok(_) => panic!("expected duplicate hook registration to fail"),
+            Err(error) => error.to_string(),
+        };
+
+        assert!(error.contains("command `list`"));
+        assert!(error.contains("pre-dispatch"));
+        assert!(error.contains("CommandConfig"));
+        assert!(error.contains("AppBuilder::hooks"));
+
+        let builder = AppBuilder::new()
+            .commands(|g| {
+                g.command_with(
+                    "list",
+                    |_m, _ctx| Ok(HandlerOutput::Render(json!({"ok": true}))),
+                    |cfg| {
+                        cfg.template("{{ ok }}")
+                            .post_output(|_, _, output: RenderedOutput| Ok(output))
+                    },
+                )
+            })
+            .unwrap()
+            .hooks("list", Hooks::new().post_output(|_, _, output| Ok(output)));
+
+        let error = match builder.build() {
+            Ok(_) => panic!("expected duplicate hook registration to fail"),
+            Err(error) => error.to_string(),
+        };
+
+        assert!(error.contains("command `list`"));
+        assert!(error.contains("post-output"));
+    }
+
+    #[test]
+    fn test_commands_and_builder_hooks_different_phases_are_combined() {
+        use crate::cli::hooks::{Hooks, RenderedOutput};
+        use serde_json::json;
+        use std::sync::atomic::{AtomicUsize, Ordering};
+        use std::sync::Arc;
+
+        let calls = Arc::new(AtomicUsize::new(0));
+        let pre_calls = calls.clone();
+        let post_calls = calls.clone();
+
+        let builder = AppBuilder::new()
+            .hooks(
+                "list",
+                Hooks::new().post_output(move |_, _, output: RenderedOutput| {
+                    post_calls.fetch_add(1, Ordering::SeqCst);
+                    Ok(output)
+                }),
+            )
+            .commands(|g| {
+                g.command_with(
+                    "list",
+                    |_m, _ctx| Ok(HandlerOutput::Render(json!({"ok": true}))),
+                    move |cfg| {
+                        cfg.template("{{ ok }}").pre_dispatch(move |_, _| {
+                            pre_calls.fetch_add(1, Ordering::SeqCst);
+                            Ok(())
+                        })
+                    },
+                )
+            })
+            .unwrap()
+            .build()
+            .unwrap();
+
+        let cmd = Command::new("app").subcommand(Command::new("list"));
+        let matches = cmd.try_get_matches_from(["app", "list"]).unwrap();
+        let result = builder.dispatch(matches, OutputMode::Text);
+
+        assert!(result.is_handled());
+        assert_eq!(result.output(), Some("true"));
+        assert_eq!(calls.load(Ordering::SeqCst), 2);
     }
 
     // ============================================================================
