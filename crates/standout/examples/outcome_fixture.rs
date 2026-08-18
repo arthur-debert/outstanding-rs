@@ -34,21 +34,21 @@ fn app() -> App {
             "{{ message }}",
         )
         .unwrap()
-        .command(
+        .command_with(
             "fail",
             |_, _| -> HandlerResult<serde_json::Value> {
                 Err(anyhow::anyhow!("fixture handler failed"))
             },
-            "",
+            |config| config.structured_only(),
         )
         .unwrap()
-        .command(
+        .command_with(
             "silent",
             |_, _| -> HandlerResult<()> { Ok(Output::Silent) },
-            "",
+            |config| config.silent(),
         )
         .unwrap()
-        .command(
+        .command_with(
             "binary",
             |_, _| -> HandlerResult<()> {
                 Ok(Output::Binary {
@@ -56,7 +56,7 @@ fn app() -> App {
                     filename: "fixture.bin".into(),
                 })
             },
-            "",
+            |config| config.binary(),
         )
         .unwrap()
         .command(
@@ -69,7 +69,7 @@ fn app() -> App {
             "{{ message }}",
         )
         .unwrap()
-        .command(
+        .command_with(
             "binary-huge",
             |_, _| -> HandlerResult<()> {
                 Ok(Output::Binary {
@@ -77,7 +77,7 @@ fn app() -> App {
                     filename: "fixture.bin".into(),
                 })
             },
-            "",
+            |config| config.binary(),
         )
         .unwrap()
         .command(
@@ -89,23 +89,23 @@ fn app() -> App {
             "{{ message }}",
         )
         .unwrap()
-        .command(
+        .command_with(
             "warn-fail",
             |_, _| -> HandlerResult<serde_json::Value> {
                 standout::warnings::push_warning("fixture warning");
                 Err(anyhow::anyhow!("fixture handler failed"))
             },
-            "",
+            |config| config.structured_only(),
         )
         .unwrap()
-        .command(
+        .command_with(
             "external",
             |_, _| -> HandlerResult<serde_json::Value> {
                 Err(ExternalFailure::new(128, "fatal: external fixture failed")
                     .unwrap()
                     .into())
             },
-            "",
+            |config| config.structured_only(),
         )
         .unwrap()
         .command(

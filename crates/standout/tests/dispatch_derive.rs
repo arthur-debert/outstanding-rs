@@ -85,7 +85,7 @@ fn test_handler_override_compiles() {
 #[derive(Subcommand, Dispatch)]
 #[dispatch(handlers = handlers)]
 enum TemplateCommands {
-    #[dispatch(template = "custom.j2")]
+    #[dispatch(template_name = "custom.j2")]
     List,
 }
 

@@ -62,12 +62,12 @@ fn test_snapshots_json_output() {
 #[test]
 fn test_snapshots_error_handling() {
     let app = App::builder()
-        .command(
+        .command_with(
             "fail",
             |_m, _ctx| -> standout::cli::HandlerResult<()> {
                 Err(anyhow::anyhow!("Critical failure in operation"))
             },
-            "",
+            |config| config.silent(),
         )
         .unwrap()
         .build()

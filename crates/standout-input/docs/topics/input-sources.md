@@ -198,7 +198,7 @@ Or use the builder API for more control:
 ```rust
 let app = App::builder()
     .command_with("create", handlers::create, |cfg| {
-        cfg.template("create.jinja")
+        cfg.template_name("create")
            .input("message", InputSource::chain()
                .try_arg("message")
                .try_stdin()

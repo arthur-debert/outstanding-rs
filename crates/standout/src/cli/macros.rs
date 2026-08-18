@@ -9,7 +9,7 @@
 //! use standout::cli::{dispatch, App};
 //!
 //! let builder = App::builder()
-//!     .template_dir("templates")
+//!     .templates_dir("templates")?
 //!     .commands(dispatch! {
 //!         db: {
 //!             migrate => db::migrate,
@@ -30,7 +30,7 @@
 //!     db: {
 //!         migrate => {
 //!             handler: db::migrate,
-//!             template: "custom/migrate.j2",
+//!             template: "Migrated {{ count }} rows",
 //!             pre_dispatch: validate_db,
 //!         },
 //!     },
@@ -52,7 +52,7 @@
 ///     // Command with options
 ///     command_name => {
 ///         handler: handler_fn,
-///         template: "template.j2",           // optional
+///         template: "inline {{ value }}",    // optional
 ///         pre_dispatch: hook_fn,             // optional
 ///         post_dispatch: hook_fn,            // optional
 ///         post_output: hook_fn,              // optional
@@ -81,13 +81,13 @@
 /// }
 ///
 /// let builder = App::builder()
-///     .template_dir("templates")
+///     .templates_dir("templates")?
 ///     .commands(dispatch! {
 ///         db: {
 ///             migrate => migrate_handler,
 ///             backup => {
 ///                 handler: backup_handler,
-///                 template: "db/backup_custom.j2",
+///                 template: "Backed up {{ count }} files",
 ///             },
 ///         },
 ///         version => |_m, _ctx| Ok(Output::Render(json!({"version": "1.0.0"}))),
@@ -282,7 +282,7 @@ mod tests {
         let configure = dispatch! {
             list => {
                 handler: |_m: &ArgMatches, _ctx: &CommandContext| Ok(Output::Render(json!({}))),
-                template: "custom.j2",
+                template: "items: {{ items | length }}",
             },
         };
 
@@ -318,7 +318,7 @@ mod tests {
                 migrate => |_m: &ArgMatches, _ctx: &CommandContext| Ok(Output::Render(json!({}))),
                 backup => {
                     handler: |_m: &ArgMatches, _ctx: &CommandContext| Ok(Output::Render(json!({}))),
-                    template: "backup.j2",
+                    template: "backup complete",
                 },
             },
             cache: {

@@ -10,6 +10,9 @@ use clap::ArgMatches;
 use std::cell::RefCell;
 use std::rc::Rc;
 
+use crate::cli::builder::{
+    refresh_named_template, SharedTemplateEngine, TemplateAbsence, TemplateRef,
+};
 use crate::cli::handler::Output as HandlerOutput;
 use crate::cli::handler::{CommandContext, ExternalFailure, RunError, RunErrorKind};
 use crate::cli::hooks::{ArtifactOutput, HookError, Hooks};
@@ -58,10 +61,12 @@ pub enum DispatchOutput {
 /// configuration in an owned value lets the same rendering rules apply at
 /// either point, instead of the artifact path growing a second, drifting copy.
 pub struct Presentation {
-    template: String,
+    command_path: String,
+    template: TemplateRef,
     theme: Theme,
     context_registry: ContextRegistry,
-    template_engine: Rc<Box<dyn standout_render::template::TemplateEngine>>,
+    template_engine: SharedTemplateEngine,
+    template_registry: Option<Rc<crate::TemplateRegistry>>,
     output_mode: crate::OutputMode,
     structured_output_projection: Option<StructuredOutputProjection>,
     ambiguous_width: crate::AmbiguousWidth,
@@ -98,20 +103,164 @@ impl Presentation {
                         .map_err(|e| RunError::new(e.to_string(), RunErrorKind::Render))?,
                 )
             }
-            _ => standout_render::template::render_auto_with_engine_split(
-                &**self.template_engine,
-                &self.template,
-                json_data,
-                &self.theme,
-                self.output_mode,
-                &self.context_registry,
-                &render_ctx,
-            )
-            .map_err(|e| RunError::new(e.to_string(), RunErrorKind::Render))?,
+            _ => self.render_template_ref(json_data, &render_ctx)?,
         };
 
         Ok((render_result.formatted, render_result.raw))
     }
+
+    fn render_template_ref(
+        &self,
+        json_data: &serde_json::Value,
+        render_ctx: &RenderContext,
+    ) -> Result<standout_render::template::RenderResult, RunError> {
+        if let TemplateRef::Absent(reason) = &self.template {
+            return match reason {
+                TemplateAbsence::StructuredOnly => {
+                    let mode = match self.output_mode {
+                        crate::OutputMode::Auto => crate::OutputMode::Json,
+                        crate::OutputMode::Json
+                        | crate::OutputMode::Yaml
+                        | crate::OutputMode::Xml
+                        | crate::OutputMode::Csv => self.output_mode,
+                        crate::OutputMode::Term
+                        | crate::OutputMode::Text
+                        | crate::OutputMode::TermDebug => {
+                            return Err(absent_template_render_error(
+                                &self.command_path,
+                                *reason,
+                                self.output_mode,
+                            ));
+                        }
+                    };
+                    standout_render::template::render_auto_with_engine_split(
+                        &**self.template_engine.borrow(),
+                        "",
+                        json_data,
+                        &self.theme,
+                        mode,
+                        &self.context_registry,
+                        render_ctx,
+                    )
+                    .map_err(render_error)
+                }
+                TemplateAbsence::Silent | TemplateAbsence::Binary => Err(
+                    absent_template_render_error(&self.command_path, *reason, self.output_mode),
+                ),
+            };
+        }
+
+        if self.output_mode.is_structured() {
+            return standout_render::template::render_auto_with_engine_split(
+                &**self.template_engine.borrow(),
+                "",
+                json_data,
+                &self.theme,
+                self.output_mode,
+                &self.context_registry,
+                render_ctx,
+            )
+            .map_err(render_error);
+        }
+
+        match &self.template {
+            TemplateRef::Inline(source) => {
+                standout_render::template::render_auto_with_engine_split_inline(
+                    &**self.template_engine.borrow(),
+                    source,
+                    json_data,
+                    &self.theme,
+                    self.output_mode,
+                    &self.context_registry,
+                    render_ctx,
+                )
+                .map_err(render_error)
+            }
+            TemplateRef::Named(name) => {
+                let registry = self.template_registry.as_ref().ok_or_else(|| {
+                    RunError::new(
+                        format!(
+                            "command `{}` references template `{}`, but no template registry is configured",
+                            self.command_path, name
+                        ),
+                        RunErrorKind::Render,
+                    )
+                })?;
+                {
+                    let mut engine = self.template_engine.borrow_mut();
+                    refresh_named_template(&mut **engine, registry, name).map_err(|error| {
+                        RunError::new(
+                            format!("{} while rendering command `{}`", error, self.command_path),
+                            RunErrorKind::Render,
+                        )
+                    })?;
+                }
+                standout_render::template::render_auto_with_engine_split_named(
+                    &**self.template_engine.borrow(),
+                    name,
+                    json_data,
+                    &self.theme,
+                    self.output_mode,
+                    &self.context_registry,
+                    render_ctx,
+                )
+                .map_err(render_error)
+            }
+            TemplateRef::Convention(name) => {
+                let registry = self.template_registry.as_ref().ok_or_else(|| {
+                    RunError::new(
+                        format!(
+                            "command `{}` expects convention template `{}`, but no template registry is configured",
+                            self.command_path, name
+                        ),
+                        RunErrorKind::Render,
+                    )
+                })?;
+                {
+                    let mut engine = self.template_engine.borrow_mut();
+                    refresh_named_template(&mut **engine, registry, name).map_err(|error| {
+                        RunError::new(
+                            format!("{} while rendering command `{}`", error, self.command_path),
+                            RunErrorKind::Render,
+                        )
+                    })?;
+                }
+                standout_render::template::render_auto_with_engine_split_named(
+                    &**self.template_engine.borrow(),
+                    name,
+                    json_data,
+                    &self.theme,
+                    self.output_mode,
+                    &self.context_registry,
+                    render_ctx,
+                )
+                .map_err(render_error)
+            }
+            TemplateRef::Absent(_) => unreachable!("absence handled before template rendering"),
+        }
+    }
+}
+
+fn render_error(error: standout_render::RenderError) -> RunError {
+    RunError::new(error.to_string(), RunErrorKind::Render)
+}
+
+fn absent_template_render_error(
+    command_path: &str,
+    reason: TemplateAbsence,
+    output_mode: crate::OutputMode,
+) -> RunError {
+    let reason = match reason {
+        TemplateAbsence::Silent => "silent",
+        TemplateAbsence::StructuredOnly => "structured-only",
+        TemplateAbsence::Binary => "binary",
+    };
+    RunError::new(
+        format!(
+            "command `{command_path}` is declared {reason} and cannot render data in --output {output_mode:?}; configure a template with .template(...) or .template_name(...) or return the matching Output variant"
+        ),
+        RunErrorKind::Render,
+    )
 }
 
 #[derive(Debug)]
@@ -142,10 +291,11 @@ pub(crate) fn render_handler_output<T: Serialize>(
     matches: &ArgMatches,
     ctx: &CommandContext,
     hooks: Option<&Hooks>,
-    template: &str,
+    template: &TemplateRef,
     theme: &Theme,
     context_registry: &ContextRegistry,
-    template_engine: &Rc<Box<dyn standout_render::template::TemplateEngine>>,
+    template_engine: &SharedTemplateEngine,
+    template_registry: Option<&Rc<crate::TemplateRegistry>>,
     output_mode: crate::OutputMode,
     structured_output_projection: Option<&StructuredOutputProjection>,
     ambiguous_width: crate::AmbiguousWidth,
@@ -156,10 +306,12 @@ pub(crate) fn render_handler_output<T: Serialize>(
     };
 
     let presentation = Presentation {
-        template: template.to_string(),
+        command_path: ctx.command_path.join("."),
+        template: template.clone(),
         theme: theme.clone(),
         context_registry: context_registry.clone(),
         template_engine: template_engine.clone(),
+        template_registry: template_registry.cloned(),
         output_mode,
         structured_output_projection: structured_output_projection.cloned(),
         ambiguous_width,

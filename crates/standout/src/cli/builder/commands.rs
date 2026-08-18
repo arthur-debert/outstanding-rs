@@ -9,7 +9,7 @@
 use clap::ArgMatches;
 use serde::Serialize;
 
-use super::{AppBuilder, PendingCommand};
+use super::{inline_template_ref, AppBuilder, PendingCommand, TemplateAbsence, TemplateRef};
 use crate::cli::group::{
     ClosureRecipe, CommandConfig, ErasedConfigRecipe, GroupBuilder, GroupEntry, PassthroughRecipe,
     StructRecipe,
@@ -25,7 +25,7 @@ impl AppBuilder {
     ///
     /// ```rust,ignore
     /// App::builder()
-    ///     .template_dir("templates")
+    ///     .templates_dir("templates")?
     ///     .group("db", |g| g
     ///         .command("migrate", db::migrate)
     ///         .command("backup", db::backup))
@@ -56,7 +56,7 @@ impl AppBuilder {
     /// ```rust,ignore
     /// App::builder()
     ///     .command_with("list", handler, |cfg| cfg
-    ///         .template("custom/list.j2")
+    ///         .template_name("custom/list")
     ///         .pre_dispatch(validate_auth)
     ///         .post_output(copy_to_clipboard))
     ///     .build()
@@ -75,11 +75,15 @@ impl AppBuilder {
         let config = CommandConfig::new(FnHandler::new(handler));
         let mut config = configure(config);
 
-        // Resolve template
-        let template = config
-            .template
-            .clone()
-            .unwrap_or_else(|| self.resolve_template(path));
+        let template = if let Some(absence) = config.template_absence {
+            TemplateRef::Absent(absence)
+        } else if let Some(name) = config.template_name.clone() {
+            TemplateRef::Named(name)
+        } else if let Some(template) = config.template.clone() {
+            inline_template_ref(template, "CommandConfig::template")?
+        } else {
+            TemplateRef::convention(path, &self.template_ext)
+        };
 
         // Register hooks if present
         if let Some(hooks) = config.hooks.take() {
@@ -123,11 +127,15 @@ impl AppBuilder {
 
             match entry {
                 GroupEntry::Command { mut handler } => {
-                    // Resolve template
-                    let template = handler
-                        .template()
-                        .map(String::from)
-                        .unwrap_or_else(|| self.resolve_template(&path));
+                    let template = if let Some(absence) = handler.template_absence() {
+                        TemplateRef::Absent(absence)
+                    } else if let Some(name) = handler.template_name() {
+                        TemplateRef::Named(name.to_string())
+                    } else if let Some(template) = handler.template() {
+                        inline_template_ref(template, "CommandConfig::template")?
+                    } else {
+                        TemplateRef::convention(&path, &self.template_ext)
+                    };
 
                     // Extract and register hooks
                     if let Some(hooks) = handler.take_hooks() {
@@ -163,32 +171,6 @@ impl AppBuilder {
         Ok(())
     }
 
-    /// Resolves a template from a command path using conventions.
-    ///
-    /// Resolution order:
-    /// 1. If template_registry is set, look up by command path (e.g., "db/migrate.j2")
-    /// 2. If template_dir is set, return the file path for runtime loading
-    /// 3. Otherwise return empty string (JSON serialization fallback)
-    pub(crate) fn resolve_template(&self, command_path: &str) -> String {
-        let file_path = command_path.replace('.', "/");
-        let template_name = format!("{}{}", file_path, self.template_ext);
-
-        // First, try to get content from embedded templates
-        if let Some(ref registry) = self.template_registry {
-            if let Ok(content) = registry.get_content(&template_name) {
-                return content;
-            }
-        }
-
-        // Fall back to file path if template_dir is configured
-        if let Some(ref dir) = self.template_dir {
-            return format!("{}/{}", dir.display(), template_name);
-        }
-
-        // No template found - will use JSON serialization in structured modes
-        String::new()
-    }
-
     /// Registers a command handler (closure) with a template.
     ///
     /// The handler will be invoked when the command path matches. The path uses
@@ -220,7 +202,11 @@ impl AppBuilder {
         F: FnMut(&ArgMatches, &CommandContext) -> HandlerResult<T> + 'static,
         T: Serialize + 'static,
     {
-        self.command_handler(path, FnHandler::new(handler), template)
+        self.register_struct_config(
+            path,
+            CommandConfig::new(FnHandler::new(handler)).template(template),
+            "AppBuilder::command",
+        )
     }
 
     /// Registers a struct handler with a template.
@@ -263,10 +249,68 @@ impl AppBuilder {
         H: Handler<Output = T> + 'static,
         T: Serialize + 'static,
     {
-        let template = template.to_string();
+        self.register_struct_config(
+            path,
+            CommandConfig::new(handler).template(template),
+            "AppBuilder::command_handler",
+        )
+    }
 
-        // Create a recipe for deferred closure creation
-        let recipe = StructRecipe::new(handler);
+    /// Registers a struct handler with command configuration.
+    ///
+    /// This is the struct-handler counterpart to [`command_with`](Self::command_with).
+    /// Use it to select a named template, declare template absence, or attach
+    /// hooks and structured-output projection without a placeholder template.
+    pub fn command_handler_with<H, T, C>(
+        self,
+        path: &str,
+        handler: H,
+        configure: C,
+    ) -> Result<Self, SetupError>
+    where
+        H: Handler<Output = T> + 'static,
+        T: Serialize + 'static,
+        C: FnOnce(CommandConfig<H>) -> CommandConfig<H>,
+    {
+        self.register_struct_config(
+            path,
+            configure(CommandConfig::new(handler)),
+            "CommandConfig::template",
+        )
+    }
+
+    fn register_struct_config<H, T>(
+        mut self,
+        path: &str,
+        mut config: CommandConfig<H>,
+        inline_api: &str,
+    ) -> Result<Self, SetupError>
+    where
+        H: Handler<Output = T> + 'static,
+        T: Serialize + 'static,
+    {
+        let template = if let Some(absence) = config.template_absence {
+            TemplateRef::Absent(absence)
+        } else if let Some(name) = config.template_name.take() {
+            TemplateRef::Named(name)
+        } else if let Some(template) = config.template.take() {
+            inline_template_ref(template, inline_api)?
+        } else {
+            TemplateRef::convention(path, &self.template_ext)
+        };
+
+        if let Some(hooks) = config.hooks.take() {
+            self.command_hooks.insert(path.to_string(), hooks);
+        }
+        if let Some(questionnaire) = config.questionnaire.take() {
+            self.questionnaire_commands
+                .insert(path.to_string(), questionnaire);
+        }
+
+        let mut recipe = StructRecipe::new(config.handler);
+        if let Some(projection) = config.structured_output_projection {
+            recipe = recipe.with_structured_output_projection(projection);
+        }
 
         // Check for duplicates
         if self.pending_commands.borrow().contains_key(path) {
@@ -322,7 +366,7 @@ impl AppBuilder {
             path.to_string(),
             PendingCommand {
                 recipe: Box::new(recipe),
-                template: String::new(),
+                template: TemplateRef::Absent(TemplateAbsence::Silent),
             },
         );
 

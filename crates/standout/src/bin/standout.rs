@@ -1988,7 +1988,7 @@ fn build_app() -> Result<standout::cli::App> {
         .styles(embed_styles!("src/styles"))
         .default_theme("{{ project_name }}")
         .command_with("{{ command_name }}", handlers::{{ command_ident }}__handler, |config| {
-            config.template("{{ command_name }}.jinja")
+            config.template_name("{{ command_name }}")
         })?
         .build()?)
 }

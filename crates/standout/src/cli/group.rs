@@ -11,6 +11,7 @@ use std::cell::RefCell;
 use std::collections::HashMap;
 use std::rc::Rc;
 
+use super::builder::{SharedTemplateEngine, TemplateAbsence, TemplateRef};
 use super::dispatch::{render_handler_output, DispatchFn};
 use crate::cli::handler::{CommandContext, FnHandler, Handler, HandlerResult};
 use crate::cli::hooks::{Hooks, RenderedOutput, TextOutput};
@@ -45,6 +46,18 @@ pub(crate) trait CommandRecipe {
     #[allow(dead_code)]
     fn template(&self) -> Option<&str>;
 
+    /// Returns the explicit template registry name, if set.
+    #[allow(dead_code)]
+    fn template_name(&self) -> Option<&str> {
+        None
+    }
+
+    /// Returns the declared reason this command has no template, if any.
+    #[allow(dead_code)]
+    fn template_absence(&self) -> Option<TemplateAbsence> {
+        None
+    }
+
     /// Returns hooks for this command, if set.
     #[allow(dead_code)]
     fn hooks(&self) -> Option<&Hooks>;
@@ -64,9 +77,10 @@ pub(crate) trait CommandRecipe {
     /// `ErasedConfigRecipe` will panic if called more than once (see trait docs).
     fn create_dispatch(
         &self,
-        template: &str,
+        template: &TemplateRef,
         context_registry: &ContextRegistry,
-        template_engine: Rc<Box<dyn standout_render::template::TemplateEngine>>,
+        template_engine: SharedTemplateEngine,
+        template_registry: Option<Rc<crate::TemplateRegistry>>,
     ) -> DispatchFn;
 
     /// Returns the arguments expected by this command handler.
@@ -145,12 +159,13 @@ where
 
     fn create_dispatch(
         &self,
-        template: &str,
+        template: &TemplateRef,
         context_registry: &ContextRegistry,
-        template_engine: Rc<Box<dyn standout_render::template::TemplateEngine>>,
+        template_engine: SharedTemplateEngine,
+        template_registry: Option<Rc<crate::TemplateRegistry>>,
     ) -> DispatchFn {
         let handler = self.handler.clone();
-        let template = template.to_string();
+        let template = template.clone();
         let context_registry = context_registry.clone();
         let structured_output_projection = self.structured_output_projection.clone();
 
@@ -171,6 +186,7 @@ where
                     theme,
                     &context_registry,
                     &template_engine,
+                    template_registry.as_ref(),
                     output_mode,
                     structured_output_projection.as_ref(),
                     ambiguous_width,
@@ -260,12 +276,13 @@ where
 
     fn create_dispatch(
         &self,
-        template: &str,
+        template: &TemplateRef,
         context_registry: &ContextRegistry,
-        template_engine: Rc<Box<dyn standout_render::template::TemplateEngine>>,
+        template_engine: SharedTemplateEngine,
+        template_registry: Option<Rc<crate::TemplateRegistry>>,
     ) -> DispatchFn {
         let handler = self.handler.clone();
-        let template = template.to_string();
+        let template = template.clone();
         let context_registry = context_registry.clone();
         let structured_output_projection = self.structured_output_projection.clone();
 
@@ -286,6 +303,7 @@ where
                     theme,
                     &context_registry,
                     &template_engine,
+                    template_registry.as_ref(),
                     output_mode,
                     structured_output_projection.as_ref(),
                     ambiguous_width,
@@ -317,6 +335,8 @@ pub(crate) struct ErasedConfigRecipe {
     config: RefCell<Option<Box<dyn ErasedCommandConfig>>>,
     #[allow(dead_code)]
     template: Option<String>,
+    template_name: Option<String>,
+    template_absence: Option<TemplateAbsence>,
     #[allow(dead_code)]
     hooks: RefCell<Option<Hooks>>,
 }
@@ -325,10 +345,14 @@ impl ErasedConfigRecipe {
     /// Creates a new recipe from an existing boxed handler (for group registration).
     pub fn from_handler(mut handler: Box<dyn ErasedCommandConfig>) -> Self {
         let template = handler.template().map(String::from);
+        let template_name = handler.template_name().map(String::from);
+        let template_absence = handler.template_absence();
         let hooks = handler.take_hooks();
         Self {
             config: RefCell::new(Some(handler)),
             template,
+            template_name,
+            template_absence,
             hooks: RefCell::new(hooks),
         }
     }
@@ -337,6 +361,14 @@ impl ErasedConfigRecipe {
 impl CommandRecipe for ErasedConfigRecipe {
     fn template(&self) -> Option<&str> {
         self.template.as_deref()
+    }
+
+    fn template_name(&self) -> Option<&str> {
+        self.template_name.as_deref()
+    }
+
+    fn template_absence(&self) -> Option<TemplateAbsence> {
+        self.template_absence
     }
 
     fn hooks(&self) -> Option<&Hooks> {
@@ -354,9 +386,10 @@ impl CommandRecipe for ErasedConfigRecipe {
 
     fn create_dispatch(
         &self,
-        template: &str,
+        template: &TemplateRef,
         context_registry: &ContextRegistry,
-        template_engine: Rc<Box<dyn standout_render::template::TemplateEngine>>,
+        template_engine: SharedTemplateEngine,
+        template_registry: Option<Rc<crate::TemplateRegistry>>,
     ) -> DispatchFn {
         let config = self
             .config
@@ -365,9 +398,10 @@ impl CommandRecipe for ErasedConfigRecipe {
             .expect("ErasedConfigRecipe::create_dispatch called more than once");
         config.register(
             "",
-            template.to_string(),
+            template.clone(),
             context_registry.clone(),
             template_engine,
+            template_registry,
         )
     }
 
@@ -426,9 +460,10 @@ where
 
     fn create_dispatch(
         &self,
-        _template: &str,
+        _template: &TemplateRef,
         _context_registry: &ContextRegistry,
-        _template_engine: Rc<Box<dyn standout_render::template::TemplateEngine>>,
+        _template_engine: SharedTemplateEngine,
+        _template_registry: Option<Rc<crate::TemplateRegistry>>,
     ) -> DispatchFn {
         let handler = self.handler.clone();
 
@@ -460,6 +495,8 @@ where
 pub struct CommandConfig<H> {
     pub(crate) handler: H,
     pub(crate) template: Option<String>,
+    pub(crate) template_name: Option<String>,
+    pub(crate) template_absence: Option<TemplateAbsence>,
     pub(crate) hooks: Option<Hooks>,
     pub(crate) questionnaire: Option<QuestionnaireCommand>,
     pub(crate) structured_output_projection: Option<StructuredOutputProjection>,
@@ -471,18 +508,61 @@ impl<H> CommandConfig<H> {
         Self {
             handler,
             template: None,
+            template_name: None,
+            template_absence: None,
             hooks: None,
             questionnaire: None,
             structured_output_projection: None,
         }
     }
 
-    /// Sets an explicit template for this command.
+    /// Sets explicit inline template source for this command.
     ///
-    /// If not set, the template will be derived from the command path
-    /// using the configured template directory and extension.
+    /// This value is always rendered as MiniJinja source text. Use
+    /// [`template_name`](Self::template_name) to reference a registry entry.
     pub fn template(mut self, template: impl Into<String>) -> Self {
         self.template = Some(template.into());
+        self.template_name = None;
+        self.template_absence = None;
+        self
+    }
+
+    /// Sets an explicit registry template name for this command.
+    ///
+    /// The name resolves through templates registered with `.templates(...)` or
+    /// `.templates_dir(...)`, including extension fallback.
+    pub fn template_name(mut self, name: impl Into<String>) -> Self {
+        self.template = None;
+        self.template_name = Some(name.into());
+        self.template_absence = None;
+        self
+    }
+
+    /// Declares that returned render data is only valid for structured modes.
+    ///
+    /// `auto`, omitted `--output`, and explicit `json` serialize as JSON;
+    /// `yaml`, `xml`, and `csv` use their serializers; `term`, `text`, and
+    /// `term-debug` fail because this command has no human presentation.
+    pub fn structured_only(mut self) -> Self {
+        self.template = None;
+        self.template_name = None;
+        self.template_absence = Some(TemplateAbsence::StructuredOnly);
+        self
+    }
+
+    /// Declares that this command intentionally emits no presentation text.
+    pub fn silent(mut self) -> Self {
+        self.template = None;
+        self.template_name = None;
+        self.template_absence = Some(TemplateAbsence::Silent);
+        self
+    }
+
+    /// Declares that this command's successful output is binary.
+    pub fn binary(mut self) -> Self {
+        self.template = None;
+        self.template_name = None;
+        self.template_absence = Some(TemplateAbsence::Binary);
         self
     }
 
@@ -625,7 +705,7 @@ impl<H> CommandConfig<H> {
     ///         let body: &String = ctx.input("body")?;
     ///         Ok(Output::Render(serde_json::json!({ "body": body })))
     ///     }, |cfg| {
-    ///         cfg.template("create.jinja")
+    ///         cfg.template_name("create")
     ///            .input("body", InputChain::<String>::new()
     ///                .try_source(ArgSource::new("body"))
     ///                .try_source(StdinSource::new())
@@ -851,6 +931,8 @@ pub(crate) enum GroupEntry {
 /// Type-erased command configuration for storage.
 pub(crate) trait ErasedCommandConfig {
     fn template(&self) -> Option<&str>;
+    fn template_name(&self) -> Option<&str>;
+    fn template_absence(&self) -> Option<TemplateAbsence>;
     #[allow(dead_code)]
     fn hooks(&self) -> Option<&Hooks>;
     fn take_hooks(&mut self) -> Option<Hooks>;
@@ -858,9 +940,10 @@ pub(crate) trait ErasedCommandConfig {
     fn register(
         self: Box<Self>,
         path: &str,
-        template: String,
+        template: TemplateRef,
         context_registry: ContextRegistry,
-        template_engine: Rc<Box<dyn standout_render::template::TemplateEngine>>,
+        template_engine: SharedTemplateEngine,
+        template_registry: Option<Rc<crate::TemplateRegistry>>,
     ) -> DispatchFn;
 
     fn expected_args(&self) -> Vec<ExpectedArg>;
@@ -942,7 +1025,7 @@ impl GroupBuilder {
     /// ```rust,ignore
     /// .group("db", |g| g
     ///     .command_with("migrate", handler, |cfg| cfg
-    ///         .template("custom/migrate.j2")
+    ///         .template_name("custom/migrate")
     ///         .pre_dispatch(validate_db)))
     /// ```
     pub fn command_with<F, T, C>(mut self, name: &str, handler: F, configure: C) -> Self
@@ -959,6 +1042,8 @@ impl GroupBuilder {
                 handler: Box::new(ClosureCommandConfig {
                     handler: Rc::new(RefCell::new(config.handler)),
                     template: config.template,
+                    template_name: config.template_name,
+                    template_absence: config.template_absence,
                     hooks: config.hooks,
                     questionnaire: config.questionnaire,
                     structured_output_projection: config.structured_output_projection,
@@ -992,6 +1077,8 @@ impl GroupBuilder {
                 handler: Box::new(StructCommandConfig {
                     handler: Rc::new(RefCell::new(config.handler)),
                     template: config.template,
+                    template_name: config.template_name,
+                    template_absence: config.template_absence,
                     hooks: config.hooks,
                     questionnaire: config.questionnaire,
                     structured_output_projection: config.structured_output_projection,
@@ -1093,6 +1180,8 @@ where
 {
     handler: Rc<RefCell<FnHandler<F, T>>>,
     template: Option<String>,
+    template_name: Option<String>,
+    template_absence: Option<TemplateAbsence>,
     hooks: Option<Hooks>,
     questionnaire: Option<QuestionnaireCommand>,
     structured_output_projection: Option<StructuredOutputProjection>,
@@ -1105,6 +1194,14 @@ where
 {
     fn template(&self) -> Option<&str> {
         self.template.as_deref()
+    }
+
+    fn template_name(&self) -> Option<&str> {
+        self.template_name.as_deref()
+    }
+
+    fn template_absence(&self) -> Option<TemplateAbsence> {
+        self.template_absence
     }
 
     fn hooks(&self) -> Option<&Hooks> {
@@ -1122,9 +1219,10 @@ where
     fn register(
         self: Box<Self>,
         _path: &str,
-        template: String,
+        template: TemplateRef,
         context_registry: ContextRegistry,
-        template_engine: Rc<Box<dyn standout_render::template::TemplateEngine>>,
+        template_engine: SharedTemplateEngine,
+        template_registry: Option<Rc<crate::TemplateRegistry>>,
     ) -> DispatchFn {
         let handler = self.handler;
         let structured_output_projection = self.structured_output_projection;
@@ -1146,6 +1244,7 @@ where
                     theme,
                     &context_registry,
                     &template_engine,
+                    template_registry.as_ref(),
                     output_mode,
                     structured_output_projection.as_ref(),
                     ambiguous_width,
@@ -1167,6 +1266,8 @@ where
 {
     handler: Rc<RefCell<H>>,
     template: Option<String>,
+    template_name: Option<String>,
+    template_absence: Option<TemplateAbsence>,
     hooks: Option<Hooks>,
     questionnaire: Option<QuestionnaireCommand>,
     structured_output_projection: Option<StructuredOutputProjection>,
@@ -1179,6 +1280,14 @@ where
 {
     fn template(&self) -> Option<&str> {
         self.template.as_deref()
+    }
+
+    fn template_name(&self) -> Option<&str> {
+        self.template_name.as_deref()
+    }
+
+    fn template_absence(&self) -> Option<TemplateAbsence> {
+        self.template_absence
     }
 
     fn hooks(&self) -> Option<&Hooks> {
@@ -1196,9 +1305,10 @@ where
     fn register(
         self: Box<Self>,
         _path: &str,
-        template: String,
+        template: TemplateRef,
         context_registry: ContextRegistry,
-        template_engine: Rc<Box<dyn standout_render::template::TemplateEngine>>,
+        template_engine: SharedTemplateEngine,
+        template_registry: Option<Rc<crate::TemplateRegistry>>,
     ) -> DispatchFn {
         let handler = self.handler;
         let structured_output_projection = self.structured_output_projection;
@@ -1220,6 +1330,7 @@ where
                     theme,
                     &context_registry,
                     &template_engine,
+                    template_registry.as_ref(),
                     output_mode,
                     structured_output_projection.as_ref(),
                     ambiguous_width,
@@ -1249,6 +1360,14 @@ where
         None
     }
 
+    fn template_name(&self) -> Option<&str> {
+        None
+    }
+
+    fn template_absence(&self) -> Option<TemplateAbsence> {
+        Some(TemplateAbsence::Silent)
+    }
+
     fn hooks(&self) -> Option<&Hooks> {
         None
     }
@@ -1264,9 +1383,10 @@ where
     fn register(
         self: Box<Self>,
         _path: &str,
-        _template: String,
+        _template: TemplateRef,
         _context_registry: ContextRegistry,
-        _template_engine: Rc<Box<dyn standout_render::template::TemplateEngine>>,
+        _template_engine: SharedTemplateEngine,
+        _template_registry: Option<Rc<crate::TemplateRegistry>>,
     ) -> DispatchFn {
         let handler = self.handler;
 
@@ -1330,9 +1450,9 @@ mod tests {
             CommandConfig::new(FnHandler::new(|_m: &ArgMatches, _ctx: &CommandContext| {
                 Ok(HandlerOutput::Render(json!({})))
             }))
-            .template("custom.j2");
+            .template("custom {{ value }}");
 
-        assert_eq!(config.template, Some("custom.j2".to_string()));
+        assert_eq!(config.template, Some("custom {{ value }}".to_string()));
     }
 
     #[test]

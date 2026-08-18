@@ -41,8 +41,7 @@ use crate::{render_auto, OutputMode, Theme};
 use clap::{Arg, ArgAction, ArgMatches, Command};
 use serde::Serialize;
 use std::cell::RefCell;
-use std::collections::HashMap;
-use std::path::PathBuf;
+use std::collections::{HashMap, HashSet};
 use std::rc::Rc;
 
 use super::default_command::ParseFailure;
@@ -55,10 +54,319 @@ use super::questionnaire::QuestionnaireCommand;
 use super::result::{HelpDisplay, HelpResult};
 use standout_dispatch::verify::ExpectedArg;
 
-/// Stores a pending command recipe along with its resolved template.
+pub(crate) type SharedTemplateEngine =
+    Rc<RefCell<Box<dyn standout_render::template::TemplateEngine>>>;
+
+/// The presentation configuration a command declared.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) enum TemplateRef {
+    /// A named template that must resolve through the template registry.
+    Named(String),
+    /// A convention-derived template name.
+    ///
+    /// These are checked when the application configured templates, but do not
+    /// force structured-only CLIs to annotate every command.
+    Convention(String),
+    /// Inline MiniJinja source carried directly on the command.
+    Inline(String),
+    /// A command that deliberately has no human template.
+    Absent(TemplateAbsence),
+}
+
+/// Why a command has no human template.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum TemplateAbsence {
+    /// The command performs side effects and intentionally emits no output.
+    Silent,
+    /// Rendered data is available only through structured output modes.
+    StructuredOnly,
+    /// The command's success channel is binary data, not presentation text.
+    Binary,
+}
+
+impl TemplateRef {
+    pub(crate) fn inline(template: impl Into<String>) -> Self {
+        Self::Inline(template.into())
+    }
+
+    pub(crate) fn convention(command_path: &str, template_ext: &str) -> Self {
+        let file_path = command_path.replace('.', "/");
+        Self::Convention(format!("{}{}", file_path, template_ext))
+    }
+}
+
+pub(crate) fn inline_template_ref(
+    template: impl Into<String>,
+    api: &str,
+) -> Result<TemplateRef, SetupError> {
+    let template = template.into();
+    if template.is_empty() {
+        return Err(SetupError::Config(format!(
+            "{api} received an empty template; use .silent(), .structured_only(), or .binary() to declare template absence"
+        )));
+    }
+    Ok(TemplateRef::inline(template))
+}
+
+#[derive(Debug, Clone)]
+pub(crate) struct TemplateRefreshError {
+    name: String,
+    location: String,
+    message: String,
+}
+
+impl TemplateRefreshError {
+    fn new(
+        name: impl Into<String>,
+        registry: &TemplateRegistry,
+        message: impl Into<String>,
+    ) -> Self {
+        let name = name.into();
+        Self {
+            location: template_location(registry, &name),
+            name,
+            message: message.into(),
+        }
+    }
+}
+
+impl std::fmt::Display for TemplateRefreshError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "template `{}`{} could not be refreshed: {}",
+            self.name, self.location, self.message
+        )
+    }
+}
+
+impl std::error::Error for TemplateRefreshError {}
+
+pub(crate) fn template_location(registry: &TemplateRegistry, name: &str) -> String {
+    match registry.get(name) {
+        Ok(standout_render::template::ResolvedTemplate::File(path)) => {
+            format!(" at `{}`", path.display())
+        }
+        Ok(standout_render::template::ResolvedTemplate::Inline(_)) | Err(_) => String::new(),
+    }
+}
+
+pub(crate) fn refresh_engine_templates(
+    engine: &mut dyn standout_render::template::TemplateEngine,
+    registry: &TemplateRegistry,
+) -> Result<(), TemplateRefreshError> {
+    for name in registry.names() {
+        let content = registry
+            .get_content(name)
+            .map_err(|error| TemplateRefreshError::new(name, registry, error.to_string()))?;
+        engine
+            .add_template(name, &content)
+            .map_err(|error| TemplateRefreshError::new(name, registry, error.to_string()))?;
+    }
+    Ok(())
+}
+
+pub(crate) fn refresh_named_template(
+    engine: &mut dyn standout_render::template::TemplateEngine,
+    registry: &TemplateRegistry,
+    name: &str,
+) -> Result<(), TemplateRefreshError> {
+    let mut seen = HashSet::new();
+    refresh_template_tree(engine, registry, name, &mut seen)
+}
+
+fn refresh_template_tree(
+    engine: &mut dyn standout_render::template::TemplateEngine,
+    registry: &TemplateRegistry,
+    name: &str,
+    seen: &mut HashSet<String>,
+) -> Result<(), TemplateRefreshError> {
+    if !seen.insert(name.to_string()) {
+        return Ok(());
+    }
+
+    let content = registry
+        .get_content(name)
+        .map_err(|error| TemplateRefreshError::new(name, registry, error.to_string()))?;
+    engine
+        .add_template(name, &content)
+        .map_err(|error| TemplateRefreshError::new(name, registry, error.to_string()))?;
+
+    let dependencies = template_dependencies(&content);
+    if dependencies.dynamic {
+        return refresh_engine_templates(engine, registry);
+    }
+
+    for dependency in dependencies.names {
+        refresh_template_tree(engine, registry, &dependency, seen)?;
+    }
+
+    Ok(())
+}
+
+#[derive(Default)]
+struct TemplateDependencies {
+    names: Vec<String>,
+    dynamic: bool,
+}
+
+fn template_dependencies(source: &str) -> TemplateDependencies {
+    let mut dependencies = TemplateDependencies::default();
+    let mut rest = source;
+
+    while let Some(tag_start) = rest.find("{%") {
+        let after_start = &rest[tag_start + 2..];
+        let Some(tag_end) = after_start.find("%}") else {
+            break;
+        };
+        let tag = after_start[..tag_end].trim();
+        let tag = tag
+            .strip_prefix('-')
+            .or_else(|| tag.strip_prefix('+'))
+            .unwrap_or(tag)
+            .trim_start();
+        let tag = tag
+            .strip_suffix('-')
+            .or_else(|| tag.strip_suffix('+'))
+            .unwrap_or(tag)
+            .trim_end();
+        let mut words = tag.splitn(2, char::is_whitespace);
+        let keyword = words.next().unwrap_or_default();
+        let body = words.next().unwrap_or_default().trim();
+
+        let expression = match keyword {
+            "include" | "extends" | "import" => Some(body),
+            "from" => body
+                .split_once(" import ")
+                .map(|(template, _imports)| template.trim()),
+            _ => None,
+        };
+
+        if matches!(keyword, "include" | "extends" | "import" | "from") {
+            match expression.and_then(|expression| static_template_names(keyword, expression)) {
+                Some(names) => dependencies.names.extend(names),
+                None => dependencies.dynamic = true,
+            }
+        }
+        rest = &after_start[tag_end + 2..];
+    }
+
+    dependencies
+}
+
+fn static_template_names(keyword: &str, expression: &str) -> Option<Vec<String>> {
+    let expression = expression.trim();
+    if keyword == "include" && expression.starts_with('[') {
+        let list_end = expression.find(']')?;
+        let mut names = Vec::new();
+        for item in expression[1..list_end].split(',') {
+            let (name, remainder) = quoted_string(item.trim())?;
+            if !remainder.trim().is_empty() {
+                return None;
+            }
+            names.push(name);
+        }
+        return (!names.is_empty()
+            && is_static_dependency_suffix(keyword, &expression[list_end + 1..]))
+        .then_some(names);
+    }
+
+    let (name, remainder) = quoted_string(expression)?;
+    is_static_dependency_suffix(keyword, remainder).then_some(vec![name])
+}
+
+fn is_static_dependency_suffix(keyword: &str, suffix: &str) -> bool {
+    let suffix = suffix.trim();
+    match keyword {
+        "extends" | "from" => suffix.is_empty(),
+        "import" => suffix.starts_with("as "),
+        "include" => suffix
+            .split_whitespace()
+            .all(|word| matches!(word, "ignore" | "missing" | "with" | "without" | "context")),
+        _ => false,
+    }
+}
+
+fn quoted_string(input: &str) -> Option<(String, &str)> {
+    let mut chars = input.char_indices();
+    let (_, quote) = chars.next()?;
+    if quote != '\'' && quote != '"' {
+        return None;
+    }
+
+    for (index, ch) in chars {
+        if ch == '\\' {
+            return None;
+        }
+        if ch == quote {
+            return Some((
+                input[quote.len_utf8()..index].to_string(),
+                &input[index + ch.len_utf8()..],
+            ));
+        }
+    }
+
+    None
+}
+
+fn missing_template_message(
+    command_path: &str,
+    template_name: &str,
+    registry: Option<&TemplateRegistry>,
+) -> String {
+    let mut message = format!(
+        "command `{command_path}` references template `{template_name}`, but that template is not registered; add it with .templates(...) or .templates_dir(...)"
+    );
+    if let Some(registry) = registry {
+        let suggestions = nearest_template_names(template_name, registry);
+        if !suggestions.is_empty() {
+            message.push_str("; did you mean ");
+            message.push_str(&suggestions.join(", "));
+            message.push('?');
+        }
+    }
+    message
+}
+
+fn nearest_template_names(name: &str, registry: &TemplateRegistry) -> Vec<String> {
+    let mut candidates: Vec<(usize, String)> = registry
+        .names()
+        .map(|candidate| (edit_distance(name, candidate), candidate.to_string()))
+        .filter(|(distance, candidate)| {
+            *distance <= 3 || candidate.contains(name) || name.contains(candidate)
+        })
+        .collect();
+    candidates.sort_by(|left, right| left.0.cmp(&right.0).then_with(|| left.1.cmp(&right.1)));
+    candidates.dedup_by(|left, right| left.1 == right.1);
+    candidates
+        .into_iter()
+        .take(3)
+        .map(|(_, candidate)| format!("`{candidate}`"))
+        .collect()
+}
+
+fn edit_distance(left: &str, right: &str) -> usize {
+    let left: Vec<char> = left.chars().collect();
+    let right: Vec<char> = right.chars().collect();
+    let mut costs: Vec<usize> = (0..=right.len()).collect();
+
+    for (i, left_char) in left.iter().enumerate() {
+        let mut previous = costs[0];
+        costs[0] = i + 1;
+        for (j, right_char) in right.iter().enumerate() {
+            let substitution = previous + usize::from(left_char != right_char);
+            previous = costs[j + 1];
+            costs[j + 1] = (costs[j + 1] + 1).min(costs[j] + 1).min(substitution);
+        }
+    }
+
+    costs[right.len()]
+}
+
+/// Stores a pending command recipe along with its typed template declaration.
 struct PendingCommand {
     recipe: Box<dyn CommandRecipe>,
-    template: String,
+    template: TemplateRef,
 }
 
 /// Main entry point for standout-clap integration.
@@ -121,7 +429,6 @@ pub struct AppBuilder {
     pub(crate) command_hooks: HashMap<String, Hooks>,
     pub(crate) questionnaire_commands: HashMap<String, QuestionnaireCommand>,
     pub(crate) context_registry: ContextRegistry,
-    pub(crate) template_dir: Option<PathBuf>,
     pub(crate) template_ext: String,
     /// Static default command to use when no subcommand is specified
     pub(crate) default_command: Option<String>,
@@ -141,7 +448,7 @@ pub struct AppBuilder {
     /// Optional template engine.
     ///
     /// If not provided, a default MiniJinja engine will be created.
-    pub(crate) template_engine: Rc<Box<dyn standout_render::template::TemplateEngine>>,
+    pub(crate) template_engine: SharedTemplateEngine,
 
     /// Command groups for organized help display.
     pub(crate) help_command_groups: Option<Vec<CommandGroup>>,
@@ -200,14 +507,15 @@ impl AppBuilder {
             command_hooks: HashMap::new(),
             questionnaire_commands: HashMap::new(),
             context_registry: ContextRegistry::new(),
-            template_dir: None,
             template_ext: ".j2".to_string(),
             default_command: None,
             default_command_resolver: None,
             include_framework_templates: true,
             include_framework_styles: true,
             app_state: Rc::new(Extensions::new()),
-            template_engine: Rc::new(Box::new(standout_render::template::MiniJinjaEngine::new())),
+            template_engine: Rc::new(RefCell::new(Box::new(
+                standout_render::template::MiniJinjaEngine::new(),
+            ))),
             help_command_groups: None,
             help_handling: false,
             help_word: false,
@@ -241,11 +549,11 @@ impl AppBuilder {
     ///
     /// let app = App::new()
     ///     .app_state(Metrics { requests: AtomicUsize::new(0) })
-    ///     .command("test", |_m, ctx| {
+    ///     .command_with("test", |_m, ctx| {
     ///         let metrics = ctx.app_state.get_required::<Metrics>()?;
     ///         metrics.requests.fetch_add(1, Ordering::SeqCst);
     ///         Ok(Output::<()>::Silent)
-    ///     }, "").unwrap()
+    ///     }, |cfg| cfg.silent()).unwrap()
     ///     .build()
     ///     .unwrap();
     /// ```
@@ -295,7 +603,7 @@ impl AppBuilder {
         mut self,
         engine: Box<dyn standout_render::template::TemplateEngine>,
     ) -> Self {
-        self.template_engine = Rc::new(engine);
+        self.template_engine = Rc::new(RefCell::new(engine));
         self
     }
 
@@ -320,6 +628,7 @@ impl AppBuilder {
                 &pending.template,
                 context_registry,
                 self.template_engine.clone(),
+                self.template_registry.clone(),
             );
             commands.insert(path.clone(), dispatch);
         }
@@ -342,13 +651,16 @@ impl AppBuilder {
         self.pending_commands.borrow().contains_key(path)
     }
 
-    /// Finalizes the App, resolving themes, loading templates, and preparing
-    /// for dispatch and rendering.
+    /// Finalizes the App, resolving themes, validating typed template
+    /// declarations, loading templates, and preparing for dispatch and
+    /// rendering.
     ///
     /// # Errors
     ///
     /// Returns an error if:
     /// - A `default_theme()` was specified but the theme wasn't found in the stylesheet registry
+    /// - a command references a named template that is not in the template registry
+    /// - a registered template fails to compile
     /// - `command_groups` or topics are configured without `.help_handling(true)`
     /// - a command is registered under the root `help` with `.help_handling(true)`,
     ///   which is the name standout installs its own word under
@@ -383,18 +695,6 @@ impl AppBuilder {
                     self.template_registry = Some(Rc::new(registry));
                 }
             };
-        }
-
-        // Populate engine with templates from registry
-        // We use Rc::get_mut to mutate the engine in-place before sharing it
-        if let Some(registry) = &self.template_registry {
-            if let Some(engine_box) = Rc::get_mut(&mut self.template_engine) {
-                for name in registry.names() {
-                    if let Ok(content) = registry.get_content(name) {
-                        let _ = engine_box.add_template(name, &content);
-                    }
-                }
-            }
         }
 
         // Resolve theme BEFORE finalization
@@ -468,10 +768,56 @@ impl AppBuilder {
             }
         }
 
+        self.validate_command_templates()?;
+
+        // Populate engine with templates from the registry and keep the compile
+        // result. Named renders refresh this cache again so file-backed
+        // templates can hot reload.
+        if let Some(registry) = &self.template_registry {
+            refresh_engine_templates(&mut **self.template_engine.borrow_mut(), registry)
+                .map_err(|error| SetupError::Template(error.to_string()))?;
+        }
+
         // Finalize commands (now theme is resolved and will be captured correctly)
         self.ensure_commands_finalized();
 
         Ok(self)
+    }
+
+    fn validate_command_templates(&self) -> Result<(), SetupError> {
+        for (path, pending) in self.pending_commands.borrow().iter() {
+            let (name, allow_missing_without_templates) = match &pending.template {
+                TemplateRef::Named(name) => (name, false),
+                TemplateRef::Convention(name) => (name, true),
+                TemplateRef::Inline(_) | TemplateRef::Absent(_) => continue,
+            };
+            let Some(registry) = self.template_registry.as_ref() else {
+                if allow_missing_without_templates {
+                    continue;
+                }
+                return Err(SetupError::Template(missing_template_message(
+                    path, name, None,
+                )));
+            };
+            if allow_missing_without_templates && !registry.has_application_templates() {
+                continue;
+            }
+            registry.get_content(name).map_err(|error| {
+                let message = match error {
+                    standout_render::RegistryError::NotFound { .. } => {
+                        missing_template_message(path, name, Some(registry))
+                    }
+                    _ => TemplateRefreshError::new(name, registry, error.to_string()).to_string(),
+                };
+                SetupError::Template(message)
+            })?;
+            if allow_missing_without_templates {
+                let mut engine = self.template_engine.borrow_mut();
+                refresh_named_template(&mut **engine, registry, name)
+                    .map_err(|error| SetupError::Template(error.to_string()))?;
+            }
+        }
+        Ok(())
     }
 
     /// Builds and parses CLI arguments in one step.
@@ -1350,6 +1696,24 @@ fn help_word_command(has_subcommands: bool) -> Command {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn template_dependencies_support_whitespace_controls() {
+        let dependencies = template_dependencies(
+            "{%+ extends 'base' +%}{%- include 'partial' -%}{%+ import 'macros' as macros -%}{%- from 'forms' import field +%}",
+        );
+
+        assert_eq!(dependencies.names, ["base", "partial", "macros", "forms"]);
+        assert!(!dependencies.dynamic);
+    }
+
+    #[test]
+    fn escaped_template_dependency_uses_full_registry_refresh() {
+        let dependencies = template_dependencies(r#"{% include "a\\b" %}"#);
+
+        assert!(dependencies.names.is_empty());
+        assert!(dependencies.dynamic);
+    }
 
     /// A root with a value-taking option, a flag, and a positional — enough
     /// shape for the lexing the scan would have had to reimplement.

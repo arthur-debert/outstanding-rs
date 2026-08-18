@@ -12,7 +12,7 @@ use clap::{Arg, ArgAction, ArgMatches, Command};
 use std::io::Write;
 use std::path::PathBuf;
 
-use super::{AppBuilder, PendingCommand};
+use super::{inline_template_ref, AppBuilder, PendingCommand, TemplateRef};
 use crate::cli::default_command::ParseFailure;
 use crate::cli::dispatch::{
     dispatch, extract_command_path, get_deepest_matches, DispatchOutput, Presentation,
@@ -40,7 +40,7 @@ impl AppBuilder {
     /// use standout::cli::{dispatch, App};
     ///
     /// App::builder()
-    ///     .template_dir("templates")
+    ///     .templates_dir("templates")?
     ///     .commands(dispatch! {
     ///         db: {
     ///             migrate => db::migrate,
@@ -68,10 +68,15 @@ impl AppBuilder {
         for (name, entry) in builder.entries {
             match entry {
                 GroupEntry::Command { mut handler } => {
-                    let template = handler
-                        .template()
-                        .map(String::from)
-                        .unwrap_or_else(|| self.resolve_template(&name));
+                    let template = if let Some(absence) = handler.template_absence() {
+                        TemplateRef::Absent(absence)
+                    } else if let Some(name) = handler.template_name() {
+                        TemplateRef::Named(name.to_string())
+                    } else if let Some(template) = handler.template() {
+                        inline_template_ref(template, "CommandConfig::template")?
+                    } else {
+                        TemplateRef::convention(&name, &self.template_ext)
+                    };
 
                     if let Some(hooks) = handler.take_hooks() {
                         self.command_hooks.insert(name.clone(), hooks);
@@ -1079,7 +1084,11 @@ mod tests {
         use serde_json::json;
 
         let builder = AppBuilder::new()
-            .command("list", |_m, _ctx| Ok(HandlerOutput::Render(json!({}))), "")
+            .command_with(
+                "list",
+                |_m, _ctx| Ok(HandlerOutput::Render(json!({}))),
+                |config| config.structured_only(),
+            )
             .unwrap();
 
         let cmd = Command::new("app")
@@ -1141,7 +1150,11 @@ mod tests {
     #[test]
     fn test_dispatch_silent_result() {
         let builder = AppBuilder::new()
-            .command("quiet", |_m, _ctx| Ok(HandlerOutput::<()>::Silent), "")
+            .command_with(
+                "quiet",
+                |_m, _ctx| Ok(HandlerOutput::<()>::Silent),
+                |config| config.silent(),
+            )
             .unwrap();
 
         let cmd = Command::new("app").subcommand(Command::new("quiet"));
@@ -1156,10 +1169,10 @@ mod tests {
     #[test]
     fn test_dispatch_error_result() {
         let builder = AppBuilder::new()
-            .command(
+            .command_with(
                 "fail",
                 |_m, _ctx| Err::<HandlerOutput<()>, _>(anyhow::anyhow!("something went wrong")),
-                "",
+                |config| config.silent(),
             )
             .unwrap();
 
@@ -1220,7 +1233,11 @@ mod tests {
         use serde_json::json;
 
         let builder = AppBuilder::new()
-            .command("list", |_m, _ctx| Ok(HandlerOutput::Render(json!({}))), "")
+            .command_with(
+                "list",
+                |_m, _ctx| Ok(HandlerOutput::Render(json!({}))),
+                |config| config.structured_only(),
+            )
             .unwrap();
 
         let cmd = Command::new("app")
@@ -1273,12 +1290,12 @@ mod tests {
     #[test]
     fn test_dispatch_pre_dispatch_hook_abort() {
         let builder = AppBuilder::new()
-            .command(
+            .command_with(
                 "list",
                 |_m, _ctx| -> HandlerResult<()> {
                     panic!("Handler should not be called");
                 },
-                "",
+                |config| config.silent(),
             )
             .unwrap()
             .hooks(
@@ -1477,7 +1494,7 @@ mod tests {
     #[test]
     fn test_dispatch_binary_output_with_hook() {
         let builder = AppBuilder::new()
-            .command(
+            .command_with(
                 "export",
                 |_m, _ctx| -> HandlerResult<()> {
                     Ok(HandlerOutput::Binary {
@@ -1485,7 +1502,7 @@ mod tests {
                         filename: "out.bin".into(),
                     })
                 },
-                "",
+                |config| config.binary(),
             )
             .unwrap()
             .hooks(
@@ -2632,14 +2649,14 @@ header:
 
         // Note: No app_state registered
         let builder = AppBuilder::new()
-            .command(
+            .command_with(
                 "list",
                 |_m, ctx| {
                     // This should fail because NotProvided wasn't registered
                     let _missing = ctx.app_state.get_required::<NotProvided>()?;
                     Ok(HandlerOutput::Render(json!({})))
                 },
-                "",
+                |config| config.structured_only(),
             )
             .unwrap();
 

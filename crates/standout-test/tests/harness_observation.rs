@@ -120,12 +120,12 @@ fn a_file_artifact_reports_on_stdout_and_leaves_stderr_silent() {
 
 fn failing_app() -> App {
     App::builder()
-        .command(
+        .command_with(
             "run",
             |_m, _ctx| -> HandlerResult<serde_json::Value> {
                 Err(std::io::Error::other("the handler refused").into())
             },
-            "",
+            |config| config.structured_only(),
         )
         .unwrap()
         .build()
@@ -137,14 +137,14 @@ fn failing_app() -> App {
 /// testable against the framework's own newline termination.
 fn external_failure_app() -> App {
     App::builder()
-        .command(
+        .command_with(
             "run",
             |_m, _ctx| -> HandlerResult<serde_json::Value> {
                 Err(ExternalFailure::new(3, "fatal: not a git repository")
                     .unwrap()
                     .into())
             },
-            "",
+            |config| config.structured_only(),
         )
         .unwrap()
         .build()

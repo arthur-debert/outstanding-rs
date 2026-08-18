@@ -163,7 +163,8 @@ pub fn embed_styles(input: TokenStream) -> TokenStream {
 /// | Attribute | Description | Default |
 /// |-----------|-------------|---------|
 /// | `handler = path` | Handler function | `{handlers}::{snake_case}` |
-/// | `template = "path"` | Template file | `{snake_case}.j2` |
+/// | `template = "source"` | Inline MiniJinja source | None |
+/// | `template_name = "name"` | Registered template name | `{snake_case}.j2` by convention |
 /// | `pre_dispatch = fn` | Pre-dispatch hook | None |
 /// | `post_dispatch = fn` | Post-dispatch hook | None |
 /// | `post_output = fn` | Post-output hook | None |
