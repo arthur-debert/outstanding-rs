@@ -9,6 +9,13 @@ corpus pilot; the corpus cleanup epic (ROC02) mints it in ADR form. It is a
 transcription of decided material, not new design; the serde structs in
 `crates/corpus-runner/src/report.rs` are the schema's executable statement.
 
+Amendment (ROC02-WS03): `schema_version: 3` replaced the single
+isolation-backend word with a per-capability isolation record and dropped the
+producerless `session.attempts` counter; committed schema-2 evidence still
+loads, unrewritten, through the typed historical-report path re-evaluation
+uses. The shape below is the version-2 transcription this ADR minted;
+`report.rs` remains authoritative for the current shape.
+
 The shape:
 
 - `schema_version`, `run_id` — identity.

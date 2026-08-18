@@ -109,10 +109,13 @@ Recorded here as a decision and minted as
 
 ## Decision: the run-report schema
 
-`report.json`, `schema_version: 2` (recorded here and minted as
-[ADR-0024](../docs/adr/0024-the-corpus-run-report-schema.md)).
-Objective results and agent self-assessment are deliberately separate
-sections. The shape:
+`report.json`, `schema_version: 3` (recorded here and minted as
+[ADR-0024](../docs/adr/0024-the-corpus-run-report-schema.md); version 3
+replaced the single `isolation_backend` word with a per-capability
+isolation record and dropped the producerless `session.attempts` counter —
+committed schema-2 evidence still loads, unrewritten, through the typed
+historical-report path re-evaluation uses). Objective results and agent
+self-assessment are deliberately separate sections. The shape:
 
 - `schema_version`, `run_id` — identity.
 - `archetype` — name plus the sha256 of the exact spec text given to the
@@ -123,14 +126,20 @@ sections. The shape:
   give when the tree is dirty), the exact acceptance-suite hash, and the exit
   questionnaire's semantic fingerprint.
 - `evaluation` — whether this was a full run or an isolated re-evaluation,
-  the enforced backend, and the exact produced-binary hash.
-- `blindness` — the protocol statement, environment key set, isolation
-  backend, credential exceptions, and the agent's own account of what it
-  consulted (from the questionnaire).
+  the isolation record of the check boundary (backend, filesystem model,
+  and the policy-derived network state: `denied` when the requested denial
+  is kernel-enforced, `denial-requested-but-unsupported` on Landlock ABI
+  v1, which is filesystem-only — the report says so rather than reading
+  stronger than the kernel guarantee), and the exact produced-binary hash.
+- `blindness` — the protocol statement, environment key set, the isolation
+  record for the agent/build boundary (its network state is
+  `allowed-by-policy`: those phases fetch crates.io), credential
+  exceptions, and the agent's own account of what it consulted (from the
+  questionnaire).
 - `session` — instrumentation: the agent command, wall seconds, exit code,
-  whether the session hit its deadline (`timed_out`), attempts, and
-  turns/token counts when the transcript is Claude Code stream-json; plus
-  the transcript path (always linked, relative to the run directory).
+  whether the session hit its deadline (`timed_out`), and turns/token counts
+  when the transcript is Claude Code stream-json; plus the transcript path
+  (always linked, relative to the run directory).
 - `acceptance` — objective: whether the produced app built, and one entry
   per suite item — `checks` (pass/fail) for the check schema, `cases` for
   roster suites, each carrying the case's `expected` marker and its
@@ -161,7 +170,7 @@ Synthetic CLI archetypes in repository form, each one a package of
 - **`acceptance.toml`** — the objective acceptance suite, written **before any
   implementation exists**. Spec-first is a hard rule: if the criteria are
   written after seeing a result, "did it work" stops being an objective
-  measure. A structural test (`crates/standout-test/tests/corpus_roster.rs`)
+  measure. A structural test (`crates/corpus-runner/tests/corpus_roster.rs`)
   enforces that no implementation lives under `corpus/archetypes/`.
 
 Archetype names double as binary names: the implementer of `gitlike` produces
@@ -209,8 +218,9 @@ stdout_lines_end_with_once = ["<id:name>"] # each suffix ends exactly one non-em
 ```
 
 Besides the cases, a suite may carry a declarative ROB01 matrix. The global
-axes establish the stable planned cells; each command declares whether its
-output is framework-rendered or opaque bytes and may narrow applicability:
+axes are the whole plan: every command runs on every global axis
+combination, and each command declares only whether its output is
+framework-rendered or intentionally opaque bytes:
 
 ```toml
 [invariants]

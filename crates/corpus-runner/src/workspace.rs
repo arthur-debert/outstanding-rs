@@ -15,7 +15,9 @@ use anyhow::{bail, Context};
 use sha2::{Digest, Sha256};
 
 use crate::archetype::Archetype;
+use crate::digest;
 use crate::questionnaire;
+use crate::report::IsolationRecord;
 use crate::sandbox::{self, Policy};
 
 /// The published documentation set: what the mdbook ships, relative to the
@@ -141,6 +143,22 @@ impl Isolation {
         std::fs::create_dir_all(sandbox_root.join("tmp"))
             .map_err(|e| format!("creating check tmp: {e}"))?;
         sandbox::apply(command, &self.policy(sandbox_root, &self.check_home, false))
+    }
+
+    /// The isolation record for the boundary [`Self::apply_agent`] and
+    /// [`Self::apply_build`] install: filesystem enforced, network
+    /// deliberately allowed by policy (both phases fetch crates.io). Kept
+    /// beside the `apply_*` methods so the recorded state can never drift
+    /// from the network flag they actually pass.
+    pub fn agent_capability(&self) -> IsolationRecord {
+        sandbox::capability(true)
+    }
+
+    /// The isolation record for the boundary [`Self::apply_check`] installs
+    /// around acceptance/invariant invocations: a network denial is
+    /// requested, and the record states whether this backend enforced it.
+    pub fn evaluation_capability(&self) -> IsolationRecord {
+        sandbox::capability(false)
     }
 
     /// Proves the source checkout and host home are unreadable from the same
@@ -271,11 +289,7 @@ pub fn docs_digest(docs_root: &Path) -> anyhow::Result<String> {
         hasher.update([0]);
         hasher.update(std::fs::read(docs_root.join(rel))?);
     }
-    Ok(hasher
-        .finalize()
-        .iter()
-        .map(|b| format!("{b:02x}"))
-        .collect())
+    Ok(digest::hex(hasher.finalize()))
 }
 
 /// Collects every regular file under `dir` as a `/`-separated path relative
