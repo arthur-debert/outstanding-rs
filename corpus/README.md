@@ -168,7 +168,7 @@ Synthetic CLI archetypes in repository form, each one a package of
 - **`acceptance.toml`** — the objective acceptance suite, written **before any
   implementation exists**. Spec-first is a hard rule: if the criteria are
   written after seeing a result, "did it work" stops being an objective
-  measure. A structural test (`crates/standout-test/tests/corpus_roster.rs`)
+  measure. A structural test (`crates/corpus-runner/tests/corpus_roster.rs`)
   enforces that no implementation lives under `corpus/archetypes/`.
 
 Archetype names double as binary names: the implementer of `gitlike` produces

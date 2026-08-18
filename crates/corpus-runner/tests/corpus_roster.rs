@@ -4,10 +4,13 @@
 //! formats) is declarative data consumed by the corpus runner, so nothing
 //! compiles it and a typo would otherwise surface only mid-pilot-run. This
 //! suite is the compile step: every roster archetype must carry its three
-//! files, the acceptance suites and manifests must deserialize into the
-//! documented schema exactly (typed structs, unknown keys rejected, every
-//! field's shape checked), cross-references must resolve — manifest `cases`
-//! to acceptance case names, expected-fail `gap`s to the manifest's `[gaps]`
+//! files, every acceptance suite must load through the runner's own parser
+//! ([`CaseSuite::parse`] — the schema's single definition, so a suite cannot
+//! pass this lint and fail the runner or vice versa), the manifests must
+//! deserialize into the documented schema exactly (typed structs, unknown
+//! keys rejected — the manifest types live here because the runner never
+//! parses manifests), cross-references must resolve — manifest `cases` to
+//! acceptance case names, expected-fail `gap`s to the manifest's `[gaps]`
 //! table — and, the corpus's founding rule, no implementation may live
 //! beside the specs (acceptance is written spec-first; blind agents
 //! implement elsewhere). One directory is exempt from roster membership:
@@ -15,176 +18,21 @@
 //! check schema (see `corpus/README.md`, Layout); the no-implementation
 //! rule still covers it.
 //!
-//! It deliberately does NOT run any acceptance case: that is the WS01
-//! runner's job, against a produced binary.
+//! It deliberately does NOT run any acceptance case: that is the runner's
+//! job, against a produced binary.
 
 use std::collections::{BTreeMap, HashSet};
 use std::path::{Path, PathBuf};
 
+use corpus_runner::archetype::CaseSuite;
 use serde::Deserialize;
 
-// --- the documented schema, as types ----------------------------------------
+// --- the manifest schema, as types -------------------------------------------
 //
 // One struct per table in `corpus/README.md`. `deny_unknown_fields` makes the
-// vocabulary closed: a misspelled key fails here, not mid-pilot-run. Fields
-// whose values carry extra rules (positive timeout, resolvable references,
-// pass/fail coupling) get semantic checks on top, below.
-
-#[derive(Deserialize)]
-#[serde(deny_unknown_fields)]
-struct AcceptanceDoc {
-    schema: i64,
-    archetype: String,
-    #[serde(rename = "case")]
-    cases: Vec<AcceptanceCase>,
-    // Optional: the read-only commands the runner's ROB01 invariant matrix
-    // sweeps across output modes (WS04's execution addition to the schema).
-    #[allow(dead_code)] // shape-checked by the typed parse; the runner consumes it
-    invariants: Option<InvariantsDoc>,
-}
-
-#[derive(Deserialize)]
-#[serde(deny_unknown_fields)]
-struct InvariantsDoc {
-    #[allow(dead_code)]
-    modes: Vec<InvariantMode>,
-    #[allow(dead_code)]
-    colors: Vec<ColorState>,
-    #[serde(rename = "theme")]
-    #[allow(dead_code)]
-    themes: Vec<InvariantTheme>,
-    #[serde(rename = "command")]
-    #[allow(dead_code)]
-    commands: Vec<InvariantCommand>,
-}
-
-#[derive(Deserialize)]
-#[serde(rename_all = "lowercase")]
-enum InvariantMode {
-    Text,
-    Term,
-    Json,
-}
-
-#[derive(Deserialize)]
-#[serde(rename_all = "lowercase")]
-enum ColorState {
-    Off,
-    On,
-}
-
-#[derive(Deserialize)]
-#[serde(deny_unknown_fields)]
-struct InvariantTheme {
-    #[allow(dead_code)]
-    name: String,
-    #[allow(dead_code)]
-    env: Option<BTreeMap<String, String>>,
-}
-
-#[derive(Deserialize)]
-#[serde(deny_unknown_fields)]
-struct InvariantCommand {
-    #[allow(dead_code)] // an empty word-list is the naked invocation
-    argv: Vec<String>,
-    #[allow(dead_code)]
-    contract: InvariantContract,
-    #[allow(dead_code)]
-    modes: Option<Vec<InvariantMode>>,
-    #[allow(dead_code)]
-    colors: Option<Vec<ColorState>>,
-    #[allow(dead_code)]
-    themes: Option<Vec<String>>,
-}
-
-#[derive(Deserialize)]
-#[serde(rename_all = "kebab-case")]
-enum InvariantContract {
-    Rendered,
-    OpaqueBytes,
-}
-
-#[derive(Deserialize)]
-#[serde(deny_unknown_fields)]
-struct AcceptanceCase {
-    name: String,
-    #[allow(dead_code)] // grouping is for humans and runner reports, not checks
-    group: Option<String>,
-    stresses: String,
-    expected: Expected,
-    gap: Option<String>,
-    reason: Option<String>,
-    run: Run,
-    expect: Expect,
-}
-
-#[derive(Deserialize, Clone, Copy, PartialEq)]
-#[serde(rename_all = "lowercase")]
-enum Expected {
-    Pass,
-    Fail,
-}
-
-#[derive(Deserialize)]
-#[serde(deny_unknown_fields)]
-struct Run {
-    // Required by the schema; may be empty (a naked default-command line).
-    #[allow(dead_code)]
-    argv: Vec<String>,
-    #[allow(dead_code)]
-    env: Option<BTreeMap<String, String>>,
-    #[allow(dead_code)]
-    tty: Option<Vec<TtyStream>>,
-    #[allow(dead_code)]
-    stdin: Option<String>,
-    #[allow(dead_code)]
-    cwd: Option<String>,
-    // Mandatory: it is the never-hang bound.
-    timeout_seconds: i64,
-    #[allow(dead_code)]
-    files: Option<BTreeMap<String, String>>,
-}
-
-#[derive(Deserialize)]
-#[serde(rename_all = "lowercase")]
-enum TtyStream {
-    Stdin,
-    Stdout,
-    Stderr,
-}
-
-#[derive(Deserialize)]
-#[serde(deny_unknown_fields)]
-struct Expect {
-    exit_code: Option<i64>,
-    stdout: Option<String>,
-    stderr: Option<String>,
-    stdout_json: Option<String>,
-    stdout_contains: Option<Vec<String>>,
-    stderr_contains: Option<Vec<String>>,
-    stdout_not_contains: Option<Vec<String>>,
-    stderr_not_contains: Option<Vec<String>>,
-    stdout_lines_end_with_once: Option<Vec<String>>,
-}
-
-impl Expect {
-    fn assertion_count(&self) -> usize {
-        [
-            self.exit_code.is_some(),
-            self.stdout.is_some(),
-            self.stderr.is_some(),
-            self.stdout_json.is_some(),
-            self.stdout_contains.is_some(),
-            self.stderr_contains.is_some(),
-            self.stdout_not_contains.is_some(),
-            self.stderr_not_contains.is_some(),
-            self.stdout_lines_end_with_once.is_some(),
-        ]
-        .iter()
-        .filter(|present| **present)
-        .count()
-    }
-}
+// vocabulary closed: a misspelled key fails here, not mid-pilot-run. The
+// acceptance case schema is NOT redefined here — it is the runner's
+// `CaseSuite`, parsed and validated by the runner's own rules.
 
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -272,95 +120,19 @@ fn parse<T: serde::de::DeserializeOwned>(path: &Path) -> T {
     })
 }
 
-/// One archetype's acceptance suite: typed parse plus the semantic rules the
-/// types cannot carry. Returns the doc for cross-file checks.
-fn load_acceptance(dir: &Path) -> AcceptanceDoc {
-    let name = dir_name(dir);
-    let doc: AcceptanceDoc = parse(&dir.join("acceptance.toml"));
-    assert_eq!(
-        doc.schema, 1,
-        "{name}: acceptance.toml must declare `schema = 1`"
-    );
-    assert_eq!(
-        doc.archetype, name,
-        "{name}: acceptance.toml `archetype` must match the directory name"
-    );
-    assert!(!doc.cases.is_empty(), "{name}: empty acceptance suite");
-
-    let mut names = HashSet::new();
-    for case in &doc.cases {
-        let ctx = format!("{name}/{}", case.name);
-        assert!(
-            names.insert(case.name.clone()),
-            "{ctx}: duplicate case name"
-        );
-        assert!(
-            case.name
-                .chars()
-                .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-'),
-            "{ctx}: case names are kebab-case"
-        );
-        assert!(
-            !case.stresses.is_empty(),
-            "{ctx}: `stresses` must name the interaction under test"
-        );
-        validate_expected_marker(case, &ctx);
-        validate_run(&case.run, &ctx);
-        validate_expect(&case.expect, &ctx);
-    }
-    doc
+/// One archetype's acceptance suite through the runner's parser — shape and
+/// semantic rules alike come from `CaseSuite::parse`, never a second,
+/// test-local reimplementation. Returns the suite for cross-file checks.
+fn load_acceptance(dir: &Path) -> CaseSuite {
+    let path = dir.join("acceptance.toml");
+    let text = std::fs::read_to_string(&path)
+        .unwrap_or_else(|e| panic!("{} must be readable: {e}", path.display()));
+    CaseSuite::parse(&text, dir_name(dir), &path)
+        .unwrap_or_else(|e| panic!("{} is not a valid acceptance suite: {e:#}", path.display()))
 }
 
-fn case_names(doc: &AcceptanceDoc) -> HashSet<&str> {
-    doc.cases.iter().map(|c| c.name.as_str()).collect()
-}
-
-/// `expected = "pass"` stands alone; `"fail"` carries the gap that owns the
-/// failure and the reason it fails today (the gap resolves against the
-/// manifest's `[gaps]` table in the cross-file check below).
-fn validate_expected_marker(case: &AcceptanceCase, ctx: &str) {
-    match case.expected {
-        Expected::Pass => {
-            assert!(
-                case.gap.is_none() && case.reason.is_none(),
-                "{ctx}: `gap`/`reason` belong to expected-fail cases only"
-            );
-        }
-        Expected::Fail => {
-            assert!(
-                case.gap.as_deref().is_some_and(|g| !g.is_empty()),
-                "{ctx}: expected-fail case must name its `gap`"
-            );
-            assert!(
-                case.reason.as_deref().is_some_and(|r| !r.is_empty()),
-                "{ctx}: expected-fail case must carry a `reason`"
-            );
-        }
-    }
-}
-
-fn validate_run(run: &Run, ctx: &str) {
-    assert!(
-        run.timeout_seconds > 0,
-        "{ctx}: timeout_seconds must be positive (it is the never-hang bound)"
-    );
-}
-
-fn validate_expect(expect: &Expect, ctx: &str) {
-    assert!(
-        expect.assertion_count() > 0,
-        "{ctx}: at least one assertion is required"
-    );
-    // Exact-stdout and semantic-JSON assertions on the same stream contradict
-    // each other's reason to exist; a case picks one.
-    assert!(
-        !(expect.stdout.is_some() && expect.stdout_json.is_some()),
-        "{ctx}: use `stdout` (exact) or `stdout_json` (semantic), not both"
-    );
-    if let Some(json) = &expect.stdout_json {
-        serde_json::from_str::<serde_json::Value>(json)
-            .unwrap_or_else(|e| panic!("{ctx}: stdout_json is not valid JSON: {e}"));
-    }
+fn case_names(suite: &CaseSuite) -> HashSet<&str> {
+    suite.cases.iter().map(|c| c.name.as_str()).collect()
 }
 
 // --- the tests --------------------------------------------------------------
@@ -499,9 +271,9 @@ fn pilot_roster_is_complete() {
 /// bounded-time non-interactive failure path.
 #[test]
 fn formlike_pins_the_bounded_noninteractive_failure() {
-    let doc = load_acceptance(&archetypes_dir().join("formlike"));
+    let suite = load_acceptance(&archetypes_dir().join("formlike"));
     assert!(
-        case_names(&doc).contains("missing-required-answer-under-closed-stdin-fails-fast"),
+        case_names(&suite).contains("missing-required-answer-under-closed-stdin-fails-fast"),
         "formlike must keep its bounded-time non-interactive failure case"
     );
 }
