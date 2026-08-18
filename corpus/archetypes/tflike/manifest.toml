@@ -1,0 +1,55 @@
+# Feature/interaction manifest for `tflike`. Format: corpus/README.md.
+#
+# Gap-only archetype (ROB03-WS03): every acceptance case is expected-fail —
+# the spec deliberately describes capability standout does not have. The
+# byte-precise, runnable-today form of this suite is the workspace crate
+# `corpus/gap-suites` (tests/tflike_diagnostic.rs, tests/tflike_progress.rs),
+# which reports expected-fail under plain `pixi run test`.
+
+[archetype]
+name = "tflike"
+survey = "C4"
+summary = "plan/apply tool: NDJSON diagnostic-and-event stream, detailed exit codes, progress suppression under structured modes"
+status = "partially-past-capability"
+
+[features]
+used = [
+    "dispatch.subcommands",
+    "output-modes",
+    "error-handling.exit-codes",
+]
+
+[[interactions]]
+id = "diagnostic-emission-vs-output-mode"
+stresses = ["structured output mode", "stream diagnostics with ranges", "handler-error routing"]
+description = "A failure while the resolved output mode is structured must serialize into the NDJSON stream (with a range for config errors), never fall back to prose — standout's failures are prose on stderr regardless of mode."
+cases = [
+    "plan-streams-version-changes-and-summary",
+    "plan-deletion-with-explicit-state-streams-a-delete",
+    "config-error-yields-one-error-diagnostic-with-range",
+    "handler-error-yields-stream-diagnostic-not-prose",
+]
+
+[[interactions]]
+id = "exit-code-vocabulary-vs-plan-result"
+stresses = ["detailed exit codes", "plan-result classification"]
+description = "The same command distinguishes empty (0), changed (2), and failed (1) without the caller parsing output; standout's ExitStatus cannot express the succeeded-but-there-are-changes split."
+cases = [
+    "detailed-exitcode-zero-on-empty-plan",
+    "detailed-exitcode-two-on-changes",
+    "detailed-exitcode-one-on-error",
+]
+
+[[interactions]]
+id = "progress-vs-stream-integrity"
+stresses = ["progress reporting", "NDJSON stream integrity", "mode-aware suppression"]
+description = "Apply-lifecycle events ride the same stream the diagnostics do, and human progress must vanish entirely under structured modes — standout has no progress API, so nothing owns that suppression."
+cases = [
+    "apply-lifecycle-events-ride-the-stream",
+    "apply-deletion-emits-lifecycle-and-summary",
+    "progress-silent-under-structured-mode",
+]
+
+[gaps]
+PAR02 = "The machine contract (docs/spec/parity-machine-contract.md): NDJSON stream mode, diagnostics as stream entries with severity and range, -detailed-exitcode's 0/2/1 vocabulary, handler-error-as-diagnostic. The diagnostic-milestone cases are its executable shape; PAR02 is done when they turn green."
+PAR03 = "Terminal citizenship (docs/spec/parity-terminal-citizenship.md): a framework-owned progress seam emitting apply-lifecycle events into the stream and suppressing human progress entirely under structured modes. The progress-milestone cases are its executable shape; PAR03 is done when they turn green."
