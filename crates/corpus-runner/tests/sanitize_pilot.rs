@@ -279,7 +279,10 @@ fn hostname_hits(text: &str, hits: &mut Vec<Hit>) {
             });
         }
     }
-    for (at, _) in text.match_indices(".local") {
+    // DNS names are case-insensitive, so the suffix is matched on `lower`
+    // (`to_ascii_lowercase` preserves byte offsets) while slices come from
+    // the original text, keeping the matched value and excerpt exact.
+    for (at, _) in lower.match_indices(".local") {
         let is_label = |c: char| c.is_ascii_alphanumeric() || c == '-';
         let label_len: usize = text[..at]
             .chars()
@@ -293,7 +296,7 @@ fn hostname_hits(text: &str, hits: &mut Vec<Hit>) {
         if label.contains('-') && label.chars().any(|c| c.is_ascii_alphanumeric()) && bounded_after
         {
             hits.push(Hit {
-                value: format!("{label}.local"),
+                value: text[at - label_len..end].to_string(),
                 shown: format!("mDNS host name: {}", excerpt(text, at - label_len)),
             });
         }
@@ -434,6 +437,7 @@ fn secret_shape_patterns_catch_each_class() {
         "by adebert on the host",
         "uname reports astron.is here",
         "host iMac-de-Arthur.local answering",
+        "host Build-Agent.LOCAL answering",
         "\"hostname\":\"redacted\"",
         "mail carol.smith+x@gmail.com now",
         "token ghp_abcdefghij",
