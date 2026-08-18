@@ -202,7 +202,11 @@ impl AppBuilder {
         F: FnMut(&ArgMatches, &CommandContext) -> HandlerResult<T> + 'static,
         T: Serialize + 'static,
     {
-        self.command_handler(path, FnHandler::new(handler), template)
+        self.register_struct_config(
+            path,
+            CommandConfig::new(FnHandler::new(handler)).template(template),
+            "AppBuilder::command",
+        )
     }
 
     /// Registers a struct handler with a template.
@@ -245,10 +249,68 @@ impl AppBuilder {
         H: Handler<Output = T> + 'static,
         T: Serialize + 'static,
     {
-        let template = inline_template_ref(template, "AppBuilder::command")?;
+        self.register_struct_config(
+            path,
+            CommandConfig::new(handler).template(template),
+            "AppBuilder::command_handler",
+        )
+    }
 
-        // Create a recipe for deferred closure creation
-        let recipe = StructRecipe::new(handler);
+    /// Registers a struct handler with command configuration.
+    ///
+    /// This is the struct-handler counterpart to [`command_with`](Self::command_with).
+    /// Use it to select a named template, declare template absence, or attach
+    /// hooks and structured-output projection without a placeholder template.
+    pub fn command_handler_with<H, T, C>(
+        self,
+        path: &str,
+        handler: H,
+        configure: C,
+    ) -> Result<Self, SetupError>
+    where
+        H: Handler<Output = T> + 'static,
+        T: Serialize + 'static,
+        C: FnOnce(CommandConfig<H>) -> CommandConfig<H>,
+    {
+        self.register_struct_config(
+            path,
+            configure(CommandConfig::new(handler)),
+            "CommandConfig::template",
+        )
+    }
+
+    fn register_struct_config<H, T>(
+        mut self,
+        path: &str,
+        mut config: CommandConfig<H>,
+        inline_api: &str,
+    ) -> Result<Self, SetupError>
+    where
+        H: Handler<Output = T> + 'static,
+        T: Serialize + 'static,
+    {
+        let template = if let Some(absence) = config.template_absence {
+            TemplateRef::Absent(absence)
+        } else if let Some(name) = config.template_name.take() {
+            TemplateRef::Named(name)
+        } else if let Some(template) = config.template.take() {
+            inline_template_ref(template, inline_api)?
+        } else {
+            TemplateRef::convention(path, &self.template_ext)
+        };
+
+        if let Some(hooks) = config.hooks.take() {
+            self.command_hooks.insert(path.to_string(), hooks);
+        }
+        if let Some(questionnaire) = config.questionnaire.take() {
+            self.questionnaire_commands
+                .insert(path.to_string(), questionnaire);
+        }
+
+        let mut recipe = StructRecipe::new(config.handler);
+        if let Some(projection) = config.structured_output_projection {
+            recipe = recipe.with_structured_output_projection(projection);
+        }
 
         // Check for duplicates
         if self.pending_commands.borrow().contains_key(path) {

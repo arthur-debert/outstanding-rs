@@ -53,10 +53,10 @@ fn command_silent_and_binary_success_are_status_zero() {
     assert_eq!(text.output(), Some("ok"));
 
     let silent = App::builder()
-        .command(
+        .command_with(
             "go",
             |_matches, _ctx| -> HandlerResult<()> { Ok(Output::Silent) },
-            "unused",
+            |config| config.silent(),
         )
         .unwrap()
         .build()
@@ -66,7 +66,7 @@ fn command_silent_and_binary_success_are_status_zero() {
     assert_eq!(silent.output(), Some(""));
 
     let binary = App::builder()
-        .command(
+        .command_with(
             "go",
             |_matches, _ctx| -> HandlerResult<()> {
                 Ok(Output::Binary {
@@ -74,7 +74,7 @@ fn command_silent_and_binary_success_are_status_zero() {
                     filename: "data.bin".into(),
                 })
             },
-            "unused",
+            |config| config.binary(),
         )
         .unwrap()
         .build()
@@ -87,12 +87,12 @@ fn command_silent_and_binary_success_are_status_zero() {
 #[test]
 fn handler_and_each_hook_phase_keep_their_origin() {
     let handler = App::builder()
-        .command(
+        .command_with(
             "go",
             |_matches, _ctx| -> HandlerResult<serde_json::Value> {
                 Err(anyhow::anyhow!("handler failed"))
             },
-            "unused",
+            |config| config.structured_only(),
         )
         .unwrap()
         .build()
@@ -134,7 +134,7 @@ fn handler_and_each_hook_phase_keep_their_origin() {
 #[test]
 fn external_failure_metadata_crosses_handler_and_pre_dispatch_seams() {
     let handler = App::builder()
-        .command(
+        .command_with(
             "go",
             |_matches, _ctx| -> HandlerResult<serde_json::Value> {
                 Err(anyhow::Error::new(
@@ -144,7 +144,7 @@ fn external_failure_metadata_crosses_handler_and_pre_dispatch_seams() {
                 )
                 .context("delegated Git invocation"))
             },
-            "unused",
+            |config| config.structured_only(),
         )
         .unwrap()
         .build()
@@ -253,7 +253,7 @@ fn render_and_output_file_write_failures_are_typed() {
     assert_eq!(write.exit_status(), Some(ExitStatus::FAILURE));
 
     let binary_app = App::builder()
-        .command(
+        .command_with(
             "go",
             |_matches, _ctx| -> HandlerResult<()> {
                 Ok(Output::Binary {
@@ -261,7 +261,7 @@ fn render_and_output_file_write_failures_are_typed() {
                     filename: "data.bin".into(),
                 })
             },
-            "unused",
+            |config| config.binary(),
         )
         .unwrap()
         .build()

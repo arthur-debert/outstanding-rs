@@ -152,6 +152,38 @@ fn empty_inline_template_is_rejected() {
 }
 
 #[test]
+fn filename_looking_inline_template_is_rejected() {
+    let error = match App::builder().command(
+        "show",
+        |_m, _ctx| Ok(Output::Render(json!({"name": "Ada"}))),
+        "show.jinja",
+    ) {
+        Ok(_) => panic!("expected filename-looking inline template to fail"),
+        Err(error) => error.to_string(),
+    };
+
+    assert!(error.contains("AppBuilder::command"));
+    assert!(error.contains("show.jinja"));
+    assert!(error.contains("template_name"));
+}
+
+#[test]
+fn path_looking_command_config_template_is_rejected() {
+    let error = match App::builder().command_with(
+        "show",
+        |_m, _ctx| Ok(Output::Render(json!({"name": "Ada"}))),
+        |config| config.template("views/show"),
+    ) {
+        Ok(_) => panic!("expected path-looking inline template to fail"),
+        Err(error) => error.to_string(),
+    };
+
+    assert!(error.contains("CommandConfig::template"));
+    assert!(error.contains("views/show"));
+    assert!(error.contains("template_name"));
+}
+
+#[test]
 fn convention_template_without_application_registry_allows_structured_output() {
     let app = App::builder()
         .command_with(
@@ -197,6 +229,135 @@ fn templates_dir_hot_reloads_between_renders() {
     assert_eq!(first.stdout(), "Hello Ada");
 
     std::fs::write(dir.path().join("show.jinja"), "Bye {{ name }}").unwrap();
+
+    let second = TestHarness::new()
+        .text_output()
+        .run(&app, command(), ["app", "show"]);
+    second.assert_success();
+    assert_eq!(second.stdout(), "Bye Ada");
+}
+
+#[test]
+#[serial]
+fn file_backed_extended_template_hot_reloads_between_renders() {
+    let dir = tempfile::tempdir().unwrap();
+    let base_path = dir.path().join("base.jinja");
+    std::fs::write(&base_path, "Old {% block body %}{% endblock %}").unwrap();
+    std::fs::write(
+        dir.path().join("show.jinja"),
+        "{% extends 'base' %}{% block body %}{{ name }}{% endblock %}",
+    )
+    .unwrap();
+
+    let app = App::builder()
+        .templates_dir(dir.path())
+        .unwrap()
+        .command_with(
+            "show",
+            |_m, _ctx| Ok(Output::Render(json!({"name": "Ada"}))),
+            |config| config.template_name("show"),
+        )
+        .unwrap()
+        .build()
+        .unwrap();
+
+    let first = TestHarness::new()
+        .text_output()
+        .run(&app, command(), ["app", "show"]);
+    first.assert_success();
+    assert_eq!(first.stdout(), "Old Ada");
+
+    std::fs::write(&base_path, "New {% block body %}{% endblock %}").unwrap();
+
+    let second = TestHarness::new()
+        .text_output()
+        .run(&app, command(), ["app", "show"]);
+    second.assert_success();
+    assert_eq!(second.stdout(), "New Ada");
+}
+
+#[test]
+#[serial]
+fn file_backed_imported_template_hot_reloads_between_renders() {
+    let dir = tempfile::tempdir().unwrap();
+    let macros_path = dir.path().join("macros.jinja");
+    std::fs::write(
+        &macros_path,
+        "{% macro greeting(name) %}Hello {{ name }}{% endmacro %}",
+    )
+    .unwrap();
+    std::fs::write(
+        dir.path().join("show.jinja"),
+        "{% import 'macros' as macros %}{{ macros.greeting(name) }}",
+    )
+    .unwrap();
+
+    let app = App::builder()
+        .templates_dir(dir.path())
+        .unwrap()
+        .command_with(
+            "show",
+            |_m, _ctx| Ok(Output::Render(json!({"name": "Ada"}))),
+            |config| config.template_name("show"),
+        )
+        .unwrap()
+        .build()
+        .unwrap();
+
+    let first = TestHarness::new()
+        .text_output()
+        .run(&app, command(), ["app", "show"]);
+    first.assert_success();
+    assert_eq!(first.stdout(), "Hello Ada");
+
+    std::fs::write(
+        &macros_path,
+        "{% macro greeting(name) %}Bye {{ name }}{% endmacro %}",
+    )
+    .unwrap();
+
+    let second = TestHarness::new()
+        .text_output()
+        .run(&app, command(), ["app", "show"]);
+    second.assert_success();
+    assert_eq!(second.stdout(), "Bye Ada");
+}
+
+#[test]
+#[serial]
+fn file_backed_dynamic_include_hot_reloads_between_renders() {
+    let dir = tempfile::tempdir().unwrap();
+    let partial_path = dir.path().join("partial.jinja");
+    std::fs::write(&partial_path, "Hello {{ name }}").unwrap();
+    std::fs::write(
+        dir.path().join("show.jinja"),
+        "{% include partial ~ suffix %}",
+    )
+    .unwrap();
+
+    let app = App::builder()
+        .templates_dir(dir.path())
+        .unwrap()
+        .command_with(
+            "show",
+            |_m, _ctx| {
+                Ok(Output::Render(
+                    json!({"name": "Ada", "partial": "partial", "suffix": ""}),
+                ))
+            },
+            |config| config.template_name("show"),
+        )
+        .unwrap()
+        .build()
+        .unwrap();
+
+    let first = TestHarness::new()
+        .text_output()
+        .run(&app, command(), ["app", "show"]);
+    first.assert_success();
+    assert_eq!(first.stdout(), "Hello Ada");
+
+    std::fs::write(&partial_path, "Bye {{ name }}").unwrap();
 
     let second = TestHarness::new()
         .text_output()

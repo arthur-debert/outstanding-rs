@@ -189,12 +189,12 @@ fn harness_exposes_typed_clap_and_handler_outcomes() {
     usage.assert_error_kind(RunErrorKind::ClapUsage);
 
     let failing = App::builder()
-        .command(
+        .command_with(
             "fail",
             |_matches, _ctx| -> HandlerResult<serde_json::Value> {
                 Err(std::io::Error::other("boom").into())
             },
-            "unused",
+            |config| config.structured_only(),
         )
         .unwrap()
         .build()
@@ -235,7 +235,7 @@ fn harness_answers_a_version_declared_on_the_builder() {
 #[serial]
 fn harness_exposes_external_failure_payload_status_and_origin() {
     let app = App::builder()
-        .command(
+        .command_with(
             "external",
             |_matches, _ctx| -> HandlerResult<serde_json::Value> {
                 Err(
@@ -244,7 +244,7 @@ fn harness_exposes_external_failure_payload_status_and_origin() {
                         .into(),
                 )
             },
-            "unused",
+            |config| config.structured_only(),
         )
         .unwrap()
         .command(

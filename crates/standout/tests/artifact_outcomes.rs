@@ -457,7 +457,7 @@ fn a_binary_filename_still_authorizes_no_write() {
 
     let result = App::builder()
         .output_file_flag(Some("output-file-path"))
-        .command(
+        .command_with(
             "export",
             |_matches, _ctx| -> HandlerResult<ExportReport> {
                 Ok(Output::Binary {
@@ -465,7 +465,7 @@ fn a_binary_filename_still_authorizes_no_write() {
                     filename: "data.bin".into(),
                 })
             },
-            "unused",
+            |config| config.binary(),
         )
         .unwrap()
         .build()
@@ -486,7 +486,7 @@ fn binary_output_still_honors_the_explicit_override() {
 
     let result = App::builder()
         .output_file_flag(Some("output-file-path"))
-        .command(
+        .command_with(
             "export",
             |_matches, _ctx| -> HandlerResult<ExportReport> {
                 Ok(Output::Binary {
@@ -494,7 +494,7 @@ fn binary_output_still_honors_the_explicit_override() {
                     filename: "data.bin".into(),
                 })
             },
-            "unused",
+            |config| config.binary(),
         )
         .unwrap()
         .build()

@@ -1084,10 +1084,10 @@ mod tests {
         use serde_json::json;
 
         let builder = AppBuilder::new()
-            .command(
+            .command_with(
                 "list",
                 |_m, _ctx| Ok(HandlerOutput::Render(json!({}))),
-                "unused",
+                |config| config.structured_only(),
             )
             .unwrap();
 
@@ -1150,10 +1150,10 @@ mod tests {
     #[test]
     fn test_dispatch_silent_result() {
         let builder = AppBuilder::new()
-            .command(
+            .command_with(
                 "quiet",
                 |_m, _ctx| Ok(HandlerOutput::<()>::Silent),
-                "unused",
+                |config| config.silent(),
             )
             .unwrap();
 
@@ -1169,10 +1169,10 @@ mod tests {
     #[test]
     fn test_dispatch_error_result() {
         let builder = AppBuilder::new()
-            .command(
+            .command_with(
                 "fail",
                 |_m, _ctx| Err::<HandlerOutput<()>, _>(anyhow::anyhow!("something went wrong")),
-                "unused",
+                |config| config.silent(),
             )
             .unwrap();
 
@@ -1233,10 +1233,10 @@ mod tests {
         use serde_json::json;
 
         let builder = AppBuilder::new()
-            .command(
+            .command_with(
                 "list",
                 |_m, _ctx| Ok(HandlerOutput::Render(json!({}))),
-                "unused",
+                |config| config.structured_only(),
             )
             .unwrap();
 
@@ -1290,12 +1290,12 @@ mod tests {
     #[test]
     fn test_dispatch_pre_dispatch_hook_abort() {
         let builder = AppBuilder::new()
-            .command(
+            .command_with(
                 "list",
                 |_m, _ctx| -> HandlerResult<()> {
                     panic!("Handler should not be called");
                 },
-                "unused",
+                |config| config.silent(),
             )
             .unwrap()
             .hooks(
@@ -1494,7 +1494,7 @@ mod tests {
     #[test]
     fn test_dispatch_binary_output_with_hook() {
         let builder = AppBuilder::new()
-            .command(
+            .command_with(
                 "export",
                 |_m, _ctx| -> HandlerResult<()> {
                     Ok(HandlerOutput::Binary {
@@ -1502,7 +1502,7 @@ mod tests {
                         filename: "out.bin".into(),
                     })
                 },
-                "unused",
+                |config| config.binary(),
             )
             .unwrap()
             .hooks(
@@ -1601,7 +1601,7 @@ mod tests {
             |_m, _ctx| {
                 panic!("Handler should not be called");
             },
-            "unused",
+            "",
         );
 
         assert!(result.is_err());
@@ -1650,7 +1650,7 @@ mod tests {
             "test",
             sub_matches,
             |_m, _ctx| Ok(HandlerOutput::Silent),
-            "unused",
+            "",
         );
 
         assert!(result.is_ok());
@@ -1684,7 +1684,7 @@ mod tests {
                     filename: "data.bin".into(),
                 })
             },
-            "unused",
+            "",
         );
 
         assert!(result.is_ok());
@@ -2649,14 +2649,14 @@ header:
 
         // Note: No app_state registered
         let builder = AppBuilder::new()
-            .command(
+            .command_with(
                 "list",
                 |_m, ctx| {
                     // This should fail because NotProvided wasn't registered
                     let _missing = ctx.app_state.get_required::<NotProvided>()?;
                     Ok(HandlerOutput::Render(json!({})))
                 },
-                "unused",
+                |config| config.structured_only(),
             )
             .unwrap();
 

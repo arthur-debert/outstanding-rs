@@ -37,7 +37,7 @@ use crate::topics::{
     display_with_pager, render_topic, render_topics_list, TopicRegistry, TopicRenderConfig,
 };
 use crate::TemplateRegistry;
-use crate::{render_auto, OutputMode, Theme};
+use crate::{render_auto, OutputMode, Theme, TEMPLATE_EXTENSIONS};
 use clap::{Arg, ArgAction, ArgMatches, Command};
 use serde::Serialize;
 use std::cell::RefCell;
@@ -105,7 +105,28 @@ pub(crate) fn inline_template_ref(
             "{api} received an empty template; use .silent(), .structured_only(), or .binary() to declare template absence"
         )));
     }
+    if looks_like_template_name(&template) {
+        return Err(SetupError::Config(format!(
+            "{api} received `{template}`, which looks like a registry template name, but this API accepts inline MiniJinja source; use .template_name(...) on a command configuration to reference a registered template"
+        )));
+    }
     Ok(TemplateRef::inline(template))
+}
+
+fn looks_like_template_name(template: &str) -> bool {
+    let template = template.trim();
+    let contains_template_syntax =
+        template.contains("{{") || template.contains("{%") || template.contains("{#");
+    let path_like = (template.contains('/') || template.contains('\\'))
+        && !template.chars().any(char::is_whitespace)
+        && !template.contains('[')
+        && !template.contains(']');
+
+    !contains_template_syntax
+        && (TEMPLATE_EXTENSIONS
+            .iter()
+            .any(|extension| template.ends_with(extension))
+            || path_like)
 }
 
 #[derive(Debug, Clone)]
@@ -192,15 +213,26 @@ fn refresh_template_tree(
         .add_template(name, &content)
         .map_err(|error| TemplateRefreshError::new(name, registry, error.to_string()))?;
 
-    for include in literal_includes(&content) {
-        refresh_template_tree(engine, registry, &include, seen)?;
+    let dependencies = template_dependencies(&content);
+    if dependencies.dynamic {
+        return refresh_engine_templates(engine, registry);
+    }
+
+    for dependency in dependencies.names {
+        refresh_template_tree(engine, registry, &dependency, seen)?;
     }
 
     Ok(())
 }
 
-fn literal_includes(source: &str) -> Vec<String> {
-    let mut includes = Vec::new();
+#[derive(Default)]
+struct TemplateDependencies {
+    names: Vec<String>,
+    dynamic: bool,
+}
+
+fn template_dependencies(source: &str) -> TemplateDependencies {
+    let mut dependencies = TemplateDependencies::default();
     let mut rest = source;
 
     while let Some(tag_start) = rest.find("{%") {
@@ -209,47 +241,89 @@ fn literal_includes(source: &str) -> Vec<String> {
             break;
         };
         let tag = after_start[..tag_end].trim();
-        if let Some(include) = tag.strip_prefix("include") {
-            includes.extend(quoted_strings(include));
+        let mut words = tag.splitn(2, char::is_whitespace);
+        let keyword = words.next().unwrap_or_default();
+        let body = words.next().unwrap_or_default().trim();
+
+        let expression = match keyword {
+            "include" | "extends" | "import" => Some(body),
+            "from" => body
+                .split_once(" import ")
+                .map(|(template, _imports)| template.trim()),
+            _ => None,
+        };
+
+        if matches!(keyword, "include" | "extends" | "import" | "from") {
+            match expression.and_then(|expression| static_template_names(keyword, expression)) {
+                Some(names) => dependencies.names.extend(names),
+                None => dependencies.dynamic = true,
+            }
         }
         rest = &after_start[tag_end + 2..];
     }
 
-    includes
+    dependencies
 }
 
-fn quoted_strings(input: &str) -> Vec<String> {
-    let mut quoted = Vec::new();
-    let mut chars = input.char_indices().peekable();
+fn static_template_names(keyword: &str, expression: &str) -> Option<Vec<String>> {
+    let expression = expression.trim();
+    if keyword == "include" && expression.starts_with('[') {
+        let list_end = expression.find(']')?;
+        let mut names = Vec::new();
+        for item in expression[1..list_end].split(',') {
+            let (name, remainder) = quoted_string(item.trim())?;
+            if !remainder.trim().is_empty() {
+                return None;
+            }
+            names.push(name);
+        }
+        return (!names.is_empty()
+            && is_static_dependency_suffix(keyword, &expression[list_end + 1..]))
+        .then_some(names);
+    }
 
-    while let Some((start, quote)) = chars.next() {
-        if quote != '\'' && quote != '"' {
+    let (name, remainder) = quoted_string(expression)?;
+    is_static_dependency_suffix(keyword, remainder).then_some(vec![name])
+}
+
+fn is_static_dependency_suffix(keyword: &str, suffix: &str) -> bool {
+    let suffix = suffix.trim();
+    match keyword {
+        "extends" | "from" => suffix.is_empty(),
+        "import" => suffix.starts_with("as "),
+        "include" => suffix
+            .split_whitespace()
+            .all(|word| matches!(word, "ignore" | "missing" | "with" | "without" | "context")),
+        _ => false,
+    }
+}
+
+fn quoted_string(input: &str) -> Option<(String, &str)> {
+    let mut chars = input.char_indices();
+    let (_, quote) = chars.next()?;
+    if quote != '\'' && quote != '"' {
+        return None;
+    }
+
+    let mut escaped = false;
+    for (index, ch) in chars {
+        if escaped {
+            escaped = false;
             continue;
         }
-
-        let mut escaped = false;
-        let mut end = None;
-        for (index, ch) in chars.by_ref() {
-            if escaped {
-                escaped = false;
-                continue;
-            }
-            if ch == '\\' {
-                escaped = true;
-                continue;
-            }
-            if ch == quote {
-                end = Some(index);
-                break;
-            }
+        if ch == '\\' {
+            escaped = true;
+            continue;
         }
-
-        if let Some(end) = end {
-            quoted.push(input[start + quote.len_utf8()..end].to_string());
+        if ch == quote {
+            return Some((
+                input[quote.len_utf8()..index].to_string(),
+                &input[index + ch.len_utf8()..],
+            ));
         }
     }
 
-    quoted
+    None
 }
 
 fn missing_template_message(
