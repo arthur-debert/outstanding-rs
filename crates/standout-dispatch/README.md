@@ -2,7 +2,7 @@
 
 Command dispatch with strict separation of command logic and presentation for CLI applications.
 
-```rust
+```rust,ignore
 use standout_dispatch::{CommandContext, HandlerResult, Output};
 
 // Handler returns data, not strings

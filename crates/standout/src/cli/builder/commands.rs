@@ -436,7 +436,7 @@ impl AppBuilder {
         self
     }
 
-    fn register_command_hooks(
+    pub(super) fn register_command_hooks(
         &mut self,
         path: &str,
         hooks: Hooks,
@@ -463,11 +463,11 @@ impl AppBuilder {
                 .insert((path.to_string(), phase), source);
         }
 
-        let hooks = match self.command_hooks.remove(path) {
-            Some(existing) => existing.append(hooks),
-            None => hooks,
+        let (key, hooks) = match self.command_hooks.remove_entry(path) {
+            Some((key, existing)) => (key, existing.append(hooks)),
+            None => (path.to_string(), hooks),
         };
-        self.command_hooks.insert(path.to_string(), hooks);
+        self.command_hooks.insert(key, hooks);
         Ok(())
     }
 }
@@ -613,6 +613,96 @@ mod tests {
                     })
                 },
             )
+            .unwrap()
+            .build()
+            .unwrap();
+
+        let cmd = Command::new("app").subcommand(Command::new("list"));
+        let matches = cmd.try_get_matches_from(["app", "list"]).unwrap();
+        let result = builder.dispatch(matches, OutputMode::Text);
+
+        assert!(result.is_handled());
+        assert_eq!(result.output(), Some("true"));
+        assert_eq!(calls.load(Ordering::SeqCst), 2);
+    }
+
+    #[test]
+    fn test_commands_and_builder_hooks_same_phase_errors_in_either_order() {
+        use crate::cli::hooks::{Hooks, RenderedOutput};
+        use serde_json::json;
+
+        let error = match AppBuilder::new()
+            .hooks("list", Hooks::new().pre_dispatch(|_, _| Ok(())))
+            .commands(|g| {
+                g.command_with(
+                    "list",
+                    |_m, _ctx| Ok(HandlerOutput::Render(json!({"ok": true}))),
+                    |cfg| cfg.template("{{ ok }}").pre_dispatch(|_, _| Ok(())),
+                )
+            }) {
+            Ok(_) => panic!("expected duplicate hook registration to fail"),
+            Err(error) => error.to_string(),
+        };
+
+        assert!(error.contains("command `list`"));
+        assert!(error.contains("pre-dispatch"));
+        assert!(error.contains("CommandConfig"));
+        assert!(error.contains("AppBuilder::hooks"));
+
+        let builder = AppBuilder::new()
+            .commands(|g| {
+                g.command_with(
+                    "list",
+                    |_m, _ctx| Ok(HandlerOutput::Render(json!({"ok": true}))),
+                    |cfg| {
+                        cfg.template("{{ ok }}")
+                            .post_output(|_, _, output: RenderedOutput| Ok(output))
+                    },
+                )
+            })
+            .unwrap()
+            .hooks("list", Hooks::new().post_output(|_, _, output| Ok(output)));
+
+        let error = match builder.build() {
+            Ok(_) => panic!("expected duplicate hook registration to fail"),
+            Err(error) => error.to_string(),
+        };
+
+        assert!(error.contains("command `list`"));
+        assert!(error.contains("post-output"));
+    }
+
+    #[test]
+    fn test_commands_and_builder_hooks_different_phases_are_combined() {
+        use crate::cli::hooks::{Hooks, RenderedOutput};
+        use serde_json::json;
+        use std::sync::atomic::{AtomicUsize, Ordering};
+        use std::sync::Arc;
+
+        let calls = Arc::new(AtomicUsize::new(0));
+        let pre_calls = calls.clone();
+        let post_calls = calls.clone();
+
+        let builder = AppBuilder::new()
+            .hooks(
+                "list",
+                Hooks::new().post_output(move |_, _, output: RenderedOutput| {
+                    post_calls.fetch_add(1, Ordering::SeqCst);
+                    Ok(output)
+                }),
+            )
+            .commands(|g| {
+                g.command_with(
+                    "list",
+                    |_m, _ctx| Ok(HandlerOutput::Render(json!({"ok": true}))),
+                    move |cfg| {
+                        cfg.template("{{ ok }}").pre_dispatch(move |_, _| {
+                            pre_calls.fetch_add(1, Ordering::SeqCst);
+                            Ok(())
+                        })
+                    },
+                )
+            })
             .unwrap()
             .build()
             .unwrap();
