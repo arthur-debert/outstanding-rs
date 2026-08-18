@@ -838,12 +838,12 @@ mod tests {
                 })
             });
 
-        let builder = builder.unwrap().build().unwrap();
+        let app = builder.unwrap().build().unwrap();
 
         let cmd =
             Command::new("app").subcommand(Command::new("db").subcommand(Command::new("migrate")));
         let matches = cmd.try_get_matches_from(["app", "db", "migrate"]).unwrap();
-        let result = builder.dispatch(matches, OutputMode::Text);
+        let result = app.dispatch(matches, OutputMode::Text);
 
         assert_eq!(result.output(), Some("true"));
     }

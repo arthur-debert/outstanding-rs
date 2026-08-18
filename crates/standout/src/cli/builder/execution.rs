@@ -12,7 +12,9 @@ use clap::{Arg, ArgAction, ArgMatches, Command};
 use std::io::Write;
 use std::path::PathBuf;
 
-use super::{inline_template_ref, App, AppBuilder, PendingCommand, TemplateRef};
+use super::{
+    inline_template_ref, App, AppBuilder, HookRegistrationSource, PendingCommand, TemplateRef,
+};
 use crate::cli::default_command::ParseFailure;
 use crate::cli::dispatch::{
     dispatch, extract_command_path, get_deepest_matches, DispatchOutput, Presentation,
@@ -53,6 +55,11 @@ impl AppBuilder {
     ///
     /// The closure receives an empty [`GroupBuilder`] and should return it with
     /// commands added. Each top-level entry becomes a command or group.
+    ///
+    /// Top-level command hooks declared here use the same conflict rules as
+    /// [`command_with`](Self::command_with): a command can collect different
+    /// phases from `CommandConfig` and [`hooks`](Self::hooks), but the same
+    /// phase cannot be registered through both APIs.
     pub fn commands<F>(mut self, configure: F) -> Result<Self, SetupError>
     where
         F: FnOnce(GroupBuilder) -> GroupBuilder,
@@ -79,7 +86,11 @@ impl AppBuilder {
                     };
 
                     if let Some(hooks) = handler.take_hooks() {
-                        self.command_hooks.insert(name.clone(), hooks);
+                        self.register_command_hooks(
+                            &name,
+                            hooks,
+                            HookRegistrationSource::CommandConfig,
+                        )?;
                     }
                     if let Some(questionnaire) = handler.take_questionnaire() {
                         self.questionnaire_commands

@@ -91,7 +91,7 @@ fn list_handler(_m: &ArgMatches, _ctx: &CommandContext) -> HandlerResult<Vec<Ite
 ### Step 3: Set Up Dispatch for That Command
 
 ```rust
-use standout_dispatch::{FnHandler, from_fn, extract_command_path, path_to_string};
+use standout_dispatch::{FnHandler, Handler, extract_command_path, path_to_string};
 
 fn main() {
     let cmd = build_clap_command();  // Your existing clap definition
@@ -101,12 +101,10 @@ fn main() {
     // Dispatch-managed command
     if path_to_string(&path) == "list" {
         let handler = FnHandler::new(list_handler);
-        let render = from_fn(|data, _| Ok(serde_json::to_string_pretty(data)?));
 
         let ctx = CommandContext { command_path: path };
         if let Ok(Output::Render(data)) = handler.handle(&matches, &ctx) {
-            let json = serde_json::to_value(&data).unwrap();
-            println!("{}", render(&json, "list").unwrap());
+            println!("{}", serde_json::to_string_pretty(&data).unwrap());
         }
         return;
     }
@@ -278,7 +276,6 @@ fn main() {
 
 fn dispatch_if_managed(matches: &ArgMatches, path: &[String]) -> Option<()> {
     let ctx = CommandContext { command_path: path.to_vec() };
-    let render = from_fn(|data, _| Ok(serde_json::to_string_pretty(data)?));
 
     let result = match path_to_string(path).as_str() {
         "list" => list_handler(matches, &ctx),
@@ -288,8 +285,7 @@ fn dispatch_if_managed(matches: &ArgMatches, path: &[String]) -> Option<()> {
 
     match result {
         Ok(Output::Render(data)) => {
-            let json = serde_json::to_value(&data).ok()?;
-            println!("{}", render(&json, "").ok()?);
+            println!("{}", serde_json::to_string_pretty(&data).ok()?);
         }
         Ok(Output::Silent) => {}
         Ok(Output::Binary { data, filename }) => {
