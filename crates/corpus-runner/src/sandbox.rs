@@ -200,24 +200,40 @@ pub fn system_read_roots() -> Vec<PathBuf> {
     // Permit PATH directories read-only. If one lives beneath an explicitly
     // denied source/home root, the macOS profile admits only this narrower
     // subtree; Landlock's default-deny model likewise adds only this path.
-    // A PATH entry's sibling `lib` is admitted with it: relocatable
-    // toolchains (rustup-less pixi/conda envs) resolve their dylibs and
-    // sysroot through `bin/../lib`, so a `bin` admitted without its `lib`
-    // yields an rustc that launches and then aborts loading librustc_driver.
+    // A PATH entry named `bin`/`sbin` also admits its sibling `lib`:
+    // relocatable toolchains (rustup-less pixi/conda envs) resolve their
+    // dylibs and sysroot through `bin/../lib`, so a `bin` admitted without
+    // its `lib` yields an rustc that launches and then aborts loading
+    // librustc_driver. The name check keeps this narrow: an arbitrary PATH
+    // entry (e.g. `$HOME/bin` where `bin` is just a personal scripts dir)
+    // still only admits a sibling `lib` when the directory is actually named
+    // `bin`/`sbin`, not any directory that happens to have a `lib` sibling.
     if let Some(path) = std::env::var_os("PATH") {
         for dir in std::env::split_paths(&path) {
             if !dir.is_dir() {
                 continue;
             }
-            if let Some(lib) = dir.parent().map(|parent| parent.join("lib")) {
-                if lib.is_dir() {
-                    roots.push(lib);
-                }
+            if let Some(lib) = toolchain_sibling_lib(&dir) {
+                roots.push(lib);
             }
             roots.push(dir);
         }
     }
     existing(roots)
+}
+
+/// The sibling `lib` directory for a PATH entry, admitted only when the
+/// entry is itself named `bin`/`sbin` (the toolchain layout this targets)
+/// and that sibling actually exists. Kept as a pure, name-gated helper so an
+/// unrelated PATH entry (any directory not named `bin`/`sbin`) never widens
+/// the sandbox's read surface to its sibling directories.
+fn toolchain_sibling_lib(dir: &Path) -> Option<PathBuf> {
+    match dir.file_name().and_then(|name| name.to_str()) {
+        Some("bin") | Some("sbin") => {}
+        _ => return None,
+    }
+    let lib = dir.parent()?.join("lib");
+    lib.is_dir().then_some(lib)
 }
 
 #[cfg(target_os = "macos")]
@@ -404,5 +420,33 @@ mod tests {
             &["/home/runner/work/project"],
         );
         validate_denied_boundaries(&policy).unwrap();
+    }
+
+    #[test]
+    fn toolchain_sibling_lib_admits_only_a_bin_or_sbin_entrys_lib() {
+        let root = tempfile::tempdir().unwrap();
+
+        // `envs/default/bin` with a `lib` sibling: the relocatable-toolchain
+        // shape this is meant to admit.
+        let toolchain = root.path().join("envs/default");
+        std::fs::create_dir_all(toolchain.join("bin")).unwrap();
+        std::fs::create_dir_all(toolchain.join("lib")).unwrap();
+        assert_eq!(
+            toolchain_sibling_lib(&toolchain.join("bin")),
+            Some(toolchain.join("lib"))
+        );
+
+        // An arbitrary PATH entry that is not named `bin`/`sbin` (e.g. a
+        // personal scripts directory) must not leak its sibling `lib`, even
+        // when one exists.
+        let scripts = root.path().join("home").join("scripts");
+        std::fs::create_dir_all(&scripts).unwrap();
+        std::fs::create_dir_all(root.path().join("home").join("lib")).unwrap();
+        assert_eq!(toolchain_sibling_lib(&scripts), None);
+
+        // A `bin` entry with no sibling `lib` admits nothing extra.
+        let bare = root.path().join("nolib");
+        std::fs::create_dir_all(bare.join("bin")).unwrap();
+        assert_eq!(toolchain_sibling_lib(&bare.join("bin")), None);
     }
 }
