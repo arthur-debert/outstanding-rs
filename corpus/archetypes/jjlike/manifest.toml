@@ -1,0 +1,63 @@
+# Feature/interaction manifest for `jjlike`. Format: corpus/README.md.
+#
+# Gap-only archetype (ROB03-WS03): every acceptance case is expected-fail —
+# the spec deliberately describes capability standout does not have
+# (user-supplied runtime templates as untrusted input). The byte-precise,
+# runnable-today form of this suite is the workspace crate `corpus/gap-suites`
+# (tests/jjlike.rs), which reports expected-fail under plain `pixi run test`.
+#
+# The gap key below is a lowercase slug, not an epic code: no parity Spec
+# covers runtime templates yet, and epic codes are human-assigned, so this
+# manifest deliberately does not invent one. When the runtime-templates parity
+# epic is minted, one key swap names it.
+
+[archetype]
+name = "jjlike"
+survey = "C9"
+summary = "log viewer whose only stable output surface is a user-supplied runtime template, treated as untrusted input"
+status = "partially-past-capability"
+
+[features]
+used = [
+    "dispatch.subcommands",
+    "templates",
+    "error-handling.exit-codes",
+]
+
+[[interactions]]
+id = "template-parsing-vs-diagnostics"
+stresses = ["runtime template parsing", "diagnostic naming with byte offset", "panic-free failure"]
+description = "Parse/lookup failures of untrusted template input must carry the offending function/tag name and its byte offset as a JSON diagnostic on stderr, never a panic — standout's templates are app-author artifacts, so this whole failure direction is unowned."
+cases = [
+    "unknown-filter-diagnoses-function-and-offset",
+    "unknown-filter-offset-counts-bytes-not-chars",
+    "unknown-tag-errors-by-default-with-tag-and-offset",
+]
+
+[[interactions]]
+id = "typed-functions-as-stable-surface"
+stresses = ["typed template functions", "per-record rendering"]
+description = "The documented function set (upper, lower) applied per record is the tool's contract with its user, not an app-author implementation detail."
+cases = [
+    "well-formed-template-renders-per-record",
+    "upper-filter-renders-per-record",
+    "lower-filter-renders-per-record",
+]
+
+[[interactions]]
+id = "configured-degradation-vs-rendering"
+stresses = ["unknown-tag behavior selection", "per-record rendering"]
+description = "The same unknown-tag input either errors or renders its inner text depending on one flag — behavior selection, not luck."
+cases = [
+    "unknown-tag-errors-by-default-with-tag-and-offset",
+    "unknown-tag-degrades-to-inner-text-when-configured",
+]
+
+[[interactions]]
+id = "render-loop-vs-budget"
+stresses = ["render budget", "bounded time on hostile input", "failure as diagnostic"]
+description = "A template that exceeds --render-budget-ms must terminate promptly with a diagnostic — bounded time on hostile input, never a hang."
+cases = ["render-budget-exceeded-fails-promptly"]
+
+[gaps]
+runtime-templates = "User-supplied runtime templates — parsing, typed functions as a stable surface, untrusted-input hardening (name+offset diagnostics, configured tag degradation, render budget). Owning parity epic not yet minted: the three existing parity Specs are PAR01/PAR02/PAR03, none covers this, and codes are human-assigned, so the owner is recorded in prose; assigning the code is flagged for that epic's grill."

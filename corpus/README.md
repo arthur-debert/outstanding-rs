@@ -259,5 +259,15 @@ PAR01 = "what is specced past current capability, and why on purpose"
 | `formlike` | C12 | questionnaire-driven provisioning under full non-interactivity |
 | `ghlike` | C2 | deep command nesting with machine JSON and field selection |
 
-Out of scope here: the gap-spec suites `tflike`/`jjlike` (WS03) and pilot
-execution (WS04).
+Two gap-only archetypes (WS03) sit beside the pilot four, every acceptance
+case `expected = "fail"`:
+
+| Archetype | Survey | Shape |
+| --- | --- | --- |
+| `tflike` | C4 | plan/apply: NDJSON diagnostic/event stream, detailed exit codes, progress suppression |
+| `jjlike` | C9 | user-supplied runtime templates as untrusted input |
+
+Their byte-precise, runnable-today suites live in `corpus/gap-suites/` (see
+its README for the expected-fail semantics under plain `pixi run test`).
+
+Out of scope here: pilot execution (WS04).

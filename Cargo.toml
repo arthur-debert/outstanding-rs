@@ -14,4 +14,5 @@ members = [
     "crates/standout-test",
     "crates/todo-example/todo-core",
     "crates/todo-example/tdoo",
+    "corpus/gap-suites",
 ]
