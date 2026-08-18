@@ -58,7 +58,15 @@ const LIST_VIEW_TEMPLATE: &str = r#"{% if intro %}
 [standout-muted]({{ filter_summary }})[/standout-muted]
 {% endif %}
 {% for msg in messages %}
-[standout-{{ msg.level }}]{{ msg.text }}[/standout-{{ msg.level }}]
+{% if msg.level == "error" -%}
+[standout-error]{{ msg.text }}[/standout-error]
+{% elif msg.level == "warning" -%}
+[standout-warning]{{ msg.text }}[/standout-warning]
+{% elif msg.level == "success" -%}
+[standout-success]{{ msg.text }}[/standout-success]
+{% else -%}
+[standout-info]{{ msg.text }}[/standout-info]
+{% endif %}
 {% endfor %}
 "#;
 

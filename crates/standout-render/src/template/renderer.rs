@@ -563,7 +563,7 @@ impl Renderer {
             output,
             self.styles.to_resolved_map(),
             transform,
-            UnknownTagBehavior::Passthrough,
+            UnknownTagBehavior::Strip,
         )
     }
 

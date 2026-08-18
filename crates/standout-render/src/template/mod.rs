@@ -74,8 +74,8 @@
 //! ```
 //!
 //! Tags can nest, span multiple lines, and contain template logic. Unknown tags
-//! show a `?` marker (`[unknown?]text[/unknown?]`) — use [`validate_template`]
-//! to catch typos at startup or in tests.
+//! degrade to unstyled inner text; use [`validate_template`] to catch typos at
+//! startup or in tests.
 //!
 //! ## Template Registry
 //!

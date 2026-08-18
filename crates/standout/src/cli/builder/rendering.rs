@@ -142,7 +142,7 @@ impl AppBuilder {
             &minijinja_output,
             styles.to_resolved_map(),
             transform,
-            UnknownTagBehavior::Passthrough,
+            UnknownTagBehavior::Strip,
         );
 
         Ok(final_output)

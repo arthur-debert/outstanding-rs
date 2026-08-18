@@ -50,7 +50,7 @@
 //! style-tag passes resolved — which tags the theme could not define, under
 //! which transform and unknown-tag policy — so "this page is corrupt" is a
 //! fact about structured data in every output mode, rather than a search for
-//! the `[tag?]` marker in the one mode that emits it.
+//! the historical `[tag?]` marker.
 //!
 //! # Invariants
 //!
@@ -841,10 +841,10 @@ impl TestResult {
     ///
     /// It is the *structural* form of "the theme is complete": it holds in
     /// every output mode, needs no ANSI and no TTY, and names the tag — where
-    /// searching the page for the `[tag?]` marker only works in the one mode
-    /// that emits it. [`invariants::assert_every_tag_resolved`] is the
-    /// assertion written on it; [`unresolved_tags`](Self::unresolved_tags) is
-    /// the flattened view.
+    /// searching the page for the historical `[tag?]` marker can only catch
+    /// leakage after it has already reached rendered text.
+    /// [`invariants::assert_every_tag_resolved`] is the assertion written on
+    /// it; [`unresolved_tags`](Self::unresolved_tags) is the flattened view.
     ///
     /// A run that rendered nothing (an error before dispatch, a structured
     /// output mode) records no passes. Only what this run rendered is here: the
