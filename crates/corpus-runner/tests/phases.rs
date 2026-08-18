@@ -272,6 +272,15 @@ fn provisioning_refuses_symlinks_from_a_published_root_into_internal_docs() {
     assert!(format!("{err:#}").contains("symlink"), "{err:#}");
 }
 
+#[test]
+fn kernel_boundary_blocks_an_actual_checkout_file_open() {
+    let workspace_root = tempfile::tempdir().unwrap();
+    let source_root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+    let isolation = workspace::Isolation::new(workspace_root.path(), &source_root).unwrap();
+
+    isolation.verify_boundary(&source_root).unwrap();
+}
+
 // ---------------------------------------------------------------------------
 // Session
 // ---------------------------------------------------------------------------

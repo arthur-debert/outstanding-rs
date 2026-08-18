@@ -152,11 +152,18 @@ impl Isolation {
             .unwrap_or_else(|| source_root.to_path_buf())
             .join(".gitconfig");
         let mut command = Command::new("sh");
+        // Perform real opens through shell redirections. A permission query
+        // such as `test -r` may use access(2), which Landlock deliberately
+        // leaves unrestricted and therefore cannot prove file readability.
         command
             .args([
                 "-c",
-                "if test -r \"$1\"; then echo source-readable >&2; exit 1; fi; \
-                 if test -r \"$2\"; then echo host-home-readable >&2; exit 1; fi",
+                "if { : < \"$1\"; } 2>/dev/null; then \
+                     echo source-readable >&2; exit 1; \
+                 fi; \
+                 if { : < \"$2\"; } 2>/dev/null; then \
+                     echo host-home-readable >&2; exit 1; \
+                 fi",
                 "corpus-boundary",
             ])
             .arg(source_root.join("Cargo.toml"))

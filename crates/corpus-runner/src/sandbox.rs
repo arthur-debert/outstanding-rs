@@ -8,7 +8,9 @@
 //! Landlock admits only the phase workspace and selected system/toolchain
 //! roots. If the host cannot enforce either policy, the run refuses to start.
 
-use std::path::{Path, PathBuf};
+#[cfg(target_os = "macos")]
+use std::path::Path;
+use std::path::PathBuf;
 use std::process::Command;
 
 /// One process's filesystem policy.
@@ -55,6 +57,8 @@ pub fn backend_name() -> &'static str {
 /// Installs `policy` around `command` without changing its argv, cwd, env, or
 /// stdio. Call this after configuring cwd/env and before configuring stdio.
 pub fn apply(command: &mut Command, policy: &Policy) -> Result<(), String> {
+    validate_denied_boundaries(policy)?;
+
     #[cfg(target_os = "macos")]
     return apply_macos(command, policy);
 
@@ -66,6 +70,26 @@ pub fn apply(command: &mut Command, policy: &Policy) -> Result<(), String> {
         let _ = (command, policy);
         Err("corpus isolation requires macOS Seatbelt or Linux Landlock".to_string())
     }
+}
+
+/// Refuses a policy whose allowlist contains a denied root or one of its
+/// ancestors. Landlock cannot subtract a denied subtree from a broader
+/// admitted hierarchy, and a broad Seatbelt exception would reopen the same
+/// subtree. Narrow tool paths beneath a denied user/source root remain valid:
+/// admitting that exact subtree does not grant access to its parent or siblings.
+fn validate_denied_boundaries(policy: &Policy) -> Result<(), String> {
+    for denied in &policy.deny_read {
+        for admitted in policy.read.iter().chain(&policy.write) {
+            if denied.starts_with(admitted) {
+                return Err(format!(
+                    "sandbox policy admits {} which covers denied root {}",
+                    admitted.display(),
+                    denied.display()
+                ));
+            }
+        }
+    }
+    Ok(())
 }
 
 fn existing(paths: Vec<PathBuf>) -> Vec<PathBuf> {
@@ -92,7 +116,8 @@ pub fn system_read_roots() -> Vec<PathBuf> {
         "/etc",
         "/dev",
         "/proc",
-        "/System",
+        "/System/Library",
+        "/System/Cryptexes",
         "/Library",
         "/opt/homebrew",
         "/usr/local",
@@ -252,4 +277,43 @@ fn enforce_landlock(policy: &Policy) -> Result<(), String> {
         ));
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn policy(read: &[&str], write: &[&str], denied: &[&str]) -> Policy {
+        Policy {
+            read: read.iter().map(PathBuf::from).collect(),
+            write: write.iter().map(PathBuf::from).collect(),
+            deny_read: denied.iter().map(PathBuf::from).collect(),
+            network: false,
+        }
+    }
+
+    #[test]
+    fn broad_allow_cannot_cover_a_denied_root() {
+        let policy = policy(
+            &["/system", "/home/runner/work"],
+            &["/tmp/workspace"],
+            &["/home/runner/work/project"],
+        );
+        let err = validate_denied_boundaries(&policy).unwrap_err();
+        assert!(err.contains("/home/runner/work"), "{err}");
+        assert!(err.contains("/home/runner/work/project"), "{err}");
+    }
+
+    #[test]
+    fn narrow_tool_path_beneath_a_denied_root_does_not_cover_siblings() {
+        let policy = policy(
+            &[
+                "/system",
+                "/home/runner/work/project/.pixi/envs/default/bin",
+            ],
+            &["/tmp/workspace"],
+            &["/home/runner/work/project"],
+        );
+        validate_denied_boundaries(&policy).unwrap();
+    }
 }
