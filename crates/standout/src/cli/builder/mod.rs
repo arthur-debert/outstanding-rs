@@ -39,7 +39,7 @@ use crate::topics::{
     TopicRenderConfig,
 };
 use crate::TemplateRegistry;
-use crate::{render_auto, OutputMode, Theme};
+use crate::{render_auto, OutputMode, Theme, TEMPLATE_EXTENSIONS};
 use clap::{Arg, ArgAction, ArgMatches, Command};
 use serde::Serialize;
 use std::cell::RefCell;
@@ -386,8 +386,8 @@ fn canonical_template_names(registry: &TemplateRegistry) -> Vec<String> {
                 entry.insert(name.to_string());
             }
             std::collections::btree_map::Entry::Occupied(mut entry)
-                if is_extensionless_template_name(entry.get())
-                    && !is_extensionless_template_name(name) =>
+                if standout_render::extension_priority(name, TEMPLATE_EXTENSIONS)
+                    < standout_render::extension_priority(entry.get(), TEMPLATE_EXTENSIONS) =>
             {
                 entry.insert(name.to_string());
             }
@@ -398,16 +398,12 @@ fn canonical_template_names(registry: &TemplateRegistry) -> Vec<String> {
 }
 
 fn template_alias_key(name: &str) -> &str {
-    for extension in [".jinja", ".jinja2", ".j2", ".stpl", ".txt"] {
-        if let Some(stripped) = name.strip_suffix(extension) {
+    for extension in TEMPLATE_EXTENSIONS {
+        if let Some(stripped) = name.strip_suffix(*extension) {
             return stripped;
         }
     }
     name
-}
-
-fn is_extensionless_template_name(name: &str) -> bool {
-    template_alias_key(name) == name
 }
 
 fn edit_distance(left: &str, right: &str) -> usize {

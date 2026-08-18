@@ -117,6 +117,29 @@ fn available_template_names_are_sorted_unique_and_limited() {
 }
 
 #[test]
+fn template_suggestions_follow_extension_priority() {
+    let error = build_error(
+        App::builder()
+            .templates(EmbeddedSource::<TemplateResource>::new(
+                &[
+                    ("report.j2", "Short {{ name }}"),
+                    ("report.jinja", "Standard {{ name }}"),
+                ],
+                "/path/that/does/not/exist",
+            ))
+            .command_with(
+                "show",
+                |_m, _ctx| Ok(Output::Render(json!({"name": "Ada"}))),
+                |cfg| cfg.template_name("report.jinj"),
+            )
+            .unwrap(),
+    );
+
+    assert!(error.contains("did you mean `report.jinja`?"), "{error}");
+    assert!(!error.contains("`report.j2`"), "{error}");
+}
+
+#[test]
 fn templates_after_commands_resolve_at_build() {
     let app = App::builder()
         .commands(|g| {
