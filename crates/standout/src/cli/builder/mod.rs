@@ -37,7 +37,7 @@ use crate::topics::{
     display_with_pager, render_topic, render_topics_list, TopicRegistry, TopicRenderConfig,
 };
 use crate::TemplateRegistry;
-use crate::{render_auto, OutputMode, Theme, TEMPLATE_EXTENSIONS};
+use crate::{render_auto, OutputMode, Theme};
 use clap::{Arg, ArgAction, ArgMatches, Command};
 use serde::Serialize;
 use std::cell::RefCell;
@@ -105,28 +105,7 @@ pub(crate) fn inline_template_ref(
             "{api} received an empty template; use .silent(), .structured_only(), or .binary() to declare template absence"
         )));
     }
-    if looks_like_template_name(&template) {
-        return Err(SetupError::Config(format!(
-            "{api} received `{template}`, which looks like a registry template name, but this API accepts inline MiniJinja source; use .template_name(...) on a command configuration to reference a registered template"
-        )));
-    }
     Ok(TemplateRef::inline(template))
-}
-
-fn looks_like_template_name(template: &str) -> bool {
-    let template = template.trim();
-    let contains_template_syntax =
-        template.contains("{{") || template.contains("{%") || template.contains("{#");
-    let path_like = (template.contains('/') || template.contains('\\'))
-        && !template.chars().any(char::is_whitespace)
-        && !template.contains('[')
-        && !template.contains(']');
-
-    !contains_template_syntax
-        && (TEMPLATE_EXTENSIONS
-            .iter()
-            .any(|extension| template.ends_with(extension))
-            || path_like)
 }
 
 #[derive(Debug, Clone)]
@@ -241,6 +220,8 @@ fn template_dependencies(source: &str) -> TemplateDependencies {
             break;
         };
         let tag = after_start[..tag_end].trim();
+        let tag = tag.strip_prefix('-').unwrap_or(tag).trim_start();
+        let tag = tag.strip_suffix('-').unwrap_or(tag).trim_end();
         let mut words = tag.splitn(2, char::is_whitespace);
         let keyword = words.next().unwrap_or_default();
         let body = words.next().unwrap_or_default().trim();
@@ -305,15 +286,9 @@ fn quoted_string(input: &str) -> Option<(String, &str)> {
         return None;
     }
 
-    let mut escaped = false;
     for (index, ch) in chars {
-        if escaped {
-            escaped = false;
-            continue;
-        }
         if ch == '\\' {
-            escaped = true;
-            continue;
+            return None;
         }
         if ch == quote {
             return Some((
@@ -1713,6 +1688,24 @@ fn help_word_command(has_subcommands: bool) -> Command {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn template_dependencies_support_whitespace_control() {
+        let dependencies = template_dependencies(
+            "{%- extends 'base' -%}{%- include 'partial' -%}{%- import 'macros' as macros -%}{%- from 'forms' import field -%}",
+        );
+
+        assert_eq!(dependencies.names, ["base", "partial", "macros", "forms"]);
+        assert!(!dependencies.dynamic);
+    }
+
+    #[test]
+    fn escaped_template_dependency_uses_full_registry_refresh() {
+        let dependencies = template_dependencies(r#"{% include "a\\b" %}"#);
+
+        assert!(dependencies.names.is_empty());
+        assert!(dependencies.dynamic);
+    }
 
     /// A root with a value-taking option, a flag, and a positional — enough
     /// shape for the lexing the scan would have had to reimplement.

@@ -152,35 +152,43 @@ fn empty_inline_template_is_rejected() {
 }
 
 #[test]
-fn filename_looking_inline_template_is_rejected() {
-    let error = match App::builder().command(
-        "show",
-        |_m, _ctx| Ok(Output::Render(json!({"name": "Ada"}))),
-        "show.jinja",
-    ) {
-        Ok(_) => panic!("expected filename-looking inline template to fail"),
-        Err(error) => error.to_string(),
-    };
+fn filename_looking_command_template_renders_as_inline_source() {
+    let app = App::builder()
+        .command(
+            "show",
+            |_m, _ctx| Ok(Output::Render(json!({"name": "Ada"}))),
+            "report.txt",
+        )
+        .unwrap()
+        .build()
+        .unwrap();
 
-    assert!(error.contains("AppBuilder::command"));
-    assert!(error.contains("show.jinja"));
-    assert!(error.contains("template_name"));
+    let result = TestHarness::new()
+        .text_output()
+        .run(&app, command(), ["app", "show"]);
+
+    result.assert_success();
+    assert_eq!(result.stdout(), "report.txt");
 }
 
 #[test]
-fn path_looking_command_config_template_is_rejected() {
-    let error = match App::builder().command_with(
-        "show",
-        |_m, _ctx| Ok(Output::Render(json!({"name": "Ada"}))),
-        |config| config.template("views/show"),
-    ) {
-        Ok(_) => panic!("expected path-looking inline template to fail"),
-        Err(error) => error.to_string(),
-    };
+fn path_looking_command_config_template_renders_as_inline_source() {
+    let app = App::builder()
+        .command_with(
+            "show",
+            |_m, _ctx| Ok(Output::Render(json!({"name": "Ada"}))),
+            |config| config.template("docs/output"),
+        )
+        .unwrap()
+        .build()
+        .unwrap();
 
-    assert!(error.contains("CommandConfig::template"));
-    assert!(error.contains("views/show"));
-    assert!(error.contains("template_name"));
+    let result = TestHarness::new()
+        .text_output()
+        .run(&app, command(), ["app", "show"]);
+
+    result.assert_success();
+    assert_eq!(result.stdout(), "docs/output");
 }
 
 #[test]
@@ -345,6 +353,41 @@ fn file_backed_dynamic_include_hot_reloads_between_renders() {
                     json!({"name": "Ada", "partial": "partial", "suffix": ""}),
                 ))
             },
+            |config| config.template_name("show"),
+        )
+        .unwrap()
+        .build()
+        .unwrap();
+
+    let first = TestHarness::new()
+        .text_output()
+        .run(&app, command(), ["app", "show"]);
+    first.assert_success();
+    assert_eq!(first.stdout(), "Hello Ada");
+
+    std::fs::write(&partial_path, "Bye {{ name }}").unwrap();
+
+    let second = TestHarness::new()
+        .text_output()
+        .run(&app, command(), ["app", "show"]);
+    second.assert_success();
+    assert_eq!(second.stdout(), "Bye Ada");
+}
+
+#[test]
+#[serial]
+fn file_backed_whitespace_control_include_hot_reloads_between_renders() {
+    let dir = tempfile::tempdir().unwrap();
+    let partial_path = dir.path().join("partial.jinja");
+    std::fs::write(&partial_path, "Hello {{ name }}").unwrap();
+    std::fs::write(dir.path().join("show.jinja"), "{%- include 'partial' -%}").unwrap();
+
+    let app = App::builder()
+        .templates_dir(dir.path())
+        .unwrap()
+        .command_with(
+            "show",
+            |_m, _ctx| Ok(Output::Render(json!({"name": "Ada"}))),
             |config| config.template_name("show"),
         )
         .unwrap()
