@@ -1,0 +1,146 @@
+# Acceptance suite for the `jjlike` archetype. Format: corpus/README.md.
+# Written spec-first (ROB03-WS03). Gap-only archetype: every case is
+# expected-fail, owned by the not-yet-minted runtime-templates parity epic
+# (see the manifest's [gaps] table). The byte-precise form of these
+# assertions — the single-JSON-diagnostic stderr contract, exact byte
+# offsets — lives in `corpus/gap-suites` (tests/jjlike.rs) and runs today
+# under plain `pixi run test`; the cases here are the runner-facing statement
+# of the same criteria in the roster's assertion vocabulary.
+schema = 1
+archetype = "jjlike"
+
+[[case]]
+name = "well-formed-template-renders-per-record"
+group = "runtime-templates"
+stresses = "a runtime template renders once per NDJSON record, newline-terminated, in file order"
+expected = "fail"
+gap = "runtime-templates"
+reason = "no runtime-template surface exists"
+[case.run]
+argv = ["log", "--data", "entries.ndjson", "-T", "{{ id }}: {{ message }}"]
+timeout_seconds = 10
+[case.run.files]
+"entries.ndjson" = "{\"id\":\"a1\",\"author\":\"amy\",\"message\":\"first\"}\n{\"id\":\"b2\",\"author\":\"bob\",\"message\":\"second\"}\n"
+[case.expect]
+exit_code = 0
+stdout = "a1: first\nb2: second\n"
+stderr = ""
+
+[[case]]
+name = "upper-filter-renders-per-record"
+group = "runtime-templates"
+stresses = "the typed function set: upper applies per record"
+expected = "fail"
+gap = "runtime-templates"
+reason = "no typed template functions exist"
+[case.run]
+argv = ["log", "--data", "entries.ndjson", "-T", "{{ message | upper }}"]
+timeout_seconds = 10
+[case.run.files]
+"entries.ndjson" = "{\"id\":\"a1\",\"author\":\"amy\",\"message\":\"first\"}\n{\"id\":\"b2\",\"author\":\"bob\",\"message\":\"second\"}\n"
+[case.expect]
+exit_code = 0
+stdout = "FIRST\nSECOND\n"
+stderr = ""
+
+[[case]]
+name = "lower-filter-renders-per-record"
+group = "runtime-templates"
+stresses = "the typed function set: lower applies per record (uppercase source, so identity cannot pass)"
+expected = "fail"
+gap = "runtime-templates"
+reason = "no typed template functions exist"
+[case.run]
+argv = ["log", "--data", "entries.ndjson", "-T", "{{ message | lower }}"]
+timeout_seconds = 10
+[case.run.files]
+"entries.ndjson" = "{\"id\":\"c3\",\"author\":\"cal\",\"message\":\"THIRD\"}\n{\"id\":\"d4\",\"author\":\"dot\",\"message\":\"FOURTH\"}\n"
+[case.expect]
+exit_code = 0
+stdout = "third\nfourth\n"
+stderr = ""
+
+[[case]]
+name = "unknown-filter-diagnoses-function-and-offset"
+group = "runtime-templates"
+stresses = "an unknown filter yields a stderr JSON diagnostic naming the function and its byte offset, renders nothing"
+expected = "fail"
+gap = "runtime-templates"
+reason = "unknown template functions panic or pass silently"
+[case.run]
+argv = ["log", "--data", "entries.ndjson", "-T", "{{ message | frobnicate }}"]
+timeout_seconds = 10
+[case.run.files]
+"entries.ndjson" = "{\"id\":\"a1\",\"author\":\"amy\",\"message\":\"first\"}\n{\"id\":\"b2\",\"author\":\"bob\",\"message\":\"second\"}\n"
+[case.expect]
+exit_code = 1
+stdout = ""
+stderr_contains = ["frobnicate", "13"]
+stderr_not_contains = ["panicked at"]
+
+[[case]]
+name = "unknown-filter-offset-counts-bytes-not-chars"
+group = "runtime-templates"
+stresses = "the diagnostic offset is a byte offset: a 3-byte char before the template shifts it to 16, not 14"
+expected = "fail"
+gap = "runtime-templates"
+reason = "unknown template functions panic or pass silently"
+[case.run]
+argv = ["log", "--data", "entries.ndjson", "-T", "→{{ message | frobnicate }}"]
+timeout_seconds = 10
+[case.run.files]
+"entries.ndjson" = "{\"id\":\"a1\",\"author\":\"amy\",\"message\":\"first\"}\n{\"id\":\"b2\",\"author\":\"bob\",\"message\":\"second\"}\n"
+[case.expect]
+exit_code = 1
+stderr_contains = ["frobnicate", "16"]
+stderr_not_contains = ["panicked at"]
+
+[[case]]
+name = "unknown-tag-errors-by-default-with-tag-and-offset"
+group = "runtime-templates"
+stresses = "an unknown tag errors by default with a diagnostic naming the tag and its byte offset"
+expected = "fail"
+gap = "runtime-templates"
+reason = "unknown tags have no configured behavior"
+[case.run]
+argv = ["log", "--data", "entries.ndjson", "-T", "{% frob %}X{% endfrob %}"]
+timeout_seconds = 10
+[case.run.files]
+"entries.ndjson" = "{\"id\":\"a1\",\"author\":\"amy\",\"message\":\"first\"}\n{\"id\":\"b2\",\"author\":\"bob\",\"message\":\"second\"}\n"
+[case.expect]
+exit_code = 1
+stderr_contains = ["frob", "3"]
+stderr_not_contains = ["panicked at"]
+
+[[case]]
+name = "unknown-tag-degrades-to-inner-text-when-configured"
+group = "runtime-templates"
+stresses = "--unknown-tags inner degrades the same unknown tag pair to its inner text, exit 0, no diagnostic"
+expected = "fail"
+gap = "runtime-templates"
+reason = "unknown tags have no configured behavior"
+[case.run]
+argv = ["log", "--data", "entries.ndjson", "-T", "{% frob %}X{% endfrob %}", "--unknown-tags", "inner"]
+timeout_seconds = 10
+[case.run.files]
+"entries.ndjson" = "{\"id\":\"a1\",\"author\":\"amy\",\"message\":\"first\"}\n{\"id\":\"b2\",\"author\":\"bob\",\"message\":\"second\"}\n"
+[case.expect]
+exit_code = 0
+stdout = "X\nX\n"
+stderr = ""
+
+[[case]]
+name = "render-budget-exceeded-fails-promptly"
+group = "runtime-templates"
+stresses = "a template exceeding --render-budget-ms terminates promptly with a diagnostic (the timeout is the never-hang bound)"
+expected = "fail"
+gap = "runtime-templates"
+reason = "rendering has no budget and can hang"
+[case.run]
+argv = ["log", "--data", "entries.ndjson", "-T", "{% for i in range(1000000000) %}{{ i }}{% endfor %}", "--render-budget-ms", "500"]
+timeout_seconds = 5
+[case.run.files]
+"entries.ndjson" = "{\"id\":\"a1\",\"author\":\"amy\",\"message\":\"first\"}\n{\"id\":\"b2\",\"author\":\"bob\",\"message\":\"second\"}\n"
+[case.expect]
+exit_code = 1
+stderr_contains = ["render budget exceeded"]

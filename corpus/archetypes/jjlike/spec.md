@@ -17,7 +17,10 @@ templates; the three existing parity Specs are config layering (PAR01), the mach
 contract (PAR02), and terminal citizenship (PAR03). Epic codes are assigned by the
 human, so this suite deliberately does not invent one — every assertion group below is
 owned by the future runtime-templates parity epic, and assigning its code is flagged for
-that epic's grill. Until then the suite's expected-fail markers name the gap in prose.
+that epic's grill. Until then the expected-fail markers name the gap in prose: the
+roster's `acceptance.toml` beside this spec keys its cases to the manifest's
+`runtime-templates` gap slug (a slug, not a code), and the runnable-today suite in
+`corpus/gap-suites/tests/jjlike.rs` prints the same ownership with every outcome.
 
 Everything below is asserted black-box against a produced binary.
 

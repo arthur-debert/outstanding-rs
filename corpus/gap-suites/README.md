@@ -5,6 +5,12 @@ The two gap archetypes (`corpus/archetypes/tflike/`, `corpus/archetypes/jjlike/`
 describe capability standout does not have; their acceptance suites here are red on
 arrival, deliberately.
 
+The archetypes also sit in the roster proper: each carries the roster's three files
+(`spec.md`, `manifest.toml`, `acceptance.toml`, all `expected = "fail"` cases — see
+`corpus/README.md`) for the WS01 runner. The suites *here* are the byte-precise form
+of the same criteria — per-line NDJSON parseability, exact byte offsets, state-file
+rewrites — and the form that runs today under plain `pixi run test`.
+
 **Gating note.** These suites gate the parity epics and must be green before those
 epics close:
 
@@ -14,7 +20,7 @@ epics close:
   `docs/spec/parity-terminal-citizenship.md`). PAR03 is done when this group turns green.
 - `tests/jjlike.rs` — gates the future runtime-templates parity epic, whose code is not
   yet minted (codes are human-assigned; see the ownership note in
-  `corpus/archetypes/jjlike/SPEC.md`).
+  `corpus/archetypes/jjlike/spec.md`).
 
 ## Expected-fail semantics
 

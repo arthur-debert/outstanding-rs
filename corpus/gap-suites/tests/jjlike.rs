@@ -4,7 +4,7 @@
 //! templates today (the existing three are PAR01 config layering, PAR02 machine
 //! contract, PAR03 terminal citizenship); epic codes are human-assigned, so this suite
 //! names its owner in prose — the future runtime-templates parity epic — instead of
-//! inventing a code. See `corpus/archetypes/jjlike/SPEC.md` and
+//! inventing a code. See `corpus/archetypes/jjlike/spec.md` and
 //! `corpus/gap-suites/README.md`.
 //!
 //! Behavior under test: the typed-function surface (`upper`, `lower`) rendering per

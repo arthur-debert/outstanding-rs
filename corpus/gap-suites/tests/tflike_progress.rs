@@ -1,7 +1,7 @@
 //! `tflike` acceptance suite — **progress milestone**, gating **PAR03** (terminal
 //! citizenship, `docs/spec/parity-terminal-citizenship.md`). PAR03 is done when this
 //! group turns green; the diagnostic milestone in `tflike_diagnostic.rs` belongs to
-//! PAR02, not here. Behavior under test: `corpus/archetypes/tflike/SPEC.md`
+//! PAR02, not here. Behavior under test: `corpus/archetypes/tflike/spec.md`
 //! (apply-lifecycle events in the stream, the rewritten state file, and total progress
 //! suppression under structured modes). Every assertion is black-box against the
 //! binary named by `CORPUS_TFLIKE_BIN` and runs with expected-fail semantics

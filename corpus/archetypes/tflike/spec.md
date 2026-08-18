@@ -5,9 +5,11 @@ against recorded state, reports the difference as a *plan*, and *applies* it. It
 surface is an NDJSON diagnostic-and-event stream plus detailed exit codes.
 
 **This is a gap specification.** It describes capability standout does not have (survey
-Part C, archetype C4; `docs/spec/robustness-corpus.md`). Its acceptance suite
-(`corpus/gap-suites/`) is red on arrival, deliberately, and is authored in two milestone
-groups because two different epics own them:
+Part C, archetype C4; `docs/spec/robustness-corpus.md`). Its acceptance criteria exist
+in two forms — the roster's `acceptance.toml` beside this spec (every case
+`expected = "fail"`) and the byte-precise, runnable-today suite in `corpus/gap-suites/`
+— red on arrival, deliberately, and authored in two milestone groups because two
+different epics own them:
 
 - **Diagnostic milestone** — gates **PAR02** (`docs/spec/parity-machine-contract.md`).
 - **Progress milestone** — gates **PAR03** (`docs/spec/parity-terminal-citizenship.md`).

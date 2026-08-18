@@ -1,7 +1,7 @@
 //! `tflike` acceptance suite — **diagnostic milestone**, gating **PAR02** (the machine
 //! contract, `docs/spec/parity-machine-contract.md`). PAR02 is done when this group
 //! turns green; the progress milestone in `tflike_progress.rs` belongs to PAR03, not
-//! here. Behavior under test: `corpus/archetypes/tflike/SPEC.md`. Every assertion is
+//! here. Behavior under test: `corpus/archetypes/tflike/spec.md`. Every assertion is
 //! black-box against the binary named by `CORPUS_TFLIKE_BIN` and runs with
 //! expected-fail semantics (`corpus_gap_suites::expect_gap`).
 
