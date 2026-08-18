@@ -14,13 +14,14 @@
 //! This module routes that result through a thread-local collector, mirroring
 //! [`crate::warnings`]. The collector is the *only* thing it does:
 //!
-//! - **Nothing here changes a rendered byte.** [`resolve_tags`] returns exactly
-//!   what `BBParser::parse` returned before; it simply keeps the error list
-//!   that `parse` discarded.
-//! - **Nothing here reacts.** The framework does not warn, error, or degrade on
-//!   an unresolved tag because this module saw it. Surfacing is not reacting;
-//!   what the framework should *do* about a corrupt page is the loud-failures
-//!   Spec's decision.
+//! - The caller chooses what unresolved tags do to the page through
+//!   [`UnknownTagBehavior`]. Standout's runtime render paths use
+//!   [`Strip`](UnknownTagBehavior::Strip), so an app-template tag the resolved
+//!   theme lacks degrades to unstyled inner text instead of leaking `[tag?]`
+//!   markup.
+//! - When capture is open, unresolved tags become framework warnings as well as
+//!   structured records. The warning is the user-facing signal; the record is
+//!   the test oracle.
 //! - **Nothing is collected unless someone asked.** Recording happens only
 //!   inside a capture window — see below.
 //!
@@ -83,10 +84,9 @@
 //! The consumer is the invariant assertion library in `standout-test`, which
 //! needs to state "every tag this page emitted is defined in the resolved
 //! theme" as a fact about structured data rather than as a search for the
-//! `[tag?]` marker in rendered text. The marker is a symptom: it only appears
-//! under `TagTransform::Apply`, it is absent from the very modes most help
-//! tests run in, and finding it means substring-matching a page instead of
-//! naming a tag. A [`TagResolution`] names the tag in every mode.
+//! historical `[tag?]` marker in rendered text. A marker is only a symptom
+//! after template markup has leaked; a [`TagResolution`] names the tag in every
+//! mode.
 //!
 //! # Usage
 //!
@@ -106,9 +106,9 @@
 //!     "[nope]hi[/nope]",
 //!     HashMap::new(),
 //!     TagTransform::Remove,
-//!     UnknownTagBehavior::Passthrough,
+//!     UnknownTagBehavior::Strip,
 //! );
-//! assert_eq!(output, "hi"); // Remove mode: no marker reaches the page…
+//! assert_eq!(output, "hi"); // Strip policy: no marker reaches the page…
 //!
 //! drop(window); // the run boundary ends the batch
 //! let passes = diagnostics::take_captured();
@@ -293,6 +293,10 @@ pub fn resolve_tags(
         .into_iter()
         .partition(|error| !parser.styles().contains_key(&error.tag));
 
+    if !unresolved.is_empty() {
+        warn_unresolved_tags(&unresolved);
+    }
+
     let defined_tags = if unresolved.is_empty() {
         Vec::new()
     } else {
@@ -313,6 +317,23 @@ pub fn resolve_tags(
     });
 
     output
+}
+
+fn warn_unresolved_tags(unresolved: &[UnknownTagError]) {
+    let mut names: Vec<&str> = Vec::new();
+    for error in unresolved {
+        let name = error.tag.as_str();
+        if !names.contains(&name) {
+            names.push(name);
+        }
+    }
+
+    if !names.is_empty() {
+        crate::warnings::push_warning(format!(
+            "Unresolved style tag(s) degraded to unstyled text: {}",
+            names.join(", ")
+        ));
+    }
 }
 
 /// An open capture window, owning the batch recorded inside it.

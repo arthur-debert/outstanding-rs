@@ -41,11 +41,8 @@
 //! like the same check and are not. The first reads the structured record of
 //! what the style-tag pass resolved ([`standout::diagnostics`]) and proves *the
 //! theme is incomplete*, in every output mode, naming the tag. The second
-//! searches the page for the `[tag?]` marker and proves *the corruption
-//! reached the page a user sees*, which only happens under
-//! [`TagTransform::Apply`](standout_render::TagTransform). #303 deserves both:
-//! a page can be structurally corrupt in `Text` mode while looking perfect,
-//! and the marker is what the user actually filed the bug about.
+//! searches the page for the historical `[tag?]` marker and proves template
+//! markup did not leak into the user-facing page.
 //!
 //! # What these do not do
 //!
@@ -129,12 +126,10 @@ pub fn assert_every_tag_resolved(result: &TestResult) {
 
 /// Panics if any `[tag?]` marker reached the rendered page.
 ///
-/// The marker is what an unresolved tag leaves behind under
-/// [`TagTransform::Apply`](standout_render::TagTransform) with the
-/// [`Passthrough`](standout_render::UnknownTagBehavior) policy the framework
-/// renders with — template markup leaking into user-facing output. Checking it
-/// needs no real ANSI: `Term` mode applies the transform whether or not color
-/// bytes are produced.
+/// Current framework render paths degrade unresolved tags to unstyled text, but
+/// snapshots, fixtures, and assertion-library tests can still contain the old
+/// marker form. This catches any regression that lets it reach user-facing
+/// output again.
 #[track_caller]
 pub fn assert_no_unresolved_tag_markers(result: &TestResult) {
     assert_no_unresolved_tag_markers_in_page(&result.stdout_plain());

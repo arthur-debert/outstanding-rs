@@ -200,21 +200,19 @@ fn standalone_renders_neither_accumulate_nor_reach_a_later_run() {
     assert_every_tag_resolved(&result);
 }
 
-/// The other direction: under `Term` the corruption reaches the page, and the
-/// marker scan is what proves a user would have seen it. No real ANSI is
-/// needed — `Term` applies the transform regardless of whether color bytes are
-/// produced.
+/// Under `Term`, an unresolved tag now degrades before it reaches the page.
+/// The structural record still names the missing tag.
 #[test]
 #[serial]
-fn the_marker_check_catches_the_corruption_that_reaches_the_page() {
+fn term_output_degrades_unresolved_tags_without_hiding_the_structural_record() {
     let result = TestHarness::new().output_mode(OutputMode::Term).run(
         &undefined_tag_app(),
         say_command(),
         ["app", "say"],
     );
 
-    assert_eq!(result.stdout(), "[headline?]hello[/headline?]");
-    fails_naming("[headline?]", || assert_no_unresolved_tag_markers(&result));
+    assert_eq!(result.stdout(), "hello");
+    assert_no_unresolved_tag_markers(&result);
     fails_naming("headline", || assert_every_tag_resolved(&result));
 }
 

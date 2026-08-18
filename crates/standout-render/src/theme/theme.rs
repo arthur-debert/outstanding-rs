@@ -644,8 +644,9 @@ impl Theme {
 
     /// Merges another theme into this one.
     ///
-    /// Styles from `other` take precedence over styles in `self`.
-    /// This allows layering themes, e.g., loading a base theme and applying user overrides.
+    /// Styles, icons, palette, and the optional name from `other` take
+    /// precedence over values in `self`. This allows layering themes, e.g.,
+    /// loading a framework base and applying user overrides.
     ///
     /// # Example
     ///
@@ -665,6 +666,9 @@ impl Theme {
         self.dark.extend(other.dark);
         self.aliases.extend(other.aliases);
         self.icons = self.icons.merge(other.icons);
+        if other.name.is_some() {
+            self.name = other.name;
+        }
         if other.palette.is_some() {
             self.palette = other.palette;
         }

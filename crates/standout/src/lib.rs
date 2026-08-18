@@ -82,7 +82,7 @@
 //! assert_eq!(output, "Report: 42 items by Alice");
 //! ```
 //!
-//! Unknown tags show a `?` marker in terminal output: `[unknown?]text[/unknown?]`.
+//! Unknown tags degrade to unstyled inner text and emit a framework warning.
 //! Use [`validate_template`] to catch typos during development.
 //!
 //! ## Adaptive Themes (Light & Dark)

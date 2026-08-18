@@ -149,14 +149,12 @@ fn test_late_binding_with_nested_groups() {
 // Invariant Tests
 // ============================================================================
 
-/// Test the invariant: unknown style tags render as [tag?].
+/// Test the invariant: unknown style tags degrade to unstyled text.
 ///
-/// This is the symptom of the original bug - when a theme is not applied,
-/// style tags render with a "?" suffix to indicate the style was not found.
-/// This test documents this behavior as a regression detection mechanism.
+/// The runtime warning channel carries the missing-style signal; rendered user
+/// output must not leak `[tag?]` template markup.
 #[test]
-fn test_unknown_style_renders_as_tag_question_mark() {
-    // Build WITHOUT any theme - styles should render as [tag?]
+fn test_unknown_style_degrades_to_unstyled_text() {
     let app = App::builder()
         .command(
             "test",
@@ -173,12 +171,8 @@ fn test_unknown_style_renders_as_tag_question_mark() {
 
     match result {
         standout::cli::RunResult::Handled(output) => {
-            // Unknown styles should render as [tag?] to indicate missing style
-            assert!(
-                output.contains("[unknown_style?]"),
-                "Unknown style should render as [unknown_style?], but got: {:?}",
-                output
-            );
+            assert_eq!(output, "content");
+            assert!(!output.contains("?]"));
         }
         _ => panic!("Expected handled result, got {:?}", result),
     }
