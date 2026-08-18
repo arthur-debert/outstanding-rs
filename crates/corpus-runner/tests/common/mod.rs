@@ -59,6 +59,23 @@ cp "{impl_path}" "$td/debug/{binary_name}""#,
     );
 }
 
+/// Recursively copies `src` into `dest`, host-side. Tests use this to stage
+/// checkout fixtures into scratch space before a sandboxed phase runs: the
+/// agent sandbox denies reads under the source checkout, so a script that
+/// `cp`s a fixture straight from the repo fails with EPERM.
+pub fn stage_dir(src: &Path, dest: &Path) {
+    fs::create_dir_all(dest).unwrap();
+    for entry in fs::read_dir(src).unwrap() {
+        let entry = entry.unwrap();
+        let target = dest.join(entry.file_name());
+        if entry.file_type().unwrap().is_dir() {
+            stage_dir(&entry.path(), &target);
+        } else {
+            fs::copy(entry.path(), &target).unwrap();
+        }
+    }
+}
+
 /// Writes the scripted questionnaire agent as `name` in `dir` and returns
 /// its path: after running `preamble` (shell lines, may be empty), it answers
 /// the rendered answer sheet in place — one `(question id, answer)` line

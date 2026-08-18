@@ -274,6 +274,25 @@ fn kernel_boundary_blocks_an_actual_checkout_file_open() {
 // Session
 // ---------------------------------------------------------------------------
 
+/// `>/dev/null` (and `Stdio::null()`, which `posix_spawn`s an open of the
+/// device for writing) must work under every phase policy: without the
+/// `/dev/null` write admission, any sandboxed child that nulls a stream —
+/// cargo build scripts probing the compiler, e.g. rustix's — dies at spawn
+/// with EPERM, and the real-crates.io build can never succeed.
+#[test]
+fn sandboxed_children_can_write_dev_null() {
+    let dir = tempfile::tempdir().unwrap();
+    let report = session::run_agent(
+        dir.path(),
+        &isolation(dir.path()),
+        "echo probe > /dev/null",
+        &dir.path().join("t.jsonl"),
+        NO_TIMEOUT,
+    )
+    .unwrap();
+    assert_eq!(report.exit_code, Some(0));
+}
+
 #[test]
 fn session_scrubs_the_environment_and_writes_the_transcript() {
     let dir = tempfile::tempdir().unwrap();
