@@ -20,7 +20,7 @@ use standout_test::invariants::{
 };
 
 use crate::archetype::{
-    ColorState, InvariantCommand, InvariantContract, InvariantMode, Invariants,
+    ColorState, InvariantCommand, InvariantContract, InvariantMode, InvariantTheme, Invariants,
 };
 use crate::exec;
 use crate::report::{InvariantCell, InvariantStatus};
@@ -80,9 +80,9 @@ const MATRIX_CHECKS: [&str; 5] = [
 ];
 
 /// Sweeps the declarative ROB01 matrix. Every global
-/// command×mode×color×theme×check identity is emitted exactly once. Command
-/// declarations decide applicability; an invocation failure leaves dependent
-/// checks `not-run` rather than silently shrinking the denominator.
+/// command×mode×color×theme×check identity is emitted exactly once; an
+/// invocation failure leaves dependent checks `not-run` rather than
+/// silently shrinking the denominator.
 pub fn run_invariants(
     binary: &Path,
     invariants: &Invariants,
@@ -90,81 +90,80 @@ pub fn run_invariants(
     isolation: &workspace::Isolation,
     matrix_root: &Path,
 ) -> Vec<InvariantCell> {
-    let mut cells = Vec::new();
-    for command in &invariants.commands {
-        for color in &invariants.colors {
-            for theme in &invariants.themes {
-                let home = matrix_root.join(format!(
-                    "{}-{}-{}",
-                    safe_label(&command.argv),
-                    color.as_str(),
-                    safe_label(std::slice::from_ref(&theme.name))
-                ));
-                let mut runs = BTreeMap::new();
-                for mode in &invariants.modes {
-                    if command_applies(command, *mode, *color, &theme.name) {
-                        runs.insert(
-                            mode.as_str(),
-                            run_mode(
-                                binary,
-                                command,
-                                MatrixInvocation {
-                                    mode: *mode,
-                                    color: *color,
-                                    theme_env: &theme.env,
-                                    home: &home,
-                                },
-                                timeout,
-                                isolation,
-                            ),
-                        );
-                    }
-                }
-                for mode in &invariants.modes {
-                    emit_axis_cells(&mut cells, command, *mode, *color, &theme.name, &runs);
-                }
-            }
-        }
-    }
-    cells
+    sweep_plan(
+        invariants,
+        |command, color, theme| {
+            let home = matrix_root.join(format!(
+                "{}-{}-{}",
+                safe_label(&command.argv),
+                color.as_str(),
+                safe_label(std::slice::from_ref(&theme.name))
+            ));
+            invariants
+                .modes
+                .iter()
+                .map(|mode| {
+                    (
+                        mode.as_str(),
+                        run_mode(
+                            binary,
+                            command,
+                            MatrixInvocation {
+                                mode: *mode,
+                                color,
+                                theme_env: &theme.env,
+                                home: &home,
+                            },
+                            timeout,
+                            isolation,
+                        ),
+                    )
+                })
+                .collect()
+        },
+        "planned invocation was not executed",
+    )
 }
 
-/// Stable matrix identities for a build that never produced a binary.
+/// Stable matrix identities for a build that never produced a binary: the
+/// same cell plan as [`run_invariants`], with every applicable cell
+/// `not-run` for `reason` instead of executed.
 pub fn not_run_invariants(invariants: &Invariants, reason: &str) -> Vec<InvariantCell> {
-    let mut cells = Vec::new();
-    for command in &invariants.commands {
-        for color in &invariants.colors {
-            for theme in &invariants.themes {
-                for mode in &invariants.modes {
-                    for check in MATRIX_CHECKS {
-                        let applicable = command_applies(command, *mode, *color, &theme.name)
-                            && check_applies(command.contract, *mode, check);
-                        cells.push(matrix_cell(
-                            command,
-                            *mode,
-                            *color,
-                            &theme.name,
-                            check,
-                            if applicable {
-                                InvariantStatus::NotRun
-                            } else {
-                                InvariantStatus::NotApplicable
-                            },
-                            Some(if applicable {
-                                reason.to_string()
-                            } else {
-                                applicability_reason(command, *mode, *color, &theme.name, check)
-                            }),
-                        ));
-                    }
-                }
-            }
-        }
-    }
-    cells
+    sweep_plan(invariants, |_, _, _| ModeRuns::new(), reason)
 }
 
 type ModeRuns = BTreeMap<&'static str, Result<(Option<i32>, String), String>>;
+
+/// The one walk of the planned cell identities. `mode_runs` supplies the
+/// per-mode invocation outcomes for one command×color×theme group (empty
+/// when nothing ran); a planned mode absent from the map is emitted as
+/// `not-run` with `not_run_reason`.
+fn sweep_plan(
+    invariants: &Invariants,
+    mut mode_runs: impl FnMut(&InvariantCommand, ColorState, &InvariantTheme) -> ModeRuns,
+    not_run_reason: &str,
+) -> Vec<InvariantCell> {
+    let mut cells = Vec::new();
+    for command in &invariants.commands {
+        for color in &invariants.colors {
+            for theme in &invariants.themes {
+                let runs = mode_runs(command, *color, theme);
+                for mode in &invariants.modes {
+                    emit_axis_cells(
+                        &mut cells,
+                        command,
+                        *mode,
+                        *color,
+                        &theme.name,
+                        &runs,
+                        not_run_reason,
+                    );
+                }
+            }
+        }
+    }
+    cells
+}
 
 fn emit_axis_cells(
     out: &mut Vec<InvariantCell>,
@@ -173,10 +172,10 @@ fn emit_axis_cells(
     color: ColorState,
     theme: &str,
     runs: &ModeRuns,
+    not_run_reason: &str,
 ) {
-    let axes_apply = command_applies(command, mode, color, theme);
     for check in MATRIX_CHECKS {
-        if !axes_apply || !check_applies(command.contract, mode, check) {
+        if !check_applies(command.contract, mode, check) {
             out.push(matrix_cell(
                 command,
                 mode,
@@ -184,7 +183,7 @@ fn emit_axis_cells(
                 theme,
                 check,
                 InvariantStatus::NotApplicable,
-                Some(applicability_reason(command, mode, color, theme, check)),
+                Some(applicability_reason(command.contract, mode, check)),
             ));
             continue;
         }
@@ -196,7 +195,7 @@ fn emit_axis_cells(
                 theme,
                 check,
                 InvariantStatus::NotRun,
-                Some("planned invocation was not executed".to_string()),
+                Some(not_run_reason.to_string()),
             ));
             continue;
         };
@@ -261,17 +260,6 @@ fn emit_axis_cells(
     }
 }
 
-fn command_applies(
-    command: &InvariantCommand,
-    mode: InvariantMode,
-    color: ColorState,
-    theme: &str,
-) -> bool {
-    (command.modes.is_empty() || command.modes.contains(&mode))
-        && (command.colors.is_empty() || command.colors.contains(&color))
-        && (command.themes.is_empty() || command.themes.iter().any(|t| t == theme))
-}
-
 fn check_applies(contract: InvariantContract, mode: InvariantMode, check: &str) -> bool {
     match check {
         "exits 0" => true,
@@ -291,28 +279,18 @@ fn check_applies(contract: InvariantContract, mode: InvariantMode, check: &str) 
     }
 }
 
-fn applicability_reason(
-    command: &InvariantCommand,
-    mode: InvariantMode,
-    color: ColorState,
-    theme: &str,
-    check: &str,
-) -> String {
-    if !command_applies(command, mode, color, theme) {
-        "command declaration excludes this axis combination".to_string()
-    } else {
-        match (command.contract, check) {
-            (InvariantContract::OpaqueBytes, "stdout parses as JSON") => {
-                "opaque-byte command is not structured JSON".to_string()
-            }
-            (InvariantContract::OpaqueBytes, _) => {
-                "opaque-byte command uses byte-identity checks".to_string()
-            }
-            (_, "opaque output preserves text bytes") => {
-                "rendered command uses render invariants".to_string()
-            }
-            (_, _) => format!("check does not apply to {} mode", mode.as_str()),
+fn applicability_reason(contract: InvariantContract, mode: InvariantMode, check: &str) -> String {
+    match (contract, check) {
+        (InvariantContract::OpaqueBytes, "stdout parses as JSON") => {
+            "opaque-byte command is not structured JSON".to_string()
         }
+        (InvariantContract::OpaqueBytes, _) => {
+            "opaque-byte command uses byte-identity checks".to_string()
+        }
+        (_, "opaque output preserves text bytes") => {
+            "rendered command uses render invariants".to_string()
+        }
+        (_, _) => format!("check does not apply to {} mode", mode.as_str()),
     }
 }
 

@@ -7,11 +7,20 @@
 //! host user-data/source reads and writes outside the phase workspace; Linux
 //! Landlock admits only the phase workspace and selected system/toolchain
 //! roots. If the host cannot enforce either policy, the run refuses to start.
+//!
+//! The two backends are not equivalent, and reports must not pretend they
+//! are: Seatbelt is allow-default with denied roots and enforces network
+//! denial; Landlock (ABI v1) is default-deny over admitted roots and is
+//! filesystem-only — a `network = false` policy is NOT enforced there. The
+//! gap is recorded per phase policy by [`capability`] and warned about at
+//! apply time, so a report never reads stronger than what was enforced.
 
 #[cfg(target_os = "macos")]
 use std::path::Path;
 use std::path::PathBuf;
 use std::process::Command;
+
+use crate::report::{IsolationRecord, NetworkEnforcement};
 
 /// One process's filesystem policy.
 #[derive(Debug, Clone)]
@@ -38,19 +47,51 @@ impl Policy {
     }
 }
 
-/// Human-readable identity pinned in reports.
-pub fn backend_name() -> &'static str {
+/// What this host's backend actually enforces for one phase policy,
+/// recorded verbatim in reports (see [`IsolationRecord`]).
+///
+/// `network_allowed` is the phase policy's network flag (see
+/// [`Policy::new`]): a policy that allows network yields
+/// [`NetworkEnforcement::AllowedByPolicy`] on every backend, while a
+/// requested denial is enforced by Seatbelt and loudly unenforced on
+/// Landlock (ABI v1, filesystem-only).
+pub fn capability(network_allowed: bool) -> IsolationRecord {
     #[cfg(target_os = "macos")]
     {
-        "macos-seatbelt"
+        IsolationRecord {
+            backend: "macos-seatbelt".to_string(),
+            filesystem: "allow-default; reads denied under listed user/source roots, \
+                         writes denied outside the phase workspace"
+                .to_string(),
+            network: if network_allowed {
+                NetworkEnforcement::AllowedByPolicy
+            } else {
+                NetworkEnforcement::Denied
+            },
+        }
     }
     #[cfg(target_os = "linux")]
     {
-        "linux-landlock"
+        IsolationRecord {
+            backend: "linux-landlock".to_string(),
+            filesystem: "default-deny; only admitted workspace/system/toolchain roots \
+                         are reachable"
+                .to_string(),
+            network: if network_allowed {
+                NetworkEnforcement::AllowedByPolicy
+            } else {
+                NetworkEnforcement::DenialRequestedButUnsupported
+            },
+        }
     }
     #[cfg(not(any(target_os = "macos", target_os = "linux")))]
     {
-        "unavailable"
+        let _ = network_allowed;
+        IsolationRecord {
+            backend: "unavailable".to_string(),
+            filesystem: "not enforced".to_string(),
+            network: NetworkEnforcement::NotEnforced,
+        }
     }
 }
 
@@ -58,6 +99,7 @@ pub fn backend_name() -> &'static str {
 /// stdio. Call this after configuring cwd/env and before configuring stdio.
 pub fn apply(command: &mut Command, policy: &Policy) -> Result<(), String> {
     validate_denied_boundaries(policy)?;
+    warn_unenforced_network(policy);
 
     #[cfg(target_os = "macos")]
     return apply_macos(command, policy);
@@ -70,6 +112,27 @@ pub fn apply(command: &mut Command, policy: &Policy) -> Result<(), String> {
         let _ = (command, policy);
         Err("corpus isolation requires macOS Seatbelt or Linux Landlock".to_string())
     }
+}
+
+/// Warns (once per process) when a policy asks for a network denial the
+/// active backend cannot enforce. The report records the same gap via
+/// [`capability`]; this makes it loud at run time too.
+fn warn_unenforced_network(policy: &Policy) {
+    #[cfg(target_os = "linux")]
+    {
+        static WARNED: std::sync::Once = std::sync::Once::new();
+        if !policy.network {
+            WARNED.call_once(|| {
+                eprintln!(
+                    "[corpus] warning: this phase's policy disables network, but \
+                     linux-landlock (ABI v1) is filesystem-only and cannot enforce it; \
+                     the report records network isolation as NOT ENFORCED"
+                );
+            });
+        }
+    }
+    #[cfg(not(target_os = "linux"))]
+    let _ = policy;
 }
 
 /// Refuses a policy whose allowlist contains a denied root or one of its
@@ -302,6 +365,22 @@ mod tests {
         let err = validate_denied_boundaries(&policy).unwrap_err();
         assert!(err.contains("/home/runner/work"), "{err}");
         assert!(err.contains("/home/runner/work/project"), "{err}");
+    }
+
+    #[test]
+    #[cfg(any(target_os = "macos", target_os = "linux"))]
+    fn capability_reflects_the_phase_policy_network_request() {
+        assert_eq!(
+            capability(true).network,
+            NetworkEnforcement::AllowedByPolicy
+        );
+        #[cfg(target_os = "macos")]
+        assert_eq!(capability(false).network, NetworkEnforcement::Denied);
+        #[cfg(target_os = "linux")]
+        assert_eq!(
+            capability(false).network,
+            NetworkEnforcement::DenialRequestedButUnsupported
+        );
     }
 
     #[test]

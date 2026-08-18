@@ -1,14 +1,18 @@
 //! The run report: the durable artifact a corpus run leaves behind.
 //!
 //! `schema_version` 3 — the shape is a recorded decision (see
-//! `corpus/README.md`); an ADR may formalize it later. Version 2 differed
-//! only in carrying a parallel `checks` vector for the retired check schema;
-//! committed v2 reports still deserialize (the vector was omitted when empty,
-//! and serde tolerates it where present). Objective results (acceptance,
-//! invariants) and the agent's self-assessment (questionnaire) are
-//! deliberately separate sections, and the `pins` block is what makes two
+//! `corpus/README.md`); an ADR may formalize it later. Objective results
+//! (acceptance, invariants) and the agent's self-assessment (questionnaire)
+//! are deliberately separate sections, and the `pins` block is what makes two
 //! runs comparable: same spec hash + same framework version + same docs
-//! commit means the same experiment.
+//! commit means the same experiment. Version 3 is one bump carrying every
+//! shape change over version 2: it replaced the single `isolation_backend`
+//! word with the per-capability [`IsolationRecord`], dropped the
+//! producerless `session.attempts` counter, and removed the retired check
+//! schema's parallel `checks` vector. Committed v2 reports (the preserved
+//! pilot evidence) still deserialize: the historical path accepts
+//! [`HISTORICAL_SCHEMA_MIN`]`..=`[`SCHEMA_VERSION`], and retired keys are
+//! ignored where present.
 
 use std::collections::BTreeMap;
 use std::path::Path;
@@ -41,9 +45,47 @@ pub struct EvaluationStamp {
     /// `full-run` when one runner invocation owned every phase, or
     /// `isolated-re-evaluation` for preserved historical workspaces.
     pub origin: String,
-    pub isolation_backend: String,
+    /// The check-phase boundary the objective results ran under. Its policy
+    /// requests a network denial; the record states whether the backend
+    /// actually enforced it.
+    pub isolation: IsolationRecord,
     /// sha256 of the exact produced executable evaluated, when one existed.
     pub binary_sha256: Option<String>,
+}
+
+/// What the isolation boundary actually enforced, per capability. One
+/// backend word overstates parity — Linux Landlock (ABI v1) cannot enforce
+/// a network policy at all, and its default-deny filesystem model differs
+/// from Seatbelt's allow-default-with-denied-roots — so reports record each
+/// capability distinctly and never read stronger than what was enforced.
+/// The network state is derived from the phase policy that was actually
+/// applied, never from the backend's abilities alone.
+#[derive(Debug, Serialize, Deserialize)]
+pub struct IsolationRecord {
+    /// The kernel mechanism, e.g. `macos-seatbelt` or `linux-landlock`.
+    pub backend: String,
+    /// The filesystem enforcement model this backend applied.
+    pub filesystem: String,
+    /// How the phase policy's network request landed on this backend.
+    pub network: NetworkEnforcement,
+}
+
+/// What actually happened at the network boundary of one phase policy.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum NetworkEnforcement {
+    /// The phase policy did not request a network denial: access was allowed
+    /// deliberately (the agent and build phases fetch crates.io).
+    AllowedByPolicy,
+    /// The policy requested a denial and the backend enforced it (Seatbelt).
+    Denied,
+    /// The policy requested a denial the backend cannot enforce — Landlock
+    /// ABI v1 is filesystem-only — so the gap is recorded loudly instead
+    /// (and warned about at apply time).
+    DenialRequestedButUnsupported,
+    /// No kernel boundary made any network claim (historical agent sessions,
+    /// hosts without a supported backend).
+    NotEnforced,
 }
 
 /// Which archetype ran, pinned by content rather than by name alone.
@@ -82,8 +124,10 @@ pub struct Blindness {
     /// True when provisioning excluded framework source (always, today;
     /// recorded so a future compromised mode is visible in the report).
     pub framework_source_excluded: bool,
-    /// Kernel-enforced boundary used for agent/build/binary descendants.
-    pub isolation_backend: String,
+    /// Kernel-enforced boundary for the agent session and the scaffold
+    /// build (network is allowed by policy there — both phases fetch
+    /// crates.io); the check boundary's record lives in `evaluation`.
+    pub isolation: IsolationRecord,
     /// Any credential intentionally admitted to the agent boundary. Empty is
     /// the only safe default; generated builds share the agent's sandbox.
     pub credential_exceptions: Vec<String>,
@@ -103,8 +147,6 @@ pub struct SessionReport {
     pub exit_code: Option<i32>,
     /// True when the session hit its deadline and was killed.
     pub timed_out: bool,
-    /// How many times the agent command was invoked for this run.
-    pub attempts: u32,
     /// Conversation turns, when the transcript is Claude Code stream-json.
     pub turns: Option<u64>,
     pub input_tokens: Option<u64>,
@@ -226,4 +268,51 @@ impl RunReport {
         std::fs::write(path, json + "\n")
             .with_context(|| format!("writing report to {}", path.display()))
     }
+}
+
+/// The oldest report schema the typed historical path accepts. Version 2 is
+/// the schema the preserved pilot evidence was written in and the oldest
+/// shape [`HistoricalRun`] matches; earlier or unknown future versions are
+/// refused by `reevaluate` rather than silently rewritten as the current
+/// schema.
+pub const HISTORICAL_SCHEMA_MIN: u32 = 2;
+
+/// The slice of a historical report that re-evaluation preserves: identity,
+/// pins, session instrumentation, questionnaire, and the agent's own
+/// blindness answers. Preservation is verbatim except
+/// `pins.acceptance_sha256`, which re-evaluation recomputes from the loaded
+/// suite. Everything re-evaluation regenerates (evaluation, acceptance,
+/// invariants, the enforced-blindness record) is absent, so any report in
+/// the supported range ([`HISTORICAL_SCHEMA_MIN`]`..=`[`SCHEMA_VERSION`])
+/// loads typed — the source's `schema_version` is required and validated by
+/// `reevaluate`, unknown or retired keys are ignored, and an off-shape file
+/// fails with a serde diagnostic naming the field, never a panic.
+#[derive(Debug, Deserialize)]
+pub struct HistoricalRun {
+    pub schema_version: u32,
+    pub run_id: String,
+    pub archetype: HistoricalArchetype,
+    pub pins: Pins,
+    pub blindness: HistoricalBlindness,
+    pub session: SessionReport,
+    pub questionnaire: QuestionnaireReport,
+}
+
+/// The archetype identity a historical report claims (its hash pins are
+/// recomputed from the current archetype on re-evaluation).
+#[derive(Debug, Deserialize)]
+pub struct HistoricalArchetype {
+    pub name: String,
+}
+
+/// The preserved blindness facts: the historical env allowlist and the
+/// agent's self-reported sources. The enforcement half is rewritten because
+/// re-evaluation cannot vouch for a boundary it never installed.
+#[derive(Debug, Deserialize)]
+pub struct HistoricalBlindness {
+    pub env_allowlist: Vec<String>,
+    #[serde(default)]
+    pub agent_reported_docs: Option<String>,
+    #[serde(default)]
+    pub agent_reported_external_sources: Option<String>,
 }
