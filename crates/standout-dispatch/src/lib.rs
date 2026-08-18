@@ -1,8 +1,8 @@
 //! Command dispatch and orchestration for clap-based CLIs.
 //!
 //! `standout-dispatch` provides command routing, handler execution, and a hook
-//! system for CLI applications. It orchestrates the execution flow while remaining
-//! agnostic to rendering implementation.
+//! system for CLI applications. It returns typed results and leaves presentation
+//! to the consuming framework.
 //!
 //! # Architecture
 //!
@@ -13,7 +13,7 @@
 //!   → pre-dispatch hook (validation, setup)
 //!   → handler adapter (CLI input → application call → serializable view data)
 //!   → post-dispatch hook (data transformation)
-//!   → render handler (view + data → string output)
+//!   → framework presentation
 //!   → post-output hook (output transformation)
 //! ```
 //!
@@ -25,35 +25,10 @@
 //!   `&CommandContext`) and return serializable data. Reusable application
 //!   behavior remains behind a CLI-free library interface.
 //!
-//! - Render handlers are pluggable callbacks provided by the consuming framework.
-//!   They receive (view name, data) and return a formatted string. All rendering
-//!   decisions (format, theme, template engine) live in the render handler.
-//!
 //! This separation allows:
 //! - Using dispatch without any rendering (just return data)
-//! - Using dispatch with custom renderers (not just standout-render)
+//! - Letting a consuming framework choose how returned data becomes output
 //! - Keeping format/theme/template logic out of the dispatch layer
-//!
-//! ## Render Handler Pattern
-//!
-//! The render handler is a closure that captures rendering context:
-//!
-//! ```rust,ignore
-//! // Framework (e.g., standout) creates the render handler at runtime
-//! // after parsing CLI args to determine format
-//! let format = extract_output_mode(&matches);  // --output=json
-//! let theme = &config.theme;
-//!
-//! let render_handler = move |view: &str, data: &Value| {
-//!     // All format/theme knowledge lives here, not in dispatch
-//!     my_renderer::render(view, data, theme, format)
-//! };
-//!
-//! dispatcher.run_with_renderer(matches, render_handler);
-//! ```
-//!
-//! This pattern means dispatch calls `render_handler(view, data)` without knowing
-//! what format, theme, or template engine is being used.
 //!
 //! # State Management
 //!
@@ -85,23 +60,9 @@
 //! - Handler traits: [`Handler`] trait with `&mut self` for mutable state
 //! - Hook system: Pre/post dispatch and post-output hooks for cross-cutting concerns
 //! - State injection: App-level state via `app_state`, per-request state via `extensions`
-//! - Render abstraction: Pluggable render handlers via [`RenderFn`]
+//! - Command results: serializable data, silent success, binary bytes, or an error
 //!
 //! # Usage
-//!
-//! ## Standalone (no rendering framework)
-//!
-//! ```rust,ignore
-//! use standout_dispatch::{Handler, Output, from_fn};
-//!
-//! // Simple render handler that just serializes to JSON
-//! let render = from_fn(|data, _| Ok(serde_json::to_string_pretty(data)?));
-//!
-//! Dispatcher::builder()
-//!     .command("list", list_handler, render)
-//!     .build()?
-//!     .run(cmd, args);
-//! ```
 //!
 //! ## With standout framework
 //!
@@ -117,15 +78,14 @@
 //!     .run(cmd, args);
 //! ```
 //!
-//! In this case, `standout` creates the render handler internally, injecting
-//! the template registry, theme, and output format from CLI args.
+//! In this case, `standout` owns template lookup, theme selection, and output
+//! mode handling after dispatch returns handler data.
 
 // Core modules
 pub mod artifact;
 mod dispatch;
 mod handler;
 mod hooks;
-mod render;
 pub mod verify;
 
 // Re-export compound artifact types
@@ -149,6 +109,3 @@ pub use hooks::{
     ArtifactOutput, HookError, HookPhase, Hooks, PostDispatchFn, PostOutputFn, PreDispatchFn,
     RenderedOutput, TextOutput,
 };
-
-// Re-export render abstraction
-pub use render::{from_fn, RenderError, RenderFn};

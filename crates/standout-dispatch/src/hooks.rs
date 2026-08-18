@@ -13,7 +13,7 @@
 //!   → PRE-DISPATCH HOOK ← (validation, auth checks, setup)
 //!   → logic handler
 //!   → POST-DISPATCH HOOK ← (data transformation, enrichment)
-//!   → render handler
+//!   → framework rendering
 //!   → POST-OUTPUT HOOK ← (output transformation, logging)
 //! ```
 //!
@@ -301,6 +301,37 @@ impl Hooks {
         self.pre_dispatch.is_empty() && self.post_dispatch.is_empty() && self.post_output.is_empty()
     }
 
+    /// Returns true when at least one hook is registered for `phase`.
+    pub fn has_phase(&self, phase: HookPhase) -> bool {
+        match phase {
+            HookPhase::PreDispatch => !self.pre_dispatch.is_empty(),
+            HookPhase::PostDispatch => !self.post_dispatch.is_empty(),
+            HookPhase::PostOutput => !self.post_output.is_empty(),
+        }
+    }
+
+    /// Returns the phases that contain at least one hook.
+    pub fn phases(&self) -> impl Iterator<Item = HookPhase> + '_ {
+        [
+            HookPhase::PreDispatch,
+            HookPhase::PostDispatch,
+            HookPhase::PostOutput,
+        ]
+        .into_iter()
+        .filter(|phase| self.has_phase(*phase))
+    }
+
+    /// Appends another hook configuration after this one.
+    ///
+    /// Hooks in the same phase keep registration order: the hooks already in
+    /// `self` run before hooks from `other`.
+    pub fn append(mut self, mut other: Hooks) -> Self {
+        self.pre_dispatch.append(&mut other.pre_dispatch);
+        self.post_dispatch.append(&mut other.post_dispatch);
+        self.post_output.append(&mut other.post_output);
+        self
+    }
+
     /// Adds a pre-dispatch hook.
     ///
     /// Pre-dispatch hooks receive mutable access to [`CommandContext`], allowing
@@ -455,6 +486,43 @@ mod tests {
     fn test_hooks_empty() {
         let hooks = Hooks::new();
         assert!(hooks.is_empty());
+    }
+
+    #[test]
+    fn test_hooks_report_registered_phases() {
+        let hooks = Hooks::new()
+            .pre_dispatch(|_, _| Ok(()))
+            .post_output(|_, _, output| Ok(output));
+
+        let phases: Vec<_> = hooks.phases().collect();
+
+        assert_eq!(phases, vec![HookPhase::PreDispatch, HookPhase::PostOutput]);
+        assert!(hooks.has_phase(HookPhase::PreDispatch));
+        assert!(!hooks.has_phase(HookPhase::PostDispatch));
+    }
+
+    #[test]
+    fn test_hooks_append_preserves_phase_order() {
+        use std::cell::RefCell;
+
+        let calls = Rc::new(RefCell::new(Vec::new()));
+        let first_calls = calls.clone();
+        let second_calls = calls.clone();
+        let hooks = Hooks::new()
+            .pre_dispatch(move |_, _| {
+                first_calls.borrow_mut().push("first");
+                Ok(())
+            })
+            .append(Hooks::new().pre_dispatch(move |_, _| {
+                second_calls.borrow_mut().push("second");
+                Ok(())
+            }));
+        let mut ctx = test_context();
+        let matches = test_matches();
+
+        hooks.run_pre_dispatch(&matches, &mut ctx).unwrap();
+
+        assert_eq!(&*calls.borrow(), &["first", "second"]);
     }
 
     #[test]
