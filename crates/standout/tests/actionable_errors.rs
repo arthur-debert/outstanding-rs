@@ -28,6 +28,32 @@ fn render_named_without_registry_names_the_builder_calls() {
 }
 
 #[test]
+fn render_named_file_refresh_error_keeps_read_context() {
+    let dir = tempfile::tempdir().unwrap();
+    let template_path = dir.path().join("show.jinja");
+    std::fs::write(&template_path, "Hello {{ name }}").unwrap();
+
+    let app = App::builder()
+        .templates_dir(dir.path())
+        .unwrap()
+        .build()
+        .unwrap();
+    std::fs::remove_file(&template_path).unwrap();
+
+    let message = app
+        .render("show", &json!({"name": "Ada"}), standout::OutputMode::Text)
+        .expect_err("deleted template should fail during render refresh")
+        .to_string();
+
+    assert!(message.contains("could not refresh the registered template"));
+    assert!(message.contains(&template_path.display().to_string()));
+    assert!(
+        !message.contains("could not find the named template"),
+        "{message}"
+    );
+}
+
+#[test]
 fn hook_conflict_error_names_the_phase_and_single_registration_fix() {
     let result = App::builder()
         .command_with(

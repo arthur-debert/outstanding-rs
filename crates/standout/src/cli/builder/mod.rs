@@ -43,7 +43,7 @@ use crate::{render_auto, OutputMode, Theme};
 use clap::{Arg, ArgAction, ArgMatches, Command};
 use serde::Serialize;
 use std::cell::RefCell;
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::rc::Rc;
 
 use super::default_command::ParseFailure;
@@ -318,7 +318,9 @@ fn missing_template_message(
     template_name: &str,
     registry: Option<&TemplateRegistry>,
 ) -> String {
-    let mut message = if registry.is_some() {
+    let has_application_templates =
+        registry.is_some_and(TemplateRegistry::has_application_templates);
+    let mut message = if has_application_templates {
         format!(
             "command `{command_path}` references template `{template_name}`, but that template is not registered; add it with .templates(embed_templates!(\"src/templates\")) or .templates_dir(\"path/to/templates\")"
         )
@@ -331,6 +333,9 @@ fn missing_template_message(
     let Some(registry) = registry else {
         return message;
     };
+    if !has_application_templates {
+        return message;
+    }
 
     let suggestions = nearest_template_names(template_name, registry);
     if !suggestions.is_empty() {
@@ -348,17 +353,17 @@ fn missing_template_message(
 }
 
 fn available_template_names(registry: &TemplateRegistry) -> Vec<String> {
-    registry
-        .names()
+    canonical_template_names(registry)
+        .into_iter()
         .take(5)
         .map(|candidate| format!("`{candidate}`"))
         .collect()
 }
 
 fn nearest_template_names(name: &str, registry: &TemplateRegistry) -> Vec<String> {
-    let mut candidates: Vec<(usize, String)> = registry
-        .names()
-        .map(|candidate| (edit_distance(name, candidate), candidate.to_string()))
+    let mut candidates: Vec<(usize, String)> = canonical_template_names(registry)
+        .into_iter()
+        .map(|candidate| (edit_distance(name, &candidate), candidate))
         .filter(|(distance, candidate)| {
             *distance <= 3 || candidate.contains(name) || name.contains(candidate)
         })
@@ -370,6 +375,39 @@ fn nearest_template_names(name: &str, registry: &TemplateRegistry) -> Vec<String
         .take(3)
         .map(|(_, candidate)| format!("`{candidate}`"))
         .collect()
+}
+
+fn canonical_template_names(registry: &TemplateRegistry) -> Vec<String> {
+    let mut names = BTreeMap::<String, String>::new();
+    for name in registry.names() {
+        let key = template_alias_key(name).to_string();
+        match names.entry(key) {
+            std::collections::btree_map::Entry::Vacant(entry) => {
+                entry.insert(name.to_string());
+            }
+            std::collections::btree_map::Entry::Occupied(mut entry)
+                if is_extensionless_template_name(entry.get())
+                    && !is_extensionless_template_name(name) =>
+            {
+                entry.insert(name.to_string());
+            }
+            std::collections::btree_map::Entry::Occupied(_) => {}
+        }
+    }
+    names.into_values().collect()
+}
+
+fn template_alias_key(name: &str) -> &str {
+    for extension in [".jinja", ".jinja2", ".j2", ".stpl", ".txt"] {
+        if let Some(stripped) = name.strip_suffix(extension) {
+            return stripped;
+        }
+    }
+    name
+}
+
+fn is_extensionless_template_name(name: &str) -> bool {
+    template_alias_key(name) == name
 }
 
 fn edit_distance(left: &str, right: &str) -> usize {

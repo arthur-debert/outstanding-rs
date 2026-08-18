@@ -34,7 +34,7 @@ impl std::fmt::Display for SetupError {
             SetupError::Stylesheet(msg) => write!(f, "stylesheet error: {}", msg),
             SetupError::ThemeNotFound(name) => write!(
                 f,
-                "theme `{}` not found; add it with .styles(embed_styles!(\"src/styles\")) or .styles_dir(\"path/to/styles\"), select an available stylesheet with .default_theme(...), or pass a Theme directly with .theme(...)",
+                "theme `{}` not found; add styles with .styles(embed_styles!(\"src/styles\")) or .styles_dir(\"path/to/styles\"), select an available theme with .default_theme(...), or pass a Theme directly with .theme(...)",
                 name
             ),
             SetupError::Config(msg) => write!(f, "configuration error: {}", msg),

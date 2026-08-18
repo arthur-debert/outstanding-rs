@@ -131,11 +131,11 @@ Explicit `.theme()` takes precedence over `.default_theme()`.
 
 ```rust
 App::builder()
-    .command("list", list_handler, "list.j2")
-    .command("add", add_handler, "add.j2")
+    .command("list", list_handler, "[title]Items[/title]")
+    .command("add", add_handler, "Added {{ name }}")
 ```
 
-Arguments: command name, handler function, template path.
+Arguments: command name, handler function, inline MiniJinja template source.
 
 ### With Configuration
 
@@ -157,11 +157,11 @@ independent of the selected output mode. See [Output Modes](output-modes.md#csv-
 ```rust
 App::builder()
     .group("db", |g| g
-        .command("migrate", migrate_handler, "db/migrate.j2")
-        .command("status", status_handler, "db/status.j2")
+        .command("migrate", migrate_handler, "Migrated")
+        .command("status", status_handler, "Status: {{ status }}")
         .group("backup", |b| b
-            .command("create", backup_create, "db/backup/create.j2")
-            .command("restore", backup_restore, "db/backup/restore.j2")))
+            .command("create", backup_create, "Backup created")
+            .command("restore", backup_restore, "Backup restored")))
 ```
 
 Creates command paths: `db.migrate`, `db.status`, `db.backup.create`, `db.backup.restore`.
@@ -190,8 +190,8 @@ When a CLI is invoked without a subcommand (a "naked" invocation like `myapp` or
 ```rust
 App::builder()
     .default_command("list")
-    .command("list", list_handler, "list.j2")
-    .command("add", add_handler, "add.j2")
+    .command("list", list_handler, "{{ items | length }} items")
+    .command("add", add_handler, "Added {{ name }}")
 ```
 
 With this configuration:
@@ -211,8 +211,8 @@ App::builder()
     .default_command_with(|ctx| {
         Some(if ctx.stdin_is_piped() { "add" } else { "list" }.to_string())
     })
-    .command("list", list_handler, "list.j2")
-    .command("add", add_handler, "add.j2")
+    .command("list", list_handler, "{{ items | length }} items")
+    .command("add", add_handler, "Added {{ name }}")
 ```
 
 - `myapp` at a terminal becomes `myapp list`
@@ -282,7 +282,7 @@ Attach hooks to specific command paths:
 
 ```rust
 App::builder()
-    .command("migrate", migrate_handler, "migrate.j2")
+    .command("migrate", migrate_handler, "Migrated")
     .hooks("db.migrate", Hooks::new()
         .pre_dispatch(require_admin)
         .post_dispatch(add_timestamp)
@@ -458,7 +458,8 @@ Parses with Standout's augmented command but doesn't dispatch.
 `build()` validates:
 
 - a theme registry exists and contains the theme named by `.default_theme(...)`
-- named and convention templates resolve through `.templates(...)` or `.templates_dir(...)`
+- named templates resolve through `.templates(...)` or `.templates_dir(...)`
+- convention templates resolve when application templates are configured; without application templates, human-mode rendering reports the missing convention template at runtime
 - registered templates compile
 - framework templates only use tags defined by the resolved theme
 - `command_groups`, topics, and `help_word(true)` are paired with `.help_handling(true)`

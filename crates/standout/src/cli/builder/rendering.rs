@@ -10,6 +10,7 @@ use super::App;
 use crate::context::RenderContext;
 use crate::setup::SetupError;
 use crate::{detect_color_mode, detect_icon_mode, OutputMode};
+use standout_render::RegistryError;
 
 impl App {
     // =========================================================================
@@ -51,10 +52,13 @@ impl App {
         // Get template content
         let template_content = registry
             .get_content(template)
-            .map_err(|e| {
-                SetupError::Template(format!(
-                    "render({template:?}, ...) could not find the named template; add it with .templates(embed_templates!(\"src/templates\")) or .templates_dir(\"path/to/templates\"): {e}"
-                ))
+            .map_err(|error| match error {
+                RegistryError::NotFound { .. } => SetupError::Template(format!(
+                    "render({template:?}, ...) could not find the named template; add it with .templates(embed_templates!(\"src/templates\")) or .templates_dir(\"path/to/templates\"): {error}"
+                )),
+                _ => SetupError::Template(format!(
+                    "render({template:?}, ...) could not refresh the registered template: {error}"
+                )),
             })?;
 
         // Render the template content

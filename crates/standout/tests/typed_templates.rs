@@ -45,7 +45,6 @@ fn build_fails_for_missing_named_template_with_near_match() {
 fn build_fails_for_missing_template_registry_with_builder_call() {
     let error = build_error(
         App::builder()
-            .include_framework_templates(false)
             .command_with(
                 "show",
                 |_m, _ctx| Ok(Output::Render(json!({"name": "Ada"}))),
@@ -58,6 +57,7 @@ fn build_fails_for_missing_template_registry_with_builder_call() {
     assert!(error.contains("no application templates are configured"));
     assert!(error.contains(".templates(embed_templates!"));
     assert!(error.contains(".templates_dir(\"path/to/templates\")"));
+    assert!(!error.contains("standout/list-view"), "{error}");
 }
 
 #[test]
@@ -82,6 +82,38 @@ fn build_fails_for_missing_named_template_with_available_names() {
     assert!(error.contains("available templates"), "{error}");
     assert!(error.contains("`alpha.jinja`"));
     assert!(error.contains("`beta.jinja`"));
+}
+
+#[test]
+fn available_template_names_are_sorted_unique_and_limited() {
+    let error = build_error(
+        App::builder()
+            .templates(EmbeddedSource::<TemplateResource>::new(
+                &[
+                    ("zeta.jinja", "Zeta {{ name }}"),
+                    ("alpha.jinja", "Alpha {{ name }}"),
+                    ("beta.jinja", "Beta {{ name }}"),
+                    ("gamma.jinja", "Gamma {{ name }}"),
+                    ("delta.jinja", "Delta {{ name }}"),
+                    ("epsilon.jinja", "Epsilon {{ name }}"),
+                ],
+                "/path/that/does/not/exist",
+            ))
+            .command_with(
+                "show",
+                |_m, _ctx| Ok(Output::Render(json!({"name": "Ada"}))),
+                |cfg| cfg.template_name("unmatchable-template-name.jinja"),
+            )
+            .unwrap(),
+    );
+
+    assert!(
+        error.contains(
+            "available templates: `alpha.jinja`, `beta.jinja`, `delta.jinja`, `epsilon.jinja`, `gamma.jinja`"
+        ),
+        "{error}"
+    );
+    assert!(!error.contains("`zeta.jinja`"), "{error}");
 }
 
 #[test]

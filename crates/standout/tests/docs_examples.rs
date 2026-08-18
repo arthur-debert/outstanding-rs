@@ -2,7 +2,7 @@ use clap::{ArgMatches, CommandFactory, Parser, Subcommand};
 use serde::Serialize;
 use standout::cli::{App, CommandContext, Dispatch, HandlerResult, Output};
 use standout::{embed_styles, embed_templates};
-use standout_test::TestHarness;
+use standout_test::{serial, TestHarness};
 
 #[derive(Parser)]
 #[command(name = "app")]
@@ -42,6 +42,7 @@ fn list_handler(_matches: &ArgMatches, _ctx: &CommandContext) -> HandlerResult<T
 }
 
 #[test]
+#[serial]
 fn readme_and_index_builder_order_builds_and_runs() -> Result<(), Box<dyn std::error::Error>> {
     let app = App::builder()
         .templates(embed_templates!("tests/fixtures/templates"))
@@ -60,6 +61,7 @@ fn readme_and_index_builder_order_builds_and_runs() -> Result<(), Box<dyn std::e
 }
 
 #[test]
+#[serial]
 fn app_configuration_complete_example_builds() -> Result<(), Box<dyn std::error::Error>> {
     let app = App::builder()
         .templates(embed_templates!("tests/fixtures/templates"))
