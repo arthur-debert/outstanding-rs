@@ -59,7 +59,7 @@
 //! Use [`resolve_styles`](Theme::resolve_styles) to get a `Styles` collection
 //! for a specific color mode. This is typically called during rendering.
 
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
 use console::Style;
@@ -661,20 +661,17 @@ impl Theme {
     /// // "text" is now bold (from user)
     /// ```
     pub fn merge(mut self, other: Theme) -> Self {
-        let declared_names: HashSet<String> = other
+        for name in other
             .base
             .keys()
             .chain(other.light.keys())
             .chain(other.dark.keys())
             .chain(other.aliases.keys())
-            .cloned()
-            .collect();
-
-        for name in declared_names {
-            self.base.remove(&name);
-            self.light.remove(&name);
-            self.dark.remove(&name);
-            self.aliases.remove(&name);
+        {
+            self.base.remove(name);
+            self.light.remove(name);
+            self.dark.remove(name);
+            self.aliases.remove(name);
         }
 
         self.base.extend(other.base);
