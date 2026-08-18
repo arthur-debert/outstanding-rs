@@ -1,13 +1,15 @@
 # The corpus run-report schema
 
-Every corpus run writes one `report.json`, `schema_version: 2`, in which
-objective results and agent self-assessment are deliberately separate
-sections — the reader must never have to untangle what the harness measured
-from what the agent claimed. This ADR transcribes the decision recorded in
-`corpus/README.md` ("Decision: the run-report schema") during the ROB03
-corpus pilot; the corpus cleanup epic (ROC02) mints it in ADR form. It is a
-transcription of decided material, not new design; the serde structs in
-`crates/corpus-runner/src/report.rs` are the schema's executable statement.
+Every corpus run writes one `report.json` in which objective results and
+agent self-assessment are deliberately separate sections — the reader must
+never have to untangle what the harness measured from what the agent
+claimed. This ADR transcribes the decision recorded in `corpus/README.md`
+("Decision: the run-report schema") during the ROB03 corpus pilot, where it
+was `schema_version: 2`; the corpus cleanup epic (ROC02) mints it in ADR
+form and the amendment below records the `schema_version: 3` shape current
+runs actually write. It is a transcription of decided material, not new
+design; the serde structs in `crates/corpus-runner/src/report.rs` are the
+schema's executable statement.
 
 Amendment (ROC02-WS02, ROC02-WS03): `schema_version: 3` is one bump
 carrying every shape change over version 2 — it replaced the single

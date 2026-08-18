@@ -124,7 +124,8 @@ fn warn_unenforced_network(policy: &Policy) {
                 eprintln!(
                     "[corpus] warning: this phase's policy disables network, but \
                      linux-landlock (ABI v1) is filesystem-only and cannot enforce it; \
-                     the report records network isolation as NOT ENFORCED"
+                     the report records network isolation as \
+                     denial-requested-but-unsupported"
                 );
             });
         }
