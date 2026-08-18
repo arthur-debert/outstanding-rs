@@ -244,10 +244,28 @@ stderr_contains = ["bogus", "number", "title"]
 # piped. Failures here are framework findings by default.
 
 [invariants]
-commands = [
-    ["auth", "status"],
-    ["repo", "view", "demo/alpha"],
-    ["pr", "list"],
-    ["pr", "view", "2"],
-    ["pr", "checks", "list", "1"],
-]
+modes = ["text", "term", "json"]
+colors = ["off", "on"]
+
+[[invariants.theme]]
+name = "application"
+
+[[invariants.command]]
+argv = ["auth", "status"]
+contract = "rendered"
+
+[[invariants.command]]
+argv = ["repo", "view", "demo/alpha"]
+contract = "rendered"
+
+[[invariants.command]]
+argv = ["pr", "list"]
+contract = "rendered"
+
+[[invariants.command]]
+argv = ["pr", "view", "2"]
+contract = "rendered"
+
+[[invariants.command]]
+argv = ["pr", "checks", "list", "1"]
+contract = "rendered"

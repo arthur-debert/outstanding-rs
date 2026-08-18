@@ -13,8 +13,8 @@ use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
-use corpus_runner::archetype::{Archetype, Invariants};
-use corpus_runner::report::{QuestionnaireReport, RunReport};
+use corpus_runner::archetype::{Archetype, InvariantCommand, InvariantContract, Invariants};
+use corpus_runner::report::{InvariantStatus, QuestionnaireReport, RunReport};
 use corpus_runner::{acceptance, questionnaire, session, workspace};
 
 /// A generous per-process deadline for tests that must not time out.
@@ -61,6 +61,30 @@ fn script(dir: &Path, name: &str, body: &str) -> PathBuf {
     fs::write(&path, format!("#!/bin/sh\n{body}")).unwrap();
     fs::set_permissions(&path, fs::Permissions::from_mode(0o755)).unwrap();
     path
+}
+
+fn isolation(root: &Path) -> workspace::Isolation {
+    workspace::Isolation::new(root, &Path::new(env!("CARGO_MANIFEST_DIR")).join("../..")).unwrap()
+}
+
+fn rendered(argv: &[&str]) -> InvariantCommand {
+    InvariantCommand {
+        argv: argv.iter().map(|s| (*s).to_string()).collect(),
+        contract: InvariantContract::Rendered,
+        modes: Vec::new(),
+        colors: Vec::new(),
+        themes: Vec::new(),
+    }
+}
+
+fn opaque(argv: &[&str]) -> InvariantCommand {
+    InvariantCommand {
+        argv: argv.iter().map(|s| (*s).to_string()).collect(),
+        contract: InvariantContract::OpaqueBytes,
+        modes: Vec::new(),
+        colors: Vec::new(),
+        themes: Vec::new(),
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -228,6 +252,26 @@ fn provisioning_refuses_symlinks_in_the_docs_source() {
     assert!(format!("{err:#}").contains("symlink"), "{err:#}");
 }
 
+#[test]
+fn provisioning_refuses_symlinks_from_a_published_root_into_internal_docs() {
+    let archetype = Archetype::load(&corpus_dir().join("archetypes"), "smoke").unwrap();
+    let run_dir = tempfile::tempdir().unwrap();
+    let scratch = tempfile::tempdir().unwrap();
+    let docs_dir = scratch.path().join("docs");
+    fs::create_dir_all(docs_dir.join("guides")).unwrap();
+    fs::create_dir_all(docs_dir.join("spec")).unwrap();
+    fs::write(docs_dir.join("index.md"), "index").unwrap();
+    fs::write(docs_dir.join("spec/internal.md"), "framework internals").unwrap();
+    std::os::unix::fs::symlink(
+        docs_dir.join("spec/internal.md"),
+        docs_dir.join("guides/leak.md"),
+    )
+    .unwrap();
+
+    let err = workspace::provision(run_dir.path(), &archetype, &docs_dir, "8.1.1").unwrap_err();
+    assert!(format!("{err:#}").contains("symlink"), "{err:#}");
+}
+
 // ---------------------------------------------------------------------------
 // Session
 // ---------------------------------------------------------------------------
@@ -237,8 +281,14 @@ fn session_scrubs_the_environment_and_writes_the_transcript() {
     let dir = tempfile::tempdir().unwrap();
     std::env::set_var("CORPUS_SECRET_CANARY", "leaked");
 
-    let report =
-        session::run_agent(dir.path(), "env", &dir.path().join("t.jsonl"), NO_TIMEOUT).unwrap();
+    let report = session::run_agent(
+        dir.path(),
+        &isolation(dir.path()),
+        "env",
+        &dir.path().join("t.jsonl"),
+        NO_TIMEOUT,
+    )
+    .unwrap();
 
     let transcript = fs::read_to_string(dir.path().join("t.jsonl")).unwrap();
     assert!(!transcript.contains("CORPUS_SECRET_CANARY"), "{transcript}");
@@ -257,6 +307,7 @@ fn overrunning_agent_is_killed_and_recorded_as_timed_out() {
     let dir = tempfile::tempdir().unwrap();
     let report = session::run_agent(
         dir.path(),
+        &isolation(dir.path()),
         "sleep 30",
         &dir.path().join("t.jsonl"),
         Duration::from_millis(200),
@@ -285,6 +336,7 @@ fn failing_agent_is_recorded_not_fatal() {
     let dir = tempfile::tempdir().unwrap();
     let report = session::run_agent(
         dir.path(),
+        &isolation(dir.path()),
         "exit 3",
         &dir.path().join("t.jsonl"),
         NO_TIMEOUT,
@@ -328,6 +380,10 @@ case "$mode" in
 esac
 "#;
 
+const OPAQUE: &str = r#"
+printf '\001\002opaque\377\n'
+"#;
+
 #[test]
 fn checks_pass_and_fail_against_real_process_output() {
     let dir = tempfile::tempdir().unwrap();
@@ -362,7 +418,7 @@ stdout_contains = ["absent needle"]
     let corpus_runner::archetype::Suite::Checks(suite) = &archetype.suite else {
         panic!("fixture carries the runner check schema");
     };
-    let report = acceptance::run_checks(&binary, &suite.checks, NO_TIMEOUT);
+    let report = acceptance::run_checks(&binary, &suite.checks, NO_TIMEOUT, &isolation(dir.path()));
     assert!(report.built);
     let outcomes: Vec<bool> = report.checks.iter().map(|c| c.passed).collect();
     assert_eq!(outcomes, vec![true, true, false]);
@@ -375,18 +431,102 @@ fn invariant_matrix_passes_a_well_behaved_binary() {
     let dir = tempfile::tempdir().unwrap();
     let binary = script(dir.path(), "fake", WELL_BEHAVED);
     let invariants = Invariants {
-        commands: vec![vec!["greet".to_string()]],
+        commands: vec![rendered(&["greet"])],
+        ..Invariants::default()
     };
 
     let cells = acceptance::run_invariants(
         &binary,
         &invariants,
         NO_TIMEOUT,
-        &acceptance::EnvSetup::Allowlist,
+        &isolation(dir.path()),
+        &dir.path().join("matrix"),
     );
     assert!(!cells.is_empty());
-    let failures: Vec<_> = cells.iter().filter(|c| !c.passed).collect();
+    let failures: Vec<_> = cells
+        .iter()
+        .filter(|c| c.status == InvariantStatus::Fail)
+        .collect();
     assert!(failures.is_empty(), "{failures:?}");
+    assert_eq!(cells.len(), 30);
+    assert_eq!(
+        cells
+            .iter()
+            .filter(|c| c.status == InvariantStatus::Pass)
+            .count(),
+        14
+    );
+    assert_eq!(
+        cells
+            .iter()
+            .filter(|c| c.status == InvariantStatus::NotApplicable)
+            .count(),
+        16
+    );
+}
+
+#[test]
+fn opaque_matrix_preserves_bytes_without_json_or_render_checks() {
+    let dir = tempfile::tempdir().unwrap();
+    let binary = script(dir.path(), "fake", OPAQUE);
+    let invariants = Invariants {
+        commands: vec![opaque(&["cat-object", "deadbeef"])],
+        ..Invariants::default()
+    };
+
+    let cells = acceptance::run_invariants(
+        &binary,
+        &invariants,
+        NO_TIMEOUT,
+        &isolation(dir.path()),
+        &dir.path().join("matrix"),
+    );
+    assert_eq!(cells.len(), 30);
+    assert_eq!(
+        cells
+            .iter()
+            .filter(|c| c.status == InvariantStatus::Pass)
+            .count(),
+        10
+    );
+    assert_eq!(
+        cells
+            .iter()
+            .filter(|c| c.status == InvariantStatus::NotApplicable)
+            .count(),
+        20
+    );
+    assert!(cells
+        .iter()
+        .all(|c| c.status != InvariantStatus::Fail && c.status != InvariantStatus::NotRun));
+    assert!(cells
+        .iter()
+        .filter(|c| c.check == "stdout parses as JSON")
+        .all(|c| c.status == InvariantStatus::NotApplicable));
+}
+
+#[test]
+fn matrix_keeps_stable_identities_when_the_build_does_not_run() {
+    let invariants = Invariants {
+        commands: vec![rendered(&["greet"])],
+        ..Invariants::default()
+    };
+    let cells = acceptance::not_run_invariants(&invariants, "build failed");
+    assert_eq!(cells.len(), 30);
+    assert_eq!(
+        cells
+            .iter()
+            .filter(|c| c.status == InvariantStatus::NotRun)
+            .count(),
+        14
+    );
+    assert_eq!(
+        cells
+            .iter()
+            .filter(|c| c.status == InvariantStatus::NotApplicable)
+            .count(),
+        16
+    );
 }
 
 #[test]
@@ -394,32 +534,28 @@ fn invariant_matrix_catches_markers_layout_drift_and_bad_json() {
     let dir = tempfile::tempdir().unwrap();
     let binary = script(dir.path(), "fake", CORRUPT);
     let invariants = Invariants {
-        commands: vec![vec!["greet".to_string()]],
+        commands: vec![rendered(&["greet"])],
+        ..Invariants::default()
     };
 
     let cells = acceptance::run_invariants(
         &binary,
         &invariants,
         NO_TIMEOUT,
-        &acceptance::EnvSetup::Allowlist,
+        &isolation(dir.path()),
+        &dir.path().join("matrix"),
     );
     let failed: Vec<&str> = cells
         .iter()
-        .filter(|c| !c.passed)
+        .filter(|c| c.status == InvariantStatus::Fail)
         .map(|c| c.check.as_str())
         .collect();
+    assert!(failed.contains(&"no unresolved tag markers"), "{failed:?}");
     assert!(
-        failed.contains(&"term: no unresolved tag markers"),
+        failed.contains(&"styling preserves text layout"),
         "{failed:?}"
     );
-    assert!(
-        failed.contains(&"term vs text: styling preserves layout"),
-        "{failed:?}"
-    );
-    assert!(
-        failed.contains(&"json: stdout parses as JSON"),
-        "{failed:?}"
-    );
+    assert!(failed.contains(&"stdout parses as JSON"), "{failed:?}");
 }
 
 /// A binary emitting associated rows in text and JSON: rows carry name,
@@ -481,7 +617,7 @@ stdout_json_rows = [["Aldebaran", "Taurus", "0.86"]]
     let corpus_runner::archetype::Suite::Checks(suite) = &archetype.suite else {
         panic!("fixture carries the runner check schema");
     };
-    let report = acceptance::run_checks(&binary, &suite.checks, NO_TIMEOUT);
+    let report = acceptance::run_checks(&binary, &suite.checks, NO_TIMEOUT, &isolation(dir.path()));
     let outcomes: Vec<bool> = report.checks.iter().map(|c| c.passed).collect();
     assert_eq!(outcomes, vec![true, false, true, false, false]);
     assert!(report.checks[1]
@@ -522,7 +658,7 @@ stdout_contains = ["CORPUS_ACCEPTANCE_CANARY"]
     let corpus_runner::archetype::Suite::Checks(suite) = &archetype.suite else {
         panic!("fixture carries the runner check schema");
     };
-    let report = acceptance::run_checks(&binary, &suite.checks, NO_TIMEOUT);
+    let report = acceptance::run_checks(&binary, &suite.checks, NO_TIMEOUT, &isolation(dir.path()));
     // The canary must NOT reach the untrusted binary: the check fails.
     assert!(!report.checks[0].passed, "{:?}", report.checks[0].detail);
 }
@@ -532,21 +668,20 @@ fn hanging_binary_times_out_as_a_finding() {
     let dir = tempfile::tempdir().unwrap();
     let binary = script(dir.path(), "fake", "sleep 30");
     let invariants = Invariants {
-        commands: vec![vec!["greet".to_string()]],
+        commands: vec![rendered(&["greet"])],
+        ..Invariants::default()
     };
 
     let cells = acceptance::run_invariants(
         &binary,
         &invariants,
         Duration::from_millis(200),
-        &acceptance::EnvSetup::Allowlist,
+        &isolation(dir.path()),
+        &dir.path().join("matrix"),
     );
     assert!(!cells.is_empty());
-    let exit_cells: Vec<_> = cells
-        .iter()
-        .filter(|c| c.check.contains("exits 0"))
-        .collect();
-    assert!(exit_cells.iter().all(|c| !c.passed));
+    let exit_cells: Vec<_> = cells.iter().filter(|c| c.check == "exits 0").collect();
+    assert!(exit_cells.iter().all(|c| c.status == InvariantStatus::Fail));
     assert!(exit_cells
         .iter()
         .all(|c| c.detail.as_deref().unwrap().contains("timed out")));
@@ -569,12 +704,20 @@ fn report_round_trips_through_json() {
             framework_version: "8.1.1".into(),
             docs_commit: "deadbeef".into(),
             docs_sha256: "cd".repeat(32),
+            acceptance_sha256: "ef".repeat(32),
             questionnaire_fingerprint: questionnaire::definition().fingerprint().into(),
+        },
+        evaluation: corpus_runner::report::EvaluationStamp {
+            origin: "full-run".into(),
+            isolation_backend: "test".into(),
+            binary_sha256: None,
         },
         blindness: corpus_runner::report::Blindness {
             policy: "p".into(),
             env_allowlist: vec!["PATH".into()],
             framework_source_excluded: true,
+            isolation_backend: "test".into(),
+            credential_exceptions: vec![],
             agent_reported_docs: None,
             agent_reported_external_sources: Some("none".into()),
         },
@@ -611,7 +754,7 @@ fn report_round_trips_through_json() {
     let path = dir.path().join("report.json");
     report.write(&path).unwrap();
     let restored: RunReport = serde_json::from_str(&fs::read_to_string(&path).unwrap()).unwrap();
-    assert_eq!(restored.schema_version, 1);
+    assert_eq!(restored.schema_version, 2);
     assert_eq!(restored.run_id, report.run_id);
     assert_eq!(restored.session.turns, Some(3));
     assert_eq!(

@@ -1,6 +1,6 @@
 //! The run report: the durable artifact a corpus run leaves behind.
 //!
-//! `schema_version` 1 — the shape is a recorded decision (see
+//! `schema_version` 2 — the shape is a recorded decision (see
 //! `corpus/README.md`); an ADR may formalize it later. Objective results
 //! (acceptance, invariants) and the agent's self-assessment (questionnaire)
 //! are deliberately separate sections, and the `pins` block is what makes two
@@ -14,7 +14,7 @@ use anyhow::Context;
 use serde::{Deserialize, Serialize};
 
 /// The current report schema version.
-pub const SCHEMA_VERSION: u32 = 1;
+pub const SCHEMA_VERSION: u32 = 2;
 
 /// Everything one corpus run durably records.
 #[derive(Debug, Serialize, Deserialize)]
@@ -24,12 +24,23 @@ pub struct RunReport {
     pub run_id: String,
     pub archetype: ArchetypeStamp,
     pub pins: Pins,
+    pub evaluation: EvaluationStamp,
     pub blindness: Blindness,
     pub session: SessionReport,
     pub acceptance: AcceptanceReport,
     /// ROB01 invariant-matrix cells, one per (command × check).
     pub invariants: Vec<InvariantCell>,
     pub questionnaire: QuestionnaireReport,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct EvaluationStamp {
+    /// `full-run` when one runner invocation owned every phase, or
+    /// `isolated-re-evaluation` for preserved historical workspaces.
+    pub origin: String,
+    pub isolation_backend: String,
+    /// sha256 of the exact produced executable evaluated, when one existed.
+    pub binary_sha256: Option<String>,
 }
 
 /// Which archetype ran, pinned by content rather than by name alone.
@@ -52,6 +63,8 @@ pub struct Pins {
     /// (sorted relative paths + contents) — the content-true pin that
     /// `docs_commit` alone cannot give when the source tree is dirty.
     pub docs_sha256: String,
+    /// sha256 of the exact acceptance.toml evaluated by the runner.
+    pub acceptance_sha256: String,
     /// Semantic fingerprint of the exit questionnaire definition.
     pub questionnaire_fingerprint: String,
 }
@@ -66,6 +79,11 @@ pub struct Blindness {
     /// True when provisioning excluded framework source (always, today;
     /// recorded so a future compromised mode is visible in the report).
     pub framework_source_excluded: bool,
+    /// Kernel-enforced boundary used for agent/build/binary descendants.
+    pub isolation_backend: String,
+    /// Any credential intentionally admitted to the agent boundary. Empty is
+    /// the only safe default; generated builds share the agent's sandbox.
+    pub credential_exceptions: Vec<String>,
     /// The agent's own answer: which provided docs it consulted.
     pub agent_reported_docs: Option<String>,
     /// The agent's own answer: what it relied on beyond the provided docs.
@@ -177,10 +195,28 @@ impl CaseOutcome {
 pub struct InvariantCell {
     /// The command words the cell ran, joined by spaces (e.g. `list`).
     pub command: String,
+    pub mode: String,
+    pub color: String,
+    pub theme: String,
     /// Which invariant the cell asserts (e.g. `text: no unresolved tags`).
     pub check: String,
-    pub passed: bool,
+    pub status: InvariantStatus,
     pub detail: Option<String>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum InvariantStatus {
+    Pass,
+    Fail,
+    NotRun,
+    NotApplicable,
+}
+
+impl InvariantStatus {
+    pub fn passed(self) -> bool {
+        self == Self::Pass
+    }
 }
 
 /// The collected exit questionnaire: the agent's self-assessment.

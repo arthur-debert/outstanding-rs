@@ -255,9 +255,24 @@ stderr_contains = ["Usage"]
 # framework findings by default.
 
 [invariants]
-commands = [
-    [],
-    ["list-units"],
-    ["list-units", "--state", "active"],
-    ["list-units", "--no-legend"],
-]
+modes = ["text", "term", "json"]
+colors = ["off", "on"]
+
+[[invariants.theme]]
+name = "application"
+
+[[invariants.command]]
+argv = []
+contract = "rendered"
+
+[[invariants.command]]
+argv = ["list-units"]
+contract = "rendered"
+
+[[invariants.command]]
+argv = ["list-units", "--state", "active"]
+contract = "rendered"
+
+[[invariants.command]]
+argv = ["list-units", "--no-legend"]
+contract = "rendered"

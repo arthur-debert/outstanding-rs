@@ -46,6 +46,11 @@ else (the walking-skeleton test uses a scripted agent) and
 `--framework-version` overrides the crates.io pin; see `corpus-runner run
 --help` for the rest.
 
+Run workspaces default to the system temporary directory. `--runs-dir` may
+override it, but the runner refuses a directory beneath the framework
+checkout: a nested workspace would let parent traversal and Git discovery
+cross the blindness boundary.
+
 Every external process (agent, cargo build, produced binary) runs under a
 per-phase deadline (`--agent-timeout`, `--build-timeout`, `--check-timeout`,
 seconds) — an overrun is killed (whole process group) and recorded in the
@@ -73,23 +78,27 @@ fragile"; partial blindness is acceptable if it is *known*).
    scaffold declares its own empty `[workspace]` so cargo never adopts an
    enclosing checkout's workspace (a leak the first live smoke run exposed).
    Symlinks in the docs source are dereferenced only when their target stays
-   inside the published docs surface (`docs/` or a crate's `docs/`, which is
-   how the mdbook mounts crate docs); any other link is a provisioning
+   inside an exact published root (`docs/index.md`, `docs/intro.md`,
+   `docs/guides`, `docs/topics`, or `crates/<name>/docs`, which is how the
+   mdbook mounts crate docs). A guide cannot link into `docs/spec` and smuggle
+   internal material into the snapshot; every other link is a provisioning
    error, never a silent follow.
-2. **Every untrusted-side process runs with a scrubbed environment.** The
-   agent session, the cargo build of the produced app, and every produced-
-   binary invocation get `env_clear()` plus a small recorded allowlist
-   (PATH, HOME, cargo/rustup homes, locale, TERM, TMPDIR) — no repo secrets
-   reach the produced code, which is treated as untrusted. The allowlist is
-   written into the report. The default Claude session is additionally
-   hardened: `--setting-sources ''` keeps host settings and plugins from
-   loading and `--strict-mcp-config` keeps MCP servers/connectors from
-   attaching. Known residue, recorded rather than eliminated: HOME grants
-   the agent its own credentials and caches (what makes the session runnable
-   at all, and what keeps cargo caches shared), and neither the agent nor
-   the produced code runs inside an OS sandbox — full container isolation is
-   deliberately out of the pilot's scope (harness gold-plating); run the
-   pilot from a checkout without repo secrets.
+2. **Every untrusted-side process has its own environment and kernel boundary.**
+   The agent session, cargo build, and every produced-binary invocation get
+   `env_clear()` plus a small recorded key set. HOME, CARGO_HOME, and TMPDIR
+   point to separate disposable phase directories; their host values are
+   never inherited. The processes and all descendants also run inside macOS
+   Seatbelt or Linux Landlock. The policy admits the phase workspace,
+   disposable home, system runtime, and selected toolchain paths while
+   excluding source and host user-data roots; macOS Keychain brokers are
+   denied too. A pre-run probe must prove that the checkout and host home are
+   unreadable or the run refuses to start. The default Claude session is
+   additionally hardened: `--setting-sources ''` keeps host settings and
+   plugins from loading and `--strict-mcp-config` keeps MCP
+   servers/connectors from attaching. The runner grants no credential
+   exception: an agent backend that requires a host HOME, environment token,
+   or Keychain item fails closed rather than exposing that credential to
+   agent-invoked build scripts.
 3. **Blindness is recorded, not assumed.** The exit questionnaire asks two
    dedicated questions — which provided docs were consulted, and what (if
    anything) beyond them: web search, prior knowledge of standout internals,
@@ -99,7 +108,7 @@ fragile"; partial blindness is acceptable if it is *known*).
 
 ## Decision: the run-report schema
 
-`report.json`, `schema_version: 1` (recorded here because an ADR may follow).
+`report.json`, `schema_version: 2` (recorded here because an ADR may follow).
 Objective results and agent self-assessment are deliberately separate
 sections. The shape:
 
@@ -109,10 +118,13 @@ sections. The shape:
 - `pins` — what makes runs comparable: the crates.io framework version the
   scaffold pinned, the git commit the docs snapshot came from, the sha256 of
   the snapshot's actual bytes (the content-true pin a commit alone cannot
-  give when the tree is dirty), and the exit questionnaire's semantic
-  fingerprint.
-- `blindness` — the protocol statement, the environment allowlist, and the
-  agent's own account of what it consulted (from the questionnaire).
+  give when the tree is dirty), the exact acceptance-suite hash, and the exit
+  questionnaire's semantic fingerprint.
+- `evaluation` — whether this was a full run or an isolated re-evaluation,
+  the enforced backend, and the exact produced-binary hash.
+- `blindness` — the protocol statement, environment key set, isolation
+  backend, credential exceptions, and the agent's own account of what it
+  consulted (from the questionnaire).
 - `session` — instrumentation: the agent command, wall seconds, exit code,
   whether the session hit its deadline (`timed_out`), attempts, and
   turns/token counts when the transcript is Claude Code stream-json; plus
@@ -123,9 +135,10 @@ sections. The shape:
   `outcome` (`pass`, `fail`, `expected-fail`, or `unexpected-pass`, the
   news of a gap silently closed) plus the authored `stresses`/`gap`/
   `reason` context so the report reads without the suite beside it.
-- `invariants` — objective: the ROB01 invariant matrix cells (per command ×
-  output mode: exit status, unresolved-tag markers, styling-preserves-layout,
-  JSON well-formedness).
+- `invariants` — objective: the fixed ROB01 plan (command × output mode ×
+  color × compiled theme × check). Every identity has `pass`, `fail`,
+  `not-run`, or `not-applicable`; reports never improve a denominator by
+  omitting a cell.
 - `questionnaire` — subjective: whether a valid sheet was collected, its
   diagnostics, and the decoded answers keyed by stable field id.
 
@@ -190,16 +203,37 @@ timeout_seconds = 10                 # hard bound; exceeding it fails the case
 exit_code = 0
 stdout = "exact bytes\n"             # exact match, LF-normalized
 stderr = ""
+stdout_lines_end_with_once = ["<id:name>"] # each suffix ends exactly one non-empty line
 ```
 
-Besides the cases, a suite may carry an `[invariants]` table — the read-only
-commands the ROB01 invariant matrix sweeps across output modes
-(text/term/json, piped) against the produced binary, on top of the cases:
+Besides the cases, a suite may carry a declarative ROB01 matrix. The global
+axes establish the stable planned cells; each command declares whether its
+output is framework-rendered or opaque bytes and may narrow applicability:
 
 ```toml
 [invariants]
-commands = [["log"], ["status"], []]   # [] is the naked invocation
+modes = ["text", "term", "json"]
+colors = ["off", "on"]
+
+[[invariants.theme]]
+name = "application"                  # the theme compiled into this binary
+
+[[invariants.command]]
+argv = ["log"]
+contract = "rendered"                 # markers, layout, and JSON apply
+
+[[invariants.command]]
+argv = ["ref-list"]
+contract = "opaque-bytes"             # modes preserve text bytes
 ```
+
+Color is explicit and deterministic: `off` sets no-color controls; `on` sets
+terminal capability and force-color controls. A produced binary cannot swap
+its compiled application theme, so suites name the applicable theme rather
+than fabricating a runtime variant. Reports still record all five check
+identities per axis cell and mark incompatible checks (for example, JSON
+parsing of opaque plumbing bytes) `not-applicable`. If a build or required
+baseline does not run, the planned identities remain present as `not-run`.
 
 ### Run semantics (what the runner must provide)
 
@@ -232,6 +266,7 @@ commands = [["log"], ["status"], []]   # [] is the naked invocation
 | `stdout_json` | stdout parses as JSON and is *semantically* equal to this JSON string (key order and whitespace irrelevant) |
 | `stdout_contains`, `stderr_contains` | every listed substring occurs in the stream |
 | `stdout_not_contains`, `stderr_not_contains` | no listed substring occurs in the stream |
+| `stdout_lines_end_with_once` | each suffix terminates exactly one non-empty stdout line |
 
 Prefer `stdout` (exact). Use `stdout_json` for machine output, where byte
 layout is an implementation detail but content is not. Use the `contains`

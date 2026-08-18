@@ -16,21 +16,18 @@ use sha2::{Digest, Sha256};
 
 use crate::archetype::Archetype;
 use crate::questionnaire;
+use crate::sandbox::{self, Policy};
 
 /// The published documentation set: what the mdbook ships, relative to the
 /// repo's `docs/` directory. ADRs, internal specs, proposals, and dev notes
 /// are deliberately absent.
 const PUBLISHED_DOCS: &[&str] = &["index.md", "intro.md", "guides", "topics", "crates"];
 
-/// The only environment variables any untrusted-side process inherits — the
-/// agent session, the cargo build of the produced app, and every produced-
-/// binary invocation (recorded in the report). HOME is the known blindness
-/// residue: it grants the agent its own credentials and caches, which is
-/// what makes the session runnable; it also keeps cargo caches shared.
+/// Names present in every phase after scrubbing. Values are phase-local:
+/// HOME, CARGO_HOME, and TMPDIR never point at their host counterparts.
 pub const ENV_ALLOWLIST: &[&str] = &[
     "PATH",
     "HOME",
-    "USER",
     "SHELL",
     "TERM",
     "LANG",
@@ -40,19 +37,16 @@ pub const ENV_ALLOWLIST: &[&str] = &[
     "RUSTUP_HOME",
 ];
 
-/// Applies the blindness environment policy to a command: `env_clear()`
-/// plus exactly [`ENV_ALLOWLIST`], inherited from the runner's own
-/// environment. Every process on the untrusted side of the fence (agent,
-/// build, produced binary) must pass through this — except roster-case and
-/// roster-invariant invocations, whose stricter per-case baseline is
-/// [`apply_case_baseline_env`].
-pub fn apply_env_policy(command: &mut Command) {
+fn apply_phase_env(command: &mut Command, home: &Path) {
     command.env_clear();
-    for key in ENV_ALLOWLIST {
+    for key in ["PATH", "SHELL", "TERM", "LANG", "LC_ALL", "RUSTUP_HOME"] {
         if let Ok(value) = std::env::var(key) {
             command.env(key, value);
         }
     }
+    command.env("HOME", home);
+    command.env("CARGO_HOME", home.join("cargo"));
+    command.env("TMPDIR", home.join("tmp"));
 }
 
 /// Applies the roster cases' scrubbed baseline (`corpus/README.md`, Run
@@ -69,6 +63,120 @@ pub fn apply_case_baseline_env(command: &mut Command, home: &Path) {
     command.env("HOME", home);
     command.env("LANG", "C.UTF-8");
     command.env("LC_ALL", "C.UTF-8");
+    command.env("TMPDIR", home.join("tmp"));
+}
+
+/// Enforced isolation roots for a run. Each phase has a disposable home,
+/// while the source checkout is absent from every child policy.
+#[derive(Debug, Clone)]
+pub struct Isolation {
+    pub workspace_root: PathBuf,
+    pub agent_home: PathBuf,
+    pub build_home: PathBuf,
+    pub check_home: PathBuf,
+    system_read: Vec<PathBuf>,
+    denied_read: Vec<PathBuf>,
+}
+
+impl Isolation {
+    pub fn new(workspace_root: &Path, source_root: &Path) -> anyhow::Result<Self> {
+        let homes = workspace_root.join(".isolated-homes");
+        let agent_home = homes.join("agent");
+        let build_home = homes.join("build");
+        let check_home = homes.join("check");
+        for home in [&agent_home, &build_home, &check_home] {
+            std::fs::create_dir_all(home.join("cargo"))?;
+            std::fs::create_dir_all(home.join("tmp"))?;
+        }
+        Ok(Self {
+            workspace_root: workspace_root.to_path_buf(),
+            agent_home,
+            build_home,
+            check_home,
+            system_read: sandbox::system_read_roots(),
+            denied_read: [
+                Some(source_root.to_path_buf()),
+                std::env::var_os("HOME").map(PathBuf::from),
+                Some(PathBuf::from("/Users")),
+                Some(PathBuf::from("/Volumes")),
+                Some(PathBuf::from("/home")),
+                Some(PathBuf::from("/Network")),
+            ]
+            .into_iter()
+            .flatten()
+            .collect(),
+        })
+    }
+
+    fn policy(&self, writable: &Path, home: &Path, network: bool) -> Policy {
+        let mut read = self.system_read.clone();
+        read.push(self.workspace_root.clone());
+        read.push(writable.to_path_buf());
+        Policy::new(
+            read,
+            vec![writable.to_path_buf(), home.to_path_buf()],
+            self.denied_read.clone(),
+            network,
+        )
+    }
+
+    pub fn apply_agent(&self, command: &mut Command) -> Result<(), String> {
+        apply_phase_env(command, &self.agent_home);
+        sandbox::apply(
+            command,
+            &self.policy(&self.workspace_root, &self.agent_home, true),
+        )
+    }
+
+    pub fn apply_build(&self, command: &mut Command) -> Result<(), String> {
+        apply_phase_env(command, &self.build_home);
+        sandbox::apply(
+            command,
+            &self.policy(&self.workspace_root, &self.build_home, true),
+        )
+    }
+
+    pub fn apply_check(&self, command: &mut Command, sandbox_root: &Path) -> Result<(), String> {
+        apply_case_baseline_env(command, sandbox_root);
+        std::fs::create_dir_all(sandbox_root.join("tmp"))
+            .map_err(|e| format!("creating check tmp: {e}"))?;
+        sandbox::apply(command, &self.policy(sandbox_root, &self.check_home, false))
+    }
+
+    /// Proves the source checkout and host home are unreadable from the same
+    /// enforced boundary the agent receives. A run refuses to start if the
+    /// kernel policy is missing or porous.
+    pub fn verify_boundary(&self, source_root: &Path) -> Result<(), String> {
+        let host_probe = std::env::var_os("HOME")
+            .map(PathBuf::from)
+            .unwrap_or_else(|| source_root.to_path_buf())
+            .join(".gitconfig");
+        let mut command = Command::new("sh");
+        command
+            .args([
+                "-c",
+                "if test -r \"$1\"; then echo source-readable >&2; exit 1; fi; \
+                 if test -r \"$2\"; then echo host-home-readable >&2; exit 1; fi",
+                "corpus-boundary",
+            ])
+            .arg(source_root.join("Cargo.toml"))
+            .arg(host_probe)
+            .current_dir(&self.workspace_root);
+        self.apply_agent(&mut command)?;
+        let output = command
+            .output()
+            .map_err(|e| format!("probing isolation boundary: {e}"))?;
+        if !output.status.success() {
+            return Err(format!(
+                "OS sandbox allowed source-checkout/host-home access or failed to enforce \
+                 (status {:?}, stdout {:?}, stderr {:?})",
+                output.status.code(),
+                String::from_utf8_lossy(&output.stdout).trim(),
+                String::from_utf8_lossy(&output.stderr).trim()
+            ));
+        }
+        Ok(())
+    }
 }
 
 /// A provisioned blind workspace.
@@ -80,6 +188,7 @@ pub struct Workspace {
     pub app_dir: PathBuf,
     /// sha256 (hex) over the provisioned docs snapshot's actual bytes.
     pub docs_sha256: String,
+    pub isolation: Isolation,
 }
 
 /// Provisions the blind workspace under `run_dir/workspace`.
@@ -132,10 +241,12 @@ pub fn provision(
         "fn main() {\n    // Replace this stub with the implementation of SPEC.md.\n}\n",
     )?;
 
+    let isolation = Isolation::new(&root, &repo_root)?;
     Ok(Workspace {
         root,
         app_dir,
         docs_sha256,
+        isolation,
     })
 }
 
@@ -259,11 +370,9 @@ anyhow = "1"
 /// Copies a file or directory tree from `src` to `dest` with an explicit
 /// symlink policy: a link is dereferenced (copied as regular content, never
 /// as a link back into the checkout) only when its canonical target stays
-/// inside the repo's published docs surface — `docs/` or a crate's `docs/`
-/// (the mdbook mounts `docs/crates/<name>` as a symlink to
-/// `crates/standout-<name>/docs`). Any other link is a provisioning error,
-/// not a silent follow: it would pull content from outside the published
-/// set into the blind workspace.
+/// inside one exact published root: the five mdbook source entries or a
+/// crate's `docs/` tree (mounted under `docs/crates/<name>`). Any other link
+/// is a provisioning error, not a silent follow.
 fn copy_recursive(src: &Path, dest: &Path, repo_root: &Path) -> anyhow::Result<()> {
     let meta =
         std::fs::symlink_metadata(src).with_context(|| format!("inspecting {}", src.display()))?;
@@ -294,9 +403,7 @@ fn copy_recursive(src: &Path, dest: &Path, repo_root: &Path) -> anyhow::Result<(
     Ok(())
 }
 
-/// True when a canonical symlink target lies inside the published docs
-/// surface of the checkout rooted at `repo_root`: under `docs/`, or under a
-/// crate's own `docs/` directory (`crates/<name>/docs`).
+/// True when a canonical symlink target lies inside one exact published root.
 fn is_published_docs_target(target: &Path, repo_root: &Path) -> bool {
     let Ok(rel) = target.strip_prefix(repo_root) else {
         return false;
@@ -305,7 +412,10 @@ fn is_published_docs_target(target: &Path, repo_root: &Path) -> bool {
         .components()
         .map(|c| c.as_os_str().to_string_lossy().into_owned());
     match components.next().as_deref() {
-        Some("docs") => true,
+        Some("docs") => matches!(
+            components.next().as_deref(),
+            Some("index.md" | "intro.md" | "guides" | "topics" | "crates")
+        ),
         Some("crates") => {
             components.next(); // the crate directory name
             components.next().as_deref() == Some("docs")

@@ -25,12 +25,17 @@ use crate::workspace;
 /// Runs every case against the binary, each in a fresh sandbox under
 /// `cases_dir` (kept, not temp: a run's sandboxes are part of its
 /// inspectable residue). Returns the roster-shaped acceptance report.
-pub fn run_cases(binary: &Path, cases: &[Case], cases_dir: &Path) -> AcceptanceReport {
+pub fn run_cases(
+    binary: &Path,
+    cases: &[Case],
+    cases_dir: &Path,
+    isolation: &workspace::Isolation,
+) -> AcceptanceReport {
     let results = cases
         .iter()
         .map(|case| {
             let sandbox = cases_dir.join(&case.name);
-            let (outcome, detail) = match execute(binary, case, &sandbox) {
+            let (outcome, detail) = match execute(binary, case, &sandbox, isolation) {
                 Ok(execution) => {
                     let (raw_pass, detail) = evaluate(case, &execution);
                     let outcome = match (case.expected, raw_pass) {
@@ -80,7 +85,12 @@ struct Execution {
 /// Provisions the sandbox and runs the binary once under the case's own
 /// deadline. Errors here are sandbox/spawn failures — suite errors, not
 /// case verdicts.
-fn execute(binary: &Path, case: &Case, sandbox: &Path) -> Result<Execution, String> {
+fn execute(
+    binary: &Path,
+    case: &Case,
+    sandbox: &Path,
+    isolation: &workspace::Isolation,
+) -> Result<Execution, String> {
     std::fs::create_dir_all(sandbox).map_err(|err| format!("creating sandbox: {err}"))?;
     for (rel, content) in &case.run.files {
         let dest = sandbox_path(sandbox, rel)?;
@@ -104,7 +114,7 @@ fn execute(binary: &Path, case: &Case, sandbox: &Path) -> Result<Execution, Stri
 
     let mut command = Command::new(binary);
     command.args(&case.run.argv).current_dir(&cwd);
-    workspace::apply_case_baseline_env(&mut command, sandbox);
+    isolation.apply_check(&mut command, sandbox)?;
     for (key, value) in &case.run.env {
         command.env(key, value);
     }
@@ -112,32 +122,37 @@ fn execute(binary: &Path, case: &Case, sandbox: &Path) -> Result<Execution, Stri
 
     let mut master = None;
     if use_pty {
-        let (m, slave) = standout_test::pty::open_pair()
-            .map_err(|err| format!("opening pty for case streams: {err}"))?;
-        let dup = |name: &str| -> Result<Stdio, String> {
-            Ok(Stdio::from(slave.try_clone().map_err(|err| {
-                format!("duplicating pty slave for {name}: {err}")
-            })?))
-        };
-        command.stdin(if tty_stdin {
-            dup("stdin")?
-        } else {
-            Stdio::piped()
-        });
-        command.stdout(if tty_stdout {
-            dup("stdout")?
-        } else {
-            Stdio::piped()
-        });
-        command.stderr(if tty_stderr {
-            dup("stderr")?
-        } else {
-            Stdio::piped()
-        });
-        master = Some(m);
-        // `slave` drops here: the child holds the only remaining slave fds
-        // (inside `command`'s Stdio handles, released by `drop(command)`
-        // below), so the master read ends when the child exits.
+        #[cfg(not(unix))]
+        return Err("pty-backed case streams are unsupported on this platform".to_string());
+        #[cfg(unix)]
+        {
+            let (m, slave) = standout_test::pty::open_pair()
+                .map_err(|err| format!("opening pty for case streams: {err}"))?;
+            let dup = |name: &str| -> Result<Stdio, String> {
+                Ok(Stdio::from(slave.try_clone().map_err(|err| {
+                    format!("duplicating pty slave for {name}: {err}")
+                })?))
+            };
+            command.stdin(if tty_stdin {
+                dup("stdin")?
+            } else {
+                Stdio::piped()
+            });
+            command.stdout(if tty_stdout {
+                dup("stdout")?
+            } else {
+                Stdio::piped()
+            });
+            command.stderr(if tty_stderr {
+                dup("stderr")?
+            } else {
+                Stdio::piped()
+            });
+            master = Some(m);
+            // `slave` drops here: the child holds the only remaining slave fds
+            // (inside `command`'s Stdio handles, released by `drop(command)`
+            // below), so the master read ends when the child exits.
+        }
     } else {
         command
             .stdin(Stdio::piped())
@@ -334,6 +349,18 @@ fn apply_expectations(expect: &CaseExpect, execution: &Execution, failures: &mut
     for needle in &expect.stderr_not_contains {
         if execution.stderr.contains(needle) {
             failures.push(format!("stderr must not contain {needle:?}"));
+        }
+    }
+    for suffix in &expect.stdout_lines_end_with_once {
+        let count = execution
+            .stdout
+            .lines()
+            .filter(|line| !line.trim().is_empty() && line.trim_end().ends_with(suffix))
+            .count();
+        if count != 1 {
+            failures.push(format!(
+                "expected exactly one non-empty stdout line ending with {suffix:?}, got {count}"
+            ));
         }
     }
 }

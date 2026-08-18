@@ -29,7 +29,7 @@ fn sanitizer_prefers_specific_paths_without_rewriting_bare_usernames() {
     fs::write(
         run.join("transcript.jsonl"),
         format!(
-            "{{\"type\":\"system\",\"subtype\":\"init\",\"cwd\":{:?},\"session_id\":\"12345678-1234-1234-1234-123456789abc\",\"tools\":[\"host-tool\"],\"note\":\"root art cartoon\"}}\n",
+            "{{\"type\":\"system\",\"subtype\":\"init\",\"cwd\":{:?},\"session_id\":\"12345678-ABCD-1234-ABCD-123456789ABC\",\"tools\":[\"host-tool\"],\"note\":\"root art cartoon\"}}\n",
             workspace.to_string_lossy(),
         ),
     )
@@ -63,7 +63,7 @@ fn sanitizer_prefers_specific_paths_without_rewriting_bare_usernames() {
     );
     assert!(transcript.contains("root art cartoon"), "{transcript}");
     assert!(!transcript.contains("host-tool"), "{transcript}");
-    assert!(!transcript.contains("12345678-1234-1234-1234-123456789abc"));
+    assert!(!transcript.contains("12345678-ABCD-1234-ABCD-123456789ABC"));
 }
 
 #[test]

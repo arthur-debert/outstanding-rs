@@ -8,6 +8,7 @@
 //! under a hard deadline (via `exec`). Check failures, build failures, and
 //! timeouts are findings recorded in the report, never runner errors.
 
+use std::collections::BTreeMap;
 use std::panic::{catch_unwind, AssertUnwindSafe};
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -18,19 +19,25 @@ use standout_test::invariants::{
     assert_no_unresolved_tag_markers_in_page, assert_styling_preserves_layout_in_pages,
 };
 
-use crate::archetype::{Check, Invariants};
+use crate::archetype::{
+    Check, ColorState, InvariantCommand, InvariantContract, InvariantMode, Invariants,
+};
 use crate::exec;
-use crate::report::{AcceptanceReport, CheckResult, InvariantCell};
+use crate::report::{AcceptanceReport, CheckResult, InvariantCell, InvariantStatus};
 use crate::workspace;
 
 /// Builds the workspace app with cargo; returns the produced binary path.
 ///
-/// The build runs env-cleared to the recorded allowlist (the produced code
-/// is untrusted — its build script must not see the runner's secrets; the
-/// allowlist keeps CARGO_HOME/HOME so caches stay shared), with an explicit
-/// `--target-dir` so the binary lands where the runner looks even when the
-/// host configures a shared target directory, and under `timeout`.
-pub fn build_app(app_dir: &Path, binary: &str, timeout: Duration) -> Result<PathBuf, String> {
+/// The build runs env-cleared with disposable HOME/CARGO_HOME directories and
+/// kernel filesystem isolation because the produced build script is
+/// untrusted. An explicit `--target-dir` makes the binary location independent
+/// of host cargo configuration, and `timeout` bounds the whole build.
+pub fn build_app(
+    app_dir: &Path,
+    binary: &str,
+    timeout: Duration,
+    isolation: &workspace::Isolation,
+) -> Result<PathBuf, String> {
     let target_dir = app_dir.join("target");
     let mut command = Command::new("cargo");
     command
@@ -38,7 +45,7 @@ pub fn build_app(app_dir: &Path, binary: &str, timeout: Duration) -> Result<Path
         .arg("--target-dir")
         .arg(&target_dir)
         .current_dir(app_dir);
-    workspace::apply_env_policy(&mut command);
+    isolation.apply_build(&mut command)?;
     let outcome =
         exec::run(&mut command, timeout, true).map_err(|err| format!("cargo build: {err}"))?;
     if outcome.timed_out {
@@ -65,11 +72,16 @@ pub fn build_app(app_dir: &Path, binary: &str, timeout: Duration) -> Result<Path
 }
 
 /// Runs every acceptance check against the binary, each under `timeout`.
-pub fn run_checks(binary: &Path, checks: &[Check], timeout: Duration) -> AcceptanceReport {
+pub fn run_checks(
+    binary: &Path,
+    checks: &[Check],
+    timeout: Duration,
+    isolation: &workspace::Isolation,
+) -> AcceptanceReport {
     let results = checks
         .iter()
         .map(|check| {
-            let (passed, detail) = evaluate_check(binary, check, timeout);
+            let (passed, detail) = evaluate_check(binary, check, timeout, isolation);
             CheckResult {
                 name: check.name.clone(),
                 passed,
@@ -87,8 +99,14 @@ pub fn run_checks(binary: &Path, checks: &[Check], timeout: Duration) -> Accepta
 
 /// One check: spawn, compare exit code, stdout substrings, row-scoped
 /// substrings, JSON shape, and JSON row groups.
-fn evaluate_check(binary: &Path, check: &Check, timeout: Duration) -> (bool, Option<String>) {
-    let (exit, stdout) = match run_binary(binary, &check.args, timeout, &EnvSetup::Allowlist) {
+fn evaluate_check(
+    binary: &Path,
+    check: &Check,
+    timeout: Duration,
+    isolation: &workspace::Isolation,
+) -> (bool, Option<String>) {
+    let home = isolation.check_home.join("smoke-checks");
+    let (exit, stdout) = match run_binary(binary, &check.args, timeout, isolation, &home, &[]) {
         Ok(pair) => pair,
         Err(detail) => return (false, Some(detail)),
     };
@@ -185,107 +203,292 @@ fn collect_scalars(value: &serde_json::Value, out: &mut Vec<String>) {
     }
 }
 
-/// How invariant-cell and check invocations scrub their environment: the
-/// allowlist policy (the smoke path, matching every other untrusted-side
-/// process) or the roster cases' stricter sandbox baseline, so matrix cells
-/// see the same environment the acceptance cases ran under.
-pub enum EnvSetup {
-    Allowlist,
-    CaseBaseline { home: PathBuf },
-}
+const MATRIX_CHECKS: [&str; 5] = [
+    "exits 0",
+    "no unresolved tag markers",
+    "stdout parses as JSON",
+    "styling preserves text layout",
+    "opaque output preserves text bytes",
+];
 
-impl EnvSetup {
-    fn apply(&self, command: &mut Command) {
-        match self {
-            EnvSetup::Allowlist => workspace::apply_env_policy(command),
-            EnvSetup::CaseBaseline { home } => workspace::apply_case_baseline_env(command, home),
-        }
-    }
-}
-
-/// Sweeps the ROB01 invariant matrix: each configured command runs across
-/// output modes (`text`, `term`, `json`), asserting exit 0 everywhere, no
-/// unresolved `[tag?]` marker in either rendered page, term stripped of
-/// escapes byte-equal to text, and json well-formed. Each invocation runs
-/// under `timeout` with the environment `env` prescribes.
+/// Sweeps the declarative ROB01 matrix. Every global
+/// command×mode×color×theme×check identity is emitted exactly once. Command
+/// declarations decide applicability; an invocation failure leaves dependent
+/// checks `not-run` rather than silently shrinking the denominator.
 pub fn run_invariants(
     binary: &Path,
     invariants: &Invariants,
     timeout: Duration,
-    env: &EnvSetup,
+    isolation: &workspace::Isolation,
+    matrix_root: &Path,
 ) -> Vec<InvariantCell> {
-    if let EnvSetup::CaseBaseline { home } = env {
-        // The matrix's sandbox: an empty HOME so a config-reading binary
-        // sees a clean slate, created up front so every cell shares it.
-        let _ = std::fs::create_dir_all(home);
-    }
     let mut cells = Vec::new();
     for command in &invariants.commands {
-        let label = command.join(" ");
-        let text = run_mode(binary, command, "text", timeout, env);
-        let term = run_mode(binary, command, "term", timeout, env);
-        let json = run_mode(binary, command, "json", timeout, env);
-
-        for (mode, run) in [("text", &text), ("term", &term), ("json", &json)] {
-            cells.push(cell(
-                &label,
-                format!("{mode}: exits 0"),
-                match run {
-                    Ok((status, _)) if *status == Some(0) => Ok(()),
-                    Ok((status, _)) => Err(format!("exit {status:?}")),
-                    Err(err) => Err(err.clone()),
-                },
-            ));
-        }
-
-        if let Ok((_, page)) = &text {
-            cells.push(cell(
-                &label,
-                "text: no unresolved tag markers".to_string(),
-                caught(|| assert_no_unresolved_tag_markers_in_page(page)),
-            ));
-        }
-        if let Ok((_, page)) = &term {
-            let stripped = console::strip_ansi_codes(page).into_owned();
-            cells.push(cell(
-                &label,
-                "term: no unresolved tag markers".to_string(),
-                caught(|| assert_no_unresolved_tag_markers_in_page(&stripped)),
-            ));
-            if let Ok((_, text_page)) = &text {
-                cells.push(cell(
-                    &label,
-                    "term vs text: styling preserves layout".to_string(),
-                    caught(|| assert_styling_preserves_layout_in_pages(&stripped, text_page)),
+        for color in &invariants.colors {
+            for theme in &invariants.themes {
+                let home = matrix_root.join(format!(
+                    "{}-{}-{}",
+                    safe_label(&command.argv),
+                    color.as_str(),
+                    safe_label(std::slice::from_ref(&theme.name))
                 ));
+                let mut runs = BTreeMap::new();
+                for mode in &invariants.modes {
+                    if command_applies(command, *mode, *color, &theme.name) {
+                        runs.insert(
+                            mode.as_str(),
+                            run_mode(
+                                binary,
+                                command,
+                                MatrixInvocation {
+                                    mode: *mode,
+                                    color: *color,
+                                    theme_env: &theme.env,
+                                    home: &home,
+                                },
+                                timeout,
+                                isolation,
+                            ),
+                        );
+                    }
+                }
+                for mode in &invariants.modes {
+                    emit_axis_cells(&mut cells, command, *mode, *color, &theme.name, &runs);
+                }
             }
-        }
-        if let Ok((_, page)) = &json {
-            cells.push(cell(
-                &label,
-                "json: stdout parses as JSON".to_string(),
-                serde_json::from_str::<serde_json::Value>(page)
-                    .map(|_| ())
-                    .map_err(|err| err.to_string()),
-            ));
         }
     }
     cells
 }
 
+/// Stable matrix identities for a build that never produced a binary.
+pub fn not_run_invariants(invariants: &Invariants, reason: &str) -> Vec<InvariantCell> {
+    let mut cells = Vec::new();
+    for command in &invariants.commands {
+        for color in &invariants.colors {
+            for theme in &invariants.themes {
+                for mode in &invariants.modes {
+                    for check in MATRIX_CHECKS {
+                        let applicable = command_applies(command, *mode, *color, &theme.name)
+                            && check_applies(command.contract, *mode, check);
+                        cells.push(matrix_cell(
+                            command,
+                            *mode,
+                            *color,
+                            &theme.name,
+                            check,
+                            if applicable {
+                                InvariantStatus::NotRun
+                            } else {
+                                InvariantStatus::NotApplicable
+                            },
+                            Some(if applicable {
+                                reason.to_string()
+                            } else {
+                                applicability_reason(command, *mode, *color, &theme.name, check)
+                            }),
+                        ));
+                    }
+                }
+            }
+        }
+    }
+    cells
+}
+
+type ModeRuns = BTreeMap<&'static str, Result<(Option<i32>, String), String>>;
+
+fn emit_axis_cells(
+    out: &mut Vec<InvariantCell>,
+    command: &InvariantCommand,
+    mode: InvariantMode,
+    color: ColorState,
+    theme: &str,
+    runs: &ModeRuns,
+) {
+    let axes_apply = command_applies(command, mode, color, theme);
+    for check in MATRIX_CHECKS {
+        if !axes_apply || !check_applies(command.contract, mode, check) {
+            out.push(matrix_cell(
+                command,
+                mode,
+                color,
+                theme,
+                check,
+                InvariantStatus::NotApplicable,
+                Some(applicability_reason(command, mode, color, theme, check)),
+            ));
+            continue;
+        }
+        let Some(run) = runs.get(mode.as_str()) else {
+            out.push(matrix_cell(
+                command,
+                mode,
+                color,
+                theme,
+                check,
+                InvariantStatus::NotRun,
+                Some("planned invocation was not executed".to_string()),
+            ));
+            continue;
+        };
+        let outcome = match (check, run) {
+            ("exits 0", Ok((Some(0), _))) => Ok(()),
+            ("exits 0", Ok((status, _))) => Err(format!("exit {status:?}")),
+            ("exits 0", Err(err)) => Err(err.clone()),
+            (_, Err(err)) => {
+                out.push(matrix_cell(
+                    command,
+                    mode,
+                    color,
+                    theme,
+                    check,
+                    InvariantStatus::NotRun,
+                    Some(err.clone()),
+                ));
+                continue;
+            }
+            ("no unresolved tag markers", Ok((_, page))) => {
+                let plain = console::strip_ansi_codes(page).into_owned();
+                caught(|| assert_no_unresolved_tag_markers_in_page(&plain))
+            }
+            ("stdout parses as JSON", Ok((_, page))) => {
+                serde_json::from_str::<serde_json::Value>(page)
+                    .map(|_| ())
+                    .map_err(|err| err.to_string())
+            }
+            ("styling preserves text layout", Ok((_, page))) => {
+                match runs.get(InvariantMode::Text.as_str()) {
+                    Some(Ok((_, text))) => {
+                        let plain = console::strip_ansi_codes(page).into_owned();
+                        caught(|| assert_styling_preserves_layout_in_pages(&plain, text))
+                    }
+                    Some(Err(err)) => Err(format!("text baseline unavailable: {err}")),
+                    None => Err("text baseline was not planned".to_string()),
+                }
+            }
+            ("opaque output preserves text bytes", Ok((_, page))) => {
+                match runs.get(InvariantMode::Text.as_str()) {
+                    Some(Ok((_, text))) if page == text => Ok(()),
+                    Some(Ok(_)) => Err("bytes differ from text-mode baseline".to_string()),
+                    Some(Err(err)) => Err(format!("text baseline unavailable: {err}")),
+                    None => Err("text baseline was not planned".to_string()),
+                }
+            }
+            _ => unreachable!("applicability and check table agree"),
+        };
+        out.push(matrix_cell(
+            command,
+            mode,
+            color,
+            theme,
+            check,
+            if outcome.is_ok() {
+                InvariantStatus::Pass
+            } else {
+                InvariantStatus::Fail
+            },
+            outcome.err(),
+        ));
+    }
+}
+
+fn command_applies(
+    command: &InvariantCommand,
+    mode: InvariantMode,
+    color: ColorState,
+    theme: &str,
+) -> bool {
+    (command.modes.is_empty() || command.modes.contains(&mode))
+        && (command.colors.is_empty() || command.colors.contains(&color))
+        && (command.themes.is_empty() || command.themes.iter().any(|t| t == theme))
+}
+
+fn check_applies(contract: InvariantContract, mode: InvariantMode, check: &str) -> bool {
+    match check {
+        "exits 0" => true,
+        "no unresolved tag markers" => {
+            contract == InvariantContract::Rendered && mode != InvariantMode::Json
+        }
+        "stdout parses as JSON" => {
+            contract == InvariantContract::Rendered && mode == InvariantMode::Json
+        }
+        "styling preserves text layout" => {
+            contract == InvariantContract::Rendered && mode == InvariantMode::Term
+        }
+        "opaque output preserves text bytes" => {
+            contract == InvariantContract::OpaqueBytes && mode != InvariantMode::Text
+        }
+        _ => false,
+    }
+}
+
+fn applicability_reason(
+    command: &InvariantCommand,
+    mode: InvariantMode,
+    color: ColorState,
+    theme: &str,
+    check: &str,
+) -> String {
+    if !command_applies(command, mode, color, theme) {
+        "command declaration excludes this axis combination".to_string()
+    } else {
+        match (command.contract, check) {
+            (InvariantContract::OpaqueBytes, "stdout parses as JSON") => {
+                "opaque-byte command is not structured JSON".to_string()
+            }
+            (InvariantContract::OpaqueBytes, _) => {
+                "opaque-byte command uses byte-identity checks".to_string()
+            }
+            (_, "opaque output preserves text bytes") => {
+                "rendered command uses render invariants".to_string()
+            }
+            (_, _) => format!("check does not apply to {} mode", mode.as_str()),
+        }
+    }
+}
+
 /// Runs the binary with `command` plus `--output <mode>` appended (the same
 /// argv edit `standout-test`'s harness makes), returning exit code + stdout.
+struct MatrixInvocation<'a> {
+    mode: InvariantMode,
+    color: ColorState,
+    theme_env: &'a BTreeMap<String, String>,
+    home: &'a Path,
+}
+
 fn run_mode(
     binary: &Path,
-    command: &[String],
-    mode: &str,
+    command: &InvariantCommand,
+    invocation: MatrixInvocation<'_>,
     timeout: Duration,
-    env: &EnvSetup,
+    isolation: &workspace::Isolation,
 ) -> Result<(Option<i32>, String), String> {
-    let mut args: Vec<String> = command.to_vec();
+    let mut args: Vec<String> = command.argv.clone();
     args.push("--output".to_string());
-    args.push(mode.to_string());
-    run_binary(binary, &args, timeout, env)
+    args.push(invocation.mode.as_str().to_string());
+    let mut env: Vec<(String, String)> = invocation
+        .theme_env
+        .iter()
+        .map(|(k, v)| (k.clone(), v.clone()))
+        .collect();
+    match invocation.color {
+        ColorState::Off => {
+            env.extend([
+                ("NO_COLOR".to_string(), "1".to_string()),
+                ("CLICOLOR_FORCE".to_string(), "0".to_string()),
+                ("FORCE_COLOR".to_string(), "0".to_string()),
+            ]);
+        }
+        ColorState::On => {
+            env.extend([
+                ("TERM".to_string(), "xterm-256color".to_string()),
+                ("CLICOLOR_FORCE".to_string(), "1".to_string()),
+                ("FORCE_COLOR".to_string(), "1".to_string()),
+            ]);
+        }
+    }
+    run_binary(binary, &args, timeout, isolation, invocation.home, &env)
 }
 
 /// One deadlined, env-scrubbed invocation of the produced (untrusted)
@@ -294,11 +497,16 @@ fn run_binary(
     binary: &Path,
     args: &[String],
     timeout: Duration,
-    env: &EnvSetup,
+    isolation: &workspace::Isolation,
+    home: &Path,
+    env: &[(String, String)],
 ) -> Result<(Option<i32>, String), String> {
     let mut command = Command::new(binary);
-    command.args(args);
-    env.apply(&mut command);
+    command.args(args).current_dir(home);
+    isolation.apply_check(&mut command, home)?;
+    for (key, value) in env {
+        command.env(key, value);
+    }
     let outcome = exec::run(&mut command, timeout, true)
         .map_err(|err| format!("running {}: {err}", binary.display()))?;
     if outcome.timed_out {
@@ -334,11 +542,34 @@ fn caught(assertion: impl FnOnce()) -> Result<(), String> {
     })
 }
 
-fn cell(command: &str, check: String, outcome: Result<(), String>) -> InvariantCell {
+fn matrix_cell(
+    command: &InvariantCommand,
+    mode: InvariantMode,
+    color: ColorState,
+    theme: &str,
+    check: &str,
+    status: InvariantStatus,
+    detail: Option<String>,
+) -> InvariantCell {
     InvariantCell {
-        command: command.to_string(),
-        check,
-        passed: outcome.is_ok(),
-        detail: outcome.err(),
+        command: command.argv.join(" "),
+        mode: mode.as_str().to_string(),
+        color: color.as_str().to_string(),
+        theme: theme.to_string(),
+        check: check.to_string(),
+        status,
+        detail,
     }
+}
+
+fn safe_label(words: &[String]) -> String {
+    let label = if words.is_empty() {
+        "root".to_string()
+    } else {
+        words.join("-")
+    };
+    label
+        .chars()
+        .map(|c| if c.is_ascii_alphanumeric() { c } else { '-' })
+        .collect()
 }

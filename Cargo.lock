@@ -409,6 +409,8 @@ dependencies = [
  "anyhow",
  "clap",
  "console",
+ "landlock",
+ "libc",
  "serde",
  "serde_json",
  "sha2",
@@ -1001,6 +1003,17 @@ dependencies = [
  "cfg-if",
  "futures-util",
  "wasm-bindgen",
+]
+
+[[package]]
+name = "landlock"
+version = "0.4.7"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "4cca98e95f35b29d469dade6724c6f96cec9236640f745a0e99b0334ec320ab1"
+dependencies = [
+ "enumflags2",
+ "libc",
+ "thiserror 2.0.20",
 ]
 
 [[package]]

@@ -15,6 +15,7 @@ use std::path::{Path, PathBuf};
 use corpus_runner::archetype::{Archetype, Suite};
 use corpus_runner::cases::run_cases;
 use corpus_runner::report::{CaseOutcome, CaseResult};
+use corpus_runner::workspace::Isolation;
 
 /// Writes an executable script and returns its path.
 fn script(dir: &Path, name: &str, body: &str) -> PathBuf {
@@ -41,7 +42,12 @@ fn run_suite(toml: &str, binary_body: &str) -> Vec<CaseResult> {
     let Suite::Cases(suite) = &archetype.suite else {
         panic!("fixture carries the roster case schema");
     };
-    let report = run_cases(&binary, &suite.cases, &dir.path().join("cases"));
+    let isolation = Isolation::new(
+        dir.path(),
+        &Path::new(env!("CARGO_MANIFEST_DIR")).join("../.."),
+    )
+    .unwrap();
+    let report = run_cases(&binary, &suite.cases, &dir.path().join("cases"), &isolation);
     assert!(report.built);
     assert!(report.checks.is_empty());
     report.cases
@@ -225,6 +231,61 @@ stderr_not_contains = ["fatal"]
         "echo plain; echo warned >&2",
     );
     assert_eq!(result.outcome, CaseOutcome::Pass, "{:?}", result.detail);
+}
+
+#[test]
+fn line_suffix_assertion_rejects_duplicate_or_embedded_answer_sheet_tags() {
+    let results = run_suite(
+        r#"
+[[case]]
+name = "one-tag-per-line"
+stresses = "answer-sheet structure"
+expected = "pass"
+[case.run]
+argv = ["good"]
+timeout_seconds = 5
+[case.expect]
+stdout_lines_end_with_once = ["<id:name>", "<id:region>"]
+
+[[case]]
+name = "duplicate-tag"
+stresses = "answer-sheet structure"
+expected = "pass"
+[case.run]
+argv = ["duplicate"]
+timeout_seconds = 5
+[case.expect]
+stdout_lines_end_with_once = ["<id:name>", "<id:region>"]
+
+[[case]]
+name = "embedded-tag"
+stresses = "answer-sheet structure"
+expected = "pass"
+[case.run]
+argv = ["embedded"]
+timeout_seconds = 5
+[case.expect]
+stdout_lines_end_with_once = ["<id:name>", "<id:region>"]
+"#,
+        r#"case "$1" in
+  good) printf 'Name <id:name>\nRegion <id:region>\n' ;;
+  duplicate) printf 'Name <id:name>\nAgain <id:name>\nRegion <id:region>\n' ;;
+  embedded) printf 'Name <id:name> trailing\nRegion <id:region>\n' ;;
+esac"#,
+    );
+    assert_eq!(
+        results[0].outcome,
+        CaseOutcome::Pass,
+        "{:?}",
+        results[0].detail
+    );
+    assert_eq!(results[1].outcome, CaseOutcome::Fail);
+    assert!(results[1]
+        .detail
+        .as_deref()
+        .unwrap()
+        .contains("exactly one"));
+    assert_eq!(results[2].outcome, CaseOutcome::Fail);
 }
 
 // ---------------------------------------------------------------------------

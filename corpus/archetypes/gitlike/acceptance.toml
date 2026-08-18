@@ -291,9 +291,24 @@ stdout = "a3f4 Fix off-by-one (alice)\n"
 # semantics). Failures here are framework findings by default.
 
 [invariants]
-commands = [
-    ["log"],
-    ["status"],
-    ["ref-list"],
-    ["cat-object", "c1a9"],
-]
+modes = ["text", "term", "json"]
+colors = ["off", "on"]
+
+[[invariants.theme]]
+name = "application"
+
+[[invariants.command]]
+argv = ["log"]
+contract = "rendered"
+
+[[invariants.command]]
+argv = ["status"]
+contract = "rendered"
+
+[[invariants.command]]
+argv = ["ref-list"]
+contract = "opaque-bytes"
+
+[[invariants.command]]
+argv = ["cat-object", "c1a9"]
+contract = "opaque-bytes"

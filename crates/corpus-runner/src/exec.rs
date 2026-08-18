@@ -154,9 +154,11 @@ pub fn supervise(
 fn kill_group(child: &mut Child) {
     #[cfg(unix)]
     {
-        let _ = Command::new("kill")
-            .args(["-KILL", "--", &format!("-{}", child.id())])
-            .status();
+        // SAFETY: the child was made its own process-group leader before
+        // spawn, so the negative pid targets only that run's descendants.
+        unsafe {
+            libc::killpg(child.id() as libc::pid_t, libc::SIGKILL);
+        }
     }
     let _ = child.kill();
 }

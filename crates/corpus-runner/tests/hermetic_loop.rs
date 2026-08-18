@@ -55,7 +55,7 @@ fn full_loop_completes_hermetically_with_a_fake_build() {
     // --target-dir the runner passes (also proving that plumbing).
     let bin_dir = scratch.path().join("bin");
     fs::create_dir_all(&bin_dir).unwrap();
-    let impl_path = scratch.path().join("smoketable-impl");
+    let impl_path = bin_dir.join("smoketable-impl");
     fs::write(&impl_path, SMOKETABLE).unwrap();
     fs::set_permissions(&impl_path, fs::Permissions::from_mode(0o755)).unwrap();
     let cargo = bin_dir.join("cargo");
@@ -89,7 +89,7 @@ cp "{impl_path}" "$td/debug/smoketable"
 
     // The scripted agent: answer the questionnaire in place and emit a
     // stream-json result event (the fake cargo makes app/ contents moot).
-    let agent = scratch.path().join("agent.sh");
+    let agent = bin_dir.join("agent.sh");
     fs::write(
         &agent,
         r#"#!/bin/sh
@@ -111,7 +111,7 @@ echo '{"type":"result","num_turns":1,"usage":{"input_tokens":10,"output_tokens":
         archetypes_dir: repo.join("corpus/archetypes"),
         runs_dir: scratch.path().join("runs"),
         docs_dir: repo.join("docs"),
-        agent_cmd: format!("sh {}", agent.display()),
+        agent_cmd: "agent.sh".to_string(),
         framework_version: "8.1.1".to_string(),
         timeouts: Timeouts::default(),
     };
@@ -142,6 +142,10 @@ echo '{"type":"result","num_turns":1,"usage":{"input_tokens":10,"output_tokens":
         .filter(|c| !c.passed)
         .collect();
     assert!(failed.is_empty(), "{failed:?}");
-    let failed: Vec<_> = report.invariants.iter().filter(|c| !c.passed).collect();
+    let failed: Vec<_> = report
+        .invariants
+        .iter()
+        .filter(|c| c.status == corpus_runner::report::InvariantStatus::Fail)
+        .collect();
     assert!(failed.is_empty(), "{failed:?}");
 }

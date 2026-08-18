@@ -1,5 +1,5 @@
 {
-  "schema_version": 1,
+  "schema_version": 2,
   "run_id": "formlike-1787048043",
   "archetype": {
     "name": "formlike",
@@ -9,10 +9,16 @@
     "framework_version": "8.1.1",
     "docs_commit": "c9d7198c173a986756876994431a3174366bdef6",
     "docs_sha256": "49489f0d5fb49e8c277ce49efce51e414166338aa7adb7626c4e6328e0b0ae73",
+    "acceptance_sha256": "0dc7f735f8288084af3b1cdf1a37ee65b8188d0615eee79442c624dd8948ff75",
     "questionnaire_fingerprint": "sha256:64291870245510dad73ca960fd4024db9b9c161113a3dcc9c7e57a30973663fc"
   },
+  "evaluation": {
+    "origin": "isolated-re-evaluation",
+    "isolation_backend": "macos-seatbelt",
+    "binary_sha256": "a226aa4f8692f6e619bdab4e0d6df22865ce70e2f3b6be68e0cd6d831dee4876"
+  },
   "blindness": {
-    "policy": "workspace contains spec + published docs + crates.io pins only; agent, build, and produced-binary processes run env-cleared to a recorded allowlist; consulted sources are self-reported in the exit questionnaire",
+    "policy": "historical session was partially blind: its workspace was nested beneath a source checkout and inherited host homes; acceptance and ROB01 matrix results were later regenerated from an external workspace under the recorded evaluation sandbox",
     "env_allowlist": [
       "PATH",
       "HOME",
@@ -25,7 +31,11 @@
       "CARGO_HOME",
       "RUSTUP_HOME"
     ],
-    "framework_source_excluded": true,
+    "framework_source_excluded": false,
+    "isolation_backend": "historical-partial",
+    "credential_exceptions": [
+      "historical agent session inherited host HOME, CARGO_HOME, and RUSTUP_HOME"
+    ],
     "agent_reported_docs": "Read in full:\n\n- docs/index.md\n- docs/intro.md\n- docs/guides/tldr-intro-to-standout.md\n- docs/guides/minimal-single-crate.md\n- docs/guides/production-shaped-example.md\n- docs/guides/upgrading-from-5.0.md\n- docs/guides/derived-questionnaires.md\n- docs/crates/input/guides/intro-to-input.md\n- docs/crates/input/topics/answer-sheets.md\n- docs/crates/input/topics/framework-integration.md\n- docs/crates/input/topics/interactive-flows.md\n- docs/crates/input/topics/input-sources.md\n- docs/crates/dispatch/topics/handler-contract.md\n- docs/crates/dispatch/topics/execution-model.md\n- docs/topics/error-handling.md\n- docs/topics/execution-outcomes.md\n\nRead in part:\n\n- docs/topics/output-modes.md (first section)\n- docs/topics/app-configuration.md (first half)\n\nThe most load-bearing pages were derived-questionnaires.md, answer-sheets.md,\nhandler-contract.md, and error-handling.md / execution-outcomes.md for the exit\nstatus table.",
     "agent_reported_external_sources": "No web search, and I did not open the standout sources or repository. Two things\nstill went beyond docs/, and both matter:\n\n- Runtime introspection of the framework's own CLI surface. The docs give no\n  public name for the `--answers` argument the questionnaire integration\n  injects, so I temporarily printed `ArgMatches::ids()` from a hook and found\n  the reserved id `_standout_questionnaire_answers`. The shipped code matches\n  the suffix `questionnaire_answers` and falls back to scanning argv, so it\n  does not hard-code the full internal id, but the knowledge came from probing\n  rather than from docs/.\n- Compiler diagnostics that quote framework source. rustc errors displayed the\n  `GroupBuilder::command_with` bound from standout-8.1.1/src/cli/group.rs and\n  the signature of `AnswerValue::as_text` from\n  standout-input-8.1.1/src/questionnaire/decode.rs. I did not open those files,\n  but the error text told me things docs/ did not.\n\nEverything else is general Rust, clap, and MiniJinja knowledge, plus behavior\nobserved by running the binary."
   },
@@ -133,45 +143,273 @@
   "invariants": [
     {
       "command": "provision questions",
-      "check": "text: exits 0",
-      "passed": true,
+      "mode": "text",
+      "color": "off",
+      "theme": "application",
+      "check": "exits 0",
+      "status": "pass",
       "detail": null
     },
     {
       "command": "provision questions",
-      "check": "term: exits 0",
-      "passed": true,
+      "mode": "text",
+      "color": "off",
+      "theme": "application",
+      "check": "no unresolved tag markers",
+      "status": "pass",
       "detail": null
     },
     {
       "command": "provision questions",
-      "check": "json: exits 0",
-      "passed": true,
+      "mode": "text",
+      "color": "off",
+      "theme": "application",
+      "check": "stdout parses as JSON",
+      "status": "not-applicable",
+      "detail": "check does not apply to text mode"
+    },
+    {
+      "command": "provision questions",
+      "mode": "text",
+      "color": "off",
+      "theme": "application",
+      "check": "styling preserves text layout",
+      "status": "not-applicable",
+      "detail": "check does not apply to text mode"
+    },
+    {
+      "command": "provision questions",
+      "mode": "text",
+      "color": "off",
+      "theme": "application",
+      "check": "opaque output preserves text bytes",
+      "status": "not-applicable",
+      "detail": "rendered command uses render invariants"
+    },
+    {
+      "command": "provision questions",
+      "mode": "term",
+      "color": "off",
+      "theme": "application",
+      "check": "exits 0",
+      "status": "pass",
       "detail": null
     },
     {
       "command": "provision questions",
-      "check": "text: no unresolved tag markers",
-      "passed": true,
+      "mode": "term",
+      "color": "off",
+      "theme": "application",
+      "check": "no unresolved tag markers",
+      "status": "pass",
       "detail": null
     },
     {
       "command": "provision questions",
-      "check": "term: no unresolved tag markers",
-      "passed": true,
+      "mode": "term",
+      "color": "off",
+      "theme": "application",
+      "check": "stdout parses as JSON",
+      "status": "not-applicable",
+      "detail": "check does not apply to term mode"
+    },
+    {
+      "command": "provision questions",
+      "mode": "term",
+      "color": "off",
+      "theme": "application",
+      "check": "styling preserves text layout",
+      "status": "pass",
       "detail": null
     },
     {
       "command": "provision questions",
-      "check": "term vs text: styling preserves layout",
-      "passed": true,
+      "mode": "term",
+      "color": "off",
+      "theme": "application",
+      "check": "opaque output preserves text bytes",
+      "status": "not-applicable",
+      "detail": "rendered command uses render invariants"
+    },
+    {
+      "command": "provision questions",
+      "mode": "json",
+      "color": "off",
+      "theme": "application",
+      "check": "exits 0",
+      "status": "pass",
       "detail": null
     },
     {
       "command": "provision questions",
-      "check": "json: stdout parses as JSON",
-      "passed": false,
+      "mode": "json",
+      "color": "off",
+      "theme": "application",
+      "check": "no unresolved tag markers",
+      "status": "not-applicable",
+      "detail": "check does not apply to json mode"
+    },
+    {
+      "command": "provision questions",
+      "mode": "json",
+      "color": "off",
+      "theme": "application",
+      "check": "stdout parses as JSON",
+      "status": "fail",
       "detail": "expected value at line 1 column 1"
+    },
+    {
+      "command": "provision questions",
+      "mode": "json",
+      "color": "off",
+      "theme": "application",
+      "check": "styling preserves text layout",
+      "status": "not-applicable",
+      "detail": "check does not apply to json mode"
+    },
+    {
+      "command": "provision questions",
+      "mode": "json",
+      "color": "off",
+      "theme": "application",
+      "check": "opaque output preserves text bytes",
+      "status": "not-applicable",
+      "detail": "rendered command uses render invariants"
+    },
+    {
+      "command": "provision questions",
+      "mode": "text",
+      "color": "on",
+      "theme": "application",
+      "check": "exits 0",
+      "status": "pass",
+      "detail": null
+    },
+    {
+      "command": "provision questions",
+      "mode": "text",
+      "color": "on",
+      "theme": "application",
+      "check": "no unresolved tag markers",
+      "status": "pass",
+      "detail": null
+    },
+    {
+      "command": "provision questions",
+      "mode": "text",
+      "color": "on",
+      "theme": "application",
+      "check": "stdout parses as JSON",
+      "status": "not-applicable",
+      "detail": "check does not apply to text mode"
+    },
+    {
+      "command": "provision questions",
+      "mode": "text",
+      "color": "on",
+      "theme": "application",
+      "check": "styling preserves text layout",
+      "status": "not-applicable",
+      "detail": "check does not apply to text mode"
+    },
+    {
+      "command": "provision questions",
+      "mode": "text",
+      "color": "on",
+      "theme": "application",
+      "check": "opaque output preserves text bytes",
+      "status": "not-applicable",
+      "detail": "rendered command uses render invariants"
+    },
+    {
+      "command": "provision questions",
+      "mode": "term",
+      "color": "on",
+      "theme": "application",
+      "check": "exits 0",
+      "status": "pass",
+      "detail": null
+    },
+    {
+      "command": "provision questions",
+      "mode": "term",
+      "color": "on",
+      "theme": "application",
+      "check": "no unresolved tag markers",
+      "status": "pass",
+      "detail": null
+    },
+    {
+      "command": "provision questions",
+      "mode": "term",
+      "color": "on",
+      "theme": "application",
+      "check": "stdout parses as JSON",
+      "status": "not-applicable",
+      "detail": "check does not apply to term mode"
+    },
+    {
+      "command": "provision questions",
+      "mode": "term",
+      "color": "on",
+      "theme": "application",
+      "check": "styling preserves text layout",
+      "status": "pass",
+      "detail": null
+    },
+    {
+      "command": "provision questions",
+      "mode": "term",
+      "color": "on",
+      "theme": "application",
+      "check": "opaque output preserves text bytes",
+      "status": "not-applicable",
+      "detail": "rendered command uses render invariants"
+    },
+    {
+      "command": "provision questions",
+      "mode": "json",
+      "color": "on",
+      "theme": "application",
+      "check": "exits 0",
+      "status": "pass",
+      "detail": null
+    },
+    {
+      "command": "provision questions",
+      "mode": "json",
+      "color": "on",
+      "theme": "application",
+      "check": "no unresolved tag markers",
+      "status": "not-applicable",
+      "detail": "check does not apply to json mode"
+    },
+    {
+      "command": "provision questions",
+      "mode": "json",
+      "color": "on",
+      "theme": "application",
+      "check": "stdout parses as JSON",
+      "status": "fail",
+      "detail": "expected value at line 1 column 1"
+    },
+    {
+      "command": "provision questions",
+      "mode": "json",
+      "color": "on",
+      "theme": "application",
+      "check": "styling preserves text layout",
+      "status": "not-applicable",
+      "detail": "check does not apply to json mode"
+    },
+    {
+      "command": "provision questions",
+      "mode": "json",
+      "color": "on",
+      "theme": "application",
+      "check": "opaque output preserves text bytes",
+      "status": "not-applicable",
+      "detail": "rendered command uses render invariants"
     }
   ],
   "questionnaire": {

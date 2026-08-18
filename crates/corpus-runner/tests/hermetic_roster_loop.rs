@@ -80,7 +80,13 @@ timeout_seconds = 5
 exit_code = 0
 
 [invariants]
-commands = [["greet"]]
+modes = ["text", "term", "json"]
+colors = ["off", "on"]
+[[invariants.theme]]
+name = "application"
+[[invariants.command]]
+argv = ["greet"]
+contract = "rendered"
 "#;
 
 #[test]
@@ -99,7 +105,7 @@ fn roster_archetype_completes_the_loop_with_case_results() {
     // roster rule that archetype names double as binary names.
     let bin_dir = scratch.path().join("bin");
     fs::create_dir_all(&bin_dir).unwrap();
-    let impl_path = scratch.path().join("caselike-impl");
+    let impl_path = bin_dir.join("caselike-impl");
     fs::write(&impl_path, CASELIKE).unwrap();
     fs::set_permissions(&impl_path, fs::Permissions::from_mode(0o755)).unwrap();
     let cargo = bin_dir.join("cargo");
@@ -131,7 +137,7 @@ cp "{impl_path}" "$td/debug/caselike"
         ),
     );
 
-    let agent = scratch.path().join("agent.sh");
+    let agent = bin_dir.join("agent.sh");
     fs::write(
         &agent,
         r#"#!/bin/sh
@@ -152,7 +158,7 @@ mv QUESTIONNAIRE.md.filled QUESTIONNAIRE.md
         archetypes_dir: archetypes,
         runs_dir: scratch.path().join("runs"),
         docs_dir: repo.join("docs"),
-        agent_cmd: format!("sh {}", agent.display()),
+        agent_cmd: "agent.sh".to_string(),
         framework_version: "8.1.1".to_string(),
         timeouts: Timeouts::default(),
     };
@@ -184,7 +190,11 @@ mv QUESTIONNAIRE.md.filled QUESTIONNAIRE.md
     // The invariant matrix ran under the case baseline and all cells pass
     // for the well-behaved fixture.
     assert!(!report.invariants.is_empty());
-    let failed: Vec<_> = report.invariants.iter().filter(|c| !c.passed).collect();
+    let failed: Vec<_> = report
+        .invariants
+        .iter()
+        .filter(|c| c.status == corpus_runner::report::InvariantStatus::Fail)
+        .collect();
     assert!(failed.is_empty(), "{failed:?}");
 
     // The report round-trips with its cases section.

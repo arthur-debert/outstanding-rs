@@ -61,6 +61,7 @@ def scrub_text(text: str, subs: list[tuple[str, str]]) -> str:
         r'"session_id"\s*:\s*"[0-9a-f-]{36}"',
         f'"session_id":"{ZERO_SESSION}"',
         text,
+        flags=re.IGNORECASE,
     )
 
 

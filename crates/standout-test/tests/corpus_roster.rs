@@ -46,8 +46,62 @@ struct AcceptanceDoc {
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct InvariantsDoc {
+    #[allow(dead_code)]
+    modes: Vec<InvariantMode>,
+    #[allow(dead_code)]
+    colors: Vec<ColorState>,
+    #[serde(rename = "theme")]
+    #[allow(dead_code)]
+    themes: Vec<InvariantTheme>,
+    #[serde(rename = "command")]
+    #[allow(dead_code)]
+    commands: Vec<InvariantCommand>,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "lowercase")]
+enum InvariantMode {
+    Text,
+    Term,
+    Json,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "lowercase")]
+enum ColorState {
+    Off,
+    On,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct InvariantTheme {
+    #[allow(dead_code)]
+    name: String,
+    #[allow(dead_code)]
+    env: Option<BTreeMap<String, String>>,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct InvariantCommand {
     #[allow(dead_code)] // an empty word-list is the naked invocation
-    commands: Vec<Vec<String>>,
+    argv: Vec<String>,
+    #[allow(dead_code)]
+    contract: InvariantContract,
+    #[allow(dead_code)]
+    modes: Option<Vec<InvariantMode>>,
+    #[allow(dead_code)]
+    colors: Option<Vec<ColorState>>,
+    #[allow(dead_code)]
+    themes: Option<Vec<String>>,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "kebab-case")]
+enum InvariantContract {
+    Rendered,
+    OpaqueBytes,
 }
 
 #[derive(Deserialize)]
@@ -110,6 +164,7 @@ struct Expect {
     stderr_contains: Option<Vec<String>>,
     stdout_not_contains: Option<Vec<String>>,
     stderr_not_contains: Option<Vec<String>>,
+    stdout_lines_end_with_once: Option<Vec<String>>,
 }
 
 impl Expect {
@@ -123,6 +178,7 @@ impl Expect {
             self.stderr_contains.is_some(),
             self.stdout_not_contains.is_some(),
             self.stderr_not_contains.is_some(),
+            self.stdout_lines_end_with_once.is_some(),
         ]
         .iter()
         .filter(|present| **present)

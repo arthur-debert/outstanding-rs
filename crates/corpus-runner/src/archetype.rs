@@ -32,6 +32,7 @@ pub struct Archetype {
     /// The exact spec text the agent will receive.
     pub spec: String,
     pub suite: Suite,
+    acceptance_sha256: String,
 }
 
 /// The acceptance suite, in whichever schema the archetype carries.
@@ -82,13 +83,115 @@ pub struct Check {
     pub stdout_json_rows: Vec<Vec<String>>,
 }
 
-/// Which commands the ROB01 invariant matrix exercises.
-#[derive(Debug, Default, Deserialize)]
+/// Declarative ROB01 matrix plan. The global axes define the stable planned
+/// cells; each command then declares where it applies and whether its output
+/// is framework-rendered or intentionally opaque bytes.
+#[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Invariants {
-    /// Command word-lists; each runs across the output-mode matrix.
+    #[serde(default = "all_modes")]
+    pub modes: Vec<InvariantMode>,
+    #[serde(default = "all_colors")]
+    pub colors: Vec<ColorState>,
+    #[serde(rename = "theme", default = "default_themes")]
+    pub themes: Vec<InvariantTheme>,
+    #[serde(rename = "command", default)]
+    pub commands: Vec<InvariantCommand>,
+}
+
+impl Default for Invariants {
+    fn default() -> Self {
+        Self {
+            modes: all_modes(),
+            colors: all_colors(),
+            themes: default_themes(),
+            commands: Vec::new(),
+        }
+    }
+}
+
+#[derive(Debug, Deserialize, Clone, Copy, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+pub enum InvariantMode {
+    Text,
+    Term,
+    Json,
+}
+
+impl InvariantMode {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Text => "text",
+            Self::Term => "term",
+            Self::Json => "json",
+        }
+    }
+}
+
+#[derive(Debug, Deserialize, Clone, Copy, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+pub enum ColorState {
+    Off,
+    On,
+}
+
+impl ColorState {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Off => "off",
+            Self::On => "on",
+        }
+    }
+}
+
+#[derive(Debug, Deserialize, Clone, Copy, PartialEq, Eq)]
+#[serde(rename_all = "kebab-case")]
+pub enum InvariantContract {
+    Rendered,
+    OpaqueBytes,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct InvariantTheme {
+    pub name: String,
     #[serde(default)]
-    pub commands: Vec<Vec<String>>,
+    pub env: BTreeMap<String, String>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct InvariantCommand {
+    pub argv: Vec<String>,
+    pub contract: InvariantContract,
+    /// Empty means every global mode is applicable.
+    #[serde(default)]
+    pub modes: Vec<InvariantMode>,
+    /// Empty means every global color state is applicable.
+    #[serde(default)]
+    pub colors: Vec<ColorState>,
+    /// Empty means every global theme is applicable.
+    #[serde(default)]
+    pub themes: Vec<String>,
+}
+
+fn all_modes() -> Vec<InvariantMode> {
+    vec![
+        InvariantMode::Text,
+        InvariantMode::Term,
+        InvariantMode::Json,
+    ]
+}
+
+fn all_colors() -> Vec<ColorState> {
+    vec![ColorState::Off, ColorState::On]
+}
+
+fn default_themes() -> Vec<InvariantTheme> {
+    vec![InvariantTheme {
+        name: "application".to_string(),
+        env: BTreeMap::new(),
+    }]
 }
 
 /// The roster case schema (`corpus/README.md`, "Acceptance case format").
@@ -182,6 +285,11 @@ pub struct CaseExpect {
     pub stdout_not_contains: Vec<String>,
     #[serde(default)]
     pub stderr_not_contains: Vec<String>,
+    /// Each suffix must terminate exactly one non-empty stdout line. This is
+    /// the answer-sheet assertion: tags cannot be duplicated or collapsed
+    /// into prose and still pass.
+    #[serde(default)]
+    pub stdout_lines_end_with_once: Vec<String>,
 }
 
 impl CaseExpect {
@@ -195,6 +303,7 @@ impl CaseExpect {
             && self.stderr_contains.is_empty()
             && self.stdout_not_contains.is_empty()
             && self.stderr_not_contains.is_empty()
+            && self.stdout_lines_end_with_once.is_empty()
     }
 }
 
@@ -230,6 +339,7 @@ impl Archetype {
             dir,
             spec,
             suite,
+            acceptance_sha256: sha256(&acceptance_text),
         })
     }
 
@@ -253,9 +363,17 @@ impl Archetype {
 
     /// sha256 (hex) of the spec text, pinning the run to spec content.
     pub fn spec_sha256(&self) -> String {
-        let digest = Sha256::digest(self.spec.as_bytes());
-        digest.iter().map(|b| format!("{b:02x}")).collect()
+        sha256(&self.spec)
     }
+
+    pub fn acceptance_sha256(&self) -> &str {
+        &self.acceptance_sha256
+    }
+}
+
+fn sha256(text: &str) -> String {
+    let digest = Sha256::digest(text.as_bytes());
+    digest.iter().map(|b| format!("{b:02x}")).collect()
 }
 
 /// The semantic rules the case schema carries beyond its shape: version 1,

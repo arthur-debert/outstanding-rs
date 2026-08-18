@@ -1,9 +1,14 @@
 # ROB03 corpus pilot scorecard
 
-This scorecard records four blind implementations against Standout 8.1.1 and the
+This scorecard records four partially blind implementations against Standout 8.1.1 and the
 documentation snapshot at `c9d7198c173a986756876994431a3174366bdef6`. Each agent
 received an archetype specification, the published documentation snapshot, and crates.io
-dependencies. The runner excluded the Standout source tree.
+dependencies. The provisioned workspaces omitted Standout source, but the run directories
+were nested beneath a framework checkout: agent-invoked `git status` could resolve the
+parent repository, and the processes inherited host homes. The reports now state
+`framework_source_excluded: false` and record that historical credential exception. The
+objective suites were re-evaluated from external workspaces under the integrated OS sandbox;
+the historical transcripts and session measurements were not rewritten.
 
 The committed evidence for each run is the sanitized `report.json` and
 `transcript.jsonl`. Run workspaces, build directories, and acceptance sandboxes are not
@@ -20,18 +25,25 @@ usage at first render directly.
 
 | Archetype | Acceptance | ROB01 invariants | Agent attempts | First render | Whole run | Workarounds visible in code |
 | --- | ---: | ---: | ---: | ---: | ---: | --- |
-| `formlike` | 4/11 (36.4%) | 6/7 (85.7%) | 1 | 2m22s, ~5,109 generated tokens ([command](runs/formlike-1787048043/transcript.jsonl#L117), [output](runs/formlike-1787048043/transcript.jsonl#L118)) | 12m14s, 53,294 generated tokens | 3: synthesized `--yes`, discovery of an internal answer-sheet argument ID, and an app-owned confirmation prompt stream ([report](runs/formlike-1787048043/report.json)) |
-| `ghlike` | 18/18 (100%) | 35/35 (100%) | 1 | 5m48s, ~16,011 generated tokens ([command](runs/ghlike-1787048044/transcript.jsonl#L240), [output](runs/ghlike-1787048044/transcript.jsonl#L241)) | 11m49s, 54,492 generated tokens | 6 listed items: four framework escapes plus two explicit application decisions ([report](runs/ghlike-1787048044/report.json)) |
-| `gitlike` | 15 pass + 4 unexpected-pass / 19 | 26/28 (92.9%) | 1 | 7m55s, ~23,382 generated tokens ([command](runs/gitlike-1787048041/transcript.jsonl#L305), [output](runs/gitlike-1787048041/transcript.jsonl#L306)) | 12m27s, 56,330 generated tokens | 4 workarounds plus one deliberate direct-write path for plumbing commands ([report](runs/gitlike-1787048041/report.json)) |
-| `systemdlike` | 17/18 (94.4%) | 28/28 (100%) | 1 | 5m38s, ~15,364 generated tokens ([command](runs/systemdlike-1787048043/transcript.jsonl#L246), [output](runs/systemdlike-1787048043/transcript.jsonl#L247)) | 12m00s, 54,480 generated tokens | 6: argument rewriting, `CLICOLOR_FORCE`, pre-parsing arguments, app-owned paging, builder registration, and an explicit clap ID ([report](runs/systemdlike-1787048043/report.json)) |
+| `formlike` | 4/11 (36.4%) | 12/14 applicable (85.7%); 30 planned: 12 pass, 2 fail, 16 N/A | 1 | 2m22s, ~5,109 generated tokens ([command](runs/formlike-1787048043/transcript.jsonl#L117), [output](runs/formlike-1787048043/transcript.jsonl#L118)) | 12m14s, 53,294 generated tokens | 3: synthesized `--yes`, discovery of an internal answer-sheet argument ID, and an app-owned confirmation prompt stream ([report](runs/formlike-1787048043/report.json)) |
+| `ghlike` | 18/18 (100%) | 70/70 applicable (100%); 150 planned: 70 pass, 80 N/A | 1 | 5m48s, ~16,011 generated tokens ([command](runs/ghlike-1787048044/transcript.jsonl#L240), [output](runs/ghlike-1787048044/transcript.jsonl#L241)) | 11m49s, 54,492 generated tokens | 6 listed items: four framework escapes plus two explicit application decisions ([report](runs/ghlike-1787048044/report.json)) |
+| `gitlike` | 15 pass + 4 unexpected-pass / 19 | 48/48 applicable (100%); 120 planned: 48 pass, 72 N/A | 1 | 7m55s, ~23,382 generated tokens ([command](runs/gitlike-1787048041/transcript.jsonl#L305), [output](runs/gitlike-1787048041/transcript.jsonl#L306)) | 12m27s, 56,330 generated tokens | 4 workarounds plus one deliberate direct-write path for plumbing commands ([report](runs/gitlike-1787048041/report.json)) |
+| `systemdlike` | 17/18 (94.4%) | 56/56 applicable (100%); 120 planned: 56 pass, 64 N/A | 1 | 5m38s, ~15,364 generated tokens ([command](runs/systemdlike-1787048043/transcript.jsonl#L246), [output](runs/systemdlike-1787048043/transcript.jsonl#L247)) | 12m00s, 54,480 generated tokens | 6: argument rewriting, `CLICOLOR_FORCE`, pre-parsing arguments, app-owned paging, builder registration, and an explicit clap ID ([report](runs/systemdlike-1787048043/report.json)) |
 
 `gitlike`'s four `unexpected-pass` outcomes are PAR01 gap cases that the agent implemented
 inside the application. They are successful observed behavior, but the report preserves
-their spec-first `expected = "fail"` classification. Its two invariant failures apply the
-JSON-parse check to plumbing commands whose archetype contract requires identical plain
-bytes under every output mode; they are an invariant-applicability mismatch, not an app
-failure ([the direct-write decision](runs/gitlike-1787048041/transcript.jsonl#L277),
+their spec-first `expected = "fail"` classification. The declarative matrix marks plumbing
+commands as opaque bytes: all text/term/json and color-off/on invocations preserve the text
+baseline, while JSON parsing is explicitly not applicable. This removes the former two false
+failures without weakening the plumbing contract
+([the direct-write decision](runs/gitlike-1787048041/transcript.jsonl#L277),
 [the resulting command output](runs/gitlike-1787048041/transcript.jsonl#L306)).
+
+Each report contains every planned command × output-mode × color × compiled-theme × check
+identity. `not-applicable` and `not-run` are first-class statuses, so a future failure cannot
+improve a ratio by silently shrinking its denominator. These pilot binaries each contain one
+application theme selected at build time; that single named profile is the applicable theme
+axis rather than pretending the evaluator can swap a compiled theme at runtime.
 
 `formlike`'s seven acceptance failures share one cause: the framework-owned answer-sheet
 preamble replaces the archetype's specified sheet format and diagnostics
@@ -55,7 +67,7 @@ it. The linked transcript moments are the evidence for each qualitative grouping
 
 ## Filed findings and attribution
 
-Every filed finding states its attribution. All twelve are framework findings: a blind
+Every filed finding states its attribution. All twelve behavior findings are framework findings: a blind
 adopter following the available documentation either reached behavior the framework owns
 or had to bypass a documented framework path. No filed finding was reclassified as an
 application defect.
@@ -74,6 +86,8 @@ application defect.
 | [#358 — generated items trigger `non_snake_case`](https://github.com/arthur-debert/standout/issues/358) | `gitlike`, `ghlike` | Framework |
 | [#359 — table helper cannot measure the whole table](https://github.com/arthur-debert/standout/issues/359) | `ghlike` | Framework |
 | [#360 — questionnaire derives require an undeclared direct dependency](https://github.com/arthur-debert/standout/issues/360) | `formlike` | Framework |
+| [#361 — documentation errata found by the pilot](https://github.com/arthur-debert/standout/issues/361) | all four runs | Framework documentation |
+| [#362 — systemdlike invalid-value suite expectation](https://github.com/arthur-debert/standout/issues/362) | `systemdlike` | Archetype suite |
 
 ## Validity verdict
 
@@ -103,8 +117,10 @@ distinguish “fixed” from “not exercised.” The twelve findings remain aud
 evidence, but their frequency is not an exhaustive measure of framework risk. Before the
 method is used as a regression detector, add one scenario that combines an app theme with
 framework-rendered help and one that deliberately varies template registration order and
-name resolution, then rerun the pilot.
+name resolution, then rerun the pilot. That required follow-up is tracked in
+[#365](https://github.com/arthur-debert/standout/issues/365); epic closure does not imply
+that the validity check passed.
 
-This scorecard is linked from `docs/spec/robustness-blessed-surface.md`, the ROB05 planning
+This scorecard is linked from the [ROB05 planning spec](../../docs/spec/robustness-blessed-surface.md), the ROB05 planning
 artifact. No ROB05 tracker issue existed when ROB03-WS04 completed, so the repository link
 is the durable handoff for its ADR round.

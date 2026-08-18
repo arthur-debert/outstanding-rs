@@ -51,4 +51,16 @@ stdout_contains = ["smoketable"]
 # (text, term, json): exit 0 everywhere, no unresolved [tag?] markers, term
 # stripped of escapes must equal text byte-for-byte, json must parse.
 [invariants]
-commands = [["list"], ["about"]]
+modes = ["text", "term", "json"]
+colors = ["off", "on"]
+
+[[invariants.theme]]
+name = "application"
+
+[[invariants.command]]
+argv = ["list"]
+contract = "rendered"
+
+[[invariants.command]]
+argv = ["about"]
+contract = "rendered"

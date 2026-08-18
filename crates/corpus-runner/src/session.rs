@@ -6,12 +6,11 @@
 //! non-interactive Claude Code session whose stream-json transcript yields
 //! turn and token counts. The default session is hardened: no user/project
 //! settings or plugins load (`--setting-sources ''`) and no MCP servers or
-//! connectors attach (`--strict-mcp-config`), so the agent's host identity
-//! reduces to the HOME-held credentials that make the session runnable at
-//! all (the recorded blindness residue). The child runs with `env_clear()`
-//! plus the recorded allowlist — no repo secrets reach the produced code,
-//! which is treated as untrusted — and is killed (whole process group) when
-//! the configured deadline expires, which is a reported outcome, not a
+//! connectors attach (`--strict-mcp-config`). The child runs with `env_clear()`
+//! plus the recorded allowlist and a disposable home, inside the kernel
+//! isolation boundary. No host credentials or repo secrets reach the
+//! produced code, which is treated as untrusted. The process group is killed
+//! when the configured deadline expires; that is a reported outcome, not a
 //! runner error.
 
 use std::path::Path;
@@ -47,6 +46,7 @@ pub fn default_agent_cmd() -> String {
 /// session is still a reportable run.
 pub fn run_agent(
     workspace: &Path,
+    isolation: &workspace::Isolation,
     agent_cmd: &str,
     transcript_path: &Path,
     timeout: Duration,
@@ -56,14 +56,14 @@ pub fn run_agent(
     let stderr_file = transcript_file.try_clone()?;
 
     let mut command = Command::new("sh");
+    command.arg("-c").arg(agent_cmd).current_dir(workspace);
+    isolation
+        .apply_agent(&mut command)
+        .map_err(anyhow::Error::msg)?;
     command
-        .arg("-c")
-        .arg(agent_cmd)
-        .current_dir(workspace)
         .stdin(Stdio::null())
         .stdout(transcript_file)
         .stderr(stderr_file);
-    workspace::apply_env_policy(&mut command);
 
     let started = Instant::now();
     let outcome = exec::run(&mut command, timeout, false)

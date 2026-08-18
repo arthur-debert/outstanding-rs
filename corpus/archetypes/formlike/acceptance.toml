@@ -19,7 +19,8 @@ argv = ["provision", "questions"]
 timeout_seconds = 10
 [case.expect]
 exit_code = 0
-stdout_contains = ["<id:name>", "<id:region>", "<id:public>"]
+stdout_lines_end_with_once = ["<id:name>", "<id:region>", "<id:public>"]
+stderr = ""
 
 [[case]]
 name = "answers-file-full-noninteractive"
@@ -174,6 +175,12 @@ stderr_contains = ["--answers"]
 # findings by default.
 
 [invariants]
-commands = [
-    ["provision", "questions"],
-]
+modes = ["text", "term", "json"]
+colors = ["off", "on"]
+
+[[invariants.theme]]
+name = "application"
+
+[[invariants.command]]
+argv = ["provision", "questions"]
+contract = "rendered"
