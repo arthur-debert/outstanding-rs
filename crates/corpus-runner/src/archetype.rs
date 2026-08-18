@@ -286,6 +286,16 @@ pub struct CaseExpect {
     pub stdout_contains: Vec<String>,
     #[serde(default)]
     pub stderr_contains: Vec<String>,
+    /// Row-association groups: every value in a group must co-occur on one
+    /// single stdout line (e.g. a star with *its* constellation and
+    /// magnitude), which flat `stdout_contains` cannot express.
+    #[serde(default)]
+    pub stdout_row_contains: Vec<Vec<String>>,
+    /// JSON row-association groups: stdout must parse as JSON and every
+    /// value in a group must co-occur among the scalars of one single JSON
+    /// array element (numbers match their decimal literal).
+    #[serde(default)]
+    pub stdout_json_rows: Vec<Vec<String>>,
     #[serde(default)]
     pub stdout_not_contains: Vec<String>,
     #[serde(default)]
@@ -306,6 +316,8 @@ impl CaseExpect {
             && self.stdout_json.is_none()
             && self.stdout_contains.is_empty()
             && self.stderr_contains.is_empty()
+            && self.stdout_row_contains.is_empty()
+            && self.stdout_json_rows.is_empty()
             && self.stdout_not_contains.is_empty()
             && self.stderr_not_contains.is_empty()
             && self.stdout_lines_end_with_once.is_empty()
@@ -594,11 +606,27 @@ exit_code = 0
     /// must not satisfy the at-least-one-assertion rule.
     #[test]
     fn empty_assertion_lists_do_not_count() {
-        let err = parse(&suite(
-            &VALID_CASE.replace("exit_code = 0", "stdout_contains = []"),
-        ))
-        .unwrap_err();
-        assert!(err.to_string().contains("asserts nothing"), "{err:#}");
+        for key in ["stdout_contains", "stdout_row_contains", "stdout_json_rows"] {
+            let err = parse(&suite(
+                &VALID_CASE.replace("exit_code = 0", &format!("{key} = []")),
+            ))
+            .unwrap_err();
+            assert!(err.to_string().contains("asserts nothing"), "{err:#}");
+        }
+    }
+
+    /// The two row-association kinds ported from the retired check schema
+    /// parse and each satisfies the at-least-one-assertion rule alone.
+    #[test]
+    fn row_association_assertions_parse_and_count() {
+        for key in ["stdout_row_contains", "stdout_json_rows"] {
+            let suite = parse(&suite(&VALID_CASE.replace(
+                "exit_code = 0",
+                &format!("{key} = [[\"Aldebaran\", \"Taurus\", \"0.86\"]]"),
+            )))
+            .unwrap();
+            assert_eq!(suite.cases.len(), 1);
+        }
     }
 
     #[test]

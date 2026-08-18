@@ -265,6 +265,8 @@ baseline does not run, the planned identities remain present as `not-run`.
 | `stdout`, `stderr` | exact stream contents, LF-normalized |
 | `stdout_json` | stdout parses as JSON and is *semantically* equal to this JSON string (key order and whitespace irrelevant) |
 | `stdout_contains`, `stderr_contains` | every listed substring occurs in the stream |
+| `stdout_row_contains` | every value in each group co-occurs on one single stdout line (row association, e.g. a star with *its* constellation and magnitude) |
+| `stdout_json_rows` | stdout parses as JSON and every value in each group co-occurs among the scalars of one single JSON array element (numbers match their decimal literal) |
 | `stdout_not_contains`, `stderr_not_contains` | no listed substring occurs in the stream |
 | `stdout_lines_end_with_once` | each suffix terminates exactly one non-empty stdout line |
 

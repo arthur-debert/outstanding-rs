@@ -288,6 +288,108 @@ esac"#,
     assert_eq!(results[2].outcome, CaseOutcome::Fail);
 }
 
+/// A binary emitting associated rows in text and JSON: rows carry name,
+/// constellation, and magnitude together.
+const ROWS: &str = r#"
+mode=text
+prev=""
+for a in "$@"; do
+  if [ "$prev" = "--output" ]; then mode="$a"; fi
+  prev="$a"
+done
+case "$mode" in
+  json) echo '{"stars":[{"name":"Aldebaran","constellation":"Taurus","magnitude":0.86},{"name":"Rigel","constellation":"Orion","magnitude":0.13}]}' ;;
+  *) printf 'Stars\nAldebaran  Taurus  0.86\nRigel  Orion  0.13\n' ;;
+esac
+"#;
+
+/// The two assertion kinds ported from the retired check schema: each group
+/// must co-occur on one single row, so a cross-row bag of substrings fails.
+#[test]
+fn row_assertions_bind_values_to_one_row() {
+    let results = run_suite(
+        r#"
+[[case]]
+name = "text-rows-are-associated"
+stresses = "row association in rendered output"
+expected = "pass"
+[case.run]
+argv = ["list", "--output", "text"]
+timeout_seconds = 5
+[case.expect]
+stdout_row_contains = [["Aldebaran", "Taurus", "0.86"], ["Rigel", "Orion", "0.13"]]
+
+[[case]]
+name = "cross-row-bag-of-substrings-fails"
+stresses = "row association in rendered output"
+expected = "pass"
+[case.run]
+argv = ["list", "--output", "text"]
+timeout_seconds = 5
+[case.expect]
+stdout_row_contains = [["Aldebaran", "Orion"]]
+
+[[case]]
+name = "json-rows-are-associated"
+stresses = "row association in machine output"
+expected = "pass"
+[case.run]
+argv = ["list", "--output", "json"]
+timeout_seconds = 5
+[case.expect]
+stdout_json_rows = [["Aldebaran", "Taurus", "0.86"], ["Rigel", "Orion", "0.13"]]
+
+[[case]]
+name = "json-cross-row-group-fails"
+stresses = "row association in machine output"
+expected = "pass"
+[case.run]
+argv = ["list", "--output", "json"]
+timeout_seconds = 5
+[case.expect]
+stdout_json_rows = [["Aldebaran", "0.13"]]
+
+[[case]]
+name = "json-rows-on-non-json-output-fails"
+stresses = "row association in machine output"
+expected = "pass"
+[case.run]
+argv = ["list", "--output", "text"]
+timeout_seconds = 5
+[case.expect]
+stdout_json_rows = [["Aldebaran", "Taurus", "0.86"]]
+"#,
+        ROWS,
+    );
+    let outcomes: Vec<CaseOutcome> = results.iter().map(|r| r.outcome).collect();
+    assert_eq!(
+        outcomes,
+        vec![
+            CaseOutcome::Pass,
+            CaseOutcome::Fail,
+            CaseOutcome::Pass,
+            CaseOutcome::Fail,
+            CaseOutcome::Fail
+        ],
+        "{results:?}"
+    );
+    assert!(results[1]
+        .detail
+        .as_deref()
+        .unwrap()
+        .contains("no single stdout line"));
+    assert!(results[3]
+        .detail
+        .as_deref()
+        .unwrap()
+        .contains("no single JSON element"));
+    assert!(results[4]
+        .detail
+        .as_deref()
+        .unwrap()
+        .contains("not valid JSON"));
+}
+
 // ---------------------------------------------------------------------------
 // Run semantics: environment, sandbox, stdin, tty, timeout
 // ---------------------------------------------------------------------------
