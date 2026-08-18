@@ -21,8 +21,9 @@ them into an epic rather than letting them rot as a follow-up list.
 
 ## Problem
 
-Concrete defects and debt, as found by the review (file references current at the
-time of writing, post-#364):
+Concrete defects and debt, as found by the review. File references throughout this
+Spec are to the ROB03 delivery — PR #364's branch, which merges ahead of this epic —
+so they may not exist on `main` until that merge lands:
 
 1. **The roster case schema exists twice and has diverged.** The runner's parser
    (`corpus-runner/src/archetype.rs`) and the structural test's parallel structs
