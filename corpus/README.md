@@ -108,9 +108,12 @@ fragile"; partial blindness is acceptable if it is *known*).
 
 ## Decision: the run-report schema
 
-`report.json`, `schema_version: 2` (recorded here because an ADR may follow).
-Objective results and agent self-assessment are deliberately separate
-sections. The shape:
+`report.json`, `schema_version: 3` (recorded here because an ADR may follow;
+version 3 replaced the single `isolation_backend` word with a per-capability
+isolation record and dropped the producerless `session.attempts` counter —
+committed schema-2 evidence still loads, unrewritten, through the typed
+historical-report path re-evaluation uses). Objective results and agent
+self-assessment are deliberately separate sections. The shape:
 
 - `schema_version`, `run_id` — identity.
 - `archetype` — name plus the sha256 of the exact spec text given to the
@@ -121,14 +124,17 @@ sections. The shape:
   give when the tree is dirty), the exact acceptance-suite hash, and the exit
   questionnaire's semantic fingerprint.
 - `evaluation` — whether this was a full run or an isolated re-evaluation,
-  the enforced backend, and the exact produced-binary hash.
-- `blindness` — the protocol statement, environment key set, isolation
-  backend, credential exceptions, and the agent's own account of what it
-  consulted (from the questionnaire).
+  the isolation record (backend, filesystem model, and whether a network
+  denial was actually enforced — Landlock ABI v1 is filesystem-only, and the
+  report says so rather than reading stronger than the kernel guarantee),
+  and the exact produced-binary hash.
+- `blindness` — the protocol statement, environment key set, the isolation
+  record for the agent boundary, credential exceptions, and the agent's own
+  account of what it consulted (from the questionnaire).
 - `session` — instrumentation: the agent command, wall seconds, exit code,
-  whether the session hit its deadline (`timed_out`), attempts, and
-  turns/token counts when the transcript is Claude Code stream-json; plus
-  the transcript path (always linked, relative to the run directory).
+  whether the session hit its deadline (`timed_out`), and turns/token counts
+  when the transcript is Claude Code stream-json; plus the transcript path
+  (always linked, relative to the run directory).
 - `acceptance` — objective: whether the produced app built, and one entry
   per suite item — `checks` (pass/fail) for the check schema, `cases` for
   roster suites, each carrying the case's `expected` marker and its

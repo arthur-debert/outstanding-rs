@@ -12,6 +12,7 @@
 pub mod acceptance;
 pub mod archetype;
 pub mod cases;
+mod digest;
 pub mod exec;
 pub mod questionnaire;
 pub mod report;
@@ -23,11 +24,11 @@ use std::path::{Path, PathBuf};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use anyhow::Context;
-use sha2::{Digest, Sha256};
 
 use crate::archetype::{Archetype, Suite};
 use crate::report::{
-    AcceptanceReport, ArchetypeStamp, Blindness, EvaluationStamp, Pins, RunReport, SCHEMA_VERSION,
+    AcceptanceReport, ArchetypeStamp, Blindness, EvaluationStamp, HistoricalRun, InvariantCell,
+    IsolationRecord, Pins, RunReport, SCHEMA_VERSION,
 };
 
 /// Everything one run needs to start. The agent command is a seam: any
@@ -163,41 +164,18 @@ pub fn run(config: &RunConfig) -> anyhow::Result<(RunReport, PathBuf)> {
 
     // Phase 4: acceptance suite + invariant matrix against the produced binary.
     eprintln!("[corpus] building produced app and running acceptance suite");
-    let (acceptance_report, invariant_cells, binary_sha256) = match acceptance::build_app(
-        &workspace.app_dir,
-        archetype.binary(),
-        config.timeouts.build,
-        &workspace.isolation,
-    ) {
-        Ok(binary) => {
-            let cases_dir = run_dir.join("cases");
-            let suite_report = match &archetype.suite {
-                Suite::Checks(suite) => acceptance::run_checks(
-                    &binary,
-                    &suite.checks,
-                    config.timeouts.check,
-                    &workspace.isolation,
-                ),
-                Suite::Cases(suite) => {
-                    cases::run_cases(&binary, &suite.cases, &cases_dir, &workspace.isolation)
-                }
-            };
-            let cells = acceptance::run_invariants(
-                &binary,
-                archetype.invariants(),
-                config.timeouts.check,
-                &workspace.isolation,
-                &cases_dir.join("_invariants"),
-            );
-            let binary_sha = digest_file(&binary).ok();
-            (suite_report, cells, binary_sha)
-        }
-        Err(detail) => (
-            AcceptanceReport::build_failed(detail.clone()),
-            acceptance::not_run_invariants(archetype.invariants(), &detail),
-            None,
+    let evaluation = evaluate_binary(
+        &archetype,
+        acceptance::build_app(
+            &workspace.app_dir,
+            archetype.binary(),
+            config.timeouts.build,
+            &workspace.isolation,
         ),
-    };
+        &run_dir.join("cases"),
+        config.timeouts.check,
+        &workspace.isolation,
+    );
 
     // Phase 5: file the report.
     let report = RunReport {
@@ -216,8 +194,8 @@ pub fn run(config: &RunConfig) -> anyhow::Result<(RunReport, PathBuf)> {
         },
         evaluation: EvaluationStamp {
             origin: "full-run".to_string(),
-            isolation_backend: sandbox::backend_name().to_string(),
-            binary_sha256,
+            isolation: sandbox::capability(),
+            binary_sha256: evaluation.binary_sha256,
         },
         blindness: Blindness {
             policy: BLINDNESS_POLICY.to_string(),
@@ -226,7 +204,7 @@ pub fn run(config: &RunConfig) -> anyhow::Result<(RunReport, PathBuf)> {
                 .map(ToString::to_string)
                 .collect(),
             framework_source_excluded: true,
-            isolation_backend: sandbox::backend_name().to_string(),
+            isolation: sandbox::capability(),
             credential_exceptions: Vec::new(),
             agent_reported_docs: questionnaire_report.answers.get("sources.docs").cloned(),
             agent_reported_external_sources: questionnaire_report
@@ -235,8 +213,8 @@ pub fn run(config: &RunConfig) -> anyhow::Result<(RunReport, PathBuf)> {
                 .cloned(),
         },
         session: session_report,
-        acceptance: acceptance_report,
-        invariants: invariant_cells,
+        acceptance: evaluation.acceptance,
+        invariants: evaluation.invariants,
         questionnaire: questionnaire_report,
     };
     let report_path = run_dir.join("report.json");
@@ -246,8 +224,21 @@ pub fn run(config: &RunConfig) -> anyhow::Result<(RunReport, PathBuf)> {
     Ok((report, run_dir))
 }
 
+/// The blindness statement re-evaluation records: the historical session's
+/// partial blindness plus the regenerated objective results' provenance.
+const HISTORICAL_BLINDNESS_POLICY: &str =
+    "historical session was partially blind: its workspace was nested beneath a source \
+     checkout and inherited host homes; acceptance and ROB01 matrix results were later \
+     regenerated from an external workspace under the recorded evaluation sandbox";
+
 /// Re-evaluates a preserved produced workspace against the current suite and
 /// matrix without rerunning or rewriting the historical agent session.
+///
+/// The historical report is read typed ([`HistoricalRun`]): its identity,
+/// pins, session instrumentation, questionnaire, and agent-reported sources
+/// are preserved verbatim, while every objective section is regenerated. An
+/// off-shape source report is a diagnostic error naming the file, never a
+/// panic.
 pub fn reevaluate(config: &ReevaluationConfig) -> anyhow::Result<RunReport> {
     let archetype = Archetype::load(&config.archetypes_dir, &config.archetype)?;
     let source_root = config
@@ -261,30 +252,23 @@ pub fn reevaluate(config: &ReevaluationConfig) -> anyhow::Result<RunReport> {
         .verify_boundary(&source_root)
         .map_err(anyhow::Error::msg)?;
 
-    let mut value: serde_json::Value =
-        serde_json::from_str(&std::fs::read_to_string(&config.source_report)?)?;
-    value["schema_version"] = serde_json::json!(SCHEMA_VERSION);
-    value["pins"]["acceptance_sha256"] = serde_json::json!(archetype.acceptance_sha256());
-    value["evaluation"] = serde_json::json!({
-        "origin": "isolated-re-evaluation",
-        "isolation_backend": sandbox::backend_name(),
-        "binary_sha256": null,
-    });
-    value["blindness"]["framework_source_excluded"] = serde_json::json!(false);
-    value["blindness"]["isolation_backend"] = serde_json::json!("historical-partial");
-    value["blindness"]["credential_exceptions"] = serde_json::json!([
-        "historical agent session inherited host HOME, CARGO_HOME, and RUSTUP_HOME"
-    ]);
-    value["blindness"]["policy"] = serde_json::json!(
-        "historical session was partially blind: its workspace was nested beneath a source checkout and inherited host homes; acceptance and ROB01 matrix results were later regenerated from an external workspace under the recorded evaluation sandbox"
-    );
-    value["invariants"] = serde_json::json!([]);
-    let mut report: RunReport = serde_json::from_value(value)?;
-    report.archetype.spec_sha256 = archetype.spec_sha256();
-    report.pins.acceptance_sha256 = archetype.acceptance_sha256().to_string();
+    let source_text = std::fs::read_to_string(&config.source_report)
+        .with_context(|| format!("reading source report {}", config.source_report.display()))?;
+    let source: HistoricalRun = serde_json::from_str(&source_text).with_context(|| {
+        format!(
+            "source report {} does not deserialize as a run report",
+            config.source_report.display()
+        )
+    })?;
+    if source.archetype.name != archetype.name {
+        anyhow::bail!(
+            "source report {} records archetype {:?}, but re-evaluation was asked for {:?}",
+            config.source_report.display(),
+            source.archetype.name,
+            archetype.name
+        );
+    }
 
-    let app_dir = config.workspace_root.join("app");
-    let cases_dir = config.workspace_root.join(".reevaluation-cases");
     let binary_result = match config.produced_binary.as_deref() {
         Some(path) if path.is_file() => Ok(path.to_path_buf()),
         Some(path) => Err(format!(
@@ -292,46 +276,108 @@ pub fn reevaluate(config: &ReevaluationConfig) -> anyhow::Result<RunReport> {
             path.display()
         )),
         None => acceptance::build_app(
-            &app_dir,
+            &config.workspace_root.join("app"),
             archetype.binary(),
             config.timeouts.build,
             &isolation,
         ),
     };
-    match binary_result {
-        Ok(binary) => {
-            report.evaluation.binary_sha256 = digest_file(&binary).ok();
-            report.acceptance = match &archetype.suite {
-                Suite::Checks(suite) => acceptance::run_checks(
-                    &binary,
-                    &suite.checks,
-                    config.timeouts.check,
-                    &isolation,
-                ),
-                Suite::Cases(suite) => {
-                    cases::run_cases(&binary, &suite.cases, &cases_dir, &isolation)
-                }
-            };
-            report.invariants = acceptance::run_invariants(
-                &binary,
-                archetype.invariants(),
-                config.timeouts.check,
-                &isolation,
-                &cases_dir.join("_invariants"),
-            );
-        }
-        Err(detail) => {
-            report.acceptance = AcceptanceReport::build_failed(detail.clone());
-            report.invariants = acceptance::not_run_invariants(archetype.invariants(), &detail);
-        }
-    }
+    let evaluation = evaluate_binary(
+        &archetype,
+        binary_result,
+        &config.workspace_root.join(".reevaluation-cases"),
+        config.timeouts.check,
+        &isolation,
+    );
+
+    let report = RunReport {
+        schema_version: SCHEMA_VERSION,
+        run_id: source.run_id,
+        archetype: ArchetypeStamp {
+            name: archetype.name.clone(),
+            spec_sha256: archetype.spec_sha256(),
+        },
+        pins: Pins {
+            acceptance_sha256: archetype.acceptance_sha256().to_string(),
+            ..source.pins
+        },
+        evaluation: EvaluationStamp {
+            origin: "isolated-re-evaluation".to_string(),
+            isolation: sandbox::capability(),
+            binary_sha256: evaluation.binary_sha256,
+        },
+        blindness: Blindness {
+            policy: HISTORICAL_BLINDNESS_POLICY.to_string(),
+            env_allowlist: source.blindness.env_allowlist,
+            framework_source_excluded: false,
+            isolation: IsolationRecord {
+                backend: "historical-partial".to_string(),
+                filesystem: "historical agent session ran without the source-exclusion \
+                             boundary (workspace nested beneath a source checkout, host \
+                             homes inherited)"
+                    .to_string(),
+                network: "not enforced for the historical agent session".to_string(),
+            },
+            credential_exceptions: vec![
+                "historical agent session inherited host HOME, CARGO_HOME, and RUSTUP_HOME"
+                    .to_string(),
+            ],
+            agent_reported_docs: source.blindness.agent_reported_docs,
+            agent_reported_external_sources: source.blindness.agent_reported_external_sources,
+        },
+        session: source.session,
+        acceptance: evaluation.acceptance,
+        invariants: evaluation.invariants,
+        questionnaire: source.questionnaire,
+    };
     report.write(&config.output_report)?;
     Ok(report)
 }
 
-fn digest_file(path: &Path) -> anyhow::Result<String> {
-    let digest = Sha256::digest(std::fs::read(path)?);
-    Ok(digest.iter().map(|b| format!("{b:02x}")).collect())
+/// The objective evaluation both entry points share: acceptance suite plus
+/// invariant matrix against one produced binary, or their build-failed /
+/// not-run shapes when no binary exists.
+struct Evaluation {
+    acceptance: AcceptanceReport,
+    invariants: Vec<InvariantCell>,
+    binary_sha256: Option<String>,
+}
+
+/// Runs the archetype's suite and the ROB01 matrix against the outcome of a
+/// build. A build failure is a finding — it becomes a build-failed
+/// acceptance report with the full not-run matrix — never a runner error.
+fn evaluate_binary(
+    archetype: &Archetype,
+    binary: Result<PathBuf, String>,
+    cases_dir: &Path,
+    check_timeout: Duration,
+    isolation: &workspace::Isolation,
+) -> Evaluation {
+    match binary {
+        Ok(binary) => Evaluation {
+            acceptance: match &archetype.suite {
+                Suite::Checks(suite) => {
+                    acceptance::run_checks(&binary, &suite.checks, check_timeout, isolation)
+                }
+                Suite::Cases(suite) => {
+                    cases::run_cases(&binary, &suite.cases, cases_dir, isolation)
+                }
+            },
+            invariants: acceptance::run_invariants(
+                &binary,
+                archetype.invariants(),
+                check_timeout,
+                isolation,
+                &cases_dir.join("_invariants"),
+            ),
+            binary_sha256: std::fs::read(&binary).map(digest::sha256_hex).ok(),
+        },
+        Err(detail) => Evaluation {
+            acceptance: AcceptanceReport::build_failed(detail.clone()),
+            invariants: acceptance::not_run_invariants(archetype.invariants(), &detail),
+            binary_sha256: None,
+        },
+    }
 }
 
 /// Prints a human summary of the report to stderr.

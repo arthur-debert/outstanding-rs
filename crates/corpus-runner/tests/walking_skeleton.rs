@@ -69,7 +69,7 @@ echo '{{"type":"result","num_turns":1,"usage":{{"input_tokens":10,"output_tokens
     // The report is on disk and complete.
     assert!(run_dir.join("report.json").is_file());
     assert!(run_dir.join(&report.session.transcript).is_file());
-    assert_eq!(report.schema_version, 2);
+    assert_eq!(report.schema_version, corpus_runner::report::SCHEMA_VERSION);
     assert_eq!(report.archetype.name, "smoke");
     assert_eq!(report.pins.framework_version, "8.1.1");
     assert_ne!(report.pins.docs_commit, "unknown");

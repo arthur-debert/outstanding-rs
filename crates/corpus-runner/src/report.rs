@@ -1,11 +1,13 @@
 //! The run report: the durable artifact a corpus run leaves behind.
 //!
-//! `schema_version` 2 — the shape is a recorded decision (see
+//! `schema_version` 3 — the shape is a recorded decision (see
 //! `corpus/README.md`); an ADR may formalize it later. Objective results
 //! (acceptance, invariants) and the agent's self-assessment (questionnaire)
 //! are deliberately separate sections, and the `pins` block is what makes two
 //! runs comparable: same spec hash + same framework version + same docs
-//! commit means the same experiment.
+//! commit means the same experiment. Version 3 replaced the single
+//! `isolation_backend` word with the per-capability [`IsolationRecord`] and
+//! dropped the producerless `session.attempts` counter.
 
 use std::collections::BTreeMap;
 use std::path::Path;
@@ -14,7 +16,7 @@ use anyhow::Context;
 use serde::{Deserialize, Serialize};
 
 /// The current report schema version.
-pub const SCHEMA_VERSION: u32 = 2;
+pub const SCHEMA_VERSION: u32 = 3;
 
 /// Everything one corpus run durably records.
 #[derive(Debug, Serialize, Deserialize)]
@@ -38,9 +40,24 @@ pub struct EvaluationStamp {
     /// `full-run` when one runner invocation owned every phase, or
     /// `isolated-re-evaluation` for preserved historical workspaces.
     pub origin: String,
-    pub isolation_backend: String,
+    pub isolation: IsolationRecord,
     /// sha256 of the exact produced executable evaluated, when one existed.
     pub binary_sha256: Option<String>,
+}
+
+/// What the isolation boundary actually enforced, per capability. One
+/// backend word overstates parity — Linux Landlock (ABI v1) cannot enforce
+/// a network policy at all, and its default-deny filesystem model differs
+/// from Seatbelt's allow-default-with-denied-roots — so reports record each
+/// capability distinctly and never read stronger than what was enforced.
+#[derive(Debug, Serialize, Deserialize)]
+pub struct IsolationRecord {
+    /// The kernel mechanism, e.g. `macos-seatbelt` or `linux-landlock`.
+    pub backend: String,
+    /// The filesystem enforcement model this backend applied.
+    pub filesystem: String,
+    /// Whether a network-disabling policy is actually enforced here.
+    pub network: String,
 }
 
 /// Which archetype ran, pinned by content rather than by name alone.
@@ -80,7 +97,7 @@ pub struct Blindness {
     /// recorded so a future compromised mode is visible in the report).
     pub framework_source_excluded: bool,
     /// Kernel-enforced boundary used for agent/build/binary descendants.
-    pub isolation_backend: String,
+    pub isolation: IsolationRecord,
     /// Any credential intentionally admitted to the agent boundary. Empty is
     /// the only safe default; generated builds share the agent's sandbox.
     pub credential_exceptions: Vec<String>,
@@ -100,8 +117,6 @@ pub struct SessionReport {
     pub exit_code: Option<i32>,
     /// True when the session hit its deadline and was killed.
     pub timed_out: bool,
-    /// How many times the agent command was invoked for this run.
-    pub attempts: u32,
     /// Conversation turns, when the transcript is Claude Code stream-json.
     pub turns: Option<u64>,
     pub input_tokens: Option<u64>,
@@ -237,4 +252,40 @@ impl RunReport {
         std::fs::write(path, json + "\n")
             .with_context(|| format!("writing report to {}", path.display()))
     }
+}
+
+/// The slice of a historical report that re-evaluation preserves verbatim:
+/// identity, pins, session instrumentation, questionnaire, and the agent's
+/// own blindness answers. Everything re-evaluation regenerates (evaluation,
+/// acceptance, invariants, the enforced-blindness record) is absent, so any
+/// report from `schema_version` 2 onward loads typed — unknown or retired
+/// keys are ignored, and an off-shape file fails with a serde diagnostic
+/// naming the field, never a panic.
+#[derive(Debug, Deserialize)]
+pub struct HistoricalRun {
+    pub run_id: String,
+    pub archetype: HistoricalArchetype,
+    pub pins: Pins,
+    pub blindness: HistoricalBlindness,
+    pub session: SessionReport,
+    pub questionnaire: QuestionnaireReport,
+}
+
+/// The archetype identity a historical report claims (its hash pins are
+/// recomputed from the current archetype on re-evaluation).
+#[derive(Debug, Deserialize)]
+pub struct HistoricalArchetype {
+    pub name: String,
+}
+
+/// The preserved blindness facts: the historical env allowlist and the
+/// agent's self-reported sources. The enforcement half is rewritten because
+/// re-evaluation cannot vouch for a boundary it never installed.
+#[derive(Debug, Deserialize)]
+pub struct HistoricalBlindness {
+    pub env_allowlist: Vec<String>,
+    #[serde(default)]
+    pub agent_reported_docs: Option<String>,
+    #[serde(default)]
+    pub agent_reported_external_sources: Option<String>,
 }

@@ -15,6 +15,7 @@ use anyhow::{bail, Context};
 use sha2::{Digest, Sha256};
 
 use crate::archetype::Archetype;
+use crate::digest;
 use crate::questionnaire;
 use crate::sandbox::{self, Policy};
 
@@ -271,11 +272,7 @@ pub fn docs_digest(docs_root: &Path) -> anyhow::Result<String> {
         hasher.update([0]);
         hasher.update(std::fs::read(docs_root.join(rel))?);
     }
-    Ok(hasher
-        .finalize()
-        .iter()
-        .map(|b| format!("{b:02x}"))
-        .collect())
+    Ok(digest::hex(hasher.finalize()))
 }
 
 /// Collects every regular file under `dir` as a `/`-separated path relative
