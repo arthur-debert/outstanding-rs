@@ -35,6 +35,9 @@
 //! | `handler = path` | Handler function path | `{handlers}::{snake_case}` |
 //! | `template = "source"` | Inline MiniJinja source | None |
 //! | `template_name = "name"` | Registered template name | `{snake_case}.j2` by convention |
+//! | `silent` | Command intentionally emits no presentation text | false |
+//! | `binary` | Command emits binary output instead of presentation text | false |
+//! | `structured_only` | Command renders only structured output modes | false |
 //! | `pre_dispatch = fn` | Pre-dispatch hook | None |
 //! | `post_dispatch = fn` | Post-dispatch hook | None |
 //! | `post_output = fn` | Post-output hook | None |
@@ -77,6 +80,9 @@ struct VariantAttrs {
     handler: Option<Path>,
     template: Option<String>,
     template_name: Option<String>,
+    silent: bool,
+    binary: bool,
+    structured_only: bool,
     pre_dispatch: Option<Path>,
     post_dispatch: Option<Path>,
     post_output: Option<Path>,
@@ -168,6 +174,15 @@ impl Parse for VariantAttrs {
                         return Err(Error::new(nv.value.span(), "expected string literal"));
                     }
                 }
+                Meta::Path(p) if p.is_ident("silent") => {
+                    attrs.silent = true;
+                }
+                Meta::Path(p) if p.is_ident("binary") => {
+                    attrs.binary = true;
+                }
+                Meta::Path(p) if p.is_ident("structured_only") => {
+                    attrs.structured_only = true;
+                }
                 Meta::NameValue(nv) if nv.path.is_ident("pre_dispatch") => {
                     if let Expr::Path(expr_path) = &nv.value {
                         attrs.pre_dispatch = Some(expr_path.path.clone());
@@ -253,7 +268,7 @@ impl Parse for VariantAttrs {
                 _ => {
                     return Err(Error::new(
                         meta.span(),
-                        "unknown attribute, expected one of: handler, template, template_name, pre_dispatch, post_dispatch, post_output, questionnaire, nested, skip, default, list_view, item_type, pipe_to, pipe_through, pipe_to_clipboard, simple, pure",
+                        "unknown attribute, expected one of: handler, template, template_name, silent, binary, structured_only, pre_dispatch, post_dispatch, post_output, questionnaire, nested, skip, default, list_view, item_type, pipe_to, pipe_through, pipe_to_clipboard, simple, pure",
                     ));
                 }
             }
@@ -263,6 +278,21 @@ impl Parse for VariantAttrs {
             return Err(Error::new(
                 input.span(),
                 "`template` and `template_name` cannot be used together",
+            ));
+        }
+        let absence_count = usize::from(attrs.silent)
+            + usize::from(attrs.binary)
+            + usize::from(attrs.structured_only);
+        if absence_count > 1 {
+            return Err(Error::new(
+                input.span(),
+                "`silent`, `binary`, and `structured_only` cannot be used together",
+            ));
+        }
+        if absence_count == 1 && (attrs.template.is_some() || attrs.template_name.is_some()) {
+            return Err(Error::new(
+                input.span(),
+                "`silent`, `binary`, and `structured_only` cannot be combined with `template` or `template_name`",
             ));
         }
 
@@ -442,6 +472,9 @@ pub fn dispatch_derive_impl(input: DeriveInput) -> Result<TokenStream> {
 
                 let has_config = v_template.is_some()
                     || v_template_name.is_some()
+                    || v.attrs.silent
+                    || v.attrs.binary
+                    || v.attrs.structured_only
                     || v.attrs.pre_dispatch.is_some()
                     || v.attrs.post_dispatch.is_some()
                     || v.attrs.post_output.is_some()
@@ -512,6 +545,15 @@ pub fn dispatch_derive_impl(input: DeriveInput) -> Result<TokenStream> {
                     let template_name_call = v_template_name.as_ref().map(
                         |template_name| quote! { __cfg = __cfg.template_name(#template_name); },
                     );
+                    let absence_call = if v.attrs.silent {
+                        Some(quote! { __cfg = __cfg.silent(); })
+                    } else if v.attrs.binary {
+                        Some(quote! { __cfg = __cfg.binary(); })
+                    } else if v.attrs.structured_only {
+                        Some(quote! { __cfg = __cfg.structured_only(); })
+                    } else {
+                        None
+                    };
                     let pre_dispatch_call = v.attrs.pre_dispatch.as_ref().map(|p| {
                         quote! { __cfg = __cfg.pre_dispatch(#p); }
                     });
@@ -540,6 +582,7 @@ pub fn dispatch_derive_impl(input: DeriveInput) -> Result<TokenStream> {
                         let __builder = __builder.command_with(#cmd_name, #handler_expr, |mut __cfg| {
                             #template_call
                             #template_name_call
+                            #absence_call
                             #questionnaire_call
                             #pre_dispatch_call
                             #post_dispatch_call

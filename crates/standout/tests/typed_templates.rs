@@ -12,6 +12,10 @@ fn command() -> Command {
     Command::new("app").subcommand(Command::new("show"))
 }
 
+fn group_command() -> Command {
+    Command::new("app").subcommand(Command::new("db").subcommand(Command::new("show")))
+}
+
 fn build_error(builder: AppBuilder) -> String {
     match builder.build() {
         Ok(_) => panic!("expected build to fail"),
@@ -288,12 +292,31 @@ fn path_looking_command_config_template_renders_as_inline_source() {
 }
 
 #[test]
-fn convention_template_without_application_registry_allows_structured_output() {
+fn convention_template_without_application_registry_fails_at_build() {
+    let error = build_error(
+        App::builder()
+            .command_with(
+                "show",
+                |_m, _ctx| Ok(Output::Render(json!({"name": "Ada"}))),
+                |cfg| cfg,
+            )
+            .unwrap(),
+    );
+
+    assert!(error.contains("command `show` references template `show.j2`"));
+    assert!(error.contains("no application templates are configured"));
+    assert!(error.contains(".structured_only()"));
+    assert!(error.contains(".silent()"));
+    assert!(error.contains(".binary()"));
+}
+
+#[test]
+fn explicit_structured_only_without_application_registry_allows_structured_output() {
     let app = App::builder()
         .command_with(
             "show",
             |_m, _ctx| Ok(Output::Render(json!({"name": "Ada"}))),
-            |cfg| cfg,
+            |cfg| cfg.structured_only(),
         )
         .unwrap()
         .build()
@@ -306,6 +329,110 @@ fn convention_template_without_application_registry_allows_structured_output() {
 
     result.assert_success();
     assert_eq!(result.stdout(), "{\n  \"name\": \"Ada\"\n}");
+}
+
+#[test]
+fn template_ext_before_command_applies_to_convention_template() {
+    let app = App::builder()
+        .template_ext(".jinja")
+        .templates(EmbeddedSource::<TemplateResource>::new(
+            ORDERED_TEMPLATES,
+            "/path/that/does/not/exist",
+        ))
+        .command_with(
+            "show",
+            |_m, _ctx| Ok(Output::Render(json!({"name": "Ada"}))),
+            |cfg| cfg,
+        )
+        .unwrap()
+        .build()
+        .unwrap();
+
+    let result = TestHarness::new()
+        .text_output()
+        .run(&app, command(), ["app", "show"]);
+
+    result.assert_success();
+    assert_eq!(result.stdout(), "Hello Ada");
+}
+
+#[test]
+fn template_ext_after_command_applies_to_convention_template() {
+    let app = App::builder()
+        .command_with(
+            "show",
+            |_m, _ctx| Ok(Output::Render(json!({"name": "Ada"}))),
+            |cfg| cfg,
+        )
+        .unwrap()
+        .template_ext(".jinja")
+        .templates(EmbeddedSource::<TemplateResource>::new(
+            ORDERED_TEMPLATES,
+            "/path/that/does/not/exist",
+        ))
+        .build()
+        .unwrap();
+
+    let result = TestHarness::new()
+        .text_output()
+        .run(&app, command(), ["app", "show"]);
+
+    result.assert_success();
+    assert_eq!(result.stdout(), "Hello Ada");
+}
+
+#[test]
+fn template_ext_after_commands_applies_to_convention_template() {
+    let app = App::builder()
+        .commands(|g| {
+            g.command_with(
+                "show",
+                |_m, _ctx| Ok(Output::Render(json!({"name": "Ada"}))),
+                |cfg| cfg,
+            )
+        })
+        .unwrap()
+        .template_ext(".jinja")
+        .templates(EmbeddedSource::<TemplateResource>::new(
+            ORDERED_TEMPLATES,
+            "/path/that/does/not/exist",
+        ))
+        .build()
+        .unwrap();
+
+    let result = TestHarness::new()
+        .text_output()
+        .run(&app, command(), ["app", "show"]);
+
+    result.assert_success();
+    assert_eq!(result.stdout(), "Hello Ada");
+}
+
+#[test]
+fn template_ext_after_group_applies_to_nested_convention_template() {
+    let app = App::builder()
+        .group("db", |g| {
+            g.command_with(
+                "show",
+                |_m, _ctx| Ok(Output::Render(json!({"name": "Ada"}))),
+                |cfg| cfg,
+            )
+        })
+        .unwrap()
+        .template_ext(".jinja")
+        .templates(EmbeddedSource::<TemplateResource>::new(
+            &[("db/show.jinja", "Hello {{ name }}")],
+            "/path/that/does/not/exist",
+        ))
+        .build()
+        .unwrap();
+
+    let result = TestHarness::new()
+        .text_output()
+        .run(&app, group_command(), ["app", "db", "show"]);
+
+    result.assert_success();
+    assert_eq!(result.stdout(), "Hello Ada");
 }
 
 #[test]
@@ -472,6 +599,42 @@ fn file_backed_dynamic_include_hot_reloads_between_renders() {
 
 #[test]
 #[serial]
+fn file_backed_dynamic_include_discovers_new_template_between_renders() {
+    let dir = tempfile::tempdir().unwrap();
+    let partial_path = dir.path().join("partial.jinja");
+    std::fs::write(
+        dir.path().join("show.jinja"),
+        "{% include partial ~ suffix %}",
+    )
+    .unwrap();
+
+    let app = App::builder()
+        .templates_dir(dir.path())
+        .unwrap()
+        .command_with(
+            "show",
+            |_m, _ctx| {
+                Ok(Output::Render(
+                    json!({"name": "Ada", "partial": "partial", "suffix": ""}),
+                ))
+            },
+            |config| config.template_name("show"),
+        )
+        .unwrap()
+        .build()
+        .unwrap();
+
+    std::fs::write(&partial_path, "Hello {{ name }}").unwrap();
+
+    let result = TestHarness::new()
+        .text_output()
+        .run(&app, command(), ["app", "show"]);
+    result.assert_success();
+    assert_eq!(result.stdout(), "Hello Ada");
+}
+
+#[test]
+#[serial]
 fn file_backed_whitespace_control_include_hot_reloads_between_renders() {
     let dir = tempfile::tempdir().unwrap();
     let partial_path = dir.path().join("partial.jinja");
@@ -589,6 +752,143 @@ fn corrupted_file_backed_include_names_include_path_at_render() {
         .run(&app, command(), ["app", "show"]);
     result.assert_error_contains("template `_partial`");
     result.assert_error_contains(&partial_path.display().to_string());
+}
+
+#[test]
+#[serial]
+fn app_render_refreshes_changed_dependency() {
+    let dir = tempfile::tempdir().unwrap();
+    let partial_path = dir.path().join("_partial.jinja");
+    std::fs::write(&partial_path, "Hello {{ name }}").unwrap();
+    std::fs::write(dir.path().join("show.jinja"), "{% include '_partial' %}").unwrap();
+
+    let app = App::builder()
+        .templates_dir(dir.path())
+        .unwrap()
+        .build()
+        .unwrap();
+
+    assert_eq!(
+        app.render("show", &json!({"name": "Ada"}), OutputMode::Text)
+            .unwrap(),
+        "Hello Ada"
+    );
+
+    std::fs::write(&partial_path, "Bye {{ name }}").unwrap();
+
+    assert_eq!(
+        app.render("show", &json!({"name": "Ada"}), OutputMode::Text)
+            .unwrap(),
+        "Bye Ada"
+    );
+}
+
+#[test]
+#[serial]
+fn app_render_refreshes_newly_added_dependency() {
+    let dir = tempfile::tempdir().unwrap();
+    let show_path = dir.path().join("show.jinja");
+    std::fs::write(&show_path, "Hello {{ name }}").unwrap();
+
+    let app = App::builder()
+        .templates_dir(dir.path())
+        .unwrap()
+        .build()
+        .unwrap();
+
+    assert_eq!(
+        app.render("show", &json!({"name": "Ada"}), OutputMode::Text)
+            .unwrap(),
+        "Hello Ada"
+    );
+
+    std::fs::write(dir.path().join("_partial.jinja"), "Bye {{ name }}").unwrap();
+    std::fs::write(&show_path, "{% include '_partial' %}").unwrap();
+
+    assert_eq!(
+        app.render("show", &json!({"name": "Ada"}), OutputMode::Text)
+            .unwrap(),
+        "Bye Ada"
+    );
+}
+
+#[test]
+#[serial]
+fn app_render_reports_deleted_dependency() {
+    let dir = tempfile::tempdir().unwrap();
+    let partial_path = dir.path().join("_partial.jinja");
+    std::fs::write(&partial_path, "Hello {{ name }}").unwrap();
+    std::fs::write(dir.path().join("show.jinja"), "{% include '_partial' %}").unwrap();
+
+    let app = App::builder()
+        .templates_dir(dir.path())
+        .unwrap()
+        .build()
+        .unwrap();
+    std::fs::remove_file(&partial_path).unwrap();
+
+    let error = app
+        .render("show", &json!({"name": "Ada"}), OutputMode::Text)
+        .unwrap_err()
+        .to_string();
+
+    assert!(error.contains("template `_partial`"), "{error}");
+}
+
+#[test]
+#[serial]
+fn app_render_reports_corrupted_dependency() {
+    let dir = tempfile::tempdir().unwrap();
+    let partial_path = dir.path().join("_partial.jinja");
+    std::fs::write(&partial_path, "Hello {{ name }}").unwrap();
+    std::fs::write(dir.path().join("show.jinja"), "{% include '_partial' %}").unwrap();
+
+    let app = App::builder()
+        .templates_dir(dir.path())
+        .unwrap()
+        .build()
+        .unwrap();
+    std::fs::write(&partial_path, "{% if").unwrap();
+
+    let error = app
+        .render("show", &json!({"name": "Ada"}), OutputMode::Text)
+        .unwrap_err()
+        .to_string();
+
+    assert!(error.contains("template `_partial`"), "{error}");
+    assert!(
+        error.contains(&partial_path.display().to_string()),
+        "{error}"
+    );
+}
+
+#[test]
+#[serial]
+fn dependency_scanner_ignores_comment_raw_and_variable_blocks() {
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::write(dir.path().join("_partial.jinja"), "Hello {{ name }}").unwrap();
+    std::fs::write(
+        dir.path().join("show.jinja"),
+        concat!(
+            "{# example: {% include 'missing-comment' %} #}",
+            "{{ \"{% include 'missing-variable' %}\" }}",
+            "{% raw %}{% include 'missing-raw' %}{% endraw %}",
+            "{% include '_partial' %}",
+        ),
+    )
+    .unwrap();
+
+    let app = App::builder()
+        .templates_dir(dir.path())
+        .unwrap()
+        .build()
+        .unwrap();
+
+    assert_eq!(
+        app.render("show", &json!({"name": "Ada"}), OutputMode::Text)
+            .unwrap(),
+        "{% include 'missing-variable' %}{% include 'missing-raw' %}Hello Ada"
+    );
 }
 
 #[test]

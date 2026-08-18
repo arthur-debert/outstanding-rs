@@ -53,6 +53,7 @@
 ///     command_name => {
 ///         handler: handler_fn,
 ///         template: "inline {{ value }}",    // optional
+///         structured_only: true,              // optional; or silent/binary
 ///         pre_dispatch: hook_fn,             // optional
 ///         post_dispatch: hook_fn,            // optional
 ///         post_output: hook_fn,              // optional
@@ -196,6 +197,26 @@ macro_rules! dispatch_apply_config {
     };
     ($cfg:expr; template : $template:expr) => {
         $cfg.template($template)
+    };
+
+    // Template absence options
+    ($cfg:expr; structured_only : true , $($rest:tt)*) => {
+        $crate::dispatch_apply_config!($cfg.structured_only(); $($rest)*)
+    };
+    ($cfg:expr; structured_only : true) => {
+        $cfg.structured_only()
+    };
+    ($cfg:expr; silent : true , $($rest:tt)*) => {
+        $crate::dispatch_apply_config!($cfg.silent(); $($rest)*)
+    };
+    ($cfg:expr; silent : true) => {
+        $cfg.silent()
+    };
+    ($cfg:expr; binary : true , $($rest:tt)*) => {
+        $crate::dispatch_apply_config!($cfg.binary(); $($rest)*)
+    };
+    ($cfg:expr; binary : true) => {
+        $cfg.binary()
     };
 
     // Pre-dispatch hook

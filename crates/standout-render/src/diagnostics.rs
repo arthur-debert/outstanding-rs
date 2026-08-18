@@ -19,11 +19,10 @@
 //!   [`Strip`](UnknownTagBehavior::Strip), so an app-template tag the resolved
 //!   theme lacks degrades to unstyled inner text instead of leaking `[tag?]`
 //!   markup.
-//! - When capture is open, unresolved tags become framework warnings as well as
-//!   structured records. The warning is the user-facing signal; the record is
-//!   the test oracle.
-//! - **Nothing is collected unless someone asked.** Recording happens only
-//!   inside a capture window — see below.
+//! - Unresolved tags become framework warnings on every render path. The
+//!   warning is the user-facing signal.
+//! - **Nothing is recorded unless someone asked.** Structured records are kept
+//!   only inside a capture window — see below.
 //!
 //! # The capture window
 //!
@@ -266,9 +265,10 @@ impl TagResolution {
 /// Runs a style-tag pass, records what it resolved, and returns the output.
 ///
 /// This is the render path's replacement for building a [`BBParser`] and
-/// calling `parse`: byte-for-byte the same output, with the error list `parse`
-/// discarded kept in the thread-local collector instead — and kept only while
-/// a capture window is open, so a standalone render costs no memory.
+/// calling `parse`: byte-for-byte the same output, with unresolved-style
+/// warnings routed to the framework warning collector and structured records
+/// kept only while a capture window is open, so a standalone render costs no
+/// diagnostic-memory growth.
 pub fn resolve_tags(
     input: &str,
     styles: HashMap<String, Style>,
@@ -277,10 +277,6 @@ pub fn resolve_tags(
 ) -> String {
     let parser = BBParser::new(styles, transform).unknown_behavior(unknown_behavior);
     let (output, errors) = parser.parse_with_diagnostics(input);
-
-    if !is_capturing() {
-        return output;
-    }
 
     // The parser reports two different failures through one vector: a tag the
     // theme has no style for, and markup it could not balance. Only the first
@@ -295,6 +291,10 @@ pub fn resolve_tags(
 
     if !unresolved.is_empty() {
         warn_unresolved_tags(&unresolved);
+    }
+
+    if !is_capturing() {
+        return output;
     }
 
     let defined_tags = if unresolved.is_empty() {
@@ -561,6 +561,7 @@ mod tests {
     fn renders_outside_a_capture_window_accumulate_nothing() {
         drop(reset());
         take_captured();
+        crate::warnings::drain_warnings();
 
         for _ in 0..1000 {
             resolve_tags(
@@ -576,6 +577,11 @@ mod tests {
             drain().is_empty(),
             "a render outside a capture window records nothing"
         );
+        assert_eq!(
+            crate::warnings::drain_warnings(),
+            vec!["Unresolved style tag(s) degraded to unstyled text: nope".to_string()],
+            "a render outside a capture window still emits the framework warning"
+        );
     }
 
     /// …and the second half of that defect: those renders must not turn up in
@@ -584,6 +590,7 @@ mod tests {
     fn a_render_before_a_run_cannot_contaminate_it() {
         drop(reset());
         take_captured();
+        crate::warnings::drain_warnings();
 
         resolve_tags(
             "[stray]before the run[/stray]",
@@ -604,6 +611,11 @@ mod tests {
         let captured = take_captured();
         assert_eq!(captured.len(), 1, "only the run's own pass is captured");
         assert!(captured[0].is_clean());
+        assert_eq!(
+            crate::warnings::drain_warnings(),
+            vec!["Unresolved style tag(s) degraded to unstyled text: stray".to_string()],
+            "warnings remain independent from diagnostic capture windows"
+        );
     }
 
     /// Markup the theme *does* define is a template defect, not a hole in the

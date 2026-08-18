@@ -349,6 +349,7 @@ fn template_config() -> FileRegistryConfig<String> {
 /// // Resolve and get content
 /// let content = registry.get_content("header")?;
 /// ```
+#[derive(Clone)]
 pub struct TemplateRegistry {
     /// The underlying file registry for directory-based file loading.
     inner: FileRegistry<String>,

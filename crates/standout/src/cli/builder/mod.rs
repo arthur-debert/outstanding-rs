@@ -68,8 +68,10 @@ pub(crate) enum TemplateRef {
     Named(String),
     /// A convention-derived template name.
     ///
-    /// These are checked when the application configured templates, but do not
-    /// force structured-only CLIs to annotate every command.
+    /// The command path is stored until `build()` so `.template_ext(...)`
+    /// applies regardless of whether it was called before or after command
+    /// registration. Build validation materializes it to the final registry
+    /// name.
     Convention(String),
     /// Inline MiniJinja source carried directly on the command.
     Inline(String),
@@ -93,9 +95,13 @@ impl TemplateRef {
         Self::Inline(template.into())
     }
 
-    pub(crate) fn convention(command_path: &str, template_ext: &str) -> Self {
+    pub(crate) fn convention(command_path: &str) -> Self {
+        Self::Convention(command_path.to_string())
+    }
+
+    pub(crate) fn convention_name(command_path: &str, template_ext: &str) -> String {
         let file_path = command_path.replace('.', "/");
-        Self::Convention(format!("{}{}", file_path, template_ext))
+        format!("{}{}", file_path, template_ext)
     }
 }
 
@@ -131,6 +137,10 @@ impl TemplateRefreshError {
             name,
             message: message.into(),
         }
+    }
+
+    fn is_not_found(&self) -> bool {
+        self.message.starts_with("Template not found:")
     }
 }
 
@@ -176,7 +186,17 @@ pub(crate) fn refresh_named_template(
     name: &str,
 ) -> Result<(), TemplateRefreshError> {
     let mut seen = HashSet::new();
-    refresh_template_tree(engine, registry, name, &mut seen)
+    let result = refresh_template_tree(engine, registry, name, &mut seen);
+    if !matches!(&result, Err(error) if error.is_not_found()) {
+        return result;
+    }
+
+    let mut refreshed = registry.clone();
+    refreshed
+        .refresh()
+        .map_err(|error| TemplateRefreshError::new(name, &refreshed, error.to_string()))?;
+    let mut seen = HashSet::new();
+    refresh_template_tree(engine, &refreshed, name, &mut seen)
 }
 
 fn refresh_template_tree(
@@ -198,7 +218,11 @@ fn refresh_template_tree(
 
     let dependencies = template_dependencies(&content);
     if dependencies.dynamic {
-        return refresh_engine_templates(engine, registry);
+        let mut refreshed = registry.clone();
+        refreshed
+            .refresh()
+            .map_err(|error| TemplateRefreshError::new(name, &refreshed, error.to_string()))?;
+        return refresh_engine_templates(engine, &refreshed);
     }
 
     for dependency in dependencies.names {
@@ -216,27 +240,33 @@ struct TemplateDependencies {
 
 fn template_dependencies(source: &str) -> TemplateDependencies {
     let mut dependencies = TemplateDependencies::default();
-    let mut rest = source;
+    let mut cursor = 0;
 
-    while let Some(tag_start) = rest.find("{%") {
-        let after_start = &rest[tag_start + 2..];
-        let Some(tag_end) = after_start.find("%}") else {
+    while let Some(open) = find_next_template_syntax(source, cursor) {
+        if source[open..].starts_with("{#") {
+            let Some(close) = source[open + 2..].find("#}") else {
+                break;
+            };
+            cursor = open + 2 + close + 2;
+            continue;
+        }
+
+        if source[open..].starts_with("{{") {
+            let Some(close) = source[open + 2..].find("}}") else {
+                break;
+            };
+            cursor = open + 2 + close + 2;
+            continue;
+        }
+
+        let Some((tag, close)) = read_tag(source, open) else {
             break;
         };
-        let tag = after_start[..tag_end].trim();
-        let tag = tag
-            .strip_prefix('-')
-            .or_else(|| tag.strip_prefix('+'))
-            .unwrap_or(tag)
-            .trim_start();
-        let tag = tag
-            .strip_suffix('-')
-            .or_else(|| tag.strip_suffix('+'))
-            .unwrap_or(tag)
-            .trim_end();
-        let mut words = tag.splitn(2, char::is_whitespace);
-        let keyword = words.next().unwrap_or_default();
-        let body = words.next().unwrap_or_default().trim();
+        let (keyword, body) = split_tag(&tag);
+        if keyword == "raw" {
+            cursor = find_endraw(source, close).unwrap_or(source.len());
+            continue;
+        }
 
         let expression = match keyword {
             "include" | "extends" | "import" => Some(body),
@@ -252,10 +282,65 @@ fn template_dependencies(source: &str) -> TemplateDependencies {
                 None => dependencies.dynamic = true,
             }
         }
-        rest = &after_start[tag_end + 2..];
+        cursor = close;
     }
 
     dependencies
+}
+
+fn find_next_template_syntax(source: &str, cursor: usize) -> Option<usize> {
+    let rest = &source[cursor..];
+    ["{%", "{{", "{#"]
+        .into_iter()
+        .filter_map(|marker| rest.find(marker).map(|index| cursor + index))
+        .min()
+}
+
+fn read_tag(source: &str, open: usize) -> Option<(String, usize)> {
+    if !source[open..].starts_with("{%") {
+        return None;
+    }
+    let after_start = open + 2;
+    let tag_end = source[after_start..].find("%}")?;
+    let close = after_start + tag_end + 2;
+    Some((
+        normalize_tag(&source[after_start..after_start + tag_end]),
+        close,
+    ))
+}
+
+fn normalize_tag(tag: &str) -> String {
+    let tag = tag.trim();
+    let tag = tag
+        .strip_prefix('-')
+        .or_else(|| tag.strip_prefix('+'))
+        .unwrap_or(tag)
+        .trim_start();
+    let tag = tag
+        .strip_suffix('-')
+        .or_else(|| tag.strip_suffix('+'))
+        .unwrap_or(tag)
+        .trim_end();
+    tag.to_string()
+}
+
+fn split_tag(tag: &str) -> (&str, &str) {
+    let mut words = tag.splitn(2, char::is_whitespace);
+    let keyword = words.next().unwrap_or_default();
+    let body = words.next().unwrap_or_default().trim();
+    (keyword, body)
+}
+
+fn find_endraw(source: &str, cursor: usize) -> Option<usize> {
+    let mut cursor = cursor;
+    while let Some(open) = source[cursor..].find("{%").map(|index| cursor + index) {
+        let (tag, close) = read_tag(source, open)?;
+        if split_tag(&tag).0 == "endraw" {
+            return Some(close);
+        }
+        cursor = close;
+    }
+    None
 }
 
 fn static_template_names(keyword: &str, expression: &str) -> Option<Vec<String>> {
@@ -326,7 +411,7 @@ fn missing_template_message(
         )
     } else {
         format!(
-            "command `{command_path}` references template `{template_name}`, but no application templates are configured; add .templates(embed_templates!(\"src/templates\")) or .templates_dir(\"path/to/templates\") before .build()"
+            "command `{command_path}` references template `{template_name}`, but no application templates are configured; add .templates(embed_templates!(\"src/templates\")) or .templates_dir(\"path/to/templates\") before .build(), or declare no presentation with .structured_only(), .silent(), or .binary()"
         )
     };
 
@@ -769,7 +854,9 @@ impl AppBuilder {
     ///
     /// Returns an error if:
     /// - A `default_theme()` was specified but the theme wasn't found in the stylesheet registry
-    /// - a command references a named template that is not in the template registry
+    /// - a command references a named or convention template that is not in the template registry
+    /// - a command relies on a convention template without configuring application templates
+    ///   or declaring absence with `.structured_only()`, `.silent()`, or `.binary()`
     /// - a registered template fails to compile
     /// - `command_groups` or topics are configured without `.help_handling(true)`
     /// - a command is registered under the root `help` with `.help_handling(true)`,
@@ -863,6 +950,7 @@ impl AppBuilder {
 
         self.validate_command_templates()?;
         self.validate_framework_template_styles()?;
+        self.materialize_convention_templates();
 
         // Populate engine with templates from the registry and keep the compile
         // result. Named renders refresh this cache again so file-backed
@@ -903,38 +991,46 @@ impl AppBuilder {
 
     fn validate_command_templates(&self) -> Result<(), SetupError> {
         for (path, pending) in self.pending_commands.borrow().iter() {
-            let (name, allow_missing_without_templates) = match &pending.template {
-                TemplateRef::Named(name) => (name, false),
-                TemplateRef::Convention(name) => (name, true),
+            let name = match &pending.template {
+                TemplateRef::Named(name) => name.clone(),
+                TemplateRef::Convention(command_path) => {
+                    TemplateRef::convention_name(command_path, &self.template_ext)
+                }
                 TemplateRef::Inline(_) | TemplateRef::Absent(_) => continue,
             };
             let Some(registry) = self.template_registry.as_ref() else {
-                if allow_missing_without_templates {
-                    continue;
-                }
                 return Err(SetupError::Template(missing_template_message(
-                    path, name, None,
+                    path, &name, None,
                 )));
             };
-            if allow_missing_without_templates && !registry.has_application_templates() {
-                continue;
-            }
-            registry.get_content(name).map_err(|error| {
+            registry.get_content(&name).map_err(|error| {
                 let message = match error {
                     standout_render::RegistryError::NotFound { .. } => {
-                        missing_template_message(path, name, Some(registry))
+                        missing_template_message(path, &name, Some(registry))
                     }
-                    _ => TemplateRefreshError::new(name, registry, error.to_string()).to_string(),
+                    _ => TemplateRefreshError::new(&name, registry, error.to_string()).to_string(),
                 };
                 SetupError::Template(message)
             })?;
-            if allow_missing_without_templates {
+            if matches!(pending.template, TemplateRef::Convention(_)) {
                 let mut engine = self.template_engine.borrow_mut();
-                refresh_named_template(&mut **engine, registry, name)
+                refresh_named_template(&mut **engine, registry, &name)
                     .map_err(|error| SetupError::Template(error.to_string()))?;
             }
         }
         Ok(())
+    }
+
+    fn materialize_convention_templates(&self) {
+        let mut pending_commands = self.pending_commands.borrow_mut();
+        for pending in pending_commands.values_mut() {
+            if let TemplateRef::Convention(command_path) = &pending.template {
+                pending.template = TemplateRef::Convention(TemplateRef::convention_name(
+                    command_path,
+                    &self.template_ext,
+                ));
+            }
+        }
     }
 
     fn resolve_configured_theme(&mut self) -> Result<Option<Theme>, SetupError> {

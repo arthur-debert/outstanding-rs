@@ -82,7 +82,7 @@ impl AppBuilder {
                     } else if let Some(template) = handler.template() {
                         inline_template_ref(template, "CommandConfig::template")?
                     } else {
-                        TemplateRef::convention(&name, &self.template_ext)
+                        TemplateRef::convention(&name)
                     };
 
                     if let Some(hooks) = handler.take_hooks() {
@@ -940,7 +940,10 @@ mod tests {
 
         let builder = AppBuilder::new()
             .commands(dispatch! {
-                list => |_m, _ctx| Ok(HandlerOutput::Render(json!({"items": ["a", "b"]})))
+                list => {
+                    handler: |_m, _ctx| Ok(HandlerOutput::Render(json!({"items": ["a", "b"]}))),
+                    structured_only: true,
+                }
             })
             .unwrap();
 
@@ -963,10 +966,19 @@ mod tests {
         let builder = AppBuilder::new()
             .commands(dispatch! {
                 db: {
-                    migrate => |_m, _ctx| Ok(HandlerOutput::Render(json!({"migrated": true}))),
-                    backup => |_m, _ctx| Ok(HandlerOutput::Render(json!({"backed_up": true}))),
+                    migrate => {
+                        handler: |_m, _ctx| Ok(HandlerOutput::Render(json!({"migrated": true}))),
+                        structured_only: true,
+                    },
+                    backup => {
+                        handler: |_m, _ctx| Ok(HandlerOutput::Render(json!({"backed_up": true}))),
+                        structured_only: true,
+                    },
                 },
-                version => |_m, _ctx| Ok(HandlerOutput::Render(json!({"v": "1.0"}))),
+                version => {
+                    handler: |_m, _ctx| Ok(HandlerOutput::Render(json!({"v": "1.0"}))),
+                    structured_only: true,
+                },
             })
             .unwrap();
 

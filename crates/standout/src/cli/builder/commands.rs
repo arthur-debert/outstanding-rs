@@ -85,7 +85,7 @@ impl AppBuilder {
         } else if let Some(template) = config.template.clone() {
             inline_template_ref(template, "CommandConfig::template")?
         } else {
-            TemplateRef::convention(path, &self.template_ext)
+            TemplateRef::convention(path)
         };
 
         if let Some(hooks) = config.hooks.take() {
@@ -136,7 +136,7 @@ impl AppBuilder {
                     } else if let Some(template) = handler.template() {
                         inline_template_ref(template, "CommandConfig::template")?
                     } else {
-                        TemplateRef::convention(&path, &self.template_ext)
+                        TemplateRef::convention(&path)
                     };
 
                     if let Some(hooks) = handler.take_hooks() {
@@ -301,7 +301,7 @@ impl AppBuilder {
         } else if let Some(template) = config.template.take() {
             inline_template_ref(template, inline_api)?
         } else {
-            TemplateRef::convention(path, &self.template_ext)
+            TemplateRef::convention(path)
         };
 
         if let Some(hooks) = config.hooks.take() {
@@ -727,12 +727,16 @@ mod tests {
 
         let builder = AppBuilder::new()
             .group("db", |g| {
-                g.command("migrate", |_m, _ctx| {
-                    Ok(HandlerOutput::Render(json!({"status": "migrated"})))
-                })
-                .command("backup", |_m, _ctx| {
-                    Ok(HandlerOutput::Render(json!({"status": "backed_up"})))
-                })
+                g.command_with(
+                    "migrate",
+                    |_m, _ctx| Ok(HandlerOutput::Render(json!({"status": "migrated"}))),
+                    |cfg| cfg.structured_only(),
+                )
+                .command_with(
+                    "backup",
+                    |_m, _ctx| Ok(HandlerOutput::Render(json!({"status": "backed_up"}))),
+                    |cfg| cfg.structured_only(),
+                )
             })
             .unwrap();
         let app = builder.build().unwrap();
@@ -754,16 +758,22 @@ mod tests {
 
         let builder = AppBuilder::new()
             .group("app", |g| {
-                g.command("start", |_m, _ctx| {
-                    Ok(HandlerOutput::Render(json!({"action": "start"})))
-                })
+                g.command_with(
+                    "start",
+                    |_m, _ctx| Ok(HandlerOutput::Render(json!({"action": "start"}))),
+                    |cfg| cfg.structured_only(),
+                )
                 .group("config", |g| {
-                    g.command("get", |_m, _ctx| {
-                        Ok(HandlerOutput::Render(json!({"value": "test_value"})))
-                    })
-                    .command("set", |_m, _ctx| {
-                        Ok(HandlerOutput::Render(json!({"ok": true})))
-                    })
+                    g.command_with(
+                        "get",
+                        |_m, _ctx| Ok(HandlerOutput::Render(json!({"value": "test_value"}))),
+                        |cfg| cfg.structured_only(),
+                    )
+                    .command_with(
+                        "set",
+                        |_m, _ctx| Ok(HandlerOutput::Render(json!({"ok": true}))),
+                        |cfg| cfg.structured_only(),
+                    )
                 })
             })
             .unwrap();
