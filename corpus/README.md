@@ -1,18 +1,23 @@
-# The downstream corpus harness
+# The downstream corpus
 
-The pilot-phase runner for the robustness corpus
-(`docs/spec/robustness-corpus.md`): blind agents implement small CLIs from an
-archetype spec and the published standout documentation alone, and every run
-produces one structured, reproducible report. The runner is a means, not a
-product — it is deliberately the minimum that makes runs reproducible and
-comparable.
+The corpus pilot (`docs/spec/robustness-corpus.md`) in repository form: the
+**archetype roster** — synthetic CLI archetypes with spec-first acceptance
+suites — and the **runner** (`crates/corpus-runner`) that has blind agents
+implement them from the archetype spec and the published standout
+documentation alone, producing one structured, reproducible report per run.
+The runner is a means, not a product — it is deliberately the minimum that
+makes runs reproducible and comparable.
 
 ## Layout
 
-- `archetypes/<name>/spec.md` — the agent-facing behavioral spec.
-- `archetypes/<name>/acceptance.toml` — the pre-written acceptance suite
-  (binary name, black-box checks, invariant-matrix commands), authored before
-  any implementation exists.
+- `archetypes/<name>/` — one archetype package: `spec.md`, `manifest.toml`,
+  `acceptance.toml` (formats under "The archetype roster" below). One
+  exception: `smoke` is not a roster member — it is the harness's own
+  walking-skeleton archetype (spec, "Testing / Verification": "the harness
+  itself gets a smoke archetype"), carrying `spec.md` plus an
+  `acceptance.toml` in the runner's check schema, and its binary name
+  (`smoketable`) deliberately differs from its directory name. The roster's
+  structural test exempts it by name.
 - `runs/<run-id>/` — one directory per run: the provisioned `workspace/`, the
   session `transcript.jsonl`, and the durable `report.json`. Runs are
   artifacts, not source: `runs/` is gitignored. Deliberately kept
@@ -21,7 +26,9 @@ comparable.
   host paths become placeholders, session ids are zeroed, and the host's
   tool/plugin/connector inventory is removed from the init event.
 
-The runner itself is `crates/corpus-runner`. One command runs the full loop:
+## The runner
+
+The runner is `crates/corpus-runner`. One command runs the full loop:
 
 ```bash
 cargo run -p corpus-runner -- run smoke
@@ -38,6 +45,11 @@ per-phase deadline (`--agent-timeout`, `--build-timeout`, `--check-timeout`,
 seconds) — an overrun is killed (whole process group) and recorded in the
 report as a finding, so a prompting or looping produced CLI can never
 prevent `report.json` from being written.
+
+The runner currently consumes its own check schema (the `smoke` suite);
+executing the roster's `[[case]]` suites below — the run semantics they
+require of it — is pilot-execution work (WS04), not part of the walking
+skeleton.
 
 ## Decision: the blindness protocol
 
@@ -108,3 +120,144 @@ sections. The shape:
 
 A run that completes the loop always writes a report, even when every check
 fails — failing checks are findings, not runner errors.
+
+## The archetype roster
+
+Synthetic CLI archetypes in repository form, each one a package of
+
+- **`spec.md`** — the behavioral spec, written from the CLI *user's*
+  perspective. This is the only description of the tool a blind implementer
+  receives (together with the published standout documentation).
+- **`manifest.toml`** — which standout features the archetype uses and, more
+  importantly, which feature *interactions* it stresses. The interactions are
+  the point: single features are covered by the framework's own suite; the
+  corpus exists for the combinations an adopter meets.
+- **`acceptance.toml`** — the objective acceptance suite, written **before any
+  implementation exists**. Spec-first is a hard rule: if the criteria are
+  written after seeing a result, "did it work" stops being an objective
+  measure. A structural test (`crates/standout-test/tests/corpus_roster.rs`)
+  enforces that no implementation lives under `corpus/archetypes/`.
+
+Archetype names double as binary names: the implementer of `gitlike` produces
+a binary called `gitlike`, so acceptance assertions can name their subject
+without a per-run indirection.
+
+### Acceptance case format
+
+Every assertion is **black-box against the produced binary** — argv, env,
+stdin in; stdout, stderr, exit status, wall time out. Nothing may inspect the
+produced source, link against it, or depend on standout internals, so the
+suites survive both idiom changes (ROB05) and any framework refactor.
+
+An `acceptance.toml` is:
+
+```toml
+schema = 1
+archetype = "gitlike"
+
+[[case]]
+name = "unique-kebab-case-name"
+group = "optional-group-name"        # optional: milestone/topic grouping
+stresses = "one line naming the interaction under test"
+expected = "pass"                    # "pass" | "fail"
+# When expected = "fail" (specced past current capability), both are required:
+# gap    = "PAR01"                   # the epic that closes the gap — must be a key of the manifest's [gaps] table
+# reason = "why this fails today"
+
+[case.run]
+argv = ["log", "--limit", "2"]       # arguments after the binary name
+env = { GITLIKE_PAGER = "sed -n 1p" }  # explicit env on top of the scrubbed baseline
+tty = []                             # streams attached to a pty: any of "stdin", "stdout", "stderr"
+stdin = "piped content"              # omitted = stdin is piped and already at EOF
+cwd = "."                            # working directory, relative to the sandbox root
+timeout_seconds = 10                 # hard bound; exceeding it fails the case
+
+[case.run.files]                     # sandbox files created before the run
+"sub/dir/.gitlike.toml" = "log.limit = 2\n"
+
+[case.expect]                        # at least one assertion is required
+exit_code = 0
+stdout = "exact bytes\n"             # exact match, LF-normalized
+stderr = ""
+```
+
+### Run semantics (what the runner must provide)
+
+- **Scrubbed baseline env.** The process starts from a minimal environment:
+  `PATH`, `HOME` pointing into the sandbox, `LANG`/`LC_ALL` = `C.UTF-8`.
+  Everything that steers output — `TERM`, `NO_COLOR`, `CLICOLOR`,
+  `CLICOLOR_FORCE`, `FORCE_COLOR`, `PAGER`, and any tool-specific variable —
+  is **unset unless the case sets it**. A case's env is therefore complete,
+  not a delta against whatever the CI host exports.
+- **stdin.** Omitted `stdin` (with `"stdin"` not in `tty`) means
+  piped-and-at-EOF — the adversarial non-interactive default. A string value
+  is scripted input, and `tty` decides its transport: on a pipe it is the
+  piped content followed by EOF; when `tty` includes `"stdin"` it is written
+  to the pty as keystrokes (as if typed, already newline-terminated), after
+  which the pty closes. The pty form is how attended interactive flows —
+  prompt answers, confirmations — are driven. `"stdin"` in `tty` with no
+  `stdin` string is an attended terminal that never sends anything.
+- **tty.** Streams listed in `tty` are attached to a pseudo-terminal (the
+  ROB01 harness's pty seam); all others are pipes. Pty captures are normalized
+  to LF before comparison.
+- **timeout_seconds** is mandatory and is itself an assertion: a run that
+  exceeds it fails the case. This is how "must never hang" is expressed.
+
+### Assertion vocabulary (all objective, nothing subjective)
+
+| Key | Meaning |
+| --- | --- |
+| `exit_code` | exact process exit status |
+| `stdout`, `stderr` | exact stream contents, LF-normalized |
+| `stdout_json` | stdout parses as JSON and is *semantically* equal to this JSON string (key order and whitespace irrelevant) |
+| `stdout_contains`, `stderr_contains` | every listed substring occurs in the stream |
+| `stdout_not_contains`, `stderr_not_contains` | no listed substring occurs in the stream |
+
+Prefer `stdout` (exact). Use `stdout_json` for machine output, where byte
+layout is an implementation detail but content is not. Use the `contains`
+family only where exactness would pin something the spec deliberately leaves
+to the implementer — e.g. asserting *that* ANSI styling is present
+(the two-byte CSI introducer, `ESC` `[`, written `\u001b[` in TOML) without pinning a theme's exact colors.
+
+### Expected-fail cases
+
+`expected = "fail"` marks a criterion **specced past current framework
+capability**: the case is written as if the capability existed, and its
+failure today reads as a framework gap — signal for the named parity epic —
+rather than a spec defect. The runner reports these as *expected-fail* (and an
+unexpected pass as news), never as suite errors. Gap-only archetypes
+(`tflike`, `jjlike`, landed by ROB03-WS03) use the same marker per case.
+
+### Manifest format
+
+```toml
+[archetype]
+name = "gitlike"          # must match the directory name
+survey = "C1"             # roster entry in the 2026-08-16 survey (Part C)
+summary = "one line"
+status = "in-capability"  # or "partially-past-capability" (gaps table says where)
+
+[features]
+used = ["dispatch.subcommands", "output-modes", "..."]
+
+[[interactions]]
+id = "kebab-case-id"
+stresses = ["feature A", "feature B"]
+description = "why this combination is where bugs live"
+cases = ["case-name", "..."]   # acceptance cases that exercise it
+
+[gaps]                          # only for partially-past-capability archetypes
+PAR01 = "what is specced past current capability, and why on purpose"
+```
+
+### The pilot roster
+
+| Archetype | Survey | Shape |
+| --- | --- | --- |
+| `gitlike` | C1 | porcelain/plumbing split, config layering by cwd walk-up, pager |
+| `systemdlike` | C5 | naked default command, `--plain`/`--no-legend`, color/pager env discipline |
+| `formlike` | C12 | questionnaire-driven provisioning under full non-interactivity |
+| `ghlike` | C2 | deep command nesting with machine JSON and field selection |
+
+Out of scope here: the gap-spec suites `tflike`/`jjlike` (WS03) and pilot
+execution (WS04).

@@ -1,0 +1,170 @@
+# Acceptance suite for the `formlike` archetype. Format: corpus/README.md.
+# Written spec-first, before any implementation exists (ROB03-WS02).
+#
+# The load-bearing group is `bounded-non-interactive`: every path where input
+# cannot arrive must fail cleanly inside timeout_seconds, never hang. The
+# timeout is the assertion.
+schema = 1
+archetype = "formlike"
+
+# --- the answer-sheet surface ------------------------------------------------
+
+[[case]]
+name = "questions-prints-sheet-with-stable-ids"
+group = "answer-sheet"
+stresses = "blank sheet rendering carries the stable question ids"
+expected = "pass"
+[case.run]
+argv = ["provision", "questions"]
+timeout_seconds = 10
+[case.expect]
+exit_code = 0
+stdout_contains = ["<id:name>", "<id:region>", "<id:public>"]
+
+[[case]]
+name = "answers-file-full-noninteractive"
+group = "answer-sheet"
+stresses = "sheet from file + --yes: a complete run with no terminal at all, stderr silent"
+expected = "pass"
+[case.run]
+argv = ["provision", "--answers", "answers.txt", "--yes"]
+timeout_seconds = 10
+[case.run.files]
+"answers.txt" = "1. What is the site name? (string) <id:name>\ndemo-site\n\n2. Which region? (choice: eu or us) <id:region>\nus\n\n3. Should the site be public? (yes/no) <id:public>\nyes\n"
+[case.expect]
+exit_code = 0
+stdout = "provisioned demo-site in us (public: yes)\n"
+stderr = ""
+
+[[case]]
+name = "answers-from-stdin-dash"
+group = "answer-sheet"
+stresses = "--answers - reads the sheet from piped stdin"
+expected = "pass"
+[case.run]
+argv = ["provision", "--answers", "-", "--yes"]
+stdin = "1. What is the site name? (string) <id:name>\npipe-site\n\n2. Which region? (choice: eu or us) <id:region>\n\n3. Should the site be public? (yes/no) <id:public>\n\n"
+timeout_seconds = 10
+[case.expect]
+exit_code = 0
+stdout = "provisioned pipe-site in eu (public: no)\n"
+
+[[case]]
+name = "blank-answers-take-defaults"
+group = "answer-sheet"
+stresses = "blank sheet answers resolve to declared defaults"
+expected = "pass"
+[case.run]
+argv = ["provision", "--answers", "answers.txt", "--yes"]
+timeout_seconds = 10
+[case.run.files]
+"answers.txt" = "1. What is the site name? (string) <id:name>\ndemo-site\n\n2. Which region? (choice: eu or us) <id:region>\n\n3. Should the site be public? (yes/no) <id:public>\n\n"
+[case.expect]
+exit_code = 0
+stdout = "provisioned demo-site in eu (public: no)\n"
+
+# --- interactive fallback ----------------------------------------------------
+
+[[case]]
+name = "interactive-collection-and-confirmation-on-tty"
+group = "answer-sheet"
+stresses = "no --answers, no --yes: attended stdin drives collection and confirmation to success"
+expected = "pass"
+[case.run]
+argv = ["provision"]
+tty = ["stdin"]
+stdin = "tty-site\nus\nyes\nyes\n"
+timeout_seconds = 10
+[case.expect]
+exit_code = 0
+stdout_contains = ["provisioned tty-site in us (public: yes)"]
+
+# --- validation --------------------------------------------------------------
+
+[[case]]
+name = "validation-failure-names-field"
+group = "validation"
+stresses = "field validator rejection routes to stderr, names the field, exits 1"
+expected = "pass"
+[case.run]
+argv = ["provision", "--answers", "answers.txt", "--yes"]
+timeout_seconds = 10
+[case.run.files]
+"answers.txt" = "1. What is the site name? (string) <id:name>\nBad Name!\n\n2. Which region? (choice: eu or us) <id:region>\n\n3. Should the site be public? (yes/no) <id:public>\n\n"
+[case.expect]
+exit_code = 1
+stdout = ""
+stderr_contains = ["name"]
+
+[[case]]
+name = "invalid-choice-names-field"
+group = "validation"
+stresses = "choice decoding rejection names the field and exits 1"
+expected = "pass"
+[case.run]
+argv = ["provision", "--answers", "answers.txt", "--yes"]
+timeout_seconds = 10
+[case.run.files]
+"answers.txt" = "1. What is the site name? (string) <id:name>\ndemo-site\n\n2. Which region? (choice: eu or us) <id:region>\nmars\n\n3. Should the site be public? (yes/no) <id:public>\n\n"
+[case.expect]
+exit_code = 1
+stdout = ""
+stderr_contains = ["region"]
+
+# --- bounded non-interactive failure (must never hang) -----------------------
+
+[[case]]
+name = "missing-required-answer-under-closed-stdin-fails-fast"
+group = "bounded-non-interactive"
+stresses = "no sheet + piped-EOF stdin: interactive collection is impossible and must fail within bounds, not block"
+expected = "pass"
+[case.run]
+argv = ["provision"]
+timeout_seconds = 10
+[case.expect]
+exit_code = 1
+stdout = ""
+stderr_contains = ["--answers"]
+
+[[case]]
+name = "missing-required-answer-in-sheet-fails-fast"
+group = "bounded-non-interactive"
+stresses = "sheet with a blank required answer fails naming the question id, without falling back to prompting"
+expected = "pass"
+[case.run]
+argv = ["provision", "--answers", "answers.txt", "--yes"]
+timeout_seconds = 10
+[case.run.files]
+"answers.txt" = "1. What is the site name? (string) <id:name>\n\n2. Which region? (choice: eu or us) <id:region>\n\n3. Should the site be public? (yes/no) <id:public>\n\n"
+[case.expect]
+exit_code = 1
+stdout = ""
+stderr_contains = ["name"]
+
+[[case]]
+name = "confirmation-impossible-under-piped-stdin"
+group = "bounded-non-interactive"
+stresses = "valid sheet without --yes: piped stdin never confirms, EOF never confirms, and the failure points at --yes"
+expected = "pass"
+[case.run]
+argv = ["provision", "--answers", "answers.txt"]
+timeout_seconds = 10
+[case.run.files]
+"answers.txt" = "1. What is the site name? (string) <id:name>\ndemo-site\n\n2. Which region? (choice: eu or us) <id:region>\n\n3. Should the site be public? (yes/no) <id:public>\n\n"
+[case.expect]
+exit_code = 1
+stdout = ""
+stderr_contains = ["--yes"]
+
+[[case]]
+name = "yes-does-not-invent-required-answers"
+group = "bounded-non-interactive"
+stresses = "--yes skips confirmation only; with no sheet and no terminal the run still fails fast"
+expected = "pass"
+[case.run]
+argv = ["provision", "--yes"]
+timeout_seconds = 10
+[case.expect]
+exit_code = 1
+stdout = ""
+stderr_contains = ["--answers"]
