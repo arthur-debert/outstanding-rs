@@ -1910,6 +1910,7 @@ dependencies = [
  "standout-input",
  "standout-render",
  "tempfile",
+ "toml",
 ]
 
 [[package]]

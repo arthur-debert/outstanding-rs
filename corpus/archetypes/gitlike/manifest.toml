@@ -1,0 +1,64 @@
+# Feature/interaction manifest for `gitlike`. Format: corpus/README.md.
+
+[archetype]
+name = "gitlike"
+survey = "C1"
+summary = "porcelain/plumbing split, config layering by cwd walk-up, pager discipline"
+status = "partially-past-capability"
+
+[features]
+used = [
+    "dispatch.subcommands",
+    "dispatch.handler-macro",
+    "output-modes.auto-degradation",
+    "output-modes.term-text-flag",
+    "templates",
+    "styling.themes",
+    "styling.no-color",
+    "help.pager-display",
+]
+
+[[interactions]]
+id = "plumbing-vs-output-modes"
+stresses = ["byte-stable command output", "global --output flag", "theme selection", "TTY detection"]
+description = "A stability contract for some commands must survive the global output/theme machinery that styles the others; the framework's per-app knobs are global, so keeping two surfaces with different rules in one app is exactly the adopter shape that breaks."
+cases = [
+    "ref-list-stable-bytes",
+    "ref-list-identical-under-forced-term",
+    "ref-list-identical-under-theme-and-tty",
+    "cat-object-known",
+]
+
+[[interactions]]
+id = "pager-vs-captured-output"
+stresses = ["pager spawn", "TTY detection", "porcelain/plumbing split"]
+description = "Pager engagement keys off stdout attendance and must compose with output capture: page porcelain on a TTY, never page pipes, never page plumbing, honor tool-specific over generic pager variables."
+cases = [
+    "log-pages-on-tty",
+    "log-tool-pager-var-beats-generic",
+    "log-no-pager-flag",
+    "log-piped-never-pages",
+    "plumbing-never-pages",
+]
+
+[[interactions]]
+id = "config-layering-vs-cwd"
+stresses = ["config file discovery by walk-up", "layer precedence (flag > repo > user > default)", "harness cwd control"]
+description = "Effective-value resolution walking up from cwd, layered under per-invocation flags and over a user config file — resolved differently depending on where in the sandbox the process starts."
+cases = [
+    "config-walkup-nearest-wins",
+    "config-walkup-stops-at-first-file",
+    "config-repo-overrides-user",
+    "config-user-level-fallback",
+    "config-get-unset-key",
+    "log-flag-beats-user-config",
+]
+
+[[interactions]]
+id = "domain-error-stream-routing"
+stresses = ["error handling", "exit-code mapping", "stream separation"]
+description = "A domain failure must leave stdout untouched (scripts consume it), route prose to stderr, and map to a documented non-generic exit code."
+cases = ["cat-object-unknown-exit-3", "config-get-unset-key"]
+
+[gaps]
+PAR01 = "Config layering (cwd walk-up, precedence chain) is specced past current capability on purpose — signal for the ROB07/PAR01 parity-config-layering epic. The config-layering expected-fail cases are its executable shape; a hand-rolled pass is friction signal, not a framework pass."
