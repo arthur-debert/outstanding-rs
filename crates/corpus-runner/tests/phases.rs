@@ -1,15 +1,19 @@
 //! Per-phase tests of the corpus runner: each seam of the loop proven fast
 //! and hermetically (no network, no real agent, no crates.io build). The
-//! whole loop end to end — blind workspace → scripted agent → questionnaire
-//! → acceptance → report — lives in `walking_skeleton.rs`.
+//! whole loop end to end lives in `hermetic_loop.rs` (fake build, always
+//! on) and `walking_skeleton.rs` (real crates.io build, ignored).
 
 use std::fs;
 use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
+use std::time::Duration;
 
 use corpus_runner::archetype::{Archetype, Invariants};
 use corpus_runner::report::{QuestionnaireReport, RunReport};
 use corpus_runner::{acceptance, questionnaire, session, workspace};
+
+/// A generous per-process deadline for tests that must not time out.
+const NO_TIMEOUT: Duration = Duration::from_secs(60);
 
 /// The repo's real corpus directory, relative to this crate.
 fn corpus_dir() -> PathBuf {
@@ -152,6 +156,14 @@ fn provisioned_workspace_is_blind() {
     }
     assert!(ws.root.join("docs/index.md").is_file());
     assert!(ws.root.join("docs/guides").is_dir());
+    // The crate-docs mounts (symlinks in the source tree) arrive as real
+    // dereferenced content — never as links back into the checkout.
+    let crate_docs = ws.root.join("docs/crates/dispatch");
+    assert!(crate_docs.is_dir());
+    assert!(!fs::symlink_metadata(&crate_docs)
+        .unwrap()
+        .file_type()
+        .is_symlink());
     assert!(ws.app_dir.join("Cargo.toml").is_file());
     assert!(ws.app_dir.join("src/main.rs").is_file());
 
@@ -173,6 +185,41 @@ fn provisioned_workspace_is_blind() {
     assert!(manifest.contains("[workspace]"));
 }
 
+#[test]
+fn provisioning_records_the_docs_snapshot_digest() {
+    let archetype = Archetype::load(&corpus_dir().join("archetypes"), "smoke").unwrap();
+    let run_dir = tempfile::tempdir().unwrap();
+    let docs_dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../docs");
+
+    let ws = workspace::provision(run_dir.path(), &archetype, &docs_dir, "8.1.1").unwrap();
+
+    assert_eq!(ws.docs_sha256.len(), 64);
+    // The digest is over the copied bytes: recomputing from the snapshot
+    // reproduces it.
+    assert_eq!(
+        ws.docs_sha256,
+        workspace::docs_digest(&ws.root.join("docs")).unwrap()
+    );
+}
+
+#[test]
+fn provisioning_refuses_symlinks_in_the_docs_source() {
+    let archetype = Archetype::load(&corpus_dir().join("archetypes"), "smoke").unwrap();
+    let run_dir = tempfile::tempdir().unwrap();
+    let scratch = tempfile::tempdir().unwrap();
+
+    // A docs tree whose published set hides a symlink pointing outside it.
+    let outside = scratch.path().join("outside.md");
+    fs::write(&outside, "framework internals").unwrap();
+    let docs_dir = scratch.path().join("docs");
+    fs::create_dir_all(docs_dir.join("guides")).unwrap();
+    fs::write(docs_dir.join("index.md"), "index").unwrap();
+    std::os::unix::fs::symlink(&outside, docs_dir.join("guides/leak.md")).unwrap();
+
+    let err = workspace::provision(run_dir.path(), &archetype, &docs_dir, "8.1.1").unwrap_err();
+    assert!(format!("{err:#}").contains("symlink"), "{err:#}");
+}
+
 // ---------------------------------------------------------------------------
 // Session
 // ---------------------------------------------------------------------------
@@ -182,7 +229,8 @@ fn session_scrubs_the_environment_and_writes_the_transcript() {
     let dir = tempfile::tempdir().unwrap();
     std::env::set_var("CORPUS_SECRET_CANARY", "leaked");
 
-    let report = session::run_agent(dir.path(), "env", &dir.path().join("t.jsonl")).unwrap();
+    let report =
+        session::run_agent(dir.path(), "env", &dir.path().join("t.jsonl"), NO_TIMEOUT).unwrap();
 
     let transcript = fs::read_to_string(dir.path().join("t.jsonl")).unwrap();
     assert!(!transcript.contains("CORPUS_SECRET_CANARY"), "{transcript}");
@@ -191,8 +239,24 @@ fn session_scrubs_the_environment_and_writes_the_transcript() {
     assert_eq!(report.attempts, 1);
     assert!(report.wall_seconds >= 0.0);
     assert_eq!(report.transcript, session::TRANSCRIPT_FILENAME);
+    assert!(!report.timed_out);
     // A non-stream-json transcript yields no turn/token instrumentation.
     assert_eq!(report.turns, None);
+}
+
+#[test]
+fn overrunning_agent_is_killed_and_recorded_as_timed_out() {
+    let dir = tempfile::tempdir().unwrap();
+    let report = session::run_agent(
+        dir.path(),
+        "sleep 30",
+        &dir.path().join("t.jsonl"),
+        Duration::from_millis(200),
+    )
+    .unwrap();
+    assert!(report.timed_out);
+    assert_eq!(report.exit_code, None);
+    assert!(report.wall_seconds < 10.0);
 }
 
 #[test]
@@ -211,7 +275,13 @@ fn stream_json_result_event_yields_turns_and_tokens() {
 #[test]
 fn failing_agent_is_recorded_not_fatal() {
     let dir = tempfile::tempdir().unwrap();
-    let report = session::run_agent(dir.path(), "exit 3", &dir.path().join("t.jsonl")).unwrap();
+    let report = session::run_agent(
+        dir.path(),
+        "exit 3",
+        &dir.path().join("t.jsonl"),
+        NO_TIMEOUT,
+    )
+    .unwrap();
     assert_eq!(report.exit_code, Some(3));
 }
 
@@ -281,7 +351,7 @@ stdout_contains = ["absent needle"]
     .unwrap();
     let archetype = Archetype::load(&dir.path().join("archetypes"), "fake").unwrap();
 
-    let report = acceptance::run_checks(&binary, &archetype.acceptance.checks);
+    let report = acceptance::run_checks(&binary, &archetype.acceptance.checks, NO_TIMEOUT);
     assert!(report.built);
     let outcomes: Vec<bool> = report.checks.iter().map(|c| c.passed).collect();
     assert_eq!(outcomes, vec![true, true, false]);
@@ -297,7 +367,7 @@ fn invariant_matrix_passes_a_well_behaved_binary() {
         commands: vec![vec!["greet".to_string()]],
     };
 
-    let cells = acceptance::run_invariants(&binary, &invariants);
+    let cells = acceptance::run_invariants(&binary, &invariants, NO_TIMEOUT);
     assert!(!cells.is_empty());
     let failures: Vec<_> = cells.iter().filter(|c| !c.passed).collect();
     assert!(failures.is_empty(), "{failures:?}");
@@ -311,7 +381,7 @@ fn invariant_matrix_catches_markers_layout_drift_and_bad_json() {
         commands: vec![vec!["greet".to_string()]],
     };
 
-    let cells = acceptance::run_invariants(&binary, &invariants);
+    let cells = acceptance::run_invariants(&binary, &invariants, NO_TIMEOUT);
     let failed: Vec<&str> = cells
         .iter()
         .filter(|c| !c.passed)
@@ -331,6 +401,125 @@ fn invariant_matrix_catches_markers_layout_drift_and_bad_json() {
     );
 }
 
+/// A binary emitting associated rows in text and JSON: rows carry name,
+/// constellation, and magnitude together.
+const ROWS: &str = r#"
+mode=text
+prev=""
+for a in "$@"; do
+  if [ "$prev" = "--output" ]; then mode="$a"; fi
+  prev="$a"
+done
+case "$mode" in
+  json) echo '{"stars":[{"name":"Aldebaran","constellation":"Taurus","magnitude":0.86},{"name":"Rigel","constellation":"Orion","magnitude":0.13}]}' ;;
+  *) printf 'Stars\nAldebaran  Taurus  0.86\nRigel  Orion  0.13\n' ;;
+esac
+"#;
+
+#[test]
+fn row_assertions_bind_values_to_one_row() {
+    let dir = tempfile::tempdir().unwrap();
+    let binary = script(dir.path(), "fake", ROWS);
+    let archetype_dir = dir.path().join("archetypes/fake");
+    fs::create_dir_all(&archetype_dir).unwrap();
+    fs::write(archetype_dir.join("spec.md"), "spec").unwrap();
+    fs::write(
+        archetype_dir.join("acceptance.toml"),
+        r#"
+binary = "fake"
+
+[[check]]
+name = "text rows are associated"
+args = ["list", "--output", "text"]
+stdout_row_contains = [["Aldebaran", "Taurus", "0.86"], ["Rigel", "Orion", "0.13"]]
+
+[[check]]
+name = "cross-row bag of substrings fails"
+args = ["list", "--output", "text"]
+stdout_row_contains = [["Aldebaran", "Orion"]]
+
+[[check]]
+name = "json rows are associated"
+args = ["list", "--output", "json"]
+stdout_json_rows = [["Aldebaran", "Taurus", "0.86"], ["Rigel", "Orion", "0.13"]]
+
+[[check]]
+name = "json cross-row group fails"
+args = ["list", "--output", "json"]
+stdout_json_rows = [["Aldebaran", "0.13"]]
+
+[[check]]
+name = "json rows on non-JSON output fails"
+args = ["list", "--output", "text"]
+stdout_json_rows = [["Aldebaran", "Taurus", "0.86"]]
+"#,
+    )
+    .unwrap();
+    let archetype = Archetype::load(&dir.path().join("archetypes"), "fake").unwrap();
+
+    let report = acceptance::run_checks(&binary, &archetype.acceptance.checks, NO_TIMEOUT);
+    let outcomes: Vec<bool> = report.checks.iter().map(|c| c.passed).collect();
+    assert_eq!(outcomes, vec![true, false, true, false, false]);
+    assert!(report.checks[1]
+        .detail
+        .as_deref()
+        .unwrap()
+        .contains("no single stdout line"));
+    assert!(report.checks[3]
+        .detail
+        .as_deref()
+        .unwrap()
+        .contains("no single JSON element"));
+}
+
+#[test]
+fn produced_binary_runs_env_scrubbed() {
+    let dir = tempfile::tempdir().unwrap();
+    // A "produced binary" that leaks its environment to stdout.
+    let binary = script(dir.path(), "fake", "env");
+    std::env::set_var("CORPUS_ACCEPTANCE_CANARY", "leaked");
+    let archetype_dir = dir.path().join("archetypes/fake");
+    fs::create_dir_all(&archetype_dir).unwrap();
+    fs::write(archetype_dir.join("spec.md"), "spec").unwrap();
+    fs::write(
+        archetype_dir.join("acceptance.toml"),
+        r#"
+binary = "fake"
+
+[[check]]
+name = "sees the canary"
+args = []
+stdout_contains = ["CORPUS_ACCEPTANCE_CANARY"]
+"#,
+    )
+    .unwrap();
+    let archetype = Archetype::load(&dir.path().join("archetypes"), "fake").unwrap();
+
+    let report = acceptance::run_checks(&binary, &archetype.acceptance.checks, NO_TIMEOUT);
+    // The canary must NOT reach the untrusted binary: the check fails.
+    assert!(!report.checks[0].passed, "{:?}", report.checks[0].detail);
+}
+
+#[test]
+fn hanging_binary_times_out_as_a_finding() {
+    let dir = tempfile::tempdir().unwrap();
+    let binary = script(dir.path(), "fake", "sleep 30");
+    let invariants = Invariants {
+        commands: vec![vec!["greet".to_string()]],
+    };
+
+    let cells = acceptance::run_invariants(&binary, &invariants, Duration::from_millis(200));
+    assert!(!cells.is_empty());
+    let exit_cells: Vec<_> = cells
+        .iter()
+        .filter(|c| c.check.contains("exits 0"))
+        .collect();
+    assert!(exit_cells.iter().all(|c| !c.passed));
+    assert!(exit_cells
+        .iter()
+        .all(|c| c.detail.as_deref().unwrap().contains("timed out")));
+}
+
 // ---------------------------------------------------------------------------
 // Report
 // ---------------------------------------------------------------------------
@@ -347,6 +536,7 @@ fn report_round_trips_through_json() {
         pins: corpus_runner::report::Pins {
             framework_version: "8.1.1".into(),
             docs_commit: "deadbeef".into(),
+            docs_sha256: "cd".repeat(32),
             questionnaire_fingerprint: questionnaire::definition().fingerprint().into(),
         },
         blindness: corpus_runner::report::Blindness {
@@ -360,6 +550,7 @@ fn report_round_trips_through_json() {
             agent_cmd: "true".into(),
             wall_seconds: 1.5,
             exit_code: Some(0),
+            timed_out: false,
             attempts: 1,
             turns: Some(3),
             input_tokens: None,

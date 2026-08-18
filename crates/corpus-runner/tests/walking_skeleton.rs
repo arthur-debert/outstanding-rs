@@ -5,7 +5,9 @@
 //!
 //! Ignored by default: the acceptance phase builds the produced app against
 //! the crates.io `standout` pin, which needs the network and a full
-//! dependency compile. Run it with:
+//! dependency compile. The always-on hermetic twin (fake `cargo` on PATH,
+//! no network) lives in `hermetic_loop.rs`; this test proves the same loop
+//! against the real crates.io pin. Run it with:
 //!
 //! ```bash
 //! cargo test -p corpus-runner --test walking_skeleton -- --ignored
@@ -15,7 +17,7 @@ use std::fs;
 use std::os::unix::fs::PermissionsExt;
 use std::path::Path;
 
-use corpus_runner::{run, RunConfig};
+use corpus_runner::{run, RunConfig, Timeouts};
 
 #[test]
 #[ignore = "builds the produced app against crates.io (network + full compile)"]
@@ -55,6 +57,7 @@ echo '{{"type":"result","num_turns":1,"usage":{{"input_tokens":10,"output_tokens
         docs_dir: repo.join("docs"),
         agent_cmd: format!("sh {}", agent.display()),
         framework_version: "8.1.1".to_string(),
+        timeouts: Timeouts::default(),
     };
 
     let (report, run_dir) = run(&config).unwrap();

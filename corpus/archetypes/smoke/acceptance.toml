@@ -19,15 +19,28 @@ stdout_contains = [
 ]
 
 [[check]]
-name = "list carries the magnitudes"
+name = "list binds each star to its own constellation and magnitude"
 args = ["list", "--output", "text"]
-stdout_contains = ["0.86", "0.13", "0.03"]
+# Row association, not a bag of substrings: each group must co-occur on one
+# single output line, so a table that shuffles columns across rows fails.
+stdout_row_contains = [
+    ["Aldebaran", "Taurus", "0.86"],
+    ["Rigel", "Orion", "0.13"],
+    ["Vega", "Lyra", "0.03"],
+]
 
 [[check]]
-name = "list emits the catalog as JSON"
+name = "list emits the catalog as JSON with complete star rows"
 args = ["list", "--output", "json"]
 stdout_is_json = true
-stdout_contains = ["Aldebaran", "Rigel", "Vega"]
+# Each group must co-occur inside one single JSON array element (numbers
+# match their decimal literal), so `["Aldebaran","Rigel","Vega"]` alone —
+# names without constellations or magnitudes — fails.
+stdout_json_rows = [
+    ["Aldebaran", "Taurus", "0.86"],
+    ["Rigel", "Orion", "0.13"],
+    ["Vega", "Lyra", "0.03"],
+]
 
 [[check]]
 name = "about names the tool"

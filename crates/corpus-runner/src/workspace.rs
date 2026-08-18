@@ -11,7 +11,8 @@
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
-use anyhow::Context;
+use anyhow::{bail, Context};
+use sha2::{Digest, Sha256};
 
 use crate::archetype::Archetype;
 use crate::questionnaire;
@@ -21,9 +22,11 @@ use crate::questionnaire;
 /// are deliberately absent.
 const PUBLISHED_DOCS: &[&str] = &["index.md", "intro.md", "guides", "topics", "crates"];
 
-/// The only environment variables the agent process inherits (recorded in
-/// the report). HOME is the known blindness residue: it grants the agent its
-/// own credentials and caches, which is what makes the session runnable.
+/// The only environment variables any untrusted-side process inherits — the
+/// agent session, the cargo build of the produced app, and every produced-
+/// binary invocation (recorded in the report). HOME is the known blindness
+/// residue: it grants the agent its own credentials and caches, which is
+/// what makes the session runnable; it also keeps cargo caches shared.
 pub const ENV_ALLOWLIST: &[&str] = &[
     "PATH",
     "HOME",
@@ -37,12 +40,28 @@ pub const ENV_ALLOWLIST: &[&str] = &[
     "RUSTUP_HOME",
 ];
 
+/// Applies the blindness environment policy to a command: `env_clear()`
+/// plus exactly [`ENV_ALLOWLIST`], inherited from the runner's own
+/// environment. Every process on the untrusted side of the fence (agent,
+/// build, produced binary) must pass through this.
+pub fn apply_env_policy(command: &mut Command) {
+    command.env_clear();
+    for key in ENV_ALLOWLIST {
+        if let Ok(value) = std::env::var(key) {
+            command.env(key, value);
+        }
+    }
+}
+
 /// A provisioned blind workspace.
+#[derive(Debug)]
 pub struct Workspace {
     /// The directory the agent works in.
     pub root: PathBuf,
     /// The cargo project directory inside it.
     pub app_dir: PathBuf,
+    /// sha256 (hex) over the provisioned docs snapshot's actual bytes.
+    pub docs_sha256: String,
 }
 
 /// Provisions the blind workspace under `run_dir/workspace`.
@@ -68,14 +87,21 @@ pub fn provision(
 
     let docs_dest = root.join("docs");
     std::fs::create_dir_all(&docs_dest)?;
+    let repo_root = docs_dir
+        .canonicalize()
+        .with_context(|| format!("resolving docs directory {}", docs_dir.display()))?
+        .parent()
+        .map(Path::to_path_buf)
+        .unwrap_or_default();
     for entry in PUBLISHED_DOCS {
         let src = docs_dir.join(entry);
         if !src.exists() {
             continue;
         }
-        copy_recursive(&src, &docs_dest.join(entry))
+        copy_recursive(&src, &docs_dest.join(entry), &repo_root)
             .with_context(|| format!("snapshotting docs entry {}", src.display()))?;
     }
+    let docs_sha256 = docs_digest(&docs_dest)?;
 
     let app_dir = root.join("app");
     std::fs::create_dir_all(app_dir.join("src"))?;
@@ -88,7 +114,53 @@ pub fn provision(
         "fn main() {\n    // Replace this stub with the implementation of SPEC.md.\n}\n",
     )?;
 
-    Ok(Workspace { root, app_dir })
+    Ok(Workspace {
+        root,
+        app_dir,
+        docs_sha256,
+    })
+}
+
+/// sha256 (hex) over the provisioned docs snapshot: every file in sorted
+/// relative-path order, each hashed as `<relpath>\0<bytes>`. This pins the
+/// bytes the agent actually saw — `docs_commit` alone says nothing when the
+/// source working tree is dirty or drifts after provisioning.
+pub fn docs_digest(docs_root: &Path) -> anyhow::Result<String> {
+    let mut files = Vec::new();
+    collect_relative_files(docs_root, docs_root, &mut files)?;
+    files.sort();
+    let mut hasher = Sha256::new();
+    for rel in &files {
+        hasher.update(rel.as_bytes());
+        hasher.update([0]);
+        hasher.update(std::fs::read(docs_root.join(rel))?);
+    }
+    Ok(hasher
+        .finalize()
+        .iter()
+        .map(|b| format!("{b:02x}"))
+        .collect())
+}
+
+/// Collects every regular file under `dir` as a `/`-separated path relative
+/// to `root`.
+fn collect_relative_files(root: &Path, dir: &Path, out: &mut Vec<String>) -> anyhow::Result<()> {
+    for entry in std::fs::read_dir(dir)? {
+        let path = entry?.path();
+        if path.is_dir() {
+            collect_relative_files(root, &path, out)?;
+        } else {
+            let rel = path
+                .strip_prefix(root)
+                .expect("walk stays under root")
+                .components()
+                .map(|c| c.as_os_str().to_string_lossy())
+                .collect::<Vec<_>>()
+                .join("/");
+            out.push(rel);
+        }
+    }
+    Ok(())
 }
 
 /// The git commit of the checkout `docs_dir` lives in, or `"unknown"`.
@@ -166,17 +238,60 @@ anyhow = "1"
     )
 }
 
-/// Copies a file or directory tree from `src` to `dest`.
-fn copy_recursive(src: &Path, dest: &Path) -> anyhow::Result<()> {
-    if src.is_dir() {
+/// Copies a file or directory tree from `src` to `dest` with an explicit
+/// symlink policy: a link is dereferenced (copied as regular content, never
+/// as a link back into the checkout) only when its canonical target stays
+/// inside the repo's published docs surface — `docs/` or a crate's `docs/`
+/// (the mdbook mounts `docs/crates/<name>` as a symlink to
+/// `crates/standout-<name>/docs`). Any other link is a provisioning error,
+/// not a silent follow: it would pull content from outside the published
+/// set into the blind workspace.
+fn copy_recursive(src: &Path, dest: &Path, repo_root: &Path) -> anyhow::Result<()> {
+    let meta =
+        std::fs::symlink_metadata(src).with_context(|| format!("inspecting {}", src.display()))?;
+    if meta.file_type().is_symlink() {
+        let target = src
+            .canonicalize()
+            .with_context(|| format!("resolving symlink {}", src.display()))?;
+        if !is_published_docs_target(&target, repo_root) {
+            bail!(
+                "refusing to snapshot symlink {} -> {}: target is outside the \
+                 published docs surface (blindness boundary)",
+                src.display(),
+                target.display()
+            );
+        }
+        return copy_recursive(&target, dest, repo_root);
+    }
+    if meta.is_dir() {
         std::fs::create_dir_all(dest)?;
         for entry in std::fs::read_dir(src)? {
             let entry = entry?;
-            copy_recursive(&entry.path(), &dest.join(entry.file_name()))?;
+            copy_recursive(&entry.path(), &dest.join(entry.file_name()), repo_root)?;
         }
     } else {
         std::fs::copy(src, dest)
             .with_context(|| format!("copying {} to {}", src.display(), dest.display()))?;
     }
     Ok(())
+}
+
+/// True when a canonical symlink target lies inside the published docs
+/// surface of the checkout rooted at `repo_root`: under `docs/`, or under a
+/// crate's own `docs/` directory (`crates/<name>/docs`).
+fn is_published_docs_target(target: &Path, repo_root: &Path) -> bool {
+    let Ok(rel) = target.strip_prefix(repo_root) else {
+        return false;
+    };
+    let mut components = rel
+        .components()
+        .map(|c| c.as_os_str().to_string_lossy().into_owned());
+    match components.next().as_deref() {
+        Some("docs") => true,
+        Some("crates") => {
+            components.next(); // the crate directory name
+            components.next().as_deref() == Some("docs")
+        }
+        _ => false,
+    }
 }

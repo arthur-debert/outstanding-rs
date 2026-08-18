@@ -46,9 +46,19 @@ pub struct Check {
     /// Substrings that must each appear on stdout.
     #[serde(default)]
     pub stdout_contains: Vec<String>,
+    /// Row-association groups: every value in a group must co-occur on one
+    /// single stdout line (e.g. a star with *its* constellation and
+    /// magnitude), which flat `stdout_contains` cannot express.
+    #[serde(default)]
+    pub stdout_row_contains: Vec<Vec<String>>,
     /// When true, stdout must parse as JSON.
     #[serde(default)]
     pub stdout_is_json: bool,
+    /// JSON row-association groups: stdout must parse as JSON and every
+    /// value in a group must co-occur among the scalars of one single JSON
+    /// array element (numbers match their decimal literal).
+    #[serde(default)]
+    pub stdout_json_rows: Vec<Vec<String>>,
 }
 
 /// Which commands the ROB01 invariant matrix exercises.

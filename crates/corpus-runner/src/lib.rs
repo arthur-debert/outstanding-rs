@@ -11,13 +11,14 @@
 
 pub mod acceptance;
 pub mod archetype;
+pub mod exec;
 pub mod questionnaire;
 pub mod report;
 pub mod session;
 pub mod workspace;
 
 use std::path::{Path, PathBuf};
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use anyhow::Context;
 
@@ -37,12 +38,36 @@ pub struct RunConfig {
     pub agent_cmd: String,
     /// Exact crates.io version the blind scaffold pins.
     pub framework_version: String,
+    /// Per-phase deadlines; an expired phase is a reported finding.
+    pub timeouts: Timeouts,
+}
+
+/// Per-phase deadlines. A phase that overruns is killed (whole process
+/// group) and recorded in the report — the durable-report contract must
+/// survive a prompting, deadlocked, or looping produced CLI.
+pub struct Timeouts {
+    /// The whole agent session.
+    pub agent: Duration,
+    /// The cargo build of the produced app.
+    pub build: Duration,
+    /// Each acceptance check / invariant-cell invocation.
+    pub check: Duration,
+}
+
+impl Default for Timeouts {
+    fn default() -> Self {
+        Self {
+            agent: Duration::from_secs(3600),
+            build: Duration::from_secs(1800),
+            check: Duration::from_secs(120),
+        }
+    }
 }
 
 /// The one-line blindness policy statement recorded in every report.
 const BLINDNESS_POLICY: &str = "workspace contains spec + published docs + crates.io pins only; \
-     agent env is cleared to a recorded allowlist; consulted sources are \
-     self-reported in the exit questionnaire";
+     agent, build, and produced-binary processes run env-cleared to a recorded \
+     allowlist; consulted sources are self-reported in the exit questionnaire";
 
 /// Runs the full loop and returns the written report plus the run directory.
 ///
@@ -53,10 +78,10 @@ const BLINDNESS_POLICY: &str = "workspace contains spec + published docs + crate
 pub fn run(config: &RunConfig) -> anyhow::Result<(RunReport, PathBuf)> {
     let archetype = Archetype::load(&config.archetypes_dir, &config.archetype)?;
 
-    let run_id = format!("{}-{}", archetype.name, unix_timestamp());
-    let run_dir = config.runs_dir.join(&run_id);
-    std::fs::create_dir_all(&run_dir)
-        .with_context(|| format!("creating run directory {}", run_dir.display()))?;
+    std::fs::create_dir_all(&config.runs_dir)
+        .with_context(|| format!("creating runs directory {}", config.runs_dir.display()))?;
+    let base = format!("{}-{}", archetype.name, unix_timestamp());
+    let (run_id, run_dir) = claim_run_dir(&config.runs_dir, &base)?;
 
     // Phase 1: provision the blind workspace.
     eprintln!(
@@ -76,7 +101,12 @@ pub fn run(config: &RunConfig) -> anyhow::Result<(RunReport, PathBuf)> {
         config.agent_cmd
     );
     let transcript_path = run_dir.join(session::TRANSCRIPT_FILENAME);
-    let session_report = session::run_agent(&workspace.root, &config.agent_cmd, &transcript_path)?;
+    let session_report = session::run_agent(
+        &workspace.root,
+        &config.agent_cmd,
+        &transcript_path,
+        config.timeouts.agent,
+    )?;
     eprintln!(
         "[corpus] session finished in {:.0}s (exit {:?})",
         session_report.wall_seconds, session_report.exit_code
@@ -91,14 +121,21 @@ pub fn run(config: &RunConfig) -> anyhow::Result<(RunReport, PathBuf)> {
 
     // Phase 4: acceptance suite + invariant matrix against the produced binary.
     eprintln!("[corpus] building produced app and running acceptance suite");
-    let (acceptance_report, invariant_cells) =
-        match acceptance::build_app(&workspace.app_dir, &archetype.acceptance.binary) {
-            Ok(binary) => (
-                acceptance::run_checks(&binary, &archetype.acceptance.checks),
-                acceptance::run_invariants(&binary, &archetype.acceptance.invariants),
+    let (acceptance_report, invariant_cells) = match acceptance::build_app(
+        &workspace.app_dir,
+        &archetype.acceptance.binary,
+        config.timeouts.build,
+    ) {
+        Ok(binary) => (
+            acceptance::run_checks(&binary, &archetype.acceptance.checks, config.timeouts.check),
+            acceptance::run_invariants(
+                &binary,
+                &archetype.acceptance.invariants,
+                config.timeouts.check,
             ),
-            Err(detail) => (AcceptanceReport::build_failed(detail), Vec::new()),
-        };
+        ),
+        Err(detail) => (AcceptanceReport::build_failed(detail), Vec::new()),
+    };
 
     // Phase 5: file the report.
     let report = RunReport {
@@ -111,6 +148,7 @@ pub fn run(config: &RunConfig) -> anyhow::Result<(RunReport, PathBuf)> {
         pins: Pins {
             framework_version: config.framework_version.clone(),
             docs_commit: workspace::docs_commit(&config.docs_dir),
+            docs_sha256: workspace.docs_sha256.clone(),
             questionnaire_fingerprint: questionnaire::definition().fingerprint().to_string(),
         },
         blindness: Blindness {
@@ -175,6 +213,31 @@ fn unix_timestamp() -> u64 {
         .unwrap_or(0)
 }
 
+/// Claims a fresh run directory atomically: `create_dir` (never
+/// `create_dir_all`, which would silently adopt an existing directory) with
+/// a numeric suffix retry, so two runs claiming the same base id — parallel
+/// runs of one archetype, or two scripted runs inside one second — can
+/// never share a workspace, transcript, or report.
+fn claim_run_dir(runs_dir: &Path, base: &str) -> anyhow::Result<(String, PathBuf)> {
+    for attempt in 0..1000u32 {
+        let run_id = if attempt == 0 {
+            base.to_string()
+        } else {
+            format!("{base}-{attempt}")
+        };
+        let run_dir = runs_dir.join(&run_id);
+        match std::fs::create_dir(&run_dir) {
+            Ok(()) => return Ok((run_id, run_dir)),
+            Err(err) if err.kind() == std::io::ErrorKind::AlreadyExists => continue,
+            Err(err) => {
+                return Err(err)
+                    .with_context(|| format!("creating run directory {}", run_dir.display()))
+            }
+        }
+    }
+    anyhow::bail!("could not claim a run directory for {base} after 1000 attempts");
+}
+
 /// Resolves a possibly-relative CLI path against the current directory.
 pub fn absolute(path: &Path) -> PathBuf {
     if path.is_absolute() {
@@ -183,5 +246,21 @@ pub fn absolute(path: &Path) -> PathBuf {
         std::env::current_dir()
             .map(|cwd| cwd.join(path))
             .unwrap_or_else(|_| path.to_path_buf())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn claimed_run_dirs_never_collide() {
+        let runs = tempfile::tempdir().unwrap();
+        let (first, first_dir) = claim_run_dir(runs.path(), "smoke-42").unwrap();
+        let (second, second_dir) = claim_run_dir(runs.path(), "smoke-42").unwrap();
+        assert_eq!(first, "smoke-42");
+        assert_eq!(second, "smoke-42-1");
+        assert_ne!(first_dir, second_dir);
+        assert!(first_dir.is_dir() && second_dir.is_dir());
     }
 }

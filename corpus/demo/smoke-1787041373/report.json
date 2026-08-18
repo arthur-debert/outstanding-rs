@@ -8,6 +8,7 @@
   "pins": {
     "framework_version": "8.1.1",
     "docs_commit": "7833db18a66b987d3d29bae0ece82e1b74f096e4",
+    "docs_sha256": "49489f0d5fb49e8c277ce49efce51e414166338aa7adb7626c4e6328e0b0ae73",
     "questionnaire_fingerprint": "sha256:64291870245510dad73ca960fd4024db9b9c161113a3dcc9c7e57a30973663fc"
   },
   "blindness": {
@@ -32,6 +33,7 @@
     "agent_cmd": "claude --dangerously-skip-permissions -p \"Read INSTRUCTIONS.md in the current directory and carry it out completely.\" --output-format stream-json --verbose",
     "wall_seconds": 257.164925334,
     "exit_code": 0,
+    "timed_out": false,
     "attempts": 1,
     "turns": 34,
     "input_tokens": 46,

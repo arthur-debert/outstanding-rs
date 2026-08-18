@@ -1,44 +1,55 @@
 //! The implementation session: run the agent command in the blind workspace,
-//! scrubbed and instrumented.
+//! scrubbed, instrumented, and deadlined.
 //!
 //! The agent is a seam, not a hard dependency: any shell command works (the
 //! walking-skeleton test uses a scripted agent), and the default is a
 //! non-interactive Claude Code session whose stream-json transcript yields
-//! turn and token counts. The child runs with `env_clear()` plus the
-//! recorded allowlist — no repo secrets reach the produced code, which is
-//! treated as untrusted.
+//! turn and token counts. The default session is hardened: no user/project
+//! settings or plugins load (`--setting-sources ''`) and no MCP servers or
+//! connectors attach (`--strict-mcp-config`), so the agent's host identity
+//! reduces to the HOME-held credentials that make the session runnable at
+//! all (the recorded blindness residue). The child runs with `env_clear()`
+//! plus the recorded allowlist — no repo secrets reach the produced code,
+//! which is treated as untrusted — and is killed (whole process group) when
+//! the configured deadline expires, which is a reported outcome, not a
+//! runner error.
 
 use std::path::Path;
 use std::process::{Command, Stdio};
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 use anyhow::Context;
 
+use crate::exec;
 use crate::report::SessionReport;
-use crate::workspace::ENV_ALLOWLIST;
+use crate::workspace;
 
 /// The transcript filename inside the run directory.
 pub const TRANSCRIPT_FILENAME: &str = "transcript.jsonl";
 
 /// The default agent: a non-interactive Claude Code session over the
-/// workspace's instructions file.
+/// workspace's instructions file, with host settings, plugins, and MCP
+/// servers/connectors disabled.
 pub fn default_agent_cmd() -> String {
     "claude --dangerously-skip-permissions \
+     --setting-sources '' --strict-mcp-config \
      -p \"Read INSTRUCTIONS.md in the current directory and carry it out completely.\" \
      --output-format stream-json --verbose"
         .to_string()
 }
 
 /// Runs `agent_cmd` (via `sh -c`) with the workspace as its working
-/// directory, capturing stdout+stderr to `transcript_path`.
+/// directory, capturing stdout+stderr to `transcript_path`. The session is
+/// killed when `timeout` expires; the kill is recorded in the report.
 ///
 /// Fails only when the agent process cannot be spawned at all; a nonzero
-/// agent exit is recorded in the report, because a failed session is still
-/// a reportable run.
+/// agent exit or a timeout is recorded in the report, because a failed
+/// session is still a reportable run.
 pub fn run_agent(
     workspace: &Path,
     agent_cmd: &str,
     transcript_path: &Path,
+    timeout: Duration,
 ) -> anyhow::Result<SessionReport> {
     let transcript_file = std::fs::File::create(transcript_path)
         .with_context(|| format!("creating transcript {}", transcript_path.display()))?;
@@ -51,18 +62,12 @@ pub fn run_agent(
         .current_dir(workspace)
         .stdin(Stdio::null())
         .stdout(transcript_file)
-        .stderr(stderr_file)
-        .env_clear();
-    for key in ENV_ALLOWLIST {
-        if let Ok(value) = std::env::var(key) {
-            command.env(key, value);
-        }
-    }
+        .stderr(stderr_file);
+    workspace::apply_env_policy(&mut command);
 
     let started = Instant::now();
-    let status = command
-        .status()
-        .with_context(|| format!("spawning agent command: {agent_cmd}"))?;
+    let outcome = exec::run(&mut command, timeout, false)
+        .map_err(|err| anyhow::anyhow!("agent command {agent_cmd}: {err}"))?;
     let wall_seconds = started.elapsed().as_secs_f64();
 
     let transcript_text = std::fs::read_to_string(transcript_path).unwrap_or_default();
@@ -71,7 +76,8 @@ pub fn run_agent(
     Ok(SessionReport {
         agent_cmd: agent_cmd.to_string(),
         wall_seconds,
-        exit_code: status.code(),
+        exit_code: outcome.exit_code,
+        timed_out: outcome.timed_out,
         attempts: 1,
         turns: stats.turns,
         input_tokens: stats.input_tokens,

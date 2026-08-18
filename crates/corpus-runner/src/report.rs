@@ -48,6 +48,10 @@ pub struct Pins {
     /// Git commit of the checkout the docs snapshot was copied from
     /// (`unknown` when the docs directory is not inside a git checkout).
     pub docs_commit: String,
+    /// sha256 (hex) over the provisioned docs snapshot's actual bytes
+    /// (sorted relative paths + contents) — the content-true pin that
+    /// `docs_commit` alone cannot give when the source tree is dirty.
+    pub docs_sha256: String,
     /// Semantic fingerprint of the exit questionnaire definition.
     pub questionnaire_fingerprint: String,
 }
@@ -76,6 +80,8 @@ pub struct SessionReport {
     pub wall_seconds: f64,
     /// The agent process exit code; `None` when killed by a signal.
     pub exit_code: Option<i32>,
+    /// True when the session hit its deadline and was killed.
+    pub timed_out: bool,
     /// How many times the agent command was invoked for this run.
     pub attempts: u32,
     /// Conversation turns, when the transcript is Claude Code stream-json.
