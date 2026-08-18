@@ -6,12 +6,12 @@
 use serde::Serialize;
 use std::collections::HashMap;
 
-use super::AppBuilder;
+use super::App;
 use crate::context::RenderContext;
 use crate::setup::SetupError;
 use crate::{detect_color_mode, detect_icon_mode, OutputMode};
 
-impl AppBuilder {
+impl App {
     // =========================================================================
     // Public Rendering API
     // =========================================================================

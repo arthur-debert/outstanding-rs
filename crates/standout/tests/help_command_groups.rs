@@ -262,18 +262,22 @@ fn test_group_help_text_renders_below_title() {
 
 /// Helper: build an App with help_handling enabled and command groups.
 fn app_with_groups() -> App {
-    App::new().help_handling(true).command_groups(vec![
-        CommandGroup {
-            title: "Core".into(),
-            help: None,
-            commands: vec![Some("status".into()), Some("list".into())],
-        },
-        CommandGroup {
-            title: "Misc".into(),
-            help: None,
-            commands: vec![Some("help".into())],
-        },
-    ])
+    App::builder()
+        .help_handling(true)
+        .command_groups(vec![
+            CommandGroup {
+                title: "Core".into(),
+                help: None,
+                commands: vec![Some("status".into()), Some("list".into())],
+            },
+            CommandGroup {
+                title: "Misc".into(),
+                help: None,
+                commands: vec![Some("help".into())],
+            },
+        ])
+        .build()
+        .unwrap()
 }
 
 fn test_cmd() -> Command {
@@ -364,7 +368,7 @@ fn test_subcommand_help_short_flag() {
 #[test]
 fn test_help_handling_off_does_not_intercept() {
     // Without help_handling, the "help" subcommand is NOT added by standout
-    let app = App::new();
+    let app = App::builder().build().unwrap();
     let cmd = test_cmd();
     let result = app.get_matches_from(cmd, ["myapp", "status"]);
     // Should get normal matches, not help
@@ -379,7 +383,7 @@ fn test_help_handling_off_does_not_intercept() {
 #[test]
 fn test_help_handling_off_help_flag_returns_clap_error() {
     // Without help_handling, --help goes through clap's error path
-    let app = App::new();
+    let app = App::builder().build().unwrap();
     let cmd = test_cmd();
     let result = app.get_matches_from(cmd, ["myapp", "--help"]);
     match result {
@@ -392,7 +396,7 @@ fn test_help_handling_off_help_flag_returns_clap_error() {
 
 #[test]
 fn test_build_errors_on_groups_without_help_handling() {
-    let result = App::new()
+    let result = App::builder()
         .command_groups(vec![CommandGroup {
             title: "Core".into(),
             help: None,
@@ -414,7 +418,7 @@ fn test_build_errors_on_groups_without_help_handling() {
 #[test]
 fn test_build_errors_on_topics_without_help_handling() {
     use standout::topics::{Topic, TopicType};
-    let result = App::new()
+    let result = App::builder()
         .add_topic(Topic::new(
             "Guide",
             "Some guide content here.",
@@ -436,7 +440,7 @@ fn test_build_errors_on_topics_without_help_handling() {
 
 #[test]
 fn test_build_succeeds_with_help_handling_and_groups() {
-    let app = App::new()
+    let app = App::builder()
         .help_handling(true)
         .command_groups(vec![CommandGroup {
             title: "Core".into(),
@@ -450,7 +454,7 @@ fn test_build_succeeds_with_help_handling_and_groups() {
 #[test]
 fn test_build_succeeds_with_help_handling_and_topics() {
     use standout::topics::{Topic, TopicType};
-    let app = App::new()
+    let app = App::builder()
         .help_handling(true)
         .add_topic(Topic::new(
             "Guide",
@@ -466,7 +470,7 @@ fn test_build_succeeds_with_help_handling_and_topics() {
 fn test_help_flag_works_with_required_args() {
     // A subcommand with required positional args should still show help
     // when --help is passed (clap's native short-circuit behavior).
-    let app = App::new().help_handling(true);
+    let app = App::builder().help_handling(true).build().unwrap();
     let cmd = Command::new("myapp").subcommand(
         Command::new("greet")
             .about("Greet someone")

@@ -1,0 +1,5 @@
+error[E0599]: no method named `run` found for struct `AppBuilder` in the current scope
+ --> tests/ui/unbuilt_builder_cannot_run.rs:5:35
+  |
+5 |     let _handled = App::builder().run(Command::new("app"), ["app"]);
+  |                                   ^^^ method not found in `AppBuilder`
