@@ -253,7 +253,7 @@ fn execute(
 /// every value in `row` among its scalars — the association check that keeps
 /// e.g. a star bound to its own constellation and magnitude, which flat
 /// substring matching cannot express.
-pub(crate) fn json_has_row(value: &serde_json::Value, row: &[String]) -> bool {
+fn json_has_row(value: &serde_json::Value, row: &[String]) -> bool {
     let mut candidates = Vec::new();
     collect_array_elements(value, &mut candidates);
     candidates.iter().any(|element| {

@@ -51,10 +51,12 @@ checkout: a nested workspace would let parent traversal and Git discovery
 cross the blindness boundary.
 
 Every external process (agent, cargo build, produced binary) runs under a
-per-phase deadline (`--agent-timeout`, `--build-timeout`, `--check-timeout`,
-seconds) — an overrun is killed (whole process group) and recorded in the
+deadline — an overrun is killed (whole process group) and recorded in the
 report as a finding, so a prompting or looping produced CLI can never
-prevent `report.json` from being written.
+prevent `report.json` from being written. `--agent-timeout` and
+`--build-timeout` (seconds) bound their phases; `--check-timeout` bounds
+each invariant invocation only — acceptance cases are deliberately outside
+its reach, each governed by its own authored `timeout_seconds`.
 
 The runner executes one acceptance schema: the `[[case]]` suites below with
 their full run semantics (per-case sandboxes, the scrubbed baseline env,
@@ -268,6 +270,10 @@ baseline does not run, the planned identities remain present as `not-run`.
 | `stdout_json_rows` | stdout parses as JSON and every value in each group co-occurs among the scalars of one single JSON array element (numbers match their decimal literal) |
 | `stdout_not_contains`, `stderr_not_contains` | no listed substring occurs in the stream |
 | `stdout_lines_end_with_once` | each suffix terminates exactly one non-empty stdout line |
+
+Every listed string and every row group must be non-empty: an empty group or
+empty substring matches any output, so it would silently assert nothing —
+the parser rejects it at load time.
 
 Prefer `stdout` (exact). Use `stdout_json` for machine output, where byte
 layout is an implementation detail but content is not. Use the `contains`

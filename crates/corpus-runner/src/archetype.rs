@@ -334,9 +334,11 @@ impl CaseSuite {
 /// The semantic rules the case schema carries beyond its shape: version 1,
 /// archetype/directory agreement, a non-empty suite of uniquely named
 /// kebab-case cases, a non-empty `stresses` line, a positive timeout, at
-/// least one assertion per case, no exact-`stdout` + semantic-`stdout_json`
-/// contradiction, `stdout_json` that parses as JSON, and non-empty
-/// `gap`/`reason` exactly on expected-fail cases.
+/// least one assertion per case, no vacuous assertion elements (an empty
+/// row group or an empty string in a substring/row/suffix list matches any
+/// output), no exact-`stdout` + semantic-`stdout_json` contradiction,
+/// `stdout_json` that parses as JSON, and non-empty `gap`/`reason` exactly
+/// on expected-fail cases.
 fn validate_case_suite(suite: &CaseSuite, name: &str, path: &Path) -> anyhow::Result<()> {
     if suite.schema != 1 {
         bail!(
@@ -389,6 +391,47 @@ fn validate_case_suite(suite: &CaseSuite, name: &str, path: &Path) -> anyhow::Re
         }
         if case.expect.is_empty() {
             bail!("{}: case {:?} asserts nothing", path.display(), case.name);
+        }
+        // A vacuous element asserts nothing while counting as an assertion:
+        // an empty row group is satisfied by any output, and an empty
+        // string is a substring of everything. Reject both at load time so
+        // a malformed case cannot silently pass.
+        for (key, rows) in [
+            ("stdout_row_contains", &case.expect.stdout_row_contains),
+            ("stdout_json_rows", &case.expect.stdout_json_rows),
+        ] {
+            if rows.iter().any(|row| row.is_empty()) {
+                bail!(
+                    "{}: case {:?} — {key} groups must be non-empty",
+                    path.display(),
+                    case.name
+                );
+            }
+            if rows.iter().flatten().any(|cell| cell.is_empty()) {
+                bail!(
+                    "{}: case {:?} — {key} cells must be non-empty",
+                    path.display(),
+                    case.name
+                );
+            }
+        }
+        for (key, entries) in [
+            ("stdout_contains", &case.expect.stdout_contains),
+            ("stderr_contains", &case.expect.stderr_contains),
+            ("stdout_not_contains", &case.expect.stdout_not_contains),
+            ("stderr_not_contains", &case.expect.stderr_not_contains),
+            (
+                "stdout_lines_end_with_once",
+                &case.expect.stdout_lines_end_with_once,
+            ),
+        ] {
+            if entries.iter().any(|entry| entry.is_empty()) {
+                bail!(
+                    "{}: case {:?} — {key} entries must be non-empty",
+                    path.display(),
+                    case.name
+                );
+            }
         }
         // Exact-stdout and semantic-JSON assertions on the same stream
         // contradict each other's reason to exist; a case picks one.
@@ -541,6 +584,60 @@ exit_code = 0
             ))
             .unwrap_err();
             assert!(err.to_string().contains("asserts nothing"), "{err:#}");
+        }
+    }
+
+    /// `[[]]` counts as a present assertion but is satisfied by any
+    /// output; the vacuous-element rule must reject it.
+    #[test]
+    fn empty_row_groups_are_rejected() {
+        for key in ["stdout_row_contains", "stdout_json_rows"] {
+            let err = parse(&suite(
+                &VALID_CASE.replace("exit_code = 0", &format!("{key} = [[]]")),
+            ))
+            .unwrap_err();
+            assert!(
+                err.to_string().contains("groups must be non-empty"),
+                "{err:#}"
+            );
+        }
+    }
+
+    /// An empty cell is a substring of every line (and matching an empty
+    /// scalar is `stdout_json` territory); the rule rejects it.
+    #[test]
+    fn empty_row_cells_are_rejected() {
+        for key in ["stdout_row_contains", "stdout_json_rows"] {
+            let err = parse(&suite(
+                &VALID_CASE.replace("exit_code = 0", &format!("{key} = [[\"\"]]")),
+            ))
+            .unwrap_err();
+            assert!(
+                err.to_string().contains("cells must be non-empty"),
+                "{err:#}"
+            );
+        }
+    }
+
+    /// The empty string is a substring (and suffix) of everything, so an
+    /// empty entry in any flat assertion list is equally vacuous.
+    #[test]
+    fn empty_list_entries_are_rejected() {
+        for key in [
+            "stdout_contains",
+            "stderr_contains",
+            "stdout_not_contains",
+            "stderr_not_contains",
+            "stdout_lines_end_with_once",
+        ] {
+            let err = parse(&suite(
+                &VALID_CASE.replace("exit_code = 0", &format!("{key} = [\"\"]")),
+            ))
+            .unwrap_err();
+            assert!(
+                err.to_string().contains("entries must be non-empty"),
+                "{err:#}"
+            );
         }
     }
 
