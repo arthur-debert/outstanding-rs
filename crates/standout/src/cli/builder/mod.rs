@@ -220,8 +220,16 @@ fn template_dependencies(source: &str) -> TemplateDependencies {
             break;
         };
         let tag = after_start[..tag_end].trim();
-        let tag = tag.strip_prefix('-').unwrap_or(tag).trim_start();
-        let tag = tag.strip_suffix('-').unwrap_or(tag).trim_end();
+        let tag = tag
+            .strip_prefix('-')
+            .or_else(|| tag.strip_prefix('+'))
+            .unwrap_or(tag)
+            .trim_start();
+        let tag = tag
+            .strip_suffix('-')
+            .or_else(|| tag.strip_suffix('+'))
+            .unwrap_or(tag)
+            .trim_end();
         let mut words = tag.splitn(2, char::is_whitespace);
         let keyword = words.next().unwrap_or_default();
         let body = words.next().unwrap_or_default().trim();
@@ -1690,9 +1698,9 @@ mod tests {
     use super::*;
 
     #[test]
-    fn template_dependencies_support_whitespace_control() {
+    fn template_dependencies_support_whitespace_controls() {
         let dependencies = template_dependencies(
-            "{%- extends 'base' -%}{%- include 'partial' -%}{%- import 'macros' as macros -%}{%- from 'forms' import field -%}",
+            "{%+ extends 'base' +%}{%- include 'partial' -%}{%+ import 'macros' as macros -%}{%- from 'forms' import field +%}",
         );
 
         assert_eq!(dependencies.names, ["base", "partial", "macros", "forms"]);
