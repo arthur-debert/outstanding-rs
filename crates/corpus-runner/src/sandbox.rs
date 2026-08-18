@@ -15,9 +15,7 @@
 //! gap is recorded per phase policy by [`capability`] and warned about at
 //! apply time, so a report never reads stronger than what was enforced.
 
-#[cfg(target_os = "macos")]
-use std::path::Path;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process::Command;
 
 use crate::report::{IsolationRecord, NetworkEnforcement};
