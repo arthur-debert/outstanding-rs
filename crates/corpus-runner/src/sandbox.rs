@@ -344,6 +344,14 @@ fn enforce_landlock(policy: &Policy) -> Result<(), String> {
     // phase for `Stdio::null()`/`posix_spawn`) is a character device, not a
     // directory, so it needs the file-only subset; every other write root
     // here is a real directory and keeps the full set.
+    //
+    // The dispatch below only narrows a path to `file_only` when it is
+    // *positively confirmed* to exist and not be a directory. Defaulting to
+    // `all` otherwise matters: `path.is_dir()` alone reads false for a
+    // directory that doesn't exist yet at the instant of the check, and a
+    // real workspace/home directory must never lose its directory rights
+    // (create/remove/list entries) just because of that ambiguity — it is
+    // always a directory once it exists, so `all` is the correct fallback.
     let file_only = AccessFs::from_file(abi);
     let mut ruleset = Ruleset::default()
         .handle_access(all)
@@ -360,7 +368,11 @@ fn enforce_landlock(policy: &Policy) -> Result<(), String> {
     for path in &policy.write {
         let fd = PathFd::new(path)
             .map_err(|e| format!("opening {} for Landlock: {e}", path.display()))?;
-        let access = if path.is_dir() { all } else { file_only };
+        let access = if path.exists() && !path.is_dir() {
+            file_only
+        } else {
+            all
+        };
         ruleset = ruleset
             .add_rule(PathBeneath::new(fd, access))
             .map_err(|e| format!("allowing Landlock write {}: {e}", path.display()))?;
