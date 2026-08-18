@@ -1,0 +1,52 @@
+# Feature/interaction manifest for `formlike`. Format: corpus/README.md.
+
+[archetype]
+name = "formlike"
+survey = "C12"
+summary = "questionnaire-driven provisioning under full non-interactivity"
+status = "in-capability"
+
+[features]
+used = [
+    "input.derived-questionnaires",
+    "input.answer-sheets",
+    "input.choice-enums",
+    "input.field-validation",
+    "input.confirmation-gate",
+    "dispatch.subcommands",
+    "output-modes.auto-degradation",
+]
+
+[[interactions]]
+id = "input-source-precedence"
+stresses = ["--answers file", "--answers -", "interactive fallback", "sources-never-merge rule"]
+description = "One questionnaire, three ways in. A sheet replaces interactive collection entirely; stdin doubles as a sheet transport (--answers -) and as the interactivity signal, and those two roles must not be confused."
+cases = [
+    "answers-file-full-noninteractive",
+    "answers-from-stdin-dash",
+    "blank-answers-take-defaults",
+    "interactive-collection-and-confirmation-on-tty",
+]
+
+[[interactions]]
+id = "bounded-non-interactive-failure"
+stresses = ["piped/EOF stdin detection", "confirmation gate", "--yes semantics", "required-answer resolution"]
+description = "The differentiator no surveyed CLI has, so the one that must be bulletproof: every path where input cannot arrive (no sheet + piped stdin, blank required answer, unconfirmable run) fails with exit 1, an actionable stderr, and inside the case timeout — a hang here is the worst possible adopter experience, a CI job that never ends."
+cases = [
+    "missing-required-answer-under-closed-stdin-fails-fast",
+    "missing-required-answer-in-sheet-fails-fast",
+    "confirmation-impossible-under-piped-stdin",
+    "yes-does-not-invent-required-answers",
+]
+
+[[interactions]]
+id = "validation-vs-decoding-vs-streams"
+stresses = ["field validators", "choice decoding", "stream separation", "exit-code mapping"]
+description = "Rejections from two different layers (validator hook, choice decode) must present identically to the user: exit 1, empty stdout, stderr naming the offending question id."
+cases = ["validation-failure-names-field", "invalid-choice-names-field"]
+
+[[interactions]]
+id = "sheet-identity-stability"
+stresses = ["answer-sheet rendering", "stable <id:...> tags", "cosmetic freedom"]
+description = "The blank sheet is a machine artifact wearing prose: cosmetics may drift, the id tags may not — the acceptance sheet fixtures deliberately vary numbering and wording from whatever the implementation renders."
+cases = ["questions-prints-sheet-with-stable-ids"]
