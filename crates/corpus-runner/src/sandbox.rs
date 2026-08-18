@@ -200,11 +200,21 @@ pub fn system_read_roots() -> Vec<PathBuf> {
     // Permit PATH directories read-only. If one lives beneath an explicitly
     // denied source/home root, the macOS profile admits only this narrower
     // subtree; Landlock's default-deny model likewise adds only this path.
+    // A PATH entry's sibling `lib` is admitted with it: relocatable
+    // toolchains (rustup-less pixi/conda envs) resolve their dylibs and
+    // sysroot through `bin/../lib`, so a `bin` admitted without its `lib`
+    // yields an rustc that launches and then aborts loading librustc_driver.
     if let Some(path) = std::env::var_os("PATH") {
         for dir in std::env::split_paths(&path) {
-            if dir.is_dir() {
-                roots.push(dir);
+            if !dir.is_dir() {
+                continue;
             }
+            if let Some(lib) = dir.parent().map(|parent| parent.join("lib")) {
+                if lib.is_dir() {
+                    roots.push(lib);
+                }
+            }
+            roots.push(dir);
         }
     }
     existing(roots)

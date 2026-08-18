@@ -27,8 +27,16 @@ use corpus_runner::{run, RunConfig, Timeouts};
 #[ignore = "builds the produced app against crates.io (network + full compile)"]
 fn smoke_archetype_completes_the_loop() {
     let repo = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
-    let solution = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/smoke-solution");
     let scratch = tempfile::tempdir().unwrap();
+
+    // The canned solution is staged into scratch space host-side first: the
+    // agent runs under the kernel sandbox, which denies reads under the
+    // source checkout, so the script cannot copy the fixture from the repo.
+    let solution = scratch.path().join("smoke-solution");
+    common::stage_dir(
+        &Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/smoke-solution"),
+        &solution,
+    );
 
     // The scripted agent: install the canned solution into app/, then answer
     // the questionnaire in place (an answer line under each question tag),

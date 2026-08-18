@@ -116,7 +116,15 @@ impl Isolation {
         read.push(writable.to_path_buf());
         Policy::new(
             read,
-            vec![writable.to_path_buf(), home.to_path_buf()],
+            // `/dev/null` is writable in every phase: `Stdio::null()` opens
+            // it for writing inside `posix_spawn`, so a write policy without
+            // it makes any child that nulls a stream (cargo build scripts
+            // probing the compiler, e.g. rustix's) fail at spawn with EPERM.
+            vec![
+                writable.to_path_buf(),
+                home.to_path_buf(),
+                PathBuf::from("/dev/null"),
+            ],
             self.denied_read.clone(),
             network,
         )
