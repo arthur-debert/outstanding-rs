@@ -335,24 +335,29 @@ fn enforce_landlock(policy: &Policy) -> Result<(), String> {
     let abi = ABI::V1;
     let all = AccessFs::from_all(abi);
     let read = AccessFs::from_read(abi);
-    // Directory-only rights (create/remove/list a directory entry — e.g.
-    // MakeChar, RemoveFile, ReadDir) are meaningless on a non-directory
-    // target and the kernel rejects a rule that carries them for one with
-    // EINVAL (see landlock_add_rule(2)): a `PathBeneath` rule's parent must
-    // either be a directory, or request only the access rights legitimate
-    // for a file (`AccessFs::from_file`). `/dev/null` (writable in every
-    // phase for `Stdio::null()`/`posix_spawn`) is a character device, not a
-    // directory, so it needs the file-only subset; every other write root
-    // here is a real directory and keeps the full set.
+    // `/dev/null` is the ONLY non-directory ever admitted for write (see
+    // `Isolation::policy`): a `PathBeneath` rule's parent must either be a
+    // directory, or request only the access rights legitimate for a file
+    // (`AccessFs::from_file`) — directory-only rights (MakeChar, RemoveFile,
+    // ReadDir, ...) on a non-directory target make the kernel reject the
+    // whole rule with EINVAL (see landlock_add_rule(2)). Two earlier
+    // attempts at inferring "is this a directory" from filesystem state at
+    // rule-construction time (`path.is_dir()`, then
+    // `path.exists() && !path.is_dir()`) proved unnecessary risk for no
+    // observed benefit — every other write root here is unconditionally a
+    // real, already-provisioned directory (`workspace_root`, a phase's
+    // isolated home), so there is nothing to infer: key on the literal
+    // `/dev/null` path instead of a runtime type check.
     //
-    // The dispatch below only narrows a path to `file_only` when it is
-    // *positively confirmed* to exist and not be a directory. Defaulting to
-    // `all` otherwise matters: `path.is_dir()` alone reads false for a
-    // directory that doesn't exist yet at the instant of the check, and a
-    // real workspace/home directory must never lose its directory rights
-    // (create/remove/list entries) just because of that ambiguity — it is
-    // always a directory once it exists, so `all` is the correct fallback.
+    // `AccessFs::from_file` intersects with the ABI-V1-only `all` above, so
+    // it never includes `Truncate` (added at ABI V3) regardless of what the
+    // running kernel additionally supports: this ruleset only ever
+    // `handle_access`es the V1 set, and Landlock leaves any access-right
+    // category outside a process's handled set ungoverned (not restricted),
+    // so a `>`-style truncating redirect onto `/dev/null` is unaffected
+    // either way.
     let file_only = AccessFs::from_file(abi);
+    let dev_null = Path::new("/dev/null");
     let mut ruleset = Ruleset::default()
         .handle_access(all)
         .map_err(|e| format!("creating Landlock access set: {e}"))?
@@ -368,7 +373,7 @@ fn enforce_landlock(policy: &Policy) -> Result<(), String> {
     for path in &policy.write {
         let fd = PathFd::new(path)
             .map_err(|e| format!("opening {} for Landlock: {e}", path.display()))?;
-        let access = if path.exists() && !path.is_dir() {
+        let access = if path.as_path() == dev_null {
             file_only
         } else {
             all

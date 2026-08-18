@@ -177,35 +177,62 @@ impl Isolation {
             .map(PathBuf::from)
             .unwrap_or_else(|| source_root.to_path_buf())
             .join(".gitconfig");
+        // A host-readable log the probe appends checkpoints (and anything
+        // the shell/`true` printed) to, so a failure names the exact step
+        // reached instead of leaving only a bare, unhelpful exit status.
+        let probe_log = self.workspace_root.join(".boundary-probe.log");
+        let _ = std::fs::remove_file(&probe_log);
         let mut command = Command::new("sh");
         // Perform real opens through shell redirections. A permission query
         // such as `test -r` may use access(2), which Landlock deliberately
         // leaves unrestricted and therefore cannot prove file readability.
+        //
+        // The probed command is `true` — a POSIX *regular* builtin — not
+        // `:` (colon), a POSIX *special* builtin: per POSIX, a redirection
+        // error on a special builtin forces a non-interactive shell to exit
+        // immediately, bypassing the enclosing `if`/`then` entirely. dash
+        // (Linux's default `/bin/sh`) enforces this strictly; bash-as-
+        // `/bin/sh` (macOS) does not. So `: < denied-file` silently killed
+        // this whole probe script on Linux the moment the read was denied
+        // — the shell aborted before the `if` ever got a chance to see a
+        // clean nonzero status — instead of the intended "command failed,
+        // `if` reports denial" outcome `test -r` exists to avoid needing.
+        // `true` forces the identical real open() without that hazard.
         command
             .args([
                 "-c",
-                "if { : < \"$1\"; } 2>/dev/null; then \
-                     echo source-readable >&2; exit 1; \
+                "log=\"$3\"; \
+                 echo checkpoint:start >> \"$log\" 2>&1; \
+                 if { true < \"$1\"; } >> \"$log\" 2>&1; then \
+                     echo source-readable >&2; \
+                     echo checkpoint:source-readable >> \"$log\" 2>&1; exit 1; \
                  fi; \
-                 if { : < \"$2\"; } 2>/dev/null; then \
-                     echo host-home-readable >&2; exit 1; \
-                 fi",
+                 echo checkpoint:source-denied >> \"$log\" 2>&1; \
+                 if { true < \"$2\"; } >> \"$log\" 2>&1; then \
+                     echo host-home-readable >&2; \
+                     echo checkpoint:host-home-readable >> \"$log\" 2>&1; exit 1; \
+                 fi; \
+                 echo checkpoint:host-home-denied >> \"$log\" 2>&1",
                 "corpus-boundary",
             ])
             .arg(source_root.join("Cargo.toml"))
             .arg(host_probe)
+            .arg(&probe_log)
             .current_dir(&self.workspace_root);
         self.apply_agent(&mut command)?;
         let output = command
             .output()
             .map_err(|e| format!("probing isolation boundary: {e}"))?;
         if !output.status.success() {
+            let log = std::fs::read_to_string(&probe_log)
+                .unwrap_or_else(|e| format!("<no probe log: {e}>"));
             return Err(format!(
                 "OS sandbox allowed source-checkout/host-home access or failed to enforce \
-                 (status {:?}, stdout {:?}, stderr {:?})",
+                 (status {:?}, stdout {:?}, stderr {:?}, probe log {:?})",
                 output.status.code(),
                 String::from_utf8_lossy(&output.stdout).trim(),
-                String::from_utf8_lossy(&output.stderr).trim()
+                String::from_utf8_lossy(&output.stderr).trim(),
+                log.trim()
             ));
         }
         Ok(())
