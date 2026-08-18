@@ -214,7 +214,7 @@ commands = [["log"], ["status"], []]   # [] is the naked invocation
   is scripted input, and `tty` decides its transport: on a pipe it is the
   piped content followed by EOF; when `tty` includes `"stdin"` it is written
   to the pty as keystrokes (as if typed, already newline-terminated), after
-  which the pty closes. The pty form is how attended interactive flows —
+  which terminal EOF is sent. The pty form is how attended interactive flows —
   prompt answers, confirmations — are driven. `"stdin"` in `tty` with no
   `stdin` string is an attended terminal that never sends anything.
 - **tty.** Streams listed in `tty` are attached to a pseudo-terminal (the

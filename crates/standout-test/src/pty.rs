@@ -8,6 +8,7 @@
 //! binary streams to it when an acceptance case declares `tty` (see
 //! `corpus/README.md`, Run semantics).
 
+use std::io;
 use std::os::fd::{AsRawFd, FromRawFd, OwnedFd};
 
 /// Opens a pty pair sized 80×24 with `ONLCR` off, returning
@@ -19,11 +20,10 @@ use std::os::fd::{AsRawFd, FromRawFd, OwnedFd};
 /// window size keeps width-sensitive rendering deterministic instead of
 /// inheriting a 0×0 window.
 ///
-/// # Panics
-///
-/// When any of the three C calls fails — a pty is a per-process resource
-/// and a failure to open one is an environment defect, not a test outcome.
-pub fn open_pair() -> (OwnedFd, OwnedFd) {
+/// Returns the operating-system error when any of the three C calls fails.
+/// Callers decide whether that environment failure should be recorded or
+/// treated as a test-harness panic.
+pub fn open_pair() -> io::Result<(OwnedFd, OwnedFd)> {
     let mut master: libc::c_int = -1;
     let mut slave: libc::c_int = -1;
     let mut winsize = libc::winsize {
@@ -47,12 +47,9 @@ pub fn open_pair() -> (OwnedFd, OwnedFd) {
             &raw mut winsize,
         )
     };
-    assert_eq!(
-        rc,
-        0,
-        "pty::open_pair: openpty failed: {}",
-        std::io::Error::last_os_error()
-    );
+    if rc != 0 {
+        return Err(io::Error::last_os_error());
+    }
     // SAFETY: on success both fds are freshly opened and unowned; these
     // OwnedFds are their sole owners from here on.
     let (master, slave) = unsafe { (OwnedFd::from_raw_fd(master), OwnedFd::from_raw_fd(slave)) };
@@ -62,21 +59,15 @@ pub fn open_pair() -> (OwnedFd, OwnedFd) {
     unsafe {
         let mut termios: libc::termios = std::mem::zeroed();
         let rc = libc::tcgetattr(slave.as_raw_fd(), &mut termios);
-        assert_eq!(
-            rc,
-            0,
-            "pty::open_pair: tcgetattr failed: {}",
-            std::io::Error::last_os_error()
-        );
+        if rc != 0 {
+            return Err(io::Error::last_os_error());
+        }
         termios.c_oflag &= !(libc::ONLCR as libc::tcflag_t);
         let rc = libc::tcsetattr(slave.as_raw_fd(), libc::TCSANOW, &termios);
-        assert_eq!(
-            rc,
-            0,
-            "pty::open_pair: tcsetattr failed: {}",
-            std::io::Error::last_os_error()
-        );
+        if rc != 0 {
+            return Err(io::Error::last_os_error());
+        }
     }
 
-    (master, slave)
+    Ok((master, slave))
 }

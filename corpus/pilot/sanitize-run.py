@@ -39,18 +39,19 @@ def replacements(run_dir: pathlib.Path) -> list[tuple[str, str]]:
     workspace = str((run_dir / "workspace").resolve())
     repo = str(pathlib.Path(__file__).resolve().parents[2])
     home = str(pathlib.Path.home())
-    # Longest first so [workspace] wins over its [repo] prefix. The dash
-    # forms cover Claude Code's path-encoded project ids; the bare username
-    # covers incidental residue such as `ls -l` owner columns.
-    return [
+    # Sort by actual needle length so nested paths win regardless of the
+    # order in which they were declared. The dash forms cover Claude Code's
+    # path-encoded project ids. Do not replace the bare home-directory name:
+    # common account names such as `root` or `user` are ordinary evidence too.
+    paths = [
         (str(run_dir.resolve()), "[run]"),
         (workspace, "[workspace]"),
         (repo, "[repo]"),
         (repo.replace("/", "-"), "[project]"),
         (home, "[home]"),
         (home.replace("/", "-"), "[home]"),
-        (pathlib.Path.home().name, "[user]"),
     ]
+    return sorted(paths, key=lambda item: len(item[0]), reverse=True)
 
 
 def scrub_text(text: str, subs: list[tuple[str, str]]) -> str:

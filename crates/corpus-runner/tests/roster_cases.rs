@@ -328,6 +328,30 @@ stdout = "lines=0\n"
 }
 
 #[test]
+fn omitted_stdin_stays_piped_when_an_output_stream_uses_a_pty() {
+    let result = one(
+        r#"
+[[case]]
+name = "mixed-pty-stdin-eof"
+stresses = "piped stdin with terminal stdout"
+expected = "pass"
+[case.run]
+argv = []
+tty = ["stdout"]
+timeout_seconds = 5
+[case.expect]
+exit_code = 0
+stdout = "stdin=pipe\nlines=0\n"
+"#,
+        r#"if [ -p /dev/stdin ]; then kind=pipe; else kind=other; fi
+n=0
+while read -r line; do n=$((n+1)); done
+printf 'stdin=%s\nlines=%s\n' "$kind" "$n""#,
+    );
+    assert_eq!(result.outcome, CaseOutcome::Pass, "{:?}", result.detail);
+}
+
+#[test]
 fn stdin_string_on_a_pipe_is_content_then_eof() {
     let result = one(
         r#"
@@ -414,6 +438,28 @@ stdout = "got first\ngot second\n"
 }
 
 #[test]
+fn tty_stdin_sends_eof_while_an_output_stream_keeps_the_pty_open() {
+    let result = one(
+        r#"
+[[case]]
+name = "attended-stdin-eof"
+stresses = "scripted pty input followed by terminal EOF"
+expected = "pass"
+[case.run]
+argv = []
+tty = ["stdin", "stderr"]
+stdin = "alpha\nbeta\n"
+timeout_seconds = 2
+[case.expect]
+exit_code = 0
+stdout = "alpha\nbeta\n"
+"#,
+        "cat",
+    );
+    assert_eq!(result.outcome, CaseOutcome::Pass, "{:?}", result.detail);
+}
+
+#[test]
 fn exceeding_timeout_seconds_fails_the_case() {
     let result = one(
         r#"
@@ -478,4 +524,37 @@ stdout = "hello\n"
     assert!(results[0].outcome.is_expected());
     assert_eq!(results[1].outcome, CaseOutcome::UnexpectedPass);
     assert!(!results[1].outcome.is_expected());
+}
+
+#[test]
+fn expected_fail_does_not_hide_case_execution_errors() {
+    let result = one(
+        r#"
+[[case]]
+name = "broken-gap"
+stresses = "runner errors stay visible"
+expected = "fail"
+gap = "PAR01"
+reason = "a known behavioral gap"
+[case.run]
+argv = []
+timeout_seconds = 5
+[case.run.files]
+"../outside.txt" = "must not be written\n"
+[case.expect]
+exit_code = 0
+"#,
+        "true",
+    );
+    assert_eq!(result.outcome, CaseOutcome::Fail);
+    assert!(!result.outcome.is_expected());
+    assert!(
+        result
+            .detail
+            .as_deref()
+            .unwrap()
+            .contains("case execution error"),
+        "{:?}",
+        result.detail
+    );
 }

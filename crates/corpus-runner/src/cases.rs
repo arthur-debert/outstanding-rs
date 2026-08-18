@@ -30,15 +30,21 @@ pub fn run_cases(binary: &Path, cases: &[Case], cases_dir: &Path) -> AcceptanceR
         .iter()
         .map(|case| {
             let sandbox = cases_dir.join(&case.name);
-            let (raw_pass, detail) = match execute(binary, case, &sandbox) {
-                Ok(execution) => evaluate(case, &execution),
-                Err(err) => (false, Some(format!("case execution error: {err}"))),
-            };
-            let outcome = match (case.expected, raw_pass) {
-                (Expected::Pass, true) => CaseOutcome::Pass,
-                (Expected::Pass, false) => CaseOutcome::Fail,
-                (Expected::Fail, false) => CaseOutcome::ExpectedFail,
-                (Expected::Fail, true) => CaseOutcome::UnexpectedPass,
+            let (outcome, detail) = match execute(binary, case, &sandbox) {
+                Ok(execution) => {
+                    let (raw_pass, detail) = evaluate(case, &execution);
+                    let outcome = match (case.expected, raw_pass) {
+                        (Expected::Pass, true) => CaseOutcome::Pass,
+                        (Expected::Pass, false) => CaseOutcome::Fail,
+                        (Expected::Fail, false) => CaseOutcome::ExpectedFail,
+                        (Expected::Fail, true) => CaseOutcome::UnexpectedPass,
+                    };
+                    (outcome, detail)
+                }
+                Err(err) => (
+                    CaseOutcome::Fail,
+                    Some(format!("case execution error: {err}")),
+                ),
             };
             CaseResult {
                 name: case.name.clone(),
@@ -106,7 +112,8 @@ fn execute(binary: &Path, case: &Case, sandbox: &Path) -> Result<Execution, Stri
 
     let mut master = None;
     if use_pty {
-        let (m, slave) = standout_test::pty::open_pair();
+        let (m, slave) = standout_test::pty::open_pair()
+            .map_err(|err| format!("opening pty for case streams: {err}"))?;
         let dup = |name: &str| -> Result<Stdio, String> {
             Ok(Stdio::from(slave.try_clone().map_err(|err| {
                 format!("duplicating pty slave for {name}: {err}")
@@ -114,10 +121,8 @@ fn execute(binary: &Path, case: &Case, sandbox: &Path) -> Result<Execution, Stri
         };
         command.stdin(if tty_stdin {
             dup("stdin")?
-        } else if case.run.stdin.is_some() {
-            Stdio::piped()
         } else {
-            Stdio::null()
+            Stdio::piped()
         });
         command.stdout(if tty_stdout {
             dup("stdout")?
@@ -135,11 +140,7 @@ fn execute(binary: &Path, case: &Case, sandbox: &Path) -> Result<Execution, Stri
         // below), so the master read ends when the child exits.
     } else {
         command
-            .stdin(if case.run.stdin.is_some() {
-                Stdio::piped()
-            } else {
-                Stdio::null()
-            })
+            .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped());
     }
@@ -168,8 +169,8 @@ fn execute(binary: &Path, case: &Case, sandbox: &Path) -> Result<Execution, Stri
     };
 
     // Scripted stdin. On a pipe: the content followed by EOF. On the pty:
-    // keystrokes, after which the pty closes — the writer thread owns the
-    // last master handle unless a capture still reads it.
+    // keystrokes followed by the terminal's EOF character. Closing only the
+    // writer handle is insufficient when a capture retains another master.
     let stdin_bytes = case.run.stdin.clone();
     if tty_stdin {
         if let Some(text) = stdin_bytes {
@@ -177,17 +178,24 @@ fn execute(binary: &Path, case: &Case, sandbox: &Path) -> Result<Execution, Stri
             std::thread::spawn(move || {
                 let mut writer = std::fs::File::from(handle);
                 let _ = writer.write_all(text.as_bytes());
-                // Dropping `writer` closes this master handle; when it is
-                // the last one, the child's terminal hangs up.
+                // In canonical mode one Ctrl-D flushes an unterminated final
+                // line and the next delivers EOF; when the input already
+                // ends in a newline, the first one delivers EOF and the
+                // second write is harmless (and may see EIO).
+                let _ = writer.write_all(&[0x04, 0x04]);
             });
         }
         // With no stdin string the master stays held below: an attended
         // terminal that never sends anything (and never hangs up early).
-    } else if let Some(text) = stdin_bytes {
+    } else {
         let mut stdin_pipe = child.stdin.take().expect("stdin was piped");
-        std::thread::spawn(move || {
-            let _ = stdin_pipe.write_all(text.as_bytes());
-        });
+        if let Some(text) = stdin_bytes {
+            std::thread::spawn(move || {
+                let _ = stdin_pipe.write_all(text.as_bytes());
+            });
+        }
+        // With no scripted content, dropping the pipe writer delivers the
+        // documented adversarial default: a pipe already at EOF.
     }
 
     let captures: Vec<&exec::Capture> = [

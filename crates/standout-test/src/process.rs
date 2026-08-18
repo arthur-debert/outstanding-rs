@@ -161,7 +161,8 @@ impl TestHarness {
         self.reject_in_process_only_settings();
         let (mut command, cwd) = self.prepare_command(program.as_ref(), args);
 
-        let (master, slave) = crate::pty::open_pair();
+        let (master, slave) = crate::pty::open_pair()
+            .unwrap_or_else(|err| panic!("TestHarness::run_pty: opening pty failed: {err}"));
         command
             .stdin(Stdio::null())
             .stdout(Stdio::from(slave))
