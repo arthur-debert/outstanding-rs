@@ -8,18 +8,32 @@
 //! gates (PAR02, PAR03, and the unminted runtime-templates epic).
 //!
 //! Everything here is black-box: [`run`] spawns a produced binary and returns its
-//! stdout/stderr/exit status; nothing links against standout.
+//! stdout/stderr/exit status plus wall-clock duration; capture is bounded per stream
+//! ([`OUTPUT_LIMIT`]) so a runaway child cannot exhaust the test runner's memory;
+//! nothing links against standout.
 
 use std::io::Read;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 /// How long [`run`] lets a spawned binary live before declaring it hung.
 ///
 /// Generous on purpose: this bounds *suite* runtime; per-assertion promptness
-/// requirements (e.g. jjlike's render budget) are asserted separately.
+/// requirements (e.g. jjlike's render budget) are asserted separately against
+/// [`Output::duration`].
 pub const SPAWN_TIMEOUT: Duration = Duration::from_secs(30);
+
+/// Per-stream cap on retained child output.
+///
+/// The archetype contracts emit at most a handful of kilobytes, so this is generous —
+/// but the suites deliberately hand binaries hostile inputs (a billion-iteration
+/// template), and a binary without budget enforcement could otherwise emit hundreds of
+/// megabytes inside [`SPAWN_TIMEOUT`] and OOM the test runner. A child that exceeds the
+/// cap on either stream is killed and reported as a behavioral mismatch by [`run`].
+pub const OUTPUT_LIMIT: usize = 8 * 1024 * 1024;
 
 /// Captured result of one black-box invocation of an archetype binary.
 pub struct Output {
@@ -29,6 +43,9 @@ pub struct Output {
     pub stdout: String,
     /// Everything the process wrote to stderr, decoded as UTF-8.
     pub stderr: String,
+    /// Wall-clock time from spawn to exit — what promptness assertions (e.g. jjlike's
+    /// render budget) measure against.
+    pub duration: Duration,
 }
 
 /// Runs one gap assertion with expected-fail semantics.
@@ -84,13 +101,15 @@ fn produced_binary(binary_env: &str) -> Option<PathBuf> {
 }
 
 /// Spawns `binary` with `args` in `dir` and captures its output, killing it at
-/// [`SPAWN_TIMEOUT`].
+/// [`SPAWN_TIMEOUT`] or when a stream exceeds [`OUTPUT_LIMIT`].
 ///
 /// Returns `Err` for *behavioral* failures the assertions care about — the process hung
-/// past the timeout, or wrote non-UTF-8 where the specs require a UTF-8 stream. Panics
-/// when an existing binary cannot be spawned at all: that is a broken suite or
-/// environment, which must surface as an error, not as expected-fail.
+/// past the timeout, drowned a stream past the output cap, or wrote non-UTF-8 where the
+/// specs require a UTF-8 stream. Panics when an existing binary cannot be spawned at
+/// all: that is a broken suite or environment, which must surface as an error, not as
+/// expected-fail.
 pub fn run(binary: &Path, args: &[&str], dir: &Path) -> Result<Output, String> {
+    let started = Instant::now();
     let mut child = Command::new(binary)
         .args(args)
         .current_dir(dir)
@@ -101,19 +120,39 @@ pub fn run(binary: &Path, args: &[&str], dir: &Path) -> Result<Output, String> {
         .unwrap_or_else(|err| panic!("suite broken: failed to spawn {binary:?}: {err}"));
 
     // Drain the pipes on threads so a chatty child can't deadlock against a full pipe
-    // while we wait on it.
+    // while we wait on it. Each drain retains at most OUTPUT_LIMIT bytes and raises
+    // `exceeded` past that, so the wait loop can kill a runaway child early.
     let stdout_pipe = child.stdout.take().expect("stdout was piped");
     let stderr_pipe = child.stderr.take().expect("stderr was piped");
-    let stdout_thread = std::thread::spawn(move || read_all(stdout_pipe));
-    let stderr_thread = std::thread::spawn(move || read_all(stderr_pipe));
+    let exceeded = Arc::new(AtomicBool::new(false));
+    let stdout_thread = {
+        let exceeded = Arc::clone(&exceeded);
+        std::thread::spawn(move || drain_capped(stdout_pipe, &exceeded))
+    };
+    let stderr_thread = {
+        let exceeded = Arc::clone(&exceeded);
+        std::thread::spawn(move || drain_capped(stderr_pipe, &exceeded))
+    };
 
     let deadline = Instant::now() + SPAWN_TIMEOUT;
     let status = loop {
+        if exceeded.load(Ordering::Relaxed) {
+            // Killing the child closes its pipe ends, so the drains reach EOF and the
+            // joins cannot block; joining (rather than detaching) keeps repeated
+            // failures from leaking threads.
+            let _ = child.kill();
+            let _ = child.wait();
+            let _ = stdout_thread.join();
+            let _ = stderr_thread.join();
+            return Err(output_cap_mismatch(args));
+        }
         match child.try_wait() {
             Ok(Some(status)) => break status,
             Ok(None) if Instant::now() >= deadline => {
                 let _ = child.kill();
                 let _ = child.wait();
+                let _ = stdout_thread.join();
+                let _ = stderr_thread.join();
                 return Err(format!(
                     "process hung: still running after {SPAWN_TIMEOUT:?} (args: {args:?})"
                 ));
@@ -122,28 +161,67 @@ pub fn run(binary: &Path, args: &[&str], dir: &Path) -> Result<Output, String> {
             Err(err) => panic!("suite broken: waiting on {binary:?} failed: {err}"),
         }
     };
+    let duration = started.elapsed();
 
-    let stdout = decode(
-        stdout_thread.join().expect("stdout drain panicked"),
-        "stdout",
-    )?;
-    let stderr = decode(
-        stderr_thread.join().expect("stderr drain panicked"),
-        "stderr",
-    )?;
+    let stdout_captured = stdout_thread.join().expect("stdout drain panicked");
+    let stderr_captured = stderr_thread.join().expect("stderr drain panicked");
+    // A child can blow the cap and exit before the wait loop notices the flag.
+    if stdout_captured.truncated || stderr_captured.truncated {
+        return Err(output_cap_mismatch(args));
+    }
+    let stdout = decode(stdout_captured.bytes, "stdout")?;
+    let stderr = decode(stderr_captured.bytes, "stderr")?;
     Ok(Output {
         code: status.code(),
         stdout,
         stderr,
+        duration,
     })
 }
 
-/// Reads a child pipe to EOF, panicking (suite broken) on IO failure.
-fn read_all(mut pipe: impl Read) -> Vec<u8> {
-    let mut buf = Vec::new();
-    pipe.read_to_end(&mut buf)
-        .unwrap_or_else(|err| panic!("suite broken: reading child pipe failed: {err}"));
-    buf
+/// The behavioral mismatch [`run`] reports when a stream outgrew [`OUTPUT_LIMIT`].
+fn output_cap_mismatch(args: &[&str]) -> String {
+    format!(
+        "process drowned a stream: more than {OUTPUT_LIMIT} bytes on stdout or stderr \
+         (args: {args:?})"
+    )
+}
+
+/// What one drain thread captured from a child pipe.
+struct Captured {
+    /// The first (at most) [`OUTPUT_LIMIT`] bytes the child wrote.
+    bytes: Vec<u8>,
+    /// Whether the child wrote past the cap; retained bytes are then incomplete.
+    truncated: bool,
+}
+
+/// Reads a child pipe to EOF, retaining at most [`OUTPUT_LIMIT`] bytes and raising
+/// `exceeded` when the child writes past the cap; keeps draining after truncation so
+/// the child can never block on a full pipe. Panics (suite broken) on IO failure.
+fn drain_capped(mut pipe: impl Read, exceeded: &AtomicBool) -> Captured {
+    let mut retained = Vec::new();
+    let mut truncated = false;
+    let mut chunk = [0u8; 64 * 1024];
+    loop {
+        let n = pipe
+            .read(&mut chunk)
+            .unwrap_or_else(|err| panic!("suite broken: reading child pipe failed: {err}"));
+        if n == 0 {
+            break;
+        }
+        if !truncated {
+            let keep = n.min(OUTPUT_LIMIT - retained.len());
+            retained.extend_from_slice(&chunk[..keep]);
+            if keep < n {
+                truncated = true;
+                exceeded.store(true, Ordering::Relaxed);
+            }
+        }
+    }
+    Captured {
+        bytes: retained,
+        truncated,
+    }
 }
 
 /// Decodes captured bytes as UTF-8, reporting a behavioral mismatch when they are not.

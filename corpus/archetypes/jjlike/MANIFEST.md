@@ -25,7 +25,8 @@
 ## Milestone ownership
 
 One milestone group — **runtime-template hardening** (the whole suite): baseline
-render, unknown filter, unknown tag (both configured behaviors), render budget.
+render, typed functions (`upper`, `lower`), unknown filter (including the byte-offset
+contract), unknown tag (both configured behaviors), render budget.
 
 Owning epic: **not yet minted** — the future runtime-templates parity epic; code
 assignment is flagged for its grill (codes are human-assigned).
