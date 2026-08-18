@@ -18,17 +18,17 @@
 //! invariant matrix sweeps.
 
 use std::collections::{BTreeMap, HashSet};
-use std::path::{Path, PathBuf};
+use std::path::Path;
 
 use anyhow::{bail, Context};
 use serde::Deserialize;
-use sha2::{Digest, Sha256};
+
+use crate::digest;
 
 /// One archetype as loaded from disk.
 #[derive(Debug)]
 pub struct Archetype {
     pub name: String,
-    pub dir: PathBuf,
     /// The exact spec text the agent will receive.
     pub spec: String,
     pub suite: Suite,
@@ -84,8 +84,9 @@ pub struct Check {
 }
 
 /// Declarative ROB01 matrix plan. The global axes define the stable planned
-/// cells; each command then declares where it applies and whether its output
-/// is framework-rendered or intentionally opaque bytes.
+/// cells; each command declares only whether its output is
+/// framework-rendered or intentionally opaque bytes — every command runs on
+/// every global axis combination.
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Invariants {
@@ -164,15 +165,6 @@ pub struct InvariantTheme {
 pub struct InvariantCommand {
     pub argv: Vec<String>,
     pub contract: InvariantContract,
-    /// Empty means every global mode is applicable.
-    #[serde(default)]
-    pub modes: Vec<InvariantMode>,
-    /// Empty means every global color state is applicable.
-    #[serde(default)]
-    pub colors: Vec<ColorState>,
-    /// Empty means every global theme is applicable.
-    #[serde(default)]
-    pub themes: Vec<String>,
 }
 
 fn all_modes() -> Vec<InvariantMode> {
@@ -337,10 +329,9 @@ impl Archetype {
         };
         Ok(Self {
             name: name.to_string(),
-            dir,
             spec,
             suite,
-            acceptance_sha256: sha256(&acceptance_text),
+            acceptance_sha256: digest::sha256_hex(&acceptance_text),
         })
     }
 
@@ -364,17 +355,12 @@ impl Archetype {
 
     /// sha256 (hex) of the spec text, pinning the run to spec content.
     pub fn spec_sha256(&self) -> String {
-        sha256(&self.spec)
+        digest::sha256_hex(&self.spec)
     }
 
     pub fn acceptance_sha256(&self) -> &str {
         &self.acceptance_sha256
     }
-}
-
-fn sha256(text: &str) -> String {
-    let digest = Sha256::digest(text.as_bytes());
-    digest.iter().map(|b| format!("{b:02x}")).collect()
 }
 
 impl CaseSuite {

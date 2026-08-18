@@ -69,7 +69,9 @@ enum Commands {
         source_report: PathBuf,
         #[arg(long)]
         output_report: PathBuf,
-        /// Exact already-built executable to evaluate. When omitted, the
+        /// Exact already-built executable to evaluate; it must live beneath
+        /// the preserved workspace, since checks run inside a sandbox that
+        /// admits only the workspace and system roots. When omitted, the
         /// preserved app is rebuilt inside the isolated build phase.
         #[arg(long)]
         binary: Option<PathBuf>,

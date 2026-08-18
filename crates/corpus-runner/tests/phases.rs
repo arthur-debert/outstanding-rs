@@ -71,9 +71,6 @@ fn rendered(argv: &[&str]) -> InvariantCommand {
     InvariantCommand {
         argv: argv.iter().map(|s| (*s).to_string()).collect(),
         contract: InvariantContract::Rendered,
-        modes: Vec::new(),
-        colors: Vec::new(),
-        themes: Vec::new(),
     }
 }
 
@@ -81,9 +78,6 @@ fn opaque(argv: &[&str]) -> InvariantCommand {
     InvariantCommand {
         argv: argv.iter().map(|s| (*s).to_string()).collect(),
         contract: InvariantContract::OpaqueBytes,
-        modes: Vec::new(),
-        colors: Vec::new(),
-        themes: Vec::new(),
     }
 }
 
@@ -303,7 +297,6 @@ fn session_scrubs_the_environment_and_writes_the_transcript() {
     assert!(!transcript.contains("CORPUS_SECRET_CANARY"), "{transcript}");
     assert!(transcript.contains("PATH="));
     assert_eq!(report.exit_code, Some(0));
-    assert_eq!(report.attempts, 1);
     assert!(report.wall_seconds >= 0.0);
     assert_eq!(report.transcript, session::TRANSCRIPT_FILENAME);
     assert!(!report.timed_out);
@@ -700,6 +693,14 @@ fn hanging_binary_times_out_as_a_finding() {
 // Report
 // ---------------------------------------------------------------------------
 
+fn test_isolation_record() -> corpus_runner::report::IsolationRecord {
+    corpus_runner::report::IsolationRecord {
+        backend: "test".into(),
+        filesystem: "test".into(),
+        network: corpus_runner::report::NetworkEnforcement::NotEnforced,
+    }
+}
+
 #[test]
 fn report_round_trips_through_json() {
     let report = RunReport {
@@ -718,14 +719,14 @@ fn report_round_trips_through_json() {
         },
         evaluation: corpus_runner::report::EvaluationStamp {
             origin: "full-run".into(),
-            isolation_backend: "test".into(),
+            isolation: test_isolation_record(),
             binary_sha256: None,
         },
         blindness: corpus_runner::report::Blindness {
             policy: "p".into(),
             env_allowlist: vec!["PATH".into()],
             framework_source_excluded: true,
-            isolation_backend: "test".into(),
+            isolation: test_isolation_record(),
             credential_exceptions: vec![],
             agent_reported_docs: None,
             agent_reported_external_sources: Some("none".into()),
@@ -735,7 +736,6 @@ fn report_round_trips_through_json() {
             wall_seconds: 1.5,
             exit_code: Some(0),
             timed_out: false,
-            attempts: 1,
             turns: Some(3),
             input_tokens: None,
             output_tokens: None,
@@ -763,7 +763,10 @@ fn report_round_trips_through_json() {
     let path = dir.path().join("report.json");
     report.write(&path).unwrap();
     let restored: RunReport = serde_json::from_str(&fs::read_to_string(&path).unwrap()).unwrap();
-    assert_eq!(restored.schema_version, 2);
+    assert_eq!(
+        restored.schema_version,
+        corpus_runner::report::SCHEMA_VERSION
+    );
     assert_eq!(restored.run_id, report.run_id);
     assert_eq!(restored.session.turns, Some(3));
     assert_eq!(

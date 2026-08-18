@@ -26,6 +26,11 @@ use crate::workspace;
 /// The transcript filename inside the run directory.
 pub const TRANSCRIPT_FILENAME: &str = "transcript.jsonl";
 
+/// Most transcript bytes read back for instrumentation. The stats live in
+/// the trailing `result` event, so only this much tail is ever ingested — a
+/// runaway agent can write a transcript far larger than runner memory.
+const TRANSCRIPT_TAIL_BYTES: u64 = 4 * 1024 * 1024;
+
 /// The default agent: a non-interactive Claude Code session over the
 /// workspace's instructions file, with host settings, plugins, and MCP
 /// servers/connectors disabled.
@@ -70,15 +75,13 @@ pub fn run_agent(
         .map_err(|err| anyhow::anyhow!("agent command {agent_cmd}: {err}"))?;
     let wall_seconds = started.elapsed().as_secs_f64();
 
-    let transcript_text = std::fs::read_to_string(transcript_path).unwrap_or_default();
-    let stats = stream_json_stats(&transcript_text);
+    let stats = stream_json_stats(&read_tail(transcript_path, TRANSCRIPT_TAIL_BYTES));
 
     Ok(SessionReport {
         agent_cmd: agent_cmd.to_string(),
         wall_seconds,
         exit_code: outcome.exit_code,
         timed_out: outcome.timed_out,
-        attempts: 1,
         turns: stats.turns,
         input_tokens: stats.input_tokens,
         output_tokens: stats.output_tokens,
@@ -92,6 +95,29 @@ pub struct StreamStats {
     pub turns: Option<u64>,
     pub input_tokens: Option<u64>,
     pub output_tokens: Option<u64>,
+}
+
+/// Reads at most the last `limit` bytes of `transcript_path` (lossy UTF-8;
+/// a line truncated at the window's start simply fails to parse and is
+/// skipped). An unreadable transcript yields an empty string — the same
+/// best-effort contract as the stats themselves.
+fn read_tail(path: &Path, limit: u64) -> String {
+    use std::io::{Read, Seek, SeekFrom};
+    let Ok(mut file) = std::fs::File::open(path) else {
+        return String::new();
+    };
+    let len = match file.metadata() {
+        Ok(meta) => meta.len(),
+        Err(_) => return String::new(),
+    };
+    if len > limit && file.seek(SeekFrom::End(-(limit as i64))).is_err() {
+        return String::new();
+    }
+    let mut bytes = Vec::new();
+    if file.take(limit).read_to_end(&mut bytes).is_err() {
+        return String::new();
+    }
+    String::from_utf8_lossy(&bytes).into_owned()
 }
 
 /// Extracts instrumentation from a Claude Code stream-json transcript: the
@@ -117,4 +143,45 @@ pub fn stream_json_stats(transcript: &str) -> StreamStats {
             .and_then(|n| n.as_u64());
     }
     stats
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    const RESULT_LINE: &str =
+        r#"{"type":"result","num_turns":7,"usage":{"input_tokens":123,"output_tokens":45}}"#;
+
+    #[test]
+    fn transcript_ingestion_is_bounded_to_the_tail() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("t.jsonl");
+        // A transcript far larger than the read window, stats event last —
+        // where a stream-json result always lives.
+        let mut oversized =
+            format!("{{\"type\":\"noise\",\"fill\":\"{}\"}}\n", "x".repeat(200)).repeat(200);
+        oversized.push_str(RESULT_LINE);
+        oversized.push('\n');
+        let limit = 4096;
+        assert!(oversized.len() as u64 > limit);
+        std::fs::write(&path, &oversized).unwrap();
+
+        let tail = read_tail(&path, limit);
+        assert!(tail.len() as u64 <= limit, "read {} bytes", tail.len());
+        let stats = stream_json_stats(&tail);
+        assert_eq!(stats.turns, Some(7));
+        assert_eq!(stats.input_tokens, Some(123));
+        assert_eq!(stats.output_tokens, Some(45));
+    }
+
+    #[test]
+    fn short_and_missing_transcripts_read_whole_and_empty() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("t.jsonl");
+        std::fs::write(&path, format!("{RESULT_LINE}\n")).unwrap();
+        let stats = stream_json_stats(&read_tail(&path, TRANSCRIPT_TAIL_BYTES));
+        assert_eq!(stats.turns, Some(7));
+
+        assert_eq!(read_tail(&dir.path().join("absent.jsonl"), 4096), "");
+    }
 }
