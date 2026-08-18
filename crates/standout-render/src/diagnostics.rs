@@ -320,16 +320,12 @@ pub fn resolve_tags(
 }
 
 fn warn_unresolved_tags(unresolved: &[UnknownTagError]) {
-    let mut names: Vec<&str> = Vec::new();
-    for error in unresolved {
-        let name = error.tag.as_str();
-        if !names.contains(&name) {
-            names.push(name);
-        }
-    }
+    let mut names: Vec<&str> = unresolved.iter().map(|error| error.tag.as_str()).collect();
+    names.sort_unstable();
+    names.dedup();
 
     if !names.is_empty() {
-        crate::warnings::push_warning(format!(
+        crate::warnings::push_warning_once(format!(
             "Unresolved style tag(s) degraded to unstyled text: {}",
             names.join(", ")
         ));

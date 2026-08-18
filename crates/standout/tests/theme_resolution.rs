@@ -29,7 +29,10 @@ fn app_template_unknown_tag_degrades_to_text_and_warns() {
     result.assert_success();
     assert_eq!(result.stdout(), "hello");
     assert!(!result.stdout().contains("?]"));
-    result.assert_warning_contains("missing_style");
+    assert_eq!(
+        result.warnings(),
+        ["Unresolved style tag(s) degraded to unstyled text: missing_style"]
+    );
 }
 
 #[test]

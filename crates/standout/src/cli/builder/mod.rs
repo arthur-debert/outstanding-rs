@@ -366,14 +366,53 @@ fn edit_distance(left: &str, right: &str) -> usize {
     costs[right.len()]
 }
 
-fn unique_unknown_tag_names(errors: &standout_bbparser::UnknownTagErrors) -> Vec<String> {
-    let mut names = Vec::new();
-    for error in &errors.errors {
-        if !names.contains(&error.tag) {
-            names.push(error.tag.clone());
-        }
-    }
+fn unique_unknown_tag_names<'a>(
+    errors: impl IntoIterator<Item = &'a standout_bbparser::UnknownTagError>,
+) -> Vec<String> {
+    let mut names: Vec<String> = errors.into_iter().map(|error| error.tag.clone()).collect();
+    names.sort_unstable();
+    names.dedup();
     names
+}
+
+fn validate_framework_template_content(
+    name: &str,
+    content: &str,
+    parser: &standout_bbparser::BBParser,
+) -> Result<(), SetupError> {
+    use standout_bbparser::UnknownTagKind;
+
+    let Err(errors) = parser.validate(content) else {
+        return Ok(());
+    };
+
+    let malformed = unique_unknown_tag_names(errors.errors.iter().filter(|error| {
+        matches!(
+            error.kind,
+            UnknownTagKind::Unbalanced | UnknownTagKind::UnexpectedClose
+        )
+    }));
+    if !malformed.is_empty() {
+        return Err(SetupError::Template(format!(
+            "framework template `{name}` contains malformed style markup involving tag(s): {}",
+            malformed.join(", ")
+        )));
+    }
+
+    let missing = unique_unknown_tag_names(
+        errors
+            .errors
+            .iter()
+            .filter(|error| !parser.styles().contains_key(&error.tag)),
+    );
+    if !missing.is_empty() {
+        return Err(SetupError::Template(format!(
+            "framework template `{name}` emits style tag(s) not defined by the resolved theme: {}",
+            missing.join(", ")
+        )));
+    }
+
+    Ok(())
 }
 
 /// Stores a pending command recipe along with its typed template declaration.
@@ -879,13 +918,7 @@ impl AppBuilder {
                     TemplateRefreshError::new(name, registry, error.to_string()).to_string(),
                 )
             })?;
-            if let Err(errors) = parser.validate(&content) {
-                let tags = unique_unknown_tag_names(&errors);
-                return Err(SetupError::Template(format!(
-                    "framework template `{name}` emits style tag(s) not defined by the resolved theme: {}",
-                    tags.join(", ")
-                )));
-            }
+            validate_framework_template_content(name, &content, &parser)?;
         }
 
         Ok(())
@@ -1767,6 +1800,7 @@ fn help_word_command(has_subcommands: bool) -> Command {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use console::Style;
 
     #[test]
     fn template_dependencies_support_whitespace_controls() {
@@ -1784,6 +1818,49 @@ mod tests {
 
         assert!(dependencies.names.is_empty());
         assert!(dependencies.dynamic);
+    }
+
+    #[test]
+    fn framework_template_validation_reports_malformed_markup_separately() {
+        let parser = standout_bbparser::BBParser::new(
+            HashMap::from([("known".to_string(), Style::new())]),
+            standout_bbparser::TagTransform::Remove,
+        );
+
+        let error =
+            validate_framework_template_content("standout/broken", "[known]unclosed", &parser)
+                .unwrap_err()
+                .to_string();
+
+        assert!(error.contains("malformed style markup"), "{error}");
+        assert!(error.contains("known"), "{error}");
+        assert!(
+            !error.contains("not defined by the resolved theme"),
+            "{error}"
+        );
+    }
+
+    #[test]
+    fn framework_template_validation_reports_only_missing_styles() {
+        let parser = standout_bbparser::BBParser::new(
+            HashMap::from([("known".to_string(), Style::new())]),
+            standout_bbparser::TagTransform::Remove,
+        );
+
+        let error = validate_framework_template_content(
+            "standout/missing",
+            "[missing]text[/missing]",
+            &parser,
+        )
+        .unwrap_err()
+        .to_string();
+
+        assert!(
+            error.contains("not defined by the resolved theme"),
+            "{error}"
+        );
+        assert!(error.contains("missing"), "{error}");
+        assert!(!error.contains("malformed style markup"), "{error}");
     }
 
     /// A root with a value-taking option, a flag, and a positional — enough
