@@ -1,0 +1,13 @@
+[package]
+name = "corpus-gap-suites"
+version = "0.0.0"
+edition = "2021"
+description = "Expected-fail acceptance suites for the corpus gap archetypes (tflike, jjlike)"
+license = "MIT"
+publish = false
+
+[dependencies]
+serde_json = "1"
+
+[dev-dependencies]
+tempfile = "3"
