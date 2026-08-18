@@ -1,7 +1,7 @@
 use clap::Command;
 use serde_json::json;
 use serial_test::serial;
-use standout::cli::{App, Output, RunResult};
+use standout::cli::{App, AppBuilder, Output, RunResult};
 use standout::{EmbeddedSource, OutputMode, TemplateResource};
 use standout_test::TestHarness;
 
@@ -12,7 +12,7 @@ fn command() -> Command {
     Command::new("app").subcommand(Command::new("show"))
 }
 
-fn build_error(builder: standout::cli::App) -> String {
+fn build_error(builder: AppBuilder) -> String {
     match builder.build() {
         Ok(_) => panic!("expected build to fail"),
         Err(error) => error.to_string(),

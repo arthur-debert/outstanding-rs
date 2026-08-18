@@ -378,6 +378,8 @@ fn reserved_answers_collision_fails_verification() {
         .command_with("collect", handlers::collect, |cfg| {
             cfg.template("{{ name }}").questionnaire::<FixtureAnswers>()
         })
+        .unwrap()
+        .build()
         .unwrap();
     let cmd = Command::new("fixture")
         .subcommand(Command::new("collect").arg(Arg::new("answers").long("answers")));
@@ -393,6 +395,8 @@ fn reserved_answer_alias_collision_fails_verification() {
         .command_with("collect", handlers::collect, |cfg| {
             cfg.template("{{ name }}").questionnaire::<FixtureAnswers>()
         })
+        .unwrap()
+        .build()
         .unwrap();
     let cmd = Command::new("fixture")
         .subcommand(Command::new("collect").arg(Arg::new("other").long("other").alias("answers")));
@@ -408,6 +412,8 @@ fn reserved_questions_alias_collision_fails_verification() {
         .command_with("collect", handlers::collect, |cfg| {
             cfg.template("{{ name }}").questionnaire::<FixtureAnswers>()
         })
+        .unwrap()
+        .build()
         .unwrap();
     let cmd = Command::new("fixture")
         .subcommand(Command::new("collect").subcommand(Command::new("local").alias("questions")));

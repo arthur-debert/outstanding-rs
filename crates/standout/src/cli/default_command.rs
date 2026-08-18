@@ -4,9 +4,9 @@
 //! `myapp --verbose`. Standout can substitute a command for it in two additive
 //! layers:
 //!
-//! - [`AppBuilder::default_command`](crate::cli::App::default_command) — a
+//! - [`AppBuilder::default_command`](crate::cli::AppBuilder::default_command) — a
 //!   static name, used for every naked invocation.
-//! - [`AppBuilder::default_command_with`](crate::cli::App::default_command_with)
+//! - [`AppBuilder::default_command_with`](crate::cli::AppBuilder::default_command_with)
 //!   — a resolver that picks a name per invocation from non-consuming facts.
 //!
 //! Both layers funnel through [`resolve`], and both parse paths reach it
@@ -249,7 +249,7 @@ impl<'a> DefaultCommandContext<'a> {
     }
 
     /// Borrows app-level state of type `T`, if registered via
-    /// [`app_state`](crate::cli::App::app_state).
+    /// [`app_state`](crate::cli::AppBuilder::app_state).
     ///
     /// Read-only: resolution happens before dispatch and must not mutate.
     pub fn app_state<T: 'static>(&self) -> Option<&'a T> {

@@ -91,7 +91,7 @@ fn help_flags_still_render_themed_help_without_the_opt_in() {
 /// a positional.
 #[test]
 fn a_flat_command_with_no_positionals_gets_the_word_automatically() {
-    let app = App::new().help_handling(true).build().unwrap();
+    let app = App::builder().help_handling(true).build().unwrap();
     let cmd = Command::new("app").about("Flag-only app").arg(
         Arg::new("staged")
             .long("staged")
@@ -201,7 +201,7 @@ fn the_policy_reads_the_shape_the_framework_leaves_behind() {
     //
     // The app is bespoke because the questionnaire is the subject; the command
     // is the fixture's flat root, so the shape under test is the shared one.
-    let app = App::new()
+    let app = App::builder()
         .help_handling(true)
         .command_with(
             "",
@@ -234,7 +234,7 @@ fn the_policy_reads_the_shape_the_framework_leaves_behind() {
 
 #[test]
 fn help_word_without_help_handling_is_a_setup_error() {
-    match App::new().help_word(true).build() {
+    match App::builder().help_word(true).build() {
         Err(e) => assert!(
             e.to_string()
                 .contains("help_word requires .help_handling(true)"),

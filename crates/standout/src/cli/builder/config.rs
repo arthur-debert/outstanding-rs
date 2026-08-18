@@ -14,7 +14,6 @@ use crate::topics::Topic;
 use crate::TemplateRegistry;
 use crate::{EmbeddedStyles, EmbeddedTemplates, Theme};
 use minijinja::Value;
-use std::rc::Rc;
 
 use super::AppBuilder;
 
@@ -185,7 +184,7 @@ impl AppBuilder {
     ///     .run(cmd, args);
     /// ```
     pub fn templates(mut self, templates: EmbeddedTemplates) -> Self {
-        self.template_registry = Some(Rc::new(TemplateRegistry::from(templates)));
+        self.template_registry = Some(TemplateRegistry::from(templates));
         self
     }
 
@@ -267,20 +266,11 @@ impl AppBuilder {
     ///     .templates_dir("~/.myapp/templates")  // User overrides
     /// ```
     pub fn templates_dir<P: AsRef<std::path::Path>>(mut self, path: P) -> Result<Self, SetupError> {
-        if self.template_registry.is_none() {
-            self.template_registry = Some(Rc::new(TemplateRegistry::new()));
-        }
-
-        let arc = self.template_registry.as_mut().unwrap();
-        match Rc::get_mut(arc) {
-            Some(registry) => {
-                registry.add_template_dir(path)?;
-                registry.refresh()?;
-            }
-            None => {
-                panic!("Cannot modify template registry after commands have been dispatched/finalized.");
-            }
-        }
+        let registry = self
+            .template_registry
+            .get_or_insert_with(TemplateRegistry::new);
+        registry.add_template_dir(path)?;
+        registry.refresh()?;
         Ok(self)
     }
 
@@ -597,7 +587,7 @@ mod tests {
 
         let cmd = Command::new("app").subcommand(Command::new("info"));
         let matches = cmd.try_get_matches_from(["app", "info"]).unwrap();
-        let result = builder.dispatch(matches, OutputMode::Text);
+        let result = builder.build().unwrap().dispatch(matches, OutputMode::Text);
 
         assert!(result.is_handled());
         assert_eq!(result.output(), Some("app v1.0.0"));
@@ -619,7 +609,7 @@ mod tests {
 
         let cmd = Command::new("app").subcommand(Command::new("info"));
         let matches = cmd.try_get_matches_from(["app", "info"]).unwrap();
-        let result = builder.dispatch(matches, OutputMode::Text);
+        let result = builder.build().unwrap().dispatch(matches, OutputMode::Text);
 
         assert!(result.is_handled());
         assert_eq!(result.output(), Some("Report by Alice (2024)"));
@@ -642,7 +632,7 @@ mod tests {
 
         let cmd = Command::new("app").subcommand(Command::new("info"));
         let matches = cmd.try_get_matches_from(["app", "info"]).unwrap();
-        let result = builder.dispatch(matches, OutputMode::Text);
+        let result = builder.build().unwrap().dispatch(matches, OutputMode::Text);
 
         assert!(result.is_handled());
         // The width will be actual terminal width or 80 in tests
@@ -667,7 +657,7 @@ mod tests {
 
         let cmd = Command::new("app").subcommand(Command::new("info"));
         let matches = cmd.try_get_matches_from(["app", "info"]).unwrap();
-        let result = builder.dispatch(matches, OutputMode::Text);
+        let result = builder.build().unwrap().dispatch(matches, OutputMode::Text);
 
         assert!(result.is_handled());
         assert_eq!(result.output(), Some("Mode: Text"));
@@ -690,7 +680,7 @@ mod tests {
 
         let cmd = Command::new("app").subcommand(Command::new("test"));
         let matches = cmd.try_get_matches_from(["app", "test"]).unwrap();
-        let result = builder.dispatch(matches, OutputMode::Text);
+        let result = builder.build().unwrap().dispatch(matches, OutputMode::Text);
 
         assert!(result.is_handled());
         assert_eq!(result.output(), Some("from_data"));
@@ -718,15 +708,16 @@ mod tests {
         let cmd = Command::new("app")
             .subcommand(Command::new("list"))
             .subcommand(Command::new("info"));
+        let app = builder.build().unwrap();
 
         // Test "list" command
         let matches = cmd.clone().try_get_matches_from(["app", "list"]).unwrap();
-        let result = builder.dispatch(matches, OutputMode::Text);
+        let result = app.dispatch(matches, OutputMode::Text);
         assert_eq!(result.output(), Some("MyApp: list"));
 
         // Test "info" command
         let matches = cmd.try_get_matches_from(["app", "info"]).unwrap();
-        let result = builder.dispatch(matches, OutputMode::Text);
+        let result = app.dispatch(matches, OutputMode::Text);
         assert_eq!(result.output(), Some("MyApp: info"));
     }
 
@@ -748,7 +739,7 @@ mod tests {
 
         let cmd = Command::new("app").subcommand(Command::new("test"));
         let matches = cmd.try_get_matches_from(["app", "test"]).unwrap();
-        let result = builder.dispatch(matches, OutputMode::Text);
+        let result = builder.build().unwrap().dispatch(matches, OutputMode::Text);
 
         assert!(result.is_handled());
         assert_eq!(result.output(), Some("Count: 21, Doubled: 42"));
@@ -775,7 +766,7 @@ mod tests {
 
         let cmd = Command::new("app").subcommand(Command::new("test"));
         let matches = cmd.try_get_matches_from(["app", "test"]).unwrap();
-        let result = builder.dispatch(matches, OutputMode::Text);
+        let result = builder.build().unwrap().dispatch(matches, OutputMode::Text);
 
         assert!(result.is_handled());
         assert_eq!(result.output(), Some("Debug: true, Max: 100"));
@@ -799,7 +790,7 @@ mod tests {
 
         let cmd = Command::new("app").subcommand(Command::new("list"));
         let matches = cmd.try_get_matches_from(["app", "list"]).unwrap();
-        let result = builder.dispatch(matches, OutputMode::Text);
+        let result = builder.build().unwrap().dispatch(matches, OutputMode::Text);
 
         assert!(result.is_handled());
         assert_eq!(result.output(), Some("a | b | c"));
@@ -820,7 +811,7 @@ mod tests {
 
         let cmd = Command::new("app").subcommand(Command::new("test"));
         let matches = cmd.try_get_matches_from(["app", "test"]).unwrap();
-        let result = builder.dispatch(matches, OutputMode::Json);
+        let result = builder.build().unwrap().dispatch(matches, OutputMode::Json);
 
         assert!(result.is_handled());
         let output = result.output().unwrap();
@@ -847,12 +838,12 @@ mod tests {
                 })
             });
 
-        let builder = builder.unwrap().build().unwrap();
+        let app = builder.unwrap().build().unwrap();
 
         let cmd =
             Command::new("app").subcommand(Command::new("db").subcommand(Command::new("migrate")));
         let matches = cmd.try_get_matches_from(["app", "db", "migrate"]).unwrap();
-        let result = builder.dispatch(matches, OutputMode::Text);
+        let result = app.dispatch(matches, OutputMode::Text);
 
         assert_eq!(result.output(), Some("true"));
     }

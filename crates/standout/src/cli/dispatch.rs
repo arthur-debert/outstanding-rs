@@ -42,7 +42,7 @@ pub enum DispatchOutput {
     /// The report can only name the destination once the framework has
     /// selected one and the write has succeeded, so the artifact travels with
     /// the presentation configuration needed to render it later, in
-    /// `AppBuilder::dispatch`, after the write.
+    /// `App::dispatch`, after the write.
     Artifact {
         /// Bytes, suggestion, stdout opt-in, and the serialized report.
         output: ArtifactOutput,

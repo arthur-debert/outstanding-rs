@@ -1,8 +1,9 @@
-//! App builder and main entry point for CLI integration.
+//! App builder and built entry point for CLI integration.
 //!
-//! This module provides the [`AppBuilder`] type (re-exported as [`App`](super::App))
-//! for configuring CLI applications with commands, hooks, templates, themes,
-//! and app-level state.
+//! This module provides [`AppBuilder`] for configuring CLI applications with
+//! commands, hooks, templates, themes, and app-level state. Calling
+//! [`AppBuilder::build`] consumes the builder and returns the executable
+//! [`App`] that owns parsing, dispatch, rendering, and run entry points.
 //!
 //! # App State
 //!
@@ -10,7 +11,7 @@
 //! injected via `.app_state()` and accessed in handlers via `ctx.app_state`:
 //!
 //! ```rust,ignore
-//! App::new()
+//! App::builder()
 //!     .app_state(Database::connect()?)
 //!     .app_state(Config::load()?)
 //!     .command("list", |matches, ctx| {
@@ -427,23 +428,62 @@ pub(crate) enum HookRegistrationSource {
     CommandConfig,
 }
 
-/// Main entry point for standout-clap integration.
+/// Main entry point for running a configured standout-clap application.
 ///
-/// `AppBuilder` is re-exported as `App` in the public API. It serves as both
-/// the builder for configuration and the runtime for command dispatch, rendering,
-/// and help.
+/// `App` is produced by [`AppBuilder::build`]. It owns command dispatch,
+/// rendering, parsing, and run entry points; the configuring builder does not.
+/// Create one with [`App::builder`] and finish configuration with `build()`.
 ///
 /// # Example
 ///
 /// ```rust
 /// use standout::cli::App;
 ///
-/// let standout = App::new()
+/// let standout = App::builder()
 ///     .help_handling(true)
 ///     .topics_dir(".").unwrap()
 ///     .output_flag(Some("format"))
 ///     .build();
 /// ```
+pub struct App {
+    pub(crate) registry: TopicRegistry,
+    pub(crate) output_flag: Option<String>,
+    pub(crate) output_file_flag: Option<String>,
+    pub(crate) theme: Option<Theme>,
+    pub(crate) stylesheet_registry: Option<crate::StylesheetRegistry>,
+    pub(crate) template_registry: Option<Rc<TemplateRegistry>>,
+    pending_commands: RefCell<HashMap<String, PendingCommand>>,
+    finalized_commands: RefCell<Option<HashMap<String, DispatchFn>>>,
+    pub(crate) command_hooks: HashMap<String, Hooks>,
+    pub(crate) questionnaire_commands: HashMap<String, QuestionnaireCommand>,
+    pub(crate) context_registry: ContextRegistry,
+    pub(crate) default_command: Option<String>,
+    pub(crate) default_command_resolver: Option<crate::cli::DefaultCommandResolver>,
+    pub(crate) app_state: Rc<Extensions>,
+    pub(crate) template_engine: SharedTemplateEngine,
+    pub(crate) help_command_groups: Option<Vec<CommandGroup>>,
+    pub(crate) help_handling: bool,
+    pub(crate) help_word: bool,
+    pub(crate) ambiguous_width: crate::AmbiguousWidth,
+    pub(crate) version: Option<&'static str>,
+}
+
+impl App {
+    /// Starts configuring a standout CLI application.
+    ///
+    /// This is the public constructor for the configuring builder. Call
+    /// [`AppBuilder::build`] when configuration is complete to obtain the
+    /// executable [`App`].
+    pub fn builder() -> AppBuilder {
+        AppBuilder::new()
+    }
+}
+
+/// Configures a standout-clap application before it can run.
+///
+/// `AppBuilder` owns configuration methods only. Running, dispatching,
+/// parsing, and rendering are available after [`build`](Self::build) returns
+/// an [`App`].
 ///
 /// # Context Injection
 ///
@@ -455,7 +495,7 @@ pub(crate) enum HookRegistrationSource {
 /// use crate::context::RenderContext;
 /// use minijinja::Value;
 ///
-/// App::new()
+/// App::builder()
 ///     // Static context
 ///     .context("app_version", Value::from("1.0.0"))
 ///
@@ -478,7 +518,7 @@ pub struct AppBuilder {
     /// Stylesheet registry (built from embedded styles)
     pub(crate) stylesheet_registry: Option<crate::StylesheetRegistry>,
     /// Template registry (built from embedded templates)
-    pub(crate) template_registry: Option<Rc<TemplateRegistry>>,
+    pub(crate) template_registry: Option<TemplateRegistry>,
     pub(crate) default_theme_name: Option<String>,
     /// Pending commands - closures are created lazily at dispatch time
     pending_commands: RefCell<HashMap<String, PendingCommand>>,
@@ -499,11 +539,8 @@ pub struct AppBuilder {
     pub(crate) include_framework_templates: bool,
     /// Whether to include framework-supplied styles (default: true)
     pub(crate) include_framework_styles: bool,
-    /// App-level state shared across all dispatches.
-    ///
-    /// Stored as `Rc<Extensions>` so it can be cloned cheaply into CommandContext.
-    /// During builder phase, `Rc::get_mut` is used since only the builder holds the Rc.
-    pub(crate) app_state: Rc<Extensions>,
+    /// App-level state that will be shared across all dispatches after build.
+    pub(crate) app_state: Extensions,
 
     /// Optional template engine.
     ///
@@ -549,11 +586,11 @@ impl Default for AppBuilder {
 }
 
 impl AppBuilder {
-    /// Creates a new App with default settings.
+    /// Creates a new builder with default settings.
     ///
     /// By default, the `--output` flag is enabled, framework templates and styles
     /// are included, and no hooks are registered.
-    pub fn new() -> Self {
+    pub(crate) fn new() -> Self {
         Self {
             registry: TopicRegistry::new(),
             output_flag: Some("output".to_string()), // Enabled by default
@@ -574,7 +611,7 @@ impl AppBuilder {
             default_command_resolver: None,
             include_framework_templates: true,
             include_framework_styles: true,
-            app_state: Rc::new(Extensions::new()),
+            app_state: Extensions::new(),
             template_engine: Rc::new(RefCell::new(Box::new(
                 standout_render::template::MiniJinjaEngine::new(),
             ))),
@@ -584,11 +621,6 @@ impl AppBuilder {
             ambiguous_width: crate::AmbiguousWidth::Narrow,
             version: None,
         }
-    }
-
-    /// Backwards-compatible alias for `new()`.
-    pub fn builder() -> Self {
-        Self::new()
     }
 
     /// Adds app-level state that will be available to all handlers.
@@ -609,7 +641,7 @@ impl AppBuilder {
     ///     requests: AtomicUsize,
     /// }
     ///
-    /// let app = App::new()
+    /// let app = App::builder()
     ///     .app_state(Metrics { requests: AtomicUsize::new(0) })
     ///     .command_with("test", |_m, ctx| {
     ///         let metrics = ctx.app_state.get_required::<Metrics>()?;
@@ -628,7 +660,7 @@ impl AppBuilder {
     /// struct Database { url: String }
     /// struct Config { debug: bool }
     ///
-    /// let app = App::new()
+    /// let app = App::builder()
     ///     .app_state(Database { url: "postgres://localhost".into() })
     ///     .app_state(Config { debug: true })
     ///     .command("list", |matches, ctx| {
@@ -646,15 +678,12 @@ impl AppBuilder {
     /// type replaces the first:
     ///
     /// ```rust,ignore
-    /// App::new()
+    /// App::builder()
     ///     .app_state(Config { debug: false })
     ///     .app_state(Config { debug: true })  // Replaces previous Config
     /// ```
     pub fn app_state<T: 'static>(mut self, value: T) -> Self {
-        // During builder phase, only the builder holds the Rc, so get_mut succeeds.
-        Rc::get_mut(&mut self.app_state)
-            .expect("app_state Rc should be exclusively owned during builder phase")
-            .insert(value);
+        self.app_state.insert(value);
         self
     }
 
@@ -669,53 +698,15 @@ impl AppBuilder {
         self
     }
 
-    /// Ensures all pending commands have been finalized into dispatch functions.
-    ///
-    /// This method is called lazily on first dispatch. It creates the actual
-    /// dispatch closures from the stored recipes. The theme is NOT captured here -
-    /// it is passed at runtime via late binding, which allows `.theme()` to be
-    /// called in any order relative to `.command()`.
-    fn ensure_commands_finalized(&self) {
-        // Already finalized?
-        if self.finalized_commands.borrow().is_some() {
-            return;
-        }
-
-        let context_registry = &self.context_registry;
-
-        // Build dispatch functions from recipes
-        let mut commands = HashMap::new();
-        for (path, pending) in self.pending_commands.borrow().iter() {
-            let dispatch = pending.recipe.create_dispatch(
-                &pending.template,
-                context_registry,
-                self.template_engine.clone(),
-                self.template_registry.clone(),
-            );
-            commands.insert(path.clone(), dispatch);
-        }
-
-        *self.finalized_commands.borrow_mut() = Some(commands);
-    }
-
-    /// Returns the finalized commands map, creating it if necessary.
-    fn get_commands(&self) -> std::cell::Ref<'_, HashMap<String, DispatchFn>> {
-        self.ensure_commands_finalized();
-        std::cell::Ref::map(self.finalized_commands.borrow(), |opt| {
-            opt.as_ref()
-                .expect("finalized_commands should be Some after ensure_commands_finalized")
-        })
-    }
-
     /// Test helper: Check if a command path is registered.
     #[cfg(test)]
     pub(crate) fn has_command(&self, path: &str) -> bool {
         self.pending_commands.borrow().contains_key(path)
     }
 
-    /// Finalizes the App, resolving one framework-base-plus-application theme,
-    /// validating typed template declarations, loading templates, and preparing
-    /// for dispatch and rendering.
+    /// Finalizes the builder into an executable App, resolving one
+    /// framework-base-plus-application theme, validating typed template
+    /// declarations, loading templates, and preparing for dispatch and rendering.
     ///
     /// # Errors
     ///
@@ -732,12 +723,12 @@ impl AppBuilder {
     /// # Example
     ///
     /// ```rust,ignore
-    /// let standout = App::new()
+    /// let standout = App::builder()
     ///     .styles(embed_styles!("src/styles"))
     ///     .default_theme("dark")
     ///     .build()?;
     /// ```
-    pub fn build(mut self) -> Result<Self, SetupError> {
+    pub fn build(mut self) -> Result<App, SetupError> {
         use crate::assets::FRAMEWORK_TEMPLATES;
 
         if !self.setup_errors.is_empty() {
@@ -747,20 +738,12 @@ impl AppBuilder {
         // Add framework templates if enabled (BEFORE finalizing commands)
         if self.include_framework_templates {
             match self.template_registry.as_mut() {
-                Some(arc) => {
-                    // Get mutable access to the registry
-                    if let Some(registry) = Rc::get_mut(arc) {
-                        registry.add_framework_entries(FRAMEWORK_TEMPLATES);
-                    } else {
-                        // Shouldn't happen during build before finalization
-                        panic!("template registry was shared before build completed");
-                    }
-                }
+                Some(registry) => registry.add_framework_entries(FRAMEWORK_TEMPLATES),
                 None => {
                     // Create new registry with just framework templates
                     let mut registry = TemplateRegistry::new();
                     registry.add_framework_entries(FRAMEWORK_TEMPLATES);
-                    self.template_registry = Some(Rc::new(registry));
+                    self.template_registry = Some(registry);
                 }
             };
         }
@@ -832,10 +815,33 @@ impl AppBuilder {
                 .map_err(|error| SetupError::Template(error.to_string()))?;
         }
 
-        // Finalize commands (now theme is resolved and will be captured correctly)
-        self.ensure_commands_finalized();
+        let app = App {
+            registry: self.registry,
+            output_flag: self.output_flag,
+            output_file_flag: self.output_file_flag,
+            theme: self.theme,
+            stylesheet_registry: self.stylesheet_registry,
+            template_registry: self.template_registry.map(Rc::new),
+            pending_commands: self.pending_commands,
+            finalized_commands: self.finalized_commands,
+            command_hooks: self.command_hooks,
+            questionnaire_commands: self.questionnaire_commands,
+            context_registry: self.context_registry,
+            default_command: self.default_command,
+            default_command_resolver: self.default_command_resolver,
+            app_state: Rc::new(self.app_state),
+            template_engine: self.template_engine,
+            help_command_groups: self.help_command_groups,
+            help_handling: self.help_handling,
+            help_word: self.help_word,
+            ambiguous_width: self.ambiguous_width,
+            version: self.version,
+        };
 
-        Ok(self)
+        // Finalize commands with built template and theme state in place.
+        app.ensure_commands_finalized();
+
+        Ok(app)
     }
 
     fn validate_command_templates(&self) -> Result<(), SetupError> {
@@ -939,15 +945,41 @@ impl AppBuilder {
 
         Ok(())
     }
+}
 
-    /// Builds and parses CLI arguments in one step.
+impl App {
+    /// Ensures all pending commands have been finalized into dispatch functions.
     ///
-    /// # Panics
-    ///
-    /// Panics if building fails (e.g., theme not found). For proper error handling,
-    /// use `build()` followed by `parse_with()` instead.
-    pub fn parse(self, cmd: clap::Command) -> clap::ArgMatches {
-        self.build().expect("Failed to build App").parse_with(cmd)
+    /// This method is called lazily on first dispatch. It creates the actual
+    /// dispatch closures from the stored recipes. The theme is passed at
+    /// dispatch time via late binding, which allows `.theme()` to be called in
+    /// any order relative to `.command()` before build.
+    fn ensure_commands_finalized(&self) {
+        if self.finalized_commands.borrow().is_some() {
+            return;
+        }
+
+        let mut commands = HashMap::new();
+        for (path, pending) in self.pending_commands.borrow().iter() {
+            let dispatch = pending.recipe.create_dispatch(
+                &pending.template,
+                &self.context_registry,
+                self.template_engine.clone(),
+                self.template_registry.clone(),
+            );
+            commands.insert(path.clone(), dispatch);
+        }
+
+        *self.finalized_commands.borrow_mut() = Some(commands);
+    }
+
+    /// Returns the finalized commands map, creating it if necessary.
+    fn get_commands(&self) -> std::cell::Ref<'_, HashMap<String, DispatchFn>> {
+        self.ensure_commands_finalized();
+        std::cell::Ref::map(self.finalized_commands.borrow(), |opt| match opt.as_ref() {
+            Some(commands) => commands,
+            None => unreachable!("command finalization stores a command map before returning"),
+        })
     }
 
     // =========================================================================
@@ -1015,7 +1047,14 @@ impl AppBuilder {
     // Parsing & Help
     // =========================================================================
 
-    /// Parses CLI arguments with this configured App instance.
+    /// Parses CLI arguments with this built App instance.
+    ///
+    /// This compatibility entry point is equivalent to [`parse_with`](Self::parse_with).
+    pub fn parse(&self, cmd: Command) -> clap::ArgMatches {
+        self.parse_with(cmd)
+    }
+
+    /// Parses CLI arguments with this built App instance.
     pub fn parse_with(&self, cmd: Command) -> clap::ArgMatches {
         self.parse_from(cmd, std::env::args())
     }
@@ -1750,7 +1789,7 @@ fn duplicate_help_word(claim: &str) -> SetupError {
     ))
 }
 
-/// Argument ids for the flags [`AppBuilder::help_request`] re-declares.
+/// Argument ids for the flags [`App::help_request`] re-declares.
 ///
 /// Named out of the application's namespace: they exist only on a throwaway
 /// clone, but a collision with a real argument would silently change what the
@@ -1885,7 +1924,7 @@ mod tests {
 
     fn request(args: &[&str]) -> HelpRequest {
         let args: Vec<std::ffi::OsString> = args.iter().map(Into::into).collect();
-        AppBuilder::help_request(&probe_command(), &args)
+        App::help_request(&probe_command(), &args)
     }
 
     #[test]

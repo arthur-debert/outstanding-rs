@@ -12,7 +12,7 @@
 use clap::{Arg, ArgAction, Command};
 use serde_json::json;
 use serial_test::serial;
-use standout::cli::{App, ExitStatus, HelpResult, Output, RunErrorKind, SuccessKind};
+use standout::cli::{App, AppBuilder, ExitStatus, HelpResult, Output, RunErrorKind, SuccessKind};
 use standout_input::env::MockStdin;
 use standout_input::{reset_default_stdin_reader, set_default_stdin_reader};
 use standout_test::TestHarness;
@@ -38,7 +38,7 @@ fn app_command() -> Command {
 
 /// Registers handlers for every command except `unhandled`, which exercises the
 /// partial-adoption `NoMatch` path.
-fn register(builder: App) -> App {
+fn register(builder: AppBuilder) -> AppBuilder {
     builder
         .command(
             "list",
