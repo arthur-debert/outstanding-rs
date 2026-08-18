@@ -1,13 +1,20 @@
 # Acceptance suite for the smoke archetype, written before any implementation
 # (spec-first: "did it work" is never judged by the implementer). The runner
-# executes each check against the produced binary and records pass/fail in the
-# run report, separate from the agent's self-assessment.
+# executes each case against the produced binary and records its outcome in
+# the run report, separate from the agent's self-assessment.
 
-binary = "smoketable"
+schema = 1
+archetype = "smoke"
 
-[[check]]
-name = "list renders the heading and every star row"
-args = ["list", "--output", "text"]
+[[case]]
+name = "list-renders-heading-and-every-star-row"
+stresses = "table rendering of the fixed catalog"
+expected = "pass"
+[case.run]
+argv = ["list", "--output", "text"]
+timeout_seconds = 30
+[case.expect]
+exit_code = 0
 stdout_contains = [
     "Star Catalog",
     "Aldebaran",
@@ -18,9 +25,15 @@ stdout_contains = [
     "Lyra",
 ]
 
-[[check]]
-name = "list binds each star to its own constellation and magnitude"
-args = ["list", "--output", "text"]
+[[case]]
+name = "list-binds-each-star-to-its-own-row"
+stresses = "row association in the rendered table"
+expected = "pass"
+[case.run]
+argv = ["list", "--output", "text"]
+timeout_seconds = 30
+[case.expect]
+exit_code = 0
 # Row association, not a bag of substrings: each group must co-occur on one
 # single output line, so a table that shuffles columns across rows fails.
 stdout_row_contains = [
@@ -29,10 +42,15 @@ stdout_row_contains = [
     ["Vega", "Lyra", "0.03"],
 ]
 
-[[check]]
-name = "list emits the catalog as JSON with complete star rows"
-args = ["list", "--output", "json"]
-stdout_is_json = true
+[[case]]
+name = "list-emits-complete-json-star-rows"
+stresses = "machine JSON carrying complete star rows"
+expected = "pass"
+[case.run]
+argv = ["list", "--output", "json"]
+timeout_seconds = 30
+[case.expect]
+exit_code = 0
 # Each group must co-occur inside one single JSON array element (numbers
 # match their decimal literal), so `["Aldebaran","Rigel","Vega"]` alone —
 # names without constellations or magnitudes — fails.
@@ -42,10 +60,16 @@ stdout_json_rows = [
     ["Vega", "Lyra", "0.03"],
 ]
 
-[[check]]
-name = "about names the tool"
-args = ["about", "--output", "text"]
-stdout_contains = ["smoketable"]
+[[case]]
+name = "about-names-the-tool"
+stresses = "single-line about output"
+expected = "pass"
+[case.run]
+argv = ["about", "--output", "text"]
+timeout_seconds = 30
+[case.expect]
+exit_code = 0
+stdout_contains = ["smoke"]
 
 # The ROB01 invariant matrix runs each listed command across output modes
 # (text, term, json): exit 0 everywhere, no unresolved [tag?] markers, term

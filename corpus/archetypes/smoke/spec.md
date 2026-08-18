@@ -1,4 +1,4 @@
-# smoketable
+# smoke
 
 A tiny star-catalog CLI. This spec describes observable behavior only; how you
 structure the code is up to you, but the application must be built with the
@@ -7,12 +7,12 @@ scaffold.
 
 ## Binary
 
-The produced binary is named `smoketable` (the scaffold's package name already
+The produced binary is named `smoke` (the scaffold's package name already
 matches — build it with `cargo build` inside `app/`).
 
 ## Commands
 
-### `smoketable list`
+### `smoke list`
 
 Renders the fixed star catalog below as a table: one row per star, with the
 star name, constellation, and apparent magnitude in aligned columns, under a
@@ -26,9 +26,9 @@ star name, constellation, and apparent magnitude in aligned columns, under a
 
 The catalog is hard-coded; there is no storage and no way to modify it.
 
-### `smoketable about`
+### `smoke about`
 
-Prints a single descriptive line containing the tool name `smoketable` and a
+Prints a single descriptive line containing the tool name `smoke` and a
 short statement of purpose.
 
 ## Output modes

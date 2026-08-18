@@ -15,9 +15,8 @@ makes runs reproducible and comparable.
   exception: `smoke` is not a roster member — it is the harness's own
   walking-skeleton archetype (spec, "Testing / Verification": "the harness
   itself gets a smoke archetype"), carrying `spec.md` plus an
-  `acceptance.toml` in the runner's check schema, and its binary name
-  (`smoketable`) deliberately differs from its directory name. The roster's
-  structural test exempts it by name.
+  `acceptance.toml` in the same case schema as every roster suite, but no
+  `manifest.toml`. The roster's structural test exempts it by name.
 - `runs/<run-id>/` — one directory per run: the provisioned `workspace/`, the
   per-case `cases/` sandboxes, the session `transcript.jsonl`, and the
   durable `report.json`. Runs are artifacts, not source: `runs/` is
@@ -52,21 +51,23 @@ checkout: a nested workspace would let parent traversal and Git discovery
 cross the blindness boundary.
 
 Every external process (agent, cargo build, produced binary) runs under a
-per-phase deadline (`--agent-timeout`, `--build-timeout`, `--check-timeout`,
-seconds) — an overrun is killed (whole process group) and recorded in the
+deadline — an overrun is killed (whole process group) and recorded in the
 report as a finding, so a prompting or looping produced CLI can never
-prevent `report.json` from being written.
+prevent `report.json` from being written. `--agent-timeout` and
+`--build-timeout` (seconds) bound their phases; `--check-timeout` bounds
+each invariant invocation only — acceptance cases are deliberately outside
+its reach, each governed by its own authored `timeout_seconds`.
 
-The runner executes both acceptance schemas: the roster's `[[case]]` suites
-below with their full run semantics (per-case sandboxes, the scrubbed
-baseline env, pty attachment, scripted stdin, per-case deadlines,
-expected-fail mapping), and its own simpler check schema, which only the
-`smoke` archetype still speaks.
+The runner executes one acceptance schema: the `[[case]]` suites below with
+their full run semantics (per-case sandboxes, the scrubbed baseline env,
+pty attachment, scripted stdin, per-case deadlines, expected-fail mapping).
+Every archetype — `smoke` included — speaks it.
 
 ## Decision: the blindness protocol
 
-Recorded here as a decision because an ADR may follow (spec: "blindness is
-fragile"; partial blindness is acceptable if it is *known*).
+Recorded here as a decision and minted as
+[ADR-0023](../docs/adr/0023-the-corpus-blindness-protocol.md) (spec:
+"blindness is fragile"; partial blindness is acceptable if it is *known*).
 
 1. **The workspace contains no framework source.** Provisioning materializes
    exactly: the archetype spec, an instructions file, the rendered exit
@@ -108,7 +109,13 @@ fragile"; partial blindness is acceptable if it is *known*).
 
 ## Decision: the run-report schema
 
-`report.json`, `schema_version: 2` (recorded here because an ADR may follow).
+`report.json`, `schema_version: 3` (recorded here and minted as
+[ADR-0024](../docs/adr/0024-the-corpus-run-report-schema.md)). Version 3 is
+one bump carrying every shape change over version 2: it replaced the single
+`isolation_backend` word with a per-capability isolation record, dropped the
+producerless `session.attempts` counter, and removed the retired check
+schema's parallel `checks` vector. Committed schema-2 evidence still loads,
+unrewritten, through the typed historical-report path re-evaluation uses.
 Objective results and agent self-assessment are deliberately separate
 sections. The shape:
 
@@ -121,17 +128,22 @@ sections. The shape:
   give when the tree is dirty), the exact acceptance-suite hash, and the exit
   questionnaire's semantic fingerprint.
 - `evaluation` — whether this was a full run or an isolated re-evaluation,
-  the enforced backend, and the exact produced-binary hash.
-- `blindness` — the protocol statement, environment key set, isolation
-  backend, credential exceptions, and the agent's own account of what it
-  consulted (from the questionnaire).
+  the isolation record of the check boundary (backend, filesystem model,
+  and the policy-derived network state: `denied` when the requested denial
+  is kernel-enforced, `denial-requested-but-unsupported` on Landlock ABI
+  v1, which is filesystem-only — the report says so rather than reading
+  stronger than the kernel guarantee), and the exact produced-binary hash.
+- `blindness` — the protocol statement, environment key set, the isolation
+  record for the agent/build boundary (its network state is
+  `allowed-by-policy`: those phases fetch crates.io), credential
+  exceptions, and the agent's own account of what it consulted (from the
+  questionnaire).
 - `session` — instrumentation: the agent command, wall seconds, exit code,
-  whether the session hit its deadline (`timed_out`), attempts, and
-  turns/token counts when the transcript is Claude Code stream-json; plus
-  the transcript path (always linked, relative to the run directory).
+  whether the session hit its deadline (`timed_out`), and turns/token counts
+  when the transcript is Claude Code stream-json; plus the transcript path
+  (always linked, relative to the run directory).
 - `acceptance` — objective: whether the produced app built, and one entry
-  per suite item — `checks` (pass/fail) for the check schema, `cases` for
-  roster suites, each carrying the case's `expected` marker and its
+  per suite case, each carrying the case's `expected` marker and its
   `outcome` (`pass`, `fail`, `expected-fail`, or `unexpected-pass`, the
   news of a gap silently closed) plus the authored `stresses`/`gap`/
   `reason` context so the report reads without the suite beside it.
@@ -142,8 +154,8 @@ sections. The shape:
 - `questionnaire` — subjective: whether a valid sheet was collected, its
   diagnostics, and the decoded answers keyed by stable field id.
 
-A run that completes the loop always writes a report, even when every check
-fails — failing checks are findings, not runner errors.
+A run that completes the loop always writes a report, even when every case
+fails — failing cases are findings, not runner errors.
 
 ## The archetype roster
 
@@ -159,7 +171,7 @@ Synthetic CLI archetypes in repository form, each one a package of
 - **`acceptance.toml`** — the objective acceptance suite, written **before any
   implementation exists**. Spec-first is a hard rule: if the criteria are
   written after seeing a result, "did it work" stops being an objective
-  measure. A structural test (`crates/standout-test/tests/corpus_roster.rs`)
+  measure. A structural test (`crates/corpus-runner/tests/corpus_roster.rs`)
   enforces that no implementation lives under `corpus/archetypes/`.
 
 Archetype names double as binary names: the implementer of `gitlike` produces
@@ -207,8 +219,9 @@ stdout_lines_end_with_once = ["<id:name>"] # each suffix ends exactly one non-em
 ```
 
 Besides the cases, a suite may carry a declarative ROB01 matrix. The global
-axes establish the stable planned cells; each command declares whether its
-output is framework-rendered or opaque bytes and may narrow applicability:
+axes are the whole plan: every command runs on every global axis
+combination, and each command declares only whether its output is
+framework-rendered or intentionally opaque bytes:
 
 ```toml
 [invariants]
@@ -265,8 +278,14 @@ baseline does not run, the planned identities remain present as `not-run`.
 | `stdout`, `stderr` | exact stream contents, LF-normalized |
 | `stdout_json` | stdout parses as JSON and is *semantically* equal to this JSON string (key order and whitespace irrelevant) |
 | `stdout_contains`, `stderr_contains` | every listed substring occurs in the stream |
+| `stdout_row_contains` | every value in each group co-occurs on one single stdout line (row association, e.g. a star with *its* constellation and magnitude) |
+| `stdout_json_rows` | stdout parses as JSON and every value in each group co-occurs among the scalars of one single JSON array element (numbers match their decimal literal) |
 | `stdout_not_contains`, `stderr_not_contains` | no listed substring occurs in the stream |
 | `stdout_lines_end_with_once` | each suffix terminates exactly one non-empty stdout line |
+
+Every listed string and every row group must be non-empty: an empty group or
+empty substring matches any output, so it would silently assert nothing —
+the parser rejects it at load time.
 
 Prefer `stdout` (exact). Use `stdout_json` for machine output, where byte
 layout is an implementation detail but content is not. Use the `contains`

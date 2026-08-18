@@ -51,7 +51,9 @@ enum Commands {
         /// Seconds before the cargo build of the produced app is killed.
         #[arg(long)]
         build_timeout: Option<u64>,
-        /// Seconds before each acceptance/invariant invocation is killed.
+        /// Seconds before each invariant invocation is killed. Acceptance
+        /// cases are not affected: each carries its own authored
+        /// `timeout_seconds`.
         #[arg(long)]
         check_timeout: Option<u64>,
     },
@@ -69,12 +71,17 @@ enum Commands {
         source_report: PathBuf,
         #[arg(long)]
         output_report: PathBuf,
-        /// Exact already-built executable to evaluate. When omitted, the
+        /// Exact already-built executable to evaluate; it must live beneath
+        /// the preserved workspace, since checks run inside a sandbox that
+        /// admits only the workspace and system roots. When omitted, the
         /// preserved app is rebuilt inside the isolated build phase.
         #[arg(long)]
         binary: Option<PathBuf>,
         #[arg(long)]
         build_timeout: Option<u64>,
+        /// Seconds before each invariant invocation is killed. Acceptance
+        /// cases are not affected: each carries its own authored
+        /// `timeout_seconds`.
         #[arg(long)]
         check_timeout: Option<u64>,
     },

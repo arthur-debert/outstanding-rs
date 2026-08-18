@@ -1,29 +1,22 @@
 //! The roster case schema, executed for real: loading, the documented run
 //! semantics (scrubbed baseline env, sandbox files and cwd, pty attachment,
 //! scripted stdin, per-case timeout), the assertion vocabulary, and the
-//! expected-fail mapping — all against scripted stand-in binaries, the same
-//! way `phases.rs` covers the check schema.
+//! expected-fail mapping — all against scripted stand-in binaries.
 
 // Unix-only: the stand-in binaries are `sh` scripts made executable via
 // `PermissionsExt`, and pty attachment is a Unix object.
 #![cfg(unix)]
 
-use std::fs;
-use std::os::unix::fs::PermissionsExt;
-use std::path::{Path, PathBuf};
+mod common;
 
-use corpus_runner::archetype::{Archetype, Suite};
+use std::fs;
+use std::path::Path;
+
+use common::script;
+use corpus_runner::archetype::Archetype;
 use corpus_runner::cases::run_cases;
 use corpus_runner::report::{CaseOutcome, CaseResult};
 use corpus_runner::workspace::Isolation;
-
-/// Writes an executable script and returns its path.
-fn script(dir: &Path, name: &str, body: &str) -> PathBuf {
-    let path = dir.join(name);
-    fs::write(&path, format!("#!/bin/sh\n{body}\n")).unwrap();
-    fs::set_permissions(&path, fs::Permissions::from_mode(0o755)).unwrap();
-    path
-}
 
 /// Loads `toml` as archetype `fake`'s acceptance suite and runs its cases
 /// against `binary_body`, returning the per-case results.
@@ -39,17 +32,18 @@ fn run_suite(toml: &str, binary_body: &str) -> Vec<CaseResult> {
     )
     .unwrap();
     let archetype = Archetype::load(&dir.path().join("archetypes"), "fake").unwrap();
-    let Suite::Cases(suite) = &archetype.suite else {
-        panic!("fixture carries the roster case schema");
-    };
     let isolation = Isolation::new(
         dir.path(),
         &Path::new(env!("CARGO_MANIFEST_DIR")).join("../.."),
     )
     .unwrap();
-    let report = run_cases(&binary, &suite.cases, &dir.path().join("cases"), &isolation);
+    let report = run_cases(
+        &binary,
+        &archetype.suite.cases,
+        &dir.path().join("cases"),
+        &isolation,
+    );
     assert!(report.built);
-    assert!(report.checks.is_empty());
     report.cases
 }
 
@@ -76,10 +70,7 @@ fn pilot_roster_suites_load_as_case_suites() {
     ] {
         let archetype = Archetype::load(&archetypes, name).unwrap();
         assert_eq!(archetype.binary(), name, "roster names double as binaries");
-        let Suite::Cases(suite) = &archetype.suite else {
-            panic!("{name} must load as the roster case schema");
-        };
-        assert!(!suite.cases.is_empty());
+        assert!(!archetype.suite.cases.is_empty());
     }
 }
 
@@ -286,6 +277,108 @@ esac"#,
         .unwrap()
         .contains("exactly one"));
     assert_eq!(results[2].outcome, CaseOutcome::Fail);
+}
+
+/// A binary emitting associated rows in text and JSON: rows carry name,
+/// constellation, and magnitude together.
+const ROWS: &str = r#"
+mode=text
+prev=""
+for a in "$@"; do
+  if [ "$prev" = "--output" ]; then mode="$a"; fi
+  prev="$a"
+done
+case "$mode" in
+  json) echo '{"stars":[{"name":"Aldebaran","constellation":"Taurus","magnitude":0.86},{"name":"Rigel","constellation":"Orion","magnitude":0.13}]}' ;;
+  *) printf 'Stars\nAldebaran  Taurus  0.86\nRigel  Orion  0.13\n' ;;
+esac
+"#;
+
+/// The two assertion kinds ported from the retired check schema: each group
+/// must co-occur on one single row, so a cross-row bag of substrings fails.
+#[test]
+fn row_assertions_bind_values_to_one_row() {
+    let results = run_suite(
+        r#"
+[[case]]
+name = "text-rows-are-associated"
+stresses = "row association in rendered output"
+expected = "pass"
+[case.run]
+argv = ["list", "--output", "text"]
+timeout_seconds = 5
+[case.expect]
+stdout_row_contains = [["Aldebaran", "Taurus", "0.86"], ["Rigel", "Orion", "0.13"]]
+
+[[case]]
+name = "cross-row-bag-of-substrings-fails"
+stresses = "row association in rendered output"
+expected = "pass"
+[case.run]
+argv = ["list", "--output", "text"]
+timeout_seconds = 5
+[case.expect]
+stdout_row_contains = [["Aldebaran", "Orion"]]
+
+[[case]]
+name = "json-rows-are-associated"
+stresses = "row association in machine output"
+expected = "pass"
+[case.run]
+argv = ["list", "--output", "json"]
+timeout_seconds = 5
+[case.expect]
+stdout_json_rows = [["Aldebaran", "Taurus", "0.86"], ["Rigel", "Orion", "0.13"]]
+
+[[case]]
+name = "json-cross-row-group-fails"
+stresses = "row association in machine output"
+expected = "pass"
+[case.run]
+argv = ["list", "--output", "json"]
+timeout_seconds = 5
+[case.expect]
+stdout_json_rows = [["Aldebaran", "0.13"]]
+
+[[case]]
+name = "json-rows-on-non-json-output-fails"
+stresses = "row association in machine output"
+expected = "pass"
+[case.run]
+argv = ["list", "--output", "text"]
+timeout_seconds = 5
+[case.expect]
+stdout_json_rows = [["Aldebaran", "Taurus", "0.86"]]
+"#,
+        ROWS,
+    );
+    let outcomes: Vec<CaseOutcome> = results.iter().map(|r| r.outcome).collect();
+    assert_eq!(
+        outcomes,
+        vec![
+            CaseOutcome::Pass,
+            CaseOutcome::Fail,
+            CaseOutcome::Pass,
+            CaseOutcome::Fail,
+            CaseOutcome::Fail
+        ],
+        "{results:?}"
+    );
+    assert!(results[1]
+        .detail
+        .as_deref()
+        .unwrap()
+        .contains("no single stdout line"));
+    assert!(results[3]
+        .detail
+        .as_deref()
+        .unwrap()
+        .contains("no single JSON element"));
+    assert!(results[4]
+        .detail
+        .as_deref()
+        .unwrap()
+        .contains("not valid JSON"));
 }
 
 // ---------------------------------------------------------------------------
