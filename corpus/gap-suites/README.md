@@ -39,6 +39,31 @@ Each assertion runs through `corpus_gap_suites::expect_gap`, which distinguishes
   panics — an *error*, distinct from expected-fail, so a rotten suite never hides as
   "gap not yet closed".
 
+## The closed-gap tripwire (`gaps.toml` + `tests/tripwire.rs`)
+
+Without a produced binary every assertion short-circuits as expected-fail, so a
+plain green CI run says nothing about whether a gap quietly closed. Two pieces keep
+that silence honest, both running under `pixi run test`:
+
+- **The ledger** (`gaps.toml`) lists every milestone group with its owning epic,
+  binary env var, test file, `status`, and `armed` assertion count.
+  `tests/tripwire.rs` enforces it against the suite sources: the armed count must
+  match the `expect_gap` call sites exactly (a tripwire cannot be deleted or added
+  without the ledger recording it), an `open` gate must still carry its wrappers,
+  and a `closed` gate must carry none. Closing an epic therefore *requires* the
+  promotion edit — flip the gate to `closed` and remove the wrappers in the same
+  change, or CI is red either way. This is the epic-close checklist, enforced by
+  test rather than memory.
+- **The simulation** (`tripwire.rs::a_gap_case_that_passes_fails_loudly`) runs the
+  expected-fail machinery against a binary that already has a gap's behavior — a
+  silently closed gap, manufactured on purpose — and asserts the run fails loudly
+  with the gate name. The loud path itself is under test, permanently.
+
+Detection still happens where it always did: run the suites against a produced
+binary and an unexpected pass fails the run. The tripwire makes sure that signal
+cannot be skipped at epic close and that the net's assertion inventory cannot
+erode unnoticed.
+
 ## Running against a produced binary
 
 ```bash

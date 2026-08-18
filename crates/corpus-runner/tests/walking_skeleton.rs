@@ -17,8 +17,8 @@
 // `PermissionsExt`; gating keeps the workspace buildable elsewhere.
 #![cfg(unix)]
 
-use std::fs;
-use std::os::unix::fs::PermissionsExt;
+mod common;
+
 use std::path::Path;
 
 use corpus_runner::{run, RunConfig, Timeouts};
@@ -33,26 +33,21 @@ fn smoke_archetype_completes_the_loop() {
     // The scripted agent: install the canned solution into app/, then answer
     // the questionnaire in place (an answer line under each question tag),
     // and end with a stream-json result event so instrumentation has data.
-    let agent = scratch.path().join("agent.sh");
-    fs::write(
-        &agent,
-        format!(
-            r#"#!/bin/sh
-set -e
-cp -R "{solution}/src/." app/src/
-awk '{{ print }}
-/<id:summary>$/ {{ print "Implemented smoke from SPEC.md; cargo build succeeds." }}
-/<id:sources.docs>$/ {{ print "docs/guides/minimal-single-crate.md" }}
-/<id:sources.external>$/ {{ print "none" }}
-/<id:confidence>$/ {{ print "high" }}' QUESTIONNAIRE.md > QUESTIONNAIRE.md.filled
-mv QUESTIONNAIRE.md.filled QUESTIONNAIRE.md
-echo '{{"type":"result","num_turns":1,"usage":{{"input_tokens":10,"output_tokens":20}}}}'
-"#,
-            solution = solution.display()
-        ),
-    )
-    .unwrap();
-    fs::set_permissions(&agent, fs::Permissions::from_mode(0o755)).unwrap();
+    let agent = common::questionnaire_agent(
+        scratch.path(),
+        "agent.sh",
+        &format!("cp -R \"{}/src/.\" app/src/", solution.display()),
+        &[
+            (
+                "summary",
+                "Implemented smoke from SPEC.md; cargo build succeeds.",
+            ),
+            ("sources.docs", "docs/guides/minimal-single-crate.md"),
+            ("sources.external", "none"),
+            ("confidence", "high"),
+        ],
+        true,
+    );
 
     let config = RunConfig {
         archetype: "smoke".to_string(),

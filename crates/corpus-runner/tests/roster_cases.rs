@@ -7,22 +7,16 @@
 // `PermissionsExt`, and pty attachment is a Unix object.
 #![cfg(unix)]
 
-use std::fs;
-use std::os::unix::fs::PermissionsExt;
-use std::path::{Path, PathBuf};
+mod common;
 
+use std::fs;
+use std::path::Path;
+
+use common::script;
 use corpus_runner::archetype::Archetype;
 use corpus_runner::cases::run_cases;
 use corpus_runner::report::{CaseOutcome, CaseResult};
 use corpus_runner::workspace::Isolation;
-
-/// Writes an executable script and returns its path.
-fn script(dir: &Path, name: &str, body: &str) -> PathBuf {
-    let path = dir.join(name);
-    fs::write(&path, format!("#!/bin/sh\n{body}\n")).unwrap();
-    fs::set_permissions(&path, fs::Permissions::from_mode(0o755)).unwrap();
-    path
-}
 
 /// Loads `toml` as archetype `fake`'s acceptance suite and runs its cases
 /// against `binary_body`, returning the per-case results.
