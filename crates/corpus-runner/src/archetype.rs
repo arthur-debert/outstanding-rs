@@ -17,7 +17,7 @@
 //! Both may carry an `[invariants]` table naming the commands the ROB01
 //! invariant matrix sweeps.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashSet};
 use std::path::{Path, PathBuf};
 
 use anyhow::{bail, Context};
@@ -195,6 +195,11 @@ fn default_themes() -> Vec<InvariantTheme> {
 }
 
 /// The roster case schema (`corpus/README.md`, "Acceptance case format").
+///
+/// This is the schema's single definition: the runner loads suites through
+/// it, and the roster structural test (`tests/corpus_roster.rs`) parses the
+/// committed roster through [`CaseSuite::parse`], so a suite cannot pass one
+/// consumer and fail the other.
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct CaseSuite {
@@ -322,11 +327,7 @@ impl Archetype {
             .parse()
             .with_context(|| format!("parsing {}", acceptance_path.display()))?;
         let suite = if value.get("case").is_some() || value.get("schema").is_some() {
-            let suite: CaseSuite = value
-                .try_into()
-                .with_context(|| format!("parsing {}", acceptance_path.display()))?;
-            validate_case_suite(&suite, name, &acceptance_path)?;
-            Suite::Cases(suite)
+            Suite::Cases(CaseSuite::parse(&acceptance_text, name, &acceptance_path)?)
         } else {
             Suite::Checks(
                 value
@@ -376,9 +377,25 @@ fn sha256(text: &str) -> String {
     digest.iter().map(|b| format!("{b:02x}")).collect()
 }
 
+impl CaseSuite {
+    /// Parses and validates `text` as a case suite for archetype `name`
+    /// (the owning directory name); `path` labels diagnostics. This is the
+    /// one entry point every consumer shares — [`Archetype::load`] and the
+    /// roster structural test alike.
+    pub fn parse(text: &str, name: &str, path: &Path) -> anyhow::Result<Self> {
+        let suite: CaseSuite =
+            toml::from_str(text).with_context(|| format!("parsing {}", path.display()))?;
+        validate_case_suite(&suite, name, path)?;
+        Ok(suite)
+    }
+}
+
 /// The semantic rules the case schema carries beyond its shape: version 1,
-/// archetype/directory agreement, a positive timeout, at least one assertion
-/// per case, and `gap`/`reason` exactly on expected-fail cases.
+/// archetype/directory agreement, a non-empty suite of uniquely named
+/// kebab-case cases, a non-empty `stresses` line, a positive timeout, at
+/// least one assertion per case, no exact-`stdout` + semantic-`stdout_json`
+/// contradiction, `stdout_json` that parses as JSON, and non-empty
+/// `gap`/`reason` exactly on expected-fail cases.
 fn validate_case_suite(suite: &CaseSuite, name: &str, path: &Path) -> anyhow::Result<()> {
     if suite.schema != 1 {
         bail!(
@@ -395,7 +412,33 @@ fn validate_case_suite(suite: &CaseSuite, name: &str, path: &Path) -> anyhow::Re
             name
         );
     }
+    if suite.cases.is_empty() {
+        bail!("{}: empty acceptance suite", path.display());
+    }
+    let mut names = HashSet::new();
     for case in &suite.cases {
+        if !names.insert(case.name.as_str()) {
+            bail!("{}: duplicate case name {:?}", path.display(), case.name);
+        }
+        let kebab = !case.name.is_empty()
+            && case
+                .name
+                .chars()
+                .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-');
+        if !kebab {
+            bail!(
+                "{}: case {:?} — case names are kebab-case",
+                path.display(),
+                case.name
+            );
+        }
+        if case.stresses.is_empty() {
+            bail!(
+                "{}: case {:?} — `stresses` must name the interaction under test",
+                path.display(),
+                case.name
+            );
+        }
         if case.run.timeout_seconds == 0 {
             bail!(
                 "{}: case {:?} must carry a positive timeout_seconds",
@@ -406,14 +449,220 @@ fn validate_case_suite(suite: &CaseSuite, name: &str, path: &Path) -> anyhow::Re
         if case.expect.is_empty() {
             bail!("{}: case {:?} asserts nothing", path.display(), case.name);
         }
-        let is_gap = case.expected == Expected::Fail;
-        if is_gap != (case.gap.is_some() && case.reason.is_some()) {
+        // Exact-stdout and semantic-JSON assertions on the same stream
+        // contradict each other's reason to exist; a case picks one.
+        if case.expect.stdout.is_some() && case.expect.stdout_json.is_some() {
             bail!(
-                "{}: case {:?} must carry gap+reason exactly when expected = \"fail\"",
+                "{}: case {:?} — use `stdout` (exact) or `stdout_json` (semantic), not both",
                 path.display(),
                 case.name
             );
         }
+        if let Some(json) = &case.expect.stdout_json {
+            serde_json::from_str::<serde_json::Value>(json).with_context(|| {
+                format!(
+                    "{}: case {:?} — stdout_json is not valid JSON",
+                    path.display(),
+                    case.name
+                )
+            })?;
+        }
+        match case.expected {
+            Expected::Pass => {
+                if case.gap.is_some() || case.reason.is_some() {
+                    bail!(
+                        "{}: case {:?} — `gap`/`reason` belong to expected-fail cases only",
+                        path.display(),
+                        case.name
+                    );
+                }
+            }
+            Expected::Fail => {
+                let named = case.gap.as_deref().is_some_and(|g| !g.is_empty())
+                    && case.reason.as_deref().is_some_and(|r| !r.is_empty());
+                if !named {
+                    bail!(
+                        "{}: case {:?} must carry non-empty gap+reason when expected = \"fail\"",
+                        path.display(),
+                        case.name
+                    );
+                }
+            }
+        }
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    //! One fixture per reconciled validation rule: the case-schema rules the
+    //! runner and the roster structural test used to disagree on, now all
+    //! enforced by the shared parser above.
+
+    use super::*;
+
+    /// A minimal valid suite; `extra` splices fields into the one case.
+    fn suite(case: &str) -> String {
+        format!("schema = 1\narchetype = \"fake\"\n{case}")
+    }
+
+    fn parse(text: &str) -> anyhow::Result<CaseSuite> {
+        CaseSuite::parse(text, "fake", Path::new("acceptance.toml"))
+    }
+
+    const VALID_CASE: &str = r#"
+[[case]]
+name = "valid-case"
+stresses = "validation"
+expected = "pass"
+[case.run]
+argv = []
+timeout_seconds = 5
+[case.expect]
+exit_code = 0
+"#;
+
+    #[test]
+    fn minimal_valid_suite_parses() {
+        let suite = parse(&suite(VALID_CASE)).unwrap();
+        assert_eq!(suite.cases.len(), 1);
+    }
+
+    #[test]
+    fn unknown_schema_version_is_rejected() {
+        let text = format!("schema = 2\narchetype = \"fake\"\n{VALID_CASE}");
+        let err = parse(&text).unwrap_err();
+        assert!(
+            err.to_string().contains("unknown schema version"),
+            "{err:#}"
+        );
+    }
+
+    #[test]
+    fn archetype_directory_mismatch_is_rejected() {
+        let text = format!("schema = 1\narchetype = \"other\"\n{VALID_CASE}");
+        let err = parse(&text).unwrap_err();
+        assert!(err.to_string().contains("does not match"), "{err:#}");
+    }
+
+    #[test]
+    fn empty_suite_is_rejected() {
+        // An absent `[[case]]` already fails shape-wise (`case` is a
+        // required field); `case = []` is the shape-valid empty suite the
+        // semantic rule must catch.
+        let err = parse("schema = 1\narchetype = \"fake\"\ncase = []\n").unwrap_err();
+        assert!(
+            err.to_string().contains("empty acceptance suite"),
+            "{err:#}"
+        );
+    }
+
+    #[test]
+    fn duplicate_case_names_are_rejected() {
+        let err = parse(&suite(&format!("{VALID_CASE}{VALID_CASE}"))).unwrap_err();
+        assert!(err.to_string().contains("duplicate case name"), "{err:#}");
+    }
+
+    #[test]
+    fn non_kebab_case_names_are_rejected() {
+        let err = parse(&suite(&VALID_CASE.replace("valid-case", "Valid_Case"))).unwrap_err();
+        assert!(err.to_string().contains("kebab-case"), "{err:#}");
+    }
+
+    #[test]
+    fn empty_stresses_is_rejected() {
+        let err = parse(&suite(&VALID_CASE.replace("\"validation\"", "\"\""))).unwrap_err();
+        assert!(err.to_string().contains("stresses"), "{err:#}");
+    }
+
+    #[test]
+    fn zero_timeout_is_rejected() {
+        let err = parse(&suite(
+            &VALID_CASE.replace("timeout_seconds = 5", "timeout_seconds = 0"),
+        ))
+        .unwrap_err();
+        assert!(err.to_string().contains("positive timeout"), "{err:#}");
+    }
+
+    #[test]
+    fn assertion_free_case_is_rejected() {
+        let err = parse(&suite(&VALID_CASE.replace("exit_code = 0", ""))).unwrap_err();
+        assert!(err.to_string().contains("asserts nothing"), "{err:#}");
+    }
+
+    /// An empty assertion list is no assertion: presence of the key alone
+    /// must not satisfy the at-least-one-assertion rule.
+    #[test]
+    fn empty_assertion_lists_do_not_count() {
+        let err = parse(&suite(
+            &VALID_CASE.replace("exit_code = 0", "stdout_contains = []"),
+        ))
+        .unwrap_err();
+        assert!(err.to_string().contains("asserts nothing"), "{err:#}");
+    }
+
+    #[test]
+    fn exact_stdout_and_semantic_json_together_are_rejected() {
+        let err = parse(&suite(
+            &VALID_CASE.replace("exit_code = 0", "stdout = \"x\"\nstdout_json = '{}'"),
+        ))
+        .unwrap_err();
+        assert!(err.to_string().contains("not both"), "{err:#}");
+    }
+
+    #[test]
+    fn malformed_stdout_json_is_rejected() {
+        let err = parse(&suite(
+            &VALID_CASE.replace("exit_code = 0", "stdout_json = 'not json'"),
+        ))
+        .unwrap_err();
+        assert!(err.to_string().contains("not valid JSON"), "{err:#}");
+    }
+
+    #[test]
+    fn gap_or_reason_on_expected_pass_is_rejected() {
+        let err = parse(&suite(&VALID_CASE.replace(
+            "expected = \"pass\"",
+            "expected = \"pass\"\ngap = \"PAR01\"",
+        )))
+        .unwrap_err();
+        assert!(
+            err.to_string().contains("expected-fail cases only"),
+            "{err:#}"
+        );
+    }
+
+    #[test]
+    fn expected_fail_without_gap_and_reason_is_rejected() {
+        let err = parse(&suite(&VALID_CASE.replace(
+            "expected = \"pass\"",
+            "expected = \"fail\"\ngap = \"PAR01\"",
+        )))
+        .unwrap_err();
+        assert!(err.to_string().contains("gap+reason"), "{err:#}");
+    }
+
+    #[test]
+    fn empty_gap_or_reason_on_expected_fail_is_rejected() {
+        let err = parse(&suite(&VALID_CASE.replace(
+            "expected = \"pass\"",
+            "expected = \"fail\"\ngap = \"PAR01\"\nreason = \"\"",
+        )))
+        .unwrap_err();
+        assert!(err.to_string().contains("gap+reason"), "{err:#}");
+    }
+
+    /// The documented default: `[invariants]` keys may be omitted
+    /// individually — omitted axes mean the full global plan, not an error.
+    #[test]
+    fn invariants_keys_default_individually() {
+        let suite = parse(&suite(&format!(
+            "{VALID_CASE}\n[invariants]\n[[invariants.command]]\nargv = [\"log\"]\ncontract = \"rendered\"\n"
+        )))
+        .unwrap();
+        assert_eq!(suite.invariants.modes.len(), 3);
+        assert_eq!(suite.invariants.colors.len(), 2);
+        assert_eq!(suite.invariants.themes.len(), 1);
+        assert_eq!(suite.invariants.commands.len(), 1);
+    }
 }
