@@ -36,7 +36,7 @@ use standout::input::{ArgSource, EditorSource, InputChain, StdinSource};
 
 App::builder()
     .command_with("create", create, |cfg| {
-        cfg.template("create.jinja")
+        cfg.template_name("create")
             .input("body", InputChain::<String>::new()
                 .try_source(ArgSource::new("body"))
                 .try_source(StdinSource::new())
@@ -122,7 +122,7 @@ if let Some(bag) = ctx.inputs() {
 
 ```rust
 .command_with("create", create, |cfg| {
-    cfg.template("create.jinja")
+    cfg.template_name("create")
         .input("title", InputChain::<String>::new()
             .try_source(ArgSource::new("title"))
             .default("untitled".to_string()))

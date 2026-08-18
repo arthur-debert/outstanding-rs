@@ -6,12 +6,13 @@
 use serde::Serialize;
 use std::collections::HashMap;
 
-use super::AppBuilder;
+use super::{refresh_named_template, App};
 use crate::context::RenderContext;
 use crate::setup::SetupError;
 use crate::{detect_color_mode, detect_icon_mode, OutputMode};
+use standout_render::RegistryError;
 
-impl AppBuilder {
+impl App {
     // =========================================================================
     // Public Rendering API
     // =========================================================================
@@ -24,7 +25,7 @@ impl AppBuilder {
     /// # Errors
     ///
     /// Returns an error if:
-    /// - No template registry is configured
+    /// - No template registry is configured for a named template render
     /// - The template is not found
     /// - Rendering fails
     pub fn render<T: Serialize>(
@@ -42,15 +43,31 @@ impl AppBuilder {
         let registry = self
             .template_registry
             .as_ref()
-            .ok_or_else(|| SetupError::Config("No template registry configured".into()))?;
+            .ok_or_else(|| {
+                SetupError::Config(format!(
+                    "render({template:?}, ...) needs a template registry; add .templates(embed_templates!(\"src/templates\")) or .templates_dir(\"path/to/templates\") before .build(), or call render_inline(...) for inline template source"
+                ))
+            })?;
 
-        // Get template content
-        let template_content = registry
-            .get_content(template)
-            .map_err(|e| SetupError::Template(e.to_string()))?;
+        {
+            let mut engine = self.template_engine.borrow_mut();
+            refresh_named_template(&mut **engine, registry, template).map_err(|error| {
+                if matches!(
+                    registry.get(template),
+                    Err(RegistryError::NotFound { .. })
+                ) {
+                    SetupError::Template(format!(
+                        "render({template:?}, ...) could not find the named template; add it with .templates(embed_templates!(\"src/templates\")) or .templates_dir(\"path/to/templates\"): {error}"
+                    ))
+                } else {
+                    SetupError::Template(format!(
+                        "render({template:?}, ...) could not refresh the registered template: {error}"
+                    ))
+                }
+            })?;
+        }
 
-        // Render the template content
-        self.render_template_content(&template_content, data, mode)
+        self.render_template_name(template, data, mode)
     }
 
     /// Renders an inline template string with the given data.
@@ -123,6 +140,7 @@ impl AppBuilder {
         // Pass 1: Template rendering via engine
         let minijinja_output = self
             .template_engine
+            .borrow()
             .render_template_with_render_widths(
                 template,
                 &serde_json::Value::Object(combined_json_map),
@@ -141,10 +159,44 @@ impl AppBuilder {
             &minijinja_output,
             styles.to_resolved_map(),
             transform,
-            UnknownTagBehavior::Passthrough,
+            UnknownTagBehavior::Strip,
         );
 
         Ok(final_output)
+    }
+
+    /// Internal: renders a registered template name after refreshing its tree.
+    fn render_template_name<T: Serialize>(
+        &self,
+        template: &str,
+        data: &T,
+        mode: OutputMode,
+    ) -> Result<String, SetupError> {
+        let theme = self.theme.clone().unwrap_or_default();
+        let json_data =
+            serde_json::to_value(data).map_err(|e| SetupError::Config(e.to_string()))?;
+        let ambiguous_width =
+            standout_render::detect_ambiguous_width_override().unwrap_or(self.ambiguous_width);
+        let render_ctx = RenderContext::with_ambiguous_width(
+            mode,
+            standout_render::detect_terminal_width(),
+            ambiguous_width,
+            &theme,
+            &json_data,
+        );
+
+        let result = standout_render::template::render_auto_with_engine_split_named(
+            &**self.template_engine.borrow(),
+            template,
+            &json_data,
+            &theme,
+            mode,
+            &self.context_registry,
+            &render_ctx,
+        )
+        .map_err(|e| SetupError::Template(e.to_string()))?;
+
+        Ok(result.formatted)
     }
 
     /// Internal: builds combined context from icons, context providers, and data.

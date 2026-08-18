@@ -53,12 +53,13 @@ thread_local! {
     /// is sufficient and avoids the overhead of a mutex.
     static WARNINGS: RefCell<Vec<String>> = const { RefCell::new(Vec::new()) };
 
-    /// Warnings drained by the most recent capture-oriented run.
+    /// Warnings produced by capture-oriented runs and standalone renders.
     ///
     /// `App::run_to_string` cannot print the warning block, but it still owns
-    /// the run boundary. Stashing the drained batch here makes warnings
-    /// observable to test/capture APIs without letting them leak into the next
-    /// run on the same thread.
+    /// the run boundary. Standalone rendering has no stderr boundary at all.
+    /// Stashing both forms here makes their warnings observable to
+    /// test/capture APIs without letting them leak into the next run on the
+    /// same thread.
     static CAPTURED_WARNINGS: RefCell<Vec<String>> = const { RefCell::new(Vec::new()) };
 }
 
@@ -69,6 +70,32 @@ thread_local! {
 /// tab indent and banner when flushing.
 pub fn push_warning(message: impl Into<String>) {
     WARNINGS.with(|w| w.borrow_mut().push(message.into()));
+}
+
+/// Appends a framework warning unless the same message is already pending.
+pub(crate) fn push_warning_once(message: impl Into<String>) {
+    let message = message.into();
+    WARNINGS.with(|warnings| {
+        let mut warnings = warnings.borrow_mut();
+        if !warnings.contains(&message) {
+            warnings.push(message);
+        }
+    });
+}
+
+/// Records a standalone render warning in the observable captured batch.
+///
+/// Unlike [`push_warning_once`], this bypasses the pending run collector so a
+/// render performed outside `App::run` cannot leak into a later command. The
+/// batch remains available through [`take_captured_warnings`].
+pub(crate) fn capture_warning_once(message: impl Into<String>) {
+    let message = message.into();
+    CAPTURED_WARNINGS.with(|warnings| {
+        let mut warnings = warnings.borrow_mut();
+        if !warnings.contains(&message) {
+            warnings.push(message);
+        }
+    });
 }
 
 /// Removes and returns all collected warnings for the current thread.
@@ -92,8 +119,10 @@ pub fn capture_warnings_for_run() {
     });
 }
 
-/// Returns and clears the warning batch captured by the most recent
-/// capture-oriented run on this thread.
+/// Returns and clears captured warnings on this thread.
+///
+/// A capture-oriented run replaces the previous batch. Standalone renders add
+/// deduplicated warnings until this function or a later run clears them.
 pub fn take_captured_warnings() -> Vec<String> {
     CAPTURED_WARNINGS.with(|captured| std::mem::take(&mut *captured.borrow_mut()))
 }
@@ -253,6 +282,28 @@ mod tests {
 
         // Draining again yields nothing.
         assert!(drain_warnings().is_empty());
+    }
+
+    #[test]
+    fn push_warning_once_deduplicates_pending_messages() {
+        reset();
+
+        push_warning_once("same warning");
+        push_warning_once("same warning");
+
+        assert_eq!(drain_warnings(), ["same warning"]);
+    }
+
+    #[test]
+    fn capture_warning_once_is_observable_without_becoming_pending() {
+        reset();
+        take_captured_warnings();
+
+        capture_warning_once("same warning");
+        capture_warning_once("same warning");
+
+        assert!(!has_warnings());
+        assert_eq!(take_captured_warnings(), ["same warning"]);
     }
 
     #[test]

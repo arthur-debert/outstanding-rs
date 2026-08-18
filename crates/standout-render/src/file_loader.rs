@@ -402,6 +402,7 @@ pub enum LoadedEntry<T> {
 ///     transform: |content| parse_style_definitions(content),
 /// }
 /// ```
+#[derive(Clone)]
 pub struct FileRegistryConfig<T> {
     /// Valid file extensions in priority order (first = highest priority).
     ///
@@ -530,6 +531,7 @@ impl std::error::Error for LoadError {}
 ///
 /// let definitions = registry.get("darcula")?;
 /// ```
+#[derive(Clone)]
 pub struct FileRegistry<T> {
     /// Configuration for this registry.
     config: FileRegistryConfig<T>,

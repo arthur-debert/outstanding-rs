@@ -122,9 +122,10 @@ pub enum Commands {
 }
 
 let app = App::builder()
-    .commands(Commands::dispatch_config())?
     .templates(embed_templates!("src/templates"))
     .styles(embed_styles!("src/styles"))
+    .default_theme("default")
+    .commands(Commands::dispatch_config())?
     .build()?;
 
 app.run(Cli::command(), std::env::args());

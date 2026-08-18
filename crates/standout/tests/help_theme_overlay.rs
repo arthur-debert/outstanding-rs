@@ -126,7 +126,7 @@ fn app_theme_overrides_the_tags_it_names_and_only_those() {
 // ---------------------------------------------------------------------------
 
 fn themed_app() -> App {
-    App::new()
+    App::builder()
         .help_handling(true)
         .help_word(true)
         .theme(change_tree())

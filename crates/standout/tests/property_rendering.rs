@@ -21,18 +21,12 @@
 //!   the known XML case), but only as a `Render`-kind error — any other
 //!   failure is a dispatch defect, not a serializer refusal.
 //! - Structured output must parse as what it claims to be.
-//! - Where the theme defines every tag the template emits, the WS04
-//!   invariants hold unconditionally: no `[tag?]` marker reaches the page,
-//!   and the `Term` page, stripped of ANSI, is exactly the `Text` page.
+//! - The WS04 invariants hold unconditionally: no `[tag?]` marker reaches the
+//!   page, and the `Term` page, stripped of ANSI, is exactly the `Text` page.
 //!
-//! The unconditional form of those two invariants — no marker and no
-//! mode-split *whatever* the theme defines — is the #303-shaped property, and
-//! it fails on today's framework: an app template's unknown tag renders as a
-//! `[tag?]` marker under `Term` while `Text` strips it silently, so the two
-//! modes disagree about the same render. That test is below, `#[ignore]`d
-//! with the issue that owns the fix (#318, loud-failures: themes merge and
-//! unresolved tags degrade instead of leaking). Run it with
-//! `cargo test -- --ignored` to watch the net catch the bug.
+//! The unconditional form of those two invariants is the #303-shaped property:
+//! an incomplete theme, a styled template, and terminal output must still render
+//! one clean page.
 
 use clap::Command;
 use console::Style;
@@ -62,47 +56,32 @@ fn output_mode_strategy() -> impl Strategy<Value = OutputMode> {
     ]
 }
 
-/// A template variant, carrying the style tags it emits so a postcondition
-/// can compare them against what the theme defines.
+/// A template variant.
 #[derive(Debug, Clone)]
 struct TemplateCase {
     source: &'static str,
-    tags: &'static [&'static str],
 }
 
 /// Template variations: the plain MiniJinja path, one styled tag, and nested
-/// styled tags. The vocabulary is `title`/`highlight`, mirrored by the theme
-/// strategy below.
+/// styled tags.
 fn template_strategy() -> impl Strategy<Value = TemplateCase> {
     prop_oneof![
         Just(TemplateCase {
             source: "{{ data }}",
-            tags: &[],
         }),
         Just(TemplateCase {
             source: "[title]{{ data }}[/title]",
-            tags: &["title"],
         }),
         Just(TemplateCase {
             source: "[highlight]Output: [title]{{ data }}[/title][/highlight]",
-            tags: &["title", "highlight"],
         }),
     ]
 }
 
-/// A theme variant, carrying which of the template vocabulary it defines.
+/// A theme variant.
 #[derive(Debug, Clone)]
 struct ThemeCase {
     theme: Option<Theme>,
-    defines: &'static [&'static str],
-}
-
-impl ThemeCase {
-    /// Whether every tag `template` emits is defined here — the condition
-    /// under which the tag invariants hold on today's framework.
-    fn covers(&self, template: &TemplateCase) -> bool {
-        template.tags.iter().all(|tag| self.defines.contains(tag))
-    }
 }
 
 /// Themes from absent through incomplete to complete.
@@ -113,21 +92,15 @@ impl ThemeCase {
 /// search space deliberately contains the bug.
 fn theme_strategy() -> impl Strategy<Value = ThemeCase> {
     prop_oneof![
-        Just(ThemeCase {
-            theme: None,
-            defines: &[],
-        }),
+        Just(ThemeCase { theme: None }),
         Just(ThemeCase {
             theme: Some(Theme::new()),
-            defines: &[],
         }),
         Just(ThemeCase {
             theme: Some(Theme::new().add("title", Style::new().bold())),
-            defines: &["title"],
         }),
         Just(ThemeCase {
             theme: Some(Theme::new().add("highlight", Style::new().cyan())),
-            defines: &["highlight"],
         }),
         Just(ThemeCase {
             theme: Some(
@@ -136,7 +109,6 @@ fn theme_strategy() -> impl Strategy<Value = ThemeCase> {
                     .add("highlight", Style::new().cyan())
                     .add("error", Style::new().red().bold())
             ),
-            defines: &["title", "highlight"],
         }),
     ]
 }
@@ -282,13 +254,10 @@ proptest! {
     /// The invariants that hold on today's framework, over the whole space —
     /// incomplete themes included.
     ///
-    /// The tag invariants are conditioned on the theme covering the
-    /// template's vocabulary, because an *uncovered* tag currently leaks a
-    /// marker by design of `UnknownTagBehavior::Passthrough`; the
-    /// unconditional form is the `#[ignore]`d test below. Everything else is
-    /// unconditional: a valid template renders, JSON/YAML serialize any
-    /// value, XML/CSV refuse a shape only as a `Render` error, and whatever
-    /// a serializer emits parses.
+    /// The tag invariants are unconditional: an uncovered tag degrades to
+    /// unstyled text and must not change the rendered page beyond color.
+    /// A valid template renders, JSON/YAML serialize any value, XML/CSV refuse
+    /// a shape only as a `Render` error, and whatever a serializer emits parses.
     #[test]
     fn rendering_upholds_the_invariants(
         mode in output_mode_strategy(),
@@ -345,28 +314,19 @@ proptest! {
                 result
             );
 
-            if theme.covers(&template) {
-                let output = result.output().expect("a handled render has output");
-                assert_no_unresolved_tag_markers_in_page(output);
-                if matches!(mode, OutputMode::Term | OutputMode::Auto) {
-                    assert_agrees_with_text_mode(output, &theme, &template, &data);
-                }
+            let output = result.output().expect("a handled render has output");
+            assert_no_unresolved_tag_markers_in_page(output);
+            if matches!(mode, OutputMode::Term | OutputMode::Auto) {
+                assert_agrees_with_text_mode(output, &theme, &template, &data);
             }
         }
     }
 
     /// The unconditional tag invariants — the #303-shaped property.
     ///
-    /// A tag the theme does not define must not corrupt the page, in any
-    /// mode, and the text modes must agree about every input. Today both
-    /// halves fail: under `Term`, an unknown tag renders as a `[tag?]` marker
-    /// (template markup in user-facing output) while `Text` strips it
-    /// silently — the exact divergence that let #303 ship. #318 (loud
-    /// failures: themes merge, unresolved tags degrade to unstyled text) owns
-    /// the fix; this net is what proves it.
+    /// A tag the theme does not define must not corrupt the page, and `Term`
+    /// must agree with `Text` after stripping ANSI.
     #[test]
-    #[ignore = "red on current behavior: unknown tags leak [tag?] markers under Term and split \
-                Term/Text; fix owned by #318 (loud failures: themes merge, never replace)"]
     fn no_theme_gap_corrupts_a_page_or_splits_the_modes(
         theme in theme_strategy(),
         template in template_strategy(),

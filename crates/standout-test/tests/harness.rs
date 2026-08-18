@@ -47,7 +47,7 @@ struct WidthSensitiveItem {
 
 fn build_framework_list_view_app() -> App {
     App::builder()
-        .command(
+        .command_with(
             "list",
             |_matches, _ctx| {
                 let spec = standout::tabular::TabularSpec::builder()
@@ -59,7 +59,7 @@ fn build_framework_list_view_app() -> App {
                         .build(),
                 ))
             },
-            "standout/list-view",
+            |config| config.template_name("standout/list-view"),
         )
         .unwrap()
         .build()
@@ -189,12 +189,12 @@ fn harness_exposes_typed_clap_and_handler_outcomes() {
     usage.assert_error_kind(RunErrorKind::ClapUsage);
 
     let failing = App::builder()
-        .command(
+        .command_with(
             "fail",
             |_matches, _ctx| -> HandlerResult<serde_json::Value> {
                 Err(std::io::Error::other("boom").into())
             },
-            "",
+            |config| config.structured_only(),
         )
         .unwrap()
         .build()
@@ -235,7 +235,7 @@ fn harness_answers_a_version_declared_on_the_builder() {
 #[serial]
 fn harness_exposes_external_failure_payload_status_and_origin() {
     let app = App::builder()
-        .command(
+        .command_with(
             "external",
             |_matches, _ctx| -> HandlerResult<serde_json::Value> {
                 Err(
@@ -244,7 +244,7 @@ fn harness_exposes_external_failure_payload_status_and_origin() {
                         .into(),
                 )
             },
-            "",
+            |config| config.structured_only(),
         )
         .unwrap()
         .command(
@@ -634,7 +634,11 @@ fn rustloc_fixture_uses_configured_csv_projection() {
                     "skipped": 1
                 })))
             },
-            |config| config.structured_output_projection(projection),
+            |config| {
+                config
+                    .structured_only()
+                    .structured_output_projection(projection)
+            },
         )
         .unwrap()
         .build()

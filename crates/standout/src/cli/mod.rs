@@ -34,12 +34,12 @@
 //! let mut api = MyApi::new();
 //!
 //! // FnMut handlers can capture mutable state
-//! App::new()
-//!     .command("add", |m, ctx| {
+//! App::builder()
+//!     .command_with("add", |m, ctx| {
 //!         let item = Item::from(m);
 //!         api.add(item);  // &mut self works!
 //!         Ok(Output::Silent)
-//!     }, "")?
+//!     }, |cfg| cfg.silent())?
 //!     .build()?
 //!     .run(cmd, args);
 //! ```
@@ -72,7 +72,7 @@
 //! ```rust,ignore
 //! use standout::cli::{App, Output, HandlerResult};
 //!
-//! App::new()
+//! App::builder()
 //!     .command("list", |matches, ctx| {
 //!         let items = load_items()?;
 //!         Ok(Output::Render(items))
@@ -103,7 +103,8 @@
 //!
 //! ## Key Types
 //!
-//! - [`App`]: Main entry point and configuration (re-export of `AppBuilder`)
+//! - [`AppBuilder`]: Configuration before build
+//! - [`App`]: Built application that owns parsing, dispatch, and execution
 //! - [`Handler`]: Trait for command handlers (`&mut self`)
 //! - [`FnHandler`]: Wrapper for `FnMut` closures
 //! - [`Output`]: What handlers produce (render data, silent, binary)
@@ -139,8 +140,8 @@ pub mod hooks;
 #[macro_use]
 pub mod macros;
 
-// Re-export AppBuilder as App — the single unified type
-pub use builder::AppBuilder as App;
+// Re-export the configuring builder and built executable app.
+pub use builder::{App, AppBuilder};
 
 // Re-export group types for declarative dispatch
 pub use group::{CommandConfig, GroupBuilder};
@@ -183,7 +184,10 @@ pub use default_command::{DefaultCommandContext, DefaultCommandResolver, Unknown
 ///
 /// This is the simplest entry point for basic CLIs without topics.
 pub fn parse(cmd: clap::Command) -> clap::ArgMatches {
-    App::new().parse_with(cmd)
+    App::builder()
+        .build()
+        .unwrap_or_else(|error| unreachable!("default standout app build failed: {error}"))
+        .parse_with(cmd)
 }
 
 /// Like `parse`, but takes arguments from an iterator.
@@ -192,5 +196,8 @@ where
     I: IntoIterator<Item = T>,
     T: Into<std::ffi::OsString> + Clone,
 {
-    App::new().parse_from(cmd, itr)
+    App::builder()
+        .build()
+        .unwrap_or_else(|error| unreachable!("default standout app build failed: {error}"))
+        .parse_from(cmd, itr)
 }

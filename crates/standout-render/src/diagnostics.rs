@@ -14,15 +14,17 @@
 //! This module routes that result through a thread-local collector, mirroring
 //! [`crate::warnings`]. The collector is the *only* thing it does:
 //!
-//! - **Nothing here changes a rendered byte.** [`resolve_tags`] returns exactly
-//!   what `BBParser::parse` returned before; it simply keeps the error list
-//!   that `parse` discarded.
-//! - **Nothing here reacts.** The framework does not warn, error, or degrade on
-//!   an unresolved tag because this module saw it. Surfacing is not reacting;
-//!   what the framework should *do* about a corrupt page is the loud-failures
-//!   Spec's decision.
-//! - **Nothing is collected unless someone asked.** Recording happens only
-//!   inside a capture window — see below.
+//! - The caller chooses what unresolved tags do to the page through
+//!   [`UnknownTagBehavior`]. Standout's runtime render paths use
+//!   [`Strip`](UnknownTagBehavior::Strip), so an app-template tag the resolved
+//!   theme lacks degrades to unstyled inner text instead of leaking `[tag?]`
+//!   markup.
+//! - Unresolved tags become framework warnings on every render path. Run-bound
+//!   renders leave them for the run to flush; standalone renders expose them
+//!   through [`crate::warnings::take_captured_warnings`] so they cannot leak
+//!   into a later command.
+//! - **Nothing is recorded unless someone asked.** Structured records are kept
+//!   only inside a capture window — see below.
 //!
 //! # The capture window
 //!
@@ -83,10 +85,9 @@
 //! The consumer is the invariant assertion library in `standout-test`, which
 //! needs to state "every tag this page emitted is defined in the resolved
 //! theme" as a fact about structured data rather than as a search for the
-//! `[tag?]` marker in rendered text. The marker is a symptom: it only appears
-//! under `TagTransform::Apply`, it is absent from the very modes most help
-//! tests run in, and finding it means substring-matching a page instead of
-//! naming a tag. A [`TagResolution`] names the tag in every mode.
+//! historical `[tag?]` marker in rendered text. A marker is only a symptom
+//! after template markup has leaked; a [`TagResolution`] names the tag in every
+//! mode.
 //!
 //! # Usage
 //!
@@ -106,9 +107,9 @@
 //!     "[nope]hi[/nope]",
 //!     HashMap::new(),
 //!     TagTransform::Remove,
-//!     UnknownTagBehavior::Passthrough,
+//!     UnknownTagBehavior::Strip,
 //! );
-//! assert_eq!(output, "hi"); // Remove mode: no marker reaches the page…
+//! assert_eq!(output, "hi"); // Strip policy: no marker reaches the page…
 //!
 //! drop(window); // the run boundary ends the batch
 //! let passes = diagnostics::take_captured();
@@ -266,9 +267,10 @@ impl TagResolution {
 /// Runs a style-tag pass, records what it resolved, and returns the output.
 ///
 /// This is the render path's replacement for building a [`BBParser`] and
-/// calling `parse`: byte-for-byte the same output, with the error list `parse`
-/// discarded kept in the thread-local collector instead — and kept only while
-/// a capture window is open, so a standalone render costs no memory.
+/// calling `parse`: byte-for-byte the same output, with unresolved-style
+/// warnings routed to the framework warning collector and structured records
+/// kept only while a capture window is open, so a standalone render costs no
+/// diagnostic-memory growth.
 pub fn resolve_tags(
     input: &str,
     styles: HashMap<String, Style>,
@@ -277,10 +279,6 @@ pub fn resolve_tags(
 ) -> String {
     let parser = BBParser::new(styles, transform).unknown_behavior(unknown_behavior);
     let (output, errors) = parser.parse_with_diagnostics(input);
-
-    if !is_capturing() {
-        return output;
-    }
 
     // The parser reports two different failures through one vector: a tag the
     // theme has no style for, and markup it could not balance. Only the first
@@ -292,6 +290,14 @@ pub fn resolve_tags(
         .errors
         .into_iter()
         .partition(|error| !parser.styles().contains_key(&error.tag));
+
+    if !unresolved.is_empty() {
+        warn_unresolved_tags(&unresolved);
+    }
+
+    if !is_capturing() {
+        return output;
+    }
 
     let defined_tags = if unresolved.is_empty() {
         Vec::new()
@@ -313,6 +319,24 @@ pub fn resolve_tags(
     });
 
     output
+}
+
+fn warn_unresolved_tags(unresolved: &[UnknownTagError]) {
+    let mut names: Vec<&str> = unresolved.iter().map(|error| error.tag.as_str()).collect();
+    names.sort_unstable();
+    names.dedup();
+
+    if !names.is_empty() {
+        let warning = format!(
+            "Unresolved style tag(s) degraded to unstyled text: {}",
+            names.join(", ")
+        );
+        if is_capturing() {
+            crate::warnings::push_warning_once(warning);
+        } else {
+            crate::warnings::capture_warning_once(warning);
+        }
+    }
 }
 
 /// An open capture window, owning the batch recorded inside it.
@@ -544,6 +568,8 @@ mod tests {
     fn renders_outside_a_capture_window_accumulate_nothing() {
         drop(reset());
         take_captured();
+        crate::warnings::drain_warnings();
+        crate::warnings::take_captured_warnings();
 
         for _ in 0..1000 {
             resolve_tags(
@@ -559,6 +585,15 @@ mod tests {
             drain().is_empty(),
             "a render outside a capture window records nothing"
         );
+        assert_eq!(
+            crate::warnings::take_captured_warnings(),
+            vec!["Unresolved style tag(s) degraded to unstyled text: nope".to_string()],
+            "a render outside a capture window exposes its framework warning"
+        );
+        assert!(
+            crate::warnings::drain_warnings().is_empty(),
+            "a standalone warning cannot remain pending for a later run"
+        );
     }
 
     /// …and the second half of that defect: those renders must not turn up in
@@ -567,6 +602,8 @@ mod tests {
     fn a_render_before_a_run_cannot_contaminate_it() {
         drop(reset());
         take_captured();
+        crate::warnings::drain_warnings();
+        crate::warnings::take_captured_warnings();
 
         resolve_tags(
             "[stray]before the run[/stray]",
@@ -587,6 +624,15 @@ mod tests {
         let captured = take_captured();
         assert_eq!(captured.len(), 1, "only the run's own pass is captured");
         assert!(captured[0].is_clean());
+        assert_eq!(
+            crate::warnings::take_captured_warnings(),
+            vec!["Unresolved style tag(s) degraded to unstyled text: stray".to_string()],
+            "the standalone warning remains observable"
+        );
+        assert!(
+            crate::warnings::drain_warnings().is_empty(),
+            "the next run has no pending standalone warning to inherit"
+        );
     }
 
     /// Markup the theme *does* define is a template defect, not a hole in the

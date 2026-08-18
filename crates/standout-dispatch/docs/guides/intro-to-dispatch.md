@@ -5,17 +5,16 @@ CLI applications typically mix business logic with output formatting: database q
 `standout-dispatch` enforces a clean separation:
 
 ```text
-CLI args → Handler (adapter) → View data → Renderer (presentation) → Output
+CLI args → Handler (adapter) → View data → consuming framework
 ```
 
 - **Handlers** receive parsed arguments, return serializable data
-- **Renderers** are pluggable callbacks you provide
 - **Hooks** intercept execution at defined points
 
 This isn't just architectural nicety—it unlocks:
 
 - **Testable handlers** — Typed adapters with explicit inputs and outputs
-- **Swappable renderers** — JSON, templates, plain text from the same handler
+- **Reusable results** — JSON, templates, and plain text can all start from the same handler data
 - **Cross-cutting concerns** — Auth, logging, transformation via hooks
 - **Incremental adoption** — Migrate one command at a time
 
@@ -83,24 +82,7 @@ The handler:
 - Returns a `Result` with serializable data
 - Contains zero presentation logic
 
-Rendering is handled separately:
-
-```rust
-use standout_dispatch::from_fn;
-
-// Simple JSON renderer
-let render = from_fn(|data, _view| {
-    Ok(serde_json::to_string_pretty(data)?)
-});
-```
-
-Or use a full template engine:
-
-```rust
-let render = from_fn(move |data, view| {
-    my_renderer::render_template(view, data, &theme)
-});
-```
+Presentation is handled separately by the caller or by the `standout` framework.
 
 ---
 
@@ -118,7 +100,7 @@ anyhow = "1"
 ```rust
 use standout_dispatch::{
     FnHandler, Output, CommandContext, HandlerResult,
-    from_fn, extract_command_path, path_to_string,
+    extract_command_path, path_to_string,
 };
 use clap::{Command, Arg};
 use serde::Serialize;
@@ -142,12 +124,7 @@ fn main() -> anyhow::Result<()> {
         }))
     });
 
-    // 3. Create render function
-    let render = from_fn(|data, _view| {
-        Ok(serde_json::to_string_pretty(data)?)
-    });
-
-    // 4. Parse and dispatch
+    // 3. Parse and dispatch
     let matches = cmd.get_matches();
     let path = extract_command_path(&matches);
 
@@ -156,9 +133,7 @@ fn main() -> anyhow::Result<()> {
         let result = greet_handler.handle(&matches, &ctx)?;
 
         if let Output::Render(data) = result {
-            let json = serde_json::to_value(&data)?;
-            let output = render(&json, "greet")?;
-            println!("{}", output);
+            println!("{}", serde_json::to_string_pretty(&data)?);
         }
     }
 

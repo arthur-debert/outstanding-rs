@@ -84,7 +84,7 @@ Or use the builder API for more control:
 let app = App::builder()
     .commands(|g| {
         g.command_with("list", handlers::list, |cfg| {
-            cfg.template("list.jinja")
+            cfg.template_name("list")
                .pipe_through("jq '.items'")
         })
     })

@@ -644,8 +644,9 @@ impl Theme {
 
     /// Merges another theme into this one.
     ///
-    /// Styles from `other` take precedence over styles in `self`.
-    /// This allows layering themes, e.g., loading a base theme and applying user overrides.
+    /// Styles, icons, palette, and the optional name from `other` take
+    /// precedence over values in `self`. This allows layering themes, e.g.,
+    /// loading a framework base and applying user overrides.
     ///
     /// # Example
     ///
@@ -660,14 +661,26 @@ impl Theme {
     /// // "text" is now bold (from user)
     /// ```
     pub fn merge(mut self, other: Theme) -> Self {
+        for name in other
+            .base
+            .keys()
+            .chain(other.light.keys())
+            .chain(other.dark.keys())
+            .chain(other.aliases.keys())
+        {
+            self.base.remove(name);
+            self.light.remove(name);
+            self.dark.remove(name);
+            self.aliases.remove(name);
+        }
+
         self.base.extend(other.base);
         self.light.extend(other.light);
         self.dark.extend(other.dark);
         self.aliases.extend(other.aliases);
         self.icons = self.icons.merge(other.icons);
-        if other.palette.is_some() {
-            self.palette = other.palette;
-        }
+        self.name = other.name.or(self.name);
+        self.palette = other.palette.or(self.palette);
         self
     }
 }
@@ -1224,6 +1237,83 @@ mod tests {
         assert!(styles.has("new"));
 
         assert_eq!(merged.len(), 3);
+    }
+
+    fn rendered_style(theme: &Theme, name: &str, mode: Option<ColorMode>) -> String {
+        theme
+            .get_style(name, mode)
+            .unwrap()
+            .force_styling(true)
+            .apply_to("x")
+            .to_string()
+    }
+
+    fn rendered_color(color: impl FnOnce(Style) -> Style) -> String {
+        color(Style::new())
+            .force_styling(true)
+            .apply_to("x")
+            .to_string()
+    }
+
+    #[test]
+    fn test_theme_merge_concrete_replaces_adaptive_definition() {
+        let base = Theme::new().add_adaptive(
+            "status",
+            Style::new().red(),
+            Some(Style::new().green()),
+            Some(Style::new().blue()),
+        );
+        let merged = base.merge(Theme::new().add("status", Style::new().yellow()));
+        let expected = rendered_color(Style::yellow);
+
+        assert_eq!(rendered_style(&merged, "status", None), expected);
+        assert_eq!(
+            rendered_style(&merged, "status", Some(ColorMode::Light)),
+            expected
+        );
+        assert_eq!(
+            rendered_style(&merged, "status", Some(ColorMode::Dark)),
+            expected
+        );
+    }
+
+    #[test]
+    fn test_theme_merge_concrete_replaces_alias_definition() {
+        let base = Theme::new()
+            .add("framework-status", Style::new().red())
+            .add("status", "framework-status");
+        let merged = base.merge(Theme::new().add("status", Style::new().yellow()));
+        let expected = rendered_color(Style::yellow);
+
+        assert_eq!(rendered_style(&merged, "status", None), expected);
+        assert_eq!(
+            rendered_style(&merged, "status", Some(ColorMode::Light)),
+            expected
+        );
+        assert_eq!(
+            rendered_style(&merged, "status", Some(ColorMode::Dark)),
+            expected
+        );
+    }
+
+    #[test]
+    fn test_theme_merge_alias_replaces_concrete_definition() {
+        let base = Theme::new().add("status", Style::new().red());
+        let extension = Theme::new()
+            .add("application-status", Style::new().yellow())
+            .add("status", "application-status");
+        let merged = base.merge(extension);
+        let expected = rendered_color(Style::yellow);
+
+        assert_eq!(rendered_style(&merged, "status", None), expected);
+        assert_eq!(
+            rendered_style(&merged, "status", Some(ColorMode::Light)),
+            expected
+        );
+        assert_eq!(
+            rendered_style(&merged, "status", Some(ColorMode::Dark)),
+            expected
+        );
     }
 
     // =========================================================================

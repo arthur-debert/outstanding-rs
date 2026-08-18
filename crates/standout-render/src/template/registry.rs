@@ -349,6 +349,7 @@ fn template_config() -> FileRegistryConfig<String> {
 /// // Resolve and get content
 /// let content = registry.get_content("header")?;
 /// ```
+#[derive(Clone)]
 pub struct TemplateRegistry {
     /// The underlying file registry for directory-based file loading.
     inner: FileRegistry<String>,
@@ -728,6 +729,15 @@ impl TemplateRegistry {
     /// Returns true if the registry has framework templates.
     pub fn has_framework_templates(&self) -> bool {
         !self.framework.is_empty()
+    }
+
+    /// Returns true when the application registered non-framework templates.
+    ///
+    /// Framework templates are defaults in the `standout/` namespace. They
+    /// should not make convention-derived application templates mandatory for
+    /// structured-only CLIs that never configured their own template registry.
+    pub fn has_application_templates(&self) -> bool {
+        !self.inline.is_empty() || !self.files.is_empty() || !self.inner.is_empty()
     }
 
     /// Returns an iterator over framework template names.

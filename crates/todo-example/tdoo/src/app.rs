@@ -28,7 +28,7 @@ pub(crate) fn build(store: TodoStore) -> Result<App> {
         .default_theme("todo")
         .command_with("add", handlers::add__handler, |config| {
             config
-                .template("add.jinja")
+                .template_name("add")
                 .input(
                     "title",
                     InputChain::<String>::new()
@@ -39,13 +39,13 @@ pub(crate) fn build(store: TodoStore) -> Result<App> {
                 .post_dispatch(audit_hook)
         })?
         .command_with("list", handlers::list__handler, |config| {
-            config.template("list.jinja")
+            config.template_name("list")
         })?
         .command_with("done", handlers::done__handler, |config| {
-            config.template("done.jinja").post_dispatch(audit_hook)
+            config.template_name("done").post_dispatch(audit_hook)
         })?
         .command_with("export", handlers::export__handler, |config| {
-            config.template("export.jinja")
+            config.template_name("export")
         })?
         .build()?)
 }

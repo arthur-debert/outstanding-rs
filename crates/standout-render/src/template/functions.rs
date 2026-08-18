@@ -115,7 +115,7 @@ pub fn apply_style_tags(output: &str, styles: &Styles, mode: OutputMode) -> Stri
         output,
         styles.to_resolved_map(),
         transform,
-        UnknownTagBehavior::Passthrough,
+        UnknownTagBehavior::Strip,
     )
 }
 
@@ -975,6 +975,82 @@ pub fn render_auto_with_engine_split(
     context_registry: &ContextRegistry,
     render_context: &RenderContext,
 ) -> Result<RenderResult, RenderError> {
+    render_auto_with_engine_split_kind(
+        engine,
+        TemplateIdentity::Auto(template),
+        data,
+        theme,
+        mode,
+        context_registry,
+        render_context,
+    )
+}
+
+/// Auto-dispatches rendering with an explicitly inline template source.
+///
+/// Structured modes serialize `data` directly. Human-readable modes always
+/// render `template` as source text, even when a registered template has the
+/// same name.
+pub fn render_auto_with_engine_split_inline(
+    engine: &dyn super::TemplateEngine,
+    template: &str,
+    data: &serde_json::Value,
+    theme: &Theme,
+    mode: OutputMode,
+    context_registry: &ContextRegistry,
+    render_context: &RenderContext,
+) -> Result<RenderResult, RenderError> {
+    render_auto_with_engine_split_kind(
+        engine,
+        TemplateIdentity::Inline(template),
+        data,
+        theme,
+        mode,
+        context_registry,
+        render_context,
+    )
+}
+
+/// Auto-dispatches rendering with an explicitly named template.
+///
+/// Structured modes serialize `data` directly. Human-readable modes always
+/// render `name` through [`TemplateEngine::render_named_with_render_widths`]
+/// and never reinterpret it as inline source.
+pub fn render_auto_with_engine_split_named(
+    engine: &dyn super::TemplateEngine,
+    name: &str,
+    data: &serde_json::Value,
+    theme: &Theme,
+    mode: OutputMode,
+    context_registry: &ContextRegistry,
+    render_context: &RenderContext,
+) -> Result<RenderResult, RenderError> {
+    render_auto_with_engine_split_kind(
+        engine,
+        TemplateIdentity::Named(name),
+        data,
+        theme,
+        mode,
+        context_registry,
+        render_context,
+    )
+}
+
+enum TemplateIdentity<'a> {
+    Auto(&'a str),
+    Inline(&'a str),
+    Named(&'a str),
+}
+
+fn render_auto_with_engine_split_kind(
+    engine: &dyn super::TemplateEngine,
+    template: TemplateIdentity<'_>,
+    data: &serde_json::Value,
+    theme: &Theme,
+    mode: OutputMode,
+    context_registry: &ContextRegistry,
+    render_context: &RenderContext,
+) -> Result<RenderResult, RenderError> {
     if mode.is_structured() {
         // For structured modes, no style processing, so raw == formatted
         let output = match mode {
@@ -1013,20 +1089,27 @@ pub fn render_auto_with_engine_split(
         let combined_value = serde_json::Value::Object(context_map.into_iter().collect());
 
         // Pass 1: Render template (this is the raw/intermediate output)
-        let raw_output = if engine.has_template(template) {
-            engine.render_named_with_render_widths(
-                template,
+        let raw_output = match template {
+            TemplateIdentity::Auto(template) if engine.has_template(template) => engine
+                .render_named_with_render_widths(
+                    template,
+                    &combined_value,
+                    render_context.terminal_width,
+                    render_context.ambiguous_width(),
+                )?,
+            TemplateIdentity::Auto(template) | TemplateIdentity::Inline(template) => engine
+                .render_template_with_render_widths(
+                    template,
+                    &combined_value,
+                    render_context.terminal_width,
+                    render_context.ambiguous_width(),
+                )?,
+            TemplateIdentity::Named(name) => engine.render_named_with_render_widths(
+                name,
                 &combined_value,
                 render_context.terminal_width,
                 render_context.ambiguous_width(),
-            )?
-        } else {
-            engine.render_template_with_render_widths(
-                template,
-                &combined_value,
-                render_context.terminal_width,
-                render_context.ambiguous_width(),
-            )?
+            )?,
         };
 
         // Pass 2: Apply styles to get formatted output
@@ -1099,7 +1182,7 @@ mod tests {
     }
 
     #[test]
-    fn test_render_unknown_style_shows_indicator() {
+    fn test_render_unknown_style_degrades_to_text() {
         let theme = Theme::new();
         let data = SimpleData {
             message: "hello".into(),
@@ -1113,8 +1196,7 @@ mod tests {
         )
         .unwrap();
 
-        // Unknown tags in passthrough mode get ? marker on both open and close tags
-        assert_eq!(output, "[unknown?]hello[/unknown?]");
+        assert_eq!(output, "hello");
     }
 
     #[test]
@@ -2015,8 +2097,7 @@ mod tests {
     }
 
     #[test]
-    fn test_tag_syntax_unknown_tag_passthrough() {
-        // Passthrough with ? marker only applies in Apply mode (Term)
+    fn test_tag_syntax_unknown_tag_degrades_to_text() {
         let theme = Theme::new().add("known", Style::new().bold());
 
         #[derive(Serialize)]
@@ -2024,7 +2105,6 @@ mod tests {
             name: String,
         }
 
-        // In Term mode, unknown tags get ? marker
         let output = render_with_output(
             "[unknown]{{ name }}[/unknown]",
             &Data {
@@ -2035,12 +2115,8 @@ mod tests {
         )
         .unwrap();
 
-        // Unknown tags get ? marker in passthrough mode
-        assert!(output.contains("[unknown?]"));
-        assert!(output.contains("[/unknown?]"));
-        assert!(output.contains("Hello"));
+        assert_eq!(output, "Hello");
 
-        // In Text mode, all tags are stripped (Remove transform)
         let text_output = render_with_output(
             "[unknown]{{ name }}[/unknown]",
             &Data {
@@ -2051,7 +2127,6 @@ mod tests {
         )
         .unwrap();
 
-        // Text mode strips all tags
         assert_eq!(text_output, "Hello");
     }
 

@@ -147,7 +147,7 @@ App::builder()
     .default_theme("todo")
     .command_with("add", handlers::add__handler, |config| {
         config
-            .template("add.jinja")
+            .template_name("add")
             .input(
                 "title",
                 InputChain::<String>::new()

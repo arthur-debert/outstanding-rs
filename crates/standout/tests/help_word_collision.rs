@@ -33,7 +33,7 @@ fn error_text(result: HelpResult) -> String {
 
 #[test]
 fn a_declared_help_subcommand_is_a_setup_error_not_a_panic() {
-    let app = App::new().help_handling(true).build().unwrap();
+    let app = App::builder().help_handling(true).build().unwrap();
 
     let message = error_text(app.get_matches_from(app_with_its_own_help(), ["app", "build"]));
     assert!(
@@ -52,7 +52,7 @@ fn a_declared_help_subcommand_is_a_setup_error_not_a_panic() {
 
 #[test]
 fn the_dispatch_path_reports_the_same_collision() {
-    let app = App::new().help_handling(true).build().unwrap();
+    let app = App::builder().help_handling(true).build().unwrap();
 
     match app.run_to_string(app_with_its_own_help(), ["app", "build"]) {
         RunResult::Error(e) => assert!(
@@ -65,7 +65,7 @@ fn the_dispatch_path_reports_the_same_collision() {
 
 #[test]
 fn an_aliased_help_subcommand_collides_too() {
-    let app = App::new().help_handling(true).build().unwrap();
+    let app = App::builder().help_handling(true).build().unwrap();
     let cmd = Command::new("app")
         .disable_help_subcommand(true)
         .subcommand(Command::new("build"))
@@ -85,7 +85,7 @@ fn augmentation_hands_back_the_colliding_root_for_the_caller_to_refuse() {
     // registered. So augmenting a root that already claims `help` yields two
     // claims on the name — the collision the entry points read and refuse on,
     // before the parse that would panic.
-    let app = App::new().help_handling(true).build().unwrap();
+    let app = App::builder().help_handling(true).build().unwrap();
     let augmented = app.augment_command_with_help(app_with_its_own_help());
 
     let claims = augmented
@@ -97,7 +97,7 @@ fn augmentation_hands_back_the_colliding_root_for_the_caller_to_refuse() {
 
 #[test]
 fn a_registered_help_command_fails_at_build() {
-    let result = App::new()
+    let result = App::builder()
         .help_handling(true)
         .command("help", |_m, _ctx| Ok(Output::Render("mine")), "mine")
         .unwrap()
@@ -116,7 +116,7 @@ fn a_registered_help_command_fails_at_build() {
 fn a_command_registered_under_help_fails_at_build_too() {
     // `help.topic` never runs: the root word standout installs is what `myapp
     // help …` reaches. Claiming the first segment is claiming the word.
-    let result = App::new()
+    let result = App::builder()
         .help_handling(true)
         .command("help.topic", |_m, _ctx| Ok(Output::Render("mine")), "mine")
         .unwrap()
@@ -140,7 +140,7 @@ fn a_command_registered_under_help_fails_at_build_too() {
 
 #[test]
 fn a_help_group_fails_at_build_too() {
-    let result = App::new()
+    let result = App::builder()
         .help_handling(true)
         .group("help", |g| {
             g.command("topic", |_m, _ctx| Ok(Output::Render("mine")))
@@ -160,7 +160,7 @@ fn a_help_group_fails_at_build_too() {
 #[test]
 fn a_nested_help_command_is_not_the_root_word() {
     // Only the root word is standout's; `myapp db help` is the application's.
-    App::new()
+    App::builder()
         .help_handling(true)
         .command("db.help", |_m, _ctx| Ok(Output::Render("mine")), "mine")
         .unwrap()
@@ -170,7 +170,7 @@ fn a_nested_help_command_is_not_the_root_word() {
 
 #[test]
 fn without_help_handling_the_application_keeps_the_name() {
-    let app = App::new()
+    let app = App::builder()
         .command("help", |_m, _ctx| Ok(Output::Render("mine")), "mine")
         .unwrap()
         .build()
@@ -186,7 +186,7 @@ fn without_help_handling_the_application_keeps_the_name() {
 fn a_flat_root_that_never_gets_the_word_is_unaffected() {
     // Flat with positionals and no opt-in: standout installs nothing, so a
     // `help` the application declares elsewhere is not standout's business.
-    let app = App::new().help_handling(true).build().unwrap();
+    let app = App::builder().help_handling(true).build().unwrap();
     let cmd = Command::new("app")
         .about("Flat app")
         .arg(Arg::new("range").help("A revision range"))

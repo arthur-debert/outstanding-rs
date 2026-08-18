@@ -167,7 +167,11 @@ fn projection_failures_are_typed_render_errors() {
         .command_with(
             "summary",
             |_matches, _ctx| Ok(Output::Render(response())),
-            |config| config.structured_output_projection(projection),
+            |config| {
+                config
+                    .structured_only()
+                    .structured_output_projection(projection)
+            },
         )
         .unwrap()
         .build()
@@ -188,6 +192,7 @@ fn projection_runs_between_post_dispatch_and_post_output() {
             |_matches, _ctx| Ok(Output::Render(response())),
             |config| {
                 config
+                    .structured_only()
                     .structured_output_projection(rustloc_projection())
                     .post_dispatch(|_matches, _ctx, mut root| {
                         root["report"]["items"][0]["language"] = json!("Rust (hooked)");

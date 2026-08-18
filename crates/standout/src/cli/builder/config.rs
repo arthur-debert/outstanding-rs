@@ -14,8 +14,6 @@ use crate::topics::Topic;
 use crate::TemplateRegistry;
 use crate::{EmbeddedStyles, EmbeddedTemplates, Theme};
 use minijinja::Value;
-use std::path::PathBuf;
-use std::rc::Rc;
 
 use super::AppBuilder;
 
@@ -168,9 +166,9 @@ impl AppBuilder {
     /// if the source path exists, templates are loaded from disk for hot-reload.
     /// In release mode, embedded content is used.
     ///
-    /// Templates set here will be used to resolve template paths when registering
-    /// commands. Call this method *before* `.commands()` or `.group()` to ensure
-    /// templates are available for resolution.
+    /// Templates set here resolve command template names during `build()`, so
+    /// call order with `.commands()` and `.group()` does not affect template
+    /// lookup.
     ///
     /// # Example
     ///
@@ -186,7 +184,7 @@ impl AppBuilder {
     ///     .run(cmd, args);
     /// ```
     pub fn templates(mut self, templates: EmbeddedTemplates) -> Self {
-        self.template_registry = Some(Rc::new(TemplateRegistry::from(templates)));
+        self.template_registry = Some(TemplateRegistry::from(templates));
         self
     }
 
@@ -252,33 +250,13 @@ impl AppBuilder {
         self
     }
 
-    /// Sets the base directory for convention-based template resolution.
-    ///
-    /// When a command is registered without an explicit template, the template
-    /// path is derived from the command path:
-    /// - Command `db.migrate` → `{template_dir}/db/migrate{template_ext}`
-    ///
-    /// This is for file-based template loading at render time. For embedded
-    /// templates, use `.templates()` instead.
-    ///
-    /// # Example
-    ///
-    /// ```rust,ignore
-    /// App::builder()
-    ///     .template_dir("templates")
-    ///     .group("db", |g| g
-    ///         .command("migrate", handler))  // uses "templates/db/migrate.j2"
-    /// ```
-    pub fn template_dir(mut self, path: impl Into<PathBuf>) -> Self {
-        self.template_dir = Some(path.into());
-        self
-    }
-
     /// Adds a template directory to the registry for runtime loading.
     ///
-    /// Templates from directories are loaded immediately and merged with any
-    /// embedded templates. Directory templates take precedence over embedded
-    /// templates with the same name.
+    /// Templates from directories are registered for runtime loading and
+    /// merged with any embedded templates. File-backed entries are reread
+    /// during named renders, so edits are visible inside the same debug
+    /// process. Directory templates take precedence over embedded templates
+    /// with the same name.
     ///
     /// # Example
     ///
@@ -288,19 +266,11 @@ impl AppBuilder {
     ///     .templates_dir("~/.myapp/templates")  // User overrides
     /// ```
     pub fn templates_dir<P: AsRef<std::path::Path>>(mut self, path: P) -> Result<Self, SetupError> {
-        if self.template_registry.is_none() {
-            self.template_registry = Some(Rc::new(TemplateRegistry::new()));
-        }
-
-        let arc = self.template_registry.as_mut().unwrap();
-        match Rc::get_mut(arc) {
-            Some(registry) => {
-                registry.add_template_dir(path)?;
-            }
-            None => {
-                panic!("Cannot modify template registry after commands have been dispatched/finalized.");
-            }
-        }
+        let registry = self
+            .template_registry
+            .get_or_insert_with(TemplateRegistry::new);
+        registry.add_template_dir(path)?;
+        registry.refresh()?;
         Ok(self)
     }
 
@@ -312,10 +282,10 @@ impl AppBuilder {
     ///
     /// ```rust,ignore
     /// App::builder()
-    ///     .template_dir("templates")
+    ///     .templates_dir("templates")?
     ///     .template_ext(".jinja2")
     ///     .group("db", |g| g
-    ///         .command("migrate", handler))  // uses "templates/db/migrate.jinja2"
+    ///         .command("migrate", handler))  // resolves "db/migrate.jinja2"
     /// ```
     pub fn template_ext(mut self, ext: impl Into<String>) -> Self {
         self.template_ext = ext.into();
@@ -617,7 +587,7 @@ mod tests {
 
         let cmd = Command::new("app").subcommand(Command::new("info"));
         let matches = cmd.try_get_matches_from(["app", "info"]).unwrap();
-        let result = builder.dispatch(matches, OutputMode::Text);
+        let result = builder.build().unwrap().dispatch(matches, OutputMode::Text);
 
         assert!(result.is_handled());
         assert_eq!(result.output(), Some("app v1.0.0"));
@@ -639,7 +609,7 @@ mod tests {
 
         let cmd = Command::new("app").subcommand(Command::new("info"));
         let matches = cmd.try_get_matches_from(["app", "info"]).unwrap();
-        let result = builder.dispatch(matches, OutputMode::Text);
+        let result = builder.build().unwrap().dispatch(matches, OutputMode::Text);
 
         assert!(result.is_handled());
         assert_eq!(result.output(), Some("Report by Alice (2024)"));
@@ -662,7 +632,7 @@ mod tests {
 
         let cmd = Command::new("app").subcommand(Command::new("info"));
         let matches = cmd.try_get_matches_from(["app", "info"]).unwrap();
-        let result = builder.dispatch(matches, OutputMode::Text);
+        let result = builder.build().unwrap().dispatch(matches, OutputMode::Text);
 
         assert!(result.is_handled());
         // The width will be actual terminal width or 80 in tests
@@ -687,7 +657,7 @@ mod tests {
 
         let cmd = Command::new("app").subcommand(Command::new("info"));
         let matches = cmd.try_get_matches_from(["app", "info"]).unwrap();
-        let result = builder.dispatch(matches, OutputMode::Text);
+        let result = builder.build().unwrap().dispatch(matches, OutputMode::Text);
 
         assert!(result.is_handled());
         assert_eq!(result.output(), Some("Mode: Text"));
@@ -710,7 +680,7 @@ mod tests {
 
         let cmd = Command::new("app").subcommand(Command::new("test"));
         let matches = cmd.try_get_matches_from(["app", "test"]).unwrap();
-        let result = builder.dispatch(matches, OutputMode::Text);
+        let result = builder.build().unwrap().dispatch(matches, OutputMode::Text);
 
         assert!(result.is_handled());
         assert_eq!(result.output(), Some("from_data"));
@@ -738,15 +708,16 @@ mod tests {
         let cmd = Command::new("app")
             .subcommand(Command::new("list"))
             .subcommand(Command::new("info"));
+        let app = builder.build().unwrap();
 
         // Test "list" command
         let matches = cmd.clone().try_get_matches_from(["app", "list"]).unwrap();
-        let result = builder.dispatch(matches, OutputMode::Text);
+        let result = app.dispatch(matches, OutputMode::Text);
         assert_eq!(result.output(), Some("MyApp: list"));
 
         // Test "info" command
         let matches = cmd.try_get_matches_from(["app", "info"]).unwrap();
-        let result = builder.dispatch(matches, OutputMode::Text);
+        let result = app.dispatch(matches, OutputMode::Text);
         assert_eq!(result.output(), Some("MyApp: info"));
     }
 
@@ -768,7 +739,7 @@ mod tests {
 
         let cmd = Command::new("app").subcommand(Command::new("test"));
         let matches = cmd.try_get_matches_from(["app", "test"]).unwrap();
-        let result = builder.dispatch(matches, OutputMode::Text);
+        let result = builder.build().unwrap().dispatch(matches, OutputMode::Text);
 
         assert!(result.is_handled());
         assert_eq!(result.output(), Some("Count: 21, Doubled: 42"));
@@ -795,7 +766,7 @@ mod tests {
 
         let cmd = Command::new("app").subcommand(Command::new("test"));
         let matches = cmd.try_get_matches_from(["app", "test"]).unwrap();
-        let result = builder.dispatch(matches, OutputMode::Text);
+        let result = builder.build().unwrap().dispatch(matches, OutputMode::Text);
 
         assert!(result.is_handled());
         assert_eq!(result.output(), Some("Debug: true, Max: 100"));
@@ -819,7 +790,7 @@ mod tests {
 
         let cmd = Command::new("app").subcommand(Command::new("list"));
         let matches = cmd.try_get_matches_from(["app", "list"]).unwrap();
-        let result = builder.dispatch(matches, OutputMode::Text);
+        let result = builder.build().unwrap().dispatch(matches, OutputMode::Text);
 
         assert!(result.is_handled());
         assert_eq!(result.output(), Some("a | b | c"));
@@ -840,7 +811,7 @@ mod tests {
 
         let cmd = Command::new("app").subcommand(Command::new("test"));
         let matches = cmd.try_get_matches_from(["app", "test"]).unwrap();
-        let result = builder.dispatch(matches, OutputMode::Json);
+        let result = builder.build().unwrap().dispatch(matches, OutputMode::Json);
 
         assert!(result.is_handled());
         let output = result.output().unwrap();
@@ -851,22 +822,29 @@ mod tests {
     }
 
     #[test]
-    fn test_template_dir_convention() {
+    fn test_templates_dir_convention() {
         use serde_json::json;
+        let temp_dir = tempfile::tempdir().unwrap();
+        std::fs::create_dir_all(temp_dir.path().join("db")).unwrap();
+        std::fs::write(temp_dir.path().join("db/migrate.jinja2"), "{{ ok }}").unwrap();
 
         let builder = AppBuilder::new()
-            .template_dir("templates")
+            .templates_dir(temp_dir.path())
+            .unwrap()
             .template_ext(".jinja2")
             .group("db", |g| {
-                // No explicit template - should resolve to "templates/db/migrate.jinja2"
                 g.command("migrate", |_m, _ctx| {
                     Ok(HandlerOutput::Render(json!({"ok": true})))
                 })
             });
 
-        let builder = builder.unwrap();
+        let app = builder.unwrap().build().unwrap();
 
-        // Verify the builder has the commands registered
-        assert!(builder.has_command("db.migrate"));
+        let cmd =
+            Command::new("app").subcommand(Command::new("db").subcommand(Command::new("migrate")));
+        let matches = cmd.try_get_matches_from(["app", "db", "migrate"]).unwrap();
+        let result = app.dispatch(matches, OutputMode::Text);
+
+        assert_eq!(result.output(), Some("true"));
     }
 }

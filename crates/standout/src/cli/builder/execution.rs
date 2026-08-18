@@ -1,4 +1,4 @@
-//! Dispatch and execution methods for AppBuilder.
+//! Dispatch and execution methods for built Apps.
 //!
 //! This module contains methods for dispatching and running commands:
 //! - `commands()` - dispatch macro integration
@@ -12,7 +12,9 @@ use clap::{Arg, ArgAction, ArgMatches, Command};
 use std::io::Write;
 use std::path::PathBuf;
 
-use super::{AppBuilder, PendingCommand};
+use super::{
+    inline_template_ref, App, AppBuilder, HookRegistrationSource, PendingCommand, TemplateRef,
+};
 use crate::cli::default_command::ParseFailure;
 use crate::cli::dispatch::{
     dispatch, extract_command_path, get_deepest_matches, DispatchOutput, Presentation,
@@ -40,7 +42,7 @@ impl AppBuilder {
     /// use standout::cli::{dispatch, App};
     ///
     /// App::builder()
-    ///     .template_dir("templates")
+    ///     .templates_dir("templates")?
     ///     .commands(dispatch! {
     ///         db: {
     ///             migrate => db::migrate,
@@ -53,6 +55,11 @@ impl AppBuilder {
     ///
     /// The closure receives an empty [`GroupBuilder`] and should return it with
     /// commands added. Each top-level entry becomes a command or group.
+    ///
+    /// Top-level command hooks declared here use the same conflict rules as
+    /// [`command_with`](Self::command_with): a command can collect different
+    /// phases from `CommandConfig` and [`hooks`](Self::hooks), but the same
+    /// phase cannot be registered through both APIs.
     pub fn commands<F>(mut self, configure: F) -> Result<Self, SetupError>
     where
         F: FnOnce(GroupBuilder) -> GroupBuilder,
@@ -68,13 +75,22 @@ impl AppBuilder {
         for (name, entry) in builder.entries {
             match entry {
                 GroupEntry::Command { mut handler } => {
-                    let template = handler
-                        .template()
-                        .map(String::from)
-                        .unwrap_or_else(|| self.resolve_template(&name));
+                    let template = if let Some(absence) = handler.template_absence() {
+                        TemplateRef::Absent(absence)
+                    } else if let Some(name) = handler.template_name() {
+                        TemplateRef::Named(name.to_string())
+                    } else if let Some(template) = handler.template() {
+                        inline_template_ref(template, "CommandConfig::template")?
+                    } else {
+                        TemplateRef::convention(&name)
+                    };
 
                     if let Some(hooks) = handler.take_hooks() {
-                        self.command_hooks.insert(name.clone(), hooks);
+                        self.register_command_hooks(
+                            &name,
+                            hooks,
+                            HookRegistrationSource::CommandConfig,
+                        )?;
                     }
                     if let Some(questionnaire) = handler.take_questionnaire() {
                         self.questionnaire_commands
@@ -106,7 +122,9 @@ impl AppBuilder {
 
         Ok(self)
     }
+}
 
+impl App {
     /// Dispatches to a registered handler if one matches the command path.
     ///
     /// Returns:
@@ -922,7 +940,10 @@ mod tests {
 
         let builder = AppBuilder::new()
             .commands(dispatch! {
-                list => |_m, _ctx| Ok(HandlerOutput::Render(json!({"items": ["a", "b"]})))
+                list => {
+                    handler: |_m, _ctx| Ok(HandlerOutput::Render(json!({"items": ["a", "b"]}))),
+                    structured_only: true,
+                }
             })
             .unwrap();
 
@@ -930,7 +951,7 @@ mod tests {
 
         let cmd = Command::new("app").subcommand(Command::new("list"));
         let matches = cmd.try_get_matches_from(["app", "list"]).unwrap();
-        let result = builder.dispatch(matches, OutputMode::Json);
+        let result = builder.build().unwrap().dispatch(matches, OutputMode::Json);
 
         assert!(result.is_handled());
         let output = result.output().unwrap();
@@ -945,10 +966,19 @@ mod tests {
         let builder = AppBuilder::new()
             .commands(dispatch! {
                 db: {
-                    migrate => |_m, _ctx| Ok(HandlerOutput::Render(json!({"migrated": true}))),
-                    backup => |_m, _ctx| Ok(HandlerOutput::Render(json!({"backed_up": true}))),
+                    migrate => {
+                        handler: |_m, _ctx| Ok(HandlerOutput::Render(json!({"migrated": true}))),
+                        structured_only: true,
+                    },
+                    backup => {
+                        handler: |_m, _ctx| Ok(HandlerOutput::Render(json!({"backed_up": true}))),
+                        structured_only: true,
+                    },
                 },
-                version => |_m, _ctx| Ok(HandlerOutput::Render(json!({"v": "1.0"}))),
+                version => {
+                    handler: |_m, _ctx| Ok(HandlerOutput::Render(json!({"v": "1.0"}))),
+                    structured_only: true,
+                },
             })
             .unwrap();
 
@@ -969,7 +999,7 @@ mod tests {
             .clone()
             .try_get_matches_from(["app", "db", "migrate"])
             .unwrap();
-        let result = builder.dispatch(matches, OutputMode::Json);
+        let result = builder.build().unwrap().dispatch(matches, OutputMode::Json);
         assert!(result.is_handled());
         assert!(result.output().unwrap().contains("migrated"));
     }
@@ -990,7 +1020,7 @@ mod tests {
 
         let cmd = Command::new("app").subcommand(Command::new("list"));
         let matches = cmd.try_get_matches_from(["app", "list"]).unwrap();
-        let result = builder.dispatch(matches, OutputMode::Text);
+        let result = builder.build().unwrap().dispatch(matches, OutputMode::Text);
 
         assert!(result.is_handled());
         assert_eq!(result.output(), Some("Count: 42"));
@@ -1021,7 +1051,7 @@ mod tests {
 
         let cmd = Command::new("app").subcommand(Command::new("list"));
         let matches = cmd.try_get_matches_from(["app", "list"]).unwrap();
-        let result = builder.dispatch(matches, OutputMode::Text);
+        let result = builder.build().unwrap().dispatch(matches, OutputMode::Text);
 
         assert!(result.is_handled());
         assert!(hook_called.load(Ordering::SeqCst));
@@ -1068,7 +1098,7 @@ mod tests {
         let cmd = Command::new("app").subcommand(Command::new("list"));
 
         let matches = cmd.try_get_matches_from(["app", "list"]).unwrap();
-        let result = builder.dispatch(matches, OutputMode::Text);
+        let result = builder.build().unwrap().dispatch(matches, OutputMode::Text);
 
         assert!(result.is_handled());
         assert_eq!(result.output(), Some("Count: 42"));
@@ -1079,7 +1109,11 @@ mod tests {
         use serde_json::json;
 
         let builder = AppBuilder::new()
-            .command("list", |_m, _ctx| Ok(HandlerOutput::Render(json!({}))), "")
+            .command_with(
+                "list",
+                |_m, _ctx| Ok(HandlerOutput::Render(json!({}))),
+                |config| config.structured_only(),
+            )
             .unwrap();
 
         let cmd = Command::new("app")
@@ -1087,7 +1121,7 @@ mod tests {
             .subcommand(Command::new("other"));
 
         let matches = cmd.try_get_matches_from(["app", "other"]).unwrap();
-        let result = builder.dispatch(matches, OutputMode::Text);
+        let result = builder.build().unwrap().dispatch(matches, OutputMode::Text);
 
         assert!(!result.is_handled());
         assert!(result.matches().is_some());
@@ -1108,7 +1142,7 @@ mod tests {
         let cmd = Command::new("app").subcommand(Command::new("list"));
 
         let matches = cmd.try_get_matches_from(["app", "list"]).unwrap();
-        let result = builder.dispatch(matches, OutputMode::Json);
+        let result = builder.build().unwrap().dispatch(matches, OutputMode::Json);
 
         assert!(result.is_handled());
         let output = result.output().unwrap();
@@ -1132,7 +1166,7 @@ mod tests {
             Command::new("app").subcommand(Command::new("config").subcommand(Command::new("get")));
 
         let matches = cmd.try_get_matches_from(["app", "config", "get"]).unwrap();
-        let result = builder.dispatch(matches, OutputMode::Text);
+        let result = builder.build().unwrap().dispatch(matches, OutputMode::Text);
 
         assert!(result.is_handled());
         assert_eq!(result.output(), Some("value"));
@@ -1141,13 +1175,17 @@ mod tests {
     #[test]
     fn test_dispatch_silent_result() {
         let builder = AppBuilder::new()
-            .command("quiet", |_m, _ctx| Ok(HandlerOutput::<()>::Silent), "")
+            .command_with(
+                "quiet",
+                |_m, _ctx| Ok(HandlerOutput::<()>::Silent),
+                |config| config.silent(),
+            )
             .unwrap();
 
         let cmd = Command::new("app").subcommand(Command::new("quiet"));
 
         let matches = cmd.try_get_matches_from(["app", "quiet"]).unwrap();
-        let result = builder.dispatch(matches, OutputMode::Text);
+        let result = builder.build().unwrap().dispatch(matches, OutputMode::Text);
 
         assert!(result.is_handled());
         assert_eq!(result.output(), Some(""));
@@ -1156,17 +1194,17 @@ mod tests {
     #[test]
     fn test_dispatch_error_result() {
         let builder = AppBuilder::new()
-            .command(
+            .command_with(
                 "fail",
                 |_m, _ctx| Err::<HandlerOutput<()>, _>(anyhow::anyhow!("something went wrong")),
-                "",
+                |config| config.silent(),
             )
             .unwrap();
 
         let cmd = Command::new("app").subcommand(Command::new("fail"));
 
         let matches = cmd.try_get_matches_from(["app", "fail"]).unwrap();
-        let result = builder.dispatch(matches, OutputMode::Text);
+        let result = builder.build().unwrap().dispatch(matches, OutputMode::Text);
 
         assert!(result.is_error(), "expected Error, got {:?}", result);
         let msg = result.error().unwrap();
@@ -1188,7 +1226,7 @@ mod tests {
 
         let cmd = Command::new("app").subcommand(Command::new("list"));
 
-        let result = builder.dispatch_from(cmd, ["app", "list"]);
+        let result = builder.build().unwrap().dispatch_from(cmd, ["app", "list"]);
 
         assert!(result.is_handled());
         assert_eq!(result.output(), Some("Items: [\"a\", \"b\"]"));
@@ -1208,7 +1246,10 @@ mod tests {
 
         let cmd = Command::new("app").subcommand(Command::new("list"));
 
-        let result = builder.dispatch_from(cmd, ["app", "--output=json", "list"]);
+        let result = builder
+            .build()
+            .unwrap()
+            .dispatch_from(cmd, ["app", "--output=json", "list"]);
 
         assert!(result.is_handled());
         let output = result.output().unwrap();
@@ -1220,14 +1261,21 @@ mod tests {
         use serde_json::json;
 
         let builder = AppBuilder::new()
-            .command("list", |_m, _ctx| Ok(HandlerOutput::Render(json!({}))), "")
+            .command_with(
+                "list",
+                |_m, _ctx| Ok(HandlerOutput::Render(json!({}))),
+                |config| config.structured_only(),
+            )
             .unwrap();
 
         let cmd = Command::new("app")
             .subcommand(Command::new("list"))
             .subcommand(Command::new("other"));
 
-        let result = builder.dispatch_from(cmd, ["app", "other"]);
+        let result = builder
+            .build()
+            .unwrap()
+            .dispatch_from(cmd, ["app", "other"]);
 
         assert!(!result.is_handled());
     }
@@ -1263,7 +1311,7 @@ mod tests {
         let cmd = Command::new("app").subcommand(Command::new("list"));
 
         let matches = cmd.try_get_matches_from(["app", "list"]).unwrap();
-        let result = builder.dispatch(matches, OutputMode::Text);
+        let result = builder.build().unwrap().dispatch(matches, OutputMode::Text);
 
         assert!(result.is_handled());
         assert!(hook_called.load(Ordering::SeqCst));
@@ -1273,12 +1321,12 @@ mod tests {
     #[test]
     fn test_dispatch_pre_dispatch_hook_abort() {
         let builder = AppBuilder::new()
-            .command(
+            .command_with(
                 "list",
                 |_m, _ctx| -> HandlerResult<()> {
                     panic!("Handler should not be called");
                 },
-                "",
+                |config| config.silent(),
             )
             .unwrap()
             .hooks(
@@ -1290,7 +1338,7 @@ mod tests {
         let cmd = Command::new("app").subcommand(Command::new("list"));
 
         let matches = cmd.try_get_matches_from(["app", "list"]).unwrap();
-        let result = builder.dispatch(matches, OutputMode::Text);
+        let result = builder.build().unwrap().dispatch(matches, OutputMode::Text);
 
         assert!(result.is_error(), "expected Error, got {:?}", result);
         let msg = result.error().unwrap();
@@ -1326,7 +1374,7 @@ mod tests {
         let cmd = Command::new("app").subcommand(Command::new("list"));
 
         let matches = cmd.try_get_matches_from(["app", "list"]).unwrap();
-        let result = builder.dispatch(matches, OutputMode::Text);
+        let result = builder.build().unwrap().dispatch(matches, OutputMode::Text);
 
         assert!(result.is_handled());
         assert_eq!(result.output(), Some("HELLO"));
@@ -1371,7 +1419,7 @@ mod tests {
         let cmd = Command::new("app").subcommand(Command::new("list"));
 
         let matches = cmd.try_get_matches_from(["app", "list"]).unwrap();
-        let result = builder.dispatch(matches, OutputMode::Text);
+        let result = builder.build().unwrap().dispatch(matches, OutputMode::Text);
 
         assert!(result.is_handled());
         assert_eq!(result.output(), Some("[TEST]"));
@@ -1398,7 +1446,7 @@ mod tests {
         let cmd = Command::new("app").subcommand(Command::new("list"));
 
         let matches = cmd.try_get_matches_from(["app", "list"]).unwrap();
-        let result = builder.dispatch(matches, OutputMode::Text);
+        let result = builder.build().unwrap().dispatch(matches, OutputMode::Text);
 
         assert!(result.is_error(), "expected Error, got {:?}", result);
         let msg = result.error().unwrap();
@@ -1432,7 +1480,7 @@ mod tests {
             Command::new("app").subcommand(Command::new("config").subcommand(Command::new("get")));
 
         let matches = cmd.try_get_matches_from(["app", "config", "get"]).unwrap();
-        let result = builder.dispatch(matches, OutputMode::Text);
+        let result = builder.build().unwrap().dispatch(matches, OutputMode::Text);
 
         assert!(result.is_handled());
         assert_eq!(result.output(), Some("***"));
@@ -1468,7 +1516,7 @@ mod tests {
             .subcommand(Command::new("other"));
 
         let matches = cmd.try_get_matches_from(["app", "other"]).unwrap();
-        let result = builder.dispatch(matches, OutputMode::Text);
+        let result = builder.build().unwrap().dispatch(matches, OutputMode::Text);
 
         assert!(result.is_handled());
         assert_eq!(result.output(), Some("other"));
@@ -1477,7 +1525,7 @@ mod tests {
     #[test]
     fn test_dispatch_binary_output_with_hook() {
         let builder = AppBuilder::new()
-            .command(
+            .command_with(
                 "export",
                 |_m, _ctx| -> HandlerResult<()> {
                     Ok(HandlerOutput::Binary {
@@ -1485,7 +1533,7 @@ mod tests {
                         filename: "out.bin".into(),
                     })
                 },
-                "",
+                |config| config.binary(),
             )
             .unwrap()
             .hooks(
@@ -1503,7 +1551,7 @@ mod tests {
         let cmd = Command::new("app").subcommand(Command::new("export"));
 
         let matches = cmd.try_get_matches_from(["app", "export"]).unwrap();
-        let result = builder.dispatch(matches, OutputMode::Text);
+        let result = builder.build().unwrap().dispatch(matches, OutputMode::Text);
 
         assert!(result.is_binary());
         let (bytes, filename) = result.binary().unwrap();
@@ -1706,7 +1754,7 @@ mod tests {
         let cmd = Command::new("app").subcommand(Command::new("list"));
 
         let matches = cmd.try_get_matches_from(["app", "list"]).unwrap();
-        let result = builder.dispatch(matches, OutputMode::Text);
+        let result = builder.build().unwrap().dispatch(matches, OutputMode::Text);
 
         assert!(result.is_handled());
         let output = result.output().unwrap();
@@ -1744,7 +1792,7 @@ mod tests {
         let cmd = Command::new("app").subcommand(Command::new("list"));
 
         let matches = cmd.try_get_matches_from(["app", "list"]).unwrap();
-        let result = builder.dispatch(matches, OutputMode::Text);
+        let result = builder.build().unwrap().dispatch(matches, OutputMode::Text);
 
         assert!(result.is_error(), "expected Error, got {:?}", result);
         let msg = result.error().unwrap();
@@ -1785,7 +1833,7 @@ mod tests {
         let cmd = Command::new("app").subcommand(Command::new("list"));
 
         let matches = cmd.try_get_matches_from(["app", "list"]).unwrap();
-        let result = builder.dispatch(matches, OutputMode::Text);
+        let result = builder.build().unwrap().dispatch(matches, OutputMode::Text);
 
         assert!(result.is_handled());
         // 1 * 2 = 2, 2 + 10 = 12
@@ -1830,7 +1878,7 @@ mod tests {
         let cmd = Command::new("app").subcommand(Command::new("list"));
 
         let matches = cmd.try_get_matches_from(["app", "list"]).unwrap();
-        let result = builder.dispatch(matches, OutputMode::Text);
+        let result = builder.build().unwrap().dispatch(matches, OutputMode::Text);
 
         assert!(result.is_handled());
         assert_eq!(call_order.load(Ordering::SeqCst), 3);
@@ -1950,7 +1998,7 @@ mod tests {
             .subcommand(Command::new("add"));
 
         // Naked invocation should dispatch to default command
-        let result = builder.dispatch_from(cmd, ["app"]);
+        let result = builder.build().unwrap().dispatch_from(cmd, ["app"]);
         assert!(result.is_handled());
         assert_eq!(result.output(), Some("Items: [\"a\", \"b\"]"));
     }
@@ -1971,7 +2019,10 @@ mod tests {
         let cmd = Command::new("app").subcommand(Command::new("list"));
 
         // Naked invocation with --output flag should work
-        let result = builder.dispatch_from(cmd, ["app", "--output=json"]);
+        let result = builder
+            .build()
+            .unwrap()
+            .dispatch_from(cmd, ["app", "--output=json"]);
         assert!(result.is_handled());
         let output = result.output().unwrap();
         assert!(output.contains("\"count\": 42"));
@@ -2001,7 +2052,7 @@ mod tests {
             .subcommand(Command::new("add"));
 
         // Explicit command should override default
-        let result = builder.dispatch_from(cmd, ["app", "add"]);
+        let result = builder.build().unwrap().dispatch_from(cmd, ["app", "add"]);
         assert!(result.is_handled());
         assert_eq!(result.output(), Some("add"));
     }
@@ -2021,7 +2072,7 @@ mod tests {
         let cmd = Command::new("app").subcommand(Command::new("list"));
 
         // Without default command, naked invocation should return NoMatch
-        let result = builder.dispatch_from(cmd, ["app"]);
+        let result = builder.build().unwrap().dispatch_from(cmd, ["app"]);
         assert!(!result.is_handled());
     }
 
@@ -2046,7 +2097,10 @@ mod tests {
 
         let cmd = Command::new("app").subcommand(Command::new("list"));
 
-        let result = builder.dispatch_from(cmd, ["app", "--output-file-path", path_str, "list"]);
+        let result = builder
+            .build()
+            .unwrap()
+            .dispatch_from(cmd, ["app", "--output-file-path", path_str, "list"]);
 
         assert!(result.is_handled());
         // Verify output is suppressed (silent)
@@ -2075,7 +2129,10 @@ mod tests {
 
         let cmd = Command::new("app").subcommand(Command::new("list"));
 
-        let result = builder.dispatch_from(cmd, ["app", "--save-to", path_str, "list"]);
+        let result = builder
+            .build()
+            .unwrap()
+            .dispatch_from(cmd, ["app", "--save-to", path_str, "list"]);
 
         assert!(result.is_handled());
         assert_eq!(result.output(), Some(""));
@@ -2101,7 +2158,7 @@ mod tests {
 
         let cmd = Command::new("app").subcommand(Command::new("show"));
 
-        let result = builder.dispatch_from(
+        let result = builder.build().unwrap().dispatch_from(
             cmd,
             [
                 "app",
@@ -2139,7 +2196,7 @@ mod tests {
 
         let cmd = Command::new("app").subcommand(Command::new("show"));
 
-        let result = builder.dispatch_from(
+        let result = builder.build().unwrap().dispatch_from(
             cmd,
             [
                 "app",
@@ -2174,7 +2231,7 @@ mod tests {
         let cmd = Command::new("app").subcommand(Command::new("show"));
 
         // Without the flag, output goes to stdout normally
-        let result = builder.dispatch_from(cmd, ["app", "show"]);
+        let result = builder.build().unwrap().dispatch_from(cmd, ["app", "show"]);
 
         assert!(result.is_handled());
         assert!(result.output().unwrap().contains("Count: 42"));
@@ -2205,7 +2262,10 @@ mod tests {
             .theme(theme); // Theme set AFTER command registration
 
         let cmd = Command::new("app").subcommand(Command::new("list"));
-        let result = builder.dispatch_from(cmd, ["app", "--output=term", "list"]);
+        let result = builder
+            .build()
+            .unwrap()
+            .dispatch_from(cmd, ["app", "--output=term", "list"]);
 
         assert!(result.is_handled());
         let output = result.output().unwrap();
@@ -2239,7 +2299,10 @@ mod tests {
             .unwrap();
 
         let cmd = Command::new("app").subcommand(Command::new("list"));
-        let result = builder.dispatch_from(cmd, ["app", "--output=term", "list"]);
+        let result = builder
+            .build()
+            .unwrap()
+            .dispatch_from(cmd, ["app", "--output=term", "list"]);
 
         assert!(result.is_handled());
         let output = result.output().unwrap();
@@ -2590,7 +2653,7 @@ header:
             .unwrap();
 
         let cmd = Command::new("app").subcommand(Command::new("list"));
-        let result = builder.dispatch_from(cmd, ["app", "list"]);
+        let result = builder.build().unwrap().dispatch_from(cmd, ["app", "list"]);
 
         assert!(result.is_handled());
         assert_eq!(result.output(), Some("postgres://localhost"));
@@ -2618,7 +2681,7 @@ header:
             .unwrap();
 
         let cmd = Command::new("app").subcommand(Command::new("list"));
-        let result = builder.dispatch_from(cmd, ["app", "list"]);
+        let result = builder.build().unwrap().dispatch_from(cmd, ["app", "list"]);
 
         assert!(result.is_handled());
         assert_eq!(result.output(), Some("debug=true"));
@@ -2632,19 +2695,19 @@ header:
 
         // Note: No app_state registered
         let builder = AppBuilder::new()
-            .command(
+            .command_with(
                 "list",
                 |_m, ctx| {
                     // This should fail because NotProvided wasn't registered
                     let _missing = ctx.app_state.get_required::<NotProvided>()?;
                     Ok(HandlerOutput::Render(json!({})))
                 },
-                "",
+                |config| config.structured_only(),
             )
             .unwrap();
 
         let cmd = Command::new("app").subcommand(Command::new("list"));
-        let result = builder.dispatch_from(cmd, ["app", "list"]);
+        let result = builder.build().unwrap().dispatch_from(cmd, ["app", "list"]);
 
         assert!(result.is_error(), "expected Error, got {:?}", result);
         let msg = result.error().unwrap();
@@ -2686,7 +2749,7 @@ header:
             .unwrap();
 
         let cmd = Command::new("app").subcommand(Command::new("info"));
-        let result = builder.dispatch_from(cmd, ["app", "info"]);
+        let result = builder.build().unwrap().dispatch_from(cmd, ["app", "info"]);
 
         assert!(result.is_handled());
         assert_eq!(result.output(), Some("db=mydb, version=42"));
@@ -2736,7 +2799,7 @@ header:
             );
 
         let cmd = Command::new("app").subcommand(Command::new("list"));
-        let result = builder.dispatch_from(cmd, ["app", "list"]);
+        let result = builder.build().unwrap().dispatch_from(cmd, ["app", "list"]);
 
         assert!(result.is_handled());
         assert_eq!(result.output(), Some("db=maindb, user=user123"));
