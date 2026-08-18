@@ -12,6 +12,14 @@
 
 use std::fs;
 use std::path::{Path, PathBuf};
+use std::sync::Mutex;
+
+/// Serializes the simulation tests' environment writes. Under plain
+/// `cargo test` the tests in this binary share one process and may run on
+/// concurrent threads, where an unsynchronized `set_var` races other env
+/// reads. Each simulation test also uses its own variable name, so no test
+/// ever observes — or depends on — another's value.
+static ENV_LOCK: Mutex<()> = Mutex::new(());
 
 /// The textual shape of an armed tripwire in a suite source file. This file
 /// calls the wrapper too, so the ledger sweep skips `tripwire.rs` by name.
@@ -113,14 +121,15 @@ fn a_gap_case_that_passes_fails_loudly() {
     let binary = dir.path().join("simulated");
     fs::write(&binary, "#!/bin/sh\necho gap-behavior-present\n").unwrap();
     fs::set_permissions(&binary, fs::Permissions::from_mode(0o755)).unwrap();
-    // nextest runs each test in its own process, so this cannot race another
-    // test's environment.
-    std::env::set_var("CORPUS_TRIPWIRE_SIM_BIN", &binary);
+    let _env = ENV_LOCK
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    std::env::set_var("CORPUS_TRIPWIRE_SIM_PASS_BIN", &binary);
 
     let outcome = std::panic::catch_unwind(|| {
         corpus_gap_suites::expect_gap(
             "tripwire/simulation",
-            "CORPUS_TRIPWIRE_SIM_BIN",
+            "CORPUS_TRIPWIRE_SIM_PASS_BIN",
             "simulated capability, closed on purpose",
             |binary| {
                 let dir = tempfile::tempdir().unwrap();
@@ -157,10 +166,14 @@ fn a_gap_case_that_passes_fails_loudly() {
 fn open_gaps_and_missing_binaries_stay_expected_fail() {
     use std::os::unix::fs::PermissionsExt;
 
-    std::env::remove_var("CORPUS_TRIPWIRE_SIM_BIN");
+    let _env = ENV_LOCK
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    // This name is set nowhere: the unset case needs no remove_var, which
+    // would race the other simulation test's set under `cargo test`.
     corpus_gap_suites::expect_gap(
         "tripwire/simulation",
-        "CORPUS_TRIPWIRE_SIM_BIN",
+        "CORPUS_TRIPWIRE_SIM_NEVER_SET_BIN",
         "no binary produced",
         |_| panic!("must short-circuit before running the assertion"),
     );
@@ -169,10 +182,10 @@ fn open_gaps_and_missing_binaries_stay_expected_fail() {
     let binary = dir.path().join("simulated");
     fs::write(&binary, "#!/bin/sh\nexit 1\n").unwrap();
     fs::set_permissions(&binary, fs::Permissions::from_mode(0o755)).unwrap();
-    std::env::set_var("CORPUS_TRIPWIRE_SIM_BIN", &binary);
+    std::env::set_var("CORPUS_TRIPWIRE_SIM_OPEN_BIN", &binary);
     corpus_gap_suites::expect_gap(
         "tripwire/simulation",
-        "CORPUS_TRIPWIRE_SIM_BIN",
+        "CORPUS_TRIPWIRE_SIM_OPEN_BIN",
         "capability still missing",
         |_| Err("gap open".into()),
     );
