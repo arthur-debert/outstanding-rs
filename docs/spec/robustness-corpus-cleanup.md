@@ -178,4 +178,7 @@ Source material: the ROB03 deep-review session (2026-08-18) over PR #364 — spe
 alignment, architecture/duplication, roster/test-net, and evidence-credibility
 passes. The two ADRs this epic mints transcribe the "Decision:" sections of
 `corpus/README.md`. No grill round is planned: the decisions here are review
-outcomes, already specific; ADR links land in this section when minted.
+outcomes, already specific. Minted:
+[ADR-0023 — the corpus blindness protocol](../adr/0023-the-corpus-blindness-protocol.md)
+and
+[ADR-0024 — the corpus run-report schema](../adr/0024-the-corpus-run-report-schema.md).

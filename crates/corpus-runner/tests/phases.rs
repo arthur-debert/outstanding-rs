@@ -8,11 +8,13 @@
 // gating keeps the workspace buildable elsewhere.
 #![cfg(unix)]
 
+mod common;
+
 use std::fs;
-use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
+use common::script;
 use corpus_runner::archetype::{Archetype, InvariantCommand, InvariantContract, Invariants};
 use corpus_runner::report::{InvariantStatus, QuestionnaireReport, RunReport};
 use corpus_runner::{acceptance, questionnaire, session, workspace};
@@ -53,14 +55,6 @@ fn filled_sheet() -> String {
     sheet = answer(&sheet, "sources.external", "none");
     sheet = answer(&sheet, "confidence", "high");
     sheet
-}
-
-/// Writes an executable script and returns its path.
-fn script(dir: &Path, name: &str, body: &str) -> PathBuf {
-    let path = dir.join(name);
-    fs::write(&path, format!("#!/bin/sh\n{body}")).unwrap();
-    fs::set_permissions(&path, fs::Permissions::from_mode(0o755)).unwrap();
-    path
 }
 
 fn isolation(root: &Path) -> workspace::Isolation {
