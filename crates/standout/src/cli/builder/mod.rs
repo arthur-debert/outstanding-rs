@@ -318,18 +318,41 @@ fn missing_template_message(
     template_name: &str,
     registry: Option<&TemplateRegistry>,
 ) -> String {
-    let mut message = format!(
-        "command `{command_path}` references template `{template_name}`, but that template is not registered; add it with .templates(...) or .templates_dir(...)"
-    );
-    if let Some(registry) = registry {
-        let suggestions = nearest_template_names(template_name, registry);
-        if !suggestions.is_empty() {
-            message.push_str("; did you mean ");
-            message.push_str(&suggestions.join(", "));
-            message.push('?');
+    let mut message = if registry.is_some() {
+        format!(
+            "command `{command_path}` references template `{template_name}`, but that template is not registered; add it with .templates(embed_templates!(\"src/templates\")) or .templates_dir(\"path/to/templates\")"
+        )
+    } else {
+        format!(
+            "command `{command_path}` references template `{template_name}`, but no application templates are configured; add .templates(embed_templates!(\"src/templates\")) or .templates_dir(\"path/to/templates\") before .build()"
+        )
+    };
+
+    let Some(registry) = registry else {
+        return message;
+    };
+
+    let suggestions = nearest_template_names(template_name, registry);
+    if !suggestions.is_empty() {
+        message.push_str("; did you mean ");
+        message.push_str(&suggestions.join(", "));
+        message.push('?');
+    } else {
+        let available = available_template_names(registry);
+        if !available.is_empty() {
+            message.push_str("; available templates: ");
+            message.push_str(&available.join(", "));
         }
     }
     message
+}
+
+fn available_template_names(registry: &TemplateRegistry) -> Vec<String> {
+    registry
+        .names()
+        .take(5)
+        .map(|candidate| format!("`{candidate}`"))
+        .collect()
 }
 
 fn nearest_template_names(name: &str, registry: &TemplateRegistry) -> Vec<String> {
@@ -395,7 +418,7 @@ fn validate_framework_template_content(
     }));
     if !malformed.is_empty() {
         return Err(SetupError::Template(format!(
-            "framework template `{name}` contains malformed style markup involving tag(s): {}",
+            "framework template `{name}` contains malformed style markup involving tag(s): {}; fix the template source or disable framework templates with .include_framework_templates(false) if this app does not use them",
             malformed.join(", ")
         )));
     }
@@ -408,7 +431,7 @@ fn validate_framework_template_content(
     );
     if !missing.is_empty() {
         return Err(SetupError::Template(format!(
-            "framework template `{name}` emits style tag(s) not defined by the resolved theme: {}",
+            "framework template `{name}` emits style tag(s) not defined by the resolved theme: {}; enable framework styles with .include_framework_styles(true), define the tag with .theme(...) or .styles(...), or disable framework templates with .include_framework_templates(false)",
             missing.join(", ")
         )));
     }
@@ -886,6 +909,9 @@ impl AppBuilder {
         }
 
         let Some(ref mut registry) = self.stylesheet_registry else {
+            if let Some(name) = &self.default_theme_name {
+                return Err(SetupError::ThemeNotFound(name.to_string()));
+            }
             return Ok(None);
         };
 

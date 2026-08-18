@@ -145,9 +145,10 @@ use standout::{embed_templates, embed_styles};
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let app = App::builder()
-        .commands(Commands::dispatch_config())? // Register handlers from derive macro
         .templates(embed_templates!("src/templates"))
         .styles(embed_styles!("src/styles"))
+        .default_theme("default")
+        .commands(Commands::dispatch_config())? // Register handlers from derive macro
         .build()?;
 
     app.run(Cli::command(), std::env::args());

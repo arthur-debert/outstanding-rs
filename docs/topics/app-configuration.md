@@ -21,7 +21,7 @@ let app = App::builder()
     .templates(embed_templates!("src/templates"))
     .styles(embed_styles!("src/styles"))
     .default_theme("default")
-    .command("list", list_handler, "list.j2")
+    .command_with("list", list_handler, |config| config.template_name("list"))?
     .build()?;
 
 app.run(Cli::command(), std::env::args());
@@ -142,7 +142,7 @@ Arguments: command name, handler function, template path.
 ```rust
 App::builder()
     .command_with("delete", delete_handler, |cfg| cfg
-        .template("delete.j2")
+        .template_name("delete")
         .pre_dispatch(require_confirmation)
         .post_dispatch(log_deletion))
 ```
@@ -457,21 +457,25 @@ Parses with Standout's augmented command but doesn't dispatch.
 
 `build()` validates:
 
-- Theme exists if `.default_theme()` was called
-- Returns `SetupError::ThemeNotFound` if not found
+- a theme registry exists and contains the theme named by `.default_theme(...)`
+- named and convention templates resolve through `.templates(...)` or `.templates_dir(...)`
+- registered templates compile
+- framework templates only use tags defined by the resolved theme
+- `command_groups`, topics, and `help_word(true)` are paired with `.help_handling(true)`
+- commands do not collide with the `help` word installed by `.help_handling(true)`
+- the same command path and hook phase are not configured through both `CommandConfig` and `AppBuilder::hooks`
 
 What's NOT validated at build time:
 
-- Templates (resolved lazily at render time)
 - Command handlers
 - Hook signatures (verified at registration)
 
 ## Complete Example
 
 ```rust
-use standout::cli::{App, HandlerResult, Output};
+use standout::cli::{App, CommandContext, HandlerResult, Output};
 use standout_macros::{embed_templates, embed_styles};
-use clap::{Command, Arg};
+use clap::{Command, ArgMatches};
 use serde::Serialize;
 
 #[derive(Serialize)]
@@ -493,9 +497,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         .styles(embed_styles!("src/styles"))
         .default_theme("default")
         .version(env!("CARGO_PKG_VERSION"))
-        .context("version", env!("CARGO_PKG_VERSION"))
-        .command("list", list_handler, "list.j2")
-        .topics_dir("docs/topics")
+        .context("version", env!("CARGO_PKG_VERSION").into())
+        .command_with("list", list_handler, |config| {
+            config.template_name("list")
+        })?
+        .topics_dir("docs/topics")?
+        .help_handling(true)
         .build()?;
 
     app.run(cli, std::env::args());

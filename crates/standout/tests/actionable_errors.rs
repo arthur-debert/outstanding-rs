@@ -1,0 +1,114 @@
+use serde_json::json;
+use standout::cli::hooks::Hooks;
+use standout::cli::{App, Output};
+
+fn build_error(result: Result<standout::cli::App, standout::SetupError>) -> String {
+    match result {
+        Ok(_) => panic!("expected build to fail"),
+        Err(error) => error.to_string(),
+    }
+}
+
+#[test]
+fn render_named_without_registry_names_the_builder_calls() {
+    let app = App::builder()
+        .include_framework_templates(false)
+        .build()
+        .unwrap();
+
+    let error = app.render("missing", &json!({}), standout::OutputMode::Text);
+    let message = error
+        .expect_err("named render needs a template registry")
+        .to_string();
+
+    assert!(message.contains("render(\"missing\", ...) needs a template registry"));
+    assert!(message.contains(".templates(embed_templates!"));
+    assert!(message.contains(".templates_dir(\"path/to/templates\")"));
+    assert!(message.contains("render_inline(...)"));
+}
+
+#[test]
+fn hook_conflict_error_names_the_phase_and_single_registration_fix() {
+    let result = App::builder()
+        .command_with(
+            "show",
+            |_m, _ctx| Ok(Output::Render(json!({"name": "Ada"}))),
+            |config| config.template("{{ name }}").pre_dispatch(|_, _| Ok(())),
+        )
+        .unwrap()
+        .hooks("show", Hooks::new().pre_dispatch(|_, _| Ok(())))
+        .build();
+
+    let message = build_error(result);
+
+    assert!(message.contains("command `show` registers pre-dispatch hooks"));
+    assert!(message.contains("CommandConfig"));
+    assert!(message.contains("AppBuilder::hooks"));
+    assert!(message.contains("keep each (path, phase) in one registration path"));
+}
+
+#[test]
+fn help_configuration_errors_name_the_required_call() {
+    let result = App::builder()
+        .command_groups(vec![standout::cli::help::CommandGroup {
+            title: "Commands".into(),
+            help: None,
+            commands: vec![Some("show".into())],
+        }])
+        .build();
+
+    let message = build_error(result);
+
+    assert!(message.contains("command_groups requires .help_handling(true)"));
+    assert!(message.contains("intercepting help"));
+}
+
+#[test]
+fn duplicate_command_still_names_the_conflicting_command() {
+    let result = App::builder()
+        .command("show", |_m, _ctx| Ok(Output::Render(json!({}))), "ok")
+        .unwrap()
+        .command("show", |_m, _ctx| Ok(Output::Render(json!({}))), "ok");
+
+    let message = match result {
+        Ok(_) => panic!("duplicate command must fail"),
+        Err(error) => error.to_string(),
+    };
+    assert!(message.contains("duplicate command: show"));
+}
+
+#[test]
+fn registered_help_collision_names_the_setting_and_rename_fix() {
+    let result = App::builder()
+        .help_handling(true)
+        .command("help", |_m, _ctx| Ok(Output::Render(json!({}))), "ok")
+        .unwrap()
+        .build();
+
+    let message = build_error(result);
+    assert!(message.contains("duplicate command: help"));
+    assert!(message.contains(".help_handling(true)"));
+    assert!(message.contains("Rename"));
+}
+
+#[test]
+fn command_named_template_without_registry_names_the_fix() {
+    let app = App::builder()
+        .include_framework_templates(false)
+        .command_with(
+            "show",
+            |_m, _ctx| Ok(Output::Render(json!({"name": "Ada"}))),
+            |config| config.template_name("show"),
+        )
+        .unwrap()
+        .build()
+        .map_err(|error| error.to_string());
+
+    let message = match app {
+        Ok(_) => panic!("build catches missing registries before dispatch"),
+        Err(message) => message,
+    };
+    assert!(message.contains("no application templates are configured"));
+    assert!(message.contains(".templates(embed_templates!"));
+    assert!(message.contains(".templates_dir(\"path/to/templates\")"));
+}

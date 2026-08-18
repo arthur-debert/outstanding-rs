@@ -46,6 +46,23 @@ fn framework_templates_fail_build_when_the_resolved_theme_lacks_their_tags() {
 
     assert!(err.contains("framework template"), "{err}");
     assert!(err.contains("standout-muted"), "{err}");
+    assert!(err.contains(".include_framework_styles(true)"), "{err}");
+    assert!(err.contains(".theme(...)"), "{err}");
+    assert!(err.contains(".include_framework_templates(false)"), "{err}");
+}
+
+#[test]
+fn missing_default_theme_names_builder_calls_that_supply_it() {
+    let err = match App::builder().default_theme("missing").build() {
+        Ok(_) => panic!("default_theme without configured styles must fail"),
+        Err(error) => error.to_string(),
+    };
+
+    assert!(err.contains("theme `missing` not found"), "{err}");
+    assert!(err.contains(".styles(embed_styles!"), "{err}");
+    assert!(err.contains(".styles_dir(\"path/to/styles\")"), "{err}");
+    assert!(err.contains(".default_theme(...)"), "{err}");
+    assert!(err.contains(".theme(...)"), "{err}");
 }
 
 #[test]

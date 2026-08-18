@@ -24,7 +24,7 @@ impl App {
     /// # Errors
     ///
     /// Returns an error if:
-    /// - No template registry is configured
+    /// - No template registry is configured for a named template render
     /// - The template is not found
     /// - Rendering fails
     pub fn render<T: Serialize>(
@@ -42,12 +42,20 @@ impl App {
         let registry = self
             .template_registry
             .as_ref()
-            .ok_or_else(|| SetupError::Config("No template registry configured".into()))?;
+            .ok_or_else(|| {
+                SetupError::Config(format!(
+                    "render({template:?}, ...) needs a template registry; add .templates(embed_templates!(\"src/templates\")) or .templates_dir(\"path/to/templates\") before .build(), or call render_inline(...) for inline template source"
+                ))
+            })?;
 
         // Get template content
         let template_content = registry
             .get_content(template)
-            .map_err(|e| SetupError::Template(e.to_string()))?;
+            .map_err(|e| {
+                SetupError::Template(format!(
+                    "render({template:?}, ...) could not find the named template; add it with .templates(embed_templates!(\"src/templates\")) or .templates_dir(\"path/to/templates\"): {e}"
+                ))
+            })?;
 
         // Render the template content
         self.render_template_content(&template_content, data, mode)
