@@ -1,9 +1,12 @@
 //! The run report: the durable artifact a corpus run leaves behind.
 //!
-//! `schema_version` 2 — the shape is a recorded decision (see
-//! `corpus/README.md`); an ADR may formalize it later. Objective results
-//! (acceptance, invariants) and the agent's self-assessment (questionnaire)
-//! are deliberately separate sections, and the `pins` block is what makes two
+//! `schema_version` 3 — the shape is a recorded decision (see
+//! `corpus/README.md`); an ADR may formalize it later. Version 2 differed
+//! only in carrying a parallel `checks` vector for the retired check schema;
+//! committed v2 reports still deserialize (the vector was omitted when empty,
+//! and serde tolerates it where present). Objective results (acceptance,
+//! invariants) and the agent's self-assessment (questionnaire) are
+//! deliberately separate sections, and the `pins` block is what makes two
 //! runs comparable: same spec hash + same framework version + same docs
 //! commit means the same experiment.
 
@@ -14,7 +17,7 @@ use anyhow::Context;
 use serde::{Deserialize, Serialize};
 
 /// The current report schema version.
-pub const SCHEMA_VERSION: u32 = 2;
+pub const SCHEMA_VERSION: u32 = 3;
 
 /// Everything one corpus run durably records.
 #[derive(Debug, Serialize, Deserialize)]
@@ -111,16 +114,12 @@ pub struct SessionReport {
 }
 
 /// Objective results: did the produced app build, and did the pre-written
-/// suite pass against its binary. `checks` is the runner check schema's
-/// result list (the smoke path); `cases` is the roster case schema's — one
-/// suite fills exactly one of them.
+/// suite's cases pass against its binary.
 #[derive(Debug, Serialize, Deserialize)]
 pub struct AcceptanceReport {
     pub built: bool,
     /// Build stderr tail when the build failed.
     pub build_detail: Option<String>,
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub checks: Vec<CheckResult>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub cases: Vec<CaseResult>,
 }
@@ -131,19 +130,9 @@ impl AcceptanceReport {
         Self {
             built: false,
             build_detail: Some(detail),
-            checks: Vec::new(),
             cases: Vec::new(),
         }
     }
-}
-
-/// One acceptance check's outcome (runner check schema).
-#[derive(Debug, Serialize, Deserialize)]
-pub struct CheckResult {
-    pub name: String,
-    pub passed: bool,
-    /// Why it failed; `None` on a pass.
-    pub detail: Option<String>,
 }
 
 /// One roster acceptance case's outcome, carrying the case's own metadata

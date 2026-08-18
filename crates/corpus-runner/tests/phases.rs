@@ -170,10 +170,7 @@ fn smoke_archetype_loads_from_the_repo_corpus() {
         "smoke",
         "roster names double as binaries"
     );
-    let corpus_runner::archetype::Suite::Cases(acceptance) = &archetype.suite else {
-        panic!("smoke carries the roster case schema");
-    };
-    assert!(!acceptance.cases.is_empty());
+    assert!(!archetype.suite.cases.is_empty());
     assert!(!archetype.invariants().commands.is_empty());
     assert_eq!(archetype.spec_sha256().len(), 64);
 }
@@ -398,48 +395,6 @@ printf '\001\002opaque\377\n'
 "#;
 
 #[test]
-fn checks_pass_and_fail_against_real_process_output() {
-    let dir = tempfile::tempdir().unwrap();
-    let binary = script(dir.path(), "fake", WELL_BEHAVED);
-    let archetype_dir = dir.path().join("archetypes/fake");
-    fs::create_dir_all(&archetype_dir).unwrap();
-    fs::write(archetype_dir.join("spec.md"), "spec").unwrap();
-    fs::write(
-        archetype_dir.join("acceptance.toml"),
-        r#"
-binary = "fake"
-
-[[check]]
-name = "greets"
-args = ["greet", "--output", "text"]
-stdout_contains = ["Hello"]
-
-[[check]]
-name = "emits json"
-args = ["greet", "--output", "json"]
-stdout_is_json = true
-
-[[check]]
-name = "expected to fail"
-args = ["greet", "--output", "text"]
-stdout_contains = ["absent needle"]
-"#,
-    )
-    .unwrap();
-    let archetype = Archetype::load(&dir.path().join("archetypes"), "fake").unwrap();
-
-    let corpus_runner::archetype::Suite::Checks(suite) = &archetype.suite else {
-        panic!("fixture carries the runner check schema");
-    };
-    let report = acceptance::run_checks(&binary, &suite.checks, NO_TIMEOUT, &isolation(dir.path()));
-    assert!(report.built);
-    let outcomes: Vec<bool> = report.checks.iter().map(|c| c.passed).collect();
-    assert_eq!(outcomes, vec![true, true, false]);
-    let failure = &report.checks[2];
-    assert!(failure.detail.as_deref().unwrap().contains("absent needle"));
-}
-
-#[test]
 fn invariant_matrix_passes_a_well_behaved_binary() {
     let dir = tempfile::tempdir().unwrap();
     let binary = script(dir.path(), "fake", WELL_BEHAVED);
@@ -571,111 +526,6 @@ fn invariant_matrix_catches_markers_layout_drift_and_bad_json() {
     assert!(failed.contains(&"stdout parses as JSON"), "{failed:?}");
 }
 
-/// A binary emitting associated rows in text and JSON: rows carry name,
-/// constellation, and magnitude together.
-const ROWS: &str = r#"
-mode=text
-prev=""
-for a in "$@"; do
-  if [ "$prev" = "--output" ]; then mode="$a"; fi
-  prev="$a"
-done
-case "$mode" in
-  json) echo '{"stars":[{"name":"Aldebaran","constellation":"Taurus","magnitude":0.86},{"name":"Rigel","constellation":"Orion","magnitude":0.13}]}' ;;
-  *) printf 'Stars\nAldebaran  Taurus  0.86\nRigel  Orion  0.13\n' ;;
-esac
-"#;
-
-#[test]
-fn row_assertions_bind_values_to_one_row() {
-    let dir = tempfile::tempdir().unwrap();
-    let binary = script(dir.path(), "fake", ROWS);
-    let archetype_dir = dir.path().join("archetypes/fake");
-    fs::create_dir_all(&archetype_dir).unwrap();
-    fs::write(archetype_dir.join("spec.md"), "spec").unwrap();
-    fs::write(
-        archetype_dir.join("acceptance.toml"),
-        r#"
-binary = "fake"
-
-[[check]]
-name = "text rows are associated"
-args = ["list", "--output", "text"]
-stdout_row_contains = [["Aldebaran", "Taurus", "0.86"], ["Rigel", "Orion", "0.13"]]
-
-[[check]]
-name = "cross-row bag of substrings fails"
-args = ["list", "--output", "text"]
-stdout_row_contains = [["Aldebaran", "Orion"]]
-
-[[check]]
-name = "json rows are associated"
-args = ["list", "--output", "json"]
-stdout_json_rows = [["Aldebaran", "Taurus", "0.86"], ["Rigel", "Orion", "0.13"]]
-
-[[check]]
-name = "json cross-row group fails"
-args = ["list", "--output", "json"]
-stdout_json_rows = [["Aldebaran", "0.13"]]
-
-[[check]]
-name = "json rows on non-JSON output fails"
-args = ["list", "--output", "text"]
-stdout_json_rows = [["Aldebaran", "Taurus", "0.86"]]
-"#,
-    )
-    .unwrap();
-    let archetype = Archetype::load(&dir.path().join("archetypes"), "fake").unwrap();
-
-    let corpus_runner::archetype::Suite::Checks(suite) = &archetype.suite else {
-        panic!("fixture carries the runner check schema");
-    };
-    let report = acceptance::run_checks(&binary, &suite.checks, NO_TIMEOUT, &isolation(dir.path()));
-    let outcomes: Vec<bool> = report.checks.iter().map(|c| c.passed).collect();
-    assert_eq!(outcomes, vec![true, false, true, false, false]);
-    assert!(report.checks[1]
-        .detail
-        .as_deref()
-        .unwrap()
-        .contains("no single stdout line"));
-    assert!(report.checks[3]
-        .detail
-        .as_deref()
-        .unwrap()
-        .contains("no single JSON element"));
-}
-
-#[test]
-fn produced_binary_runs_env_scrubbed() {
-    let dir = tempfile::tempdir().unwrap();
-    // A "produced binary" that leaks its environment to stdout.
-    let binary = script(dir.path(), "fake", "env");
-    std::env::set_var("CORPUS_ACCEPTANCE_CANARY", "leaked");
-    let archetype_dir = dir.path().join("archetypes/fake");
-    fs::create_dir_all(&archetype_dir).unwrap();
-    fs::write(archetype_dir.join("spec.md"), "spec").unwrap();
-    fs::write(
-        archetype_dir.join("acceptance.toml"),
-        r#"
-binary = "fake"
-
-[[check]]
-name = "sees the canary"
-args = []
-stdout_contains = ["CORPUS_ACCEPTANCE_CANARY"]
-"#,
-    )
-    .unwrap();
-    let archetype = Archetype::load(&dir.path().join("archetypes"), "fake").unwrap();
-
-    let corpus_runner::archetype::Suite::Checks(suite) = &archetype.suite else {
-        panic!("fixture carries the runner check schema");
-    };
-    let report = acceptance::run_checks(&binary, &suite.checks, NO_TIMEOUT, &isolation(dir.path()));
-    // The canary must NOT reach the untrusted binary: the check fails.
-    assert!(!report.checks[0].passed, "{:?}", report.checks[0].detail);
-}
-
 #[test]
 fn hanging_binary_times_out_as_a_finding() {
     let dir = tempfile::tempdir().unwrap();
@@ -748,12 +598,16 @@ fn report_round_trips_through_json() {
         acceptance: corpus_runner::report::AcceptanceReport {
             built: true,
             build_detail: None,
-            checks: vec![corpus_runner::report::CheckResult {
+            cases: vec![corpus_runner::report::CaseResult {
                 name: "c".into(),
-                passed: true,
+                group: None,
+                stresses: "round-trip".into(),
+                expected: "pass".into(),
+                outcome: corpus_runner::report::CaseOutcome::Pass,
+                gap: None,
+                reason: None,
                 detail: None,
             }],
-            cases: vec![],
         },
         invariants: vec![],
         questionnaire: QuestionnaireReport {
@@ -767,11 +621,38 @@ fn report_round_trips_through_json() {
     let path = dir.path().join("report.json");
     report.write(&path).unwrap();
     let restored: RunReport = serde_json::from_str(&fs::read_to_string(&path).unwrap()).unwrap();
-    assert_eq!(restored.schema_version, 2);
+    assert_eq!(restored.schema_version, 3);
     assert_eq!(restored.run_id, report.run_id);
     assert_eq!(restored.session.turns, Some(3));
     assert_eq!(
         restored.questionnaire.answers.get("summary").unwrap(),
         "did it"
     );
+}
+
+/// Every committed historical report — the pilot runs (schema 2, case
+/// results) and the demo smoke run (schema 2, whose `checks` vector belongs
+/// to the retired check schema and is now ignored) — must keep
+/// deserializing: the re-evaluation path reads them as typed [`RunReport`]s.
+#[test]
+fn committed_historical_reports_still_deserialize() {
+    let mut reports = Vec::new();
+    for dir in ["pilot/runs", "demo"] {
+        for entry in fs::read_dir(corpus_dir().join(dir)).unwrap() {
+            let path = entry.unwrap().path().join("report.json");
+            if path.is_file() {
+                reports.push(path);
+            }
+        }
+    }
+    assert!(!reports.is_empty(), "no committed reports found");
+    for path in reports {
+        let report: RunReport = serde_json::from_str(&fs::read_to_string(&path).unwrap())
+            .unwrap_or_else(|err| panic!("{} must deserialize: {err}", path.display()));
+        assert!(
+            report.schema_version <= corpus_runner::report::SCHEMA_VERSION,
+            "{} carries a future schema version",
+            path.display()
+        );
+    }
 }

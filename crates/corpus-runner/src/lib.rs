@@ -25,7 +25,7 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use anyhow::Context;
 use sha2::{Digest, Sha256};
 
-use crate::archetype::{Archetype, Suite};
+use crate::archetype::Archetype;
 use crate::report::{
     AcceptanceReport, ArchetypeStamp, Blindness, EvaluationStamp, Pins, RunReport, SCHEMA_VERSION,
 };
@@ -67,7 +67,8 @@ pub struct Timeouts {
     pub agent: Duration,
     /// The cargo build of the produced app.
     pub build: Duration,
-    /// Each acceptance check / invariant-cell invocation.
+    /// Each invariant-cell invocation (acceptance cases carry their own
+    /// per-case `timeout_seconds`).
     pub check: Duration,
 }
 
@@ -90,7 +91,7 @@ const BLINDNESS_POLICY: &str = "workspace contains spec + published docs + crate
 /// Runs the full loop and returns the written report plus the run directory.
 ///
 /// A run that completes the loop always writes `report.json`, even when the
-/// app never built or every check failed — those are findings. Errors are
+/// app never built or every case failed — those are findings. Errors are
 /// reserved for the runner's own failures (unloadable archetype, unwritable
 /// run directory, unspawnable agent).
 pub fn run(config: &RunConfig) -> anyhow::Result<(RunReport, PathBuf)> {
@@ -171,17 +172,12 @@ pub fn run(config: &RunConfig) -> anyhow::Result<(RunReport, PathBuf)> {
     ) {
         Ok(binary) => {
             let cases_dir = run_dir.join("cases");
-            let suite_report = match &archetype.suite {
-                Suite::Checks(suite) => acceptance::run_checks(
-                    &binary,
-                    &suite.checks,
-                    config.timeouts.check,
-                    &workspace.isolation,
-                ),
-                Suite::Cases(suite) => {
-                    cases::run_cases(&binary, &suite.cases, &cases_dir, &workspace.isolation)
-                }
-            };
+            let suite_report = cases::run_cases(
+                &binary,
+                &archetype.suite.cases,
+                &cases_dir,
+                &workspace.isolation,
+            );
             let cells = acceptance::run_invariants(
                 &binary,
                 archetype.invariants(),
@@ -301,17 +297,8 @@ pub fn reevaluate(config: &ReevaluationConfig) -> anyhow::Result<RunReport> {
     match binary_result {
         Ok(binary) => {
             report.evaluation.binary_sha256 = digest_file(&binary).ok();
-            report.acceptance = match &archetype.suite {
-                Suite::Checks(suite) => acceptance::run_checks(
-                    &binary,
-                    &suite.checks,
-                    config.timeouts.check,
-                    &isolation,
-                ),
-                Suite::Cases(suite) => {
-                    cases::run_cases(&binary, &suite.cases, &cases_dir, &isolation)
-                }
-            };
+            report.acceptance =
+                cases::run_cases(&binary, &archetype.suite.cases, &cases_dir, &isolation);
             report.invariants = acceptance::run_invariants(
                 &binary,
                 archetype.invariants(),
@@ -337,14 +324,13 @@ fn digest_file(path: &Path) -> anyhow::Result<String> {
 /// Prints a human summary of the report to stderr.
 pub fn print_summary(report: &RunReport) {
     use crate::report::CaseOutcome;
-    let passed = report.acceptance.checks.iter().filter(|c| c.passed).count()
-        + report
-            .acceptance
-            .cases
-            .iter()
-            .filter(|c| c.outcome.is_expected())
-            .count();
-    let total = report.acceptance.checks.len() + report.acceptance.cases.len();
+    let passed = report
+        .acceptance
+        .cases
+        .iter()
+        .filter(|c| c.outcome.is_expected())
+        .count();
+    let total = report.acceptance.cases.len();
     let inv_passed = report
         .invariants
         .iter()
@@ -364,9 +350,6 @@ pub fn print_summary(report: &RunReport) {
             "NOT collected"
         },
     );
-    for check in report.acceptance.checks.iter().filter(|c| !c.passed) {
-        eprintln!("[corpus]   FAIL acceptance: {}", check.name);
-    }
     for case in &report.acceptance.cases {
         match case.outcome {
             CaseOutcome::Fail => eprintln!("[corpus]   FAIL case: {}", case.name),

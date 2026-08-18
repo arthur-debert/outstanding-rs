@@ -3,18 +3,14 @@
 //! An archetype is a directory under `corpus/archetypes/<name>/` holding
 //! `spec.md` (the agent-facing behavioral spec) and `acceptance.toml` —
 //! authored before any implementation, so "did it work" is never judged by
-//! the implementer. Two acceptance schemas exist (`corpus/README.md`):
+//! the implementer. There is one acceptance schema (`corpus/README.md`): the
+//! **roster case schema** (`schema = 1`, `[[case]]` tables) — black-box
+//! cases with full run semantics — scrubbed baseline env, sandbox files,
+//! pty attachment, scripted stdin, per-case timeout — and the documented
+//! assertion vocabulary, including `expected = "fail"` gap markers. The
+//! binary name is the archetype name (the roster's naming rule).
 //!
-//! - The **roster case schema** (`schema = 1`, `[[case]]` tables): black-box
-//!   cases with full run semantics — scrubbed baseline env, sandbox files,
-//!   pty attachment, scripted stdin, per-case timeout — and the documented
-//!   assertion vocabulary, including `expected = "fail"` gap markers. The
-//!   binary name is the archetype name (the roster's naming rule).
-//! - The **runner check schema** (`binary` + `[[check]]`): the walking
-//!   skeleton's own simpler vocabulary, used by the `smoke` archetype (whose
-//!   binary name deliberately differs from its directory name).
-//!
-//! Both may carry an `[invariants]` table naming the commands the ROB01
+//! A suite may carry an `[invariants]` table naming the commands the ROB01
 //! invariant matrix sweeps.
 
 use std::collections::{BTreeMap, HashSet};
@@ -31,56 +27,8 @@ pub struct Archetype {
     pub dir: PathBuf,
     /// The exact spec text the agent will receive.
     pub spec: String,
-    pub suite: Suite,
+    pub suite: CaseSuite,
     acceptance_sha256: String,
-}
-
-/// The acceptance suite, in whichever schema the archetype carries.
-#[derive(Debug)]
-pub enum Suite {
-    /// The runner check schema (`binary` + `[[check]]`) — the smoke path.
-    Checks(ChecksConfig),
-    /// The roster case schema (`schema = 1`, `[[case]]`).
-    Cases(CaseSuite),
-}
-
-/// The runner check schema: what to run against the produced binary.
-#[derive(Debug, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct ChecksConfig {
-    /// The binary the scaffold's package produces.
-    pub binary: String,
-    #[serde(rename = "check", default)]
-    pub checks: Vec<Check>,
-    #[serde(default)]
-    pub invariants: Invariants,
-}
-
-/// One black-box acceptance check.
-#[derive(Debug, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct Check {
-    pub name: String,
-    pub args: Vec<String>,
-    /// Expected exit code (default 0).
-    #[serde(default)]
-    pub expect_exit: i32,
-    /// Substrings that must each appear on stdout.
-    #[serde(default)]
-    pub stdout_contains: Vec<String>,
-    /// Row-association groups: every value in a group must co-occur on one
-    /// single stdout line (e.g. a star with *its* constellation and
-    /// magnitude), which flat `stdout_contains` cannot express.
-    #[serde(default)]
-    pub stdout_row_contains: Vec<Vec<String>>,
-    /// When true, stdout must parse as JSON.
-    #[serde(default)]
-    pub stdout_is_json: bool,
-    /// JSON row-association groups: stdout must parse as JSON and every
-    /// value in a group must co-occur among the scalars of one single JSON
-    /// array element (numbers match their decimal literal).
-    #[serde(default)]
-    pub stdout_json_rows: Vec<Vec<String>>,
 }
 
 /// Declarative ROB01 matrix plan. The global axes define the stable planned
@@ -325,8 +273,7 @@ impl CaseExpect {
 }
 
 impl Archetype {
-    /// Loads `archetypes_dir/<name>/{spec.md,acceptance.toml}`, detecting
-    /// which acceptance schema the file speaks by its tables.
+    /// Loads `archetypes_dir/<name>/{spec.md,acceptance.toml}`.
     pub fn load(archetypes_dir: &Path, name: &str) -> anyhow::Result<Self> {
         let dir = archetypes_dir.join(name);
         let spec_path = dir.join("spec.md");
@@ -335,18 +282,7 @@ impl Archetype {
         let acceptance_path = dir.join("acceptance.toml");
         let acceptance_text = std::fs::read_to_string(&acceptance_path)
             .with_context(|| format!("reading {}", acceptance_path.display()))?;
-        let value: toml::Value = acceptance_text
-            .parse()
-            .with_context(|| format!("parsing {}", acceptance_path.display()))?;
-        let suite = if value.get("case").is_some() || value.get("schema").is_some() {
-            Suite::Cases(CaseSuite::parse(&acceptance_text, name, &acceptance_path)?)
-        } else {
-            Suite::Checks(
-                value
-                    .try_into()
-                    .with_context(|| format!("parsing {}", acceptance_path.display()))?,
-            )
-        };
+        let suite = CaseSuite::parse(&acceptance_text, name, &acceptance_path)?;
         Ok(Self {
             name: name.to_string(),
             dir,
@@ -357,21 +293,14 @@ impl Archetype {
     }
 
     /// The binary the produced app must build: the roster rule is that
-    /// archetype names double as binary names; the check schema names its
-    /// binary explicitly.
+    /// archetype names double as binary names.
     pub fn binary(&self) -> &str {
-        match &self.suite {
-            Suite::Checks(config) => &config.binary,
-            Suite::Cases(_) => &self.name,
-        }
+        &self.name
     }
 
     /// The commands the ROB01 invariant matrix sweeps.
     pub fn invariants(&self) -> &Invariants {
-        match &self.suite {
-            Suite::Checks(config) => &config.invariants,
-            Suite::Cases(suite) => &suite.invariants,
-        }
+        &self.suite.invariants
     }
 
     /// sha256 (hex) of the spec text, pinning the run to spec content.

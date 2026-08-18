@@ -1,8 +1,7 @@
 //! The roster case schema, executed for real: loading, the documented run
 //! semantics (scrubbed baseline env, sandbox files and cwd, pty attachment,
 //! scripted stdin, per-case timeout), the assertion vocabulary, and the
-//! expected-fail mapping — all against scripted stand-in binaries, the same
-//! way `phases.rs` covers the check schema.
+//! expected-fail mapping — all against scripted stand-in binaries.
 
 // Unix-only: the stand-in binaries are `sh` scripts made executable via
 // `PermissionsExt`, and pty attachment is a Unix object.
@@ -12,7 +11,7 @@ use std::fs;
 use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
 
-use corpus_runner::archetype::{Archetype, Suite};
+use corpus_runner::archetype::Archetype;
 use corpus_runner::cases::run_cases;
 use corpus_runner::report::{CaseOutcome, CaseResult};
 use corpus_runner::workspace::Isolation;
@@ -39,17 +38,18 @@ fn run_suite(toml: &str, binary_body: &str) -> Vec<CaseResult> {
     )
     .unwrap();
     let archetype = Archetype::load(&dir.path().join("archetypes"), "fake").unwrap();
-    let Suite::Cases(suite) = &archetype.suite else {
-        panic!("fixture carries the roster case schema");
-    };
     let isolation = Isolation::new(
         dir.path(),
         &Path::new(env!("CARGO_MANIFEST_DIR")).join("../.."),
     )
     .unwrap();
-    let report = run_cases(&binary, &suite.cases, &dir.path().join("cases"), &isolation);
+    let report = run_cases(
+        &binary,
+        &archetype.suite.cases,
+        &dir.path().join("cases"),
+        &isolation,
+    );
     assert!(report.built);
-    assert!(report.checks.is_empty());
     report.cases
 }
 
@@ -76,10 +76,7 @@ fn pilot_roster_suites_load_as_case_suites() {
     ] {
         let archetype = Archetype::load(&archetypes, name).unwrap();
         assert_eq!(archetype.binary(), name, "roster names double as binaries");
-        let Suite::Cases(suite) = &archetype.suite else {
-            panic!("{name} must load as the roster case schema");
-        };
-        assert!(!suite.cases.is_empty());
+        assert!(!archetype.suite.cases.is_empty());
     }
 }
 

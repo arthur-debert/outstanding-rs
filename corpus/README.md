@@ -56,11 +56,10 @@ seconds) — an overrun is killed (whole process group) and recorded in the
 report as a finding, so a prompting or looping produced CLI can never
 prevent `report.json` from being written.
 
-The runner executes both acceptance schemas: the roster's `[[case]]` suites
-below with their full run semantics (per-case sandboxes, the scrubbed
-baseline env, pty attachment, scripted stdin, per-case deadlines,
-expected-fail mapping), and its own simpler check schema, which only the
-`smoke` archetype still speaks.
+The runner executes one acceptance schema: the `[[case]]` suites below with
+their full run semantics (per-case sandboxes, the scrubbed baseline env,
+pty attachment, scripted stdin, per-case deadlines, expected-fail mapping).
+Every archetype — `smoke` included — speaks it.
 
 ## Decision: the blindness protocol
 
@@ -107,9 +106,11 @@ fragile"; partial blindness is acceptable if it is *known*).
 
 ## Decision: the run-report schema
 
-`report.json`, `schema_version: 2` (recorded here because an ADR may follow).
-Objective results and agent self-assessment are deliberately separate
-sections. The shape:
+`report.json`, `schema_version: 3` (recorded here because an ADR may follow).
+Version 2 differed only in carrying a parallel `checks` vector for the
+retired check schema; committed v2 reports still deserialize. Objective
+results and agent self-assessment are deliberately separate sections. The
+shape:
 
 - `schema_version`, `run_id` — identity.
 - `archetype` — name plus the sha256 of the exact spec text given to the
@@ -129,8 +130,7 @@ sections. The shape:
   turns/token counts when the transcript is Claude Code stream-json; plus
   the transcript path (always linked, relative to the run directory).
 - `acceptance` — objective: whether the produced app built, and one entry
-  per suite item — `checks` (pass/fail) for the check schema, `cases` for
-  roster suites, each carrying the case's `expected` marker and its
+  per suite case, each carrying the case's `expected` marker and its
   `outcome` (`pass`, `fail`, `expected-fail`, or `unexpected-pass`, the
   news of a gap silently closed) plus the authored `stresses`/`gap`/
   `reason` context so the report reads without the suite beside it.
@@ -141,8 +141,8 @@ sections. The shape:
 - `questionnaire` — subjective: whether a valid sheet was collected, its
   diagnostics, and the decoded answers keyed by stable field id.
 
-A run that completes the loop always writes a report, even when every check
-fails — failing checks are findings, not runner errors.
+A run that completes the loop always writes a report, even when every case
+fails — failing cases are findings, not runner errors.
 
 ## The archetype roster
 

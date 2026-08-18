@@ -69,7 +69,6 @@ pub fn run_cases(
     AcceptanceReport {
         built: true,
         build_detail: None,
-        checks: Vec::new(),
         cases: results,
     }
 }
