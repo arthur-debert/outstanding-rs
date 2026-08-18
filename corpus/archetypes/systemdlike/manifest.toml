@@ -41,6 +41,7 @@ cases = [
     "tool-var-forces-color-when-piped",
     "tool-var-zero-beats-capable-tty",
     "output-text-beats-tool-var",
+    "output-term-beats-everything-when-piped",
     "plain-beats-tool-var",
 ]
 

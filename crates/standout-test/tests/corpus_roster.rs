@@ -4,18 +4,161 @@
 //! formats) is declarative data consumed by the corpus runner, so nothing
 //! compiles it and a typo would otherwise surface only mid-pilot-run. This
 //! suite is the compile step: every archetype must carry its three files,
-//! the acceptance suites and manifests must parse and use only the documented
-//! vocabulary, cross-references must resolve, and — the corpus's founding
-//! rule — no implementation may live beside the specs (acceptance is written
-//! spec-first; blind agents implement elsewhere).
+//! the acceptance suites and manifests must deserialize into the documented
+//! schema exactly (typed structs, unknown keys rejected, every field's shape
+//! checked), cross-references must resolve — manifest `cases` to acceptance
+//! case names, expected-fail `gap`s to the manifest's `[gaps]` table — and,
+//! the corpus's founding rule, no implementation may live beside the specs
+//! (acceptance is written spec-first; blind agents implement elsewhere).
 //!
 //! It deliberately does NOT run any acceptance case: that is the WS01
 //! runner's job, against a produced binary.
 
-use std::collections::HashSet;
+use std::collections::{BTreeMap, HashSet};
 use std::path::{Path, PathBuf};
 
-use toml::Value;
+use serde::Deserialize;
+
+// --- the documented schema, as types ----------------------------------------
+//
+// One struct per table in `corpus/README.md`. `deny_unknown_fields` makes the
+// vocabulary closed: a misspelled key fails here, not mid-pilot-run. Fields
+// whose values carry extra rules (positive timeout, resolvable references,
+// pass/fail coupling) get semantic checks on top, below.
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct AcceptanceDoc {
+    schema: i64,
+    archetype: String,
+    #[serde(rename = "case")]
+    cases: Vec<AcceptanceCase>,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct AcceptanceCase {
+    name: String,
+    #[allow(dead_code)] // grouping is for humans and runner reports, not checks
+    group: Option<String>,
+    stresses: String,
+    expected: Expected,
+    gap: Option<String>,
+    reason: Option<String>,
+    run: Run,
+    expect: Expect,
+}
+
+#[derive(Deserialize, Clone, Copy, PartialEq)]
+#[serde(rename_all = "lowercase")]
+enum Expected {
+    Pass,
+    Fail,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct Run {
+    // Required by the schema; may be empty (a naked default-command line).
+    #[allow(dead_code)]
+    argv: Vec<String>,
+    #[allow(dead_code)]
+    env: Option<BTreeMap<String, String>>,
+    #[allow(dead_code)]
+    tty: Option<Vec<TtyStream>>,
+    #[allow(dead_code)]
+    stdin: Option<String>,
+    #[allow(dead_code)]
+    cwd: Option<String>,
+    // Mandatory: it is the never-hang bound.
+    timeout_seconds: i64,
+    #[allow(dead_code)]
+    files: Option<BTreeMap<String, String>>,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "lowercase")]
+enum TtyStream {
+    Stdin,
+    Stdout,
+    Stderr,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct Expect {
+    exit_code: Option<i64>,
+    stdout: Option<String>,
+    stderr: Option<String>,
+    stdout_json: Option<String>,
+    stdout_contains: Option<Vec<String>>,
+    stderr_contains: Option<Vec<String>>,
+    stdout_not_contains: Option<Vec<String>>,
+    stderr_not_contains: Option<Vec<String>>,
+}
+
+impl Expect {
+    fn assertion_count(&self) -> usize {
+        [
+            self.exit_code.is_some(),
+            self.stdout.is_some(),
+            self.stderr.is_some(),
+            self.stdout_json.is_some(),
+            self.stdout_contains.is_some(),
+            self.stderr_contains.is_some(),
+            self.stdout_not_contains.is_some(),
+            self.stderr_not_contains.is_some(),
+        ]
+        .iter()
+        .filter(|present| **present)
+        .count()
+    }
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct ManifestDoc {
+    archetype: ManifestArchetype,
+    features: Features,
+    interactions: Vec<Interaction>,
+    gaps: Option<BTreeMap<String, String>>,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct ManifestArchetype {
+    name: String,
+    #[allow(dead_code)]
+    survey: String,
+    #[allow(dead_code)]
+    summary: String,
+    status: Status,
+}
+
+#[derive(Deserialize, Clone, Copy, PartialEq)]
+enum Status {
+    #[serde(rename = "in-capability")]
+    InCapability,
+    #[serde(rename = "partially-past-capability")]
+    PartiallyPastCapability,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct Features {
+    used: Vec<String>,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct Interaction {
+    id: String,
+    stresses: Vec<String>,
+    description: String,
+    cases: Vec<String>,
+}
+
+// --- loading ----------------------------------------------------------------
 
 fn archetypes_dir() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("../../corpus/archetypes")
@@ -38,180 +181,111 @@ fn dir_name(dir: &Path) -> &str {
     dir.file_name().unwrap().to_str().unwrap()
 }
 
-fn parse_toml(path: &Path) -> Value {
+/// Typed parse: the file must match the documented schema exactly. Serde's
+/// error carries the offending key/type and its TOML position.
+fn parse<T: serde::de::DeserializeOwned>(path: &Path) -> T {
     let text = std::fs::read_to_string(path)
         .unwrap_or_else(|e| panic!("{} must be readable: {e}", path.display()));
-    // parse::<Value>() would parse a single TOML *value*; a file is a table.
-    let table = text
-        .parse::<toml::Table>()
-        .unwrap_or_else(|e| panic!("{} must parse as TOML: {e}", path.display()));
-    Value::Table(table)
+    toml::from_str(&text).unwrap_or_else(|e| {
+        panic!(
+            "{} does not match the schema in corpus/README.md: {e}",
+            path.display()
+        )
+    })
 }
 
-fn str_field<'a>(value: &'a Value, key: &str, context: &str) -> &'a str {
-    value
-        .get(key)
-        .and_then(Value::as_str)
-        .unwrap_or_else(|| panic!("{context}: missing string field `{key}`"))
-}
-
-/// The acceptance case names of one archetype, validating each case as it goes.
-fn case_names(dir: &Path) -> HashSet<String> {
+/// One archetype's acceptance suite: typed parse plus the semantic rules the
+/// types cannot carry. Returns the doc for cross-file checks.
+fn load_acceptance(dir: &Path) -> AcceptanceDoc {
     let name = dir_name(dir);
-    let doc = parse_toml(&dir.join("acceptance.toml"));
+    let doc: AcceptanceDoc = parse(&dir.join("acceptance.toml"));
     assert_eq!(
-        doc.get("schema").and_then(Value::as_integer),
-        Some(1),
+        doc.schema, 1,
         "{name}: acceptance.toml must declare `schema = 1`"
     );
     assert_eq!(
-        doc.get("archetype").and_then(Value::as_str),
-        Some(name),
+        doc.archetype, name,
         "{name}: acceptance.toml `archetype` must match the directory name"
     );
-
-    let cases = doc
-        .get("case")
-        .and_then(Value::as_array)
-        .unwrap_or_else(|| panic!("{name}: acceptance.toml has no [[case]] entries"));
-    assert!(!cases.is_empty(), "{name}: empty acceptance suite");
+    assert!(!doc.cases.is_empty(), "{name}: empty acceptance suite");
 
     let mut names = HashSet::new();
-    for case in cases {
-        let case_name = str_field(case, "name", &format!("{name}: case"));
-        let ctx = format!("{name}/{case_name}");
+    for case in &doc.cases {
+        let ctx = format!("{name}/{}", case.name);
         assert!(
-            names.insert(case_name.to_string()),
+            names.insert(case.name.clone()),
             "{ctx}: duplicate case name"
         );
         assert!(
-            case_name
+            case.name
                 .chars()
                 .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-'),
             "{ctx}: case names are kebab-case"
         );
-
+        assert!(
+            !case.stresses.is_empty(),
+            "{ctx}: `stresses` must name the interaction under test"
+        );
         validate_expected_marker(case, &ctx);
-        validate_run(case, &ctx);
-        validate_expect(case, &ctx);
+        validate_run(&case.run, &ctx);
+        validate_expect(&case.expect, &ctx);
     }
-    names
+    doc
 }
 
-/// `expected` is `"pass"`, or `"fail"` carrying the gap that owns the failure.
-fn validate_expected_marker(case: &Value, ctx: &str) {
-    match str_field(case, "expected", ctx) {
-        "pass" => {}
-        "fail" => {
+fn case_names(doc: &AcceptanceDoc) -> HashSet<&str> {
+    doc.cases.iter().map(|c| c.name.as_str()).collect()
+}
+
+/// `expected = "pass"` stands alone; `"fail"` carries the gap that owns the
+/// failure and the reason it fails today (the gap resolves against the
+/// manifest's `[gaps]` table in the cross-file check below).
+fn validate_expected_marker(case: &AcceptanceCase, ctx: &str) {
+    match case.expected {
+        Expected::Pass => {
             assert!(
-                !str_field(case, "gap", ctx).is_empty(),
+                case.gap.is_none() && case.reason.is_none(),
+                "{ctx}: `gap`/`reason` belong to expected-fail cases only"
+            );
+        }
+        Expected::Fail => {
+            assert!(
+                case.gap.as_deref().is_some_and(|g| !g.is_empty()),
                 "{ctx}: expected-fail case must name its `gap`"
             );
             assert!(
-                !str_field(case, "reason", ctx).is_empty(),
+                case.reason.as_deref().is_some_and(|r| !r.is_empty()),
                 "{ctx}: expected-fail case must carry a `reason`"
             );
         }
-        other => panic!("{ctx}: `expected` must be \"pass\" or \"fail\", got {other:?}"),
     }
 }
 
-fn validate_run(case: &Value, ctx: &str) {
-    let run = case
-        .get("run")
-        .and_then(Value::as_table)
-        .unwrap_or_else(|| panic!("{ctx}: missing [case.run]"));
-
-    let known = [
-        "argv",
-        "env",
-        "tty",
-        "stdin",
-        "cwd",
-        "timeout_seconds",
-        "files",
-    ];
-    for key in run.keys() {
-        assert!(
-            known.contains(&key.as_str()),
-            "{ctx}: unknown run key `{key}`"
-        );
-    }
-
-    let argv = run
-        .get("argv")
-        .and_then(Value::as_array)
-        .unwrap_or_else(|| panic!("{ctx}: run.argv must be an array"));
+fn validate_run(run: &Run, ctx: &str) {
     assert!(
-        argv.iter().all(|a| a.as_str().is_some()),
-        "{ctx}: run.argv must be strings"
+        run.timeout_seconds > 0,
+        "{ctx}: timeout_seconds must be positive (it is the never-hang bound)"
     );
-
-    let timeout = run
-        .get("timeout_seconds")
-        .and_then(Value::as_integer)
-        .unwrap_or_else(|| {
-            panic!("{ctx}: run.timeout_seconds is mandatory (it is the never-hang bound)")
-        });
-    assert!(timeout > 0, "{ctx}: timeout_seconds must be positive");
-
-    if let Some(tty) = run.get("tty") {
-        let streams: Vec<&str> = tty
-            .as_array()
-            .unwrap_or_else(|| panic!("{ctx}: run.tty must be an array"))
-            .iter()
-            .map(|v| v.as_str().unwrap())
-            .collect();
-        assert!(
-            streams
-                .iter()
-                .all(|s| ["stdin", "stdout", "stderr"].contains(s)),
-            "{ctx}: run.tty entries must be stdin/stdout/stderr"
-        );
-    }
 }
 
-fn validate_expect(case: &Value, ctx: &str) {
-    let expect = case
-        .get("expect")
-        .and_then(Value::as_table)
-        .unwrap_or_else(|| panic!("{ctx}: missing [case.expect]"));
-
-    let known = [
-        "exit_code",
-        "stdout",
-        "stderr",
-        "stdout_json",
-        "stdout_contains",
-        "stderr_contains",
-        "stdout_not_contains",
-        "stderr_not_contains",
-    ];
-    for key in expect.keys() {
-        assert!(
-            known.contains(&key.as_str()),
-            "{ctx}: unknown assertion `{key}` (vocabulary is fixed in corpus/README.md)"
-        );
-    }
+fn validate_expect(expect: &Expect, ctx: &str) {
     assert!(
-        !expect.is_empty(),
+        expect.assertion_count() > 0,
         "{ctx}: at least one assertion is required"
     );
-
     // Exact-stdout and semantic-JSON assertions on the same stream contradict
     // each other's reason to exist; a case picks one.
     assert!(
-        !(expect.contains_key("stdout") && expect.contains_key("stdout_json")),
+        !(expect.stdout.is_some() && expect.stdout_json.is_some()),
         "{ctx}: use `stdout` (exact) or `stdout_json` (semantic), not both"
     );
-    if let Some(json) = expect.get("stdout_json") {
-        let text = json
-            .as_str()
-            .unwrap_or_else(|| panic!("{ctx}: stdout_json must be a string of JSON"));
-        serde_json::from_str::<serde_json::Value>(text)
+    if let Some(json) = &expect.stdout_json {
+        serde_json::from_str::<serde_json::Value>(json)
             .unwrap_or_else(|e| panic!("{ctx}: stdout_json is not valid JSON: {e}"));
     }
 }
+
+// --- the tests --------------------------------------------------------------
 
 #[test]
 fn every_archetype_carries_spec_manifest_and_acceptance() {
@@ -229,68 +303,72 @@ fn every_archetype_carries_spec_manifest_and_acceptance() {
 #[test]
 fn acceptance_suites_are_wellformed() {
     for dir in archetype_dirs() {
-        case_names(&dir);
+        load_acceptance(&dir);
     }
 }
 
 #[test]
-fn manifests_are_wellformed_and_case_references_resolve() {
+fn manifests_are_wellformed_and_cross_references_resolve() {
     for dir in archetype_dirs() {
         let name = dir_name(&dir);
-        let doc = parse_toml(&dir.join("manifest.toml"));
-        let names = case_names(&dir);
+        let manifest: ManifestDoc = parse(&dir.join("manifest.toml"));
+        let acceptance = load_acceptance(&dir);
+        let names = case_names(&acceptance);
 
-        let archetype = doc
-            .get("archetype")
-            .unwrap_or_else(|| panic!("{name}: manifest missing [archetype]"));
         assert_eq!(
-            archetype.get("name").and_then(Value::as_str),
-            Some(name),
+            manifest.archetype.name, name,
             "{name}: manifest [archetype].name must match the directory"
         );
-        for key in ["survey", "summary", "status"] {
-            str_field(archetype, key, &format!("{name}: [archetype]"));
-        }
-
-        let used = doc
-            .get("features")
-            .and_then(|f| f.get("used"))
-            .and_then(Value::as_array)
-            .unwrap_or_else(|| panic!("{name}: manifest missing [features] used"));
-        assert!(!used.is_empty(), "{name}: manifest names no features");
-
-        let interactions = doc
-            .get("interactions")
-            .and_then(Value::as_array)
-            .unwrap_or_else(|| panic!("{name}: manifest has no [[interactions]]"));
         assert!(
-            !interactions.is_empty(),
+            !manifest.features.used.is_empty(),
+            "{name}: manifest names no features"
+        );
+        assert!(
+            !manifest.interactions.is_empty(),
             "{name}: the manifest must name stressed interactions, not just features"
         );
-        for interaction in interactions {
-            let id = str_field(interaction, "id", &format!("{name}: interaction"));
-            let ctx = format!("{name}/interaction {id}");
+        for interaction in &manifest.interactions {
+            let ctx = format!("{name}/interaction {}", interaction.id);
             assert!(
-                !str_field(interaction, "description", &ctx).is_empty(),
+                !interaction.description.is_empty(),
                 "{ctx}: empty description"
             );
-            let stresses = interaction
-                .get("stresses")
-                .and_then(Value::as_array)
-                .unwrap_or_else(|| panic!("{ctx}: missing `stresses` list"));
             assert!(
-                stresses.len() >= 2,
+                interaction.stresses.len() >= 2,
                 "{ctx}: an interaction stresses at least two features"
             );
-            let cases = interaction
-                .get("cases")
-                .and_then(Value::as_array)
-                .unwrap_or_else(|| panic!("{ctx}: missing `cases` list"));
-            for case in cases {
-                let case = case.as_str().unwrap();
+            for case in &interaction.cases {
                 assert!(
-                    names.contains(case),
+                    names.contains(case.as_str()),
                     "{ctx}: references unknown acceptance case `{case}`"
+                );
+            }
+        }
+
+        // The gaps table exists exactly when the archetype is specced past
+        // capability, and every expected-fail case's `gap` resolves into it —
+        // a typo here would attribute runner results to a nonexistent epic.
+        let gaps = manifest.gaps.unwrap_or_default();
+        match manifest.archetype.status {
+            Status::PartiallyPastCapability => {
+                assert!(
+                    !gaps.is_empty(),
+                    "{name}: partially-past-capability requires a non-empty [gaps] table"
+                );
+            }
+            Status::InCapability => {
+                assert!(
+                    gaps.is_empty(),
+                    "{name}: [gaps] is only for partially-past-capability archetypes"
+                );
+            }
+        }
+        for case in &acceptance.cases {
+            if let Some(gap) = &case.gap {
+                assert!(
+                    gaps.contains_key(gap),
+                    "{name}/{}: gap `{gap}` is not in the manifest's [gaps] table",
+                    case.name
                 );
             }
         }
@@ -343,9 +421,9 @@ fn pilot_roster_is_complete() {
 /// bounded-time non-interactive failure path.
 #[test]
 fn formlike_pins_the_bounded_noninteractive_failure() {
-    let names = case_names(&archetypes_dir().join("formlike"));
+    let doc = load_acceptance(&archetypes_dir().join("formlike"));
     assert!(
-        names.contains("missing-required-answer-under-closed-stdin-fails-fast"),
+        case_names(&doc).contains("missing-required-answer-under-closed-stdin-fails-fast"),
         "formlike must keep its bounded-time non-interactive failure case"
     );
 }

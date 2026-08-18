@@ -63,6 +63,22 @@ timeout_seconds = 10
 exit_code = 0
 stdout = "provisioned demo-site in eu (public: no)\n"
 
+# --- interactive fallback ----------------------------------------------------
+
+[[case]]
+name = "interactive-collection-and-confirmation-on-tty"
+group = "answer-sheet"
+stresses = "no --answers, no --yes: attended stdin drives collection and confirmation to success"
+expected = "pass"
+[case.run]
+argv = ["provision"]
+tty = ["stdin"]
+stdin = "tty-site\nus\nyes\nyes\n"
+timeout_seconds = 10
+[case.expect]
+exit_code = 0
+stdout_contains = ["provisioned tty-site in us (public: yes)"]
+
 # --- validation --------------------------------------------------------------
 
 [[case]]

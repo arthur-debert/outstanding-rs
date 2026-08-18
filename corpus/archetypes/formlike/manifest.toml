@@ -21,7 +21,12 @@ used = [
 id = "input-source-precedence"
 stresses = ["--answers file", "--answers -", "interactive fallback", "sources-never-merge rule"]
 description = "One questionnaire, three ways in. A sheet replaces interactive collection entirely; stdin doubles as a sheet transport (--answers -) and as the interactivity signal, and those two roles must not be confused."
-cases = ["answers-file-full-noninteractive", "answers-from-stdin-dash", "blank-answers-take-defaults"]
+cases = [
+    "answers-file-full-noninteractive",
+    "answers-from-stdin-dash",
+    "blank-answers-take-defaults",
+    "interactive-collection-and-confirmation-on-tty",
+]
 
 [[interactions]]
 id = "bounded-non-interactive-failure"

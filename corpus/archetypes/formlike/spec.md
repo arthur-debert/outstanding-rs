@@ -43,10 +43,23 @@ A fully non-interactive successful run writes **nothing to stderr**.
 - `--yes` skips the confirmation gate. It does **not** invent answers:
   a missing required answer is still an error under `--yes`.
 
+### Interactive collection
+
+With no `--answers` and stdin an attended terminal, the three questions are
+asked in order, one answer line each. A blank answer line takes the question's
+default; a blank answer to a required question with no default re-asks, and
+end-of-input during collection is an input error (exit 1) — collection never
+silently proceeds without an answer. Prompt wording and layout are cosmetic
+(the `<id:...>` tags
+are not required interactively); the success line and exit codes are the same
+as for sheet runs.
+
 ### Confirmation
 
-Without `--yes`, provisioning asks for confirmation on an attended terminal.
-Piped stdin never confirms; EOF never confirms.
+Without `--yes`, provisioning asks for confirmation on an attended terminal
+and reads one answer line: `yes` or `y` (case-insensitive) confirms; any other
+answer declines, and a declined run exits 1 without provisioning. Piped stdin
+never confirms; EOF never confirms.
 
 ### Non-interactive failure is bounded
 

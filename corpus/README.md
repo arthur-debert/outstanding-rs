@@ -40,7 +40,7 @@ group = "optional-group-name"        # optional: milestone/topic grouping
 stresses = "one line naming the interaction under test"
 expected = "pass"                    # "pass" | "fail"
 # When expected = "fail" (specced past current capability), both are required:
-# gap    = "PAR01"                   # the program epic that closes the gap
+# gap    = "PAR01"                   # the epic that closes the gap — must be a key of the manifest's [gaps] table
 # reason = "why this fails today"
 
 [case.run]
@@ -68,9 +68,14 @@ stderr = ""
   `CLICOLOR_FORCE`, `FORCE_COLOR`, `PAGER`, and any tool-specific variable —
   is **unset unless the case sets it**. A case's env is therefore complete,
   not a delta against whatever the CI host exports.
-- **stdin.** Omitted `stdin` means piped-and-at-EOF (the adversarial
-  non-interactive default). A string value is piped content followed by EOF.
-  `"stdin"` in `tty` means an attended terminal instead.
+- **stdin.** Omitted `stdin` (with `"stdin"` not in `tty`) means
+  piped-and-at-EOF — the adversarial non-interactive default. A string value
+  is scripted input, and `tty` decides its transport: on a pipe it is the
+  piped content followed by EOF; when `tty` includes `"stdin"` it is written
+  to the pty as keystrokes (as if typed, already newline-terminated), after
+  which the pty closes. The pty form is how attended interactive flows —
+  prompt answers, confirmations — are driven. `"stdin"` in `tty` with no
+  `stdin` string is an attended terminal that never sends anything.
 - **tty.** Streams listed in `tty` are attached to a pseudo-terminal (the
   ROB01 harness's pty seam); all others are pipes. Pty captures are normalized
   to LF before comparison.

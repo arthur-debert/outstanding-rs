@@ -166,6 +166,19 @@ exit_code = 0
 stdout = "UNIT          LOAD   ACTIVE   SUB\ncore.service  loaded active   running\nweb.service   loaded active   running\ncache.service loaded inactive dead\nbackup.timer  loaded active   waiting\n\n4 units listed.\n"
 
 [[case]]
+name = "output-term-beats-everything-when-piped"
+group = "color-precedence"
+stresses = "explicit --output term forces ANSI over the tool disable, NO_COLOR, and pipe autodetection at once"
+expected = "pass"
+[case.run]
+argv = ["list-units", "--output", "term"]
+env = { NO_COLOR = "1", SYSTEMDLIKE_COLORS = "0" }
+timeout_seconds = 10
+[case.expect]
+exit_code = 0
+stdout_contains = ["\u001b["]
+
+[[case]]
 name = "plain-beats-tool-var"
 group = "color-precedence"
 stresses = "--plain outranks the tool color variable"
