@@ -1,0 +1,166 @@
+{
+  "schema_version": 1,
+  "run_id": "smoke-1787041373",
+  "archetype": {
+    "name": "smoke",
+    "spec_sha256": "c5af827db21589e80eb7809515f984d1d2c5fda95fe8d9610afb63b39726500c"
+  },
+  "pins": {
+    "framework_version": "8.1.1",
+    "docs_commit": "7833db18a66b987d3d29bae0ece82e1b74f096e4",
+    "questionnaire_fingerprint": "sha256:64291870245510dad73ca960fd4024db9b9c161113a3dcc9c7e57a30973663fc"
+  },
+  "blindness": {
+    "policy": "workspace contains spec + published docs + crates.io pins only; agent env is cleared to a recorded allowlist; consulted sources are self-reported in the exit questionnaire",
+    "env_allowlist": [
+      "PATH",
+      "HOME",
+      "USER",
+      "SHELL",
+      "TERM",
+      "LANG",
+      "LC_ALL",
+      "TMPDIR",
+      "CARGO_HOME",
+      "RUSTUP_HOME"
+    ],
+    "framework_source_excluded": true,
+    "agent_reported_docs": "- docs/guides/tldr-intro-to-standout.md\n- docs/guides/minimal-single-crate.md\n- docs/guides/intro-to-standout.md (sections on the handler macro and AppBuilder wiring)\n- docs/guides/upgrading-from-5.0.md\n- docs/index.md\n- docs/topics/output-modes.md\n- docs/topics/app-configuration.md\n- docs/crates/dispatch/guides/intro-to-dispatch.md\n- docs/crates/dispatch/topics/handler-contract.md\n- docs/crates/render/guides/intro-to-tabular.md",
+    "agent_reported_external_sources": "No standout-specific knowledge beyond docs/, no web search, no source code. I did use general (non-standout) prior knowledge: Rust/clap/serde idioms, and Jinja2/MiniJinja whitespace-control syntax (`{% for ... -%}` / `{% endfor -%}`) to fix blank lines between table rows — the dash syntax itself is not shown in the provided docs. I also used general knowledge of the `NO_COLOR` convention to diagnose why `--output term` initially showed no ANSI codes (the shell had `NO_COLOR=1` set)."
+  },
+  "session": {
+    "agent_cmd": "claude --dangerously-skip-permissions -p \"Read INSTRUCTIONS.md in the current directory and carry it out completely.\" --output-format stream-json --verbose",
+    "wall_seconds": 257.164925334,
+    "exit_code": 0,
+    "attempts": 1,
+    "turns": 34,
+    "input_tokens": 46,
+    "output_tokens": 17046,
+    "transcript": "transcript.jsonl"
+  },
+  "acceptance": {
+    "built": true,
+    "build_detail": null,
+    "checks": [
+      {
+        "name": "list renders the heading and every star row",
+        "passed": true,
+        "detail": null
+      },
+      {
+        "name": "list carries the magnitudes",
+        "passed": true,
+        "detail": null
+      },
+      {
+        "name": "list emits the catalog as JSON",
+        "passed": true,
+        "detail": null
+      },
+      {
+        "name": "about names the tool",
+        "passed": true,
+        "detail": null
+      }
+    ]
+  },
+  "invariants": [
+    {
+      "command": "list",
+      "check": "text: exits 0",
+      "passed": true,
+      "detail": null
+    },
+    {
+      "command": "list",
+      "check": "term: exits 0",
+      "passed": true,
+      "detail": null
+    },
+    {
+      "command": "list",
+      "check": "json: exits 0",
+      "passed": true,
+      "detail": null
+    },
+    {
+      "command": "list",
+      "check": "text: no unresolved tag markers",
+      "passed": true,
+      "detail": null
+    },
+    {
+      "command": "list",
+      "check": "term: no unresolved tag markers",
+      "passed": true,
+      "detail": null
+    },
+    {
+      "command": "list",
+      "check": "term vs text: styling preserves layout",
+      "passed": true,
+      "detail": null
+    },
+    {
+      "command": "list",
+      "check": "json: stdout parses as JSON",
+      "passed": true,
+      "detail": null
+    },
+    {
+      "command": "about",
+      "check": "text: exits 0",
+      "passed": true,
+      "detail": null
+    },
+    {
+      "command": "about",
+      "check": "term: exits 0",
+      "passed": true,
+      "detail": null
+    },
+    {
+      "command": "about",
+      "check": "json: exits 0",
+      "passed": true,
+      "detail": null
+    },
+    {
+      "command": "about",
+      "check": "text: no unresolved tag markers",
+      "passed": true,
+      "detail": null
+    },
+    {
+      "command": "about",
+      "check": "term: no unresolved tag markers",
+      "passed": true,
+      "detail": null
+    },
+    {
+      "command": "about",
+      "check": "term vs text: styling preserves layout",
+      "passed": true,
+      "detail": null
+    },
+    {
+      "command": "about",
+      "check": "json: stdout parses as JSON",
+      "passed": true,
+      "detail": null
+    }
+  ],
+  "questionnaire": {
+    "collected": true,
+    "diagnostics": [],
+    "answers": {
+      "confidence": "high",
+      "docs.gaps": "- minimal-single-crate.md shows `#[derive(Serialize)] struct TodoResult {...}` (private) alongside `mod handlers { ... #[handler] pub fn list(...) -> Result<Output<TodoResult>, ...> }`. Compiled as-written against 8.1.1 this shape fails with E0446 (\"private type ... in public interface\"); the structs and their fields must be `pub`.\n- Doc templates render `{% for %}` loops without whitespace-control dashes and show gap-free output (e.g. the tabular guide's \"1. pending Implement user authentication\" rows with no blank lines between them); actually each iteration emitted an extra newline until I used `{% for star in stars -%}` / `{% endfor -%}`. Either the docs' engine config differs (trim_blocks) or the examples are wrong for 8.1.1.\n- tldr-intro-to-standout.md shows `.commands(Commands::dispatch_config()?)` (the `?` inside the call) while minimal-single-crate.md and app-configuration.md show `.commands(Commands::dispatch_config())?`. The latter is what compiles on 8.1.1 — `dispatch_config()` is not itself a `Result` to unwrap at that point; `.commands(...)` returns the fallible builder.\n- output-modes.md: \"**Term**: Always applies ANSI escape codes, even when piping\" — with `NO_COLOR=1` set, `--output term` emits no escapes. The NO_COLOR interaction is undocumented.\n- minimal-single-crate.md pins `standout = \"7\"`; nothing under docs/ describes 7→8 changes (the upgrade guides stop at 3.8→? and 5.0→6.0). In practice the documented 7.x surface I used worked unchanged on 8.1.1.",
+      "friction": "- First `cargo build` failed with `error[E0446]: private type 'Catalog' in public interface ... this error originates in the attribute macro 'handler'`. The `#[handler]` macro generates `pub` wrapper functions inside the handlers module, so every view struct they return must be declared `pub`, but the doc examples (e.g. minimal-single-crate.md) declare them as private `struct TodoResult`.\n- The same build emitted `warning: function 'list__handler' should have a snake case name` (×4, for `list__handler`, `list__expected_args`, `about__handler`, `about__expected_args`) — the macro-generated double-underscore names trip `non_snake_case`; I silenced it with `#[allow(non_snake_case)]` on the handlers module.\n- First run of `smoketable list --output text` printed a blank line between every table row: the newlines around `{% for star in stars %}` were emitted per iteration. Doc templates (minimal-single-crate.md's `list.jinja`, the tabular guide's examples) use exactly that plain block layout and show output without blank lines.\n- `--output term` initially emitted zero ANSI escapes despite output-modes.md saying \"**Term**: Always applies ANSI escape codes, even when piping\". Cause was `NO_COLOR=1` in my environment (honoring it is reasonable, but the doc says \"always\").",
+      "sources.docs": "- docs/guides/tldr-intro-to-standout.md\n- docs/guides/minimal-single-crate.md\n- docs/guides/intro-to-standout.md (sections on the handler macro and AppBuilder wiring)\n- docs/guides/upgrading-from-5.0.md\n- docs/index.md\n- docs/topics/output-modes.md\n- docs/topics/app-configuration.md\n- docs/crates/dispatch/guides/intro-to-dispatch.md\n- docs/crates/dispatch/topics/handler-contract.md\n- docs/crates/render/guides/intro-to-tabular.md",
+      "sources.external": "No standout-specific knowledge beyond docs/, no web search, no source code. I did use general (non-standout) prior knowledge: Rust/clap/serde idioms, and Jinja2/MiniJinja whitespace-control syntax (`{% for ... -%}` / `{% endfor -%}`) to fix blank lines between table rows — the dash syntax itself is not shown in the provided docs. I also used general knowledge of the `NO_COLOR` convention to diagnose why `--output term` initially showed no ANSI codes (the shell had `NO_COLOR=1` set).",
+      "summary": "A single-crate `smoketable` binary in `app/` built on standout 8.1.1: a clap derive `Cli` with a `Commands` enum deriving `Dispatch` (`#[dispatch(handlers = handlers)]`), two `#[handler]` functions (`list`, `about`) returning serializable view structs, MiniJinja templates (`src/templates/list.jinja`, `about.jinja`) matched by command name, and a `src/styles/default.css` theme. `list` renders the three hard-coded stars in aligned columns (via the `col` filter) under a \"Star Catalog\" heading; `about` prints one descriptive line. Verified by running the binary: `--output text` is plain (no ANSI), `--output term` adds color with byte-identical layout after stripping escapes (checked with `diff`), `--output json` for `list` emits all three fields per star, both commands exit 0, unknown subcommands fail through clap with exit 2. `cargo build` succeeds with no warnings. Complete and working.",
+      "workarounds": "- `#[allow(non_snake_case)]` on the `handlers` module, to suppress warnings about the `#[handler]` macro's generated `list__handler`/`list__expected_args`-style names.\n- Whitespace-control dashes (`-%}`) in `list.jinja` to prevent blank lines between rows — arguably normal Jinja, but it deviates from the doc examples' plain block syntax."
+    }
+  }
+}

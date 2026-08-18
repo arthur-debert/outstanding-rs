@@ -1,0 +1,41 @@
+# Acceptance suite for the smoke archetype, written before any implementation
+# (spec-first: "did it work" is never judged by the implementer). The runner
+# executes each check against the produced binary and records pass/fail in the
+# run report, separate from the agent's self-assessment.
+
+binary = "smoketable"
+
+[[check]]
+name = "list renders the heading and every star row"
+args = ["list", "--output", "text"]
+stdout_contains = [
+    "Star Catalog",
+    "Aldebaran",
+    "Taurus",
+    "Rigel",
+    "Orion",
+    "Vega",
+    "Lyra",
+]
+
+[[check]]
+name = "list carries the magnitudes"
+args = ["list", "--output", "text"]
+stdout_contains = ["0.86", "0.13", "0.03"]
+
+[[check]]
+name = "list emits the catalog as JSON"
+args = ["list", "--output", "json"]
+stdout_is_json = true
+stdout_contains = ["Aldebaran", "Rigel", "Vega"]
+
+[[check]]
+name = "about names the tool"
+args = ["about", "--output", "text"]
+stdout_contains = ["smoketable"]
+
+# The ROB01 invariant matrix runs each listed command across output modes
+# (text, term, json): exit 0 everywhere, no unresolved [tag?] markers, term
+# stripped of escapes must equal text byte-for-byte, json must parse.
+[invariants]
+commands = [["list"], ["about"]]

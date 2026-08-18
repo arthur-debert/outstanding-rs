@@ -28,3 +28,4 @@ book/
 /dist/
 /dist-signed/
 # <<< shipit-managed release-output ignores <<<
+corpus/runs/
