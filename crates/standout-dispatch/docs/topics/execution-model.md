@@ -250,61 +250,6 @@ HookError::post_dispatch("transformation failed")
 
 ---
 
-## Render Handlers
-
-The render handler is a pluggable callback that converts data to output:
-
-```rust
-use standout_dispatch::{from_fn, RenderFn};
-
-// Simple JSON renderer
-let render: RenderFn = from_fn(|data, _view| {
-    Ok(serde_json::to_string_pretty(data)?)
-});
-```
-
-### Render Function Signature
-
-```rust
-fn(&serde_json::Value, &str) -> Result<String, RenderError>
-```
-
-Parameters:
-
-- `data`: The serialized handler output
-- `view`: A view/template name hint (can be ignored)
-
-### Using View Names
-
-The `view` parameter enables template-based rendering:
-
-```rust
-let render = from_fn(move |data, view| {
-    match view {
-        "list" => format_as_list(data),
-        "detail" => format_as_detail(data),
-        _ => Ok(serde_json::to_string_pretty(data)?),
-    }
-});
-```
-
-> **For standout framework users:** The framework automatically maps view names to template files. See standout documentation for details.
-
-### Local Render Functions
-
-For render functions that need mutable state:
-
-```rust
-use standout_dispatch::{from_fn_mut, LocalRenderFn};
-
-let render: LocalRenderFn = from_fn_mut(|data, view| {
-    // Can capture and mutate state
-    Ok(format_data(data))
-});
-```
-
----
-
 ## Default Command Support
 
 Handle the case when no subcommand is specified:
@@ -333,7 +278,7 @@ A complete dispatch flow:
 ```rust
 use standout_dispatch::{
     SimpleFnHandler, FnHandler, Output, CommandContext, Hooks, HookError,
-    from_fn, extract_command_path, get_deepest_matches, path_to_string,
+    extract_command_path, get_deepest_matches, path_to_string,
 };
 
 fn main() -> anyhow::Result<()> {
@@ -355,19 +300,14 @@ fn main() -> anyhow::Result<()> {
         Ok(Output::Silent)
     });
 
-    // 3. Create render function
-    let render = from_fn(|data, _view| {
-        Ok(serde_json::to_string_pretty(data)?)
-    });
-
-    // 4. Create hooks
+    // 3. Create hooks
     let hooks = Hooks::new()
         .pre_dispatch(|_m, _ctx| {
             println!("Starting command...");
             Ok(())
         });
 
-    // 5. Parse and dispatch
+    // 4. Parse and dispatch
     let matches = cmd.get_matches();
     let path = extract_command_path(&matches);
     let mut ctx = CommandContext {
@@ -383,9 +323,7 @@ fn main() -> anyhow::Result<()> {
         "list" => {
             let output = list_handler.handle(&matches, &ctx)?;
             if let Output::Render(data) = output {
-                let json = serde_json::to_value(&data)?;
-                let rendered = render(&json, "list")?;
-                println!("{}", rendered);
+                println!("{}", serde_json::to_string_pretty(&data)?);
             }
         }
         "delete" => {
@@ -409,5 +347,5 @@ The execution model provides:
 1. **Clear pipeline** — Each stage has defined inputs and outputs
 2. **Hook points** — Intercept before, after handler, and after render
 3. **Command routing** — Utilities for navigating subcommand hierarchies
-4. **Pluggable rendering** — Render functions are separate from handlers
+4. **Presentation ownership** — Rendering stays outside dispatch handlers
 5. **Testable stages** — Each component can be tested in isolation
