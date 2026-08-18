@@ -168,3 +168,12 @@ timeout_seconds = 10
 exit_code = 1
 stdout = ""
 stderr_contains = ["--answers"]
+
+# --- ROB01 invariant matrix --------------------------------------------------
+# The one side-effect-free command formlike has. Failures here are framework
+# findings by default.
+
+[invariants]
+commands = [
+    ["provision", "questions"],
+]

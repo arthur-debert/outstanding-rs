@@ -19,12 +19,18 @@ makes runs reproducible and comparable.
   (`smoketable`) deliberately differs from its directory name. The roster's
   structural test exempts it by name.
 - `runs/<run-id>/` — one directory per run: the provisioned `workspace/`, the
-  session `transcript.jsonl`, and the durable `report.json`. Runs are
-  artifacts, not source: `runs/` is gitignored. Deliberately kept
-  demonstration runs live under `demo/` instead (report + transcript only,
-  never the workspace). Demo transcripts are sanitized before committing:
-  host paths become placeholders, session ids are zeroed, and the host's
-  tool/plugin/connector inventory is removed from the init event.
+  per-case `cases/` sandboxes, the session `transcript.jsonl`, and the
+  durable `report.json`. Runs are artifacts, not source: `runs/` is
+  gitignored. Deliberately kept demonstration runs live under `demo/`
+  instead (report + transcript only, never the workspace). Demo transcripts
+  are sanitized before committing: host paths become placeholders, session
+  ids are zeroed, and the host's tool/plugin/connector inventory is removed
+  from the init event.
+- `pilot/` — the pilot execution's committed artifacts (ROB03-WS04): one
+  `runs/<run-id>/` per pilot run (report + sanitized transcript, demo
+  rules), and `scorecard.md` — the per-archetype signals, ranked friction
+  themes, and validity verdict the blessed-surface (ROB05) ADR round
+  consumes.
 
 ## The runner
 
@@ -46,10 +52,11 @@ seconds) — an overrun is killed (whole process group) and recorded in the
 report as a finding, so a prompting or looping produced CLI can never
 prevent `report.json` from being written.
 
-The runner currently consumes its own check schema (the `smoke` suite);
-executing the roster's `[[case]]` suites below — the run semantics they
-require of it — is pilot-execution work (WS04), not part of the walking
-skeleton.
+The runner executes both acceptance schemas: the roster's `[[case]]` suites
+below with their full run semantics (per-case sandboxes, the scrubbed
+baseline env, pty attachment, scripted stdin, per-case deadlines,
+expected-fail mapping), and its own simpler check schema, which only the
+`smoke` archetype still speaks.
 
 ## Decision: the blindness protocol
 
@@ -110,8 +117,12 @@ sections. The shape:
   whether the session hit its deadline (`timed_out`), attempts, and
   turns/token counts when the transcript is Claude Code stream-json; plus
   the transcript path (always linked, relative to the run directory).
-- `acceptance` — objective: whether the produced app built, and one
-  pass/fail entry per acceptance check.
+- `acceptance` — objective: whether the produced app built, and one entry
+  per suite item — `checks` (pass/fail) for the check schema, `cases` for
+  roster suites, each carrying the case's `expected` marker and its
+  `outcome` (`pass`, `fail`, `expected-fail`, or `unexpected-pass`, the
+  news of a gap silently closed) plus the authored `stresses`/`gap`/
+  `reason` context so the report reads without the suite beside it.
 - `invariants` — objective: the ROB01 invariant matrix cells (per command ×
   output mode: exit status, unresolved-tag markers, styling-preserves-layout,
   JSON well-formedness).
@@ -179,6 +190,15 @@ timeout_seconds = 10                 # hard bound; exceeding it fails the case
 exit_code = 0
 stdout = "exact bytes\n"             # exact match, LF-normalized
 stderr = ""
+```
+
+Besides the cases, a suite may carry an `[invariants]` table — the read-only
+commands the ROB01 invariant matrix sweeps across output modes
+(text/term/json, piped) against the produced binary, on top of the cases:
+
+```toml
+[invariants]
+commands = [["log"], ["status"], []]   # [] is the naked invocation
 ```
 
 ### Run semantics (what the runner must provide)
@@ -270,4 +290,5 @@ case `expected = "fail"`:
 Their byte-precise, runnable-today suites live in `corpus/gap-suites/` (see
 its README for the expected-fail semantics under plain `pixi run test`).
 
-Out of scope here: pilot execution (WS04).
+The pilot's execution artifacts — committed run reports and the scorecard —
+live under `pilot/` (see Layout above).

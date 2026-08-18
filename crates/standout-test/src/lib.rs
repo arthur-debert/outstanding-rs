@@ -137,6 +137,8 @@ pub mod invariants;
 mod matrix;
 mod page;
 mod process;
+#[cfg(unix)]
+pub mod pty;
 mod snapshot;
 
 pub use matrix::{matrix, MatrixCell};

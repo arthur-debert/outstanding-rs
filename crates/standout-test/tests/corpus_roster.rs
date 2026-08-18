@@ -37,6 +37,17 @@ struct AcceptanceDoc {
     archetype: String,
     #[serde(rename = "case")]
     cases: Vec<AcceptanceCase>,
+    // Optional: the read-only commands the runner's ROB01 invariant matrix
+    // sweeps across output modes (WS04's execution addition to the schema).
+    #[allow(dead_code)] // shape-checked by the typed parse; the runner consumes it
+    invariants: Option<InvariantsDoc>,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct InvariantsDoc {
+    #[allow(dead_code)] // an empty word-list is the naked invocation
+    commands: Vec<Vec<String>>,
 }
 
 #[derive(Deserialize)]

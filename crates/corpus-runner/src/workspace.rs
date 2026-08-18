@@ -43,7 +43,9 @@ pub const ENV_ALLOWLIST: &[&str] = &[
 /// Applies the blindness environment policy to a command: `env_clear()`
 /// plus exactly [`ENV_ALLOWLIST`], inherited from the runner's own
 /// environment. Every process on the untrusted side of the fence (agent,
-/// build, produced binary) must pass through this.
+/// build, produced binary) must pass through this — except roster-case and
+/// roster-invariant invocations, whose stricter per-case baseline is
+/// [`apply_case_baseline_env`].
 pub fn apply_env_policy(command: &mut Command) {
     command.env_clear();
     for key in ENV_ALLOWLIST {
@@ -51,6 +53,22 @@ pub fn apply_env_policy(command: &mut Command) {
             command.env(key, value);
         }
     }
+}
+
+/// Applies the roster cases' scrubbed baseline (`corpus/README.md`, Run
+/// semantics): `env_clear()` plus `PATH` from the runner, `HOME` pointing
+/// into the sandbox, and `LANG`/`LC_ALL` = `C.UTF-8`. Everything that
+/// steers output — `TERM`, `NO_COLOR`, pager variables, tool variables —
+/// is unset unless the case sets it, so a case's env is complete rather
+/// than a delta against whatever the host exports.
+pub fn apply_case_baseline_env(command: &mut Command, home: &Path) {
+    command.env_clear();
+    if let Ok(path) = std::env::var("PATH") {
+        command.env("PATH", path);
+    }
+    command.env("HOME", home);
+    command.env("LANG", "C.UTF-8");
+    command.env("LC_ALL", "C.UTF-8");
 }
 
 /// A provisioned blind workspace.
@@ -107,7 +125,7 @@ pub fn provision(
     std::fs::create_dir_all(app_dir.join("src"))?;
     std::fs::write(
         app_dir.join("Cargo.toml"),
-        scaffold_manifest(&archetype.acceptance.binary, framework_version),
+        scaffold_manifest(archetype.binary(), framework_version),
     )?;
     std::fs::write(
         app_dir.join("src").join("main.rs"),

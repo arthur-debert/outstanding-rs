@@ -141,9 +141,12 @@ fn missing_sheet_is_an_uncollected_report() {
 #[test]
 fn smoke_archetype_loads_from_the_repo_corpus() {
     let archetype = Archetype::load(&corpus_dir().join("archetypes"), "smoke").unwrap();
-    assert_eq!(archetype.acceptance.binary, "smoketable");
-    assert!(!archetype.acceptance.checks.is_empty());
-    assert!(!archetype.acceptance.invariants.commands.is_empty());
+    assert_eq!(archetype.binary(), "smoketable");
+    let corpus_runner::archetype::Suite::Checks(acceptance) = &archetype.suite else {
+        panic!("smoke carries the runner check schema");
+    };
+    assert!(!acceptance.checks.is_empty());
+    assert!(!archetype.invariants().commands.is_empty());
     assert_eq!(archetype.spec_sha256().len(), 64);
 }
 
@@ -356,7 +359,10 @@ stdout_contains = ["absent needle"]
     .unwrap();
     let archetype = Archetype::load(&dir.path().join("archetypes"), "fake").unwrap();
 
-    let report = acceptance::run_checks(&binary, &archetype.acceptance.checks, NO_TIMEOUT);
+    let corpus_runner::archetype::Suite::Checks(suite) = &archetype.suite else {
+        panic!("fixture carries the runner check schema");
+    };
+    let report = acceptance::run_checks(&binary, &suite.checks, NO_TIMEOUT);
     assert!(report.built);
     let outcomes: Vec<bool> = report.checks.iter().map(|c| c.passed).collect();
     assert_eq!(outcomes, vec![true, true, false]);
@@ -372,7 +378,12 @@ fn invariant_matrix_passes_a_well_behaved_binary() {
         commands: vec![vec!["greet".to_string()]],
     };
 
-    let cells = acceptance::run_invariants(&binary, &invariants, NO_TIMEOUT);
+    let cells = acceptance::run_invariants(
+        &binary,
+        &invariants,
+        NO_TIMEOUT,
+        &acceptance::EnvSetup::Allowlist,
+    );
     assert!(!cells.is_empty());
     let failures: Vec<_> = cells.iter().filter(|c| !c.passed).collect();
     assert!(failures.is_empty(), "{failures:?}");
@@ -386,7 +397,12 @@ fn invariant_matrix_catches_markers_layout_drift_and_bad_json() {
         commands: vec![vec!["greet".to_string()]],
     };
 
-    let cells = acceptance::run_invariants(&binary, &invariants, NO_TIMEOUT);
+    let cells = acceptance::run_invariants(
+        &binary,
+        &invariants,
+        NO_TIMEOUT,
+        &acceptance::EnvSetup::Allowlist,
+    );
     let failed: Vec<&str> = cells
         .iter()
         .filter(|c| !c.passed)
@@ -462,7 +478,10 @@ stdout_json_rows = [["Aldebaran", "Taurus", "0.86"]]
     .unwrap();
     let archetype = Archetype::load(&dir.path().join("archetypes"), "fake").unwrap();
 
-    let report = acceptance::run_checks(&binary, &archetype.acceptance.checks, NO_TIMEOUT);
+    let corpus_runner::archetype::Suite::Checks(suite) = &archetype.suite else {
+        panic!("fixture carries the runner check schema");
+    };
+    let report = acceptance::run_checks(&binary, &suite.checks, NO_TIMEOUT);
     let outcomes: Vec<bool> = report.checks.iter().map(|c| c.passed).collect();
     assert_eq!(outcomes, vec![true, false, true, false, false]);
     assert!(report.checks[1]
@@ -500,7 +519,10 @@ stdout_contains = ["CORPUS_ACCEPTANCE_CANARY"]
     .unwrap();
     let archetype = Archetype::load(&dir.path().join("archetypes"), "fake").unwrap();
 
-    let report = acceptance::run_checks(&binary, &archetype.acceptance.checks, NO_TIMEOUT);
+    let corpus_runner::archetype::Suite::Checks(suite) = &archetype.suite else {
+        panic!("fixture carries the runner check schema");
+    };
+    let report = acceptance::run_checks(&binary, &suite.checks, NO_TIMEOUT);
     // The canary must NOT reach the untrusted binary: the check fails.
     assert!(!report.checks[0].passed, "{:?}", report.checks[0].detail);
 }
@@ -513,7 +535,12 @@ fn hanging_binary_times_out_as_a_finding() {
         commands: vec![vec!["greet".to_string()]],
     };
 
-    let cells = acceptance::run_invariants(&binary, &invariants, Duration::from_millis(200));
+    let cells = acceptance::run_invariants(
+        &binary,
+        &invariants,
+        Duration::from_millis(200),
+        &acceptance::EnvSetup::Allowlist,
+    );
     assert!(!cells.is_empty());
     let exit_cells: Vec<_> = cells
         .iter()
@@ -570,6 +597,7 @@ fn report_round_trips_through_json() {
                 passed: true,
                 detail: None,
             }],
+            cases: vec![],
         },
         invariants: vec![],
         questionnaire: QuestionnaireReport {

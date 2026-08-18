@@ -93,33 +93,83 @@ pub struct SessionReport {
 }
 
 /// Objective results: did the produced app build, and did the pre-written
-/// checks pass against its binary.
+/// suite pass against its binary. `checks` is the runner check schema's
+/// result list (the smoke path); `cases` is the roster case schema's — one
+/// suite fills exactly one of them.
 #[derive(Debug, Serialize, Deserialize)]
 pub struct AcceptanceReport {
     pub built: bool,
     /// Build stderr tail when the build failed.
     pub build_detail: Option<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub checks: Vec<CheckResult>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub cases: Vec<CaseResult>,
 }
 
 impl AcceptanceReport {
-    /// A report for a workspace whose app never built: no checks ran.
+    /// A report for a workspace whose app never built: nothing ran.
     pub fn build_failed(detail: String) -> Self {
         Self {
             built: false,
             build_detail: Some(detail),
             checks: Vec::new(),
+            cases: Vec::new(),
         }
     }
 }
 
-/// One acceptance check's outcome.
+/// One acceptance check's outcome (runner check schema).
 #[derive(Debug, Serialize, Deserialize)]
 pub struct CheckResult {
     pub name: String,
     pub passed: bool,
     /// Why it failed; `None` on a pass.
     pub detail: Option<String>,
+}
+
+/// One roster acceptance case's outcome, carrying the case's own metadata
+/// so the report (and the scorecard built from it) reads without the
+/// acceptance.toml beside it.
+#[derive(Debug, Serialize, Deserialize)]
+pub struct CaseResult {
+    pub name: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub group: Option<String>,
+    /// The interaction the case stresses, from the suite.
+    pub stresses: String,
+    /// The authored expectation: `pass`, or `fail` for gap cases.
+    pub expected: String,
+    pub outcome: CaseOutcome,
+    /// The parity epic a gap case signals for.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub gap: Option<String>,
+    /// Why a gap case fails today, from the suite.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reason: Option<String>,
+    /// Failure detail with the observed streams; `None` on a clean pass.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub detail: Option<String>,
+}
+
+/// How a roster case landed once its `expected` marker is applied:
+/// expected-fail is the gap cases' steady state, and an unexpected pass is
+/// news (a gap silently closed), never celebrated silently.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum CaseOutcome {
+    Pass,
+    Fail,
+    ExpectedFail,
+    UnexpectedPass,
+}
+
+impl CaseOutcome {
+    /// True for the outcomes that leave the suite healthy: a pass, or a gap
+    /// case failing exactly as authored.
+    pub fn is_expected(self) -> bool {
+        matches!(self, CaseOutcome::Pass | CaseOutcome::ExpectedFail)
+    }
 }
 
 /// One invariant-matrix cell's outcome.

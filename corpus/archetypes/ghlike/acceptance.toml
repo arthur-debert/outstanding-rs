@@ -238,3 +238,16 @@ timeout_seconds = 10
 exit_code = 1
 stdout = ""
 stderr_contains = ["bogus", "number", "title"]
+
+# --- ROB01 invariant matrix --------------------------------------------------
+# Read-only commands the runner sweeps across output modes (text/term/json),
+# piped. Failures here are framework findings by default.
+
+[invariants]
+commands = [
+    ["auth", "status"],
+    ["repo", "view", "demo/alpha"],
+    ["pr", "list"],
+    ["pr", "view", "2"],
+    ["pr", "checks", "list", "1"],
+]

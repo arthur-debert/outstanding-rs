@@ -81,13 +81,14 @@ pub fn run_checks(binary: &Path, checks: &[Check], timeout: Duration) -> Accepta
         built: true,
         build_detail: None,
         checks: results,
+        cases: Vec::new(),
     }
 }
 
 /// One check: spawn, compare exit code, stdout substrings, row-scoped
 /// substrings, JSON shape, and JSON row groups.
 fn evaluate_check(binary: &Path, check: &Check, timeout: Duration) -> (bool, Option<String>) {
-    let (exit, stdout) = match run_binary(binary, &check.args, timeout) {
+    let (exit, stdout) = match run_binary(binary, &check.args, timeout, &EnvSetup::Allowlist) {
         Ok(pair) => pair,
         Err(detail) => return (false, Some(detail)),
     };
@@ -184,22 +185,46 @@ fn collect_scalars(value: &serde_json::Value, out: &mut Vec<String>) {
     }
 }
 
+/// How invariant-cell and check invocations scrub their environment: the
+/// allowlist policy (the smoke path, matching every other untrusted-side
+/// process) or the roster cases' stricter sandbox baseline, so matrix cells
+/// see the same environment the acceptance cases ran under.
+pub enum EnvSetup {
+    Allowlist,
+    CaseBaseline { home: PathBuf },
+}
+
+impl EnvSetup {
+    fn apply(&self, command: &mut Command) {
+        match self {
+            EnvSetup::Allowlist => workspace::apply_env_policy(command),
+            EnvSetup::CaseBaseline { home } => workspace::apply_case_baseline_env(command, home),
+        }
+    }
+}
+
 /// Sweeps the ROB01 invariant matrix: each configured command runs across
 /// output modes (`text`, `term`, `json`), asserting exit 0 everywhere, no
 /// unresolved `[tag?]` marker in either rendered page, term stripped of
 /// escapes byte-equal to text, and json well-formed. Each invocation runs
-/// under `timeout`.
+/// under `timeout` with the environment `env` prescribes.
 pub fn run_invariants(
     binary: &Path,
     invariants: &Invariants,
     timeout: Duration,
+    env: &EnvSetup,
 ) -> Vec<InvariantCell> {
+    if let EnvSetup::CaseBaseline { home } = env {
+        // The matrix's sandbox: an empty HOME so a config-reading binary
+        // sees a clean slate, created up front so every cell shares it.
+        let _ = std::fs::create_dir_all(home);
+    }
     let mut cells = Vec::new();
     for command in &invariants.commands {
         let label = command.join(" ");
-        let text = run_mode(binary, command, "text", timeout);
-        let term = run_mode(binary, command, "term", timeout);
-        let json = run_mode(binary, command, "json", timeout);
+        let text = run_mode(binary, command, "text", timeout, env);
+        let term = run_mode(binary, command, "term", timeout, env);
+        let json = run_mode(binary, command, "json", timeout, env);
 
         for (mode, run) in [("text", &text), ("term", &term), ("json", &json)] {
             cells.push(cell(
@@ -255,11 +280,12 @@ fn run_mode(
     command: &[String],
     mode: &str,
     timeout: Duration,
+    env: &EnvSetup,
 ) -> Result<(Option<i32>, String), String> {
     let mut args: Vec<String> = command.to_vec();
     args.push("--output".to_string());
     args.push(mode.to_string());
-    run_binary(binary, &args, timeout)
+    run_binary(binary, &args, timeout, env)
 }
 
 /// One deadlined, env-scrubbed invocation of the produced (untrusted)
@@ -268,10 +294,11 @@ fn run_binary(
     binary: &Path,
     args: &[String],
     timeout: Duration,
+    env: &EnvSetup,
 ) -> Result<(Option<i32>, String), String> {
     let mut command = Command::new(binary);
     command.args(args);
-    workspace::apply_env_policy(&mut command);
+    env.apply(&mut command);
     let outcome = exec::run(&mut command, timeout, true)
         .map_err(|err| format!("running {}: {err}", binary.display()))?;
     if outcome.timed_out {

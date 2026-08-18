@@ -248,3 +248,16 @@ timeout_seconds = 10
 exit_code = 2
 stdout = ""
 stderr_contains = ["Usage"]
+
+# --- ROB01 invariant matrix --------------------------------------------------
+# Read-only commands the runner sweeps across output modes (text/term/json),
+# piped. The empty command is the naked invocation. Failures here are
+# framework findings by default.
+
+[invariants]
+commands = [
+    [],
+    ["list-units"],
+    ["list-units", "--state", "active"],
+    ["list-units", "--no-legend"],
+]
