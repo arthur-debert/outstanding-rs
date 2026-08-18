@@ -36,11 +36,107 @@ fn build_fails_for_missing_named_template_with_near_match() {
     );
 
     assert!(error.contains("command `show` references template `shoe.jinja`"));
-    assert!(
-        error.contains("`.templates(...) or .templates_dir(...)`")
-            || error.contains(".templates(...) or .templates_dir(...)")
-    );
+    assert!(error.contains(".templates(embed_templates!"));
+    assert!(error.contains(".templates_dir(\"path/to/templates\")"));
     assert!(error.contains("`show.jinja`"));
+}
+
+#[test]
+fn build_fails_for_missing_template_registry_with_builder_call() {
+    let error = build_error(
+        App::builder()
+            .command_with(
+                "show",
+                |_m, _ctx| Ok(Output::Render(json!({"name": "Ada"}))),
+                |cfg| cfg.template_name("show.jinja"),
+            )
+            .unwrap(),
+    );
+
+    assert!(error.contains("command `show` references template `show.jinja`"));
+    assert!(error.contains("no application templates are configured"));
+    assert!(error.contains(".templates(embed_templates!"));
+    assert!(error.contains(".templates_dir(\"path/to/templates\")"));
+    assert!(!error.contains("standout/list-view"), "{error}");
+}
+
+#[test]
+fn build_fails_for_missing_named_template_with_available_names() {
+    let error = build_error(
+        App::builder()
+            .templates(EmbeddedSource::<TemplateResource>::new(
+                &[
+                    ("alpha.jinja", "Alpha {{ name }}"),
+                    ("beta.jinja", "Beta {{ name }}"),
+                ],
+                "/path/that/does/not/exist",
+            ))
+            .command_with(
+                "show",
+                |_m, _ctx| Ok(Output::Render(json!({"name": "Ada"}))),
+                |cfg| cfg.template_name("unmatchable-template-name.jinja"),
+            )
+            .unwrap(),
+    );
+
+    assert!(error.contains("available templates"), "{error}");
+    assert!(error.contains("`alpha.jinja`"));
+    assert!(error.contains("`beta.jinja`"));
+}
+
+#[test]
+fn available_template_names_are_sorted_unique_and_limited() {
+    let error = build_error(
+        App::builder()
+            .templates(EmbeddedSource::<TemplateResource>::new(
+                &[
+                    ("zeta.jinja", "Zeta {{ name }}"),
+                    ("alpha.jinja", "Alpha {{ name }}"),
+                    ("beta.jinja", "Beta {{ name }}"),
+                    ("gamma.jinja", "Gamma {{ name }}"),
+                    ("delta.jinja", "Delta {{ name }}"),
+                    ("epsilon.jinja", "Epsilon {{ name }}"),
+                ],
+                "/path/that/does/not/exist",
+            ))
+            .command_with(
+                "show",
+                |_m, _ctx| Ok(Output::Render(json!({"name": "Ada"}))),
+                |cfg| cfg.template_name("unmatchable-template-name.jinja"),
+            )
+            .unwrap(),
+    );
+
+    assert!(
+        error.contains(
+            "available templates: `alpha.jinja`, `beta.jinja`, `delta.jinja`, `epsilon.jinja`, `gamma.jinja`"
+        ),
+        "{error}"
+    );
+    assert!(!error.contains("`zeta.jinja`"), "{error}");
+}
+
+#[test]
+fn template_suggestions_follow_extension_priority() {
+    let error = build_error(
+        App::builder()
+            .templates(EmbeddedSource::<TemplateResource>::new(
+                &[
+                    ("report.j2", "Short {{ name }}"),
+                    ("report.jinja", "Standard {{ name }}"),
+                ],
+                "/path/that/does/not/exist",
+            ))
+            .command_with(
+                "show",
+                |_m, _ctx| Ok(Output::Render(json!({"name": "Ada"}))),
+                |cfg| cfg.template_name("report.jinj"),
+            )
+            .unwrap(),
+    );
+
+    assert!(error.contains("did you mean `report.jinja`?"), "{error}");
+    assert!(!error.contains("`report.j2`"), "{error}");
 }
 
 #[test]
@@ -525,10 +621,16 @@ fn structured_only_maps_machine_modes_and_rejects_human_modes() {
     for mode in [OutputMode::Term, OutputMode::Text, OutputMode::TermDebug] {
         let matches = command().try_get_matches_from(["app", "show"]).unwrap();
         let result = app.dispatch(matches, mode);
-        assert!(
-            matches!(result, RunResult::Error(_)),
-            "expected {mode:?} to reject structured-only output, got {result:?}"
-        );
+        match result {
+            RunResult::Error(error) => {
+                let message = error.to_string();
+                assert!(message.contains("command `show` is declared structured-only"));
+                assert!(message.contains("--output"));
+                assert!(message.contains(".template(...)"));
+                assert!(message.contains(".template_name(...)"));
+            }
+            other => panic!("expected {mode:?} to reject structured-only output, got {other:?}"),
+        }
     }
 }
 

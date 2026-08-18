@@ -10,7 +10,7 @@ pub enum SetupError {
     Template(String),
     /// Stylesheet loading or parsing error.
     Stylesheet(String),
-    /// Theme not found.
+    /// Theme not found in the configured stylesheets.
     ThemeNotFound(String),
     /// Configuration error.
     Config(String),
@@ -32,7 +32,11 @@ impl std::fmt::Display for SetupError {
         match self {
             SetupError::Template(msg) => write!(f, "template error: {}", msg),
             SetupError::Stylesheet(msg) => write!(f, "stylesheet error: {}", msg),
-            SetupError::ThemeNotFound(name) => write!(f, "theme not found: {}", name),
+            SetupError::ThemeNotFound(name) => write!(
+                f,
+                "theme `{}` not found; add styles with .styles(embed_styles!(\"src/styles\")) or .styles_dir(\"path/to/styles\"), select an available theme with .default_theme(...), or pass a Theme directly with .theme(...)",
+                name
+            ),
             SetupError::Config(msg) => write!(f, "configuration error: {}", msg),
             SetupError::DuplicateCommand(cmd) => write!(f, "duplicate command: {}", cmd),
             SetupError::Io(err) => write!(f, "setup I/O error: {}", err),
@@ -77,6 +81,8 @@ mod tests {
         assert_eq!(err.to_string(), "template error: test error");
 
         let err = SetupError::ThemeNotFound("dark".into());
-        assert_eq!(err.to_string(), "theme not found: dark");
+        assert!(err.to_string().contains("theme `dark` not found"));
+        assert!(err.to_string().contains(".styles(embed_styles!"));
+        assert!(err.to_string().contains(".theme(...)"));
     }
 }

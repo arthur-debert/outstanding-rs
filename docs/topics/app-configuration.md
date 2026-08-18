@@ -21,7 +21,7 @@ let app = App::builder()
     .templates(embed_templates!("src/templates"))
     .styles(embed_styles!("src/styles"))
     .default_theme("default")
-    .command("list", list_handler, "list.j2")
+    .command_with("list", list_handler, |config| config.template_name("list"))?
     .build()?;
 
 app.run(Cli::command(), std::env::args());
@@ -131,18 +131,18 @@ Explicit `.theme()` takes precedence over `.default_theme()`.
 
 ```rust
 App::builder()
-    .command("list", list_handler, "list.j2")
-    .command("add", add_handler, "add.j2")
+    .command("list", list_handler, "[title]Items[/title]")
+    .command("add", add_handler, "Added {{ name }}")
 ```
 
-Arguments: command name, handler function, template path.
+Arguments: command name, handler function, inline MiniJinja template source.
 
 ### With Configuration
 
 ```rust
 App::builder()
     .command_with("delete", delete_handler, |cfg| cfg
-        .template("delete.j2")
+        .template_name("delete")
         .pre_dispatch(require_confirmation)
         .post_dispatch(log_deletion))
 ```
@@ -157,11 +157,11 @@ independent of the selected output mode. See [Output Modes](output-modes.md#csv-
 ```rust
 App::builder()
     .group("db", |g| g
-        .command("migrate", migrate_handler, "db/migrate.j2")
-        .command("status", status_handler, "db/status.j2")
+        .command("migrate", migrate_handler, "Migrated")
+        .command("status", status_handler, "Status: {{ status }}")
         .group("backup", |b| b
-            .command("create", backup_create, "db/backup/create.j2")
-            .command("restore", backup_restore, "db/backup/restore.j2")))
+            .command("create", backup_create, "Backup created")
+            .command("restore", backup_restore, "Backup restored")))
 ```
 
 Creates command paths: `db.migrate`, `db.status`, `db.backup.create`, `db.backup.restore`.
@@ -190,8 +190,8 @@ When a CLI is invoked without a subcommand (a "naked" invocation like `myapp` or
 ```rust
 App::builder()
     .default_command("list")
-    .command("list", list_handler, "list.j2")
-    .command("add", add_handler, "add.j2")
+    .command("list", list_handler, "{{ items | length }} items")
+    .command("add", add_handler, "Added {{ name }}")
 ```
 
 With this configuration:
@@ -211,8 +211,8 @@ App::builder()
     .default_command_with(|ctx| {
         Some(if ctx.stdin_is_piped() { "add" } else { "list" }.to_string())
     })
-    .command("list", list_handler, "list.j2")
-    .command("add", add_handler, "add.j2")
+    .command("list", list_handler, "{{ items | length }} items")
+    .command("add", add_handler, "Added {{ name }}")
 ```
 
 - `myapp` at a terminal becomes `myapp list`
@@ -282,7 +282,7 @@ Attach hooks to specific command paths:
 
 ```rust
 App::builder()
-    .command("migrate", migrate_handler, "migrate.j2")
+    .command("migrate", migrate_handler, "Migrated")
     .hooks("db.migrate", Hooks::new()
         .pre_dispatch(require_admin)
         .post_dispatch(add_timestamp)
@@ -457,21 +457,26 @@ Parses with Standout's augmented command but doesn't dispatch.
 
 `build()` validates:
 
-- Theme exists if `.default_theme()` was called
-- Returns `SetupError::ThemeNotFound` if not found
+- a theme registry exists and contains the theme named by `.default_theme(...)`
+- named templates resolve through `.templates(...)` or `.templates_dir(...)`
+- convention templates resolve when application templates are configured; without application templates, human-mode rendering reports the missing convention template at runtime
+- registered templates compile
+- framework templates only use tags defined by the resolved theme
+- `command_groups`, topics, and `help_word(true)` are paired with `.help_handling(true)`
+- commands do not collide with the `help` word installed by `.help_handling(true)`
+- the same command path and hook phase are not configured through both `CommandConfig` and `AppBuilder::hooks`
 
 What's NOT validated at build time:
 
-- Templates (resolved lazily at render time)
 - Command handlers
 - Hook signatures (verified at registration)
 
 ## Complete Example
 
 ```rust
-use standout::cli::{App, HandlerResult, Output};
+use standout::cli::{App, CommandContext, HandlerResult, Output};
 use standout_macros::{embed_templates, embed_styles};
-use clap::{Command, Arg};
+use clap::{Command, ArgMatches};
 use serde::Serialize;
 
 #[derive(Serialize)]
@@ -493,9 +498,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         .styles(embed_styles!("src/styles"))
         .default_theme("default")
         .version(env!("CARGO_PKG_VERSION"))
-        .context("version", env!("CARGO_PKG_VERSION"))
-        .command("list", list_handler, "list.j2")
-        .topics_dir("docs/topics")
+        .context("version", env!("CARGO_PKG_VERSION").into())
+        .command_with("list", list_handler, |config| {
+            config.template_name("list")
+        })?
+        .topics_dir("docs/topics")?
+        .help_handling(true)
         .build()?;
 
     app.run(cli, std::env::args());

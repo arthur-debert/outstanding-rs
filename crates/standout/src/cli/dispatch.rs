@@ -180,7 +180,7 @@ impl Presentation {
                 let registry = self.template_registry.as_ref().ok_or_else(|| {
                     RunError::new(
                         format!(
-                            "command `{}` references template `{}`, but no template registry is configured",
+                            "command `{}` references template `{}`, but no template registry is configured; add .templates(embed_templates!(\"src/templates\")) or .templates_dir(\"path/to/templates\") before .build()",
                             self.command_path, name
                         ),
                         RunErrorKind::Render,
@@ -210,7 +210,7 @@ impl Presentation {
                 let registry = self.template_registry.as_ref().ok_or_else(|| {
                     RunError::new(
                         format!(
-                            "command `{}` expects convention template `{}`, but no template registry is configured",
+                            "command `{}` expects convention template `{}`, but no template registry is configured; add .templates(embed_templates!(\"src/templates\")) or .templates_dir(\"path/to/templates\") before .build(), or declare no presentation with .structured_only(), .silent(), or .binary()",
                             self.command_path, name
                         ),
                         RunErrorKind::Render,
