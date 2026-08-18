@@ -65,8 +65,9 @@ expected-fail mapping), and its own simpler check schema, which only the
 
 ## Decision: the blindness protocol
 
-Recorded here as a decision because an ADR may follow (spec: "blindness is
-fragile"; partial blindness is acceptable if it is *known*).
+Recorded here as a decision and minted as
+[ADR-0023](../docs/adr/0023-the-corpus-blindness-protocol.md) (spec:
+"blindness is fragile"; partial blindness is acceptable if it is *known*).
 
 1. **The workspace contains no framework source.** Provisioning materializes
    exactly: the archetype spec, an instructions file, the rendered exit
@@ -108,8 +109,9 @@ fragile"; partial blindness is acceptable if it is *known*).
 
 ## Decision: the run-report schema
 
-`report.json`, `schema_version: 3` (recorded here because an ADR may follow;
-version 3 replaced the single `isolation_backend` word with a per-capability
+`report.json`, `schema_version: 3` (recorded here and minted as
+[ADR-0024](../docs/adr/0024-the-corpus-run-report-schema.md); version 3
+replaced the single `isolation_backend` word with a per-capability
 isolation record and dropped the producerless `session.attempts` counter —
 committed schema-2 evidence still loads, unrewritten, through the typed
 historical-report path re-evaluation uses). Objective results and agent

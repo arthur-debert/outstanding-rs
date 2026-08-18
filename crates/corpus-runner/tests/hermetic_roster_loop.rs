@@ -12,17 +12,18 @@
 // executable via `PermissionsExt`.
 #![cfg(unix)]
 
+mod common;
+
 use std::fs;
-use std::os::unix::fs::PermissionsExt;
 use std::path::Path;
 
 use corpus_runner::report::CaseOutcome;
 use corpus_runner::{run, RunConfig, Timeouts};
 
-/// A canned `caselike` implementation: `greet` prints a line (JSON under
-/// `--output json`), `home` prints `$HOME`, and everything else exits 2.
-const CASELIKE: &str = r#"#!/bin/sh
-cmd="$1"
+/// A canned `caselike` implementation as a shell-script body: `greet` prints
+/// a line (JSON under `--output json`), `home` prints `$HOME`, and everything
+/// else exits 2.
+const CASELIKE: &str = r#"cmd="$1"
 mode=text
 prev=""
 for a in "$@"; do
@@ -104,54 +105,20 @@ fn roster_archetype_completes_the_loop_with_case_results() {
     // The fake toolchain installs the canned binary as `caselike` — the
     // roster rule that archetype names double as binary names.
     let bin_dir = scratch.path().join("bin");
-    fs::create_dir_all(&bin_dir).unwrap();
-    let impl_path = bin_dir.join("caselike-impl");
-    fs::write(&impl_path, CASELIKE).unwrap();
-    fs::set_permissions(&impl_path, fs::Permissions::from_mode(0o755)).unwrap();
-    let cargo = bin_dir.join("cargo");
-    fs::write(
-        &cargo,
-        format!(
-            r#"#!/bin/sh
-td=""
-prev=""
-for a in "$@"; do
-  if [ "$prev" = "--target-dir" ]; then td="$a"; fi
-  prev="$a"
-done
-[ -n "$td" ] || {{ echo "no --target-dir passed" >&2; exit 1; }}
-mkdir -p "$td/debug"
-cp "{impl_path}" "$td/debug/caselike"
-"#,
-            impl_path = impl_path.display()
-        ),
-    )
-    .unwrap();
-    fs::set_permissions(&cargo, fs::Permissions::from_mode(0o755)).unwrap();
-    std::env::set_var(
-        "PATH",
-        format!(
-            "{}:{}",
-            bin_dir.display(),
-            std::env::var("PATH").unwrap_or_default()
-        ),
-    );
+    common::install_fake_cargo(&bin_dir, "caselike", CASELIKE);
 
-    let agent = bin_dir.join("agent.sh");
-    fs::write(
-        &agent,
-        r#"#!/bin/sh
-set -e
-awk '{ print }
-/<id:summary>$/ { print "Implemented caselike from SPEC.md." }
-/<id:sources.docs>$/ { print "docs/index.md" }
-/<id:sources.external>$/ { print "none" }
-/<id:confidence>$/ { print "high" }' QUESTIONNAIRE.md > QUESTIONNAIRE.md.filled
-mv QUESTIONNAIRE.md.filled QUESTIONNAIRE.md
-"#,
-    )
-    .unwrap();
-    fs::set_permissions(&agent, fs::Permissions::from_mode(0o755)).unwrap();
+    common::questionnaire_agent(
+        &bin_dir,
+        "agent.sh",
+        "",
+        &[
+            ("summary", "Implemented caselike from SPEC.md."),
+            ("sources.docs", "docs/index.md"),
+            ("sources.external", "none"),
+            ("confidence", "high"),
+        ],
+        false,
+    );
 
     let config = RunConfig {
         archetype: "caselike".to_string(),
