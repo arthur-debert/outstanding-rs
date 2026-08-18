@@ -397,6 +397,7 @@ dependencies = [
 name = "corpus-gap-suites"
 version = "0.0.0"
 dependencies = [
+ "libc",
  "serde_json",
  "tempfile",
 ]

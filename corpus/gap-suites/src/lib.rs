@@ -9,14 +9,15 @@
 //!
 //! Everything here is black-box: [`run`] spawns a produced binary and returns its
 //! stdout/stderr/exit status plus wall-clock duration; capture is bounded per stream
-//! ([`OUTPUT_LIMIT`]) so a runaway child cannot exhaust the test runner's memory;
+//! ([`OUTPUT_LIMIT`]) and every wait is bounded ([`SPAWN_TIMEOUT`], [`DRAIN_GRACE`]),
+//! so a hostile binary can neither exhaust the test runner's memory nor hang it;
 //! nothing links against standout.
 
 use std::io::Read;
 use std::path::{Path, PathBuf};
-use std::process::{Command, Stdio};
+use std::process::{Child, Command, Stdio};
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::Arc;
+use std::sync::{mpsc, Arc};
 use std::time::{Duration, Instant};
 
 /// How long [`run`] lets a spawned binary live before declaring it hung.
@@ -34,6 +35,15 @@ pub const SPAWN_TIMEOUT: Duration = Duration::from_secs(30);
 /// megabytes inside [`SPAWN_TIMEOUT`] and OOM the test runner. A child that exceeds the
 /// cap on either stream is killed and reported as a behavioral mismatch by [`run`].
 pub const OUTPUT_LIMIT: usize = 8 * 1024 * 1024;
+
+/// How long [`run`] waits for a drain thread to deliver its capture once the child
+/// is gone.
+///
+/// With every writer dead a drain has only buffered bytes left to read, so this
+/// expires only when the child left a live descendant holding its stdout/stderr —
+/// which [`run`] reports as a behavioral mismatch instead of blocking on a join
+/// until the descendant exits.
+const DRAIN_GRACE: Duration = Duration::from_secs(2);
 
 /// Captured result of one black-box invocation of an archetype binary.
 pub struct Output {
@@ -103,56 +113,55 @@ fn produced_binary(binary_env: &str) -> Option<PathBuf> {
 /// Spawns `binary` with `args` in `dir` and captures its output, killing it at
 /// [`SPAWN_TIMEOUT`] or when a stream exceeds [`OUTPUT_LIMIT`].
 ///
+/// The child runs as its own process-group leader (Unix), so the kill paths take out
+/// every descendant via [`kill_tree`] — a grandchild holding an inherited pipe writer
+/// cannot keep the harness blocked past its own deadlines.
+///
 /// Returns `Err` for *behavioral* failures the assertions care about — the process hung
-/// past the timeout, drowned a stream past the output cap, or wrote non-UTF-8 where the
-/// specs require a UTF-8 stream. Panics when an existing binary cannot be spawned at
-/// all: that is a broken suite or environment, which must surface as an error, not as
-/// expected-fail.
+/// past the timeout, drowned a stream past the output cap, left a descendant holding a
+/// stream open after exit, or wrote non-UTF-8 where the specs require a UTF-8 stream.
+/// Panics when an existing binary cannot be spawned at all: that is a broken suite or
+/// environment, which must surface as an error, not as expected-fail.
 pub fn run(binary: &Path, args: &[&str], dir: &Path) -> Result<Output, String> {
     let started = Instant::now();
-    let mut child = Command::new(binary)
+    let mut command = Command::new(binary);
+    command
         .args(args)
         .current_dir(dir)
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
+        .stderr(Stdio::piped());
+    // Isolate the child as its own process-group leader so kill_tree can signal every
+    // descendant, not just the direct child.
+    #[cfg(unix)]
+    std::os::unix::process::CommandExt::process_group(&mut command, 0);
+    let mut child = command
         .spawn()
         .unwrap_or_else(|err| panic!("suite broken: failed to spawn {binary:?}: {err}"));
 
     // Drain the pipes on threads so a chatty child can't deadlock against a full pipe
     // while we wait on it. Each drain retains at most OUTPUT_LIMIT bytes and raises
-    // `exceeded` past that, so the wait loop can kill a runaway child early.
+    // `exceeded` past that, so the wait loop can kill a runaway child early. Results
+    // come back over channels, never a bare join: every collection is bounded
+    // (DRAIN_GRACE), even when a descendant still holds a pipe writer.
     let stdout_pipe = child.stdout.take().expect("stdout was piped");
     let stderr_pipe = child.stderr.take().expect("stderr was piped");
     let exceeded = Arc::new(AtomicBool::new(false));
-    let stdout_thread = {
-        let exceeded = Arc::clone(&exceeded);
-        std::thread::spawn(move || drain_capped(stdout_pipe, &exceeded))
-    };
-    let stderr_thread = {
-        let exceeded = Arc::clone(&exceeded);
-        std::thread::spawn(move || drain_capped(stderr_pipe, &exceeded))
-    };
+    let stdout_drain = spawn_drain(stdout_pipe, Arc::clone(&exceeded));
+    let stderr_drain = spawn_drain(stderr_pipe, Arc::clone(&exceeded));
 
     let deadline = Instant::now() + SPAWN_TIMEOUT;
     let status = loop {
         if exceeded.load(Ordering::Relaxed) {
-            // Killing the child closes its pipe ends, so the drains reach EOF and the
-            // joins cannot block; joining (rather than detaching) keeps repeated
-            // failures from leaking threads.
-            let _ = child.kill();
-            let _ = child.wait();
-            let _ = stdout_thread.join();
-            let _ = stderr_thread.join();
+            // Killing the whole tree closes every pipe writer, so the drains reach
+            // EOF and exit on their own; nothing here waits on them.
+            kill_tree(&mut child);
             return Err(output_cap_mismatch(args));
         }
         match child.try_wait() {
             Ok(Some(status)) => break status,
             Ok(None) if Instant::now() >= deadline => {
-                let _ = child.kill();
-                let _ = child.wait();
-                let _ = stdout_thread.join();
-                let _ = stderr_thread.join();
+                kill_tree(&mut child);
                 return Err(format!(
                     "process hung: still running after {SPAWN_TIMEOUT:?} (args: {args:?})"
                 ));
@@ -163,8 +172,8 @@ pub fn run(binary: &Path, args: &[&str], dir: &Path) -> Result<Output, String> {
     };
     let duration = started.elapsed();
 
-    let stdout_captured = stdout_thread.join().expect("stdout drain panicked");
-    let stderr_captured = stderr_thread.join().expect("stderr drain panicked");
+    let stdout_captured = collect_drain(&stdout_drain, &mut child, "stdout", args)?;
+    let stderr_captured = collect_drain(&stderr_drain, &mut child, "stderr", args)?;
     // A child can blow the cap and exit before the wait loop notices the flag.
     if stdout_captured.truncated || stderr_captured.truncated {
         return Err(output_cap_mismatch(args));
@@ -177,6 +186,71 @@ pub fn run(binary: &Path, args: &[&str], dir: &Path) -> Result<Output, String> {
         stderr,
         duration,
     })
+}
+
+/// Kills `child` — and, on Unix, every descendant in its process group — then reaps it.
+///
+/// Signalling only the direct child is not enough to unblock the drain threads: a
+/// descendant that inherited a stdout/stderr writer keeps the pipe open, leaving a
+/// drain stuck in `read` indefinitely. [`run`] spawns the child as its own
+/// process-group leader precisely so this can address the whole tree. The group id
+/// stays valid even after the child is reaped: a pid is not recycled while it still
+/// names a live process group.
+fn kill_tree(child: &mut Child) {
+    #[cfg(unix)]
+    // SAFETY: plain kill(2); the negative pid addresses the process group `run`
+    // created for the child at spawn. ESRCH (group already gone) is harmless.
+    unsafe {
+        libc::kill(-(child.id() as i32), libc::SIGKILL);
+    }
+    let _ = child.kill();
+    let _ = child.wait();
+}
+
+/// Runs [`drain_capped`] on a background thread, returning the channel that will carry
+/// its [`Captured`] result.
+///
+/// The channel — rather than a join handle — is what keeps [`run`] bounded: a receive
+/// can time out ([`DRAIN_GRACE`]), whereas joining a thread blocked in `read` on a pipe
+/// some leaked descendant still holds would wait forever.
+fn spawn_drain(
+    pipe: impl Read + Send + 'static,
+    exceeded: Arc<AtomicBool>,
+) -> mpsc::Receiver<Captured> {
+    let (sender, receiver) = mpsc::channel();
+    std::thread::spawn(move || {
+        // The receiver is dropped on the kill paths; failed delivery is fine there.
+        let _ = sender.send(drain_capped(pipe, &exceeded));
+    });
+    receiver
+}
+
+/// Collects one drain's capture after the child has exited, bounded by [`DRAIN_GRACE`].
+///
+/// A timeout means the pipe is still open although the child is gone: it leaked a live
+/// descendant holding its `stream` writer. The suites treat a process as done at exit,
+/// so the leftover tree is killed and the leak reported as a behavioral mismatch. A
+/// disconnected channel means the drain thread panicked (pipe IO failure): the suite is
+/// broken, so panic.
+fn collect_drain(
+    drain: &mpsc::Receiver<Captured>,
+    child: &mut Child,
+    stream: &str,
+    args: &[&str],
+) -> Result<Captured, String> {
+    match drain.recv_timeout(DRAIN_GRACE) {
+        Ok(captured) => Ok(captured),
+        Err(mpsc::RecvTimeoutError::Timeout) => {
+            kill_tree(child);
+            Err(format!(
+                "process leaked a descendant: {stream} still open {DRAIN_GRACE:?} \
+                 after exit (args: {args:?})"
+            ))
+        }
+        Err(mpsc::RecvTimeoutError::Disconnected) => {
+            panic!("suite broken: {stream} drain thread died without delivering")
+        }
+    }
 }
 
 /// The behavioral mismatch [`run`] reports when a stream outgrew [`OUTPUT_LIMIT`].
@@ -267,4 +341,36 @@ pub fn reject_panic(stderr: &str) -> Result<(), String> {
         return Err(format!("process panicked instead of diagnosing: {stderr}"));
     }
     Ok(())
+}
+
+#[cfg(all(test, unix))]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn captures_output_and_exit_code() {
+        let dir = tempfile::tempdir().unwrap();
+        let out = run(
+            Path::new("/bin/sh"),
+            &["-c", "echo out; echo err >&2; exit 3"],
+            dir.path(),
+        )
+        .unwrap();
+        assert_eq!(out.code, Some(3));
+        assert_eq!(out.stdout, "out\n");
+        assert_eq!(out.stderr, "err\n");
+    }
+
+    /// A descendant that inherits stdout and outlives the child must surface as a
+    /// bounded mismatch, not stall `run` until the descendant exits: the sleep here
+    /// outlives [`DRAIN_GRACE`] by far, so this test only passes promptly if the
+    /// leaked-writer path fires (and only passes at all if `run` reports the leak).
+    #[test]
+    fn reports_descendant_holding_pipe_instead_of_hanging() {
+        let dir = tempfile::tempdir().unwrap();
+        let err = run(Path::new("/bin/sh"), &["-c", "sleep 30 &"], dir.path())
+            .err()
+            .expect("a leaked pipe-holding descendant must be a mismatch");
+        assert!(err.contains("leaked a descendant"), "got: {err}");
+    }
 }
