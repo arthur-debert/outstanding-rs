@@ -1,0 +1,62 @@
+# Feature/interaction manifest for `ghlike`. Format: corpus/README.md.
+
+[archetype]
+name = "ghlike"
+survey = "C2"
+summary = "deep command nesting with machine JSON and field selection"
+status = "in-capability"
+
+[features]
+used = [
+    "dispatch.nested-subcommands",
+    "dispatch.group-builder",
+    "dispatch.derive-macro",
+    "output-modes.structured-json",
+    "tabular.column-formatting",
+    "help.rendering",
+    "templates",
+]
+
+[[interactions]]
+id = "dispatch-depth-vs-everything"
+stresses = ["nested subcommand dispatch", "positional args at deep leaves", "help rendering per level", "usage-error policy for group nodes"]
+description = "Every per-command feature (templates, structured output, help, positionals) must keep working four levels down; group nodes must be non-commands with a consistent usage-error shape at every depth."
+cases = [
+    "auth-status-two-levels",
+    "checks-list-four-levels",
+    "group-without-subcommand-is-usage-error",
+    "deep-group-without-subcommand",
+    "unknown-subcommand-is-usage-error",
+    "root-help-lists-groups",
+    "deep-leaf-help",
+]
+
+[[interactions]]
+id = "json-projection-vs-render-pipeline"
+stresses = ["structured output mode", "field selection", "typed serialization (number/bool)", "template bypass"]
+description = "--json narrows the handler's data to a caller-chosen field set and must bypass the whole human pipeline: same handler, projected typed JSON out, no template, no table, no styling."
+cases = [
+    "pr-list-json-two-fields",
+    "pr-list-json-single-field",
+    "pr-view-json-all-fields",
+    "checks-json-at-depth-four",
+    "unknown-json-field-lists-valid-ones",
+]
+
+[[interactions]]
+id = "machine-purity-vs-tty"
+stresses = ["structured output", "TTY color autodetection", "output framing"]
+description = "The classic contamination bug: an attended capable terminal must not tempt styling, legends, or prose into a structured stream. JSON on a TTY is byte-identical JSON."
+cases = ["json-is-pure-on-attended-terminal"]
+
+[[interactions]]
+id = "domain-error-stream-routing"
+stresses = ["error handling", "exit-code mapping", "stream separation at depth"]
+description = "Domain errors (unknown repo, unknown PR, unknown field) present identically from any depth: exit 1, empty stdout, prose on stderr — distinct from usage errors at exit 2."
+cases = ["repo-view-unknown", "pr-view-unknown-number", "unknown-json-field-lists-valid-ones"]
+
+[[interactions]]
+id = "human-table-vs-detail-views"
+stresses = ["tabular formatting", "templates", "plain degradation under pipe"]
+description = "List and detail views of the same records through the same theme, both byte-exact when piped."
+cases = ["pr-list-human-table", "pr-view-human", "repo-view-known"]

@@ -30,3 +30,6 @@ insta = "1.46.1"
 proptest = "1"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
+# The corpus roster structural test (tests/corpus_roster.rs) parses the
+# archetype manifests and acceptance suites under corpus/.
+toml = "1"
