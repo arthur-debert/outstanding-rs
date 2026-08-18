@@ -154,4 +154,6 @@ New features, schema versioning, corpus construction, crate reorganization.
 
 Expected ADRs: the blessed-idiom set; the stability statement; the help-on-by-default
 decision. The DX audit's redundancy catalogue (session record 2026-08-15/16) is the
-working inventory for step 1. Links to be added by the grill.
+working inventory for step 1. The corpus pilot's scorecard — the observed-friction
+input to the choosing — is `corpus/pilot/scorecard.md` (ROB03-WS04). Links to be
+added by the grill.

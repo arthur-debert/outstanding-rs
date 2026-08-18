@@ -11,6 +11,7 @@
 
 pub mod acceptance;
 pub mod archetype;
+pub mod cases;
 pub mod exec;
 pub mod questionnaire;
 pub mod report;
@@ -22,7 +23,7 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use anyhow::Context;
 
-use crate::archetype::Archetype;
+use crate::archetype::{Archetype, Suite};
 use crate::report::{AcceptanceReport, ArchetypeStamp, Blindness, Pins, RunReport, SCHEMA_VERSION};
 
 /// Everything one run needs to start. The agent command is a seam: any
@@ -123,17 +124,33 @@ pub fn run(config: &RunConfig) -> anyhow::Result<(RunReport, PathBuf)> {
     eprintln!("[corpus] building produced app and running acceptance suite");
     let (acceptance_report, invariant_cells) = match acceptance::build_app(
         &workspace.app_dir,
-        &archetype.acceptance.binary,
+        archetype.binary(),
         config.timeouts.build,
     ) {
-        Ok(binary) => (
-            acceptance::run_checks(&binary, &archetype.acceptance.checks, config.timeouts.check),
-            acceptance::run_invariants(
+        Ok(binary) => {
+            let cases_dir = run_dir.join("cases");
+            let (suite_report, invariant_env) = match &archetype.suite {
+                Suite::Checks(suite) => (
+                    acceptance::run_checks(&binary, &suite.checks, config.timeouts.check),
+                    acceptance::EnvSetup::Allowlist,
+                ),
+                Suite::Cases(suite) => (
+                    cases::run_cases(&binary, &suite.cases, &cases_dir),
+                    // The matrix shares the cases' scrubbed baseline, with
+                    // its own empty HOME sandbox.
+                    acceptance::EnvSetup::CaseBaseline {
+                        home: cases_dir.join("_invariants_home"),
+                    },
+                ),
+            };
+            let cells = acceptance::run_invariants(
                 &binary,
-                &archetype.acceptance.invariants,
+                archetype.invariants(),
                 config.timeouts.check,
-            ),
-        ),
+                &invariant_env,
+            );
+            (suite_report, cells)
+        }
         Err(detail) => (AcceptanceReport::build_failed(detail), Vec::new()),
     };
 
@@ -178,14 +195,22 @@ pub fn run(config: &RunConfig) -> anyhow::Result<(RunReport, PathBuf)> {
 
 /// Prints a human summary of the report to stderr.
 pub fn print_summary(report: &RunReport) {
-    let passed = report.acceptance.checks.iter().filter(|c| c.passed).count();
+    use crate::report::CaseOutcome;
+    let passed = report.acceptance.checks.iter().filter(|c| c.passed).count()
+        + report
+            .acceptance
+            .cases
+            .iter()
+            .filter(|c| c.outcome.is_expected())
+            .count();
+    let total = report.acceptance.checks.len() + report.acceptance.cases.len();
     let inv_passed = report.invariants.iter().filter(|c| c.passed).count();
     eprintln!(
         "[corpus] {}: built={} acceptance={}/{} invariants={}/{} questionnaire={}",
         report.run_id,
         report.acceptance.built,
         passed,
-        report.acceptance.checks.len(),
+        total,
         inv_passed,
         report.invariants.len(),
         if report.questionnaire.collected {
@@ -196,6 +221,26 @@ pub fn print_summary(report: &RunReport) {
     );
     for check in report.acceptance.checks.iter().filter(|c| !c.passed) {
         eprintln!("[corpus]   FAIL acceptance: {}", check.name);
+    }
+    for case in &report.acceptance.cases {
+        match case.outcome {
+            CaseOutcome::Fail => eprintln!("[corpus]   FAIL case: {}", case.name),
+            CaseOutcome::ExpectedFail => {
+                eprintln!(
+                    "[corpus]   expected-fail case: {} (gap {})",
+                    case.name,
+                    case.gap.as_deref().unwrap_or("?")
+                );
+            }
+            CaseOutcome::UnexpectedPass => {
+                eprintln!(
+                    "[corpus]   UNEXPECTED PASS case: {} (gap {} may be closed)",
+                    case.name,
+                    case.gap.as_deref().unwrap_or("?")
+                );
+            }
+            CaseOutcome::Pass => {}
+        }
     }
     for cell in report.invariants.iter().filter(|c| !c.passed) {
         eprintln!(

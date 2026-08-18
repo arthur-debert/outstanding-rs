@@ -284,3 +284,16 @@ timeout_seconds = 10
 [case.expect]
 exit_code = 0
 stdout = "a3f4 Fix off-by-one (alice)\n"
+
+# --- ROB01 invariant matrix --------------------------------------------------
+# Read-only commands the runner sweeps across output modes (text/term/json),
+# piped, on top of the case suite (format: corpus/README.md, Manifest/Run
+# semantics). Failures here are framework findings by default.
+
+[invariants]
+commands = [
+    ["log"],
+    ["status"],
+    ["ref-list"],
+    ["cat-object", "c1a9"],
+]
