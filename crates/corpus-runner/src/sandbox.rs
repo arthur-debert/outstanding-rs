@@ -335,6 +335,16 @@ fn enforce_landlock(policy: &Policy) -> Result<(), String> {
     let abi = ABI::V1;
     let all = AccessFs::from_all(abi);
     let read = AccessFs::from_read(abi);
+    // Directory-only rights (create/remove/list a directory entry — e.g.
+    // MakeChar, RemoveFile, ReadDir) are meaningless on a non-directory
+    // target and the kernel rejects a rule that carries them for one with
+    // EINVAL (see landlock_add_rule(2)): a `PathBeneath` rule's parent must
+    // either be a directory, or request only the access rights legitimate
+    // for a file (`AccessFs::from_file`). `/dev/null` (writable in every
+    // phase for `Stdio::null()`/`posix_spawn`) is a character device, not a
+    // directory, so it needs the file-only subset; every other write root
+    // here is a real directory and keeps the full set.
+    let file_only = AccessFs::from_file(abi);
     let mut ruleset = Ruleset::default()
         .handle_access(all)
         .map_err(|e| format!("creating Landlock access set: {e}"))?
@@ -350,8 +360,9 @@ fn enforce_landlock(policy: &Policy) -> Result<(), String> {
     for path in &policy.write {
         let fd = PathFd::new(path)
             .map_err(|e| format!("opening {} for Landlock: {e}", path.display()))?;
+        let access = if path.is_dir() { all } else { file_only };
         ruleset = ruleset
-            .add_rule(PathBeneath::new(fd, all))
+            .add_rule(PathBeneath::new(fd, access))
             .map_err(|e| format!("allowing Landlock write {}: {e}", path.display()))?;
     }
     let status = ruleset
