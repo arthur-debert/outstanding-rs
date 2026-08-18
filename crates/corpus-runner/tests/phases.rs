@@ -697,7 +697,7 @@ fn test_isolation_record() -> corpus_runner::report::IsolationRecord {
     corpus_runner::report::IsolationRecord {
         backend: "test".into(),
         filesystem: "test".into(),
-        network: "test".into(),
+        network: corpus_runner::report::NetworkEnforcement::NotEnforced,
     }
 }
 

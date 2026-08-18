@@ -12,7 +12,7 @@
 //! are: Seatbelt is allow-default with denied roots and enforces network
 //! denial; Landlock (ABI v1) is default-deny over admitted roots and is
 //! filesystem-only — a `network = false` policy is NOT enforced there. The
-//! gap is recorded per capability by [`capability`] and warned about at
+//! gap is recorded per phase policy by [`capability`] and warned about at
 //! apply time, so a report never reads stronger than what was enforced.
 
 #[cfg(target_os = "macos")]
@@ -20,7 +20,7 @@ use std::path::Path;
 use std::path::PathBuf;
 use std::process::Command;
 
-use crate::report::IsolationRecord;
+use crate::report::{IsolationRecord, NetworkEnforcement};
 
 /// One process's filesystem policy.
 #[derive(Debug, Clone)]
@@ -47,9 +47,15 @@ impl Policy {
     }
 }
 
-/// What this host's backend actually enforces, per capability, recorded
-/// verbatim in reports (see [`IsolationRecord`]).
-pub fn capability() -> IsolationRecord {
+/// What this host's backend actually enforces for one phase policy,
+/// recorded verbatim in reports (see [`IsolationRecord`]).
+///
+/// `network_allowed` is the phase policy's network flag (see
+/// [`Policy::new`]): a policy that allows network yields
+/// [`NetworkEnforcement::AllowedByPolicy`] on every backend, while a
+/// requested denial is enforced by Seatbelt and loudly unenforced on
+/// Landlock (ABI v1, filesystem-only).
+pub fn capability(network_allowed: bool) -> IsolationRecord {
     #[cfg(target_os = "macos")]
     {
         IsolationRecord {
@@ -57,7 +63,11 @@ pub fn capability() -> IsolationRecord {
             filesystem: "allow-default; reads denied under listed user/source roots, \
                          writes denied outside the phase workspace"
                 .to_string(),
-            network: "enforced; denied whenever the phase policy disables network".to_string(),
+            network: if network_allowed {
+                NetworkEnforcement::AllowedByPolicy
+            } else {
+                NetworkEnforcement::Denied
+            },
         }
     }
     #[cfg(target_os = "linux")]
@@ -67,17 +77,20 @@ pub fn capability() -> IsolationRecord {
             filesystem: "default-deny; only admitted workspace/system/toolchain roots \
                          are reachable"
                 .to_string(),
-            network: "NOT ENFORCED; Landlock ABI v1 is filesystem-only, so a \
-                      network-disabling policy is recorded but not enforced"
-                .to_string(),
+            network: if network_allowed {
+                NetworkEnforcement::AllowedByPolicy
+            } else {
+                NetworkEnforcement::DenialRequestedButUnsupported
+            },
         }
     }
     #[cfg(not(any(target_os = "macos", target_os = "linux")))]
     {
+        let _ = network_allowed;
         IsolationRecord {
             backend: "unavailable".to_string(),
             filesystem: "not enforced".to_string(),
-            network: "not enforced".to_string(),
+            network: NetworkEnforcement::NotEnforced,
         }
     }
 }
@@ -352,6 +365,22 @@ mod tests {
         let err = validate_denied_boundaries(&policy).unwrap_err();
         assert!(err.contains("/home/runner/work"), "{err}");
         assert!(err.contains("/home/runner/work/project"), "{err}");
+    }
+
+    #[test]
+    #[cfg(any(target_os = "macos", target_os = "linux"))]
+    fn capability_reflects_the_phase_policy_network_request() {
+        assert_eq!(
+            capability(true).network,
+            NetworkEnforcement::AllowedByPolicy
+        );
+        #[cfg(target_os = "macos")]
+        assert_eq!(capability(false).network, NetworkEnforcement::Denied);
+        #[cfg(target_os = "linux")]
+        assert_eq!(
+            capability(false).network,
+            NetworkEnforcement::DenialRequestedButUnsupported
+        );
     }
 
     #[test]

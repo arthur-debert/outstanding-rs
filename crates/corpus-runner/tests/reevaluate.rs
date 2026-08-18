@@ -1,9 +1,11 @@
 //! Typed re-evaluation of preserved historical runs: the source report is
 //! read through `report::HistoricalRun` — schema-2 reports (with retired
 //! keys like `session.attempts` and the `isolation_backend` strings) load
-//! cleanly, off-shape input is a diagnostic error naming the file, and the
+//! cleanly, schema versions outside the supported historical range are
+//! refused, off-shape input is a diagnostic error naming the file, and the
 //! rewritten report regenerates every objective section while preserving
-//! the historical identity, pins, session, and questionnaire verbatim.
+//! the historical identity, session, and questionnaire verbatim (pins keep
+//! every value except the recomputed acceptance-suite hash).
 
 // Unix-only: the fake produced binary is a `sh` script made executable via
 // `PermissionsExt`; gating keeps the workspace buildable elsewhere.
@@ -53,7 +55,11 @@ stdout_contains = ["hello"]
     let workspace_root = scratch.path().join("ws");
     fs::create_dir_all(&workspace_root).unwrap();
 
-    let binary = scratch.path().join("fake");
+    // The fake produced binary lives beneath the workspace root: the
+    // evaluation sandbox admits only the workspace and system roots, so an
+    // out-of-workspace sibling would be unexecutable under Landlock (and is
+    // refused up front by the produced-binary contract).
+    let binary = workspace_root.join("fake");
     fs::write(&binary, "#!/bin/sh\necho hello\n").unwrap();
     fs::set_permissions(&binary, fs::Permissions::from_mode(0o755)).unwrap();
 
@@ -148,6 +154,23 @@ fn reevaluation_preserves_history_and_regenerates_objective_sections() {
     // Rewritten identity and stamps.
     assert_eq!(report.schema_version, corpus_runner::report::SCHEMA_VERSION);
     assert_eq!(report.evaluation.origin, "isolated-re-evaluation");
+    // Isolation records are policy-derived: the historical agent boundary
+    // claims nothing, while the regenerated results' record carries the
+    // check policy's network denial as this backend actually lands it.
+    assert_eq!(
+        report.blindness.isolation.network,
+        corpus_runner::report::NetworkEnforcement::NotEnforced
+    );
+    #[cfg(target_os = "macos")]
+    assert_eq!(
+        report.evaluation.isolation.network,
+        corpus_runner::report::NetworkEnforcement::Denied
+    );
+    #[cfg(target_os = "linux")]
+    assert_eq!(
+        report.evaluation.isolation.network,
+        corpus_runner::report::NetworkEnforcement::DenialRequestedButUnsupported
+    );
     assert_eq!(report.blindness.isolation.backend, "historical-partial");
     assert!(!report.blindness.framework_source_excluded);
     assert!(!report.blindness.credential_exceptions.is_empty());
@@ -188,6 +211,85 @@ fn reevaluation_preserves_history_and_regenerates_objective_sections() {
         restored.schema_version,
         corpus_runner::report::SCHEMA_VERSION
     );
+}
+
+/// Rewrites (or removes) the top-level `schema_version` of a report JSON.
+fn with_schema_version(report: &str, version: Option<u64>) -> String {
+    let mut value: serde_json::Value = serde_json::from_str(report).unwrap();
+    let object = value.as_object_mut().unwrap();
+    match version {
+        Some(version) => {
+            object.insert("schema_version".into(), version.into());
+        }
+        None => {
+            object.remove("schema_version");
+        }
+    }
+    serde_json::to_string(&value).unwrap()
+}
+
+#[test]
+fn schema_versions_outside_the_historical_range_are_refused() {
+    for version in [1, 99] {
+        let fixture = fixture(&with_schema_version(
+            &historical_v2_report("fake"),
+            Some(version),
+        ));
+
+        let err = reevaluate(&config(&fixture)).unwrap_err();
+
+        let chain = format!("{err:#}");
+        assert!(
+            chain.contains(&format!("records schema_version {version}")),
+            "{chain}"
+        );
+        assert!(
+            chain.contains(&fixture.source_report.display().to_string()),
+            "{chain}"
+        );
+        assert!(!fixture.output_report.exists());
+    }
+}
+
+#[test]
+fn missing_schema_version_is_a_deserialization_diagnostic() {
+    let fixture = fixture(&with_schema_version(&historical_v2_report("fake"), None));
+
+    let err = reevaluate(&config(&fixture)).unwrap_err();
+
+    let chain = format!("{err:#}");
+    assert!(
+        chain.contains("does not deserialize as a run report"),
+        "{chain}"
+    );
+    assert!(chain.contains("schema_version"), "{chain}");
+    assert!(!fixture.output_report.exists());
+}
+
+#[test]
+fn out_of_workspace_binary_override_is_a_loud_finding() {
+    let fixture = fixture(&historical_v2_report("fake"));
+    let outside = fixture
+        .workspace_root
+        .parent()
+        .unwrap()
+        .join("outside-fake");
+    fs::write(&outside, "#!/bin/sh\necho hello\n").unwrap();
+    fs::set_permissions(&outside, fs::Permissions::from_mode(0o755)).unwrap();
+    let mut config = config(&fixture);
+    config.produced_binary = Some(outside);
+
+    let report = reevaluate(&config).unwrap();
+
+    // The refusal is a finding, not a runner error: the report records a
+    // failed build with the workspace-residency contract in the detail.
+    assert!(!report.acceptance.built);
+    assert!(report
+        .acceptance
+        .build_detail
+        .as_deref()
+        .unwrap()
+        .contains("outside the preserved workspace"));
 }
 
 #[test]

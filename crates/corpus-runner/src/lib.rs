@@ -28,7 +28,7 @@ use anyhow::Context;
 use crate::archetype::{Archetype, Suite};
 use crate::report::{
     AcceptanceReport, ArchetypeStamp, Blindness, EvaluationStamp, HistoricalRun, InvariantCell,
-    IsolationRecord, Pins, RunReport, SCHEMA_VERSION,
+    IsolationRecord, NetworkEnforcement, Pins, RunReport, HISTORICAL_SCHEMA_MIN, SCHEMA_VERSION,
 };
 
 /// Everything one run needs to start. The agent command is a seam: any
@@ -56,6 +56,12 @@ pub struct ReevaluationConfig {
     pub workspace_root: PathBuf,
     pub source_report: PathBuf,
     pub output_report: PathBuf,
+    /// Explicit already-built executable to evaluate instead of rebuilding
+    /// the preserved app. It must be a regular file beneath
+    /// `workspace_root`: the check sandbox admits only the workspace and
+    /// system roots, so an outside path would be unexecutable under
+    /// Landlock's default-deny model — the contract is validated up front
+    /// and refused identically on every backend.
     pub produced_binary: Option<PathBuf>,
     pub timeouts: Timeouts,
 }
@@ -194,7 +200,7 @@ pub fn run(config: &RunConfig) -> anyhow::Result<(RunReport, PathBuf)> {
         },
         evaluation: EvaluationStamp {
             origin: "full-run".to_string(),
-            isolation: sandbox::capability(),
+            isolation: workspace.isolation.evaluation_capability(),
             binary_sha256: evaluation.binary_sha256,
         },
         blindness: Blindness {
@@ -204,7 +210,7 @@ pub fn run(config: &RunConfig) -> anyhow::Result<(RunReport, PathBuf)> {
                 .map(ToString::to_string)
                 .collect(),
             framework_source_excluded: true,
-            isolation: sandbox::capability(),
+            isolation: workspace.isolation.agent_capability(),
             credential_exceptions: Vec::new(),
             agent_reported_docs: questionnaire_report.answers.get("sources.docs").cloned(),
             agent_reported_external_sources: questionnaire_report
@@ -235,10 +241,13 @@ const HISTORICAL_BLINDNESS_POLICY: &str =
 /// matrix without rerunning or rewriting the historical agent session.
 ///
 /// The historical report is read typed ([`HistoricalRun`]): its identity,
-/// pins, session instrumentation, questionnaire, and agent-reported sources
-/// are preserved verbatim, while every objective section is regenerated. An
-/// off-shape source report is a diagnostic error naming the file, never a
-/// panic.
+/// session instrumentation, questionnaire, and agent-reported sources are
+/// preserved verbatim, and its pins are preserved except
+/// `acceptance_sha256`, which is recomputed from the loaded suite so the
+/// pin identifies the suite behind the regenerated objective results. The
+/// source's `schema_version` must fall in the supported historical range;
+/// an off-shape or out-of-range source report is a diagnostic error naming
+/// the file, never a panic.
 pub fn reevaluate(config: &ReevaluationConfig) -> anyhow::Result<RunReport> {
     let archetype = Archetype::load(&config.archetypes_dir, &config.archetype)?;
     let source_root = config
@@ -260,6 +269,16 @@ pub fn reevaluate(config: &ReevaluationConfig) -> anyhow::Result<RunReport> {
             config.source_report.display()
         )
     })?;
+    if source.schema_version < HISTORICAL_SCHEMA_MIN || source.schema_version > SCHEMA_VERSION {
+        anyhow::bail!(
+            "source report {} records schema_version {}, outside the supported historical \
+             range {}..={}",
+            config.source_report.display(),
+            source.schema_version,
+            HISTORICAL_SCHEMA_MIN,
+            SCHEMA_VERSION
+        );
+    }
     if source.archetype.name != archetype.name {
         anyhow::bail!(
             "source report {} records archetype {:?}, but re-evaluation was asked for {:?}",
@@ -270,11 +289,7 @@ pub fn reevaluate(config: &ReevaluationConfig) -> anyhow::Result<RunReport> {
     }
 
     let binary_result = match config.produced_binary.as_deref() {
-        Some(path) if path.is_file() => Ok(path.to_path_buf()),
-        Some(path) => Err(format!(
-            "provided produced binary {} does not exist",
-            path.display()
-        )),
+        Some(path) => provided_binary(path, &config.workspace_root),
         None => acceptance::build_app(
             &config.workspace_root.join("app"),
             archetype.binary(),
@@ -303,7 +318,7 @@ pub fn reevaluate(config: &ReevaluationConfig) -> anyhow::Result<RunReport> {
         },
         evaluation: EvaluationStamp {
             origin: "isolated-re-evaluation".to_string(),
-            isolation: sandbox::capability(),
+            isolation: isolation.evaluation_capability(),
             binary_sha256: evaluation.binary_sha256,
         },
         blindness: Blindness {
@@ -316,7 +331,7 @@ pub fn reevaluate(config: &ReevaluationConfig) -> anyhow::Result<RunReport> {
                              boundary (workspace nested beneath a source checkout, host \
                              homes inherited)"
                     .to_string(),
-                network: "not enforced for the historical agent session".to_string(),
+                network: NetworkEnforcement::NotEnforced,
             },
             credential_exceptions: vec![
                 "historical agent session inherited host HOME, CARGO_HOME, and RUSTUP_HOME"
@@ -332,6 +347,41 @@ pub fn reevaluate(config: &ReevaluationConfig) -> anyhow::Result<RunReport> {
     };
     report.write(&config.output_report)?;
     Ok(report)
+}
+
+/// Validates an explicit produced-binary override: it must be a regular
+/// file beneath the preserved workspace, because the check sandbox admits
+/// only the workspace and system roots — under Landlock's default-deny
+/// model an outside path would be unexecutable, so the contract is refused
+/// up front, loudly and identically on every backend. A refusal is a
+/// finding (a build-failed report), consistent with the missing-path case.
+fn provided_binary(path: &Path, workspace_root: &Path) -> Result<PathBuf, String> {
+    if !path.is_file() {
+        return Err(format!(
+            "provided produced binary {} {}",
+            path.display(),
+            if path.exists() {
+                "is not a regular file"
+            } else {
+                "does not exist"
+            }
+        ));
+    }
+    let canonical = path
+        .canonicalize()
+        .map_err(|e| format!("resolving provided produced binary {}: {e}", path.display()))?;
+    let root = workspace_root
+        .canonicalize()
+        .map_err(|e| format!("resolving workspace root {}: {e}", workspace_root.display()))?;
+    if !canonical.starts_with(&root) {
+        return Err(format!(
+            "provided produced binary {} lies outside the preserved workspace {}; the \
+             evaluation sandbox admits only the workspace and system roots",
+            canonical.display(),
+            root.display()
+        ));
+    }
+    Ok(canonical)
 }
 
 /// The objective evaluation both entry points share: acceptance suite plus
