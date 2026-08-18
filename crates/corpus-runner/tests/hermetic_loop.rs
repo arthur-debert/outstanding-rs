@@ -21,11 +21,11 @@ use std::path::Path;
 
 use corpus_runner::{run, RunConfig, Timeouts};
 
-/// A canned `smoketable` implementation as a shell script: the star table
+/// A canned `smoke` implementation as a shell script: the star table
 /// in text/term, the catalog as JSON rows, and an about line — enough to
 /// satisfy the smoke archetype's full acceptance suite and invariant
 /// matrix.
-const SMOKETABLE: &str = r#"#!/bin/sh
+const SMOKE: &str = r#"#!/bin/sh
 cmd="$1"
 mode=text
 prev=""
@@ -35,8 +35,8 @@ for a in "$@"; do
 done
 if [ "$cmd" = "about" ]; then
   case "$mode" in
-    json) echo '{"name":"smoketable","purpose":"a tiny fixed star catalog"}' ;;
-    *) echo 'smoketable — a tiny fixed star catalog' ;;
+    json) echo '{"name":"smoke","purpose":"a tiny fixed star catalog"}' ;;
+    *) echo 'smoke — a tiny fixed star catalog' ;;
   esac
 else
   case "$mode" in
@@ -55,8 +55,8 @@ fn full_loop_completes_hermetically_with_a_fake_build() {
     // --target-dir the runner passes (also proving that plumbing).
     let bin_dir = scratch.path().join("bin");
     fs::create_dir_all(&bin_dir).unwrap();
-    let impl_path = bin_dir.join("smoketable-impl");
-    fs::write(&impl_path, SMOKETABLE).unwrap();
+    let impl_path = bin_dir.join("smoke-impl");
+    fs::write(&impl_path, SMOKE).unwrap();
     fs::set_permissions(&impl_path, fs::Permissions::from_mode(0o755)).unwrap();
     let cargo = bin_dir.join("cargo");
     fs::write(
@@ -71,7 +71,7 @@ for a in "$@"; do
 done
 [ -n "$td" ] || {{ echo "no --target-dir passed" >&2; exit 1; }}
 mkdir -p "$td/debug"
-cp "{impl_path}" "$td/debug/smoketable"
+cp "{impl_path}" "$td/debug/smoke"
 "#,
             impl_path = impl_path.display()
         ),
@@ -95,7 +95,7 @@ cp "{impl_path}" "$td/debug/smoketable"
         r#"#!/bin/sh
 set -e
 awk '{ print }
-/<id:summary>$/ { print "Implemented smoketable from SPEC.md." }
+/<id:summary>$/ { print "Implemented smoke from SPEC.md." }
 /<id:sources.docs>$/ { print "docs/guides/minimal-single-crate.md" }
 /<id:sources.external>$/ { print "none" }
 /<id:confidence>$/ { print "high" }' QUESTIONNAIRE.md > QUESTIONNAIRE.md.filled
@@ -128,18 +128,19 @@ echo '{"type":"result","num_turns":1,"usage":{"input_tokens":10,"output_tokens":
     assert!(report.questionnaire.collected);
 
     // Objective: the fake build produced the binary where the runner looks,
-    // and the strengthened acceptance suite (row + JSON-row association)
-    // passes end to end, as does the invariant matrix.
+    // and the case suite (substring, row, and JSON-row association) passes
+    // end to end, as does the invariant matrix.
     assert!(
         report.acceptance.built,
         "{:?}",
         report.acceptance.build_detail
     );
+    assert!(!report.acceptance.cases.is_empty());
     let failed: Vec<_> = report
         .acceptance
-        .checks
+        .cases
         .iter()
-        .filter(|c| !c.passed)
+        .filter(|c| !c.outcome.is_expected())
         .collect();
     assert!(failed.is_empty(), "{failed:?}");
     let failed: Vec<_> = report

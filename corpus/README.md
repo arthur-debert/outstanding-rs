@@ -15,9 +15,8 @@ makes runs reproducible and comparable.
   exception: `smoke` is not a roster member — it is the harness's own
   walking-skeleton archetype (spec, "Testing / Verification": "the harness
   itself gets a smoke archetype"), carrying `spec.md` plus an
-  `acceptance.toml` in the runner's check schema, and its binary name
-  (`smoketable`) deliberately differs from its directory name. The roster's
-  structural test exempts it by name.
+  `acceptance.toml` in the same case schema as every roster suite, but no
+  `manifest.toml`. The roster's structural test exempts it by name.
 - `runs/<run-id>/` — one directory per run: the provisioned `workspace/`, the
   per-case `cases/` sandboxes, the session `transcript.jsonl`, and the
   durable `report.json`. Runs are artifacts, not source: `runs/` is

@@ -4,7 +4,7 @@ use standout::cli::{App, CommandContext, Dispatch, Output};
 use standout::{embed_styles, embed_templates, handler};
 
 #[derive(Parser)]
-#[command(name = "smoketable")]
+#[command(name = "smoke")]
 struct Cli {
     #[command(subcommand)]
     command: Commands,
@@ -56,7 +56,7 @@ mod handlers {
     #[handler]
     pub fn about(#[ctx] _ctx: &CommandContext) -> Result<Output<AboutView>, anyhow::Error> {
         Ok(Output::Render(AboutView {
-            name: "smoketable".into(),
+            name: "smoke".into(),
             purpose: "a tiny fixed star catalog".into(),
         }))
     }

@@ -14,9 +14,9 @@
 //! table — and, the corpus's founding rule, no implementation may live
 //! beside the specs (acceptance is written spec-first; blind agents
 //! implement elsewhere). One directory is exempt from roster membership:
-//! `smoke`, the harness's own walking-skeleton archetype in the runner's
-//! check schema (see `corpus/README.md`, Layout); the no-implementation
-//! rule still covers it.
+//! `smoke`, the harness's own manifest-less walking-skeleton archetype
+//! (see `corpus/README.md`, Layout); the no-implementation rule still
+//! covers it.
 //!
 //! It deliberately does NOT run any acceptance case: that is the runner's
 //! job, against a produced binary.
@@ -87,10 +87,11 @@ fn archetypes_dir() -> PathBuf {
 ///
 /// `smoke` is exempt by name: it is the harness's own walking-skeleton
 /// archetype (spec: "the harness itself gets a smoke archetype"), owned by
-/// the corpus runner and written in the runner's check schema — not a
-/// roster member (`corpus/README.md`, Layout). Only roster membership is
-/// waived: `no_implementation_lives_in_the_roster` walks the whole
-/// directory, `smoke` included.
+/// the corpus runner and carrying no `manifest.toml` — not a roster member
+/// (`corpus/README.md`, Layout), though its acceptance suite speaks the
+/// same case schema. Only roster membership is waived:
+/// `no_implementation_lives_in_the_roster` walks the whole directory,
+/// `smoke` included.
 fn archetype_dirs() -> Vec<PathBuf> {
     let root = archetypes_dir();
     let mut dirs: Vec<PathBuf> = std::fs::read_dir(&root)

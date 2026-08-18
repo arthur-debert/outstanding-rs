@@ -41,7 +41,7 @@ fn smoke_archetype_completes_the_loop() {
 set -e
 cp -R "{solution}/src/." app/src/
 awk '{{ print }}
-/<id:summary>$/ {{ print "Implemented smoketable from SPEC.md; cargo build succeeds." }}
+/<id:summary>$/ {{ print "Implemented smoke from SPEC.md; cargo build succeeds." }}
 /<id:sources.docs>$/ {{ print "docs/guides/minimal-single-crate.md" }}
 /<id:sources.external>$/ {{ print "none" }}
 /<id:confidence>$/ {{ print "high" }}' QUESTIONNAIRE.md > QUESTIONNAIRE.md.filled
@@ -87,18 +87,19 @@ echo '{{"type":"result","num_turns":1,"usage":{{"input_tokens":10,"output_tokens
         Some("none")
     );
 
-    // Objective: the produced binary built, and every acceptance check and
+    // Objective: the produced binary built, and every acceptance case and
     // invariant cell passed.
     assert!(
         report.acceptance.built,
         "{:?}",
         report.acceptance.build_detail
     );
+    assert!(!report.acceptance.cases.is_empty());
     let failed: Vec<_> = report
         .acceptance
-        .checks
+        .cases
         .iter()
-        .filter(|c| !c.passed)
+        .filter(|c| !c.outcome.is_expected())
         .collect();
     assert!(failed.is_empty(), "{failed:?}");
     let failed: Vec<_> = report

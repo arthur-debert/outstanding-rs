@@ -358,7 +358,7 @@ impl Archetype {
 
     /// The binary the produced app must build: the roster rule is that
     /// archetype names double as binary names; the check schema names its
-    /// binary explicitly (smoke's `smoketable`).
+    /// binary explicitly.
     pub fn binary(&self) -> &str {
         match &self.suite {
             Suite::Checks(config) => &config.binary,

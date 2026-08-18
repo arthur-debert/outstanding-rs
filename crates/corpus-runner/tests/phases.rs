@@ -44,7 +44,7 @@ fn answer(sheet: &str, id: &str, answer: &str) -> String {
 /// A filled sheet answering every required field.
 fn filled_sheet() -> String {
     let mut sheet = questionnaire::definition().render_answer_sheet();
-    sheet = answer(&sheet, "summary", "Built the smoketable CLI.");
+    sheet = answer(&sheet, "summary", "Built the smoke CLI.");
     sheet = answer(
         &sheet,
         "sources.docs",
@@ -165,11 +165,15 @@ fn missing_sheet_is_an_uncollected_report() {
 #[test]
 fn smoke_archetype_loads_from_the_repo_corpus() {
     let archetype = Archetype::load(&corpus_dir().join("archetypes"), "smoke").unwrap();
-    assert_eq!(archetype.binary(), "smoketable");
-    let corpus_runner::archetype::Suite::Checks(acceptance) = &archetype.suite else {
-        panic!("smoke carries the runner check schema");
+    assert_eq!(
+        archetype.binary(),
+        "smoke",
+        "roster names double as binaries"
+    );
+    let corpus_runner::archetype::Suite::Cases(acceptance) = &archetype.suite else {
+        panic!("smoke carries the roster case schema");
     };
-    assert!(!acceptance.checks.is_empty());
+    assert!(!acceptance.cases.is_empty());
     assert!(!archetype.invariants().commands.is_empty());
     assert_eq!(archetype.spec_sha256().len(), 64);
 }
