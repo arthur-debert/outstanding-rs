@@ -1,6 +1,7 @@
 [workspace]
 resolver = "2"
 members = [
+    "crates/corpus-runner",
     "crates/standout",
     "crates/standout-bbparser",
     "crates/standout-dispatch",

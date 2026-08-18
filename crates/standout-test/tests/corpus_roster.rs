@@ -3,13 +3,17 @@
 //! The roster under `corpus/archetypes/` (see `corpus/README.md` for the
 //! formats) is declarative data consumed by the corpus runner, so nothing
 //! compiles it and a typo would otherwise surface only mid-pilot-run. This
-//! suite is the compile step: every archetype must carry its three files,
-//! the acceptance suites and manifests must deserialize into the documented
-//! schema exactly (typed structs, unknown keys rejected, every field's shape
-//! checked), cross-references must resolve — manifest `cases` to acceptance
-//! case names, expected-fail `gap`s to the manifest's `[gaps]` table — and,
-//! the corpus's founding rule, no implementation may live beside the specs
-//! (acceptance is written spec-first; blind agents implement elsewhere).
+//! suite is the compile step: every roster archetype must carry its three
+//! files, the acceptance suites and manifests must deserialize into the
+//! documented schema exactly (typed structs, unknown keys rejected, every
+//! field's shape checked), cross-references must resolve — manifest `cases`
+//! to acceptance case names, expected-fail `gap`s to the manifest's `[gaps]`
+//! table — and, the corpus's founding rule, no implementation may live
+//! beside the specs (acceptance is written spec-first; blind agents
+//! implement elsewhere). One directory is exempt from roster membership:
+//! `smoke`, the harness's own walking-skeleton archetype in the runner's
+//! check schema (see `corpus/README.md`, Layout); the no-implementation
+//! rule still covers it.
 //!
 //! It deliberately does NOT run any acceptance case: that is the WS01
 //! runner's job, against a produced binary.
@@ -164,13 +168,20 @@ fn archetypes_dir() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("../../corpus/archetypes")
 }
 
-/// Every archetype directory, sorted for stable failure output.
+/// Every roster archetype directory, sorted for stable failure output.
+///
+/// `smoke` is exempt by name: it is the harness's own walking-skeleton
+/// archetype (spec: "the harness itself gets a smoke archetype"), owned by
+/// the corpus runner and written in the runner's check schema — not a
+/// roster member (`corpus/README.md`, Layout). Only roster membership is
+/// waived: `no_implementation_lives_in_the_roster` walks the whole
+/// directory, `smoke` included.
 fn archetype_dirs() -> Vec<PathBuf> {
     let root = archetypes_dir();
     let mut dirs: Vec<PathBuf> = std::fs::read_dir(&root)
         .unwrap_or_else(|e| panic!("corpus/archetypes must exist: {e}"))
         .map(|entry| entry.unwrap().path())
-        .filter(|p| p.is_dir())
+        .filter(|p| p.is_dir() && dir_name(p) != "smoke")
         .collect();
     dirs.sort();
     assert!(!dirs.is_empty(), "corpus/archetypes has no archetypes");
