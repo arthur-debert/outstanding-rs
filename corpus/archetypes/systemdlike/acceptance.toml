@@ -247,7 +247,7 @@ timeout_seconds = 10
 [case.expect]
 exit_code = 2
 stdout = ""
-stderr_contains = ["Usage"]
+stderr_contains = ["invalid value", "bogus", "possible values"]
 
 # --- ROB01 invariant matrix --------------------------------------------------
 # Read-only commands the runner sweeps across output modes (text/term/json),
