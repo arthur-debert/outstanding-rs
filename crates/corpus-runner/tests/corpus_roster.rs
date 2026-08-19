@@ -269,10 +269,13 @@ fn pilot_roster_is_complete() {
 }
 
 /// Issue #365: the method-coverage archetype must keep the three known-edge
-/// families the ROB03 pilot did not independently rediscover. An agent
-/// cannot pass this suite without requesting a missing template name,
-/// rendering through both registration orders, and combining an incomplete
-/// app theme with framework help at root and at a deep leaf.
+/// families (including the two the ROB03 pilot did not independently
+/// rediscover). An agent cannot pass this suite without requesting a missing
+/// template name, rendering through both registration orders, and combining
+/// an incomplete app theme with framework help at root and at a deep leaf.
+/// Color-off help cells and `show-registered-name-term-color-on` stay pinned
+/// so the suite cannot drop the complementary no-ANSI path or the proof that
+/// the app theme actually styles the `ok` tag.
 #[test]
 fn validity_pins_the_known_edge_families() {
     let present: HashSet<String> = archetype_dirs()
@@ -288,13 +291,20 @@ fn validity_pins_the_known_edge_families() {
     let names = case_names(&suite);
     for case in [
         "show-registered-name",
+        "show-registered-name-term-color-on",
         "show-mistyped-name",
         "show-missing-name",
-        "late-registered-before-templates",
-        "early-registered-after-templates",
+        "early-registered-before-templates",
+        "late-registered-after-templates",
+        "root-h-text-color-off",
+        "root-help-flag-text-color-off",
+        "root-help-word-text-color-off",
         "root-h-term-color-on",
         "root-help-flag-term-color-on",
         "root-help-word-term-color-on",
+        "leaf-h-text-color-off",
+        "leaf-help-flag-text-color-off",
+        "leaf-help-word-text-color-off",
         "leaf-h-term-color-on",
         "leaf-help-flag-term-color-on",
         "leaf-help-word-term-color-on",

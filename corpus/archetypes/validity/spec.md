@@ -1,9 +1,10 @@
 # `validity` — known-edge method coverage
 
 `validity` is not a product CLI. It exists so a blind implementer cannot
-finish the suite without exercising two known framework edges the ROB03
-pilot never independently rediscovered: the silent-template family, and
-an application-owned incomplete theme combined with framework-rendered
+finish the suite without exercising the three known-edge families
+(including the two the ROB03 pilot did not independently rediscover):
+the silent-template family, registration / construction order, and an
+application-owned incomplete theme combined with framework-rendered
 help.
 
 The construction contract below is part of the spec. Follow it exactly.
@@ -31,9 +32,9 @@ The produced binary is named `validity`.
    not print the success bytes `ok\n`, must not exit 0, and must finish
    inside the case timeout. Stderr names the requested template. Empty
    stdout. Exit status **1**.
-4. **Registration order.** Register the `late` command (configured to
+4. **Registration order.** Register the `early` command (configured to
    use template `ok`) *before* application templates are loaded.
-   Register the `early` command (also template `ok`) *after* templates
+   Register the `late` command (also template `ok`) *after* templates
    are loaded. Both orders must produce the same success bytes as
    `validity show ok`. An order that silently renders empty output or
    the template name as source is a failure.
@@ -84,7 +85,8 @@ with color forced on may style the word, but the visible text is still
 ### `validity early` and `validity late`
 
 Both render identically to `validity show ok` (same exact bytes under
-`--output text`). They exist to force the two registration orders in
+`--output text`). `early` is registered before templates load; `late`
+is registered after. They exist to force the two registration orders in
 the construction contract.
 
 ### `validity nest inner leaf`

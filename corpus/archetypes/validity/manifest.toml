@@ -32,8 +32,8 @@ id = "registration-order-and-build-gate"
 stresses = ["template load vs command registration order", "build() before run"]
 description = "Commands registered before templates are loaded and commands registered after must both render; an unbuilt or incompletely registered app must not silently render."
 cases = [
-    "late-registered-before-templates",
-    "early-registered-after-templates",
+    "early-registered-before-templates",
+    "late-registered-after-templates",
 ]
 
 [[interactions]]

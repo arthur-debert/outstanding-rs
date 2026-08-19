@@ -349,10 +349,11 @@ live under `pilot/` (see Layout above).
 
 One method-coverage archetype sits beside the product roster. It is not a
 survey Part C CLI; it exists so the known-edge validity check (#365) can
-force the two families the ROB03 pilot did not independently rediscover.
-Its spec includes an implementer construction contract (registration
-order, the single registered template name, an incomplete app theme)
-because those edges are invisible on a happy-path product spec.
+pin all three known-edge families (including the two the ROB03 pilot did
+not independently rediscover). Its spec includes an implementer
+construction contract (registration order, the single registered
+template name, an incomplete app theme) because those edges are
+invisible on a happy-path product spec.
 
 | Archetype | Survey | Shape |
 | --- | --- | --- |

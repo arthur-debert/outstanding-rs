@@ -64,22 +64,9 @@ stdout_not_contains = ["{{", "{%"]
 stderr_not_contains = ["{{", "{%"]
 
 [[case]]
-name = "late-registered-before-templates"
+name = "early-registered-before-templates"
 group = "registration-order"
 stresses = "a command registered before templates load still renders, never empty or as source"
-expected = "pass"
-[case.run]
-argv = ["late", "--output", "text"]
-timeout_seconds = 10
-[case.expect]
-exit_code = 0
-stdout = "ok\n"
-stderr = ""
-
-[[case]]
-name = "early-registered-after-templates"
-group = "registration-order"
-stresses = "a command registered after templates load renders the same bytes"
 expected = "pass"
 [case.run]
 argv = ["early", "--output", "text"]
@@ -89,9 +76,26 @@ exit_code = 0
 stdout = "ok\n"
 stderr = ""
 
+[[case]]
+name = "late-registered-after-templates"
+group = "registration-order"
+stresses = "a command registered after templates load renders the same bytes"
+expected = "pass"
+[case.run]
+argv = ["late", "--output", "text"]
+timeout_seconds = 10
+[case.expect]
+exit_code = 0
+stdout = "ok\n"
+stderr = ""
+
 # --- incomplete app theme × framework help -----------------------------------
 # Unresolved-tag markers that #303 leaked onto a terminal. Help clap facts
 # are Usage plus the command names the page must still present.
+# -h/--help short-circuit before --output, so they render Auto. Color-on
+# flag cases need a stdout PTY plus a capable TERM; color-off flag cases
+# use the same PTY with NO_COLOR so they prove suppression, not the pipe
+# default. The help word honors --output and does not need a PTY.
 
 [[case]]
 name = "root-h-text-color-off"
@@ -100,7 +104,8 @@ stresses = "root -h, text-equivalent (color off): no markers, clap facts present
 expected = "pass"
 [case.run]
 argv = ["-h"]
-env = { NO_COLOR = "1", CLICOLOR_FORCE = "0", FORCE_COLOR = "0" }
+env = { TERM = "xterm-256color", NO_COLOR = "1", CLICOLOR_FORCE = "0", FORCE_COLOR = "0" }
+tty = ["stdout"]
 timeout_seconds = 10
 [case.expect]
 exit_code = 0
@@ -126,7 +131,8 @@ stresses = "root --help, color off: same facts, no markers, no ANSI"
 expected = "pass"
 [case.run]
 argv = ["--help"]
-env = { NO_COLOR = "1", CLICOLOR_FORCE = "0", FORCE_COLOR = "0" }
+env = { TERM = "xterm-256color", NO_COLOR = "1", CLICOLOR_FORCE = "0", FORCE_COLOR = "0" }
+tty = ["stdout"]
 timeout_seconds = 10
 [case.expect]
 exit_code = 0
@@ -179,6 +185,7 @@ expected = "pass"
 [case.run]
 argv = ["-h"]
 env = { TERM = "xterm-256color", CLICOLOR_FORCE = "1", FORCE_COLOR = "1" }
+tty = ["stdout"]
 timeout_seconds = 10
 [case.expect]
 exit_code = 0
@@ -204,6 +211,7 @@ expected = "pass"
 [case.run]
 argv = ["--help"]
 env = { TERM = "xterm-256color", CLICOLOR_FORCE = "1", FORCE_COLOR = "1" }
+tty = ["stdout"]
 timeout_seconds = 10
 [case.expect]
 exit_code = 0
@@ -305,7 +313,8 @@ stresses = "deep-leaf -h, color off"
 expected = "pass"
 [case.run]
 argv = ["nest", "inner", "leaf", "-h"]
-env = { NO_COLOR = "1", CLICOLOR_FORCE = "0", FORCE_COLOR = "0" }
+env = { TERM = "xterm-256color", NO_COLOR = "1", CLICOLOR_FORCE = "0", FORCE_COLOR = "0" }
+tty = ["stdout"]
 timeout_seconds = 10
 [case.expect]
 exit_code = 0
@@ -331,7 +340,8 @@ stresses = "deep-leaf --help, color off"
 expected = "pass"
 [case.run]
 argv = ["nest", "inner", "leaf", "--help"]
-env = { NO_COLOR = "1", CLICOLOR_FORCE = "0", FORCE_COLOR = "0" }
+env = { TERM = "xterm-256color", NO_COLOR = "1", CLICOLOR_FORCE = "0", FORCE_COLOR = "0" }
+tty = ["stdout"]
 timeout_seconds = 10
 [case.expect]
 exit_code = 0
@@ -384,6 +394,7 @@ expected = "pass"
 [case.run]
 argv = ["nest", "inner", "leaf", "-h"]
 env = { TERM = "xterm-256color", CLICOLOR_FORCE = "1", FORCE_COLOR = "1" }
+tty = ["stdout"]
 timeout_seconds = 10
 [case.expect]
 exit_code = 0
@@ -409,6 +420,7 @@ expected = "pass"
 [case.run]
 argv = ["nest", "inner", "leaf", "--help"]
 env = { TERM = "xterm-256color", CLICOLOR_FORCE = "1", FORCE_COLOR = "1" }
+tty = ["stdout"]
 timeout_seconds = 10
 [case.expect]
 exit_code = 0

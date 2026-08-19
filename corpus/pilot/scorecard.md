@@ -127,12 +127,14 @@ upgrade the verdict above and does **not** distinguish “fixed by ROB02” from
 
 Extending `gitlike` / `ghlike` cannot force a missing registry name or an
 incomplete-theme × help merge without rewriting those product specs, so the
-roster gained a dedicated method-coverage archetype `corpus/archetypes/validity/`:
+roster gained a dedicated method-coverage archetype `corpus/archetypes/validity/`.
+The suite pins all three known-edge families (including the two the ROB03
+pilot did not independently rediscover):
 
 | Family | How the suite forces it | Cases |
 | --- | --- | --- |
 | Missing / mistyped template name | `show <name>` is a registry lookup; only `ok` is registered; `okk` and `nosuch` must fail loudly and bounded (exit 1, empty stdout, no MiniJinja source) | `show-registered-name`, `show-mistyped-name`, `show-missing-name` |
-| Registration / construction order | `late` is registered before templates load, `early` after; both must render the same success bytes. Unbuilt execution is a construction rule (`build()` before run); after ADR-0021 it is unrepresentable as a CLI case | `late-registered-before-templates`, `early-registered-after-templates` |
+| Registration / construction order | `early` is registered before templates load, `late` after; both must render the same success bytes. Unbuilt execution is a construction rule (`build()` before run); after ADR-0021 it is unrepresentable as a CLI case | `early-registered-before-templates`, `late-registered-after-templates` |
 | Incomplete app theme × framework help | App theme defines only the `ok` tag; `-h`, `--help`, and the `help` word at root and at `nest inner leaf`, across text/term and color off/on; no `[tag?]` markers, clap facts present, term+color-on still carries ANSI | the `themed-help` group |
 
 Historical ROB03-WS04 evidence under `runs/{formlike,ghlike,gitlike,systemdlike}-*`
