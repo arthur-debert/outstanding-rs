@@ -114,12 +114,64 @@ application defect.
 Only one of the three requested known-edge families appeared. Some silent-template and
 theme-merge defects were changed by ROB02 before these runs; this pilot therefore cannot
 distinguish “fixed” from “not exercised.” The twelve findings remain auditable adopter
-evidence, but their frequency is not an exhaustive measure of framework risk. Before the
-method is used as a regression detector, add one scenario that combines an app theme with
-framework-rendered help and one that deliberately varies template registration order and
-name resolution, then rerun the pilot. That required follow-up is tracked in
-[#365](https://github.com/arthur-debert/standout/issues/365); epic closure does not imply
-that the validity check passed.
+evidence, but their frequency is not an exhaustive measure of framework risk.
+
+## Validity follow-up (#365)
+
+**The known-edge families are now exercisable. They are not yet independently
+detected.** A live blind run did not complete, so this follow-up does **not**
+upgrade the verdict above and does **not** distinguish “fixed by ROB02” from
+“not exercised.”
+
+### What landed (spec-first)
+
+Extending `gitlike` / `ghlike` cannot force a missing registry name or an
+incomplete-theme × help merge without rewriting those product specs, so the
+roster gained a dedicated method-coverage archetype `corpus/archetypes/validity/`:
+
+| Family | How the suite forces it | Cases |
+| --- | --- | --- |
+| Missing / mistyped template name | `show <name>` is a registry lookup; only `ok` is registered; `okk` and `nosuch` must fail loudly and bounded (exit 1, empty stdout, no MiniJinja source) | `show-registered-name`, `show-mistyped-name`, `show-missing-name` |
+| Registration / construction order | `late` is registered before templates load, `early` after; both must render the same success bytes. Unbuilt execution is a construction rule (`build()` before run); after ADR-0021 it is unrepresentable as a CLI case | `late-registered-before-templates`, `early-registered-after-templates` |
+| Incomplete app theme × framework help | App theme defines only the `ok` tag; `-h`, `--help`, and the `help` word at root and at `nest inner leaf`, across text/term and color off/on; no `[tag?]` markers, clap facts present, term+color-on still carries ANSI | the `themed-help` group |
+
+Historical ROB03-WS04 evidence under `runs/{formlike,ghlike,gitlike,systemdlike}-*`
+is untouched.
+
+### Live isolated run: blocked
+
+The default Claude Code agent (`crates/corpus-runner/src/session.rs`) was invoked
+from an external `--runs-dir` (`/tmp/standout-corpus-runs-365`) so the workspace
+was not nested in the checkout. Isolation provisioned and the isolation probe
+passed. Two sessions were attempted:
+
+1. `validity-1787169136` — `claude` was not on the isolated `PATH` (the
+   host install is a user-local symlink whose target sits under a denied
+   home root). Session exit 127, `sh: claude: command not found`, wall 0s.
+2. `validity-1787169225` — `PATH` was widened to the symlink target directory
+   so Seatbelt could read the Mach-O. Claude started (`apiKeySource: none`)
+   and stopped immediately: `Not logged in · Please run /login`
+   (`authentication_failed`, wall 0.6s, 0 tokens). The runner's
+   no-credential-exception policy (disposable agent HOME, Keychain denied,
+   `ANTHROPIC_API_KEY` not on the allowlist) is what made login impossible.
+
+No implementation session occurred. The scaffold `cargo build` succeeded
+because the empty app crate compiles; every acceptance case then failed
+against that empty binary. **Those 0/22 reports are not validity evidence**
+and are not committed — committing them would read as “the agent built the
+wrong app” rather than “the agent never ran.”
+
+A scripted agent was not substituted: it cannot answer the validity question.
+Re-run when the default Claude session can authenticate under the isolation
+policy:
+
+```bash
+cargo run -p corpus-runner -- run validity --runs-dir /tmp/standout-corpus-runs-365
+```
+
+then `corpus/pilot/sanitize-run.py <run-dir> corpus/pilot/runs/<run-id>/` and
+replace this subsection with the sanitized report's outcomes, anchored to
+transcript moments.
 
 This scorecard is linked from the [ROB05 planning spec](../../docs/spec/robustness-blessed-surface.md), the ROB05 planning
 artifact. No ROB05 tracker issue existed when ROB03-WS04 completed, so the repository link

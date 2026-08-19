@@ -346,3 +346,14 @@ its README for the expected-fail semantics under plain `pixi run test`).
 
 The pilot's execution artifacts — committed run reports and the scorecard —
 live under `pilot/` (see Layout above).
+
+One method-coverage archetype sits beside the product roster. It is not a
+survey Part C CLI; it exists so the known-edge validity check (#365) can
+force the two families the ROB03 pilot did not independently rediscover.
+Its spec includes an implementer construction contract (registration
+order, the single registered template name, an incomplete app theme)
+because those edges are invisible on a happy-path product spec.
+
+| Archetype | Survey | Shape |
+| --- | --- | --- |
+| `validity` | validity | missing/mistyped template name, registration order, incomplete theme × framework help |
