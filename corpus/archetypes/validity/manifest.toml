@@ -1,0 +1,66 @@
+# Feature/interaction manifest for `validity`. Format: corpus/README.md.
+# Method-coverage archetype (#365): not a 2026-08-16 survey product CLI.
+
+[archetype]
+name = "validity"
+survey = "validity"
+summary = "forces silent-template name resolution, registration order, and incomplete-theme × framework help"
+status = "in-capability"
+
+[features]
+used = [
+    "templates.named-registry",
+    "templates.registration-order",
+    "styling.themes",
+    "help.rendering",
+    "help.word",
+    "dispatch.nested-subcommands",
+]
+
+[[interactions]]
+id = "missing-template-name-is-loud"
+stresses = ["named template registry", "missing-name diagnostics", "bounded runtime failure"]
+description = "A template registered under one name, then requested under a missing or mistyped name, must fail loudly and in bounded time rather than render source, succeed empty, or hang."
+cases = [
+    "show-registered-name",
+    "show-mistyped-name",
+    "show-missing-name",
+]
+
+[[interactions]]
+id = "registration-order-and-build-gate"
+stresses = ["template load vs command registration order", "build() before run"]
+description = "Commands registered before templates are loaded and commands registered after must both render; an unbuilt or incompletely registered app must not silently render."
+cases = [
+    "early-registered-before-templates",
+    "late-registered-after-templates",
+]
+
+[[interactions]]
+id = "incomplete-theme-vs-framework-help"
+stresses = [
+    "application-owned incomplete theme",
+    "framework-rendered help",
+    "root and deep-leaf help",
+    "help spelling vs output mode vs color",
+]
+description = "An app theme that does not define help tags must still leave framework help free of unresolved markers and missing clap facts, for -h, --help, and the help word, at root and at a deep leaf, across text/term and color off/on."
+cases = [
+    "show-registered-name-term-color-on",
+    "root-h-text-color-off",
+    "root-help-flag-text-color-off",
+    "root-help-word-text-color-off",
+    "root-h-term-color-on",
+    "root-help-flag-term-color-on",
+    "root-help-word-term-color-on",
+    "root-help-word-text-color-on",
+    "root-help-word-term-color-off",
+    "leaf-h-text-color-off",
+    "leaf-help-flag-text-color-off",
+    "leaf-help-word-text-color-off",
+    "leaf-h-term-color-on",
+    "leaf-help-flag-term-color-on",
+    "leaf-help-word-term-color-on",
+    "leaf-help-word-text-color-on",
+    "leaf-help-word-term-color-off",
+]
