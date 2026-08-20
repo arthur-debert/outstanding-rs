@@ -2,7 +2,7 @@ use clap::Command;
 use insta::{assert_json_snapshot, assert_snapshot};
 use serde_json::json;
 use standout::cli::{App, Output};
-use standout::OutputMode;
+use standout::{AmbiguousWidth, ColorMode, IconMode, InputSources, OutputMode, TargetProperties};
 
 #[test]
 fn test_snapshots_term_output() {
@@ -22,9 +22,12 @@ fn test_snapshots_term_output() {
         .unwrap();
 
     let cmd = Command::new("app").subcommand(Command::new("list"));
-    let matches = cmd.try_get_matches_from(["app", "list"]).unwrap();
-
-    let result = app.dispatch(matches, OutputMode::Term);
+    let result = app.run_with(
+        cmd,
+        ["app", "list", "--output=term"],
+        snapshot_target(),
+        InputSources::from_process(),
+    );
     let output = result.output().unwrap();
 
     assert_snapshot!("term_list_output", output);
@@ -48,9 +51,12 @@ fn test_snapshots_json_output() {
         .unwrap();
 
     let cmd = Command::new("app").subcommand(Command::new("list"));
-    let matches = cmd.try_get_matches_from(["app", "list"]).unwrap();
-
-    let result = app.dispatch(matches, OutputMode::Json);
+    let result = app.run_with(
+        cmd,
+        ["app", "list", "--output=json"],
+        snapshot_target(),
+        InputSources::from_process(),
+    );
     let output = result.output().unwrap();
 
     // Use assert_json_snapshot for semantic comparison
@@ -87,4 +93,17 @@ fn test_snapshots_error_handling() {
     );
     let output = result.error().unwrap();
     assert_snapshot!("error_output", output);
+}
+
+fn snapshot_target() -> TargetProperties {
+    TargetProperties {
+        width: None,
+        stdout_is_terminal: false,
+        stderr_is_terminal: false,
+        stdout_color_capability: false,
+        stderr_color_capability: false,
+        color_scheme: ColorMode::Dark,
+        icon_mode: IconMode::Classic,
+        ambiguous_width: AmbiguousWidth::Narrow,
+    }
 }

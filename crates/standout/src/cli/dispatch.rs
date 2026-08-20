@@ -17,9 +17,14 @@ use crate::cli::handler::Output as HandlerOutput;
 use crate::cli::handler::{CommandContext, ExternalFailure, RunError, RunErrorKind};
 use crate::cli::hooks::{ArtifactOutput, HookError, Hooks};
 use crate::context::{ContextRegistry, RenderContext};
-use crate::StructuredOutputProjection;
 use crate::Theme;
+use crate::{ColorPolicy, RenderRequest, StructuredOutputProjection, TargetProperties};
 use serde::Serialize;
+use standout_render::render_request_split;
+
+/// Walking-skeleton command: dispatch builds a [`RenderRequest`] and calls
+/// [`render_request_split`] when destination facts were supplied via `run_with`.
+const SKELETON_COMMAND: &str = "list";
 
 // Re-export pure dispatch utilities from standout-dispatch
 pub use standout_dispatch::{
@@ -70,6 +75,7 @@ pub struct Presentation {
     output_mode: crate::OutputMode,
     structured_output_projection: Option<StructuredOutputProjection>,
     ambiguous_width: crate::AmbiguousWidth,
+    target: Option<TargetProperties>,
 }
 
 impl Presentation {
@@ -82,6 +88,10 @@ impl Presentation {
         &self,
         json_data: &serde_json::Value,
     ) -> Result<(String, String), RunError> {
+        if self.uses_request_path() {
+            return self.render_via_request(json_data);
+        }
+
         let ambiguous_width =
             standout_render::detect_ambiguous_width_override().unwrap_or(self.ambiguous_width);
         let render_ctx = RenderContext::with_ambiguous_width(
@@ -239,6 +249,79 @@ impl Presentation {
             TemplateRef::Absent(_) => unreachable!("absence handled before template rendering"),
         }
     }
+
+    fn uses_request_path(&self) -> bool {
+        self.target.is_some() && self.command_path == SKELETON_COMMAND
+    }
+
+    fn render_via_request(
+        &self,
+        json_data: &serde_json::Value,
+    ) -> Result<(String, String), RunError> {
+        let target = self.target.expect("request path requires TargetProperties");
+        let template = self.render_time_template()?;
+        let request = RenderRequest {
+            data: json_data.clone(),
+            template,
+            theme: self.theme.clone(),
+            format: self.output_mode,
+            color_policy: ColorPolicy::Auto,
+            target,
+            engine: self.template_engine.clone(),
+            registry: self.template_registry.clone(),
+            context_registry: Some(self.context_registry.clone()),
+            csv_projection: self
+                .structured_output_projection
+                .as_ref()
+                .map(|projection| projection.csv_projection().clone()),
+        };
+        let rendered = render_request_split(&request).map_err(render_error)?;
+        Ok((rendered.formatted, rendered.raw))
+    }
+
+    /// Maps glue [`TemplateRef`] onto the render-time type.
+    ///
+    /// Silent and binary absence cannot serialize: they keep the actionable
+    /// [`absent_template_render_error`]. Only structured-only maps to
+    /// render-time [`standout_render::TemplateRef::Absent`]. Named templates
+    /// still require a registry; the leaf loads the include tree from it.
+    fn render_time_template(&self) -> Result<standout_render::TemplateRef, RunError> {
+        match &self.template {
+            TemplateRef::Named(name) | TemplateRef::Convention(name) => {
+                if self.template_registry.is_none() {
+                    return Err(RunError::new(
+                        format!(
+                            "command `{}` references template `{}`, but no template registry is configured; add .templates(embed_templates!(\"src/templates\")) or .templates_dir(\"path/to/templates\") before .build()",
+                            self.command_path, name
+                        ),
+                        RunErrorKind::Render,
+                    ));
+                }
+                Ok(standout_render::TemplateRef::Named(name.clone()))
+            }
+            TemplateRef::Inline(source) => Ok(standout_render::TemplateRef::Inline(source.clone())),
+            TemplateRef::Absent(reason) => match reason {
+                TemplateAbsence::Silent | TemplateAbsence::Binary => Err(
+                    absent_template_render_error(&self.command_path, *reason, self.output_mode),
+                ),
+                TemplateAbsence::StructuredOnly => {
+                    if matches!(
+                        self.output_mode,
+                        crate::OutputMode::Term
+                            | crate::OutputMode::Text
+                            | crate::OutputMode::TermDebug
+                    ) {
+                        return Err(absent_template_render_error(
+                            &self.command_path,
+                            *reason,
+                            self.output_mode,
+                        ));
+                    }
+                    Ok(standout_render::TemplateRef::Absent)
+                }
+            },
+        }
+    }
 }
 
 fn render_error(error: standout_render::RenderError) -> RunError {
@@ -299,6 +382,7 @@ pub(crate) fn render_handler_output<T: Serialize>(
     output_mode: crate::OutputMode,
     structured_output_projection: Option<&StructuredOutputProjection>,
     ambiguous_width: crate::AmbiguousWidth,
+    target: Option<TargetProperties>,
 ) -> Result<DispatchOutput, RunError> {
     let output = match result {
         Ok(output) => output,
@@ -315,6 +399,7 @@ pub(crate) fn render_handler_output<T: Serialize>(
         output_mode,
         structured_output_projection: structured_output_projection.cloned(),
         ambiguous_width,
+        target,
     };
 
     match output {
@@ -418,7 +503,8 @@ pub(crate) fn hook_run_error(mut error: HookError, phase: crate::cli::HookPhase)
 
 /// Type-erased dispatch function for single-threaded handlers.
 ///
-/// Takes ArgMatches, CommandContext, optional Hooks, OutputMode, and Theme.
+/// Takes ArgMatches, CommandContext, optional Hooks, OutputMode, Theme,
+/// ambiguous-width policy, and optional destination facts from `run_with`.
 /// The hooks parameter allows post-dispatch hooks to run between handler
 /// execution and rendering. OutputMode is passed separately because CommandContext
 /// is render-agnostic, while output_mode is a rendering concern.
@@ -434,11 +520,13 @@ pub type DispatchFn = Rc<
             crate::OutputMode,
             &crate::Theme,
             crate::AmbiguousWidth,
+            Option<TargetProperties>,
         ) -> Result<DispatchOutput, RunError>,
     >,
 >;
 
 /// Dispatches the command with the given context.
+#[allow(clippy::too_many_arguments)]
 pub fn dispatch(
     dispatch_fn: &DispatchFn,
     matches: &ArgMatches,
@@ -447,8 +535,17 @@ pub fn dispatch(
     output_mode: crate::OutputMode,
     theme: &crate::Theme,
     ambiguous_width: crate::AmbiguousWidth,
+    target: Option<TargetProperties>,
 ) -> Result<DispatchOutput, RunError> {
-    (dispatch_fn.borrow_mut())(matches, ctx, hooks, output_mode, theme, ambiguous_width)
+    (dispatch_fn.borrow_mut())(
+        matches,
+        ctx,
+        hooks,
+        output_mode,
+        theme,
+        ambiguous_width,
+        target,
+    )
 }
 
 // Note: extract_command_path, get_deepest_matches, has_subcommand, insert_default_command,

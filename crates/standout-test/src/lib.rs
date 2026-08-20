@@ -118,6 +118,7 @@ use clap::Command;
 use standout::cli::{
     App, ArtifactDestination, ArtifactRun, ExitStatus, RunErrorKind, RunResult, SuccessKind,
 };
+use standout::{InputSources, TargetProperties};
 use standout_input::env::{MockClipboard, MockStdin};
 use standout_input::{
     reset_default_clipboard_reader, reset_default_prompt_responder, reset_default_stdin_reader,
@@ -125,6 +126,7 @@ use standout_input::{
     PromptResponder,
 };
 use standout_render::{
+    detect_color_capability, detect_color_mode, detect_icon_mode, detect_terminal_width,
     reset_environment_detectors, set_ambiguous_width_detector, set_color_capability_detector,
     set_terminal_width_detector, AmbiguousWidth, OutputMode,
 };
@@ -453,6 +455,11 @@ impl TestHarness {
     /// Installs every override, runs `app` with the given `cmd` definition
     /// and argv, and returns a [`TestResult`].
     ///
+    /// Constructs [`TargetProperties`] from this harness (at least width and
+    /// stdout color capability) and calls [`App::run_with`] rather than
+    /// installing those facts only as detector globals. Detector APIs remain
+    /// installed so commands not yet on the request path keep working.
+    ///
     /// Overrides are torn down when the returned guard held inside the
     /// `TestResult` is dropped. The `TestResult` and the harness share the
     /// same lifetime, so a typical test binds the result and lets it fall
@@ -616,7 +623,12 @@ impl TestHarness {
             argv.push(format!("--{}={}", self.output_flag_name, output_mode_flag(mode)).into());
         }
 
-        let outcome = app.run_to_string(cmd, argv);
+        let target = self.target_properties();
+        let sources = InputSources::from_process();
+        let capture_window = standout_render::diagnostics::begin_capture();
+        let outcome = app.run_with(cmd, argv, target, sources);
+        standout_render::warnings::capture_warnings_for_run();
+        drop(capture_window);
         let warnings = standout_render::warnings::take_captured_warnings();
         let tag_resolutions = standout_render::diagnostics::take_captured();
 
@@ -630,6 +642,22 @@ impl TestHarness {
             tag_resolutions,
             _tempdir: self.tempdir.take(),
             _restore: restore,
+        }
+    }
+
+    fn target_properties(&self) -> TargetProperties {
+        TargetProperties {
+            width: match self.terminal_width {
+                Some(width) => width,
+                None => detect_terminal_width(),
+            },
+            stdout_is_terminal: false,
+            stderr_is_terminal: false,
+            stdout_color_capability: self.color_capable.unwrap_or_else(detect_color_capability),
+            stderr_color_capability: self.color_capable.unwrap_or_else(detect_color_capability),
+            color_scheme: detect_color_mode(),
+            icon_mode: detect_icon_mode(),
+            ambiguous_width: self.ambiguous_width.unwrap_or(AmbiguousWidth::Narrow),
         }
     }
 }
@@ -670,7 +698,7 @@ fn validate_fixture_path(path: &Path) -> PathBuf {
 /// Reconstructs the text the framework's standard-output channel would have
 /// carried.
 ///
-/// `run_to_string` captures one outcome; the split into stdout and stderr is
+/// `run_with` captures one outcome; the split into stdout and stderr is
 /// made later, by `App::run`'s writer seam. This mirrors that seam's stdout
 /// side so stream routing is assertable in-process:
 ///

@@ -149,6 +149,15 @@ impl App {
     /// `RunResult::Error(msg)`. Callers using `dispatch()` directly are
     /// responsible for writing the error to stderr and choosing an exit code.
     pub fn dispatch(&self, matches: ArgMatches, output_mode: OutputMode) -> RunResult {
+        self.dispatch_with_target(matches, output_mode, None)
+    }
+
+    fn dispatch_with_target(
+        &self,
+        matches: ArgMatches,
+        output_mode: OutputMode,
+        target: Option<TargetProperties>,
+    ) -> RunResult {
         // Ensure commands are finalized (creates dispatch closures with current theme)
         self.ensure_commands_finalized();
 
@@ -190,6 +199,7 @@ impl App {
                 output_mode,
                 theme,
                 self.ambiguous_width,
+                target,
             ) {
                 Ok(output) => output,
                 Err(e) => return RunResult::Error(e),
@@ -331,6 +341,19 @@ impl App {
         I: IntoIterator<Item = T>,
         T: Into<std::ffi::OsString> + Clone,
     {
+        self.dispatch_from_with_target(cmd, args, None)
+    }
+
+    fn dispatch_from_with_target<I, T>(
+        &self,
+        cmd: Command,
+        args: I,
+        target: Option<TargetProperties>,
+    ) -> RunResult
+    where
+        I: IntoIterator<Item = T>,
+        T: Into<std::ffi::OsString> + Clone,
+    {
         // Verbatim, all the way to Clap: a non-UTF8 argument is a real argument.
         let args: Vec<std::ffi::OsString> = args.into_iter().map(Into::into).collect();
 
@@ -431,10 +454,16 @@ impl App {
         };
 
         // Dispatch to handler
-        self.dispatch(matches, output_mode)
+        self.dispatch_with_target(matches, output_mode, target)
     }
 
     /// Runs the CLI: parses arguments, dispatches to handlers, and prints output.
+    ///
+    /// Detects [`TargetProperties`] once at the process edge, overwrites
+    /// ambiguous-width with this application's policy, constructs
+    /// [`InputSources`] from the real process, and forwards both to
+    /// [`run_with`](Self::run_with). This is the printing wrapper around that
+    /// inner method.
     ///
     /// This is the main entry point for command execution. It handles everything:
     /// parsing, dispatch, rendering, and output.
@@ -488,7 +517,10 @@ impl App {
         // than leaving it open for every later run on the thread.
         let capture_window = standout_render::diagnostics::begin_capture();
 
-        let result = self.dispatch_from(cmd, args);
+        let mut target = TargetProperties::detect();
+        target.ambiguous_width = self.ambiguous_width;
+        let sources = InputSources::from_process();
+        let result = self.run_with(cmd, args, target, sources);
         let primary_status = result.exit_status();
 
         // A `help --page` display is the one output `run()` hands to a pager
@@ -543,29 +575,31 @@ impl App {
 
     /// Inner public run: destination properties and input sources as two arguments.
     ///
-    /// Production [`run`](Self::run) will later call [`TargetProperties::detect`]
-    /// and [`InputSources::from_process`] at the process edge, forward both
-    /// here, emit the structured result, and convert it to the legacy [`bool`].
+    /// Production [`run`](Self::run) calls [`TargetProperties::detect`] and
+    /// [`InputSources::from_process`] at the process edge, overwrites
+    /// ambiguous-width with the application's policy, and forwards both here.
     /// Tests construct both values themselves and call this same method,
     /// inspecting the [`RunResult`] (output, errors, artifacts) without
     /// intercepting process streams.
     /// The two arguments are not a combined run-environment type and are not
     /// stored on [`App`].
     ///
-    /// The body is unimplemented in this workstream (`todo!()`). [`Self::run`]
-    /// is unchanged and does not call this method yet.
+    /// Input resolution may still read process-global readers in this
+    /// workstream; `sources` is still constructed and passed so production
+    /// `run` owns the pair at the crate edge.
     pub fn run_with<I, T>(
         &self,
-        _cmd: Command,
-        _args: I,
-        _target: TargetProperties,
-        _sources: InputSources,
+        cmd: Command,
+        args: I,
+        target: TargetProperties,
+        sources: InputSources,
     ) -> RunResult
     where
         I: IntoIterator<Item = T>,
         T: Into<std::ffi::OsString> + Clone,
     {
-        todo!("ROB04-WS01 lands this signature only; wiring run() onto it is a later workstream")
+        let _sources = sources;
+        self.dispatch_from_with_target(cmd, args, Some(target))
     }
 
     /// Runs the CLI and returns the rendered output as a string.
