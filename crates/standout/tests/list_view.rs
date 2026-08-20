@@ -2,7 +2,7 @@
 
 use clap::Command;
 use serde::Serialize;
-use standout::cli::{App, Output, RunResult};
+use standout::cli::{App, DispatchResult, Output};
 use standout::views::{list_view, ListViewResult, MessageLevel};
 
 #[derive(Clone, Serialize)]
@@ -101,7 +101,7 @@ fn test_list_view_renders_with_framework_template() {
 
     // Run and check output
     let result = app.run_to_string(cmd, vec!["test", "list"]);
-    if let RunResult::Handled(output) = result {
+    if let DispatchResult::Handled(output) = result.outcome() {
         assert!(output.contains("Tasks:"), "Output should contain intro");
         // The template should render the items
         assert!(
@@ -135,7 +135,7 @@ fn test_list_view_empty_list() {
     let cmd = Command::new("test").subcommand(Command::new("list"));
     let result = app.run_to_string(cmd, vec!["test", "list"]);
 
-    if let RunResult::Handled(output) = result {
+    if let DispatchResult::Handled(output) = result.outcome() {
         assert!(
             output.contains("No items found"),
             "Output should contain empty message"
@@ -167,7 +167,7 @@ fn test_list_view_with_filter_summary_renders() {
     let cmd = Command::new("test").subcommand(Command::new("list"));
     let result = app.run_to_string(cmd, vec!["test", "list"]);
 
-    if let RunResult::Handled(output) = result {
+    if let DispatchResult::Handled(output) = result.outcome() {
         // Should show "Showing X of Y"
         assert!(
             output.contains("Showing 1 of 3"),

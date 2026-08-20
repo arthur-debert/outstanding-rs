@@ -147,7 +147,7 @@ pub use builder::{App, AppBuilder};
 pub use group::{CommandConfig, GroupBuilder};
 
 // Re-export result type
-pub use result::HelpResult;
+pub use result::{HelpResult, RunResult};
 
 // Re-export help types
 pub use help::{
@@ -158,8 +158,8 @@ pub use help::{
 // Re-export handler types
 pub use handler::{
     Artifact, ArtifactDestination, ArtifactReceipt, ArtifactRun, CommandContext,
-    CommandContextInput, ExitStatus, ExternalFailure, FnHandler, Handler, HandlerResult,
-    InvalidExternalStatus, Output, OutputKind, RunError, RunErrorKind, RunOutput, RunResult,
+    CommandContextInput, DispatchResult, ExitStatus, ExternalFailure, FnHandler, Handler,
+    HandlerResult, InvalidExternalStatus, Output, OutputKind, RunError, RunErrorKind, RunOutput,
     SuccessKind,
 };
 

@@ -7,8 +7,8 @@ use clap::Command;
 use serde_json::json;
 use serial_test::serial;
 use standout::cli::{
-    App, Artifact, ExitStatus, ExternalFailure, HandlerResult, HookError, Hooks, Output,
-    OutputKind, RunErrorKind, SuccessKind,
+    App, Artifact, CommandContextInput, ExitStatus, ExternalFailure, HandlerResult, HookError,
+    Hooks, Output, OutputKind, RunErrorKind, SuccessKind,
 };
 use standout::tabular::{Column, Width};
 use standout::views::list_view;
@@ -354,11 +354,11 @@ fn piped_stdin_reaches_handler() {
     let app = App::builder()
         .command(
             "read",
-            |_m, _ctx| {
+            |_m, ctx| {
                 let v = InputChain::<String>::new()
                     .try_source(StdinSource::new())
                     .default("nothing".into())
-                    .resolve(_m)
+                    .resolve_from(_m, ctx.input_sources())
                     .unwrap();
                 Ok(Output::Render(json!({ "val": v })))
             },
@@ -381,11 +381,11 @@ fn interactive_stdin_falls_through_to_default() {
     let app = App::builder()
         .command(
             "read",
-            |_m, _ctx| {
+            |_m, ctx| {
                 let v = InputChain::<String>::new()
                     .try_source(StdinSource::new())
                     .default("no-pipe".into())
-                    .resolve(_m)
+                    .resolve_from(_m, ctx.input_sources())
                     .unwrap();
                 Ok(Output::Render(json!({ "val": v })))
             },
@@ -408,11 +408,11 @@ fn clipboard_reaches_handler() {
     let app = App::builder()
         .command(
             "paste",
-            |_m, _ctx| {
+            |_m, ctx| {
                 let v = InputChain::<String>::new()
                     .try_source(ClipboardSource::new())
                     .default("empty".into())
-                    .resolve(_m)
+                    .resolve_from(_m, ctx.input_sources())
                     .unwrap();
                 Ok(Output::Render(json!({ "val": v })))
             },
@@ -444,10 +444,17 @@ fn scripted_prompts_drive_a_wizard_handler() {
     let app = App::builder()
         .command(
             "wizard",
-            |_m, _ctx| {
-                let name = TextPromptSource::new("Name: ").prompt().unwrap();
-                let proceed = ConfirmPromptSource::new("Continue? ").prompt().unwrap();
-                let title = TextPromptSource::new("Title: ").prompt().unwrap();
+            |_m, ctx| {
+                let sources = ctx.input_sources();
+                let name = TextPromptSource::new("Name: ")
+                    .prompt_from(sources)
+                    .unwrap();
+                let proceed = ConfirmPromptSource::new("Continue? ")
+                    .prompt_from(sources)
+                    .unwrap();
+                let title = TextPromptSource::new("Title: ")
+                    .prompt_from(sources)
+                    .unwrap();
                 Ok(Output::Render(json!({
                     "name": name,
                     "proceed": proceed,
@@ -485,8 +492,8 @@ fn scripted_cancel_propagates_to_handler() {
     let app = App::builder()
         .command(
             "wizard",
-            |_m, _ctx| {
-                let body = match TextPromptSource::new("Name: ").prompt() {
+            |_m, ctx| {
+                let body = match TextPromptSource::new("Name: ").prompt_from(ctx.input_sources()) {
                     Ok(name) => format!("ok:{name}"),
                     Err(e) => format!("err:{e}"),
                 };
@@ -521,8 +528,8 @@ fn responder_is_reset_between_runs() {
     let app = App::builder()
         .command(
             "wizard",
-            |_m, _ctx| {
-                let body = match TextPromptSource::new("Name: ").prompt() {
+            |_m, ctx| {
+                let body = match TextPromptSource::new("Name: ").prompt_from(ctx.input_sources()) {
                     Ok(name) => format!("ok:{name}"),
                     Err(e) => format!("err:{e}"),
                 };

@@ -9,6 +9,7 @@ use clap::ArgMatches;
 
 use crate::collector::{InputCollector, InputSourceKind, ResolvedInput};
 use crate::InputError;
+use crate::InputSources;
 
 /// Validator function type.
 type ValidatorFn<T> = Box<dyn Fn(&T) -> Result<(), String> + Send + Sync>;
@@ -133,9 +134,24 @@ impl<T: Clone + Send + Sync + 'static> InputChain<T> {
     /// Resolve the chain and return the input value.
     ///
     /// Tries each source in order until one provides input, then runs
-    /// validation. Returns the value or an error.
+    /// validation. Returns the value or an error. Uses
+    /// [`InputSources::from_process`]; prefer [`resolve_from`] when the
+    /// caller already has invocation sources.
     pub fn resolve(&self, matches: &ArgMatches) -> Result<T, InputError> {
-        self.resolve_with_source(matches).map(|r| r.value)
+        self.resolve_from(matches, &InputSources::from_process())
+    }
+
+    /// Resolve against explicit [`InputSources`].
+    ///
+    /// Stdin, clipboard, and (for interactive collection) the prompt
+    /// responder come from `sources` rather than process-global defaults.
+    pub fn resolve_from(
+        &self,
+        matches: &ArgMatches,
+        sources: &InputSources,
+    ) -> Result<T, InputError> {
+        self.resolve_from_with_source(matches, sources)
+            .map(|r| r.value)
     }
 
     /// Resolve the chain and return the input with source metadata.
@@ -146,7 +162,21 @@ impl<T: Clone + Send + Sync + 'static> InputChain<T> {
         &self,
         matches: &ArgMatches,
     ) -> Result<ResolvedInput<T>, InputError> {
+        self.resolve_from_with_source(matches, &InputSources::from_process())
+    }
+
+    /// Resolve against explicit [`InputSources`] and return source metadata.
+    pub fn resolve_from_with_source(
+        &self,
+        matches: &ArgMatches,
+        sources: &InputSources,
+    ) -> Result<ResolvedInput<T>, InputError> {
         for (source, kind) in &self.sources {
+            let bound = source.bind_sources(sources);
+            let source: &dyn InputCollector<T> = match bound.as_ref() {
+                Some(bound) => bound.as_ref(),
+                None => source.as_ref(),
+            };
             if !source.is_available(matches) {
                 continue;
             }

@@ -32,7 +32,7 @@ use clap::Command;
 use console::Style;
 use proptest::prelude::*;
 use serde_json::{json, Value};
-use standout::cli::{App, Output, RunErrorKind, RunResult};
+use standout::cli::{App, DispatchResult as RunResult, Output, RunErrorKind};
 use standout::{OutputMode, Theme};
 use standout_test::invariants::{
     assert_no_unresolved_tag_markers_in_page, assert_styling_preserves_layout_in_pages,

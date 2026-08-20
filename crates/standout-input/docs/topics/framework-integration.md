@@ -193,9 +193,9 @@ fn create_falls_back_to_stdin() {
 }
 ```
 
-The harness installs `MockStdin` / `MockClipboard` via `standout-input`'s process-global default readers, so `StdinSource::new()` and `ClipboardSource::new()` inside the chain transparently see the mocks. No source code changes are needed to make the chain testable.
+The harness constructs [`InputSources`](https://docs.rs/standout-input/latest/standout_input/struct.InputSources.html) with `MockStdin` / `MockClipboard` and passes them into `App::run_with`, so `StdinSource::new()` and `ClipboardSource::new()` inside a `CommandConfig::input` chain see the mocks at resolve time.
 
-For lower-level tests that don't need the harness, you can manipulate the readers directly with [`set_default_stdin_reader`](https://docs.rs/standout-input/latest/standout_input/fn.set_default_stdin_reader.html) and friends. Serialize tests that touch them with `#[serial]` from `serial_test`, and scope each installed override with an RAII guard whose `Drop` resets it so a panic cannot leak process-global state into later tests.
+For lower-level tests that don't need the harness, pass sources into [`InputChain::resolve_from`](https://docs.rs/standout-input/latest/standout_input/struct.InputChain.html#method.resolve_from).
 
 ---
 

@@ -14,6 +14,7 @@ use crate::{
     TargetProperties,
 };
 use clap::{Arg, ArgAction, ArgMatches, Command};
+use standout_render::warnings::WarningBuffer;
 use std::io::Write;
 use std::path::PathBuf;
 
@@ -147,7 +148,13 @@ impl App {
     /// `RunResult::Error(msg)`. Callers using `dispatch()` directly are
     /// responsible for writing the error to stderr and choosing an exit code.
     pub fn dispatch(&self, matches: ArgMatches, output_mode: OutputMode) -> RunResult {
-        self.dispatch_with_target(matches, output_mode, None)
+        self.dispatch_with_target(
+            matches,
+            output_mode,
+            None,
+            InputSources::from_process(),
+            WarningBuffer::new(),
+        )
     }
 
     fn dispatch_with_target(
@@ -155,6 +162,8 @@ impl App {
         matches: ArgMatches,
         output_mode: OutputMode,
         target: Option<TargetProperties>,
+        sources: InputSources,
+        warnings: WarningBuffer,
     ) -> RunResult {
         // Ensure commands are finalized (creates dispatch closures with current theme)
         self.ensure_commands_finalized();
@@ -167,6 +176,8 @@ impl App {
         let commands = self.get_commands();
         if let Some(dispatch_fn) = commands.get(&path_str) {
             let mut ctx = CommandContext::new(path, self.app_state.clone());
+            ctx.extensions.insert(sources);
+            ctx.extensions.insert(warnings);
 
             // Get hooks for this command (used for pre-dispatch, post-dispatch, and post-output)
             let hooks = self.command_hooks.get(&path_str);
@@ -338,7 +349,13 @@ impl App {
         I: IntoIterator<Item = T>,
         T: Into<std::ffi::OsString> + Clone,
     {
-        self.dispatch_from_with_target(cmd, args, None)
+        self.dispatch_from_with_target(
+            cmd,
+            args,
+            None,
+            InputSources::from_process(),
+            WarningBuffer::new(),
+        )
     }
 
     fn dispatch_from_with_target<I, T>(
@@ -346,6 +363,8 @@ impl App {
         cmd: Command,
         args: I,
         target: Option<TargetProperties>,
+        sources: InputSources,
+        warnings: WarningBuffer,
     ) -> RunResult
     where
         I: IntoIterator<Item = T>,
@@ -375,7 +394,8 @@ impl App {
 
         // One parse seam for both paths: Clap decides which command the line
         // named, and a line that named none may take a default command.
-        let matches = match self.parse_with_default_command(&augmented_cmd, &args) {
+        let matches = match self.parse_with_default_command(&augmented_cmd, &args, sources.stdin())
+        {
             Ok(matches) => matches,
             Err(ParseFailure::UnknownDefault(e)) => {
                 return RunResult::Error(RunError::new(e.to_string(), RunErrorKind::DefaultCommand))
@@ -453,7 +473,7 @@ impl App {
         };
 
         // Dispatch to handler
-        self.dispatch_with_target(matches, output_mode, target)
+        self.dispatch_with_target(matches, output_mode, target, sources, warnings)
     }
 
     /// Runs the CLI: parses arguments, dispatches to handlers, and prints output.
@@ -521,13 +541,16 @@ impl App {
         let sources = InputSources::from_process();
         let result = self.run_with(cmd, args, target, sources);
         let primary_status = result.exit_status();
+        let warnings = result.warnings().to_vec();
 
         // A `help --page` display is the one output `run()` hands to a pager
         // instead of writing itself, which is why it happens before the
         // handles are locked. With no pager available it falls through to the
         // normal writers, so help is never lost to a missing `less`.
-        let paged = match &result {
-            RunResult::Handled(output) if output.kind() == SuccessKind::PagedHelp => {
+        let paged = match result.outcome() {
+            crate::cli::DispatchResult::Handled(output)
+                if output.kind() == SuccessKind::PagedHelp =>
+            {
                 display_with_pager(output.as_str()).is_ok()
             }
             _ => false,
@@ -540,7 +563,7 @@ impl App {
         let (handled, final_write_failure) = if paged {
             (true, None)
         } else {
-            emit_run_result(&result, &mut stdout, &mut stderr)
+            emit_run_result(result.outcome(), &mut stdout, &mut stderr)
         };
         drop(stdout);
         drop(stderr);
@@ -552,7 +575,7 @@ impl App {
         // driven by whether stderr itself is a color-capable TTY.
         let default_theme = crate::Theme::default();
         let theme = self.theme.as_ref().unwrap_or(&default_theme);
-        standout_render::warnings::flush_to_stderr(theme, OutputMode::Auto);
+        standout_render::warnings::flush_to_stderr(theme, OutputMode::Auto, target, &warnings);
 
         // Closes this run's window for render diagnostics. Nothing prints them
         // — the framework does not react to an unresolved tag — but closing the
@@ -583,32 +606,34 @@ impl App {
     /// The two arguments are not a combined run-environment type and are not
     /// stored on [`App`].
     ///
-    /// Input resolution may still read process-global readers in this
-    /// workstream; `sources` is still constructed and passed so production
-    /// `run` owns the pair at the crate edge.
+    /// Input resolution takes `sources` as an argument. Tests construct
+    /// mocks and pass them here; production `run` uses
+    /// [`InputSources::from_process`].
     pub fn run_with<I, T>(
         &self,
         cmd: Command,
         args: I,
         target: TargetProperties,
         sources: InputSources,
-    ) -> RunResult
+    ) -> crate::cli::RunResult
     where
         I: IntoIterator<Item = T>,
         T: Into<std::ffi::OsString> + Clone,
     {
-        let _sources = sources;
-        self.dispatch_from_with_target(cmd, args, Some(target))
+        let warnings = WarningBuffer::new();
+        let inner =
+            self.dispatch_from_with_target(cmd, args, Some(target), sources, warnings.clone());
+        crate::cli::RunResult::from_dispatch(inner, warnings.take())
     }
 
     /// Runs the CLI and returns the rendered output as a string.
     ///
     /// Similar to `run()`, but returns the output instead of printing it.
     /// Useful for testing or when you need to capture and process the output.
-    /// Framework warnings queued during the run are drained into
-    /// [`standout_render::warnings::take_captured_warnings`] instead of
-    /// printing to stderr, so consecutive in-process runs do not leak warnings
-    /// into each other. The run's style-tag passes are likewise ended into
+    /// Framework warnings queued during the run are returned on the
+    /// [`crate::cli::RunResult`], not a thread-local, so consecutive
+    /// in-process runs do not leak warnings into each other. The run's
+    /// style-tag passes are ended into
     /// [`standout_render::diagnostics::take_captured`].
     ///
     /// Reentrant: a handler may drive another app through this entry point, and
@@ -646,7 +671,7 @@ impl App {
     ///     _ => {},
     /// }
     /// ```
-    pub fn run_to_string<I, T>(&self, cmd: Command, args: I) -> RunResult
+    pub fn run_to_string<I, T>(&self, cmd: Command, args: I) -> crate::cli::RunResult
     where
         I: IntoIterator<Item = T>,
         T: Into<std::ffi::OsString> + Clone,
@@ -655,10 +680,16 @@ impl App {
         // this same entry point nests a window inside this one instead of
         // ending it. See `standout_render::diagnostics` on nesting.
         let capture_window = standout_render::diagnostics::begin_capture();
-        let result = self.dispatch_from(cmd, args);
-        standout_render::warnings::capture_warnings_for_run();
+        let warnings = WarningBuffer::new();
+        let inner = self.dispatch_from_with_target(
+            cmd,
+            args,
+            None,
+            InputSources::from_process(),
+            warnings.clone(),
+        );
         drop(capture_window);
-        result
+        crate::cli::RunResult::from_dispatch(inner, warnings.take())
     }
 
     /// Adds the framework-owned surface every parse path shares: the

@@ -116,6 +116,10 @@ pub struct RenderContext<'a> {
     /// This allows passing arbitrary metadata to context providers
     /// without modifying the struct definition.
     pub extras: HashMap<String, String>,
+
+    /// Optional per-run warning buffer. Style-tag application records
+    /// unresolved-tag warnings here when present.
+    pub warnings: Option<crate::warnings::WarningBuffer>,
 }
 
 impl<'a> RenderContext<'a> {
@@ -155,6 +159,7 @@ impl<'a> RenderContext<'a> {
             theme,
             data,
             extras,
+            warnings: None,
         }
     }
 

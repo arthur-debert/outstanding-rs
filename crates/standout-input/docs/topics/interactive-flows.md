@@ -254,30 +254,27 @@ PromptResponse::Skip    // -> Err(InputError::NoInput)        — same path as "
 
 Use them to test the wizard's abort and re-ask logic without involving real signal handling.
 
-For lower-level tests that don't need the harness, install the responder directly:
+For lower-level tests that don't need the harness, put the responder on [`InputSources`](https://docs.rs/standout-input/latest/standout_input/struct.InputSources.html):
 
 ```rust
 use std::sync::Arc;
-use standout_input::{
-    set_default_prompt_responder, reset_default_prompt_responder,
-    ScriptedResponder, PromptResponse,
-};
+use standout_input::{InputSources, ScriptedResponder, PromptResponse};
 
 #[test]
-#[serial(prompt_responder)]
 fn pack_name_validation_re_asks_on_invalid() {
-    set_default_prompt_responder(Arc::new(ScriptedResponder::new([
+    let sources = InputSources::from_process().with_responder(Arc::new(ScriptedResponder::new([
         PromptResponse::text("BadName!"),  // first try, rejected by validator
         PromptResponse::text("good-name"), // re-ask, accepted
     ])));
 
-    assert_eq!(prompt_pack_name(&Ctx::fresh()).unwrap(), Answer::Text("good-name".into()));
-
-    reset_default_prompt_responder();
+    assert_eq!(
+        prompt_pack_name_from(&sources).unwrap(),
+        Answer::Text("good-name".into())
+    );
 }
 ```
 
-This serializes on the `prompt_responder` axis (the global override is process-wide, like stdin / clipboard). The harness handles the install + reset for you when used as `.prompts(...)`.
+The harness places that responder on the run's `InputSources` when used as `.prompts(...)`.
 
 ---
 

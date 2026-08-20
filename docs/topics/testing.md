@@ -67,16 +67,15 @@ verbatim diagnostic, `error_kind()` is `RunErrorKind::External`, and
 - Working directory (real `std::env::set_current_dir`, original restored on drop)
 - Fixture files (written into a `tempfile::TempDir`)
 - Terminal detectors: width, TTY, color capability
-- Stdin reader (process-global override consulted by `StdinSource::new()`)
-- Clipboard reader (same mechanism for `ClipboardSource::new()`)
-- Interactive prompt responder (process-global override consulted by every interactive source's `.prompt()` shortcut, so wizard handlers are testable in process — see [Interactive Flows → Testing Wizards](../crates/input/topics/interactive-flows.md#testing-wizards))
+- Stdin, clipboard, and prompt responder as an [`InputSources`](https://docs.rs/standout/latest/standout/struct.InputSources.html) value passed into `App::run_with` (not process-global overrides)
+- Interactive prompt responder on those sources, so wizard handlers that call `.prompt_from(ctx.input_sources())` are testable in process — see [Interactive Flows → Testing Wizards](../crates/input/topics/interactive-flows.md#testing-wizards)
 - Forced `OutputMode` (injected as `--output=<mode>` into argv)
 - Framework warnings captured from the run boundary, including accepted answer-sheet parse warnings queued by questionnaire commands
 
 A `RestoreState` held inside the returned `TestResult` runs on drop — on both normal exit and panic unwind — and tears down every override, so a failing assertion never leaks state into sibling tests. Two nuances worth knowing:
 
 - **Env vars and cwd** are restored to the values captured at `run()` time. This is a true "put it back the way you found it."
-- **Terminal detectors and default stdin/clipboard readers** are reset to the library defaults, not to whatever was installed before `run()`. If you mix `TestHarness` with a manually installed `set_*_detector` / `set_default_*_reader` on the same thread, the harness's drop will wipe your override. Keep them separate, or scope the manual override entirely outside the harness.
+- **Terminal detectors** are reset to the library defaults, not to whatever was installed before `run()`. If you mix `TestHarness` with a manually installed `set_*_detector` on the same thread, the harness's drop will wipe your override. Keep them separate, or scope the manual override entirely outside the harness. Stdin, clipboard, and the prompt responder are not process-global: they live on the `InputSources` value for that run.
 
 The harness is `#[must_use]`: a `TestHarness::new()` without a `.run(...)` does nothing and gets flagged by the compiler.
 
@@ -85,11 +84,10 @@ See [Introduction to Testing](../guides/intro-to-testing.md) for the full builde
 ### Captured warnings
 
 `App::run` renders framework warnings to stderr after the primary command
-output. `TestHarness` uses the capture path instead: each `TestResult` owns the
-warnings produced by that run and exposes them through `warnings()` plus
-assertion helpers such as `assert_warning_contains(...)`. This covers
-resource-loading warnings and accepted questionnaire answer-sheet warnings,
-without leaking a warning batch into the next in-process run.
+output, styled from stderr color capability on `TargetProperties`. `TestHarness`
+reads them from the run result: each `TestResult` owns the warnings produced by
+that run and exposes them through `warnings()` plus assertion helpers such as
+`assert_warning_contains(...)`. There is no thread-local warning collector.
 
 ## Environment seams exposed by the framework
 
@@ -112,45 +110,29 @@ There is no TTY detector: one existed, nothing in production ever read it, and i
 
 These drive `OutputMode::Auto`'s color decision and the render context's terminal width. By default, terminal width resolves from a valid positive `$COLUMNS` value before probing the terminal. Installing a width detector replaces that full resolution, so an override keeps snapshot tests deterministic regardless of the process environment.
 
-### `standout-input` default readers
+### `standout-input` InputSources
 
-`StdinSource::new()` and `ClipboardSource::new()` resolve their reader through the `DefaultStdin` / `DefaultClipboard` shims. Each shim first consults a process-global override; if none is installed, it falls back to the real OS-backed reader.
+Stdin, clipboard, and the prompt responder are arguments to input collection,
+carried on [`InputSources`](https://docs.rs/standout-input/latest/standout_input/struct.InputSources.html).
+Production `App::run` constructs them from the real process.
+`TestHarness` constructs mocks and passes them into `App::run_with`.
+`StdinSource::new()` / `ClipboardSource::new()` bind to those sources at
+resolve time; handlers that resolve a chain themselves call
+`InputChain::resolve_from(matches, ctx.input_sources())`.
 
 ```rust
-use std::sync::Arc;
-use standout_input::{set_default_stdin_reader, reset_default_stdin_reader};
-use standout_input::env::MockStdin;
+use standout_input::{InputSources, MockStdin};
 
-struct StdinGuard;
-
-impl StdinGuard {
-    fn install(reader: MockStdin) -> Self {
-        set_default_stdin_reader(Arc::new(reader));
-        Self
-    }
-}
-
-impl Drop for StdinGuard {
-    fn drop(&mut self) {
-        reset_default_stdin_reader();
-    }
-}
-
-let _stdin = StdinGuard::install(MockStdin::piped("hello"));
-// ... run test ...
+let sources = InputSources::from_process().with_stdin(MockStdin::piped("hello"));
+let value = chain.resolve_from(&matches, &sources)?;
 ```
 
-The guard resets even if the test panics. Use the same pattern with
-`set_default_clipboard_reader` / `reset_default_clipboard_reader` when testing
-the default clipboard seam.
-
-Handlers that use `StdinSource::new()` / `ClipboardSource::new()` / `read_if_piped()` pick up the mock transparently — no handler refactor needed.
-
-Handlers that need per-instance control keep using `StdinSource::with_reader(MockStdin::piped(...))` as before.
+Handlers that need a source-local mock keep using
+`StdinSource::with_reader(MockStdin::piped(...))` as before.
 
 ### Testing invocation-aware default commands
 
-`default_command_with` resolves through the same `DefaultStdin` seam, so `TestHarness` drives it with no extra wiring:
+`default_command_with` reads the stdin terminal fact from `InputSources`, so `TestHarness` drives it with no extra wiring:
 
 ```rust
 // Piped stdin resolves the naked invocation to the piped entry point.
@@ -170,51 +152,34 @@ TestHarness::new()
 
 `interactive_stdin()` is required for the terminal branch — without it the harness inherits the real stdin, which is *not* a terminal under a test runner, so a naked invocation would take the piped branch and the test would pass or fail depending on how it was launched.
 
-For the parse-only path (`get_matches_from` / `parse_from`) there's no harness entry point; install the override directly:
+For the parse-only path (`get_matches_from` / `parse_from`) pass sources explicitly:
 
 ```rust
-let _stdin = StdinGuard::install(MockStdin::terminal());
-match app.get_matches_from(cli::command(), ["tdoo"]) {
+use standout_input::{InputSources, MockStdin};
+
+let sources = InputSources::from_process().with_stdin(MockStdin::terminal());
+match app.get_matches_from_with_sources(cli::command(), ["tdoo"], &sources) {
     HelpResult::Matches(m) => assert_eq!(m.subcommand_name(), Some("list")),
     other => panic!("expected matches, got {other:?}"),
 }
 ```
 
-Both the harness and the manual override are process-global — mark these tests `#[serial]`.
-
 ### `standout-input` prompt responder
 
-The `.prompt()` shortcut on every interactive source (`InquireText`, `InquireSelect`, `TextPromptSource`, `EditorSource`, …) consults a process-global [`PromptResponder`](https://docs.rs/standout-input/latest/standout_input/trait.PromptResponder.html) before opening any real prompt. Install one to make wizard handlers testable in-process:
-
-The override is process-global, so tests installing it directly must (a) carry a `#[serial(prompt_responder)]` attribute and (b) reset on every exit path including panics — either via an RAII guard or by preferring the harness, which handles both:
+The `.prompt_from(&sources)` shortcut on every interactive source (`InquireText`, `InquireSelect`, `TextPromptSource`, `EditorSource`, …) consults the [`PromptResponder`](https://docs.rs/standout-input/latest/standout_input/trait.PromptResponder.html) on [`InputSources`] before opening any real prompt. Put a [`ScriptedResponder`](https://docs.rs/standout-input/latest/standout_input/struct.ScriptedResponder.html) on those sources — or use `TestHarness::prompts(...)` — to make wizard handlers testable in-process:
 
 ```rust
 use std::sync::Arc;
-use serial_test::serial;
-use standout_input::{
-    set_default_prompt_responder, reset_default_prompt_responder,
-    ScriptedResponder, PromptResponse,
-};
+use standout_input::{InputSources, ScriptedResponder, PromptResponse};
 
-struct ResponderGuard;
-impl Drop for ResponderGuard {
-    fn drop(&mut self) { reset_default_prompt_responder(); }
-}
-
-#[test]
-#[serial(prompt_responder)]
-fn pack_name_re_asks_on_invalid() {
-    set_default_prompt_responder(Arc::new(ScriptedResponder::new([
-        PromptResponse::text("BadName!"),  // rejected by validator
-        PromptResponse::text("good-name"), // accepted on re-ask
-    ])));
-    let _guard = ResponderGuard; // resets even if assertions panic
-
-    // ... call the wizard step under test, assert, etc ...
-}
+let sources = InputSources::from_process().with_responder(Arc::new(ScriptedResponder::new([
+    PromptResponse::text("BadName!"),  // rejected by validator
+    PromptResponse::text("good-name"), // accepted on re-ask
+])));
+let name = TextPromptSource::new("Pack name: ").prompt_from(&sources)?;
 ```
 
-Most tests should reach for `TestHarness::prompts(...)` instead — the harness's `RestoreState` runs `reset_default_prompt_responder()` on drop just like it does for stdin and clipboard, so the boilerplate disappears.
+Most tests should reach for `TestHarness::prompts(...)` instead; handlers then call `.prompt_from(ctx.input_sources())`.
 
 Open prompts (`Text`/`Password`/`Editor`) take a `Text(String)`; finite-choice prompts (`Confirm`/`Select`/`MultiSelect`) take a `Bool` / `Choice(usize)` / `Choices(Vec<usize>)`. Position-based responses are deliberate: a test that picked `Choice(2)` keeps working when you rename `"Production"` to `"Live"`. `ScriptedResponder` panics on kind mismatch so a wizard reorder fails loudly. `PromptResponse::Cancel` and `PromptResponse::Skip` are kind-agnostic and let tests cover the abort and re-ask paths without real signal handling. See [Interactive Flows](../crates/input/topics/interactive-flows.md) for the wizard-shape walkthrough and `TestHarness::prompts(...)` for the harness-level wiring.
 
@@ -224,9 +189,9 @@ These aren't proxied through a Standout abstraction — they're just real OS pri
 
 ## Concurrency model
 
-Every seam above is process-global. Parallel tests that mutate them will interfere with each other.
+Env vars, cwd, and render detectors remain process-global. Parallel tests that mutate them will interfere with each other.
 
-Use `#[serial]` from the `serial_test` crate (re-exported as `standout_test::serial`) on every test that uses `TestHarness` or any of the lower-level detectors. Within a test binary, serial execution is automatic; across test binaries, cargo runs one test binary at a time by default, so there's no extra coordination needed.
+Use `#[serial]` from the `serial_test` crate (re-exported as `standout_test::serial`) on every test that uses `TestHarness` for those reasons, or any of the lower-level detectors. Input sources and warning capture no longer require `#[serial]`. Within a test binary, serial execution is automatic; across test binaries, cargo runs one test binary at a time by default, so there's no extra coordination needed.
 
 ## Recipes
 

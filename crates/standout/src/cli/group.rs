@@ -743,13 +743,17 @@ impl<H> CommandConfig<H> {
     {
         let name = name.into();
         self.pre_dispatch(move |matches, ctx| {
+            use crate::cli::CommandContextInput;
             // Pre-dispatch hooks receive the top-level ArgMatches, but the
             // chain's sources reference args defined on the deepest subcommand
             // (the same matches the handler sees). Resolve against those.
             let sub_matches = crate::cli::dispatch::get_deepest_matches(matches);
-            let resolved = chain.resolve_with_source(sub_matches).map_err(|e| {
-                crate::cli::hooks::HookError::pre_dispatch(format!("input `{}`: {}", name, e))
-            })?;
+            let sources = ctx.input_sources();
+            let resolved = chain
+                .resolve_from_with_source(sub_matches, sources)
+                .map_err(|e| {
+                    crate::cli::hooks::HookError::pre_dispatch(format!("input `{}`: {}", name, e))
+                })?;
             if !ctx.extensions.contains::<standout_input::Inputs>() {
                 ctx.extensions.insert(standout_input::Inputs::new());
             }

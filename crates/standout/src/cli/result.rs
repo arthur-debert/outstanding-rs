@@ -7,7 +7,49 @@
 //! are what keep `myapp help` from meaning one thing through one entry point
 //! and something else through the other.
 
-use crate::cli::handler::{RunError, RunErrorKind, RunOutput, RunResult};
+use crate::cli::handler::{DispatchResult, RunError, RunErrorKind, RunOutput};
+
+/// Outcome of [`App::run_with`](crate::cli::App::run_with) / [`App::run_to_string`](crate::cli::App::run_to_string):
+/// the dispatch result plus framework warnings collected during the run.
+///
+/// Warnings are an argument of the run, not a thread-local. [`Deref`] to the
+/// inner [`DispatchResult`] so `is_handled`, `exit_status`, and similar
+/// methods keep working. Match on [`outcome`](Self::outcome) for variants.
+#[derive(Debug)]
+pub struct RunResult {
+    inner: DispatchResult,
+    warnings: Vec<String>,
+}
+
+impl RunResult {
+    /// Wraps a dispatch outcome with the warnings collected during the run.
+    pub fn from_dispatch(inner: DispatchResult, warnings: Vec<String>) -> Self {
+        Self { inner, warnings }
+    }
+
+    /// The dispatch outcome (handled, error, artifact, …).
+    pub fn outcome(&self) -> &DispatchResult {
+        &self.inner
+    }
+
+    /// Consumes this result and returns the dispatch outcome.
+    pub fn into_outcome(self) -> DispatchResult {
+        self.inner
+    }
+
+    /// Framework warnings collected during the run, one per entry.
+    pub fn warnings(&self) -> &[String] {
+        &self.warnings
+    }
+}
+
+impl std::ops::Deref for RunResult {
+    type Target = DispatchResult;
+
+    fn deref(&self) -> &Self::Target {
+        &self.inner
+    }
+}
 
 /// Result of the help interception.
 ///
@@ -66,7 +108,7 @@ impl From<HelpDisplay> for HelpResult {
     }
 }
 
-impl From<HelpDisplay> for RunResult {
+impl From<HelpDisplay> for DispatchResult {
     /// Projects a help display onto the dispatch path's result type.
     ///
     /// A rendered help is a typed success — the pager request rides along in
@@ -82,17 +124,17 @@ impl From<HelpDisplay> for RunResult {
     /// as a usage error, nor exit with the usage status.
     fn from(display: HelpDisplay) -> Self {
         match display {
-            HelpDisplay::Rendered { text, paged } => RunResult::Handled(if paged {
+            HelpDisplay::Rendered { text, paged } => DispatchResult::Handled(if paged {
                 RunOutput::paged_help(text)
             } else {
                 RunOutput::clap_help(text)
             }),
             HelpDisplay::Clap(e) if e.use_stderr() => {
-                RunResult::Error(RunError::new(e.to_string(), RunErrorKind::ClapUsage))
+                DispatchResult::Error(RunError::new(e.to_string(), RunErrorKind::ClapUsage))
             }
-            HelpDisplay::Clap(e) => RunResult::Handled(RunOutput::clap_help(e.to_string())),
+            HelpDisplay::Clap(e) => DispatchResult::Handled(RunOutput::clap_help(e.to_string())),
             HelpDisplay::RenderFailed(e) => {
-                RunResult::Error(RunError::new(e.to_string(), RunErrorKind::Render))
+                DispatchResult::Error(RunError::new(e.to_string(), RunErrorKind::Render))
             }
         }
     }

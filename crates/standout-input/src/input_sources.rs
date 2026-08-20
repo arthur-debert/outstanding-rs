@@ -8,14 +8,17 @@
 use std::fmt;
 use std::sync::Arc;
 
-use crate::env::{ClipboardReader, DefaultClipboard, DefaultStdin, StdinReader};
+use crate::env::{ClipboardReader, RealClipboard, RealStdin, StdinReader};
 use crate::responder::PromptResponder;
 
 /// Stdin, clipboard, and prompt-responder used for one invocation.
 ///
 /// Constructed from the real process in production ([`from_process`](Self::from_process));
-/// constructed with mocks by tests ([`new`](Self::new)). Passed into `App`
-/// next to target properties as a second argument, not stored on `App`.
+/// constructed with mocks by tests ([`new`](Self::new), [`with_stdin`](Self::with_stdin)
+/// and siblings). Passed into `App` next to target properties as a second
+/// argument, not stored on `App`. Input collection takes this value as an
+/// argument; it does not read process-global default readers.
+#[derive(Clone)]
 pub struct InputSources {
     stdin: Arc<dyn StdinReader>,
     clipboard: Arc<dyn ClipboardReader>,
@@ -48,14 +51,32 @@ impl InputSources {
         }
     }
 
-    /// Constructs sources from the real process (stdin, clipboard, prompt
+    /// Constructs sources from the real process (stdin, clipboard, no prompt
     /// responder).
     ///
-    /// Production `App::run` calls this at the process edge. Input resolution
-    /// may still read process-global default readers in this workstream; this
-    /// constructor still produces an explicit value for `run_with`.
+    /// Production `App::run` calls this at the process edge. Interactive
+    /// prompts then use the real backend; tests that need a scripted responder
+    /// call [`with_responder`](Self::with_responder) on a value they construct.
     pub fn from_process() -> Self {
-        Self::new(DefaultStdin, DefaultClipboard, None)
+        Self::new(RealStdin, RealClipboard, None)
+    }
+
+    /// Replaces the stdin reader.
+    pub fn with_stdin(mut self, stdin: impl StdinReader + 'static) -> Self {
+        self.stdin = Arc::new(stdin);
+        self
+    }
+
+    /// Replaces the clipboard reader.
+    pub fn with_clipboard(mut self, clipboard: impl ClipboardReader + 'static) -> Self {
+        self.clipboard = Arc::new(clipboard);
+        self
+    }
+
+    /// Sets the prompt responder used by `.prompt()` / interactive collection.
+    pub fn with_responder(mut self, responder: Arc<dyn PromptResponder>) -> Self {
+        self.responder = Some(responder);
+        self
     }
 
     /// Stdin reader for this invocation.
@@ -63,14 +84,29 @@ impl InputSources {
         self.stdin.as_ref()
     }
 
+    /// Shared stdin reader handle, for binding collectors at resolve time.
+    pub fn stdin_arc(&self) -> Arc<dyn StdinReader> {
+        Arc::clone(&self.stdin)
+    }
+
     /// Clipboard reader for this invocation.
     pub fn clipboard(&self) -> &dyn ClipboardReader {
         self.clipboard.as_ref()
     }
 
+    /// Shared clipboard reader handle, for binding collectors at resolve time.
+    pub fn clipboard_arc(&self) -> Arc<dyn ClipboardReader> {
+        Arc::clone(&self.clipboard)
+    }
+
     /// Prompt responder for this invocation, if one was supplied.
     pub fn responder(&self) -> Option<&dyn PromptResponder> {
         self.responder.as_deref()
+    }
+
+    /// Shared prompt-responder handle, if one was supplied.
+    pub fn responder_arc(&self) -> Option<Arc<dyn PromptResponder>> {
+        self.responder.clone()
     }
 }
 
@@ -111,6 +147,14 @@ mod tests {
     }
 
     #[test]
+    fn input_sources_is_clone() {
+        let sources = sample();
+        let cloned = sources.clone();
+        assert_eq!(cloned.stdin().read_to_string().unwrap(), "hello");
+        assert_eq!(sources.stdin().read_to_string().unwrap(), "hello");
+    }
+
+    #[test]
     fn input_sources_debug_is_structural() {
         let sources = sample();
         let debug = format!("{sources:?}");
@@ -123,5 +167,17 @@ mod tests {
         let sources = InputSources::from_process();
         let _ = sources.stdin().is_terminal();
         assert!(sources.responder().is_none());
+    }
+
+    #[test]
+    fn builders_replace_readers() {
+        let sources = InputSources::from_process()
+            .with_stdin(MockStdin::piped("in"))
+            .with_clipboard(MockClipboard::with_content("clip"));
+        assert_eq!(sources.stdin().read_to_string().unwrap(), "in");
+        assert_eq!(
+            sources.clipboard().read().unwrap(),
+            Some("clip".to_string())
+        );
     }
 }

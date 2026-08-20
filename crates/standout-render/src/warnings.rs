@@ -9,10 +9,12 @@
 //! *before* the command's own output and as plain text, even when rendering into
 //! a rich terminal.
 //!
-//! This module routes those messages through a process-local collector so
-//! the CLI layer can render them *after* the command output, styled through
-//! the active theme, with a clear banner separating them from the rest of
-//! the terminal session.
+//! This module collects those messages on an explicit [`WarningBuffer`] so
+//! the CLI layer can return them on the run result and render them *after*
+//! the command output, styled through the active theme from stderr color
+//! capability on [`crate::TargetProperties`], with a clear banner separating
+//! them from the rest of the terminal session. There is no thread-local
+//! collector.
 //!
 //! # Scope
 //!
@@ -25,114 +27,89 @@
 //!
 //! # Usage
 //!
-//! Inside the framework, call [`push_warning`] instead of `eprintln!`:
+//! Inside the framework, call [`WarningBuffer::push`] instead of `eprintln!`:
 //!
 //! ```rust,ignore
-//! use standout_render::warnings::push_warning;
-//! push_warning(format!("Failed to parse stylesheets from '{}': {}", path, err));
+//! use standout_render::warnings::WarningBuffer;
+//! buffer.push(format!("Failed to parse stylesheets from '{}': {}", path, err));
 //! ```
 //!
-//! The CLI layer drains the collector at the end of `App::run` and renders
-//! the batch through the theme; see the `standout` crate for the flush
-//! logic. [`render_block_plain`] exposes that same layout to a caller with no
+//! The CLI layer takes the buffer at the end of `App::run_with` and returns
+//! the messages on the run result; `App::run` then renders the batch through
+//! the theme using stderr color capability from [`crate::TargetProperties`].
+//! [`render_block_plain`] exposes that same layout to a caller with no
 //! stderr of its own — the in-process test harness reconstructing what the
 //! error channel carried — so the two cannot drift apart.
 
 use std::cell::RefCell;
 use std::io::Write;
+use std::rc::Rc;
 
 use crate::output::OutputMode;
 use crate::theme::Theme;
+use crate::TargetProperties;
 
-thread_local! {
-    /// Thread-local buffer of framework warnings collected during this run.
-    ///
-    /// A CLI process is effectively single-threaded for the duration of
-    /// `App::run` (handlers themselves may spawn threads, but framework
-    /// warnings come from the main-thread setup path), so a thread-local
-    /// is sufficient and avoids the overhead of a mutex.
-    static WARNINGS: RefCell<Vec<String>> = const { RefCell::new(Vec::new()) };
-
-    /// Warnings produced by capture-oriented runs and standalone renders.
-    ///
-    /// `App::run_to_string` cannot print the warning block, but it still owns
-    /// the run boundary. Standalone rendering has no stderr boundary at all.
-    /// Stashing both forms here makes their warnings observable to
-    /// test/capture APIs without letting them leak into the next run on the
-    /// same thread.
-    static CAPTURED_WARNINGS: RefCell<Vec<String>> = const { RefCell::new(Vec::new()) };
-}
-
-/// Appends a framework warning to the thread-local collector.
+/// Per-run collector of framework warnings.
 ///
-/// The warning is stored verbatim — callers should format a complete,
-/// self-contained message (no trailing newline). The CLI layer adds the
-/// tab indent and banner when flushing.
-pub fn push_warning(message: impl Into<String>) {
-    WARNINGS.with(|w| w.borrow_mut().push(message.into()));
+/// Cheap to clone (`Rc`): glue creates one at the run edge, stores it on
+/// the command context and the render request, and takes the messages onto
+/// the run result. It is not a thread-local and not a process global.
+#[derive(Clone, Default)]
+pub struct WarningBuffer {
+    inner: Rc<RefCell<Vec<String>>>,
 }
 
-/// Appends a framework warning unless the same message is already pending.
-pub(crate) fn push_warning_once(message: impl Into<String>) {
-    let message = message.into();
-    WARNINGS.with(|warnings| {
-        let mut warnings = warnings.borrow_mut();
+impl std::fmt::Debug for WarningBuffer {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("WarningBuffer")
+            .field("len", &self.inner.borrow().len())
+            .finish()
+    }
+}
+
+impl WarningBuffer {
+    /// Creates an empty buffer.
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Appends a framework warning.
+    ///
+    /// The warning is stored verbatim — callers should format a complete,
+    /// self-contained message (no trailing newline). The CLI layer adds the
+    /// tab indent and banner when flushing.
+    pub fn push(&self, message: impl Into<String>) {
+        self.inner.borrow_mut().push(message.into());
+    }
+
+    /// Appends a framework warning unless the same message is already pending.
+    pub fn push_once(&self, message: impl Into<String>) {
+        let message = message.into();
+        let mut warnings = self.inner.borrow_mut();
         if !warnings.contains(&message) {
             warnings.push(message);
         }
-    });
+    }
+
+    /// Removes and returns all collected warnings.
+    pub fn take(&self) -> Vec<String> {
+        std::mem::take(&mut *self.inner.borrow_mut())
+    }
+
+    /// Returns a snapshot of pending warnings without draining.
+    pub fn snapshot(&self) -> Vec<String> {
+        self.inner.borrow().clone()
+    }
+
+    /// Returns `true` if no warnings are pending.
+    pub fn is_empty(&self) -> bool {
+        self.inner.borrow().is_empty()
+    }
 }
 
-/// Records a standalone render warning in the observable captured batch.
-///
-/// Unlike [`push_warning_once`], this bypasses the pending run collector so a
-/// render performed outside `App::run` cannot leak into a later command. The
-/// batch remains available through [`take_captured_warnings`].
-pub(crate) fn capture_warning_once(message: impl Into<String>) {
-    let message = message.into();
-    CAPTURED_WARNINGS.with(|warnings| {
-        let mut warnings = warnings.borrow_mut();
-        if !warnings.contains(&message) {
-            warnings.push(message);
-        }
-    });
-}
-
-/// Removes and returns all collected warnings for the current thread.
-///
-/// After this call the collector is empty. The CLI layer calls this once
-/// at the end of `App::run` to render the batch.
-pub fn drain_warnings() -> Vec<String> {
-    WARNINGS.with(|w| std::mem::take(&mut *w.borrow_mut()))
-}
-
-/// Drains pending framework warnings into the captured-run buffer.
-///
-/// This is the capture-mode counterpart to [`flush_to_stderr`]: it ends the
-/// current run's warning batch without writing to stderr. The next call
-/// replaces the previous captured batch, so stale warnings cannot bleed across
-/// consecutive in-process runs.
-pub fn capture_warnings_for_run() {
-    let warnings = drain_warnings();
-    CAPTURED_WARNINGS.with(|captured| {
-        *captured.borrow_mut() = warnings;
-    });
-}
-
-/// Returns and clears captured warnings on this thread.
-///
-/// A capture-oriented run replaces the previous batch. Standalone renders add
-/// deduplicated warnings until this function or a later run clears them.
-pub fn take_captured_warnings() -> Vec<String> {
-    CAPTURED_WARNINGS.with(|captured| std::mem::take(&mut *captured.borrow_mut()))
-}
-
-/// Returns `true` if any warnings are currently buffered for this thread.
-///
-/// Intended for hot-path checks that want to skip the rendering work when
-/// there is nothing to emit.
-pub fn has_warnings() -> bool {
-    WARNINGS.with(|w| !w.borrow().is_empty())
+/// Appends a framework warning to `buffer`.
+pub fn push_warning(buffer: &WarningBuffer, message: impl Into<String>) {
+    buffer.push(message);
 }
 
 /// Style name for the "Standout :: Warnings" banner, looked up in the theme.
@@ -144,6 +121,24 @@ pub const WARNING_ITEM_STYLE: &str = "standout_warning_item";
 /// Literal banner text. Leading/trailing spaces give the background color
 /// room to breathe when the banner is styled with a bg fill.
 const BANNER_TEXT: &str = " Standout :: Warnings ";
+
+/// Renders the warning block for a destination, applying stderr color from
+/// `target`.
+///
+/// Used by tests that need to assert the piped-stdout / TTY-stderr case
+/// without writing to a real stderr.
+pub fn render_block_for_target(
+    theme: &Theme,
+    output_mode: OutputMode,
+    target: TargetProperties,
+    warnings: &[String],
+) -> String {
+    let use_color = should_style_stderr(output_mode, target);
+    let styles = theme.resolve_styles(None);
+    render_block(warnings, |style_name, text| {
+        style_for_stderr(&styles, style_name, text, use_color)
+    })
+}
 
 /// Renders the warning block — blank line, banner, one tab-indented line per
 /// warning — with each styled span passed through `style`.
@@ -182,28 +177,34 @@ pub fn render_block_plain(warnings: &[String]) -> String {
     render_block(warnings, |_, text| text.to_string())
 }
 
-/// Drains the collector and emits the warnings to stderr.
+/// Emits `warnings` to stderr.
 ///
 /// Called by the CLI layer at the end of `App::run`, *after* the command
 /// output has been written to stdout, so the banner is the last thing the
-/// user sees. Does nothing if no warnings have been collected.
+/// user sees. Does nothing if `warnings` is empty.
 ///
 /// # Styling
 ///
-/// Styling is applied when stderr is a TTY that supports color and
-/// `output_mode` does not explicitly forbid ANSI output (`Text` mode). The
-/// banner pulls its style from [`WARNING_BANNER_STYLE`] in `theme`; each
-/// warning line pulls from [`WARNING_ITEM_STYLE`]. Themes that don't define
-/// these styles fall back to unstyled text.
-pub fn flush_to_stderr(theme: &Theme, output_mode: OutputMode) {
-    let warnings = drain_warnings();
+/// Styling is applied when stderr color capability on `target` is true and
+/// `output_mode` does not explicitly forbid ANSI output (`Text` mode). Piped
+/// stdout does not strip stderr: primary render reads stdout capability,
+/// warnings read stderr capability. The banner pulls its style from
+/// [`WARNING_BANNER_STYLE`] in `theme`; each warning line pulls from
+/// [`WARNING_ITEM_STYLE`]. Themes that don't define these styles fall back
+/// to unstyled text.
+pub fn flush_to_stderr(
+    theme: &Theme,
+    output_mode: OutputMode,
+    target: TargetProperties,
+    warnings: &[String],
+) {
     if warnings.is_empty() {
         return;
     }
 
-    let use_color = should_style_stderr(output_mode);
+    let use_color = should_style_stderr(output_mode, target);
     let styles = theme.resolve_styles(None);
-    let block = render_block(&warnings, |style_name, text| {
+    let block = render_block(warnings, |style_name, text| {
         style_for_stderr(&styles, style_name, text, use_color)
     });
 
@@ -247,15 +248,15 @@ fn style_for_stderr(
 ///
 /// `OutputMode::Text` explicitly opts out of color. Structured modes
 /// (`Json`/`Yaml`/`Xml`/`Csv`) target stdout, not stderr, so they don't
-/// constrain our styling choices here — stderr TTY capability is what
-/// matters. `TermDebug` emits bracket tags instead of ANSI in the main
-/// output, but the warnings banner isn't subject to that contract, so we
-/// still honor the stderr TTY signal.
-fn should_style_stderr(output_mode: OutputMode) -> bool {
+/// constrain our styling choices here — stderr color capability on
+/// [`TargetProperties`] is what matters. Piped stdout does not strip
+/// stderr. `TermDebug` emits bracket tags instead of ANSI in the main
+/// output, but the warnings banner isn't subject to that contract.
+fn should_style_stderr(output_mode: OutputMode, target: TargetProperties) -> bool {
     if matches!(output_mode, OutputMode::Text) {
         return false;
     }
-    console::Term::stderr().features().colors_supported()
+    target.stderr_color_capability
 }
 
 #[cfg(test)]
@@ -263,63 +264,40 @@ mod tests {
     use super::*;
     use console::Style;
 
-    fn reset() {
-        let _ = drain_warnings();
+    fn sample_target(stdout_color: bool, stderr_color: bool) -> TargetProperties {
+        TargetProperties {
+            width: None,
+            stdout_is_terminal: stdout_color,
+            stderr_is_terminal: stderr_color,
+            stdout_color_capability: stdout_color,
+            stderr_color_capability: stderr_color,
+            color_scheme: crate::ColorMode::Dark,
+            icon_mode: crate::IconMode::Classic,
+            ambiguous_width: crate::AmbiguousWidth::Narrow,
+        }
     }
 
     #[test]
-    fn push_and_drain_roundtrip() {
-        reset();
+    fn push_and_take_roundtrip() {
+        let buffer = WarningBuffer::new();
 
-        assert!(!has_warnings());
-        push_warning("first");
-        push_warning(String::from("second"));
-        assert!(has_warnings());
+        assert!(buffer.is_empty());
+        buffer.push("first");
+        push_warning(&buffer, String::from("second"));
+        assert!(!buffer.is_empty());
 
-        let drained = drain_warnings();
+        let drained = buffer.take();
         assert_eq!(drained, vec!["first".to_string(), "second".to_string()]);
-        assert!(!has_warnings());
-
-        // Draining again yields nothing.
-        assert!(drain_warnings().is_empty());
+        assert!(buffer.is_empty());
+        assert!(buffer.take().is_empty());
     }
 
     #[test]
-    fn push_warning_once_deduplicates_pending_messages() {
-        reset();
-
-        push_warning_once("same warning");
-        push_warning_once("same warning");
-
-        assert_eq!(drain_warnings(), ["same warning"]);
-    }
-
-    #[test]
-    fn capture_warning_once_is_observable_without_becoming_pending() {
-        reset();
-        take_captured_warnings();
-
-        capture_warning_once("same warning");
-        capture_warning_once("same warning");
-
-        assert!(!has_warnings());
-        assert_eq!(take_captured_warnings(), ["same warning"]);
-    }
-
-    #[test]
-    fn capture_replaces_previous_batch_and_drains_pending_warnings() {
-        reset();
-        push_warning("first");
-        capture_warnings_for_run();
-        assert_eq!(take_captured_warnings(), vec!["first".to_string()]);
-        assert!(drain_warnings().is_empty());
-
-        push_warning("second");
-        capture_warnings_for_run();
-        push_warning("pending");
-        capture_warnings_for_run();
-        assert_eq!(take_captured_warnings(), vec!["pending".to_string()]);
-        assert!(drain_warnings().is_empty());
+    fn push_once_deduplicates_pending_messages() {
+        let buffer = WarningBuffer::new();
+        buffer.push_once("same warning");
+        buffer.push_once("same warning");
+        assert_eq!(buffer.take(), ["same warning"]);
     }
 
     #[test]
@@ -380,5 +358,53 @@ mod tests {
             out
         );
         assert!(out.contains("hello"));
+    }
+
+    #[test]
+    fn piped_stdout_tty_stderr_keeps_warning_color() {
+        let theme = Theme::default();
+        let target = sample_target(false, true);
+        let block = render_block_for_target(
+            &theme,
+            OutputMode::Auto,
+            target,
+            &["stylesheet fell back".to_string()],
+        );
+        assert!(
+            block.contains("\x1b["),
+            "piped stdout must not strip stderr warning color, got: {:?}",
+            block
+        );
+        assert!(block.contains("stylesheet fell back"));
+    }
+
+    #[test]
+    fn piped_stderr_strips_warning_color() {
+        let theme = Theme::default();
+        let target = sample_target(true, false);
+        let block = render_block_for_target(
+            &theme,
+            OutputMode::Auto,
+            target,
+            &["stylesheet fell back".to_string()],
+        );
+        assert!(
+            !block.contains("\x1b["),
+            "stderr without color capability must be plain, got: {:?}",
+            block
+        );
+    }
+
+    #[test]
+    fn text_mode_strips_warning_color_even_when_stderr_is_capable() {
+        let theme = Theme::default();
+        let target = sample_target(false, true);
+        let block = render_block_for_target(
+            &theme,
+            OutputMode::Text,
+            target,
+            &["stylesheet fell back".to_string()],
+        );
+        assert!(!block.contains("\x1b["));
     }
 }

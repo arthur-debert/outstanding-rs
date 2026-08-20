@@ -40,7 +40,7 @@
 //! `docs/dev/design-guidelines.md`.
 
 use clap::{ArgMatches, Command};
-use standout_input::env::{DefaultStdin, StdinReader};
+use standout_input::env::StdinReader;
 use std::ffi::OsString;
 use std::rc::Rc;
 
@@ -92,13 +92,14 @@ impl App {
         &self,
         cmd: &Command,
         args: &[OsString],
+        stdin: &dyn StdinReader,
     ) -> Result<ArgMatches, ParseFailure> {
         match cmd.clone().try_get_matches_from(args) {
             Ok(matches) => {
                 if matches.subcommand().is_some() {
                     return Ok(matches);
                 }
-                match self.resolve_default_command(cmd, &matches) {
+                match self.resolve_default_command(cmd, &matches, stdin) {
                     Err(e) => Err(ParseFailure::UnknownDefault(e)),
                     Ok(None) => Ok(matches),
                     Ok(Some(name)) => self.reparse_with_command(cmd, args, &name),
@@ -114,7 +115,7 @@ impl App {
                 let Some(probe) = self.probe_naked(cmd, args) else {
                     return Err(ParseFailure::Clap(error));
                 };
-                match self.resolve_default_command(cmd, &probe) {
+                match self.resolve_default_command(cmd, &probe, stdin) {
                     Err(e) => Err(ParseFailure::UnknownDefault(e)),
                     Ok(None) => Err(ParseFailure::Clap(error)),
                     Ok(Some(name)) => self.reparse_with_command(cmd, args, &name),
@@ -182,6 +183,7 @@ impl App {
         &self,
         cmd: &Command,
         matches: &ArgMatches,
+        stdin: &dyn StdinReader,
     ) -> Result<Option<String>, UnknownDefaultCommand> {
         resolve(
             cmd,
@@ -189,6 +191,7 @@ impl App {
             &self.app_state,
             self.default_command_resolver.as_ref(),
             self.default_command.as_deref(),
+            stdin,
         )
     }
 }
@@ -313,6 +316,7 @@ pub(crate) fn resolve(
     app_state: &Extensions,
     resolver: Option<&DefaultCommandResolver>,
     static_default: Option<&str>,
+    stdin: &dyn StdinReader,
 ) -> Result<Option<String>, UnknownDefaultCommand> {
     // Anything Clap already routed to a subcommand — including `help` — takes
     // precedence over every default.
@@ -321,11 +325,10 @@ pub(crate) fn resolve(
     }
 
     if let Some(resolver) = resolver {
-        let stdin = DefaultStdin;
         let ctx = DefaultCommandContext {
             matches,
             app_state,
-            stdin: &stdin,
+            stdin,
         };
         if let Some(name) = resolver(&ctx) {
             return check_known_command(cmd, name).map(Some);
@@ -354,7 +357,7 @@ fn check_known_command(cmd: &Command, name: String) -> Result<String, UnknownDef
 #[cfg(test)]
 mod tests {
     use super::*;
-    use standout_input::env::MockStdin;
+    use standout_input::env::{MockStdin, RealStdin};
 
     fn app_cmd() -> Command {
         Command::new("myapp")
@@ -378,6 +381,7 @@ mod tests {
             &Extensions::new(),
             None,
             Some("list"),
+            &RealStdin,
         );
         assert_eq!(resolved.unwrap().as_deref(), Some("list"));
     }
@@ -391,6 +395,7 @@ mod tests {
             &Extensions::new(),
             Some(&resolver_returning(Some("list"))),
             Some("list"),
+            &RealStdin,
         );
         assert_eq!(resolved.unwrap(), None);
     }
@@ -403,6 +408,7 @@ mod tests {
             &Extensions::new(),
             Some(&resolver_returning(Some("add"))),
             Some("list"),
+            &RealStdin,
         );
         assert_eq!(resolved.unwrap().as_deref(), Some("add"));
     }
@@ -415,6 +421,7 @@ mod tests {
             &Extensions::new(),
             Some(&resolver_returning(None)),
             Some("list"),
+            &RealStdin,
         );
         assert_eq!(resolved.unwrap().as_deref(), Some("list"));
     }
@@ -427,13 +434,21 @@ mod tests {
             &Extensions::new(),
             Some(&resolver_returning(None)),
             None,
+            &RealStdin,
         );
         assert_eq!(resolved.unwrap(), None);
     }
 
     #[test]
     fn no_default_configured_resolves_to_none() {
-        let resolved = resolve(&app_cmd(), &naked_matches(), &Extensions::new(), None, None);
+        let resolved = resolve(
+            &app_cmd(),
+            &naked_matches(),
+            &Extensions::new(),
+            None,
+            None,
+            &RealStdin,
+        );
         assert_eq!(resolved.unwrap(), None);
     }
 
@@ -445,6 +460,7 @@ mod tests {
             &Extensions::new(),
             Some(&resolver_returning(Some("ls"))),
             None,
+            &RealStdin,
         );
         assert_eq!(resolved.unwrap().as_deref(), Some("ls"));
     }
@@ -457,6 +473,7 @@ mod tests {
             &Extensions::new(),
             Some(&resolver_returning(Some("nope"))),
             None,
+            &RealStdin,
         );
         let error = resolved.expect_err("an unknown command must not resolve");
         assert_eq!(error.name, "nope");
@@ -472,6 +489,7 @@ mod tests {
             &Extensions::new(),
             Some(&resolver_returning(Some("nope"))),
             Some("list"),
+            &RealStdin,
         );
         assert!(resolved.is_err());
     }
@@ -495,9 +513,16 @@ mod tests {
 
         let naked = cmd.clone().try_get_matches_from(["myapp"]).unwrap();
         assert_eq!(
-            resolve(&cmd, &naked, &Extensions::new(), Some(&resolver), None)
-                .unwrap()
-                .as_deref(),
+            resolve(
+                &cmd,
+                &naked,
+                &Extensions::new(),
+                Some(&resolver),
+                None,
+                &RealStdin
+            )
+            .unwrap()
+            .as_deref(),
             Some("add")
         );
 
@@ -506,9 +531,16 @@ mod tests {
             .try_get_matches_from(["myapp", "--all"])
             .unwrap();
         assert_eq!(
-            resolve(&cmd, &flagged, &Extensions::new(), Some(&resolver), None)
-                .unwrap()
-                .as_deref(),
+            resolve(
+                &cmd,
+                &flagged,
+                &Extensions::new(),
+                Some(&resolver),
+                None,
+                &RealStdin,
+            )
+            .unwrap()
+            .as_deref(),
             Some("list")
         );
     }

@@ -1100,6 +1100,22 @@ impl App {
         I: IntoIterator<Item = T>,
         T: Into<std::ffi::OsString> + Clone,
     {
+        self.get_matches_from_with_sources(cmd, itr, &crate::InputSources::from_process())
+    }
+
+    /// [`get_matches_from`](Self::get_matches_from) against explicit
+    /// [`crate::InputSources`] (stdin terminal fact for default-command
+    /// resolution).
+    pub fn get_matches_from_with_sources<I, T>(
+        &self,
+        cmd: Command,
+        itr: I,
+        sources: &crate::InputSources,
+    ) -> HelpResult
+    where
+        I: IntoIterator<Item = T>,
+        T: Into<std::ffi::OsString> + Clone,
+    {
         let mut cmd = self.augment_command_with_help(cmd);
 
         // The application's `Command` is only visible from a parse entry point,
@@ -1118,7 +1134,7 @@ impl App {
         // Verbatim, all the way to Clap: a non-UTF8 argument is a real argument.
         let args: Vec<std::ffi::OsString> = itr.into_iter().map(Into::into).collect();
 
-        let matches = match self.parse_with_default_command(&cmd, &args) {
+        let matches = match self.parse_with_default_command(&cmd, &args, sources.stdin()) {
             Ok(matches) => matches,
             Err(ParseFailure::UnknownDefault(e)) => {
                 return HelpResult::Error(

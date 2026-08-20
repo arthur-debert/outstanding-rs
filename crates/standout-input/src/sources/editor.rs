@@ -13,6 +13,7 @@ use clap::ArgMatches;
 
 use crate::collector::InputCollector;
 use crate::InputError;
+use crate::InputSources;
 
 /// Abstraction over editor invocation for testability.
 pub trait EditorRunner: Send + Sync {
@@ -225,17 +226,22 @@ impl<R: EditorRunner + 'static> EditorSource<R> {
     /// [`InputError::EditorCancelled`] when `require_save` is set and the
     /// user exits without saving.
     ///
-    /// Routes through any installed
-    /// [`PromptResponder`](crate::PromptResponder), so wizard tests can
-    /// supply the editor's "saved" content directly without launching
-    /// `$EDITOR`.
+    /// Routes through a [`PromptResponder`](crate::PromptResponder) on
+    /// [`InputSources`] when one is supplied, so wizard tests can supply the
+    /// editor's "saved" content directly without launching `$EDITOR`.
     pub fn prompt(&self) -> Result<String, InputError> {
+        self.prompt_from(&InputSources::from_process())
+    }
+
+    /// [`prompt`](Self::prompt) against explicit [`InputSources`].
+    pub fn prompt_from(&self, sources: &InputSources) -> Result<String, InputError> {
         if let Some(value) = crate::responder::intercept_text(
             crate::PromptKind::Editor,
             // EditorSource has no user-facing "message" — use the file
             // extension as the diagnostic hint so panic messages still
             // identify which editor source failed.
             &self.extension,
+            sources.responder(),
         )? {
             return Ok(value);
         }
@@ -488,22 +494,15 @@ mod tests {
     // The happy path with the mock runner is covered by the existing
     // editor_collects_content / editor_failure / editor_no_editor_error tests
     // on collect(), which prompt() delegates to once the TTY gate passes.
-    //
-    // Every test that calls .prompt() shares one #[serial] axis
-    // (`prompt_responder`) because the global responder override is
-    // process-wide; without serialization a responder installed by a
-    // parallel responder-using test would leak into these vanilla
-    // shortcut tests.
 
-    use crate::{
-        reset_default_prompt_responder, set_default_prompt_responder, PromptResponse,
-        ScriptedResponder,
-    };
-    use serial_test::serial;
+    use crate::{InputSources, PromptResponse, ScriptedResponder};
     use std::sync::Arc;
 
+    fn sources_with(responder: ScriptedResponder) -> InputSources {
+        InputSources::from_process().with_responder(Arc::new(responder))
+    }
+
     #[test]
-    #[serial(prompt_responder)]
     fn editor_prompt_shortcut_returns_no_input_in_non_tty() {
         let source = EditorSource::with_runner(MockEditorRunner::with_result("hello"));
         let err = source.prompt().unwrap_err();
@@ -511,7 +510,6 @@ mod tests {
     }
 
     #[test]
-    #[serial(prompt_responder)]
     fn editor_prompt_shortcut_no_input_when_no_editor_detected() {
         // No TTY *and* no editor — both fail is_available, so NoInput either way.
         let source = EditorSource::with_runner(MockEditorRunner::no_editor());
@@ -519,40 +517,23 @@ mod tests {
         assert!(matches!(err, InputError::NoInput));
     }
 
-    // === .prompt() via PromptResponder ===
-
-    struct ResponderGuard;
-    impl ResponderGuard {
-        fn install(responder: ScriptedResponder) -> Self {
-            set_default_prompt_responder(Arc::new(responder));
-            Self
-        }
-    }
-    impl Drop for ResponderGuard {
-        fn drop(&mut self) {
-            reset_default_prompt_responder();
-        }
-    }
-
     #[test]
-    #[serial(prompt_responder)]
     fn editor_prompt_routes_through_responder_without_launching_editor() {
-        let _g = ResponderGuard::install(ScriptedResponder::new([PromptResponse::text(
+        let sources = sources_with(ScriptedResponder::new([PromptResponse::text(
             "edited body",
         )]));
         // Even with a no-editor mock runner, the responder gate runs first
         // and wins — the editor is never launched in tests.
         let source = EditorSource::with_runner(MockEditorRunner::no_editor());
-        let value = source.prompt().unwrap();
+        let value = source.prompt_from(&sources).unwrap();
         assert_eq!(value, "edited body");
     }
 
     #[test]
-    #[serial(prompt_responder)]
     fn editor_prompt_responder_cancel_propagates() {
-        let _g = ResponderGuard::install(ScriptedResponder::new([PromptResponse::Cancel]));
+        let sources = sources_with(ScriptedResponder::new([PromptResponse::Cancel]));
         let source = EditorSource::with_runner(MockEditorRunner::no_editor());
-        let err = source.prompt().unwrap_err();
+        let err = source.prompt_from(&sources).unwrap_err();
         assert!(matches!(err, InputError::PromptCancelled));
     }
 }

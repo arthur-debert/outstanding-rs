@@ -191,6 +191,9 @@ pub struct RenderRequest {
     /// The reserved `standout.ambiguous_width` key is owned by
     /// [`TargetProperties::ambiguous_width`] and is not copied from here.
     pub extras: HashMap<String, String>,
+    /// Optional per-run warning buffer. Unresolved-tag warnings land here
+    /// when the request path threads it through style-tag application.
+    pub warnings: Option<crate::warnings::WarningBuffer>,
 }
 
 impl fmt::Debug for RenderRequest {
@@ -206,6 +209,7 @@ impl fmt::Debug for RenderRequest {
             .field("has_context_registry", &self.context_registry.is_some())
             .field("csv_projection", &self.csv_projection)
             .field("extras", &self.extras)
+            .field("has_warnings", &self.warnings.is_some())
             .finish_non_exhaustive()
     }
 }
@@ -398,6 +402,7 @@ pub(crate) fn convenience_request(
         context_registry,
         csv_projection,
         extras: HashMap::new(),
+        warnings: None,
     }
 }
 
@@ -419,6 +424,7 @@ fn render_context_from_request(request: &RenderRequest) -> RenderContext<'_> {
         }
         ctx.extras.insert(key.clone(), value.clone());
     }
+    ctx.warnings = request.warnings.clone();
     ctx
 }
 
@@ -458,6 +464,7 @@ mod tests {
             context_registry: None,
             csv_projection: None,
             extras: HashMap::new(),
+            warnings: None,
         }
     }
 
@@ -920,6 +927,7 @@ mod tests {
             context_registry: None,
             csv_projection: None,
             extras: HashMap::new(),
+            warnings: None,
         };
         assert_eq!(via_wrapper, render_request(&request).unwrap());
         assert_eq!(via_wrapper, "hello");

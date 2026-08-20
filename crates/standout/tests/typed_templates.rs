@@ -1,7 +1,7 @@
 use clap::Command;
 use serde_json::json;
 use serial_test::serial;
-use standout::cli::{App, AppBuilder, Output, RunResult};
+use standout::cli::{App, AppBuilder, DispatchResult as RunResult, Output};
 use standout::{EmbeddedSource, OutputMode, TemplateResource};
 use standout_test::TestHarness;
 
@@ -865,9 +865,6 @@ fn app_render_reports_corrupted_dependency() {
 #[test]
 #[serial]
 fn standalone_app_render_warning_cannot_leak_into_a_later_run() {
-    standout_render::warnings::drain_warnings();
-    standout_render::warnings::take_captured_warnings();
-
     let dir = tempfile::tempdir().unwrap();
     let template_path = dir.path().join("show.jinja");
     std::fs::write(&template_path, "Hello {{ name }}").unwrap();
@@ -889,14 +886,6 @@ fn standalone_app_render_warning_cannot_leak_into_a_later_run() {
         app.render("show", &json!({"name": "Ada"}), OutputMode::Text)
             .unwrap(),
         "Hello Ada"
-    );
-    assert!(
-        !standout_render::warnings::has_warnings(),
-        "the standalone warning must not remain queued for a command run"
-    );
-    assert_eq!(
-        standout_render::warnings::take_captured_warnings(),
-        ["Unresolved style tag(s) degraded to unstyled text: missing"]
     );
 
     std::fs::write(&template_path, "Hello {{ name }}").unwrap();

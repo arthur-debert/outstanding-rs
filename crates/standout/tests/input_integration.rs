@@ -6,40 +6,37 @@
 
 use clap::{Arg, Command};
 use serde_json::json;
-use serial_test::serial;
-use standout::cli::{App, CommandContextInput, Output, RunResult};
+use standout::cli::{App, CommandContextInput, DispatchResult as RunResult, Output};
 use standout::input::{
-    env::MockStdin, reset_default_stdin_reader, set_default_stdin_reader, ArgSource, FlagSource,
-    InputChain, InputSourceKind, StdinSource,
+    env::MockStdin, ArgSource, FlagSource, InputChain, InputSourceKind, InputSources, StdinSource,
 };
-use std::sync::Arc;
+use standout::{AmbiguousWidth, ColorMode, IconMode, TargetProperties};
 
 fn body_command() -> Command {
     Command::new("test")
         .subcommand(Command::new("create").arg(Arg::new("body").long("body").short('b')))
 }
 
-/// RAII guard that installs a stdin reader on construction and resets it
-/// on drop — including on panic, so a failing assertion or panic inside
-/// the dispatcher cannot leak the override into the next test.
-struct StdinGuard;
-
-impl StdinGuard {
-    fn piped(content: &str) -> Self {
-        set_default_stdin_reader(Arc::new(MockStdin::piped(content)));
-        Self
-    }
-
-    fn terminal() -> Self {
-        set_default_stdin_reader(Arc::new(MockStdin::terminal()));
-        Self
+fn capable_target() -> TargetProperties {
+    TargetProperties {
+        width: Some(80),
+        stdout_is_terminal: false,
+        stderr_is_terminal: false,
+        stdout_color_capability: false,
+        stderr_color_capability: false,
+        color_scheme: ColorMode::Dark,
+        icon_mode: IconMode::Classic,
+        ambiguous_width: AmbiguousWidth::Narrow,
     }
 }
 
-impl Drop for StdinGuard {
-    fn drop(&mut self) {
-        reset_default_stdin_reader();
+fn run_create(app: &App, args: Vec<&str>, stdin: Option<MockStdin>) -> RunResult {
+    let mut sources = InputSources::from_process();
+    if let Some(stdin) = stdin {
+        sources = sources.with_stdin(stdin);
     }
+    app.run_with(body_command(), args, capable_target(), sources)
+        .into_outcome()
 }
 
 #[test]
@@ -64,7 +61,7 @@ fn arg_value_reaches_handler_via_ctx_input() {
         .build()
         .unwrap();
 
-    let result = app.run_to_string(body_command(), vec!["test", "create", "--body", "hello"]);
+    let result = run_create(&app, vec!["test", "create", "--body", "hello"], None);
     match result {
         RunResult::Handled(out) => assert_eq!(out, "hello"),
         other => panic!("expected Handled, got {:?}", other),
@@ -93,7 +90,7 @@ fn default_kicks_in_when_no_source_provides_value() {
         .build()
         .unwrap();
 
-    let result = app.run_to_string(body_command(), vec!["test", "create"]);
+    let result = run_create(&app, vec!["test", "create"], None);
     match result {
         RunResult::Handled(out) => assert_eq!(out, "FALLBACK"),
         other => panic!("expected Handled, got {:?}", other),
@@ -122,7 +119,7 @@ fn input_source_reports_arg_kind() {
         .build()
         .unwrap();
 
-    let result = app.run_to_string(body_command(), vec!["test", "create", "--body", "x"]);
+    let result = run_create(&app, vec!["test", "create", "--body", "x"], None);
     if let RunResult::Handled(out) = result {
         assert_eq!(out, InputSourceKind::Arg.to_string());
     } else {
@@ -152,7 +149,7 @@ fn input_source_reports_default_kind_when_falling_back() {
         .build()
         .unwrap();
 
-    let result = app.run_to_string(body_command(), vec!["test", "create"]);
+    let result = run_create(&app, vec!["test", "create"], None);
     if let RunResult::Handled(out) = result {
         assert_eq!(out, InputSourceKind::Default.to_string());
     } else {
@@ -161,10 +158,7 @@ fn input_source_reports_default_kind_when_falling_back() {
 }
 
 #[test]
-#[serial(stdin)]
 fn stdin_fallback_when_arg_absent() {
-    let _stdin = StdinGuard::piped("from stdin\n");
-
     let app = App::builder()
         .command_with(
             "create",
@@ -190,7 +184,11 @@ fn stdin_fallback_when_arg_absent() {
         .build()
         .unwrap();
 
-    let result = app.run_to_string(body_command(), vec!["test", "create"]);
+    let result = run_create(
+        &app,
+        vec!["test", "create"],
+        Some(MockStdin::piped("from stdin\n")),
+    );
 
     if let RunResult::Handled(out) = result {
         // StdinSource trims trailing newlines.
@@ -201,12 +199,10 @@ fn stdin_fallback_when_arg_absent() {
 }
 
 #[test]
-#[serial(stdin)]
 fn arg_wins_over_stdin_when_both_available() {
     // With arg present, stdin source must not be reached. The MockStdin
     // terminal mode avoids accidentally reading real stdin if precedence is
     // wrong.
-    let _stdin = StdinGuard::terminal();
 
     let app = App::builder()
         .command_with(
@@ -233,7 +229,11 @@ fn arg_wins_over_stdin_when_both_available() {
         .build()
         .unwrap();
 
-    let result = app.run_to_string(body_command(), vec!["test", "create", "--body", "from arg"]);
+    let result = run_create(
+        &app,
+        vec!["test", "create", "--body", "from arg"],
+        Some(MockStdin::terminal()),
+    );
 
     if let RunResult::Handled(out) = result {
         assert_eq!(out, "argument: from arg");
@@ -281,17 +281,19 @@ fn multiple_named_inputs_of_same_type_do_not_collide() {
         .build()
         .unwrap();
 
-    let result = app.run_to_string(
-        cmd,
-        vec![
-            "test",
-            "create",
-            "--body",
-            "the body",
-            "--title",
-            "the title",
-        ],
-    );
+    let result = app
+        .run_to_string(
+            cmd,
+            vec![
+                "test",
+                "create",
+                "--body",
+                "the body",
+                "--title",
+                "the title",
+            ],
+        )
+        .into_outcome();
     if let RunResult::Handled(out) = result {
         assert_eq!(out, "the title | the body");
     } else {
@@ -342,7 +344,9 @@ fn mixed_types_string_and_bool_coexist() {
         .build()
         .unwrap();
 
-    let result = app.run_to_string(cmd, vec!["test", "create", "--body", "x", "--force"]);
+    let result = app
+        .run_to_string(cmd, vec!["test", "create", "--body", "x", "--force"])
+        .into_outcome();
     if let RunResult::Handled(out) = result {
         assert_eq!(out, "body=x force=true");
     } else {
@@ -371,7 +375,7 @@ fn validation_failure_aborts_before_handler() {
         .build()
         .unwrap();
 
-    let result = app.run_to_string(body_command(), vec!["test", "create", "--body", "   "]);
+    let result = run_create(&app, vec!["test", "create", "--body", "   "], None);
     let out = match result {
         RunResult::Error(s) => s,
         other => panic!("expected Error, got {:?}", other),
@@ -407,7 +411,7 @@ fn handler_asking_for_unregistered_input_gets_missing_input_error() {
         .build()
         .unwrap();
 
-    let result = app.run_to_string(body_command(), vec!["test", "create"]);
+    let result = run_create(&app, vec!["test", "create"], None);
     if let RunResult::Handled(out) = result {
         assert!(out.contains("nonexistent"), "got: {out}");
         assert!(out.contains("no input"), "got: {out}");
@@ -439,7 +443,7 @@ fn type_mismatch_lookup_returns_descriptive_error() {
         .build()
         .unwrap();
 
-    let result = app.run_to_string(body_command(), vec!["test", "create"]);
+    let result = run_create(&app, vec!["test", "create"], None);
     if let RunResult::Handled(out) = result {
         assert!(out.contains("body"), "got: {out}");
         assert!(out.contains("u32"), "got: {out}");

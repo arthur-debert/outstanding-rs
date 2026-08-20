@@ -92,6 +92,7 @@ mod tests {
             context_registry: None,
             csv_projection: None,
             extras: HashMap::new(),
+            warnings: None,
         };
         let dark_output = render_request(&dark).unwrap();
         assert!(

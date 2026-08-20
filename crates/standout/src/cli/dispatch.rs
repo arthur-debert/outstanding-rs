@@ -116,6 +116,7 @@ fn build_render_request(
     output_mode: crate::OutputMode,
     structured_output_projection: Option<&StructuredOutputProjection>,
     target: TargetProperties,
+    warnings: Option<standout_render::warnings::WarningBuffer>,
 ) -> Result<RenderRequest, RunError> {
     let template = render_time_template(command_path, template, template_registry, output_mode)?;
     Ok(RenderRequest {
@@ -131,6 +132,7 @@ fn build_render_request(
         csv_projection: structured_output_projection
             .map(|projection| projection.csv_projection().clone()),
         extras: HashMap::new(),
+        warnings,
     })
 }
 
@@ -213,6 +215,10 @@ pub(crate) fn render_handler_output<T: Serialize>(
             detected
         }
     };
+    let warnings = ctx
+        .extensions
+        .get::<standout_render::warnings::WarningBuffer>()
+        .cloned();
     let request_for = |json_data: serde_json::Value| {
         build_render_request(
             &command_path,
@@ -225,6 +231,7 @@ pub(crate) fn render_handler_output<T: Serialize>(
             output_mode,
             structured_output_projection,
             target,
+            warnings.clone(),
         )
     };
 

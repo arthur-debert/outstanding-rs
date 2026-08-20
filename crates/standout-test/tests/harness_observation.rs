@@ -191,8 +191,9 @@ fn warning_app() -> App {
     App::builder()
         .command(
             "say",
-            |_m, _ctx| {
-                standout::warnings::push_warning("stylesheet fell back to the compiled copy");
+            |_m, ctx| {
+                use standout::cli::CommandContextInput;
+                ctx.warn("stylesheet fell back to the compiled copy");
                 Ok(Output::Render(json!({})))
             },
             "hello",

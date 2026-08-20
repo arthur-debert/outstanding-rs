@@ -6,7 +6,7 @@
 use clap::Command;
 use console::Style;
 use serde_json::json;
-use standout::cli::{App, Output, RunResult};
+use standout::cli::{App, DispatchResult, Output, RunResult};
 use standout::{AmbiguousWidth, ColorMode, IconMode, InputSources, TargetProperties, Theme};
 
 fn list_command() -> Command {
@@ -96,8 +96,8 @@ fn silent_list_rejects_rendered_data_through_run_with() {
         .unwrap();
 
     let result = run_list(&app, &["app", "list"]);
-    match result {
-        RunResult::Error(error) => {
+    match result.into_outcome() {
+        DispatchResult::Error(error) => {
             let message = error.to_string();
             assert!(
                 message.contains("command `list` is declared silent"),
@@ -121,8 +121,8 @@ fn binary_list_rejects_rendered_data_through_run_with() {
         .unwrap();
 
     let result = run_list(&app, &["app", "list"]);
-    match result {
-        RunResult::Error(error) => {
+    match result.into_outcome() {
+        DispatchResult::Error(error) => {
             let message = error.to_string();
             assert!(
                 message.contains("command `list` is declared binary"),
@@ -164,8 +164,8 @@ fn structured_only_list_rejects_term_through_run_with() {
         .unwrap();
 
     let result = run_list(&app, &["app", "list", "--output=term"]);
-    match result {
-        RunResult::Error(error) => {
+    match result.into_outcome() {
+        DispatchResult::Error(error) => {
             let message = error.to_string();
             assert!(
                 message.contains("command `list` is declared structured-only"),

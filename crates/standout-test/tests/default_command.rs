@@ -6,15 +6,16 @@
 //! commands, nested commands, help, version, invalid syntax — must be untouched
 //! by that policy.
 //!
-//! All tests are `#[serial]` because the harness mutates process-global state
-//! (the default stdin reader among them).
+//! Tests that call `TestHarness::run` stay `#[serial]` while the harness still
+//! mutates env/cwd/detectors. Stdin for default-command resolution is injected
+//! through `InputSources`.
 
 use clap::{Arg, ArgAction, Command};
 use serde_json::json;
 use serial_test::serial;
 use standout::cli::{App, AppBuilder, ExitStatus, HelpResult, Output, RunErrorKind, SuccessKind};
 use standout_input::env::MockStdin;
-use standout_input::{reset_default_stdin_reader, set_default_stdin_reader};
+use standout_input::InputSources;
 use standout_test::TestHarness;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
@@ -53,10 +54,14 @@ fn register(builder: AppBuilder) -> AppBuilder {
         .unwrap()
         .command(
             "add",
-            |m, _ctx| {
+            |m, ctx| {
                 // The resolver never reads stdin; the handler still can.
-                use standout_input::env::{DefaultStdin, StdinReader};
-                let piped = DefaultStdin.read_to_string().unwrap_or_default();
+                use standout::cli::CommandContextInput;
+                let piped = ctx
+                    .input_sources()
+                    .stdin()
+                    .read_to_string()
+                    .unwrap_or_default();
                 Ok(Output::Render(json!({
                     "cmd": "add",
                     "stdin": piped.trim(),
@@ -362,43 +367,24 @@ fn get_matches_from_reports_an_unknown_command_as_a_clap_error() {
         .build()
         .unwrap();
 
-    with_stdin(MockStdin::terminal(), || {
-        match app.get_matches_from(app_command(), ["app"]) {
-            HelpResult::Error(e) => assert!(
-                e.to_string()
-                    .contains("default command resolver returned `nope`"),
-                "{e}"
-            ),
-            other => panic!("expected a clap error, got {other:?}"),
-        }
-    });
+    match app.get_matches_from_with_sources(
+        app_command(),
+        ["app"],
+        &sources_with(MockStdin::terminal()),
+    ) {
+        HelpResult::Error(e) => assert!(
+            e.to_string()
+                .contains("default command resolver returned `nope`"),
+            "{e}"
+        ),
+        other => panic!("expected a clap error, got {other:?}"),
+    }
 }
 
 // --- the configured parsing path ------------------------------------------
 
-/// Runs `body` with the process-global stdin reader mocked, then restores it.
-///
-/// The `TestHarness` owns this seam for `run()`; `get_matches_from` is a
-/// parse-only path with no harness entry point, so these tests drive the same
-/// override directly.
-struct StdinGuard;
-
-impl StdinGuard {
-    fn install(reader: MockStdin) -> Self {
-        set_default_stdin_reader(Arc::new(reader));
-        Self
-    }
-}
-
-impl Drop for StdinGuard {
-    fn drop(&mut self) {
-        reset_default_stdin_reader();
-    }
-}
-
-fn with_stdin<R>(reader: MockStdin, body: impl FnOnce() -> R) -> R {
-    let _guard = StdinGuard::install(reader);
-    body()
+fn sources_with(reader: MockStdin) -> InputSources {
+    InputSources::from_process().with_stdin(reader)
 }
 
 #[test]
@@ -408,27 +394,33 @@ fn get_matches_from_resolves_the_same_default_as_dispatch() {
     // the command a naked `run()` would have selected.
     let app = piped_aware_app();
 
-    with_stdin(MockStdin::terminal(), || {
-        match app.get_matches_from(app_command(), ["app"]) {
-            HelpResult::Matches(m) => assert_eq!(m.subcommand_name(), Some("list")),
-            other => panic!("expected matches, got {other:?}"),
-        }
-    });
+    match app.get_matches_from_with_sources(
+        app_command(),
+        ["app"],
+        &sources_with(MockStdin::terminal()),
+    ) {
+        HelpResult::Matches(m) => assert_eq!(m.subcommand_name(), Some("list")),
+        other => panic!("expected matches, got {other:?}"),
+    }
 
-    with_stdin(MockStdin::piped("payload"), || {
-        match app.get_matches_from(app_command(), ["app"]) {
-            HelpResult::Matches(m) => assert_eq!(m.subcommand_name(), Some("add")),
-            other => panic!("expected matches, got {other:?}"),
-        }
-    });
+    match app.get_matches_from_with_sources(
+        app_command(),
+        ["app"],
+        &sources_with(MockStdin::piped("payload")),
+    ) {
+        HelpResult::Matches(m) => assert_eq!(m.subcommand_name(), Some("add")),
+        other => panic!("expected matches, got {other:?}"),
+    }
 
     // Piped-but-empty is a pipe here too — same answer, no read.
-    with_stdin(MockStdin::piped_empty(), || {
-        match app.get_matches_from(app_command(), ["app"]) {
-            HelpResult::Matches(m) => assert_eq!(m.subcommand_name(), Some("add")),
-            other => panic!("expected matches, got {other:?}"),
-        }
-    });
+    match app.get_matches_from_with_sources(
+        app_command(),
+        ["app"],
+        &sources_with(MockStdin::piped_empty()),
+    ) {
+        HelpResult::Matches(m) => assert_eq!(m.subcommand_name(), Some("add")),
+        other => panic!("expected matches, got {other:?}"),
+    }
 }
 
 #[test]
@@ -436,12 +428,14 @@ fn get_matches_from_resolves_the_same_default_as_dispatch() {
 fn get_matches_from_leaves_invalid_syntax_a_clap_error() {
     let app = piped_aware_app();
 
-    with_stdin(MockStdin::piped("data"), || {
-        match app.get_matches_from(app_command(), ["app", "--nonexistent"]) {
-            HelpResult::Error(_) => {}
-            other => panic!("expected a clap error, got {other:?}"),
-        }
-    });
+    match app.get_matches_from_with_sources(
+        app_command(),
+        ["app", "--nonexistent"],
+        &sources_with(MockStdin::piped("data")),
+    ) {
+        HelpResult::Error(_) => {}
+        other => panic!("expected a clap error, got {other:?}"),
+    }
 }
 
 #[test]
@@ -526,12 +520,14 @@ fn both_paths_select_the_same_command_for_a_flagged_line() {
     dispatched.assert_stdout_eq("list loud=true");
     drop(dispatched);
 
-    with_stdin(MockStdin::piped("data"), || {
-        match app.get_matches_from(app_command(), ["app", "--loud", "list"]) {
-            HelpResult::Matches(m) => assert_eq!(m.subcommand_name(), Some("list")),
-            other => panic!("expected matches, got {other:?}"),
-        }
-    });
+    match app.get_matches_from_with_sources(
+        app_command(),
+        ["app", "--loud", "list"],
+        &sources_with(MockStdin::piped("data")),
+    ) {
+        HelpResult::Matches(m) => assert_eq!(m.subcommand_name(), Some("list")),
+        other => panic!("expected matches, got {other:?}"),
+    }
 }
 
 // --- the `help` word on a flat command -------------------------------------

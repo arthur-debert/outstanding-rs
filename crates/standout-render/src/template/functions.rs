@@ -111,6 +111,16 @@ fn output_mode_to_transform(mode: OutputMode) -> TagTransform {
 /// and additionally records which tags the theme could not resolve — see that
 /// module for why the result is kept rather than discarded.
 pub fn apply_style_tags(output: &str, styles: &Styles, mode: OutputMode) -> String {
+    apply_style_tags_with(output, styles, mode, None)
+}
+
+/// [`apply_style_tags`] that records unresolved-tag warnings on `warnings`.
+pub fn apply_style_tags_with(
+    output: &str,
+    styles: &Styles,
+    mode: OutputMode,
+    warnings: Option<&crate::warnings::WarningBuffer>,
+) -> String {
     let transform = output_mode_to_transform(mode);
     let mut resolved = styles.to_resolved_map();
     if transform == TagTransform::Apply {
@@ -121,7 +131,13 @@ pub fn apply_style_tags(output: &str, styles: &Styles, mode: OutputMode) -> Stri
             *style = style.clone().force_styling(true);
         }
     }
-    crate::diagnostics::resolve_tags(output, resolved, transform, UnknownTagBehavior::Strip)
+    crate::diagnostics::resolve_tags_with(
+        output,
+        resolved,
+        transform,
+        UnknownTagBehavior::Strip,
+        warnings,
+    )
 }
 
 /// Result of rendering that includes both formatted and raw output.
@@ -1052,8 +1068,10 @@ fn render_auto_with_engine_split_kind(
             )?,
         };
 
-        // Pass 2: Apply styles to get formatted output
-        let formatted_output = apply_style_tags(&raw_output, &styles, mode);
+        // Pass 2: Apply styles to get formatted output. Unresolved-tag
+        // warnings are recorded once, on the formatted pass.
+        let formatted_output =
+            apply_style_tags_with(&raw_output, &styles, mode, render_context.warnings.as_ref());
 
         // For raw output, strip style tags (OutputMode::Text behavior)
         let stripped_output = apply_style_tags(&raw_output, &styles, OutputMode::Text);
@@ -2409,6 +2427,7 @@ mod tests {
             context_registry: None,
             csv_projection: None,
             extras: HashMap::new(),
+            warnings: None,
         };
         assert_eq!(render_request(&request).unwrap(), "[ok] done >>");
     }
@@ -2447,6 +2466,7 @@ mod tests {
             context_registry: None,
             csv_projection: None,
             extras: HashMap::new(),
+            warnings: None,
         };
         assert_eq!(render_request(&request).unwrap(), "\u{f00c} done");
     }

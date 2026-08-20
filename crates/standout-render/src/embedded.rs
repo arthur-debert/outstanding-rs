@@ -32,7 +32,6 @@ use std::path::Path;
 use crate::file_loader::{build_embedded_registry, walk_dir};
 use crate::style::{parse_theme_content, StylesheetRegistry, STYLESHEET_EXTENSIONS};
 use crate::template::{walk_template_dir, TemplateRegistry};
-use crate::warnings::push_warning;
 
 /// Marker type for template resources.
 #[derive(Debug, Clone, Copy)]
@@ -119,20 +118,20 @@ impl From<EmbeddedTemplates> for TemplateRegistry {
             let files = match walk_template_dir(source.source_path) {
                 Ok(files) => files,
                 Err(e) => {
-                    push_warning(format!(
-                        "Failed to walk templates directory '{}', using embedded: {}",
+                    eprintln!(
+                        "Warning: Failed to walk templates directory '{}', using embedded: {}",
                         source.source_path, e
-                    ));
+                    );
                     return TemplateRegistry::from_embedded_entries(source.entries);
                 }
             };
 
             let mut registry = TemplateRegistry::new();
             if let Err(e) = registry.add_from_files(files) {
-                push_warning(format!(
-                    "Failed to register templates from '{}', using embedded: {}",
+                eprintln!(
+                    "Warning: Failed to register templates from '{}', using embedded: {}",
                     source.source_path, e
-                ));
+                );
                 return TemplateRegistry::from_embedded_entries(source.entries);
             }
             registry
@@ -161,10 +160,10 @@ impl From<EmbeddedStyles> for StylesheetRegistry {
             let files = match walk_dir(Path::new(source.source_path), STYLESHEET_EXTENSIONS) {
                 Ok(files) => files,
                 Err(e) => {
-                    push_warning(format!(
-                        "Failed to walk styles directory '{}', using embedded: {}",
+                    eprintln!(
+                        "Warning: Failed to walk styles directory '{}', using embedded: {}",
                         source.source_path, e
-                    ));
+                    );
                     return StylesheetRegistry::from_embedded_entries(source.entries)
                         .expect("embedded stylesheets should parse");
                 }
@@ -176,11 +175,11 @@ impl From<EmbeddedStyles> for StylesheetRegistry {
                 .filter_map(|file| match std::fs::read_to_string(&file.path) {
                     Ok(content) => Some((file.name_with_ext, content)),
                     Err(e) => {
-                        push_warning(format!(
-                            "Failed to read stylesheet '{}': {}",
+                        eprintln!(
+                            "Warning: Failed to read stylesheet '{}': {}",
                             file.path.display(),
                             e
-                        ));
+                        );
                         None
                     }
                 })
@@ -198,10 +197,10 @@ impl From<EmbeddedStyles> for StylesheetRegistry {
                 }) {
                     Ok(map) => map,
                     Err(e) => {
-                        push_warning(format!(
-                            "Failed to parse stylesheets from '{}', using embedded: {}",
+                        eprintln!(
+                            "Warning: Failed to parse stylesheets from '{}', using embedded: {}",
                             source.source_path, e
-                        ));
+                        );
                         return StylesheetRegistry::from_embedded_entries(source.entries)
                             .expect("embedded stylesheets should parse");
                     }

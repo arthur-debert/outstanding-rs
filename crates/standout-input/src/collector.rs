@@ -6,6 +6,7 @@
 use clap::ArgMatches;
 
 use crate::InputError;
+use crate::InputSources;
 
 /// A source that can collect input of type T.
 ///
@@ -69,6 +70,17 @@ pub trait InputCollector<T>: Send + Sync {
     /// - `Ok(None)` - This source has no input; try the next one in the chain
     /// - `Err(e)` - Collection failed; abort the chain with this error
     fn collect(&self, matches: &ArgMatches) -> Result<Option<T>, InputError>;
+
+    /// Bind this collector to an invocation's [`InputSources`].
+    ///
+    /// Stdin and clipboard sources constructed with [`crate::StdinSource::new`]
+    /// / [`crate::ClipboardSource::new`] return a collector that reads those
+    /// invocation sources. Collectors built with an explicit reader, and
+    /// sources that do not consult stdin/clipboard, return `None` and keep
+    /// their existing behaviour.
+    fn bind_sources(&self, _sources: &InputSources) -> Option<Box<dyn InputCollector<T>>> {
+        None
+    }
 
     /// Validate the collected value.
     ///

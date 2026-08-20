@@ -7,7 +7,8 @@ use clap::{Arg, Command, Subcommand};
 use serde_json::json;
 use serial_test::serial;
 use standout::cli::{
-    App, CommandContext, CommandContextInput, Dispatch, HandlerResult, Output, RunResult,
+    App, CommandContext, CommandContextInput, Dispatch, DispatchResult as RunResult, HandlerResult,
+    Output,
 };
 use standout::input::questionnaire::QuestionnaireInput;
 use standout::input::{DefaultSource, InputChain, PromptResponse, ScriptedResponder};

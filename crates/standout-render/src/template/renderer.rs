@@ -502,6 +502,7 @@ impl Renderer {
             context_registry: None,
             csv_projection: None,
             extras: HashMap::new(),
+            warnings: None,
         };
         render_request(&request)
     }
