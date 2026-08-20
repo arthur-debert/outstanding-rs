@@ -32,7 +32,17 @@ use std::path::Path;
 use crate::file_loader::{build_embedded_registry, walk_dir};
 use crate::style::{parse_theme_content, StylesheetRegistry, STYLESHEET_EXTENSIONS};
 use crate::template::{walk_template_dir, TemplateRegistry};
-use crate::warnings::push_warning;
+use crate::warnings::WarningBuffer;
+
+/// Records a setup warning on `buffer`, or prints it when the caller is the
+/// standalone [`From`] conversion (no run-scoped collector yet).
+fn emit_setup_warning(warnings: Option<&WarningBuffer>, message: impl Into<String>) {
+    let message = message.into();
+    match warnings {
+        Some(buffer) => buffer.push(message),
+        None => eprintln!("Warning: {message}"),
+    }
+}
 
 /// Marker type for template resources.
 #[derive(Debug, Clone, Copy)]
@@ -106,66 +116,89 @@ pub type EmbeddedTemplates = EmbeddedSource<TemplateResource>;
 /// Type alias for embedded stylesheets.
 pub type EmbeddedStyles = EmbeddedSource<StylesheetResource>;
 
-impl From<EmbeddedTemplates> for TemplateRegistry {
-    /// Converts embedded templates into a TemplateRegistry.
+impl EmbeddedTemplates {
+    /// Converts into a [`TemplateRegistry`], recording hot-reload fallbacks.
     ///
-    /// In debug mode, if the source path exists, templates are loaded from disk
-    /// (enabling hot-reload). Otherwise, embedded content is used.
-    fn from(source: EmbeddedTemplates) -> Self {
-        if source.should_hot_reload() {
+    /// When `warnings` is `Some`, fallback messages go on that buffer so a
+    /// later run can return them on the run result. When `None` (the
+    /// standalone [`From`] conversion), they print to stderr.
+    pub fn into_registry(self, warnings: Option<&WarningBuffer>) -> TemplateRegistry {
+        if self.should_hot_reload() {
             // Debug mode with existing source path: load from filesystem
             // Use walk_template_dir + add_from_files for immediate loading
             // (add_template_dir uses lazy loading which doesn't work well here)
-            let files = match walk_template_dir(source.source_path) {
+            let files = match walk_template_dir(self.source_path) {
                 Ok(files) => files,
                 Err(e) => {
-                    push_warning(format!(
-                        "Failed to walk templates directory '{}', using embedded: {}",
-                        source.source_path, e
-                    ));
-                    return TemplateRegistry::from_embedded_entries(source.entries);
+                    emit_setup_warning(
+                        warnings,
+                        format!(
+                            "Failed to walk templates directory '{}', using embedded: {}",
+                            self.source_path, e
+                        ),
+                    );
+                    return TemplateRegistry::from_embedded_entries(self.entries);
                 }
             };
 
             let mut registry = TemplateRegistry::new();
             if let Err(e) = registry.add_from_files(files) {
-                push_warning(format!(
-                    "Failed to register templates from '{}', using embedded: {}",
-                    source.source_path, e
-                ));
-                return TemplateRegistry::from_embedded_entries(source.entries);
+                emit_setup_warning(
+                    warnings,
+                    format!(
+                        "Failed to register templates from '{}', using embedded: {}",
+                        self.source_path, e
+                    ),
+                );
+                return TemplateRegistry::from_embedded_entries(self.entries);
             }
             registry
         } else {
             // Release mode or missing source: use embedded content
-            TemplateRegistry::from_embedded_entries(source.entries)
+            TemplateRegistry::from_embedded_entries(self.entries)
         }
     }
 }
 
-impl From<EmbeddedStyles> for StylesheetRegistry {
-    /// Converts embedded styles into a StylesheetRegistry.
+impl From<EmbeddedTemplates> for TemplateRegistry {
+    /// Converts embedded templates into a TemplateRegistry.
     ///
-    /// In debug mode, if the source path exists, styles are loaded from disk
-    /// (enabling hot-reload). Otherwise, embedded content is used.
+    /// In debug mode, if the source path exists, templates are loaded from disk
+    /// (enabling hot-reload). Otherwise, embedded content is used. Hot-reload
+    /// fallbacks print to stderr; [`EmbeddedTemplates::into_registry`] records
+    /// them on a [`WarningBuffer`] instead.
+    fn from(source: EmbeddedTemplates) -> Self {
+        source.into_registry(None)
+    }
+}
+
+impl EmbeddedStyles {
+    /// Converts into a [`StylesheetRegistry`], recording hot-reload fallbacks.
+    ///
+    /// When `warnings` is `Some`, fallback messages go on that buffer so a
+    /// later run can return them on the run result. When `None` (the
+    /// standalone [`From`] conversion), they print to stderr.
     ///
     /// # Panics
     ///
     /// Panics if embedded stylesheet content (CSS or YAML) fails to parse
     /// (should be caught in dev).
-    fn from(source: EmbeddedStyles) -> Self {
-        if source.should_hot_reload() {
+    pub fn into_registry(self, warnings: Option<&WarningBuffer>) -> StylesheetRegistry {
+        if self.should_hot_reload() {
             // Debug mode with existing source path: load from filesystem
             // Walk directory and load immediately (add_dir uses lazy loading which
             // doesn't work well for names() iteration)
-            let files = match walk_dir(Path::new(source.source_path), STYLESHEET_EXTENSIONS) {
+            let files = match walk_dir(Path::new(self.source_path), STYLESHEET_EXTENSIONS) {
                 Ok(files) => files,
                 Err(e) => {
-                    push_warning(format!(
-                        "Failed to walk styles directory '{}', using embedded: {}",
-                        source.source_path, e
-                    ));
-                    return StylesheetRegistry::from_embedded_entries(source.entries)
+                    emit_setup_warning(
+                        warnings,
+                        format!(
+                            "Failed to walk styles directory '{}', using embedded: {}",
+                            self.source_path, e
+                        ),
+                    );
+                    return StylesheetRegistry::from_embedded_entries(self.entries)
                         .expect("embedded stylesheets should parse");
                 }
             };
@@ -176,11 +209,10 @@ impl From<EmbeddedStyles> for StylesheetRegistry {
                 .filter_map(|file| match std::fs::read_to_string(&file.path) {
                     Ok(content) => Some((file.name_with_ext, content)),
                     Err(e) => {
-                        push_warning(format!(
-                            "Failed to read stylesheet '{}': {}",
-                            file.path.display(),
-                            e
-                        ));
+                        emit_setup_warning(
+                            warnings,
+                            format!("Failed to read stylesheet '{}': {}", file.path.display(), e),
+                        );
                         None
                     }
                 })
@@ -198,11 +230,14 @@ impl From<EmbeddedStyles> for StylesheetRegistry {
                 }) {
                     Ok(map) => map,
                     Err(e) => {
-                        push_warning(format!(
-                            "Failed to parse stylesheets from '{}', using embedded: {}",
-                            source.source_path, e
-                        ));
-                        return StylesheetRegistry::from_embedded_entries(source.entries)
+                        emit_setup_warning(
+                            warnings,
+                            format!(
+                                "Failed to parse stylesheets from '{}', using embedded: {}",
+                                self.source_path, e
+                            ),
+                        );
+                        return StylesheetRegistry::from_embedded_entries(self.entries)
                             .expect("embedded stylesheets should parse");
                     }
                 };
@@ -212,9 +247,26 @@ impl From<EmbeddedStyles> for StylesheetRegistry {
             registry
         } else {
             // Release mode or missing source: use embedded content
-            StylesheetRegistry::from_embedded_entries(source.entries)
+            StylesheetRegistry::from_embedded_entries(self.entries)
                 .expect("embedded stylesheets should parse")
         }
+    }
+}
+
+impl From<EmbeddedStyles> for StylesheetRegistry {
+    /// Converts embedded styles into a StylesheetRegistry.
+    ///
+    /// In debug mode, if the source path exists, styles are loaded from disk
+    /// (enabling hot-reload). Otherwise, embedded content is used. Hot-reload
+    /// fallbacks print to stderr; [`EmbeddedStyles::into_registry`] records
+    /// them on a [`WarningBuffer`] instead.
+    ///
+    /// # Panics
+    ///
+    /// Panics if embedded stylesheet content (CSS or YAML) fails to parse
+    /// (should be caught in dev).
+    fn from(source: EmbeddedStyles) -> Self {
+        source.into_registry(None)
     }
 }
 
@@ -238,5 +290,28 @@ mod tests {
 
         // Should be false because path doesn't exist
         assert!(!source.should_hot_reload());
+    }
+
+    #[test]
+    fn hot_reload_walk_failure_records_warning_buffer() {
+        // A file (not a directory) exists, so debug hot-reload attempts a walk
+        // and falls back to the embedded copy.
+        const CARGO_TOML: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/Cargo.toml");
+        static ENTRIES: &[(&str, &str)] = &[("ok.jinja", "hi")];
+        let source: EmbeddedTemplates = EmbeddedSource::new(ENTRIES, CARGO_TOML);
+        if !source.should_hot_reload() {
+            return;
+        }
+
+        let buffer = WarningBuffer::new();
+        let registry = source.into_registry(Some(&buffer));
+        let warnings = buffer.take();
+        assert_eq!(warnings.len(), 1);
+        assert!(
+            warnings[0].contains("Failed to walk templates directory"),
+            "unexpected warning: {}",
+            warnings[0]
+        );
+        assert_eq!(registry.get_content("ok").unwrap(), "hi");
     }
 }

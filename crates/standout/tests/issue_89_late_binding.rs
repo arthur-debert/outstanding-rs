@@ -33,8 +33,8 @@ fn test_late_binding_theme_sequencing() {
     // We simulate passing "--output=term" to force terminal output with colors
     let result = app.run_to_string(cmd, ["app", "--output=term", "late_bind"]);
 
-    match result {
-        standout::cli::RunResult::Handled(output) => {
+    match result.outcome() {
+        standout::cli::DispatchResult::Handled(output) => {
             // 4. Verification: If theme works, output should contain ANSI cyan code: \x1b[36m
             assert!(
                 output.contains("\x1b[36m"),
@@ -69,8 +69,8 @@ fn test_late_binding_with_dispatch_macro() {
     let cmd = Command::new("app").subcommand(Command::new("macro_cmd"));
     let result = app.run_to_string(cmd, ["app", "--output=term", "macro_cmd"]);
 
-    match result {
-        standout::cli::RunResult::Handled(output) => {
+    match result.outcome() {
+        standout::cli::DispatchResult::Handled(output) => {
             // Magenta ANSI code: \x1b[35m
             assert!(
                 output.contains("\x1b[35m"),
@@ -127,8 +127,8 @@ fn test_late_binding_with_nested_groups() {
 
     let result = app.run_to_string(cmd, ["test", "--output=term", "app", "config", "get"]);
 
-    match result {
-        standout::cli::RunResult::Handled(output) => {
+    match result.outcome() {
+        standout::cli::DispatchResult::Handled(output) => {
             // Green ANSI code: \x1b[32m
             assert!(
                 output.contains("\x1b[32m"),
@@ -169,8 +169,8 @@ fn test_unknown_style_degrades_to_unstyled_text() {
     let cmd = Command::new("app").subcommand(Command::new("test"));
     let result = app.run_to_string(cmd, ["app", "--output=term", "test"]);
 
-    match result {
-        standout::cli::RunResult::Handled(output) => {
+    match result.outcome() {
+        standout::cli::DispatchResult::Handled(output) => {
             assert_eq!(output, "content");
             assert!(!output.contains("?]"));
         }
@@ -201,8 +201,8 @@ fn test_defined_style_does_not_render_as_tag_question_mark() {
     let cmd = Command::new("app").subcommand(Command::new("test"));
     let result = app.run_to_string(cmd, ["app", "--output=term", "test"]);
 
-    match result {
-        standout::cli::RunResult::Handled(output) => {
+    match result.outcome() {
+        standout::cli::DispatchResult::Handled(output) => {
             // Defined style should NOT render as [tag?]
             assert!(
                 !output.contains("[defined_style?]"),

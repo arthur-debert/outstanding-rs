@@ -113,6 +113,7 @@ impl App {
             context_registry: Some(self.context_registry.clone()),
             csv_projection: None,
             extras: HashMap::new(),
+            warnings: None,
         };
         render_request(&request).map_err(|e| SetupError::Template(e.to_string()))
     }

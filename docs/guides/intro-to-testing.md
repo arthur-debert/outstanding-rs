@@ -266,14 +266,13 @@ Same story for the system clipboard:
 
 ### 4.5 Interactive prompts (wizards)
 
-Apps that drive their own interactive shell — wizards, setup helpers, REPLs — call `InquireText::new(...).prompt()`, `InquireSelect::new(...).prompt()`, etc. Without a seam those calls need a real TTY and become level-3 territory. With `.prompts(...)`, the harness intercepts every prompt at the boundary so a wizard handler is fully testable in process:
+Apps that drive their own interactive shell — wizards, setup helpers, REPLs — call `InquireText::new(...).prompt_from(ctx.input_sources())`, `InquireSelect::new(...).prompt_from(ctx.input_sources())`, etc. Without a seam those calls need a real TTY and become level-3 territory. With `.prompts(...)`, the harness places a responder on the run's `InputSources` so a wizard handler that reads `ctx.input_sources()` is fully testable in process:
 
 ```rust
 use standout_input::{PromptResponse, ScriptedResponder};
 use std::sync::Arc;
 
 #[test]
-#[serial]
 fn setup_wizard_completes_with_scripted_answers() {
     let result = TestHarness::new()
         .prompts(Arc::new(ScriptedResponder::new([

@@ -240,6 +240,7 @@ pub use standout_render::file_loader;
 pub use standout_render::style;
 pub use standout_render::tabular;
 pub use standout_render::warnings;
+pub use standout_render::warnings::WarningBuffer;
 
 // Error type (from standout-render)
 pub use standout_render::RenderError;

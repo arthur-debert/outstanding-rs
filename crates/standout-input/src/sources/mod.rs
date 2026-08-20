@@ -29,7 +29,7 @@ pub use arg::{ArgSource, FlagSource};
 pub use clipboard::ClipboardSource;
 pub use default::DefaultSource;
 pub use env::EnvSource;
-pub use stdin::{read_if_piped, StdinSource};
+pub use stdin::{read_if_piped, read_if_piped_from, StdinSource};
 
 #[cfg(feature = "editor")]
 pub use editor::{EditorRunner, EditorSource, MockEditorResult, MockEditorRunner};

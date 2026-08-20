@@ -184,7 +184,9 @@ impl AppBuilder {
     ///     .run(cmd, args);
     /// ```
     pub fn templates(mut self, templates: EmbeddedTemplates) -> Self {
-        self.template_registry = Some(TemplateRegistry::from(templates));
+        let warnings = standout_render::warnings::WarningBuffer::new();
+        self.template_registry = Some(templates.into_registry(Some(&warnings)));
+        self.startup_warnings.extend(warnings.take());
         self
     }
 
@@ -207,7 +209,9 @@ impl AppBuilder {
     ///     .run(cmd, args);
     /// ```
     pub fn styles(mut self, styles: EmbeddedStyles) -> Self {
-        self.stylesheet_registry = Some(crate::StylesheetRegistry::from(styles));
+        let warnings = standout_render::warnings::WarningBuffer::new();
+        self.stylesheet_registry = Some(styles.into_registry(Some(&warnings)));
+        self.startup_warnings.extend(warnings.take());
         self
     }
 
@@ -846,5 +850,420 @@ mod tests {
         let result = app.dispatch(matches, OutputMode::Text);
 
         assert_eq!(result.output(), Some("true"));
+    }
+
+    /// A file path (not a directory) exists, so debug hot-reload attempts a
+    /// walk and falls back to the embedded copy.
+    fn hot_reload_fallback_templates() -> Option<crate::EmbeddedTemplates> {
+        const CARGO_TOML: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/Cargo.toml");
+        static ENTRIES: &[(&str, &str)] = &[("ok.jinja", "hi")];
+        let source = crate::EmbeddedSource::<crate::TemplateResource>::new(ENTRIES, CARGO_TOML);
+        source.should_hot_reload().then_some(source)
+    }
+
+    fn assert_hot_reload_walk_warning(warnings: &[String]) {
+        assert!(
+            warnings
+                .iter()
+                .any(|warning| warning.contains("Failed to walk templates directory")),
+            "expected hot-reload fallback warning, got {warnings:?}"
+        );
+    }
+
+    #[test]
+    fn dispatch_returns_embedded_hot_reload_fallback_warnings() {
+        use serde_json::json;
+
+        let Some(source) = hot_reload_fallback_templates() else {
+            return;
+        };
+        let app = AppBuilder::new()
+            .templates(source)
+            .command(
+                "list",
+                |_m, _ctx| Ok(HandlerOutput::Render(json!({"n": 1}))),
+                "n={{ n }}",
+            )
+            .unwrap()
+            .build()
+            .unwrap();
+        let cmd = Command::new("app").subcommand(Command::new("list"));
+        let matches = cmd.try_get_matches_from(["app", "list"]).unwrap();
+        let result = app.dispatch(matches, OutputMode::Text);
+        assert!(result.is_handled());
+        assert_hot_reload_walk_warning(result.warnings());
+    }
+
+    #[test]
+    fn dispatch_from_returns_embedded_hot_reload_fallback_warnings() {
+        use serde_json::json;
+
+        let Some(source) = hot_reload_fallback_templates() else {
+            return;
+        };
+        let app = AppBuilder::new()
+            .templates(source)
+            .command(
+                "list",
+                |_m, _ctx| Ok(HandlerOutput::Render(json!({"n": 1}))),
+                "n={{ n }}",
+            )
+            .unwrap()
+            .build()
+            .unwrap();
+        let cmd = Command::new("app").subcommand(Command::new("list"));
+        let result = app.dispatch_from(cmd, ["app", "list"]);
+        assert!(result.is_handled());
+        assert_hot_reload_walk_warning(result.warnings());
+    }
+
+    #[test]
+    fn run_with_text_output_keeps_warning_block_plain_on_color_capable_stderr() {
+        use crate::cli::CommandContextInput;
+        use crate::{AmbiguousWidth, ColorMode, IconMode, InputSources, TargetProperties};
+        use serde_json::json;
+        use standout_render::warnings::render_block_for_target;
+
+        let app = AppBuilder::new()
+            .command(
+                "list",
+                |_m, ctx| {
+                    ctx.warn("stylesheet fell back");
+                    Ok(HandlerOutput::Render(json!({"n": 1})))
+                },
+                "n={{ n }}",
+            )
+            .unwrap()
+            .build()
+            .unwrap();
+        let target = TargetProperties {
+            width: Some(80),
+            stdout_is_terminal: false,
+            stderr_is_terminal: true,
+            stdout_color_capability: false,
+            stderr_color_capability: true,
+            color_scheme: ColorMode::Dark,
+            icon_mode: IconMode::Classic,
+            ambiguous_width: AmbiguousWidth::Narrow,
+        };
+        let cmd = Command::new("app").subcommand(Command::new("list"));
+        let result = app.run_with(
+            cmd,
+            ["app", "--output=text", "list"],
+            target,
+            InputSources::from_process(),
+        );
+        assert_eq!(result.output_mode(), OutputMode::Text);
+        assert!(
+            result
+                .warnings()
+                .iter()
+                .any(|warning| warning.contains("stylesheet fell back")),
+            "expected ctx.warn on the run result, got {:?}",
+            result.warnings()
+        );
+        let theme = crate::Theme::default();
+        let block =
+            render_block_for_target(&theme, result.output_mode(), target, result.warnings());
+        assert!(
+            !block.contains("\x1b["),
+            "--output=text must keep the warning block plain, got {block:?}"
+        );
+        let styled = render_block_for_target(&theme, OutputMode::Auto, target, result.warnings());
+        assert!(
+            styled.contains("\x1b["),
+            "Auto on color-capable stderr should style warnings, got {styled:?}"
+        );
+    }
+
+    fn color_capable_stderr_target() -> crate::TargetProperties {
+        use crate::{AmbiguousWidth, ColorMode, IconMode, TargetProperties};
+        TargetProperties {
+            width: Some(80),
+            stdout_is_terminal: false,
+            stderr_is_terminal: true,
+            stdout_color_capability: false,
+            stderr_color_capability: true,
+            color_scheme: ColorMode::Dark,
+            icon_mode: IconMode::Classic,
+            ambiguous_width: AmbiguousWidth::Narrow,
+        }
+    }
+
+    #[test]
+    fn clap_usage_error_honours_text_output_for_startup_warnings() {
+        use crate::cli::handler::RunErrorKind;
+        use crate::InputSources;
+        use serde_json::json;
+        use standout_render::warnings::render_block_for_target;
+
+        let mut app = AppBuilder::new()
+            .command(
+                "list",
+                |_m, _ctx| Ok(HandlerOutput::Render(json!({"n": 1}))),
+                "n={{ n }}",
+            )
+            .unwrap()
+            .build()
+            .unwrap();
+        app.startup_warnings
+            .push("stylesheet fell back".to_string());
+        let target = color_capable_stderr_target();
+        let cmd = Command::new("app").subcommand(Command::new("list"));
+        let result = app.run_with(
+            cmd,
+            ["app", "--output=text", "not-a-command"],
+            target,
+            InputSources::from_process(),
+        );
+        assert!(
+            result.is_error(),
+            "unknown command should be a clap usage error, got {:?}",
+            result.outcome()
+        );
+        assert_eq!(result.error_kind(), Some(RunErrorKind::ClapUsage));
+        assert_eq!(result.output_mode(), OutputMode::Text);
+        assert!(
+            result
+                .warnings()
+                .iter()
+                .any(|warning| warning.contains("stylesheet fell back")),
+            "expected startup warning on the clap-error result, got {:?}",
+            result.warnings()
+        );
+        let theme = crate::Theme::default();
+        let block =
+            render_block_for_target(&theme, result.output_mode(), target, result.warnings());
+        assert!(
+            !block.contains("\x1b["),
+            "clap usage with --output=text must keep warnings plain, got {block:?}"
+        );
+        let styled = render_block_for_target(&theme, OutputMode::Auto, target, result.warnings());
+        assert!(
+            styled.contains("\x1b["),
+            "Auto on color-capable stderr should style warnings, got {styled:?}"
+        );
+    }
+
+    #[test]
+    fn clap_help_and_version_honour_text_output_flag_from_unparsed_line() {
+        use crate::InputSources;
+
+        let app = AppBuilder::new()
+            .version("1.0.0")
+            .command(
+                "list",
+                |_m, _ctx| Ok(HandlerOutput::Render(serde_json::json!({"n": 1}))),
+                "n={{ n }}",
+            )
+            .unwrap()
+            .build()
+            .unwrap();
+        let target = color_capable_stderr_target();
+        let cmd = Command::new("app").subcommand(Command::new("list"));
+        let help = app.run_with(
+            cmd.clone(),
+            ["app", "--help", "--output=text"],
+            target,
+            InputSources::from_process(),
+        );
+        assert_eq!(
+            help.output_mode(),
+            OutputMode::Text,
+            "--output=text after --help must still opt warnings out of ANSI"
+        );
+        let version = app.run_with(
+            cmd,
+            ["app", "--output=text", "--version"],
+            target,
+            InputSources::from_process(),
+        );
+        assert_eq!(
+            version.output_mode(),
+            OutputMode::Text,
+            "--output=text before --version must still opt warnings out of ANSI"
+        );
+    }
+
+    #[test]
+    fn output_mode_probe_skips_help_and_version_spellings_the_command_already_declares() {
+        use crate::InputSources;
+        use clap::{Arg, ArgAction};
+        use serde_json::json;
+
+        let app = AppBuilder::new()
+            .command(
+                "list",
+                |_m, _ctx| Ok(HandlerOutput::Render(json!({"n": 1}))),
+                "n={{ n }}",
+            )
+            .unwrap()
+            .build()
+            .unwrap();
+        let target = color_capable_stderr_target();
+        let cases: [(&str, Command); 6] = [
+            (
+                "root --help",
+                Command::new("app")
+                    .disable_help_flag(true)
+                    .arg(
+                        Arg::new("manual_help")
+                            .long("help")
+                            .action(ArgAction::SetTrue),
+                    )
+                    .subcommand(Command::new("list")),
+            ),
+            (
+                "root -h",
+                Command::new("app")
+                    .disable_help_flag(true)
+                    .arg(Arg::new("manual_h").short('h').action(ArgAction::SetTrue))
+                    .subcommand(Command::new("list")),
+            ),
+            (
+                "root --version",
+                Command::new("app")
+                    .disable_version_flag(true)
+                    .arg(
+                        Arg::new("manual_version")
+                            .long("version")
+                            .action(ArgAction::SetTrue),
+                    )
+                    .subcommand(Command::new("list")),
+            ),
+            (
+                "subcommand --help",
+                Command::new("app").subcommand(
+                    Command::new("list").disable_help_flag(true).arg(
+                        Arg::new("manual_help")
+                            .long("help")
+                            .action(ArgAction::SetTrue),
+                    ),
+                ),
+            ),
+            (
+                "subcommand -h",
+                Command::new("app").subcommand(
+                    Command::new("list")
+                        .disable_help_flag(true)
+                        .arg(Arg::new("manual_h").short('h').action(ArgAction::SetTrue)),
+                ),
+            ),
+            (
+                "subcommand --version",
+                Command::new("app").subcommand(
+                    Command::new("list").disable_version_flag(true).arg(
+                        Arg::new("manual_version")
+                            .long("version")
+                            .action(ArgAction::SetTrue),
+                    ),
+                ),
+            ),
+        ];
+        for (label, cmd) in cases {
+            let result = app.run_with(
+                cmd,
+                ["app", "--output=text", "not-a-command"],
+                target,
+                InputSources::from_process(),
+            );
+            assert!(
+                result.is_error(),
+                "{label}: expected a clap usage error, got {:?}",
+                result.outcome()
+            );
+            assert_eq!(
+                result.output_mode(),
+                OutputMode::Text,
+                "{label}: custom help/version spellings must not panic the probe or drop --output=text"
+            );
+        }
+    }
+
+    #[test]
+    fn output_mode_probe_honours_text_output_on_a_sibling_when_another_branch_owns_the_spelling() {
+        use crate::InputSources;
+        use clap::{Arg, ArgAction};
+        use serde_json::json;
+
+        let app = AppBuilder::new()
+            .command(
+                "list",
+                |_m, _ctx| Ok(HandlerOutput::Render(json!({"n": 1}))),
+                "n={{ n }}",
+            )
+            .unwrap()
+            .command(
+                "sibling",
+                |_m, _ctx| Ok(HandlerOutput::Render(json!({"n": 1}))),
+                "n={{ n }}",
+            )
+            .unwrap()
+            .build()
+            .unwrap();
+        let target = color_capable_stderr_target();
+
+        let help_cmd = Command::new("app")
+            .subcommand(
+                Command::new("list").disable_help_flag(true).arg(
+                    Arg::new("manual_help")
+                        .long("help")
+                        .action(ArgAction::SetTrue),
+                ),
+            )
+            .subcommand(Command::new("sibling"));
+        let help = app.run_with(
+            help_cmd,
+            ["app", "sibling", "--help", "--output=text"],
+            target,
+            InputSources::from_process(),
+        );
+        assert_eq!(
+            help.output_mode(),
+            OutputMode::Text,
+            "sibling --help --output=text must keep Text when list owns --help"
+        );
+
+        let short_cmd = Command::new("app")
+            .subcommand(
+                Command::new("list")
+                    .disable_help_flag(true)
+                    .arg(Arg::new("manual_h").short('h').action(ArgAction::SetTrue)),
+            )
+            .subcommand(Command::new("sibling"));
+        let short = app.run_with(
+            short_cmd,
+            ["app", "sibling", "-h", "--output=text"],
+            target,
+            InputSources::from_process(),
+        );
+        assert_eq!(
+            short.output_mode(),
+            OutputMode::Text,
+            "sibling -h --output=text must keep Text when list owns -h"
+        );
+
+        let version_cmd = Command::new("app")
+            .version("1.0.0")
+            .propagate_version(true)
+            .subcommand(
+                Command::new("list").disable_version_flag(true).arg(
+                    Arg::new("manual_version")
+                        .long("version")
+                        .action(ArgAction::SetTrue),
+                ),
+            )
+            .subcommand(Command::new("sibling"));
+        let version = app.run_with(
+            version_cmd,
+            ["app", "sibling", "--version", "--output=text"],
+            target,
+            InputSources::from_process(),
+        );
+        assert_eq!(
+            version.output_mode(),
+            OutputMode::Text,
+            "sibling --version --output=text must keep Text when list owns --version"
+        );
     }
 }

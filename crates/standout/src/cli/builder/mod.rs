@@ -438,6 +438,11 @@ pub struct App {
     pub(crate) help_word: bool,
     pub(crate) ambiguous_width: crate::AmbiguousWidth,
     pub(crate) version: Option<&'static str>,
+    /// Framework warnings collected while converting embedded templates/styles
+    /// at build time (hot-reload fallbacks). Copied into each run's
+    /// [`standout_render::warnings::WarningBuffer`] so they return on the run
+    /// result instead of printing at construction.
+    pub(crate) startup_warnings: Vec<String>,
 }
 
 impl App {
@@ -549,6 +554,11 @@ pub struct AppBuilder {
     /// only under its `string` feature; the borrow is leaked once, when the
     /// builder is configured, rather than on every parse.
     pub(crate) version: Option<&'static str>,
+
+    /// Framework warnings collected while converting embedded templates/styles
+    /// (hot-reload fallbacks). Copied onto [`App`] at build and into each
+    /// run's warning buffer.
+    pub(crate) startup_warnings: Vec<String>,
 }
 
 impl Default for AppBuilder {
@@ -592,6 +602,7 @@ impl AppBuilder {
             help_word: false,
             ambiguous_width: crate::AmbiguousWidth::Narrow,
             version: None,
+            startup_warnings: Vec::new(),
         }
     }
 
@@ -811,6 +822,7 @@ impl AppBuilder {
             help_word: self.help_word,
             ambiguous_width: self.ambiguous_width,
             version: self.version,
+            startup_warnings: self.startup_warnings,
         };
 
         // Finalize commands with built template and theme state in place.
@@ -1100,6 +1112,22 @@ impl App {
         I: IntoIterator<Item = T>,
         T: Into<std::ffi::OsString> + Clone,
     {
+        self.get_matches_from_with_sources(cmd, itr, &crate::InputSources::from_process())
+    }
+
+    /// [`get_matches_from`](Self::get_matches_from) against explicit
+    /// [`crate::InputSources`] (stdin terminal fact for default-command
+    /// resolution).
+    pub fn get_matches_from_with_sources<I, T>(
+        &self,
+        cmd: Command,
+        itr: I,
+        sources: &crate::InputSources,
+    ) -> HelpResult
+    where
+        I: IntoIterator<Item = T>,
+        T: Into<std::ffi::OsString> + Clone,
+    {
         let mut cmd = self.augment_command_with_help(cmd);
 
         // The application's `Command` is only visible from a parse entry point,
@@ -1118,7 +1146,7 @@ impl App {
         // Verbatim, all the way to Clap: a non-UTF8 argument is a real argument.
         let args: Vec<std::ffi::OsString> = itr.into_iter().map(Into::into).collect();
 
-        let matches = match self.parse_with_default_command(&cmd, &args) {
+        let matches = match self.parse_with_default_command(&cmd, &args, sources.stdin()) {
             Ok(matches) => matches,
             Err(ParseFailure::UnknownDefault(e)) => {
                 return HelpResult::Error(
@@ -1588,21 +1616,45 @@ impl App {
     /// Extracts the output mode from parsed ArgMatches.
     pub fn extract_output_mode(&self, matches: &ArgMatches) -> OutputMode {
         if self.output_flag.is_some() {
-            match matches
-                .get_one::<String>("_output_mode")
-                .map(|s| s.as_str())
-            {
-                Some("term") => OutputMode::Term,
-                Some("text") => OutputMode::Text,
-                Some("term-debug") => OutputMode::TermDebug,
-                Some("json") => OutputMode::Json,
-                Some("yaml") => OutputMode::Yaml,
-                Some("xml") => OutputMode::Xml,
-                Some("csv") => OutputMode::Csv,
-                _ => OutputMode::Auto,
-            }
+            parse_output_mode_flag(
+                matches
+                    .get_one::<String>("_output_mode")
+                    .map(|s| s.as_str()),
+            )
         } else {
             OutputMode::Auto
+        }
+    }
+
+    /// Resolves `--output` when Clap did not produce matches.
+    ///
+    /// Usage errors, `--help`, and `--version` short-circuit before
+    /// [`extract_output_mode`](Self::extract_output_mode). Warning flush still
+    /// reads the run's output mode, so `--output=text` must opt the warning
+    /// block out of ANSI on those exits too.
+    ///
+    /// `cmd` must already carry the framework `--output` flag (the same
+    /// augmentation the failing parse used). The probe is a clap
+    /// `ignore_errors` parse. Each command in the cloned tree has clap-generated
+    /// help/version disabled, then `--help`/`-h`/`--version` re-declared as
+    /// ordinary (non-global) flags only in scopes that do not already use those
+    /// spellings. A custom declaration on one branch therefore cannot panic the
+    /// probe or leave a sibling's generated `--help` short-circuiting so
+    /// `--output=text` is lost. That is clap classifying the line, not a
+    /// lexical argv scan (ADR-0018).
+    pub(crate) fn extract_output_mode_from_unparsed(
+        &self,
+        cmd: &Command,
+        args: &[std::ffi::OsString],
+    ) -> OutputMode {
+        if self.output_flag.is_none() {
+            return OutputMode::Auto;
+        }
+        let probe = prepare_output_mode_probe(cmd.clone(), OccupiedSpellings::default())
+            .ignore_errors(true);
+        match probe.try_get_matches_from(args) {
+            Ok(matches) => self.extract_output_mode(&matches),
+            Err(_) => OutputMode::Auto,
         }
     }
 
@@ -1790,6 +1842,127 @@ fn duplicate_help_word(claim: &str) -> SetupError {
 /// probe reports.
 const HELP_PROBE_SHORT: &str = "__standout_help_short";
 const HELP_PROBE_LONG: &str = "__standout_help_long";
+
+/// Argument ids for the flags [`App::extract_output_mode_from_unparsed`]
+/// re-declares so a help/version short-circuit still yields `--output`.
+const OUTPUT_MODE_PROBE_HELP: &str = "__standout_output_mode_help";
+const OUTPUT_MODE_PROBE_VERSION: &str = "__standout_output_mode_version";
+
+fn parse_output_mode_flag(value: Option<&str>) -> OutputMode {
+    match value {
+        Some("term") => OutputMode::Term,
+        Some("text") => OutputMode::Text,
+        Some("term-debug") => OutputMode::TermDebug,
+        Some("json") => OutputMode::Json,
+        Some("yaml") => OutputMode::Yaml,
+        Some("xml") => OutputMode::Xml,
+        Some("csv") => OutputMode::Csv,
+        _ => OutputMode::Auto,
+    }
+}
+
+/// Long/short spellings already claimed by ancestor *global* arguments.
+///
+/// Probe flags are local to one command. A parent global `--help` is copied
+/// onto children at clap build time, so a child must not add the same
+/// spelling even if it does not declare it itself.
+#[derive(Clone, Default)]
+struct OccupiedSpellings {
+    longs: Vec<String>,
+    shorts: Vec<char>,
+}
+
+impl OccupiedSpellings {
+    fn has_long(&self, name: &str) -> bool {
+        self.longs.iter().any(|long| long == name)
+    }
+
+    fn has_short(&self, short: char) -> bool {
+        self.shorts.contains(&short)
+    }
+
+    fn with_globals_of(&self, cmd: &Command) -> Self {
+        let mut next = self.clone();
+        for arg in cmd.get_arguments().filter(|arg| arg.is_global_set()) {
+            if let Some(long) = arg.get_long() {
+                next.longs.push(long.to_string());
+            }
+            if let Some(aliases) = arg.get_all_aliases() {
+                next.longs.extend(aliases.into_iter().map(str::to_string));
+            }
+            if let Some(short) = arg.get_short() {
+                next.shorts.push(short);
+            }
+            if let Some(aliases) = arg.get_all_short_aliases() {
+                next.shorts.extend(aliases);
+            }
+        }
+        next
+    }
+}
+
+fn command_has_long(cmd: &Command, name: &str) -> bool {
+    cmd.get_long_flag() == Some(name)
+        || cmd.get_all_long_flag_aliases().any(|alias| alias == name)
+        || cmd.get_arguments().any(|arg| {
+            arg.get_long() == Some(name)
+                || arg
+                    .get_all_aliases()
+                    .is_some_and(|aliases| aliases.contains(&name))
+        })
+}
+
+fn command_has_short(cmd: &Command, short: char) -> bool {
+    cmd.get_short_flag() == Some(short)
+        || cmd.get_all_short_flag_aliases().any(|alias| alias == short)
+        || cmd.get_arguments().any(|arg| {
+            arg.get_short() == Some(short)
+                || arg
+                    .get_all_short_aliases()
+                    .is_some_and(|aliases| aliases.contains(&short))
+        })
+}
+
+/// Disables clap-generated help/version on every command and adds ordinary
+/// probe flags only where that scope does not already use the spelling.
+fn prepare_output_mode_probe(cmd: Command, occupied: OccupiedSpellings) -> Command {
+    let mut cmd = cmd.disable_help_flag(true).disable_version_flag(true);
+
+    let add_help_long = !occupied.has_long("help") && !command_has_long(&cmd, "help");
+    let add_help_short = !occupied.has_short('h') && !command_has_short(&cmd, 'h');
+    if add_help_long || add_help_short {
+        let mut help = Arg::new(OUTPUT_MODE_PROBE_HELP)
+            .action(ArgAction::SetTrue)
+            .hide(true);
+        if add_help_long {
+            help = help.long("help");
+        }
+        if add_help_short {
+            help = help.short('h');
+        }
+        cmd = cmd.arg(help);
+    }
+    if !occupied.has_long("version") && !command_has_long(&cmd, "version") {
+        cmd = cmd.arg(
+            Arg::new(OUTPUT_MODE_PROBE_VERSION)
+                .long("version")
+                .action(ArgAction::SetTrue)
+                .hide(true),
+        );
+    }
+
+    let occupied_for_children = occupied.with_globals_of(&cmd);
+    let child_names: Vec<String> = cmd
+        .get_subcommands()
+        .map(|sub| sub.get_name().to_string())
+        .collect();
+    for name in child_names {
+        if let Some(sub) = cmd.find_subcommand_mut(&name) {
+            *sub = prepare_output_mode_probe(sub.clone(), occupied_for_children.clone());
+        }
+    }
+    cmd
+}
 
 /// What a help request named, once Clap has read the line.
 ///

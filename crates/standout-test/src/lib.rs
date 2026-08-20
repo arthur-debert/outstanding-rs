@@ -84,13 +84,17 @@
 //!
 //! # Concurrency and restoration
 //!
-//! [`TestHarness::run`] mutates process-global state (env vars, cwd,
-//! default input readers). Tests that call it must be annotated `#[serial]`
-//! (from the re-exported `serial_test` crate) when they use those seams.
-//! Width, color, theme, and icon are injected on [`TargetProperties`] and
-//! do not need `#[serial]` for detector reasons. [`TestHarness::run_process`]
-//! and [`TestHarness::run_pty`] mutate none of the process-global seams, so
-//! a binary of process tests alone needs no annotation.
+//! [`TestHarness::run`] mutates process-global state (env vars, cwd).
+//! Stdin, clipboard, and the prompt responder are constructed as
+//! [`InputSources`] and passed into
+//! [`App::run_with`](standout::cli::App::run_with); they are not
+//! process-global overrides. Width, color, theme, and icon are injected on
+//! [`TargetProperties`] and do not need `#[serial]` for detector reasons.
+//! Tests that call `run` must be annotated `#[serial]` (from the re-exported
+//! `serial_test` crate) when they use env or cwd.
+//! [`TestHarness::run_process`] and [`TestHarness::run_pty`] mutate none of
+//! the process-global seams, so a binary of process tests alone needs no
+//! annotation.
 //!
 //! They do *inherit* it, though: a child starts from the test process's
 //! ambient environment and — unless the harness names a `cwd` or materializes
@@ -104,9 +108,8 @@
 //! unwind, with two nuances:
 //!
 //! - Env vars and cwd are restored to the values captured at `run()` time.
-//! - Default input readers are reset to the library defaults, not to
-//!   whatever was installed before `run()`. Don't mix a `TestHarness` with
-//!   a manually installed input-reader override on the same thread.
+//! - Stdin, clipboard, and the prompt responder live on the [`InputSources`]
+//!   value for that run, so they do not need restore.
 
 use std::collections::HashMap;
 use std::ffi::OsString;
@@ -114,16 +117,11 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use clap::Command;
-use standout::cli::{
-    App, ArtifactDestination, ArtifactRun, ExitStatus, RunErrorKind, RunResult, SuccessKind,
-};
+use standout::cli::DispatchResult;
+use standout::cli::{App, ArtifactDestination, ArtifactRun, ExitStatus, RunErrorKind, SuccessKind};
 use standout::{ColorMode, IconMode, InputSources, TargetProperties};
 use standout_input::env::{MockClipboard, MockStdin};
-use standout_input::{
-    reset_default_clipboard_reader, reset_default_prompt_responder, reset_default_stdin_reader,
-    set_default_clipboard_reader, set_default_prompt_responder, set_default_stdin_reader,
-    PromptResponder,
-};
+use standout_input::PromptResponder;
 use standout_render::{AmbiguousWidth, OutputMode};
 use tempfile::TempDir;
 
@@ -323,9 +321,11 @@ impl TestHarness {
 
     // --- stdin ----------------------------------------------------------------
 
-    /// Simulates piped stdin with `content`. Handlers using
-    /// `StdinSource::new()` will see `is_terminal() == false` and read
-    /// `content`.
+    /// Simulates piped stdin with `content`. Input collection resolved
+    /// against this run's [`InputSources`] sees `is_terminal() == false` and
+    /// reads `content`. Handlers that call [`InputChain::resolve_from`](standout_input::InputChain::resolve_from)
+    /// with [`CommandContextInput::input_sources`](standout::cli::CommandContextInput::input_sources)
+    /// observe the same pipe.
     pub fn piped_stdin(mut self, content: impl Into<String>) -> Self {
         self.stdin = StdinMode::Piped(content.into());
         self
@@ -339,8 +339,7 @@ impl TestHarness {
 
     // --- clipboard ------------------------------------------------------------
 
-    /// Installs `content` as the mock clipboard. Handlers using
-    /// `ClipboardSource::new()` will read it.
+    /// Installs `content` as the mock clipboard on this run's [`InputSources`].
     pub fn clipboard(mut self, content: impl Into<String>) -> Self {
         self.clipboard = Some(content.into());
         self
@@ -349,12 +348,13 @@ impl TestHarness {
     // --- interactive prompts --------------------------------------------------
 
     /// Installs a [`PromptResponder`](standout_input::PromptResponder) that
-    /// every `.prompt()` call on a [`standout_input`] interactive source
-    /// will route through during the run.
+    /// interactive sources consult during the run.
     ///
-    /// Use this to test wizard / setup / REPL flows that call
-    /// `InquireText::new(...).prompt()`, `InquireSelect::new(...).prompt()`,
-    /// etc., without launching real prompts. The
+    /// Use this to test wizard / setup / REPL flows and
+    /// [`CommandConfig::input`](standout::cli::CommandConfig::input) chains
+    /// that include prompt or editor sources, without launching real prompts.
+    /// Handlers call `.prompt_from(ctx.input_sources())`; chains resolve
+    /// against those same sources. The
     /// [`ScriptedResponder`](standout_input::ScriptedResponder) bundled with
     /// `standout-input` covers the common case:
     ///
@@ -371,10 +371,10 @@ impl TestHarness {
     ///     .run(&app, cmd, ["mycli", "setup"]);
     /// ```
     ///
-    /// The responder is installed via
-    /// [`set_default_prompt_responder`](standout_input::set_default_prompt_responder)
-    /// for the duration of the run and reset on drop, matching the
-    /// stdin / clipboard pattern.
+    /// The responder is placed on this run's [`InputSources`] and passed into
+    /// [`App::run_with`](standout::cli::App::run_with). Handlers call
+    /// `.prompt_from(ctx.input_sources())` (or resolve input chains against
+    /// those sources) to receive it.
     pub fn prompts(mut self, responder: Arc<dyn PromptResponder>) -> Self {
         self.prompts = Some(responder);
         self
@@ -511,25 +511,22 @@ impl TestHarness {
         //    Width/color/theme/icon no longer install process-global
         //    detectors or `console::set_colors_enabled`.
 
-        // 4. Stdin / clipboard overrides.
+        // 4. InputSources from this harness (stdin / clipboard / responder).
+        let mut sources = InputSources::from_process();
         match std::mem::replace(&mut self.stdin, StdinMode::Inherit) {
             StdinMode::Inherit => {}
             StdinMode::Piped(content) => {
-                set_default_stdin_reader(Arc::new(MockStdin::piped(content)));
-                restore.reset_stdin = true;
+                sources = sources.with_stdin(MockStdin::piped(content));
             }
             StdinMode::Interactive => {
-                set_default_stdin_reader(Arc::new(MockStdin::terminal()));
-                restore.reset_stdin = true;
+                sources = sources.with_stdin(MockStdin::terminal());
             }
         }
         if let Some(content) = self.clipboard.take() {
-            set_default_clipboard_reader(Arc::new(MockClipboard::with_content(content)));
-            restore.reset_clipboard = true;
+            sources = sources.with_clipboard(MockClipboard::with_content(content));
         }
         if let Some(responder) = self.prompts.take() {
-            set_default_prompt_responder(responder);
-            restore.reset_prompts = true;
+            sources = sources.with_responder(responder);
         }
 
         // 5. Argv: append --<flag>=<mode> if an output mode was forced.
@@ -539,19 +536,22 @@ impl TestHarness {
         }
 
         let target = self.target_properties();
-        let sources = InputSources::from_process();
         let capture_window = standout_render::diagnostics::begin_capture();
-        let outcome = app.run_with(cmd, argv, target, sources);
-        standout_render::warnings::capture_warnings_for_run();
+        let run = app.run_with(cmd, argv, target, sources);
         drop(capture_window);
-        let warnings = standout_render::warnings::take_captured_warnings();
+        let warnings = run.warnings().to_vec();
+        let output_mode = run.output_mode();
+        let outcome = run.into_outcome();
         let tag_resolutions = standout_render::diagnostics::take_captured();
+        // Same fallback `App::run` uses when flushing the warning block.
+        let default_theme = standout::Theme::default();
+        let theme = app.get_default_theme().unwrap_or(&default_theme);
 
         // `self` (and its tempdir) move into TestResult so the fixture dir
         // survives until the test is finished with the result.
         TestResult {
             stdout: render_stdout(&outcome),
-            stderr: render_stderr(&outcome, &warnings),
+            stderr: render_stderr(&outcome, &warnings, output_mode, target, theme),
             outcome,
             warnings,
             tag_resolutions,
@@ -628,10 +628,10 @@ fn validate_fixture_path(path: &Path) -> PathBuf {
 /// `stdout()` has always had and every existing assertion is written against;
 /// modeling the terminator would be a suite-wide rewrite for no oracle this
 /// slice needs.
-fn render_stdout(outcome: &RunResult) -> String {
+fn render_stdout(outcome: &DispatchResult) -> String {
     match outcome {
-        RunResult::Handled(text) => text.as_str().to_string(),
-        RunResult::Artifact(run) if !run.destination().is_stdout() => report_line(run),
+        DispatchResult::Handled(text) => text.as_str().to_string(),
+        DispatchResult::Artifact(run) if !run.destination().is_stdout() => report_line(run),
         _ => String::new(),
     }
 }
@@ -647,23 +647,29 @@ fn render_stdout(outcome: &RunResult) -> String {
 ///   (an artifact written to a file leaves stdout free and reports there);
 /// - framework warnings close the channel, in the block `App::run` flushes
 ///   after the primary output — blank line, banner, one tab-indented line per
-///   warning. The layout is `standout_render`'s own
-///   [`render_block_plain`](standout_render::warnings::render_block_plain), so
-///   the harness cannot drift from what the CLI layer writes. Only the styling
-///   is not modeled: `run` themes that block according to the real stderr's
-///   color capability, which an in-process run has no equivalent of, so the
-///   block appears here as `stderr_plain` would show it. The warnings also
-///   remain individually addressable on
+///   warning. The layout, `--output=text` / stderr-capability styling, and
+///   the app's resolved theme (same `get_default_theme().unwrap_or(default)`
+///   `App::run` uses) are `standout_render`'s own
+///   [`render_block_for_target`](standout_render::warnings::render_block_for_target),
+///   so the harness cannot drift from what the CLI layer writes. The warnings
+///   also remain individually addressable on
 ///   [`TestResult::warnings`](TestResult::warnings).
-fn render_stderr(outcome: &RunResult, warnings: &[String]) -> String {
+fn render_stderr(
+    outcome: &DispatchResult,
+    warnings: &[String],
+    output_mode: OutputMode,
+    target: TargetProperties,
+    theme: &standout::Theme,
+) -> String {
     let primary = match outcome {
-        RunResult::Error(error) if error.kind() == RunErrorKind::External => error.to_string(),
-        RunResult::Error(error) => format!("{}\n", error),
-        RunResult::Artifact(run) if run.destination().is_stdout() => report_line(run),
+        DispatchResult::Error(error) if error.kind() == RunErrorKind::External => error.to_string(),
+        DispatchResult::Error(error) => format!("{}\n", error),
+        DispatchResult::Artifact(run) if run.destination().is_stdout() => report_line(run),
         _ => String::new(),
     };
 
-    primary + &standout_render::warnings::render_block_plain(warnings)
+    primary
+        + &standout_render::warnings::render_block_for_target(theme, output_mode, target, warnings)
 }
 
 /// Returns an artifact's report as the framework writes it — newline-terminated
@@ -696,9 +702,6 @@ fn output_mode_flag(mode: OutputMode) -> &'static str {
 struct RestoreState {
     env_originals: HashMap<String, Option<String>>,
     original_cwd: Option<PathBuf>,
-    reset_stdin: bool,
-    reset_clipboard: bool,
-    reset_prompts: bool,
 }
 
 impl Drop for RestoreState {
@@ -712,24 +715,15 @@ impl Drop for RestoreState {
         if let Some(cwd) = self.original_cwd.take() {
             let _ = std::env::set_current_dir(cwd);
         }
-        if self.reset_stdin {
-            reset_default_stdin_reader();
-        }
-        if self.reset_clipboard {
-            reset_default_clipboard_reader();
-        }
-        if self.reset_prompts {
-            reset_default_prompt_responder();
-        }
     }
 }
 
 /// Outcome of a [`TestHarness::run`] invocation.
 ///
-/// Holds the raw [`RunResult`] produced by the app, plus convenience
+/// Holds the raw [`DispatchResult`] produced by the app, plus convenience
 /// accessors and assertion helpers oriented at text output.
 pub struct TestResult {
-    outcome: RunResult,
+    outcome: DispatchResult,
     stdout: String,
     stderr: String,
     warnings: Vec<String>,
@@ -741,9 +735,9 @@ pub struct TestResult {
 }
 
 impl TestResult {
-    /// Returns the raw [`RunResult`] for cases where the structured
+    /// Returns the raw [`DispatchResult`] for cases where the structured
     /// accessors aren't enough.
-    pub fn outcome(&self) -> &RunResult {
+    pub fn outcome(&self) -> &DispatchResult {
         &self.outcome
     }
 
@@ -899,19 +893,19 @@ impl TestResult {
 
     /// Returns `true` if the run produced text output.
     pub fn is_handled(&self) -> bool {
-        matches!(self.outcome, RunResult::Handled(_))
+        matches!(self.outcome, DispatchResult::Handled(_))
     }
 
     /// Returns `true` if no handler matched the argv.
     pub fn is_no_match(&self) -> bool {
-        matches!(self.outcome, RunResult::NoMatch(_))
+        matches!(self.outcome, DispatchResult::NoMatch(_))
     }
 
     /// If the run produced binary output, returns the bytes and suggested
     /// filename.
     pub fn binary(&self) -> Option<(&[u8], &str)> {
         match &self.outcome {
-            RunResult::Binary(bytes, filename) => Some((bytes.as_slice(), filename.as_str())),
+            DispatchResult::Binary(bytes, filename) => Some((bytes.as_slice(), filename.as_str())),
             _ => None,
         }
     }
@@ -1022,20 +1016,20 @@ impl TestResult {
     // --- assertions ----------------------------------------------------------
 
     /// Panics unless the run ended in a successful dispatch
-    /// (`RunResult::Handled`, `RunResult::Silent`, `RunResult::Binary`, or
-    /// `RunResult::Artifact`). `RunResult::NoMatch` and `RunResult::Error`
+    /// (`DispatchResult::Handled`, `DispatchResult::Silent`, `DispatchResult::Binary`, or
+    /// `DispatchResult::Artifact`). `DispatchResult::NoMatch` and `DispatchResult::Error`
     /// trigger a panic.
     #[track_caller]
     pub fn assert_success(&self) {
         match &self.outcome {
-            RunResult::Handled(_)
-            | RunResult::Silent
-            | RunResult::Binary(_, _)
-            | RunResult::Artifact(_) => {}
-            RunResult::NoMatch(_) => {
+            DispatchResult::Handled(_)
+            | DispatchResult::Silent
+            | DispatchResult::Binary(_, _)
+            | DispatchResult::Artifact(_) => {}
+            DispatchResult::NoMatch(_) => {
                 panic!("expected successful dispatch but no handler matched; stdout was empty")
             }
-            RunResult::Error(msg) => {
+            DispatchResult::Error(msg) => {
                 panic!("expected successful dispatch, got error: {}", msg)
             }
             _ => panic!(
@@ -1069,29 +1063,29 @@ impl TestResult {
 
     /// Returns `true` if the run produced an error.
     pub fn is_error(&self) -> bool {
-        matches!(self.outcome, RunResult::Error(_))
+        matches!(self.outcome, DispatchResult::Error(_))
     }
 
     /// Returns the error message if the run produced one, or `None`.
     pub fn error(&self) -> Option<&str> {
         match &self.outcome {
-            RunResult::Error(s) => Some(s.as_str()),
+            DispatchResult::Error(s) => Some(s.as_str()),
             _ => None,
         }
     }
 
-    /// Panics unless the run ended in `RunResult::Error`.
+    /// Panics unless the run ended in `DispatchResult::Error`.
     #[track_caller]
     pub fn assert_error(&self) {
         if !self.is_error() {
             panic!(
-                "expected RunResult::Error, got: {:?}",
+                "expected DispatchResult::Error, got: {:?}",
                 describe_outcome(&self.outcome)
             );
         }
     }
 
-    /// Panics unless the run ended in `RunResult::Error` and the message
+    /// Panics unless the run ended in `DispatchResult::Error` and the message
     /// contains `needle`.
     #[track_caller]
     pub fn assert_error_contains(&self, needle: &str) {
@@ -1102,13 +1096,13 @@ impl TestResult {
                 needle, msg
             ),
             None => panic!(
-                "expected RunResult::Error, got: {:?}",
+                "expected DispatchResult::Error, got: {:?}",
                 describe_outcome(&self.outcome)
             ),
         }
     }
 
-    /// Panics unless the run ended in `RunResult::NoMatch`.
+    /// Panics unless the run ended in `DispatchResult::NoMatch`.
     #[track_caller]
     pub fn assert_no_match(&self) {
         if !self.is_no_match() {
@@ -1192,18 +1186,18 @@ impl TestResult {
     }
 }
 
-fn describe_outcome(o: &RunResult) -> String {
+fn describe_outcome(o: &DispatchResult) -> String {
     match o {
-        RunResult::Handled(s) => format!("Handled({:?})", s),
-        RunResult::Silent => "Silent".into(),
-        RunResult::Binary(b, f) => format!("Binary(len={}, {:?})", b.len(), f),
-        RunResult::Artifact(run) => format!(
+        DispatchResult::Handled(s) => format!("Handled({:?})", s),
+        DispatchResult::Silent => "Silent".into(),
+        DispatchResult::Binary(b, f) => format!("Binary(len={}, {:?})", b.len(), f),
+        DispatchResult::Artifact(run) => format!(
             "Artifact(len={}, destination={:?})",
             run.bytes().len(),
             run.destination().label()
         ),
-        RunResult::Error(s) => format!("Error({:?})", s),
-        RunResult::NoMatch(_) => "NoMatch".into(),
+        DispatchResult::Error(s) => format!("Error({:?})", s),
+        DispatchResult::NoMatch(_) => "NoMatch".into(),
         _ => "Unknown".into(),
     }
 }

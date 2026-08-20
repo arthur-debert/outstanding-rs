@@ -1,8 +1,8 @@
 use clap::Command;
 use serde_json::json;
 use standout::cli::{
-    App, ExitStatus, ExternalFailure, HandlerResult, HookError, HookPhase, Hooks, Output,
-    OutputKind, RunErrorKind, RunResult, SuccessKind,
+    App, DispatchResult as RunResult, ExitStatus, ExternalFailure, HandlerResult, HookError,
+    HookPhase, Hooks, Output, OutputKind, RunErrorKind, SuccessKind,
 };
 
 fn command() -> Command {
@@ -155,7 +155,7 @@ fn external_failure_metadata_crosses_handler_and_pre_dispatch_seams() {
     assert_eq!(handler.error_kind(), Some(RunErrorKind::External));
     assert_eq!(handler.error(), Some("fatal: handler external\n"));
     assert_eq!(handler.output(), None);
-    let RunResult::Error(handler_error) = &handler else {
+    let RunResult::Error(handler_error) = handler.outcome() else {
         panic!("expected external error");
     };
     assert_eq!(
@@ -287,7 +287,7 @@ fn output_file_success_is_silent_and_no_match_has_no_status() {
     assert_eq!(std::fs::read_to_string(path).unwrap(), "ok");
 
     let no_match = success_app().run_to_string(command(), ["app"]);
-    assert!(matches!(&no_match, RunResult::NoMatch(_)));
+    assert!(matches!(no_match.outcome(), RunResult::NoMatch(_)));
     assert_eq!(no_match.exit_status(), None);
     assert_eq!(no_match.error_kind(), None);
 }

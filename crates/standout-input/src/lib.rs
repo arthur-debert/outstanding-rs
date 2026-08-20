@@ -25,7 +25,8 @@
 //!
 //! [`InputSources`] is the explicit stdin, clipboard, and prompt-responder for
 //! one invocation. Production constructs it from the real process; tests put
-//! mocks in the same type.
+//! mocks in the same type. Input collection takes it as an argument; there is
+//! no process-global default-reader override.
 //!
 //! # Architecture
 //!
@@ -80,13 +81,13 @@ pub use error::InputError;
 pub use input_sources::InputSources;
 pub use inputs::{Inputs, MissingInput};
 pub use responder::{
-    reset_default_prompt_responder, set_default_prompt_responder, PromptContext, PromptKind,
-    PromptResponder, PromptResponse, ScriptedResponder,
+    PromptContext, PromptKind, PromptResponder, PromptResponse, ScriptedResponder,
 };
 
 // Re-export sources at crate root for convenience
 pub use sources::{
-    read_if_piped, ArgSource, ClipboardSource, DefaultSource, EnvSource, FlagSource, StdinSource,
+    read_if_piped, read_if_piped_from, ArgSource, ClipboardSource, DefaultSource, EnvSource,
+    FlagSource, StdinSource,
 };
 
 #[cfg(feature = "editor")]
@@ -103,8 +104,5 @@ pub use sources::{
 // Re-export mock types for testing
 pub use env::{MockClipboard, MockEnv, MockStdin};
 
-// Re-export process-global default reader controls (used by test harnesses)
-pub use env::{
-    reset_default_clipboard_reader, reset_default_stdin_reader, set_default_clipboard_reader,
-    set_default_stdin_reader, DefaultClipboard, DefaultStdin,
-};
+// Re-export real process readers for callers constructing [`InputSources`].
+pub use env::{RealClipboard, RealStdin};

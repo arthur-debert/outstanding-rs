@@ -1,7 +1,6 @@
 use std::path::PathBuf;
 use std::sync::Arc;
 
-use serial_test::serial;
 use standout_input::env::MockStdin;
 use standout_input::questionnaire::QuestionnaireChoices as _;
 use standout_input::questionnaire::{
@@ -9,9 +8,7 @@ use standout_input::questionnaire::{
     Questionnaire as RuntimeQuestionnaire, QuestionnaireError, QuestionnaireInput,
     QuestionnaireInputError, ScalarField, ScalarKind, ValidationDiagnostic,
 };
-use standout_input::{
-    reset_default_prompt_responder, set_default_prompt_responder, PromptResponse, ScriptedResponder,
-};
+use standout_input::{InputSources, PromptResponse, ScriptedResponder};
 use standout_macros::{Questionnaire, QuestionnaireChoices};
 
 #[derive(Debug, PartialEq, Eq, Questionnaire)]
@@ -243,18 +240,20 @@ struct CopyableInputs {
     inputs: Vec<CommandInput>,
 }
 
-struct ResponderGuard;
+struct ResponderGuard {
+    sources: InputSources,
+}
 
 impl ResponderGuard {
     fn install(responses: impl IntoIterator<Item = PromptResponse>) -> Self {
-        set_default_prompt_responder(Arc::new(ScriptedResponder::new(responses)));
-        Self
+        Self {
+            sources: InputSources::from_process()
+                .with_responder(Arc::new(ScriptedResponder::new(responses))),
+        }
     }
-}
 
-impl Drop for ResponderGuard {
-    fn drop(&mut self) {
-        reset_default_prompt_responder();
+    fn sources(&self) -> &InputSources {
+        &self.sources
     }
 }
 
@@ -408,7 +407,6 @@ fn typed_decode_accepts_file_and_stdin_raw_answers() {
 }
 
 #[test]
-#[serial(prompt_responder)]
 fn typed_decode_accepts_interactive_raw_answers() {
     let questionnaire = Profile::questionnaire().unwrap();
     let _guard = ResponderGuard::install([
@@ -420,7 +418,9 @@ fn typed_decode_accepts_interactive_raw_answers() {
         PromptResponse::text("/etc/demo"),
     ]);
 
-    let raw = questionnaire.collect_interactive().unwrap();
+    let raw = questionnaire
+        .collect_interactive_from(_guard.sources())
+        .unwrap();
     assert_eq!(Profile::from_raw_answers(&raw).unwrap(), expected_profile());
 }
 
@@ -807,14 +807,15 @@ fn behavior_hooks_round_trip_through_sheet_decode() {
 }
 
 #[test]
-#[serial(prompt_responder)]
 fn behavior_hooks_round_trip_through_interactive_decode() {
     let questionnaire = HookedProfile::questionnaire().unwrap();
     let _guard = ResponderGuard::install([
         PromptResponse::text("docker"),
         PromptResponse::Skip, // image: blank -> computed default
     ]);
-    let raw = questionnaire.collect_interactive().unwrap();
+    let raw = questionnaire
+        .collect_interactive_from(_guard.sources())
+        .unwrap();
 
     assert_eq!(
         HookedProfile::from_raw_answers(&raw).unwrap(),

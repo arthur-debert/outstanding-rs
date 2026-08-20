@@ -29,8 +29,8 @@ fn test_theme_preservation_bug() {
     // We simulate passing "--output=term" to force terminal output with colors
     let result = app.run_to_string(cmd, ["app", "--output=term", "test"]);
 
-    match result {
-        standout::cli::RunResult::Handled(output) => {
+    match result.into_outcome() {
+        standout::cli::DispatchResult::Handled(output) => {
             // 4. Verification: If theme works, output should contain ANSI red code: \x1b[31m
             assert!(
                 output.contains("\x1b[31m"),

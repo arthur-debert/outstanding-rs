@@ -4,21 +4,11 @@
 //! allowing tests to run without depending on actual terminal state,
 //! stdin piping, or clipboard contents.
 //!
-//! # Default readers and test overrides
-//!
-//! [`StdinSource::new`](crate::StdinSource::new) and
-//! [`ClipboardSource::new`](crate::ClipboardSource::new) both use "default"
-//! readers ([`DefaultStdin`], [`DefaultClipboard`]) that consult a
-//! process-global override before falling back to the real OS-backed
-//! implementation.
-//!
-//! Tests can swap in a mock without touching handler code by calling
-//! [`set_default_stdin_reader`] / [`set_default_clipboard_reader`]. The
-//! `TestHarness` in the `standout-test` crate wires these automatically.
+//! Production collection receives readers through [`crate::InputSources`].
+//! Tests construct mocks ([`MockStdin`], [`MockClipboard`]) and put them on
+//! that same type; there is no process-global default-reader override.
 
-use once_cell::sync::Lazy;
 use std::io::{self, IsTerminal, Read};
-use std::sync::{Arc, Mutex};
 
 use crate::InputError;
 
@@ -229,118 +219,9 @@ impl ClipboardReader for MockClipboard {
     }
 }
 
-// === Process-global default reader overrides ===
-//
-// `StdinSource::new()` and `ClipboardSource::new()` resolve their reader
-// through the `DefaultStdin` / `DefaultClipboard` shims below, which consult
-// these slots before falling back to the real OS-backed readers. Tests use
-// `set_default_*_reader` to install a mock for a serial scope; the
-// `standout-test` `TestHarness` handles teardown via its `Drop` impl.
-
-type SharedStdin = Arc<dyn StdinReader + Send + Sync>;
-type SharedClipboard = Arc<dyn ClipboardReader + Send + Sync>;
-
-static STDIN_OVERRIDE: Lazy<Mutex<Option<SharedStdin>>> = Lazy::new(|| Mutex::new(None));
-static CLIPBOARD_OVERRIDE: Lazy<Mutex<Option<SharedClipboard>>> = Lazy::new(|| Mutex::new(None));
-
-/// Installs a process-global stdin reader that [`DefaultStdin`] (and
-/// therefore [`StdinSource::new`](crate::StdinSource::new)) will delegate
-/// to until [`reset_default_stdin_reader`] is called.
-///
-/// Intended for test harnesses. Tests using this must run serially (e.g.
-/// via `#[serial]`) because the override is process-global.
-pub fn set_default_stdin_reader(reader: SharedStdin) {
-    *STDIN_OVERRIDE.lock().unwrap() = Some(reader);
-}
-
-/// Clears the stdin override installed by [`set_default_stdin_reader`].
-pub fn reset_default_stdin_reader() {
-    *STDIN_OVERRIDE.lock().unwrap() = None;
-}
-
-/// Installs a process-global clipboard reader that [`DefaultClipboard`]
-/// (and therefore [`ClipboardSource::new`](crate::ClipboardSource::new))
-/// will delegate to until [`reset_default_clipboard_reader`] is called.
-pub fn set_default_clipboard_reader(reader: SharedClipboard) {
-    *CLIPBOARD_OVERRIDE.lock().unwrap() = Some(reader);
-}
-
-/// Clears the clipboard override installed by
-/// [`set_default_clipboard_reader`].
-pub fn reset_default_clipboard_reader() {
-    *CLIPBOARD_OVERRIDE.lock().unwrap() = None;
-}
-
-fn current_stdin_override() -> Option<SharedStdin> {
-    STDIN_OVERRIDE.lock().unwrap().clone()
-}
-
-fn current_clipboard_override() -> Option<SharedClipboard> {
-    CLIPBOARD_OVERRIDE.lock().unwrap().clone()
-}
-
-/// Stdin reader used by [`StdinSource::new`](crate::StdinSource::new).
-///
-/// Delegates to a reader installed via [`set_default_stdin_reader`] if one
-/// is present; otherwise falls back to [`RealStdin`]. The indirection lets
-/// a test harness inject a [`MockStdin`] without reconstructing sources
-/// inside handler code.
-#[derive(Debug, Default, Clone, Copy)]
-pub struct DefaultStdin;
-
-impl StdinReader for DefaultStdin {
-    fn is_terminal(&self) -> bool {
-        if let Some(r) = current_stdin_override() {
-            return r.is_terminal();
-        }
-        RealStdin.is_terminal()
-    }
-
-    fn read_to_string(&self) -> io::Result<String> {
-        if let Some(r) = current_stdin_override() {
-            return r.read_to_string();
-        }
-        RealStdin.read_to_string()
-    }
-}
-
-/// Clipboard reader used by
-/// [`ClipboardSource::new`](crate::ClipboardSource::new).
-///
-/// Delegates to a reader installed via [`set_default_clipboard_reader`] if
-/// one is present; otherwise falls back to [`RealClipboard`].
-#[derive(Debug, Default, Clone, Copy)]
-pub struct DefaultClipboard;
-
-impl ClipboardReader for DefaultClipboard {
-    fn read(&self) -> Result<Option<String>, InputError> {
-        if let Some(r) = current_clipboard_override() {
-            return r.read();
-        }
-        RealClipboard.read()
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
-    use serial_test::serial;
-
-    struct StdinOverrideGuard;
-
-    impl Drop for StdinOverrideGuard {
-        fn drop(&mut self) {
-            reset_default_stdin_reader();
-        }
-    }
-
-    struct ClipboardOverrideGuard;
-
-    impl Drop for ClipboardOverrideGuard {
-        fn drop(&mut self) {
-            reset_default_clipboard_reader();
-        }
-    }
 
     #[test]
     fn mock_stdin_terminal() {
@@ -392,34 +273,5 @@ mod tests {
             clipboard.read().unwrap(),
             Some("clipboard text".to_string())
         );
-    }
-
-    #[test]
-    #[serial]
-    fn default_stdin_uses_override() {
-        set_default_stdin_reader(Arc::new(MockStdin::piped("overridden")));
-        let _guard = StdinOverrideGuard;
-        let reader = DefaultStdin;
-        assert!(!reader.is_terminal());
-        assert_eq!(reader.read_to_string().unwrap(), "overridden");
-    }
-
-    #[test]
-    #[serial]
-    fn default_stdin_falls_back_without_override() {
-        reset_default_stdin_reader();
-        // Behaviour matches RealStdin; we can only assert it doesn't panic
-        // and reports a terminal state consistent with the current process.
-        let reader = DefaultStdin;
-        let _ = reader.is_terminal();
-    }
-
-    #[test]
-    #[serial]
-    fn default_clipboard_uses_override() {
-        set_default_clipboard_reader(Arc::new(MockClipboard::with_content("paste")));
-        let _guard = ClipboardOverrideGuard;
-        let reader = DefaultClipboard;
-        assert_eq!(reader.read().unwrap(), Some("paste".to_string()));
     }
 }
