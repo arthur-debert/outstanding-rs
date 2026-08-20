@@ -137,7 +137,7 @@ impl App {
         registry: Option<std::rc::Rc<crate::TemplateRegistry>>,
         target: TargetProperties,
     ) -> Result<String, SetupError> {
-        let theme = self.theme.clone().unwrap_or_default();
+        let theme = self.theme.clone();
         let request = RenderRequest {
             data: serde_json::to_value(data).map_err(|e| SetupError::Config(e.to_string()))?,
             template,

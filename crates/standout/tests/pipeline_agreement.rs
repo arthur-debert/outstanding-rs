@@ -91,10 +91,7 @@ fn composition_request(
     RenderRequest {
         data: json!({"name": "Ada", "label": "hi"}),
         template: TemplateRef::Inline(COMPOSITION_TEMPLATE.to_string()),
-        theme: app
-            .get_default_theme()
-            .cloned()
-            .expect("build merged a theme"),
+        theme: app.get_default_theme().clone(),
         format: OutputMode::Term,
         color_policy: ColorPolicy::Auto,
         target,
@@ -155,6 +152,46 @@ fn dispatch_render_inline_and_render_request_agree_byte_for_byte() {
     assert_eq!(
         inline, via_request,
         "render_inline_with must match render_request of the same facts"
+    );
+}
+
+#[test]
+fn run_command_and_dispatch_agree_byte_for_byte() {
+    let templates = write_part_template();
+    let app = composition_app(templates.path());
+    let cmd = greet_command();
+    let matches = cmd.try_get_matches_from(["app", "greet"]).unwrap();
+
+    let dispatched = app.dispatch(matches, OutputMode::Auto);
+    let dispatch_out = dispatched
+        .output()
+        .expect("dispatch should render")
+        .to_string();
+
+    let matches = greet_command()
+        .try_get_matches_from(["app", "greet"])
+        .unwrap();
+    let sub = matches.subcommand_matches("greet").unwrap();
+    let via_run_command = app
+        .run_command(
+            "greet",
+            sub,
+            |_m, _ctx| Ok(Output::Render(json!({"name": "Ada", "label": "hi"}))),
+            COMPOSITION_TEMPLATE,
+        )
+        .expect("run_command should render");
+
+    assert!(
+        dispatch_out.contains("ADA")
+            && dispatch_out.contains("INC")
+            && dispatch_out.contains("9.9")
+            && dispatch_out.contains("w"),
+        "template must consume filter, include, and context:\n{dispatch_out}"
+    );
+    assert_eq!(
+        via_run_command.as_text(),
+        Some(dispatch_out.as_str()),
+        "run_command and dispatch must share the request pipeline"
     );
 }
 

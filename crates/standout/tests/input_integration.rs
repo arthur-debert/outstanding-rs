@@ -71,6 +71,47 @@ fn arg_value_reaches_handler_via_ctx_input() {
 }
 
 #[test]
+fn run_command_resolves_declared_input() {
+    let app = App::builder()
+        .command_with(
+            "create",
+            |_m, ctx| {
+                let body: &String = ctx.input("body").expect("body should be resolved");
+                Ok(Output::Render(json!({ "echo": body })))
+            },
+            |cfg| {
+                cfg.template("{{ echo }}").input(
+                    "body",
+                    InputChain::<String>::new()
+                        .try_source(ArgSource::new("body"))
+                        .default("FALLBACK".to_string()),
+                )
+            },
+        )
+        .unwrap()
+        .build()
+        .unwrap();
+
+    let cmd = body_command();
+    let matches = cmd
+        .try_get_matches_from(["test", "create", "--body", "hello"])
+        .unwrap();
+    let sub = matches.subcommand_matches("create").unwrap();
+    let output = app
+        .run_command(
+            "create",
+            sub,
+            |_m, ctx| {
+                let body: &String = ctx.input("body").expect("body should be resolved");
+                Ok(Output::Render(json!({ "echo": body })))
+            },
+            "{{ echo }}",
+        )
+        .expect("run_command should resolve the declared input");
+    assert_eq!(output.as_text(), Some("hello"));
+}
+
+#[test]
 fn default_kicks_in_when_no_source_provides_value() {
     let app = App::builder()
         .command_with(

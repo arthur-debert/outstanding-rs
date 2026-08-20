@@ -569,9 +569,8 @@ impl TestHarness {
         let output_mode = run.output_mode();
         let outcome = run.into_outcome();
         let tag_resolutions = standout_render::diagnostics::take_captured();
-        // Same fallback `App::run` uses when flushing the warning block.
-        let default_theme = standout::Theme::default();
-        let theme = app.get_default_theme().unwrap_or(&default_theme);
+        // Same theme `App::run` uses when flushing the warning block.
+        let theme = app.get_default_theme();
 
         // `self` (and its tempdir) move into TestResult so the fixture dir
         // survives until the test is finished with the result.
@@ -714,7 +713,7 @@ fn render_stdout(outcome: &DispatchResult) -> String {
 /// - framework warnings close the channel, in the block `App::run` flushes
 ///   after the primary output — blank line, banner, one tab-indented line per
 ///   warning. The layout, `--output=text` / stderr-capability styling, and
-///   the app's resolved theme (same `get_default_theme().unwrap_or(default)`
+///   the app's resolved theme (the one `get_default_theme()` returns, which
 ///   `App::run` uses) are `standout_render`'s own
 ///   [`render_block_for_target`](standout_render::warnings::render_block_for_target),
 ///   so the harness cannot drift from what the CLI layer writes. The warnings
