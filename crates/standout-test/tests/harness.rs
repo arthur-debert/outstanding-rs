@@ -1,9 +1,11 @@
 //! Integration tests for `TestHarness`.
 //!
 //! All tests are `#[serial]` because the harness mutates process-global
-//! state (env vars, cwd, detectors, default input readers).
+//! state (env vars, cwd). Destination facts are injected on
+//! `TargetProperties` and do not need `#[serial]` for detector reasons.
 
 use clap::Command;
+use console::Style;
 use serde_json::json;
 use serial_test::serial;
 use standout::cli::{
@@ -12,7 +14,9 @@ use standout::cli::{
 };
 use standout::tabular::{Column, Width};
 use standout::views::list_view;
-use standout::{CsvProjection, StructuredOutputProjection};
+use standout::{
+    ColorMode, CsvProjection, IconDefinition, IconMode, StructuredOutputProjection, Theme,
+};
 use standout_input::{ClipboardSource, EnvSource, InputChain, StdinSource};
 use standout_render::{AmbiguousWidth, OutputMode};
 use standout_test::TestHarness;
@@ -102,7 +106,10 @@ fn ambiguous_width_policy_can_be_injected_for_the_same_app_fixture() {
 fn terminal_width_cascades_through_the_framework_list_view_template() {
     let app = build_framework_list_view_app();
 
-    for width in [31, 47] {
+    // 37 is the width the former COLUMNS-env cascade used to assert via
+    // detect(). The assertion is that width on the request reaches the
+    // template, so it is injected — not read from `$COLUMNS`.
+    for width in [31, 37, 47] {
         let result =
             TestHarness::new()
                 .terminal_width(width)
@@ -116,22 +123,6 @@ fn terminal_width_cascades_through_the_framework_list_view_template() {
         assert_eq!(row.chars().count(), width);
         drop(result);
     }
-}
-
-#[test]
-#[serial]
-fn columns_environment_width_cascades_through_the_framework_list_view_template() {
-    let app = build_framework_list_view_app();
-    let result = TestHarness::new()
-        .env("COLUMNS", "37")
-        .run(&app, list_command(), ["app", "list"]);
-    result.assert_success();
-    let row = result
-        .stdout()
-        .lines()
-        .find(|line| line.contains("cascade"))
-        .expect("framework list view should render its tabular row");
-    assert_eq!(row.chars().count(), 37);
 }
 
 #[test]
@@ -172,6 +163,154 @@ fn unknown_terminal_width_uses_the_framework_list_view_fallback() {
         .find(|line| line.contains("cascade"))
         .expect("framework list view should render its tabular row");
     assert_eq!(row.chars().count(), 80);
+}
+
+/// An app whose output would change if the harness still called
+/// `TargetProperties::detect`: list-view width follows `$COLUMNS`, the
+/// icon follows `$NERD_FONT`, and the adaptive style follows OS appearance.
+fn build_detectable_facts_app() -> App {
+    let theme = Theme::new()
+        .add_icon("mark", IconDefinition::new("CLASSIC").with_nerdfont("NERD"))
+        .add_adaptive(
+            "tone",
+            Style::new(),
+            Some(Style::new().green()),
+            Some(Style::new().red()),
+        );
+    App::builder()
+        .theme(theme)
+        .command(
+            "say",
+            |_m, _ctx| Ok(Output::Render(json!({}))),
+            "[tone]{{ icons.mark }}[/tone]",
+        )
+        .unwrap()
+        .command_with(
+            "list",
+            |_matches, _ctx| {
+                let spec = standout::tabular::TabularSpec::builder()
+                    .column(Column::new(Width::Fill).right().key("name"))
+                    .build();
+                Ok(Output::Render(
+                    list_view(vec![WidthSensitiveItem { name: "cascade" }])
+                        .tabular_spec(spec)
+                        .build(),
+                ))
+            },
+            |config| config.template_name("standout/list-view"),
+        )
+        .unwrap()
+        .build()
+        .unwrap()
+}
+
+fn detectable_command() -> Command {
+    Command::new("app")
+        .subcommand(Command::new("say"))
+        .subcommand(Command::new("list"))
+}
+
+#[test]
+#[serial]
+fn harness_run_is_independent_of_detected_process_facts() {
+    let app = build_detectable_facts_app();
+    let cmd = detectable_command();
+
+    let baseline = || {
+        TestHarness::new()
+            .with_color()
+            .output_mode(OutputMode::Term)
+    };
+    let perturb = || {
+        // Env knobs detect() would read, plus the usual OS-scheme hints.
+        // The OS appearance API itself is not an env var; the contract pin
+        // below (unset scheme == Dark, != Light) is what makes scheme
+        // independence fail if detect() came back.
+        baseline()
+            .env("COLUMNS", "37")
+            .env("NERD_FONT", "1")
+            .env("GTK_THEME", "Adwaita:light")
+            .env("COLORFGBG", "0;15")
+    };
+
+    let (say_default, say_default_plain) = {
+        let result = baseline().run(&app, cmd.clone(), ["app", "say"]);
+        result.assert_success();
+        (
+            result.stdout().to_string(),
+            result.stdout_plain().to_string(),
+        )
+    };
+    let list_default = {
+        let result = baseline().run(&app, cmd.clone(), ["app", "list"]);
+        result.assert_success();
+        result.stdout().to_string()
+    };
+
+    let say_perturbed = {
+        let result = perturb().run(&app, cmd.clone(), ["app", "say"]);
+        result.assert_success();
+        result.stdout().to_string()
+    };
+    let list_perturbed = {
+        let result = perturb().run(&app, cmd.clone(), ["app", "list"]);
+        result.assert_success();
+        result.stdout().to_string()
+    };
+
+    assert_eq!(say_default, say_perturbed);
+    assert_eq!(list_default, list_perturbed);
+    assert!(
+        say_default_plain.contains("CLASSIC"),
+        "unset icon_mode is Classic, got {say_default_plain:?}"
+    );
+    assert!(
+        !say_default_plain.contains("NERD"),
+        "NERD_FONT must not select the nerd variant: {say_default_plain:?}"
+    );
+    let row = list_default
+        .lines()
+        .find(|line| line.contains("cascade"))
+        .expect("framework list view should render its tabular row");
+    assert_eq!(
+        row.chars().count(),
+        80,
+        "unset width is None, list-view fallback 80; got {row:?}"
+    );
+
+    let say_dark = {
+        let result =
+            baseline()
+                .color_scheme(ColorMode::Dark)
+                .run(&app, cmd.clone(), ["app", "say"]);
+        result.stdout().to_string()
+    };
+    let say_light = {
+        let result =
+            baseline()
+                .color_scheme(ColorMode::Light)
+                .run(&app, cmd.clone(), ["app", "say"]);
+        result.stdout().to_string()
+    };
+    assert_eq!(
+        say_default, say_dark,
+        "unset color_scheme is ColorMode::Dark"
+    );
+    assert_ne!(
+        say_default, say_light,
+        "Light vs Dark must be visible so scheme independence is meaningful"
+    );
+    let say_nerd = {
+        let result =
+            baseline()
+                .icon_mode(IconMode::NerdFont)
+                .run(&app, cmd.clone(), ["app", "say"]);
+        result.stdout().to_string()
+    };
+    assert_ne!(
+        say_default, say_nerd,
+        "Classic vs NerdFont must be visible so NERD_FONT independence is meaningful"
+    );
 }
 
 #[test]

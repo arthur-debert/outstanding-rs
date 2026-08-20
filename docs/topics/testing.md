@@ -66,7 +66,7 @@ verbatim diagnostic, `error_kind()` is `RunErrorKind::External`, and
 - Env vars (real `std::env::set_var`, originals captured and restored on drop)
 - Working directory (real `std::env::set_current_dir`, original restored on drop)
 - Fixture files (written into a `tempfile::TempDir`)
-- Terminal detectors: width, TTY, color capability
+- Destination facts on `TargetProperties`: width, color capability, color-scheme, icon mode, ambiguous-width (injected, never detected)
 - Stdin, clipboard, and prompt responder as an [`InputSources`](https://docs.rs/standout/latest/standout/struct.InputSources.html) value passed into `App::run_with` (not process-global overrides)
 - Interactive prompt responder on those sources, so wizard handlers that call `.prompt_from(ctx.input_sources())` are testable in process — see [Interactive Flows → Testing Wizards](../crates/input/topics/interactive-flows.md#testing-wizards)
 - Forced `OutputMode` (injected as `--output=<mode>` into argv)
@@ -75,7 +75,7 @@ verbatim diagnostic, `error_kind()` is `RunErrorKind::External`, and
 A `RestoreState` held inside the returned `TestResult` runs on drop — on both normal exit and panic unwind — and tears down every override, so a failing assertion never leaks state into sibling tests. Two nuances worth knowing:
 
 - **Env vars and cwd** are restored to the values captured at `run()` time. This is a true "put it back the way you found it."
-- **Terminal detectors** are reset to the library defaults, not to whatever was installed before `run()`. If you mix `TestHarness` with a manually installed `set_*_detector` on the same thread, the harness's drop will wipe your override. Keep them separate, or scope the manual override entirely outside the harness. Stdin, clipboard, and the prompt responder are not process-global: they live on the `InputSources` value for that run.
+- **Destination facts** are injected on `TargetProperties` for that run; the harness does not install detector overrides. Stdin, clipboard, and the prompt responder are not process-global: they live on the `InputSources` value for that run.
 
 The harness is `#[must_use]`: a `TestHarness::new()` without a `.run(...)` does nothing and gets flagged by the compiler.
 
@@ -95,7 +95,7 @@ The harness doesn't invent new mechanisms; it wires together seams that Standout
 
 ### `TargetProperties` (standout-render)
 
-Detection is [`TargetProperties::detect()`](https://docs.rs/standout-render/latest/standout_render/struct.TargetProperties.html#method.detect) at the crate edge. Convenience wrappers and `App::run` call it there, then pass the result into `render_request`. Tests do not call `detect()`; they construct `TargetProperties` or inject facts through `TestHarness` (`terminal_width`, `with_color` / `no_color`, `color_scheme`, `icon_mode`, `ambiguous_width`).
+Detection is [`TargetProperties::detect()`](https://docs.rs/standout-render/latest/standout_render/struct.TargetProperties.html#method.detect) at the crate edge. Convenience wrappers and `App::run` call it there, then pass the result into `render_request`. Tests do not call `detect()`; they construct `TargetProperties` or inject facts through `TestHarness` (`terminal_width`, `with_color` / `no_color`, `color_scheme`, `icon_mode`, `ambiguous_width`). Unset facts take fixed defaults — `width: None`, `ColorMode::Dark`, `IconMode::Classic`, `AmbiguousWidth::Narrow` — so `$COLUMNS`, `$NERD_FONT`, and the OS appearance setting cannot change an in-process run.
 
 The detector override APIs are removed: `set_terminal_width_detector`, `set_color_capability_detector`, `set_ambiguous_width_detector`, `set_theme_detector`, `set_icon_detector`, `DetectorGuard`, and the public `detect_*` cluster they served.
 
@@ -180,9 +180,9 @@ These aren't proxied through a Standout abstraction — they're just real OS pri
 
 ## Concurrency model
 
-Env vars, cwd, and render detectors remain process-global. Parallel tests that mutate them will interfere with each other.
+Env vars and cwd remain process-global. Parallel tests that mutate them will interfere with each other. Destination facts (width, color, color-scheme, icon mode) are injected on `TargetProperties` and no longer need `#[serial]` for detector reasons.
 
-Use `#[serial]` from the `serial_test` crate (re-exported as `standout_test::serial`) on every test that uses `TestHarness` for those reasons, or any of the lower-level detectors. Input sources and warning capture no longer require `#[serial]`. Within a test binary, serial execution is automatic; across test binaries, cargo runs one test binary at a time by default, so there's no extra coordination needed.
+Use `#[serial]` from the `serial_test` crate (re-exported as `standout_test::serial`) on every in-process `TestHarness::run` test while those env/cwd overrides exist: `serial_test` only orders annotated tests against each other, so an unannotated `run` can race with one that mutates env or cwd. Input sources and warning capture no longer require `#[serial]`. Within a test binary, serial execution is automatic among annotated tests; across test binaries, cargo runs one test binary at a time by default, so there's no extra coordination needed.
 
 ## Recipes
 

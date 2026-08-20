@@ -168,7 +168,7 @@ fn list_runs() {
 
 That's it. `run()` drives the same dispatch path as production — same clap parsing, same handler lookup, same render pipeline — and returns the rendered text. No subprocess, no stdout capture gymnastics.
 
-> **Why `#[serial]`?** The harness mutates process-global state (env vars, cwd, terminal detectors, default input readers). Tests that use `TestHarness` must run serially. The `serial_test::serial` attribute is re-exported from `standout_test` for convenience: `use standout_test::serial;`.
+> **Why `#[serial]`?** The harness mutates process-global state (env vars, cwd). Destination facts (width, color, color-scheme, icon mode) are injected on `TargetProperties` and do not need `#[serial]` for detector reasons. All in-process `run` tests still need `#[serial]` while those env/cwd overrides exist: `serial_test` only orders annotated tests against each other, so an unannotated `run` can race with one that mutates env or cwd. The `serial_test::serial` attribute is re-exported from `standout_test` for convenience: `use standout_test::serial;`.
 >
 > **Verify:** Add a `TestHarness::new().run(...)` test to your app. It should run in under 10ms, not 100ms.
 
@@ -290,7 +290,7 @@ Open prompts (`Text`/`Password`/`Editor`) take `PromptResponse::Text(...)`; fini
 
 ### 4.6 Terminal state
 
-Two orthogonal knobs, routed through Phase 1's environment detectors:
+Two orthogonal knobs, injected on `TargetProperties` (never detected from the process):
 
 ```rust
 .terminal_width(80)     // forces a fixed width for tabular layouts
@@ -575,10 +575,11 @@ TestHarness::new()
     .fixture("notes/todo.txt", "content")    // writes file, sets cwd to tempdir
     .fixture_bytes("data.bin", vec![1,2,3])
 
-    // terminal detectors (see standout-render::environment)
+    // destination facts on TargetProperties (fixed defaults when unset:
+    // width None, ColorMode::Dark, IconMode::Classic, AmbiguousWidth::Narrow)
     .terminal_width(80)
     .no_terminal_width()
-    .with_color()                             // or .no_color(); opens console's gate too
+    .with_color()                             // or .no_color(); fills per-stream capability
 
     // forced output mode (injects --output=<mode> into argv)
     .output_mode(OutputMode::Json)
@@ -602,8 +603,8 @@ TestHarness::new()
     // execute in-process...
     .run(&app, cmd, ["binname", "subcommand", "--flag"])
 
-    // ...or as the real binary (ProcessResult; rejects the detector,
-    // stdin, clipboard, and prompt settings a child can't inherit)
+    // ...or as the real binary (ProcessResult; rejects in-process
+    // destination facts, stdin, clipboard, and prompt settings a child can't inherit)
     .run_process(env!("CARGO_BIN_EXE_binname"), ["subcommand", "--flag"])
 
 // TestResult: choose the assertion group that matches the observed outcome.
@@ -641,8 +642,8 @@ writers.
 
 ## Appendix: common pitfalls
 
-- **Tests leak state into each other.** Every test that uses `TestHarness` must be `#[serial]`. Parallel execution mixed with process-global mutations is unsupported.
+- **Tests leak state into each other.** Every in-process `run` test must be `#[serial]` while the harness still mutates env/cwd. `serial_test` only orders annotated tests against each other, so an unannotated `run` can race with one that mutates those globals. Detector reasons no longer apply. Parallel execution mixed with process-global mutations is unsupported.
 - **A `TestHarness::new()` without `.run(...)` does nothing.** The harness is `#[must_use]` — inert until you call `.run`.
 - **`output_mode(...)` injects `--output=<mode>` into argv.** If your app uses a different flag name (via `AppBuilder::output_flag(Some("format"))`), set `.output_flag_name("format")`.
-- **Detectors reset to library defaults, not to prior overrides.** Don't mix a `TestHarness` with a manually installed `set_*_detector` on the same thread; the harness's `Drop` will wipe your override.
+- **Unset destination facts are fixed defaults, not detected.** `$COLUMNS`, `$NERD_FONT`, and the OS appearance setting cannot change an in-process run. Inject `terminal_width` / `color_scheme` / `icon_mode` when a test needs non-default facts.
 - **Handlers that bypass `standout-input`.** If a handler reads stdin directly via `std::io::stdin()` instead of `StdinSource::new()` or `read_if_piped()`, the harness's `.piped_stdin()` won't reach it. Prefer the abstractions.
