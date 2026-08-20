@@ -30,19 +30,21 @@
 //! - Templates can be embedded at compile time for deployment
 //! - Use [`Renderer::with_embedded`] to load pre-embedded templates
 
+use std::cell::RefCell;
 use std::collections::HashMap;
 use std::path::Path;
+use std::rc::Rc;
 
 use serde::Serialize;
-use standout_bbparser::{TagTransform, UnknownTagBehavior};
 
 use super::engine::{MiniJinjaEngine, TemplateEngine};
 use super::registry::{walk_template_dir, ResolvedTemplate, TemplateRegistry};
 use crate::error::RenderError;
 use crate::output::OutputMode;
-use crate::style::Styles;
-use crate::theme::{detect_icon_mode, Theme};
+use crate::request::{render_request, SharedTemplateEngine, TargetProperties, TemplateRef};
+use crate::theme::Theme;
 use crate::AmbiguousWidth;
+use crate::ColorPolicy;
 use crate::EmbeddedTemplates;
 
 /// A renderer with pre-registered templates.
@@ -119,21 +121,23 @@ use crate::EmbeddedTemplates;
 /// cargo run -- todos list
 /// ```
 pub struct Renderer {
-    engine: Box<dyn TemplateEngine>,
+    engine: SharedTemplateEngine,
     /// Registry for file-based template resolution
     registry: TemplateRegistry,
     /// Whether the registry has been initialized from directories
     registry_initialized: bool,
     /// Registered template directories (for lazy initialization)
     template_dirs: Vec<std::path::PathBuf>,
-    /// Resolved styles for BBParser post-processing
-    styles: Styles,
-    /// Output mode for BBParser transform selection
+    /// Theme carried onto each [`crate::RenderRequest`].
+    theme: Theme,
+    /// Output mode for this renderer.
     output_mode: OutputMode,
-    /// Resolved icon context for template injection
-    icon_context: HashMap<String, serde_json::Value>,
     /// Explicit ambiguous-width policy; narrow preserves existing behavior.
     ambiguous_width: AmbiguousWidth,
+    /// Optional icon-mode overlay applied over [`TargetProperties::detect`].
+    icon_mode: Option<crate::IconMode>,
+    /// Optional color-scheme overlay applied over [`TargetProperties::detect`].
+    color_scheme: Option<crate::ColorMode>,
 }
 
 impl Renderer {
@@ -170,38 +174,20 @@ impl Renderer {
         mode: OutputMode,
         engine: Box<dyn TemplateEngine>,
     ) -> Result<Self, RenderError> {
-        // Validate style aliases before creating the renderer
         theme
             .validate()
             .map_err(|e| RenderError::StyleError(e.to_string()))?;
 
-        // Detect color mode and resolve styles for that mode
-        let color_mode = super::super::theme::detect_color_mode();
-        let styles = theme.resolve_styles(Some(color_mode));
-
-        // Resolve icons for the detected icon mode
-        let icon_context = if theme.icons().is_empty() {
-            HashMap::new()
-        } else {
-            let icon_mode = detect_icon_mode();
-            let resolved_icons = theme.resolve_icons(icon_mode);
-            let mut ctx = HashMap::new();
-            ctx.insert(
-                "icons".to_string(),
-                serde_json::to_value(resolved_icons).unwrap(),
-            );
-            ctx
-        };
-
         Ok(Self {
-            engine,
+            engine: Rc::new(RefCell::new(engine)),
             registry: TemplateRegistry::new(),
             registry_initialized: false,
             template_dirs: Vec::new(),
-            styles,
+            theme,
             output_mode: mode,
-            icon_context,
             ambiguous_width: AmbiguousWidth::Narrow,
+            icon_mode: None,
+            color_scheme: None,
         })
     }
 
@@ -219,6 +205,22 @@ impl Renderer {
         self
     }
 
+    /// Overlays icon mode on the detected [`TargetProperties`] for each render.
+    pub fn set_icon_mode(&mut self, mode: crate::IconMode) {
+        self.icon_mode = Some(mode);
+    }
+
+    /// Overlays icon mode on the detected [`TargetProperties`] for each render.
+    pub fn with_icon_mode(mut self, mode: crate::IconMode) -> Self {
+        self.set_icon_mode(mode);
+        self
+    }
+
+    /// Overlays color-scheme on the detected [`TargetProperties`] for each render.
+    pub fn set_color_scheme(&mut self, scheme: crate::ColorMode) {
+        self.color_scheme = Some(scheme);
+    }
+
     /// Registers a named inline template.
     ///
     /// Inline templates have the highest priority and will shadow any
@@ -232,9 +234,7 @@ impl Renderer {
     /// renderer.add_template("header", r#"[title]{{ title }}[/title]"#)?;
     /// ```
     pub fn add_template(&mut self, name: &str, source: &str) -> Result<(), RenderError> {
-        // Add to engine for compilation
-        self.engine.add_template(name, source)?;
-        // Also add to registry for consistency
+        self.engine.borrow_mut().add_template(name, source)?;
         self.registry.add_inline(name, source);
         Ok(())
     }
@@ -362,7 +362,7 @@ impl Renderer {
             if let Ok(content) = template_registry.get_content(name) {
                 // Add to engine (required for includes to work)
                 // Ignore errors for duplicate names (e.g., "foo" and "foo.jinja" have same content)
-                let _ = self.engine.add_template(name, &content);
+                let _ = self.engine.borrow_mut().add_template(name, &content);
                 // Add to registry for name resolution
                 self.registry.add_inline(name, &content);
             }
@@ -416,6 +416,11 @@ impl Renderer {
     fn initialize_registry(&mut self) -> Result<(), RenderError> {
         // Clear existing file-based templates (keep inline)
         let mut new_registry = TemplateRegistry::new();
+        for name in self.registry.names() {
+            if let Ok(ResolvedTemplate::Inline(content)) = self.registry.get(name) {
+                new_registry.add_inline(name, &content);
+            }
+        }
 
         // Walk each directory and collect templates
         for dir in &self.template_dirs {
@@ -467,104 +472,37 @@ impl Renderer {
     /// let output = renderer.render("todos/list", &data)?;
     /// ```
     pub fn render<T: Serialize>(&mut self, name: &str, data: &T) -> Result<String, RenderError> {
-        let ambiguous_width =
-            crate::detect_ambiguous_width_override().unwrap_or(self.ambiguous_width);
-        let terminal_width = crate::detect_terminal_width();
-        // First, check if it's an inline template
-        // We check this first to avoid filesystem lookups for known templates.
-        // In debug mode, if it's a file-based template, we want to skip this check
-        // to force a reload from disk.
-
+        self.ensure_registry_initialized()?;
         let is_inline = self
             .registry
             .get(name)
             .is_ok_and(|t| matches!(t, ResolvedTemplate::Inline(_)));
-
-        // Convert data to serde_json::Value for the engine
-        // If we have icon context, merge it with the data (data fields take precedence)
-        let data_value = if self.icon_context.is_empty() {
-            serde_json::to_value(data)?
-        } else {
-            let mut merged = self.icon_context.clone();
-            let data_val = serde_json::to_value(data)?;
-            if let Some(obj) = data_val.as_object() {
-                for (k, v) in obj {
-                    merged.insert(k.clone(), v.clone());
-                }
-            }
-            serde_json::Value::Object(merged.into_iter().collect())
-        };
-
-        // In release mode: always use engine cache if available.
-        // In debug mode: only use engine cache if it's an inline template (which doesn't change on disk).
-        let template_output = if !cfg!(debug_assertions) || is_inline {
-            // Try to render with the engine's cached template
-            match self.engine.render_named_with_render_widths(
-                name,
-                &data_value,
-                terminal_width,
-                ambiguous_width,
-            ) {
-                Ok(output) => output,
-                Err(_) => {
-                    // Template not in cache, load and render
-                    self.ensure_registry_initialized()?;
-                    let content = self.get_template_content(name)?;
-                    self.engine.add_template(name, &content)?;
-                    self.engine.render_named_with_render_widths(
-                        name,
-                        &data_value,
-                        terminal_width,
-                        ambiguous_width,
-                    )?
-                }
-            }
-        } else {
-            // Debug mode with file-based template: always reload
-            self.ensure_registry_initialized()?;
+        if (cfg!(debug_assertions) && !is_inline) || !self.engine.borrow().has_template(name) {
             let content = self.get_template_content(name)?;
-            self.engine.add_template(name, &content)?;
-            self.engine.render_named_with_render_widths(
-                name,
-                &data_value,
-                terminal_width,
-                ambiguous_width,
-            )?
+            self.engine.borrow_mut().add_template(name, &content)?;
+        }
+
+        let mut target = TargetProperties::detect();
+        target.ambiguous_width = self.ambiguous_width;
+        if let Some(icon_mode) = self.icon_mode {
+            target.icon_mode = icon_mode;
+        }
+        if let Some(color_scheme) = self.color_scheme {
+            target.color_scheme = color_scheme;
+        }
+        let request = crate::RenderRequest {
+            data: serde_json::to_value(data)?,
+            template: TemplateRef::Named(name.to_string()),
+            theme: self.theme.clone(),
+            format: self.output_mode,
+            color_policy: ColorPolicy::Auto,
+            target,
+            engine: self.engine.clone(),
+            registry: Some(Rc::new(self.registry.clone())),
+            context_registry: None,
+            csv_projection: None,
         };
-
-        // Pass 2: BBParser style tag processing
-        let final_output = self.apply_style_tags(&template_output);
-
-        Ok(final_output)
-    }
-
-    /// Applies BBParser style tag post-processing.
-    ///
-    /// The pass runs through [`crate::diagnostics::resolve_tags`]: same bytes,
-    /// plus a record of the tags this renderer's theme could not resolve.
-    fn apply_style_tags(&self, output: &str) -> String {
-        let transform = match self.output_mode {
-            OutputMode::Auto => {
-                if self.output_mode.should_use_color() {
-                    TagTransform::Apply
-                } else {
-                    TagTransform::Remove
-                }
-            }
-            OutputMode::Term => TagTransform::Apply,
-            OutputMode::Text => TagTransform::Remove,
-            OutputMode::TermDebug => TagTransform::Keep,
-            OutputMode::Json | OutputMode::Yaml | OutputMode::Xml | OutputMode::Csv => {
-                TagTransform::Remove
-            }
-        };
-
-        crate::diagnostics::resolve_tags(
-            output,
-            self.styles.to_resolved_map(),
-            transform,
-            UnknownTagBehavior::Strip,
-        )
+        render_request(&request)
     }
 
     /// Gets template content, re-reading from disk in debug mode.
@@ -1047,11 +985,8 @@ mod tests {
     // =========================================================================
 
     #[test]
-    #[serial_test::serial]
     fn test_renderer_with_icons() {
-        use crate::{set_icon_detector, IconDefinition, IconMode};
-
-        set_icon_detector(|| IconMode::Classic);
+        use crate::IconDefinition;
 
         let theme = Theme::new().add_icon(
             "check",
@@ -1075,18 +1010,17 @@ mod tests {
     }
 
     #[test]
-    #[serial_test::serial]
     fn test_renderer_with_icons_nerdfont() {
-        use crate::{set_icon_detector, IconDefinition, IconMode};
-
-        set_icon_detector(|| IconMode::NerdFont);
+        use crate::{IconDefinition, IconMode};
 
         let theme = Theme::new().add_icon(
             "check",
             IconDefinition::new("[ok]").with_nerdfont("\u{f00c}"),
         );
 
-        let mut renderer = Renderer::with_output(theme, OutputMode::Text).unwrap();
+        let mut renderer = Renderer::with_output(theme, OutputMode::Text)
+            .unwrap()
+            .with_icon_mode(IconMode::NerdFont);
         renderer
             .add_template("test", "{{ icons.check }} {{ message }}")
             .unwrap();
@@ -1100,9 +1034,6 @@ mod tests {
             )
             .unwrap();
         assert_eq!(output, "\u{f00c} done");
-
-        // Reset
-        set_icon_detector(|| IconMode::Classic);
     }
 
     #[test]

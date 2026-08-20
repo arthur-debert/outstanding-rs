@@ -152,7 +152,7 @@ pub mod colorspace;
 pub mod context;
 pub mod diagnostics;
 mod embedded;
-pub mod environment;
+mod environment;
 mod error;
 pub mod file_loader;
 pub mod output;
@@ -178,10 +178,7 @@ pub use style::{
 };
 
 // Theme module exports
-pub use theme::{
-    detect_color_mode, detect_icon_mode, set_icon_detector, set_theme_detector, ColorMode,
-    IconDefinition, IconMode, IconSet, Theme,
-};
+pub use theme::{ColorMode, IconDefinition, IconMode, IconSet, Theme};
 
 // Output module exports
 pub use output::{write_binary_output, write_output, OutputDestination, OutputMode};
@@ -189,13 +186,6 @@ pub use projection::{
     CsvProjection, CsvProjectionBuilder, ProjectionError, StructuredOutputProjection,
 };
 pub use width::{AmbiguousWidth, WidthCalculator};
-
-// Environment detection exports
-pub use environment::{
-    detect_ambiguous_width_override, detect_color_capability, detect_terminal_width,
-    reset_detectors as reset_environment_detectors, set_ambiguous_width_detector,
-    set_color_capability_detector, set_terminal_width_detector, DetectorGuard,
-};
 
 // Composition-contract types (explicit request; detect at the crate edge)
 pub use request::{

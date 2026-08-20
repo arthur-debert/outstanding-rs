@@ -252,10 +252,7 @@ pub use standout_render::{
 };
 
 // Theme module exports (from standout-render)
-pub use standout_render::{
-    detect_color_mode, detect_icon_mode, set_icon_detector, set_theme_detector, ColorMode,
-    IconDefinition, IconMode, IconSet, Theme,
-};
+pub use standout_render::{ColorMode, IconDefinition, IconMode, IconSet, Theme};
 
 // Composition-contract types (from standout-render / standout-input)
 pub use standout_input::InputSources;

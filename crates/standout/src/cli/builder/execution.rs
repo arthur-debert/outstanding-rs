@@ -10,7 +10,7 @@
 //! - `run_to_string()` - dispatch and return
 
 use crate::{
-    write_binary_output, write_output, InputSources, OutputDestination, OutputMode,
+    write_binary_output, write_output, InputSources, OutputDestination, OutputMode, RenderRequest,
     TargetProperties,
 };
 use clap::{Arg, ArgAction, ArgMatches, Command};
@@ -21,9 +21,7 @@ use super::{
     inline_template_ref, App, AppBuilder, HookRegistrationSource, PendingCommand, TemplateRef,
 };
 use crate::cli::default_command::ParseFailure;
-use crate::cli::dispatch::{
-    dispatch, extract_command_path, get_deepest_matches, DispatchOutput, Presentation,
-};
+use crate::cli::dispatch::{dispatch, extract_command_path, get_deepest_matches, DispatchOutput};
 use crate::cli::group::{ErasedConfigRecipe, GroupBuilder, GroupEntry};
 use crate::cli::handler::{
     ArtifactDestination, ArtifactReceipt, ArtifactRun, CommandContext, OutputKind, RunError,
@@ -209,15 +207,14 @@ impl App {
             // presentation travels beside the hook payload: hooks may still
             // change the bytes or the report, so the report is only rendered
             // after the write, further down.
-            let (output, presentation) = match dispatch_output {
+            let (output, request) = match dispatch_output {
                 DispatchOutput::Text { formatted, raw } => {
                     (RenderedOutput::Text(TextOutput::new(formatted, raw)), None)
                 }
                 DispatchOutput::Binary(b, f) => (RenderedOutput::Binary(b, f), None),
-                DispatchOutput::Artifact {
-                    output,
-                    presentation,
-                } => (RenderedOutput::Artifact(output), Some(presentation)),
+                DispatchOutput::Artifact { output, request } => {
+                    (RenderedOutput::Artifact(output), Some(request))
+                }
                 DispatchOutput::Silent => (RenderedOutput::Silent, None),
             };
 
@@ -247,7 +244,7 @@ impl App {
             // The artifact path owns its own destination policy and write, so
             // it is resolved before the legacy override handling below.
             if let RenderedOutput::Artifact(artifact) = final_output {
-                return complete_artifact(artifact, presentation, override_path);
+                return complete_artifact(artifact, request, override_path);
             }
 
             // Handle file output if configured
@@ -386,7 +383,9 @@ impl App {
             Err(ParseFailure::Clap(e)) => {
                 // Clap's native `--help`/`-h` short-circuits validation and
                 // arrives here; standout renders it when it owns help.
-                if let Some(display) = self.intercept_display_help(&mut augmented_cmd, &args, &e) {
+                if let Some(display) =
+                    self.intercept_display_help(&mut augmented_cmd, &args, &e, target)
+                {
                     return display.into();
                 }
                 // Clap's remaining "errors" include `--version`, a successful
@@ -408,7 +407,7 @@ impl App {
 
         // The `help` word is a subcommand Clap routed; standout answers it
         // before dispatch, sharing the arm with `get_matches_from`.
-        if let Some(display) = self.intercept_help_word(&mut augmented_cmd, &matches) {
+        if let Some(display) = self.intercept_help_word(&mut augmented_cmd, &matches, target) {
             return display.into();
         }
 
@@ -830,7 +829,7 @@ fn report_envelope(
 /// side-effect-free, exactly as `RunResult::Binary` already behaves.
 fn complete_artifact(
     artifact: ArtifactOutput,
-    presentation: Option<Box<Presentation>>,
+    request: Option<Box<RenderRequest>>,
     override_path: Option<PathBuf>,
 ) -> RunResult {
     let destination = match resolve_artifact_destination(&artifact, override_path) {
@@ -854,9 +853,9 @@ fn complete_artifact(
         None => None,
         Some(report) => {
             // A post-output hook can turn text into an artifact, but it has no
-            // presentation configuration to render a report with. Say so
-            // rather than dropping the report on the floor.
-            let Some(presentation) = presentation else {
+            // request to render a report with. Say so rather than dropping
+            // the report on the floor.
+            let Some(mut request) = request else {
                 return RunResult::Error(RunError::new(
                     "Cannot render artifact report: the artifact carries a report but was not \
                      produced by a handler, so no template configuration is available",
@@ -867,9 +866,12 @@ fn complete_artifact(
                 Ok(envelope) => envelope,
                 Err(error) => return RunResult::Error(error),
             };
-            match presentation.render(&envelope) {
-                Ok((formatted, _raw)) => Some(formatted),
-                Err(error) => return RunResult::Error(error),
+            request.data = envelope;
+            match standout_render::render_request_split(&request) {
+                Ok(rendered) => Some(rendered.formatted),
+                Err(error) => {
+                    return RunResult::Error(RunError::new(error.to_string(), RunErrorKind::Render))
+                }
             }
         }
     };

@@ -657,10 +657,7 @@ fn rustloc_fixture_uses_configured_csv_projection() {
 
 #[test]
 #[serial]
-fn terminal_width_override_is_observable_via_detector() {
-    // The override stays installed for the lifetime of the TestResult
-    // (restored when it drops), so we can probe the detector directly
-    // while the result is still in scope.
+fn terminal_width_override_does_not_install_a_detector() {
     let app = build_echo_app("{{ msg }}");
     let result = TestHarness::new().terminal_width(42).no_color().run(
         &app,
@@ -668,12 +665,6 @@ fn terminal_width_override_is_observable_via_detector() {
         vec!["app", "echo", "hi"],
     );
     result.assert_stdout_eq("hi");
-    assert_eq!(standout_render::detect_terminal_width(), Some(42));
-    assert!(!standout_render::detect_color_capability());
-    drop(result);
-    // After drop, detectors are reset to library defaults — the override
-    // should no longer be visible.
-    let _ = standout_render::detect_terminal_width();
 }
 
 #[test]

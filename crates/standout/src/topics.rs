@@ -309,6 +309,15 @@ struct TopicListItem {
     title: String,
 }
 
+/// ADR-0029: structured `--output` still prints human topics.
+fn human_topic_mode(mode: OutputMode) -> OutputMode {
+    if mode.is_structured() {
+        OutputMode::Auto
+    } else {
+        mode
+    }
+}
+
 /// Renders a single topic using standout templating.
 ///
 /// # Example
@@ -337,7 +346,7 @@ pub fn render_topic(
         .unwrap_or(include_str!("topic_template.txt"));
 
     let theme = resolve_topic_theme(config.theme);
-    let mode = config.output_mode.unwrap_or(OutputMode::Auto);
+    let mode = human_topic_mode(config.output_mode.unwrap_or(OutputMode::Auto));
 
     let data = TopicData {
         title: topic.title.clone(),
@@ -379,7 +388,7 @@ pub fn render_topics_list(
         .unwrap_or(include_str!("topics_list_template.txt"));
 
     let theme = resolve_topic_theme(config.theme);
-    let mode = config.output_mode.unwrap_or(OutputMode::Auto);
+    let mode = human_topic_mode(config.output_mode.unwrap_or(OutputMode::Auto));
 
     let topics = registry.list_topics();
 

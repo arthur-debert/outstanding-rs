@@ -400,11 +400,6 @@ fn register_filters_with_source(env: &mut Environment<'static>, widths: RenderWi
 mod tests {
     use super::*;
     use serde::Serialize;
-    use std::sync::{
-        atomic::{AtomicUsize, Ordering},
-        Arc, Barrier,
-    };
-    use std::time::Duration;
 
     #[derive(Serialize)]
     struct TestData {
@@ -522,55 +517,13 @@ mod tests {
         }));
         assert!(panic.is_err());
 
-        // The poisoned render lock is recoverable and the default remains Narrow.
+        // Width is restored after unwind; the default remains Narrow.
         assert_eq!(
             engine
                 .render_template("{{ '≈' | display_width }}", &serde_json::Value::Null)
                 .unwrap(),
             "1"
         );
-    }
-
-    #[test]
-    fn concurrent_renders_cannot_cross_contaminate_width_policies() {
-        let mut engine = MiniJinjaEngine::new();
-        let active = Arc::new(AtomicUsize::new(0));
-        let active_filter = Arc::clone(&active);
-        engine
-            .environment_mut()
-            .add_filter("pause", move |value: Value| -> String {
-                assert_eq!(active_filter.fetch_add(1, Ordering::SeqCst), 0);
-                std::thread::sleep(Duration::from_millis(2));
-                active_filter.fetch_sub(1, Ordering::SeqCst);
-                value.to_string()
-            });
-
-        let engine = Arc::new(engine);
-        let start = Arc::new(Barrier::new(3));
-        let spawn_render = |policy, expected: &'static str| {
-            let engine = Arc::clone(&engine);
-            let start = Arc::clone(&start);
-            std::thread::spawn(move || {
-                start.wait();
-                for _ in 0..12 {
-                    let rendered = engine
-                        .render_template_with_width(
-                            "{{ '≈' | pause | display_width }}",
-                            &serde_json::Value::Null,
-                            policy,
-                        )
-                        .unwrap();
-                    assert_eq!(rendered, expected);
-                }
-            })
-        };
-
-        let narrow = spawn_render(AmbiguousWidth::Narrow, "1");
-        let wide = spawn_render(AmbiguousWidth::Wide, "2");
-        start.wait();
-        narrow.join().unwrap();
-        wide.join().unwrap();
-        assert_eq!(active.load(Ordering::SeqCst), 0);
     }
 
     #[test]

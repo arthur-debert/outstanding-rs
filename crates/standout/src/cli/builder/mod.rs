@@ -58,6 +58,33 @@ use super::questionnaire::QuestionnaireCommand;
 use super::result::{HelpDisplay, HelpResult};
 use standout_dispatch::verify::ExpectedArg;
 
+/// Resolves help/topics [`OutputMode::Auto`] from this invocation's
+/// destination facts without putting help on the request pipeline.
+///
+/// Help still calls [`crate::render_with_output`] (WS04 moves it onto
+/// `render_request` with the app engine). Until then, Auto would detect
+/// independently and ignore harness-injected color. Resolving Auto here
+/// from stdout capability keeps help bytes aligned with dispatch.
+fn resolve_help_output_mode(
+    mode: OutputMode,
+    target: Option<crate::TargetProperties>,
+) -> OutputMode {
+    // ADR-0029: structured `--output` still prints human help.
+    let mode = if mode.is_structured() {
+        OutputMode::Auto
+    } else {
+        mode
+    };
+    match mode {
+        OutputMode::Auto => match target {
+            Some(target) if target.stdout_color_capability => OutputMode::Term,
+            Some(_) => OutputMode::Text,
+            None => OutputMode::Auto,
+        },
+        other => other,
+    }
+}
+
 pub(crate) type SharedTemplateEngine =
     Rc<RefCell<Box<dyn standout_render::template::TemplateEngine>>>;
 
@@ -1100,14 +1127,14 @@ impl App {
                 )
             }
             Err(ParseFailure::Clap(e)) => {
-                return match self.intercept_display_help(&mut cmd, &args, &e) {
+                return match self.intercept_display_help(&mut cmd, &args, &e, None) {
                     Some(display) => display.into(),
                     None => HelpResult::Error(e),
                 }
             }
         };
 
-        match self.intercept_help_word(&mut cmd, &matches) {
+        match self.intercept_help_word(&mut cmd, &matches, None) {
             Some(display) => display.into(),
             None => HelpResult::Matches(matches),
         }
@@ -1125,12 +1152,13 @@ impl App {
         &self,
         cmd: &mut Command,
         matches: &ArgMatches,
+        target: Option<crate::TargetProperties>,
     ) -> Option<HelpDisplay> {
         if !self.help_handling {
             return None;
         }
         let (name, sub_matches) = matches.subcommand()?;
-        (name == "help").then(|| self.render_help_word(cmd, matches, sub_matches))
+        (name == "help").then(|| self.render_help_word(cmd, matches, sub_matches, target))
     }
 
     /// Answers Clap's `DisplayHelp` short-circuit, when standout owns help.
@@ -1146,9 +1174,10 @@ impl App {
         cmd: &mut Command,
         args: &[std::ffi::OsString],
         error: &clap::Error,
+        target: Option<crate::TargetProperties>,
     ) -> Option<HelpDisplay> {
         (self.help_handling && error.kind() == clap::error::ErrorKind::DisplayHelp)
-            .then(|| self.render_help_for_display_help_error(cmd, args))
+            .then(|| self.render_help_for_display_help_error(cmd, args, target))
     }
 
     /// Renders the help the `help` word asked for.
@@ -1161,9 +1190,13 @@ impl App {
         cmd: &mut Command,
         matches: &ArgMatches,
         sub_matches: &ArgMatches,
+        target: Option<crate::TargetProperties>,
     ) -> HelpDisplay {
         let config = HelpConfig {
-            output_mode: Some(self.extract_output_mode(matches)),
+            output_mode: Some(resolve_help_output_mode(
+                self.extract_output_mode(matches),
+                target,
+            )),
             theme: self.theme.clone(),
             command_groups: self.help_command_groups.clone(),
             // The word is the spelled-out request, so it reads like `--help`.
@@ -1235,10 +1268,12 @@ impl App {
         &self,
         cmd: &mut Command,
         args: &[std::ffi::OsString],
+        target: Option<crate::TargetProperties>,
     ) -> HelpDisplay {
         let request = Self::help_request(cmd, args);
 
         let config = HelpConfig {
+            output_mode: Some(resolve_help_output_mode(crate::OutputMode::Auto, target)),
             theme: self.theme.clone(),
             command_groups: self.help_command_groups.clone(),
             length: request.length,

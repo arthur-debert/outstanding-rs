@@ -10,7 +10,7 @@ use serde::{Deserialize, Serialize};
 use standout_bbparser::StyledText;
 use std::sync::{
     atomic::{AtomicU8, AtomicUsize, Ordering},
-    Arc, Mutex, MutexGuard,
+    Arc,
 };
 use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
 
@@ -45,7 +45,6 @@ pub(crate) enum VisibleTruncateAt {
 struct RenderWidthState {
     ambiguous_width: AtomicU8,
     terminal_width: AtomicUsize,
-    render_lock: Mutex<()>,
 }
 
 #[derive(Clone, Debug)]
@@ -55,7 +54,6 @@ pub(crate) struct RenderWidthGuard<'a> {
     source: &'a RenderWidthSource,
     previous_ambiguous_width: AmbiguousWidth,
     previous_terminal_width: Option<usize>,
-    _render_lock: MutexGuard<'a, ()>,
 }
 
 impl Drop for RenderWidthGuard<'_> {
@@ -72,7 +70,6 @@ impl RenderWidthSource {
         Self(Arc::new(RenderWidthState {
             ambiguous_width: AtomicU8::new(policy as u8),
             terminal_width: AtomicUsize::new(0),
-            render_lock: Mutex::new(()),
         }))
     }
 
@@ -108,14 +105,10 @@ impl RenderWidthSource {
         policy: AmbiguousWidth,
         terminal_width: Option<usize>,
     ) -> RenderWidthGuard<'_> {
-        // A render that unwinds poisons the standard mutex. Recover its guard:
-        // restoration is handled by RenderWidthGuard, so the protected
-        // state remains valid after a template/filter panic.
-        let render_lock = self
-            .0
-            .render_lock
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        // Width is on the request; this stores it for MiniJinja filters
+        // registered at engine construction. The framework is single-threaded
+        // (#84), so there is no lock. Restoration is handled by
+        // RenderWidthGuard, including after a template/filter panic.
         let previous_ambiguous_width = self.ambiguous_width();
         let previous_terminal_width = self.terminal_width();
         self.store_ambiguous_width(policy);
@@ -124,7 +117,6 @@ impl RenderWidthSource {
             source: self,
             previous_ambiguous_width,
             previous_terminal_width,
-            _render_lock: render_lock,
         }
     }
 }
