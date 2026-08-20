@@ -990,6 +990,62 @@ mod tests {
         }
     }
 
+    fn os_args(args: &[&str]) -> Vec<std::ffi::OsString> {
+        args.iter().map(Into::into).collect()
+    }
+
+    #[test]
+    fn unparsed_output_mode_reads_equals_and_space_forms() {
+        let app = AppBuilder::new().build().unwrap();
+        assert_eq!(
+            app.extract_output_mode_from_unparsed(&os_args(&["app", "--output=json"])),
+            OutputMode::Json
+        );
+        assert_eq!(
+            app.extract_output_mode_from_unparsed(&os_args(&["app", "--output", "json"])),
+            OutputMode::Json
+        );
+    }
+
+    #[test]
+    fn unparsed_output_mode_stops_at_terminator_and_falls_back_on_bad_values() {
+        let app = AppBuilder::new().build().unwrap();
+        assert_eq!(
+            app.extract_output_mode_from_unparsed(&os_args(&["app", "--", "--output=text"])),
+            OutputMode::Auto,
+            "arguments after -- are not flags"
+        );
+        assert_eq!(
+            app.extract_output_mode_from_unparsed(&os_args(&[
+                "app",
+                "--output=text",
+                "--",
+                "--output=json"
+            ])),
+            OutputMode::Text,
+            "a flag before -- still counts; one after it does not"
+        );
+        assert_eq!(
+            app.extract_output_mode_from_unparsed(&os_args(&["app", "--output=nope"])),
+            OutputMode::Auto,
+            "unknown value"
+        );
+        assert_eq!(
+            app.extract_output_mode_from_unparsed(&os_args(&["app", "--output"])),
+            OutputMode::Auto,
+            "missing value"
+        );
+    }
+
+    #[test]
+    fn unparsed_output_mode_is_auto_when_the_app_has_no_output_flag() {
+        let app = AppBuilder::new().no_output_flag().build().unwrap();
+        assert_eq!(
+            app.extract_output_mode_from_unparsed(&os_args(&["app", "--output=text"])),
+            OutputMode::Auto
+        );
+    }
+
     #[test]
     fn clap_usage_error_honours_text_output_for_startup_warnings() {
         use crate::cli::handler::RunErrorKind;
@@ -1086,7 +1142,7 @@ mod tests {
     }
 
     #[test]
-    fn output_mode_probe_skips_help_and_version_spellings_the_command_already_declares() {
+    fn unparsed_output_mode_skips_help_and_version_spellings_the_command_already_declares() {
         use crate::InputSources;
         use clap::{Arg, ArgAction};
         use serde_json::json;
@@ -1175,13 +1231,13 @@ mod tests {
             assert_eq!(
                 result.output_mode(),
                 OutputMode::Text,
-                "{label}: custom help/version spellings must not panic the probe or drop --output=text"
+                "{label}: custom help/version spellings must not drop --output=text"
             );
         }
     }
 
     #[test]
-    fn output_mode_probe_honours_text_output_on_a_sibling_when_another_branch_owns_the_spelling() {
+    fn unparsed_output_mode_honours_text_output_on_a_sibling_when_another_branch_owns_the_spelling() {
         use crate::InputSources;
         use clap::{Arg, ArgAction};
         use serde_json::json;
