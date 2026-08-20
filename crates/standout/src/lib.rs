@@ -58,6 +58,10 @@
 //! println!("{}", output);
 //! ```
 //!
+//! [`render_request`] is the contract. [`render`] and siblings detect at their
+//! edge, build a [`RenderRequest`], and delegate. Detector override APIs are
+//! removed; tests construct [`TargetProperties`].
+//!
 //! ## Tag-Based Styling
 //!
 //! Use tag syntax `[name]content[/name]` for styling both static and dynamic content:

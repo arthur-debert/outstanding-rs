@@ -120,12 +120,15 @@ let output = render(template, &report, &theme)?;
 print!("{}", output);
 ```
 
+`render` is the convenience wrapper. The contract is `render_request`: an owned `RenderRequest` carrying data, template, theme, format, color policy, and `TargetProperties`. Wrappers detect destination facts at their edge, build that request, and delegate. They keep their own names. Tests construct `TargetProperties` rather than installing detector overrides (those APIs are removed).
+
 Now:
 
 - Logic is testable without output concerns
 - Presentation is declarative and readable
 - Styles are centralized and named semantically
 - Changes to appearance don't require recompilation (with file-based templates)
+- The same request, with file-backed templates and context providers held fixed, produces the same bytes
 
 ---
 

@@ -51,6 +51,15 @@
 //! println!("{}", output);
 //! ```
 //!
+//! [`render_request`] is the contract: an owned [`RenderRequest`] in, bytes out.
+//! [`render`], [`render_with_output`], and siblings stay as detect-then-call
+//! wrappers — they probe [`TargetProperties::detect`] at their edge, build a
+//! request, and delegate. They keep their own names (Rust has no free-function
+//! overloading). Tests construct [`TargetProperties`] rather than installing
+//! detector overrides; those APIs (`set_terminal_width_detector`,
+//! `set_color_capability_detector`, `set_theme_detector`, `set_icon_detector`,
+//! and the `detect_*` cluster they served) are removed.
+//!
 //! ## Tag-Based Styling
 //!
 //! Templates use lightweight `[name]content[/name]` tags, so you can mix static text
