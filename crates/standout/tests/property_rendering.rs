@@ -176,7 +176,7 @@ fn dispatch(
     let app = builder.build().expect("Failed to build app");
     let cmd = Command::new("app").subcommand(Command::new("test"));
     let matches = cmd.try_get_matches_from(["app", "test"]).unwrap();
-    app.dispatch(matches, mode)
+    app.dispatch(matches, mode).into_outcome()
 }
 
 /// Structured output must parse as the format it claims to be.

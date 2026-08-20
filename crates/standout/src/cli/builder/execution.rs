@@ -2,8 +2,8 @@
 //!
 //! This module contains methods for dispatching and running commands:
 //! - `commands()` - dispatch macro integration
-//! - `dispatch()` - match and execute handler
-//! - `dispatch_from()` - parse args and dispatch
+//! - `dispatch()` - match and execute handler, returning [`crate::cli::RunResult`]
+//! - `dispatch_from()` - parse args and dispatch, returning [`crate::cli::RunResult`]
 //! - `run()` - dispatch and print
 //! - `run_with()` - inner public run taking target properties and input sources,
 //!   returning [`crate::cli::RunResult`]
@@ -147,14 +147,21 @@ impl App {
     /// Handler errors and hook errors both abort execution and return
     /// `RunResult::Error(msg)`. Callers using `dispatch()` directly are
     /// responsible for writing the error to stderr and choosing an exit code.
-    pub fn dispatch(&self, matches: ArgMatches, output_mode: OutputMode) -> RunResult {
-        self.dispatch_with_target(
-            matches,
-            output_mode,
-            None,
-            InputSources::from_process(),
-            WarningBuffer::new(),
-        )
+    ///
+    /// Returns [`crate::cli::RunResult`]: the dispatch outcome plus framework
+    /// warnings collected for this invocation (including embedded hot-reload
+    /// fallbacks recorded at build). Match on
+    /// [`outcome()`](crate::cli::RunResult::outcome) for variants.
+    pub fn dispatch(&self, matches: ArgMatches, output_mode: OutputMode) -> crate::cli::RunResult {
+        self.collect_run_warnings(|warnings| {
+            self.dispatch_with_target(
+                matches,
+                output_mode,
+                None,
+                InputSources::from_process(),
+                warnings,
+            )
+        })
     }
 
     fn dispatch_with_target(
@@ -325,37 +332,40 @@ impl App {
     ///
     /// # Returns
     ///
-    /// - `RunResult::Handled(output)` if a registered handler processed the command
-    /// - `RunResult::NoMatch(matches)` if no handler matched (for manual handling)
+    /// A [`crate::cli::RunResult`] wrapping the dispatch outcome plus any
+    /// framework warnings collected for this invocation. Inspect
+    /// [`warnings()`](crate::cli::RunResult::warnings), then match
+    /// [`outcome()`](crate::cli::RunResult::outcome):
+    ///
+    /// - `DispatchResult::Handled(output)` if a registered handler processed the command
+    /// - `DispatchResult::NoMatch(matches)` if no handler matched (for manual handling)
     ///
     /// # Example
     ///
     /// ```rust,ignore
-    /// use standout::cli::{App, HandlerResult, Output, RunResult};
+    /// use standout::cli::{App, DispatchResult, HandlerResult, Output};
     ///
     /// let result = App::builder()
     ///     .command("list", |_m, _ctx| Ok(HandlerOutput::Render(vec!["a", "b"]), "{{ . }}")
     ///     .dispatch_from(cmd, std::env::args());
     ///
-    /// match result {
-    ///     RunResult::Handled(output) => println!("{}", output),
-    ///     RunResult::NoMatch(matches) => {
+    /// let _ = result.warnings();
+    /// match result.into_outcome() {
+    ///     DispatchResult::Handled(output) => println!("{}", output),
+    ///     DispatchResult::NoMatch(matches) => {
     ///         // Handle manually
     ///     }
+    ///     _ => {}
     /// }
     /// ```
-    pub fn dispatch_from<I, T>(&self, cmd: Command, args: I) -> RunResult
+    pub fn dispatch_from<I, T>(&self, cmd: Command, args: I) -> crate::cli::RunResult
     where
         I: IntoIterator<Item = T>,
         T: Into<std::ffi::OsString> + Clone,
     {
-        self.dispatch_from_with_target(
-            cmd,
-            args,
-            None,
-            InputSources::from_process(),
-            WarningBuffer::new(),
-        )
+        self.collect_run_warnings(|warnings| {
+            self.dispatch_from_with_target(cmd, args, None, InputSources::from_process(), warnings)
+        })
     }
 
     fn dispatch_from_with_target<I, T>(
@@ -601,6 +611,18 @@ impl App {
         }
     }
 
+    /// Seeds build-time framework warnings into a per-invocation buffer, runs
+    /// `inner`, and returns the dispatch outcome together with those warnings.
+    fn collect_run_warnings(
+        &self,
+        inner: impl FnOnce(WarningBuffer) -> RunResult,
+    ) -> crate::cli::RunResult {
+        let warnings = WarningBuffer::new();
+        self.seed_startup_warnings(&warnings);
+        let outcome = inner(warnings.clone());
+        crate::cli::RunResult::from_dispatch(outcome, warnings.take())
+    }
+
     /// Inner public run: destination properties and input sources as two arguments.
     ///
     /// Production [`run`](Self::run) calls [`TargetProperties::detect`] and
@@ -626,11 +648,9 @@ impl App {
         I: IntoIterator<Item = T>,
         T: Into<std::ffi::OsString> + Clone,
     {
-        let warnings = WarningBuffer::new();
-        self.seed_startup_warnings(&warnings);
-        let inner =
-            self.dispatch_from_with_target(cmd, args, Some(target), sources, warnings.clone());
-        crate::cli::RunResult::from_dispatch(inner, warnings.take())
+        self.collect_run_warnings(|warnings| {
+            self.dispatch_from_with_target(cmd, args, Some(target), sources, warnings)
+        })
     }
 
     /// Runs the CLI and returns the rendered output as a string.
@@ -694,17 +714,11 @@ impl App {
         // this same entry point nests a window inside this one instead of
         // ending it. See `standout_render::diagnostics` on nesting.
         let capture_window = standout_render::diagnostics::begin_capture();
-        let warnings = WarningBuffer::new();
-        self.seed_startup_warnings(&warnings);
-        let inner = self.dispatch_from_with_target(
-            cmd,
-            args,
-            None,
-            InputSources::from_process(),
-            warnings.clone(),
-        );
+        let result = self.collect_run_warnings(|warnings| {
+            self.dispatch_from_with_target(cmd, args, None, InputSources::from_process(), warnings)
+        });
         drop(capture_window);
-        crate::cli::RunResult::from_dispatch(inner, warnings.take())
+        result
     }
 
     /// Adds the framework-owned surface every parse path shares: the

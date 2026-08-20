@@ -956,7 +956,7 @@ fn structured_only_maps_machine_modes_and_rejects_human_modes() {
         let matches = command().try_get_matches_from(["app", "show"]).unwrap();
         let result = app.dispatch(matches, mode);
         assert!(
-            matches!(result, RunResult::Handled(_)),
+            matches!(result.outcome(), RunResult::Handled(_)),
             "expected {mode:?} to serialize, got {result:?}"
         );
     }
@@ -964,7 +964,7 @@ fn structured_only_maps_machine_modes_and_rejects_human_modes() {
     for mode in [OutputMode::Term, OutputMode::Text, OutputMode::TermDebug] {
         let matches = command().try_get_matches_from(["app", "show"]).unwrap();
         let result = app.dispatch(matches, mode);
-        match result {
+        match result.into_outcome() {
             RunResult::Error(error) => {
                 let message = error.to_string();
                 assert!(message.contains("command `show` is declared structured-only"));

@@ -851,4 +851,69 @@ mod tests {
 
         assert_eq!(result.output(), Some("true"));
     }
+
+    /// A file path (not a directory) exists, so debug hot-reload attempts a
+    /// walk and falls back to the embedded copy.
+    fn hot_reload_fallback_templates() -> Option<crate::EmbeddedTemplates> {
+        const CARGO_TOML: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/Cargo.toml");
+        static ENTRIES: &[(&str, &str)] = &[("ok.jinja", "hi")];
+        let source = crate::EmbeddedSource::<crate::TemplateResource>::new(ENTRIES, CARGO_TOML);
+        source.should_hot_reload().then_some(source)
+    }
+
+    fn assert_hot_reload_walk_warning(warnings: &[String]) {
+        assert!(
+            warnings
+                .iter()
+                .any(|warning| warning.contains("Failed to walk templates directory")),
+            "expected hot-reload fallback warning, got {warnings:?}"
+        );
+    }
+
+    #[test]
+    fn dispatch_returns_embedded_hot_reload_fallback_warnings() {
+        use serde_json::json;
+
+        let Some(source) = hot_reload_fallback_templates() else {
+            return;
+        };
+        let app = AppBuilder::new()
+            .templates(source)
+            .command(
+                "list",
+                |_m, _ctx| Ok(HandlerOutput::Render(json!({"n": 1}))),
+                "n={{ n }}",
+            )
+            .unwrap()
+            .build()
+            .unwrap();
+        let cmd = Command::new("app").subcommand(Command::new("list"));
+        let matches = cmd.try_get_matches_from(["app", "list"]).unwrap();
+        let result = app.dispatch(matches, OutputMode::Text);
+        assert!(result.is_handled());
+        assert_hot_reload_walk_warning(result.warnings());
+    }
+
+    #[test]
+    fn dispatch_from_returns_embedded_hot_reload_fallback_warnings() {
+        use serde_json::json;
+
+        let Some(source) = hot_reload_fallback_templates() else {
+            return;
+        };
+        let app = AppBuilder::new()
+            .templates(source)
+            .command(
+                "list",
+                |_m, _ctx| Ok(HandlerOutput::Render(json!({"n": 1}))),
+                "n={{ n }}",
+            )
+            .unwrap()
+            .build()
+            .unwrap();
+        let cmd = Command::new("app").subcommand(Command::new("list"));
+        let result = app.dispatch_from(cmd, ["app", "list"]);
+        assert!(result.is_handled());
+        assert_hot_reload_walk_warning(result.warnings());
+    }
 }

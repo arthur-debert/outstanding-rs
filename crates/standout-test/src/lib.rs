@@ -118,9 +118,7 @@ use std::sync::Arc;
 
 use clap::Command;
 use standout::cli::DispatchResult;
-use standout::cli::{
-    App, ArtifactDestination, ArtifactRun, ExitStatus, RunErrorKind, SuccessKind,
-};
+use standout::cli::{App, ArtifactDestination, ArtifactRun, ExitStatus, RunErrorKind, SuccessKind};
 use standout::{ColorMode, IconMode, InputSources, TargetProperties};
 use standout_input::env::{MockClipboard, MockStdin};
 use standout_input::PromptResponder;

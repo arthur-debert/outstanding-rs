@@ -9,7 +9,10 @@
 
 use crate::cli::handler::{DispatchResult, RunError, RunErrorKind, RunOutput};
 
-/// Outcome of [`App::run_with`](crate::cli::App::run_with) / [`App::run_to_string`](crate::cli::App::run_to_string):
+/// Outcome of [`App::run_with`](crate::cli::App::run_with) /
+/// [`App::run_to_string`](crate::cli::App::run_to_string) /
+/// [`App::dispatch`](crate::cli::App::dispatch) /
+/// [`App::dispatch_from`](crate::cli::App::dispatch_from):
 /// the dispatch result plus framework warnings collected during the run.
 ///
 /// Warnings are an argument of the run, not a thread-local. [`Deref`] to the

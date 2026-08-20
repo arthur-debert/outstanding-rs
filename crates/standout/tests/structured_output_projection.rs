@@ -87,7 +87,7 @@ fn direct_dispatch(app: &App, mode: OutputMode) -> String {
     let matches = command()
         .try_get_matches_from(["rustloc", "summary"])
         .unwrap();
-    let RunResult::Handled(output) = app.dispatch(matches, mode) else {
+    let RunResult::Handled(output) = app.dispatch(matches, mode).into_outcome() else {
         panic!("expected handled output")
     };
     output.into_string()
