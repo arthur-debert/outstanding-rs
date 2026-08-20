@@ -626,7 +626,7 @@ impl App {
         handled
     }
 
-    fn seed_startup_warnings(&self, warnings: &WarningBuffer) {
+    pub(crate) fn seed_startup_warnings(&self, warnings: &WarningBuffer) {
         for message in &self.startup_warnings {
             warnings.push(message.clone());
         }

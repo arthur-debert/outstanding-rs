@@ -40,7 +40,7 @@ use crate::topics::{
 };
 use crate::TemplateRegistry;
 use crate::{
-    render_request, ColorPolicy, InputSources, OutputMode, RenderError, RenderRequest,
+    render_request_split, ColorPolicy, InputSources, OutputMode, RenderError, RenderRequest,
     TargetProperties, Theme, TEMPLATE_EXTENSIONS,
 };
 use clap::{Arg, ArgAction, ArgMatches, Command};
@@ -1013,6 +1013,19 @@ impl App {
         OutputMode::Auto
     }
 
+    /// Output mode for a manual-dispatch invocation.
+    ///
+    /// When `matches` carries Standout's `_output_mode` argument, the parse
+    /// went through a tree that installed `--output`, and that value is the
+    /// invocation's mode. Otherwise the
+    /// [fallback](Self::output_mode_fallback).
+    fn output_mode_from_matches(matches: &ArgMatches) -> OutputMode {
+        match matches.try_get_one::<String>("_output_mode") {
+            Ok(Some(value)) => parse_output_mode_flag(Some(value)),
+            Ok(None) | Err(_) => Self::output_mode_fallback(),
+        }
+    }
+
     /// Gets a theme by name from the stylesheet registry.
     ///
     /// This allows using themes other than the default at runtime.
@@ -1791,12 +1804,18 @@ impl App {
     /// The method:
     /// 1. Inserts [`InputSources::from_process`] and a
     ///    [`standout_render::warnings::WarningBuffer`] into the context (the
-    ///    same run extensions `dispatch` / `run_with` insert)
+    ///    same run extensions `dispatch` / `run_with` insert). The buffer is
+    ///    seeded with build-time startup warnings so hooks and render see the
+    ///    same in-call destination as the other run edges; this method still
+    ///    returns only [`RenderedOutput`] (no final write, no warnings-return
+    ///    API)
     /// 2. Runs pre-dispatch hooks (if any)
     /// 3. Calls your handler closure
-    /// 4. Renders the result through [`crate::render_request`] using the app engine,
-    ///    template registry, context registry, merged theme, and the output-mode
-    ///    fallback
+    /// 4. Renders the result through [`crate::render_request_split`] using the
+    ///    app engine, template registry, context registry, merged theme, and
+    ///    the output mode from `matches` (`--output` when the parse installed
+    ///    Standout's argument, otherwise the fallback). Formatted and raw
+    ///    travel on [`TextOutput`] the same way dispatch does
     /// 5. Runs post-output hooks (if any)
     /// 6. Returns the final output
     ///
@@ -1824,6 +1843,7 @@ impl App {
             self.app_state.clone(),
         );
         let warnings = WarningBuffer::new();
+        self.seed_startup_warnings(&warnings);
         ctx.extensions.insert(InputSources::from_process());
         ctx.extensions.insert(warnings.clone());
 
@@ -1853,7 +1873,7 @@ impl App {
                     data: json_data,
                     template: crate::TemplateRef::Inline(template.to_string()),
                     theme: self.theme.clone(),
-                    format: Self::output_mode_fallback(),
+                    format: Self::output_mode_from_matches(matches),
                     color_policy: ColorPolicy::Auto,
                     target,
                     engine: self.template_engine.clone(),
@@ -1863,8 +1883,10 @@ impl App {
                     extras: HashMap::new(),
                     warnings: Some(warnings),
                 };
-                match render_request(&request) {
-                    Ok(rendered) => RenderedOutput::Text(TextOutput::plain(rendered)),
+                match render_request_split(&request) {
+                    Ok(rendered) => {
+                        RenderedOutput::Text(TextOutput::new(rendered.formatted, rendered.raw))
+                    }
                     Err(e) => return Err(HookError::post_output("Render error").with_source(e)),
                 }
             }
