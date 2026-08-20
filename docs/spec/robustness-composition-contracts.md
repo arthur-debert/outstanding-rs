@@ -120,11 +120,12 @@ enough to only *build* those inputs.
   are not the final per-invocation value. Point-of-use fallbacks (`unwrap_or_default()`,
   silent 80-column width, "Auto because this call site forgot") go away. Per-invocation
   resolution is per setting family, not one ladder. Terminal settings (color, pager,
-  stream facts) keep `flag > env > config > detection`, with the App fallback at the
-  default end — config does not override env conventions such as `NO_COLOR`. Output
-  mode and theme resolve as flag > later config > App fallback; they have no detection
-  source. Resolved values land on the request. `App` does not hold per-invocation
-  facts. This Spec does not require a public type for the fallback bundle.
+  stream facts) keep `flag > env > config > detection`, with no App fallback —
+  terminal facts live on `TargetProperties` via detection; config does not override
+  env conventions such as `NO_COLOR`. Output mode and theme resolve as flag >
+  later config > App fallback; they have no detection source. Resolved values land
+  on the request. `App` does not hold per-invocation facts. This Spec does not
+  require a public type for the fallback bundle.
 - **`App::render` / `render_inline` are the same pipeline as dispatch.** All three call
   `render_request`.
 - **Help and topics are ordinary renders** through that pipeline (the app's engine,
@@ -172,15 +173,15 @@ them so those Specs do not reopen this redesign.
 
 - **Color axis** reads the color-policy fact, not `OutputMode`. It composes with the
   per-stream color capabilities already on `TargetProperties` and keeps
-  `flag > env > config > detection` (so `NO_COLOR` beats config). Primary render
-  consumes stdout color capability / stdout-is-a-terminal; warnings and progress
-  consume stderr color capability / stderr-is-a-terminal.
+  `flag > env > config > detection`, with no App fallback (so `NO_COLOR` beats
+  config). Primary render consumes stdout color capability / stdout-is-a-terminal;
+  warnings and progress consume stderr color capability / stderr-is-a-terminal.
 - **Pager** reads stdout-is-a-terminal; **progress** reads stderr-is-a-terminal and must
   be able to emit into a future machine-event channel without inventing a second one.
 - **Config layering** is one input to per-invocation resolution, not a second path
   beside glue-invented defaults, and not a universal ladder. Terminal settings keep
-  `flag > env > config > detection` (App fallback at the default end); env conventions
-  such as `NO_COLOR` beat config. Output mode and theme resolve as flag > later config
+  `flag > env > config > detection`, with no App fallback; env conventions such as
+  `NO_COLOR` beat config. Output mode and theme resolve as flag > later config
   > App fallback, with no detection source. Resolved values land on the request;
   per-invocation facts do not land on `App`.
 - **Machine-contract diagnostics** emit at the single emission point, including a
@@ -193,10 +194,10 @@ them so those Specs do not reopen this redesign.
   `csv`, and `quick-xml` live in `standout-render` only.
 - **No `MiniJinjaEngine::new()` outside `build()`.**
 - **The glue does not invent a rendering default.** It builds the request from the
-  build-time fallbacks on `App` plus this invocation's flags, env, later config (when
-  those epics land), and detection (terminal facts only); it does not pick a theme,
-  mode, or width of its own at the point of use. It does not apply one ladder to every
-  setting.
+  build-time fallbacks on `App` (theme, output-mode, registry) plus this invocation's
+  flags, env, later config (when those epics land), and detection (terminal facts
+  only; no App fallback on that ladder); it does not pick a theme, mode, or width
+  of its own at the point of use. It does not apply one ladder to every setting.
 - **Adding an output mode touches the mode enum and the serializer registry**, not nine
   files.
 
@@ -244,9 +245,8 @@ holds what `build()` can know as fallbacks (merged theme, output-mode fallback,
 registry). Per-invocation facts (argv-selected mode, detected width, stream
 terminal-ness and per-stream color capability) belong on the request, not on `App`.
 Resolution is per setting family: terminal settings keep `flag > env > config >
-detection` (App fallback at the default end); output mode and theme are flag >
-later config > App fallback, with no detection source. Point-of-use defaults
-disappear.
+detection`, with no App fallback; output mode and theme are flag > later config
+> App fallback, with no detection source. Point-of-use defaults disappear.
 
 **4. Harness injection and crate invariants.** `TestHarness` puts facts on the request.
 The detector override APIs are removed. The four maintainer invariants (no serializers
