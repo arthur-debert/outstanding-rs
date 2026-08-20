@@ -1337,6 +1337,7 @@ impl App {
             &self.registry,
             config.command_groups.as_deref(),
             config.length,
+            &target,
         );
         self.help_display(
             cmd,
@@ -1502,7 +1503,8 @@ impl App {
                 Ok(template) => template,
                 Err(e) => return Self::render_failure(cmd, e),
             };
-            let data = topics_list_data(&self.registry, &format!("{} help", cmd.get_name()));
+            let data =
+                topics_list_data(&self.registry, &format!("{} help", cmd.get_name()), &target);
             return self.help_display(
                 cmd,
                 self.render_help_surface(&data, template, format, target, warnings),
@@ -1521,8 +1523,12 @@ impl App {
                     Ok(template) => template,
                     Err(e) => return Self::render_failure(cmd, e),
                 };
-                let data =
-                    extract_help_data(help_cmd, config.command_groups.as_deref(), config.length);
+                let data = extract_help_data(
+                    help_cmd,
+                    config.command_groups.as_deref(),
+                    config.length,
+                    &target,
+                );
                 return self.help_display(
                     cmd,
                     self.render_help_surface(&data, template, format, target, warnings),

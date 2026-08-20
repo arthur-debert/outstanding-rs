@@ -61,7 +61,7 @@ use console::Style;
 use serde::Serialize;
 
 use crate::assets::{TOPICS_LIST_TEMPLATE_NAME, TOPIC_TEMPLATE_NAME};
-use crate::cli::help::data::resolve_name_column;
+use crate::cli::help::data::{resolve_name_column, ASSUMED_TERMINAL_WIDTH};
 use crate::cli::help::{inline_template_ref, render_via_request};
 use crate::{
     default_template_engine, OutputMode, RenderError, TargetProperties, TemplateRef, Theme,
@@ -341,7 +341,15 @@ pub(crate) fn topic_data(topic: &Topic) -> TopicData {
     }
 }
 
-pub(crate) fn topics_list_data(registry: &TopicRegistry, usage_prefix: &str) -> TopicsListData {
+/// Builds the topics-list page data.
+///
+/// `name_width` is resolved against `target` so the list aligns using the
+/// same destination the render request will carry.
+pub(crate) fn topics_list_data(
+    registry: &TopicRegistry,
+    usage_prefix: &str,
+    target: &TargetProperties,
+) -> TopicsListData {
     let topics = registry.list_topics();
     let topic_items: Vec<TopicListItem> = topics
         .iter()
@@ -355,6 +363,8 @@ pub(crate) fn topics_list_data(registry: &TopicRegistry, usage_prefix: &str) -> 
             .iter()
             .map(|topic| topic.name.as_str())
             .collect::<Vec<_>>(),
+        target.width.unwrap_or(ASSUMED_TERMINAL_WIDTH),
+        target.ambiguous_width,
     );
     TopicsListData {
         usage: format!("{} <topic>", usage_prefix),
@@ -443,6 +453,8 @@ pub fn render_topic(
 ///
 /// Standalone: no `App` is required. The template string becomes
 /// [`TemplateRef::Inline`] with tag validation at request construction.
+/// Destination facts are detected once and reused for list layout and the
+/// request.
 pub fn render_topics_list(
     registry: &TopicRegistry,
     usage_prefix: &str,
@@ -456,12 +468,13 @@ pub fn render_topics_list(
         TOPICS_LIST_TEMPLATE_NAME,
         &theme,
     )?;
+    let target = TargetProperties::detect();
     render_via_request(
-        &topics_list_data(registry, usage_prefix),
+        &topics_list_data(registry, usage_prefix, &target),
         template,
         theme,
         config.output_mode.unwrap_or(OutputMode::Auto),
-        TargetProperties::detect(),
+        target,
         default_template_engine(),
         None,
         None,

@@ -86,6 +86,39 @@ fn help_path_uses_the_app_engine_from_build() {
 }
 
 #[test]
+fn unreadable_named_help_override_surfaces_as_render_error() {
+    let dir = tempfile::tempdir().unwrap();
+    let nested = dir.path().join("standout");
+    std::fs::create_dir(&nested).unwrap();
+    let path = nested.join("help.jinja");
+    std::fs::write(&path, "CUSTOM HELP PAGE\n").unwrap();
+
+    let app = App::builder()
+        .help_handling(true)
+        .templates_dir(dir.path())
+        .unwrap()
+        .build()
+        .unwrap();
+
+    std::fs::remove_file(&path).unwrap();
+
+    match app.get_matches_from(help_command(), ["app", "--help"]) {
+        HelpResult::Error(err) => {
+            let msg = err.to_string();
+            assert!(
+                msg.contains("failed to render help"),
+                "broken override must surface as a render failure, got:\n{msg}"
+            );
+            assert!(
+                !msg.contains("CUSTOM HELP PAGE"),
+                "must not render the deleted override:\n{msg}"
+            );
+        }
+        other => panic!("expected render failure, got {other:?}"),
+    }
+}
+
+#[test]
 fn standalone_render_help_still_works_without_an_app() {
     use standout::cli::{render_help, HelpConfig};
     use standout::OutputMode;

@@ -64,16 +64,28 @@ pub(crate) fn inline_template_ref(
 
 /// Named registry template when registered; otherwise the default source as
 /// [`TemplateRef::Inline`] with tag validation.
+///
+/// Registration is checked with [`crate::TemplateRegistry::get`] (resolution
+/// only, no disk read). [`crate::RegistryError::NotFound`] and a missing
+/// registry fall back to the inline default. Any other registry error is
+/// propagated so a broken file override is not silently replaced by the
+/// framework default — `load_named_template` still performs the read.
 pub(crate) fn named_or_inline_template(
     registry: Option<&crate::TemplateRegistry>,
     named: &str,
     default_source: &str,
     theme: &Theme,
 ) -> Result<TemplateRef, RenderError> {
-    if registry.is_some_and(|registry| registry.get_content(named).is_ok()) {
-        return Ok(TemplateRef::Named(named.to_string()));
+    match registry {
+        Some(registry) => match registry.get(named) {
+            Ok(_) => Ok(TemplateRef::Named(named.to_string())),
+            Err(crate::RegistryError::NotFound { .. }) => {
+                inline_template_ref(default_source, theme, named)
+            }
+            Err(error) => Err(RenderError::OperationError(error.to_string())),
+        },
+        None => inline_template_ref(default_source, theme, named),
     }
-    inline_template_ref(default_source, theme, named)
 }
 
 /// Validates literal style tags in template source against `theme`.
@@ -167,6 +179,8 @@ pub(crate) fn render_via_request<T: Serialize>(
 /// Standalone: no `App` is required. The template string (configured or the
 /// framework default) becomes [`TemplateRef::Inline`] with tag validation at
 /// request construction, and the request uses [`default_template_engine`].
+/// Destination facts are detected once and reused for extraction and the
+/// request, so name-column widths match the target the renderer sees.
 pub fn render_help(cmd: &Command, config: Option<HelpConfig>) -> Result<String, RenderError> {
     let config = config.unwrap_or_default();
     let theme = resolve_help_theme(config.theme);
@@ -174,13 +188,19 @@ pub fn render_help(cmd: &Command, config: Option<HelpConfig>) -> Result<String, 
         Some(source) => inline_template_ref(source, &theme, HELP_TEMPLATE_NAME)?,
         None => inline_template_ref(DEFAULT_HELP_TEMPLATE, &theme, HELP_TEMPLATE_NAME)?,
     };
-    let data = extract_help_data(cmd, config.command_groups.as_deref(), config.length);
+    let target = TargetProperties::detect();
+    let data = extract_help_data(
+        cmd,
+        config.command_groups.as_deref(),
+        config.length,
+        &target,
+    );
     render_via_request(
         &data,
         template,
         theme,
         config.output_mode.unwrap_or(OutputMode::Auto),
-        TargetProperties::detect(),
+        target,
         default_template_engine(),
         None,
         None,
@@ -191,7 +211,8 @@ pub fn render_help(cmd: &Command, config: Option<HelpConfig>) -> Result<String, 
 /// Renders the help for a clap command with topics in a "Learn More" section.
 ///
 /// Same standalone contract as [`render_help`]: `TemplateRef::Inline`, tag
-/// validation at construction, [`default_template_engine`].
+/// validation at construction, [`default_template_engine`]. Destination facts
+/// are detected once and reused for extraction and the request.
 pub fn render_help_with_topics(
     cmd: &Command,
     registry: &TopicRegistry,
@@ -203,18 +224,20 @@ pub fn render_help_with_topics(
         Some(source) => inline_template_ref(source, &theme, HELP_TEMPLATE_NAME)?,
         None => inline_template_ref(DEFAULT_HELP_TEMPLATE, &theme, HELP_TEMPLATE_NAME)?,
     };
+    let target = TargetProperties::detect();
     let data = extract_help_data_with_topics(
         cmd,
         registry,
         config.command_groups.as_deref(),
         config.length,
+        &target,
     );
     render_via_request(
         &data,
         template,
         theme,
         config.output_mode.unwrap_or(OutputMode::Auto),
-        TargetProperties::detect(),
+        target,
         default_template_engine(),
         None,
         None,
@@ -299,5 +322,61 @@ mod tests {
         assert_eq!(human_help_format(OutputMode::Term), OutputMode::Term);
         assert_eq!(human_help_format(OutputMode::Text), OutputMode::Text);
         assert_eq!(human_help_format(OutputMode::Auto), OutputMode::Auto);
+    }
+
+    #[test]
+    fn registered_file_override_is_named_without_reading_content() {
+        let mut registry = crate::TemplateRegistry::new();
+        registry
+            .add_from_files(vec![crate::TemplateFile::new(
+                HELP_TEMPLATE_NAME,
+                "standout/help.jinja",
+                "/missing/standout/help.jinja",
+                "/missing",
+            )])
+            .unwrap();
+
+        let theme = default_help_theme();
+        let template = named_or_inline_template(
+            Some(&registry),
+            HELP_TEMPLATE_NAME,
+            DEFAULT_HELP_TEMPLATE,
+            &theme,
+        )
+        .unwrap();
+        assert_eq!(
+            template,
+            TemplateRef::Named(HELP_TEMPLATE_NAME.to_string()),
+            "an unreadable registered override must stay Named so load can surface the read error"
+        );
+    }
+
+    #[test]
+    fn missing_named_template_falls_back_to_inline_default() {
+        let registry = crate::TemplateRegistry::new();
+        let theme = default_help_theme();
+        let template = named_or_inline_template(
+            Some(&registry),
+            HELP_TEMPLATE_NAME,
+            DEFAULT_HELP_TEMPLATE,
+            &theme,
+        )
+        .unwrap();
+        assert!(
+            matches!(template, TemplateRef::Inline(_)),
+            "NotFound must fall back to the inline default, got {template:?}"
+        );
+    }
+
+    #[test]
+    fn no_registry_falls_back_to_inline_default() {
+        let theme = default_help_theme();
+        let template =
+            named_or_inline_template(None, HELP_TEMPLATE_NAME, DEFAULT_HELP_TEMPLATE, &theme)
+                .unwrap();
+        assert!(
+            matches!(template, TemplateRef::Inline(_)),
+            "no registry must fall back to the inline default, got {template:?}"
+        );
     }
 }
