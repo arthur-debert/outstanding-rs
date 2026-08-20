@@ -7,7 +7,7 @@
 //! by that policy.
 //!
 //! Tests that call `TestHarness::run` stay `#[serial]` while the harness still
-//! mutates env/cwd/detectors. Stdin for default-command resolution is injected
+//! mutates env/cwd. Stdin for default-command resolution is injected
 //! through `InputSources`.
 
 use clap::{Arg, ArgAction, Command};

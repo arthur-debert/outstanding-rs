@@ -1,8 +1,8 @@
 //! What `run_process` refuses to pretend it can do.
 //!
 //! The escape hatch shares one builder with the in-process runner, and most
-//! of that builder describes *injection seams* — detectors and default
-//! readers a same-process run installs behind the app's back. A child
+//! of that builder describes *injection seams* — destination facts and
+//! input sources a same-process run installs on the request. A child
 //! process inherits none of them: it resolves width, color, stdin, and
 //! prompts from its own environment. Carrying such a setting silently into a
 //! `run_process` call would produce the worst kind of test — one that reads

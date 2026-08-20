@@ -1,9 +1,9 @@
 //! In-process test harness for apps built on the `standout` CLI framework.
 //!
-//! `TestHarness` bundles the scattered injection seams — environment
-//! detectors, env vars, working directory, stdin, clipboard, output mode,
-//! and tempdir fixtures — into a single fluent builder, and restores every
-//! override when the harness is dropped.
+//! `TestHarness` bundles the scattered injection seams — destination facts
+//! on [`TargetProperties`], env vars, working directory, stdin, clipboard,
+//! output mode, and tempdir fixtures — into a single fluent builder, and
+//! restores every override when the harness is dropped.
 //!
 //! # Example
 //!
@@ -81,6 +81,12 @@
 //! [`with_color`](TestHarness::with_color) fills stdout/stderr color
 //! capability so ANSI-positive assertions work in-process through
 //! `force_styling` on the request. It does not call `set_colors_enabled`.
+//! Facts the test does not set take fixed defaults, never
+//! [`TargetProperties::detect`]: `width: None`, [`ColorMode::Dark`],
+//! [`IconMode::Classic`], [`AmbiguousWidth::Narrow`]. Color capability
+//! defaults to off and both streams are non-terminal. `$COLUMNS`,
+//! `$NERD_FONT`, and the OS appearance setting cannot change an in-process
+//! run.
 //!
 //! # Concurrency and restoration
 //!
@@ -158,6 +164,16 @@ enum StdinMode {
 /// See the [crate-level docs](crate) for the usage pattern. The harness
 /// installs every override in [`TestHarness::run`] and tears them down on
 /// [`Drop`], so a failed assertion never leaks state into the next test.
+///
+/// Unset [`TargetProperties`] fields take these fixed defaults — the
+/// harness never calls [`TargetProperties::detect`]:
+///
+/// - `width`: `None` (unknown; framework list-view falls back to 80)
+/// - `color_scheme`: [`ColorMode::Dark`]
+/// - `icon_mode`: [`IconMode::Classic`]
+/// - `ambiguous_width`: [`AmbiguousWidth::Narrow`]
+/// - stdout/stderr color capability: `false`
+/// - stdout/stderr is-a-terminal: `false`
 #[must_use = "TestHarness is inert until you call run(...)"]
 pub struct TestHarness {
     env_set: HashMap<String, String>,
@@ -224,22 +240,29 @@ impl TestHarness {
         self
     }
 
-    // --- terminal detectors ---------------------------------------------------
+    // --- destination facts ----------------------------------------------------
 
-    /// Forces the reported terminal width to `cols`.
+    /// Injects terminal width `cols` on [`TargetProperties`].
+    ///
+    /// When unset, the harness injects `width: None` rather than probing
+    /// `$COLUMNS` or the TTY.
     pub fn terminal_width(mut self, cols: usize) -> Self {
         self.terminal_width = Some(Some(cols));
         self
     }
 
-    /// Forces terminal-width detection to report "unknown" (as if stdout
-    /// is not a TTY).
+    /// Injects unknown terminal width (`None`) on [`TargetProperties`].
+    ///
+    /// This is also the harness default when
+    /// [`terminal_width`](Self::terminal_width) is not called.
     pub fn no_terminal_width(mut self) -> Self {
         self.terminal_width = Some(None);
         self
     }
 
-    /// Forces either narrow or wide treatment of East Asian Ambiguous text.
+    /// Injects the East Asian Ambiguous width policy on [`TargetProperties`].
+    ///
+    /// Defaults to [`AmbiguousWidth::Narrow`] when unset.
     pub fn ambiguous_width(mut self, policy: AmbiguousWidth) -> Self {
         self.ambiguous_width = Some(policy);
         self
@@ -439,8 +462,9 @@ impl TestHarness {
     ///
     /// Constructs [`TargetProperties`] from this harness (width, color
     /// capability, color-scheme, icon mode, ambiguous-width) and calls
-    /// [`App::run_with`]. It does not install detector overrides or call
-    /// `set_colors_enabled`.
+    /// [`App::run_with`]. Unset fields take the fixed defaults documented
+    /// on [`TestHarness`]; this does not call [`TargetProperties::detect`]
+    /// or `set_colors_enabled`.
     ///
     /// Overrides are torn down when the returned guard held inside the
     /// `TestResult` is dropped. The `TestResult` and the harness share the
@@ -560,16 +584,19 @@ impl TestHarness {
         }
     }
 
+    /// Destination facts for this run.
+    ///
+    /// Unset fields take the fixed defaults documented on [`TestHarness`].
+    /// Never calls [`TargetProperties::detect`].
     fn target_properties(&self) -> TargetProperties {
-        let detected = TargetProperties::detect();
         TargetProperties {
-            width: self.terminal_width.unwrap_or(detected.width),
+            width: self.terminal_width.flatten(),
             stdout_is_terminal: false,
             stderr_is_terminal: false,
             stdout_color_capability: self.color_capable.unwrap_or(false),
             stderr_color_capability: self.color_capable.unwrap_or(false),
-            color_scheme: self.color_scheme.unwrap_or(detected.color_scheme),
-            icon_mode: self.icon_mode.unwrap_or(detected.icon_mode),
+            color_scheme: self.color_scheme.unwrap_or(ColorMode::Dark),
+            icon_mode: self.icon_mode.unwrap_or(IconMode::Classic),
             ambiguous_width: self.ambiguous_width.unwrap_or(AmbiguousWidth::Narrow),
         }
     }
@@ -578,6 +605,43 @@ impl TestHarness {
 impl Default for TestHarness {
     fn default() -> Self {
         Self::new()
+    }
+}
+
+#[cfg(test)]
+mod target_properties_defaults {
+    use super::*;
+
+    #[test]
+    fn unset_destination_facts_are_the_documented_fixed_defaults() {
+        let target = TestHarness::new().target_properties();
+        assert_eq!(target.width, None);
+        assert!(!target.stdout_is_terminal);
+        assert!(!target.stderr_is_terminal);
+        assert!(!target.stdout_color_capability);
+        assert!(!target.stderr_color_capability);
+        assert_eq!(target.color_scheme, ColorMode::Dark);
+        assert_eq!(target.icon_mode, IconMode::Classic);
+        assert_eq!(target.ambiguous_width, AmbiguousWidth::Narrow);
+    }
+
+    #[test]
+    fn explicit_overrides_replace_the_fixed_defaults() {
+        let target = TestHarness::new()
+            .terminal_width(42)
+            .with_color()
+            .color_scheme(ColorMode::Light)
+            .icon_mode(IconMode::NerdFont)
+            .ambiguous_width(AmbiguousWidth::Wide)
+            .target_properties();
+        assert_eq!(target.width, Some(42));
+        assert!(!target.stdout_is_terminal);
+        assert!(!target.stderr_is_terminal);
+        assert!(target.stdout_color_capability);
+        assert!(target.stderr_color_capability);
+        assert_eq!(target.color_scheme, ColorMode::Light);
+        assert_eq!(target.icon_mode, IconMode::NerdFont);
+        assert_eq!(target.ambiguous_width, AmbiguousWidth::Wide);
     }
 }
 

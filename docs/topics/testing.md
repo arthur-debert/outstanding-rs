@@ -95,7 +95,7 @@ The harness doesn't invent new mechanisms; it wires together seams that Standout
 
 ### `TargetProperties` (standout-render)
 
-Detection is [`TargetProperties::detect()`](https://docs.rs/standout-render/latest/standout_render/struct.TargetProperties.html#method.detect) at the crate edge. Convenience wrappers and `App::run` call it there, then pass the result into `render_request`. Tests do not call `detect()`; they construct `TargetProperties` or inject facts through `TestHarness` (`terminal_width`, `with_color` / `no_color`, `color_scheme`, `icon_mode`, `ambiguous_width`).
+Detection is [`TargetProperties::detect()`](https://docs.rs/standout-render/latest/standout_render/struct.TargetProperties.html#method.detect) at the crate edge. Convenience wrappers and `App::run` call it there, then pass the result into `render_request`. Tests do not call `detect()`; they construct `TargetProperties` or inject facts through `TestHarness` (`terminal_width`, `with_color` / `no_color`, `color_scheme`, `icon_mode`, `ambiguous_width`). Unset facts take fixed defaults — `width: None`, `ColorMode::Dark`, `IconMode::Classic`, `AmbiguousWidth::Narrow` — so `$COLUMNS`, `$NERD_FONT`, and the OS appearance setting cannot change an in-process run.
 
 The detector override APIs are removed: `set_terminal_width_detector`, `set_color_capability_detector`, `set_ambiguous_width_detector`, `set_theme_detector`, `set_icon_detector`, `DetectorGuard`, and the public `detect_*` cluster they served.
 
