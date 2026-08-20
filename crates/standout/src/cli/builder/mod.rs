@@ -846,10 +846,6 @@ impl AppBuilder {
                 };
                 SetupError::Template(message)
             })?;
-            if matches!(pending.template, TemplateRef::Convention(_)) {
-                refresh_named_template(registry, &name)
-                    .map_err(|error| SetupError::Template(error.to_string()))?;
-            }
         }
         Ok(())
     }

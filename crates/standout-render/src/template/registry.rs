@@ -88,6 +88,7 @@ use crate::file_loader::{
 pub const TEMPLATE_EXTENSIONS: &[&str] = &[".jinja", ".jinja2", ".j2", ".stpl", ".txt"];
 
 static NEXT_REGISTRY_ID: AtomicU64 = AtomicU64::new(1);
+static NEXT_GENERATION: AtomicU64 = AtomicU64::new(1);
 
 /// A template file discovered during directory walking.
 ///
@@ -377,9 +378,10 @@ pub struct TemplateRegistry {
     /// allocation address.
     id: u64,
 
-    /// Incremented by every mutation that can change resolution or content,
-    /// including [`Self::refresh`]. Identity plus this value is the
-    /// load-into-engine cache key.
+    /// Globally unique revision assigned by every mutation that can change
+    /// resolution or content, including [`Self::refresh`]. Identity plus this
+    /// value is the load-into-engine cache key. Sibling clones must not share
+    /// a revision after they diverge.
     generation: u64,
 }
 
@@ -404,7 +406,7 @@ impl TemplateRegistry {
     }
 
     fn bump_generation(&mut self) {
-        self.generation = self.generation.wrapping_add(1);
+        self.generation = NEXT_GENERATION.fetch_add(1, Ordering::Relaxed);
     }
 
     /// Adds an inline template with the given name.
@@ -713,8 +715,8 @@ impl TemplateRegistry {
     /// - You've added template directories after the first render
     /// - Template files have been added/removed from disk
     ///
-    /// Each successful refresh increments [`Self::generation`], as do in-memory
-    /// mutations such as [`Self::add_inline`].
+    /// Each successful refresh assigns a new [`Self::generation`], as do
+    /// in-memory mutations such as [`Self::add_inline`].
     ///
     /// # Panics
     ///
@@ -730,7 +732,7 @@ impl TemplateRegistry {
         self.id
     }
 
-    /// Mutation generation: identity plus this value is the load-into-engine cache key.
+    /// Globally unique revision: identity plus this value is the load-into-engine cache key.
     pub fn generation(&self) -> u64 {
         self.generation
     }
@@ -1023,31 +1025,33 @@ mod tests {
     }
 
     #[test]
-    fn refresh_increments_generation() {
+    fn refresh_assigns_a_new_generation() {
         let mut registry = TemplateRegistry::new();
         assert_eq!(registry.generation(), 0);
         registry.refresh().unwrap();
-        assert_eq!(registry.generation(), 1);
+        let first = registry.generation();
+        assert_ne!(first, 0);
         registry.refresh().unwrap();
-        assert_eq!(registry.generation(), 2);
+        assert_ne!(registry.generation(), first);
     }
 
     #[test]
-    fn in_memory_mutations_increment_generation() {
+    fn in_memory_mutations_assign_distinct_generations() {
         let mut registry = TemplateRegistry::new();
         assert_eq!(registry.generation(), 0);
+        let mut seen = std::collections::HashSet::from([0]);
         registry.add_inline("a", "1");
-        assert_eq!(registry.generation(), 1);
+        assert!(seen.insert(registry.generation()));
         registry.add_framework("standout/x", "x");
-        assert_eq!(registry.generation(), 2);
+        assert!(seen.insert(registry.generation()));
         registry.add_embedded(HashMap::from([("b".into(), "2".into())]));
-        assert_eq!(registry.generation(), 3);
+        assert!(seen.insert(registry.generation()));
         registry.add_framework_entries(&[("standout/y.jinja", "y")]);
-        assert_eq!(registry.generation(), 4);
+        assert!(seen.insert(registry.generation()));
         registry.clear_framework();
-        assert_eq!(registry.generation(), 5);
+        assert!(seen.insert(registry.generation()));
         registry.clear();
-        assert_eq!(registry.generation(), 6);
+        assert!(seen.insert(registry.generation()));
     }
 
     #[test]
@@ -1063,6 +1067,19 @@ mod tests {
         assert_eq!(a.id(), cloned.id());
         assert_ne!(a.generation(), cloned.generation());
         assert_eq!(a.get_content("x").unwrap(), "1");
+    }
+
+    #[test]
+    fn sibling_clones_mutated_once_each_get_distinct_generations() {
+        let parent = TemplateRegistry::new();
+        let mut first = parent.clone();
+        let mut second = parent.clone();
+        first.add_inline("x", "one");
+        second.add_inline("x", "two");
+        assert_eq!(first.id(), second.id());
+        assert_ne!(first.generation(), second.generation());
+        assert_eq!(first.get_content("x").unwrap(), "one");
+        assert_eq!(second.get_content("x").unwrap(), "two");
     }
 
     // =========================================================================

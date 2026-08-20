@@ -22,11 +22,12 @@ use crate::error::RenderError;
 ///
 /// Engine addresses are compared, never dereferenced. Registry identity is
 /// [`TemplateRegistry::id`], so a new registry is never a hit just because
-/// it reused a heap address. A generation change or a different engine is a
-/// miss. One slot is deliberate: a shared engine overwrites same-named
-/// templates, so returning to a previous registry must reload. Pointer reuse
-/// of a dropped engine is rejected by checking that a registered name is
-/// already on the engine.
+/// it reused a heap address. [`TemplateRegistry::generation`] is a globally
+/// unique revision, so sibling clones that diverge cannot share a key. A
+/// generation change or a different engine is a miss. One slot is
+/// deliberate: a shared engine overwrites same-named templates, so returning
+/// to a previous registry must reload. Pointer reuse of a dropped engine is
+/// rejected by checking that a registered name is already on the engine.
 #[derive(Clone, Copy, PartialEq, Eq)]
 struct LoadCacheKey {
     engine: usize,
@@ -199,11 +200,7 @@ fn disappeared_file_error(
             Ok(ResolvedTemplate::File(_)) => None,
             _ => Some(match original.get_content(name) {
                 Err(error) => refresh_error(name, original, error),
-                Ok(_) => refresh_error(
-                    name,
-                    original,
-                    format!("Template not found: \"{name}\""),
-                ),
+                Ok(_) => refresh_error(name, original, format!("Template not found: \"{name}\"")),
             }),
         },
         _ => None,
@@ -385,6 +382,27 @@ mod tests {
     }
 
     #[test]
+    fn sibling_clones_with_different_content_reload_on_a_shared_engine() {
+        let parent = TemplateRegistry::new();
+        let mut first = parent.clone();
+        let mut second = parent.clone();
+        first.add_inline("x", "from-a");
+        second.add_inline("x", "from-b");
+        let mut engine: Box<dyn TemplateEngine> = Box::new(MiniJinjaEngine::new());
+
+        load_named_template(&mut *engine, &first, "x").unwrap();
+        assert_eq!(
+            engine.render_named("x", &serde_json::json!({})).unwrap(),
+            "from-a"
+        );
+        load_named_template(&mut *engine, &second, "x").unwrap();
+        assert_eq!(
+            engine.render_named("x", &serde_json::json!({})).unwrap(),
+            "from-b"
+        );
+    }
+
+    #[test]
     fn adding_then_removing_inline_and_framework_templates_reloads_on_a_shared_engine() {
         let mut engine: Box<dyn TemplateEngine> = Box::new(MiniJinjaEngine::new());
         let mut registry = TemplateRegistry::new();
@@ -423,11 +441,7 @@ mod tests {
 
         registry.clear_framework();
         let error = load_named_template(&mut *engine, &registry, "standout/x").unwrap_err();
-        assert!(
-            error.to_string().contains("standout/x"),
-            "{}",
-            error
-        );
+        assert!(error.to_string().contains("standout/x"), "{}", error);
 
         registry.clear();
         let error = load_named_template(&mut *engine, &registry, "list").unwrap_err();
