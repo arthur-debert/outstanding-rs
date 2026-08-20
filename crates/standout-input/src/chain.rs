@@ -181,18 +181,18 @@ impl<T: Clone + Send + Sync + 'static> InputChain<T> {
                 continue;
             }
 
-            // This loop is intentional: interactive sources (where can_retry() is true)
-            // will re-prompt on validation failure. The `break` on None moves to the
-            // next source in the chain.
+            // Interactive sources (where can_retry() is true) re-prompt on
+            // validation failure. `continue 'collect` retries this source;
+            // `break` moves to the next source in the chain.
             #[allow(clippy::while_let_loop)]
-            loop {
+            'collect: loop {
                 match source.collect(matches)? {
                     Some(value) => {
                         // Run source-level validation
                         if let Err(msg) = source.validate(&value) {
                             if source.can_retry() {
                                 eprintln!("Invalid: {}", msg);
-                                continue;
+                                continue 'collect;
                             }
                             return Err(InputError::ValidationFailed(msg));
                         }
@@ -202,7 +202,7 @@ impl<T: Clone + Send + Sync + 'static> InputChain<T> {
                             if let Err(msg) = validator(&value) {
                                 if source.can_retry() {
                                     eprintln!("Invalid: {}", msg);
-                                    continue;
+                                    continue 'collect;
                                 }
                                 return Err(InputError::ValidationFailed(msg));
                             }
@@ -452,6 +452,29 @@ mod tests {
         ));
         let sources =
             InputSources::from_process().with_responder(Arc::new(ScriptedResponder::new([
+                PromptResponse::text("Ada"),
+            ])));
+
+        assert_eq!(chain.resolve_from(&matches, &sources).unwrap(), "Ada");
+    }
+
+    #[cfg(feature = "simple-prompts")]
+    #[test]
+    fn chain_validation_retries_interactive_source_via_scripted_responder() {
+        use crate::sources::{MockTerminal, TextPromptSource};
+        use crate::{PromptResponse, ScriptedResponder};
+        use std::sync::Arc;
+
+        let matches = make_matches(&["test"]);
+        let chain = InputChain::<String>::new()
+            .try_source(TextPromptSource::with_terminal(
+                "Name: ",
+                MockTerminal::non_terminal(),
+            ))
+            .validate(|s| s.len() >= 3, "too short");
+        let sources =
+            InputSources::from_process().with_responder(Arc::new(ScriptedResponder::new([
+                PromptResponse::text("ab"),
                 PromptResponse::text("Ada"),
             ])));
 

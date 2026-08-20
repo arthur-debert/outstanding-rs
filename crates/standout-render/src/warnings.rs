@@ -198,15 +198,10 @@ pub fn flush_to_stderr(
     target: TargetProperties,
     warnings: &[String],
 ) {
-    if warnings.is_empty() {
+    let block = render_block_for_target(theme, output_mode, target, warnings);
+    if block.is_empty() {
         return;
     }
-
-    let use_color = should_style_stderr(output_mode, target);
-    let styles = theme.resolve_styles(None);
-    let block = render_block(warnings, |style_name, text| {
-        style_for_stderr(&styles, style_name, text, use_color)
-    });
 
     // Write everything through a single stderr lock so the banner and its
     // items cannot be interleaved with other output on a shared stream.
@@ -373,6 +368,24 @@ mod tests {
         assert!(
             block.contains("\x1b["),
             "piped stdout must not strip stderr warning color, got: {:?}",
+            block
+        );
+        assert!(block.contains("stylesheet fell back"));
+    }
+
+    #[test]
+    fn text_output_opts_out_of_warning_color_on_capable_stderr() {
+        let theme = Theme::default();
+        let target = sample_target(false, true);
+        let block = render_block_for_target(
+            &theme,
+            OutputMode::Text,
+            target,
+            &["stylesheet fell back".to_string()],
+        );
+        assert!(
+            !block.contains("\x1b["),
+            "--output=text must keep the warning block plain, got: {:?}",
             block
         );
         assert!(block.contains("stylesheet fell back"));

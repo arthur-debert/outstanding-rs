@@ -1,17 +1,18 @@
 //! Test injection for interactive prompts.
 //!
-//! Wizard / setup-helper / REPL flows that build on the `.prompt()` shortcut
-//! on every interactive source ([`InquireText`](crate::InquireText),
-//! [`InquireSelect`](crate::InquireSelect), [`TextPromptSource`](crate::TextPromptSource),
-//! and friends) are otherwise untestable in process — the inquire backends
-//! reach for raw stdin and the simple-prompts and editor sources need a TTY.
+//! Wizard / setup-helper / REPL flows that build on interactive sources
+//! ([`InquireText`](crate::InquireText), [`InquireSelect`](crate::InquireSelect),
+//! [`TextPromptSource`](crate::TextPromptSource), and friends) are otherwise
+//! untestable in process — the inquire backends reach for raw stdin and the
+//! simple-prompts and editor sources need a TTY.
 //!
-//! [`PromptResponder`] is the test seam: every `.prompt()` call consults an
-//! explicit responder from [`crate::InputSources`] first, and falls through
-//! to the real backend only when none was supplied. Tests put a
-//! [`ScriptedResponder`] on [`crate::InputSources`] with a queue of typed
-//! [`PromptResponse`] values; production wizard code that does not pass
-//! sources uses the real backend.
+//! [`PromptResponder`] is the test seam: `.prompt_from`,
+//! [`InputChain::resolve_from`](crate::InputChain::resolve_from), and framework
+//! collection consult an explicit responder from [`crate::InputSources`] first,
+//! and fall through to the real backend only when none was supplied. Tests put
+//! a [`ScriptedResponder`] on [`crate::InputSources`] with a queue of typed
+//! [`PromptResponse`] values. Standalone `.prompt()` builds
+//! [`InputSources::from_process`] and never sees a scripted responder.
 //!
 //! # Why responses are typed by *kind*, not by message text
 //!
@@ -141,12 +142,13 @@ impl PromptResponse {
     }
 }
 
-/// Test seam for the `.prompt()` shortcut on interactive sources.
+/// Test seam for interactive sources.
 ///
-/// When a responder is present on [`crate::InputSources`], every `prompt()`
-/// call that receives those sources routes through it instead of opening a
-/// real prompt. Implement this trait for custom dispatch logic, or use the
-/// bundled [`ScriptedResponder`].
+/// When a responder is present on [`crate::InputSources`], `.prompt_from`,
+/// chain `resolve_from`, and framework collection route through it instead of
+/// opening a real prompt. Standalone `.prompt()` does not: it constructs
+/// [`InputSources::from_process`]. Implement this trait for custom dispatch
+/// logic, or use the bundled [`ScriptedResponder`].
 pub trait PromptResponder: Send + Sync {
     /// Produce a response for the given prompt.
     fn respond(&self, ctx: PromptContext<'_>) -> PromptResponse;
@@ -245,7 +247,7 @@ impl std::fmt::Debug for ScriptedResponder {
     }
 }
 
-/// Helper used by source `.prompt()` shortcuts that return a free-form
+/// Helper used by source collect / `.prompt_from` paths that return a free-form
 /// `String` (text / password / editor prompts).
 ///
 /// If a responder is supplied, dispatches and maps `Text(s) -> Ok(s)`,

@@ -73,7 +73,12 @@ impl InputSources {
         self
     }
 
-    /// Sets the prompt responder used by `.prompt()` / interactive collection.
+    /// Sets the prompt responder used by `.prompt_from`, `resolve_from`, and
+    /// framework interactive collection.
+    ///
+    /// Standalone `.prompt()` builds [`InputSources::from_process`] and never
+    /// sees this responder. Harness tests call `.prompt_from(ctx.input_sources())`
+    /// (or resolve chains against those sources).
     pub fn with_responder(mut self, responder: Arc<dyn PromptResponder>) -> Self {
         self.responder = Some(responder);
         self

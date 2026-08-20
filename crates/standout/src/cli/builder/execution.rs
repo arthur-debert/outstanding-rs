@@ -154,12 +154,15 @@ impl App {
     /// [`outcome()`](crate::cli::RunResult::outcome) for variants.
     pub fn dispatch(&self, matches: ArgMatches, output_mode: OutputMode) -> crate::cli::RunResult {
         self.collect_run_warnings(|warnings| {
-            self.dispatch_with_target(
-                matches,
+            (
+                self.dispatch_with_target(
+                    matches,
+                    output_mode,
+                    None,
+                    InputSources::from_process(),
+                    warnings,
+                ),
                 output_mode,
-                None,
-                InputSources::from_process(),
-                warnings,
             )
         })
     }
@@ -375,7 +378,7 @@ impl App {
         target: Option<TargetProperties>,
         sources: InputSources,
         warnings: WarningBuffer,
-    ) -> RunResult
+    ) -> (RunResult, OutputMode)
     where
         I: IntoIterator<Item = T>,
         T: Into<std::ffi::OsString> + Clone,
@@ -384,7 +387,10 @@ impl App {
         let args: Vec<std::ffi::OsString> = args.into_iter().map(Into::into).collect();
 
         if let Err(error) = self.validate_questionnaire_surfaces(&cmd) {
-            return RunResult::Error(RunError::new(error.to_string(), RunErrorKind::ClapUsage));
+            return (
+                RunResult::Error(RunError::new(error.to_string(), RunErrorKind::ClapUsage)),
+                OutputMode::Auto,
+            );
         }
 
         // Augment command with framework-owned flags, the questionnaire command
@@ -399,7 +405,10 @@ impl App {
         // It is a setup failure, but it surfaces on a run, so it takes the kind
         // a questionnaire-surface failure takes.
         if let Some(error) = self.help_word_collision(&augmented_cmd) {
-            return RunResult::Error(RunError::new(error.to_string(), RunErrorKind::ClapUsage));
+            return (
+                RunResult::Error(RunError::new(error.to_string(), RunErrorKind::ClapUsage)),
+                OutputMode::Auto,
+            );
         }
 
         // One parse seam for both paths: Clap decides which command the line
@@ -408,7 +417,10 @@ impl App {
         {
             Ok(matches) => matches,
             Err(ParseFailure::UnknownDefault(e)) => {
-                return RunResult::Error(RunError::new(e.to_string(), RunErrorKind::DefaultCommand))
+                return (
+                    RunResult::Error(RunError::new(e.to_string(), RunErrorKind::DefaultCommand)),
+                    OutputMode::Auto,
+                )
             }
             Err(ParseFailure::Clap(e)) => {
                 // Clap's native `--help`/`-h` short-circuits validation and
@@ -416,14 +428,17 @@ impl App {
                 if let Some(display) =
                     self.intercept_display_help(&mut augmented_cmd, &args, &e, target)
                 {
-                    return display.into();
+                    return (display.into(), OutputMode::Auto);
                 }
                 // Clap's remaining "errors" include `--version`, a successful
                 // display path (stdout, exit 0). Real parse errors get
                 // `use_stderr() == true` and surface as `RunResult::Error` so
                 // they exit non-zero on stderr.
                 if e.use_stderr() {
-                    return RunResult::Error(RunError::new(e.to_string(), RunErrorKind::ClapUsage));
+                    return (
+                        RunResult::Error(RunError::new(e.to_string(), RunErrorKind::ClapUsage)),
+                        OutputMode::Auto,
+                    );
                 }
                 let output = match e.kind() {
                     clap::error::ErrorKind::DisplayVersion => {
@@ -431,14 +446,16 @@ impl App {
                     }
                     _ => RunOutput::clap_help(e.to_string()),
                 };
-                return RunResult::Handled(output);
+                return (RunResult::Handled(output), OutputMode::Auto);
             }
         };
+
+        let output_mode = self.extract_output_mode(&matches);
 
         // The `help` word is a subcommand Clap routed; standout answers it
         // before dispatch, sharing the arm with `get_matches_from`.
         if let Some(display) = self.intercept_help_word(&mut augmented_cmd, &matches, target) {
-            return display.into();
+            return (display.into(), output_mode);
         }
 
         if let Some((path, questionnaire)) = self.questionnaire_questions_invocation(&matches) {
@@ -454,36 +471,26 @@ impl App {
                     .unwrap_or(None)
                     == Some(&true);
                 if has_answers || has_yes {
-                    return RunResult::Error(RunError::new(
-                        "`questions` renders the blank answer sheet and cannot be combined with --answers or --yes",
-                        RunErrorKind::ClapUsage,
-                    ));
+                    return (
+                        RunResult::Error(RunError::new(
+                            "`questions` renders the blank answer sheet and cannot be combined with --answers or --yes",
+                            RunErrorKind::ClapUsage,
+                        )),
+                        output_mode,
+                    );
                 }
             }
-            return render_questions_result(questionnaire, &matches);
+            return (
+                render_questions_result(questionnaire, &matches),
+                output_mode,
+            );
         }
 
-        // Extract output mode
-        let output_mode = if self.output_flag.is_some() {
-            match matches
-                .get_one::<String>("_output_mode")
-                .map(|s| s.as_str())
-            {
-                Some("term") => OutputMode::Term,
-                Some("text") => OutputMode::Text,
-                Some("term-debug") => OutputMode::TermDebug,
-                Some("json") => OutputMode::Json,
-                Some("yaml") => OutputMode::Yaml,
-                Some("xml") => OutputMode::Xml,
-                Some("csv") => OutputMode::Csv,
-                _ => OutputMode::Auto,
-            }
-        } else {
-            OutputMode::Auto
-        };
-
         // Dispatch to handler
-        self.dispatch_with_target(matches, output_mode, target, sources, warnings)
+        (
+            self.dispatch_with_target(matches, output_mode, target, sources, warnings),
+            output_mode,
+        )
     }
 
     /// Runs the CLI: parses arguments, dispatches to handlers, and prints output.
@@ -580,12 +587,12 @@ impl App {
 
         // After the primary output has been flushed to stdout, render any
         // framework warnings collected during setup/dispatch to stderr so
-        // they appear last on the user's terminal. `OutputMode::Auto` is a
-        // safe default here: the renderer's final decision on styling is
-        // driven by whether stderr itself is a color-capable TTY.
+        // they appear last on the user's terminal. The resolved `--output`
+        // mode travels on the run result: `Text` opts out of ANSI even when
+        // stderr is color-capable.
         let default_theme = crate::Theme::default();
         let theme = self.theme.as_ref().unwrap_or(&default_theme);
-        standout_render::warnings::flush_to_stderr(theme, OutputMode::Auto, target, &warnings);
+        standout_render::warnings::flush_to_stderr(theme, result.output_mode(), target, &warnings);
 
         // Closes this run's window for render diagnostics. Nothing prints them
         // — the framework does not react to an unresolved tag — but closing the
@@ -612,15 +619,16 @@ impl App {
     }
 
     /// Seeds build-time framework warnings into a per-invocation buffer, runs
-    /// `inner`, and returns the dispatch outcome together with those warnings.
+    /// `inner`, and returns the dispatch outcome together with those warnings
+    /// and the output mode `inner` resolved.
     fn collect_run_warnings(
         &self,
-        inner: impl FnOnce(WarningBuffer) -> RunResult,
+        inner: impl FnOnce(WarningBuffer) -> (RunResult, OutputMode),
     ) -> crate::cli::RunResult {
         let warnings = WarningBuffer::new();
         self.seed_startup_warnings(&warnings);
-        let outcome = inner(warnings.clone());
-        crate::cli::RunResult::from_dispatch(outcome, warnings.take())
+        let (outcome, output_mode) = inner(warnings.clone());
+        crate::cli::RunResult::from_dispatch(outcome, warnings.take(), output_mode)
     }
 
     /// Inner public run: destination properties and input sources as two arguments.

@@ -8,6 +8,7 @@
 //! and something else through the other.
 
 use crate::cli::handler::{DispatchResult, RunError, RunErrorKind, RunOutput};
+use crate::OutputMode;
 
 /// Outcome of [`App::run_with`](crate::cli::App::run_with) /
 /// [`App::run_to_string`](crate::cli::App::run_to_string) /
@@ -22,12 +23,22 @@ use crate::cli::handler::{DispatchResult, RunError, RunErrorKind, RunOutput};
 pub struct RunResult {
     inner: DispatchResult,
     warnings: Vec<String>,
+    output_mode: OutputMode,
 }
 
 impl RunResult {
-    /// Wraps a dispatch outcome with the warnings collected during the run.
-    pub fn from_dispatch(inner: DispatchResult, warnings: Vec<String>) -> Self {
-        Self { inner, warnings }
+    /// Wraps a dispatch outcome with the warnings collected during the run
+    /// and the output mode that dispatch resolved.
+    pub fn from_dispatch(
+        inner: DispatchResult,
+        warnings: Vec<String>,
+        output_mode: OutputMode,
+    ) -> Self {
+        Self {
+            inner,
+            warnings,
+            output_mode,
+        }
     }
 
     /// The dispatch outcome (handled, error, artifact, …).
@@ -43,6 +54,14 @@ impl RunResult {
     /// Framework warnings collected during the run, one per entry.
     pub fn warnings(&self) -> &[String] {
         &self.warnings
+    }
+
+    /// Output mode resolved for this invocation (`--output`, else Auto).
+    ///
+    /// [`App::run`](crate::cli::App::run) passes this to warning flush so
+    /// `--output=text` opts out of ANSI on the warning block.
+    pub fn output_mode(&self) -> OutputMode {
+        self.output_mode
     }
 }
 

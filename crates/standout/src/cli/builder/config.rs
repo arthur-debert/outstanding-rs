@@ -916,4 +916,63 @@ mod tests {
         assert!(result.is_handled());
         assert_hot_reload_walk_warning(result.warnings());
     }
+
+    #[test]
+    fn run_with_text_output_keeps_warning_block_plain_on_color_capable_stderr() {
+        use crate::cli::CommandContextInput;
+        use crate::{AmbiguousWidth, ColorMode, IconMode, InputSources, TargetProperties};
+        use serde_json::json;
+        use standout_render::warnings::render_block_for_target;
+
+        let app = AppBuilder::new()
+            .command(
+                "list",
+                |_m, ctx| {
+                    ctx.warn("stylesheet fell back");
+                    Ok(HandlerOutput::Render(json!({"n": 1})))
+                },
+                "n={{ n }}",
+            )
+            .unwrap()
+            .build()
+            .unwrap();
+        let target = TargetProperties {
+            width: Some(80),
+            stdout_is_terminal: false,
+            stderr_is_terminal: true,
+            stdout_color_capability: false,
+            stderr_color_capability: true,
+            color_scheme: ColorMode::Dark,
+            icon_mode: IconMode::Classic,
+            ambiguous_width: AmbiguousWidth::Narrow,
+        };
+        let cmd = Command::new("app").subcommand(Command::new("list"));
+        let result = app.run_with(
+            cmd,
+            ["app", "--output=text", "list"],
+            target,
+            InputSources::from_process(),
+        );
+        assert_eq!(result.output_mode(), OutputMode::Text);
+        assert!(
+            result
+                .warnings()
+                .iter()
+                .any(|warning| warning.contains("stylesheet fell back")),
+            "expected ctx.warn on the run result, got {:?}",
+            result.warnings()
+        );
+        let theme = crate::Theme::default();
+        let block =
+            render_block_for_target(&theme, result.output_mode(), target, result.warnings());
+        assert!(
+            !block.contains("\x1b["),
+            "--output=text must keep the warning block plain, got {block:?}"
+        );
+        let styled = render_block_for_target(&theme, OutputMode::Auto, target, result.warnings());
+        assert!(
+            styled.contains("\x1b["),
+            "Auto on color-capable stderr should style warnings, got {styled:?}"
+        );
+    }
 }

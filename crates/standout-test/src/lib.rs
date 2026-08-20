@@ -540,6 +540,7 @@ impl TestHarness {
         let run = app.run_with(cmd, argv, target, sources);
         drop(capture_window);
         let warnings = run.warnings().to_vec();
+        let output_mode = run.output_mode();
         let outcome = run.into_outcome();
         let tag_resolutions = standout_render::diagnostics::take_captured();
 
@@ -547,7 +548,7 @@ impl TestHarness {
         // survives until the test is finished with the result.
         TestResult {
             stdout: render_stdout(&outcome),
-            stderr: render_stderr(&outcome, &warnings),
+            stderr: render_stderr(&outcome, &warnings, output_mode, target),
             outcome,
             warnings,
             tag_resolutions,
@@ -643,15 +644,18 @@ fn render_stdout(outcome: &DispatchResult) -> String {
 ///   (an artifact written to a file leaves stdout free and reports there);
 /// - framework warnings close the channel, in the block `App::run` flushes
 ///   after the primary output — blank line, banner, one tab-indented line per
-///   warning. The layout is `standout_render`'s own
-///   [`render_block_plain`](standout_render::warnings::render_block_plain), so
-///   the harness cannot drift from what the CLI layer writes. Only the styling
-///   is not modeled: `run` themes that block according to the real stderr's
-///   color capability, which an in-process run has no equivalent of, so the
-///   block appears here as `stderr_plain` would show it. The warnings also
-///   remain individually addressable on
+///   warning. The layout and `--output=text` / stderr-capability styling are
+///   `standout_render`'s own
+///   [`render_block_for_target`](standout_render::warnings::render_block_for_target),
+///   so the harness cannot drift from what the CLI layer writes. The warnings
+///   also remain individually addressable on
 ///   [`TestResult::warnings`](TestResult::warnings).
-fn render_stderr(outcome: &DispatchResult, warnings: &[String]) -> String {
+fn render_stderr(
+    outcome: &DispatchResult,
+    warnings: &[String],
+    output_mode: OutputMode,
+    target: TargetProperties,
+) -> String {
     let primary = match outcome {
         DispatchResult::Error(error) if error.kind() == RunErrorKind::External => error.to_string(),
         DispatchResult::Error(error) => format!("{}\n", error),
@@ -659,7 +663,14 @@ fn render_stderr(outcome: &DispatchResult, warnings: &[String]) -> String {
         _ => String::new(),
     };
 
-    primary + &standout_render::warnings::render_block_plain(warnings)
+    let default_theme = standout::Theme::default();
+    primary
+        + &standout_render::warnings::render_block_for_target(
+            &default_theme,
+            output_mode,
+            target,
+            warnings,
+        )
 }
 
 /// Returns an artifact's report as the framework writes it — newline-terminated

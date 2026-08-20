@@ -477,35 +477,33 @@ impl<T: Display + Clone + Send + Sync + 'static> InputCollector<Vec<T>> for Inqu
     }
 
     fn collect(&self, _matches: &ArgMatches) -> Result<Option<Vec<T>>, InputError> {
-        if let ControlFlow::Break(indices) =
+        let result = if let ControlFlow::Break(indices) =
             crate::responder::collect_intercept(crate::responder::intercept_choices(
                 &self.message,
                 self.options.len(),
                 self.responder.as_deref(),
-            ))?
-        {
-            return Ok(
-                indices.map(|indices| indices.iter().map(|&i| self.options[i].clone()).collect())
-            );
-        }
+            ))? {
+            match indices {
+                Some(indices) => indices.iter().map(|&i| self.options[i].clone()).collect(),
+                None => return Ok(None),
+            }
+        } else {
+            if self.options.is_empty() {
+                return Ok(None);
+            }
 
-        if self.options.is_empty() {
-            return Ok(None);
-        }
+            let mut prompt = MultiSelect::new(&self.message, self.options.clone())
+                .with_page_size(self.page_size);
 
-        let mut prompt =
-            MultiSelect::new(&self.message, self.options.clone()).with_page_size(self.page_size);
+            if let Some(help) = &self.help_message {
+                prompt = prompt.with_help_message(help);
+            }
 
-        if let Some(help) = &self.help_message {
-            prompt = prompt.with_help_message(help);
-        }
+            // Note: inquire's min/max validation is done via validators,
+            // but we simplify by checking after the fact
+            prompt.prompt().map_err(map_inquire_error)?
+        };
 
-        // Note: inquire's min/max validation is done via validators,
-        // but we simplify by checking after the fact
-
-        let result = prompt.prompt().map_err(map_inquire_error)?;
-
-        // Validate min/max selections
         if let Some(min) = self.min_selections {
             if result.len() < min {
                 return Err(InputError::ValidationFailed(format!(
@@ -1022,5 +1020,21 @@ mod tests {
             chain.resolve_from(&empty_matches(), &sources).unwrap(),
             "prod"
         );
+    }
+
+    #[test]
+    fn inquire_multiselect_responder_rejects_under_minimum() {
+        let sources = sources_with(ScriptedResponder::new([PromptResponse::choices([0])]));
+        let source = InquireMultiSelect::new("Pick:", vec!["a", "b", "c"]).min_selections(2);
+        let err = source.prompt_from(&sources).unwrap_err();
+        assert!(matches!(err, InputError::ValidationFailed(msg) if msg.contains("At least 2")));
+    }
+
+    #[test]
+    fn inquire_multiselect_responder_rejects_over_maximum() {
+        let sources = sources_with(ScriptedResponder::new([PromptResponse::choices([0, 1, 2])]));
+        let source = InquireMultiSelect::new("Pick:", vec!["a", "b", "c"]).max_selections(2);
+        let err = source.prompt_from(&sources).unwrap_err();
+        assert!(matches!(err, InputError::ValidationFailed(msg) if msg.contains("At most 2")));
     }
 }
