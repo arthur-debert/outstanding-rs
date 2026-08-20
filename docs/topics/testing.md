@@ -8,7 +8,7 @@ For the tutorial introduction — how to *use* `TestHarness` starting from a sma
 
 Most CLI frameworks punt on testing. Users end up with one of two patterns: (a) a tangled handler they can't unit test, tested only via subprocess + regex on stdout; (b) a split architecture they enforce by convention, with scaffolding to match mocks to sources duplicated across every test file. Standout tries to make the clean path the easy path.
 
-This is a mix of architectural choices (which move more testable code closer to the surface) and concrete tooling (`standout-test`, environment detectors, default reader shims).
+This is a mix of architectural choices (which move more testable code closer to the surface) and concrete tooling (`standout-test`, `TargetProperties` injection, `InputSources`).
 
 ## Four levels, four tools
 
@@ -93,22 +93,13 @@ that run and exposes them through `warnings()` plus assertion helpers such as
 
 The harness doesn't invent new mechanisms; it wires together seams that Standout exposes deliberately, all of which you can also use directly.
 
-### `standout-render::environment`
+### `TargetProperties` (standout-render)
 
-The render crate exposes overridable detectors:
+Detection is [`TargetProperties::detect()`](https://docs.rs/standout-render/latest/standout_render/struct.TargetProperties.html#method.detect) at the crate edge. Convenience wrappers and `App::run` call it there, then pass the result into `render_request`. Tests do not call `detect()`; they construct `TargetProperties` or inject facts through `TestHarness` (`terminal_width`, `with_color` / `no_color`, `color_scheme`, `icon_mode`, `ambiguous_width`).
 
-```rust
-use standout_render::{
-    set_terminal_width_detector, set_color_capability_detector,
-    set_ambiguous_width_detector, reset_environment_detectors, DetectorGuard,
-};
-```
-
-Each takes a `fn() -> T` (function pointer or non-capturing closure). `DetectorGuard` is a RAII helper that resets all of them on drop.
+The detector override APIs are removed: `set_terminal_width_detector`, `set_color_capability_detector`, `set_ambiguous_width_detector`, `set_theme_detector`, `set_icon_detector`, `DetectorGuard`, and the public `detect_*` cluster they served.
 
 There is no TTY detector: one existed, nothing in production ever read it, and it was removed rather than left as a seam that answers only about stdout (`docs/adr/0022-delete-the-in-process-tty-seam.md`). Terminal-dependent behavior is tested against a real process via `TestHarness::run_process`.
-
-These drive `OutputMode::Auto`'s color decision and the render context's terminal width. By default, terminal width resolves from a valid positive `$COLUMNS` value before probing the terminal. Installing a width detector replaces that full resolution, so an override keeps snapshot tests deterministic regardless of the process environment.
 
 ### `standout-input` InputSources
 

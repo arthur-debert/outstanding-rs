@@ -17,6 +17,8 @@ let output = render(
 )?;
 ```
 
+`render_request` is the contract: pass an owned `RenderRequest` (data, template, theme, format, color policy, `TargetProperties`) and get bytes back. `render`, `render_with_output`, and siblings stay as detect-then-call wrappers — they probe the process at their edge, build a request, and delegate. They keep their own names. Tests construct `TargetProperties` instead of installing detector overrides; those APIs (`set_terminal_width_detector`, `set_color_capability_detector`, `set_theme_detector`, `set_icon_detector`, and the `detect_*` cluster they served) are removed.
+
 ## Why standout-render?
 
 Terminal output is stuck in the 1970s: scattered `println!` statements, cryptic ANSI escape codes, and presentation logic tangled with business logic. Every change requires recompilation. Nobody bothers with polish because iteration is painful.

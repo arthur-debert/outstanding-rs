@@ -496,8 +496,10 @@ pub struct AppBuilder {
 
     /// Optional template engine.
     ///
-    /// If not provided, a default MiniJinja engine will be created.
-    pub(crate) template_engine: SharedTemplateEngine,
+    /// Unset until [`AppBuilder::template_engine`] or [`build`](Self::build).
+    /// `build()` constructs the default MiniJinja engine when this is `None`
+    /// — the only place glue may call `MiniJinjaEngine::new()`.
+    pub(crate) template_engine: Option<SharedTemplateEngine>,
 
     /// Command groups for organized help display.
     pub(crate) help_command_groups: Option<Vec<CommandGroup>>,
@@ -569,9 +571,7 @@ impl AppBuilder {
             include_framework_templates: true,
             include_framework_styles: true,
             app_state: Extensions::new(),
-            template_engine: Rc::new(RefCell::new(Box::new(
-                standout_render::template::MiniJinjaEngine::new(),
-            ))),
+            template_engine: None,
             help_command_groups: None,
             help_handling: false,
             help_word: false,
@@ -645,14 +645,15 @@ impl AppBuilder {
         self
     }
 
-    /// sets a custom template engine to be used for rendering.
+    /// Sets a custom template engine to be used for rendering.
     ///
-    /// If not set, the default MiniJinja engine will be used.
+    /// If not set, [`build`](Self::build) constructs the default MiniJinja
+    /// engine. That construction is the only `MiniJinjaEngine::new()` in glue.
     pub fn template_engine(
         mut self,
         engine: Box<dyn standout_render::template::TemplateEngine>,
     ) -> Self {
-        self.template_engine = Rc::new(RefCell::new(engine));
+        self.template_engine = Some(Rc::new(RefCell::new(engine)));
         self
     }
 
@@ -663,8 +664,10 @@ impl AppBuilder {
     }
 
     /// Finalizes the builder into an executable App, resolving one
-    /// framework-base-plus-application theme, validating typed template
-    /// declarations, loading templates, and preparing for dispatch and rendering.
+    /// framework-base-plus-application theme, constructing the template engine
+    /// if unset (the only `MiniJinjaEngine::new()` in glue), validating typed
+    /// template declarations, loading templates, and preparing for dispatch
+    /// and rendering.
     ///
     /// # Errors
     ///
@@ -764,7 +767,13 @@ impl AppBuilder {
             }
         }
 
-        self.validate_command_templates()?;
+        let template_engine = self.template_engine.take().unwrap_or_else(|| {
+            Rc::new(RefCell::new(Box::new(
+                standout_render::template::MiniJinjaEngine::new(),
+            )))
+        });
+
+        self.validate_command_templates(&template_engine)?;
         self.validate_framework_template_styles()?;
         self.materialize_convention_templates();
 
@@ -772,7 +781,7 @@ impl AppBuilder {
         // result. Named renders refresh this cache again so file-backed
         // templates can hot reload.
         if let Some(registry) = &self.template_registry {
-            refresh_engine_templates(&mut **self.template_engine.borrow_mut(), registry)
+            refresh_engine_templates(&mut **template_engine.borrow_mut(), registry)
                 .map_err(|error| SetupError::Template(error.to_string()))?;
         }
 
@@ -791,7 +800,7 @@ impl AppBuilder {
             default_command: self.default_command,
             default_command_resolver: self.default_command_resolver,
             app_state: Rc::new(self.app_state),
-            template_engine: self.template_engine,
+            template_engine,
             help_command_groups: self.help_command_groups,
             help_handling: self.help_handling,
             help_word: self.help_word,
@@ -806,7 +815,10 @@ impl AppBuilder {
         Ok(app)
     }
 
-    fn validate_command_templates(&self) -> Result<(), SetupError> {
+    fn validate_command_templates(
+        &self,
+        template_engine: &SharedTemplateEngine,
+    ) -> Result<(), SetupError> {
         for (path, pending) in self.pending_commands.borrow().iter() {
             let name = match &pending.template {
                 TemplateRef::Named(name) => name.clone(),
@@ -830,7 +842,7 @@ impl AppBuilder {
                 SetupError::Template(message)
             })?;
             if matches!(pending.template, TemplateRef::Convention(_)) {
-                let mut engine = self.template_engine.borrow_mut();
+                let mut engine = template_engine.borrow_mut();
                 refresh_named_template(&mut **engine, registry, &name)
                     .map_err(|error| SetupError::Template(error.to_string()))?;
             }

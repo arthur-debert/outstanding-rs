@@ -72,6 +72,10 @@ pub(crate) trait CommandRecipe {
 
     /// Creates a dispatch closure with the given configuration.
     ///
+    /// Recipe and config registration share [`dispatch_from_handler`];
+    /// passthrough commands share [`dispatch_passthrough`]. There is no
+    /// public [`GroupBuilder`] change.
+    ///
     /// # Panics
     ///
     /// `ErasedConfigRecipe` will panic if called more than once (see trait docs).
@@ -85,6 +89,72 @@ pub(crate) trait CommandRecipe {
 
     /// Returns the arguments expected by this command handler.
     fn expected_args(&self) -> Vec<ExpectedArg>;
+}
+
+/// One dispatch closure for recipe and config handler registration.
+///
+/// `CommandRecipe::create_dispatch` and `ErasedCommandConfig::register` both
+/// call this so the two surfaces cannot drift. The public [`GroupBuilder`]
+/// API is unchanged.
+fn dispatch_from_handler<H>(
+    handler: Rc<RefCell<H>>,
+    template: TemplateRef,
+    context_registry: ContextRegistry,
+    template_engine: SharedTemplateEngine,
+    template_registry: Option<Rc<crate::TemplateRegistry>>,
+    structured_output_projection: Option<StructuredOutputProjection>,
+) -> DispatchFn
+where
+    H: Handler + 'static,
+    H::Output: Serialize,
+{
+    Rc::new(RefCell::new(
+        move |matches: &ArgMatches,
+              ctx: &CommandContext,
+              hooks: Option<&Hooks>,
+              output_mode: crate::OutputMode,
+              theme: &crate::Theme,
+              ambiguous_width: crate::AmbiguousWidth,
+              target: Option<crate::TargetProperties>| {
+            let result = handler.borrow_mut().handle(matches, ctx);
+            render_handler_output(
+                result,
+                matches,
+                ctx,
+                hooks,
+                &template,
+                theme,
+                &context_registry,
+                &template_engine,
+                template_registry.as_ref(),
+                output_mode,
+                structured_output_projection.as_ref(),
+                ambiguous_width,
+                target,
+            )
+        },
+    ))
+}
+
+/// One passthrough dispatch closure for recipe and config registration.
+fn dispatch_passthrough<F>(handler: Rc<RefCell<F>>) -> DispatchFn
+where
+    F: FnMut(&ArgMatches, &CommandContext) -> Result<(), anyhow::Error> + 'static,
+{
+    Rc::new(RefCell::new(
+        move |matches: &ArgMatches,
+              ctx: &CommandContext,
+              _hooks: Option<&Hooks>,
+              _output_mode: crate::OutputMode,
+              _theme: &crate::Theme,
+              _ambiguous_width: crate::AmbiguousWidth,
+              _target: Option<crate::TargetProperties>| {
+            match (handler.borrow_mut())(matches, ctx) {
+                Ok(()) => Ok(super::dispatch::DispatchOutput::Silent),
+                Err(e) => Err(super::dispatch::handler_run_error(e)),
+            }
+        },
+    ))
 }
 
 /// Recipe for closure-based command handlers.
@@ -164,37 +234,14 @@ where
         template_engine: SharedTemplateEngine,
         template_registry: Option<Rc<crate::TemplateRegistry>>,
     ) -> DispatchFn {
-        let handler = self.handler.clone();
-        let template = template.clone();
-        let context_registry = context_registry.clone();
-        let structured_output_projection = self.structured_output_projection.clone();
-
-        Rc::new(RefCell::new(
-            move |matches: &ArgMatches,
-                  ctx: &CommandContext,
-                  hooks: Option<&Hooks>,
-                  output_mode: crate::OutputMode,
-                  theme: &crate::Theme,
-                  ambiguous_width: crate::AmbiguousWidth,
-                  target: Option<crate::TargetProperties>| {
-                let result = handler.borrow_mut().handle(matches, ctx);
-                render_handler_output(
-                    result,
-                    matches,
-                    ctx,
-                    hooks,
-                    &template,
-                    theme,
-                    &context_registry,
-                    &template_engine,
-                    template_registry.as_ref(),
-                    output_mode,
-                    structured_output_projection.as_ref(),
-                    ambiguous_width,
-                    target,
-                )
-            },
-        ))
+        dispatch_from_handler(
+            self.handler.clone(),
+            template.clone(),
+            context_registry.clone(),
+            template_engine,
+            template_registry,
+            self.structured_output_projection.clone(),
+        )
     }
 
     fn expected_args(&self) -> Vec<ExpectedArg> {
@@ -283,37 +330,14 @@ where
         template_engine: SharedTemplateEngine,
         template_registry: Option<Rc<crate::TemplateRegistry>>,
     ) -> DispatchFn {
-        let handler = self.handler.clone();
-        let template = template.clone();
-        let context_registry = context_registry.clone();
-        let structured_output_projection = self.structured_output_projection.clone();
-
-        Rc::new(RefCell::new(
-            move |matches: &ArgMatches,
-                  ctx: &CommandContext,
-                  hooks: Option<&Hooks>,
-                  output_mode: crate::OutputMode,
-                  theme: &crate::Theme,
-                  ambiguous_width: crate::AmbiguousWidth,
-                  target: Option<crate::TargetProperties>| {
-                let result = handler.borrow_mut().handle(matches, ctx);
-                render_handler_output(
-                    result,
-                    matches,
-                    ctx,
-                    hooks,
-                    &template,
-                    theme,
-                    &context_registry,
-                    &template_engine,
-                    template_registry.as_ref(),
-                    output_mode,
-                    structured_output_projection.as_ref(),
-                    ambiguous_width,
-                    target,
-                )
-            },
-        ))
+        dispatch_from_handler(
+            self.handler.clone(),
+            template.clone(),
+            context_registry.clone(),
+            template_engine,
+            template_registry,
+            self.structured_output_projection.clone(),
+        )
     }
 
     fn expected_args(&self) -> Vec<ExpectedArg> {
@@ -469,23 +493,7 @@ where
         _template_engine: SharedTemplateEngine,
         _template_registry: Option<Rc<crate::TemplateRegistry>>,
     ) -> DispatchFn {
-        let handler = self.handler.clone();
-
-        Rc::new(RefCell::new(
-            move |matches: &ArgMatches,
-                  ctx: &CommandContext,
-                  _hooks: Option<&Hooks>,
-                  _output_mode: crate::OutputMode,
-                  _theme: &crate::Theme,
-                  _ambiguous_width: crate::AmbiguousWidth,
-                  _target: Option<crate::TargetProperties>| {
-                let result = (handler.borrow_mut())(matches, ctx);
-                match result {
-                    Ok(()) => Ok(super::dispatch::DispatchOutput::Silent),
-                    Err(e) => Err(super::dispatch::handler_run_error(e)),
-                }
-            },
-        ))
+        dispatch_passthrough(self.handler.clone())
     }
 
     fn expected_args(&self) -> Vec<ExpectedArg> {
@@ -1238,35 +1246,14 @@ where
         template_engine: SharedTemplateEngine,
         template_registry: Option<Rc<crate::TemplateRegistry>>,
     ) -> DispatchFn {
-        let handler = self.handler;
-        let structured_output_projection = self.structured_output_projection;
-
-        Rc::new(RefCell::new(
-            move |matches: &ArgMatches,
-                  ctx: &CommandContext,
-                  hooks: Option<&Hooks>,
-                  output_mode: crate::OutputMode,
-                  theme: &crate::Theme,
-                  ambiguous_width: crate::AmbiguousWidth,
-                  target: Option<crate::TargetProperties>| {
-                let result = handler.borrow_mut().handle(matches, ctx);
-                render_handler_output(
-                    result,
-                    matches,
-                    ctx,
-                    hooks,
-                    &template,
-                    theme,
-                    &context_registry,
-                    &template_engine,
-                    template_registry.as_ref(),
-                    output_mode,
-                    structured_output_projection.as_ref(),
-                    ambiguous_width,
-                    target,
-                )
-            },
-        ))
+        dispatch_from_handler(
+            self.handler,
+            template,
+            context_registry,
+            template_engine,
+            template_registry,
+            self.structured_output_projection,
+        )
     }
 
     fn expected_args(&self) -> Vec<ExpectedArg> {
@@ -1326,35 +1313,14 @@ where
         template_engine: SharedTemplateEngine,
         template_registry: Option<Rc<crate::TemplateRegistry>>,
     ) -> DispatchFn {
-        let handler = self.handler;
-        let structured_output_projection = self.structured_output_projection;
-
-        Rc::new(RefCell::new(
-            move |matches: &ArgMatches,
-                  ctx: &CommandContext,
-                  hooks: Option<&Hooks>,
-                  output_mode: crate::OutputMode,
-                  theme: &crate::Theme,
-                  ambiguous_width: crate::AmbiguousWidth,
-                  target: Option<crate::TargetProperties>| {
-                let result = handler.borrow_mut().handle(matches, ctx);
-                render_handler_output(
-                    result,
-                    matches,
-                    ctx,
-                    hooks,
-                    &template,
-                    theme,
-                    &context_registry,
-                    &template_engine,
-                    template_registry.as_ref(),
-                    output_mode,
-                    structured_output_projection.as_ref(),
-                    ambiguous_width,
-                    target,
-                )
-            },
-        ))
+        dispatch_from_handler(
+            self.handler,
+            template,
+            context_registry,
+            template_engine,
+            template_registry,
+            self.structured_output_projection,
+        )
     }
 
     fn expected_args(&self) -> Vec<ExpectedArg> {
@@ -1406,23 +1372,7 @@ where
         _template_engine: SharedTemplateEngine,
         _template_registry: Option<Rc<crate::TemplateRegistry>>,
     ) -> DispatchFn {
-        let handler = self.handler;
-
-        Rc::new(RefCell::new(
-            move |matches: &ArgMatches,
-                  ctx: &CommandContext,
-                  _hooks: Option<&Hooks>,
-                  _output_mode: crate::OutputMode,
-                  _theme: &crate::Theme,
-                  _ambiguous_width: crate::AmbiguousWidth,
-                  _target: Option<crate::TargetProperties>| {
-                let result = (handler.borrow_mut())(matches, ctx);
-                match result {
-                    Ok(()) => Ok(super::dispatch::DispatchOutput::Silent),
-                    Err(e) => Err(super::dispatch::handler_run_error(e)),
-                }
-            },
-        ))
+        dispatch_passthrough(self.handler)
     }
 
     fn expected_args(&self) -> Vec<ExpectedArg> {

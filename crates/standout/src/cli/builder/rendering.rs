@@ -1,8 +1,10 @@
 //! Rendering methods for App.
 //!
-//! [`App::render`] and [`App::render_inline`] build a [`crate::RenderRequest`]
-//! and call [`standout_render::render_request`], the same pipeline dispatch
-//! uses.
+//! [`App::render`], [`App::render_inline`], and [`App::render_inline_with`]
+//! build a [`crate::RenderRequest`] and call
+//! [`standout_render::render_request`], the same pipeline dispatch uses.
+//! [`App::render_inline_with`] takes destination facts the caller already
+//! has; the other two detect at this edge.
 
 use serde::Serialize;
 use std::collections::HashMap;
@@ -41,7 +43,13 @@ impl App {
         mode: OutputMode,
     ) -> Result<String, SetupError> {
         if mode.is_structured() {
-            return self.render_named_or_inline(TemplateRef::Absent, data, mode, None);
+            return self.render_named_or_inline(
+                TemplateRef::Absent,
+                data,
+                mode,
+                None,
+                detected_target(self.ambiguous_width),
+            );
         }
 
         let registry = self.template_registry.as_ref().ok_or_else(|| {
@@ -70,6 +78,7 @@ impl App {
             data,
             mode,
             Some(registry.clone()),
+            detected_target(self.ambiguous_width),
         )
     }
 
@@ -77,6 +86,10 @@ impl App {
     ///
     /// Unlike `render`, this takes the template content directly.
     /// Still supports `{% include %}` if a template registry is configured.
+    ///
+    /// Detects destination facts at this edge. Callers that already have
+    /// [`TargetProperties`] (tests, `run_with` agreement) should use
+    /// [`render_inline_with`](Self::render_inline_with).
     pub fn render_inline<T: Serialize>(
         &self,
         template: &str,
@@ -88,6 +101,31 @@ impl App {
             data,
             mode,
             self.template_registry.clone(),
+            detected_target(self.ambiguous_width),
+        )
+    }
+
+    /// Renders an inline template with caller-supplied destination facts.
+    ///
+    /// Same pipeline as [`render_inline`](Self::render_inline) and dispatch:
+    /// builds a [`crate::RenderRequest`] from the app's engine, registry,
+    /// context registry, and merged theme, and calls [`render_request`].
+    /// Ambiguous-width is overwritten with the application's policy
+    /// (ADR-0026), matching [`App::run_with`](super::App::run_with).
+    pub fn render_inline_with<T: Serialize>(
+        &self,
+        template: &str,
+        data: &T,
+        mode: OutputMode,
+        mut target: TargetProperties,
+    ) -> Result<String, SetupError> {
+        target.ambiguous_width = self.ambiguous_width;
+        self.render_named_or_inline(
+            TemplateRef::Inline(template.to_string()),
+            data,
+            mode,
+            self.template_registry.clone(),
+            target,
         )
     }
 
@@ -97,9 +135,8 @@ impl App {
         data: &T,
         mode: OutputMode,
         registry: Option<std::rc::Rc<crate::TemplateRegistry>>,
+        target: TargetProperties,
     ) -> Result<String, SetupError> {
-        let mut target = TargetProperties::detect();
-        target.ambiguous_width = self.ambiguous_width;
         let theme = self.theme.clone().unwrap_or_default();
         let request = RenderRequest {
             data: serde_json::to_value(data).map_err(|e| SetupError::Config(e.to_string()))?,
@@ -117,4 +154,10 @@ impl App {
         };
         render_request(&request).map_err(|e| SetupError::Template(e.to_string()))
     }
+}
+
+fn detected_target(ambiguous_width: crate::AmbiguousWidth) -> TargetProperties {
+    let mut target = TargetProperties::detect();
+    target.ambiguous_width = ambiguous_width;
+    target
 }
