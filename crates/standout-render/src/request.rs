@@ -371,10 +371,18 @@ fn render_from_request(request: &RenderRequest) -> Result<RenderResult, RenderEr
     }
 }
 
+/// Shared engine for callers that do not retain one from `AppBuilder::build()`.
+///
+/// Convenience wrappers and standalone `render_help` / `render_topic` use this
+/// so the glue crate never constructs [`MiniJinjaEngine`] outside `build()`.
+pub fn default_template_engine() -> SharedTemplateEngine {
+    Rc::new(RefCell::new(Box::new(MiniJinjaEngine::new())))
+}
+
 /// Shared engine handle for a convenience wrapper that detects, then calls
 /// [`render_request`].
 pub(crate) fn convenience_engine() -> SharedTemplateEngine {
-    Rc::new(RefCell::new(Box::new(MiniJinjaEngine::new())))
+    default_template_engine()
 }
 
 /// Builds a [`RenderRequest`] for a convenience wrapper that already detected

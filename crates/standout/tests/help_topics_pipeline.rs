@@ -1,0 +1,103 @@
+//! Help and topics through `render_request` (ROB04-WS04).
+//!
+//! Framework defaults are named registry templates registered at `build()`.
+//! App overrides with the same name win. The help path uses the app engine
+//! from `build()`, not a fresh `MiniJinjaEngine`.
+
+use clap::Command;
+use serial_test::serial;
+use standout::assets::{HELP_TEMPLATE_NAME, TOPICS_LIST_TEMPLATE_NAME, TOPIC_TEMPLATE_NAME};
+use standout::cli::{App, HelpResult};
+use standout::MiniJinjaEngine;
+use standout_test::TestHarness;
+
+fn help_command() -> Command {
+    Command::new("app")
+}
+
+#[test]
+fn build_registers_named_help_and_topic_templates() {
+    let app = App::builder().help_handling(true).build().unwrap();
+    let names: Vec<_> = app.template_names().collect();
+    for name in [
+        HELP_TEMPLATE_NAME,
+        TOPIC_TEMPLATE_NAME,
+        TOPICS_LIST_TEMPLATE_NAME,
+    ] {
+        assert!(names.contains(&name), "expected {name} in {names:?}");
+    }
+}
+
+#[test]
+fn app_override_of_named_help_template_is_used() {
+    let dir = tempfile::tempdir().unwrap();
+    let nested = dir.path().join("standout");
+    std::fs::create_dir(&nested).unwrap();
+    std::fs::write(nested.join("help.jinja"), "CUSTOM HELP PAGE\n").unwrap();
+
+    let app = App::builder()
+        .help_handling(true)
+        .templates_dir(dir.path())
+        .unwrap()
+        .build()
+        .unwrap();
+
+    match app.get_matches_from(help_command(), ["app", "--help"]) {
+        HelpResult::Help(text) | HelpResult::PagedHelp(text) => {
+            assert!(
+                text.contains("CUSTOM HELP PAGE"),
+                "named override must win:\n{text}"
+            );
+        }
+        other => panic!("expected rendered help, got {other:?}"),
+    }
+}
+
+#[test]
+#[serial]
+fn help_path_uses_the_app_engine_from_build() {
+    let dir = tempfile::tempdir().unwrap();
+    let nested = dir.path().join("standout");
+    std::fs::create_dir(&nested).unwrap();
+    std::fs::write(nested.join("help.jinja"), "{{ 'custom' | shout }}\n").unwrap();
+
+    let mut engine = MiniJinjaEngine::new();
+    engine
+        .environment_mut()
+        .add_filter("shout", |value: String| value.to_uppercase());
+
+    let app = App::builder()
+        .help_handling(true)
+        .template_engine(Box::new(engine))
+        .templates_dir(dir.path())
+        .unwrap()
+        .build()
+        .unwrap();
+
+    let result = TestHarness::new()
+        .text_output()
+        .run(&app, help_command(), ["app", "--help"]);
+    result.assert_success();
+    assert!(
+        result.stdout().contains("CUSTOM"),
+        "help must render through the app engine's filters, got:\n{}",
+        result.stdout()
+    );
+}
+
+#[test]
+fn standalone_render_help_still_works_without_an_app() {
+    use standout::cli::{render_help, HelpConfig};
+    use standout::OutputMode;
+
+    let output = render_help(
+        &help_command().about("Demo"),
+        Some(HelpConfig {
+            output_mode: Some(OutputMode::Text),
+            ..Default::default()
+        }),
+    )
+    .unwrap();
+    assert!(output.contains("USAGE"), "{output}");
+    assert!(output.contains("Demo"), "{output}");
+}

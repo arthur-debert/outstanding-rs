@@ -189,8 +189,8 @@ pub use width::{AmbiguousWidth, WidthCalculator};
 
 // Composition-contract types (explicit request; detect at the crate edge)
 pub use request::{
-    render_request, render_request_split, ColorPolicy, RenderRequest, SharedTemplateEngine,
-    TargetProperties, TemplateRef,
+    default_template_engine, render_request, render_request_split, ColorPolicy, RenderRequest,
+    SharedTemplateEngine, TargetProperties, TemplateRef,
 };
 
 // Render module exports

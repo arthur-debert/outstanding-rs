@@ -3,6 +3,13 @@
 //! Templates are stored as `(name, content)` pairs for registration
 //! with the template registry.
 
+/// Registry name for the framework help page (ADR-0028).
+pub const HELP_TEMPLATE_NAME: &str = "standout/help";
+/// Registry name for a single help topic.
+pub const TOPIC_TEMPLATE_NAME: &str = "standout/topic";
+/// Registry name for the topics listing page.
+pub const TOPICS_LIST_TEMPLATE_NAME: &str = "standout/topics-list";
+
 /// Framework-supplied templates.
 ///
 /// Each entry is `(name_with_extension, content)`.
@@ -11,6 +18,18 @@ pub const FRAMEWORK_TEMPLATES: &[(&str, &str)] = &[
     ("standout/list-view.jinja", LIST_VIEW_TEMPLATE),
     ("standout/empty-list.jinja", EMPTY_LIST_TEMPLATE),
     ("standout/filter-summary.jinja", FILTER_SUMMARY_TEMPLATE),
+    (
+        "standout/help.jinja",
+        include_str!("../cli/help/template.txt"),
+    ),
+    (
+        "standout/topic.jinja",
+        include_str!("../topic_template.txt"),
+    ),
+    (
+        "standout/topics-list.jinja",
+        include_str!("../topics_list_template.txt"),
+    ),
 ];
 
 /// Default list view template.

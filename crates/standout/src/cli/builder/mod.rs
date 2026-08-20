@@ -35,11 +35,11 @@ mod rendering;
 use crate::context::ContextRegistry;
 use crate::setup::SetupError;
 use crate::topics::{
-    default_topic_theme, display_with_pager, render_topic, render_topics_list, TopicRegistry,
-    TopicRenderConfig,
+    default_topic_theme, display_with_pager, topic_data, topics_list_data, TopicRegistry,
+    DEFAULT_TOPICS_LIST_TEMPLATE, DEFAULT_TOPIC_TEMPLATE,
 };
 use crate::TemplateRegistry;
-use crate::{render_auto, OutputMode, Theme, TEMPLATE_EXTENSIONS};
+use crate::{render_auto, OutputMode, RenderError, Theme, TEMPLATE_EXTENSIONS};
 use clap::{Arg, ArgAction, ArgMatches, Command};
 use serde::Serialize;
 use std::cell::RefCell;
@@ -50,40 +50,15 @@ use super::default_command::ParseFailure;
 use super::dispatch::DispatchFn;
 use super::group::CommandRecipe;
 use super::handler::{CommandContext, Extensions, HandlerResult, Output as HandlerOutput};
+use super::help::data::{extract_help_data, extract_help_data_with_topics};
 use super::help::{
-    default_help_theme, render_help, render_help_with_topics, CommandGroup, HelpConfig, HelpLength,
+    default_help_theme, human_help_format, named_or_inline_template, render_via_request,
+    CommandGroup, HelpConfig, HelpLength, DEFAULT_HELP_TEMPLATE,
 };
 use super::hooks::{ArtifactOutput, HookError, HookPhase, Hooks, RenderedOutput, TextOutput};
 use super::questionnaire::QuestionnaireCommand;
 use super::result::{HelpDisplay, HelpResult};
 use standout_dispatch::verify::ExpectedArg;
-
-/// Resolves help/topics [`OutputMode::Auto`] from this invocation's
-/// destination facts without putting help on the request pipeline.
-///
-/// Help still calls [`crate::render_with_output`] (WS04 moves it onto
-/// `render_request` with the app engine). Until then, Auto would detect
-/// independently and ignore harness-injected color. Resolving Auto here
-/// from stdout capability keeps help bytes aligned with dispatch.
-fn resolve_help_output_mode(
-    mode: OutputMode,
-    target: Option<crate::TargetProperties>,
-) -> OutputMode {
-    // ADR-0029: structured `--output` still prints human help.
-    let mode = if mode.is_structured() {
-        OutputMode::Auto
-    } else {
-        mode
-    };
-    match mode {
-        OutputMode::Auto => match target {
-            Some(target) if target.stdout_color_capability => OutputMode::Term,
-            Some(_) => OutputMode::Text,
-            None => OutputMode::Auto,
-        },
-        other => other,
-    }
-}
 
 pub(crate) type SharedTemplateEngine =
     Rc<RefCell<Box<dyn standout_render::template::TemplateEngine>>>;
@@ -1155,14 +1130,14 @@ impl App {
                 )
             }
             Err(ParseFailure::Clap(e)) => {
-                return match self.intercept_display_help(&mut cmd, &args, &e, None) {
+                return match self.intercept_display_help(&mut cmd, &args, &e, None, None) {
                     Some(display) => display.into(),
                     None => HelpResult::Error(e),
                 }
             }
         };
 
-        match self.intercept_help_word(&mut cmd, &matches, None) {
+        match self.intercept_help_word(&mut cmd, &matches, None, None) {
             Some(display) => display.into(),
             None => HelpResult::Matches(matches),
         }
@@ -1181,12 +1156,13 @@ impl App {
         cmd: &mut Command,
         matches: &ArgMatches,
         target: Option<crate::TargetProperties>,
+        warnings: Option<standout_render::warnings::WarningBuffer>,
     ) -> Option<HelpDisplay> {
         if !self.help_handling {
             return None;
         }
         let (name, sub_matches) = matches.subcommand()?;
-        (name == "help").then(|| self.render_help_word(cmd, matches, sub_matches, target))
+        (name == "help").then(|| self.render_help_word(cmd, matches, sub_matches, target, warnings))
     }
 
     /// Answers Clap's `DisplayHelp` short-circuit, when standout owns help.
@@ -1203,29 +1179,107 @@ impl App {
         args: &[std::ffi::OsString],
         error: &clap::Error,
         target: Option<crate::TargetProperties>,
+        warnings: Option<standout_render::warnings::WarningBuffer>,
     ) -> Option<HelpDisplay> {
         (self.help_handling && error.kind() == clap::error::ErrorKind::DisplayHelp)
-            .then(|| self.render_help_for_display_help_error(cmd, args, target))
+            .then(|| self.render_help_for_display_help_error(cmd, args, target, warnings))
+    }
+
+    /// Destination facts for a help/topics render.
+    ///
+    /// `run_with` supplies the invocation's target; parse-only entry points
+    /// detect at this edge. Ambiguous-width is application policy (ADR-0026).
+    fn help_target_properties(
+        &self,
+        target: Option<crate::TargetProperties>,
+    ) -> crate::TargetProperties {
+        let mut target = target.unwrap_or_else(crate::TargetProperties::detect);
+        target.ambiguous_width = self.ambiguous_width;
+        target
+    }
+
+    /// The one theme `build()` merged (ADR-0020), including help/topic tags.
+    fn help_theme(&self) -> Theme {
+        self.theme.clone().unwrap_or_else(default_help_theme)
+    }
+
+    /// Named registry template when `build()` registered it; otherwise the
+    /// default source as [`crate::TemplateRef::Inline`] with tag validation.
+    fn help_template(
+        &self,
+        override_source: Option<&str>,
+        named: &str,
+        default_source: &str,
+    ) -> Result<crate::TemplateRef, RenderError> {
+        let theme = self.help_theme();
+        if let Some(source) = override_source {
+            return super::help::inline_template_ref(source, &theme, named);
+        }
+        named_or_inline_template(
+            self.template_registry.as_deref(),
+            named,
+            default_source,
+            &theme,
+        )
+    }
+
+    /// Help and topics through [`render_request`] with the app engine, merged
+    /// theme, filters, and registry.
+    #[allow(clippy::too_many_arguments)]
+    fn render_help_surface<T: Serialize>(
+        &self,
+        data: &T,
+        template: crate::TemplateRef,
+        format: OutputMode,
+        target: crate::TargetProperties,
+        warnings: Option<standout_render::warnings::WarningBuffer>,
+    ) -> Result<String, RenderError> {
+        render_via_request(
+            data,
+            template,
+            self.help_theme(),
+            format,
+            target,
+            self.template_engine.clone(),
+            self.template_registry.clone(),
+            Some(self.context_registry.clone()),
+            warnings,
+        )
+    }
+
+    fn help_display(
+        &self,
+        cmd: &Command,
+        rendered: Result<String, RenderError>,
+        use_pager: bool,
+    ) -> HelpDisplay {
+        match rendered {
+            Ok(text) => HelpDisplay::Rendered {
+                text,
+                paged: use_pager,
+            },
+            Err(e) => Self::render_failure(cmd, e),
+        }
     }
 
     /// Renders the help the `help` word asked for.
     ///
     /// Its arguments come from Clap: `sub_matches` is the word's own parse
     /// (`topic`, `--page`), and the output mode is read from the root, where
-    /// the global flag that carries it lives.
+    /// the global flag that carries it lives. Structured modes map to
+    /// [`OutputMode::Auto`] (ADR-0029) on the request; the leaf has no help
+    /// flag.
     fn render_help_word(
         &self,
         cmd: &mut Command,
         matches: &ArgMatches,
         sub_matches: &ArgMatches,
         target: Option<crate::TargetProperties>,
+        warnings: Option<standout_render::warnings::WarningBuffer>,
     ) -> HelpDisplay {
+        let format = human_help_format(self.extract_output_mode(matches));
+        let target = self.help_target_properties(target);
         let config = HelpConfig {
-            output_mode: Some(resolve_help_output_mode(
-                self.extract_output_mode(matches),
-                target,
-            )),
-            theme: self.theme.clone(),
             command_groups: self.help_command_groups.clone(),
             // The word is the spelled-out request, so it reads like `--help`.
             length: HelpLength::Long,
@@ -1236,11 +1290,13 @@ impl App {
         if let Some(topic_args) = sub_matches.get_many::<String>("topic") {
             let keywords: Vec<_> = topic_args.map(|s| s.as_str()).collect();
             if !keywords.is_empty() {
-                return self.handle_help_request(cmd, &keywords, use_pager, Some(config));
+                return self.handle_help_request(
+                    cmd, &keywords, use_pager, config, format, target, warnings,
+                );
             }
         }
 
-        self.render_root_help(cmd, Some(config), use_pager)
+        self.render_root_help(cmd, config, format, target, warnings, use_pager)
     }
 
     /// Reports a failed help render.
@@ -1257,20 +1313,36 @@ impl App {
         ))
     }
 
-    /// Renders root help, returning an error if rendering fails.
+    /// Renders root help through [`render_request`].
+    #[allow(clippy::too_many_arguments)]
     fn render_root_help(
         &self,
         cmd: &Command,
-        config: Option<HelpConfig>,
+        config: HelpConfig,
+        format: OutputMode,
+        target: crate::TargetProperties,
+        warnings: Option<standout_render::warnings::WarningBuffer>,
         use_pager: bool,
     ) -> HelpDisplay {
-        match render_help_with_topics(cmd, &self.registry, config) {
-            Ok(text) => HelpDisplay::Rendered {
-                text,
-                paged: use_pager,
-            },
-            Err(e) => Self::render_failure(cmd, e),
-        }
+        let template = match self.help_template(
+            config.template.as_deref(),
+            crate::assets::HELP_TEMPLATE_NAME,
+            DEFAULT_HELP_TEMPLATE,
+        ) {
+            Ok(template) => template,
+            Err(e) => return Self::render_failure(cmd, e),
+        };
+        let data = extract_help_data_with_topics(
+            cmd,
+            &self.registry,
+            config.command_groups.as_deref(),
+            config.length,
+        );
+        self.help_display(
+            cmd,
+            self.render_help_surface(&data, template, format, target, warnings),
+            use_pager,
+        )
     }
 
     /// Handles a `DisplayHelp` error from clap by rendering standout help.
@@ -1297,23 +1369,23 @@ impl App {
         cmd: &mut Command,
         args: &[std::ffi::OsString],
         target: Option<crate::TargetProperties>,
+        warnings: Option<standout_render::warnings::WarningBuffer>,
     ) -> HelpDisplay {
         let request = Self::help_request(cmd, args);
-
+        let format = human_help_format(OutputMode::Auto);
+        let target = self.help_target_properties(target);
         let config = HelpConfig {
-            output_mode: Some(resolve_help_output_mode(crate::OutputMode::Auto, target)),
-            theme: self.theme.clone(),
             command_groups: self.help_command_groups.clone(),
             length: request.length,
             ..Default::default()
         };
 
         if request.target.is_empty() {
-            return self.render_root_help(cmd, Some(config), false);
+            return self.render_root_help(cmd, config, format, target, warnings, false);
         }
 
         let keywords: Vec<&str> = request.target.iter().map(|s| s.as_str()).collect();
-        self.handle_help_request(cmd, &keywords, false, Some(config))
+        self.handle_help_request(cmd, &keywords, false, config, format, target, warnings)
     }
 
     /// What a `DisplayHelp` line asked for, as Clap reads it.
@@ -1407,62 +1479,73 @@ impl App {
     }
 
     /// Handles a request for specific help e.g. `help foo`
+    #[allow(clippy::too_many_arguments)]
     fn handle_help_request(
         &self,
         cmd: &mut Command,
         keywords: &[&str],
         use_pager: bool,
-        config: Option<HelpConfig>,
+        config: HelpConfig,
+        format: OutputMode,
+        target: crate::TargetProperties,
+        warnings: Option<standout_render::warnings::WarningBuffer>,
     ) -> HelpDisplay {
         let sub_name = keywords[0];
 
         // 0. Check for "topics" - list all available topics
         if sub_name == "topics" {
-            let topic_config = TopicRenderConfig {
-                output_mode: config.as_ref().and_then(|c| c.output_mode),
-                theme: config.as_ref().and_then(|c| c.theme.clone()),
-                ..Default::default()
-            };
-            return match render_topics_list(
-                &self.registry,
-                &format!("{} help", cmd.get_name()),
-                Some(topic_config),
+            let template = match self.help_template(
+                None,
+                crate::assets::TOPICS_LIST_TEMPLATE_NAME,
+                DEFAULT_TOPICS_LIST_TEMPLATE,
             ) {
-                Ok(text) => HelpDisplay::Rendered {
-                    text,
-                    paged: use_pager,
-                },
-                Err(e) => Self::render_failure(cmd, e),
+                Ok(template) => template,
+                Err(e) => return Self::render_failure(cmd, e),
             };
+            let data = topics_list_data(&self.registry, &format!("{} help", cmd.get_name()));
+            return self.help_display(
+                cmd,
+                self.render_help_surface(&data, template, format, target, warnings),
+                use_pager,
+            );
         }
 
         // 1. Check if it's a real command
         if super::app::find_subcommand(cmd, sub_name).is_some() {
-            if let Some(target) = super::app::find_subcommand_recursive(cmd, keywords) {
-                return match render_help(target, config.clone()) {
-                    Ok(text) => HelpDisplay::Rendered {
-                        text,
-                        paged: use_pager,
-                    },
-                    Err(e) => Self::render_failure(cmd, e),
+            if let Some(help_cmd) = super::app::find_subcommand_recursive(cmd, keywords) {
+                let template = match self.help_template(
+                    config.template.as_deref(),
+                    crate::assets::HELP_TEMPLATE_NAME,
+                    DEFAULT_HELP_TEMPLATE,
+                ) {
+                    Ok(template) => template,
+                    Err(e) => return Self::render_failure(cmd, e),
                 };
+                let data =
+                    extract_help_data(help_cmd, config.command_groups.as_deref(), config.length);
+                return self.help_display(
+                    cmd,
+                    self.render_help_surface(&data, template, format, target, warnings),
+                    use_pager,
+                );
             }
         }
 
         // 2. Check if it is a topic
         if let Some(topic) = self.registry.get_topic(sub_name) {
-            let topic_config = TopicRenderConfig {
-                output_mode: config.as_ref().and_then(|c| c.output_mode),
-                theme: config.as_ref().and_then(|c| c.theme.clone()),
-                ..Default::default()
+            let template = match self.help_template(
+                None,
+                crate::assets::TOPIC_TEMPLATE_NAME,
+                DEFAULT_TOPIC_TEMPLATE,
+            ) {
+                Ok(template) => template,
+                Err(e) => return Self::render_failure(cmd, e),
             };
-            return match render_topic(topic, Some(topic_config)) {
-                Ok(text) => HelpDisplay::Rendered {
-                    text,
-                    paged: use_pager,
-                },
-                Err(e) => Self::render_failure(cmd, e),
-            };
+            return self.help_display(
+                cmd,
+                self.render_help_surface(&topic_data(topic), template, format, target, warnings),
+                use_pager,
+            );
         }
 
         // 3. Not found
