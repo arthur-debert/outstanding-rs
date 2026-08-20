@@ -1084,4 +1084,99 @@ mod tests {
             "--output=text before --version must still opt warnings out of ANSI"
         );
     }
+
+    #[test]
+    fn output_mode_probe_skips_help_and_version_spellings_the_command_already_declares() {
+        use crate::InputSources;
+        use clap::{Arg, ArgAction};
+        use serde_json::json;
+
+        let app = AppBuilder::new()
+            .command(
+                "list",
+                |_m, _ctx| Ok(HandlerOutput::Render(json!({"n": 1}))),
+                "n={{ n }}",
+            )
+            .unwrap()
+            .build()
+            .unwrap();
+        let target = color_capable_stderr_target();
+        let cases: [(&str, Command); 6] = [
+            (
+                "root --help",
+                Command::new("app")
+                    .disable_help_flag(true)
+                    .arg(
+                        Arg::new("manual_help")
+                            .long("help")
+                            .action(ArgAction::SetTrue),
+                    )
+                    .subcommand(Command::new("list")),
+            ),
+            (
+                "root -h",
+                Command::new("app")
+                    .disable_help_flag(true)
+                    .arg(Arg::new("manual_h").short('h').action(ArgAction::SetTrue))
+                    .subcommand(Command::new("list")),
+            ),
+            (
+                "root --version",
+                Command::new("app")
+                    .disable_version_flag(true)
+                    .arg(
+                        Arg::new("manual_version")
+                            .long("version")
+                            .action(ArgAction::SetTrue),
+                    )
+                    .subcommand(Command::new("list")),
+            ),
+            (
+                "subcommand --help",
+                Command::new("app").subcommand(
+                    Command::new("list").disable_help_flag(true).arg(
+                        Arg::new("manual_help")
+                            .long("help")
+                            .action(ArgAction::SetTrue),
+                    ),
+                ),
+            ),
+            (
+                "subcommand -h",
+                Command::new("app").subcommand(
+                    Command::new("list")
+                        .disable_help_flag(true)
+                        .arg(Arg::new("manual_h").short('h').action(ArgAction::SetTrue)),
+                ),
+            ),
+            (
+                "subcommand --version",
+                Command::new("app").subcommand(
+                    Command::new("list").disable_version_flag(true).arg(
+                        Arg::new("manual_version")
+                            .long("version")
+                            .action(ArgAction::SetTrue),
+                    ),
+                ),
+            ),
+        ];
+        for (label, cmd) in cases {
+            let result = app.run_with(
+                cmd,
+                ["app", "--output=text", "not-a-command"],
+                target,
+                InputSources::from_process(),
+            );
+            assert!(
+                result.is_error(),
+                "{label}: expected a clap usage error, got {:?}",
+                result.outcome()
+            );
+            assert_eq!(
+                result.output_mode(),
+                OutputMode::Text,
+                "{label}: custom help/version spellings must not panic the probe or drop --output=text"
+            );
+        }
+    }
 }

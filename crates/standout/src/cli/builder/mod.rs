@@ -1635,10 +1635,12 @@ impl App {
     ///
     /// `cmd` must already carry the framework `--output` flag (the same
     /// augmentation the failing parse used). The probe is a clap
-    /// `ignore_errors` parse with help/version re-declared as ordinary flags
-    /// so the mode does not depend on whether `--output` was written before
-    /// the short-circuiting flag. That is clap classifying the line, not a
-    /// lexical argv scan (ADR-0018).
+    /// `ignore_errors` parse. Clap-generated help/version are disabled so they
+    /// do not short-circuit; `--help`/`-h`/`--version` are re-declared as
+    /// ordinary flags only when the command tree does not already use those
+    /// spellings, so an application that defined them itself cannot panic the
+    /// probe. That is clap classifying the line, not a lexical argv scan
+    /// (ADR-0018).
     pub(crate) fn extract_output_mode_from_unparsed(
         &self,
         cmd: &Command,
@@ -1647,26 +1649,36 @@ impl App {
         if self.output_flag.is_none() {
             return OutputMode::Auto;
         }
-        let probe = cmd
+        let mut probe = cmd
             .clone()
             .disable_help_flag(true)
             .disable_version_flag(true)
-            .ignore_errors(true)
-            .arg(
-                Arg::new(OUTPUT_MODE_PROBE_HELP)
-                    .long("help")
-                    .short('h')
-                    .action(ArgAction::SetTrue)
-                    .global(true)
-                    .hide(true),
-            )
-            .arg(
+            .ignore_errors(true);
+
+        let add_help_long = !command_tree_has_long(&probe, "help");
+        let add_help_short = !command_tree_has_short(&probe, 'h');
+        if add_help_long || add_help_short {
+            let mut help = Arg::new(OUTPUT_MODE_PROBE_HELP)
+                .action(ArgAction::SetTrue)
+                .global(true)
+                .hide(true);
+            if add_help_long {
+                help = help.long("help");
+            }
+            if add_help_short {
+                help = help.short('h');
+            }
+            probe = probe.arg(help);
+        }
+        if !command_tree_has_long(&probe, "version") {
+            probe = probe.arg(
                 Arg::new(OUTPUT_MODE_PROBE_VERSION)
                     .long("version")
                     .action(ArgAction::SetTrue)
                     .global(true)
                     .hide(true),
             );
+        }
         match probe.try_get_matches_from(args) {
             Ok(matches) => self.extract_output_mode(&matches),
             Err(_) => OutputMode::Auto,
@@ -1874,6 +1886,38 @@ fn parse_output_mode_flag(value: Option<&str>) -> OutputMode {
         Some("csv") => OutputMode::Csv,
         _ => OutputMode::Auto,
     }
+}
+
+fn command_tree_has_long(cmd: &Command, name: &str) -> bool {
+    if cmd.get_long_flag() == Some(name)
+        || cmd.get_all_long_flag_aliases().any(|alias| alias == name)
+        || cmd.get_arguments().any(|arg| {
+            arg.get_long() == Some(name)
+                || arg
+                    .get_all_aliases()
+                    .is_some_and(|aliases| aliases.contains(&name))
+        })
+    {
+        return true;
+    }
+    cmd.get_subcommands()
+        .any(|sub| command_tree_has_long(sub, name))
+}
+
+fn command_tree_has_short(cmd: &Command, short: char) -> bool {
+    if cmd.get_short_flag() == Some(short)
+        || cmd.get_all_short_flag_aliases().any(|alias| alias == short)
+        || cmd.get_arguments().any(|arg| {
+            arg.get_short() == Some(short)
+                || arg
+                    .get_all_short_aliases()
+                    .is_some_and(|aliases| aliases.contains(&short))
+        })
+    {
+        return true;
+    }
+    cmd.get_subcommands()
+        .any(|sub| command_tree_has_short(sub, short))
 }
 
 /// What a help request named, once Clap has read the line.
