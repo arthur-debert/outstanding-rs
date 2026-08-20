@@ -995,6 +995,20 @@ impl App {
         self.command_hooks.get(path)
     }
 
+    /// CSV projection registered for `path`, if the command declared one.
+    ///
+    /// Same fact dispatch captures into its request: a `run_command` of a
+    /// command with [`crate::StructuredOutputProjection`] must emit the
+    /// contract CSV, not generic flattening.
+    fn csv_projection_for(&self, path: &str) -> Option<crate::CsvProjection> {
+        self.pending_commands.borrow().get(path).and_then(|pending| {
+            pending
+                .recipe
+                .structured_output_projection()
+                .map(|projection| projection.csv_projection().clone())
+        })
+    }
+
     /// Returns the theme `build()` merged (ADR-0020).
     ///
     /// Always present: `build()` computes the framework-base-plus-application
@@ -1011,19 +1025,6 @@ impl App {
     /// without hunting literals.
     fn output_mode_fallback() -> OutputMode {
         OutputMode::Auto
-    }
-
-    /// Output mode for a manual-dispatch invocation.
-    ///
-    /// When `matches` carries Standout's `_output_mode` argument, the parse
-    /// went through a tree that installed `--output`, and that value is the
-    /// invocation's mode. Otherwise the
-    /// [fallback](Self::output_mode_fallback).
-    fn output_mode_from_matches(matches: &ArgMatches) -> OutputMode {
-        match matches.try_get_one::<String>("_output_mode") {
-            Ok(Some(value)) => parse_output_mode_flag(Some(value)),
-            Ok(None) | Err(_) => Self::output_mode_fallback(),
-        }
     }
 
     /// Gets a theme by name from the stylesheet registry.
@@ -1750,15 +1751,19 @@ impl App {
     }
 
     /// Extracts the output mode from parsed ArgMatches.
+    ///
+    /// When this app installs `--output` and `matches` carries `_output_mode`,
+    /// that value is the invocation's mode. Otherwise the
+    /// [fallback](Self::output_mode_fallback) — including when the parse tree
+    /// never declared Standout's argument (`try_get_one` rather than
+    /// `get_one`, so an unaugmented manual parse does not panic).
     pub fn extract_output_mode(&self, matches: &ArgMatches) -> OutputMode {
-        if self.output_flag.is_some() {
-            parse_output_mode_flag(
-                matches
-                    .get_one::<String>("_output_mode")
-                    .map(|s| s.as_str()),
-            )
-        } else {
-            OutputMode::Auto
+        if self.output_flag.is_none() {
+            return Self::output_mode_fallback();
+        }
+        match matches.try_get_one::<String>("_output_mode") {
+            Ok(Some(value)) => parse_output_mode_flag(Some(value.as_str())),
+            Ok(None) | Err(_) => Self::output_mode_fallback(),
         }
     }
 
@@ -1812,10 +1817,11 @@ impl App {
     /// 2. Runs pre-dispatch hooks (if any)
     /// 3. Calls your handler closure
     /// 4. Renders the result through [`crate::render_request_split`] using the
-    ///    app engine, template registry, context registry, merged theme, and
-    ///    the output mode from `matches` (`--output` when the parse installed
-    ///    Standout's argument, otherwise the fallback). Formatted and raw
-    ///    travel on [`TextOutput`] the same way dispatch does
+    ///    app engine, template registry, context registry, merged theme, the
+    ///    output mode from [`extract_output_mode`](Self::extract_output_mode),
+    ///    and the command's structured-output projection when one is
+    ///    registered for `path`. Formatted and raw travel on [`TextOutput`]
+    ///    the same way dispatch does
     /// 5. Runs post-output hooks (if any)
     /// 6. Returns the final output
     ///
@@ -1873,13 +1879,13 @@ impl App {
                     data: json_data,
                     template: crate::TemplateRef::Inline(template.to_string()),
                     theme: self.theme.clone(),
-                    format: Self::output_mode_from_matches(matches),
+                    format: self.extract_output_mode(matches),
                     color_policy: ColorPolicy::Auto,
                     target,
                     engine: self.template_engine.clone(),
                     registry: self.template_registry.clone(),
                     context_registry: Some(self.context_registry.clone()),
-                    csv_projection: None,
+                    csv_projection: self.csv_projection_for(path),
                     extras: HashMap::new(),
                     warnings: Some(warnings),
                 };

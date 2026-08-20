@@ -89,6 +89,15 @@ pub(crate) trait CommandRecipe {
 
     /// Returns the arguments expected by this command handler.
     fn expected_args(&self) -> Vec<ExpectedArg>;
+
+    /// Per-command structured-output projection, if one was configured.
+    ///
+    /// Default none: passthrough commands have no render request. Dispatch
+    /// and [`App::run_command`](crate::cli::App::run_command) both read this
+    /// so `--output=csv` cannot diverge.
+    fn structured_output_projection(&self) -> Option<&StructuredOutputProjection> {
+        None
+    }
 }
 
 /// One dispatch closure for recipe and config handler registration.
@@ -247,6 +256,10 @@ where
     fn expected_args(&self) -> Vec<ExpectedArg> {
         self.handler.borrow().expected_args()
     }
+
+    fn structured_output_projection(&self) -> Option<&StructuredOutputProjection> {
+        self.structured_output_projection.as_ref()
+    }
 }
 
 /// Recipe for struct-based command handlers.
@@ -343,6 +356,10 @@ where
     fn expected_args(&self) -> Vec<ExpectedArg> {
         self.handler.borrow().expected_args()
     }
+
+    fn structured_output_projection(&self) -> Option<&StructuredOutputProjection> {
+        self.structured_output_projection.as_ref()
+    }
 }
 
 /// Wrapper around ErasedCommandConfig that implements CommandRecipe.
@@ -367,6 +384,7 @@ pub(crate) struct ErasedConfigRecipe {
     template_absence: Option<TemplateAbsence>,
     #[allow(dead_code)]
     hooks: RefCell<Option<Hooks>>,
+    structured_output_projection: Option<StructuredOutputProjection>,
 }
 
 impl ErasedConfigRecipe {
@@ -376,12 +394,14 @@ impl ErasedConfigRecipe {
         let template_name = handler.template_name().map(String::from);
         let template_absence = handler.template_absence();
         let hooks = handler.take_hooks();
+        let structured_output_projection = handler.structured_output_projection().cloned();
         Self {
             config: RefCell::new(Some(handler)),
             template,
             template_name,
             template_absence,
             hooks: RefCell::new(hooks),
+            structured_output_projection,
         }
     }
 }
@@ -440,6 +460,10 @@ impl CommandRecipe for ErasedConfigRecipe {
         } else {
             Vec::new()
         }
+    }
+
+    fn structured_output_projection(&self) -> Option<&StructuredOutputProjection> {
+        self.structured_output_projection.as_ref()
     }
 }
 
@@ -969,6 +993,10 @@ pub(crate) trait ErasedCommandConfig {
     ) -> DispatchFn;
 
     fn expected_args(&self) -> Vec<ExpectedArg>;
+
+    fn structured_output_projection(&self) -> Option<&StructuredOutputProjection> {
+        None
+    }
 }
 
 /// Builder for a group of related commands.
@@ -1259,6 +1287,10 @@ where
     fn expected_args(&self) -> Vec<ExpectedArg> {
         self.handler.borrow().expected_args()
     }
+
+    fn structured_output_projection(&self) -> Option<&StructuredOutputProjection> {
+        self.structured_output_projection.as_ref()
+    }
 }
 
 /// Internal: struct-based command config that implements ErasedCommandConfig
@@ -1325,6 +1357,10 @@ where
 
     fn expected_args(&self) -> Vec<ExpectedArg> {
         self.handler.borrow().expected_args()
+    }
+
+    fn structured_output_projection(&self) -> Option<&StructuredOutputProjection> {
+        self.structured_output_projection.as_ref()
     }
 }
 

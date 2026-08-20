@@ -1224,13 +1224,13 @@ THEME: App Configuration
 
 52. What is the App struct?
 
-	App is the runtime container for Standout configuration. It holds:
+	App is the runtime container for Standout configuration. The theme
+	`build()` merged is always present; `get_default_theme()` returns `&Theme`.
 		pub struct App {
 		    registry: TopicRegistry,              // Help topics
 		    output_flag: Option<String>,          // --output flag name
 		    output_file_flag: Option<String>,     // --output-file-path flag name
-		    output_mode: OutputMode,              // Current mode
-		    theme: Option<Theme>,                 // Default theme
+		    theme: Theme,                         // Merged at build(); get_default_theme() -> &Theme
 		    command_hooks: HashMap<String, Hooks>, // Path -> hooks
 		    template_registry: Option<TemplateRegistry>,
 		    stylesheet_registry: Option<StylesheetRegistry>,

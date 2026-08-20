@@ -393,15 +393,15 @@ App::builder()
 
 ## The App Struct
 
-`build()` produces an `App`:
+`build()` produces an `App`. The theme `build()` merged is always present
+(`theme: Theme`); `get_default_theme()` returns `&Theme`.
 
 ```rust
 pub struct App {
     registry: TopicRegistry,
     output_flag: Option<String>,
     output_file_flag: Option<String>,
-    output_mode: OutputMode,
-    theme: Option<Theme>,
+    theme: Theme,
     command_hooks: HashMap<String, Hooks>,
     template_registry: Option<TemplateRegistry>,
     stylesheet_registry: Option<StylesheetRegistry>,
