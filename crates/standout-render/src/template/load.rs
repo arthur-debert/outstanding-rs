@@ -6,9 +6,9 @@
 //! registered template into the engine, and refreshes the registry when a
 //! named template is missing so a file that appeared on disk is picked up.
 //!
-//! The copy is cached on (engine identity, registry identity, generation)
-//! when the registry has no file sources. File-backed registries reread on
-//! every render (ADR-0019). This is not MiniJinja's `Environment::set_loader`:
+//! The copy is cached on (engine identity, registry id, generation) when
+//! the registry has no file sources. File-backed registries reread on every
+//! render (ADR-0019). This is not MiniJinja's `Environment::set_loader`:
 //! that callback is `Send + Sync + 'static`, and the engine is deliberately
 //! `!Send`/`!Sync`.
 
@@ -18,15 +18,19 @@ use super::engine::TemplateEngine;
 use super::registry::{RegistryError, ResolvedTemplate, TemplateRegistry, TEMPLATE_EXTENSIONS};
 use crate::error::RenderError;
 
-/// Identity of the last registry loaded into an engine on this thread.
+/// Identity of the last registry generation loaded into an engine on this thread.
 ///
-/// Raw addresses are compared, never dereferenced. A generation change or a
-/// different engine/registry pair is a miss. Pointer reuse of a dropped engine
-/// is rejected by checking that a registered name is already on the engine.
+/// Engine addresses are compared, never dereferenced. Registry identity is
+/// [`TemplateRegistry::id`], so a new registry is never a hit just because
+/// it reused a heap address. A generation change or a different engine is a
+/// miss. One slot is deliberate: a shared engine overwrites same-named
+/// templates, so returning to a previous registry must reload. Pointer reuse
+/// of a dropped engine is rejected by checking that a registered name is
+/// already on the engine.
 #[derive(Clone, Copy, PartialEq, Eq)]
 struct LoadCacheKey {
     engine: usize,
-    registry: usize,
+    registry_id: u64,
     generation: u64,
 }
 
@@ -41,7 +45,7 @@ fn engine_addr(engine: &dyn TemplateEngine) -> usize {
 fn cache_key(engine: &dyn TemplateEngine, registry: &TemplateRegistry) -> LoadCacheKey {
     LoadCacheKey {
         engine: engine_addr(engine),
-        registry: std::ptr::from_ref(registry) as usize,
+        registry_id: registry.id(),
         generation: registry.generation(),
     }
 }
@@ -69,10 +73,10 @@ fn remember_loaded(engine: &dyn TemplateEngine, registry: &TemplateRegistry) {
 /// Loads every template in `registry` into `engine`.
 ///
 /// Cached for inline/embedded registries: a second call with the same engine,
-/// registry identity, and [`TemplateRegistry::generation`] does not call
-/// [`TemplateEngine::add_template`]. File-backed registries always re-walk
-/// and reread so includes pick up disk changes (ADR-0019). A missing named
-/// lookup still refreshes once (see [`load_named_template`]).
+/// [`TemplateRegistry::id`], and [`TemplateRegistry::generation`] does not
+/// call [`TemplateEngine::add_template`]. File-backed registries always
+/// re-walk and reread so includes pick up disk changes (ADR-0019). A missing
+/// named lookup still refreshes once (see [`load_named_template`]).
 pub(crate) fn load_registry_templates(
     engine: &mut dyn TemplateEngine,
     registry: &TemplateRegistry,
@@ -86,10 +90,8 @@ pub(crate) fn load_registry_templates(
     working.refresh().map_err(registry_error)?;
     load_all(engine, &working)?;
     for name in &original_names {
-        if working.get(name).is_err() {
-            if let Err(error) = registry.get_content(name) {
-                return Err(refresh_error(name, registry, error));
-            }
+        if let Some(error) = disappeared_file_error(name, registry, &working) {
+            return Err(error);
         }
     }
     remember_loaded(engine, registry);
@@ -98,43 +100,37 @@ pub(crate) fn load_registry_templates(
 
 /// Loads `name` and every other registered template into `engine`.
 ///
-/// If `name` is missing, the registry is refreshed once and the load is
-/// retried, so a file-backed template that appeared on disk is picked up. A
-/// second miss produces the [`refresh_error`] diagnostic.
+/// [`load_registry_templates`] copies the current registry into the engine
+/// (and errors if a registered file disappeared or became unreadable). This
+/// function then requires the *current* registry to resolve `name`; engine
+/// membership alone is not enough, because a shared engine can still hold a
+/// template from a previous registry. A name that resolves only via extension
+/// fallback is added under the requested name so `render_named` hits. If
+/// `name` is missing, the registry is refreshed once and the load is retried,
+/// so a file-backed template that appeared on disk is picked up. A second
+/// miss produces the [`refresh_error`] diagnostic.
 pub(crate) fn load_named_template(
     engine: &mut dyn TemplateEngine,
     registry: &TemplateRegistry,
     name: &str,
 ) -> Result<(), RenderError> {
     load_registry_templates(engine, registry)?;
-    if engine.has_template(name) {
-        // Cached copy is enough, but a registered file that disappeared or
-        // became unreadable must still error (ADR-0019), not render stale.
-        match registry.get_content(name) {
-            Ok(_) | Err(RegistryError::NotFound { .. }) => return Ok(()),
-            Err(error) => return Err(refresh_error(name, registry, error)),
-        }
-    }
-    if let Ok(content) = registry.get_content(name) {
-        return add_named(engine, registry, name, &content);
+    if let Some(result) = ensure_requested_name(engine, registry, name) {
+        return result;
     }
 
     let mut refreshed = registry.clone();
     refreshed.refresh().map_err(registry_error)?;
     load_all(engine, &refreshed)?;
     remember_loaded(engine, registry);
-    if engine.has_template(name) {
-        return Ok(());
+    if let Some(result) = ensure_requested_name(engine, &refreshed, name) {
+        return result;
     }
-    match refreshed.get_content(name) {
-        Ok(content) => add_named(engine, &refreshed, name, &content),
-        Err(RegistryError::NotFound { name }) => Err(refresh_error(
-            &name,
-            &refreshed,
-            format!("Template not found: \"{name}\""),
-        )),
-        Err(error) => Err(refresh_error(name, &refreshed, error)),
-    }
+    Err(refresh_error(
+        name,
+        &refreshed,
+        format!("Template not found: \"{name}\""),
+    ))
 }
 
 /// Loads every registered template so inline source can `{% include %}`.
@@ -149,6 +145,37 @@ pub(crate) fn load_inline_dependencies(
     load_registry_templates(engine, registry)
 }
 
+fn is_extension_alias(name: &str) -> bool {
+    TEMPLATE_EXTENSIONS.iter().any(|ext| name.ends_with(ext))
+}
+
+/// If `registry` resolves `name`, ensure the engine has that exact name.
+///
+/// Exact registered names were copied by [`load_all`]. Extension fallback
+/// (`show.j2` → `show`) copies the resolved content under the requested name
+/// so `render_named` hits, and overwrites a leftover from a previous registry.
+/// Engine membership alone is never treated as proof that this registry
+/// supplied `name`.
+fn ensure_requested_name(
+    engine: &mut dyn TemplateEngine,
+    registry: &TemplateRegistry,
+    name: &str,
+) -> Option<Result<(), RenderError>> {
+    match registry.get(name) {
+        Err(RegistryError::NotFound { .. }) => None,
+        Err(error) => Some(Err(refresh_error(name, registry, error))),
+        Ok(_) => {
+            if registry.names().any(|registered| registered == name) {
+                return Some(Ok(()));
+            }
+            Some(match registry.get_content(name) {
+                Ok(content) => add_named(engine, registry, name, &content),
+                Err(error) => Err(refresh_error(name, registry, error)),
+            })
+        }
+    }
+}
+
 fn add_named(
     engine: &mut dyn TemplateEngine,
     registry: &TemplateRegistry,
@@ -160,8 +187,27 @@ fn add_named(
         .map_err(|error| refresh_error(name, registry, error))
 }
 
-fn is_extension_alias(name: &str) -> bool {
-    TEMPLATE_EXTENSIONS.iter().any(|ext| name.ends_with(ext))
+/// A file-backed name that refresh dropped must error (ADR-0019), even when a
+/// framework or inline entry of the same name would still resolve.
+fn disappeared_file_error(
+    name: &str,
+    original: &TemplateRegistry,
+    working: &TemplateRegistry,
+) -> Option<RenderError> {
+    match original.get(name) {
+        Ok(ResolvedTemplate::File(_)) => match working.get(name) {
+            Ok(ResolvedTemplate::File(_)) => None,
+            _ => Some(match original.get_content(name) {
+                Err(error) => refresh_error(name, original, error),
+                Ok(_) => refresh_error(
+                    name,
+                    original,
+                    format!("Template not found: \"{name}\""),
+                ),
+            }),
+        },
+        _ => None,
+    }
 }
 
 fn load_all(
@@ -264,6 +310,155 @@ mod tests {
         let message = error.to_string();
         assert!(
             message.contains("could not be refreshed") && message.contains("missing"),
+            "{message}"
+        );
+    }
+
+    #[test]
+    fn shared_engine_does_not_accept_a_stale_template_from_another_registry() {
+        let mut engine: Box<dyn TemplateEngine> = Box::new(MiniJinjaEngine::new());
+        let mut first = TemplateRegistry::new();
+        first.add_inline("shared", "from-a");
+        first.add_inline("foo", "stale");
+        load_named_template(&mut *engine, &first, "foo").unwrap();
+
+        let mut second = TemplateRegistry::new();
+        second.add_inline("shared", "from-b");
+        let error = load_named_template(&mut *engine, &second, "foo").unwrap_err();
+        let message = error.to_string();
+        assert!(
+            message.contains("foo")
+                && (message.contains("not found") || message.contains("could not be refreshed")),
+            "{message}"
+        );
+
+        load_named_template(&mut *engine, &second, "shared").unwrap();
+        assert_eq!(
+            engine
+                .render_named("shared", &serde_json::json!({}))
+                .unwrap(),
+            "from-b"
+        );
+    }
+
+    #[test]
+    fn extension_fallback_adds_the_requested_name_and_overwrites_a_stale_engine_entry() {
+        let mut engine: Box<dyn TemplateEngine> = Box::new(MiniJinjaEngine::new());
+        let mut first = TemplateRegistry::new();
+        first.add_inline("show.j2", "stale");
+        load_named_template(&mut *engine, &first, "show.j2").unwrap();
+        assert_eq!(
+            engine
+                .render_named("show.j2", &serde_json::json!({}))
+                .unwrap(),
+            "stale"
+        );
+
+        let mut second = TemplateRegistry::new();
+        second.add_inline("show", "fresh");
+        load_named_template(&mut *engine, &second, "show.j2").unwrap();
+        assert_eq!(
+            engine
+                .render_named("show.j2", &serde_json::json!({}))
+                .unwrap(),
+            "fresh"
+        );
+    }
+
+    #[test]
+    fn replacing_inline_template_reloads_on_a_shared_engine() {
+        let mut engine: Box<dyn TemplateEngine> = Box::new(MiniJinjaEngine::new());
+        let mut registry = TemplateRegistry::new();
+        registry.add_inline("list", "one");
+        load_named_template(&mut *engine, &registry, "list").unwrap();
+        assert_eq!(
+            engine.render_named("list", &serde_json::json!({})).unwrap(),
+            "one"
+        );
+
+        registry.add_inline("list", "two");
+        load_named_template(&mut *engine, &registry, "list").unwrap();
+        assert_eq!(
+            engine.render_named("list", &serde_json::json!({})).unwrap(),
+            "two"
+        );
+    }
+
+    #[test]
+    fn adding_then_removing_inline_and_framework_templates_reloads_on_a_shared_engine() {
+        let mut engine: Box<dyn TemplateEngine> = Box::new(MiniJinjaEngine::new());
+        let mut registry = TemplateRegistry::new();
+        registry.add_inline("list", "{% include 'partial' %}");
+        registry.add_inline("partial", "old");
+        load_named_template(&mut *engine, &registry, "list").unwrap();
+        assert_eq!(
+            engine.render_named("list", &serde_json::json!({})).unwrap(),
+            "old"
+        );
+
+        registry.add_inline("partial", "new");
+        load_named_template(&mut *engine, &registry, "list").unwrap();
+        assert_eq!(
+            engine.render_named("list", &serde_json::json!({})).unwrap(),
+            "new"
+        );
+
+        registry.add_framework("standout/x", "fw-one");
+        load_named_template(&mut *engine, &registry, "standout/x").unwrap();
+        assert_eq!(
+            engine
+                .render_named("standout/x", &serde_json::json!({}))
+                .unwrap(),
+            "fw-one"
+        );
+
+        registry.add_framework("standout/x", "fw-two");
+        load_named_template(&mut *engine, &registry, "standout/x").unwrap();
+        assert_eq!(
+            engine
+                .render_named("standout/x", &serde_json::json!({}))
+                .unwrap(),
+            "fw-two"
+        );
+
+        registry.clear_framework();
+        let error = load_named_template(&mut *engine, &registry, "standout/x").unwrap_err();
+        assert!(
+            error.to_string().contains("standout/x"),
+            "{}",
+            error
+        );
+
+        registry.clear();
+        let error = load_named_template(&mut *engine, &registry, "list").unwrap_err();
+        assert!(error.to_string().contains("list"), "{error}");
+    }
+
+    #[test]
+    fn disappeared_file_is_not_replaced_by_a_framework_template_of_the_same_name() {
+        let dir = tempfile::tempdir().unwrap();
+        let nested = dir.path().join("standout");
+        std::fs::create_dir(&nested).unwrap();
+        std::fs::write(nested.join("help.jinja"), "from-disk").unwrap();
+        let mut registry = TemplateRegistry::new();
+        registry.add_template_dir(dir.path()).unwrap();
+        registry.refresh().unwrap();
+        registry.add_framework("standout/help", "from-framework");
+        let mut engine: Box<dyn TemplateEngine> = Box::new(MiniJinjaEngine::new());
+
+        load_named_template(&mut *engine, &registry, "standout/help").unwrap();
+        assert_eq!(
+            engine
+                .render_named("standout/help", &serde_json::json!({}))
+                .unwrap(),
+            "from-disk"
+        );
+
+        std::fs::remove_file(nested.join("help.jinja")).unwrap();
+        let error = load_named_template(&mut *engine, &registry, "standout/help").unwrap_err();
+        let message = error.to_string();
+        assert!(
+            message.contains("standout/help") && message.contains("could not be refreshed"),
             "{message}"
         );
     }

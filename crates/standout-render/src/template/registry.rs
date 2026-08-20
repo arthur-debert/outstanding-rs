@@ -66,6 +66,7 @@
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicU64, Ordering};
 
 use crate::file_loader::{
     self, build_embedded_registry, resolve_in_map, FileRegistry, FileRegistryConfig, LoadError,
@@ -85,6 +86,8 @@ use crate::file_loader::{
 /// 4. `.stpl` - Simple template (SimpleEngine - `{var}` format strings)
 /// 5. `.txt` - Plain text templates
 pub const TEMPLATE_EXTENSIONS: &[&str] = &[".jinja", ".jinja2", ".j2", ".stpl", ".txt"];
+
+static NEXT_REGISTRY_ID: AtomicU64 = AtomicU64::new(1);
 
 /// A template file discovered during directory walking.
 ///
@@ -369,8 +372,14 @@ pub struct TemplateRegistry {
     /// by user templates with the same name.
     framework: HashMap<String, String>,
 
-    /// Incremented by [`Self::refresh`]. Identity plus this value is the
-    /// load-into-engine cache key: a re-walk is a new generation.
+    /// Unique identity assigned at construction. Clones keep the same id so
+    /// a mutated copy is distinguished by [`Self::generation`], not by
+    /// allocation address.
+    id: u64,
+
+    /// Incremented by every mutation that can change resolution or content,
+    /// including [`Self::refresh`]. Identity plus this value is the
+    /// load-into-engine cache key.
     generation: u64,
 }
 
@@ -389,8 +398,13 @@ impl TemplateRegistry {
             files: HashMap::new(),
             sources: HashMap::new(),
             framework: HashMap::new(),
+            id: NEXT_REGISTRY_ID.fetch_add(1, Ordering::Relaxed),
             generation: 0,
         }
+    }
+
+    fn bump_generation(&mut self) {
+        self.generation = self.generation.wrapping_add(1);
     }
 
     /// Adds an inline template with the given name.
@@ -410,6 +424,7 @@ impl TemplateRegistry {
     /// ```
     pub fn add_inline(&mut self, name: impl Into<String>, content: impl Into<String>) {
         self.inline.insert(name.into(), content.into());
+        self.bump_generation();
     }
 
     /// Adds a template directory to search for files.
@@ -424,7 +439,9 @@ impl TemplateRegistry {
     ///
     /// Returns an error if the directory doesn't exist.
     pub fn add_template_dir<P: AsRef<Path>>(&mut self, path: P) -> Result<(), RegistryError> {
-        self.inner.add_dir(path).map_err(RegistryError::from)
+        self.inner.add_dir(path).map_err(RegistryError::from)?;
+        self.bump_generation();
+        Ok(())
     }
 
     /// Adds templates discovered from a directory scan.
@@ -461,6 +478,9 @@ impl TemplateRegistry {
         // Sort by extension priority so higher-priority extensions are processed first
         let mut sorted_files = files;
         sorted_files.sort_by_key(|f| f.extension_priority());
+        // Bump first: a collision can return after partial inserts, and those
+        // still change resolution for the names that landed.
+        self.bump_generation();
 
         for file in sorted_files {
             // Check for cross-directory collision on the base name
@@ -509,6 +529,7 @@ impl TemplateRegistry {
         for (name, content) in templates {
             self.inline.insert(name, content);
         }
+        self.bump_generation();
     }
 
     /// Adds framework templates (lowest priority fallback).
@@ -532,6 +553,7 @@ impl TemplateRegistry {
     /// ```
     pub fn add_framework(&mut self, name: impl Into<String>, content: impl Into<String>) {
         self.framework.insert(name.into(), content.into());
+        self.bump_generation();
     }
 
     /// Adds multiple framework templates from embedded entries.
@@ -552,6 +574,7 @@ impl TemplateRegistry {
         for (name, content) in framework {
             self.framework.insert(name, content);
         }
+        self.bump_generation();
     }
 
     /// Clears all framework templates.
@@ -560,6 +583,7 @@ impl TemplateRegistry {
     /// and require explicit template configuration.
     pub fn clear_framework(&mut self) {
         self.framework.clear();
+        self.bump_generation();
     }
 
     /// Creates a registry from embedded template entries.
@@ -689,18 +713,24 @@ impl TemplateRegistry {
     /// - You've added template directories after the first render
     /// - Template files have been added/removed from disk
     ///
-    /// Each successful refresh increments [`Self::generation`].
+    /// Each successful refresh increments [`Self::generation`], as do in-memory
+    /// mutations such as [`Self::add_inline`].
     ///
     /// # Panics
     ///
     /// Panics if a collision is detected (same name from different directories).
     pub fn refresh(&mut self) -> Result<(), RegistryError> {
         self.inner.refresh().map_err(RegistryError::from)?;
-        self.generation = self.generation.wrapping_add(1);
+        self.bump_generation();
         Ok(())
     }
 
-    /// Refresh generation: identity plus this value is the load-into-engine cache key.
+    /// Unique identity assigned at construction. Clones keep the same id.
+    pub(crate) fn id(&self) -> u64 {
+        self.id
+    }
+
+    /// Mutation generation: identity plus this value is the load-into-engine cache key.
     pub fn generation(&self) -> u64 {
         self.generation
     }
@@ -743,6 +773,7 @@ impl TemplateRegistry {
         self.sources.clear();
         self.inner.clear();
         self.framework.clear();
+        self.bump_generation();
     }
 
     /// Returns true if the registry has framework templates.
@@ -999,6 +1030,39 @@ mod tests {
         assert_eq!(registry.generation(), 1);
         registry.refresh().unwrap();
         assert_eq!(registry.generation(), 2);
+    }
+
+    #[test]
+    fn in_memory_mutations_increment_generation() {
+        let mut registry = TemplateRegistry::new();
+        assert_eq!(registry.generation(), 0);
+        registry.add_inline("a", "1");
+        assert_eq!(registry.generation(), 1);
+        registry.add_framework("standout/x", "x");
+        assert_eq!(registry.generation(), 2);
+        registry.add_embedded(HashMap::from([("b".into(), "2".into())]));
+        assert_eq!(registry.generation(), 3);
+        registry.add_framework_entries(&[("standout/y.jinja", "y")]);
+        assert_eq!(registry.generation(), 4);
+        registry.clear_framework();
+        assert_eq!(registry.generation(), 5);
+        registry.clear();
+        assert_eq!(registry.generation(), 6);
+    }
+
+    #[test]
+    fn new_registries_have_distinct_ids_and_clones_keep_theirs() {
+        let mut a = TemplateRegistry::new();
+        let b = TemplateRegistry::new();
+        assert_ne!(a.id(), b.id());
+        a.add_inline("x", "1");
+        let mut cloned = a.clone();
+        assert_eq!(a.id(), cloned.id());
+        assert_eq!(a.generation(), cloned.generation());
+        cloned.add_inline("x", "2");
+        assert_eq!(a.id(), cloned.id());
+        assert_ne!(a.generation(), cloned.generation());
+        assert_eq!(a.get_content("x").unwrap(), "1");
     }
 
     // =========================================================================

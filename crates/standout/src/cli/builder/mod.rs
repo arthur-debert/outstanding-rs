@@ -187,7 +187,6 @@ pub(crate) fn refresh_engine_templates(
 }
 
 pub(crate) fn refresh_named_template(
-    _engine: &mut dyn standout_render::template::TemplateEngine,
     registry: &TemplateRegistry,
     name: &str,
 ) -> Result<(), TemplateRefreshError> {
@@ -782,7 +781,7 @@ impl AppBuilder {
             )))
         });
 
-        self.validate_command_templates(&template_engine)?;
+        self.validate_command_templates()?;
         self.validate_framework_template_styles()?;
         self.materialize_convention_templates();
 
@@ -824,10 +823,7 @@ impl AppBuilder {
         Ok(app)
     }
 
-    fn validate_command_templates(
-        &self,
-        template_engine: &SharedTemplateEngine,
-    ) -> Result<(), SetupError> {
+    fn validate_command_templates(&self) -> Result<(), SetupError> {
         for (path, pending) in self.pending_commands.borrow().iter() {
             let name = match &pending.template {
                 TemplateRef::Named(name) => name.clone(),
@@ -851,8 +847,7 @@ impl AppBuilder {
                 SetupError::Template(message)
             })?;
             if matches!(pending.template, TemplateRef::Convention(_)) {
-                let mut engine = template_engine.borrow_mut();
-                refresh_named_template(&mut **engine, registry, &name)
+                refresh_named_template(registry, &name)
                     .map_err(|error| SetupError::Template(error.to_string()))?;
             }
         }
