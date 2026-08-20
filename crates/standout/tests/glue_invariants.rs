@@ -38,8 +38,7 @@ fn walk_rs(dir: &Path) -> Vec<PathBuf> {
 }
 
 fn is_comment_line(line: &str) -> bool {
-    let trimmed = line.trim_start();
-    trimmed.starts_with("//") || trimmed.starts_with("///") || trimmed.starts_with("//!")
+    line.trim_start().starts_with("//")
 }
 
 fn fn_name_in_line(line: &str) -> Option<&str> {
@@ -105,48 +104,122 @@ fn ident_at(text: &str, i: usize) -> Option<(&str, usize)> {
     Some((&rest[..end], end))
 }
 
-/// True when `OutputMode::<variant>` at `after_ident` is a match arm
-/// (`=>`, with `| OutputMode::Other` alternatives allowed).
+fn skip_balanced_closer(text: &str, mut i: usize, open: char, close: char) -> Option<usize> {
+    let mut depth = 1i32;
+    i += open.len_utf8();
+    while i < text.len() {
+        let ch = text[i..].chars().next().unwrap();
+        if ch == open {
+            depth += 1;
+        } else if ch == close {
+            depth -= 1;
+            if depth == 0 {
+                return Some(i + close.len_utf8());
+            }
+        }
+        i += ch.len_utf8();
+    }
+    None
+}
+
+/// Tuple/struct variant payload after `OutputMode::Ident`.
+fn skip_optional_payload(text: &str, mut i: usize) -> usize {
+    i = skip_ws(text, i);
+    match text[i..].chars().next() {
+        Some('(') => skip_balanced_closer(text, i, '(', ')').unwrap_or(i),
+        Some('{') => skip_balanced_closer(text, i, '{', '}').unwrap_or(i),
+        _ => i,
+    }
+}
+
+fn is_if_keyword_at(text: &str, i: usize) -> bool {
+    text[i..].starts_with("if")
+        && !matches!(
+            text[i + 2..].chars().next(),
+            Some(ch) if ch.is_ascii_alphanumeric() || ch == '_'
+        )
+}
+
+fn consume_output_mode_variant(text: &str, i: &mut usize) -> bool {
+    *i = skip_ws(text, *i);
+    if !text[*i..].starts_with("OutputMode") {
+        return false;
+    }
+    *i += "OutputMode".len();
+    *i = skip_ws(text, *i);
+    if !text[*i..].starts_with("::") {
+        return false;
+    }
+    *i += 2;
+    *i = skip_ws(text, *i);
+    let Some((_, nlen)) = ident_at(text, *i) else {
+        return false;
+    };
+    *i += nlen;
+    *i = skip_optional_payload(text, *i);
+    true
+}
+
+/// Skip a match-guard expression until `=>` at nesting depth 0.
+fn skip_guard_to_arrow(text: &str, mut i: usize) -> Option<usize> {
+    let mut depth = 0i32;
+    while i < text.len() {
+        if depth == 0 && text[i..].starts_with("=>") {
+            return Some(i);
+        }
+        let ch = text[i..].chars().next().unwrap();
+        match ch {
+            '(' | '{' | '[' => depth += 1,
+            ')' | '}' | ']' => depth = depth.saturating_sub(1),
+            _ => {}
+        }
+        i += ch.len_utf8();
+    }
+    None
+}
+
+/// True when `OutputMode::<variant>` at `after_ident` is a match arm:
+/// optional payload, `|` alternatives, optional `if` guard, then `=>`.
 fn arm_arrow_ahead(text: &str, mut i: usize) -> bool {
+    i = skip_optional_payload(text, i);
     loop {
         i = skip_ws(text, i);
         if text[i..].starts_with("=>") {
             return true;
         }
+        if is_if_keyword_at(text, i) {
+            i = skip_ws(text, i + 2);
+            return skip_guard_to_arrow(text, i).is_some();
+        }
         if !text[i..].starts_with('|') {
             return false;
         }
         i += 1;
-        i = skip_ws(text, i);
-        if !text[i..].starts_with("OutputMode") {
+        if !consume_output_mode_variant(text, &mut i) {
             return false;
         }
-        i += "OutputMode".len();
-        i = skip_ws(text, i);
-        if !text[i..].starts_with("::") {
-            return false;
-        }
-        i += 2;
-        i = skip_ws(text, i);
-        let Some((_, nlen)) = ident_at(text, i) else {
-            return false;
-        };
-        i += nlen;
     }
 }
 
 fn uncommented_source(source: &str) -> String {
     source
         .lines()
-        .filter(|line| !is_comment_line(line))
+        .map(|line| if is_comment_line(line) { "" } else { line })
         .collect::<Vec<_>>()
         .join("\n")
 }
 
-/// Variant names in `OutputMode::<variant> =>` arms, whitespace-insensitive.
-fn output_mode_arm_variants(source: &str) -> Vec<String> {
+fn line_index(text: &str, byte: usize) -> usize {
+    text[..byte.min(text.len())]
+        .bytes()
+        .filter(|&b| b == b'\n')
+        .count()
+}
+
+/// `(line, variant)` for each `OutputMode::<variant> =>` arm.
+fn output_mode_match_arms(source: &str) -> Vec<(usize, String)> {
     let text = uncommented_source(source);
-    let mut variants = Vec::new();
+    let mut arms = Vec::new();
     let mut search_from = 0;
     while let Some(rel) = text[search_from..].find("OutputMode") {
         let start = search_from + rel;
@@ -164,23 +237,18 @@ fn output_mode_arm_variants(source: &str) -> Vec<String> {
         };
         i += nlen;
         if arm_arrow_ahead(&text, i) {
-            variants.push(name.to_string());
+            arms.push((line_index(&text, start), name.to_string()));
         }
         search_from = start + 1;
     }
-    variants
+    arms
 }
 
-fn first_output_mode_arm_line(source: &str) -> Option<usize> {
-    for (idx, line) in source.lines().enumerate() {
-        if is_comment_line(line) {
-            continue;
-        }
-        if line.contains("OutputMode::") || line.contains("OutputMode ::") {
-            return Some(idx);
-        }
-    }
-    None
+fn output_mode_arm_variants(source: &str) -> Vec<String> {
+    output_mode_match_arms(source)
+        .into_iter()
+        .map(|(_, variant)| variant)
+        .collect()
 }
 
 /// Crate names from a Cargo dependency table: the key, or `package` when set.
@@ -338,17 +406,14 @@ fn glue_has_no_serializer_match_arms_on_output_mode() {
     let mut violations = Vec::new();
     for path in walk_rs(&glue_src()) {
         let source = fs::read_to_string(&path).unwrap();
-        let variants = output_mode_arm_variants(&source);
-        if !variants.is_empty() {
-            let lines: Vec<&str> = source.lines().collect();
-            let idx = first_output_mode_arm_line(&source).unwrap_or(0);
+        let lines: Vec<&str> = source.lines().collect();
+        for (idx, variant) in output_mode_match_arms(&source) {
             let owner = enclosing_fn(&lines, idx).unwrap_or("<module>");
             if !ALLOWED_OUTPUT_MODE_ARM_FNS.contains(&owner) {
                 violations.push(format!(
-                    "{}:{} in `{owner}`: OutputMode match arm(s) {variants:?}",
+                    "{}:{} in `{owner}`: OutputMode::{variant} =>",
                     path.strip_prefix(glue_root()).unwrap_or(&path).display(),
-                    idx + 1,
-                    variants = variants
+                    idx + 1
                 ));
             }
         }
@@ -413,4 +478,39 @@ fn output_mode_arm_scan_ignores_matches_macro_and_comments() {
         output_mode_arm_variants(src).is_empty(),
         "comments, matches!, and constructions are not match arms"
     );
+}
+
+#[test]
+fn output_mode_arm_scan_rejects_guarded_arms() {
+    let src = r#"
+        match mode {
+            OutputMode::Json if should_serialize() => drop("guarded copy"),
+            OutputMode::Toml
+                if extra() => {}
+            OutputMode::Yaml | OutputMode::Xml if both() => {}
+        }
+    "#;
+    assert_eq!(
+        output_mode_arm_variants(src),
+        ["Json", "Toml", "Yaml", "Xml"]
+    );
+}
+
+#[test]
+fn output_mode_arm_scan_reports_the_arm_line_not_an_earlier_use() {
+    let src = r#"
+fn set_mode() {
+    let _ = OutputMode::Text;
+}
+fn serialize_in_glue(mode: OutputMode) {
+    match mode {
+        OutputMode::Json => {}
+    }
+}
+"#;
+    let arms = output_mode_match_arms(src);
+    assert_eq!(arms.len(), 1);
+    assert_eq!(arms[0].1, "Json");
+    let lines: Vec<&str> = src.lines().collect();
+    assert_eq!(enclosing_fn(&lines, arms[0].0), Some("serialize_in_glue"));
 }
