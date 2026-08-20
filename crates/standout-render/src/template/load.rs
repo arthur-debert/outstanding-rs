@@ -26,7 +26,7 @@ pub fn load_named_template(
 ) -> Result<(), RenderError> {
     load_with_missing_refresh(engine, registry, |engine, registry| {
         let mut seen = HashSet::new();
-        load_tree(engine, registry, name, &mut seen)
+        load_tree(engine, registry, name, &mut seen, true)
     })
 }
 
@@ -73,6 +73,7 @@ fn load_tree(
     registry: &TemplateRegistry,
     name: &str,
     seen: &mut HashSet<String>,
+    required: bool,
 ) -> Result<(), RenderError> {
     if !seen.insert(name.to_string()) {
         return Ok(());
@@ -81,7 +82,10 @@ fn load_tree(
     let content = match registry.get_content(name) {
         Ok(content) => content,
         Err(RegistryError::NotFound { name }) => {
-            return Err(RenderError::TemplateNotFound(name));
+            if required {
+                return Err(RenderError::TemplateNotFound(name));
+            }
+            return Ok(());
         }
         Err(error) => return Err(refresh_error(name, registry, error)),
     };
@@ -104,8 +108,20 @@ fn load_source_tree(
         return load_all(engine, &refreshed);
     }
 
-    for dependency in dependencies.names {
-        load_tree(engine, registry, &dependency, seen)?;
+    for dependency in dependencies.dependencies {
+        match dependency {
+            Dependency::Required(name) => {
+                load_tree(engine, registry, &name, seen, true)?;
+            }
+            Dependency::Optional(name) => {
+                load_tree(engine, registry, &name, seen, false)?;
+            }
+            Dependency::Alternatives(names) => {
+                for name in names {
+                    load_tree(engine, registry, &name, seen, false)?;
+                }
+            }
+        }
     }
 
     Ok(())
@@ -155,9 +171,19 @@ fn is_not_found(error: &RenderError) -> bool {
     matches!(error, RenderError::TemplateNotFound(_))
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum Dependency {
+    /// `{% extends %}`, `{% import %}`, `{% from %}`, or a bare `{% include %}`.
+    Required(String),
+    /// `{% include 'name' ignore missing %}`.
+    Optional(String),
+    /// `{% include ['first', 'second'] %}`: load whichever candidates exist.
+    Alternatives(Vec<String>),
+}
+
 #[derive(Default)]
 struct TemplateDependencies {
-    names: Vec<String>,
+    dependencies: Vec<Dependency>,
     dynamic: bool,
 }
 
@@ -201,8 +227,8 @@ fn template_dependencies(source: &str) -> TemplateDependencies {
         };
 
         if matches!(keyword, "include" | "extends" | "import" | "from") {
-            match expression.and_then(|expression| static_template_names(keyword, expression)) {
-                Some(names) => dependencies.names.extend(names),
+            match expression.and_then(|expression| static_dependency(keyword, expression)) {
+                Some(dependency) => dependencies.dependencies.push(dependency),
                 None => dependencies.dynamic = true,
             }
         }
@@ -290,16 +316,23 @@ fn split_tag(tag: &str) -> (&str, &str) {
 fn find_endraw(source: &str, cursor: usize) -> Option<usize> {
     let mut cursor = cursor;
     while let Some(open) = source[cursor..].find("{%").map(|index| cursor + index) {
-        let (tag, close) = read_tag(source, open)?;
-        if split_tag(&tag).0 == "endraw" {
-            return Some(close);
+        match read_tag(source, open) {
+            Some((tag, close)) => {
+                if split_tag(&tag).0 == "endraw" {
+                    return Some(close);
+                }
+                cursor = close;
+            }
+            None => {
+                // Inside `{% raw %}`, unclosed `{%` is literal content.
+                cursor = open + 2;
+            }
         }
-        cursor = close;
     }
     None
 }
 
-fn static_template_names(keyword: &str, expression: &str) -> Option<Vec<String>> {
+fn static_dependency(keyword: &str, expression: &str) -> Option<Dependency> {
     let expression = expression.trim();
     if keyword == "include" && expression.starts_with('[') {
         let list_end = expression.find(']')?;
@@ -313,11 +346,26 @@ fn static_template_names(keyword: &str, expression: &str) -> Option<Vec<String>>
         }
         return (!names.is_empty()
             && is_static_dependency_suffix(keyword, &expression[list_end + 1..]))
-        .then_some(names);
+        .then_some(Dependency::Alternatives(names));
     }
 
     let (name, remainder) = quoted_string(expression)?;
-    is_static_dependency_suffix(keyword, remainder).then_some(vec![name])
+    if !is_static_dependency_suffix(keyword, remainder) {
+        return None;
+    }
+    if keyword == "include" && include_ignores_missing(remainder) {
+        Some(Dependency::Optional(name))
+    } else {
+        Some(Dependency::Required(name))
+    }
+}
+
+fn include_ignores_missing(suffix: &str) -> bool {
+    suffix
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .windows(2)
+        .any(|pair| pair == ["ignore", "missing"])
 }
 
 fn is_static_dependency_suffix(keyword: &str, suffix: &str) -> bool {
@@ -359,13 +407,29 @@ mod tests {
     use super::*;
     use crate::template::MiniJinjaEngine;
 
+    fn flattened_names(dependencies: &TemplateDependencies) -> Vec<&str> {
+        dependencies
+            .dependencies
+            .iter()
+            .flat_map(|dependency| match dependency {
+                Dependency::Required(name) | Dependency::Optional(name) => {
+                    vec![name.as_str()]
+                }
+                Dependency::Alternatives(names) => names.iter().map(String::as_str).collect(),
+            })
+            .collect()
+    }
+
     #[test]
     fn template_dependencies_support_whitespace_controls() {
         let dependencies = template_dependencies(
             "{%+ extends 'base' +%}{%- include 'partial' -%}{%+ import 'macros' as macros -%}{%- from 'forms' import field +%}",
         );
 
-        assert_eq!(dependencies.names, ["base", "partial", "macros", "forms"]);
+        assert_eq!(
+            flattened_names(&dependencies),
+            ["base", "partial", "macros", "forms"]
+        );
         assert!(!dependencies.dynamic);
     }
 
@@ -373,7 +437,7 @@ mod tests {
     fn escaped_template_dependency_uses_full_registry_refresh() {
         let dependencies = template_dependencies(r#"{% include "a\\b" %}"#);
 
-        assert!(dependencies.names.is_empty());
+        assert!(dependencies.dependencies.is_empty());
         assert!(dependencies.dynamic);
     }
 
@@ -388,7 +452,42 @@ mod tests {
             r#"{% include 'actual' %}"#,
         ));
 
-        assert_eq!(dependencies.names, ["actual"]);
+        assert_eq!(flattened_names(&dependencies), ["actual"]);
+        assert!(!dependencies.dynamic);
+    }
+
+    #[test]
+    fn ignore_missing_include_is_optional() {
+        let dependencies = template_dependencies("{% include 'optional' ignore missing %}");
+        assert_eq!(
+            dependencies.dependencies,
+            [Dependency::Optional("optional".into())]
+        );
+        assert!(!dependencies.dynamic);
+    }
+
+    #[test]
+    fn include_list_is_ordered_alternatives() {
+        let dependencies = template_dependencies("{% include ['override', 'default'] %}");
+        assert_eq!(
+            dependencies.dependencies,
+            [Dependency::Alternatives(vec![
+                "override".into(),
+                "default".into()
+            ])]
+        );
+        assert!(!dependencies.dynamic);
+    }
+
+    #[test]
+    fn raw_block_with_unclosed_tag_still_finds_later_includes() {
+        // An unclosed quoted `{%` inside raw swallows `%}` until the quote
+        // ends; `read_tag` returns None and must not abort the endraw scan.
+        let dependencies = template_dependencies(concat!(
+            r#"{% raw %}{% "unclosed {% endraw %}"#,
+            "{% include 'actual' %}",
+        ));
+        assert_eq!(flattened_names(&dependencies), ["actual"]);
         assert!(!dependencies.dynamic);
     }
 
@@ -424,6 +523,35 @@ mod tests {
                 .render_named("list", &serde_json::json!({"extra": "hello"}))
                 .unwrap(),
             "Ada"
+        );
+    }
+
+    #[test]
+    fn load_named_template_skips_absent_ignore_missing_include() {
+        let mut registry = TemplateRegistry::new();
+        registry.add_inline("list", "{% include 'optional' ignore missing %}ok");
+        let mut engine: Box<dyn TemplateEngine> = Box::new(MiniJinjaEngine::new());
+
+        load_named_template(&mut *engine, &registry, "list").unwrap();
+        assert_eq!(
+            engine.render_named("list", &serde_json::json!({})).unwrap(),
+            "ok"
+        );
+    }
+
+    #[test]
+    fn load_named_template_loads_present_fallback_from_include_list() {
+        let mut registry = TemplateRegistry::new();
+        registry.add_inline("list", "{% include ['override', 'default'] %}");
+        registry.add_inline("default", "fallback");
+        let mut engine: Box<dyn TemplateEngine> = Box::new(MiniJinjaEngine::new());
+
+        load_named_template(&mut *engine, &registry, "list").unwrap();
+        assert!(!engine.has_template("override"));
+        assert!(engine.has_template("default"));
+        assert_eq!(
+            engine.render_named("list", &serde_json::json!({})).unwrap(),
+            "fallback"
         );
     }
 }

@@ -669,4 +669,76 @@ mod tests {
         };
         assert_eq!(render_request(&request).unwrap(), "hello");
     }
+
+    #[test]
+    fn named_request_skips_absent_ignore_missing_include() {
+        let mut registry = TemplateRegistry::new();
+        registry.add_inline("list", "{% include 'optional' ignore missing %}ok");
+        let request = RenderRequest {
+            template: TemplateRef::Named("list".into()),
+            format: OutputMode::Text,
+            registry: Some(Rc::new(registry)),
+            engine: sample_engine(),
+            ..sample_request()
+        };
+        assert_eq!(render_request(&request).unwrap(), "ok");
+    }
+
+    #[test]
+    fn named_request_falls_back_to_the_present_include_list_candidate() {
+        let mut registry = TemplateRegistry::new();
+        registry.add_inline("list", "{% include ['override', 'default'] %}");
+        registry.add_inline("default", "fallback");
+        let request = RenderRequest {
+            template: TemplateRef::Named("list".into()),
+            format: OutputMode::Text,
+            registry: Some(Rc::new(registry)),
+            engine: sample_engine(),
+            ..sample_request()
+        };
+        assert_eq!(render_request(&request).unwrap(), "fallback");
+    }
+
+    #[test]
+    fn inline_request_skips_absent_ignore_missing_include() {
+        let registry = TemplateRegistry::new();
+        let request = RenderRequest {
+            template: TemplateRef::Inline("{% include 'optional' ignore missing %}ok".into()),
+            format: OutputMode::Text,
+            registry: Some(Rc::new(registry)),
+            engine: sample_engine(),
+            ..sample_request()
+        };
+        assert_eq!(render_request(&request).unwrap(), "ok");
+    }
+
+    #[test]
+    fn inline_request_falls_back_to_the_present_include_list_candidate() {
+        let mut registry = TemplateRegistry::new();
+        registry.add_inline("default", "fallback");
+        let request = RenderRequest {
+            template: TemplateRef::Inline("{% include ['override', 'default'] %}".into()),
+            format: OutputMode::Text,
+            registry: Some(Rc::new(registry)),
+            engine: sample_engine(),
+            ..sample_request()
+        };
+        assert_eq!(render_request(&request).unwrap(), "fallback");
+    }
+
+    #[test]
+    fn inline_request_still_finds_includes_after_an_unclosed_tag_in_raw() {
+        let mut registry = TemplateRegistry::new();
+        registry.add_inline("actual", "hello");
+        let request = RenderRequest {
+            template: TemplateRef::Inline(
+                r#"{% raw %}{% "unclosed {% endraw %}{% include 'actual' %}"#.into(),
+            ),
+            format: OutputMode::Text,
+            registry: Some(Rc::new(registry)),
+            engine: sample_engine(),
+            ..sample_request()
+        };
+        assert_eq!(render_request(&request).unwrap(), r#"{% "unclosed hello"#);
+    }
 }
