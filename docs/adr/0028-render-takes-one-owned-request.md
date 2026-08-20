@@ -1,0 +1,7 @@
+# Render takes one owned request
+
+The pure function is `render(request: &RenderRequest) -> …`. `RenderRequest` carries everything that function needs: data, a render-time `TemplateRef` (`Named`, `Inline`, or `Absent`), theme, format, `TargetProperties`, the engine (`Rc`), an optional template registry, an optional context registry, and an optional CSV projection. `Presentation` is deleted; the artifact path that today stores a `Presentation` until after the write stores a `RenderRequest` instead.
+
+A second argument (`render(request, engine)`) was rejected: standalone and framework would grow two call shapes, and the artifact path would still need a side bundle — `Presentation` under another name. Keeping `Presentation` as a private adapter was rejected for the same reason. `command_path` stays off the request; it is glue error context, not a render input.
+
+Render-time `TemplateRef` moves to `standout-render` so the leaf can interpret named, inline, and absent templates. `Convention` stays glue-private: `build()` materializes it to `Named`, and the leaf never sees it. Help and topics join this pipeline as **named registry templates** (the Spec's "ordinary renders of registry templates"): `build()` registers the framework defaults, and an app override is a name in the same registry. Inline help source was rejected because it would skip the build-time tag check ADR-0020 already applies to registered templates.
