@@ -1635,12 +1635,13 @@ impl App {
     ///
     /// `cmd` must already carry the framework `--output` flag (the same
     /// augmentation the failing parse used). The probe is a clap
-    /// `ignore_errors` parse. Clap-generated help/version are disabled so they
-    /// do not short-circuit; `--help`/`-h`/`--version` are re-declared as
-    /// ordinary flags only when the command tree does not already use those
-    /// spellings, so an application that defined them itself cannot panic the
-    /// probe. That is clap classifying the line, not a lexical argv scan
-    /// (ADR-0018).
+    /// `ignore_errors` parse. Each command in the cloned tree has clap-generated
+    /// help/version disabled, then `--help`/`-h`/`--version` re-declared as
+    /// ordinary (non-global) flags only in scopes that do not already use those
+    /// spellings. A custom declaration on one branch therefore cannot panic the
+    /// probe or leave a sibling's generated `--help` short-circuiting so
+    /// `--output=text` is lost. That is clap classifying the line, not a
+    /// lexical argv scan (ADR-0018).
     pub(crate) fn extract_output_mode_from_unparsed(
         &self,
         cmd: &Command,
@@ -1649,36 +1650,8 @@ impl App {
         if self.output_flag.is_none() {
             return OutputMode::Auto;
         }
-        let mut probe = cmd
-            .clone()
-            .disable_help_flag(true)
-            .disable_version_flag(true)
+        let probe = prepare_output_mode_probe(cmd.clone(), OccupiedSpellings::default())
             .ignore_errors(true);
-
-        let add_help_long = !command_tree_has_long(&probe, "help");
-        let add_help_short = !command_tree_has_short(&probe, 'h');
-        if add_help_long || add_help_short {
-            let mut help = Arg::new(OUTPUT_MODE_PROBE_HELP)
-                .action(ArgAction::SetTrue)
-                .global(true)
-                .hide(true);
-            if add_help_long {
-                help = help.long("help");
-            }
-            if add_help_short {
-                help = help.short('h');
-            }
-            probe = probe.arg(help);
-        }
-        if !command_tree_has_long(&probe, "version") {
-            probe = probe.arg(
-                Arg::new(OUTPUT_MODE_PROBE_VERSION)
-                    .long("version")
-                    .action(ArgAction::SetTrue)
-                    .global(true)
-                    .hide(true),
-            );
-        }
         match probe.try_get_matches_from(args) {
             Ok(matches) => self.extract_output_mode(&matches),
             Err(_) => OutputMode::Auto,
@@ -1888,8 +1861,48 @@ fn parse_output_mode_flag(value: Option<&str>) -> OutputMode {
     }
 }
 
-fn command_tree_has_long(cmd: &Command, name: &str) -> bool {
-    if cmd.get_long_flag() == Some(name)
+/// Long/short spellings already claimed by ancestor *global* arguments.
+///
+/// Probe flags are local to one command. A parent global `--help` is copied
+/// onto children at clap build time, so a child must not add the same
+/// spelling even if it does not declare it itself.
+#[derive(Clone, Default)]
+struct OccupiedSpellings {
+    longs: Vec<String>,
+    shorts: Vec<char>,
+}
+
+impl OccupiedSpellings {
+    fn has_long(&self, name: &str) -> bool {
+        self.longs.iter().any(|long| long == name)
+    }
+
+    fn has_short(&self, short: char) -> bool {
+        self.shorts.contains(&short)
+    }
+
+    fn with_globals_of(&self, cmd: &Command) -> Self {
+        let mut next = self.clone();
+        for arg in cmd.get_arguments().filter(|arg| arg.is_global_set()) {
+            if let Some(long) = arg.get_long() {
+                next.longs.push(long.to_string());
+            }
+            if let Some(aliases) = arg.get_all_aliases() {
+                next.longs.extend(aliases.into_iter().map(str::to_string));
+            }
+            if let Some(short) = arg.get_short() {
+                next.shorts.push(short);
+            }
+            if let Some(aliases) = arg.get_all_short_aliases() {
+                next.shorts.extend(aliases);
+            }
+        }
+        next
+    }
+}
+
+fn command_has_long(cmd: &Command, name: &str) -> bool {
+    cmd.get_long_flag() == Some(name)
         || cmd.get_all_long_flag_aliases().any(|alias| alias == name)
         || cmd.get_arguments().any(|arg| {
             arg.get_long() == Some(name)
@@ -1897,15 +1910,10 @@ fn command_tree_has_long(cmd: &Command, name: &str) -> bool {
                     .get_all_aliases()
                     .is_some_and(|aliases| aliases.contains(&name))
         })
-    {
-        return true;
-    }
-    cmd.get_subcommands()
-        .any(|sub| command_tree_has_long(sub, name))
 }
 
-fn command_tree_has_short(cmd: &Command, short: char) -> bool {
-    if cmd.get_short_flag() == Some(short)
+fn command_has_short(cmd: &Command, short: char) -> bool {
+    cmd.get_short_flag() == Some(short)
         || cmd.get_all_short_flag_aliases().any(|alias| alias == short)
         || cmd.get_arguments().any(|arg| {
             arg.get_short() == Some(short)
@@ -1913,11 +1921,47 @@ fn command_tree_has_short(cmd: &Command, short: char) -> bool {
                     .get_all_short_aliases()
                     .is_some_and(|aliases| aliases.contains(&short))
         })
-    {
-        return true;
+}
+
+/// Disables clap-generated help/version on every command and adds ordinary
+/// probe flags only where that scope does not already use the spelling.
+fn prepare_output_mode_probe(cmd: Command, occupied: OccupiedSpellings) -> Command {
+    let mut cmd = cmd.disable_help_flag(true).disable_version_flag(true);
+
+    let add_help_long = !occupied.has_long("help") && !command_has_long(&cmd, "help");
+    let add_help_short = !occupied.has_short('h') && !command_has_short(&cmd, 'h');
+    if add_help_long || add_help_short {
+        let mut help = Arg::new(OUTPUT_MODE_PROBE_HELP)
+            .action(ArgAction::SetTrue)
+            .hide(true);
+        if add_help_long {
+            help = help.long("help");
+        }
+        if add_help_short {
+            help = help.short('h');
+        }
+        cmd = cmd.arg(help);
     }
-    cmd.get_subcommands()
-        .any(|sub| command_tree_has_short(sub, short))
+    if !occupied.has_long("version") && !command_has_long(&cmd, "version") {
+        cmd = cmd.arg(
+            Arg::new(OUTPUT_MODE_PROBE_VERSION)
+                .long("version")
+                .action(ArgAction::SetTrue)
+                .hide(true),
+        );
+    }
+
+    let occupied_for_children = occupied.with_globals_of(&cmd);
+    let child_names: Vec<String> = cmd
+        .get_subcommands()
+        .map(|sub| sub.get_name().to_string())
+        .collect();
+    for name in child_names {
+        if let Some(sub) = cmd.find_subcommand_mut(&name) {
+            *sub = prepare_output_mode_probe(sub.clone(), occupied_for_children.clone());
+        }
+    }
+    cmd
 }
 
 /// What a help request named, once Clap has read the line.

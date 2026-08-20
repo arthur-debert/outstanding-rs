@@ -1179,4 +1179,91 @@ mod tests {
             );
         }
     }
+
+    #[test]
+    fn output_mode_probe_honours_text_output_on_a_sibling_when_another_branch_owns_the_spelling() {
+        use crate::InputSources;
+        use clap::{Arg, ArgAction};
+        use serde_json::json;
+
+        let app = AppBuilder::new()
+            .command(
+                "list",
+                |_m, _ctx| Ok(HandlerOutput::Render(json!({"n": 1}))),
+                "n={{ n }}",
+            )
+            .unwrap()
+            .command(
+                "sibling",
+                |_m, _ctx| Ok(HandlerOutput::Render(json!({"n": 1}))),
+                "n={{ n }}",
+            )
+            .unwrap()
+            .build()
+            .unwrap();
+        let target = color_capable_stderr_target();
+
+        let help_cmd = Command::new("app")
+            .subcommand(
+                Command::new("list").disable_help_flag(true).arg(
+                    Arg::new("manual_help")
+                        .long("help")
+                        .action(ArgAction::SetTrue),
+                ),
+            )
+            .subcommand(Command::new("sibling"));
+        let help = app.run_with(
+            help_cmd,
+            ["app", "sibling", "--help", "--output=text"],
+            target,
+            InputSources::from_process(),
+        );
+        assert_eq!(
+            help.output_mode(),
+            OutputMode::Text,
+            "sibling --help --output=text must keep Text when list owns --help"
+        );
+
+        let short_cmd = Command::new("app")
+            .subcommand(
+                Command::new("list")
+                    .disable_help_flag(true)
+                    .arg(Arg::new("manual_h").short('h').action(ArgAction::SetTrue)),
+            )
+            .subcommand(Command::new("sibling"));
+        let short = app.run_with(
+            short_cmd,
+            ["app", "sibling", "-h", "--output=text"],
+            target,
+            InputSources::from_process(),
+        );
+        assert_eq!(
+            short.output_mode(),
+            OutputMode::Text,
+            "sibling -h --output=text must keep Text when list owns -h"
+        );
+
+        let version_cmd = Command::new("app")
+            .version("1.0.0")
+            .propagate_version(true)
+            .subcommand(
+                Command::new("list").disable_version_flag(true).arg(
+                    Arg::new("manual_version")
+                        .long("version")
+                        .action(ArgAction::SetTrue),
+                ),
+            )
+            .subcommand(Command::new("sibling"));
+        let version = app.run_with(
+            version_cmd,
+            ["app", "sibling", "--version", "--output=text"],
+            target,
+            InputSources::from_process(),
+        );
+        assert_eq!(
+            version.output_mode(),
+            OutputMode::Text,
+            "sibling --version --output=text must keep Text when list owns --version"
+        );
+    }
 }
