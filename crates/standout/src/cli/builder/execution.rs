@@ -404,8 +404,8 @@ impl App {
         // parse below is what would meet Clap's duplicate-subcommand assertion.
         // It is a setup failure, but it surfaces on a run, so it takes the kind
         // a questionnaire-surface failure takes. The command is not parseable
-        // (clap debug-asserts on the duplicate `help` word), so the output-mode
-        // probe that clap short-circuits use is not run here.
+        // (clap debug-asserts on the duplicate `help` word), so argv is not
+        // scanned for `--output` here.
         if let Some(error) = self.help_word_collision(&augmented_cmd) {
             return (
                 RunResult::Error(RunError::new(error.to_string(), RunErrorKind::ClapUsage)),
@@ -421,15 +421,15 @@ impl App {
             Err(ParseFailure::UnknownDefault(e)) => {
                 return (
                     RunResult::Error(RunError::new(e.to_string(), RunErrorKind::DefaultCommand)),
-                    self.extract_output_mode_from_unparsed(&augmented_cmd, &args),
+                    self.extract_output_mode_from_unparsed(&args),
                 )
             }
             Err(ParseFailure::Clap(e)) => {
                 // Warning flush still needs `--output` on these short-circuits:
                 // `Text` opts the banner out of ANSI. Help *rendering* stays
                 // Auto (see `render_help_for_display_help_error`); only the
-                // run-result mode used for warnings is probed here.
-                let output_mode = self.extract_output_mode_from_unparsed(&augmented_cmd, &args);
+                // run-result mode used for warnings is read from argv here.
+                let output_mode = self.extract_output_mode_from_unparsed(&args);
                 // Clap's native `--help`/`-h` short-circuits validation and
                 // arrives here; standout renders it when it owns help.
                 if let Some(display) = self.intercept_display_help(

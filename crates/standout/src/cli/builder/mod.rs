@@ -1734,29 +1734,27 @@ impl App {
     /// reads the run's output mode, so `--output=text` must opt the warning
     /// block out of ANSI on those exits too.
     ///
-    /// `cmd` must already carry the framework `--output` flag (the same
-    /// augmentation the failing parse used). The probe is a clap
-    /// `ignore_errors` parse. Each command in the cloned tree has clap-generated
-    /// help/version disabled, then `--help`/`-h`/`--version` re-declared as
-    /// ordinary (non-global) flags only in scopes that do not already use those
-    /// spellings. A custom declaration on one branch therefore cannot panic the
-    /// probe or leave a sibling's generated `--help` short-circuiting so
-    /// `--output=text` is lost. That is clap classifying the line, not a
-    /// lexical argv scan (ADR-0018).
+    /// Scans the raw argument list for the long name the app configured
+    /// ([`AppBuilder::output_flag`]): `--flag=value` and `--flag value`. The
+    /// first element is the program name (Clap's argv[0]) and is not a flag.
+    /// A `--` terminator ends the scan, so arguments after it are not flags.
+    /// Unknown values, a missing value, a `--flag` whose next token is another
+    /// option, and a flag that appears only after `--` resolve to
+    /// [`OutputMode::Auto`]. So does an app that configured no output flag.
+    ///
+    /// This is a lexical look at that configured long name, not clap's parse:
+    /// it does not see aliases or a short spelling. Exactness is not required
+    /// here — the command line already failed, and this only styles the warning
+    /// block. The machine-contract Spec owns a parse-independent `--output`
+    /// reading.
     pub(crate) fn extract_output_mode_from_unparsed(
         &self,
-        cmd: &Command,
         args: &[std::ffi::OsString],
     ) -> OutputMode {
-        if self.output_flag.is_none() {
+        let Some(flag) = self.output_flag.as_deref() else {
             return OutputMode::Auto;
-        }
-        let probe = prepare_output_mode_probe(cmd.clone(), OccupiedSpellings::default())
-            .ignore_errors(true);
-        match probe.try_get_matches_from(args) {
-            Ok(matches) => self.extract_output_mode(&matches),
-            Err(_) => OutputMode::Auto,
-        }
+        };
+        parse_output_mode_flag(last_unparsed_flag_value(flag, args))
     }
 
     // =========================================================================
@@ -1944,11 +1942,6 @@ fn duplicate_help_word(claim: &str) -> SetupError {
 const HELP_PROBE_SHORT: &str = "__standout_help_short";
 const HELP_PROBE_LONG: &str = "__standout_help_long";
 
-/// Argument ids for the flags [`App::extract_output_mode_from_unparsed`]
-/// re-declares so a help/version short-circuit still yields `--output`.
-const OUTPUT_MODE_PROBE_HELP: &str = "__standout_output_mode_help";
-const OUTPUT_MODE_PROBE_VERSION: &str = "__standout_output_mode_version";
-
 fn parse_output_mode_flag(value: Option<&str>) -> OutputMode {
     match value {
         Some("term") => OutputMode::Term,
@@ -1962,107 +1955,43 @@ fn parse_output_mode_flag(value: Option<&str>) -> OutputMode {
     }
 }
 
-/// Long/short spellings already claimed by ancestor *global* arguments.
+/// Last `--flag` / `--flag=value` before a `--` terminator, if any.
 ///
-/// Probe flags are local to one command. A parent global `--help` is copied
-/// onto children at clap build time, so a child must not add the same
-/// spelling even if it does not declare it itself.
-#[derive(Clone, Default)]
-struct OccupiedSpellings {
-    longs: Vec<String>,
-    shorts: Vec<char>,
-}
-
-impl OccupiedSpellings {
-    fn has_long(&self, name: &str) -> bool {
-        self.longs.iter().any(|long| long == name)
-    }
-
-    fn has_short(&self, short: char) -> bool {
-        self.shorts.contains(&short)
-    }
-
-    fn with_globals_of(&self, cmd: &Command) -> Self {
-        let mut next = self.clone();
-        for arg in cmd.get_arguments().filter(|arg| arg.is_global_set()) {
-            if let Some(long) = arg.get_long() {
-                next.longs.push(long.to_string());
-            }
-            if let Some(aliases) = arg.get_all_aliases() {
-                next.longs.extend(aliases.into_iter().map(str::to_string));
-            }
-            if let Some(short) = arg.get_short() {
-                next.shorts.push(short);
-            }
-            if let Some(aliases) = arg.get_all_short_aliases() {
-                next.shorts.extend(aliases);
+/// `args` is Clap-style: the first element is the program name and is not
+/// scanned. The look is the configured long name only: not clap aliases, not a
+/// short spelling. `--flag` with no following value, whose next token is `--`,
+/// or whose next token is another option (a token starting with `-`), is a
+/// miss — the following option is not consumed. Last occurrence wins, matching
+/// clap's `Set` action.
+fn last_unparsed_flag_value<'a>(flag: &str, args: &'a [std::ffi::OsString]) -> Option<&'a str> {
+    let long = format!("--{flag}");
+    let prefix = format!("--{flag}=");
+    let mut found = None;
+    let mut iter = args.iter().skip(1).peekable();
+    while let Some(arg) = iter.next() {
+        let Some(arg) = arg.to_str() else {
+            continue;
+        };
+        if arg == "--" {
+            break;
+        }
+        if let Some(value) = arg.strip_prefix(&prefix) {
+            found = Some(value);
+            continue;
+        }
+        if arg == long {
+            match iter.peek().and_then(|next| next.to_str()) {
+                None => found = None,
+                Some("--") => {
+                    found = None;
+                    break;
+                }
+                Some(next) if next.starts_with('-') => found = None,
+                Some(_) => found = iter.next().and_then(|next| next.to_str()),
             }
         }
-        next
     }
-}
-
-fn command_has_long(cmd: &Command, name: &str) -> bool {
-    cmd.get_long_flag() == Some(name)
-        || cmd.get_all_long_flag_aliases().any(|alias| alias == name)
-        || cmd.get_arguments().any(|arg| {
-            arg.get_long() == Some(name)
-                || arg
-                    .get_all_aliases()
-                    .is_some_and(|aliases| aliases.contains(&name))
-        })
-}
-
-fn command_has_short(cmd: &Command, short: char) -> bool {
-    cmd.get_short_flag() == Some(short)
-        || cmd.get_all_short_flag_aliases().any(|alias| alias == short)
-        || cmd.get_arguments().any(|arg| {
-            arg.get_short() == Some(short)
-                || arg
-                    .get_all_short_aliases()
-                    .is_some_and(|aliases| aliases.contains(&short))
-        })
-}
-
-/// Disables clap-generated help/version on every command and adds ordinary
-/// probe flags only where that scope does not already use the spelling.
-fn prepare_output_mode_probe(cmd: Command, occupied: OccupiedSpellings) -> Command {
-    let mut cmd = cmd.disable_help_flag(true).disable_version_flag(true);
-
-    let add_help_long = !occupied.has_long("help") && !command_has_long(&cmd, "help");
-    let add_help_short = !occupied.has_short('h') && !command_has_short(&cmd, 'h');
-    if add_help_long || add_help_short {
-        let mut help = Arg::new(OUTPUT_MODE_PROBE_HELP)
-            .action(ArgAction::SetTrue)
-            .hide(true);
-        if add_help_long {
-            help = help.long("help");
-        }
-        if add_help_short {
-            help = help.short('h');
-        }
-        cmd = cmd.arg(help);
-    }
-    if !occupied.has_long("version") && !command_has_long(&cmd, "version") {
-        cmd = cmd.arg(
-            Arg::new(OUTPUT_MODE_PROBE_VERSION)
-                .long("version")
-                .action(ArgAction::SetTrue)
-                .hide(true),
-        );
-    }
-
-    let occupied_for_children = occupied.with_globals_of(&cmd);
-    let child_names: Vec<String> = cmd
-        .get_subcommands()
-        .map(|sub| sub.get_name().to_string())
-        .collect();
-    for name in child_names {
-        if let Some(sub) = cmd.find_subcommand_mut(&name) {
-            *sub = prepare_output_mode_probe(sub.clone(), occupied_for_children.clone());
-        }
-    }
-    cmd
+    found
 }
 
 /// What a help request named, once Clap has read the line.
