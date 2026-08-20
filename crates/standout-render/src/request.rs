@@ -19,8 +19,8 @@ use crate::error::RenderError;
 use crate::output::OutputMode;
 use crate::projection::CsvProjection;
 use crate::template::{
-    render_auto_with_engine_split_inline, render_auto_with_engine_split_named, RenderResult,
-    TemplateEngine, TemplateRegistry,
+    load_inline_dependencies, load_named_template, render_auto_with_engine_split_inline,
+    render_auto_with_engine_split_named, RenderResult, TemplateEngine, TemplateRegistry,
 };
 use crate::theme::{detect_color_mode, detect_icon_mode, ColorMode, IconMode, Theme};
 use crate::AmbiguousWidth;
@@ -113,15 +113,23 @@ impl TargetProperties {
 /// Independent of [`OutputMode`] (format) and of per-stream color capability
 /// on [`TargetProperties`]. Later `--color=auto|always|never` and the env
 /// ladder (`NO_COLOR`, `CLICOLOR_FORCE`, …) resolve into this field; they are
-/// not `--output`. This workstream names the fact only: no flag, no
-/// resolution, no ANSI application.
+/// not `--output`.
+///
+/// [`render_request`] applies this policy to style-tag transformation for
+/// human formats: [`Always`](Self::Always) emits ANSI, [`Never`](Self::Never)
+/// never does, and [`Auto`](Self::Auto) follows stdout color capability.
+/// [`OutputMode::TermDebug`] keeps bracket tags regardless of policy.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ColorPolicy {
-    /// Color when the consumed stream is color-capable.
+    /// Defer to the requested format: [`OutputMode::Term`] colors,
+    /// [`OutputMode::Text`] strips, and [`OutputMode::Auto`] follows stdout
+    /// color capability.
     Auto,
-    /// Color even when the consumed stream is not a TTY.
+    /// Color even when the consumed stream is not a TTY, including
+    /// [`OutputMode::Text`].
     Always,
-    /// Never emit ANSI, including on a color-capable TTY.
+    /// Never emit ANSI, including on a color-capable TTY and
+    /// [`OutputMode::Term`].
     Never,
 }
 
@@ -195,33 +203,71 @@ impl fmt::Debug for RenderRequest {
 
 /// Pure render entry: a function of an explicit [`RenderRequest`].
 ///
-/// Takes the owned request by reference. Convenience [`crate::render`] and
-/// [`crate::render_with_output`] stay as separate functions and are not
-/// rewired onto this path in this workstream.
+/// Takes the owned request by reference and returns the formatted string
+/// (ANSI applied when [`ColorPolicy`] and capability say so). Convenience
+/// [`crate::render`] and [`crate::render_with_output`] stay as separate
+/// functions and are not rewired onto this path in this workstream.
 ///
-/// Width and ambiguous-width come from [`RenderRequest::target`]. `Auto`
-/// format is resolved from [`RenderRequest::color_policy`] and stdout color
-/// capability before the existing style-tag pass, so this entry does not
-/// consult process-global detectors for those facts. Color-scheme and icon
-/// mode still ride the existing internals until later workstreams.
+/// Callers that need both formatted and stripped output (CLI pipes, output
+/// files, post-output hooks) should use [`render_request_split`].
+///
+/// Width and ambiguous-width come from [`RenderRequest::target`]. Style-tag
+/// transformation honors [`RenderRequest::color_policy`] for every human
+/// format: [`ColorPolicy::Always`] forces ANSI, [`ColorPolicy::Never`] never
+/// emits it, and [`ColorPolicy::Auto`] defers to the requested format
+/// (`Term` colors, `Text` strips, `Auto` follows stdout capability).
+/// [`OutputMode::TermDebug`] keeps bracket tags. Named templates and their
+/// includes are loaded from [`RenderRequest::registry`] when present.
+/// Color-scheme and icon mode still ride the existing internals until later
+/// workstreams.
 pub fn render_request(request: &RenderRequest) -> Result<String, RenderError> {
-    Ok(render_from_request(request)?.formatted)
+    Ok(render_request_split(request)?.formatted)
 }
 
-fn resolve_human_format(request: &RenderRequest) -> OutputMode {
+/// Pure render entry that returns both formatted and stripped output.
+///
+/// Same request function as [`render_request`]: formatted carries ANSI when
+/// the color policy and stdout capability say so; raw is the same text with
+/// style tags stripped, for pipes and output files.
+pub fn render_request_split(request: &RenderRequest) -> Result<RenderResult, RenderError> {
+    render_from_request(request)
+}
+
+/// Format fact passed to [`RenderContext`]: `Auto` resolves via color policy
+/// and capability; an explicit human format is left as requested.
+fn resolve_render_format(request: &RenderRequest) -> OutputMode {
     match request.format {
-        OutputMode::Auto => match request.color_policy {
-            ColorPolicy::Never => OutputMode::Text,
-            ColorPolicy::Always => OutputMode::Term,
-            ColorPolicy::Auto => {
+        OutputMode::Auto => resolve_style_mode(request),
+        other => other,
+    }
+}
+
+/// Style-tag transformation from [`ColorPolicy`], format, and stdout capability.
+///
+/// [`ColorPolicy::Always`] forces ANSI and [`ColorPolicy::Never`] never emits
+/// it, including when the requested format is [`OutputMode::Term`] or
+/// [`OutputMode::Text`]. [`ColorPolicy::Auto`] defers to that format:
+/// `Term` still colors, `Text` still strips, and `Auto` follows stdout
+/// capability. [`OutputMode::TermDebug`] keeps bracket tags.
+fn resolve_style_mode(request: &RenderRequest) -> OutputMode {
+    if request.format == OutputMode::TermDebug {
+        return OutputMode::TermDebug;
+    }
+    match request.color_policy {
+        ColorPolicy::Never => OutputMode::Text,
+        ColorPolicy::Always => OutputMode::Term,
+        ColorPolicy::Auto => match request.format {
+            OutputMode::Text => OutputMode::Text,
+            OutputMode::Term => OutputMode::Term,
+            OutputMode::Auto => {
                 if request.target.stdout_color_capability {
                     OutputMode::Term
                 } else {
                     OutputMode::Text
                 }
             }
+            other => other,
         },
-        other => other,
     }
 }
 
@@ -265,11 +311,12 @@ fn render_from_request(request: &RenderRequest) -> Result<RenderResult, RenderEr
         return serialize_structured(&request.data, request.format);
     }
 
-    let format = resolve_human_format(request);
+    let render_format = resolve_render_format(request);
+    let style_mode = resolve_style_mode(request);
     let empty_registry = ContextRegistry::new();
     let context_registry = request.context_registry.as_ref().unwrap_or(&empty_registry);
     let render_ctx = RenderContext::with_ambiguous_width(
-        format,
+        render_format,
         request.target.width,
         request.target.ambiguous_width,
         &request.theme,
@@ -278,23 +325,23 @@ fn render_from_request(request: &RenderRequest) -> Result<RenderResult, RenderEr
 
     match &request.template {
         TemplateRef::Inline(source) => {
+            if let Some(registry) = &request.registry {
+                load_inline_dependencies(&mut **request.engine.borrow_mut(), registry, source)?;
+            }
             let engine = request.engine.borrow();
             render_auto_with_engine_split_inline(
                 &**engine,
                 source,
                 &request.data,
                 &request.theme,
-                format,
+                style_mode,
                 context_registry,
                 &render_ctx,
             )
         }
         TemplateRef::Named(name) => {
             if let Some(registry) = &request.registry {
-                let content = registry
-                    .get_content(name)
-                    .map_err(|e| RenderError::TemplateNotFound(e.to_string()))?;
-                request.engine.borrow_mut().add_template(name, &content)?;
+                load_named_template(&mut **request.engine.borrow_mut(), registry, name)?;
             }
             let engine = request.engine.borrow();
             render_auto_with_engine_split_named(
@@ -302,7 +349,7 @@ fn render_from_request(request: &RenderRequest) -> Result<RenderResult, RenderEr
                 name,
                 &request.data,
                 &request.theme,
-                format,
+                style_mode,
                 context_registry,
                 &render_ctx,
             )
@@ -504,5 +551,122 @@ mod tests {
             ..sample_request()
         };
         assert_eq!(render_request(&request).unwrap(), "hi");
+    }
+
+    fn styled_theme() -> Theme {
+        Theme::new().add("tone", console::Style::new().red().force_styling(true))
+    }
+
+    fn styled_inline_request(
+        format: OutputMode,
+        color_policy: ColorPolicy,
+        stdout_color_capability: bool,
+    ) -> RenderRequest {
+        RenderRequest {
+            data: json!({"msg": "hi"}),
+            template: TemplateRef::Inline("[tone]{{ msg }}[/tone]".into()),
+            theme: styled_theme(),
+            format,
+            color_policy,
+            target: TargetProperties {
+                stdout_color_capability,
+                ..sample_target()
+            },
+            ..sample_request()
+        }
+    }
+
+    #[test]
+    fn color_policy_controls_ansi_independently_of_human_format_and_capability() {
+        let formats = [OutputMode::Auto, OutputMode::Term, OutputMode::Text];
+        let policies = [ColorPolicy::Auto, ColorPolicy::Always, ColorPolicy::Never];
+        for format in formats {
+            for policy in policies {
+                for capable in [true, false] {
+                    let expect_ansi = match policy {
+                        ColorPolicy::Always => true,
+                        ColorPolicy::Never => false,
+                        ColorPolicy::Auto => match format {
+                            OutputMode::Term => true,
+                            OutputMode::Text => false,
+                            OutputMode::Auto => capable,
+                            _ => unreachable!("matrix only covers human formats"),
+                        },
+                    };
+                    let request = styled_inline_request(format, policy, capable);
+                    let rendered = render_request_split(&request).unwrap();
+                    assert_eq!(
+                        rendered.formatted.contains("\x1b["),
+                        expect_ansi,
+                        "format={format:?} policy={policy:?} capable={capable} formatted={:?}",
+                        rendered.formatted
+                    );
+                    assert_eq!(
+                        rendered.raw, "hi",
+                        "format={format:?} policy={policy:?} capable={capable}"
+                    );
+                    assert!(
+                        !rendered.raw.contains("\x1b["),
+                        "raw must never carry ANSI: {:?}",
+                        rendered.raw
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn term_debug_keeps_bracket_tags_regardless_of_color_policy() {
+        let request = styled_inline_request(OutputMode::TermDebug, ColorPolicy::Never, true);
+        let rendered = render_request_split(&request).unwrap();
+        assert_eq!(rendered.formatted, "[tone]hi[/tone]");
+        assert_eq!(rendered.raw, "hi");
+    }
+
+    #[test]
+    fn named_request_loads_static_includes_from_the_registry() {
+        let mut registry = TemplateRegistry::new();
+        registry.add_inline("list", "{% include 'partial' %}");
+        registry.add_inline("partial", "{{ msg }}");
+        let request = RenderRequest {
+            data: json!({"msg": "hello"}),
+            template: TemplateRef::Named("list".into()),
+            format: OutputMode::Text,
+            registry: Some(Rc::new(registry)),
+            engine: sample_engine(),
+            ..sample_request()
+        };
+        assert_eq!(render_request(&request).unwrap(), "hello");
+    }
+
+    #[test]
+    fn named_request_loads_dynamic_includes_from_the_registry() {
+        let mut registry = TemplateRegistry::new();
+        registry.add_inline("list", "{% include extra %}");
+        registry.add_inline("greeting", "Ada");
+        let request = RenderRequest {
+            data: json!({"extra": "greeting"}),
+            template: TemplateRef::Named("list".into()),
+            format: OutputMode::Text,
+            registry: Some(Rc::new(registry)),
+            engine: sample_engine(),
+            ..sample_request()
+        };
+        assert_eq!(render_request(&request).unwrap(), "Ada");
+    }
+
+    #[test]
+    fn inline_request_loads_static_includes_from_the_registry() {
+        let mut registry = TemplateRegistry::new();
+        registry.add_inline("partial", "{{ msg }}");
+        let request = RenderRequest {
+            data: json!({"msg": "hello"}),
+            template: TemplateRef::Inline("{% include 'partial' %}".into()),
+            format: OutputMode::Text,
+            registry: Some(Rc::new(registry)),
+            engine: sample_engine(),
+            ..sample_request()
+        };
+        assert_eq!(render_request(&request).unwrap(), "hello");
     }
 }

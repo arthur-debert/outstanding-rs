@@ -199,11 +199,14 @@ pub use environment::{
 
 // Composition-contract types (explicit request; detect at the crate edge)
 pub use request::{
-    render_request, ColorPolicy, RenderRequest, SharedTemplateEngine, TargetProperties, TemplateRef,
+    render_request, render_request_split, ColorPolicy, RenderRequest, SharedTemplateEngine,
+    TargetProperties, TemplateRef,
 };
 
 // Render module exports
 pub use template::{
+    // Template registry
+    load_named_template,
     render,
     render_auto,
     render_auto_with_context,
@@ -214,7 +217,6 @@ pub use template::{
     render_with_output,
     render_with_vars,
     validate_template,
-    // Template registry
     walk_template_dir,
     // Template engine abstraction
     MiniJinjaEngine,

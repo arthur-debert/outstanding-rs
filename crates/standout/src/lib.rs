@@ -260,7 +260,8 @@ pub use standout_render::{
 // Composition-contract types (from standout-render / standout-input)
 pub use standout_input::InputSources;
 pub use standout_render::{
-    render_request, ColorPolicy, RenderRequest, SharedTemplateEngine, TargetProperties, TemplateRef,
+    render_request, render_request_split, ColorPolicy, RenderRequest, SharedTemplateEngine,
+    TargetProperties, TemplateRef,
 };
 
 // Output module exports (from standout-render)
@@ -272,6 +273,8 @@ pub use standout_render::{
 
 // Render module exports (from standout-render)
 pub use standout_render::{
+    // Template registry
+    load_named_template,
     render,
     render_auto,
     render_auto_with_context,
@@ -281,7 +284,6 @@ pub use standout_render::{
     render_with_output,
     render_with_vars,
     validate_template,
-    // Template registry
     walk_template_dir,
     // Template engine abstraction
     MiniJinjaEngine,

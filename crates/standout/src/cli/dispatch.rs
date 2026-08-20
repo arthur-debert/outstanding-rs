@@ -20,10 +20,10 @@ use crate::context::{ContextRegistry, RenderContext};
 use crate::Theme;
 use crate::{ColorPolicy, RenderRequest, StructuredOutputProjection, TargetProperties};
 use serde::Serialize;
-use standout_render::render_request;
+use standout_render::render_request_split;
 
 /// Walking-skeleton command: dispatch builds a [`RenderRequest`] and calls
-/// [`render_request`] when destination facts were supplied via `run_with`.
+/// [`render_request_split`] when destination facts were supplied via `run_with`.
 const SKELETON_COMMAND: &str = "list";
 
 // Re-export pure dispatch utilities from standout-dispatch
@@ -259,10 +259,10 @@ impl Presentation {
         json_data: &serde_json::Value,
     ) -> Result<(String, String), RunError> {
         let target = self.target.expect("request path requires TargetProperties");
-        self.refresh_named_template_if_needed()?;
+        let template = self.render_time_template()?;
         let request = RenderRequest {
             data: json_data.clone(),
-            template: render_time_template(&self.template),
+            template,
             theme: self.theme.clone(),
             format: self.output_mode,
             color_policy: ColorPolicy::Auto,
@@ -275,44 +275,52 @@ impl Presentation {
                 .as_ref()
                 .map(|projection| projection.csv_projection().clone()),
         };
-        let formatted = render_request(&request).map_err(render_error)?;
-        // Skeleton command templates are unstyled (or Auto without color in
-        // the harness), so formatted and raw match. Other commands keep the
-        // Presentation split path.
-        Ok((formatted.clone(), formatted))
+        let rendered = render_request_split(&request).map_err(render_error)?;
+        Ok((rendered.formatted, rendered.raw))
     }
 
-    fn refresh_named_template_if_needed(&self) -> Result<(), RunError> {
-        let name = match &self.template {
-            TemplateRef::Named(name) | TemplateRef::Convention(name) => name,
-            TemplateRef::Inline(_) | TemplateRef::Absent(_) => return Ok(()),
-        };
-        let registry = self.template_registry.as_ref().ok_or_else(|| {
-            RunError::new(
-                format!(
-                    "command `{}` references template `{}`, but no template registry is configured; add .templates(embed_templates!(\"src/templates\")) or .templates_dir(\"path/to/templates\") before .build()",
-                    self.command_path, name
+    /// Maps glue [`TemplateRef`] onto the render-time type.
+    ///
+    /// Silent and binary absence cannot serialize: they keep the actionable
+    /// [`absent_template_render_error`]. Only structured-only maps to
+    /// render-time [`standout_render::TemplateRef::Absent`]. Named templates
+    /// still require a registry; the leaf loads the include tree from it.
+    fn render_time_template(&self) -> Result<standout_render::TemplateRef, RunError> {
+        match &self.template {
+            TemplateRef::Named(name) | TemplateRef::Convention(name) => {
+                if self.template_registry.is_none() {
+                    return Err(RunError::new(
+                        format!(
+                            "command `{}` references template `{}`, but no template registry is configured; add .templates(embed_templates!(\"src/templates\")) or .templates_dir(\"path/to/templates\") before .build()",
+                            self.command_path, name
+                        ),
+                        RunErrorKind::Render,
+                    ));
+                }
+                Ok(standout_render::TemplateRef::Named(name.clone()))
+            }
+            TemplateRef::Inline(source) => Ok(standout_render::TemplateRef::Inline(source.clone())),
+            TemplateRef::Absent(reason) => match reason {
+                TemplateAbsence::Silent | TemplateAbsence::Binary => Err(
+                    absent_template_render_error(&self.command_path, *reason, self.output_mode),
                 ),
-                RunErrorKind::Render,
-            )
-        })?;
-        let mut engine = self.template_engine.borrow_mut();
-        refresh_named_template(&mut **engine, registry, name).map_err(|error| {
-            RunError::new(
-                format!("{} while rendering command `{}`", error, self.command_path),
-                RunErrorKind::Render,
-            )
-        })
-    }
-}
-
-fn render_time_template(template: &TemplateRef) -> standout_render::TemplateRef {
-    match template {
-        TemplateRef::Named(name) | TemplateRef::Convention(name) => {
-            standout_render::TemplateRef::Named(name.clone())
+                TemplateAbsence::StructuredOnly => {
+                    if matches!(
+                        self.output_mode,
+                        crate::OutputMode::Term
+                            | crate::OutputMode::Text
+                            | crate::OutputMode::TermDebug
+                    ) {
+                        return Err(absent_template_render_error(
+                            &self.command_path,
+                            *reason,
+                            self.output_mode,
+                        ));
+                    }
+                    Ok(standout_render::TemplateRef::Absent)
+                }
+            },
         }
-        TemplateRef::Inline(source) => standout_render::TemplateRef::Inline(source.clone()),
-        TemplateRef::Absent(_) => standout_render::TemplateRef::Absent,
     }
 }
 
