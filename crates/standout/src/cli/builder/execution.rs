@@ -5,9 +5,13 @@
 //! - `dispatch()` - match and execute handler
 //! - `dispatch_from()` - parse args and dispatch
 //! - `run()` - dispatch and print
+//! - `run_with()` - inner public run taking target properties and input sources
 //! - `run_to_string()` - dispatch and return
 
-use crate::{write_binary_output, write_output, OutputDestination, OutputMode};
+use crate::{
+    write_binary_output, write_output, InputSources, OutputDestination, OutputMode,
+    TargetProperties,
+};
 use clap::{Arg, ArgAction, ArgMatches, Command};
 use std::io::Write;
 use std::path::PathBuf;
@@ -534,6 +538,30 @@ impl App {
         }
 
         handled
+    }
+
+    /// Inner public run: destination properties and input sources as two arguments.
+    ///
+    /// Production [`run`](Self::run) will later call [`TargetProperties::detect`]
+    /// and [`InputSources::from_process`] at the process edge and forward both
+    /// here. Tests construct both values themselves and call this same method.
+    /// The two arguments are not a combined run-environment type and are not
+    /// stored on [`App`].
+    ///
+    /// The body is unimplemented in this workstream (`todo!()`). [`Self::run`]
+    /// is unchanged and does not call this method yet.
+    pub fn run_with<I, T>(
+        &self,
+        _cmd: Command,
+        _args: I,
+        _target: TargetProperties,
+        _sources: InputSources,
+    ) -> bool
+    where
+        I: IntoIterator<Item = T>,
+        T: Into<std::ffi::OsString> + Clone,
+    {
+        todo!("ROB04-WS01 lands this signature only; wiring run() onto it is a later workstream")
     }
 
     /// Runs the CLI and returns the rendered output as a string.

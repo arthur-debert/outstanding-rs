@@ -23,6 +23,10 @@
 //! - **`simple-prompts`** (default) - Enable basic terminal prompts
 //! - **`inquire`** - Enable rich TUI prompts via the inquire crate
 //!
+//! [`InputSources`] is the explicit stdin, clipboard, and prompt-responder for
+//! one invocation. Production constructs it from the real process; tests put
+//! mocks in the same type.
+//!
 //! # Architecture
 //!
 //! The crate is built around the [`InputCollector`] trait, which all input
@@ -63,6 +67,7 @@ mod chain;
 mod collector;
 pub mod env;
 mod error;
+mod input_sources;
 mod inputs;
 pub mod questionnaire;
 mod responder;
@@ -72,6 +77,7 @@ pub mod sources;
 pub use chain::InputChain;
 pub use collector::{InputCollector, InputSourceKind, ResolvedInput};
 pub use error::InputError;
+pub use input_sources::InputSources;
 pub use inputs::{Inputs, MissingInput};
 pub use responder::{
     reset_default_prompt_responder, set_default_prompt_responder, PromptContext, PromptKind,

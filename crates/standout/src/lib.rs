@@ -18,6 +18,9 @@
 //! - [`Theme`]: Named collection of adaptive styles that respond to light/dark mode
 //! - [`ColorMode`]: Light or dark color mode enum
 //! - [`OutputMode`]: Control output formatting (Auto/Term/Text/TermDebug)
+//! - [`TargetProperties`]: Destination facts for one invocation
+//! - [`RenderRequest`]: Owned explicit input to [`render_request`]
+//! - [`InputSources`]: Stdin, clipboard, and prompt-responder for one invocation
 //! - [`topics`]: Help topics system for extended documentation
 //! - Style syntax: Tag-based styling `[name]content[/name]`
 //! - [`Renderer`]: Pre-compile templates for repeated rendering
@@ -251,6 +254,12 @@ pub use standout_render::{
 pub use standout_render::{
     detect_color_mode, detect_icon_mode, set_icon_detector, set_theme_detector, ColorMode,
     IconDefinition, IconMode, IconSet, Theme,
+};
+
+// Composition-contract types (from standout-render / standout-input)
+pub use standout_input::InputSources;
+pub use standout_render::{
+    render_request, RenderRequest, SharedTemplateEngine, TargetProperties, TemplateRef,
 };
 
 // Output module exports (from standout-render)

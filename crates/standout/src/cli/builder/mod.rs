@@ -62,6 +62,10 @@ pub(crate) type SharedTemplateEngine =
     Rc<RefCell<Box<dyn standout_render::template::TemplateEngine>>>;
 
 /// The presentation configuration a command declared.
+///
+/// Glue-private: keeps [`TemplateRef::Convention`] until `build()` materializes
+/// it to a registry name. The public render-time [`crate::TemplateRef`] lives
+/// in `standout-render` and has only `Named` / `Inline` / `Absent`.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum TemplateRef {
     /// A named template that must resolve through the template registry.
