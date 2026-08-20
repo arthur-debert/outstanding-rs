@@ -1735,11 +1735,12 @@ impl App {
     /// block out of ANSI on those exits too.
     ///
     /// Scans the raw argument list for the long name the app configured
-    /// ([`AppBuilder::output_flag`]): `--flag=value` and `--flag value`. A
-    /// `--` terminator ends the scan, so arguments after it are not flags.
-    /// Unknown values, a missing value, and a flag that appears only after
-    /// `--` resolve to [`OutputMode::Auto`]. So does an app that configured
-    /// no output flag.
+    /// ([`AppBuilder::output_flag`]): `--flag=value` and `--flag value`. The
+    /// first element is the program name (Clap's argv[0]) and is not a flag.
+    /// A `--` terminator ends the scan, so arguments after it are not flags.
+    /// Unknown values, a missing value, a `--flag` whose next token is another
+    /// option, and a flag that appears only after `--` resolve to
+    /// [`OutputMode::Auto`]. So does an app that configured no output flag.
     ///
     /// This is a lexical look at that configured long name, not clap's parse:
     /// it does not see aliases or a short spelling. Exactness is not required
@@ -1956,14 +1957,17 @@ fn parse_output_mode_flag(value: Option<&str>) -> OutputMode {
 
 /// Last `--flag` / `--flag=value` before a `--` terminator, if any.
 ///
-/// The look is the configured long name only: not clap aliases, not a short
-/// spelling. `--flag` with no following value, or whose next token is `--`,
-/// is a miss. Last occurrence wins, matching clap's `Set` action.
+/// `args` is Clap-style: the first element is the program name and is not
+/// scanned. The look is the configured long name only: not clap aliases, not a
+/// short spelling. `--flag` with no following value, whose next token is `--`,
+/// or whose next token is another option (a token starting with `-`), is a
+/// miss — the following option is not consumed. Last occurrence wins, matching
+/// clap's `Set` action.
 fn last_unparsed_flag_value<'a>(flag: &str, args: &'a [std::ffi::OsString]) -> Option<&'a str> {
     let long = format!("--{flag}");
     let prefix = format!("--{flag}=");
     let mut found = None;
-    let mut iter = args.iter();
+    let mut iter = args.iter().skip(1).peekable();
     while let Some(arg) = iter.next() {
         let Some(arg) = arg.to_str() else {
             continue;
@@ -1976,13 +1980,14 @@ fn last_unparsed_flag_value<'a>(flag: &str, args: &'a [std::ffi::OsString]) -> O
             continue;
         }
         if arg == long {
-            match iter.next().and_then(|next| next.to_str()) {
+            match iter.peek().and_then(|next| next.to_str()) {
                 None => found = None,
                 Some("--") => {
                     found = None;
                     break;
                 }
-                Some(value) => found = Some(value),
+                Some(next) if next.starts_with('-') => found = None,
+                Some(_) => found = iter.next().and_then(|next| next.to_str()),
             }
         }
     }

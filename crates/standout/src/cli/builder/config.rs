@@ -1035,6 +1035,38 @@ mod tests {
             OutputMode::Auto,
             "missing value"
         );
+        assert_eq!(
+            app.extract_output_mode_from_unparsed(&os_args(&["app", "--output", "--output=text"])),
+            OutputMode::Text,
+            "standalone --output must not consume a following --output=text"
+        );
+        assert_eq!(
+            app.extract_output_mode_from_unparsed(&os_args(&[
+                "app", "--output", "--output", "text"
+            ])),
+            OutputMode::Text,
+            "standalone --output must not consume a following --output value"
+        );
+    }
+
+    #[test]
+    fn unparsed_output_mode_skips_argv0() {
+        let app = AppBuilder::new().build().unwrap();
+        assert_eq!(
+            app.extract_output_mode_from_unparsed(&os_args(&["--output=text"])),
+            OutputMode::Auto,
+            "argv[0] is the program name, even when it looks like a flag"
+        );
+        assert_eq!(
+            app.extract_output_mode_from_unparsed(&os_args(&["--output=json", "--output=text"])),
+            OutputMode::Text,
+            "a flag-like program name must not count as an occurrence"
+        );
+        assert_eq!(
+            app.extract_output_mode_from_unparsed(&os_args(&["--", "--output=text"])),
+            OutputMode::Text,
+            "a -- program name must not terminate the scan"
+        );
     }
 
     #[test]
@@ -1237,7 +1269,8 @@ mod tests {
     }
 
     #[test]
-    fn unparsed_output_mode_honours_text_output_on_a_sibling_when_another_branch_owns_the_spelling() {
+    fn unparsed_output_mode_honours_text_output_on_a_sibling_when_another_branch_owns_the_spelling()
+    {
         use crate::InputSources;
         use clap::{Arg, ArgAction};
         use serde_json::json;
