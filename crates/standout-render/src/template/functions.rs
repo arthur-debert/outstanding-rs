@@ -649,7 +649,7 @@ pub fn render_with_context<T: Serialize>(
     } else {
         TemplateRef::Inline(template.to_string())
     };
-    let request = convenience_request(
+    let mut request = convenience_request(
         template_ref,
         serde_json::to_value(data)?,
         theme.clone(),
@@ -659,6 +659,7 @@ pub fn render_with_context<T: Serialize>(
         template_registry.map(|registry| std::rc::Rc::new(registry.clone())),
         None,
     );
+    request.extras = render_context.extras.clone();
     render_request(&request)
 }
 
@@ -862,8 +863,36 @@ pub fn render_auto_with_engine_split(
 /// Structured modes serialize `data` directly. Human-readable modes always
 /// render `template` as source text, even when a registered template has the
 /// same name.
-#[allow(clippy::too_many_arguments)]
+///
+/// Detects color-scheme and icon mode at this edge. The request path uses
+/// [`render_engine_split_inline`] with facts already on the request.
 pub fn render_auto_with_engine_split_inline(
+    engine: &dyn super::TemplateEngine,
+    template: &str,
+    data: &serde_json::Value,
+    theme: &Theme,
+    mode: OutputMode,
+    context_registry: &ContextRegistry,
+    render_context: &RenderContext,
+) -> Result<RenderResult, RenderError> {
+    let detected = TargetProperties::detect();
+    render_engine_split_inline(
+        engine,
+        template,
+        data,
+        theme,
+        mode,
+        context_registry,
+        render_context,
+        detected.color_scheme,
+        detected.icon_mode,
+    )
+}
+
+/// Request-path inline render: color-scheme and icon mode come from the
+/// request, not from a detector.
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn render_engine_split_inline(
     engine: &dyn super::TemplateEngine,
     template: &str,
     data: &serde_json::Value,
@@ -892,8 +921,36 @@ pub fn render_auto_with_engine_split_inline(
 /// Structured modes serialize `data` directly. Human-readable modes always
 /// render `name` through [`TemplateEngine::render_named_with_render_widths`]
 /// and never reinterpret it as inline source.
-#[allow(clippy::too_many_arguments)]
+///
+/// Detects color-scheme and icon mode at this edge. The request path uses
+/// [`render_engine_split_named`] with facts already on the request.
 pub fn render_auto_with_engine_split_named(
+    engine: &dyn super::TemplateEngine,
+    name: &str,
+    data: &serde_json::Value,
+    theme: &Theme,
+    mode: OutputMode,
+    context_registry: &ContextRegistry,
+    render_context: &RenderContext,
+) -> Result<RenderResult, RenderError> {
+    let detected = TargetProperties::detect();
+    render_engine_split_named(
+        engine,
+        name,
+        data,
+        theme,
+        mode,
+        context_registry,
+        render_context,
+        detected.color_scheme,
+        detected.icon_mode,
+    )
+}
+
+/// Request-path named render: color-scheme and icon mode come from the
+/// request, not from a detector.
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn render_engine_split_named(
     engine: &dyn super::TemplateEngine,
     name: &str,
     data: &serde_json::Value,
@@ -1612,6 +1669,31 @@ mod tests {
     }
 
     #[test]
+    fn render_with_context_preserves_caller_extras_for_providers() {
+        use crate::context::{ContextRegistry, RenderContext};
+
+        let theme = Theme::new();
+        let data = json!({"name": "Ada"});
+        let mut registry = ContextRegistry::new();
+        registry.add_provider("label", |ctx: &RenderContext| {
+            Value::from(ctx.get_extra("label").unwrap_or("missing"))
+        });
+        let render_ctx = RenderContext::new(OutputMode::Text, Some(80), &theme, &data)
+            .with_extra("label", "from-extra");
+        let output = render_with_context(
+            "{{ name }} {{ label }}",
+            &data,
+            &theme,
+            OutputMode::Text,
+            &registry,
+            &render_ctx,
+            None,
+        )
+        .unwrap();
+        assert_eq!(output, "Ada from-extra");
+    }
+
+    #[test]
     fn test_render_with_context_dynamic_provider() {
         use crate::context::{ContextRegistry, RenderContext};
 
@@ -2326,6 +2408,7 @@ mod tests {
             registry: None,
             context_registry: None,
             csv_projection: None,
+            extras: HashMap::new(),
         };
         assert_eq!(render_request(&request).unwrap(), "[ok] done >>");
     }
@@ -2363,6 +2446,7 @@ mod tests {
             registry: None,
             context_registry: None,
             csv_projection: None,
+            extras: HashMap::new(),
         };
         assert_eq!(render_request(&request).unwrap(), "\u{f00c} done");
     }

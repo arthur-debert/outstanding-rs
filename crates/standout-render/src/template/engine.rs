@@ -7,6 +7,7 @@
 use minijinja::{Environment, Value};
 
 use std::collections::HashMap;
+use std::marker::PhantomData;
 
 use crate::error::RenderError;
 use crate::template::spelling::{self, stringify};
@@ -165,9 +166,14 @@ pub trait TemplateEngine {
 /// ).unwrap();
 /// assert_eq!(output, "Hello, World!");
 /// ```
+///
+/// Not `Send` or `Sync`: the framework is single-threaded (#84). Filter width
+/// state is scoped per render without a mutex (ADR-0030). Concurrent renders
+/// on a shared engine are unsupported at the type level.
 pub struct MiniJinjaEngine {
     env: Environment<'static>,
     render_widths: RenderWidthSource,
+    _not_threaded: PhantomData<*const ()>,
 }
 
 impl MiniJinjaEngine {
@@ -176,7 +182,11 @@ impl MiniJinjaEngine {
         let mut env = spelling::new_environment();
         let render_widths = RenderWidthSource::new(AmbiguousWidth::Narrow);
         register_filters_with_source(&mut env, render_widths.clone());
-        Self { env, render_widths }
+        Self {
+            env,
+            render_widths,
+            _not_threaded: PhantomData,
+        }
     }
 
     /// Returns a reference to the underlying MiniJinja environment.

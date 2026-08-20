@@ -5,6 +5,7 @@
 //! uses.
 
 use serde::Serialize;
+use std::collections::HashMap;
 
 use super::{refresh_named_template, App};
 use crate::setup::SetupError;
@@ -23,10 +24,14 @@ impl App {
     /// Detects destination facts at this edge and overwrites ambiguous-width
     /// with the application's configured policy.
     ///
+    /// Structured modes (JSON/YAML/XML/CSV) serialize `data` through
+    /// [`render_request`] with [`TemplateRef::Absent`] and do not look up or
+    /// refresh a named template.
+    ///
     /// # Errors
     ///
     /// Returns an error if:
-    /// - No template registry is configured for a named template render
+    /// - No template registry is configured for a named human-mode render
     /// - The template is not found
     /// - Rendering fails
     pub fn render<T: Serialize>(
@@ -35,6 +40,10 @@ impl App {
         data: &T,
         mode: OutputMode,
     ) -> Result<String, SetupError> {
+        if mode.is_structured() {
+            return self.render_named_or_inline(TemplateRef::Absent, data, mode, None);
+        }
+
         let registry = self.template_registry.as_ref().ok_or_else(|| {
             SetupError::Config(format!(
                 "render({template:?}, ...) needs a template registry; add .templates(embed_templates!(\"src/templates\")) or .templates_dir(\"path/to/templates\") before .build(), or call render_inline(...) for inline template source"
@@ -103,6 +112,7 @@ impl App {
             registry,
             context_registry: Some(self.context_registry.clone()),
             csv_projection: None,
+            extras: HashMap::new(),
         };
         render_request(&request).map_err(|e| SetupError::Template(e.to_string()))
     }

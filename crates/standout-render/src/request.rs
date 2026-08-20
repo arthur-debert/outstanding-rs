@@ -8,6 +8,7 @@
 //! [`TargetProperties::detect`].
 
 use std::cell::RefCell;
+use std::collections::HashMap;
 use std::fmt;
 use std::rc::Rc;
 
@@ -21,9 +22,8 @@ use crate::error::RenderError;
 use crate::output::OutputMode;
 use crate::projection::CsvProjection;
 use crate::template::{
-    load_inline_dependencies, load_named_template, render_auto_with_engine_split_inline,
-    render_auto_with_engine_split_named, MiniJinjaEngine, RenderResult, TemplateEngine,
-    TemplateRegistry,
+    load_inline_dependencies, load_named_template, render_engine_split_inline,
+    render_engine_split_named, MiniJinjaEngine, RenderResult, TemplateEngine, TemplateRegistry,
 };
 use crate::theme::{probe_color_mode, probe_icon_mode, ColorMode, IconMode, Theme};
 use crate::AmbiguousWidth;
@@ -160,7 +160,8 @@ pub enum TemplateRef {
 ///
 /// Format ([`OutputMode`]), color policy ([`ColorPolicy`]), and per-stream
 /// color capability on [`TargetProperties`] are independent facts. A later
-/// `--color` flag must have a home that is not `--output`.
+/// `--color` flag must have a home that is not `--output`. Caller extras
+/// for context providers ride [`Self::extras`].
 pub struct RenderRequest {
     /// Handler data, already serialized.
     pub data: serde_json::Value,
@@ -183,6 +184,13 @@ pub struct RenderRequest {
     pub context_registry: Option<ContextRegistry>,
     /// Optional CSV projection for structured CSV output.
     pub csv_projection: Option<CsvProjection>,
+    /// Caller-supplied extras forwarded onto [`RenderContext`] for providers.
+    ///
+    /// Convenience wrappers that take a [`RenderContext`] copy these through
+    /// so [`RenderContext::with_extra`] values survive `render_request`.
+    /// The reserved `standout.ambiguous_width` key is owned by
+    /// [`TargetProperties::ambiguous_width`] and is not copied from here.
+    pub extras: HashMap<String, String>,
 }
 
 impl fmt::Debug for RenderRequest {
@@ -197,6 +205,7 @@ impl fmt::Debug for RenderRequest {
             .field("has_registry", &self.registry.is_some())
             .field("has_context_registry", &self.context_registry.is_some())
             .field("csv_projection", &self.csv_projection)
+            .field("extras", &self.extras)
             .finish_non_exhaustive()
     }
 }
@@ -312,17 +321,10 @@ fn render_from_request(request: &RenderRequest) -> Result<RenderResult, RenderEr
         return serialize_structured(&request.data, request.format);
     }
 
-    let render_format = resolve_render_format(request);
     let style_mode = resolve_style_mode(request);
     let empty_registry = ContextRegistry::new();
     let context_registry = request.context_registry.as_ref().unwrap_or(&empty_registry);
-    let render_ctx = RenderContext::with_ambiguous_width(
-        render_format,
-        request.target.width,
-        request.target.ambiguous_width,
-        &request.theme,
-        &request.data,
-    );
+    let render_ctx = render_context_from_request(request);
 
     match &request.template {
         TemplateRef::Inline(source) => {
@@ -330,7 +332,7 @@ fn render_from_request(request: &RenderRequest) -> Result<RenderResult, RenderEr
                 load_inline_dependencies(&mut **request.engine.borrow_mut(), registry, source)?;
             }
             let engine = request.engine.borrow();
-            render_auto_with_engine_split_inline(
+            render_engine_split_inline(
                 &**engine,
                 source,
                 &request.data,
@@ -347,7 +349,7 @@ fn render_from_request(request: &RenderRequest) -> Result<RenderResult, RenderEr
                 load_named_template(&mut **request.engine.borrow_mut(), registry, name)?;
             }
             let engine = request.engine.borrow();
-            render_auto_with_engine_split_named(
+            render_engine_split_named(
                 &**engine,
                 name,
                 &request.data,
@@ -395,7 +397,29 @@ pub(crate) fn convenience_request(
         registry,
         context_registry,
         csv_projection,
+        extras: HashMap::new(),
     }
+}
+
+/// Provider view reconstructed from the request, including caller extras.
+///
+/// Ambiguous-width on [`TargetProperties`] wins over a reserved extra of the
+/// same name so width stays a destination fact, not a leftover context key.
+fn render_context_from_request(request: &RenderRequest) -> RenderContext<'_> {
+    let mut ctx = RenderContext::with_ambiguous_width(
+        resolve_render_format(request),
+        request.target.width,
+        request.target.ambiguous_width,
+        &request.theme,
+        &request.data,
+    );
+    for (key, value) in &request.extras {
+        if key == "standout.ambiguous_width" {
+            continue;
+        }
+        ctx.extras.insert(key.clone(), value.clone());
+    }
+    ctx
 }
 
 #[cfg(test)]
@@ -433,6 +457,7 @@ mod tests {
             registry: None,
             context_registry: None,
             csv_projection: None,
+            extras: HashMap::new(),
         }
     }
 
@@ -465,6 +490,25 @@ mod tests {
         assert!(!props.stderr_color_capability);
         assert!(!props.stdout_is_terminal);
         assert!(props.stderr_is_terminal);
+    }
+
+    #[test]
+    fn render_request_carries_extras_to_context_providers() {
+        use minijinja::Value;
+
+        let mut registry = ContextRegistry::new();
+        registry.add_provider("label", |ctx: &RenderContext| {
+            Value::from(ctx.get_extra("label").unwrap_or("missing"))
+        });
+        let request = RenderRequest {
+            data: json!({"name": "Ada"}),
+            template: TemplateRef::Inline("{{ name }} {{ label }}".into()),
+            format: OutputMode::Text,
+            context_registry: Some(registry),
+            extras: HashMap::from([("label".into(), "from-extra".into())]),
+            ..sample_request()
+        };
+        assert_eq!(render_request(&request).unwrap(), "Ada from-extra");
     }
 
     #[test]
@@ -875,6 +919,7 @@ mod tests {
             registry: None,
             context_registry: None,
             csv_projection: None,
+            extras: HashMap::new(),
         };
         assert_eq!(via_wrapper, render_request(&request).unwrap());
         assert_eq!(via_wrapper, "hello");

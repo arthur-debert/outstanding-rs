@@ -42,6 +42,7 @@ mod tests {
     use console::Style;
     use serde::Serialize;
     use std::cell::RefCell;
+    use std::collections::HashMap;
     use std::rc::Rc;
 
     #[derive(Serialize)]
@@ -90,6 +91,7 @@ mod tests {
             registry: None,
             context_registry: None,
             csv_projection: None,
+            extras: HashMap::new(),
         };
         let dark_output = render_request(&dark).unwrap();
         assert!(

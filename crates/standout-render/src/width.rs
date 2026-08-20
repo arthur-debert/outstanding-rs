@@ -106,9 +106,10 @@ impl RenderWidthSource {
         terminal_width: Option<usize>,
     ) -> RenderWidthGuard<'_> {
         // Width is on the request; this stores it for MiniJinja filters
-        // registered at engine construction. The framework is single-threaded
-        // (#84), so there is no lock. Restoration is handled by
-        // RenderWidthGuard, including after a template/filter panic.
+        // registered at engine construction. There is no mutex (ADR-0030).
+        // MiniJinjaEngine is !Send/!Sync so concurrent renders cannot
+        // interleave scoped() on a shared engine. Restoration is handled
+        // by RenderWidthGuard, including after a template/filter panic.
         let previous_ambiguous_width = self.ambiguous_width();
         let previous_terminal_width = self.terminal_width();
         self.store_ambiguous_width(policy);

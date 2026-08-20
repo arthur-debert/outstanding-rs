@@ -8,6 +8,7 @@
 
 use clap::ArgMatches;
 use std::cell::RefCell;
+use std::collections::HashMap;
 use std::rc::Rc;
 
 use crate::cli::builder::{SharedTemplateEngine, TemplateAbsence, TemplateRef};
@@ -129,6 +130,7 @@ fn build_render_request(
         context_registry: Some(context_registry.clone()),
         csv_projection: structured_output_projection
             .map(|projection| projection.csv_projection().clone()),
+        extras: HashMap::new(),
     })
 }
 

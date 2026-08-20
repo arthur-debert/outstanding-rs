@@ -501,6 +501,7 @@ impl Renderer {
             registry: Some(Rc::new(self.registry.clone())),
             context_registry: None,
             csv_projection: None,
+            extras: HashMap::new(),
         };
         render_request(&request)
     }

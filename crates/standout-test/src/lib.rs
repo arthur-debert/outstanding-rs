@@ -209,10 +209,10 @@ impl TestHarness {
     ///
     /// This does **not** reach variables a dependency read before the run
     /// started. `console` initializes its color globals lazily from `CLICOLOR`
-    /// / `CLICOLOR_FORCE`, and **every** run latches them before applying this
-    /// map (see [`with_color`](Self::with_color)); `NO_COLOR` and
-    /// `TERM=dumb` land the same way. Setting them here changes what handler
-    /// code reads, not what `console` decided — pin those conventions with
+    /// / `CLICOLOR_FORCE`, and **every** run latches them from the real
+    /// environment before applying this map; `NO_COLOR` and `TERM=dumb` land
+    /// the same way. Setting them here changes what handler code reads, not
+    /// what `console` decided — pin those conventions with
     /// [`run_process`](Self::run_process), where the child does its own
     /// initialization against the real environment.
     pub fn env(mut self, key: impl Into<String>, value: impl Into<String>) -> Self {
@@ -474,6 +474,17 @@ impl TestHarness {
             std::env::set_current_dir(&target)
                 .expect("TestHarness: failed to change working directory");
         }
+
+        // Latch `console`'s lazy color globals from the real environment
+        // before applying this run's `.env()`. `console` initializes on the
+        // first read from `CLICOLOR` / `CLICOLOR_FORCE`; reading after the
+        // overlay would let a temporary `CLICOLOR_FORCE=1` initialize the
+        // process-global that later tests inherit. This is a read, not
+        // `set_colors_enabled` (ADR-0030).
+        let _ = console::colors_enabled();
+        let _ = console::colors_enabled_stderr();
+        let _ = console::true_colors_enabled();
+        let _ = console::true_colors_enabled_stderr();
 
         // 2. Env vars. Save originals so we can restore even on panic.
         // Record each original only once per key (before any mutation), so
