@@ -5,6 +5,7 @@
 //! scalars). It is not bundled with destination properties into a combined
 //! run-environment type.
 
+use std::fmt;
 use std::sync::Arc;
 
 use crate::env::{ClipboardReader, StdinReader};
@@ -19,6 +20,14 @@ pub struct InputSources {
     stdin: Arc<dyn StdinReader>,
     clipboard: Arc<dyn ClipboardReader>,
     responder: Option<Arc<dyn PromptResponder>>,
+}
+
+impl fmt::Debug for InputSources {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("InputSources")
+            .field("has_responder", &self.responder.is_some())
+            .finish_non_exhaustive()
+    }
 }
 
 impl InputSources {
@@ -69,18 +78,6 @@ mod tests {
     use super::*;
     use crate::env::{MockClipboard, MockStdin};
 
-    /// Compile-time probe: if `T` implements `Copy`, both `AmbiguousIfImpl`
-    /// impls apply and `<Probe<T> as AmbiguousIfImpl<_>>::check` is ambiguous.
-    fn assert_not_copy<T>() {
-        struct Probe<U>(std::marker::PhantomData<U>);
-        trait AmbiguousIfImpl<A> {
-            fn check() {}
-        }
-        impl<U> AmbiguousIfImpl<()> for Probe<U> {}
-        impl<U: Copy> AmbiguousIfImpl<u8> for Probe<U> {}
-        let _ = <Probe<T> as AmbiguousIfImpl<_>>::check;
-    }
-
     fn sample() -> InputSources {
         InputSources::new(MockStdin::piped("hello"), MockClipboard::empty(), None)
     }
@@ -96,9 +93,27 @@ mod tests {
 
     #[test]
     fn input_sources_is_not_copy() {
-        assert_not_copy::<InputSources>();
+        // Probe the concrete type. A generic helper would pick the unconstrained
+        // impl while type-checking the helper and stay green if `InputSources`
+        // later gained `Copy`.
+        struct Probe<U>(std::marker::PhantomData<U>);
+        trait AmbiguousIfImpl<A> {
+            fn check() {}
+        }
+        impl<U> AmbiguousIfImpl<()> for Probe<U> {}
+        impl<U: Copy> AmbiguousIfImpl<u8> for Probe<U> {}
+        let _ = <Probe<InputSources> as AmbiguousIfImpl<_>>::check;
+
         let sources = sample();
         let moved = sources;
         assert!(!moved.stdin().is_terminal());
+    }
+
+    #[test]
+    fn input_sources_debug_is_structural() {
+        let sources = sample();
+        let debug = format!("{sources:?}");
+        assert!(debug.contains("InputSources"));
+        assert!(debug.contains("has_responder: false"));
     }
 }

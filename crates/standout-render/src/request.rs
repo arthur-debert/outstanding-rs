@@ -1,11 +1,13 @@
 //! Boundary types for an explicit render: destination facts and the request.
 //!
 //! [`TargetProperties`] is what this invocation's destination looks like.
-//! [`RenderRequest`] is what to render, including those properties. The pure
+//! [`RenderRequest`] is what to render, including those properties and a
+//! resolved [`ColorPolicy`] independent of [`crate::OutputMode`]. The pure
 //! leaf entry is [`render_request`]; convenience wrappers stay as separate
 //! functions and are not rewired onto this path in this workstream.
 
 use std::cell::RefCell;
+use std::fmt;
 use std::rc::Rc;
 
 use crate::context::ContextRegistry;
@@ -93,6 +95,23 @@ impl TargetProperties {
     }
 }
 
+/// Resolved color axis for one invocation.
+///
+/// Independent of [`OutputMode`] (format) and of per-stream color capability
+/// on [`TargetProperties`]. Later `--color=auto|always|never` and the env
+/// ladder (`NO_COLOR`, `CLICOLOR_FORCE`, …) resolve into this field; they are
+/// not `--output`. This workstream names the fact only: no flag, no
+/// resolution, no ANSI application.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ColorPolicy {
+    /// Color when the consumed stream is color-capable.
+    Auto,
+    /// Color even when the consumed stream is not a TTY.
+    Always,
+    /// Never emit ANSI, including on a color-capable TTY.
+    Never,
+}
+
 /// Named, inline, or declared-absent template carried on a [`RenderRequest`].
 ///
 /// This is the render-time type. It has no `Convention` variant: convention
@@ -118,9 +137,9 @@ pub enum TemplateRef {
 /// request; the leaf does not read framework-owned detectors or process
 /// globals.
 ///
-/// Format ([`OutputMode`]) is a separate fact from color capability on
-/// [`TargetProperties`]. A later `--color` flag must have a home that is not
-/// `--output`.
+/// Format ([`OutputMode`]), color policy ([`ColorPolicy`]), and per-stream
+/// color capability on [`TargetProperties`] are independent facts. A later
+/// `--color` flag must have a home that is not `--output`.
 pub struct RenderRequest {
     /// Handler data, already serialized.
     pub data: serde_json::Value,
@@ -128,8 +147,11 @@ pub struct RenderRequest {
     pub template: TemplateRef,
     /// Resolved theme for this invocation.
     pub theme: Theme,
-    /// Output format (`--output`), independent of color capability.
+    /// Output format (`--output`), independent of [`Self::color_policy`].
     pub format: OutputMode,
+    /// Resolved color policy, independent of [`Self::format`] and of
+    /// per-stream capability on [`Self::target`].
+    pub color_policy: ColorPolicy,
     /// Destination properties for this invocation.
     pub target: TargetProperties,
     /// Template engine, shared the way glue already shares it.
@@ -140,6 +162,22 @@ pub struct RenderRequest {
     pub context_registry: Option<ContextRegistry>,
     /// Optional CSV projection for structured CSV output.
     pub csv_projection: Option<CsvProjection>,
+}
+
+impl fmt::Debug for RenderRequest {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("RenderRequest")
+            .field("data", &self.data)
+            .field("template", &self.template)
+            .field("theme", &self.theme)
+            .field("format", &self.format)
+            .field("color_policy", &self.color_policy)
+            .field("target", &self.target)
+            .field("has_registry", &self.registry.is_some())
+            .field("has_context_registry", &self.context_registry.is_some())
+            .field("csv_projection", &self.csv_projection)
+            .finish_non_exhaustive()
+    }
 }
 
 /// Pure render entry: a function of an explicit [`RenderRequest`].
@@ -182,6 +220,7 @@ mod tests {
             template: TemplateRef::Named("list".into()),
             theme: Theme::new(),
             format: OutputMode::Text,
+            color_policy: ColorPolicy::Auto,
             target: sample_target(),
             engine: sample_engine(),
             registry: None,
@@ -233,6 +272,7 @@ mod tests {
         let held: Vec<RenderRequest> = vec![stored.request];
         assert_eq!(held.len(), 1);
         assert_eq!(held[0].format, OutputMode::Text);
+        assert_eq!(held[0].color_policy, ColorPolicy::Auto);
         match &held[0].template {
             TemplateRef::Named(name) => assert_eq!(name, "list"),
             TemplateRef::Inline(_) | TemplateRef::Absent => {
@@ -272,5 +312,48 @@ mod tests {
         assert!(request.context_registry.is_some());
         assert!(request.csv_projection.is_some());
         assert!(matches!(request.template, TemplateRef::Absent));
+    }
+
+    #[test]
+    fn render_request_format_policy_and_capabilities_vary_independently() {
+        let request = RenderRequest {
+            format: OutputMode::Json,
+            color_policy: ColorPolicy::Always,
+            target: TargetProperties {
+                stdout_color_capability: false,
+                stderr_color_capability: true,
+                stdout_is_terminal: false,
+                stderr_is_terminal: true,
+                ..sample_target()
+            },
+            ..sample_request()
+        };
+        assert_eq!(request.format, OutputMode::Json);
+        assert_eq!(request.color_policy, ColorPolicy::Always);
+        assert!(!request.target.stdout_color_capability);
+        assert!(request.target.stderr_color_capability);
+        assert!(!request.target.stdout_is_terminal);
+        assert!(request.target.stderr_is_terminal);
+    }
+
+    #[test]
+    fn color_policy_is_a_tri_state() {
+        let variants = [ColorPolicy::Auto, ColorPolicy::Always, ColorPolicy::Never];
+        for policy in variants {
+            match policy {
+                ColorPolicy::Auto | ColorPolicy::Always | ColorPolicy::Never => {}
+            }
+        }
+        let copied = assert_copy(ColorPolicy::Never);
+        assert_eq!(copied, ColorPolicy::Never);
+    }
+
+    #[test]
+    fn render_request_debug_is_structural() {
+        let request = sample_request();
+        let debug = format!("{request:?}");
+        assert!(debug.contains("RenderRequest"));
+        assert!(debug.contains("color_policy: Auto"));
+        assert!(debug.contains("has_registry: false"));
     }
 }

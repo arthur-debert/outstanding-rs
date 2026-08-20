@@ -23,7 +23,7 @@ pub use crate::{render, render_request, render_with_output};
 pub use crate::{ColorMode, IconMode, Theme};
 
 // Output control
-pub use crate::OutputMode;
+pub use crate::{ColorPolicy, OutputMode};
 
 // Composition-contract types
 pub use crate::{RenderRequest, TargetProperties, TemplateRef};

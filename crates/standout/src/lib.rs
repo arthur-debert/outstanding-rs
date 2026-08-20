@@ -20,6 +20,7 @@
 //! - [`OutputMode`]: Control output formatting (Auto/Term/Text/TermDebug)
 //! - [`TargetProperties`]: Destination facts for one invocation
 //! - [`RenderRequest`]: Owned explicit input to [`render_request`]
+//! - [`ColorPolicy`]: Resolved color axis on a [`RenderRequest`], independent of [`OutputMode`]
 //! - [`InputSources`]: Stdin, clipboard, and prompt-responder for one invocation
 //! - [`topics`]: Help topics system for extended documentation
 //! - Style syntax: Tag-based styling `[name]content[/name]`
@@ -259,7 +260,7 @@ pub use standout_render::{
 // Composition-contract types (from standout-render / standout-input)
 pub use standout_input::InputSources;
 pub use standout_render::{
-    render_request, RenderRequest, SharedTemplateEngine, TargetProperties, TemplateRef,
+    render_request, ColorPolicy, RenderRequest, SharedTemplateEngine, TargetProperties, TemplateRef,
 };
 
 // Output module exports (from standout-render)

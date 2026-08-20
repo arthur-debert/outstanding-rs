@@ -4,12 +4,12 @@
 //! detection behaviour.
 
 use clap::Command;
-use standout::cli::App;
+use standout::cli::{App, RunResult};
 use standout::{InputSources, TargetProperties};
 
 #[test]
 fn inner_run_takes_target_properties_and_input_sources() {
-    fn assert_fn<I, T>(_: fn(&App, Command, I, TargetProperties, InputSources) -> bool)
+    fn assert_fn<I, T>(_: fn(&App, Command, I, TargetProperties, InputSources) -> RunResult)
     where
         I: IntoIterator<Item = T>,
         T: Into<std::ffi::OsString> + Clone,

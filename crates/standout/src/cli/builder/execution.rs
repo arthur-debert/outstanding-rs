@@ -5,7 +5,8 @@
 //! - `dispatch()` - match and execute handler
 //! - `dispatch_from()` - parse args and dispatch
 //! - `run()` - dispatch and print
-//! - `run_with()` - inner public run taking target properties and input sources
+//! - `run_with()` - inner public run taking target properties and input sources,
+//!   returning [`crate::cli::RunResult`]
 //! - `run_to_string()` - dispatch and return
 
 use crate::{
@@ -543,8 +544,11 @@ impl App {
     /// Inner public run: destination properties and input sources as two arguments.
     ///
     /// Production [`run`](Self::run) will later call [`TargetProperties::detect`]
-    /// and [`InputSources::from_process`] at the process edge and forward both
-    /// here. Tests construct both values themselves and call this same method.
+    /// and [`InputSources::from_process`] at the process edge, forward both
+    /// here, emit the structured result, and convert it to the legacy [`bool`].
+    /// Tests construct both values themselves and call this same method,
+    /// inspecting the [`RunResult`] (output, errors, artifacts) without
+    /// intercepting process streams.
     /// The two arguments are not a combined run-environment type and are not
     /// stored on [`App`].
     ///
@@ -556,7 +560,7 @@ impl App {
         _args: I,
         _target: TargetProperties,
         _sources: InputSources,
-    ) -> bool
+    ) -> RunResult
     where
         I: IntoIterator<Item = T>,
         T: Into<std::ffi::OsString> + Clone,
