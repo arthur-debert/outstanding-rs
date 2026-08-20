@@ -368,6 +368,10 @@ pub struct TemplateRegistry {
     /// These are provided by the standout framework and can be overridden
     /// by user templates with the same name.
     framework: HashMap<String, String>,
+
+    /// Incremented by [`Self::refresh`]. Identity plus this value is the
+    /// load-into-engine cache key: a re-walk is a new generation.
+    generation: u64,
 }
 
 impl Default for TemplateRegistry {
@@ -385,6 +389,7 @@ impl TemplateRegistry {
             files: HashMap::new(),
             sources: HashMap::new(),
             framework: HashMap::new(),
+            generation: 0,
         }
     }
 
@@ -684,11 +689,25 @@ impl TemplateRegistry {
     /// - You've added template directories after the first render
     /// - Template files have been added/removed from disk
     ///
+    /// Each successful refresh increments [`Self::generation`].
+    ///
     /// # Panics
     ///
     /// Panics if a collision is detected (same name from different directories).
     pub fn refresh(&mut self) -> Result<(), RegistryError> {
-        self.inner.refresh().map_err(RegistryError::from)
+        self.inner.refresh().map_err(RegistryError::from)?;
+        self.generation = self.generation.wrapping_add(1);
+        Ok(())
+    }
+
+    /// Refresh generation: identity plus this value is the load-into-engine cache key.
+    pub fn generation(&self) -> u64 {
+        self.generation
+    }
+
+    /// True when templates can appear or change on disk (ADR-0019 hot reload).
+    pub(crate) fn has_file_sources(&self) -> bool {
+        !self.files.is_empty() || !self.inner.dirs().is_empty()
     }
 
     /// Returns the number of registered templates.
@@ -970,6 +989,16 @@ mod tests {
         assert!(!registry.is_empty());
         registry.clear();
         assert!(registry.is_empty());
+    }
+
+    #[test]
+    fn refresh_increments_generation() {
+        let mut registry = TemplateRegistry::new();
+        assert_eq!(registry.generation(), 0);
+        registry.refresh().unwrap();
+        assert_eq!(registry.generation(), 1);
+        registry.refresh().unwrap();
+        assert_eq!(registry.generation(), 2);
     }
 
     // =========================================================================

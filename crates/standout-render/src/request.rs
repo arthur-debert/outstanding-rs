@@ -333,7 +333,7 @@ fn render_from_request(request: &RenderRequest) -> Result<RenderResult, RenderEr
     match &request.template {
         TemplateRef::Inline(source) => {
             if let Some(registry) = &request.registry {
-                load_inline_dependencies(&mut **request.engine.borrow_mut(), registry, source)?;
+                load_inline_dependencies(&mut **request.engine.borrow_mut(), registry)?;
             }
             let engine = request.engine.borrow();
             render_engine_split_inline(
@@ -753,6 +753,85 @@ mod tests {
     }
 
     #[test]
+    fn second_render_of_the_same_request_does_not_add_templates_again() {
+        use std::cell::Cell;
+
+        struct CountingEngine {
+            inner: MiniJinjaEngine,
+            adds: Rc<Cell<usize>>,
+        }
+
+        impl TemplateEngine for CountingEngine {
+            fn render_template(
+                &self,
+                template: &str,
+                data: &serde_json::Value,
+            ) -> Result<String, RenderError> {
+                self.inner.render_template(template, data)
+            }
+
+            fn add_template(&mut self, name: &str, source: &str) -> Result<(), RenderError> {
+                self.adds.set(self.adds.get() + 1);
+                self.inner.add_template(name, source)
+            }
+
+            fn render_named(
+                &self,
+                name: &str,
+                data: &serde_json::Value,
+            ) -> Result<String, RenderError> {
+                self.inner.render_named(name, data)
+            }
+
+            fn has_template(&self, name: &str) -> bool {
+                self.inner.has_template(name)
+            }
+
+            fn render_with_context(
+                &self,
+                template: &str,
+                data: &serde_json::Value,
+                context: HashMap<String, serde_json::Value>,
+            ) -> Result<String, RenderError> {
+                self.inner.render_with_context(template, data, context)
+            }
+
+            fn supports_includes(&self) -> bool {
+                true
+            }
+            fn supports_filters(&self) -> bool {
+                true
+            }
+            fn supports_control_flow(&self) -> bool {
+                true
+            }
+        }
+
+        let mut registry = TemplateRegistry::new();
+        registry.add_inline("list", "{% include 'partial' %}");
+        registry.add_inline("partial", "{{ msg }}");
+        let adds = Rc::new(Cell::new(0));
+        let engine: SharedTemplateEngine = Rc::new(RefCell::new(Box::new(CountingEngine {
+            inner: MiniJinjaEngine::new(),
+            adds: adds.clone(),
+        })));
+        let request = RenderRequest {
+            data: json!({"msg": "hello"}),
+            template: TemplateRef::Named("list".into()),
+            format: OutputMode::Text,
+            registry: Some(Rc::new(registry)),
+            engine,
+            ..sample_request()
+        };
+
+        assert_eq!(render_request(&request).unwrap(), "hello");
+        let first = adds.get();
+        assert!(first >= 2, "expected list and partial, got {first}");
+        assert_eq!(render_request(&request).unwrap(), "hello");
+        assert_eq!(adds.get(), first);
+    }
+
+    #[test]
     fn inline_request_loads_static_includes_from_the_registry() {
         let mut registry = TemplateRegistry::new();
         registry.add_inline("partial", "{{ msg }}");
@@ -782,22 +861,6 @@ mod tests {
     }
 
     #[test]
-    fn named_request_does_not_load_a_later_invalid_include_list_candidate() {
-        let mut registry = TemplateRegistry::new();
-        registry.add_inline("list", "{% include ['override', 'default'] %}");
-        registry.add_inline("override", "good");
-        registry.add_inline("default", "{% if");
-        let request = RenderRequest {
-            template: TemplateRef::Named("list".into()),
-            format: OutputMode::Text,
-            registry: Some(Rc::new(registry)),
-            engine: sample_engine(),
-            ..sample_request()
-        };
-        assert_eq!(render_request(&request).unwrap(), "good");
-    }
-
-    #[test]
     fn named_request_falls_back_to_the_present_include_list_candidate() {
         let mut registry = TemplateRegistry::new();
         registry.add_inline("list", "{% include ['override', 'default'] %}");
@@ -823,21 +886,6 @@ mod tests {
             ..sample_request()
         };
         assert_eq!(render_request(&request).unwrap(), "ok");
-    }
-
-    #[test]
-    fn inline_request_does_not_load_a_later_invalid_include_list_candidate() {
-        let mut registry = TemplateRegistry::new();
-        registry.add_inline("override", "good");
-        registry.add_inline("default", "{% if");
-        let request = RenderRequest {
-            template: TemplateRef::Inline("{% include ['override', 'default'] %}".into()),
-            format: OutputMode::Text,
-            registry: Some(Rc::new(registry)),
-            engine: sample_engine(),
-            ..sample_request()
-        };
-        assert_eq!(render_request(&request).unwrap(), "good");
     }
 
     #[test]

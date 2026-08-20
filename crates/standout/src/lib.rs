@@ -276,7 +276,6 @@ pub use standout_render::{
 // Render module exports (from standout-render)
 pub use standout_render::{
     // Template registry
-    load_named_template,
     render,
     render_auto,
     render_auto_with_context,
