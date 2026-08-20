@@ -403,7 +403,9 @@ impl App {
         // word just went has a configuration standout will not serve, and the
         // parse below is what would meet Clap's duplicate-subcommand assertion.
         // It is a setup failure, but it surfaces on a run, so it takes the kind
-        // a questionnaire-surface failure takes.
+        // a questionnaire-surface failure takes. The command is not parseable
+        // (clap debug-asserts on the duplicate `help` word), so the output-mode
+        // probe that clap short-circuits use is not run here.
         if let Some(error) = self.help_word_collision(&augmented_cmd) {
             return (
                 RunResult::Error(RunError::new(error.to_string(), RunErrorKind::ClapUsage)),
@@ -419,16 +421,21 @@ impl App {
             Err(ParseFailure::UnknownDefault(e)) => {
                 return (
                     RunResult::Error(RunError::new(e.to_string(), RunErrorKind::DefaultCommand)),
-                    OutputMode::Auto,
+                    self.extract_output_mode_from_unparsed(&augmented_cmd, &args),
                 )
             }
             Err(ParseFailure::Clap(e)) => {
+                // Warning flush still needs `--output` on these short-circuits:
+                // `Text` opts the banner out of ANSI. Help *rendering* stays
+                // Auto (see `render_help_for_display_help_error`); only the
+                // run-result mode used for warnings is probed here.
+                let output_mode = self.extract_output_mode_from_unparsed(&augmented_cmd, &args);
                 // Clap's native `--help`/`-h` short-circuits validation and
                 // arrives here; standout renders it when it owns help.
                 if let Some(display) =
                     self.intercept_display_help(&mut augmented_cmd, &args, &e, target)
                 {
-                    return (display.into(), OutputMode::Auto);
+                    return (display.into(), output_mode);
                 }
                 // Clap's remaining "errors" include `--version`, a successful
                 // display path (stdout, exit 0). Real parse errors get
@@ -437,7 +444,7 @@ impl App {
                 if e.use_stderr() {
                     return (
                         RunResult::Error(RunError::new(e.to_string(), RunErrorKind::ClapUsage)),
-                        OutputMode::Auto,
+                        output_mode,
                     );
                 }
                 let output = match e.kind() {
@@ -446,7 +453,7 @@ impl App {
                     }
                     _ => RunOutput::clap_help(e.to_string()),
                 };
-                return (RunResult::Handled(output), OutputMode::Auto);
+                return (RunResult::Handled(output), output_mode);
             }
         };
 

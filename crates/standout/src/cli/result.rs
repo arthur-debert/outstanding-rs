@@ -59,7 +59,10 @@ impl RunResult {
     /// Output mode resolved for this invocation (`--output`, else Auto).
     ///
     /// [`App::run`](crate::cli::App::run) passes this to warning flush so
-    /// `--output=text` opts out of ANSI on the warning block.
+    /// `--output=text` opts out of ANSI on the warning block. Clap usage,
+    /// `--help`, and `--version` short-circuits still honour the flag: they
+    /// never produce matches, so the mode is probed from the same augmented
+    /// command the failing parse used.
     pub fn output_mode(&self) -> OutputMode {
         self.output_mode
     }

@@ -975,4 +975,113 @@ mod tests {
             "Auto on color-capable stderr should style warnings, got {styled:?}"
         );
     }
+
+    fn color_capable_stderr_target() -> crate::TargetProperties {
+        use crate::{AmbiguousWidth, ColorMode, IconMode, TargetProperties};
+        TargetProperties {
+            width: Some(80),
+            stdout_is_terminal: false,
+            stderr_is_terminal: true,
+            stdout_color_capability: false,
+            stderr_color_capability: true,
+            color_scheme: ColorMode::Dark,
+            icon_mode: IconMode::Classic,
+            ambiguous_width: AmbiguousWidth::Narrow,
+        }
+    }
+
+    #[test]
+    fn clap_usage_error_honours_text_output_for_startup_warnings() {
+        use crate::cli::handler::RunErrorKind;
+        use crate::InputSources;
+        use serde_json::json;
+        use standout_render::warnings::render_block_for_target;
+
+        let mut app = AppBuilder::new()
+            .command(
+                "list",
+                |_m, _ctx| Ok(HandlerOutput::Render(json!({"n": 1}))),
+                "n={{ n }}",
+            )
+            .unwrap()
+            .build()
+            .unwrap();
+        app.startup_warnings
+            .push("stylesheet fell back".to_string());
+        let target = color_capable_stderr_target();
+        let cmd = Command::new("app").subcommand(Command::new("list"));
+        let result = app.run_with(
+            cmd,
+            ["app", "--output=text", "not-a-command"],
+            target,
+            InputSources::from_process(),
+        );
+        assert!(
+            result.is_error(),
+            "unknown command should be a clap usage error, got {:?}",
+            result.outcome()
+        );
+        assert_eq!(result.error_kind(), Some(RunErrorKind::ClapUsage));
+        assert_eq!(result.output_mode(), OutputMode::Text);
+        assert!(
+            result
+                .warnings()
+                .iter()
+                .any(|warning| warning.contains("stylesheet fell back")),
+            "expected startup warning on the clap-error result, got {:?}",
+            result.warnings()
+        );
+        let theme = crate::Theme::default();
+        let block =
+            render_block_for_target(&theme, result.output_mode(), target, result.warnings());
+        assert!(
+            !block.contains("\x1b["),
+            "clap usage with --output=text must keep warnings plain, got {block:?}"
+        );
+        let styled = render_block_for_target(&theme, OutputMode::Auto, target, result.warnings());
+        assert!(
+            styled.contains("\x1b["),
+            "Auto on color-capable stderr should style warnings, got {styled:?}"
+        );
+    }
+
+    #[test]
+    fn clap_help_and_version_honour_text_output_flag_from_unparsed_line() {
+        use crate::InputSources;
+
+        let app = AppBuilder::new()
+            .version("1.0.0")
+            .command(
+                "list",
+                |_m, _ctx| Ok(HandlerOutput::Render(serde_json::json!({"n": 1}))),
+                "n={{ n }}",
+            )
+            .unwrap()
+            .build()
+            .unwrap();
+        let target = color_capable_stderr_target();
+        let cmd = Command::new("app").subcommand(Command::new("list"));
+        let help = app.run_with(
+            cmd.clone(),
+            ["app", "--help", "--output=text"],
+            target,
+            InputSources::from_process(),
+        );
+        assert_eq!(
+            help.output_mode(),
+            OutputMode::Text,
+            "--output=text after --help must still opt warnings out of ANSI"
+        );
+        let version = app.run_with(
+            cmd,
+            ["app", "--output=text", "--version"],
+            target,
+            InputSources::from_process(),
+        );
+        assert_eq!(
+            version.output_mode(),
+            OutputMode::Text,
+            "--output=text before --version must still opt warnings out of ANSI"
+        );
+    }
 }

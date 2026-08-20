@@ -37,9 +37,10 @@
 //! The CLI layer takes the buffer at the end of `App::run_with` and returns
 //! the messages on the run result; `App::run` then renders the batch through
 //! the theme using stderr color capability from [`crate::TargetProperties`].
-//! [`render_block_plain`] exposes that same layout to a caller with no
+//! [`render_block_for_target`] exposes that same layout to a caller with no
 //! stderr of its own — the in-process test harness reconstructing what the
-//! error channel carried — so the two cannot drift apart.
+//! error channel carried, with the app's theme and the run's output mode —
+//! so the two cannot drift apart.
 
 use std::cell::RefCell;
 use std::io::Write;
@@ -144,9 +145,9 @@ pub fn render_block_for_target(
 /// warning — with each styled span passed through `style`.
 ///
 /// The layout lives here alone so every writer of the block shares it:
-/// [`flush_to_stderr`] passes a theme-aware styling closure, and a caller with
-/// no real stderr to write to (the in-process test harness reconstructing the
-/// error channel) passes the identity via [`render_block_plain`]. Returns `""`
+/// [`flush_to_stderr`] and the in-process test harness both go through
+/// [`render_block_for_target`] so theme and `--output=text` cannot drift.
+/// [`render_block_plain`] is the unstyled form of the same layout. Returns `""`
 /// for an empty batch, which is what makes "no warnings" add nothing to the
 /// error channel.
 fn render_block(warnings: &[String], style: impl Fn(&str, &str) -> String) -> String {
@@ -169,10 +170,10 @@ fn render_block(warnings: &[String], style: impl Fn(&str, &str) -> String) -> St
 /// Renders the warning block unstyled, exactly as [`flush_to_stderr`] writes it
 /// when the theme carries no warning styles or stderr cannot take color.
 ///
-/// Intended for callers that must reconstruct the error channel without owning
-/// a stderr — chiefly `standout-test`, whose `TestResult::stderr()` would
-/// otherwise have to duplicate this layout and drift from it. Returns `""` for
-/// an empty batch.
+/// Intended for callers that want the layout without theme or destination
+/// styling. The in-process test harness reconstructs stderr through
+/// [`render_block_for_target`] so it stays aligned with `App::run`. Returns
+/// `""` for an empty batch.
 pub fn render_block_plain(warnings: &[String]) -> String {
     render_block(warnings, |_, text| text.to_string())
 }

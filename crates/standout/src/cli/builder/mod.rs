@@ -1616,21 +1616,60 @@ impl App {
     /// Extracts the output mode from parsed ArgMatches.
     pub fn extract_output_mode(&self, matches: &ArgMatches) -> OutputMode {
         if self.output_flag.is_some() {
-            match matches
-                .get_one::<String>("_output_mode")
-                .map(|s| s.as_str())
-            {
-                Some("term") => OutputMode::Term,
-                Some("text") => OutputMode::Text,
-                Some("term-debug") => OutputMode::TermDebug,
-                Some("json") => OutputMode::Json,
-                Some("yaml") => OutputMode::Yaml,
-                Some("xml") => OutputMode::Xml,
-                Some("csv") => OutputMode::Csv,
-                _ => OutputMode::Auto,
-            }
+            parse_output_mode_flag(
+                matches
+                    .get_one::<String>("_output_mode")
+                    .map(|s| s.as_str()),
+            )
         } else {
             OutputMode::Auto
+        }
+    }
+
+    /// Resolves `--output` when Clap did not produce matches.
+    ///
+    /// Usage errors, `--help`, and `--version` short-circuit before
+    /// [`extract_output_mode`](Self::extract_output_mode). Warning flush still
+    /// reads the run's output mode, so `--output=text` must opt the warning
+    /// block out of ANSI on those exits too.
+    ///
+    /// `cmd` must already carry the framework `--output` flag (the same
+    /// augmentation the failing parse used). The probe is a clap
+    /// `ignore_errors` parse with help/version re-declared as ordinary flags
+    /// so the mode does not depend on whether `--output` was written before
+    /// the short-circuiting flag. That is clap classifying the line, not a
+    /// lexical argv scan (ADR-0018).
+    pub(crate) fn extract_output_mode_from_unparsed(
+        &self,
+        cmd: &Command,
+        args: &[std::ffi::OsString],
+    ) -> OutputMode {
+        if self.output_flag.is_none() {
+            return OutputMode::Auto;
+        }
+        let probe = cmd
+            .clone()
+            .disable_help_flag(true)
+            .disable_version_flag(true)
+            .ignore_errors(true)
+            .arg(
+                Arg::new(OUTPUT_MODE_PROBE_HELP)
+                    .long("help")
+                    .short('h')
+                    .action(ArgAction::SetTrue)
+                    .global(true)
+                    .hide(true),
+            )
+            .arg(
+                Arg::new(OUTPUT_MODE_PROBE_VERSION)
+                    .long("version")
+                    .action(ArgAction::SetTrue)
+                    .global(true)
+                    .hide(true),
+            );
+        match probe.try_get_matches_from(args) {
+            Ok(matches) => self.extract_output_mode(&matches),
+            Err(_) => OutputMode::Auto,
         }
     }
 
@@ -1818,6 +1857,24 @@ fn duplicate_help_word(claim: &str) -> SetupError {
 /// probe reports.
 const HELP_PROBE_SHORT: &str = "__standout_help_short";
 const HELP_PROBE_LONG: &str = "__standout_help_long";
+
+/// Argument ids for the flags [`App::extract_output_mode_from_unparsed`]
+/// re-declares so a help/version short-circuit still yields `--output`.
+const OUTPUT_MODE_PROBE_HELP: &str = "__standout_output_mode_help";
+const OUTPUT_MODE_PROBE_VERSION: &str = "__standout_output_mode_version";
+
+fn parse_output_mode_flag(value: Option<&str>) -> OutputMode {
+    match value {
+        Some("term") => OutputMode::Term,
+        Some("text") => OutputMode::Text,
+        Some("term-debug") => OutputMode::TermDebug,
+        Some("json") => OutputMode::Json,
+        Some("yaml") => OutputMode::Yaml,
+        Some("xml") => OutputMode::Xml,
+        Some("csv") => OutputMode::Csv,
+        _ => OutputMode::Auto,
+    }
+}
 
 /// What a help request named, once Clap has read the line.
 ///

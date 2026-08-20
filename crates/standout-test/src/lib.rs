@@ -543,12 +543,15 @@ impl TestHarness {
         let output_mode = run.output_mode();
         let outcome = run.into_outcome();
         let tag_resolutions = standout_render::diagnostics::take_captured();
+        // Same fallback `App::run` uses when flushing the warning block.
+        let default_theme = standout::Theme::default();
+        let theme = app.get_default_theme().unwrap_or(&default_theme);
 
         // `self` (and its tempdir) move into TestResult so the fixture dir
         // survives until the test is finished with the result.
         TestResult {
             stdout: render_stdout(&outcome),
-            stderr: render_stderr(&outcome, &warnings, output_mode, target),
+            stderr: render_stderr(&outcome, &warnings, output_mode, target, theme),
             outcome,
             warnings,
             tag_resolutions,
@@ -644,8 +647,9 @@ fn render_stdout(outcome: &DispatchResult) -> String {
 ///   (an artifact written to a file leaves stdout free and reports there);
 /// - framework warnings close the channel, in the block `App::run` flushes
 ///   after the primary output — blank line, banner, one tab-indented line per
-///   warning. The layout and `--output=text` / stderr-capability styling are
-///   `standout_render`'s own
+///   warning. The layout, `--output=text` / stderr-capability styling, and
+///   the app's resolved theme (same `get_default_theme().unwrap_or(default)`
+///   `App::run` uses) are `standout_render`'s own
 ///   [`render_block_for_target`](standout_render::warnings::render_block_for_target),
 ///   so the harness cannot drift from what the CLI layer writes. The warnings
 ///   also remain individually addressable on
@@ -655,6 +659,7 @@ fn render_stderr(
     warnings: &[String],
     output_mode: OutputMode,
     target: TargetProperties,
+    theme: &standout::Theme,
 ) -> String {
     let primary = match outcome {
         DispatchResult::Error(error) if error.kind() == RunErrorKind::External => error.to_string(),
@@ -663,14 +668,8 @@ fn render_stderr(
         _ => String::new(),
     };
 
-    let default_theme = standout::Theme::default();
     primary
-        + &standout_render::warnings::render_block_for_target(
-            &default_theme,
-            output_mode,
-            target,
-            warnings,
-        )
+        + &standout_render::warnings::render_block_for_target(theme, output_mode, target, warnings)
 }
 
 /// Returns an artifact's report as the framework writes it — newline-terminated
