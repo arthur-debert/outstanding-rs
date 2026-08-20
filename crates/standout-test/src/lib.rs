@@ -81,7 +81,7 @@
 //! [`with_color`](TestHarness::with_color) fills stdout/stderr color
 //! capability so ANSI-positive assertions work in-process through
 //! `force_styling` on the request. It does not call `set_colors_enabled`.
-//! Facts the test does not set take fixed defaults, never
+//! Facts the test does not set take fixed defaults rather than calling
 //! [`TargetProperties::detect`]: `width: None`, [`ColorMode::Dark`],
 //! [`IconMode::Classic`], [`AmbiguousWidth::Narrow`]. Color capability
 //! defaults to off and both streams are non-terminal. `$COLUMNS`,
@@ -96,8 +96,10 @@
 //! [`App::run_with`](standout::cli::App::run_with); they are not
 //! process-global overrides. Width, color, theme, and icon are injected on
 //! [`TargetProperties`] and do not need `#[serial]` for detector reasons.
-//! Tests that call `run` must be annotated `#[serial]` (from the re-exported
-//! `serial_test` crate) when they use env or cwd.
+//! In-process `run` tests must still be annotated `#[serial]` (from the
+//! re-exported `serial_test` crate) while env/cwd overrides exist:
+//! `serial_test` only orders annotated tests against each other, so an
+//! unannotated `run` can race with one that mutates those globals.
 //! [`TestHarness::run_process`] and [`TestHarness::run_pty`] mutate none of
 //! the process-global seams, so a binary of process tests alone needs no
 //! annotation.

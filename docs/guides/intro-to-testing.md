@@ -168,7 +168,7 @@ fn list_runs() {
 
 That's it. `run()` drives the same dispatch path as production — same clap parsing, same handler lookup, same render pipeline — and returns the rendered text. No subprocess, no stdout capture gymnastics.
 
-> **Why `#[serial]`?** The harness mutates process-global state (env vars, cwd). Destination facts (width, color, color-scheme, icon mode) are injected on `TargetProperties` and do not need `#[serial]` for detector reasons. Tests that call `run` and use env or cwd must still run serially. The `serial_test::serial` attribute is re-exported from `standout_test` for convenience: `use standout_test::serial;`.
+> **Why `#[serial]`?** The harness mutates process-global state (env vars, cwd). Destination facts (width, color, color-scheme, icon mode) are injected on `TargetProperties` and do not need `#[serial]` for detector reasons. All in-process `run` tests still need `#[serial]` while those env/cwd overrides exist: `serial_test` only orders annotated tests against each other, so an unannotated `run` can race with one that mutates env or cwd. The `serial_test::serial` attribute is re-exported from `standout_test` for convenience: `use standout_test::serial;`.
 >
 > **Verify:** Add a `TestHarness::new().run(...)` test to your app. It should run in under 10ms, not 100ms.
 
@@ -642,7 +642,7 @@ writers.
 
 ## Appendix: common pitfalls
 
-- **Tests leak state into each other.** Every test that uses `TestHarness` must be `#[serial]`. Parallel execution mixed with process-global mutations is unsupported.
+- **Tests leak state into each other.** Every in-process `run` test must be `#[serial]` while the harness still mutates env/cwd. `serial_test` only orders annotated tests against each other, so an unannotated `run` can race with one that mutates those globals. Detector reasons no longer apply. Parallel execution mixed with process-global mutations is unsupported.
 - **A `TestHarness::new()` without `.run(...)` does nothing.** The harness is `#[must_use]` — inert until you call `.run`.
 - **`output_mode(...)` injects `--output=<mode>` into argv.** If your app uses a different flag name (via `AppBuilder::output_flag(Some("format"))`), set `.output_flag_name("format")`.
 - **Unset destination facts are fixed defaults, not detected.** `$COLUMNS`, `$NERD_FONT`, and the OS appearance setting cannot change an in-process run. Inject `terminal_width` / `color_scheme` / `icon_mode` when a test needs non-default facts.
