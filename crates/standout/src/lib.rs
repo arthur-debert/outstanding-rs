@@ -258,8 +258,8 @@ pub use standout_render::{ColorMode, IconDefinition, IconMode, IconSet, Theme};
 // Composition-contract types (from standout-render / standout-input)
 pub use standout_input::InputSources;
 pub use standout_render::{
-    render_request, render_request_split, ColorPolicy, RenderRequest, SharedTemplateEngine,
-    TargetProperties, TemplateRef,
+    default_template_engine, render_request, render_request_split, ColorPolicy, RenderRequest,
+    SharedTemplateEngine, TargetProperties, TemplateRef,
 };
 
 // Output module exports (from standout-render)

@@ -49,12 +49,25 @@ pub enum HelpLength {
 #[derive(Debug, Clone, Default)]
 pub struct HelpConfig {
     /// Custom template string. If None, uses the default template.
+    ///
+    /// Standalone [`super::render_help`] carries this as
+    /// [`crate::TemplateRef::Inline`] and validates literal style tags against
+    /// the resolved theme at request construction (the equivalent of the
+    /// ADR-0020 check `build()` runs on named registry templates). Framework
+    /// help uses the named `standout/help` registry entry instead.
     pub template: Option<String>,
     /// Theme overlaid on [`default_help_theme`]: per style name an entry
     /// here wins, and tags it leaves undefined keep their default styling.
     /// If None, the default help theme alone is used.
+    ///
+    /// Framework help on `App` ignores this field and uses the one theme
+    /// `build()` merged (ADR-0020).
     pub theme: Option<Theme>,
     /// Output mode. If None, uses Auto (auto-detects).
+    ///
+    /// Structured modes (`json` / `yaml` / `csv` / `xml`) still print human
+    /// help: glue maps them to [`OutputMode::Auto`] on the request
+    /// (ADR-0029).
     pub output_mode: Option<OutputMode>,
     /// Subcommand grouping for help display. If None, all subcommands
     /// appear in a single "Commands" group (default behavior).

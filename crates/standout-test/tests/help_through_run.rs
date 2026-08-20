@@ -174,18 +174,78 @@ fn the_help_word_honours_the_output_flag_through_run() {
     drop(tagged);
 
     // `json` is not a serialization of help — like every structured mode it
-    // strips the style tags off the same rendered template.
-    let json = TestHarness::new().run(
+    // strips the style tags off the same rendered template (no color, Auto).
+    for mode in ["json", "yaml", "csv", "xml"] {
+        let result = TestHarness::new().run(
+            fixture.app(),
+            fixture.command(),
+            ["lookma", "help", "--output", mode],
+        );
+        result.assert_success();
+        result.assert_stdout_contains("USAGE");
+        assert!(
+            !result.stdout().contains("[header]"),
+            "{mode}: structured modes still print human help:\n{}",
+            result.stdout()
+        );
+        assert!(
+            !result.stdout().trim_start().starts_with('{'),
+            "{mode}: must not emit a JSON help document:\n{}",
+            result.stdout()
+        );
+    }
+}
+
+#[test]
+#[serial]
+fn structured_help_on_a_color_tty_still_looks_like_help() {
+    // ADR-0029: glue maps structured `--output` to Auto, not Text, so a TTY
+    // still gets color. Mapping to Text would strip it for no reason.
+    let fixture = downstream().flat().build();
+    let result = TestHarness::new().with_color().run(
         fixture.app(),
         fixture.command(),
         ["lookma", "help", "--output", "json"],
     );
-    json.assert_success();
-    json.assert_stdout_contains("USAGE");
+    result.assert_success();
+    result.assert_stdout_contains("USAGE");
     assert!(
-        !json.stdout().contains("[header]"),
-        "structured modes strip style tags:\n{}",
-        json.stdout()
+        result.stdout().contains('\u{1b}'),
+        "help --output=json on a color TTY must still look like help:\n{:?}",
+        result.stdout()
+    );
+}
+
+#[test]
+#[serial]
+fn structured_topics_still_print_human_text() {
+    let fixture = downstream().flat().build();
+
+    let list = TestHarness::new().run(
+        fixture.app(),
+        fixture.command(),
+        ["lookma", "help", "topics", "--output", "json"],
+    );
+    list.assert_success();
+    list.assert_stdout_contains("Available Topics");
+    assert!(
+        !list.stdout().trim_start().starts_with('{'),
+        "topics --output=json must not emit a JSON document:\n{}",
+        list.stdout()
+    );
+    drop(list);
+
+    let topic = TestHarness::new().run(
+        fixture.app(),
+        fixture.command(),
+        ["lookma", "help", "ranges", "--output", "yaml"],
+    );
+    topic.assert_success();
+    topic.assert_stdout_contains("two revisions separated by two dots");
+    assert!(
+        !topic.stdout().trim_start().starts_with('{'),
+        "topic --output=yaml must not emit a structured document:\n{}",
+        topic.stdout()
     );
 }
 
@@ -309,8 +369,14 @@ fn broken_theme() -> Theme {
 }
 
 fn app_with_a_broken_theme() -> App {
+    // Framework help/topic templates are named registry entries, so ADR-0020
+    // rejects a theme that does not resolve `header` at `build()`. These tests
+    // need a *render* failure (the user's line was fine), so they skip
+    // framework registration and hit the equivalent Inline tag check at
+    // request construction.
     App::builder()
         .help_handling(true)
+        .include_framework_templates(false)
         .theme(broken_theme())
         .command("review", |_m, _ctx| Ok(Output::Render(json!({}))), "listed")
         .unwrap()

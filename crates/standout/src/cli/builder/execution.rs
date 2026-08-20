@@ -432,9 +432,13 @@ impl App {
                 let output_mode = self.extract_output_mode_from_unparsed(&augmented_cmd, &args);
                 // Clap's native `--help`/`-h` short-circuits validation and
                 // arrives here; standout renders it when it owns help.
-                if let Some(display) =
-                    self.intercept_display_help(&mut augmented_cmd, &args, &e, target)
-                {
+                if let Some(display) = self.intercept_display_help(
+                    &mut augmented_cmd,
+                    &args,
+                    &e,
+                    target,
+                    Some(warnings.clone()),
+                ) {
                     return (display.into(), output_mode);
                 }
                 // Clap's remaining "errors" include `--version`, a successful
@@ -461,7 +465,9 @@ impl App {
 
         // The `help` word is a subcommand Clap routed; standout answers it
         // before dispatch, sharing the arm with `get_matches_from`.
-        if let Some(display) = self.intercept_help_word(&mut augmented_cmd, &matches, target) {
+        if let Some(display) =
+            self.intercept_help_word(&mut augmented_cmd, &matches, target, Some(warnings.clone()))
+        {
             return (display.into(), output_mode);
         }
 

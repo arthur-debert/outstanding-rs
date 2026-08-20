@@ -22,7 +22,9 @@
 
 mod templates;
 
-pub use templates::FRAMEWORK_TEMPLATES;
+pub use templates::{
+    FRAMEWORK_TEMPLATES, HELP_TEMPLATE_NAME, TOPICS_LIST_TEMPLATE_NAME, TOPIC_TEMPLATE_NAME,
+};
 
 /// Framework style definitions.
 ///
