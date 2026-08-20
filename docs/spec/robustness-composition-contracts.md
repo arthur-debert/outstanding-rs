@@ -114,18 +114,22 @@ enough to only *build* those inputs.
 
 - **`run()` detects once at the process edge** and builds the request. App authors do not
   pass target facts in production.
-- **After `build()`, each configured fallback has one answer** — theme (already,
-  ADR-0020), output-mode fallback, template registry. These are build-time configured
-  *fallbacks*, stored on `App`: the one place glue is allowed to have a default. They
-  are not the final per-invocation value. Point-of-use fallbacks (`unwrap_or_default()`,
-  silent 80-column width, "Auto because this call site forgot") go away. Per-invocation
-  resolution is per setting family, not one ladder. Terminal settings (color, pager,
-  stream facts) keep `flag > env > config > detection`, with no App fallback —
-  terminal facts live on `TargetProperties` via detection; config does not override
-  env conventions such as `NO_COLOR`. Output mode and theme resolve as flag >
-  later config > App fallback; they have no detection source. Resolved values land
-  on the request. `App` does not hold per-invocation facts. This Spec does not
-  require a public type for the fallback bundle.
+- **After `build()`, App holds this build-time configuration:** merged theme
+  (ADR-0020), output-mode fallback, template registry, and ambiguous-width policy.
+  Not terminal facts. Theme and output-mode are configured *fallbacks* (the one
+  place glue is allowed to have a default); they are not the final per-invocation
+  value. Ambiguous-width is application policy: `detect()` defaults it to `Narrow`,
+  and `App::run` overwrites with the policy (ADR-0026). Detected facts — width,
+  stdout/stderr terminal-ness, stdout/stderr color capability, color-scheme, icon
+  mode — have no App fallback. Point-of-use fallbacks (`unwrap_or_default()`,
+  silent 80-column width, "Auto because this call site forgot") go away.
+  Per-invocation resolution is per setting family, not one ladder. Terminal
+  settings (color, pager, stream facts) keep `flag > env > config > detection`,
+  with no App fallback; config does not override env conventions such as
+  `NO_COLOR`. Output mode and theme resolve as flag > later config > App
+  fallback; they have no detection source. Resolved values land on the request.
+  `App` does not hold per-invocation facts. This Spec does not require a public
+  type for the fallback bundle.
 - **`App::render` / `render_inline` are the same pipeline as dispatch.** All three call
   `render_request`.
 - **Help and topics are ordinary renders** through that pipeline (the app's engine,
@@ -194,10 +198,12 @@ them so those Specs do not reopen this redesign.
   `csv`, and `quick-xml` live in `standout-render` only.
 - **No `MiniJinjaEngine::new()` outside `build()`.**
 - **The glue does not invent a rendering default.** It builds the request from the
-  build-time fallbacks on `App` (theme, output-mode, registry) plus this invocation's
-  flags, env, later config (when those epics land), and detection (terminal facts
-  only; no App fallback on that ladder); it does not pick a theme, mode, or width
-  of its own at the point of use. It does not apply one ladder to every setting.
+  build-time configuration on `App` (merged theme, output-mode fallback, template
+  registry, ambiguous-width policy) plus this invocation's flags, env, later config
+  (when those epics land), and detection (width, stdout/stderr terminal-ness,
+  stdout/stderr color capability, color-scheme, icon mode; no App fallback on that
+  ladder); it does not pick a theme, mode, or width of its own at the point of use.
+  It does not apply one ladder to every setting.
 - **Adding an output mode touches the mode enum and the serializer registry**, not nine
   files.
 
@@ -218,8 +224,9 @@ dependency test, `cargo deny`, a compile-fail crate) is an ADR.
 - Publishing structured help or topics under `--output json|yaml|csv|xml`.
 - Renaming or splitting crates.
 - A public `ResolvedConfig` (or equivalent) type, unless a caller in the Goals above
-  needs to name it. `App` after `build()` holds the configured fallbacks, not
-  per-invocation resolved mode, theme, or target properties.
+  needs to name it. `App` after `build()` holds merged theme, output-mode fallback,
+  template registry, and ambiguous-width policy — not per-invocation resolved mode,
+  theme, or detected target properties.
 - Re-opening ADR-0019–0022 or restoring `RenderFn`.
 - Multi-threaded `App`.
 
@@ -240,13 +247,16 @@ engine construction live in the leaf. The glue's copies and serializer dependenc
 away. `App::render`, `render_inline`, help, and topics each build a request and call
 `render_request`. Help and topics remain human-rendered under structured `--output`.
 
-**3. Build-time fallbacks on `App`, per-invocation resolution on the request.** `App`
-holds what `build()` can know as fallbacks (merged theme, output-mode fallback,
-registry). Per-invocation facts (argv-selected mode, detected width, stream
-terminal-ness and per-stream color capability) belong on the request, not on `App`.
-Resolution is per setting family: terminal settings keep `flag > env > config >
-detection`, with no App fallback; output mode and theme are flag > later config
-> App fallback, with no detection source. Point-of-use defaults disappear.
+**3. Build-time configuration on `App`, per-invocation resolution on the request.**
+`App` holds what `build()` can know: merged theme, output-mode fallback, template
+registry, and ambiguous-width policy. Not terminal facts. Detected facts — width,
+stdout/stderr terminal-ness, stdout/stderr color capability, color-scheme, icon
+mode — belong on `TargetProperties` / the request, with no App fallback.
+Argv-selected mode belongs on the request, not on `App`. Ambiguous-width is App
+policy applied over `detect()`'s `Narrow` default (ADR-0026). Resolution is per
+setting family: terminal settings keep `flag > env > config > detection`, with
+no App fallback; output mode and theme are flag > later config > App fallback,
+with no detection source. Point-of-use defaults disappear.
 
 **4. Harness injection and crate invariants.** `TestHarness` puts facts on the request.
 The detector override APIs are removed. The four maintainer invariants (no serializers
@@ -296,10 +306,11 @@ The ROB01 snapshot matrix is the oracle for byte-level deltas on every move.
   thread-locals serve the harness. Removing globals must land with the harness's
   replacement injection in the same workstream, or the test suite breaks mid-epic with
   no way to fix it from the remaining tests.
-- **Putting per-invocation facts on `App`.** `App` holds build-time configured
-  fallbacks. Argv-selected mode, detected width, stream terminal-ness, and per-stream
-  color capability belong on the request. Folding them into `App` recreates a
-  god-object the next epic cannot extend.
+- **Putting per-invocation facts on `App`.** `App` holds build-time configuration
+  (merged theme, output-mode fallback, template registry, ambiguous-width policy).
+  Argv-selected mode and detected facts (width, stdout/stderr terminal-ness,
+  stdout/stderr color capability, color-scheme, icon mode) belong on the request.
+  Folding them into `App` recreates a god-object the next epic cannot extend.
 - **Skipping the ADR round.** The mechanical diffs (one pipeline, help onto it, globals
   out) are cheap once the internal types and ownership are fixed, and expensive if those
   are invented mid-flight. The grill is the cheap part of this epic.
@@ -372,8 +383,9 @@ ADRs from the grill, authoritative where they sharpen this Spec:
   invocation, `Copy`, per-stream color capability and terminal-ness) and
   `RenderRequest` (what to render, owned, engine/registry behind `Rc`). Primary
   render uses stdout facts; warnings/progress use stderr facts. `App` stays the
-  build-time fallback bundle; `RenderContext` stays the provider view. No
-  lifetime on the public API.
+  build-time bundle (merged theme, output-mode fallback, registry,
+  ambiguous-width policy); detected facts have no App fallback.
+  `RenderContext` stays the provider view. No lifetime on the public API.
 - [`docs/adr/0026-detect-target-properties-at-the-crate-edge.md`](../adr/0026-detect-target-properties-at-the-crate-edge.md)
   — `TargetProperties::detect()` is the one process probe, in `standout-render`,
   filling both streams. Convenience wrappers and `App::run` call it at their
@@ -403,8 +415,9 @@ ADRs from the grill, authoritative where they sharpen this Spec:
   `set_colors_enabled`.
 - [`docs/adr/0031-check-glue-invariants-with-tests.md`](../adr/0031-check-glue-invariants-with-tests.md)
   — the four glue invariants are tests in `standout` (`Cargo.toml` parse, source
-  scans). Defaults are enforced by build-time fallbacks on `App` plus the
-  snapshot matrix, not a grep. Not `cargo deny`.
+  scans). Defaults are enforced by App's build-time configuration (theme,
+  output-mode, registry, ambiguous-width) plus the snapshot matrix, not a
+  grep. Not `cargo deny`.
 
 No ADR: recipe/config dispatch closures collapse to one helper. There is no public
 `GroupBuilder` change and no discarded alternative worth recording.

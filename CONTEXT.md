@@ -9,7 +9,7 @@ The explicit input to the pure entry `render_request`: data, template, theme, fo
 _Avoid_: RenderContext (that is the mid-render view for context providers)
 
 **TargetProperties**:
-Properties of the destination being rendered to for one invocation (width, stdout and stderr color capability independently, whether stdout and stderr are terminals, and related). Primary render uses stdout facts; warnings and progress use stderr facts. Detected, injected by tests, or later set by flags — not the whole run.
+Properties of the destination being rendered to for one invocation (width, stdout and stderr color capability independently, whether stdout and stderr are terminals, color-scheme, icon mode, and ambiguous-width policy). Width, stream facts, color-scheme, and icon mode are detected, with no App fallback. Ambiguous-width is App-owned policy on the type (`detect()` defaults `Narrow`; `App::run` overwrites). Primary render uses stdout facts; warnings and progress use stderr facts.
 _Avoid_: RuntimeProperties, Capabilities, TargetFacts, environment globals, a single color capability for both streams
 
 **RenderContext**:
