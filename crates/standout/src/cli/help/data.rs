@@ -58,7 +58,9 @@ pub(crate) fn resolve_name_column(names: &[&str]) -> usize {
         .build();
 
     let rows: Vec<Vec<&str>> = names.iter().map(|name| vec![*name]).collect();
-    let terminal_width = standout_render::detect_terminal_width().unwrap_or(ASSUMED_TERMINAL_WIDTH);
+    let terminal_width = crate::TargetProperties::detect()
+        .width
+        .unwrap_or(ASSUMED_TERMINAL_WIDTH);
 
     spec.resolve_widths_from_data(terminal_width, &rows)
         .get(0)

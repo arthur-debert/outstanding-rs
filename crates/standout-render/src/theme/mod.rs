@@ -38,12 +38,9 @@
 //!
 //! ## Color Mode Detection
 //!
-//! [`detect_color_mode`] queries the OS for the user's preferred scheme. Override
-//! it for testing with [`set_theme_detector`]:
-//!
-//! ```rust,ignore
-//! standout_render::set_theme_detector(|| ColorMode::Dark);
-//! ```
+//! Color-scheme is a fact on [`crate::TargetProperties`]. Convenience wrappers
+//! and `App::run` detect it at their edge; tests construct
+//! [`crate::TargetProperties`] with an explicit [`ColorMode`].
 //!
 //! ## Construction
 //!
@@ -81,7 +78,9 @@ mod icon_mode;
 #[allow(clippy::module_inception)]
 mod theme;
 
-pub use adaptive::{detect_color_mode, set_theme_detector, ColorMode};
+pub(crate) use adaptive::probe_color_mode;
+pub use adaptive::ColorMode;
 pub use icon_def::{IconDefinition, IconSet};
-pub use icon_mode::{detect_icon_mode, set_icon_detector, IconMode};
+pub(crate) use icon_mode::probe_icon_mode;
+pub use icon_mode::IconMode;
 pub use theme::Theme;

@@ -76,19 +76,21 @@
 //! The harness does not simulate a TTY in-process. It once offered
 //! `is_tty()`/`no_tty()`, which drove a detector nothing consulted; the seam
 //! is deleted (see `docs/adr/0022-delete-the-in-process-tty-seam.md`) and
-//! terminal-shaped questions belong to `run_process`/`run_pty`. What the harness does
-//! control is *color*: [`with_color`](TestHarness::with_color) opens both
-//! gates between a styled template and ANSI bytes, so an ANSI-positive
-//! assertion works in-process.
+//! terminal-shaped questions belong to `run_process`/`run_pty`. What the harness
+//! does control is destination facts on [`TargetProperties`]:
+//! [`with_color`](TestHarness::with_color) fills stdout/stderr color
+//! capability so ANSI-positive assertions work in-process through
+//! `force_styling` on the request. It does not call `set_colors_enabled`.
 //!
 //! # Concurrency and restoration
 //!
 //! [`TestHarness::run`] mutates process-global state (env vars, cwd,
-//! environment detectors, `console`'s color switch, default input readers).
-//! Tests that call it must be annotated `#[serial]` (from the re-exported
-//! `serial_test` crate). [`TestHarness::run_process`] and
-//! [`TestHarness::run_pty`] mutate none of it, so a binary of process tests
-//! alone needs no annotation.
+//! default input readers). Tests that call it must be annotated `#[serial]`
+//! (from the re-exported `serial_test` crate) when they use those seams.
+//! Width, color, theme, and icon are injected on [`TargetProperties`] and
+//! do not need `#[serial]` for detector reasons. [`TestHarness::run_process`]
+//! and [`TestHarness::run_pty`] mutate none of the process-global seams, so
+//! a binary of process tests alone needs no annotation.
 //!
 //! They do *inherit* it, though: a child starts from the test process's
 //! ambient environment and — unless the harness names a `cwd` or materializes
@@ -101,13 +103,10 @@
 //! A `Drop` impl restores every override on both normal exit and panic
 //! unwind, with two nuances:
 //!
-//! - Env vars, cwd, and `console`'s color switch are restored to the values
-//!   captured at `run()` time.
-//! - Terminal detectors and default input readers are reset to the
-//!   library defaults, not to whatever was installed before `run()`. This
-//!   matches the behavior of [`standout_render::DetectorGuard`]. Don't
-//!   mix a `TestHarness` with a manually installed detector override on
-//!   the same thread.
+//! - Env vars and cwd are restored to the values captured at `run()` time.
+//! - Default input readers are reset to the library defaults, not to
+//!   whatever was installed before `run()`. Don't mix a `TestHarness` with
+//!   a manually installed input-reader override on the same thread.
 
 use std::collections::HashMap;
 use std::ffi::OsString;
@@ -118,18 +117,14 @@ use clap::Command;
 use standout::cli::{
     App, ArtifactDestination, ArtifactRun, ExitStatus, RunErrorKind, RunResult, SuccessKind,
 };
-use standout::{InputSources, TargetProperties};
+use standout::{ColorMode, IconMode, InputSources, TargetProperties};
 use standout_input::env::{MockClipboard, MockStdin};
 use standout_input::{
     reset_default_clipboard_reader, reset_default_prompt_responder, reset_default_stdin_reader,
     set_default_clipboard_reader, set_default_prompt_responder, set_default_stdin_reader,
     PromptResponder,
 };
-use standout_render::{
-    detect_color_capability, detect_color_mode, detect_icon_mode, detect_terminal_width,
-    reset_environment_detectors, set_ambiguous_width_detector, set_color_capability_detector,
-    set_terminal_width_detector, AmbiguousWidth, OutputMode,
-};
+use standout_render::{AmbiguousWidth, OutputMode};
 use tempfile::TempDir;
 
 pub mod clap_parity;
@@ -175,6 +170,8 @@ pub struct TestHarness {
     terminal_width: Option<Option<usize>>,
     ambiguous_width: Option<AmbiguousWidth>,
     color_capable: Option<bool>,
+    color_scheme: Option<ColorMode>,
+    icon_mode: Option<IconMode>,
     output_mode: Option<OutputMode>,
     output_flag_name: String,
     stdin: StdinMode,
@@ -194,6 +191,8 @@ impl TestHarness {
             terminal_width: None,
             ambiguous_width: None,
             color_capable: None,
+            color_scheme: None,
+            icon_mode: None,
             output_mode: None,
             output_flag_name: "output".to_string(),
             stdin: StdinMode::Inherit,
@@ -210,10 +209,10 @@ impl TestHarness {
     ///
     /// This does **not** reach variables a dependency read before the run
     /// started. `console` initializes its color globals lazily from `CLICOLOR`
-    /// / `CLICOLOR_FORCE`, and **every** run latches them before applying this
-    /// map (see [`with_color`](Self::with_color)); `NO_COLOR` and
-    /// `TERM=dumb` land the same way. Setting them here changes what handler
-    /// code reads, not what `console` decided — pin those conventions with
+    /// / `CLICOLOR_FORCE`, and **every** run latches them from the real
+    /// environment before applying this map; `NO_COLOR` and `TERM=dumb` land
+    /// the same way. Setting them here changes what handler code reads, not
+    /// what `console` decided — pin those conventions with
     /// [`run_process`](Self::run_process), where the child does its own
     /// initialization against the real environment.
     pub fn env(mut self, key: impl Into<String>, value: impl Into<String>) -> Self {
@@ -248,64 +247,47 @@ impl TestHarness {
         self
     }
 
-    /// Declares that the output target supports ANSI color, at both of the
-    /// gates that decide whether escapes reach the output.
+    /// Declares that the output target supports ANSI color.
     ///
-    /// Two independent switches stand between a styled template and ANSI
-    /// bytes, and opening one alone produces nothing:
+    /// Fills [`TargetProperties::stdout_color_capability`] and
+    /// [`TargetProperties::stderr_color_capability`]. The leaf applies ANSI
+    /// from the request (`force_styling` from format + capability), not from
+    /// `console::colors_enabled()`. This method does not call
+    /// `set_colors_enabled`.
     ///
-    /// 1. Standout's own color decision — [`OutputMode::Auto`] consults
-    ///    `detect_color_capability()` to choose between applying and
-    ///    stripping style tags. This is the harness's
-    ///    [`set_color_capability_detector`] override.
-    /// 2. `console`'s process-global color switch, which
-    ///    `Style::apply_to` reads before emitting any escape. It is off in
-    ///    a non-TTY process, and a test binary is never a TTY — so a
-    ///    styled `Term` render in a test emits plain text unless this is
-    ///    turned on.
-    ///
-    /// Gate 2 is what made "ANSI-positive" untestable in-process before:
-    /// forcing gate 1 open left gate 2 shut and the render silent. So
-    /// `with_color()` sets both, and the original value of `console`'s
-    /// switch is restored on drop with every other override.
-    ///
-    /// This is test-only. No production code path sets `console`'s switch;
-    /// the harness sets it to model the terminal the test claims to be
-    /// writing to.
-    ///
-    /// # The harness owns gate 2, so in-process env cannot reach it
-    ///
-    /// `console` initializes its process-globals lazily, on the first *read*,
-    /// from `CLICOLOR` / `CLICOLOR_FORCE` (and `COLORTERM`, for the true-color
-    /// pair). **Every** run reads them before applying [`env`](Self::env) /
-    /// [`env_remove`](Self::env_remove) — including runs that set no color
-    /// knob, since the first read in a binary can just as easily come from
-    /// app code under test — so the one initialization is always spent on the
-    /// real environment. A run that also *writes* the switch restores the
-    /// pre-run value on drop.
-    ///
-    /// The consequence: by the time a run applies environment variables,
-    /// `console` has already initialized, and a test's `.env("CLICOLOR_FORCE",
-    /// …)` no longer influences it. Environment conventions that `console`
-    /// reads — `NO_COLOR`, `TERM=dumb`, `CLICOLOR_FORCE` — are therefore only
-    /// observable in a child process; assert them through
-    /// [`run_process`](Self::run_process), not here. See
-    /// `docs/adr/0022-delete-the-in-process-tty-seam.md`.
+    /// Environment conventions that `console` reads — `NO_COLOR`, `TERM=dumb`,
+    /// `CLICOLOR_FORCE` — are observable in a child process; assert them
+    /// through [`run_process`](Self::run_process). See
+    /// `docs/adr/0030-apply-styles-from-the-request-not-process-globals.md`.
     pub fn with_color(mut self) -> Self {
         self.color_capable = Some(true);
         self
     }
 
-    /// Declares that the output target does not support ANSI color, at both
-    /// gates [`with_color`](Self::with_color) describes. When `--output=auto`
-    /// is used, this forces the `Text` render path.
+    /// Declares that the output target does not support ANSI color.
     ///
-    /// A test process already has `console`'s switch off, so this changes
-    /// nothing for the common case; it exists so the two methods stay exact
-    /// opposites, and so a run cannot inherit an earlier `set_colors_enabled(true)`
-    /// from the same test binary.
+    /// When `--output=auto` is used, this forces the `Text` render path.
+    /// Does not call `set_colors_enabled`.
     pub fn no_color(mut self) -> Self {
         self.color_capable = Some(false);
+        self
+    }
+
+    /// Injects the color-scheme fact on [`TargetProperties`].
+    ///
+    /// Tests construct this rather than installing a theme detector.
+    /// Defaults to [`ColorMode::Dark`] when unset.
+    pub fn color_scheme(mut self, scheme: ColorMode) -> Self {
+        self.color_scheme = Some(scheme);
+        self
+    }
+
+    /// Injects the icon-mode fact on [`TargetProperties`].
+    ///
+    /// Tests construct this rather than installing an icon detector.
+    /// Defaults to [`IconMode::Classic`] when unset.
+    pub fn icon_mode(mut self, mode: IconMode) -> Self {
+        self.icon_mode = Some(mode);
         self
     }
 
@@ -455,10 +437,10 @@ impl TestHarness {
     /// Installs every override, runs `app` with the given `cmd` definition
     /// and argv, and returns a [`TestResult`].
     ///
-    /// Constructs [`TargetProperties`] from this harness (at least width and
-    /// stdout color capability) and calls [`App::run_with`] rather than
-    /// installing those facts only as detector globals. Detector APIs remain
-    /// installed so commands not yet on the request path keep working.
+    /// Constructs [`TargetProperties`] from this harness (width, color
+    /// capability, color-scheme, icon mode, ambiguous-width) and calls
+    /// [`App::run_with`]. It does not install detector overrides or call
+    /// `set_colors_enabled`.
     ///
     /// Overrides are torn down when the returned guard held inside the
     /// `TestResult` is dropped. The `TestResult` and the harness share the
@@ -469,38 +451,7 @@ impl TestHarness {
         I: IntoIterator<Item = T>,
         T: Into<OsString>,
     {
-        // 0. Read every pre-run value this run is about to overwrite, before
-        // it can overwrite any of them.
         let mut restore = RestoreState::default();
-
-        // `console`'s four color decisions are process-globals that
-        // initialize *lazily*, on the first read in the process, from the
-        // environment (`CLICOLOR` / `CLICOLOR_FORCE` for the color switches,
-        // `COLORTERM` by way of `Term::features()` for the true-color ones).
-        // Whichever run causes that first read decides them for the whole
-        // test binary — so a read taken after step 2 installed this run's
-        // `.env` overrides would latch a value this run itself caused
-        // (`.env("CLICOLOR_FORCE", "1")` latching `true`) for every later
-        // test. Reading them all here, before any override exists, spends the
-        // one initialization on the real environment.
-        //
-        // Unconditional on purpose: the first read need not be the harness's.
-        // A run with no color knob at all still installs `.env`, and any code
-        // it runs that styles output reads these globals — so gating this on
-        // `color_capable` would leave exactly that case initializing `console`
-        // from the harness's temporary environment, with nothing recorded to
-        // restore.
-        let ambient_console_colors = console::colors_enabled();
-        let _ = console::colors_enabled_stderr();
-        let _ = console::true_colors_enabled();
-        let _ = console::true_colors_enabled_stderr();
-
-        // Only the stdout switch is ever written (step 3, by `with_color` /
-        // `no_color`), so it is the only one with anything to restore. The
-        // other three are initialized above and then left alone.
-        if self.color_capable.is_some() {
-            restore.console_colors = Some(ambient_console_colors);
-        }
 
         // 1. Materialize fixtures + cwd.
         if let Some(dir) = self.tempdir.as_ref() {
@@ -524,6 +475,17 @@ impl TestHarness {
                 .expect("TestHarness: failed to change working directory");
         }
 
+        // Latch `console`'s lazy color globals from the real environment
+        // before applying this run's `.env()`. `console` initializes on the
+        // first read from `CLICOLOR` / `CLICOLOR_FORCE`; reading after the
+        // overlay would let a temporary `CLICOLOR_FORCE=1` initialize the
+        // process-global that later tests inherit. This is a read, not
+        // `set_colors_enabled` (ADR-0030).
+        let _ = console::colors_enabled();
+        let _ = console::colors_enabled_stderr();
+        let _ = console::true_colors_enabled();
+        let _ = console::true_colors_enabled_stderr();
+
         // 2. Env vars. Save originals so we can restore even on panic.
         // Record each original only once per key (before any mutation), so
         // if the same key appears in both env_set and env_remove, or is
@@ -545,56 +507,9 @@ impl TestHarness {
             std::env::remove_var(k);
         }
 
-        // 3. Environment detectors.
-        if let Some(w) = self.terminal_width {
-            static WIDTH_SLOT: std::sync::OnceLock<std::sync::Mutex<Option<usize>>> =
-                std::sync::OnceLock::new();
-            let slot = WIDTH_SLOT.get_or_init(|| std::sync::Mutex::new(None));
-            *slot.lock().unwrap() = w;
-            set_terminal_width_detector(|| {
-                *WIDTH_SLOT
-                    .get()
-                    .expect("width slot initialized above")
-                    .lock()
-                    .unwrap()
-            });
-            restore.reset_env_detectors = true;
-        }
-        if let Some(policy) = self.ambiguous_width {
-            static POLICY_SLOT: std::sync::OnceLock<std::sync::Mutex<Option<AmbiguousWidth>>> =
-                std::sync::OnceLock::new();
-            let slot = POLICY_SLOT.get_or_init(|| std::sync::Mutex::new(None));
-            *slot.lock().unwrap() = Some(policy);
-            set_ambiguous_width_detector(|| {
-                *POLICY_SLOT
-                    .get()
-                    .expect("ambiguous width slot initialized above")
-                    .lock()
-                    .unwrap()
-            });
-            restore.reset_env_detectors = true;
-        }
-        if let Some(flag) = self.color_capable {
-            static COLOR_SLOT: std::sync::OnceLock<std::sync::Mutex<bool>> =
-                std::sync::OnceLock::new();
-            let slot = COLOR_SLOT.get_or_init(|| std::sync::Mutex::new(false));
-            *slot.lock().unwrap() = flag;
-            set_color_capability_detector(|| {
-                *COLOR_SLOT
-                    .get()
-                    .expect("color slot initialized above")
-                    .lock()
-                    .unwrap()
-            });
-            restore.reset_env_detectors = true;
-
-            // Gate 2: `console`'s process-global switch, which
-            // `Style::apply_to` reads before emitting an escape. Standout's
-            // detector alone cannot produce ANSI in a non-TTY test process.
-            // Its pre-run value was captured in step 0, before this run's
-            // environment existed.
-            console::set_colors_enabled(flag);
-        }
+        // 3. Destination facts are injected on TargetProperties below.
+        //    Width/color/theme/icon no longer install process-global
+        //    detectors or `console::set_colors_enabled`.
 
         // 4. Stdin / clipboard overrides.
         match std::mem::replace(&mut self.stdin, StdinMode::Inherit) {
@@ -646,17 +561,15 @@ impl TestHarness {
     }
 
     fn target_properties(&self) -> TargetProperties {
+        let detected = TargetProperties::detect();
         TargetProperties {
-            width: match self.terminal_width {
-                Some(width) => width,
-                None => detect_terminal_width(),
-            },
+            width: self.terminal_width.unwrap_or(detected.width),
             stdout_is_terminal: false,
             stderr_is_terminal: false,
-            stdout_color_capability: self.color_capable.unwrap_or_else(detect_color_capability),
-            stderr_color_capability: self.color_capable.unwrap_or_else(detect_color_capability),
-            color_scheme: detect_color_mode(),
-            icon_mode: detect_icon_mode(),
+            stdout_color_capability: self.color_capable.unwrap_or(false),
+            stderr_color_capability: self.color_capable.unwrap_or(false),
+            color_scheme: self.color_scheme.unwrap_or(detected.color_scheme),
+            icon_mode: self.icon_mode.unwrap_or(detected.icon_mode),
             ambiguous_width: self.ambiguous_width.unwrap_or(AmbiguousWidth::Narrow),
         }
     }
@@ -783,16 +696,6 @@ fn output_mode_flag(mode: OutputMode) -> &'static str {
 struct RestoreState {
     env_originals: HashMap<String, Option<String>>,
     original_cwd: Option<PathBuf>,
-    reset_env_detectors: bool,
-    /// `console`'s process-global color switch as it read *before* `run()`
-    /// applied any of this run's overrides — read that early, on every run,
-    /// because the switch initializes lazily from the environment the run is
-    /// about to change. Recorded here only when the run also *writes* the
-    /// switch (`with_color` / `no_color`); a run that merely forced the
-    /// initialization has nothing to put back. Restoring writes the *value*
-    /// back — the switch has no "return to auto-detection" setter — which in
-    /// a test process is the same thing, since detection there is a constant.
-    console_colors: Option<bool>,
     reset_stdin: bool,
     reset_clipboard: bool,
     reset_prompts: bool,
@@ -808,12 +711,6 @@ impl Drop for RestoreState {
         }
         if let Some(cwd) = self.original_cwd.take() {
             let _ = std::env::set_current_dir(cwd);
-        }
-        if self.reset_env_detectors {
-            reset_environment_detectors();
-        }
-        if let Some(enabled) = self.console_colors.take() {
-            console::set_colors_enabled(enabled);
         }
         if self.reset_stdin {
             reset_default_stdin_reader();

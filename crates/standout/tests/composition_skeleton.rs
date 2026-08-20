@@ -13,6 +13,10 @@ fn list_command() -> Command {
     Command::new("app").subcommand(Command::new("list"))
 }
 
+fn show_command() -> Command {
+    Command::new("app").subcommand(Command::new("show"))
+}
+
 fn capable_target() -> TargetProperties {
     TargetProperties {
         width: Some(80),
@@ -170,4 +174,32 @@ fn structured_only_list_rejects_term_through_run_with() {
         }
         other => panic!("expected structured-only list to reject term, got {other:?}"),
     }
+}
+
+#[test]
+fn styled_show_term_goes_through_render_request() {
+    let theme = Theme::new().add("tone", Style::new().red());
+    let app = App::builder()
+        .theme(theme)
+        .command(
+            "show",
+            |_m, _ctx| Ok(Output::Render(json!({"msg": "hello"}))),
+            "[tone]{{ msg }}[/tone]",
+        )
+        .unwrap()
+        .build()
+        .unwrap();
+
+    let result = app.run_with(
+        show_command(),
+        ["app", "show", "--output=term"],
+        capable_target(),
+        InputSources::from_process(),
+    );
+    let rendered = result.output().expect("show should render");
+    assert!(
+        rendered.contains("\x1b["),
+        "every command's Term render goes through render_request force_styling, got {rendered:?}"
+    );
+    assert!(rendered.contains("hello"), "got {rendered:?}");
 }

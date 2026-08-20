@@ -3,26 +3,29 @@
 //! [`TargetProperties`] is what this invocation's destination looks like.
 //! [`RenderRequest`] is what to render, including those properties and a
 //! resolved [`ColorPolicy`] independent of [`crate::OutputMode`]. The pure
-//! leaf entry is [`render_request`]; convenience wrappers stay as separate
-//! functions and are not rewired onto this path in this workstream. Detection
-//! lives at [`TargetProperties::detect`].
+//! leaf entry is [`render_request`]; convenience wrappers detect at their
+//! edge, build a request, and delegate here. Detection lives at
+//! [`TargetProperties::detect`].
 
 use std::cell::RefCell;
+use std::collections::HashMap;
 use std::fmt;
 use std::rc::Rc;
 
 use std::io::IsTerminal;
 
 use crate::context::{ContextRegistry, RenderContext};
-use crate::environment::{detect_color_capability, detect_terminal_width};
+use crate::environment::{
+    probe_stderr_color_capability, probe_stdout_color_capability, probe_terminal_width,
+};
 use crate::error::RenderError;
 use crate::output::OutputMode;
 use crate::projection::CsvProjection;
 use crate::template::{
-    load_inline_dependencies, load_named_template, render_auto_with_engine_split_inline,
-    render_auto_with_engine_split_named, RenderResult, TemplateEngine, TemplateRegistry,
+    load_inline_dependencies, load_named_template, render_engine_split_inline,
+    render_engine_split_named, MiniJinjaEngine, RenderResult, TemplateEngine, TemplateRegistry,
 };
-use crate::theme::{detect_color_mode, detect_icon_mode, ColorMode, IconMode, Theme};
+use crate::theme::{probe_color_mode, probe_icon_mode, ColorMode, IconMode, Theme};
 use crate::AmbiguousWidth;
 
 /// Shared handle to the template engine stored on a [`RenderRequest`].
@@ -61,9 +64,6 @@ pub struct TargetProperties {
     pub stderr_is_terminal: bool,
 
     /// Whether ANSI color is supported on stdout.
-    ///
-    /// Reuses the existing leaf result type (`bool` from
-    /// [`crate::detect_color_capability`]).
     pub stdout_color_capability: bool,
 
     /// Whether ANSI color is supported on stderr.
@@ -96,13 +96,13 @@ impl TargetProperties {
     /// tests do not.
     pub fn detect() -> Self {
         Self {
-            width: detect_terminal_width(),
+            width: probe_terminal_width(),
             stdout_is_terminal: std::io::stdout().is_terminal(),
             stderr_is_terminal: std::io::stderr().is_terminal(),
-            stdout_color_capability: detect_color_capability(),
-            stderr_color_capability: console::Term::stderr().features().colors_supported(),
-            color_scheme: detect_color_mode(),
-            icon_mode: detect_icon_mode(),
+            stdout_color_capability: probe_stdout_color_capability(),
+            stderr_color_capability: probe_stderr_color_capability(),
+            color_scheme: probe_color_mode(),
+            icon_mode: probe_icon_mode(),
             ambiguous_width: AmbiguousWidth::Narrow,
         }
     }
@@ -160,7 +160,8 @@ pub enum TemplateRef {
 ///
 /// Format ([`OutputMode`]), color policy ([`ColorPolicy`]), and per-stream
 /// color capability on [`TargetProperties`] are independent facts. A later
-/// `--color` flag must have a home that is not `--output`.
+/// `--color` flag must have a home that is not `--output`. Caller extras
+/// for context providers ride [`Self::extras`].
 pub struct RenderRequest {
     /// Handler data, already serialized.
     pub data: serde_json::Value,
@@ -183,6 +184,13 @@ pub struct RenderRequest {
     pub context_registry: Option<ContextRegistry>,
     /// Optional CSV projection for structured CSV output.
     pub csv_projection: Option<CsvProjection>,
+    /// Caller-supplied extras forwarded onto [`RenderContext`] for providers.
+    ///
+    /// Convenience wrappers that take a [`RenderContext`] copy these through
+    /// so [`RenderContext::with_extra`] values survive `render_request`.
+    /// The reserved `standout.ambiguous_width` key is owned by
+    /// [`TargetProperties::ambiguous_width`] and is not copied from here.
+    pub extras: HashMap<String, String>,
 }
 
 impl fmt::Debug for RenderRequest {
@@ -197,6 +205,7 @@ impl fmt::Debug for RenderRequest {
             .field("has_registry", &self.registry.is_some())
             .field("has_context_registry", &self.context_registry.is_some())
             .field("csv_projection", &self.csv_projection)
+            .field("extras", &self.extras)
             .finish_non_exhaustive()
     }
 }
@@ -205,8 +214,8 @@ impl fmt::Debug for RenderRequest {
 ///
 /// Takes the owned request by reference and returns the formatted string
 /// (ANSI applied when [`ColorPolicy`] and capability say so). Convenience
-/// [`crate::render`] and [`crate::render_with_output`] stay as separate
-/// functions and are not rewired onto this path in this workstream.
+/// [`crate::render`] and [`crate::render_with_output`] detect at their edge,
+/// build a request, and delegate here.
 ///
 /// Callers that need both formatted and stripped output (CLI pipes, output
 /// files, post-output hooks) should use [`render_request_split`].
@@ -218,8 +227,9 @@ impl fmt::Debug for RenderRequest {
 /// (`Term` colors, `Text` strips, `Auto` follows stdout capability).
 /// [`OutputMode::TermDebug`] keeps bracket tags. Named templates and their
 /// includes are loaded from [`RenderRequest::registry`] when present.
-/// Color-scheme and icon mode still ride the existing internals until later
-/// workstreams.
+/// Color-scheme and icon mode come from [`RenderRequest::target`]. ANSI
+/// is applied via `force_styling` on the request's styles, not
+/// `console::colors_enabled()`.
 pub fn render_request(request: &RenderRequest) -> Result<String, RenderError> {
     Ok(render_request_split(request)?.formatted)
 }
@@ -311,17 +321,10 @@ fn render_from_request(request: &RenderRequest) -> Result<RenderResult, RenderEr
         return serialize_structured(&request.data, request.format);
     }
 
-    let render_format = resolve_render_format(request);
     let style_mode = resolve_style_mode(request);
     let empty_registry = ContextRegistry::new();
     let context_registry = request.context_registry.as_ref().unwrap_or(&empty_registry);
-    let render_ctx = RenderContext::with_ambiguous_width(
-        render_format,
-        request.target.width,
-        request.target.ambiguous_width,
-        &request.theme,
-        &request.data,
-    );
+    let render_ctx = render_context_from_request(request);
 
     match &request.template {
         TemplateRef::Inline(source) => {
@@ -329,7 +332,7 @@ fn render_from_request(request: &RenderRequest) -> Result<RenderResult, RenderEr
                 load_inline_dependencies(&mut **request.engine.borrow_mut(), registry, source)?;
             }
             let engine = request.engine.borrow();
-            render_auto_with_engine_split_inline(
+            render_engine_split_inline(
                 &**engine,
                 source,
                 &request.data,
@@ -337,6 +340,8 @@ fn render_from_request(request: &RenderRequest) -> Result<RenderResult, RenderEr
                 style_mode,
                 context_registry,
                 &render_ctx,
+                request.target.color_scheme,
+                request.target.icon_mode,
             )
         }
         TemplateRef::Named(name) => {
@@ -344,7 +349,7 @@ fn render_from_request(request: &RenderRequest) -> Result<RenderResult, RenderEr
                 load_named_template(&mut **request.engine.borrow_mut(), registry, name)?;
             }
             let engine = request.engine.borrow();
-            render_auto_with_engine_split_named(
+            render_engine_split_named(
                 &**engine,
                 name,
                 &request.data,
@@ -352,12 +357,69 @@ fn render_from_request(request: &RenderRequest) -> Result<RenderResult, RenderEr
                 style_mode,
                 context_registry,
                 &render_ctx,
+                request.target.color_scheme,
+                request.target.icon_mode,
             )
         }
         TemplateRef::Absent => Err(RenderError::TemplateError(
             "absent template cannot render in a human output mode".into(),
         )),
     }
+}
+
+/// Shared engine handle for a convenience wrapper that detects, then calls
+/// [`render_request`].
+pub(crate) fn convenience_engine() -> SharedTemplateEngine {
+    Rc::new(RefCell::new(Box::new(MiniJinjaEngine::new())))
+}
+
+/// Builds a [`RenderRequest`] for a convenience wrapper that already detected
+/// destination facts at its edge.
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn convenience_request(
+    template: TemplateRef,
+    data: serde_json::Value,
+    theme: Theme,
+    format: OutputMode,
+    target: TargetProperties,
+    context_registry: Option<ContextRegistry>,
+    registry: Option<Rc<TemplateRegistry>>,
+    csv_projection: Option<CsvProjection>,
+) -> RenderRequest {
+    RenderRequest {
+        data,
+        template,
+        theme,
+        format,
+        color_policy: ColorPolicy::Auto,
+        target,
+        engine: convenience_engine(),
+        registry,
+        context_registry,
+        csv_projection,
+        extras: HashMap::new(),
+    }
+}
+
+/// Provider view reconstructed from the request, including caller extras.
+///
+/// Ambiguous-width on [`TargetProperties`] wins over a reserved extra of the
+/// same name so width stays a destination fact, not a leftover context key.
+fn render_context_from_request(request: &RenderRequest) -> RenderContext<'_> {
+    let mut ctx = RenderContext::with_ambiguous_width(
+        resolve_render_format(request),
+        request.target.width,
+        request.target.ambiguous_width,
+        &request.theme,
+        &request.data,
+    );
+    for (key, value) in &request.extras {
+        if key == "standout.ambiguous_width" {
+            continue;
+        }
+        ctx.extras.insert(key.clone(), value.clone());
+    }
+    ctx
 }
 
 #[cfg(test)]
@@ -395,6 +457,7 @@ mod tests {
             registry: None,
             context_registry: None,
             csv_projection: None,
+            extras: HashMap::new(),
         }
     }
 
@@ -427,6 +490,25 @@ mod tests {
         assert!(!props.stderr_color_capability);
         assert!(!props.stdout_is_terminal);
         assert!(props.stderr_is_terminal);
+    }
+
+    #[test]
+    fn render_request_carries_extras_to_context_providers() {
+        use minijinja::Value;
+
+        let mut registry = ContextRegistry::new();
+        registry.add_provider("label", |ctx: &RenderContext| {
+            Value::from(ctx.get_extra("label").unwrap_or("missing"))
+        });
+        let request = RenderRequest {
+            data: json!({"name": "Ada"}),
+            template: TemplateRef::Inline("{{ name }} {{ label }}".into()),
+            format: OutputMode::Text,
+            context_registry: Some(registry),
+            extras: HashMap::from([("label".into(), "from-extra".into())]),
+            ..sample_request()
+        };
+        assert_eq!(render_request(&request).unwrap(), "Ada from-extra");
     }
 
     #[test]
@@ -771,5 +853,75 @@ mod tests {
             ..sample_request()
         };
         assert_eq!(render_request(&request).unwrap(), r#"{% "unclosed hello"#);
+    }
+
+    #[test]
+    fn term_emits_ansi_without_force_styling_on_the_theme() {
+        let request = RenderRequest {
+            data: json!({"msg": "hi"}),
+            template: TemplateRef::Inline("[tone]{{ msg }}[/tone]".into()),
+            theme: Theme::new().add("tone", console::Style::new().red()),
+            format: OutputMode::Term,
+            color_policy: ColorPolicy::Auto,
+            target: TargetProperties {
+                stdout_color_capability: false,
+                ..sample_target()
+            },
+            ..sample_request()
+        };
+        let rendered = render_request(&request).unwrap();
+        assert!(
+            rendered.contains("\x1b["),
+            "Term applies force_styling from the request, got {rendered:?}"
+        );
+        console::set_colors_enabled(false);
+        let again = render_request(&request).unwrap();
+        assert_eq!(
+            again, rendered,
+            "console::colors_enabled must not change the request result"
+        );
+    }
+
+    #[test]
+    fn same_request_is_stable_under_perturbed_env() {
+        let request = RenderRequest {
+            data: json!({"msg": "hello"}),
+            template: TemplateRef::Inline("{{ msg }}".into()),
+            format: OutputMode::Text,
+            ..sample_request()
+        };
+        let first = render_request(&request).unwrap();
+        let original_columns = std::env::var_os("COLUMNS");
+        std::env::set_var("COLUMNS", "20");
+        let second = render_request(&request).unwrap();
+        match original_columns {
+            Some(value) => std::env::set_var("COLUMNS", value),
+            None => std::env::remove_var("COLUMNS"),
+        }
+        assert_eq!(first, second);
+        assert_eq!(first, "hello");
+    }
+
+    #[test]
+    fn convenience_render_with_output_text_matches_render_request() {
+        let theme = Theme::new();
+        let data = json!({"msg": "hello"});
+        let via_wrapper =
+            crate::render_with_output("{{ msg }}", &data, &theme, OutputMode::Text).unwrap();
+        let request = RenderRequest {
+            data,
+            template: TemplateRef::Inline("{{ msg }}".into()),
+            theme,
+            format: OutputMode::Text,
+            color_policy: ColorPolicy::Auto,
+            target: TargetProperties::detect(),
+            engine: sample_engine(),
+            registry: None,
+            context_registry: None,
+            csv_projection: None,
+            extras: HashMap::new(),
+        };
+        assert_eq!(via_wrapper, render_request(&request).unwrap());
+        assert_eq!(via_wrapper, "hello");
     }
 }

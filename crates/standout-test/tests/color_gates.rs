@@ -1,18 +1,9 @@
-//! The two gates between a styled template and ANSI bytes, and the worked
-//! example that proves the harness opens both.
+//! ANSI follows the request, not `console::colors_enabled()`.
 //!
-//! Standout's own color decision (`OutputMode::should_use_color`) is only the
-//! first gate. The second is `console`'s process-global color switch, which
-//! `Style::apply_to` reads before emitting an escape and which is off in a
-//! non-TTY process — and a test binary is never a TTY. Opening gate 1 alone
-//! yields plain text, which is why in-repo tests that wanted real escapes
-//! reached for `force_styling(true)` on the fixture theme or called
-//! `set_colors_enabled(true)` by hand.
-//!
-//! `.with_color()` now opens both, so ANSI-positive assertions work
-//! in-process against an *unmodified* theme — including the default help
-//! theme, which sets `force_styling` on none of its styles and was the
-//! specific reason to doubt this was reachable at all.
+//! [`TestHarness::with_color`] fills [`standout::TargetProperties`] color
+//! capability. The leaf applies `force_styling` from format + capability
+//! (ADR-0030). The default help theme sets `force_styling` on none of its
+//! styles; Term and Auto-with-capability still emit escapes.
 
 use clap::{Arg, ArgAction, Command};
 use console::Style;
@@ -89,12 +80,11 @@ fn with_color_makes_a_styled_render_ansi_positive() {
     assert_eq!(result.stdout_plain().trim_end(), "hello");
 }
 
-/// The other half of the same fact: without `with_color()`, gate 2 stays
-/// shut and the identical run emits no escapes. This is the behavior that
-/// made `strip_ansi(Term) == Text` a comparison of two no-ops.
+/// `--output=term` means ANSI even when the harness does not call
+/// `with_color()`. Capability only resolves [`OutputMode::Auto`].
 #[test]
 #[serial]
-fn a_term_render_without_with_color_emits_no_escapes() {
+fn a_term_render_without_with_color_emits_escapes() {
     let result = TestHarness::new().output_mode(OutputMode::Term).run(
         &styled_app(),
         styled_command(),
@@ -102,8 +92,8 @@ fn a_term_render_without_with_color_emits_no_escapes() {
     );
 
     assert!(
-        !result.stdout().contains('\u{1b}'),
-        "a test process is not a TTY, so console suppresses styling: {:?}",
+        result.stdout().contains('\u{1b}'),
+        "Term force_styling is a function of the request, not console's switch: {:?}",
         result.stdout()
     );
 }
@@ -160,24 +150,26 @@ fn the_help_page_renders_ansi_through_the_default_help_theme() {
     assert!(result.stdout_plain().contains("--file <PATH>"));
 }
 
-/// The switch is process-global, so the harness has to hand it back. Without
-/// this, one colored test would silently color every later test in the same
-/// binary.
+/// `with_color()` fills TargetProperties and does not write console's switch.
 #[test]
 #[serial]
-fn the_color_switch_is_restored_when_the_run_is_dropped() {
+fn with_color_does_not_call_set_colors_enabled() {
     let before = console::colors_enabled();
 
     let result = TestHarness::new()
         .with_color()
         .output_mode(OutputMode::Term)
         .run(&styled_app(), styled_command(), ["app", "say"]);
-    assert!(console::colors_enabled(), "the run must open gate 2");
+    assert_eq!(
+        console::colors_enabled(),
+        before,
+        "with_color() must not write console's process-global switch"
+    );
     drop(result);
 
     assert_eq!(
         console::colors_enabled(),
         before,
-        "with_color() must not leak into the next test in this binary"
+        "with_color() must not leak a console switch change"
     );
 }

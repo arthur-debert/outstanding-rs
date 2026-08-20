@@ -32,11 +32,20 @@ pub fn render_help(cmd: &Command, config: Option<HelpConfig>) -> Result<String, 
         .unwrap_or(include_str!("template.txt"));
 
     let theme = resolve_help_theme(config.theme);
-    let mode = config.output_mode.unwrap_or(OutputMode::Auto);
+    let mode = human_help_mode(config.output_mode.unwrap_or(OutputMode::Auto));
 
     let data = extract_help_data(cmd, config.command_groups.as_deref(), config.length);
 
     render_with_output(template, &data, &theme, mode)
+}
+
+/// ADR-0029: structured `--output` still prints human help.
+fn human_help_mode(mode: OutputMode) -> OutputMode {
+    if mode.is_structured() {
+        OutputMode::Auto
+    } else {
+        mode
+    }
 }
 
 /// Renders the help for a clap command with topics in a "Learn More" section.
@@ -52,7 +61,7 @@ pub fn render_help_with_topics(
         .unwrap_or(include_str!("template.txt"));
 
     let theme = resolve_help_theme(config.theme);
-    let mode = config.output_mode.unwrap_or(OutputMode::Auto);
+    let mode = human_help_mode(config.output_mode.unwrap_or(OutputMode::Auto));
 
     let data = extract_help_data_with_topics(
         cmd,

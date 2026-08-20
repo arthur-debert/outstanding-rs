@@ -184,17 +184,16 @@ fn term_dumb_suppresses_ansi_on_a_pty() {
 // Explicit Term mode: standout opens its gate, console's stays authoritative
 // ---------------------------------------------------------------------------
 
-/// `--output=term` through a pipe emits **no** ANSI: standout opens gate 1,
-/// `console`'s process-global switch (gate 2) initializes to off on a
-/// non-TTY, and standout never sets it. This contradicts `Term`'s documented
-/// "always use ANSI" contract — #329 tracks that; the pin is what makes the
-/// eventual fix a visible, deliberate diff instead of a silent change.
+/// `--output=term` through a pipe emits ANSI: the request applies
+/// `force_styling` for Term (ADR-0030), independent of `console`'s
+/// process-global switch. This is the documented contract that #329 pinned
+/// as a contradiction; the delta is that contract becoming true.
 #[test]
-fn explicit_term_through_a_pipe_emits_no_ansi() {
+fn explicit_term_through_a_pipe_emits_ansi() {
     let result = conventions(&[])
         .output_mode(OutputMode::Term)
         .run_process(env!("CARGO_BIN_EXE_tdoo"), ["list"]);
-    assert_plain(&result);
+    assert_ansi(&result);
 }
 
 /// `CLICOLOR_FORCE=1` *does* reach an explicit `--output=term` run — through

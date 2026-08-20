@@ -5,7 +5,7 @@ A CLI framework: leaf crates do one job (render, input, dispatch, …) and the `
 ## Language
 
 **RenderRequest**:
-The explicit input to the pure entry `render_request`: data, template, theme, format, **color policy**, and **TargetProperties**. The type is owned (no lifetime); the function takes it by reference. Convenience `render(template, data, theme)` detects, builds a request, and delegates. The leaf does not read framework-owned detectors or process globals. File-backed templates and context-provider callbacks are external dependencies of the request.
+The explicit input to the pure entry `render_request`: data, template, theme, format, **color policy**, **TargetProperties**, and optional extras forwarded to context providers. The type is owned (no lifetime); the function takes it by reference. Convenience `render(template, data, theme)` detects, builds a request, and delegates. The leaf does not read framework-owned detectors or process globals. File-backed templates and context-provider callbacks are external dependencies of the request.
 _Avoid_: RenderContext (that is the mid-render view for context providers)
 
 **TargetProperties**:
