@@ -230,8 +230,26 @@ impl<T: Clone + Send + Sync + 'static> InputChain<T> {
     }
 
     /// Check if any source is available to provide input.
+    ///
+    /// Uses [`InputSources::from_process`]; prefer
+    /// [`has_available_source_from`] when the caller already has invocation
+    /// sources (a scripted responder makes interactive sources available
+    /// without a TTY).
     pub fn has_available_source(&self, matches: &ArgMatches) -> bool {
-        self.sources.iter().any(|(s, _)| s.is_available(matches)) || self.default.is_some()
+        self.has_available_source_from(matches, &InputSources::from_process())
+    }
+
+    /// [`has_available_source`](Self::has_available_source) against explicit
+    /// [`InputSources`].
+    pub fn has_available_source_from(&self, matches: &ArgMatches, sources: &InputSources) -> bool {
+        self.sources.iter().any(|(source, _)| {
+            let bound = source.bind_sources(sources);
+            let source: &dyn InputCollector<T> = match bound.as_ref() {
+                Some(bound) => bound.as_ref(),
+                None => source.as_ref(),
+            };
+            source.is_available(matches)
+        }) || self.default.is_some()
     }
 
     /// Get the number of sources in the chain.
@@ -418,5 +436,64 @@ mod tests {
             .try_source(ArgSource::new("c"));
 
         assert_eq!(chain.source_count(), 3);
+    }
+
+    #[cfg(feature = "simple-prompts")]
+    #[test]
+    fn chain_resolve_from_uses_scripted_responder_without_tty() {
+        use crate::sources::{MockTerminal, TextPromptSource};
+        use crate::{PromptResponse, ScriptedResponder};
+        use std::sync::Arc;
+
+        let matches = make_matches(&["test"]);
+        let chain = InputChain::<String>::new().try_source(TextPromptSource::with_terminal(
+            "Name: ",
+            MockTerminal::non_terminal(),
+        ));
+        let sources =
+            InputSources::from_process().with_responder(Arc::new(ScriptedResponder::new([
+                PromptResponse::text("Ada"),
+            ])));
+
+        assert_eq!(chain.resolve_from(&matches, &sources).unwrap(), "Ada");
+    }
+
+    #[cfg(feature = "simple-prompts")]
+    #[test]
+    fn chain_skips_interactive_source_without_responder_or_tty() {
+        use crate::sources::{MockTerminal, TextPromptSource};
+
+        let matches = make_matches(&["test"]);
+        let chain = InputChain::<String>::new()
+            .try_source(TextPromptSource::with_terminal(
+                "Name: ",
+                MockTerminal::non_terminal(),
+            ))
+            .default("fallback".to_string());
+        let sources = InputSources::from_process();
+
+        assert_eq!(chain.resolve_from(&matches, &sources).unwrap(), "fallback");
+        assert!(chain.has_available_source_from(&matches, &sources));
+    }
+
+    #[cfg(feature = "editor")]
+    #[test]
+    fn chain_resolve_from_uses_scripted_responder_for_editor() {
+        use crate::sources::{EditorSource, MockEditorRunner};
+        use crate::{PromptResponse, ScriptedResponder};
+        use std::sync::Arc;
+
+        let matches = make_matches(&["test"]);
+        let chain = InputChain::<String>::new()
+            .try_source(EditorSource::with_runner(MockEditorRunner::no_editor()));
+        let sources =
+            InputSources::from_process().with_responder(Arc::new(ScriptedResponder::new([
+                PromptResponse::text("edited body"),
+            ])));
+
+        assert_eq!(
+            chain.resolve_from(&matches, &sources).unwrap(),
+            "edited body"
+        );
     }
 }

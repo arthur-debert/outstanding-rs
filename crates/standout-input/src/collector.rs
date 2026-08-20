@@ -75,9 +75,11 @@ pub trait InputCollector<T>: Send + Sync {
     ///
     /// Stdin and clipboard sources constructed with [`crate::StdinSource::new`]
     /// / [`crate::ClipboardSource::new`] return a collector that reads those
-    /// invocation sources. Collectors built with an explicit reader, and
-    /// sources that do not consult stdin/clipboard, return `None` and keep
-    /// their existing behaviour.
+    /// invocation sources. Interactive prompt and editor collectors bind the
+    /// invocation's prompt responder so chain resolution — not only `.prompt()`
+    /// — can consume a scripted responder without a TTY. Collectors built with
+    /// an explicit stdin/clipboard reader keep that reader. Sources that do
+    /// not consult invocation sources return `None`.
     fn bind_sources(&self, _sources: &InputSources) -> Option<Box<dyn InputCollector<T>>> {
         None
     }
@@ -102,6 +104,28 @@ pub trait InputCollector<T>: Send + Sync {
     fn can_retry(&self) -> bool {
         false
     }
+}
+
+/// Resolve a standalone `.prompt()` against invocation [`InputSources`].
+///
+/// Binds the collector (so a scripted responder is visible to
+/// [`InputCollector::is_available`] / [`collect`](InputCollector::collect))
+/// and maps a missing answer to [`InputError::NoInput`].
+#[cfg(any(feature = "editor", feature = "simple-prompts", feature = "inquire"))]
+pub(crate) fn prompt_value_from<T>(
+    collector: &dyn InputCollector<T>,
+    sources: &InputSources,
+) -> Result<T, InputError> {
+    let bound = collector.bind_sources(sources);
+    let source: &dyn InputCollector<T> = match bound.as_ref() {
+        Some(bound) => bound.as_ref(),
+        None => collector,
+    };
+    let matches = empty_matches();
+    if !source.is_available(matches) {
+        return Err(InputError::NoInput);
+    }
+    source.collect(matches)?.ok_or(InputError::NoInput)
 }
 
 /// Returns a process-wide static [`ArgMatches`] with no arguments.

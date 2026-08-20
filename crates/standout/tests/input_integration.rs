@@ -8,9 +8,11 @@ use clap::{Arg, Command};
 use serde_json::json;
 use standout::cli::{App, CommandContextInput, DispatchResult as RunResult, Output};
 use standout::input::{
-    env::MockStdin, ArgSource, FlagSource, InputChain, InputSourceKind, InputSources, StdinSource,
+    env::MockStdin, ArgSource, FlagSource, InputChain, InputSourceKind, InputSources,
+    PromptResponse, ScriptedResponder, StdinSource, TextPromptSource,
 };
 use standout::{AmbiguousWidth, ColorMode, IconMode, TargetProperties};
+use std::sync::Arc;
 
 fn body_command() -> Command {
     Command::new("test")
@@ -237,6 +239,51 @@ fn arg_wins_over_stdin_when_both_available() {
 
     if let RunResult::Handled(out) = result {
         assert_eq!(out, "argument: from arg");
+    } else {
+        panic!("expected Handled, got {:?}", result);
+    }
+}
+
+#[test]
+fn command_config_input_consumes_scripted_responder() {
+    let app = App::builder()
+        .command_with(
+            "create",
+            |_m, ctx| {
+                let body: &String = ctx.input("body").expect("body should be resolved");
+                let kind = ctx.input_source("body").unwrap();
+                Ok(Output::Render(json!({
+                    "echo": body,
+                    "kind": kind.to_string(),
+                })))
+            },
+            |cfg| {
+                cfg.template("{{ kind }}: {{ echo }}").input(
+                    "body",
+                    InputChain::<String>::new()
+                        .try_source(ArgSource::new("body"))
+                        .try_source(TextPromptSource::new("Body: ")),
+                )
+            },
+        )
+        .unwrap()
+        .build()
+        .unwrap();
+
+    let sources = InputSources::from_process().with_responder(Arc::new(ScriptedResponder::new([
+        PromptResponse::text("from prompt"),
+    ])));
+    let result = app
+        .run_with(
+            body_command(),
+            vec!["test", "create"],
+            capable_target(),
+            sources,
+        )
+        .into_outcome();
+
+    if let RunResult::Handled(out) = result {
+        assert_eq!(out, "prompt: from prompt");
     } else {
         panic!("expected Handled, got {:?}", result);
     }

@@ -4,6 +4,7 @@
 
 use std::fs;
 use std::io::{self, Write};
+use std::ops::ControlFlow;
 use std::path::Path;
 use std::process::Command;
 use std::sync::Arc;
@@ -12,6 +13,7 @@ use std::time::SystemTime;
 use clap::ArgMatches;
 
 use crate::collector::InputCollector;
+use crate::responder::PromptResponder;
 use crate::InputError;
 use crate::InputSources;
 
@@ -142,6 +144,7 @@ pub struct EditorSource<R: EditorRunner = RealEditorRunner> {
     extension: String,
     require_save: bool,
     trim: bool,
+    responder: Option<Arc<dyn PromptResponder>>,
 }
 
 impl EditorSource<RealEditorRunner> {
@@ -153,6 +156,7 @@ impl EditorSource<RealEditorRunner> {
             extension: ".txt".to_string(),
             require_save: false,
             trim: true,
+            responder: None,
         }
     }
 }
@@ -174,6 +178,7 @@ impl<R: EditorRunner> EditorSource<R> {
             extension: ".txt".to_string(),
             require_save: false,
             trim: true,
+            responder: None,
         }
     }
 
@@ -235,21 +240,7 @@ impl<R: EditorRunner + 'static> EditorSource<R> {
 
     /// [`prompt`](Self::prompt) against explicit [`InputSources`].
     pub fn prompt_from(&self, sources: &InputSources) -> Result<String, InputError> {
-        if let Some(value) = crate::responder::intercept_text(
-            crate::PromptKind::Editor,
-            // EditorSource has no user-facing "message" — use the file
-            // extension as the diagnostic hint so panic messages still
-            // identify which editor source failed.
-            &self.extension,
-            sources.responder(),
-        )? {
-            return Ok(value);
-        }
-        let matches = crate::collector::empty_matches();
-        if !self.is_available(matches) {
-            return Err(InputError::NoInput);
-        }
-        self.collect(matches)?.ok_or(InputError::NoInput)
+        crate::collector::prompt_value_from(self, sources)
     }
 }
 
@@ -259,11 +250,26 @@ impl<R: EditorRunner + 'static> InputCollector<String> for EditorSource<R> {
     }
 
     fn is_available(&self, _matches: &ArgMatches) -> bool {
-        // Editor is available if we can detect one and we have a TTY
-        self.runner.detect_editor().is_some() && std::io::stdin().is_terminal()
+        // A scripted responder makes the source available without a TTY or
+        // a detectable editor; otherwise we need both.
+        self.responder.is_some()
+            || (self.runner.detect_editor().is_some() && std::io::stdin().is_terminal())
     }
 
     fn collect(&self, _matches: &ArgMatches) -> Result<Option<String>, InputError> {
+        if let ControlFlow::Break(value) =
+            crate::responder::collect_intercept(crate::responder::intercept_text(
+                crate::PromptKind::Editor,
+                // EditorSource has no user-facing "message" — use the file
+                // extension as the diagnostic hint so panic messages still
+                // identify which editor source failed.
+                &self.extension,
+                self.responder.as_deref(),
+            ))?
+        {
+            return Ok(value);
+        }
+
         let editor = self.runner.detect_editor().ok_or(InputError::NoEditor)?;
 
         // Create a temporary file with the specified extension
@@ -313,6 +319,17 @@ impl<R: EditorRunner + 'static> InputCollector<String> for EditorSource<R> {
         } else {
             Ok(Some(result))
         }
+    }
+
+    fn bind_sources(&self, sources: &InputSources) -> Option<Box<dyn InputCollector<String>>> {
+        Some(Box::new(Self {
+            runner: Arc::clone(&self.runner),
+            initial_content: self.initial_content.clone(),
+            extension: self.extension.clone(),
+            require_save: self.require_save,
+            trim: self.trim,
+            responder: Some(sources.responder_arc()?),
+        }))
     }
 
     fn can_retry(&self) -> bool {

@@ -214,21 +214,27 @@ You wrote ~50 lines of glue and got: themed dynamic text per step, polished TUI 
 
 ## Testing Wizards
 
-A wizard built on `.prompt()` is fully testable in process — no real TTY, no `expectrl` subprocess. Every interactive source consults a [`PromptResponder`](https://docs.rs/standout-input/latest/standout_input/trait.PromptResponder.html) before it touches stdin; in tests you install a `ScriptedResponder` and the production wizard code is unchanged.
+A wizard built on interactive sources is fully testable in process — no real TTY, no `expectrl` subprocess. Every interactive source consults a [`PromptResponder`](https://docs.rs/standout-input/latest/standout_input/trait.PromptResponder.html) on the run's [`InputSources`](https://docs.rs/standout-input/latest/standout_input/struct.InputSources.html) before it touches stdin. Production handler code calls `.prompt_from(ctx.input_sources())` (or `InputChain::resolve_from`); tests put a `ScriptedResponder` on those sources with `TestHarness::prompts(...)`.
 
 ```rust
-use serial_test::serial;
-use standout_input::{PromptResponse, ScriptedResponder};
+use standout::cli::CommandContextInput;
+use standout_input::{InquireSelect, InquireText, PromptResponse, ScriptedResponder};
 use standout_test::TestHarness;
 use std::sync::Arc;
 
+fn setup(_m: &ArgMatches, ctx: &CommandContext) -> HandlerResult<Value> {
+    let sources = ctx.input_sources();
+    let pack = InquireText::new("Pack name:").prompt_from(sources)?;
+    let env = InquireSelect::new("Environment:", vec!["dev", "staging", "prod"])
+        .prompt_from(sources)?;
+    Ok(Output::Render(json!({ "pack": pack, "env": env })))
+}
+
 #[test]
-#[serial]
 fn setup_wizard_creates_pack_and_picks_environment() {
     let result = TestHarness::new()
         .prompts(Arc::new(ScriptedResponder::new([
             PromptResponse::text("foo"),     // pack name
-            PromptResponse::Bool(true),      // confirm dirty
             PromptResponse::Choice(2),       // env: dev=0, staging=1, prod=2 -> "prod"
         ])))
         .run(&app(), command(), ["mycli", "setup"]);
@@ -237,6 +243,8 @@ fn setup_wizard_creates_pack_and_picks_environment() {
     result.assert_stdout_contains("Created pack `foo` in prod");
 }
 ```
+
+`.prompt()` still exists for standalone flows that have no `CommandContext`; it uses `InputSources::from_process()`. Harness tests of framework handlers must call `.prompt_from(ctx.input_sources())` so they see the scripted responder.
 
 Two design choices to keep tests honest:
 

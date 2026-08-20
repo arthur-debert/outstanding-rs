@@ -184,7 +184,9 @@ impl AppBuilder {
     ///     .run(cmd, args);
     /// ```
     pub fn templates(mut self, templates: EmbeddedTemplates) -> Self {
-        self.template_registry = Some(TemplateRegistry::from(templates));
+        let warnings = standout_render::warnings::WarningBuffer::new();
+        self.template_registry = Some(templates.into_registry(Some(&warnings)));
+        self.startup_warnings.extend(warnings.take());
         self
     }
 
@@ -207,7 +209,9 @@ impl AppBuilder {
     ///     .run(cmd, args);
     /// ```
     pub fn styles(mut self, styles: EmbeddedStyles) -> Self {
-        self.stylesheet_registry = Some(crate::StylesheetRegistry::from(styles));
+        let warnings = standout_render::warnings::WarningBuffer::new();
+        self.stylesheet_registry = Some(styles.into_registry(Some(&warnings)));
+        self.startup_warnings.extend(warnings.take());
         self
     }
 

@@ -5,6 +5,8 @@
 
 use std::fmt::Display;
 use std::io::IsTerminal;
+use std::ops::ControlFlow;
+use std::sync::Arc;
 
 use clap::ArgMatches;
 use inquire::{
@@ -13,6 +15,7 @@ use inquire::{
 };
 
 use crate::collector::InputCollector;
+use crate::responder::PromptResponder;
 use crate::InputError;
 use crate::InputSources;
 
@@ -42,11 +45,13 @@ fn map_inquire_error(e: InquireError) -> InputError {
 ///     .try_source(ArgSource::new("name"))
 ///     .try_source(InquireText::new("What is your name?"));
 /// ```
+#[derive(Clone)]
 pub struct InquireText {
     message: String,
     default: Option<String>,
     placeholder: Option<String>,
     help_message: Option<String>,
+    responder: Option<Arc<dyn PromptResponder>>,
 }
 
 impl InquireText {
@@ -57,6 +62,7 @@ impl InquireText {
             default: None,
             placeholder: None,
             help_message: None,
+            responder: None,
         }
     }
 
@@ -95,18 +101,7 @@ impl InquireText {
 
     /// [`prompt`](Self::prompt) against explicit [`InputSources`].
     pub fn prompt_from(&self, sources: &InputSources) -> Result<String, InputError> {
-        if let Some(value) = crate::responder::intercept_text(
-            crate::PromptKind::Text,
-            &self.message,
-            sources.responder(),
-        )? {
-            return Ok(value);
-        }
-        let matches = crate::collector::empty_matches();
-        if !self.is_available(matches) {
-            return Err(InputError::NoInput);
-        }
-        self.collect(matches)?.ok_or(InputError::NoInput)
+        crate::collector::prompt_value_from(self, sources)
     }
 }
 
@@ -116,10 +111,20 @@ impl InputCollector<String> for InquireText {
     }
 
     fn is_available(&self, _matches: &ArgMatches) -> bool {
-        std::io::stdin().is_terminal()
+        self.responder.is_some() || std::io::stdin().is_terminal()
     }
 
     fn collect(&self, _matches: &ArgMatches) -> Result<Option<String>, InputError> {
+        if let ControlFlow::Break(value) =
+            crate::responder::collect_intercept(crate::responder::intercept_text(
+                crate::PromptKind::Text,
+                &self.message,
+                self.responder.as_deref(),
+            ))?
+        {
+            return Ok(value);
+        }
+
         let mut prompt = Text::new(&self.message);
 
         if let Some(default) = &self.default {
@@ -141,6 +146,12 @@ impl InputCollector<String> for InquireText {
         }
     }
 
+    fn bind_sources(&self, sources: &InputSources) -> Option<Box<dyn InputCollector<String>>> {
+        let mut bound = self.clone();
+        bound.responder = Some(sources.responder_arc()?);
+        Some(Box::new(bound))
+    }
+
     fn can_retry(&self) -> bool {
         true
     }
@@ -159,10 +170,12 @@ impl InputCollector<String> for InquireText {
 ///     .try_source(FlagSource::new("yes"))
 ///     .try_source(InquireConfirm::new("Proceed with deployment?"));
 /// ```
+#[derive(Clone)]
 pub struct InquireConfirm {
     message: String,
     default: Option<bool>,
     help_message: Option<String>,
+    responder: Option<Arc<dyn PromptResponder>>,
 }
 
 impl InquireConfirm {
@@ -172,6 +185,7 @@ impl InquireConfirm {
             message: message.into(),
             default: None,
             help_message: None,
+            responder: None,
         }
     }
 
@@ -201,18 +215,7 @@ impl InquireConfirm {
 
     /// [`prompt`](Self::prompt) against explicit [`InputSources`].
     pub fn prompt_from(&self, sources: &InputSources) -> Result<bool, InputError> {
-        if let Some(value) = crate::responder::intercept_bool(
-            crate::PromptKind::Confirm,
-            &self.message,
-            sources.responder(),
-        )? {
-            return Ok(value);
-        }
-        let matches = crate::collector::empty_matches();
-        if !self.is_available(matches) {
-            return Err(InputError::NoInput);
-        }
-        self.collect(matches)?.ok_or(InputError::NoInput)
+        crate::collector::prompt_value_from(self, sources)
     }
 }
 
@@ -222,10 +225,20 @@ impl InputCollector<bool> for InquireConfirm {
     }
 
     fn is_available(&self, _matches: &ArgMatches) -> bool {
-        std::io::stdin().is_terminal()
+        self.responder.is_some() || std::io::stdin().is_terminal()
     }
 
     fn collect(&self, _matches: &ArgMatches) -> Result<Option<bool>, InputError> {
+        if let ControlFlow::Break(value) =
+            crate::responder::collect_intercept(crate::responder::intercept_bool(
+                crate::PromptKind::Confirm,
+                &self.message,
+                self.responder.as_deref(),
+            ))?
+        {
+            return Ok(value);
+        }
+
         let mut prompt = Confirm::new(&self.message);
 
         if let Some(default) = self.default {
@@ -237,6 +250,12 @@ impl InputCollector<bool> for InquireConfirm {
 
         let result = prompt.prompt().map_err(map_inquire_error)?;
         Ok(Some(result))
+    }
+
+    fn bind_sources(&self, sources: &InputSources) -> Option<Box<dyn InputCollector<bool>>> {
+        let mut bound = self.clone();
+        bound.responder = Some(sources.responder_arc()?);
+        Some(Box::new(bound))
     }
 
     fn can_retry(&self) -> bool {
@@ -260,11 +279,13 @@ impl InputCollector<bool> for InquireConfirm {
 ///         "production",
 ///     ]));
 /// ```
+#[derive(Clone)]
 pub struct InquireSelect<T> {
     message: String,
     options: Vec<T>,
     help_message: Option<String>,
     page_size: usize,
+    responder: Option<Arc<dyn PromptResponder>>,
 }
 
 impl<T: Display + Clone + Send + Sync + 'static> InquireSelect<T> {
@@ -275,6 +296,7 @@ impl<T: Display + Clone + Send + Sync + 'static> InquireSelect<T> {
             options,
             help_message: None,
             page_size: 10,
+            responder: None,
         }
     }
 
@@ -308,18 +330,7 @@ impl<T: Display + Clone + Send + Sync + 'static> InquireSelect<T> {
 
     /// [`prompt`](Self::prompt) against explicit [`InputSources`].
     pub fn prompt_from(&self, sources: &InputSources) -> Result<T, InputError> {
-        if let Some(i) = crate::responder::intercept_choice(
-            &self.message,
-            self.options.len(),
-            sources.responder(),
-        )? {
-            return Ok(self.options[i].clone());
-        }
-        let matches = crate::collector::empty_matches();
-        if !self.is_available(matches) {
-            return Err(InputError::NoInput);
-        }
-        self.collect(matches)?.ok_or(InputError::NoInput)
+        crate::collector::prompt_value_from(self, sources)
     }
 }
 
@@ -329,10 +340,20 @@ impl<T: Display + Clone + Send + Sync + 'static> InputCollector<T> for InquireSe
     }
 
     fn is_available(&self, _matches: &ArgMatches) -> bool {
-        std::io::stdin().is_terminal() && !self.options.is_empty()
+        !self.options.is_empty() && (self.responder.is_some() || std::io::stdin().is_terminal())
     }
 
     fn collect(&self, _matches: &ArgMatches) -> Result<Option<T>, InputError> {
+        if let ControlFlow::Break(index) =
+            crate::responder::collect_intercept(crate::responder::intercept_choice(
+                &self.message,
+                self.options.len(),
+                self.responder.as_deref(),
+            ))?
+        {
+            return Ok(index.map(|i| self.options[i].clone()));
+        }
+
         if self.options.is_empty() {
             return Ok(None);
         }
@@ -346,6 +367,12 @@ impl<T: Display + Clone + Send + Sync + 'static> InputCollector<T> for InquireSe
 
         let result = prompt.prompt().map_err(map_inquire_error)?;
         Ok(Some(result))
+    }
+
+    fn bind_sources(&self, sources: &InputSources) -> Option<Box<dyn InputCollector<T>>> {
+        let mut bound = self.clone();
+        bound.responder = Some(sources.responder_arc()?);
+        Some(Box::new(bound))
     }
 
     fn can_retry(&self) -> bool {
@@ -369,6 +396,7 @@ impl<T: Display + Clone + Send + Sync + 'static> InputCollector<T> for InquireSe
 ///         "tracing",
 ///     ]));
 /// ```
+#[derive(Clone)]
 pub struct InquireMultiSelect<T> {
     message: String,
     options: Vec<T>,
@@ -376,6 +404,7 @@ pub struct InquireMultiSelect<T> {
     page_size: usize,
     min_selections: Option<usize>,
     max_selections: Option<usize>,
+    responder: Option<Arc<dyn PromptResponder>>,
 }
 
 impl<T: Display + Clone + Send + Sync + 'static> InquireMultiSelect<T> {
@@ -388,6 +417,7 @@ impl<T: Display + Clone + Send + Sync + 'static> InquireMultiSelect<T> {
             page_size: 10,
             min_selections: None,
             max_selections: None,
+            responder: None,
         }
     }
 
@@ -433,18 +463,7 @@ impl<T: Display + Clone + Send + Sync + 'static> InquireMultiSelect<T> {
 
     /// [`prompt`](Self::prompt) against explicit [`InputSources`].
     pub fn prompt_from(&self, sources: &InputSources) -> Result<Vec<T>, InputError> {
-        if let Some(indices) = crate::responder::intercept_choices(
-            &self.message,
-            self.options.len(),
-            sources.responder(),
-        )? {
-            return Ok(indices.iter().map(|&i| self.options[i].clone()).collect());
-        }
-        let matches = crate::collector::empty_matches();
-        if !self.is_available(matches) {
-            return Err(InputError::NoInput);
-        }
-        self.collect(matches)?.ok_or(InputError::NoInput)
+        crate::collector::prompt_value_from(self, sources)
     }
 }
 
@@ -454,10 +473,22 @@ impl<T: Display + Clone + Send + Sync + 'static> InputCollector<Vec<T>> for Inqu
     }
 
     fn is_available(&self, _matches: &ArgMatches) -> bool {
-        std::io::stdin().is_terminal() && !self.options.is_empty()
+        !self.options.is_empty() && (self.responder.is_some() || std::io::stdin().is_terminal())
     }
 
     fn collect(&self, _matches: &ArgMatches) -> Result<Option<Vec<T>>, InputError> {
+        if let ControlFlow::Break(indices) =
+            crate::responder::collect_intercept(crate::responder::intercept_choices(
+                &self.message,
+                self.options.len(),
+                self.responder.as_deref(),
+            ))?
+        {
+            return Ok(
+                indices.map(|indices| indices.iter().map(|&i| self.options[i].clone()).collect())
+            );
+        }
+
         if self.options.is_empty() {
             return Ok(None);
         }
@@ -499,6 +530,12 @@ impl<T: Display + Clone + Send + Sync + 'static> InputCollector<Vec<T>> for Inqu
         }
     }
 
+    fn bind_sources(&self, sources: &InputSources) -> Option<Box<dyn InputCollector<Vec<T>>>> {
+        let mut bound = self.clone();
+        bound.responder = Some(sources.responder_arc()?);
+        Some(Box::new(bound))
+    }
+
     fn can_retry(&self) -> bool {
         true
     }
@@ -516,11 +553,13 @@ impl<T: Display + Clone + Send + Sync + 'static> InputCollector<Vec<T>> for Inqu
 /// let chain = InputChain::<String>::new()
 ///     .try_source(InquirePassword::new("Enter API token:"));
 /// ```
+#[derive(Clone)]
 pub struct InquirePassword {
     message: String,
     help_message: Option<String>,
     display_mode: PasswordDisplayMode,
     confirmation: Option<String>,
+    responder: Option<Arc<dyn PromptResponder>>,
 }
 
 impl InquirePassword {
@@ -531,6 +570,7 @@ impl InquirePassword {
             help_message: None,
             display_mode: PasswordDisplayMode::Masked,
             confirmation: None,
+            responder: None,
         }
     }
 
@@ -578,18 +618,7 @@ impl InquirePassword {
 
     /// [`prompt`](Self::prompt) against explicit [`InputSources`].
     pub fn prompt_from(&self, sources: &InputSources) -> Result<String, InputError> {
-        if let Some(value) = crate::responder::intercept_text(
-            crate::PromptKind::Password,
-            &self.message,
-            sources.responder(),
-        )? {
-            return Ok(value);
-        }
-        let matches = crate::collector::empty_matches();
-        if !self.is_available(matches) {
-            return Err(InputError::NoInput);
-        }
-        self.collect(matches)?.ok_or(InputError::NoInput)
+        crate::collector::prompt_value_from(self, sources)
     }
 }
 
@@ -599,10 +628,20 @@ impl InputCollector<String> for InquirePassword {
     }
 
     fn is_available(&self, _matches: &ArgMatches) -> bool {
-        std::io::stdin().is_terminal()
+        self.responder.is_some() || std::io::stdin().is_terminal()
     }
 
     fn collect(&self, _matches: &ArgMatches) -> Result<Option<String>, InputError> {
+        if let ControlFlow::Break(value) =
+            crate::responder::collect_intercept(crate::responder::intercept_text(
+                crate::PromptKind::Password,
+                &self.message,
+                self.responder.as_deref(),
+            ))?
+        {
+            return Ok(value);
+        }
+
         let mut prompt = Password::new(&self.message).with_display_mode(self.display_mode);
 
         if let Some(help) = &self.help_message {
@@ -623,6 +662,12 @@ impl InputCollector<String> for InquirePassword {
         }
     }
 
+    fn bind_sources(&self, sources: &InputSources) -> Option<Box<dyn InputCollector<String>>> {
+        let mut bound = self.clone();
+        bound.responder = Some(sources.responder_arc()?);
+        Some(Box::new(bound))
+    }
+
     fn can_retry(&self) -> bool {
         true
     }
@@ -641,12 +686,14 @@ impl InputCollector<String> for InquirePassword {
 ///     .try_source(ArgSource::new("message"))
 ///     .try_source(InquireEditor::new("Enter commit message:"));
 /// ```
+#[derive(Clone)]
 pub struct InquireEditor {
     message: String,
     help_message: Option<String>,
     file_extension: String,
     predefined_text: Option<String>,
     render_config: Option<RenderConfig<'static>>,
+    responder: Option<Arc<dyn PromptResponder>>,
 }
 
 impl InquireEditor {
@@ -658,6 +705,7 @@ impl InquireEditor {
             file_extension: ".txt".to_string(),
             predefined_text: None,
             render_config: None,
+            responder: None,
         }
     }
 
@@ -699,18 +747,7 @@ impl InquireEditor {
 
     /// [`prompt`](Self::prompt) against explicit [`InputSources`].
     pub fn prompt_from(&self, sources: &InputSources) -> Result<String, InputError> {
-        if let Some(value) = crate::responder::intercept_text(
-            crate::PromptKind::Editor,
-            &self.message,
-            sources.responder(),
-        )? {
-            return Ok(value);
-        }
-        let matches = crate::collector::empty_matches();
-        if !self.is_available(matches) {
-            return Err(InputError::NoInput);
-        }
-        self.collect(matches)?.ok_or(InputError::NoInput)
+        crate::collector::prompt_value_from(self, sources)
     }
 }
 
@@ -720,10 +757,20 @@ impl InputCollector<String> for InquireEditor {
     }
 
     fn is_available(&self, _matches: &ArgMatches) -> bool {
-        std::io::stdin().is_terminal()
+        self.responder.is_some() || std::io::stdin().is_terminal()
     }
 
     fn collect(&self, _matches: &ArgMatches) -> Result<Option<String>, InputError> {
+        if let ControlFlow::Break(value) =
+            crate::responder::collect_intercept(crate::responder::intercept_text(
+                crate::PromptKind::Editor,
+                &self.message,
+                self.responder.as_deref(),
+            ))?
+        {
+            return Ok(value);
+        }
+
         let mut prompt = Editor::new(&self.message).with_file_extension(&self.file_extension);
 
         if let Some(help) = &self.help_message {
@@ -744,6 +791,12 @@ impl InputCollector<String> for InquireEditor {
         } else {
             Ok(Some(trimmed.to_string()))
         }
+    }
+
+    fn bind_sources(&self, sources: &InputSources) -> Option<Box<dyn InputCollector<String>>> {
+        let mut bound = self.clone();
+        bound.responder = Some(sources.responder_arc()?);
+        Some(Box::new(bound))
     }
 
     fn can_retry(&self) -> bool {
@@ -948,5 +1001,26 @@ mod tests {
             .prompt_from(&sources)
             .unwrap();
         assert_eq!(env, "prod");
+    }
+
+    #[test]
+    fn inquire_text_chain_resolve_from_uses_responder() {
+        let sources = sources_with(ScriptedResponder::new([PromptResponse::text("Bob")]));
+        let chain = crate::InputChain::<String>::new().try_source(InquireText::new("Name?"));
+        assert_eq!(
+            chain.resolve_from(&empty_matches(), &sources).unwrap(),
+            "Bob"
+        );
+    }
+
+    #[test]
+    fn inquire_select_chain_resolve_from_uses_responder() {
+        let sources = sources_with(ScriptedResponder::new([PromptResponse::Choice(2)]));
+        let chain = crate::InputChain::<&'static str>::new()
+            .try_source(InquireSelect::new("Env:", vec!["dev", "staging", "prod"]));
+        assert_eq!(
+            chain.resolve_from(&empty_matches(), &sources).unwrap(),
+            "prod"
+        );
     }
 }

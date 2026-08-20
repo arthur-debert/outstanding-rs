@@ -12,15 +12,15 @@ path.
 
 ## The Picture
 
-Without framework integration, a handler resolves chains imperatively:
+Without framework integration, a handler resolves chains imperatively. Pass the run's [`InputSources`](https://docs.rs/standout-input/latest/standout_input/struct.InputSources.html) so stdin, clipboard, and prompt responders match the invocation:
 
 ```rust
-fn create(matches: &ArgMatches, _ctx: &CommandContext) -> HandlerResult<Pad> {
+fn create(matches: &ArgMatches, ctx: &CommandContext) -> HandlerResult<Pad> {
     let body = InputChain::<String>::new()
         .try_source(ArgSource::new("body"))
         .try_source(StdinSource::new())
         .try_source(EditorSource::new())
-        .resolve(matches)?;          // <-- handler does this itself
+        .resolve_from(matches, ctx.input_sources())?;          // <-- handler does this itself
 
     /* business logic ... */
 }
@@ -65,7 +65,7 @@ parsed CLI args → PRE-DISPATCH → handler → POST-DISPATCH → render → PO
 `.input(name, chain)` is sugar over `.pre_dispatch(...)` — the same hook used for auth checks, request-scoped state, etc. Each `.input(...)` call adds one pre-dispatch hook that:
 
 1. Walks to the deepest subcommand's `ArgMatches` (so chains see the same args the handler does).
-2. Calls `chain.resolve_with_source(matches)`.
+2. Calls `chain.resolve_from_with_source(matches, ctx.input_sources())`.
 3. Stashes the result in an [`Inputs`](https://docs.rs/standout-input/latest/standout_input/struct.Inputs.html) bag on `ctx.extensions` under `name`.
 
 If resolution returns an error, dispatch stops and the framework reports `` Hook error: input `body`: <error message> ``. The handler does not run.

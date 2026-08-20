@@ -350,12 +350,13 @@ impl TestHarness {
     // --- interactive prompts --------------------------------------------------
 
     /// Installs a [`PromptResponder`](standout_input::PromptResponder) that
-    /// every `.prompt()` call on a [`standout_input`] interactive source
-    /// will route through during the run.
+    /// interactive sources consult during the run.
     ///
-    /// Use this to test wizard / setup / REPL flows that call
-    /// `InquireText::new(...).prompt()`, `InquireSelect::new(...).prompt()`,
-    /// etc., without launching real prompts. The
+    /// Use this to test wizard / setup / REPL flows and
+    /// [`CommandConfig::input`](standout::cli::CommandConfig::input) chains
+    /// that include prompt or editor sources, without launching real prompts.
+    /// Handlers call `.prompt_from(ctx.input_sources())`; chains resolve
+    /// against those same sources. The
     /// [`ScriptedResponder`](standout_input::ScriptedResponder) bundled with
     /// `standout-input` covers the common case:
     ///

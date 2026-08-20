@@ -595,6 +595,12 @@ impl App {
         handled
     }
 
+    fn seed_startup_warnings(&self, warnings: &WarningBuffer) {
+        for message in &self.startup_warnings {
+            warnings.push(message.clone());
+        }
+    }
+
     /// Inner public run: destination properties and input sources as two arguments.
     ///
     /// Production [`run`](Self::run) calls [`TargetProperties::detect`] and
@@ -621,6 +627,7 @@ impl App {
         T: Into<std::ffi::OsString> + Clone,
     {
         let warnings = WarningBuffer::new();
+        self.seed_startup_warnings(&warnings);
         let inner =
             self.dispatch_from_with_target(cmd, args, Some(target), sources, warnings.clone());
         crate::cli::RunResult::from_dispatch(inner, warnings.take())
@@ -643,31 +650,38 @@ impl App {
     ///
     /// # Returns
     ///
-    /// - `RunResult::Handled(output)` - Handler executed successfully, or Clap produced help/version.
+    /// A [`crate::cli::RunResult`] wrapping the dispatch outcome plus any
+    /// framework warnings collected during the run. Inspect
+    /// [`warnings()`](crate::cli::RunResult::warnings) as needed, then match
+    /// [`outcome()`](crate::cli::RunResult::outcome) or
+    /// [`into_outcome()`](crate::cli::RunResult::into_outcome):
+    ///
+    /// - `DispatchResult::Handled(output)` - Handler executed successfully, or Clap produced help/version.
     ///   Silent completion remains an empty handled string for capture compatibility.
-    /// - `RunResult::Binary(bytes, filename)` - Handler produced binary output
-    /// - `RunResult::Error(error)` - A typed handler, hook, render, write, Clap usage, or external failure
-    /// - `RunResult::NoMatch(matches)` - No handler matched
+    /// - `DispatchResult::Binary(bytes, filename)` - Handler produced binary output
+    /// - `DispatchResult::Error(error)` - A typed handler, hook, render, write, Clap usage, or external failure
+    /// - `DispatchResult::NoMatch(matches)` - No handler matched
     ///
     /// # Example
     ///
     /// ```rust,ignore
-    /// use standout::cli::{App, HandlerResult, Output, RunResult};
+    /// use standout::cli::{App, DispatchResult, HandlerResult, Output};
     ///
     /// let result = App::builder()
     ///     .command("list", |_m, _ctx| Ok(HandlerOutput::Render(vec!["a", "b"])), "{{ . }}")?
     ///     .build()?
     ///     .run_to_string(cmd, std::env::args());
     ///
-    /// match result {
-    ///     RunResult::Handled(output) => println!("{}", output),
-    ///     RunResult::Binary(bytes, filename) => std::fs::write(filename, bytes)?,
-    ///     RunResult::Error(error) => {
+    /// let _ = result.warnings();
+    /// match result.into_outcome() {
+    ///     DispatchResult::Handled(output) => println!("{}", output),
+    ///     DispatchResult::Binary(bytes, filename) => std::fs::write(filename, bytes)?,
+    ///     DispatchResult::Error(error) => {
     ///         eprintln!("{}", error);
     ///         std::process::exit(error.exit_status().code().into());
     ///     },
-    ///     RunResult::NoMatch(matches) => { /* handle manually */ },
-    ///     // RunResult is #[non_exhaustive]; cover Silent and any future variants.
+    ///     DispatchResult::NoMatch(matches) => { /* handle manually */ },
+    ///     // DispatchResult is #[non_exhaustive]; cover Silent and any future variants.
     ///     _ => {},
     /// }
     /// ```
@@ -681,6 +695,7 @@ impl App {
         // ending it. See `standout_render::diagnostics` on nesting.
         let capture_window = standout_render::diagnostics::begin_capture();
         let warnings = WarningBuffer::new();
+        self.seed_startup_warnings(&warnings);
         let inner = self.dispatch_from_with_target(
             cmd,
             args,

@@ -4,11 +4,13 @@
 //! For richer TUI prompts, use the `inquire` feature instead.
 
 use std::io::{self, BufRead, IsTerminal, Write};
+use std::ops::ControlFlow;
 use std::sync::Arc;
 
 use clap::ArgMatches;
 
 use crate::collector::InputCollector;
+use crate::responder::PromptResponder;
 use crate::InputError;
 use crate::InputSources;
 
@@ -84,6 +86,7 @@ pub struct TextPromptSource<T: TerminalIO = RealTerminal> {
     terminal: Arc<T>,
     prompt: String,
     trim: bool,
+    responder: Option<Arc<dyn PromptResponder>>,
 }
 
 impl TextPromptSource<RealTerminal> {
@@ -93,6 +96,7 @@ impl TextPromptSource<RealTerminal> {
             terminal: Arc::new(RealTerminal),
             prompt: prompt.into(),
             trim: true,
+            responder: None,
         }
     }
 }
@@ -104,6 +108,7 @@ impl<T: TerminalIO> TextPromptSource<T> {
             terminal: Arc::new(terminal),
             prompt: prompt.into(),
             trim: true,
+            responder: None,
         }
     }
 
@@ -136,18 +141,7 @@ impl<T: TerminalIO + 'static> TextPromptSource<T> {
 
     /// [`prompt`](Self::prompt) against explicit [`InputSources`].
     pub fn prompt_from(&self, sources: &InputSources) -> Result<String, InputError> {
-        if let Some(value) = crate::responder::intercept_text(
-            crate::PromptKind::Text,
-            &self.prompt,
-            sources.responder(),
-        )? {
-            return Ok(value);
-        }
-        let matches = crate::collector::empty_matches();
-        if !self.is_available(matches) {
-            return Err(InputError::NoInput);
-        }
-        self.collect(matches)?.ok_or(InputError::NoInput)
+        crate::collector::prompt_value_from(self, sources)
     }
 
     /// One prompt round trip preserving the entry / non-input distinction
@@ -190,10 +184,20 @@ impl<T: TerminalIO + 'static> InputCollector<String> for TextPromptSource<T> {
     }
 
     fn is_available(&self, _matches: &ArgMatches) -> bool {
-        self.terminal.is_terminal()
+        self.responder.is_some() || self.terminal.is_terminal()
     }
 
     fn collect(&self, _matches: &ArgMatches) -> Result<Option<String>, InputError> {
+        if let ControlFlow::Break(value) =
+            crate::responder::collect_intercept(crate::responder::intercept_text(
+                crate::PromptKind::Text,
+                &self.prompt,
+                self.responder.as_deref(),
+            ))?
+        {
+            return Ok(value);
+        }
+
         if !self.terminal.is_terminal() {
             return Ok(None);
         }
@@ -228,6 +232,15 @@ impl<T: TerminalIO + 'static> InputCollector<String> for TextPromptSource<T> {
         }
     }
 
+    fn bind_sources(&self, sources: &InputSources) -> Option<Box<dyn InputCollector<String>>> {
+        Some(Box::new(Self {
+            terminal: Arc::clone(&self.terminal),
+            prompt: self.prompt.clone(),
+            trim: self.trim,
+            responder: Some(sources.responder_arc()?),
+        }))
+    }
+
     fn can_retry(&self) -> bool {
         true
     }
@@ -253,6 +266,7 @@ pub struct ConfirmPromptSource<T: TerminalIO = RealTerminal> {
     terminal: Arc<T>,
     prompt: String,
     default: Option<bool>,
+    responder: Option<Arc<dyn PromptResponder>>,
 }
 
 impl ConfirmPromptSource<RealTerminal> {
@@ -262,6 +276,7 @@ impl ConfirmPromptSource<RealTerminal> {
             terminal: Arc::new(RealTerminal),
             prompt: prompt.into(),
             default: None,
+            responder: None,
         }
     }
 }
@@ -273,6 +288,7 @@ impl<T: TerminalIO> ConfirmPromptSource<T> {
             terminal: Arc::new(terminal),
             prompt: prompt.into(),
             default: None,
+            responder: None,
         }
     }
 
@@ -309,18 +325,7 @@ impl<T: TerminalIO + 'static> ConfirmPromptSource<T> {
 
     /// [`prompt`](Self::prompt) against explicit [`InputSources`].
     pub fn prompt_from(&self, sources: &InputSources) -> Result<bool, InputError> {
-        if let Some(value) = crate::responder::intercept_bool(
-            crate::PromptKind::Confirm,
-            &self.prompt,
-            sources.responder(),
-        )? {
-            return Ok(value);
-        }
-        let matches = crate::collector::empty_matches();
-        if !self.is_available(matches) {
-            return Err(InputError::NoInput);
-        }
-        self.collect(matches)?.ok_or(InputError::NoInput)
+        crate::collector::prompt_value_from(self, sources)
     }
 }
 
@@ -330,10 +335,20 @@ impl<T: TerminalIO + 'static> InputCollector<bool> for ConfirmPromptSource<T> {
     }
 
     fn is_available(&self, _matches: &ArgMatches) -> bool {
-        self.terminal.is_terminal()
+        self.responder.is_some() || self.terminal.is_terminal()
     }
 
     fn collect(&self, _matches: &ArgMatches) -> Result<Option<bool>, InputError> {
+        if let ControlFlow::Break(value) =
+            crate::responder::collect_intercept(crate::responder::intercept_bool(
+                crate::PromptKind::Confirm,
+                &self.prompt,
+                self.responder.as_deref(),
+            ))?
+        {
+            return Ok(value);
+        }
+
         if !self.terminal.is_terminal() {
             return Ok(None);
         }
@@ -377,6 +392,15 @@ impl<T: TerminalIO + 'static> InputCollector<bool> for ConfirmPromptSource<T> {
                 ))
             }
         }
+    }
+
+    fn bind_sources(&self, sources: &InputSources) -> Option<Box<dyn InputCollector<bool>>> {
+        Some(Box::new(Self {
+            terminal: Arc::clone(&self.terminal),
+            prompt: self.prompt.clone(),
+            default: self.default,
+            responder: Some(sources.responder_arc()?),
+        }))
     }
 
     fn can_retry(&self) -> bool {
@@ -719,5 +743,24 @@ mod tests {
         let source = ConfirmPromptSource::with_terminal("OK?", MockTerminal::non_terminal());
         let value = source.prompt_from(&sources).unwrap();
         assert!(!value);
+    }
+
+    #[test]
+    fn bind_sources_makes_text_prompt_available_without_tty() {
+        let source = TextPromptSource::with_terminal("Name: ", MockTerminal::non_terminal());
+        let matches = empty_matches();
+        assert!(!source.is_available(&matches));
+        let sources = sources_with(ScriptedResponder::new([PromptResponse::text("Ada")]));
+        let bound = source.bind_sources(&sources).expect("responder binds");
+        assert!(bound.is_available(&matches));
+        assert_eq!(bound.collect(&matches).unwrap(), Some("Ada".to_string()));
+    }
+
+    #[test]
+    fn bind_sources_skip_does_not_read_terminal() {
+        let source = TextPromptSource::with_terminal("Name: ", MockTerminal::with_response("tty"));
+        let sources = sources_with(ScriptedResponder::new([PromptResponse::Skip]));
+        let bound = source.bind_sources(&sources).expect("responder binds");
+        assert_eq!(bound.collect(&empty_matches()).unwrap(), None);
     }
 }

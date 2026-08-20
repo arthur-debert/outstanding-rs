@@ -378,6 +378,24 @@ pub(crate) fn intercept_choices(
     }
 }
 
+/// Maps a `.prompt()` intercept result into [`InputCollector::collect`](crate::InputCollector::collect).
+///
+/// `Ok(Some(v))` is an answered value (`Break(Some(v))`). `Ok(None)` means no
+/// responder was supplied, so the collector should use its real backend
+/// (`Continue`). `Err(NoInput)` is a responder `Skip`, returned as
+/// `Break(None)` so an input chain can try the next source instead of aborting.
+#[cfg(any(feature = "editor", feature = "simple-prompts", feature = "inquire"))]
+pub(crate) fn collect_intercept<T>(
+    intercepted: Result<Option<T>, crate::InputError>,
+) -> Result<std::ops::ControlFlow<Option<T>>, crate::InputError> {
+    match intercepted {
+        Ok(Some(value)) => Ok(std::ops::ControlFlow::Break(Some(value))),
+        Ok(None) => Ok(std::ops::ControlFlow::Continue(())),
+        Err(crate::InputError::NoInput) => Ok(std::ops::ControlFlow::Break(None)),
+        Err(error) => Err(error),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

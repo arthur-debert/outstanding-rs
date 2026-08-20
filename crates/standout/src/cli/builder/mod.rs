@@ -438,6 +438,11 @@ pub struct App {
     pub(crate) help_word: bool,
     pub(crate) ambiguous_width: crate::AmbiguousWidth,
     pub(crate) version: Option<&'static str>,
+    /// Framework warnings collected while converting embedded templates/styles
+    /// at build time (hot-reload fallbacks). Copied into each run's
+    /// [`standout_render::warnings::WarningBuffer`] so they return on the run
+    /// result instead of printing at construction.
+    pub(crate) startup_warnings: Vec<String>,
 }
 
 impl App {
@@ -549,6 +554,11 @@ pub struct AppBuilder {
     /// only under its `string` feature; the borrow is leaked once, when the
     /// builder is configured, rather than on every parse.
     pub(crate) version: Option<&'static str>,
+
+    /// Framework warnings collected while converting embedded templates/styles
+    /// (hot-reload fallbacks). Copied onto [`App`] at build and into each
+    /// run's warning buffer.
+    pub(crate) startup_warnings: Vec<String>,
 }
 
 impl Default for AppBuilder {
@@ -592,6 +602,7 @@ impl AppBuilder {
             help_word: false,
             ambiguous_width: crate::AmbiguousWidth::Narrow,
             version: None,
+            startup_warnings: Vec::new(),
         }
     }
 
@@ -811,6 +822,7 @@ impl AppBuilder {
             help_word: self.help_word,
             ambiguous_width: self.ambiguous_width,
             version: self.version,
+            startup_warnings: self.startup_warnings,
         };
 
         // Finalize commands with built template and theme state in place.
