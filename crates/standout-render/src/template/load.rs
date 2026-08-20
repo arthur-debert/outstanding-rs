@@ -24,9 +24,9 @@ pub fn load_named_template(
     registry: &TemplateRegistry,
     name: &str,
 ) -> Result<(), RenderError> {
-    load_with_missing_refresh(engine, registry, |engine, registry| {
+    load_with_missing_refresh(engine, registry, |engine, registry, allow_optional_skip| {
         let mut seen = HashSet::new();
-        load_tree(engine, registry, name, &mut seen, true)
+        load_tree(engine, registry, name, &mut seen, true, allow_optional_skip)
     })
 }
 
@@ -40,22 +40,22 @@ pub(crate) fn load_inline_dependencies(
     registry: &TemplateRegistry,
     source: &str,
 ) -> Result<(), RenderError> {
-    load_with_missing_refresh(engine, registry, |engine, registry| {
+    load_with_missing_refresh(engine, registry, |engine, registry, allow_optional_skip| {
         let mut seen = HashSet::new();
-        load_source_tree(engine, registry, source, &mut seen)
+        load_source_tree(engine, registry, source, &mut seen, allow_optional_skip)
     })
 }
 
 fn load_with_missing_refresh(
     engine: &mut dyn TemplateEngine,
     registry: &TemplateRegistry,
-    attempt: impl Fn(&mut dyn TemplateEngine, &TemplateRegistry) -> Result<(), RenderError>,
+    attempt: impl Fn(&mut dyn TemplateEngine, &TemplateRegistry, bool) -> Result<(), RenderError>,
 ) -> Result<(), RenderError> {
-    match attempt(engine, registry) {
+    match attempt(engine, registry, false) {
         Err(error) if is_not_found(&error) => {
             let mut refreshed = registry.clone();
             refreshed.refresh().map_err(registry_error)?;
-            match attempt(engine, &refreshed) {
+            match attempt(engine, &refreshed, true) {
                 Err(RenderError::TemplateNotFound(name)) => Err(refresh_error(
                     &name,
                     &refreshed,
@@ -74,25 +74,27 @@ fn load_tree(
     name: &str,
     seen: &mut HashSet<String>,
     required: bool,
+    allow_optional_skip: bool,
 ) -> Result<(), RenderError> {
-    if !seen.insert(name.to_string()) {
+    if seen.contains(name) {
         return Ok(());
     }
 
     let content = match registry.get_content(name) {
         Ok(content) => content,
         Err(RegistryError::NotFound { name }) => {
-            if required {
+            if required || !allow_optional_skip {
                 return Err(RenderError::TemplateNotFound(name));
             }
             return Ok(());
         }
         Err(error) => return Err(refresh_error(name, registry, error)),
     };
+    seen.insert(name.to_string());
     engine
         .add_template(name, &content)
         .map_err(|error| refresh_error(name, registry, error))?;
-    load_source_tree(engine, registry, &content, seen)
+    load_source_tree(engine, registry, &content, seen, allow_optional_skip)
 }
 
 fn load_source_tree(
@@ -100,6 +102,7 @@ fn load_source_tree(
     registry: &TemplateRegistry,
     source: &str,
     seen: &mut HashSet<String>,
+    allow_optional_skip: bool,
 ) -> Result<(), RenderError> {
     let dependencies = template_dependencies(source);
     if dependencies.dynamic {
@@ -111,20 +114,71 @@ fn load_source_tree(
     for dependency in dependencies.dependencies {
         match dependency {
             Dependency::Required(name) => {
-                load_tree(engine, registry, &name, seen, true)?;
+                load_tree(engine, registry, &name, seen, true, allow_optional_skip)?;
             }
             Dependency::Optional(name) => {
-                load_tree(engine, registry, &name, seen, false)?;
+                load_tree(engine, registry, &name, seen, false, allow_optional_skip)?;
             }
-            Dependency::Alternatives(names) => {
-                for name in names {
-                    load_tree(engine, registry, &name, seen, false)?;
-                }
+            Dependency::Alternatives { names, optional } => {
+                load_first_alternative(
+                    engine,
+                    registry,
+                    &names,
+                    optional,
+                    seen,
+                    allow_optional_skip,
+                )?;
             }
         }
     }
 
     Ok(())
+}
+
+/// Loads the first include-list candidate that exists, then stops.
+///
+/// Before the registry has been refreshed, a missing candidate is treated as
+/// not-found so newly added files can appear. After that refresh, a required
+/// list with no candidates errors; an `ignore missing` list succeeds.
+fn load_first_alternative(
+    engine: &mut dyn TemplateEngine,
+    registry: &TemplateRegistry,
+    names: &[String],
+    optional: bool,
+    seen: &mut HashSet<String>,
+    allow_optional_skip: bool,
+) -> Result<(), RenderError> {
+    for name in names {
+        if seen.contains(name) {
+            return Ok(());
+        }
+        let content = match registry.get_content(name) {
+            Ok(content) => content,
+            Err(RegistryError::NotFound { name }) => {
+                if !allow_optional_skip {
+                    return Err(RenderError::TemplateNotFound(name));
+                }
+                continue;
+            }
+            Err(error) => return Err(refresh_error(name, registry, error)),
+        };
+        seen.insert(name.clone());
+        engine
+            .add_template(name, &content)
+            .map_err(|error| refresh_error(name, registry, error))?;
+        return load_source_tree(engine, registry, &content, seen, allow_optional_skip);
+    }
+
+    if optional {
+        Ok(())
+    } else {
+        Err(RenderError::TemplateNotFound(
+            names
+                .first()
+                .cloned()
+                .unwrap_or_else(|| "include-list".into()),
+        ))
+    }
 }
 
 fn load_all(
@@ -177,8 +231,8 @@ enum Dependency {
     Required(String),
     /// `{% include 'name' ignore missing %}`.
     Optional(String),
-    /// `{% include ['first', 'second'] %}`: load whichever candidates exist.
-    Alternatives(Vec<String>),
+    /// `{% include ['first', 'second'] %}`: first existing candidate wins.
+    Alternatives { names: Vec<String>, optional: bool },
 }
 
 #[derive(Default)]
@@ -344,9 +398,13 @@ fn static_dependency(keyword: &str, expression: &str) -> Option<Dependency> {
             }
             names.push(name);
         }
-        return (!names.is_empty()
-            && is_static_dependency_suffix(keyword, &expression[list_end + 1..]))
-        .then_some(Dependency::Alternatives(names));
+        let suffix = &expression[list_end + 1..];
+        return (!names.is_empty() && is_static_dependency_suffix(keyword, suffix)).then_some(
+            Dependency::Alternatives {
+                names,
+                optional: include_ignores_missing(suffix),
+            },
+        );
     }
 
     let (name, remainder) = quoted_string(expression)?;
@@ -415,7 +473,9 @@ mod tests {
                 Dependency::Required(name) | Dependency::Optional(name) => {
                     vec![name.as_str()]
                 }
-                Dependency::Alternatives(names) => names.iter().map(String::as_str).collect(),
+                Dependency::Alternatives { names, .. } => {
+                    names.iter().map(String::as_str).collect()
+                }
             })
             .collect()
     }
@@ -471,10 +531,24 @@ mod tests {
         let dependencies = template_dependencies("{% include ['override', 'default'] %}");
         assert_eq!(
             dependencies.dependencies,
-            [Dependency::Alternatives(vec![
-                "override".into(),
-                "default".into()
-            ])]
+            [Dependency::Alternatives {
+                names: vec!["override".into(), "default".into()],
+                optional: false,
+            }]
+        );
+        assert!(!dependencies.dynamic);
+    }
+
+    #[test]
+    fn include_list_ignore_missing_is_optional() {
+        let dependencies =
+            template_dependencies("{% include ['override', 'default'] ignore missing %}");
+        assert_eq!(
+            dependencies.dependencies,
+            [Dependency::Alternatives {
+                names: vec!["override".into(), "default".into()],
+                optional: true,
+            }]
         );
         assert!(!dependencies.dynamic);
     }
@@ -553,5 +627,93 @@ mod tests {
             engine.render_named("list", &serde_json::json!({})).unwrap(),
             "fallback"
         );
+    }
+
+    #[test]
+    fn load_named_template_stops_at_the_first_existing_include_list_candidate() {
+        let mut registry = TemplateRegistry::new();
+        registry.add_inline("list", "{% include ['override', 'default'] %}");
+        registry.add_inline("override", "good");
+        registry.add_inline("default", "{% if");
+        let mut engine: Box<dyn TemplateEngine> = Box::new(MiniJinjaEngine::new());
+
+        load_named_template(&mut *engine, &registry, "list").unwrap();
+        assert!(engine.has_template("override"));
+        assert!(!engine.has_template("default"));
+        assert_eq!(
+            engine.render_named("list", &serde_json::json!({})).unwrap(),
+            "good"
+        );
+    }
+
+    #[test]
+    fn required_include_list_errors_when_no_candidate_exists() {
+        let mut registry = TemplateRegistry::new();
+        registry.add_inline("list", "{% include ['missing-a', 'missing-b'] %}");
+        let mut engine: Box<dyn TemplateEngine> = Box::new(MiniJinjaEngine::new());
+
+        let error = load_named_template(&mut *engine, &registry, "list").unwrap_err();
+        assert!(
+            matches!(error, RenderError::OperationError(ref message) if message.contains("missing-a")),
+            "{error:?}"
+        );
+    }
+
+    #[test]
+    fn optional_include_list_succeeds_when_no_candidate_exists() {
+        let mut registry = TemplateRegistry::new();
+        registry.add_inline(
+            "list",
+            "{% include ['missing-a', 'missing-b'] ignore missing %}ok",
+        );
+        let mut engine: Box<dyn TemplateEngine> = Box::new(MiniJinjaEngine::new());
+
+        load_named_template(&mut *engine, &registry, "list").unwrap();
+        assert_eq!(
+            engine.render_named("list", &serde_json::json!({})).unwrap(),
+            "ok"
+        );
+    }
+
+    #[test]
+    fn file_backed_optional_include_is_discovered_after_the_initial_scan() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(
+            dir.path().join("list.jinja"),
+            "{% include 'optional' ignore missing %}end",
+        )
+        .unwrap();
+        let mut registry = TemplateRegistry::new();
+        registry.add_template_dir(dir.path()).unwrap();
+        std::fs::write(dir.path().join("optional.jinja"), "yes").unwrap();
+        let mut engine: Box<dyn TemplateEngine> = Box::new(MiniJinjaEngine::new());
+
+        load_named_template(&mut *engine, &registry, "list").unwrap();
+        assert_eq!(
+            engine.render_named("list", &serde_json::json!({})).unwrap(),
+            "yesend"
+        );
+    }
+
+    #[test]
+    fn file_backed_include_list_discovers_an_earlier_candidate_after_the_initial_scan() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(
+            dir.path().join("list.jinja"),
+            "{% include ['override', 'default'] %}",
+        )
+        .unwrap();
+        std::fs::write(dir.path().join("default.jinja"), "fallback").unwrap();
+        let mut registry = TemplateRegistry::new();
+        registry.add_template_dir(dir.path()).unwrap();
+        std::fs::write(dir.path().join("override.jinja"), "chosen").unwrap();
+        let mut engine: Box<dyn TemplateEngine> = Box::new(MiniJinjaEngine::new());
+
+        load_named_template(&mut *engine, &registry, "list").unwrap();
+        assert_eq!(
+            engine.render_named("list", &serde_json::json!({})).unwrap(),
+            "chosen"
+        );
+        assert!(!engine.has_template("default"));
     }
 }

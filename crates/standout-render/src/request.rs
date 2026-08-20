@@ -685,6 +685,22 @@ mod tests {
     }
 
     #[test]
+    fn named_request_does_not_load_a_later_invalid_include_list_candidate() {
+        let mut registry = TemplateRegistry::new();
+        registry.add_inline("list", "{% include ['override', 'default'] %}");
+        registry.add_inline("override", "good");
+        registry.add_inline("default", "{% if");
+        let request = RenderRequest {
+            template: TemplateRef::Named("list".into()),
+            format: OutputMode::Text,
+            registry: Some(Rc::new(registry)),
+            engine: sample_engine(),
+            ..sample_request()
+        };
+        assert_eq!(render_request(&request).unwrap(), "good");
+    }
+
+    #[test]
     fn named_request_falls_back_to_the_present_include_list_candidate() {
         let mut registry = TemplateRegistry::new();
         registry.add_inline("list", "{% include ['override', 'default'] %}");
@@ -710,6 +726,21 @@ mod tests {
             ..sample_request()
         };
         assert_eq!(render_request(&request).unwrap(), "ok");
+    }
+
+    #[test]
+    fn inline_request_does_not_load_a_later_invalid_include_list_candidate() {
+        let mut registry = TemplateRegistry::new();
+        registry.add_inline("override", "good");
+        registry.add_inline("default", "{% if");
+        let request = RenderRequest {
+            template: TemplateRef::Inline("{% include ['override', 'default'] %}".into()),
+            format: OutputMode::Text,
+            registry: Some(Rc::new(registry)),
+            engine: sample_engine(),
+            ..sample_request()
+        };
+        assert_eq!(render_request(&request).unwrap(), "good");
     }
 
     #[test]
