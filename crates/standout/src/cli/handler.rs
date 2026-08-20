@@ -7,9 +7,12 @@
 //! - [`Output`]: What a handler produces (render data, silent, or binary)
 //! - [`HandlerResult`]: The result type for handlers (`Result<Output<T>, Error>`)
 //! - [`ExternalFailure`]: An intentional delegated-operation failure with an exact status/payload
-//! - [`DispatchResult`]: Alias for the dispatch crate's outcome enum
-//! - [`RunResult`]: The dispatch crate's outcome enum (same type as [`DispatchResult`])
+//! - [`DispatchResult`]: The dispatch crate's outcome enum
 //! - [`Handler`]: Trait for command handlers (`&mut self`)
+//!
+//! This module also re-exports that enum under the dispatch crate's original
+//! name, [`RunResult`]. That is not [`crate::cli::RunResult`], the public
+//! framework wrapper (outcome plus warnings).
 //!
 //! # Design Note
 //!
