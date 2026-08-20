@@ -1,6 +1,6 @@
 //! Explicit stdin, clipboard, and prompt-responder for one invocation.
 //!
-//! Production `App::run` will construct [`InputSources`] from the real process;
+//! Production `App::run` constructs [`InputSources`] from the real process;
 //! tests put mocks in the same type. It is owned and not `Copy` (readers, not
 //! scalars). It is not bundled with destination properties into a combined
 //! run-environment type.
@@ -8,7 +8,7 @@
 use std::fmt;
 use std::sync::Arc;
 
-use crate::env::{ClipboardReader, StdinReader};
+use crate::env::{ClipboardReader, DefaultClipboard, DefaultStdin, StdinReader};
 use crate::responder::PromptResponder;
 
 /// Stdin, clipboard, and prompt-responder used for one invocation.
@@ -51,10 +51,11 @@ impl InputSources {
     /// Constructs sources from the real process (stdin, clipboard, prompt
     /// responder).
     ///
-    /// Production `App::run` will call this at the process edge. The body is
-    /// unimplemented in this workstream (`todo!()`).
+    /// Production `App::run` calls this at the process edge. Input resolution
+    /// may still read process-global default readers in this workstream; this
+    /// constructor still produces an explicit value for `run_with`.
     pub fn from_process() -> Self {
-        todo!("ROB04-WS01 lands this signature only; real-process construction is later")
+        Self::new(DefaultStdin, DefaultClipboard, None)
     }
 
     /// Stdin reader for this invocation.
@@ -115,5 +116,12 @@ mod tests {
         let debug = format!("{sources:?}");
         assert!(debug.contains("InputSources"));
         assert!(debug.contains("has_responder: false"));
+    }
+
+    #[test]
+    fn from_process_constructs_production_sources() {
+        let sources = InputSources::from_process();
+        let _ = sources.stdin().is_terminal();
+        assert!(sources.responder().is_none());
     }
 }

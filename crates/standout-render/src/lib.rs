@@ -197,7 +197,7 @@ pub use environment::{
     set_color_capability_detector, set_terminal_width_detector, DetectorGuard,
 };
 
-// Composition-contract types (explicit request; detection is a signature only)
+// Composition-contract types (explicit request; detect at the crate edge)
 pub use request::{
     render_request, ColorPolicy, RenderRequest, SharedTemplateEngine, TargetProperties, TemplateRef,
 };

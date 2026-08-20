@@ -4,18 +4,25 @@
 //! [`RenderRequest`] is what to render, including those properties and a
 //! resolved [`ColorPolicy`] independent of [`crate::OutputMode`]. The pure
 //! leaf entry is [`render_request`]; convenience wrappers stay as separate
-//! functions and are not rewired onto this path in this workstream.
+//! functions and are not rewired onto this path in this workstream. Detection
+//! lives at [`TargetProperties::detect`].
 
 use std::cell::RefCell;
 use std::fmt;
 use std::rc::Rc;
 
-use crate::context::ContextRegistry;
+use std::io::IsTerminal;
+
+use crate::context::{ContextRegistry, RenderContext};
+use crate::environment::{detect_color_capability, detect_terminal_width};
 use crate::error::RenderError;
 use crate::output::OutputMode;
 use crate::projection::CsvProjection;
-use crate::template::{TemplateEngine, TemplateRegistry};
-use crate::theme::{ColorMode, IconMode, Theme};
+use crate::template::{
+    render_auto_with_engine_split_inline, render_auto_with_engine_split_named, RenderResult,
+    TemplateEngine, TemplateRegistry,
+};
+use crate::theme::{detect_color_mode, detect_icon_mode, ColorMode, IconMode, Theme};
 use crate::AmbiguousWidth;
 
 /// Shared handle to the template engine stored on a [`RenderRequest`].
@@ -74,8 +81,8 @@ pub struct TargetProperties {
     /// East Asian Ambiguous width policy.
     ///
     /// Not a detected terminal fact. [`detect`](Self::detect) defaults this to
-    /// [`AmbiguousWidth::Narrow`]; that default is documented here, not
-    /// implemented in this workstream.
+    /// [`AmbiguousWidth::Narrow`]; `App::run` overwrites it with the
+    /// application's configured policy.
     pub ambiguous_width: AmbiguousWidth,
 }
 
@@ -87,11 +94,17 @@ impl TargetProperties {
     /// [`AmbiguousWidth::Narrow`]. Convenience wrappers and `App::run` call
     /// this at their edge; template functions, tabular, width helpers, and
     /// tests do not.
-    ///
-    /// The body is unimplemented in this workstream (`todo!()`). Callers that
-    /// need a value construct [`TargetProperties`] directly.
     pub fn detect() -> Self {
-        todo!("ROB04-WS01 lands this signature only; detection is a later workstream")
+        Self {
+            width: detect_terminal_width(),
+            stdout_is_terminal: std::io::stdout().is_terminal(),
+            stderr_is_terminal: std::io::stderr().is_terminal(),
+            stdout_color_capability: detect_color_capability(),
+            stderr_color_capability: console::Term::stderr().features().colors_supported(),
+            color_scheme: detect_color_mode(),
+            icon_mode: detect_icon_mode(),
+            ambiguous_width: AmbiguousWidth::Narrow,
+        }
     }
 }
 
@@ -186,9 +199,118 @@ impl fmt::Debug for RenderRequest {
 /// [`crate::render_with_output`] stay as separate functions and are not
 /// rewired onto this path in this workstream.
 ///
-/// The body is unimplemented (`todo!()`).
-pub fn render_request(_request: &RenderRequest) -> Result<String, RenderError> {
-    todo!("ROB04-WS01 lands this signature only; rendering is a later workstream")
+/// Width and ambiguous-width come from [`RenderRequest::target`]. `Auto`
+/// format is resolved from [`RenderRequest::color_policy`] and stdout color
+/// capability before the existing style-tag pass, so this entry does not
+/// consult process-global detectors for those facts. Color-scheme and icon
+/// mode still ride the existing internals until later workstreams.
+pub fn render_request(request: &RenderRequest) -> Result<String, RenderError> {
+    Ok(render_from_request(request)?.formatted)
+}
+
+fn resolve_human_format(request: &RenderRequest) -> OutputMode {
+    match request.format {
+        OutputMode::Auto => match request.color_policy {
+            ColorPolicy::Never => OutputMode::Text,
+            ColorPolicy::Always => OutputMode::Term,
+            ColorPolicy::Auto => {
+                if request.target.stdout_color_capability {
+                    OutputMode::Term
+                } else {
+                    OutputMode::Text
+                }
+            }
+        },
+        other => other,
+    }
+}
+
+fn serialize_structured(
+    data: &serde_json::Value,
+    format: OutputMode,
+) -> Result<RenderResult, RenderError> {
+    let output = match format {
+        OutputMode::Json => serde_json::to_string_pretty(data)?,
+        OutputMode::Yaml => serde_yaml::to_string(data)?,
+        OutputMode::Xml => crate::util::serialize_to_xml(data)?,
+        OutputMode::Csv => {
+            let (headers, rows) = crate::util::flatten_json_for_csv(data);
+            let mut wtr = csv::Writer::from_writer(Vec::new());
+            wtr.write_record(&headers)?;
+            for row in rows {
+                wtr.write_record(&row)?;
+            }
+            let bytes = wtr.into_inner()?;
+            String::from_utf8(bytes)?
+        }
+        _ => unreachable!("serialize_structured requires a structured OutputMode"),
+    };
+    Ok(RenderResult::plain(output))
+}
+
+fn render_from_request(request: &RenderRequest) -> Result<RenderResult, RenderError> {
+    if matches!(request.template, TemplateRef::Absent) && request.format == OutputMode::Auto {
+        return serialize_structured(&request.data, OutputMode::Json);
+    }
+
+    if request.format.is_structured() {
+        if request.format == OutputMode::Csv {
+            if let Some(projection) = &request.csv_projection {
+                let csv = projection
+                    .render(&request.data)
+                    .map_err(|e| RenderError::OperationError(e.to_string()))?;
+                return Ok(RenderResult::plain(csv));
+            }
+        }
+        return serialize_structured(&request.data, request.format);
+    }
+
+    let format = resolve_human_format(request);
+    let empty_registry = ContextRegistry::new();
+    let context_registry = request.context_registry.as_ref().unwrap_or(&empty_registry);
+    let render_ctx = RenderContext::with_ambiguous_width(
+        format,
+        request.target.width,
+        request.target.ambiguous_width,
+        &request.theme,
+        &request.data,
+    );
+
+    match &request.template {
+        TemplateRef::Inline(source) => {
+            let engine = request.engine.borrow();
+            render_auto_with_engine_split_inline(
+                &**engine,
+                source,
+                &request.data,
+                &request.theme,
+                format,
+                context_registry,
+                &render_ctx,
+            )
+        }
+        TemplateRef::Named(name) => {
+            if let Some(registry) = &request.registry {
+                let content = registry
+                    .get_content(name)
+                    .map_err(|e| RenderError::TemplateNotFound(e.to_string()))?;
+                request.engine.borrow_mut().add_template(name, &content)?;
+            }
+            let engine = request.engine.borrow();
+            render_auto_with_engine_split_named(
+                &**engine,
+                name,
+                &request.data,
+                &request.theme,
+                format,
+                context_registry,
+                &render_ctx,
+            )
+        }
+        TemplateRef::Absent => Err(RenderError::TemplateError(
+            "absent template cannot render in a human output mode".into(),
+        )),
+    }
 }
 
 #[cfg(test)]
@@ -355,5 +477,32 @@ mod tests {
         assert!(debug.contains("RenderRequest"));
         assert!(debug.contains("color_policy: Auto"));
         assert!(debug.contains("has_registry: false"));
+    }
+
+    #[test]
+    fn render_request_renders_inline_template_from_the_request() {
+        let request = RenderRequest {
+            data: json!({"msg": "hello"}),
+            template: TemplateRef::Inline("{{ msg }}".into()),
+            format: OutputMode::Text,
+            ..sample_request()
+        };
+        assert_eq!(render_request(&request).unwrap(), "hello");
+    }
+
+    #[test]
+    fn render_request_auto_without_stdout_color_strips_style_tags() {
+        let request = RenderRequest {
+            data: json!({"msg": "hi"}),
+            template: TemplateRef::Inline("[tone]{{ msg }}[/tone]".into()),
+            format: OutputMode::Auto,
+            color_policy: ColorPolicy::Auto,
+            target: TargetProperties {
+                stdout_color_capability: false,
+                ..sample_target()
+            },
+            ..sample_request()
+        };
+        assert_eq!(render_request(&request).unwrap(), "hi");
     }
 }

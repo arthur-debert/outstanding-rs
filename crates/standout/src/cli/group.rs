@@ -175,7 +175,8 @@ where
                   hooks: Option<&Hooks>,
                   output_mode: crate::OutputMode,
                   theme: &crate::Theme,
-                  ambiguous_width: crate::AmbiguousWidth| {
+                  ambiguous_width: crate::AmbiguousWidth,
+                  target: Option<crate::TargetProperties>| {
                 let result = handler.borrow_mut().handle(matches, ctx);
                 render_handler_output(
                     result,
@@ -190,6 +191,7 @@ where
                     output_mode,
                     structured_output_projection.as_ref(),
                     ambiguous_width,
+                    target,
                 )
             },
         ))
@@ -292,7 +294,8 @@ where
                   hooks: Option<&Hooks>,
                   output_mode: crate::OutputMode,
                   theme: &crate::Theme,
-                  ambiguous_width: crate::AmbiguousWidth| {
+                  ambiguous_width: crate::AmbiguousWidth,
+                  target: Option<crate::TargetProperties>| {
                 let result = handler.borrow_mut().handle(matches, ctx);
                 render_handler_output(
                     result,
@@ -307,6 +310,7 @@ where
                     output_mode,
                     structured_output_projection.as_ref(),
                     ambiguous_width,
+                    target,
                 )
             },
         ))
@@ -473,7 +477,8 @@ where
                   _hooks: Option<&Hooks>,
                   _output_mode: crate::OutputMode,
                   _theme: &crate::Theme,
-                  _ambiguous_width: crate::AmbiguousWidth| {
+                  _ambiguous_width: crate::AmbiguousWidth,
+                  _target: Option<crate::TargetProperties>| {
                 let result = (handler.borrow_mut())(matches, ctx);
                 match result {
                     Ok(()) => Ok(super::dispatch::DispatchOutput::Silent),
@@ -1238,7 +1243,8 @@ where
                   hooks: Option<&Hooks>,
                   output_mode: crate::OutputMode,
                   theme: &crate::Theme,
-                  ambiguous_width: crate::AmbiguousWidth| {
+                  ambiguous_width: crate::AmbiguousWidth,
+                  target: Option<crate::TargetProperties>| {
                 let result = handler.borrow_mut().handle(matches, ctx);
                 render_handler_output(
                     result,
@@ -1253,6 +1259,7 @@ where
                     output_mode,
                     structured_output_projection.as_ref(),
                     ambiguous_width,
+                    target,
                 )
             },
         ))
@@ -1324,7 +1331,8 @@ where
                   hooks: Option<&Hooks>,
                   output_mode: crate::OutputMode,
                   theme: &crate::Theme,
-                  ambiguous_width: crate::AmbiguousWidth| {
+                  ambiguous_width: crate::AmbiguousWidth,
+                  target: Option<crate::TargetProperties>| {
                 let result = handler.borrow_mut().handle(matches, ctx);
                 render_handler_output(
                     result,
@@ -1339,6 +1347,7 @@ where
                     output_mode,
                     structured_output_projection.as_ref(),
                     ambiguous_width,
+                    target,
                 )
             },
         ))
@@ -1401,7 +1410,8 @@ where
                   _hooks: Option<&Hooks>,
                   _output_mode: crate::OutputMode,
                   _theme: &crate::Theme,
-                  _ambiguous_width: crate::AmbiguousWidth| {
+                  _ambiguous_width: crate::AmbiguousWidth,
+                  _target: Option<crate::TargetProperties>| {
                 let result = (handler.borrow_mut())(matches, ctx);
                 match result {
                     Ok(()) => Ok(super::dispatch::DispatchOutput::Silent),
