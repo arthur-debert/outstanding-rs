@@ -11,6 +11,10 @@
 //! - [`Renderer`]: Compile and reuse templates for fast repeated rendering
 //! - [`validate_template`]: Surface typos or unknown tags before you ship templates
 //! - [`OutputMode`]: Control how content is emitted (Auto/Term/Text/TermDebug/Json/Yaml)
+//! - [`TargetProperties`]: Destination facts for one invocation (per-stream terminal and color)
+//! - [`RenderRequest`]: Owned explicit input to [`render_request`]
+//! - [`ColorPolicy`]: Resolved color axis on a [`RenderRequest`], independent of [`OutputMode`]
+//! - [`TemplateRef`]: Named, inline, or absent template on a [`RenderRequest`]
 //! - Style syntax: Tag-based `[name]content[/name]` markup for inline styling
 //!
 //! ## Quick Start
@@ -154,6 +158,7 @@ pub mod file_loader;
 pub mod output;
 pub mod prelude;
 mod projection;
+mod request;
 pub mod style;
 pub mod tabular;
 pub mod template;
@@ -190,6 +195,11 @@ pub use environment::{
     detect_ambiguous_width_override, detect_color_capability, detect_terminal_width,
     reset_detectors as reset_environment_detectors, set_ambiguous_width_detector,
     set_color_capability_detector, set_terminal_width_detector, DetectorGuard,
+};
+
+// Composition-contract types (explicit request; detection is a signature only)
+pub use request::{
+    render_request, ColorPolicy, RenderRequest, SharedTemplateEngine, TargetProperties, TemplateRef,
 };
 
 // Render module exports

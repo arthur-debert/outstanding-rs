@@ -8,6 +8,7 @@
 //!
 //! | Function | Output Mode | Color Mode | Use When |
 //! |----------|-------------|------------|----------|
+//! | [`crate::render_request`] | On the request | On [`crate::TargetProperties`] | Pure entry; explicit [`crate::RenderRequest`] |
 //! | [`render`] | Auto-detect | Auto-detect | Simple cases, let Standout decide |
 //! | [`render_with_output`] | Explicit | Auto-detect | Honoring `--output` CLI flag |
 //! | [`render_with_mode`] | Explicit | Explicit | Tests, or forcing light/dark mode |
@@ -222,6 +223,9 @@ pub fn validate_template<T: Serialize>(
 /// This is the simplest way to render styled output. It automatically detects
 /// whether stdout supports colors and applies styles accordingly. Color mode
 /// (light/dark) is detected from OS settings.
+///
+/// The pure request-taking entry is [`crate::render_request`]. This convenience
+/// wrapper is not rewired onto that path in this workstream.
 ///
 /// # Arguments
 ///
