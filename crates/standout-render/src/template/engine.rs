@@ -417,6 +417,54 @@ mod tests {
         count: usize,
     }
 
+    /// The engine's thread-affinity is a claim its docstring makes, so the
+    /// compiler is made to check it: filter width state is scoped per render
+    /// without a mutex, and a shared engine sent across threads would race it.
+    ///
+    /// `Probe`'s inherent method exists only when `T: Send`, and an inherent
+    /// method wins over a trait method of the same name — so resolution lands on
+    /// the trait's `false` exactly when the bound does not hold.
+    #[test]
+    fn minijinja_engine_is_neither_send_nor_sync() {
+        struct Probe<T>(PhantomData<T>);
+
+        trait NotSend {
+            fn is_send(&self) -> bool {
+                false
+            }
+        }
+        impl<T> NotSend for Probe<T> {}
+        impl<T: Send> Probe<T> {
+            fn is_send(&self) -> bool {
+                true
+            }
+        }
+
+        trait NotSync {
+            fn is_sync(&self) -> bool {
+                false
+            }
+        }
+        impl<T> NotSync for Probe<T> {}
+        impl<T: Sync> Probe<T> {
+            fn is_sync(&self) -> bool {
+                true
+            }
+        }
+
+        assert!(
+            Probe::<String>(PhantomData).is_send(),
+            "the probe detects a Send type, so a false below means something"
+        );
+        assert!(Probe::<String>(PhantomData).is_sync());
+
+        assert!(
+            !Probe::<MiniJinjaEngine>(PhantomData).is_send(),
+            "a shared engine sent across threads would race per-render width state"
+        );
+        assert!(!Probe::<MiniJinjaEngine>(PhantomData).is_sync());
+    }
+
     #[test]
     fn test_minijinja_engine_simple() {
         let engine = MiniJinjaEngine::new();

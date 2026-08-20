@@ -431,8 +431,9 @@ fn clipboard_reaches_handler() {
 }
 
 /// Drives a tiny three-step "wizard" handler from the harness, scripting
-/// every response. The handler talks to the simple-prompt sources via
-/// `.prompt()`; the responder intercepts each call before any TTY is touched.
+/// every response. The handler calls `.prompt_from(ctx.input_sources())`; the
+/// harness-provided responder is reached through those explicit sources
+/// before any TTY is touched.
 #[test]
 #[serial]
 fn scripted_prompts_drive_a_wizard_handler() {

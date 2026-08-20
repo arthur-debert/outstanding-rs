@@ -431,17 +431,20 @@ operation's declared nonzero status and verbatim stderr payload.
 For testing, post-processing, or when you need the output string:
 
 ```rust
-match app.run_to_string(cmd, args) {
-    RunResult::Handled(output) => { /* use output string */ }
-    RunResult::Binary(bytes, filename) => { /* handle binary */ }
-    RunResult::Error(error) => { /* inspect error.kind() */ }
-    RunResult::NoMatch(matches) => { /* fallback dispatch */ }
+let result = app.run_to_string(cmd, args);
+let _ = result.warnings();
+match result.into_outcome() {
+    DispatchResult::Handled(output) => { /* use output string */ }
+    DispatchResult::Binary(bytes, filename) => { /* handle binary */ }
+    DispatchResult::Error(error) => { /* inspect error.kind() */ }
+    DispatchResult::NoMatch(matches) => { /* fallback dispatch */ }
     _ => {}
 }
 ```
 
-Returns `RunResult` instead of printing. Use `exit_status()`, `success_kind()`,
-and `error_kind()` for typed assertions; see [Execution
+Returns `RunResult` instead of printing: a wrapper around `DispatchResult`
+plus framework warnings. Use `exit_status()`, `success_kind()`, and
+`error_kind()` for typed assertions; see [Execution
 Outcomes](./execution-outcomes.md).
 
 ### Parse Only

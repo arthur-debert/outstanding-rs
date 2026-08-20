@@ -25,7 +25,7 @@ the owning crate's public types and integration tests before copying it.
 
 Common copied examples can target older APIs. Confirm these current contracts:
 
-- `App::run(...) -> bool`; it does not return `Option<ArgMatches>`. Use `run_to_string` and `RunResult::NoMatch` when fallback needs matches.
+- `App::run(...) -> bool`; it does not return `Option<ArgMatches>`. Use `run_to_string` and match `DispatchResult::NoMatch` on `into_outcome()` when fallback needs matches.
 - `CommandContext` has `command_path`, `app_state`, and `extensions`; no `output_mode` field.
 - Binary handler output is `Output::Binary { data, filename }`, not a tuple variant.
 - `#[handler]` preserves the typed function and generates `name__handler`; wire the wrapper and unit-test the original.

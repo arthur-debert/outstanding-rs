@@ -132,12 +132,12 @@ impl App {
     /// Dispatches to a registered handler if one matches the command path.
     ///
     /// Returns:
-    /// - `RunResult::Handled(output)` if a handler was found and executed successfully,
-    /// - `RunResult::Binary(bytes, filename)` for binary output,
-    /// - `RunResult::Handled(RunOutput::command(String::new()))` if the handler
+    /// - `DispatchResult::Handled(output)` if a handler was found and executed successfully,
+    /// - `DispatchResult::Binary(bytes, filename)` for binary output,
+    /// - `DispatchResult::Handled(RunOutput::command(String::new()))` if the handler
     ///   completed silently (preserving the capture compatibility accessor),
-    /// - `RunResult::Error(msg)` if a handler, hook, or output step failed,
-    /// - `RunResult::NoMatch(matches)` if no handler matched.
+    /// - `DispatchResult::Error(msg)` if a handler, hook, or output step failed,
+    /// - `DispatchResult::NoMatch(matches)` if no handler matched.
     ///
     /// If hooks are registered for the command, they are executed:
     /// - Pre-dispatch hooks run before the handler
@@ -145,7 +145,7 @@ impl App {
     /// - Post-output hooks run after rendering
     ///
     /// Handler errors and hook errors both abort execution and return
-    /// `RunResult::Error(msg)`. Callers using `dispatch()` directly are
+    /// `DispatchResult::Error(msg)`. Callers using `dispatch()` directly are
     /// responsible for writing the error to stderr and choosing an exit code.
     ///
     /// Returns [`crate::cli::RunResult`]: the dispatch outcome plus framework
@@ -324,12 +324,12 @@ impl App {
     /// on the same terms as [`get_matches_from`](Self::get_matches_from): the
     /// `help` word where the install policy put it, and `--help` / `-h` through
     /// Clap's short-circuit, both rendered by standout and returned as
-    /// `RunResult::Handled`. A `--page` request rides back as
+    /// `DispatchResult::Handled`. A `--page` request rides back as
     /// [`SuccessKind::PagedHelp`](crate::cli::SuccessKind::PagedHelp); only
     /// [`run`](Self::run) acts on it, so this stays free of side effects.
     ///
     /// A command that declares its own `help` where standout installs the word
-    /// is refused on those same terms: `RunResult::Error` carrying
+    /// is refused on those same terms: `DispatchResult::Error` carrying
     /// [`SetupError::DuplicateCommand`](crate::SetupError::DuplicateCommand)'s
     /// report, before anything is parsed.
     ///
@@ -530,7 +530,7 @@ impl App {
     ///
     /// # Errors and exit codes
     ///
-    /// On `RunResult::Error`, this function writes the diagnostic to stderr
+    /// On `DispatchResult::Error`, this function writes the diagnostic to stderr
     /// and exits with its typed status: Clap usage errors use 2, runtime
     /// failures use 1, and an application-declared `ExternalFailure` preserves
     /// its exact nonzero status and verbatim diagnostic. Final text and binary
@@ -538,7 +538,7 @@ impl App {
     /// except that `BrokenPipe` while writing final rendered command text to stdout
     /// is treated as successful early consumer termination. Callers needing
     /// fine-grained control over exit codes should use [`Self::run_to_string`] or
-    /// [`Self::dispatch_from`] and match on `RunResult` themselves.
+    /// [`Self::dispatch_from`] and match [`crate::cli::RunResult::outcome`].
     ///
     /// # Example
     ///

@@ -29,25 +29,28 @@ final rendered command text to stdout is successful early consumer termination.
 
 ## Capturing typed metadata
 
-`run_to_string` keeps output in-process and returns `RunResult`. Existing
-string-oriented accessors remain available, while typed methods expose the
-semantics:
+`run_to_string` keeps output in-process and returns `RunResult`: the dispatch
+outcome plus any framework warnings collected during the run. `Deref` keeps
+string-oriented accessors and typed methods (`exit_status()`, `success_kind()`,
+`error_kind()`) working on the wrapper. Pattern matching needs `outcome()` or
+`into_outcome()`, because `RunResult` is not the variant enum.
 
 ```rust
-use standout::cli::{ExitStatus, RunResult, SuccessKind};
+use standout::cli::{DispatchResult, ExitStatus, RunResult, SuccessKind};
 
 let result = app.run_to_string(command, args);
+let _ = result.warnings();
 
-match &result {
-    RunResult::Handled(output) => println!("{}", output),
-    RunResult::Binary(bytes, filename) => consume(bytes, filename),
-    RunResult::Artifact(run) => {
+match result.outcome() {
+    DispatchResult::Handled(output) => println!("{}", output),
+    DispatchResult::Binary(bytes, filename) => consume(bytes, filename),
+    DispatchResult::Artifact(run) => {
         // The framework already wrote a file destination; the receipt says where.
         println!("{:?}: {:?}", run.destination(), run.report());
     }
-    RunResult::Error(error) => eprintln!("{}", error),
-    RunResult::NoMatch(matches) => legacy_dispatch(matches),
-    RunResult::Silent => {}
+    DispatchResult::Error(error) => eprintln!("{}", error),
+    DispatchResult::NoMatch(_matches) => {}
+    DispatchResult::Silent => {}
     _ => {}
 }
 
@@ -55,6 +58,9 @@ assert_eq!(result.exit_status(), Some(ExitStatus::SUCCESS));
 assert_eq!(result.success_kind(), Some(SuccessKind::Command));
 assert_eq!(result.error_kind(), None);
 ```
+
+Use `into_outcome()` when the fallback needs owned `ArgMatches`
+(`DispatchResult::NoMatch(matches)`).
 
 `RunOutput` and `RunError` dereference to `str`, implement `Display`, and expose
 `as_str()` / `into_string()` for callers that used the tuple payloads as text.
@@ -69,7 +75,7 @@ nonzero status and its text is the verbatim diagnostic payload.
 
 ## No-match is a handoff, not an error
 
-`RunResult::NoMatch` retains the parsed `ArgMatches` for partial adoption. It has
+`DispatchResult::NoMatch` retains the parsed `ArgMatches` for partial adoption. It has
 no framework exit status: `exit_status()` returns `None`, `run()` returns
 `false`, and Standout emits nothing. The fallback dispatcher still owns that
 command and its eventual status.

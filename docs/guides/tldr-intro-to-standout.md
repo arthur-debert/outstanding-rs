@@ -109,4 +109,4 @@ And finally, run in main, the autodispatcher:
 ```
 
 When the fallback needs the unmatched `ArgMatches`, call `run_to_string(...)`
-and match `RunResult::NoMatch(matches)` instead.
+and match `DispatchResult::NoMatch(matches)` on `into_outcome()` instead.

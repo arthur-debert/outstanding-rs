@@ -56,6 +56,7 @@ does not change its status, and external declarations are not recognized from
 post-dispatch or post-output hooks. Attach an underlying cause with
 `ExternalFailure::with_source` when one exists.
 
-Capture callers match `RunResult::Error`, then inspect
-`RunErrorKind::External`, `error.exit_status()`, and `error.as_str()`. See
+Capture callers match `result.outcome()` / `into_outcome()` as
+`DispatchResult::Error`, then inspect `RunErrorKind::External`,
+`error.exit_status()`, and `error.as_str()`. See
 [Execution Outcomes](./execution-outcomes.md) and [Testing](./testing.md).

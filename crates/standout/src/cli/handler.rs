@@ -7,7 +7,8 @@
 //! - [`Output`]: What a handler produces (render data, silent, or binary)
 //! - [`HandlerResult`]: The result type for handlers (`Result<Output<T>, Error>`)
 //! - [`ExternalFailure`]: An intentional delegated-operation failure with an exact status/payload
-//! - [`RunResult`]: The result of running the CLI dispatcher
+//! - [`DispatchResult`]: Alias for the dispatch crate's outcome enum
+//! - [`RunResult`]: The dispatch crate's outcome enum (same type as [`DispatchResult`])
 //! - [`Handler`]: Trait for command handlers (`&mut self`)
 //!
 //! # Design Note

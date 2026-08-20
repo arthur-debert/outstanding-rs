@@ -85,18 +85,22 @@
 //!
 //! Standout doesn't require all-or-nothing adoption. Register only the
 //! commands you want Standout to handle; unmatched commands return
-//! [`RunResult::NoMatch`] with the ArgMatches for your own dispatch:
+//! [`DispatchResult::NoMatch`] with the ArgMatches for your own dispatch.
+//! [`RunResult`] wraps that outcome plus framework warnings; match
+//! [`RunResult::into_outcome`](RunResult::into_outcome) for variants:
 //!
 //! ```rust,ignore
-//! match app.run_to_string(cmd, args) {
-//!     RunResult::Handled(output) => println!("{}", output),
-//!     RunResult::NoMatch(matches) => legacy_dispatch(matches),
-//!     RunResult::Binary(bytes, filename) => std::fs::write(filename, bytes)?,
-//!     RunResult::Error(error) => {
+//! let result = app.run_to_string(cmd, args);
+//! let _ = result.warnings();
+//! match result.into_outcome() {
+//!     DispatchResult::Handled(output) => println!("{}", output),
+//!     DispatchResult::NoMatch(matches) => legacy_dispatch(matches),
+//!     DispatchResult::Binary(bytes, filename) => std::fs::write(filename, bytes)?,
+//!     DispatchResult::Error(error) => {
 //!         eprintln!("{}", error);
 //!         std::process::exit(error.exit_status().code().into());
 //!     },
-//!     // RunResult is #[non_exhaustive]; cover Silent and future variants.
+//!     // DispatchResult is #[non_exhaustive]; cover Silent and future variants.
 //!     _ => {},
 //! }
 //! ```
@@ -109,7 +113,8 @@
 //! - [`FnHandler`]: Wrapper for `FnMut` closures
 //! - [`Output`]: What handlers produce (render data, silent, binary)
 //! - [`HandlerResult`]: `Result<Output<T>, Error>` — enables `?` for error handling
-//! - [`RunResult`]: Typed dispatch outcome, status, and failure origin
+//! - [`RunResult`]: Dispatch outcome plus framework warnings from one run
+//! - [`DispatchResult`]: Typed dispatch variants (handled, no-match, error, …)
 //! - [`Hooks`]: Pre/post execution hooks for validation and transformation
 //! - [`CommandContext`]: Runtime info passed to handlers (command path, app state)
 //!

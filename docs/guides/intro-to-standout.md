@@ -498,7 +498,7 @@ if !app.run(Cli::command(), std::env::args()) {
 ```
 
 If the fallback needs the unmatched `ArgMatches`, use `run_to_string(...)` and
-match `RunResult::NoMatch(matches)`.
+match `DispatchResult::NoMatch(matches)` on `into_outcome()`.
 
 > **Verify:** Run `tdoo list` - it should work as before.
 > **Verify:** Run `tdoo list --output json` - you should get JSON output for free!
