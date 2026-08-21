@@ -45,8 +45,15 @@ match result.outcome() {
     DispatchResult::Handled(output) => println!("{}", output),
     DispatchResult::Binary(bytes, filename) => consume(bytes, filename),
     DispatchResult::Artifact(run) => {
-        // The framework already wrote a file destination; the receipt says where.
-        println!("{:?}: {:?}", run.destination(), run.report());
+        use std::io::{self, Write};
+        if run.destination().is_stdout() {
+            io::stdout().write_all(run.bytes())?;
+            if let Some(report) = run.report().filter(|r| !r.is_empty()) {
+                eprintln!("{}", report);
+            }
+        } else if let Some(report) = run.report().filter(|r| !r.is_empty()) {
+            println!("{}", report);
+        }
     }
     DispatchResult::Error(error) => eprintln!("{}", error),
     DispatchResult::NoMatch(_matches) => {}

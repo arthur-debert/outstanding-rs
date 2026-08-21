@@ -1438,6 +1438,10 @@ THEME: Partial Adoption
 	own subcommand handling. Use into_outcome() when the fallback needs
 	owned ArgMatches.
 
+	Artifact is destination-aware. Capture APIs defer a stdout byte write
+	to the caller; a file destination is already on disk. The report of a
+	stdout artifact goes to stderr so it cannot mix with the bytes.
+
 	Helper methods (Deref to DispatchResult):
 		result.is_handled()     -> bool
 		result.output()         -> Option<&str>
@@ -1449,6 +1453,38 @@ THEME: Partial Adoption
 61. How do I fall back to my own dispatch?
 
 	Check for NoMatch and handle unregistered commands yourself:
+		fn emit_completed_artifact(run: &ArtifactRun) -> Result<(), RunError> {
+		    use std::io::{self, Write};
+		    let to_stdout = run.destination().is_stdout();
+		    if to_stdout {
+		        io::stdout()
+		            .write_all(run.bytes())
+		            .and_then(|()| io::stdout().flush())
+		            .map_err(|error| {
+		                RunError::new(
+		                    format!("Error writing artifact stdout: {}", error),
+		                    RunErrorKind::FinalWrite(OutputKind::Artifact),
+		                )
+		            })?;
+		    }
+		    if let Some(report) = run.report().filter(|r| !r.is_empty()) {
+		        let written = if to_stdout {
+		            writeln!(io::stderr(), "{}", report)
+		                .and_then(|()| io::stderr().flush())
+		        } else {
+		            writeln!(io::stdout(), "{}", report)
+		                .and_then(|()| io::stdout().flush())
+		        };
+		        written.map_err(|error| {
+		            RunError::new(
+		                format!("Error writing artifact report: {}", error),
+		                RunErrorKind::FinalWrite(OutputKind::Artifact),
+		            )
+		        })?;
+		    }
+		    Ok(())
+		}
+
 		let app = App::builder()
 		    .command("list", list_handler, "list.j2")
 		    .build()?;
@@ -1459,7 +1495,10 @@ THEME: Partial Adoption
 		        std::fs::write(&filename, bytes)?;
 		    }
 		    DispatchResult::Artifact(run) => {
-		        println!("{:?}: {:?}", run.destination(), run.report());
+		        if let Err(error) = emit_completed_artifact(&run) {
+		            eprintln!("{}", error);
+		            std::process::exit(error.exit_status().code().into());
+		        }
 		    }
 		    DispatchResult::Error(error) => {
 		        eprintln!("{}", error);
@@ -1533,7 +1572,10 @@ THEME: Partial Adoption
 		        eprintln!("Wrote {} bytes to {}", bytes.len(), filename);
 		    }
 		    DispatchResult::Artifact(run) => {
-		        println!("{:?}: {:?}", run.destination(), run.report());
+		        if let Err(error) = emit_completed_artifact(&run) {
+		            eprintln!("{}", error);
+		            std::process::exit(error.exit_status().code().into());
+		        }
 		    }
 		    DispatchResult::Error(error) => {
 		        eprintln!("{}", error);
@@ -1581,7 +1623,10 @@ THEME: Partial Adoption
 		            return;
 		        }
 		        DispatchResult::Artifact(run) => {
-		            println!("{:?}: {:?}", run.destination(), run.report());
+		            if let Err(error) = emit_completed_artifact(&run) {
+		                eprintln!("{}", error);
+		                std::process::exit(error.exit_status().code().into());
+		            }
 		            return;
 		        }
 		        DispatchResult::Error(error) => {
@@ -1631,7 +1676,10 @@ THEME: Partial Adoption
 		             std::fs::write(filename, bytes).ok();
 		        }
 		        DispatchResult::Artifact(run) => {
-		            println!("{:?}: {:?}", run.destination(), run.report());
+		            if let Err(error) = emit_completed_artifact(&run) {
+		                eprintln!("{}", error);
+		                std::process::exit(error.exit_status().code().into());
+		            }
 		        }
 		        DispatchResult::Error(error) => {
 		            eprintln!("{}", error);
