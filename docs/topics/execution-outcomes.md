@@ -36,7 +36,9 @@ string-oriented accessors and typed methods (`exit_status()`, `success_kind()`,
 `into_outcome()`, because `CompletedRun` is not the variant enum.
 
 ```rust
-use standout::cli::{CompletedRun, DispatchResult, ExitStatus, SuccessKind};
+use standout::cli::{
+    CompletedRun, DispatchResult, ExitStatus, OutputKind, RunError, RunErrorKind, SuccessKind,
+};
 
 let result = app.run_to_string(command, args);
 let _ = result.warnings();
@@ -47,12 +49,30 @@ match result.outcome() {
     DispatchResult::Artifact(run) => {
         use std::io::{self, Write};
         if run.destination().is_stdout() {
-            io::stdout().write_all(run.bytes())?;
+            let mut stdout = io::stdout();
+            stdout.write_all(run.bytes()).and_then(|()| stdout.flush()).map_err(|error| {
+                RunError::new(
+                    format!("Error writing artifact stdout: {}", error),
+                    RunErrorKind::FinalWrite(OutputKind::Artifact),
+                )
+            })?;
             if let Some(report) = run.report().filter(|r| !r.is_empty()) {
-                eprintln!("{}", report);
+                let mut stderr = io::stderr();
+                writeln!(stderr, "{}", report).and_then(|()| stderr.flush()).map_err(|error| {
+                    RunError::new(
+                        format!("Error writing artifact report: {}", error),
+                        RunErrorKind::FinalWrite(OutputKind::Artifact),
+                    )
+                })?;
             }
         } else if let Some(report) = run.report().filter(|r| !r.is_empty()) {
-            println!("{}", report);
+            let mut stdout = io::stdout();
+            writeln!(stdout, "{}", report).and_then(|()| stdout.flush()).map_err(|error| {
+                RunError::new(
+                    format!("Error writing artifact report: {}", error),
+                    RunErrorKind::FinalWrite(OutputKind::Artifact),
+                )
+            })?;
         }
     }
     DispatchResult::Error(error) => eprintln!("{}", error),

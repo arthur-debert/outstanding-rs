@@ -1457,9 +1457,10 @@ THEME: Partial Adoption
 		    use std::io::{self, Write};
 		    let to_stdout = run.destination().is_stdout();
 		    if to_stdout {
-		        io::stdout()
+		        let mut stdout = io::stdout();
+		        stdout
 		            .write_all(run.bytes())
-		            .and_then(|()| io::stdout().flush())
+		            .and_then(|()| stdout.flush())
 		            .map_err(|error| {
 		                RunError::new(
 		                    format!("Error writing artifact stdout: {}", error),
@@ -1469,11 +1470,11 @@ THEME: Partial Adoption
 		    }
 		    if let Some(report) = run.report().filter(|r| !r.is_empty()) {
 		        let written = if to_stdout {
-		            writeln!(io::stderr(), "{}", report)
-		                .and_then(|()| io::stderr().flush())
+		            let mut stderr = io::stderr();
+		            writeln!(stderr, "{}", report).and_then(|()| stderr.flush())
 		        } else {
-		            writeln!(io::stdout(), "{}", report)
-		                .and_then(|()| io::stdout().flush())
+		            let mut stdout = io::stdout();
+		            writeln!(stdout, "{}", report).and_then(|()| stdout.flush())
 		        };
 		        written.map_err(|error| {
 		            RunError::new(
