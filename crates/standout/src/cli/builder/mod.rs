@@ -1001,12 +1001,15 @@ impl App {
     /// command with [`crate::StructuredOutputProjection`] must emit the
     /// contract CSV, not generic flattening.
     fn csv_projection_for(&self, path: &str) -> Option<crate::CsvProjection> {
-        self.pending_commands.borrow().get(path).and_then(|pending| {
-            pending
-                .recipe
-                .structured_output_projection()
-                .map(|projection| projection.csv_projection().clone())
-        })
+        self.pending_commands
+            .borrow()
+            .get(path)
+            .and_then(|pending| {
+                pending
+                    .recipe
+                    .structured_output_projection()
+                    .map(|projection| projection.csv_projection().clone())
+            })
     }
 
     /// Returns the theme `build()` merged (ADR-0020).
