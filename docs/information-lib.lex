@@ -1226,6 +1226,7 @@ THEME: App Configuration
 
 	App is the runtime container for Standout configuration. The theme
 	`build()` merged is always present; `get_default_theme()` returns `&Theme`.
+	It holds:
 		pub struct App {
 		    registry: TopicRegistry,              // Help topics
 		    output_flag: Option<String>,          // --output flag name
