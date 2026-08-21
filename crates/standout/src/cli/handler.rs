@@ -143,8 +143,8 @@ impl CommandContextInput for CommandContext {
 
     /// Stdin, clipboard, and prompt-responder for this invocation.
     ///
-    /// Inserted by `App::run_with` / `dispatch_from`. Standalone `dispatch`
-    /// inserts [`InputSources::from_process`].
+    /// Inserted by `App::run_with` / `dispatch_from` / `App::run_command`.
+    /// Standalone `dispatch` inserts [`InputSources::from_process`].
     fn input_sources(&self) -> &standout_input::InputSources {
         self.extensions
             .get::<standout_input::InputSources>()

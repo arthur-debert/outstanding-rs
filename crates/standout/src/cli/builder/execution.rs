@@ -207,16 +207,14 @@ impl App {
 
             // Run the handler (post-dispatch hooks are run inside dispatch function)
             // output_mode is passed separately because CommandContext is render-agnostic
-            // Late binding: theme is resolved here at dispatch time, not when commands were registered
-            let default_theme = crate::Theme::default();
-            let theme = self.theme.as_ref().unwrap_or(&default_theme);
+            // Late binding: theme is read here at dispatch time, not when commands were registered
             let dispatch_output = match dispatch(
                 dispatch_fn,
                 sub_matches,
                 &ctx,
                 hooks,
                 output_mode,
-                theme,
+                &self.theme,
                 self.ambiguous_width,
                 target,
             ) {
@@ -603,9 +601,12 @@ impl App {
         // they appear last on the user's terminal. The resolved `--output`
         // mode travels on the run result: `Text` opts out of ANSI even when
         // stderr is color-capable.
-        let default_theme = crate::Theme::default();
-        let theme = self.theme.as_ref().unwrap_or(&default_theme);
-        standout_render::warnings::flush_to_stderr(theme, result.output_mode(), target, &warnings);
+        standout_render::warnings::flush_to_stderr(
+            &self.theme,
+            result.output_mode(),
+            target,
+            &warnings,
+        );
 
         // Closes this run's window for render diagnostics. Nothing prints them
         // — the framework does not react to an unresolved tag — but closing the
@@ -625,7 +626,7 @@ impl App {
         handled
     }
 
-    fn seed_startup_warnings(&self, warnings: &WarningBuffer) {
+    pub(crate) fn seed_startup_warnings(&self, warnings: &WarningBuffer) {
         for message in &self.startup_warnings {
             warnings.push(message.clone());
         }

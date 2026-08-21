@@ -7,11 +7,11 @@
 use std::cell::RefCell;
 use std::rc::Rc;
 
-use clap::Command;
+use clap::{Arg, Command};
 use console::Style;
 use minijinja::Value;
 use serde_json::json;
-use standout::cli::{render_help, App, HelpConfig, Output};
+use standout::cli::{render_help, App, HelpConfig, Output, RenderedOutput};
 use standout::context::{ContextRegistry, RenderContext};
 use standout::{
     render_request, AmbiguousWidth, ColorMode, ColorPolicy, IconMode, InputSources,
@@ -46,6 +46,50 @@ fn shared_engine(engine: MiniJinjaEngine) -> SharedTemplateEngine {
 
 fn greet_command() -> Command {
     Command::new("app").subcommand(Command::new("greet"))
+}
+
+/// Clap tree with Standout's `--output` argument (id `_output_mode`).
+///
+/// `run_command` reads the invocation's mode from matches; `run_with` /
+/// `dispatch_from` install this flag themselves. Manual parse for
+/// `run_command` has to carry it the same way Standout's parse API does.
+fn greet_command_with_output() -> Command {
+    greet_command().arg(
+        Arg::new("_output_mode")
+            .long("output")
+            .value_name("MODE")
+            .global(true)
+            .value_parser([
+                "auto",
+                "term",
+                "text",
+                "term-debug",
+                "json",
+                "yaml",
+                "xml",
+                "csv",
+            ])
+            .default_value("auto"),
+    )
+}
+
+fn run_command_greet(app: &App, matches: &clap::ArgMatches) -> RenderedOutput {
+    let sub = matches.subcommand_matches("greet").unwrap();
+    app.run_command(
+        "greet",
+        sub,
+        |_m, _ctx| Ok(Output::Render(json!({"name": "Ada", "label": "hi"}))),
+        COMPOSITION_TEMPLATE,
+    )
+    .expect("run_command should render")
+}
+
+fn dispatch_greet(app: &App, matches: clap::ArgMatches) -> String {
+    let mode = app.extract_output_mode(&matches);
+    app.dispatch(matches, mode)
+        .output()
+        .expect("dispatch should render")
+        .to_string()
 }
 
 fn help_command() -> Command {
@@ -91,10 +135,7 @@ fn composition_request(
     RenderRequest {
         data: json!({"name": "Ada", "label": "hi"}),
         template: TemplateRef::Inline(COMPOSITION_TEMPLATE.to_string()),
-        theme: app
-            .get_default_theme()
-            .cloned()
-            .expect("build merged a theme"),
+        theme: app.get_default_theme().clone(),
         format: OutputMode::Term,
         color_policy: ColorPolicy::Auto,
         target,
@@ -155,6 +196,106 @@ fn dispatch_render_inline_and_render_request_agree_byte_for_byte() {
     assert_eq!(
         inline, via_request,
         "render_inline_with must match render_request of the same facts"
+    );
+}
+
+#[test]
+fn run_command_and_dispatch_agree_byte_for_byte() {
+    let templates = write_part_template();
+    let app = composition_app(templates.path());
+    let matches = greet_command()
+        .try_get_matches_from(["app", "greet"])
+        .unwrap();
+
+    let dispatch_out = app
+        .dispatch(matches, OutputMode::Auto)
+        .output()
+        .expect("dispatch should render")
+        .to_string();
+
+    let matches = greet_command()
+        .try_get_matches_from(["app", "greet"])
+        .unwrap();
+    let via_run_command = run_command_greet(&app, &matches);
+
+    assert!(
+        dispatch_out.contains("ADA")
+            && dispatch_out.contains("INC")
+            && dispatch_out.contains("9.9")
+            && dispatch_out.contains("w"),
+        "template must consume filter, include, and context:\n{dispatch_out}"
+    );
+    assert_eq!(
+        via_run_command.as_text(),
+        Some(dispatch_out.as_str()),
+        "run_command and dispatch must share the request pipeline"
+    );
+}
+
+#[test]
+fn run_command_honours_parsed_output_mode_and_splits_raw() {
+    let templates = write_part_template();
+    let app = composition_app(templates.path());
+
+    let json_matches = greet_command_with_output()
+        .try_get_matches_from(["app", "greet", "--output=json"])
+        .unwrap();
+    let json_dispatch = dispatch_greet(&app, json_matches);
+    let json_matches = greet_command_with_output()
+        .try_get_matches_from(["app", "greet", "--output=json"])
+        .unwrap();
+    let json_run = run_command_greet(&app, &json_matches);
+    assert_eq!(
+        json_run.as_text(),
+        Some(json_dispatch.as_str()),
+        "run_command --output=json must match dispatch of the same matches"
+    );
+    assert_eq!(
+        json_run.as_text(),
+        json_run.as_raw_text(),
+        "structured json has no formatted/raw split"
+    );
+    let parsed: serde_json::Value =
+        serde_json::from_str(json_run.as_text().unwrap()).expect("json mode should emit JSON");
+    assert_eq!(parsed["name"], "Ada");
+    assert_eq!(parsed["label"], "hi");
+
+    let term_matches = greet_command_with_output()
+        .try_get_matches_from(["app", "greet", "--output=term"])
+        .unwrap();
+    let term_dispatch = dispatch_greet(&app, term_matches);
+    let term_matches = greet_command_with_output()
+        .try_get_matches_from(["app", "greet", "--output=term"])
+        .unwrap();
+    let term_run = run_command_greet(&app, &term_matches);
+    let formatted = term_run.as_text().expect("term should render text");
+    let raw = term_run.as_raw_text().expect("term should carry raw");
+    assert_eq!(
+        formatted, term_dispatch,
+        "run_command --output=term formatted must match dispatch"
+    );
+    assert!(
+        formatted.contains("ADA")
+            && formatted.contains("INC")
+            && formatted.contains("9.9")
+            && formatted.contains("w"),
+        "term template must consume filter, include, and context:\n{formatted}"
+    );
+    assert!(
+        formatted.contains("\x1b["),
+        "explicit term under a styled theme must emit ANSI in formatted:\n{formatted:?}"
+    );
+    assert!(
+        !raw.contains("\x1b["),
+        "raw must stay pipe-safe without ANSI:\n{raw:?}"
+    );
+    assert_ne!(
+        formatted, raw,
+        "formatted and raw must diverge under a styled term render"
+    );
+    assert!(
+        raw.contains("ADA") && raw.contains("INC") && raw.contains("9.9") && raw.contains("hi"),
+        "raw must still carry the template facts:\n{raw}"
     );
 }
 

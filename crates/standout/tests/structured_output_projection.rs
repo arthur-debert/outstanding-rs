@@ -1,6 +1,6 @@
 //! App-path coverage for per-command structured-output projections.
 
-use clap::Command;
+use clap::{Arg, Command};
 use serde_json::{json, Value};
 use standout::cli::hooks::TextOutput;
 use standout::cli::{
@@ -67,6 +67,26 @@ fn command() -> Command {
     Command::new("rustloc").subcommand(Command::new("summary"))
 }
 
+fn command_with_output() -> Command {
+    command().arg(
+        Arg::new("_output_mode")
+            .long("output")
+            .value_name("MODE")
+            .global(true)
+            .value_parser([
+                "auto",
+                "term",
+                "text",
+                "term-debug",
+                "json",
+                "yaml",
+                "xml",
+                "csv",
+            ])
+            .default_value("auto"),
+    )
+}
+
 fn app() -> App {
     App::builder()
         .command_with(
@@ -91,6 +111,27 @@ fn direct_dispatch(app: &App, mode: OutputMode) -> String {
         panic!("expected handled output")
     };
     output.into_string()
+}
+
+#[test]
+fn run_command_and_dispatch_agree_on_csv_projection() {
+    let app = app();
+    let matches = command_with_output()
+        .try_get_matches_from(["rustloc", "summary", "--output=csv"])
+        .unwrap();
+    let sub = matches.subcommand_matches("summary").unwrap();
+    let via_run_command = app
+        .run_command(
+            "summary",
+            sub,
+            |_matches, _ctx| Ok(Output::Render(response())),
+            "{{ totals.files }} files / {{ totals.code }} lines",
+        )
+        .expect("run_command should render csv");
+
+    assert_eq!(via_run_command.as_text(), Some(EXPECTED_CSV));
+    assert_eq!(via_run_command.as_raw_text(), Some(EXPECTED_CSV));
+    assert_eq!(direct_dispatch(&app, OutputMode::Csv), EXPECTED_CSV);
 }
 
 #[test]

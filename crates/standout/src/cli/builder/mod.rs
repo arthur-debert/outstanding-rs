@@ -39,7 +39,10 @@ use crate::topics::{
     DEFAULT_TOPICS_LIST_TEMPLATE, DEFAULT_TOPIC_TEMPLATE,
 };
 use crate::TemplateRegistry;
-use crate::{render_auto, OutputMode, RenderError, Theme, TEMPLATE_EXTENSIONS};
+use crate::{
+    render_request_split, ColorPolicy, InputSources, OutputMode, RenderError, RenderRequest,
+    TargetProperties, Theme, TEMPLATE_EXTENSIONS,
+};
 use clap::{Arg, ArgAction, ArgMatches, Command};
 use serde::Serialize;
 use std::cell::RefCell;
@@ -59,6 +62,7 @@ use super::hooks::{ArtifactOutput, HookError, HookPhase, Hooks, RenderedOutput, 
 use super::questionnaire::QuestionnaireCommand;
 use super::result::{HelpDisplay, HelpResult};
 use standout_dispatch::verify::ExpectedArg;
+use standout_render::warnings::WarningBuffer;
 
 pub(crate) type SharedTemplateEngine =
     Rc<RefCell<Box<dyn standout_render::template::TemplateEngine>>>;
@@ -404,7 +408,8 @@ pub struct App {
     pub(crate) registry: TopicRegistry,
     pub(crate) output_flag: Option<String>,
     pub(crate) output_file_flag: Option<String>,
-    pub(crate) theme: Option<Theme>,
+    /// The one theme `build()` merged (ADR-0020). Always set.
+    pub(crate) theme: Theme,
     pub(crate) stylesheet_registry: Option<crate::StylesheetRegistry>,
     pub(crate) template_registry: Option<Rc<TemplateRegistry>>,
     pending_commands: RefCell<HashMap<String, PendingCommand>>,
@@ -719,7 +724,8 @@ impl AppBuilder {
             };
         }
 
-        // Resolve theme BEFORE finalization
+        // Resolve theme BEFORE finalization. `App.theme` is non-optional;
+        // this `Some` is only the builder's still-unset-until-build slot.
         let app_theme = self.resolve_configured_theme()?;
         self.theme = Some(
             self.framework_base_theme()?
@@ -797,7 +803,10 @@ impl AppBuilder {
             registry: self.registry,
             output_flag: self.output_flag,
             output_file_flag: self.output_file_flag,
-            theme: self.theme,
+            theme: self
+                .theme
+                .take()
+                .expect("build always resolves a theme before constructing App"),
             stylesheet_registry: self.stylesheet_registry,
             template_registry: self.template_registry.map(Rc::new),
             pending_commands: self.pending_commands,
@@ -986,9 +995,39 @@ impl App {
         self.command_hooks.get(path)
     }
 
-    /// Returns the default theme, if configured.
-    pub fn get_default_theme(&self) -> Option<&Theme> {
-        self.theme.as_ref()
+    /// CSV projection registered for `path`, if the command declared one.
+    ///
+    /// Same fact dispatch captures into its request: a `run_command` of a
+    /// command with [`crate::StructuredOutputProjection`] must emit the
+    /// contract CSV, not generic flattening.
+    fn csv_projection_for(&self, path: &str) -> Option<crate::CsvProjection> {
+        self.pending_commands
+            .borrow()
+            .get(path)
+            .and_then(|pending| {
+                pending
+                    .recipe
+                    .structured_output_projection()
+                    .map(|projection| projection.csv_projection().clone())
+            })
+    }
+
+    /// Returns the theme `build()` merged (ADR-0020).
+    ///
+    /// Always present: `build()` computes the framework-base-plus-application
+    /// theme unconditionally, so a built [`App`] has no unset theme.
+    pub fn get_default_theme(&self) -> &Theme {
+        &self.theme
+    }
+
+    /// Output-mode fallback used when this invocation has no `--output` flag.
+    ///
+    /// `App` stores no configurable fallback (`AppBuilder::output_mode()` was
+    /// deleted in ROB02); `Auto` is the only value. Named here rather than
+    /// inlined at each call site so a later workstream can store a real field
+    /// without hunting literals.
+    fn output_mode_fallback() -> OutputMode {
+        OutputMode::Auto
     }
 
     /// Gets a theme by name from the stylesheet registry.
@@ -1212,7 +1251,7 @@ impl App {
 
     /// The one theme `build()` merged (ADR-0020), including help/topic tags.
     fn help_theme(&self) -> Theme {
-        self.theme.clone().unwrap_or_else(default_help_theme)
+        self.theme.clone()
     }
 
     /// Named registry template when `build()` registered it; otherwise the
@@ -1715,15 +1754,19 @@ impl App {
     }
 
     /// Extracts the output mode from parsed ArgMatches.
+    ///
+    /// When this app installs `--output` and `matches` carries `_output_mode`,
+    /// that value is the invocation's mode. Otherwise the
+    /// [fallback](Self::output_mode_fallback) — including when the parse tree
+    /// never declared Standout's argument (`try_get_one` rather than
+    /// `get_one`, so an unaugmented manual parse does not panic).
     pub fn extract_output_mode(&self, matches: &ArgMatches) -> OutputMode {
-        if self.output_flag.is_some() {
-            parse_output_mode_flag(
-                matches
-                    .get_one::<String>("_output_mode")
-                    .map(|s| s.as_str()),
-            )
-        } else {
-            OutputMode::Auto
+        if self.output_flag.is_none() {
+            return Self::output_mode_fallback();
+        }
+        match matches.try_get_one::<String>("_output_mode") {
+            Ok(Some(value)) => parse_output_mode_flag(Some(value.as_str())),
+            Ok(None) | Err(_) => Self::output_mode_fallback(),
         }
     }
 
@@ -1767,11 +1810,23 @@ impl App {
     /// to benefit from registered hooks.
     ///
     /// The method:
-    /// 1. Runs pre-dispatch hooks (if any)
-    /// 2. Calls your handler closure
-    /// 3. Renders the result using the template
-    /// 4. Runs post-output hooks (if any)
-    /// 5. Returns the final output
+    /// 1. Inserts [`InputSources::from_process`] and a
+    ///    [`standout_render::warnings::WarningBuffer`] into the context (the
+    ///    same run extensions `dispatch` / `run_with` insert). The buffer is
+    ///    seeded with build-time startup warnings so hooks and render see the
+    ///    same in-call destination as the other run edges; this method still
+    ///    returns only [`RenderedOutput`] (no final write, no warnings-return
+    ///    API)
+    /// 2. Runs pre-dispatch hooks (if any)
+    /// 3. Calls your handler closure
+    /// 4. Renders the result through [`crate::render_request_split`] using the
+    ///    app engine, template registry, context registry, merged theme, the
+    ///    output mode from [`extract_output_mode`](Self::extract_output_mode),
+    ///    and the command's structured-output projection when one is
+    ///    registered for `path`. Formatted and raw travel on [`TextOutput`]
+    ///    the same way dispatch does
+    /// 5. Runs post-output hooks (if any)
+    /// 6. Returns the final output
     ///
     /// # Final writes
     ///
@@ -1796,6 +1851,10 @@ impl App {
             path.split('.').map(String::from).collect(),
             self.app_state.clone(),
         );
+        let warnings = WarningBuffer::new();
+        self.seed_startup_warnings(&warnings);
+        ctx.extensions.insert(InputSources::from_process());
+        ctx.extensions.insert(warnings.clone());
 
         let hooks = self.command_hooks.get(path);
 
@@ -1817,9 +1876,26 @@ impl App {
                     json_data = hooks.run_post_dispatch(matches, &ctx, json_data)?;
                 }
 
-                let theme = self.theme.clone().unwrap_or_default();
-                match render_auto(template, &json_data, &theme, OutputMode::Auto) {
-                    Ok(rendered) => RenderedOutput::Text(TextOutput::plain(rendered)),
+                let mut target = TargetProperties::detect();
+                target.ambiguous_width = self.ambiguous_width;
+                let request = RenderRequest {
+                    data: json_data,
+                    template: crate::TemplateRef::Inline(template.to_string()),
+                    theme: self.theme.clone(),
+                    format: self.extract_output_mode(matches),
+                    color_policy: ColorPolicy::Auto,
+                    target,
+                    engine: self.template_engine.clone(),
+                    registry: self.template_registry.clone(),
+                    context_registry: Some(self.context_registry.clone()),
+                    csv_projection: self.csv_projection_for(path),
+                    extras: HashMap::new(),
+                    warnings: Some(warnings),
+                };
+                match render_request_split(&request) {
+                    Ok(rendered) => {
+                        RenderedOutput::Text(TextOutput::new(rendered.formatted, rendered.raw))
+                    }
                     Err(e) => return Err(HookError::post_output("Render error").with_source(e)),
                 }
             }
@@ -2213,9 +2289,7 @@ mod tests {
             .build()
             .unwrap();
 
-        assert!(app.theme.is_some());
-        let theme = app.theme.as_ref().unwrap();
-        assert_eq!(theme.name(), Some("base"));
+        assert_eq!(app.theme.name(), Some("base"));
 
         // 2. theme.yaml exists (should override base)
         fs::write(temp_dir.path().join("theme.yaml"), "style: { fg: red }").unwrap();
@@ -2226,7 +2300,7 @@ mod tests {
             .build()
             .unwrap();
 
-        assert_eq!(app.theme.as_ref().unwrap().name(), Some("theme"));
+        assert_eq!(app.theme.name(), Some("theme"));
 
         // 3. default.yaml exists (should override theme)
         fs::write(temp_dir.path().join("default.yaml"), "style: { fg: green }").unwrap();
@@ -2237,7 +2311,7 @@ mod tests {
             .build()
             .unwrap();
 
-        assert_eq!(app.theme.as_ref().unwrap().name(), Some("default"));
+        assert_eq!(app.theme.name(), Some("default"));
     }
 
     // ============================================================================
