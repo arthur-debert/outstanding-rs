@@ -1426,6 +1426,9 @@ THEME: Partial Adoption
 		pub enum DispatchResult {
 		    Handled(RunOutput),           // Handler ran, output string
 		    Binary(Vec<u8>, String),      // Binary output (bytes, filename)
+		    Artifact(ArtifactRun),        // Framework already wrote the file
+		    Silent,                       // Handler produced no output
+		    Error(RunError),              // Handler/hook/render/write failed
 		    NoMatch(ArgMatches),          // No handler found
 		}
 	:: rust ::
@@ -1455,6 +1458,14 @@ THEME: Partial Adoption
 		    DispatchResult::Binary(bytes, filename) => {
 		        std::fs::write(&filename, bytes)?;
 		    }
+		    DispatchResult::Artifact(run) => {
+		        println!("{:?}: {:?}", run.destination(), run.report());
+		    }
+		    DispatchResult::Error(error) => {
+		        eprintln!("{}", error);
+		        std::process::exit(error.exit_status().code().into());
+		    }
+		    DispatchResult::Silent => {}
 		    DispatchResult::NoMatch(matches) => {
 		        // Your existing dispatch logic
 		        match matches.subcommand() {
@@ -1521,6 +1532,14 @@ THEME: Partial Adoption
 		        std::fs::write(&filename, bytes)?;
 		        eprintln!("Wrote {} bytes to {}", bytes.len(), filename);
 		    }
+		    DispatchResult::Artifact(run) => {
+		        println!("{:?}: {:?}", run.destination(), run.report());
+		    }
+		    DispatchResult::Error(error) => {
+		        eprintln!("{}", error);
+		        std::process::exit(error.exit_status().code().into());
+		    }
+		    DispatchResult::Silent => {}
 		    DispatchResult::NoMatch(m) => my_dispatch(m),
 		    _ => {}
 		}
@@ -1561,6 +1580,15 @@ THEME: Partial Adoption
 		            std::fs::write(&filename, bytes).ok();
 		            return;
 		        }
+		        DispatchResult::Artifact(run) => {
+		            println!("{:?}: {:?}", run.destination(), run.report());
+		            return;
+		        }
+		        DispatchResult::Error(error) => {
+		            eprintln!("{}", error);
+		            std::process::exit(error.exit_status().code().into());
+		        }
+		        DispatchResult::Silent => return,
 		        DispatchResult::NoMatch(_) => {
 		            // Fall through to existing dispatch
 		        }
@@ -1602,7 +1630,15 @@ THEME: Partial Adoption
 		        DispatchResult::Binary(bytes, filename) => {
 		             std::fs::write(filename, bytes).ok();
 		        }
-		        _ => {} // Handle Silent or NoMatch if needed
+		        DispatchResult::Artifact(run) => {
+		            println!("{:?}: {:?}", run.destination(), run.report());
+		        }
+		        DispatchResult::Error(error) => {
+		            eprintln!("{}", error);
+		            std::process::exit(error.exit_status().code().into());
+		        }
+		        DispatchResult::Silent | DispatchResult::NoMatch(_) => {}
+		        _ => {}
 		    }
 		}
 	:: rust ::
