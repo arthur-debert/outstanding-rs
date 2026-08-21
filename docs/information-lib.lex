@@ -140,8 +140,9 @@ THEME: Architecture & Flow
 	  4. It looks up the handler for that path
 	  5. It executes the handler with the appropriate ArgMatches slice
 
-	If no handler matches, run() returns RunResult::NoMatch(matches), letting
-	you fall back to manual dispatch for commands Standout doesn't manage.
+	If no handler matches, run_to_string() returns CompletedRun whose
+	outcome is DispatchResult::NoMatch(matches), letting you fall back to
+	manual dispatch for commands Standout doesn't manage.
 
 
 5. What is a command path?
@@ -1335,9 +1336,11 @@ THEME: App Configuration
 	  - Binary output writes to file with stderr confirmation
 	  - Use for: typical CLI main()
 
-	run_to_string(cmd, args) -> RunResult:
+	run_to_string(cmd, args) -> CompletedRun:
 	  - Parses, dispatches, returns result without printing
-	  - Returns RunResult::Handled(String) or RunResult::NoMatch(ArgMatches)
+	  - Returns CompletedRun wrapping DispatchResult plus warnings
+	  - Match via outcome() / into_outcome() as
+	    DispatchResult::Handled or DispatchResult::NoMatch(ArgMatches)
 	  - Use for: testing, capturing output
 
 	parse(cmd) -> ArgMatches:
@@ -1414,11 +1417,14 @@ THEME: Partial Adoption
 ================================================================================
 
 
-60. What is RunResult and what does NoMatch contain?
+60. What is CompletedRun and what does NoMatch contain?
 
-	RunResult is returned by dispatch and run_to_string:
-		pub enum RunResult {
-		    Handled(String),              // Handler ran, output string
+	dispatch and run_to_string return CompletedRun: a wrapper around
+	DispatchResult (the outcome enum) plus framework warnings and the
+	resolved output mode. Match via outcome() or into_outcome();
+	CompletedRun is not the variant enum:
+		pub enum DispatchResult {
+		    Handled(RunOutput),           // Handler ran, output string
 		    Binary(Vec<u8>, String),      // Binary output (bytes, filename)
 		    NoMatch(ArgMatches),          // No handler found
 		}
@@ -1426,12 +1432,15 @@ THEME: Partial Adoption
 
 	NoMatch contains the clap ArgMatches from parsing. Use this for
 	fallback dispatch - the matches are fully parsed and ready for your
-	own subcommand handling.
+	own subcommand handling. Use into_outcome() when the fallback needs
+	owned ArgMatches.
 
-	Helper methods:
+	Helper methods (Deref to DispatchResult):
 		result.is_handled()     -> bool
 		result.output()         -> Option<&str>
 		result.matches()        -> Option<&ArgMatches>
+		result.outcome()        -> &DispatchResult
+		result.into_outcome()   -> DispatchResult
 
 
 61. How do I fall back to my own dispatch?
@@ -1441,12 +1450,12 @@ THEME: Partial Adoption
 		    .command("list", list_handler, "list.j2")
 		    .build()?;
 
-		match app.run_to_string(cmd, args) {
-		    RunResult::Handled(output) => println!("{}", output),
-		    RunResult::Binary(bytes, filename) => {
+		match app.run_to_string(cmd, args).into_outcome() {
+		    DispatchResult::Handled(output) => println!("{}", output),
+		    DispatchResult::Binary(bytes, filename) => {
 		        std::fs::write(&filename, bytes)?;
 		    }
-		    RunResult::NoMatch(matches) => {
+		    DispatchResult::NoMatch(matches) => {
 		        // Your existing dispatch logic
 		        match matches.subcommand() {
 		            Some(("status", sub)) => handle_status(sub),
@@ -1454,6 +1463,7 @@ THEME: Partial Adoption
 		            _ => eprintln!("Unknown command"),
 		        }
 		    }
+		    _ => {}
 		}
 	:: rust ::
 
@@ -1505,13 +1515,14 @@ THEME: Partial Adoption
 		    .subcommand(Command::new("status"))  // You handle
 		    .subcommand(Command::new("config")); // You handle
 
-		match app.run_to_string(cmd, args) {
-		    RunResult::Handled(s) => println!("{}", s),
-		    RunResult::Binary(bytes, filename) => {
+		match app.run_to_string(cmd, args).into_outcome() {
+		    DispatchResult::Handled(s) => println!("{}", s),
+		    DispatchResult::Binary(bytes, filename) => {
 		        std::fs::write(&filename, bytes)?;
 		        eprintln!("Wrote {} bytes to {}", bytes.len(), filename);
 		    }
-		    RunResult::NoMatch(m) => my_dispatch(m),
+		    DispatchResult::NoMatch(m) => my_dispatch(m),
+		    _ => {}
 		}
 	:: rust ::
 
@@ -1541,18 +1552,19 @@ THEME: Partial Adoption
 
 		    // Try Standout first
 		    let matches = cmd.clone().get_matches();
-		    match app.dispatch(matches.clone(), OutputMode::Auto) {
-		        RunResult::Handled(output) => {
+		    match app.dispatch(matches.clone(), OutputMode::Auto).into_outcome() {
+		        DispatchResult::Handled(output) => {
 		            println!("{}", output);
 		            return;
 		        }
-		        RunResult::Binary(bytes, filename) => {
+		        DispatchResult::Binary(bytes, filename) => {
 		            std::fs::write(&filename, bytes).ok();
 		            return;
 		        }
-		        RunResult::NoMatch(_) => {
+		        DispatchResult::NoMatch(_) => {
 		            // Fall through to existing dispatch
 		        }
+		        _ => {}
 		    }
 
 		    // Your existing dispatch
@@ -1585,9 +1597,9 @@ THEME: Partial Adoption
 
 		    // Standout handles "new-feature" and others
 		    let app = build_standout_app();
-		    match app.dispatch(matches, OutputMode::Auto) {
-		        RunResult::Handled(output) => println!("{}", output),
-		        RunResult::Binary(bytes, filename) => {
+		    match app.dispatch(matches, OutputMode::Auto).into_outcome() {
+		        DispatchResult::Handled(output) => println!("{}", output),
+		        DispatchResult::Binary(bytes, filename) => {
 		             std::fs::write(filename, bytes).ok();
 		        }
 		        _ => {} // Handle Silent or NoMatch if needed

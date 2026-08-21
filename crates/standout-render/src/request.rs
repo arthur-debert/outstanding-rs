@@ -478,6 +478,7 @@ mod tests {
     use super::*;
     use crate::template::MiniJinjaEngine;
     use serde_json::json;
+    use serial_test::serial;
 
     fn sample_target() -> TargetProperties {
         TargetProperties {
@@ -955,7 +956,56 @@ mod tests {
         assert_eq!(render_request(&request).unwrap(), r#"{% "unclosed hello"#);
     }
 
+    /// Restores `console` colour globals on drop, including unwind.
+    struct RestoreConsoleColors {
+        stdout: bool,
+        stderr: bool,
+    }
+
+    impl RestoreConsoleColors {
+        fn disable() -> Self {
+            let guard = Self {
+                stdout: console::colors_enabled(),
+                stderr: console::colors_enabled_stderr(),
+            };
+            console::set_colors_enabled(false);
+            console::set_colors_enabled_stderr(false);
+            guard
+        }
+    }
+
+    impl Drop for RestoreConsoleColors {
+        fn drop(&mut self) {
+            console::set_colors_enabled(self.stdout);
+            console::set_colors_enabled_stderr(self.stderr);
+        }
+    }
+
+    /// Restores one process env var on drop, including unwind.
+    struct RestoreEnvVar {
+        key: &'static str,
+        original: Option<std::ffi::OsString>,
+    }
+
+    impl RestoreEnvVar {
+        fn set(key: &'static str, value: &str) -> Self {
+            let original = std::env::var_os(key);
+            std::env::set_var(key, value);
+            Self { key, original }
+        }
+    }
+
+    impl Drop for RestoreEnvVar {
+        fn drop(&mut self) {
+            match &self.original {
+                Some(value) => std::env::set_var(self.key, value),
+                None => std::env::remove_var(self.key),
+            }
+        }
+    }
+
     #[test]
+    #[serial]
     fn term_emits_ansi_without_force_styling_on_the_theme() {
         let request = RenderRequest {
             data: json!({"msg": "hi"}),
@@ -974,13 +1024,8 @@ mod tests {
             rendered.contains("\x1b["),
             "Term applies force_styling from the request, got {rendered:?}"
         );
-        let previous = console::colors_enabled();
-        let previous_stderr = console::colors_enabled_stderr();
-        console::set_colors_enabled(false);
-        console::set_colors_enabled_stderr(false);
+        let _colors = RestoreConsoleColors::disable();
         let again = render_request(&request).unwrap();
-        console::set_colors_enabled(previous);
-        console::set_colors_enabled_stderr(previous_stderr);
         assert_eq!(
             again, rendered,
             "console::colors_enabled must not change the request result"
@@ -988,6 +1033,7 @@ mod tests {
     }
 
     #[test]
+    #[serial]
     fn same_request_is_stable_under_perturbed_env() {
         use crate::IconDefinition;
 
@@ -1032,25 +1078,10 @@ mod tests {
             "purity template must fill to request width so COLUMNS would change it:\n{first:?}"
         );
 
-        let original_columns = std::env::var_os("COLUMNS");
-        let original_nerd_font = std::env::var_os("NERD_FONT");
-        let previous_color = console::colors_enabled();
-        let previous_stderr = console::colors_enabled_stderr();
-        std::env::set_var("COLUMNS", "20");
-        std::env::set_var("NERD_FONT", "1");
-        console::set_colors_enabled(false);
-        console::set_colors_enabled_stderr(false);
+        let _columns = RestoreEnvVar::set("COLUMNS", "20");
+        let _nerd_font = RestoreEnvVar::set("NERD_FONT", "1");
+        let _colors = RestoreConsoleColors::disable();
         let second = render_request(&request).unwrap();
-        match original_columns {
-            Some(value) => std::env::set_var("COLUMNS", value),
-            None => std::env::remove_var("COLUMNS"),
-        }
-        match original_nerd_font {
-            Some(value) => std::env::set_var("NERD_FONT", value),
-            None => std::env::remove_var("NERD_FONT"),
-        }
-        console::set_colors_enabled(previous_color);
-        console::set_colors_enabled_stderr(previous_stderr);
 
         assert_eq!(first, second);
     }

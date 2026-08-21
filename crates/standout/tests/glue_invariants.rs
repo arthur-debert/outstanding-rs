@@ -5,17 +5,23 @@
 //! ambiguous-width policy, and the ROB01 snapshot matrix fails if a call site
 //! invents another.
 //!
-//! Serialization copies are forbidden by naming the thing actually forbidden:
-//! production deps on `serde_yaml` / `csv` / `quick-xml`, and source uses of
-//! those crates' paths or the leaf serializer helpers. A match-arm parser of
-//! `OutputMode::<variant> =>` is not needed; glue cannot serialize what it
-//! cannot depend on, and a helper-name scan catches a copied `serialize_to_xml`
-//! that a Cargo.toml parse would miss.
+//! Serialization copies are forbidden three ways:
+//! - production deps on `serde_yaml` / `csv` / `quick-xml` (Cargo.toml);
+//! - source uses of those crates' paths or the leaf serializer helpers
+//!   (a copied `serialize_to_xml` would not show up as a Cargo.toml dep);
+//! - any glue `OutputMode::<variant> =>` match arm. Glue already depends on
+//!   `serde_json`, so `OutputMode::Json => serde_json::to_string(...)` would
+//!   pass the first two scans while duplicating leaf serialization.
 
 use std::fs;
 use std::path::{Path, PathBuf};
 
 const BANNED_SERIALIZER_CRATES: &[&str] = &["serde_yaml", "csv", "quick-xml"];
+
+/// Glue may match on `OutputMode::<variant>` only in these functions, which
+/// route without serializing (help mapping, flag parsing). Serialization
+/// arms belong in `standout-render`. None exist in glue today.
+const ALLOWED_OUTPUT_MODE_ARM_FNS: &[&str] = &[];
 
 /// Leaf helpers glue must not copy. `pub use` re-exports from standout-render
 /// are allowed; a local definition or a call is not.
@@ -51,6 +57,12 @@ fn is_comment_line(line: &str) -> bool {
     line.trim_start().starts_with("//")
 }
 
+/// True for a re-export statement, not a line that merely contains the
+/// substring `"pub use"` (a string literal, a comment already skipped, …).
+fn is_reexport_line(line: &str) -> bool {
+    line.trim_start().starts_with("pub use ")
+}
+
 fn fn_name_in_line(line: &str) -> Option<&str> {
     let mut rest = line.trim_start();
     if let Some(after_pub) = rest.strip_prefix("pub") {
@@ -83,6 +95,182 @@ fn enclosing_fn<'a>(lines: &'a [&str], line_idx: usize) -> Option<&'a str> {
             fn_name_in_line(line)
         }
     })
+}
+
+fn skip_ws(text: &str, mut i: usize) -> usize {
+    while i < text.len() {
+        let ch = text[i..].chars().next().unwrap();
+        if !ch.is_whitespace() {
+            break;
+        }
+        i += ch.len_utf8();
+    }
+    i
+}
+
+fn ident_at(text: &str, i: usize) -> Option<(&str, usize)> {
+    let rest = text.get(i..)?;
+    let mut chars = rest.char_indices();
+    let (_, first) = chars.next()?;
+    if !(first.is_ascii_alphabetic() || first == '_') {
+        return None;
+    }
+    let mut end = first.len_utf8();
+    for (offset, ch) in chars {
+        if ch.is_ascii_alphanumeric() || ch == '_' {
+            end = offset + ch.len_utf8();
+        } else {
+            break;
+        }
+    }
+    Some((&rest[..end], end))
+}
+
+fn skip_balanced_closer(text: &str, mut i: usize, open: char, close: char) -> Option<usize> {
+    let mut depth = 1i32;
+    i += open.len_utf8();
+    while i < text.len() {
+        let ch = text[i..].chars().next().unwrap();
+        if ch == open {
+            depth += 1;
+        } else if ch == close {
+            depth -= 1;
+            if depth == 0 {
+                return Some(i + close.len_utf8());
+            }
+        }
+        i += ch.len_utf8();
+    }
+    None
+}
+
+/// Tuple/struct variant payload after `OutputMode::Ident`.
+fn skip_optional_payload(text: &str, mut i: usize) -> usize {
+    i = skip_ws(text, i);
+    match text[i..].chars().next() {
+        Some('(') => skip_balanced_closer(text, i, '(', ')').unwrap_or(i),
+        Some('{') => skip_balanced_closer(text, i, '{', '}').unwrap_or(i),
+        _ => i,
+    }
+}
+
+fn is_if_keyword_at(text: &str, i: usize) -> bool {
+    text[i..].starts_with("if")
+        && !matches!(
+            text[i + 2..].chars().next(),
+            Some(ch) if ch.is_ascii_alphanumeric() || ch == '_'
+        )
+}
+
+fn consume_output_mode_variant(text: &str, i: &mut usize) -> bool {
+    *i = skip_ws(text, *i);
+    if !text[*i..].starts_with("OutputMode") {
+        return false;
+    }
+    *i += "OutputMode".len();
+    *i = skip_ws(text, *i);
+    if !text[*i..].starts_with("::") {
+        return false;
+    }
+    *i += 2;
+    *i = skip_ws(text, *i);
+    let Some((_, nlen)) = ident_at(text, *i) else {
+        return false;
+    };
+    *i += nlen;
+    *i = skip_optional_payload(text, *i);
+    true
+}
+
+/// Skip a match-guard expression until `=>` at nesting depth 0.
+fn skip_guard_to_arrow(text: &str, mut i: usize) -> Option<usize> {
+    let mut depth = 0i32;
+    while i < text.len() {
+        if depth == 0 && text[i..].starts_with("=>") {
+            return Some(i);
+        }
+        let ch = text[i..].chars().next().unwrap();
+        match ch {
+            '(' | '{' | '[' => depth += 1,
+            ')' | '}' | ']' => depth = depth.saturating_sub(1),
+            _ => {}
+        }
+        i += ch.len_utf8();
+    }
+    None
+}
+
+/// True when `OutputMode::<variant>` at `after_ident` is a match arm:
+/// optional payload, `|` alternatives, optional `if` guard, then `=>`.
+fn arm_arrow_ahead(text: &str, mut i: usize) -> bool {
+    i = skip_optional_payload(text, i);
+    loop {
+        i = skip_ws(text, i);
+        if text[i..].starts_with("=>") {
+            return true;
+        }
+        if is_if_keyword_at(text, i) {
+            i = skip_ws(text, i + 2);
+            return skip_guard_to_arrow(text, i).is_some();
+        }
+        if !text[i..].starts_with('|') {
+            return false;
+        }
+        i += 1;
+        if !consume_output_mode_variant(text, &mut i) {
+            return false;
+        }
+    }
+}
+
+fn uncommented_source(source: &str) -> String {
+    source
+        .lines()
+        .map(|line| if is_comment_line(line) { "" } else { line })
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
+fn line_index(text: &str, byte: usize) -> usize {
+    text[..byte.min(text.len())]
+        .bytes()
+        .filter(|&b| b == b'\n')
+        .count()
+}
+
+/// `(line, variant)` for each `OutputMode::<variant> =>` arm.
+fn output_mode_match_arms(source: &str) -> Vec<(usize, String)> {
+    let text = uncommented_source(source);
+    let mut arms = Vec::new();
+    let mut search_from = 0;
+    while let Some(rel) = text[search_from..].find("OutputMode") {
+        let start = search_from + rel;
+        let mut i = start + "OutputMode".len();
+        i = skip_ws(&text, i);
+        if !text[i..].starts_with("::") {
+            search_from = start + 1;
+            continue;
+        }
+        i += 2;
+        i = skip_ws(&text, i);
+        let Some((name, nlen)) = ident_at(&text, i) else {
+            search_from = start + 1;
+            continue;
+        };
+        i += nlen;
+        if arm_arrow_ahead(&text, i) {
+            arms.push((line_index(&text, start), name.to_string()));
+        }
+        search_from = start + 1;
+    }
+    arms
+}
+
+fn output_mode_arm_variants(source: &str) -> Vec<String> {
+    output_mode_match_arms(source)
+        .into_iter()
+        .map(|(_, variant)| variant)
+        .collect()
 }
 
 /// Crate names from a Cargo dependency table: the key, or `package` when set.
@@ -141,7 +329,7 @@ fn banned_production_serializers(manifest: &str) -> Result<Vec<String>, String> 
 fn banned_serializer_uses(source: &str) -> Vec<(usize, String)> {
     let mut uses = Vec::new();
     for (idx, line) in source.lines().enumerate() {
-        if is_comment_line(line) || line.contains("pub use") {
+        if is_comment_line(line) || is_reexport_line(line) {
             continue;
         }
         for crate_name in BANNED_SERIALIZER_CRATES {
@@ -261,6 +449,30 @@ fn minijinja_engine_new_exists_only_in_build() {
 }
 
 #[test]
+fn glue_has_no_serializer_match_arms_on_output_mode() {
+    let mut violations = Vec::new();
+    for path in walk_rs(&glue_src()) {
+        let source = fs::read_to_string(&path).unwrap();
+        let lines: Vec<&str> = source.lines().collect();
+        for (idx, variant) in output_mode_match_arms(&source) {
+            let owner = enclosing_fn(&lines, idx).unwrap_or("<module>");
+            if !ALLOWED_OUTPUT_MODE_ARM_FNS.contains(&owner) {
+                violations.push(format!(
+                    "{}:{} in `{owner}`: OutputMode::{variant} =>",
+                    path.strip_prefix(glue_root()).unwrap_or(&path).display(),
+                    idx + 1
+                ));
+            }
+        }
+    }
+    assert!(
+        violations.is_empty(),
+        "glue must not match on OutputMode to serialize (that copy lives in standout-render):\n{}",
+        violations.join("\n")
+    );
+}
+
+#[test]
 fn glue_does_not_call_leaf_serializers() {
     let mut violations = Vec::new();
     for path in walk_rs(&glue_src()) {
@@ -280,6 +492,96 @@ fn glue_does_not_call_leaf_serializers() {
         "glue must not use leaf serializer paths or helpers (those copies live in standout-render):\n{}",
         violations.join("\n")
     );
+}
+
+#[test]
+fn output_mode_arm_scan_rejects_future_variant() {
+    let src = r#"
+        fn serialize_in_glue(mode: OutputMode) {
+            match mode {
+                OutputMode::Toml => drop("future serializer copy"),
+            }
+        }
+    "#;
+    assert_eq!(output_mode_arm_variants(src), ["Toml"]);
+}
+
+#[test]
+fn output_mode_arm_scan_rejects_serde_json_serializer_branch() {
+    let src = r#"
+        fn serialize_in_glue(mode: OutputMode, data: &Value) {
+            match mode {
+                OutputMode::Json => serde_json::to_string(data).unwrap(),
+            }
+        }
+    "#;
+    assert_eq!(output_mode_arm_variants(src), ["Json"]);
+    assert!(
+        banned_serializer_uses(src).is_empty(),
+        "serde_json is already a glue production dep; the path scan cannot catch this copy"
+    );
+}
+
+#[test]
+fn output_mode_arm_scan_handles_whitespace_and_or_patterns() {
+    let src = r#"
+        match mode {
+            OutputMode::Yaml
+                => {}
+            OutputMode::Json | OutputMode::Xml => {}
+        }
+    "#;
+    let variants = output_mode_arm_variants(src);
+    assert_eq!(variants, ["Yaml", "Json", "Xml"]);
+}
+
+#[test]
+fn output_mode_arm_scan_ignores_matches_macro_and_comments() {
+    let src = r#"
+        // OutputMode::Toml => would be a serializer copy
+        /// OutputMode::Csv => documented, not code
+        matches!(mode, OutputMode::Json | OutputMode::Yaml);
+        let _ = OutputMode::Xml;
+    "#;
+    assert!(
+        output_mode_arm_variants(src).is_empty(),
+        "comments, matches!, and constructions are not match arms"
+    );
+}
+
+#[test]
+fn output_mode_arm_scan_rejects_guarded_arms() {
+    let src = r#"
+        match mode {
+            OutputMode::Json if should_serialize() => drop("guarded copy"),
+            OutputMode::Toml
+                if extra() => {}
+            OutputMode::Yaml | OutputMode::Xml if both() => {}
+        }
+    "#;
+    assert_eq!(
+        output_mode_arm_variants(src),
+        ["Json", "Toml", "Yaml", "Xml"]
+    );
+}
+
+#[test]
+fn output_mode_arm_scan_reports_the_arm_line_not_an_earlier_use() {
+    let src = r#"
+fn set_mode() {
+    let _ = OutputMode::Text;
+}
+fn serialize_in_glue(mode: OutputMode) {
+    match mode {
+        OutputMode::Json => {}
+    }
+}
+"#;
+    let arms = output_mode_match_arms(src);
+    assert_eq!(arms.len(), 1);
+    assert_eq!(arms[0].1, "Json");
+    let lines: Vec<&str> = src.lines().collect();
+    assert_eq!(enclosing_fn(&lines, arms[0].0), Some("serialize_in_glue"));
 }
 
 #[test]
@@ -321,4 +623,19 @@ fn serializer_use_scan_allows_pub_use_and_ignores_comments() {
         banned_serializer_uses(src).is_empty(),
         "comments and pub use re-exports are not copies"
     );
+}
+
+#[test]
+fn serializer_use_scan_does_not_skip_string_containing_pub_use() {
+    let src = r#"
+        fn serialize_in_glue(data: &Value) {
+            let _ = "pub use";
+            serde_yaml::to_string(data).unwrap();
+        }
+    "#;
+    let uses: Vec<_> = banned_serializer_uses(src)
+        .into_iter()
+        .map(|(_, needle)| needle)
+        .collect();
+    assert_eq!(uses, ["serde_yaml::"]);
 }
