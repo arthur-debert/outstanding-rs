@@ -10,10 +10,6 @@
 //! - [`DispatchResult`]: The dispatch crate's outcome enum
 //! - [`Handler`]: Trait for command handlers (`&mut self`)
 //!
-//! This module also re-exports that enum under the dispatch crate's original
-//! name, [`RunResult`]. That is not [`crate::cli::RunResult`], the public
-//! framework wrapper (outcome plus warnings).
-//!
 //! # Design Note
 //!
 //! Handler types are defined in `standout-dispatch` because dispatch orchestrates
@@ -59,11 +55,10 @@
 
 // Re-export all handler types from standout-dispatch.
 // These types are render-agnostic and focus on handler execution.
-pub use standout_dispatch::RunResult as DispatchResult;
 pub use standout_dispatch::{
-    Artifact, ArtifactDestination, ArtifactReceipt, ArtifactRun, CommandContext, ExitStatus,
-    Extensions, ExternalFailure, FnHandler, Handler, HandlerResult, InvalidExternalStatus, Output,
-    OutputKind, RunError, RunErrorKind, RunOutput, RunResult, SuccessKind,
+    Artifact, ArtifactDestination, ArtifactReceipt, ArtifactRun, CommandContext, DispatchResult,
+    ExitStatus, Extensions, ExternalFailure, FnHandler, Handler, HandlerResult,
+    InvalidExternalStatus, Output, OutputKind, RunError, RunErrorKind, RunOutput, SuccessKind,
 };
 
 use standout_input::{InputSourceKind, Inputs, MissingInput};

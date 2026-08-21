@@ -221,6 +221,43 @@ impl fmt::Debug for RenderRequest {
 /// [`crate::render`] and [`crate::render_with_output`] detect at their edge,
 /// build a request, and delegate here.
 ///
+/// ```rust
+/// use std::collections::HashMap;
+/// use serde_json::json;
+/// use standout_render::{
+///     AmbiguousWidth, ColorMode, ColorPolicy, IconMode, OutputMode, RenderRequest,
+///     TargetProperties, TemplateRef, Theme, default_template_engine, render_request,
+/// };
+/// use console::Style;
+///
+/// let theme = Theme::new().add("title", Style::new().cyan().bold());
+/// let request = RenderRequest {
+///     data: json!({"name": "Tasks", "count": 42}),
+///     template: TemplateRef::Inline("[title]{{ name }}[/title]: {{ count }} items".into()),
+///     theme,
+///     format: OutputMode::Text,
+///     color_policy: ColorPolicy::Auto,
+///     target: TargetProperties {
+///         width: Some(80),
+///         stdout_is_terminal: true,
+///         stderr_is_terminal: true,
+///         stdout_color_capability: true,
+///         stderr_color_capability: true,
+///         color_scheme: ColorMode::Dark,
+///         icon_mode: IconMode::Classic,
+///         ambiguous_width: AmbiguousWidth::Narrow,
+///     },
+///     engine: default_template_engine(),
+///     registry: None,
+///     context_registry: None,
+///     csv_projection: None,
+///     extras: HashMap::new(),
+///     warnings: None,
+/// };
+/// let output = render_request(&request).unwrap();
+/// assert_eq!(output.trim(), "Tasks: 42 items");
+/// ```
+///
 /// Callers that need both formatted and stripped output (CLI pipes, output
 /// files, post-output hooks) should use [`render_request_split`].
 ///
@@ -441,6 +478,7 @@ mod tests {
     use super::*;
     use crate::template::MiniJinjaEngine;
     use serde_json::json;
+    use serial_test::serial;
 
     fn sample_target() -> TargetProperties {
         TargetProperties {
@@ -918,7 +956,56 @@ mod tests {
         assert_eq!(render_request(&request).unwrap(), r#"{% "unclosed hello"#);
     }
 
+    /// Restores `console` colour globals on drop, including unwind.
+    struct RestoreConsoleColors {
+        stdout: bool,
+        stderr: bool,
+    }
+
+    impl RestoreConsoleColors {
+        fn disable() -> Self {
+            let guard = Self {
+                stdout: console::colors_enabled(),
+                stderr: console::colors_enabled_stderr(),
+            };
+            console::set_colors_enabled(false);
+            console::set_colors_enabled_stderr(false);
+            guard
+        }
+    }
+
+    impl Drop for RestoreConsoleColors {
+        fn drop(&mut self) {
+            console::set_colors_enabled(self.stdout);
+            console::set_colors_enabled_stderr(self.stderr);
+        }
+    }
+
+    /// Restores one process env var on drop, including unwind.
+    struct RestoreEnvVar {
+        key: &'static str,
+        original: Option<std::ffi::OsString>,
+    }
+
+    impl RestoreEnvVar {
+        fn set(key: &'static str, value: &str) -> Self {
+            let original = std::env::var_os(key);
+            std::env::set_var(key, value);
+            Self { key, original }
+        }
+    }
+
+    impl Drop for RestoreEnvVar {
+        fn drop(&mut self) {
+            match &self.original {
+                Some(value) => std::env::set_var(self.key, value),
+                None => std::env::remove_var(self.key),
+            }
+        }
+    }
+
     #[test]
+    #[serial]
     fn term_emits_ansi_without_force_styling_on_the_theme() {
         let request = RenderRequest {
             data: json!({"msg": "hi"}),
@@ -937,7 +1024,7 @@ mod tests {
             rendered.contains("\x1b["),
             "Term applies force_styling from the request, got {rendered:?}"
         );
-        console::set_colors_enabled(false);
+        let _colors = RestoreConsoleColors::disable();
         let again = render_request(&request).unwrap();
         assert_eq!(
             again, rendered,
@@ -946,23 +1033,95 @@ mod tests {
     }
 
     #[test]
+    #[serial]
     fn same_request_is_stable_under_perturbed_env() {
+        use crate::IconDefinition;
+
         let request = RenderRequest {
             data: json!({"msg": "hello"}),
-            template: TemplateRef::Inline("{{ msg }}".into()),
-            format: OutputMode::Text,
+            template: TemplateRef::Inline(
+                "{{ icons.check }} [tone]{{ msg }}[/tone]|{% set t = tabular([{\"width\": \"fill\"}]) %}{{ t.row([msg]) }}".into(),
+            ),
+            theme: Theme::new()
+                .add("tone", console::Style::new().red())
+                .add_icon(
+                    "check",
+                    IconDefinition::new("[ok]").with_nerdfont("\u{f00c}"),
+                ),
+            format: OutputMode::Term,
+            color_policy: ColorPolicy::Auto,
+            target: TargetProperties {
+                width: Some(40),
+                stdout_color_capability: true,
+                icon_mode: crate::IconMode::Classic,
+                ..sample_target()
+            },
             ..sample_request()
         };
         let first = render_request(&request).unwrap();
-        let original_columns = std::env::var_os("COLUMNS");
-        std::env::set_var("COLUMNS", "20");
+        assert!(
+            first.contains("\x1b["),
+            "purity template must emit ANSI so a colour-global leak would change it:\n{first:?}"
+        );
+        assert!(
+            first.contains("[ok]"),
+            "purity template must emit the classic icon so NERD_FONT would change it:\n{first}"
+        );
+        let fill_width = first
+            .rsplit('|')
+            .next()
+            .expect("purity template pipes the fill column")
+            .chars()
+            .count();
+        assert_eq!(
+            fill_width, 40,
+            "purity template must fill to request width so COLUMNS would change it:\n{first:?}"
+        );
+
+        let _columns = RestoreEnvVar::set("COLUMNS", "20");
+        let _nerd_font = RestoreEnvVar::set("NERD_FONT", "1");
+        let _colors = RestoreConsoleColors::disable();
         let second = render_request(&request).unwrap();
-        match original_columns {
-            Some(value) => std::env::set_var("COLUMNS", value),
-            None => std::env::remove_var("COLUMNS"),
-        }
+
         assert_eq!(first, second);
-        assert_eq!(first, "hello");
+    }
+
+    #[test]
+    fn guide_render_request_example_compiles() {
+        let theme = Theme::new().add("title", console::Style::new().cyan().bold());
+        let request = RenderRequest {
+            data: json!({"name": "Tasks", "count": 42}),
+            template: TemplateRef::Inline("[title]{{ name }}[/title]: {{ count }} items".into()),
+            theme,
+            format: OutputMode::Text,
+            color_policy: ColorPolicy::Auto,
+            target: TargetProperties {
+                width: Some(80),
+                stdout_is_terminal: true,
+                stderr_is_terminal: true,
+                stdout_color_capability: true,
+                stderr_color_capability: true,
+                color_scheme: ColorMode::Dark,
+                icon_mode: IconMode::Classic,
+                ambiguous_width: AmbiguousWidth::Narrow,
+            },
+            engine: crate::default_template_engine(),
+            registry: None,
+            context_registry: None,
+            csv_projection: None,
+            extras: HashMap::new(),
+            warnings: None,
+        };
+        let output = render_request(&request).unwrap();
+        assert_eq!(output.trim(), "Tasks: 42 items");
+
+        let guide = include_str!("../docs/guides/intro-to-rendering.md");
+        assert!(
+            guide.contains("let request = RenderRequest {")
+                && guide.contains("target: TargetProperties {")
+                && guide.contains("let output = render_request(&request)?"),
+            "intro-to-rendering.md must show constructing a RenderRequest and calling render_request"
+        );
     }
 
     #[test]

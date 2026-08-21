@@ -198,8 +198,7 @@ pub(crate) fn render_handler_output<T: Serialize>(
     template_registry: Option<&Rc<crate::TemplateRegistry>>,
     output_mode: crate::OutputMode,
     structured_output_projection: Option<&StructuredOutputProjection>,
-    ambiguous_width: crate::AmbiguousWidth,
-    target: Option<TargetProperties>,
+    target: TargetProperties,
 ) -> Result<DispatchOutput, RunError> {
     let output = match result {
         Ok(output) => output,
@@ -207,14 +206,6 @@ pub(crate) fn render_handler_output<T: Serialize>(
     };
 
     let command_path = ctx.command_path.join(".");
-    let target = match target {
-        Some(target) => target,
-        None => {
-            let mut detected = TargetProperties::detect();
-            detected.ambiguous_width = ambiguous_width;
-            detected
-        }
-    };
     let warnings = ctx
         .extensions
         .get::<standout_render::warnings::WarningBuffer>()
@@ -339,10 +330,11 @@ pub(crate) fn hook_run_error(mut error: HookError, phase: crate::cli::HookPhase)
 /// Type-erased dispatch function for single-threaded handlers.
 ///
 /// Takes ArgMatches, CommandContext, optional Hooks, OutputMode, Theme,
-/// ambiguous-width policy, and optional destination facts from `run_with`.
-/// The hooks parameter allows post-dispatch hooks to run between handler
-/// execution and rendering. OutputMode is passed separately because CommandContext
-/// is render-agnostic, while output_mode is a rendering concern.
+/// and destination facts from the caller's edge (`App::run`, `App::dispatch`).
+/// Ambiguous-width rides `TargetProperties`; callers apply App policy before
+/// invoking. The hooks parameter allows post-dispatch hooks to run between
+/// handler execution and rendering. OutputMode is passed separately because
+/// CommandContext is render-agnostic, while output_mode is a rendering concern.
 /// Theme is passed at runtime (late binding) to ensure the correct theme is used.
 ///
 /// Uses `Rc<RefCell<_>>` and `FnMut` for single-threaded CLI apps.
@@ -354,8 +346,7 @@ pub type DispatchFn = Rc<
             Option<&Hooks>,
             crate::OutputMode,
             &crate::Theme,
-            crate::AmbiguousWidth,
-            Option<TargetProperties>,
+            TargetProperties,
         ) -> Result<DispatchOutput, RunError>,
     >,
 >;
@@ -369,18 +360,9 @@ pub fn dispatch(
     hooks: Option<&Hooks>,
     output_mode: crate::OutputMode,
     theme: &crate::Theme,
-    ambiguous_width: crate::AmbiguousWidth,
-    target: Option<TargetProperties>,
+    target: TargetProperties,
 ) -> Result<DispatchOutput, RunError> {
-    (dispatch_fn.borrow_mut())(
-        matches,
-        ctx,
-        hooks,
-        output_mode,
-        theme,
-        ambiguous_width,
-        target,
-    )
+    (dispatch_fn.borrow_mut())(matches, ctx, hooks, output_mode, theme, target)
 }
 
 // Note: extract_command_path, get_deepest_matches, has_subcommand, insert_default_command,

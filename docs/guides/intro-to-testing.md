@@ -626,7 +626,7 @@ result.assert_error_kind(RunErrorKind::Handler);
 
 // Accessors for any outcome
 result.stdout();                        // &str
-result.outcome();                       // &RunResult, for bespoke assertions
+result.outcome();                       // &DispatchResult, for bespoke assertions
 result.binary();                        // Option<(&[u8], &str)> for Binary
 result.exit_status();                   // Option<ExitStatus>; None for NoMatch
 result.success_kind();                  // command / Clap help / Clap version

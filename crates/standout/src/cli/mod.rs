@@ -86,8 +86,8 @@
 //! Standout doesn't require all-or-nothing adoption. Register only the
 //! commands you want Standout to handle; unmatched commands return
 //! [`DispatchResult::NoMatch`] with the ArgMatches for your own dispatch.
-//! [`RunResult`] wraps that outcome plus framework warnings; match
-//! [`RunResult::into_outcome`](RunResult::into_outcome) for variants:
+//! [`CompletedRun`] wraps that outcome plus framework warnings; match
+//! [`CompletedRun::into_outcome`](CompletedRun::into_outcome) for variants:
 //!
 //! ```rust,ignore
 //! let result = app.run_to_string(cmd, args);
@@ -113,7 +113,7 @@
 //! - [`FnHandler`]: Wrapper for `FnMut` closures
 //! - [`Output`]: What handlers produce (render data, silent, binary)
 //! - [`HandlerResult`]: `Result<Output<T>, Error>` — enables `?` for error handling
-//! - [`RunResult`]: Dispatch outcome plus framework warnings from one run
+//! - [`CompletedRun`]: Dispatch outcome plus framework warnings from one run
 //! - [`DispatchResult`]: Typed dispatch variants (handled, no-match, error, …)
 //! - [`Hooks`]: Pre/post execution hooks for validation and transformation
 //! - [`CommandContext`]: Runtime info passed to handlers (command path, app state)
@@ -152,7 +152,7 @@ pub use builder::{App, AppBuilder};
 pub use group::{CommandConfig, GroupBuilder};
 
 // Re-export result type
-pub use result::{HelpResult, RunResult};
+pub use result::{CompletedRun, HelpResult};
 
 // Re-export help types
 pub use help::{

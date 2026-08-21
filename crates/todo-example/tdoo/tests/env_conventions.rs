@@ -181,7 +181,7 @@ fn term_dumb_suppresses_ansi_on_a_pty() {
 }
 
 // ---------------------------------------------------------------------------
-// Explicit Term mode: standout opens its gate, console's stays authoritative
+// Explicit output flags override the environment (flag > env)
 // ---------------------------------------------------------------------------
 
 /// `--output=term` through a pipe emits ANSI: the request applies
@@ -194,6 +194,33 @@ fn explicit_term_through_a_pipe_emits_ansi() {
         .output_mode(OutputMode::Term)
         .run_process(env!("CARGO_BIN_EXE_tdoo"), ["list"]);
     assert_ansi(&result);
+}
+
+/// `NO_COLOR=1` with `--output=term` still emits ANSI. An explicit output
+/// flag overrides the environment so a test or script can ask for a known
+/// rendering (Spec `flag > env > config > detection` for terminal settings).
+/// The override is deliberate: without it there is no way to pin Term
+/// colour from a piped process. `--color` (parity program,
+/// `docs/spec/parity-terminal-citizenship.md`) will take this half so
+/// `--output` can mean format alone.
+#[test]
+fn explicit_term_overrides_no_color() {
+    let result = conventions(&[("NO_COLOR", "1")])
+        .output_mode(OutputMode::Term)
+        .run_process(env!("CARGO_BIN_EXE_tdoo"), ["list"]);
+    assert_ansi(&result);
+}
+
+/// `CLICOLOR_FORCE=1` with `--output=text` stays plain. Same flag > env
+/// rule as `explicit_term_overrides_no_color`, in the other direction:
+/// naming a format that does not colour beats the force convention.
+/// `--color` is the eventual owner of this decision.
+#[test]
+fn explicit_text_overrides_clicolor_force() {
+    let result = conventions(&[("CLICOLOR_FORCE", "1")])
+        .output_mode(OutputMode::Text)
+        .run_process(env!("CARGO_BIN_EXE_tdoo"), ["list"]);
+    assert_plain(&result);
 }
 
 /// `CLICOLOR_FORCE=1` *does* reach an explicit `--output=term` run — through

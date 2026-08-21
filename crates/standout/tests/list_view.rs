@@ -113,7 +113,7 @@ fn test_list_view_renders_with_framework_template() {
             "Output should contain task name"
         );
     } else {
-        panic!("Expected RunResult::Handled, got {:?}", result);
+        panic!("Expected DispatchResult::Handled, got {:?}", result);
     }
 }
 
@@ -141,7 +141,7 @@ fn test_list_view_empty_list() {
             "Output should contain empty message"
         );
     } else {
-        panic!("Expected RunResult::Handled, got {:?}", result);
+        panic!("Expected DispatchResult::Handled, got {:?}", result);
     }
 }
 
@@ -180,7 +180,7 @@ fn test_list_view_with_filter_summary_renders() {
             output
         );
     } else {
-        panic!("Expected RunResult::Handled, got {:?}", result);
+        panic!("Expected DispatchResult::Handled, got {:?}", result);
     }
 }
 

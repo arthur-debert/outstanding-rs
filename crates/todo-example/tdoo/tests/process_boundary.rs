@@ -1,7 +1,7 @@
 //! `tdoo` exercised the way a user runs it: as a real process.
 //!
 //! These assert the facts an in-process `TestHarness::run` cannot reach: it
-//! reconstructs the two text channels from one `RunResult` by mirroring
+//! reconstructs the two text channels from one `CompletedRun` by mirroring
 //! `App::run`'s writer seam — a faithful model, but a model: it cannot show
 //! that the compiled binary wrote the diagnostic to the *OS's* stderr, left
 //! the *OS's* stdout untouched, and handed the shell a real exit code. Only

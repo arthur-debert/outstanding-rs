@@ -4,7 +4,7 @@ use clap::{Arg, Command};
 use serde_json::{json, Value};
 use standout::cli::hooks::TextOutput;
 use standout::cli::{
-    App, DispatchResult as RunResult, ExitStatus, Output, RenderedOutput, RunErrorKind, SuccessKind,
+    App, DispatchResult, ExitStatus, Output, RenderedOutput, RunErrorKind, SuccessKind,
 };
 use standout::tabular::{Column, Width};
 use standout::{CsvProjection, OutputMode, StructuredOutputProjection};
@@ -107,7 +107,7 @@ fn direct_dispatch(app: &App, mode: OutputMode) -> String {
     let matches = command()
         .try_get_matches_from(["rustloc", "summary"])
         .unwrap();
-    let RunResult::Handled(output) = app.dispatch(matches, mode).into_outcome() else {
+    let DispatchResult::Handled(output) = app.dispatch(matches, mode).into_outcome() else {
         panic!("expected handled output")
     };
     output.into_string()
@@ -177,7 +177,7 @@ fn run_to_string_and_output_file_use_the_same_projection() {
     let result = app.run_to_string(command(), ["rustloc", "summary", "--output=csv"]);
     assert_eq!(result.exit_status(), Some(ExitStatus::SUCCESS));
     assert_eq!(result.success_kind(), Some(SuccessKind::Command));
-    let RunResult::Handled(output) = result.into_outcome() else {
+    let DispatchResult::Handled(output) = result.into_outcome() else {
         panic!("expected handled output")
     };
     assert_eq!(output, EXPECTED_CSV);
@@ -190,7 +190,7 @@ fn run_to_string_and_output_file_use_the_same_projection() {
         ["rustloc", "summary", "--output=csv", &output_arg],
     );
     assert_eq!(file_result.exit_status(), Some(ExitStatus::SUCCESS));
-    let RunResult::Handled(stdout) = file_result.into_outcome() else {
+    let DispatchResult::Handled(stdout) = file_result.into_outcome() else {
         panic!("expected handled output")
     };
     assert!(stdout.is_empty());

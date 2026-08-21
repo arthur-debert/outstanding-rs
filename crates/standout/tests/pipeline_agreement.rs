@@ -1,4 +1,5 @@
-//! Dispatch, `render_inline_with`, and `render_request` of the same facts agree.
+//! Dispatch, `render_inline_with`, `render_with` of a named template, and
+//! `render_request` of the same facts agree.
 //!
 //! Help stays human under structured `--output` (ADR-0029): glue maps those
 //! modes to `Auto` on the help/topics request. Structured help pages of the
@@ -151,6 +152,7 @@ fn composition_request(
 fn write_part_template() -> tempfile::TempDir {
     let dir = tempfile::tempdir().unwrap();
     std::fs::write(dir.path().join("part.j2"), "INC").unwrap();
+    std::fs::write(dir.path().join("greet.j2"), COMPOSITION_TEMPLATE).unwrap();
     dir
 }
 
@@ -176,6 +178,10 @@ fn dispatch_render_inline_and_render_request_agree_byte_for_byte() {
         .render_inline_with(COMPOSITION_TEMPLATE, &data, OutputMode::Term, target)
         .unwrap();
 
+    let named = app
+        .render_with("greet", &data, OutputMode::Term, target)
+        .unwrap();
+
     let via_request = render_request(&composition_request(&app, templates.path(), target)).unwrap();
 
     assert!(
@@ -192,6 +198,10 @@ fn dispatch_render_inline_and_render_request_agree_byte_for_byte() {
     assert_eq!(
         dispatch_out, inline,
         "dispatch and render_inline_with must share the request pipeline"
+    );
+    assert_eq!(
+        inline, named,
+        "App::render_with of a named template must match render_inline_with of the same source"
     );
     assert_eq!(
         inline, via_request,

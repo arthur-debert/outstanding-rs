@@ -2,11 +2,11 @@
 //!
 //! This module contains methods for dispatching and running commands:
 //! - `commands()` - dispatch macro integration
-//! - `dispatch()` - match and execute handler, returning [`crate::cli::RunResult`]
-//! - `dispatch_from()` - parse args and dispatch, returning [`crate::cli::RunResult`]
+//! - `dispatch()` - match and execute handler, returning [`crate::cli::CompletedRun`]
+//! - `dispatch_from()` - parse args and dispatch, returning [`crate::cli::CompletedRun`]
 //! - `run()` - dispatch and print
 //! - `run_with()` - inner public run taking target properties and input sources,
-//!   returning [`crate::cli::RunResult`]
+//!   returning [`crate::cli::CompletedRun`]
 //! - `run_to_string()` - dispatch and return
 
 use crate::{
@@ -25,8 +25,8 @@ use crate::cli::default_command::ParseFailure;
 use crate::cli::dispatch::{dispatch, extract_command_path, get_deepest_matches, DispatchOutput};
 use crate::cli::group::{ErasedConfigRecipe, GroupBuilder, GroupEntry};
 use crate::cli::handler::{
-    ArtifactDestination, ArtifactReceipt, ArtifactRun, CommandContext, OutputKind, RunError,
-    RunErrorKind, RunOutput, RunResult, SuccessKind,
+    ArtifactDestination, ArtifactReceipt, ArtifactRun, CommandContext, DispatchResult, OutputKind,
+    RunError, RunErrorKind, RunOutput, SuccessKind,
 };
 use crate::cli::hooks::{ArtifactOutput, RenderedOutput, TextOutput};
 use crate::cli::questionnaire::{
@@ -148,17 +148,21 @@ impl App {
     /// `DispatchResult::Error(msg)`. Callers using `dispatch()` directly are
     /// responsible for writing the error to stderr and choosing an exit code.
     ///
-    /// Returns [`crate::cli::RunResult`]: the dispatch outcome plus framework
+    /// Returns [`crate::cli::CompletedRun`]: the dispatch outcome plus framework
     /// warnings collected for this invocation (including embedded hot-reload
     /// fallbacks recorded at build). Match on
-    /// [`outcome()`](crate::cli::RunResult::outcome) for variants.
-    pub fn dispatch(&self, matches: ArgMatches, output_mode: OutputMode) -> crate::cli::RunResult {
+    /// [`outcome()`](crate::cli::CompletedRun::outcome) for variants.
+    pub fn dispatch(
+        &self,
+        matches: ArgMatches,
+        output_mode: OutputMode,
+    ) -> crate::cli::CompletedRun {
         self.collect_run_warnings(|warnings| {
             (
                 self.dispatch_with_target(
                     matches,
                     output_mode,
-                    None,
+                    self.process_edge_target(),
                     InputSources::from_process(),
                     warnings,
                 ),
@@ -167,14 +171,25 @@ impl App {
         })
     }
 
+    /// Destination facts for public entries that detect at their own edge.
+    ///
+    /// [`detect`](TargetProperties::detect) fills terminal facts;
+    /// ambiguous-width is overwritten with this application's policy
+    /// (ADR-0026), matching [`run`](Self::run).
+    fn process_edge_target(&self) -> TargetProperties {
+        let mut target = TargetProperties::detect();
+        target.ambiguous_width = self.ambiguous_width;
+        target
+    }
+
     fn dispatch_with_target(
         &self,
         matches: ArgMatches,
         output_mode: OutputMode,
-        target: Option<TargetProperties>,
+        target: TargetProperties,
         sources: InputSources,
         warnings: WarningBuffer,
-    ) -> RunResult {
+    ) -> DispatchResult {
         // Ensure commands are finalized (creates dispatch closures with current theme)
         self.ensure_commands_finalized();
 
@@ -195,7 +210,7 @@ impl App {
             // Run pre-dispatch hooks if registered (hooks can inject state via ctx.extensions)
             if let Some(hooks) = hooks {
                 if let Err(e) = hooks.run_pre_dispatch(&matches, &mut ctx) {
-                    return RunResult::Error(super::super::dispatch::hook_run_error(
+                    return DispatchResult::Error(super::super::dispatch::hook_run_error(
                         e,
                         crate::cli::HookPhase::PreDispatch,
                     ));
@@ -215,11 +230,10 @@ impl App {
                 hooks,
                 output_mode,
                 &self.theme,
-                self.ambiguous_width,
                 target,
             ) {
                 Ok(output) => output,
-                Err(e) => return RunResult::Error(e),
+                Err(e) => return DispatchResult::Error(e),
             };
 
             // Convert to Output enum for post-output hooks. An artifact's
@@ -242,7 +256,7 @@ impl App {
                 match hooks.run_post_output(&matches, &ctx, output) {
                     Ok(o) => o,
                     Err(e) => {
-                        return RunResult::Error(super::super::dispatch::hook_run_error(
+                        return DispatchResult::Error(super::super::dispatch::hook_run_error(
                             e,
                             crate::cli::HookPhase::PostOutput,
                         ))
@@ -274,7 +288,7 @@ impl App {
                     RenderedOutput::Text(t) => {
                         // Write raw output (without ANSI codes) to file
                         if let Err(e) = write_output(&t.raw, &dest) {
-                            return RunResult::Error(RunError::new(
+                            return DispatchResult::Error(RunError::new(
                                 format!("Error writing output: {}", e),
                                 RunErrorKind::FinalWrite(OutputKind::Text),
                             ));
@@ -284,7 +298,7 @@ impl App {
                     }
                     RenderedOutput::Binary(b, _) => {
                         if let Err(e) = write_binary_output(b, &dest) {
-                            return RunResult::Error(RunError::new(
+                            return DispatchResult::Error(RunError::new(
                                 format!("Error writing output: {}", e),
                                 RunErrorKind::FinalWrite(OutputKind::Binary),
                             ));
@@ -296,17 +310,19 @@ impl App {
                 }
             }
 
-            // Convert back to RunResult (using formatted for terminal display)
+            // Convert back to DispatchResult (using formatted for terminal display)
             match final_output {
-                RenderedOutput::Text(t) => RunResult::Handled(RunOutput::command(t.formatted)),
-                RenderedOutput::Binary(b, f) => RunResult::Binary(b, f),
+                RenderedOutput::Text(t) => DispatchResult::Handled(RunOutput::command(t.formatted)),
+                RenderedOutput::Binary(b, f) => DispatchResult::Binary(b, f),
                 RenderedOutput::Artifact(_) => unreachable!("artifacts returned above"),
                 // Preserve the 7.x capture contract: silent success is an
                 // empty handled string. `run()` still emits nothing.
-                RenderedOutput::Silent => RunResult::Handled(RunOutput::command(String::new())),
+                RenderedOutput::Silent => {
+                    DispatchResult::Handled(RunOutput::command(String::new()))
+                }
             }
         } else {
-            RunResult::NoMatch(matches)
+            DispatchResult::NoMatch(matches)
         }
     }
 
@@ -333,10 +349,10 @@ impl App {
     ///
     /// # Returns
     ///
-    /// A [`crate::cli::RunResult`] wrapping the dispatch outcome plus any
+    /// A [`crate::cli::CompletedRun`] wrapping the dispatch outcome plus any
     /// framework warnings collected for this invocation. Inspect
-    /// [`warnings()`](crate::cli::RunResult::warnings), then match
-    /// [`outcome()`](crate::cli::RunResult::outcome):
+    /// [`warnings()`](crate::cli::CompletedRun::warnings), then match
+    /// [`outcome()`](crate::cli::CompletedRun::outcome):
     ///
     /// - `DispatchResult::Handled(output)` if a registered handler processed the command
     /// - `DispatchResult::NoMatch(matches)` if no handler matched (for manual handling)
@@ -359,13 +375,19 @@ impl App {
     ///     _ => {}
     /// }
     /// ```
-    pub fn dispatch_from<I, T>(&self, cmd: Command, args: I) -> crate::cli::RunResult
+    pub fn dispatch_from<I, T>(&self, cmd: Command, args: I) -> crate::cli::CompletedRun
     where
         I: IntoIterator<Item = T>,
         T: Into<std::ffi::OsString> + Clone,
     {
         self.collect_run_warnings(|warnings| {
-            self.dispatch_from_with_target(cmd, args, None, InputSources::from_process(), warnings)
+            self.dispatch_from_with_target(
+                cmd,
+                args,
+                self.process_edge_target(),
+                InputSources::from_process(),
+                warnings,
+            )
         })
     }
 
@@ -373,10 +395,10 @@ impl App {
         &self,
         cmd: Command,
         args: I,
-        target: Option<TargetProperties>,
+        target: TargetProperties,
         sources: InputSources,
         warnings: WarningBuffer,
-    ) -> (RunResult, OutputMode)
+    ) -> (DispatchResult, OutputMode)
     where
         I: IntoIterator<Item = T>,
         T: Into<std::ffi::OsString> + Clone,
@@ -386,7 +408,7 @@ impl App {
 
         if let Err(error) = self.validate_questionnaire_surfaces(&cmd) {
             return (
-                RunResult::Error(RunError::new(error.to_string(), RunErrorKind::ClapUsage)),
+                DispatchResult::Error(RunError::new(error.to_string(), RunErrorKind::ClapUsage)),
                 OutputMode::Auto,
             );
         }
@@ -406,7 +428,7 @@ impl App {
         // scanned for `--output` here.
         if let Some(error) = self.help_word_collision(&augmented_cmd) {
             return (
-                RunResult::Error(RunError::new(error.to_string(), RunErrorKind::ClapUsage)),
+                DispatchResult::Error(RunError::new(error.to_string(), RunErrorKind::ClapUsage)),
                 OutputMode::Auto,
             );
         }
@@ -418,7 +440,10 @@ impl App {
             Ok(matches) => matches,
             Err(ParseFailure::UnknownDefault(e)) => {
                 return (
-                    RunResult::Error(RunError::new(e.to_string(), RunErrorKind::DefaultCommand)),
+                    DispatchResult::Error(RunError::new(
+                        e.to_string(),
+                        RunErrorKind::DefaultCommand,
+                    )),
                     self.extract_output_mode_from_unparsed(&args),
                 )
             }
@@ -434,18 +459,21 @@ impl App {
                     &mut augmented_cmd,
                     &args,
                     &e,
-                    target,
+                    Some(target),
                     Some(warnings.clone()),
                 ) {
                     return (display.into(), output_mode);
                 }
                 // Clap's remaining "errors" include `--version`, a successful
                 // display path (stdout, exit 0). Real parse errors get
-                // `use_stderr() == true` and surface as `RunResult::Error` so
+                // `use_stderr() == true` and surface as `DispatchResult::Error` so
                 // they exit non-zero on stderr.
                 if e.use_stderr() {
                     return (
-                        RunResult::Error(RunError::new(e.to_string(), RunErrorKind::ClapUsage)),
+                        DispatchResult::Error(RunError::new(
+                            e.to_string(),
+                            RunErrorKind::ClapUsage,
+                        )),
                         output_mode,
                     );
                 }
@@ -455,7 +483,7 @@ impl App {
                     }
                     _ => RunOutput::clap_help(e.to_string()),
                 };
-                return (RunResult::Handled(output), output_mode);
+                return (DispatchResult::Handled(output), output_mode);
             }
         };
 
@@ -463,9 +491,12 @@ impl App {
 
         // The `help` word is a subcommand Clap routed; standout answers it
         // before dispatch, sharing the arm with `get_matches_from`.
-        if let Some(display) =
-            self.intercept_help_word(&mut augmented_cmd, &matches, target, Some(warnings.clone()))
-        {
+        if let Some(display) = self.intercept_help_word(
+            &mut augmented_cmd,
+            &matches,
+            Some(target),
+            Some(warnings.clone()),
+        ) {
             return (display.into(), output_mode);
         }
 
@@ -483,7 +514,7 @@ impl App {
                     == Some(&true);
                 if has_answers || has_yes {
                     return (
-                        RunResult::Error(RunError::new(
+                        DispatchResult::Error(RunError::new(
                             "`questions` renders the blank answer sheet and cannot be combined with --answers or --yes",
                             RunErrorKind::ClapUsage,
                         )),
@@ -536,7 +567,7 @@ impl App {
     /// except that `BrokenPipe` while writing final rendered command text to stdout
     /// is treated as successful early consumer termination. Callers needing
     /// fine-grained control over exit codes should use [`Self::run_to_string`] or
-    /// [`Self::dispatch_from`] and match [`crate::cli::RunResult::outcome`].
+    /// [`Self::dispatch_from`] and match [`crate::cli::CompletedRun::outcome`].
     ///
     /// # Example
     ///
@@ -637,12 +668,12 @@ impl App {
     /// and the output mode `inner` resolved.
     fn collect_run_warnings(
         &self,
-        inner: impl FnOnce(WarningBuffer) -> (RunResult, OutputMode),
-    ) -> crate::cli::RunResult {
+        inner: impl FnOnce(WarningBuffer) -> (DispatchResult, OutputMode),
+    ) -> crate::cli::CompletedRun {
         let warnings = WarningBuffer::new();
         self.seed_startup_warnings(&warnings);
         let (outcome, output_mode) = inner(warnings.clone());
-        crate::cli::RunResult::from_dispatch(outcome, warnings.take(), output_mode)
+        crate::cli::CompletedRun::from_dispatch(outcome, warnings.take(), output_mode)
     }
 
     /// Inner public run: destination properties and input sources as two arguments.
@@ -651,8 +682,8 @@ impl App {
     /// [`InputSources::from_process`] at the process edge, overwrites
     /// ambiguous-width with the application's policy, and forwards both here.
     /// Tests construct both values themselves and call this same method,
-    /// inspecting the [`RunResult`] (output, errors, artifacts) without
-    /// intercepting process streams.
+    /// inspecting the [`CompletedRun`](crate::cli::CompletedRun) (output,
+    /// errors, artifacts, warnings) without intercepting process streams.
     /// The two arguments are not a combined run-environment type and are not
     /// stored on [`App`].
     ///
@@ -665,13 +696,13 @@ impl App {
         args: I,
         target: TargetProperties,
         sources: InputSources,
-    ) -> crate::cli::RunResult
+    ) -> crate::cli::CompletedRun
     where
         I: IntoIterator<Item = T>,
         T: Into<std::ffi::OsString> + Clone,
     {
         self.collect_run_warnings(|warnings| {
-            self.dispatch_from_with_target(cmd, args, Some(target), sources, warnings)
+            self.dispatch_from_with_target(cmd, args, target, sources, warnings)
         })
     }
 
@@ -680,7 +711,7 @@ impl App {
     /// Similar to `run()`, but returns the output instead of printing it.
     /// Useful for testing or when you need to capture and process the output.
     /// Framework warnings queued during the run are returned on the
-    /// [`crate::cli::RunResult`], not a thread-local, so consecutive
+    /// [`crate::cli::CompletedRun`], not a thread-local, so consecutive
     /// in-process runs do not leak warnings into each other. The run's
     /// style-tag passes are ended into
     /// [`standout_render::diagnostics::take_captured`].
@@ -692,11 +723,11 @@ impl App {
     ///
     /// # Returns
     ///
-    /// A [`crate::cli::RunResult`] wrapping the dispatch outcome plus any
+    /// A [`crate::cli::CompletedRun`] wrapping the dispatch outcome plus any
     /// framework warnings collected during the run. Inspect
-    /// [`warnings()`](crate::cli::RunResult::warnings) as needed, then match
-    /// [`outcome()`](crate::cli::RunResult::outcome) or
-    /// [`into_outcome()`](crate::cli::RunResult::into_outcome):
+    /// [`warnings()`](crate::cli::CompletedRun::warnings) as needed, then match
+    /// [`outcome()`](crate::cli::CompletedRun::outcome) or
+    /// [`into_outcome()`](crate::cli::CompletedRun::into_outcome):
     ///
     /// - `DispatchResult::Handled(output)` - Handler executed successfully, or Clap produced help/version.
     ///   Silent completion remains an empty handled string for capture compatibility.
@@ -727,7 +758,7 @@ impl App {
     ///     _ => {},
     /// }
     /// ```
-    pub fn run_to_string<I, T>(&self, cmd: Command, args: I) -> crate::cli::RunResult
+    pub fn run_to_string<I, T>(&self, cmd: Command, args: I) -> crate::cli::CompletedRun
     where
         I: IntoIterator<Item = T>,
         T: Into<std::ffi::OsString> + Clone,
@@ -737,7 +768,13 @@ impl App {
         // ending it. See `standout_render::diagnostics` on nesting.
         let capture_window = standout_render::diagnostics::begin_capture();
         let result = self.collect_run_warnings(|warnings| {
-            self.dispatch_from_with_target(cmd, args, None, InputSources::from_process(), warnings)
+            self.dispatch_from_with_target(
+                cmd,
+                args,
+                self.process_edge_target(),
+                InputSources::from_process(),
+                warnings,
+            )
         });
         drop(capture_window);
         result
@@ -908,21 +945,21 @@ fn report_envelope(
 ///
 /// The stdout destination is the one deferral: its bytes are handed to the
 /// framework's stdout writer (see `emit_run_result`) so that capture APIs stay
-/// side-effect-free, exactly as `RunResult::Binary` already behaves.
+/// side-effect-free, exactly as `DispatchResult::Binary` already behaves.
 fn complete_artifact(
     artifact: ArtifactOutput,
     request: Option<Box<RenderRequest>>,
     override_path: Option<PathBuf>,
-) -> RunResult {
+) -> DispatchResult {
     let destination = match resolve_artifact_destination(&artifact, override_path) {
         Ok(destination) => destination,
-        Err(error) => return RunResult::Error(error),
+        Err(error) => return DispatchResult::Error(error),
     };
 
     if let ArtifactDestination::File(path) = &destination {
         let dest = OutputDestination::File(path.clone());
         if let Err(e) = write_binary_output(&artifact.bytes, &dest) {
-            return RunResult::Error(RunError::new(
+            return DispatchResult::Error(RunError::new(
                 format!("Error writing artifact: {}", e),
                 RunErrorKind::FinalWrite(OutputKind::Artifact),
             ));
@@ -938,7 +975,7 @@ fn complete_artifact(
             // request to render a report with. Say so rather than dropping
             // the report on the floor.
             let Some(mut request) = request else {
-                return RunResult::Error(RunError::new(
+                return DispatchResult::Error(RunError::new(
                     "Cannot render artifact report: the artifact carries a report but was not \
                      produced by a handler, so no template configuration is available",
                     RunErrorKind::Render,
@@ -946,19 +983,22 @@ fn complete_artifact(
             };
             let envelope = match report_envelope(Some(report), &receipt) {
                 Ok(envelope) => envelope,
-                Err(error) => return RunResult::Error(error),
+                Err(error) => return DispatchResult::Error(error),
             };
             request.data = envelope;
             match standout_render::render_request_split(&request) {
                 Ok(rendered) => Some(rendered.formatted),
                 Err(error) => {
-                    return RunResult::Error(RunError::new(error.to_string(), RunErrorKind::Render))
+                    return DispatchResult::Error(RunError::new(
+                        error.to_string(),
+                        RunErrorKind::Render,
+                    ))
                 }
             }
         }
     };
 
-    RunResult::Artifact(ArtifactRun::new(
+    DispatchResult::Artifact(ArtifactRun::new(
         artifact.bytes,
         artifact.suggested_destination,
         receipt,
@@ -1010,17 +1050,17 @@ fn emit_artifact<W: Write, E: Write>(
 /// Keeping this as a writer seam makes final text/binary failures typed and
 /// unit-testable while `run()` retains its public `bool` contract.
 fn emit_run_result<W: Write, E: Write>(
-    result: &RunResult,
+    result: &DispatchResult,
     stdout: &mut W,
     stderr: &mut E,
 ) -> (bool, Option<RunError>) {
     let failure = match result {
-        RunResult::Handled(output) if output.is_empty() => None,
-        RunResult::Handled(output) => writeln!(stdout, "{}", output)
+        DispatchResult::Handled(output) if output.is_empty() => None,
+        DispatchResult::Handled(output) => writeln!(stdout, "{}", output)
             .and_then(|()| stdout.flush())
             .err()
             .and_then(|error| final_write_error_unless_broken_pipe(error, OutputKind::Text)),
-        RunResult::Binary(bytes, _) => stdout
+        DispatchResult::Binary(bytes, _) => stdout
             .write_all(bytes)
             .and_then(|()| stdout.flush())
             .err()
@@ -1030,9 +1070,9 @@ fn emit_run_result<W: Write, E: Write>(
                     RunErrorKind::FinalWrite(OutputKind::Binary),
                 )
             }),
-        RunResult::Artifact(run) => emit_artifact(run, stdout, stderr),
-        RunResult::Silent => None,
-        RunResult::Error(error) => (if error.kind() == RunErrorKind::External {
+        DispatchResult::Artifact(run) => emit_artifact(run, stdout, stderr),
+        DispatchResult::Silent => None,
+        DispatchResult::Error(error) => (if error.kind() == RunErrorKind::External {
             stderr.write_all(error.as_str().as_bytes())
         } else {
             writeln!(stderr, "{}", error)
@@ -1045,7 +1085,7 @@ fn emit_run_result<W: Write, E: Write>(
                 RunErrorKind::FinalWrite(OutputKind::Text),
             )
         }),
-        RunResult::NoMatch(_) => return (false, None),
+        DispatchResult::NoMatch(_) => return (false, None),
         _ => return (false, None),
     };
 
@@ -3029,7 +3069,7 @@ header:
         let mut stdout = Vec::new();
         let mut stderr = Vec::new();
         let (handled, failure) = emit_run_result(
-            &RunResult::Handled(RunOutput::command("hello")),
+            &DispatchResult::Handled(RunOutput::command("hello")),
             &mut stdout,
             &mut stderr,
         );
@@ -3040,7 +3080,7 @@ header:
 
         stdout.clear();
         let (handled, failure) = emit_run_result(
-            &RunResult::Error(RunError::new("bad argv", RunErrorKind::ClapUsage)),
+            &DispatchResult::Error(RunError::new("bad argv", RunErrorKind::ClapUsage)),
             &mut stdout,
             &mut stderr,
         );
@@ -3054,7 +3094,7 @@ header:
     fn final_text_broken_pipe_is_successful_early_termination() {
         let mut stderr = Vec::new();
         let (_, text_failure) = emit_run_result(
-            &RunResult::Handled(RunOutput::command("hello")),
+            &DispatchResult::Handled(RunOutput::command("hello")),
             &mut FailingWriter,
             &mut stderr,
         );
@@ -3066,7 +3106,7 @@ header:
     fn final_binary_write_failures_keep_payload_kind() {
         let mut stderr = Vec::new();
         let (_, binary_failure) = emit_run_result(
-            &RunResult::Binary(vec![0, 1], "data.bin".into()),
+            &DispatchResult::Binary(vec![0, 1], "data.bin".into()),
             &mut FailingWriter,
             &mut stderr,
         );
@@ -3085,7 +3125,7 @@ header:
     fn final_text_broken_pipe_flush_is_successful_early_termination() {
         let mut text_stdout = FlushFailingWriter::default();
         let (_, text_failure) = emit_run_result(
-            &RunResult::Handled(RunOutput::command("hello")),
+            &DispatchResult::Handled(RunOutput::command("hello")),
             &mut text_stdout,
             &mut Vec::new(),
         );
@@ -3097,7 +3137,7 @@ header:
     fn final_binary_flush_failures_keep_payload_kind() {
         let mut binary_stdout = FlushFailingWriter::default();
         let (_, binary_failure) = emit_run_result(
-            &RunResult::Binary(vec![0, 1], "data.bin".into()),
+            &DispatchResult::Binary(vec![0, 1], "data.bin".into()),
             &mut binary_stdout,
             &mut Vec::new(),
         );
@@ -3117,7 +3157,7 @@ header:
             Some("wrote out.bin".into()),
         );
         let (_, file_report_failure) = emit_run_result(
-            &RunResult::Artifact(file_run),
+            &DispatchResult::Artifact(file_run),
             &mut FailingWriter,
             &mut Vec::new(),
         );
@@ -3134,7 +3174,7 @@ header:
         );
         let mut stdout = Vec::new();
         let (_, stdout_report_failure) = emit_run_result(
-            &RunResult::Artifact(stdout_run),
+            &DispatchResult::Artifact(stdout_run),
             &mut stdout,
             &mut FailingWriter,
         );

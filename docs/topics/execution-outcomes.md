@@ -29,14 +29,16 @@ final rendered command text to stdout is successful early consumer termination.
 
 ## Capturing typed metadata
 
-`run_to_string` keeps output in-process and returns `RunResult`: the dispatch
+`run_to_string` keeps output in-process and returns `CompletedRun`: the dispatch
 outcome plus any framework warnings collected during the run. `Deref` keeps
 string-oriented accessors and typed methods (`exit_status()`, `success_kind()`,
 `error_kind()`) working on the wrapper. Pattern matching needs `outcome()` or
-`into_outcome()`, because `RunResult` is not the variant enum.
+`into_outcome()`, because `CompletedRun` is not the variant enum.
 
 ```rust
-use standout::cli::{DispatchResult, ExitStatus, RunResult, SuccessKind};
+use standout::cli::{
+    CompletedRun, DispatchResult, ExitStatus, OutputKind, RunError, RunErrorKind, SuccessKind,
+};
 
 let result = app.run_to_string(command, args);
 let _ = result.warnings();
@@ -45,8 +47,33 @@ match result.outcome() {
     DispatchResult::Handled(output) => println!("{}", output),
     DispatchResult::Binary(bytes, filename) => consume(bytes, filename),
     DispatchResult::Artifact(run) => {
-        // The framework already wrote a file destination; the receipt says where.
-        println!("{:?}: {:?}", run.destination(), run.report());
+        use std::io::{self, Write};
+        if run.destination().is_stdout() {
+            let mut stdout = io::stdout();
+            stdout.write_all(run.bytes()).and_then(|()| stdout.flush()).map_err(|error| {
+                RunError::new(
+                    format!("Error writing artifact stdout: {}", error),
+                    RunErrorKind::FinalWrite(OutputKind::Artifact),
+                )
+            })?;
+            if let Some(report) = run.report().filter(|r| !r.is_empty()) {
+                let mut stderr = io::stderr();
+                writeln!(stderr, "{}", report).and_then(|()| stderr.flush()).map_err(|error| {
+                    RunError::new(
+                        format!("Error writing artifact report: {}", error),
+                        RunErrorKind::FinalWrite(OutputKind::Artifact),
+                    )
+                })?;
+            }
+        } else if let Some(report) = run.report().filter(|r| !r.is_empty()) {
+            let mut stdout = io::stdout();
+            writeln!(stdout, "{}", report).and_then(|()| stdout.flush()).map_err(|error| {
+                RunError::new(
+                    format!("Error writing artifact report: {}", error),
+                    RunErrorKind::FinalWrite(OutputKind::Artifact),
+                )
+            })?;
+        }
     }
     DispatchResult::Error(error) => eprintln!("{}", error),
     DispatchResult::NoMatch(_matches) => {}

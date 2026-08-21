@@ -442,7 +442,7 @@ match result.into_outcome() {
 }
 ```
 
-Returns `RunResult` instead of printing: a wrapper around `DispatchResult`
+Returns `CompletedRun` instead of printing: a wrapper around `DispatchResult`
 plus framework warnings. Use `exit_status()`, `success_kind()`, and
 `error_kind()` for typed assertions; see [Execution
 Outcomes](./execution-outcomes.md).

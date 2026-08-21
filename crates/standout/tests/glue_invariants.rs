@@ -4,6 +4,14 @@
 //! `App` after `build()` holds theme, output-mode fallback, registry, and
 //! ambiguous-width policy, and the ROB01 snapshot matrix fails if a call site
 //! invents another.
+//!
+//! Serialization copies are forbidden three ways:
+//! - production deps on `serde_yaml` / `csv` / `quick-xml` (Cargo.toml);
+//! - source uses of those crates' paths or the leaf serializer helpers
+//!   (a copied `serialize_to_xml` would not show up as a Cargo.toml dep);
+//! - any glue `OutputMode::<variant> =>` match arm. Glue already depends on
+//!   `serde_json`, so `OutputMode::Json => serde_json::to_string(...)` would
+//!   pass the first two scans while duplicating leaf serialization.
 
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -14,6 +22,14 @@ const BANNED_SERIALIZER_CRATES: &[&str] = &["serde_yaml", "csv", "quick-xml"];
 /// route without serializing (help mapping, flag parsing). Serialization
 /// arms belong in `standout-render`. None exist in glue today.
 const ALLOWED_OUTPUT_MODE_ARM_FNS: &[&str] = &[];
+
+/// Leaf helpers glue must not copy. `pub use` re-exports from standout-render
+/// are allowed; a local definition or a call is not.
+const BANNED_SERIALIZER_HELPERS: &[&str] = &[
+    "serialize_to_xml",
+    "flatten_json_for_csv",
+    "serialize_structured",
+];
 
 fn glue_root() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR"))
@@ -39,6 +55,12 @@ fn walk_rs(dir: &Path) -> Vec<PathBuf> {
 
 fn is_comment_line(line: &str) -> bool {
     line.trim_start().starts_with("//")
+}
+
+/// True for a re-export statement, not a line that merely contains the
+/// substring `"pub use"` (a string literal, a comment already skipped, …).
+fn is_reexport_line(line: &str) -> bool {
+    line.trim_start().starts_with("pub use ")
 }
 
 fn fn_name_in_line(line: &str) -> Option<&str> {
@@ -300,6 +322,31 @@ fn banned_production_serializers(manifest: &str) -> Result<Vec<String>, String> 
         .collect())
 }
 
+/// `(line, needle)` for each uncommented use of a banned serializer path or
+/// helper. `pub use` re-exports are allowed. A helper is a copy when it is
+/// defined (`fn serialize_to_xml`) or called (`serialize_to_xml(`), not when
+/// it appears in a re-export list.
+fn banned_serializer_uses(source: &str) -> Vec<(usize, String)> {
+    let mut uses = Vec::new();
+    for (idx, line) in source.lines().enumerate() {
+        if is_comment_line(line) || is_reexport_line(line) {
+            continue;
+        }
+        for crate_name in BANNED_SERIALIZER_CRATES {
+            let needle = format!("{}::", crate_name.replace('-', "_"));
+            if line.contains(&needle) {
+                uses.push((idx, needle));
+            }
+        }
+        for helper in BANNED_SERIALIZER_HELPERS {
+            if line.contains(&format!("fn {helper}")) || line.contains(&format!("{helper}(")) {
+                uses.push((idx, (*helper).to_string()));
+            }
+        }
+    }
+    uses
+}
+
 #[test]
 fn standout_production_deps_exclude_serializer_crates() {
     let manifest = fs::read_to_string(glue_root().join("Cargo.toml")).unwrap();
@@ -417,26 +464,32 @@ fn glue_has_no_serializer_match_arms_on_output_mode() {
                 ));
             }
         }
-        for (idx, line) in source.lines().enumerate() {
-            if is_comment_line(line) {
-                continue;
-            }
-            for crate_name in BANNED_SERIALIZER_CRATES {
-                let needle = format!("{}::", crate_name.replace('-', "_"));
-                if line.contains(&needle) && !line.contains("pub use") {
-                    violations.push(format!(
-                        "{}:{} uses {needle}: {}",
-                        path.strip_prefix(glue_root()).unwrap_or(&path).display(),
-                        idx + 1,
-                        line.trim()
-                    ));
-                }
-            }
-        }
     }
     assert!(
         violations.is_empty(),
         "glue must not match on OutputMode to serialize (that copy lives in standout-render):\n{}",
+        violations.join("\n")
+    );
+}
+
+#[test]
+fn glue_does_not_call_leaf_serializers() {
+    let mut violations = Vec::new();
+    for path in walk_rs(&glue_src()) {
+        let source = fs::read_to_string(&path).unwrap();
+        for (idx, needle) in banned_serializer_uses(&source) {
+            let line = source.lines().nth(idx).unwrap_or("");
+            violations.push(format!(
+                "{}:{} uses {needle}: {}",
+                path.strip_prefix(glue_root()).unwrap_or(&path).display(),
+                idx + 1,
+                line.trim()
+            ));
+        }
+    }
+    assert!(
+        violations.is_empty(),
+        "glue must not use leaf serializer paths or helpers (those copies live in standout-render):\n{}",
         violations.join("\n")
     );
 }
@@ -451,6 +504,22 @@ fn output_mode_arm_scan_rejects_future_variant() {
         }
     "#;
     assert_eq!(output_mode_arm_variants(src), ["Toml"]);
+}
+
+#[test]
+fn output_mode_arm_scan_rejects_serde_json_serializer_branch() {
+    let src = r#"
+        fn serialize_in_glue(mode: OutputMode, data: &Value) {
+            match mode {
+                OutputMode::Json => serde_json::to_string(data).unwrap(),
+            }
+        }
+    "#;
+    assert_eq!(output_mode_arm_variants(src), ["Json"]);
+    assert!(
+        banned_serializer_uses(src).is_empty(),
+        "serde_json is already a glue production dep; the path scan cannot catch this copy"
+    );
 }
 
 #[test]
@@ -513,4 +582,60 @@ fn serialize_in_glue(mode: OutputMode) {
     assert_eq!(arms[0].1, "Json");
     let lines: Vec<&str> = src.lines().collect();
     assert_eq!(enclosing_fn(&lines, arms[0].0), Some("serialize_in_glue"));
+}
+
+#[test]
+fn serializer_use_scan_flags_crate_path() {
+    let src = r#"
+        fn serialize_in_glue(data: &Value) {
+            serde_yaml::to_string(data).unwrap();
+        }
+    "#;
+    let uses: Vec<_> = banned_serializer_uses(src)
+        .into_iter()
+        .map(|(_, needle)| needle)
+        .collect();
+    assert_eq!(uses, ["serde_yaml::"]);
+}
+
+#[test]
+fn serializer_use_scan_flags_helper_name() {
+    let src = r#"
+        fn copy_in_glue(data: &Value) {
+            serialize_to_xml(data).unwrap();
+        }
+    "#;
+    let uses: Vec<_> = banned_serializer_uses(src)
+        .into_iter()
+        .map(|(_, needle)| needle)
+        .collect();
+    assert_eq!(uses, ["serialize_to_xml"]);
+}
+
+#[test]
+fn serializer_use_scan_allows_pub_use_and_ignores_comments() {
+    let src = r#"
+        // serde_yaml::to_string would be a serializer copy
+        /// flatten_json_for_csv documented, not code
+        pub use standout_render::{flatten_json_for_csv, serialize_to_xml};
+    "#;
+    assert!(
+        banned_serializer_uses(src).is_empty(),
+        "comments and pub use re-exports are not copies"
+    );
+}
+
+#[test]
+fn serializer_use_scan_does_not_skip_string_containing_pub_use() {
+    let src = r#"
+        fn serialize_in_glue(data: &Value) {
+            let _ = "pub use";
+            serde_yaml::to_string(data).unwrap();
+        }
+    "#;
+    let uses: Vec<_> = banned_serializer_uses(src)
+        .into_iter()
+        .map(|(_, needle)| needle)
+        .collect();
+    assert_eq!(uses, ["serde_yaml::"]);
 }

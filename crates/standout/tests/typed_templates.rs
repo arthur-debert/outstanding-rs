@@ -1,7 +1,7 @@
 use clap::Command;
 use serde_json::json;
 use serial_test::serial;
-use standout::cli::{App, AppBuilder, DispatchResult as RunResult, Output};
+use standout::cli::{App, AppBuilder, DispatchResult, Output};
 use standout::{EmbeddedSource, OutputMode, TemplateResource};
 use standout_test::TestHarness;
 
@@ -956,7 +956,7 @@ fn structured_only_maps_machine_modes_and_rejects_human_modes() {
         let matches = command().try_get_matches_from(["app", "show"]).unwrap();
         let result = app.dispatch(matches, mode);
         assert!(
-            matches!(result.outcome(), RunResult::Handled(_)),
+            matches!(result.outcome(), DispatchResult::Handled(_)),
             "expected {mode:?} to serialize, got {result:?}"
         );
     }
@@ -965,7 +965,7 @@ fn structured_only_maps_machine_modes_and_rejects_human_modes() {
         let matches = command().try_get_matches_from(["app", "show"]).unwrap();
         let result = app.dispatch(matches, mode);
         match result.into_outcome() {
-            RunResult::Error(error) => {
+            DispatchResult::Error(error) => {
                 let message = error.to_string();
                 assert!(message.contains("command `show` is declared structured-only"));
                 assert!(message.contains("--output"));

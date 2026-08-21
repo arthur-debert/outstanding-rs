@@ -9,8 +9,8 @@ use clap::{Arg, Command};
 use serde::Serialize;
 use serde_json::json;
 use standout::cli::{
-    App, ArtifactDestination, DispatchResult as RunResult, ExitStatus, HandlerResult, HookError,
-    Hooks, Output, OutputKind, RunErrorKind,
+    App, ArtifactDestination, DispatchResult, ExitStatus, HandlerResult, HookError, Hooks, Output,
+    OutputKind, RunErrorKind,
 };
 use standout::cli::{Artifact, RenderedOutput};
 
@@ -559,5 +559,5 @@ fn no_match_still_falls_through_for_manual_dispatch() {
         Command::new("app").subcommand(Command::new("other")),
         ["app"],
     );
-    assert!(matches!(result.outcome(), RunResult::NoMatch(_)));
+    assert!(matches!(result.outcome(), DispatchResult::NoMatch(_)));
 }
