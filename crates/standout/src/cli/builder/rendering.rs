@@ -1,10 +1,11 @@
 //! Rendering methods for App.
 //!
-//! [`App::render`], [`App::render_inline`], and [`App::render_inline_with`]
-//! build a [`crate::RenderRequest`] and call
+//! [`App::render`], [`App::render_with`], [`App::render_inline`], and
+//! [`App::render_inline_with`] build a [`crate::RenderRequest`] and call
 //! [`standout_render::render_request`], the same pipeline dispatch uses.
-//! [`App::render_inline_with`] takes destination facts the caller already
-//! has; the other two detect at this edge.
+//! [`App::render_with`] and [`App::render_inline_with`] take destination
+//! facts the caller already has; the detect-at-edge pair is [`App::render`]
+//! and [`App::render_inline`].
 
 use serde::Serialize;
 use std::collections::HashMap;
@@ -24,7 +25,9 @@ impl App {
     /// template registry.
     ///
     /// Detects destination facts at this edge and overwrites ambiguous-width
-    /// with the application's configured policy.
+    /// with the application's configured policy. Callers that already have
+    /// [`TargetProperties`] (tests, `run_with` agreement) should use
+    /// [`render_with`](Self::render_with).
     ///
     /// Structured modes (JSON/YAML/XML/CSV) serialize `data` through
     /// [`render_request`] with [`TemplateRef::Absent`] and do not look up or
@@ -42,14 +45,37 @@ impl App {
         data: &T,
         mode: OutputMode,
     ) -> Result<String, SetupError> {
+        self.render_named(template, data, mode, detected_target(self.ambiguous_width))
+    }
+
+    /// Renders a named template with caller-supplied destination facts.
+    ///
+    /// Same pipeline as [`render`](Self::render) and dispatch: builds a
+    /// [`crate::RenderRequest`] from the app's engine, registry, context
+    /// registry, and merged theme, and calls [`render_request`].
+    /// Ambiguous-width is overwritten with the application's policy
+    /// (ADR-0026), matching [`render_inline_with`](Self::render_inline_with)
+    /// and [`App::run_with`](super::App::run_with).
+    pub fn render_with<T: Serialize>(
+        &self,
+        template: &str,
+        data: &T,
+        mode: OutputMode,
+        mut target: TargetProperties,
+    ) -> Result<String, SetupError> {
+        target.ambiguous_width = self.ambiguous_width;
+        self.render_named(template, data, mode, target)
+    }
+
+    fn render_named<T: Serialize>(
+        &self,
+        template: &str,
+        data: &T,
+        mode: OutputMode,
+        target: TargetProperties,
+    ) -> Result<String, SetupError> {
         if mode.is_structured() {
-            return self.render_named_or_inline(
-                TemplateRef::Absent,
-                data,
-                mode,
-                None,
-                detected_target(self.ambiguous_width),
-            );
+            return self.render_named_or_inline(TemplateRef::Absent, data, mode, None, target);
         }
 
         let registry = self.template_registry.as_ref().ok_or_else(|| {
@@ -75,7 +101,7 @@ impl App {
             data,
             mode,
             Some(registry.clone()),
-            detected_target(self.ambiguous_width),
+            target,
         )
     }
 

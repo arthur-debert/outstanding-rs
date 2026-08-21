@@ -284,7 +284,7 @@ impl<T> Artifact<T> {
 
 /// A completed artifact run: the framework's outcome for [`Output::Artifact`](crate::Output::Artifact).
 ///
-/// Carried by [`RunResult::Artifact`](crate::RunResult::Artifact). The receipt
+/// Carried by [`DispatchResult::Artifact`](crate::DispatchResult::Artifact). The receipt
 /// is authoritative for a file destination — the bytes are already on disk. For
 /// the stdout destination the byte write is deferred to the framework's stdout
 /// writer, which is why `run()` can still report a typed stdout write failure.

@@ -29,14 +29,14 @@ final rendered command text to stdout is successful early consumer termination.
 
 ## Capturing typed metadata
 
-`run_to_string` keeps output in-process and returns `RunResult`: the dispatch
+`run_to_string` keeps output in-process and returns `CompletedRun`: the dispatch
 outcome plus any framework warnings collected during the run. `Deref` keeps
 string-oriented accessors and typed methods (`exit_status()`, `success_kind()`,
 `error_kind()`) working on the wrapper. Pattern matching needs `outcome()` or
-`into_outcome()`, because `RunResult` is not the variant enum.
+`into_outcome()`, because `CompletedRun` is not the variant enum.
 
 ```rust
-use standout::cli::{DispatchResult, ExitStatus, RunResult, SuccessKind};
+use standout::cli::{CompletedRun, DispatchResult, ExitStatus, SuccessKind};
 
 let result = app.run_to_string(command, args);
 let _ = result.warnings();

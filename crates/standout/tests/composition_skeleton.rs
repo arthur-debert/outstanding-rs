@@ -6,7 +6,7 @@
 use clap::Command;
 use console::Style;
 use serde_json::json;
-use standout::cli::{App, DispatchResult, Output, RunResult};
+use standout::cli::{App, CompletedRun, DispatchResult, Output};
 use standout::{AmbiguousWidth, ColorMode, IconMode, InputSources, TargetProperties, Theme};
 
 fn list_command() -> Command {
@@ -30,7 +30,7 @@ fn capable_target() -> TargetProperties {
     }
 }
 
-fn run_list(app: &App, args: &[&str]) -> RunResult {
+fn run_list(app: &App, args: &[&str]) -> CompletedRun {
     app.run_with(
         list_command(),
         args.iter().copied(),

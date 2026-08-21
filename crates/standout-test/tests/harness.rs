@@ -914,7 +914,7 @@ fn no_match_reports_cleanly() {
     let app = build_echo_app("{{ msg }}");
     let result = TestHarness::new().run(&app, echo_command(), vec!["app", "unknown"]);
     // clap rejects unknown subcommands as a parse error; per #141, those
-    // surface as `RunResult::Error`. Older clap behavior could also produce
+    // surface as `DispatchResult::Error`. Older clap behavior could also produce
     // `NoMatch`, so accept either.
     assert!(
         result.is_error() || result.is_no_match(),

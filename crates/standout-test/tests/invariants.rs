@@ -23,7 +23,7 @@ use clap::{Arg, Command};
 use console::Style;
 use serde_json::json;
 use serial_test::serial;
-use standout::cli::{App, DispatchResult as RunResult, Output};
+use standout::cli::{App, DispatchResult, Output};
 use standout::Theme;
 use standout_fixtures::downstream;
 use standout_render::{OutputMode, TagResolution};
@@ -251,7 +251,7 @@ fn nesting_app() -> App {
                     ["inner", "emit"],
                 );
                 let embedded = match inner.outcome() {
-                    RunResult::Handled(output) => output.as_str().to_string(),
+                    DispatchResult::Handled(output) => output.as_str().to_string(),
                     other => panic!("the inner run must succeed, got {:?}", other),
                 };
                 Ok(Output::Render(json!({ "embedded": embedded })))
@@ -320,7 +320,7 @@ fn discarding_app() -> App {
                     ["inner", "emit"],
                 );
                 assert!(
-                    matches!(discarded.outcome(), RunResult::Handled(_)),
+                    matches!(discarded.outcome(), DispatchResult::Handled(_)),
                     "the inner run must succeed"
                 );
                 // …and its output goes no further.

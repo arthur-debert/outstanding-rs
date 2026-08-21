@@ -83,7 +83,7 @@ flowchart TB
     end
 
     subgraph Final["Final Output"]
-        RUN["RunResult<br/>Handled(String) | Binary | Silent"]
+        RUN["DispatchResult<br/>Handled(String) | Binary | Silent"]
         PRINT["println!() or file write"]
         RUN --> PRINT
     end
@@ -142,7 +142,7 @@ flowchart TB
 | Render (Text Pass 2) | Tagged string + `TagTransform` | ANSI/plain/debug string |
 | Result | `RenderResult` | `DispatchOutput` |
 | Post-Output | `RenderedOutput` | Transformed `RenderedOutput` |
-| Final | `RunResult` | Terminal output or file |
+| Final | `DispatchResult` | Terminal output or file |
 
 ## Key Components
 

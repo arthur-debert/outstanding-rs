@@ -27,7 +27,7 @@ if !app.run(command, args) {
 ```
 
 When the legacy path needs `ArgMatches`, capture the result instead.
-Framework `App::run_to_string` returns `standout::cli::RunResult`, a wrapper
+Framework `App::run_to_string` returns `standout::cli::CompletedRun`, a wrapper
 around this crate's outcome enum (re-exported as `DispatchResult`) plus
 framework warnings. Match `into_outcome()`:
 

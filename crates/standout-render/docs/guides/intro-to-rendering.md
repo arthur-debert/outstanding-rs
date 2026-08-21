@@ -122,6 +122,44 @@ print!("{}", output);
 
 `render` is the convenience wrapper. The contract is `render_request`: an owned `RenderRequest` carrying data, template, theme, format, color policy, and `TargetProperties`. Wrappers detect destination facts at their edge, build that request, and delegate. They keep their own names. Tests construct `TargetProperties` rather than installing detector overrides (those APIs are removed).
 
+The same render as an explicit request — destination facts on `TargetProperties`, no process detection:
+
+```rust
+use std::collections::HashMap;
+use serde_json::json;
+use standout_render::{
+    AmbiguousWidth, ColorMode, ColorPolicy, IconMode, OutputMode, RenderRequest,
+    TargetProperties, TemplateRef, Theme, default_template_engine, render_request,
+};
+use console::Style;
+
+let theme = Theme::new().add("title", Style::new().cyan().bold());
+let request = RenderRequest {
+    data: json!({"name": "Tasks", "count": 42}),
+    template: TemplateRef::Inline("[title]{{ name }}[/title]: {{ count }} items".into()),
+    theme,
+    format: OutputMode::Text,
+    color_policy: ColorPolicy::Auto,
+    target: TargetProperties {
+        width: Some(80),
+        stdout_is_terminal: true,
+        stderr_is_terminal: true,
+        stdout_color_capability: true,
+        stderr_color_capability: true,
+        color_scheme: ColorMode::Dark,
+        icon_mode: IconMode::Classic,
+        ambiguous_width: AmbiguousWidth::Narrow,
+    },
+    engine: default_template_engine(),
+    registry: None,
+    context_registry: None,
+    csv_projection: None,
+    extras: HashMap::new(),
+    warnings: None,
+};
+let output = render_request(&request)?;
+```
+
 Now:
 
 - Logic is testable without output concerns

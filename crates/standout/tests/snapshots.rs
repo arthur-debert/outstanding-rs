@@ -84,11 +84,11 @@ fn test_snapshots_error_handling() {
 
     let result = app.dispatch(matches, OutputMode::Term);
 
-    // Handler errors surface as RunResult::Error("Error: {message}").
+    // Handler errors surface as DispatchResult::Error("Error: {message}").
     // Consumers should write this to stderr and exit non-zero.
     assert!(
         result.is_error(),
-        "expected RunResult::Error, got {:?}",
+        "expected DispatchResult::Error, got {:?}",
         result
     );
     let output = result.error().unwrap();

@@ -2,7 +2,7 @@
 //!
 //! Help is decided once, in [`HelpDisplay`], and projected onto whichever
 //! result type the calling parse path speaks: [`HelpResult`] for configured
-//! parsing (`get_matches_from` / `parse_from`), [`RunResult`] for dispatch
+//! parsing (`get_matches_from` / `parse_from`), [`CompletedRun`] for dispatch
 //! (`dispatch_from` / `run` / `run_to_string`). Two projections of one decision
 //! are what keep `myapp help` from meaning one thing through one entry point
 //! and something else through the other.
@@ -20,13 +20,13 @@ use crate::OutputMode;
 /// inner [`DispatchResult`] so `is_handled`, `exit_status`, and similar
 /// methods keep working. Match on [`outcome`](Self::outcome) for variants.
 #[derive(Debug)]
-pub struct RunResult {
+pub struct CompletedRun {
     inner: DispatchResult,
     warnings: Vec<String>,
     output_mode: OutputMode,
 }
 
-impl RunResult {
+impl CompletedRun {
     /// Wraps a dispatch outcome with the warnings collected during the run
     /// and the output mode that dispatch resolved.
     pub fn from_dispatch(
@@ -68,7 +68,7 @@ impl RunResult {
     }
 }
 
-impl std::ops::Deref for RunResult {
+impl std::ops::Deref for CompletedRun {
     type Target = DispatchResult;
 
     fn deref(&self) -> &Self::Target {

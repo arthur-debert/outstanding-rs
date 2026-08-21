@@ -25,7 +25,7 @@ impl TestHarness {
     ///   stderr are two real pipes filled by the binary's own writes, so a
     ///   claim about which stream a byte went to is a claim about the
     ///   program rather than about the harness's model of it.
-    /// - **The process exit status.** `RunResult` carries the typed
+    /// - **The process exit status.** `CompletedRun` carries the typed
     ///   [`ExitStatus`](standout::cli::ExitStatus) the framework *intends*;
     ///   only a real run proves `main` reached `std::process::exit` with the
     ///   matching code — or was killed by a signal, which has no in-process
@@ -312,7 +312,7 @@ impl TestHarness {
 ///
 /// The companion to [`TestResult`](crate::TestResult) for runs that crossed
 /// the process boundary. Where `TestResult` reconstructs the text channels
-/// from one captured `RunResult`, every field here is a recording: the bytes
+/// from one captured `CompletedRun`, every field here is a recording: the bytes
 /// the OS carried on each pipe, and the status the kernel reported.
 pub struct ProcessResult {
     stdout: String,

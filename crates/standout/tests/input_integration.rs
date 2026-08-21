@@ -6,7 +6,7 @@
 
 use clap::{Arg, Command};
 use serde_json::json;
-use standout::cli::{App, CommandContextInput, DispatchResult as RunResult, Output};
+use standout::cli::{App, CommandContextInput, DispatchResult, Output};
 use standout::input::{
     env::MockStdin, ArgSource, FlagSource, InputChain, InputSourceKind, InputSources,
     PromptResponse, ScriptedResponder, StdinSource, TextPromptSource,
@@ -32,7 +32,7 @@ fn capable_target() -> TargetProperties {
     }
 }
 
-fn run_create(app: &App, args: Vec<&str>, stdin: Option<MockStdin>) -> RunResult {
+fn run_create(app: &App, args: Vec<&str>, stdin: Option<MockStdin>) -> DispatchResult {
     let mut sources = InputSources::from_process();
     if let Some(stdin) = stdin {
         sources = sources.with_stdin(stdin);
@@ -65,7 +65,7 @@ fn arg_value_reaches_handler_via_ctx_input() {
 
     let result = run_create(&app, vec!["test", "create", "--body", "hello"], None);
     match result {
-        RunResult::Handled(out) => assert_eq!(out, "hello"),
+        DispatchResult::Handled(out) => assert_eq!(out, "hello"),
         other => panic!("expected Handled, got {:?}", other),
     }
 }
@@ -135,7 +135,7 @@ fn default_kicks_in_when_no_source_provides_value() {
 
     let result = run_create(&app, vec!["test", "create"], None);
     match result {
-        RunResult::Handled(out) => assert_eq!(out, "FALLBACK"),
+        DispatchResult::Handled(out) => assert_eq!(out, "FALLBACK"),
         other => panic!("expected Handled, got {:?}", other),
     }
 }
@@ -163,7 +163,7 @@ fn input_source_reports_arg_kind() {
         .unwrap();
 
     let result = run_create(&app, vec!["test", "create", "--body", "x"], None);
-    if let RunResult::Handled(out) = result {
+    if let DispatchResult::Handled(out) = result {
         assert_eq!(out, InputSourceKind::Arg.to_string());
     } else {
         panic!("expected Handled, got {:?}", result);
@@ -193,7 +193,7 @@ fn input_source_reports_default_kind_when_falling_back() {
         .unwrap();
 
     let result = run_create(&app, vec!["test", "create"], None);
-    if let RunResult::Handled(out) = result {
+    if let DispatchResult::Handled(out) = result {
         assert_eq!(out, InputSourceKind::Default.to_string());
     } else {
         panic!("expected Handled, got {:?}", result);
@@ -233,7 +233,7 @@ fn stdin_fallback_when_arg_absent() {
         Some(MockStdin::piped("from stdin\n")),
     );
 
-    if let RunResult::Handled(out) = result {
+    if let DispatchResult::Handled(out) = result {
         // StdinSource trims trailing newlines.
         assert_eq!(out, "stdin: from stdin");
     } else {
@@ -278,7 +278,7 @@ fn arg_wins_over_stdin_when_both_available() {
         Some(MockStdin::terminal()),
     );
 
-    if let RunResult::Handled(out) = result {
+    if let DispatchResult::Handled(out) = result {
         assert_eq!(out, "argument: from arg");
     } else {
         panic!("expected Handled, got {:?}", result);
@@ -323,7 +323,7 @@ fn command_config_input_consumes_scripted_responder() {
         )
         .into_outcome();
 
-    if let RunResult::Handled(out) = result {
+    if let DispatchResult::Handled(out) = result {
         assert_eq!(out, "prompt: from prompt");
     } else {
         panic!("expected Handled, got {:?}", result);
@@ -382,7 +382,7 @@ fn multiple_named_inputs_of_same_type_do_not_collide() {
             ],
         )
         .into_outcome();
-    if let RunResult::Handled(out) = result {
+    if let DispatchResult::Handled(out) = result {
         assert_eq!(out, "the title | the body");
     } else {
         panic!("expected Handled, got {:?}", result);
@@ -435,7 +435,7 @@ fn mixed_types_string_and_bool_coexist() {
     let result = app
         .run_to_string(cmd, vec!["test", "create", "--body", "x", "--force"])
         .into_outcome();
-    if let RunResult::Handled(out) = result {
+    if let DispatchResult::Handled(out) = result {
         assert_eq!(out, "body=x force=true");
     } else {
         panic!("expected Handled, got {:?}", result);
@@ -465,7 +465,7 @@ fn validation_failure_aborts_before_handler() {
 
     let result = run_create(&app, vec!["test", "create", "--body", "   "], None);
     let out = match result {
-        RunResult::Error(s) => s,
+        DispatchResult::Error(s) => s,
         other => panic!("expected Error, got {:?}", other),
     };
     assert!(out.starts_with("Hook error:"), "unexpected output: {out}");
@@ -500,7 +500,7 @@ fn handler_asking_for_unregistered_input_gets_missing_input_error() {
         .unwrap();
 
     let result = run_create(&app, vec!["test", "create"], None);
-    if let RunResult::Handled(out) = result {
+    if let DispatchResult::Handled(out) = result {
         assert!(out.contains("nonexistent"), "got: {out}");
         assert!(out.contains("no input"), "got: {out}");
     } else {
@@ -532,7 +532,7 @@ fn type_mismatch_lookup_returns_descriptive_error() {
         .unwrap();
 
     let result = run_create(&app, vec!["test", "create"], None);
-    if let RunResult::Handled(out) = result {
+    if let DispatchResult::Handled(out) = result {
         assert!(out.contains("body"), "got: {out}");
         assert!(out.contains("u32"), "got: {out}");
     } else {

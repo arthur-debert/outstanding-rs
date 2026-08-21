@@ -421,23 +421,23 @@ pub(crate) fn validate_questionnaire_surface(cmd: &Command, path: &str) -> Resul
 pub(crate) fn render_questions_result(
     questionnaire: &QuestionnaireCommand,
     matches: &ArgMatches,
-) -> crate::cli::handler::RunResult {
+) -> crate::cli::handler::DispatchResult {
     let sheet = match questionnaire.render_answer_sheet() {
         Ok(sheet) => sheet,
-        Err(error) => return crate::cli::handler::RunResult::Error(error),
+        Err(error) => return crate::cli::handler::DispatchResult::Error(error),
     };
     let sub_matches = get_deepest_matches(matches);
     if let Some(path) = sub_matches.get_one::<String>(QUESTIONS_FILE_ARG_ID) {
         if let Err(error) = std::fs::write(path, sheet) {
-            return crate::cli::handler::RunResult::Error(RunError::new(
+            return crate::cli::handler::DispatchResult::Error(RunError::new(
                 format!("Error writing questionnaire answer sheet: {error}"),
                 RunErrorKind::FinalWrite(crate::cli::handler::OutputKind::Text),
             ));
         }
-        crate::cli::handler::RunResult::Handled(crate::cli::handler::RunOutput::command(
+        crate::cli::handler::DispatchResult::Handled(crate::cli::handler::RunOutput::command(
             String::new(),
         ))
     } else {
-        crate::cli::handler::RunResult::Handled(crate::cli::handler::RunOutput::command(sheet))
+        crate::cli::handler::DispatchResult::Handled(crate::cli::handler::RunOutput::command(sheet))
     }
 }

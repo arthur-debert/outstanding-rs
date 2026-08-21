@@ -61,7 +61,7 @@
 //! - [`Extensions`]: Type-safe container for injecting custom state
 //! - [`Output`]: What a handler produces (render data, silent, or binary)
 //! - [`HandlerResult`]: The result type for handlers (`Result<Output<T>, Error>`)
-//! - [`RunResult`]: The result of running the CLI dispatcher
+//! - [`DispatchResult`]: The result of running the CLI dispatcher
 //! - [`Handler`]: Trait for command handlers (`&mut self`)
 
 use crate::artifact::{Artifact, ArtifactRun};
@@ -542,7 +542,7 @@ impl std::error::Error for ExternalFailure {
     }
 }
 
-/// Successful text outcome carried by [`RunResult::Handled`].
+/// Successful text outcome carried by [`DispatchResult::Handled`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 #[non_exhaustive]
 pub enum SuccessKind {
@@ -835,7 +835,7 @@ impl From<RunError> for String {
 /// breaking exhaustive matchers.
 #[derive(Debug)]
 #[non_exhaustive]
-pub enum RunResult {
+pub enum DispatchResult {
     /// A handler processed the command successfully; contains the rendered output
     Handled(RunOutput),
     /// A handler produced binary output (bytes, suggested filename)
@@ -856,36 +856,36 @@ pub enum RunResult {
     NoMatch(ArgMatches),
 }
 
-impl RunResult {
+impl DispatchResult {
     /// Returns true if a handler processed the command successfully (text output).
     pub fn is_handled(&self) -> bool {
-        matches!(self, RunResult::Handled(_))
+        matches!(self, DispatchResult::Handled(_))
     }
 
     /// Returns true if the result is binary output.
     pub fn is_binary(&self) -> bool {
-        matches!(self, RunResult::Binary(_, _))
+        matches!(self, DispatchResult::Binary(_, _))
     }
 
     /// Returns true if the result is a completed artifact run.
     pub fn is_artifact(&self) -> bool {
-        matches!(self, RunResult::Artifact(_))
+        matches!(self, DispatchResult::Artifact(_))
     }
 
     /// Returns true if the result is silent.
     pub fn is_silent(&self) -> bool {
-        matches!(self, RunResult::Silent)
+        matches!(self, DispatchResult::Silent)
     }
 
     /// Returns true if the result is an error.
     pub fn is_error(&self) -> bool {
-        matches!(self, RunResult::Error(_))
+        matches!(self, DispatchResult::Error(_))
     }
 
     /// Returns the output if handled, or None otherwise.
     pub fn output(&self) -> Option<&str> {
         match self {
-            RunResult::Handled(s) => Some(s),
+            DispatchResult::Handled(s) => Some(s),
             _ => None,
         }
     }
@@ -893,7 +893,7 @@ impl RunResult {
     /// Returns the error message if this is an error, or None otherwise.
     pub fn error(&self) -> Option<&str> {
         match self {
-            RunResult::Error(s) => Some(s),
+            DispatchResult::Error(s) => Some(s),
             _ => None,
         }
     }
@@ -901,8 +901,8 @@ impl RunResult {
     /// Returns the typed success origin for captured text.
     pub fn success_kind(&self) -> Option<SuccessKind> {
         match self {
-            RunResult::Handled(output) => Some(output.kind()),
-            RunResult::Binary(_, _) | RunResult::Artifact(_) | RunResult::Silent => {
+            DispatchResult::Handled(output) => Some(output.kind()),
+            DispatchResult::Binary(_, _) | DispatchResult::Artifact(_) | DispatchResult::Silent => {
                 Some(SuccessKind::Command)
             }
             _ => None,
@@ -912,7 +912,7 @@ impl RunResult {
     /// Returns the typed error origin, if this run failed.
     pub fn error_kind(&self) -> Option<RunErrorKind> {
         match self {
-            RunResult::Error(error) => Some(error.kind()),
+            DispatchResult::Error(error) => Some(error.kind()),
             _ => None,
         }
     }
@@ -923,19 +923,19 @@ impl RunResult {
     /// framework execution and is deliberately not treated as a usage error.
     pub fn exit_status(&self) -> Option<ExitStatus> {
         match self {
-            RunResult::Handled(_)
-            | RunResult::Binary(_, _)
-            | RunResult::Artifact(_)
-            | RunResult::Silent => Some(ExitStatus::SUCCESS),
-            RunResult::Error(error) => Some(error.exit_status()),
-            RunResult::NoMatch(_) => None,
+            DispatchResult::Handled(_)
+            | DispatchResult::Binary(_, _)
+            | DispatchResult::Artifact(_)
+            | DispatchResult::Silent => Some(ExitStatus::SUCCESS),
+            DispatchResult::Error(error) => Some(error.exit_status()),
+            DispatchResult::NoMatch(_) => None,
         }
     }
 
     /// Returns the binary data and filename if binary, or None otherwise.
     pub fn binary(&self) -> Option<(&[u8], &str)> {
         match self {
-            RunResult::Binary(bytes, filename) => Some((bytes, filename)),
+            DispatchResult::Binary(bytes, filename) => Some((bytes, filename)),
             _ => None,
         }
     }
@@ -943,7 +943,7 @@ impl RunResult {
     /// Returns the completed artifact run, or None otherwise.
     pub fn artifact(&self) -> Option<&ArtifactRun> {
         match self {
-            RunResult::Artifact(run) => Some(run),
+            DispatchResult::Artifact(run) => Some(run),
             _ => None,
         }
     }
@@ -951,7 +951,7 @@ impl RunResult {
     /// Returns the matches if unhandled, or None if handled.
     pub fn matches(&self) -> Option<&ArgMatches> {
         match self {
-            RunResult::NoMatch(m) => Some(m),
+            DispatchResult::NoMatch(m) => Some(m),
             _ => None,
         }
     }
@@ -1437,7 +1437,7 @@ mod tests {
 
     #[test]
     fn test_run_result_handled() {
-        let result = RunResult::Handled("output".into());
+        let result = DispatchResult::Handled("output".into());
         assert!(result.is_handled());
         assert!(!result.is_binary());
         assert!(!result.is_silent());
@@ -1447,7 +1447,7 @@ mod tests {
 
     #[test]
     fn test_run_result_silent() {
-        let result = RunResult::Silent;
+        let result = DispatchResult::Silent;
         assert!(!result.is_handled());
         assert!(!result.is_binary());
         assert!(result.is_silent());
@@ -1456,7 +1456,7 @@ mod tests {
     #[test]
     fn test_run_result_binary() {
         let bytes = vec![0x25, 0x50, 0x44, 0x46];
-        let result = RunResult::Binary(bytes.clone(), "report.pdf".into());
+        let result = DispatchResult::Binary(bytes.clone(), "report.pdf".into());
         assert!(!result.is_handled());
         assert!(result.is_binary());
         assert!(!result.is_silent());
@@ -1469,7 +1469,7 @@ mod tests {
     #[test]
     fn test_run_result_no_match() {
         let matches = clap::Command::new("test").get_matches_from(vec!["test"]);
-        let result = RunResult::NoMatch(matches);
+        let result = DispatchResult::NoMatch(matches);
         assert!(!result.is_handled());
         assert!(!result.is_binary());
         assert!(result.matches().is_some());
