@@ -1,183 +1,209 @@
-//! Load named templates and their include/import/extends tree into an engine.
+//! Load a template registry into an engine, once per registry generation.
 //!
 //! [`RenderRequest::registry`](crate::RenderRequest::registry) is the explicit
 //! dependency for named templates and includes. Direct [`crate::render_request`]
-//! callers must not have to pre-populate the engine: this module recursively
-//! loads the named template and its static dependencies, and refreshes the
-//! registry when a dependency is dynamic.
+//! callers must not have to pre-populate the engine: this module copies every
+//! registered template into the engine, and refreshes the registry when a
+//! named template is missing so a file that appeared on disk is picked up.
+//!
+//! The copy is cached on (engine identity, registry id, generation) when
+//! the registry has no file sources. File-backed registries reread on every
+//! render (ADR-0019). This is not MiniJinja's `Environment::set_loader`:
+//! that callback is `Send + Sync + 'static`, and the engine is deliberately
+//! `!Send`/`!Sync`.
 
-use std::collections::HashSet;
+use std::cell::Cell;
 
 use super::engine::TemplateEngine;
-use super::registry::{RegistryError, ResolvedTemplate, TemplateRegistry};
+use super::registry::{RegistryError, ResolvedTemplate, TemplateRegistry, TEMPLATE_EXTENSIONS};
 use crate::error::RenderError;
 
-/// Loads `name` and its static include/import/extends dependencies into `engine`.
+/// Identity of the last registry generation loaded into an engine on this thread.
 ///
-/// If the named template (or a static dependency) is missing, the registry is
-/// refreshed once and the load is retried, so a file-backed template that
-/// appeared on disk is picked up. A dynamic include/import/extends expression
-/// refreshes the registry and loads every registered template, because the
-/// referenced name is not known until render.
-pub fn load_named_template(
-    engine: &mut dyn TemplateEngine,
-    registry: &TemplateRegistry,
-    name: &str,
-) -> Result<(), RenderError> {
-    load_with_missing_refresh(engine, registry, |engine, registry, allow_optional_skip| {
-        let mut seen = HashSet::new();
-        load_tree(engine, registry, name, &mut seen, true, allow_optional_skip)
-    })
+/// Engine addresses are compared, never dereferenced. Registry identity is
+/// [`TemplateRegistry::id`], so a new registry is never a hit just because
+/// it reused a heap address. [`TemplateRegistry::generation`] is a globally
+/// unique revision, so sibling clones that diverge cannot share a key. A
+/// generation change or a different engine is a miss. One slot is
+/// deliberate: a shared engine overwrites same-named templates, so returning
+/// to a previous registry must reload. Pointer reuse of a dropped engine is
+/// rejected by checking that a registered name is already on the engine.
+#[derive(Clone, Copy, PartialEq, Eq)]
+struct LoadCacheKey {
+    engine: usize,
+    registry_id: u64,
+    generation: u64,
 }
 
-/// Loads static include/import/extends dependencies of inline source.
-///
-/// Same refresh rules as [`load_named_template`]: a missing static dependency
-/// refreshes the registry once; a dynamic expression loads every registered
-/// template.
-pub(crate) fn load_inline_dependencies(
-    engine: &mut dyn TemplateEngine,
-    registry: &TemplateRegistry,
-    source: &str,
-) -> Result<(), RenderError> {
-    load_with_missing_refresh(engine, registry, |engine, registry, allow_optional_skip| {
-        let mut seen = HashSet::new();
-        load_source_tree(engine, registry, source, &mut seen, allow_optional_skip)
-    })
+thread_local! {
+    static LAST_LOADED: Cell<Option<LoadCacheKey>> = const { Cell::new(None) };
 }
 
-fn load_with_missing_refresh(
-    engine: &mut dyn TemplateEngine,
-    registry: &TemplateRegistry,
-    attempt: impl Fn(&mut dyn TemplateEngine, &TemplateRegistry, bool) -> Result<(), RenderError>,
-) -> Result<(), RenderError> {
-    match attempt(engine, registry, false) {
-        Err(error) if is_not_found(&error) => {
-            let mut refreshed = registry.clone();
-            refreshed.refresh().map_err(registry_error)?;
-            match attempt(engine, &refreshed, true) {
-                Err(RenderError::TemplateNotFound(name)) => Err(refresh_error(
-                    &name,
-                    &refreshed,
-                    format!("Template not found: \"{name}\""),
-                )),
-                other => other,
-            }
-        }
-        other => other,
+fn engine_addr(engine: &dyn TemplateEngine) -> usize {
+    engine as *const dyn TemplateEngine as *const () as usize
+}
+
+fn cache_key(engine: &dyn TemplateEngine, registry: &TemplateRegistry) -> LoadCacheKey {
+    LoadCacheKey {
+        engine: engine_addr(engine),
+        registry_id: registry.id(),
+        generation: registry.generation(),
     }
 }
 
-fn load_tree(
+fn already_loaded(engine: &dyn TemplateEngine, registry: &TemplateRegistry) -> bool {
+    // File-backed entries reread on every render (ADR-0019). The cache is
+    // for inline/embedded registries, where a second add is wasted work.
+    if registry.has_file_sources() {
+        return false;
+    }
+    let key = cache_key(engine, registry);
+    if LAST_LOADED.with(|cell| cell.get()) != Some(key) {
+        return false;
+    }
+    match registry.names().next() {
+        Some(name) => engine.has_template(name),
+        None => true,
+    }
+}
+
+fn remember_loaded(engine: &dyn TemplateEngine, registry: &TemplateRegistry) {
+    LAST_LOADED.with(|cell| cell.set(Some(cache_key(engine, registry))));
+}
+
+/// Loads every template in `registry` into `engine`.
+///
+/// Cached for inline/embedded registries: a second call with the same engine,
+/// [`TemplateRegistry::id`], and [`TemplateRegistry::generation`] does not
+/// call [`TemplateEngine::add_template`]. File-backed registries always
+/// re-walk and reread so includes pick up disk changes (ADR-0019). A missing
+/// named lookup still refreshes once (see [`load_named_template`]).
+pub(crate) fn load_registry_templates(
     engine: &mut dyn TemplateEngine,
     registry: &TemplateRegistry,
-    name: &str,
-    seen: &mut HashSet<String>,
-    required: bool,
-    allow_optional_skip: bool,
 ) -> Result<(), RenderError> {
-    if seen.contains(name) {
+    if already_loaded(engine, registry) {
         return Ok(());
     }
-
-    let content = match registry.get_content(name) {
-        Ok(content) => content,
-        Err(RegistryError::NotFound { name }) => {
-            if required || !allow_optional_skip {
-                return Err(RenderError::TemplateNotFound(name));
-            }
-            return Ok(());
-        }
-        Err(error) => return Err(refresh_error(name, registry, error)),
-    };
-    seen.insert(name.to_string());
-    engine
-        .add_template(name, &content)
-        .map_err(|error| refresh_error(name, registry, error))?;
-    load_source_tree(engine, registry, &content, seen, allow_optional_skip)
-}
-
-fn load_source_tree(
-    engine: &mut dyn TemplateEngine,
-    registry: &TemplateRegistry,
-    source: &str,
-    seen: &mut HashSet<String>,
-    allow_optional_skip: bool,
-) -> Result<(), RenderError> {
-    let dependencies = template_dependencies(source);
-    if dependencies.dynamic {
-        let mut refreshed = registry.clone();
-        refreshed.refresh().map_err(registry_error)?;
-        return load_all(engine, &refreshed);
-    }
-
-    for dependency in dependencies.dependencies {
-        match dependency {
-            Dependency::Required(name) => {
-                load_tree(engine, registry, &name, seen, true, allow_optional_skip)?;
-            }
-            Dependency::Optional(name) => {
-                load_tree(engine, registry, &name, seen, false, allow_optional_skip)?;
-            }
-            Dependency::Alternatives { names, optional } => {
-                load_first_alternative(
-                    engine,
-                    registry,
-                    &names,
-                    optional,
-                    seen,
-                    allow_optional_skip,
-                )?;
-            }
+    let mut original_names: Vec<String> = registry.names().map(str::to_string).collect();
+    original_names.sort_by_key(|name| is_extension_alias(name));
+    let mut working = registry.clone();
+    working.refresh().map_err(registry_error)?;
+    load_all(engine, &working)?;
+    for name in &original_names {
+        if let Some(error) = disappeared_file_error(name, registry, &working) {
+            return Err(error);
         }
     }
-
+    remember_loaded(engine, registry);
     Ok(())
 }
 
-/// Loads the first include-list candidate that exists, then stops.
+/// Loads `name` and every other registered template into `engine`.
 ///
-/// Before the registry has been refreshed, a missing candidate is treated as
-/// not-found so newly added files can appear. After that refresh, a required
-/// list with no candidates errors; an `ignore missing` list succeeds.
-fn load_first_alternative(
+/// [`load_registry_templates`] copies the current registry into the engine
+/// (and errors if a registered file disappeared or became unreadable). This
+/// function then requires the *current* registry to resolve `name`; engine
+/// membership alone is not enough, because a shared engine can still hold a
+/// template from a previous registry. A name that resolves only via extension
+/// fallback is added under the requested name so `render_named` hits. If
+/// `name` is missing, the registry is refreshed once and the load is retried,
+/// so a file-backed template that appeared on disk is picked up. A second
+/// miss produces the [`refresh_error`] diagnostic.
+pub(crate) fn load_named_template(
     engine: &mut dyn TemplateEngine,
     registry: &TemplateRegistry,
-    names: &[String],
-    optional: bool,
-    seen: &mut HashSet<String>,
-    allow_optional_skip: bool,
+    name: &str,
 ) -> Result<(), RenderError> {
-    for name in names {
-        if seen.contains(name) {
-            return Ok(());
-        }
-        let content = match registry.get_content(name) {
-            Ok(content) => content,
-            Err(RegistryError::NotFound { name }) => {
-                if !allow_optional_skip {
-                    return Err(RenderError::TemplateNotFound(name));
-                }
-                continue;
-            }
-            Err(error) => return Err(refresh_error(name, registry, error)),
-        };
-        seen.insert(name.clone());
-        engine
-            .add_template(name, &content)
-            .map_err(|error| refresh_error(name, registry, error))?;
-        return load_source_tree(engine, registry, &content, seen, allow_optional_skip);
+    load_registry_templates(engine, registry)?;
+    if let Some(result) = ensure_requested_name(engine, registry, name) {
+        return result;
     }
 
-    if optional {
-        Ok(())
-    } else {
-        Err(RenderError::TemplateNotFound(
-            names
-                .first()
-                .cloned()
-                .unwrap_or_else(|| "include-list".into()),
-        ))
+    let mut refreshed = registry.clone();
+    refreshed.refresh().map_err(registry_error)?;
+    load_all(engine, &refreshed)?;
+    remember_loaded(engine, registry);
+    if let Some(result) = ensure_requested_name(engine, &refreshed, name) {
+        return result;
+    }
+    Err(refresh_error(
+        name,
+        &refreshed,
+        format!("Template not found: \"{name}\""),
+    ))
+}
+
+/// Loads every registered template so inline source can `{% include %}`.
+///
+/// Same cache as [`load_registry_templates`]: the first render against a
+/// registry walks and copies; later renders against the same generation do
+/// not.
+pub(crate) fn load_inline_dependencies(
+    engine: &mut dyn TemplateEngine,
+    registry: &TemplateRegistry,
+) -> Result<(), RenderError> {
+    load_registry_templates(engine, registry)
+}
+
+fn is_extension_alias(name: &str) -> bool {
+    TEMPLATE_EXTENSIONS.iter().any(|ext| name.ends_with(ext))
+}
+
+/// If `registry` resolves `name`, ensure the engine has that exact name.
+///
+/// Exact registered names were copied by [`load_all`]. Extension fallback
+/// (`show.j2` → `show`) copies the resolved content under the requested name
+/// so `render_named` hits, and overwrites a leftover from a previous registry.
+/// Engine membership alone is never treated as proof that this registry
+/// supplied `name`.
+fn ensure_requested_name(
+    engine: &mut dyn TemplateEngine,
+    registry: &TemplateRegistry,
+    name: &str,
+) -> Option<Result<(), RenderError>> {
+    match registry.get(name) {
+        Err(RegistryError::NotFound { .. }) => None,
+        Err(error) => Some(Err(refresh_error(name, registry, error))),
+        Ok(_) => {
+            if registry.names().any(|registered| registered == name) {
+                return Some(Ok(()));
+            }
+            Some(match registry.get_content(name) {
+                Ok(content) => add_named(engine, registry, name, &content),
+                Err(error) => Err(refresh_error(name, registry, error)),
+            })
+        }
+    }
+}
+
+fn add_named(
+    engine: &mut dyn TemplateEngine,
+    registry: &TemplateRegistry,
+    name: &str,
+    content: &str,
+) -> Result<(), RenderError> {
+    engine
+        .add_template(name, content)
+        .map_err(|error| refresh_error(name, registry, error))
+}
+
+/// A file-backed name that refresh dropped must error (ADR-0019), even when a
+/// framework or inline entry of the same name would still resolve.
+fn disappeared_file_error(
+    name: &str,
+    original: &TemplateRegistry,
+    working: &TemplateRegistry,
+) -> Option<RenderError> {
+    match original.get(name) {
+        Ok(ResolvedTemplate::File(_)) => match working.get(name) {
+            Ok(ResolvedTemplate::File(_)) => None,
+            _ => Some(match original.get_content(name) {
+                Err(error) => refresh_error(name, original, error),
+                Ok(_) => refresh_error(name, original, format!("Template not found: \"{name}\"")),
+            }),
+        },
+        _ => None,
     }
 }
 
@@ -185,7 +211,11 @@ fn load_all(
     engine: &mut dyn TemplateEngine,
     registry: &TemplateRegistry,
 ) -> Result<(), RenderError> {
-    for name in registry.names() {
+    // Extensionless names first so a compile error names the include key
+    // (`_partial`) rather than the file alias (`_partial.jinja`).
+    let mut names: Vec<String> = registry.names().map(str::to_string).collect();
+    names.sort_by_key(|name| is_extension_alias(name));
+    for name in &names {
         let content = match registry.get_content(name) {
             Ok(content) => content,
             Err(RegistryError::NotFound { name }) => {
@@ -221,459 +251,10 @@ fn refresh_error(
     ))
 }
 
-fn is_not_found(error: &RenderError) -> bool {
-    matches!(error, RenderError::TemplateNotFound(_))
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-enum Dependency {
-    /// `{% extends %}`, `{% import %}`, `{% from %}`, or a bare `{% include %}`.
-    Required(String),
-    /// `{% include 'name' ignore missing %}`.
-    Optional(String),
-    /// `{% include ['first', 'second'] %}`: first existing candidate wins.
-    Alternatives { names: Vec<String>, optional: bool },
-}
-
-#[derive(Default)]
-struct TemplateDependencies {
-    dependencies: Vec<Dependency>,
-    dynamic: bool,
-}
-
-fn template_dependencies(source: &str) -> TemplateDependencies {
-    let mut dependencies = TemplateDependencies::default();
-    let mut cursor = 0;
-
-    while let Some(open) = find_next_template_syntax(source, cursor) {
-        if source[open..].starts_with("{#") {
-            let Some(close) = source[open + 2..].find("#}") else {
-                break;
-            };
-            cursor = open + 2 + close + 2;
-            continue;
-        }
-
-        if source[open..].starts_with("{{") {
-            let after_start = open + 2;
-            let Some(close) = find_closing_delimiter(source, after_start, b"}}") else {
-                break;
-            };
-            cursor = close + 2;
-            continue;
-        }
-
-        let Some((tag, close)) = read_tag(source, open) else {
-            break;
-        };
-        let (keyword, body) = split_tag(&tag);
-        if keyword == "raw" {
-            cursor = find_endraw(source, close).unwrap_or(source.len());
-            continue;
-        }
-
-        let expression = match keyword {
-            "include" | "extends" | "import" => Some(body),
-            "from" => body
-                .split_once(" import ")
-                .map(|(template, _imports)| template.trim()),
-            _ => None,
-        };
-
-        if matches!(keyword, "include" | "extends" | "import" | "from") {
-            match expression.and_then(|expression| static_dependency(keyword, expression)) {
-                Some(dependency) => dependencies.dependencies.push(dependency),
-                None => dependencies.dynamic = true,
-            }
-        }
-        cursor = close;
-    }
-
-    dependencies
-}
-
-fn find_next_template_syntax(source: &str, cursor: usize) -> Option<usize> {
-    let rest = &source[cursor..];
-    ["{%", "{{", "{#"]
-        .into_iter()
-        .filter_map(|marker| rest.find(marker).map(|index| cursor + index))
-        .min()
-}
-
-fn read_tag(source: &str, open: usize) -> Option<(String, usize)> {
-    if !source[open..].starts_with("{%") {
-        return None;
-    }
-    let after_start = open + 2;
-    let tag_end = find_closing_delimiter(source, after_start, b"%}")?;
-    let close = tag_end + 2;
-    Some((normalize_tag(&source[after_start..tag_end]), close))
-}
-
-fn find_closing_delimiter(source: &str, start: usize, delimiter: &[u8]) -> Option<usize> {
-    let bytes = source.as_bytes();
-    let mut cursor = start;
-    let mut quote = None;
-    let mut escaped = false;
-
-    while cursor < bytes.len() {
-        let byte = bytes[cursor];
-        if let Some(active_quote) = quote {
-            if escaped {
-                escaped = false;
-            } else if byte == b'\\' {
-                escaped = true;
-            } else if byte == active_quote {
-                quote = None;
-            }
-            cursor += 1;
-            continue;
-        }
-
-        if matches!(byte, b'\'' | b'"') {
-            quote = Some(byte);
-            cursor += 1;
-            continue;
-        }
-
-        if bytes[cursor..].starts_with(delimiter) {
-            return Some(cursor);
-        }
-        cursor += 1;
-    }
-
-    None
-}
-
-fn normalize_tag(tag: &str) -> String {
-    let tag = tag.trim();
-    let tag = tag
-        .strip_prefix('-')
-        .or_else(|| tag.strip_prefix('+'))
-        .unwrap_or(tag)
-        .trim_start();
-    let tag = tag
-        .strip_suffix('-')
-        .or_else(|| tag.strip_suffix('+'))
-        .unwrap_or(tag)
-        .trim_end();
-    tag.to_string()
-}
-
-fn split_tag(tag: &str) -> (&str, &str) {
-    let mut words = tag.splitn(2, char::is_whitespace);
-    let keyword = words.next().unwrap_or_default();
-    let body = words.next().unwrap_or_default().trim();
-    (keyword, body)
-}
-
-fn find_endraw(source: &str, cursor: usize) -> Option<usize> {
-    let mut cursor = cursor;
-    while let Some(open) = source[cursor..].find("{%").map(|index| cursor + index) {
-        match read_tag(source, open) {
-            Some((tag, close)) => {
-                if split_tag(&tag).0 == "endraw" {
-                    return Some(close);
-                }
-                cursor = close;
-            }
-            None => {
-                // Inside `{% raw %}`, unclosed `{%` is literal content.
-                cursor = open + 2;
-            }
-        }
-    }
-    None
-}
-
-fn static_dependency(keyword: &str, expression: &str) -> Option<Dependency> {
-    let expression = expression.trim();
-    if keyword == "include" && expression.starts_with('[') {
-        let list_end = expression.find(']')?;
-        let mut names = Vec::new();
-        for item in expression[1..list_end].split(',') {
-            let (name, remainder) = quoted_string(item.trim())?;
-            if !remainder.trim().is_empty() {
-                return None;
-            }
-            names.push(name);
-        }
-        let suffix = &expression[list_end + 1..];
-        return (!names.is_empty() && is_static_dependency_suffix(keyword, suffix)).then_some(
-            Dependency::Alternatives {
-                names,
-                optional: include_ignores_missing(suffix),
-            },
-        );
-    }
-
-    let (name, remainder) = quoted_string(expression)?;
-    if !is_static_dependency_suffix(keyword, remainder) {
-        return None;
-    }
-    if keyword == "include" && include_ignores_missing(remainder) {
-        Some(Dependency::Optional(name))
-    } else {
-        Some(Dependency::Required(name))
-    }
-}
-
-fn include_ignores_missing(suffix: &str) -> bool {
-    suffix
-        .split_whitespace()
-        .collect::<Vec<_>>()
-        .windows(2)
-        .any(|pair| pair == ["ignore", "missing"])
-}
-
-fn is_static_dependency_suffix(keyword: &str, suffix: &str) -> bool {
-    let suffix = suffix.trim();
-    match keyword {
-        "extends" | "from" => suffix.is_empty(),
-        "import" => suffix.starts_with("as "),
-        "include" => suffix
-            .split_whitespace()
-            .all(|word| matches!(word, "ignore" | "missing" | "with" | "without" | "context")),
-        _ => false,
-    }
-}
-
-fn quoted_string(input: &str) -> Option<(String, &str)> {
-    let mut chars = input.char_indices();
-    let (_, quote) = chars.next()?;
-    if quote != '\'' && quote != '"' {
-        return None;
-    }
-
-    for (index, ch) in chars {
-        if ch == '\\' {
-            return None;
-        }
-        if ch == quote {
-            return Some((
-                input[quote.len_utf8()..index].to_string(),
-                &input[index + ch.len_utf8()..],
-            ));
-        }
-    }
-
-    None
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::template::MiniJinjaEngine;
-
-    fn flattened_names(dependencies: &TemplateDependencies) -> Vec<&str> {
-        dependencies
-            .dependencies
-            .iter()
-            .flat_map(|dependency| match dependency {
-                Dependency::Required(name) | Dependency::Optional(name) => {
-                    vec![name.as_str()]
-                }
-                Dependency::Alternatives { names, .. } => {
-                    names.iter().map(String::as_str).collect()
-                }
-            })
-            .collect()
-    }
-
-    #[test]
-    fn template_dependencies_support_whitespace_controls() {
-        let dependencies = template_dependencies(
-            "{%+ extends 'base' +%}{%- include 'partial' -%}{%+ import 'macros' as macros -%}{%- from 'forms' import field +%}",
-        );
-
-        assert_eq!(
-            flattened_names(&dependencies),
-            ["base", "partial", "macros", "forms"]
-        );
-        assert!(!dependencies.dynamic);
-    }
-
-    #[test]
-    fn escaped_template_dependency_uses_full_registry_refresh() {
-        let dependencies = template_dependencies(r#"{% include "a\\b" %}"#);
-
-        assert!(dependencies.dependencies.is_empty());
-        assert!(dependencies.dynamic);
-    }
-
-    #[test]
-    fn template_dependencies_ignore_delimiters_inside_quoted_strings() {
-        let dependencies = template_dependencies(concat!(
-            r#"{{ "}} {% include 'variable-double' %}" }}"#,
-            r#"{{ '}} {% import "variable-single" as dep %}' }}"#,
-            r#"{% set marker = "%} {% from 'statement-double' import dep %}" %}"#,
-            r#"{% set marker = '%} {% include "statement-single" %}' %}"#,
-            r#"{{ "escaped quote: \" }} {% include 'escaped' %}" }}"#,
-            r#"{% include 'actual' %}"#,
-        ));
-
-        assert_eq!(flattened_names(&dependencies), ["actual"]);
-        assert!(!dependencies.dynamic);
-    }
-
-    #[test]
-    fn ignore_missing_include_is_optional() {
-        let dependencies = template_dependencies("{% include 'optional' ignore missing %}");
-        assert_eq!(
-            dependencies.dependencies,
-            [Dependency::Optional("optional".into())]
-        );
-        assert!(!dependencies.dynamic);
-    }
-
-    #[test]
-    fn include_list_is_ordered_alternatives() {
-        let dependencies = template_dependencies("{% include ['override', 'default'] %}");
-        assert_eq!(
-            dependencies.dependencies,
-            [Dependency::Alternatives {
-                names: vec!["override".into(), "default".into()],
-                optional: false,
-            }]
-        );
-        assert!(!dependencies.dynamic);
-    }
-
-    #[test]
-    fn include_list_ignore_missing_is_optional() {
-        let dependencies =
-            template_dependencies("{% include ['override', 'default'] ignore missing %}");
-        assert_eq!(
-            dependencies.dependencies,
-            [Dependency::Alternatives {
-                names: vec!["override".into(), "default".into()],
-                optional: true,
-            }]
-        );
-        assert!(!dependencies.dynamic);
-    }
-
-    #[test]
-    fn raw_block_with_unclosed_tag_still_finds_later_includes() {
-        // An unclosed quoted `{%` inside raw swallows `%}` until the quote
-        // ends; `read_tag` returns None and must not abort the endraw scan.
-        let dependencies = template_dependencies(concat!(
-            r#"{% raw %}{% "unclosed {% endraw %}"#,
-            "{% include 'actual' %}",
-        ));
-        assert_eq!(flattened_names(&dependencies), ["actual"]);
-        assert!(!dependencies.dynamic);
-    }
-
-    #[test]
-    fn load_named_template_adds_static_includes_to_the_engine() {
-        let mut registry = TemplateRegistry::new();
-        registry.add_inline("list", "{% include 'partial' %}!");
-        registry.add_inline("partial", "hi");
-        let mut engine: Box<dyn TemplateEngine> = Box::new(MiniJinjaEngine::new());
-
-        load_named_template(&mut *engine, &registry, "list").unwrap();
-
-        assert!(engine.has_template("list"));
-        assert!(engine.has_template("partial"));
-        assert_eq!(
-            engine.render_named("list", &serde_json::json!({})).unwrap(),
-            "hi!"
-        );
-    }
-
-    #[test]
-    fn load_named_template_loads_all_templates_for_a_dynamic_include() {
-        let mut registry = TemplateRegistry::new();
-        registry.add_inline("list", "{% include extra %}");
-        registry.add_inline("hello", "Ada");
-        let mut engine: Box<dyn TemplateEngine> = Box::new(MiniJinjaEngine::new());
-
-        load_named_template(&mut *engine, &registry, "list").unwrap();
-
-        assert!(engine.has_template("hello"));
-        assert_eq!(
-            engine
-                .render_named("list", &serde_json::json!({"extra": "hello"}))
-                .unwrap(),
-            "Ada"
-        );
-    }
-
-    #[test]
-    fn load_named_template_skips_absent_ignore_missing_include() {
-        let mut registry = TemplateRegistry::new();
-        registry.add_inline("list", "{% include 'optional' ignore missing %}ok");
-        let mut engine: Box<dyn TemplateEngine> = Box::new(MiniJinjaEngine::new());
-
-        load_named_template(&mut *engine, &registry, "list").unwrap();
-        assert_eq!(
-            engine.render_named("list", &serde_json::json!({})).unwrap(),
-            "ok"
-        );
-    }
-
-    #[test]
-    fn load_named_template_loads_present_fallback_from_include_list() {
-        let mut registry = TemplateRegistry::new();
-        registry.add_inline("list", "{% include ['override', 'default'] %}");
-        registry.add_inline("default", "fallback");
-        let mut engine: Box<dyn TemplateEngine> = Box::new(MiniJinjaEngine::new());
-
-        load_named_template(&mut *engine, &registry, "list").unwrap();
-        assert!(!engine.has_template("override"));
-        assert!(engine.has_template("default"));
-        assert_eq!(
-            engine.render_named("list", &serde_json::json!({})).unwrap(),
-            "fallback"
-        );
-    }
-
-    #[test]
-    fn load_named_template_stops_at_the_first_existing_include_list_candidate() {
-        let mut registry = TemplateRegistry::new();
-        registry.add_inline("list", "{% include ['override', 'default'] %}");
-        registry.add_inline("override", "good");
-        registry.add_inline("default", "{% if");
-        let mut engine: Box<dyn TemplateEngine> = Box::new(MiniJinjaEngine::new());
-
-        load_named_template(&mut *engine, &registry, "list").unwrap();
-        assert!(engine.has_template("override"));
-        assert!(!engine.has_template("default"));
-        assert_eq!(
-            engine.render_named("list", &serde_json::json!({})).unwrap(),
-            "good"
-        );
-    }
-
-    #[test]
-    fn required_include_list_errors_when_no_candidate_exists() {
-        let mut registry = TemplateRegistry::new();
-        registry.add_inline("list", "{% include ['missing-a', 'missing-b'] %}");
-        let mut engine: Box<dyn TemplateEngine> = Box::new(MiniJinjaEngine::new());
-
-        let error = load_named_template(&mut *engine, &registry, "list").unwrap_err();
-        assert!(
-            matches!(error, RenderError::OperationError(ref message) if message.contains("missing-a")),
-            "{error:?}"
-        );
-    }
-
-    #[test]
-    fn optional_include_list_succeeds_when_no_candidate_exists() {
-        let mut registry = TemplateRegistry::new();
-        registry.add_inline(
-            "list",
-            "{% include ['missing-a', 'missing-b'] ignore missing %}ok",
-        );
-        let mut engine: Box<dyn TemplateEngine> = Box::new(MiniJinjaEngine::new());
-
-        load_named_template(&mut *engine, &registry, "list").unwrap();
-        assert_eq!(
-            engine.render_named("list", &serde_json::json!({})).unwrap(),
-            "ok"
-        );
-    }
 
     #[test]
     fn file_backed_optional_include_is_discovered_after_the_initial_scan() {
@@ -714,6 +295,185 @@ mod tests {
             engine.render_named("list", &serde_json::json!({})).unwrap(),
             "chosen"
         );
-        assert!(!engine.has_template("default"));
+    }
+
+    #[test]
+    fn missing_named_template_refreshes_once_then_errors() {
+        let mut registry = TemplateRegistry::new();
+        registry.add_inline("list", "ok");
+        let mut engine: Box<dyn TemplateEngine> = Box::new(MiniJinjaEngine::new());
+
+        let error = load_named_template(&mut *engine, &registry, "missing").unwrap_err();
+        let message = error.to_string();
+        assert!(
+            message.contains("could not be refreshed") && message.contains("missing"),
+            "{message}"
+        );
+    }
+
+    #[test]
+    fn shared_engine_does_not_accept_a_stale_template_from_another_registry() {
+        let mut engine: Box<dyn TemplateEngine> = Box::new(MiniJinjaEngine::new());
+        let mut first = TemplateRegistry::new();
+        first.add_inline("shared", "from-a");
+        first.add_inline("foo", "stale");
+        load_named_template(&mut *engine, &first, "foo").unwrap();
+
+        let mut second = TemplateRegistry::new();
+        second.add_inline("shared", "from-b");
+        let error = load_named_template(&mut *engine, &second, "foo").unwrap_err();
+        let message = error.to_string();
+        assert!(
+            message.contains("foo")
+                && (message.contains("not found") || message.contains("could not be refreshed")),
+            "{message}"
+        );
+
+        load_named_template(&mut *engine, &second, "shared").unwrap();
+        assert_eq!(
+            engine
+                .render_named("shared", &serde_json::json!({}))
+                .unwrap(),
+            "from-b"
+        );
+    }
+
+    #[test]
+    fn extension_fallback_adds_the_requested_name_and_overwrites_a_stale_engine_entry() {
+        let mut engine: Box<dyn TemplateEngine> = Box::new(MiniJinjaEngine::new());
+        let mut first = TemplateRegistry::new();
+        first.add_inline("show.j2", "stale");
+        load_named_template(&mut *engine, &first, "show.j2").unwrap();
+        assert_eq!(
+            engine
+                .render_named("show.j2", &serde_json::json!({}))
+                .unwrap(),
+            "stale"
+        );
+
+        let mut second = TemplateRegistry::new();
+        second.add_inline("show", "fresh");
+        load_named_template(&mut *engine, &second, "show.j2").unwrap();
+        assert_eq!(
+            engine
+                .render_named("show.j2", &serde_json::json!({}))
+                .unwrap(),
+            "fresh"
+        );
+    }
+
+    #[test]
+    fn replacing_inline_template_reloads_on_a_shared_engine() {
+        let mut engine: Box<dyn TemplateEngine> = Box::new(MiniJinjaEngine::new());
+        let mut registry = TemplateRegistry::new();
+        registry.add_inline("list", "one");
+        load_named_template(&mut *engine, &registry, "list").unwrap();
+        assert_eq!(
+            engine.render_named("list", &serde_json::json!({})).unwrap(),
+            "one"
+        );
+
+        registry.add_inline("list", "two");
+        load_named_template(&mut *engine, &registry, "list").unwrap();
+        assert_eq!(
+            engine.render_named("list", &serde_json::json!({})).unwrap(),
+            "two"
+        );
+    }
+
+    #[test]
+    fn sibling_clones_with_different_content_reload_on_a_shared_engine() {
+        let parent = TemplateRegistry::new();
+        let mut first = parent.clone();
+        let mut second = parent.clone();
+        first.add_inline("x", "from-a");
+        second.add_inline("x", "from-b");
+        let mut engine: Box<dyn TemplateEngine> = Box::new(MiniJinjaEngine::new());
+
+        load_named_template(&mut *engine, &first, "x").unwrap();
+        assert_eq!(
+            engine.render_named("x", &serde_json::json!({})).unwrap(),
+            "from-a"
+        );
+        load_named_template(&mut *engine, &second, "x").unwrap();
+        assert_eq!(
+            engine.render_named("x", &serde_json::json!({})).unwrap(),
+            "from-b"
+        );
+    }
+
+    #[test]
+    fn adding_then_removing_inline_and_framework_templates_reloads_on_a_shared_engine() {
+        let mut engine: Box<dyn TemplateEngine> = Box::new(MiniJinjaEngine::new());
+        let mut registry = TemplateRegistry::new();
+        registry.add_inline("list", "{% include 'partial' %}");
+        registry.add_inline("partial", "old");
+        load_named_template(&mut *engine, &registry, "list").unwrap();
+        assert_eq!(
+            engine.render_named("list", &serde_json::json!({})).unwrap(),
+            "old"
+        );
+
+        registry.add_inline("partial", "new");
+        load_named_template(&mut *engine, &registry, "list").unwrap();
+        assert_eq!(
+            engine.render_named("list", &serde_json::json!({})).unwrap(),
+            "new"
+        );
+
+        registry.add_framework("standout/x", "fw-one");
+        load_named_template(&mut *engine, &registry, "standout/x").unwrap();
+        assert_eq!(
+            engine
+                .render_named("standout/x", &serde_json::json!({}))
+                .unwrap(),
+            "fw-one"
+        );
+
+        registry.add_framework("standout/x", "fw-two");
+        load_named_template(&mut *engine, &registry, "standout/x").unwrap();
+        assert_eq!(
+            engine
+                .render_named("standout/x", &serde_json::json!({}))
+                .unwrap(),
+            "fw-two"
+        );
+
+        registry.clear_framework();
+        let error = load_named_template(&mut *engine, &registry, "standout/x").unwrap_err();
+        assert!(error.to_string().contains("standout/x"), "{}", error);
+
+        registry.clear();
+        let error = load_named_template(&mut *engine, &registry, "list").unwrap_err();
+        assert!(error.to_string().contains("list"), "{error}");
+    }
+
+    #[test]
+    fn disappeared_file_is_not_replaced_by_a_framework_template_of_the_same_name() {
+        let dir = tempfile::tempdir().unwrap();
+        let nested = dir.path().join("standout");
+        std::fs::create_dir(&nested).unwrap();
+        std::fs::write(nested.join("help.jinja"), "from-disk").unwrap();
+        let mut registry = TemplateRegistry::new();
+        registry.add_template_dir(dir.path()).unwrap();
+        registry.refresh().unwrap();
+        registry.add_framework("standout/help", "from-framework");
+        let mut engine: Box<dyn TemplateEngine> = Box::new(MiniJinjaEngine::new());
+
+        load_named_template(&mut *engine, &registry, "standout/help").unwrap();
+        assert_eq!(
+            engine
+                .render_named("standout/help", &serde_json::json!({}))
+                .unwrap(),
+            "from-disk"
+        );
+
+        std::fs::remove_file(nested.join("help.jinja")).unwrap();
+        let error = load_named_template(&mut *engine, &registry, "standout/help").unwrap_err();
+        let message = error.to_string();
+        assert!(
+            message.contains("standout/help") && message.contains("could not be refreshed"),
+            "{message}"
+        );
     }
 }

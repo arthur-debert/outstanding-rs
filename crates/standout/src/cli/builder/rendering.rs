@@ -58,20 +58,17 @@ impl App {
             ))
         })?;
 
-        {
-            let mut engine = self.template_engine.borrow_mut();
-            refresh_named_template(&mut **engine, registry, template).map_err(|error| {
-                if matches!(registry.get(template), Err(RegistryError::NotFound { .. })) {
-                    SetupError::Template(format!(
-                        "render({template:?}, ...) could not find the named template; add it with .templates(embed_templates!(\"src/templates\")) or .templates_dir(\"path/to/templates\"): {error}"
-                    ))
-                } else {
-                    SetupError::Template(format!(
-                        "render({template:?}, ...) could not refresh the registered template: {error}"
-                    ))
-                }
-            })?;
-        }
+        refresh_named_template(registry, template).map_err(|error| {
+            if matches!(registry.get(template), Err(RegistryError::NotFound { .. })) {
+                SetupError::Template(format!(
+                    "render({template:?}, ...) could not find the named template; add it with .templates(embed_templates!(\"src/templates\")) or .templates_dir(\"path/to/templates\"): {error}"
+                ))
+            } else {
+                SetupError::Template(format!(
+                    "render({template:?}, ...) could not refresh the registered template: {error}"
+                ))
+            }
+        })?;
 
         self.render_named_or_inline(
             TemplateRef::Named(template.to_string()),

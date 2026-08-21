@@ -144,14 +144,6 @@ impl TemplateRefreshError {
             message: message.into(),
         }
     }
-
-    fn from_load(error: standout_render::RenderError) -> Self {
-        Self {
-            name: String::new(),
-            location: String::new(),
-            message: error.to_string(),
-        }
-    }
 }
 
 impl std::fmt::Display for TemplateRefreshError {
@@ -195,12 +187,28 @@ pub(crate) fn refresh_engine_templates(
 }
 
 pub(crate) fn refresh_named_template(
-    engine: &mut dyn standout_render::template::TemplateEngine,
     registry: &TemplateRegistry,
     name: &str,
 ) -> Result<(), TemplateRefreshError> {
-    standout_render::template::load_named_template(engine, registry, name)
-        .map_err(TemplateRefreshError::from_load)
+    // Existence / readability check only: `render_request` loads the whole
+    // registry into the engine (cached per registry generation). A registered
+    // file that disappeared must still error with its path (ADR-0019). A name
+    // missing from the original map is retried after a directory re-walk so
+    // a file that appeared after build() is still found.
+    match registry.get_content(name) {
+        Ok(_) => Ok(()),
+        Err(standout_render::RegistryError::NotFound { .. }) => {
+            let mut refreshed = registry.clone();
+            refreshed
+                .refresh()
+                .map_err(|error| TemplateRefreshError::new(name, registry, error.to_string()))?;
+            refreshed
+                .get_content(name)
+                .map_err(|error| TemplateRefreshError::new(name, &refreshed, error.to_string()))?;
+            Ok(())
+        }
+        Err(error) => Err(TemplateRefreshError::new(name, registry, error.to_string())),
+    }
 }
 
 fn missing_template_message(
@@ -773,7 +781,7 @@ impl AppBuilder {
             )))
         });
 
-        self.validate_command_templates(&template_engine)?;
+        self.validate_command_templates()?;
         self.validate_framework_template_styles()?;
         self.materialize_convention_templates();
 
@@ -815,10 +823,7 @@ impl AppBuilder {
         Ok(app)
     }
 
-    fn validate_command_templates(
-        &self,
-        template_engine: &SharedTemplateEngine,
-    ) -> Result<(), SetupError> {
+    fn validate_command_templates(&self) -> Result<(), SetupError> {
         for (path, pending) in self.pending_commands.borrow().iter() {
             let name = match &pending.template {
                 TemplateRef::Named(name) => name.clone(),
@@ -841,11 +846,6 @@ impl AppBuilder {
                 };
                 SetupError::Template(message)
             })?;
-            if matches!(pending.template, TemplateRef::Convention(_)) {
-                let mut engine = template_engine.borrow_mut();
-                refresh_named_template(&mut **engine, registry, &name)
-                    .map_err(|error| SetupError::Template(error.to_string()))?;
-            }
         }
         Ok(())
     }

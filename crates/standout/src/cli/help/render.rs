@@ -69,7 +69,7 @@ pub(crate) fn inline_template_ref(
 /// only, no disk read). [`crate::RegistryError::NotFound`] and a missing
 /// registry fall back to the inline default. Any other registry error is
 /// propagated so a broken file override is not silently replaced by the
-/// framework default — `load_named_template` still performs the read.
+/// framework default — the request path still reads through the registry.
 pub(crate) fn named_or_inline_template(
     registry: Option<&crate::TemplateRegistry>,
     named: &str,

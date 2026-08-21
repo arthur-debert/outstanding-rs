@@ -122,8 +122,7 @@ pub use functions::{
     render_with_mode, render_with_output, render_with_vars, validate_template, RenderResult,
 };
 pub(crate) use functions::{render_engine_split_inline, render_engine_split_named};
-pub(crate) use load::load_inline_dependencies;
-pub use load::load_named_template;
+pub(crate) use load::{load_inline_dependencies, load_named_template};
 pub use registry::{
     walk_template_dir, RegistryError, ResolvedTemplate, TemplateFile, TemplateRegistry,
     TEMPLATE_EXTENSIONS,

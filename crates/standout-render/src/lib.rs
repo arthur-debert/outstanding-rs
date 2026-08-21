@@ -205,7 +205,6 @@ pub use request::{
 // Render module exports
 pub use template::{
     // Template registry
-    load_named_template,
     render,
     render_auto,
     render_auto_with_context,
