@@ -45,7 +45,7 @@ if !app.run(Cli::command(), std::env::args()) {
 }
 ```
 
-When fallback code needs the unmatched `ArgMatches`, show `run_to_string(...)` and match `RunResult::NoMatch(matches)` instead.
+When fallback code needs the unmatched `ArgMatches`, show `run_to_string(...)` and match `DispatchResult::NoMatch(matches)` on `into_outcome()` instead. `CompletedRun` is the wrapper (warnings + outcome); `DispatchResult` is the variant enum.
 
 ## Use the `tdoo` example domain
 

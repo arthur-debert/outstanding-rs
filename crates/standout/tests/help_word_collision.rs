@@ -8,7 +8,7 @@
 //! duplicate-subcommand debug assertion, a runtime panic.
 
 use clap::{Arg, ArgAction, Command};
-use standout::cli::{App, HelpResult, Output, RunResult};
+use standout::cli::{App, DispatchResult, HelpResult, Output};
 
 /// A root with subcommands, one of which is the application's own `help`.
 ///
@@ -54,8 +54,11 @@ fn a_declared_help_subcommand_is_a_setup_error_not_a_panic() {
 fn the_dispatch_path_reports_the_same_collision() {
     let app = App::builder().help_handling(true).build().unwrap();
 
-    match app.run_to_string(app_with_its_own_help(), ["app", "build"]) {
-        RunResult::Error(e) => assert!(
+    match app
+        .run_to_string(app_with_its_own_help(), ["app", "build"])
+        .into_outcome()
+    {
+        DispatchResult::Error(e) => assert!(
             e.to_string().contains("duplicate command: help"),
             "error: {e}"
         ),
@@ -176,8 +179,11 @@ fn without_help_handling_the_application_keeps_the_name() {
         .build()
         .unwrap();
 
-    match app.run_to_string(app_with_its_own_help(), ["app", "help"]) {
-        RunResult::Handled(output) => assert_eq!(output.as_str(), "mine"),
+    match app
+        .run_to_string(app_with_its_own_help(), ["app", "help"])
+        .into_outcome()
+    {
+        DispatchResult::Handled(output) => assert_eq!(output.as_str(), "mine"),
         other => panic!("expected the application's own handler to run, got: {other:?}"),
     }
 }

@@ -208,8 +208,8 @@ if !app.run(Cli::command(), std::env::args()) {
 }
 ```
 
-Use `run_to_string(...)` and match `RunResult::NoMatch(matches)` when the legacy
-dispatcher needs the unmatched `ArgMatches`.
+Use `run_to_string(...)` and match `DispatchResult::NoMatch(matches)` on
+`into_outcome()` when the legacy dispatcher needs the unmatched `ArgMatches`.
 
 See the [Partial Adoption Guide](crates/dispatch/topics/partial-adoption.md) for the full migration path.
 

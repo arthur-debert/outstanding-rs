@@ -28,6 +28,60 @@ fn render_named_without_registry_names_the_builder_calls() {
 }
 
 #[test]
+fn render_named_structured_without_registry_serializes() {
+    let app = App::builder()
+        .include_framework_templates(false)
+        .build()
+        .unwrap();
+    let data = json!({"name": "Ada"});
+
+    let json = app
+        .render("unused", &data, standout::OutputMode::Json)
+        .expect("structured render does not need a registry");
+    assert!(json.contains("\"name\": \"Ada\""));
+
+    let yaml = app
+        .render("unused", &data, standout::OutputMode::Yaml)
+        .expect("structured render does not need a registry");
+    assert!(yaml.contains("name: Ada"));
+
+    let xml = app
+        .render("unused", &data, standout::OutputMode::Xml)
+        .expect("structured render does not need a registry");
+    assert!(xml.contains("<name>Ada</name>"));
+
+    let csv = app
+        .render("unused", &data, standout::OutputMode::Csv)
+        .expect("structured render does not need a registry");
+    assert!(csv.contains("name"));
+    assert!(csv.contains("Ada"));
+}
+
+#[test]
+fn render_named_structured_with_unregistered_name_serializes() {
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::write(dir.path().join("show.jinja"), "Hello {{ name }}").unwrap();
+    let app = App::builder()
+        .templates_dir(dir.path())
+        .unwrap()
+        .build()
+        .unwrap();
+    let data = json!({"name": "Ada"});
+
+    for mode in [
+        standout::OutputMode::Json,
+        standout::OutputMode::Yaml,
+        standout::OutputMode::Xml,
+        standout::OutputMode::Csv,
+    ] {
+        app.render("not-registered", &data, mode)
+            .unwrap_or_else(|error| {
+                panic!("structured {mode:?} ignored the missing name: {error}")
+            });
+    }
+}
+
+#[test]
 fn render_named_file_refresh_error_keeps_read_context() {
     let dir = tempfile::tempdir().unwrap();
     let template_path = dir.path().join("show.jinja");

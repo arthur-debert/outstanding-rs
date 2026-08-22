@@ -74,7 +74,7 @@ pub struct App {
 
 - **Setup Phase** (`App::builder()`): Returns `Result<Self, SetupError>`.
   - Errors: `Io`, `Template`, `DuplicateCommand`.
-- **Runtime Phase** (`dispatch()`): Returns `RunResult`.
+- **Runtime Phase** (`dispatch()`): Returns `CompletedRun`.
   - Errors from handlers are propagated via `HandlerResult` (`anyhow::Error` or similar).
 
 ## 4. PR Evaluation Checklist

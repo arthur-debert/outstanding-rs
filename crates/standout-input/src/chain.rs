@@ -9,6 +9,7 @@ use clap::ArgMatches;
 
 use crate::collector::{InputCollector, InputSourceKind, ResolvedInput};
 use crate::InputError;
+use crate::InputSources;
 
 /// Validator function type.
 type ValidatorFn<T> = Box<dyn Fn(&T) -> Result<(), String> + Send + Sync>;
@@ -133,9 +134,24 @@ impl<T: Clone + Send + Sync + 'static> InputChain<T> {
     /// Resolve the chain and return the input value.
     ///
     /// Tries each source in order until one provides input, then runs
-    /// validation. Returns the value or an error.
+    /// validation. Returns the value or an error. Uses
+    /// [`InputSources::from_process`]; prefer [`resolve_from`] when the
+    /// caller already has invocation sources.
     pub fn resolve(&self, matches: &ArgMatches) -> Result<T, InputError> {
-        self.resolve_with_source(matches).map(|r| r.value)
+        self.resolve_from(matches, &InputSources::from_process())
+    }
+
+    /// Resolve against explicit [`InputSources`].
+    ///
+    /// Stdin, clipboard, and (for interactive collection) the prompt
+    /// responder come from `sources` rather than process-global defaults.
+    pub fn resolve_from(
+        &self,
+        matches: &ArgMatches,
+        sources: &InputSources,
+    ) -> Result<T, InputError> {
+        self.resolve_from_with_source(matches, sources)
+            .map(|r| r.value)
     }
 
     /// Resolve the chain and return the input with source metadata.
@@ -146,23 +162,37 @@ impl<T: Clone + Send + Sync + 'static> InputChain<T> {
         &self,
         matches: &ArgMatches,
     ) -> Result<ResolvedInput<T>, InputError> {
+        self.resolve_from_with_source(matches, &InputSources::from_process())
+    }
+
+    /// Resolve against explicit [`InputSources`] and return source metadata.
+    pub fn resolve_from_with_source(
+        &self,
+        matches: &ArgMatches,
+        sources: &InputSources,
+    ) -> Result<ResolvedInput<T>, InputError> {
         for (source, kind) in &self.sources {
+            let bound = source.bind_sources(sources);
+            let source: &dyn InputCollector<T> = match bound.as_ref() {
+                Some(bound) => bound.as_ref(),
+                None => source.as_ref(),
+            };
             if !source.is_available(matches) {
                 continue;
             }
 
-            // This loop is intentional: interactive sources (where can_retry() is true)
-            // will re-prompt on validation failure. The `break` on None moves to the
-            // next source in the chain.
+            // Interactive sources (where can_retry() is true) re-prompt on
+            // validation failure. `continue 'collect` retries this source;
+            // `break` moves to the next source in the chain.
             #[allow(clippy::while_let_loop)]
-            loop {
+            'collect: loop {
                 match source.collect(matches)? {
                     Some(value) => {
                         // Run source-level validation
                         if let Err(msg) = source.validate(&value) {
                             if source.can_retry() {
                                 eprintln!("Invalid: {}", msg);
-                                continue;
+                                continue 'collect;
                             }
                             return Err(InputError::ValidationFailed(msg));
                         }
@@ -172,7 +202,7 @@ impl<T: Clone + Send + Sync + 'static> InputChain<T> {
                             if let Err(msg) = validator(&value) {
                                 if source.can_retry() {
                                     eprintln!("Invalid: {}", msg);
-                                    continue;
+                                    continue 'collect;
                                 }
                                 return Err(InputError::ValidationFailed(msg));
                             }
@@ -200,8 +230,26 @@ impl<T: Clone + Send + Sync + 'static> InputChain<T> {
     }
 
     /// Check if any source is available to provide input.
+    ///
+    /// Uses [`InputSources::from_process`]; prefer
+    /// [`has_available_source_from`] when the caller already has invocation
+    /// sources (a scripted responder makes interactive sources available
+    /// without a TTY).
     pub fn has_available_source(&self, matches: &ArgMatches) -> bool {
-        self.sources.iter().any(|(s, _)| s.is_available(matches)) || self.default.is_some()
+        self.has_available_source_from(matches, &InputSources::from_process())
+    }
+
+    /// [`has_available_source`](Self::has_available_source) against explicit
+    /// [`InputSources`].
+    pub fn has_available_source_from(&self, matches: &ArgMatches, sources: &InputSources) -> bool {
+        self.sources.iter().any(|(source, _)| {
+            let bound = source.bind_sources(sources);
+            let source: &dyn InputCollector<T> = match bound.as_ref() {
+                Some(bound) => bound.as_ref(),
+                None => source.as_ref(),
+            };
+            source.is_available(matches)
+        }) || self.default.is_some()
     }
 
     /// Get the number of sources in the chain.
@@ -388,5 +436,87 @@ mod tests {
             .try_source(ArgSource::new("c"));
 
         assert_eq!(chain.source_count(), 3);
+    }
+
+    #[cfg(feature = "simple-prompts")]
+    #[test]
+    fn chain_resolve_from_uses_scripted_responder_without_tty() {
+        use crate::sources::{MockTerminal, TextPromptSource};
+        use crate::{PromptResponse, ScriptedResponder};
+        use std::sync::Arc;
+
+        let matches = make_matches(&["test"]);
+        let chain = InputChain::<String>::new().try_source(TextPromptSource::with_terminal(
+            "Name: ",
+            MockTerminal::non_terminal(),
+        ));
+        let sources =
+            InputSources::from_process().with_responder(Arc::new(ScriptedResponder::new([
+                PromptResponse::text("Ada"),
+            ])));
+
+        assert_eq!(chain.resolve_from(&matches, &sources).unwrap(), "Ada");
+    }
+
+    #[cfg(feature = "simple-prompts")]
+    #[test]
+    fn chain_validation_retries_interactive_source_via_scripted_responder() {
+        use crate::sources::{MockTerminal, TextPromptSource};
+        use crate::{PromptResponse, ScriptedResponder};
+        use std::sync::Arc;
+
+        let matches = make_matches(&["test"]);
+        let chain = InputChain::<String>::new()
+            .try_source(TextPromptSource::with_terminal(
+                "Name: ",
+                MockTerminal::non_terminal(),
+            ))
+            .validate(|s| s.len() >= 3, "too short");
+        let sources =
+            InputSources::from_process().with_responder(Arc::new(ScriptedResponder::new([
+                PromptResponse::text("ab"),
+                PromptResponse::text("Ada"),
+            ])));
+
+        assert_eq!(chain.resolve_from(&matches, &sources).unwrap(), "Ada");
+    }
+
+    #[cfg(feature = "simple-prompts")]
+    #[test]
+    fn chain_skips_interactive_source_without_responder_or_tty() {
+        use crate::sources::{MockTerminal, TextPromptSource};
+
+        let matches = make_matches(&["test"]);
+        let chain = InputChain::<String>::new()
+            .try_source(TextPromptSource::with_terminal(
+                "Name: ",
+                MockTerminal::non_terminal(),
+            ))
+            .default("fallback".to_string());
+        let sources = InputSources::from_process();
+
+        assert_eq!(chain.resolve_from(&matches, &sources).unwrap(), "fallback");
+        assert!(chain.has_available_source_from(&matches, &sources));
+    }
+
+    #[cfg(feature = "editor")]
+    #[test]
+    fn chain_resolve_from_uses_scripted_responder_for_editor() {
+        use crate::sources::{EditorSource, MockEditorRunner};
+        use crate::{PromptResponse, ScriptedResponder};
+        use std::sync::Arc;
+
+        let matches = make_matches(&["test"]);
+        let chain = InputChain::<String>::new()
+            .try_source(EditorSource::with_runner(MockEditorRunner::no_editor()));
+        let sources =
+            InputSources::from_process().with_responder(Arc::new(ScriptedResponder::new([
+                PromptResponse::text("edited body"),
+            ])));
+
+        assert_eq!(
+            chain.resolve_from(&matches, &sources).unwrap(),
+            "edited body"
+        );
     }
 }

@@ -19,16 +19,10 @@
 //!
 //! ## Auto Mode Resolution
 //!
-//! `Auto` queries terminal color capability via
-//! [`detect_color_capability`](crate::detect_color_capability) (which by
-//! default wraps the `console` crate):
-//! - TTY with color support → behaves like `Term` (ANSI codes applied)
-//! - Piped output or no color support → behaves like `Text` (tags stripped)
-//!
-//! This detection happens at render time, not startup. Tests can override
-//! the result via
-//! [`set_color_capability_detector`](crate::set_color_capability_detector)
-//! — see the [`environment`](crate::environment) module.
+//! `Auto` is resolved from the request: [`crate::ColorPolicy::Auto`] plus
+//! stdout color capability on [`crate::TargetProperties`]. Convenience
+//! wrappers and `App::run` detect those facts at their edge. The leaf does
+//! not probe the process while applying styles.
 //!
 //! ## Structured Modes
 //!
@@ -41,7 +35,6 @@
 //! Use [`render_auto`](crate::render_auto) to automatically dispatch between
 //! templated and structured rendering based on output mode.
 
-use crate::environment::detect_color_capability;
 use std::io::Write;
 
 /// Destination for rendered output.
@@ -181,24 +174,14 @@ pub enum OutputMode {
 }
 
 impl OutputMode {
-    /// Resolves the output mode to a concrete decision about whether to use color.
+    /// Whether this mode itself means ANSI color.
     ///
-    /// - `Auto` checks terminal capabilities
-    /// - `Term` always returns `true`
-    /// - `Text` always returns `false`
-    /// - `TermDebug` returns `false` (handled specially by apply methods)
-    /// - `Json` returns `false` (structured output, no ANSI codes)
+    /// [`OutputMode::Auto`] is not a color decision: it is resolved from
+    /// [`crate::ColorPolicy`] and stdout capability on the request. This
+    /// method returns `false` for Auto so leftover callers cannot probe a
+    /// detector from inside the leaf.
     pub fn should_use_color(&self) -> bool {
-        match self {
-            OutputMode::Auto => detect_color_capability(),
-            OutputMode::Term => true,
-            OutputMode::Text => false,
-            OutputMode::TermDebug => false, // Handled specially
-            OutputMode::Json => false,      // Structured output
-            OutputMode::Yaml => false,      // Structured output
-            OutputMode::Xml => false,       // Structured output
-            OutputMode::Csv => false,       // Structured output
-        }
+        matches!(self, OutputMode::Term)
     }
 
     /// Returns true if this is debug mode (bracket tags instead of ANSI).

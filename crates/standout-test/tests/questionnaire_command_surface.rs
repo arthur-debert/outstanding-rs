@@ -7,7 +7,7 @@ use clap::{Arg, Command, Subcommand};
 use serde_json::json;
 use serial_test::serial;
 use standout::cli::{
-    App, CommandContext, CommandContextInput, Dispatch, HandlerResult, Output, RunResult,
+    App, CommandContext, CommandContextInput, Dispatch, DispatchResult, HandlerResult, Output,
 };
 use standout::input::questionnaire::QuestionnaireInput;
 use standout::input::{DefaultSource, InputChain, PromptResponse, ScriptedResponder};
@@ -93,7 +93,7 @@ fn answered_sheet(name: &str) -> String {
 
 fn error_text(result: &TestResult) -> String {
     match result.outcome() {
-        RunResult::Error(error) => error.to_string(),
+        DispatchResult::Error(error) => error.to_string(),
         other => panic!("expected error, got {other:?}"),
     }
 }

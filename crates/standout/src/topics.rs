@@ -60,8 +60,12 @@ use std::process::{Command as ProcessCommand, Stdio};
 use console::Style;
 use serde::Serialize;
 
-use crate::cli::help::data::resolve_name_column;
-use crate::{render_with_output, OutputMode, RenderError, Theme};
+use crate::assets::{TOPICS_LIST_TEMPLATE_NAME, TOPIC_TEMPLATE_NAME};
+use crate::cli::help::data::{resolve_name_column, ASSUMED_TERMINAL_WIDTH};
+use crate::cli::help::{inline_template_ref, render_via_request};
+use crate::{
+    default_template_engine, OutputMode, RenderError, TargetProperties, TemplateRef, Theme,
+};
 
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub enum TopicType {
@@ -247,15 +251,31 @@ impl TopicRegistry {
 /// Configuration for topic rendering.
 #[derive(Debug, Clone, Default)]
 pub struct TopicRenderConfig {
-    /// Custom template string for single topic. If None, uses built-in template.
+    /// Custom template string for a single topic. If None, uses the built-in
+    /// template.
+    ///
+    /// Standalone [`render_topic`] carries this as [`TemplateRef::Inline`]
+    /// and validates literal style tags at request construction. Framework
+    /// topics use the named `standout/topic` registry entry instead.
     pub topic_template: Option<String>,
-    /// Custom template string for topic list. If None, uses built-in template.
+    /// Custom template string for the topic list. If None, uses the built-in
+    /// template.
+    ///
+    /// Standalone [`render_topics_list`] carries this as
+    /// [`TemplateRef::Inline`] with the same tag check. Framework listings
+    /// use the named `standout/topics-list` registry entry.
     pub list_template: Option<String>,
     /// Theme overlaid on [`default_topic_theme`]: per style name an entry
     /// here wins, and tags it leaves undefined keep their default styling.
     /// If None, the default topic theme alone is used.
+    ///
+    /// Framework topics on `App` ignore this field and use the one theme
+    /// `build()` merged (ADR-0020).
     pub theme: Option<Theme>,
     /// Output mode. If None, uses Auto (auto-detects).
+    ///
+    /// Structured modes still print human topics: glue maps them to
+    /// [`OutputMode::Auto`] on the request (ADR-0029).
     pub output_mode: Option<OutputMode>,
 }
 
@@ -289,13 +309,13 @@ fn resolve_topic_theme(configured: Option<Theme>) -> Theme {
 }
 
 #[derive(Serialize)]
-struct TopicData {
+pub(crate) struct TopicData {
     title: String,
     content: String,
 }
 
 #[derive(Serialize)]
-struct TopicsListData {
+pub(crate) struct TopicsListData {
     usage: String,
     topics: Vec<TopicListItem>,
     /// Width of the name column, resolved from the topic names; the template
@@ -307,6 +327,62 @@ struct TopicsListData {
 struct TopicListItem {
     name: String,
     title: String,
+}
+
+/// Default single-topic template source.
+pub(crate) const DEFAULT_TOPIC_TEMPLATE: &str = include_str!("topic_template.txt");
+/// Default topics-list template source.
+pub(crate) const DEFAULT_TOPICS_LIST_TEMPLATE: &str = include_str!("topics_list_template.txt");
+
+pub(crate) fn topic_data(topic: &Topic) -> TopicData {
+    TopicData {
+        title: topic.title.clone(),
+        content: topic.content.clone(),
+    }
+}
+
+/// Builds the topics-list page data.
+///
+/// `name_width` is resolved against `target` so the list aligns using the
+/// same destination the render request will carry.
+pub(crate) fn topics_list_data(
+    registry: &TopicRegistry,
+    usage_prefix: &str,
+    target: &TargetProperties,
+) -> TopicsListData {
+    let topics = registry.list_topics();
+    let topic_items: Vec<TopicListItem> = topics
+        .iter()
+        .map(|t| TopicListItem {
+            name: t.name.clone(),
+            title: t.title.clone(),
+        })
+        .collect();
+    let name_width = resolve_name_column(
+        &topic_items
+            .iter()
+            .map(|topic| topic.name.as_str())
+            .collect::<Vec<_>>(),
+        target.width.unwrap_or(ASSUMED_TERMINAL_WIDTH),
+        target.ambiguous_width,
+    );
+    TopicsListData {
+        usage: format!("{} <topic>", usage_prefix),
+        topics: topic_items,
+        name_width,
+    }
+}
+
+fn standalone_topic_template(
+    configured: Option<&str>,
+    default_source: &str,
+    named: &str,
+    theme: &Theme,
+) -> Result<TemplateRef, RenderError> {
+    match configured {
+        Some(source) => inline_template_ref(source, theme, named),
+        None => inline_template_ref(default_source, theme, named),
+    }
 }
 
 /// Renders a single topic using standout templating.
@@ -326,25 +402,32 @@ struct TopicListItem {
 /// let output = render_topic(&topic, None).unwrap();
 /// println!("{}", output);
 /// ```
+///
+/// Standalone: no `App` is required. The template string becomes
+/// [`TemplateRef::Inline`] with tag validation at request construction.
 pub fn render_topic(
     topic: &Topic,
     config: Option<TopicRenderConfig>,
 ) -> Result<String, RenderError> {
     let config = config.unwrap_or_default();
-    let template = config
-        .topic_template
-        .as_deref()
-        .unwrap_or(include_str!("topic_template.txt"));
-
     let theme = resolve_topic_theme(config.theme);
-    let mode = config.output_mode.unwrap_or(OutputMode::Auto);
-
-    let data = TopicData {
-        title: topic.title.clone(),
-        content: topic.content.clone(),
-    };
-
-    render_with_output(template, &data, &theme, mode)
+    let template = standalone_topic_template(
+        config.topic_template.as_deref(),
+        DEFAULT_TOPIC_TEMPLATE,
+        TOPIC_TEMPLATE_NAME,
+        &theme,
+    )?;
+    render_via_request(
+        &topic_data(topic),
+        template,
+        theme,
+        config.output_mode.unwrap_or(OutputMode::Auto),
+        TargetProperties::detect(),
+        default_template_engine(),
+        None,
+        None,
+        None,
+    )
 }
 
 /// Renders a list of all available topics.
@@ -367,43 +450,36 @@ pub fn render_topic(
 /// let output = render_topics_list(&registry, "myapp help", None).unwrap();
 /// println!("{}", output);
 /// ```
+///
+/// Standalone: no `App` is required. The template string becomes
+/// [`TemplateRef::Inline`] with tag validation at request construction.
+/// Destination facts are detected once and reused for list layout and the
+/// request.
 pub fn render_topics_list(
     registry: &TopicRegistry,
     usage_prefix: &str,
     config: Option<TopicRenderConfig>,
 ) -> Result<String, RenderError> {
     let config = config.unwrap_or_default();
-    let template = config
-        .list_template
-        .as_deref()
-        .unwrap_or(include_str!("topics_list_template.txt"));
-
     let theme = resolve_topic_theme(config.theme);
-    let mode = config.output_mode.unwrap_or(OutputMode::Auto);
-
-    let topics = registry.list_topics();
-
-    let topic_items: Vec<TopicListItem> = topics
-        .iter()
-        .map(|t| TopicListItem {
-            name: t.name.clone(),
-            title: t.title.clone(),
-        })
-        .collect();
-    let name_width = resolve_name_column(
-        &topic_items
-            .iter()
-            .map(|topic| topic.name.as_str())
-            .collect::<Vec<_>>(),
-    );
-
-    let data = TopicsListData {
-        usage: format!("{} <topic>", usage_prefix),
-        topics: topic_items,
-        name_width,
-    };
-
-    render_with_output(template, &data, &theme, mode)
+    let template = standalone_topic_template(
+        config.list_template.as_deref(),
+        DEFAULT_TOPICS_LIST_TEMPLATE,
+        TOPICS_LIST_TEMPLATE_NAME,
+        &theme,
+    )?;
+    let target = TargetProperties::detect();
+    render_via_request(
+        &topics_list_data(registry, usage_prefix, &target),
+        template,
+        theme,
+        config.output_mode.unwrap_or(OutputMode::Auto),
+        target,
+        default_template_engine(),
+        None,
+        None,
+        None,
+    )
 }
 
 // ============================================================================
@@ -700,5 +776,54 @@ mod tests {
         let candidates = get_pager_candidates();
         assert!(candidates.contains(&"less".to_string()));
         assert!(candidates.contains(&"more".to_string()));
+    }
+
+    #[test]
+    fn structured_modes_still_print_human_topics() {
+        let topic = Topic::new(
+            "Storage",
+            "Where data lives.",
+            TopicType::Text,
+            Some("storage".to_string()),
+        );
+        for mode in [
+            crate::OutputMode::Json,
+            crate::OutputMode::Yaml,
+            crate::OutputMode::Csv,
+            crate::OutputMode::Xml,
+        ] {
+            let output = render_topic(
+                &topic,
+                Some(TopicRenderConfig {
+                    output_mode: Some(mode),
+                    ..Default::default()
+                }),
+            )
+            .unwrap();
+            assert!(
+                output.contains("STORAGE") || output.contains("Storage"),
+                "{mode:?} must print human topic text, got:\n{output}"
+            );
+            assert!(
+                !output.trim_start().starts_with('{'),
+                "{mode:?} must not emit a JSON topic document:\n{output}"
+            );
+        }
+    }
+
+    #[test]
+    fn custom_topic_template_unknown_tag_fails_at_construction() {
+        let topic = Topic::new("T", "c", TopicType::Text, Some("t".to_string()));
+        let err = render_topic(
+            &topic,
+            Some(TopicRenderConfig {
+                topic_template: Some("[nope]x[/nope]".into()),
+                output_mode: Some(crate::OutputMode::Text),
+                ..Default::default()
+            }),
+        )
+        .unwrap_err();
+        let msg = err.to_string();
+        assert!(msg.contains("nope"), "{msg}");
     }
 }

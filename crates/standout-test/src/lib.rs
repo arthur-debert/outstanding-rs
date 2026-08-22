@@ -1,9 +1,9 @@
 //! In-process test harness for apps built on the `standout` CLI framework.
 //!
-//! `TestHarness` bundles the scattered injection seams — environment
-//! detectors, env vars, working directory, stdin, clipboard, output mode,
-//! and tempdir fixtures — into a single fluent builder, and restores every
-//! override when the harness is dropped.
+//! `TestHarness` bundles the scattered injection seams — destination facts
+//! on [`TargetProperties`], env vars, working directory, stdin, clipboard,
+//! output mode, and tempdir fixtures — into a single fluent builder, and
+//! restores every override when the harness is dropped.
 //!
 //! # Example
 //!
@@ -76,19 +76,33 @@
 //! The harness does not simulate a TTY in-process. It once offered
 //! `is_tty()`/`no_tty()`, which drove a detector nothing consulted; the seam
 //! is deleted (see `docs/adr/0022-delete-the-in-process-tty-seam.md`) and
-//! terminal-shaped questions belong to `run_process`/`run_pty`. What the harness does
-//! control is *color*: [`with_color`](TestHarness::with_color) opens both
-//! gates between a styled template and ANSI bytes, so an ANSI-positive
-//! assertion works in-process.
+//! terminal-shaped questions belong to `run_process`/`run_pty`. What the harness
+//! does control is destination facts on [`TargetProperties`]:
+//! [`with_color`](TestHarness::with_color) fills stdout/stderr color
+//! capability so ANSI-positive assertions work in-process through
+//! `force_styling` on the request. It does not call `set_colors_enabled`.
+//! Facts the test does not set take fixed defaults rather than calling
+//! [`TargetProperties::detect`]: `width: None`, [`ColorMode::Dark`],
+//! [`IconMode::Classic`], [`AmbiguousWidth::Narrow`]. Color capability
+//! defaults to off and both streams are non-terminal. `$COLUMNS`,
+//! `$NERD_FONT`, and the OS appearance setting cannot change an in-process
+//! run.
 //!
 //! # Concurrency and restoration
 //!
-//! [`TestHarness::run`] mutates process-global state (env vars, cwd,
-//! environment detectors, `console`'s color switch, default input readers).
-//! Tests that call it must be annotated `#[serial]` (from the re-exported
-//! `serial_test` crate). [`TestHarness::run_process`] and
-//! [`TestHarness::run_pty`] mutate none of it, so a binary of process tests
-//! alone needs no annotation.
+//! [`TestHarness::run`] mutates process-global state (env vars, cwd).
+//! Stdin, clipboard, and the prompt responder are constructed as
+//! [`InputSources`] and passed into
+//! [`App::run_with`](standout::cli::App::run_with); they are not
+//! process-global overrides. Width, color, theme, and icon are injected on
+//! [`TargetProperties`] and do not need `#[serial]` for detector reasons.
+//! In-process `run` tests must still be annotated `#[serial]` (from the
+//! re-exported `serial_test` crate) while env/cwd overrides exist:
+//! `serial_test` only orders annotated tests against each other, so an
+//! unannotated `run` can race with one that mutates those globals.
+//! [`TestHarness::run_process`] and [`TestHarness::run_pty`] mutate none of
+//! the process-global seams, so a binary of process tests alone needs no
+//! annotation.
 //!
 //! They do *inherit* it, though: a child starts from the test process's
 //! ambient environment and — unless the harness names a `cwd` or materializes
@@ -101,13 +115,9 @@
 //! A `Drop` impl restores every override on both normal exit and panic
 //! unwind, with two nuances:
 //!
-//! - Env vars, cwd, and `console`'s color switch are restored to the values
-//!   captured at `run()` time.
-//! - Terminal detectors and default input readers are reset to the
-//!   library defaults, not to whatever was installed before `run()`. This
-//!   matches the behavior of [`standout_render::DetectorGuard`]. Don't
-//!   mix a `TestHarness` with a manually installed detector override on
-//!   the same thread.
+//! - Env vars and cwd are restored to the values captured at `run()` time.
+//! - Stdin, clipboard, and the prompt responder live on the [`InputSources`]
+//!   value for that run, so they do not need restore.
 
 use std::collections::HashMap;
 use std::ffi::OsString;
@@ -115,19 +125,12 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use clap::Command;
-use standout::cli::{
-    App, ArtifactDestination, ArtifactRun, ExitStatus, RunErrorKind, RunResult, SuccessKind,
-};
+use standout::cli::DispatchResult;
+use standout::cli::{App, ArtifactDestination, ArtifactRun, ExitStatus, RunErrorKind, SuccessKind};
+use standout::{ColorMode, IconMode, InputSources, TargetProperties};
 use standout_input::env::{MockClipboard, MockStdin};
-use standout_input::{
-    reset_default_clipboard_reader, reset_default_prompt_responder, reset_default_stdin_reader,
-    set_default_clipboard_reader, set_default_prompt_responder, set_default_stdin_reader,
-    PromptResponder,
-};
-use standout_render::{
-    reset_environment_detectors, set_ambiguous_width_detector, set_color_capability_detector,
-    set_terminal_width_detector, AmbiguousWidth, OutputMode,
-};
+use standout_input::PromptResponder;
+use standout_render::{AmbiguousWidth, OutputMode};
 use tempfile::TempDir;
 
 pub mod clap_parity;
@@ -163,6 +166,16 @@ enum StdinMode {
 /// See the [crate-level docs](crate) for the usage pattern. The harness
 /// installs every override in [`TestHarness::run`] and tears them down on
 /// [`Drop`], so a failed assertion never leaks state into the next test.
+///
+/// Unset [`TargetProperties`] fields take these fixed defaults — the
+/// harness never calls [`TargetProperties::detect`]:
+///
+/// - `width`: `None` (unknown; framework list-view falls back to 80)
+/// - `color_scheme`: [`ColorMode::Dark`]
+/// - `icon_mode`: [`IconMode::Classic`]
+/// - `ambiguous_width`: [`AmbiguousWidth::Narrow`]
+/// - stdout/stderr color capability: `false`
+/// - stdout/stderr is-a-terminal: `false`
 #[must_use = "TestHarness is inert until you call run(...)"]
 pub struct TestHarness {
     env_set: HashMap<String, String>,
@@ -173,6 +186,8 @@ pub struct TestHarness {
     terminal_width: Option<Option<usize>>,
     ambiguous_width: Option<AmbiguousWidth>,
     color_capable: Option<bool>,
+    color_scheme: Option<ColorMode>,
+    icon_mode: Option<IconMode>,
     output_mode: Option<OutputMode>,
     output_flag_name: String,
     stdin: StdinMode,
@@ -192,6 +207,8 @@ impl TestHarness {
             terminal_width: None,
             ambiguous_width: None,
             color_capable: None,
+            color_scheme: None,
+            icon_mode: None,
             output_mode: None,
             output_flag_name: "output".to_string(),
             stdin: StdinMode::Inherit,
@@ -208,10 +225,10 @@ impl TestHarness {
     ///
     /// This does **not** reach variables a dependency read before the run
     /// started. `console` initializes its color globals lazily from `CLICOLOR`
-    /// / `CLICOLOR_FORCE`, and **every** run latches them before applying this
-    /// map (see [`with_color`](Self::with_color)); `NO_COLOR` and
-    /// `TERM=dumb` land the same way. Setting them here changes what handler
-    /// code reads, not what `console` decided — pin those conventions with
+    /// / `CLICOLOR_FORCE`, and **every** run latches them from the real
+    /// environment before applying this map; `NO_COLOR` and `TERM=dumb` land
+    /// the same way. Setting them here changes what handler code reads, not
+    /// what `console` decided — pin those conventions with
     /// [`run_process`](Self::run_process), where the child does its own
     /// initialization against the real environment.
     pub fn env(mut self, key: impl Into<String>, value: impl Into<String>) -> Self {
@@ -225,85 +242,75 @@ impl TestHarness {
         self
     }
 
-    // --- terminal detectors ---------------------------------------------------
+    // --- destination facts ----------------------------------------------------
 
-    /// Forces the reported terminal width to `cols`.
+    /// Injects terminal width `cols` on [`TargetProperties`].
+    ///
+    /// When unset, the harness injects `width: None` rather than probing
+    /// `$COLUMNS` or the TTY.
     pub fn terminal_width(mut self, cols: usize) -> Self {
         self.terminal_width = Some(Some(cols));
         self
     }
 
-    /// Forces terminal-width detection to report "unknown" (as if stdout
-    /// is not a TTY).
+    /// Injects unknown terminal width (`None`) on [`TargetProperties`].
+    ///
+    /// This is also the harness default when
+    /// [`terminal_width`](Self::terminal_width) is not called.
     pub fn no_terminal_width(mut self) -> Self {
         self.terminal_width = Some(None);
         self
     }
 
-    /// Forces either narrow or wide treatment of East Asian Ambiguous text.
+    /// Injects the East Asian Ambiguous width policy on [`TargetProperties`].
+    ///
+    /// Defaults to [`AmbiguousWidth::Narrow`] when unset.
     pub fn ambiguous_width(mut self, policy: AmbiguousWidth) -> Self {
         self.ambiguous_width = Some(policy);
         self
     }
 
-    /// Declares that the output target supports ANSI color, at both of the
-    /// gates that decide whether escapes reach the output.
+    /// Declares that the output target supports ANSI color.
     ///
-    /// Two independent switches stand between a styled template and ANSI
-    /// bytes, and opening one alone produces nothing:
+    /// Fills [`TargetProperties::stdout_color_capability`] and
+    /// [`TargetProperties::stderr_color_capability`]. The leaf applies ANSI
+    /// from the request (`force_styling` from format + capability), not from
+    /// `console::colors_enabled()`. This method does not call
+    /// `set_colors_enabled`.
     ///
-    /// 1. Standout's own color decision — [`OutputMode::Auto`] consults
-    ///    `detect_color_capability()` to choose between applying and
-    ///    stripping style tags. This is the harness's
-    ///    [`set_color_capability_detector`] override.
-    /// 2. `console`'s process-global color switch, which
-    ///    `Style::apply_to` reads before emitting any escape. It is off in
-    ///    a non-TTY process, and a test binary is never a TTY — so a
-    ///    styled `Term` render in a test emits plain text unless this is
-    ///    turned on.
-    ///
-    /// Gate 2 is what made "ANSI-positive" untestable in-process before:
-    /// forcing gate 1 open left gate 2 shut and the render silent. So
-    /// `with_color()` sets both, and the original value of `console`'s
-    /// switch is restored on drop with every other override.
-    ///
-    /// This is test-only. No production code path sets `console`'s switch;
-    /// the harness sets it to model the terminal the test claims to be
-    /// writing to.
-    ///
-    /// # The harness owns gate 2, so in-process env cannot reach it
-    ///
-    /// `console` initializes its process-globals lazily, on the first *read*,
-    /// from `CLICOLOR` / `CLICOLOR_FORCE` (and `COLORTERM`, for the true-color
-    /// pair). **Every** run reads them before applying [`env`](Self::env) /
-    /// [`env_remove`](Self::env_remove) — including runs that set no color
-    /// knob, since the first read in a binary can just as easily come from
-    /// app code under test — so the one initialization is always spent on the
-    /// real environment. A run that also *writes* the switch restores the
-    /// pre-run value on drop.
-    ///
-    /// The consequence: by the time a run applies environment variables,
-    /// `console` has already initialized, and a test's `.env("CLICOLOR_FORCE",
-    /// …)` no longer influences it. Environment conventions that `console`
-    /// reads — `NO_COLOR`, `TERM=dumb`, `CLICOLOR_FORCE` — are therefore only
-    /// observable in a child process; assert them through
-    /// [`run_process`](Self::run_process), not here. See
-    /// `docs/adr/0022-delete-the-in-process-tty-seam.md`.
+    /// Environment conventions that `console` reads — `NO_COLOR`, `TERM=dumb`,
+    /// `CLICOLOR_FORCE` — are observable in a child process; assert them
+    /// through [`run_process`](Self::run_process). See
+    /// `docs/adr/0030-apply-styles-from-the-request-not-process-globals.md`.
     pub fn with_color(mut self) -> Self {
         self.color_capable = Some(true);
         self
     }
 
-    /// Declares that the output target does not support ANSI color, at both
-    /// gates [`with_color`](Self::with_color) describes. When `--output=auto`
-    /// is used, this forces the `Text` render path.
+    /// Declares that the output target does not support ANSI color.
     ///
-    /// A test process already has `console`'s switch off, so this changes
-    /// nothing for the common case; it exists so the two methods stay exact
-    /// opposites, and so a run cannot inherit an earlier `set_colors_enabled(true)`
-    /// from the same test binary.
+    /// When `--output=auto` is used, this forces the `Text` render path.
+    /// Does not call `set_colors_enabled`.
     pub fn no_color(mut self) -> Self {
         self.color_capable = Some(false);
+        self
+    }
+
+    /// Injects the color-scheme fact on [`TargetProperties`].
+    ///
+    /// Tests construct this rather than installing a theme detector.
+    /// Defaults to [`ColorMode::Dark`] when unset.
+    pub fn color_scheme(mut self, scheme: ColorMode) -> Self {
+        self.color_scheme = Some(scheme);
+        self
+    }
+
+    /// Injects the icon-mode fact on [`TargetProperties`].
+    ///
+    /// Tests construct this rather than installing an icon detector.
+    /// Defaults to [`IconMode::Classic`] when unset.
+    pub fn icon_mode(mut self, mode: IconMode) -> Self {
+        self.icon_mode = Some(mode);
         self
     }
 
@@ -339,9 +346,11 @@ impl TestHarness {
 
     // --- stdin ----------------------------------------------------------------
 
-    /// Simulates piped stdin with `content`. Handlers using
-    /// `StdinSource::new()` will see `is_terminal() == false` and read
-    /// `content`.
+    /// Simulates piped stdin with `content`. Input collection resolved
+    /// against this run's [`InputSources`] sees `is_terminal() == false` and
+    /// reads `content`. Handlers that call [`InputChain::resolve_from`](standout_input::InputChain::resolve_from)
+    /// with [`CommandContextInput::input_sources`](standout::cli::CommandContextInput::input_sources)
+    /// observe the same pipe.
     pub fn piped_stdin(mut self, content: impl Into<String>) -> Self {
         self.stdin = StdinMode::Piped(content.into());
         self
@@ -355,8 +364,7 @@ impl TestHarness {
 
     // --- clipboard ------------------------------------------------------------
 
-    /// Installs `content` as the mock clipboard. Handlers using
-    /// `ClipboardSource::new()` will read it.
+    /// Installs `content` as the mock clipboard on this run's [`InputSources`].
     pub fn clipboard(mut self, content: impl Into<String>) -> Self {
         self.clipboard = Some(content.into());
         self
@@ -365,12 +373,13 @@ impl TestHarness {
     // --- interactive prompts --------------------------------------------------
 
     /// Installs a [`PromptResponder`](standout_input::PromptResponder) that
-    /// every `.prompt()` call on a [`standout_input`] interactive source
-    /// will route through during the run.
+    /// interactive sources consult during the run.
     ///
-    /// Use this to test wizard / setup / REPL flows that call
-    /// `InquireText::new(...).prompt()`, `InquireSelect::new(...).prompt()`,
-    /// etc., without launching real prompts. The
+    /// Use this to test wizard / setup / REPL flows and
+    /// [`CommandConfig::input`](standout::cli::CommandConfig::input) chains
+    /// that include prompt or editor sources, without launching real prompts.
+    /// Handlers call `.prompt_from(ctx.input_sources())`; chains resolve
+    /// against those same sources. The
     /// [`ScriptedResponder`](standout_input::ScriptedResponder) bundled with
     /// `standout-input` covers the common case:
     ///
@@ -387,10 +396,10 @@ impl TestHarness {
     ///     .run(&app, cmd, ["mycli", "setup"]);
     /// ```
     ///
-    /// The responder is installed via
-    /// [`set_default_prompt_responder`](standout_input::set_default_prompt_responder)
-    /// for the duration of the run and reset on drop, matching the
-    /// stdin / clipboard pattern.
+    /// The responder is placed on this run's [`InputSources`] and passed into
+    /// [`App::run_with`](standout::cli::App::run_with). Handlers call
+    /// `.prompt_from(ctx.input_sources())` (or resolve input chains against
+    /// those sources) to receive it.
     pub fn prompts(mut self, responder: Arc<dyn PromptResponder>) -> Self {
         self.prompts = Some(responder);
         self
@@ -453,6 +462,12 @@ impl TestHarness {
     /// Installs every override, runs `app` with the given `cmd` definition
     /// and argv, and returns a [`TestResult`].
     ///
+    /// Constructs [`TargetProperties`] from this harness (width, color
+    /// capability, color-scheme, icon mode, ambiguous-width) and calls
+    /// [`App::run_with`]. Unset fields take the fixed defaults documented
+    /// on [`TestHarness`]; this does not call [`TargetProperties::detect`]
+    /// or `set_colors_enabled`.
+    ///
     /// Overrides are torn down when the returned guard held inside the
     /// `TestResult` is dropped. The `TestResult` and the harness share the
     /// same lifetime, so a typical test binds the result and lets it fall
@@ -462,38 +477,7 @@ impl TestHarness {
         I: IntoIterator<Item = T>,
         T: Into<OsString>,
     {
-        // 0. Read every pre-run value this run is about to overwrite, before
-        // it can overwrite any of them.
         let mut restore = RestoreState::default();
-
-        // `console`'s four color decisions are process-globals that
-        // initialize *lazily*, on the first read in the process, from the
-        // environment (`CLICOLOR` / `CLICOLOR_FORCE` for the color switches,
-        // `COLORTERM` by way of `Term::features()` for the true-color ones).
-        // Whichever run causes that first read decides them for the whole
-        // test binary — so a read taken after step 2 installed this run's
-        // `.env` overrides would latch a value this run itself caused
-        // (`.env("CLICOLOR_FORCE", "1")` latching `true`) for every later
-        // test. Reading them all here, before any override exists, spends the
-        // one initialization on the real environment.
-        //
-        // Unconditional on purpose: the first read need not be the harness's.
-        // A run with no color knob at all still installs `.env`, and any code
-        // it runs that styles output reads these globals — so gating this on
-        // `color_capable` would leave exactly that case initializing `console`
-        // from the harness's temporary environment, with nothing recorded to
-        // restore.
-        let ambient_console_colors = console::colors_enabled();
-        let _ = console::colors_enabled_stderr();
-        let _ = console::true_colors_enabled();
-        let _ = console::true_colors_enabled_stderr();
-
-        // Only the stdout switch is ever written (step 3, by `with_color` /
-        // `no_color`), so it is the only one with anything to restore. The
-        // other three are initialized above and then left alone.
-        if self.color_capable.is_some() {
-            restore.console_colors = Some(ambient_console_colors);
-        }
 
         // 1. Materialize fixtures + cwd.
         if let Some(dir) = self.tempdir.as_ref() {
@@ -517,6 +501,17 @@ impl TestHarness {
                 .expect("TestHarness: failed to change working directory");
         }
 
+        // Latch `console`'s lazy color globals from the real environment
+        // before applying this run's `.env()`. `console` initializes on the
+        // first read from `CLICOLOR` / `CLICOLOR_FORCE`; reading after the
+        // overlay would let a temporary `CLICOLOR_FORCE=1` initialize the
+        // process-global that later tests inherit. This is a read, not
+        // `set_colors_enabled` (ADR-0030).
+        let _ = console::colors_enabled();
+        let _ = console::colors_enabled_stderr();
+        let _ = console::true_colors_enabled();
+        let _ = console::true_colors_enabled_stderr();
+
         // 2. Env vars. Save originals so we can restore even on panic.
         // Record each original only once per key (before any mutation), so
         // if the same key appears in both env_set and env_remove, or is
@@ -538,76 +533,26 @@ impl TestHarness {
             std::env::remove_var(k);
         }
 
-        // 3. Environment detectors.
-        if let Some(w) = self.terminal_width {
-            static WIDTH_SLOT: std::sync::OnceLock<std::sync::Mutex<Option<usize>>> =
-                std::sync::OnceLock::new();
-            let slot = WIDTH_SLOT.get_or_init(|| std::sync::Mutex::new(None));
-            *slot.lock().unwrap() = w;
-            set_terminal_width_detector(|| {
-                *WIDTH_SLOT
-                    .get()
-                    .expect("width slot initialized above")
-                    .lock()
-                    .unwrap()
-            });
-            restore.reset_env_detectors = true;
-        }
-        if let Some(policy) = self.ambiguous_width {
-            static POLICY_SLOT: std::sync::OnceLock<std::sync::Mutex<Option<AmbiguousWidth>>> =
-                std::sync::OnceLock::new();
-            let slot = POLICY_SLOT.get_or_init(|| std::sync::Mutex::new(None));
-            *slot.lock().unwrap() = Some(policy);
-            set_ambiguous_width_detector(|| {
-                *POLICY_SLOT
-                    .get()
-                    .expect("ambiguous width slot initialized above")
-                    .lock()
-                    .unwrap()
-            });
-            restore.reset_env_detectors = true;
-        }
-        if let Some(flag) = self.color_capable {
-            static COLOR_SLOT: std::sync::OnceLock<std::sync::Mutex<bool>> =
-                std::sync::OnceLock::new();
-            let slot = COLOR_SLOT.get_or_init(|| std::sync::Mutex::new(false));
-            *slot.lock().unwrap() = flag;
-            set_color_capability_detector(|| {
-                *COLOR_SLOT
-                    .get()
-                    .expect("color slot initialized above")
-                    .lock()
-                    .unwrap()
-            });
-            restore.reset_env_detectors = true;
+        // 3. Destination facts are injected on TargetProperties below.
+        //    Width/color/theme/icon no longer install process-global
+        //    detectors or `console::set_colors_enabled`.
 
-            // Gate 2: `console`'s process-global switch, which
-            // `Style::apply_to` reads before emitting an escape. Standout's
-            // detector alone cannot produce ANSI in a non-TTY test process.
-            // Its pre-run value was captured in step 0, before this run's
-            // environment existed.
-            console::set_colors_enabled(flag);
-        }
-
-        // 4. Stdin / clipboard overrides.
+        // 4. InputSources from this harness (stdin / clipboard / responder).
+        let mut sources = InputSources::from_process();
         match std::mem::replace(&mut self.stdin, StdinMode::Inherit) {
             StdinMode::Inherit => {}
             StdinMode::Piped(content) => {
-                set_default_stdin_reader(Arc::new(MockStdin::piped(content)));
-                restore.reset_stdin = true;
+                sources = sources.with_stdin(MockStdin::piped(content));
             }
             StdinMode::Interactive => {
-                set_default_stdin_reader(Arc::new(MockStdin::terminal()));
-                restore.reset_stdin = true;
+                sources = sources.with_stdin(MockStdin::terminal());
             }
         }
         if let Some(content) = self.clipboard.take() {
-            set_default_clipboard_reader(Arc::new(MockClipboard::with_content(content)));
-            restore.reset_clipboard = true;
+            sources = sources.with_clipboard(MockClipboard::with_content(content));
         }
         if let Some(responder) = self.prompts.take() {
-            set_default_prompt_responder(responder);
-            restore.reset_prompts = true;
+            sources = sources.with_responder(responder);
         }
 
         // 5. Argv: append --<flag>=<mode> if an output mode was forced.
@@ -616,15 +561,22 @@ impl TestHarness {
             argv.push(format!("--{}={}", self.output_flag_name, output_mode_flag(mode)).into());
         }
 
-        let outcome = app.run_to_string(cmd, argv);
-        let warnings = standout_render::warnings::take_captured_warnings();
+        let target = self.target_properties();
+        let capture_window = standout_render::diagnostics::begin_capture();
+        let run = app.run_with(cmd, argv, target, sources);
+        drop(capture_window);
+        let warnings = run.warnings().to_vec();
+        let output_mode = run.output_mode();
+        let outcome = run.into_outcome();
         let tag_resolutions = standout_render::diagnostics::take_captured();
+        // Same theme `App::run` uses when flushing the warning block.
+        let theme = app.get_default_theme();
 
         // `self` (and its tempdir) move into TestResult so the fixture dir
         // survives until the test is finished with the result.
         TestResult {
             stdout: render_stdout(&outcome),
-            stderr: render_stderr(&outcome, &warnings),
+            stderr: render_stderr(&outcome, &warnings, output_mode, target, theme),
             outcome,
             warnings,
             tag_resolutions,
@@ -632,11 +584,65 @@ impl TestHarness {
             _restore: restore,
         }
     }
+
+    /// Destination facts for this run.
+    ///
+    /// Unset fields take the fixed defaults documented on [`TestHarness`].
+    /// Never calls [`TargetProperties::detect`].
+    fn target_properties(&self) -> TargetProperties {
+        TargetProperties {
+            width: self.terminal_width.flatten(),
+            stdout_is_terminal: false,
+            stderr_is_terminal: false,
+            stdout_color_capability: self.color_capable.unwrap_or(false),
+            stderr_color_capability: self.color_capable.unwrap_or(false),
+            color_scheme: self.color_scheme.unwrap_or(ColorMode::Dark),
+            icon_mode: self.icon_mode.unwrap_or(IconMode::Classic),
+            ambiguous_width: self.ambiguous_width.unwrap_or(AmbiguousWidth::Narrow),
+        }
+    }
 }
 
 impl Default for TestHarness {
     fn default() -> Self {
         Self::new()
+    }
+}
+
+#[cfg(test)]
+mod target_properties_defaults {
+    use super::*;
+
+    #[test]
+    fn unset_destination_facts_are_the_documented_fixed_defaults() {
+        let target = TestHarness::new().target_properties();
+        assert_eq!(target.width, None);
+        assert!(!target.stdout_is_terminal);
+        assert!(!target.stderr_is_terminal);
+        assert!(!target.stdout_color_capability);
+        assert!(!target.stderr_color_capability);
+        assert_eq!(target.color_scheme, ColorMode::Dark);
+        assert_eq!(target.icon_mode, IconMode::Classic);
+        assert_eq!(target.ambiguous_width, AmbiguousWidth::Narrow);
+    }
+
+    #[test]
+    fn explicit_overrides_replace_the_fixed_defaults() {
+        let target = TestHarness::new()
+            .terminal_width(42)
+            .with_color()
+            .color_scheme(ColorMode::Light)
+            .icon_mode(IconMode::NerdFont)
+            .ambiguous_width(AmbiguousWidth::Wide)
+            .target_properties();
+        assert_eq!(target.width, Some(42));
+        assert!(!target.stdout_is_terminal);
+        assert!(!target.stderr_is_terminal);
+        assert!(target.stdout_color_capability);
+        assert!(target.stderr_color_capability);
+        assert_eq!(target.color_scheme, ColorMode::Light);
+        assert_eq!(target.icon_mode, IconMode::NerdFont);
+        assert_eq!(target.ambiguous_width, AmbiguousWidth::Wide);
     }
 }
 
@@ -670,7 +676,7 @@ fn validate_fixture_path(path: &Path) -> PathBuf {
 /// Reconstructs the text the framework's standard-output channel would have
 /// carried.
 ///
-/// `run_to_string` captures one outcome; the split into stdout and stderr is
+/// `run_with` captures one outcome; the split into stdout and stderr is
 /// made later, by `App::run`'s writer seam. This mirrors that seam's stdout
 /// side so stream routing is assertable in-process:
 ///
@@ -687,10 +693,10 @@ fn validate_fixture_path(path: &Path) -> PathBuf {
 /// `stdout()` has always had and every existing assertion is written against;
 /// modeling the terminator would be a suite-wide rewrite for no oracle this
 /// slice needs.
-fn render_stdout(outcome: &RunResult) -> String {
+fn render_stdout(outcome: &DispatchResult) -> String {
     match outcome {
-        RunResult::Handled(text) => text.as_str().to_string(),
-        RunResult::Artifact(run) if !run.destination().is_stdout() => report_line(run),
+        DispatchResult::Handled(text) => text.as_str().to_string(),
+        DispatchResult::Artifact(run) if !run.destination().is_stdout() => report_line(run),
         _ => String::new(),
     }
 }
@@ -706,23 +712,29 @@ fn render_stdout(outcome: &RunResult) -> String {
 ///   (an artifact written to a file leaves stdout free and reports there);
 /// - framework warnings close the channel, in the block `App::run` flushes
 ///   after the primary output — blank line, banner, one tab-indented line per
-///   warning. The layout is `standout_render`'s own
-///   [`render_block_plain`](standout_render::warnings::render_block_plain), so
-///   the harness cannot drift from what the CLI layer writes. Only the styling
-///   is not modeled: `run` themes that block according to the real stderr's
-///   color capability, which an in-process run has no equivalent of, so the
-///   block appears here as `stderr_plain` would show it. The warnings also
-///   remain individually addressable on
+///   warning. The layout, `--output=text` / stderr-capability styling, and
+///   the app's resolved theme (the one `get_default_theme()` returns, which
+///   `App::run` uses) are `standout_render`'s own
+///   [`render_block_for_target`](standout_render::warnings::render_block_for_target),
+///   so the harness cannot drift from what the CLI layer writes. The warnings
+///   also remain individually addressable on
 ///   [`TestResult::warnings`](TestResult::warnings).
-fn render_stderr(outcome: &RunResult, warnings: &[String]) -> String {
+fn render_stderr(
+    outcome: &DispatchResult,
+    warnings: &[String],
+    output_mode: OutputMode,
+    target: TargetProperties,
+    theme: &standout::Theme,
+) -> String {
     let primary = match outcome {
-        RunResult::Error(error) if error.kind() == RunErrorKind::External => error.to_string(),
-        RunResult::Error(error) => format!("{}\n", error),
-        RunResult::Artifact(run) if run.destination().is_stdout() => report_line(run),
+        DispatchResult::Error(error) if error.kind() == RunErrorKind::External => error.to_string(),
+        DispatchResult::Error(error) => format!("{}\n", error),
+        DispatchResult::Artifact(run) if run.destination().is_stdout() => report_line(run),
         _ => String::new(),
     };
 
-    primary + &standout_render::warnings::render_block_plain(warnings)
+    primary
+        + &standout_render::warnings::render_block_for_target(theme, output_mode, target, warnings)
 }
 
 /// Returns an artifact's report as the framework writes it — newline-terminated
@@ -755,19 +767,6 @@ fn output_mode_flag(mode: OutputMode) -> &'static str {
 struct RestoreState {
     env_originals: HashMap<String, Option<String>>,
     original_cwd: Option<PathBuf>,
-    reset_env_detectors: bool,
-    /// `console`'s process-global color switch as it read *before* `run()`
-    /// applied any of this run's overrides — read that early, on every run,
-    /// because the switch initializes lazily from the environment the run is
-    /// about to change. Recorded here only when the run also *writes* the
-    /// switch (`with_color` / `no_color`); a run that merely forced the
-    /// initialization has nothing to put back. Restoring writes the *value*
-    /// back — the switch has no "return to auto-detection" setter — which in
-    /// a test process is the same thing, since detection there is a constant.
-    console_colors: Option<bool>,
-    reset_stdin: bool,
-    reset_clipboard: bool,
-    reset_prompts: bool,
 }
 
 impl Drop for RestoreState {
@@ -781,30 +780,15 @@ impl Drop for RestoreState {
         if let Some(cwd) = self.original_cwd.take() {
             let _ = std::env::set_current_dir(cwd);
         }
-        if self.reset_env_detectors {
-            reset_environment_detectors();
-        }
-        if let Some(enabled) = self.console_colors.take() {
-            console::set_colors_enabled(enabled);
-        }
-        if self.reset_stdin {
-            reset_default_stdin_reader();
-        }
-        if self.reset_clipboard {
-            reset_default_clipboard_reader();
-        }
-        if self.reset_prompts {
-            reset_default_prompt_responder();
-        }
     }
 }
 
 /// Outcome of a [`TestHarness::run`] invocation.
 ///
-/// Holds the raw [`RunResult`] produced by the app, plus convenience
+/// Holds the raw [`DispatchResult`] produced by the app, plus convenience
 /// accessors and assertion helpers oriented at text output.
 pub struct TestResult {
-    outcome: RunResult,
+    outcome: DispatchResult,
     stdout: String,
     stderr: String,
     warnings: Vec<String>,
@@ -816,9 +800,9 @@ pub struct TestResult {
 }
 
 impl TestResult {
-    /// Returns the raw [`RunResult`] for cases where the structured
+    /// Returns the raw [`DispatchResult`] for cases where the structured
     /// accessors aren't enough.
-    pub fn outcome(&self) -> &RunResult {
+    pub fn outcome(&self) -> &DispatchResult {
         &self.outcome
     }
 
@@ -974,19 +958,19 @@ impl TestResult {
 
     /// Returns `true` if the run produced text output.
     pub fn is_handled(&self) -> bool {
-        matches!(self.outcome, RunResult::Handled(_))
+        matches!(self.outcome, DispatchResult::Handled(_))
     }
 
     /// Returns `true` if no handler matched the argv.
     pub fn is_no_match(&self) -> bool {
-        matches!(self.outcome, RunResult::NoMatch(_))
+        matches!(self.outcome, DispatchResult::NoMatch(_))
     }
 
     /// If the run produced binary output, returns the bytes and suggested
     /// filename.
     pub fn binary(&self) -> Option<(&[u8], &str)> {
         match &self.outcome {
-            RunResult::Binary(bytes, filename) => Some((bytes.as_slice(), filename.as_str())),
+            DispatchResult::Binary(bytes, filename) => Some((bytes.as_slice(), filename.as_str())),
             _ => None,
         }
     }
@@ -1097,20 +1081,20 @@ impl TestResult {
     // --- assertions ----------------------------------------------------------
 
     /// Panics unless the run ended in a successful dispatch
-    /// (`RunResult::Handled`, `RunResult::Silent`, `RunResult::Binary`, or
-    /// `RunResult::Artifact`). `RunResult::NoMatch` and `RunResult::Error`
+    /// (`DispatchResult::Handled`, `DispatchResult::Silent`, `DispatchResult::Binary`, or
+    /// `DispatchResult::Artifact`). `DispatchResult::NoMatch` and `DispatchResult::Error`
     /// trigger a panic.
     #[track_caller]
     pub fn assert_success(&self) {
         match &self.outcome {
-            RunResult::Handled(_)
-            | RunResult::Silent
-            | RunResult::Binary(_, _)
-            | RunResult::Artifact(_) => {}
-            RunResult::NoMatch(_) => {
+            DispatchResult::Handled(_)
+            | DispatchResult::Silent
+            | DispatchResult::Binary(_, _)
+            | DispatchResult::Artifact(_) => {}
+            DispatchResult::NoMatch(_) => {
                 panic!("expected successful dispatch but no handler matched; stdout was empty")
             }
-            RunResult::Error(msg) => {
+            DispatchResult::Error(msg) => {
                 panic!("expected successful dispatch, got error: {}", msg)
             }
             _ => panic!(
@@ -1144,29 +1128,29 @@ impl TestResult {
 
     /// Returns `true` if the run produced an error.
     pub fn is_error(&self) -> bool {
-        matches!(self.outcome, RunResult::Error(_))
+        matches!(self.outcome, DispatchResult::Error(_))
     }
 
     /// Returns the error message if the run produced one, or `None`.
     pub fn error(&self) -> Option<&str> {
         match &self.outcome {
-            RunResult::Error(s) => Some(s.as_str()),
+            DispatchResult::Error(s) => Some(s.as_str()),
             _ => None,
         }
     }
 
-    /// Panics unless the run ended in `RunResult::Error`.
+    /// Panics unless the run ended in `DispatchResult::Error`.
     #[track_caller]
     pub fn assert_error(&self) {
         if !self.is_error() {
             panic!(
-                "expected RunResult::Error, got: {:?}",
+                "expected DispatchResult::Error, got: {:?}",
                 describe_outcome(&self.outcome)
             );
         }
     }
 
-    /// Panics unless the run ended in `RunResult::Error` and the message
+    /// Panics unless the run ended in `DispatchResult::Error` and the message
     /// contains `needle`.
     #[track_caller]
     pub fn assert_error_contains(&self, needle: &str) {
@@ -1177,13 +1161,13 @@ impl TestResult {
                 needle, msg
             ),
             None => panic!(
-                "expected RunResult::Error, got: {:?}",
+                "expected DispatchResult::Error, got: {:?}",
                 describe_outcome(&self.outcome)
             ),
         }
     }
 
-    /// Panics unless the run ended in `RunResult::NoMatch`.
+    /// Panics unless the run ended in `DispatchResult::NoMatch`.
     #[track_caller]
     pub fn assert_no_match(&self) {
         if !self.is_no_match() {
@@ -1267,18 +1251,18 @@ impl TestResult {
     }
 }
 
-fn describe_outcome(o: &RunResult) -> String {
+fn describe_outcome(o: &DispatchResult) -> String {
     match o {
-        RunResult::Handled(s) => format!("Handled({:?})", s),
-        RunResult::Silent => "Silent".into(),
-        RunResult::Binary(b, f) => format!("Binary(len={}, {:?})", b.len(), f),
-        RunResult::Artifact(run) => format!(
+        DispatchResult::Handled(s) => format!("Handled({:?})", s),
+        DispatchResult::Silent => "Silent".into(),
+        DispatchResult::Binary(b, f) => format!("Binary(len={}, {:?})", b.len(), f),
+        DispatchResult::Artifact(run) => format!(
             "Artifact(len={}, destination={:?})",
             run.bytes().len(),
             run.destination().label()
         ),
-        RunResult::Error(s) => format!("Error({:?})", s),
-        RunResult::NoMatch(_) => "NoMatch".into(),
+        DispatchResult::Error(s) => format!("Error({:?})", s),
+        DispatchResult::NoMatch(_) => "NoMatch".into(),
         _ => "Unknown".into(),
     }
 }

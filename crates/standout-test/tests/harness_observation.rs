@@ -191,8 +191,9 @@ fn warning_app() -> App {
     App::builder()
         .command(
             "say",
-            |_m, _ctx| {
-                standout::warnings::push_warning("stylesheet fell back to the compiled copy");
+            |_m, ctx| {
+                use standout::cli::CommandContextInput;
+                ctx.warn("stylesheet fell back to the compiled copy");
                 Ok(Output::Render(json!({})))
             },
             "hello",
@@ -231,6 +232,69 @@ fn framework_warnings_land_on_stderr_and_defeat_the_silent_assertion() {
     assert!(
         empty.is_err(),
         "a warning-producing run must not read as a silent error channel"
+    );
+}
+
+/// A custom warning banner/item style must reach `TestResult::stderr` the
+/// same way `App::run` flushes it: through the app's resolved theme, not
+/// `Theme::default()`.
+#[test]
+#[serial]
+fn warning_block_uses_the_app_theme_not_theme_default() {
+    use standout::{AmbiguousWidth, ColorMode, IconMode, TargetProperties};
+    use standout_render::warnings::{
+        render_block_for_target, WARNING_BANNER_STYLE, WARNING_ITEM_STYLE,
+    };
+
+    let theme = Theme::default()
+        .add(WARNING_BANNER_STYLE, Style::new().magenta().bold())
+        .add(WARNING_ITEM_STYLE, Style::new().magenta());
+    let app = App::builder()
+        .theme(theme.clone())
+        .command(
+            "say",
+            |_m, ctx| {
+                use standout::cli::CommandContextInput;
+                ctx.warn("stylesheet fell back");
+                Ok(Output::Render(json!({})))
+            },
+            "hello",
+        )
+        .unwrap()
+        .build()
+        .unwrap();
+    let cmd = Command::new("app").subcommand(Command::new("say"));
+    let result = TestHarness::new()
+        .with_color()
+        .run(&app, cmd, ["app", "say"]);
+
+    result.assert_success();
+    let target = TargetProperties {
+        width: None,
+        stdout_is_terminal: false,
+        stderr_is_terminal: false,
+        stdout_color_capability: true,
+        stderr_color_capability: true,
+        color_scheme: ColorMode::Dark,
+        icon_mode: IconMode::Classic,
+        ambiguous_width: AmbiguousWidth::Narrow,
+    };
+    let expected = render_block_for_target(&theme, OutputMode::Auto, target, result.warnings());
+    assert_eq!(
+        result.stderr(),
+        expected,
+        "harness stderr must match App::run's warning block for the app theme"
+    );
+    let default_block = render_block_for_target(
+        &Theme::default(),
+        OutputMode::Auto,
+        target,
+        result.warnings(),
+    );
+    assert_ne!(
+        result.stderr(),
+        default_block,
+        "a custom warning theme must diverge from Theme::default()"
     );
 }
 

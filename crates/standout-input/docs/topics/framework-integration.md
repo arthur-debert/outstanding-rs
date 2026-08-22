@@ -12,15 +12,15 @@ path.
 
 ## The Picture
 
-Without framework integration, a handler resolves chains imperatively:
+Without framework integration, a handler resolves chains imperatively. Pass the run's [`InputSources`](https://docs.rs/standout-input/latest/standout_input/struct.InputSources.html) so stdin, clipboard, and prompt responders match the invocation:
 
 ```rust
-fn create(matches: &ArgMatches, _ctx: &CommandContext) -> HandlerResult<Pad> {
+fn create(matches: &ArgMatches, ctx: &CommandContext) -> HandlerResult<Pad> {
     let body = InputChain::<String>::new()
         .try_source(ArgSource::new("body"))
         .try_source(StdinSource::new())
         .try_source(EditorSource::new())
-        .resolve(matches)?;          // <-- handler does this itself
+        .resolve_from(matches, ctx.input_sources())?;          // <-- handler does this itself
 
     /* business logic ... */
 }
@@ -65,7 +65,7 @@ parsed CLI args → PRE-DISPATCH → handler → POST-DISPATCH → render → PO
 `.input(name, chain)` is sugar over `.pre_dispatch(...)` — the same hook used for auth checks, request-scoped state, etc. Each `.input(...)` call adds one pre-dispatch hook that:
 
 1. Walks to the deepest subcommand's `ArgMatches` (so chains see the same args the handler does).
-2. Calls `chain.resolve_with_source(matches)`.
+2. Calls `chain.resolve_from_with_source(matches, ctx.input_sources())`.
 3. Stashes the result in an [`Inputs`](https://docs.rs/standout-input/latest/standout_input/struct.Inputs.html) bag on `ctx.extensions` under `name`.
 
 If resolution returns an error, dispatch stops and the framework reports `` Hook error: input `body`: <error message> ``. The handler does not run.
@@ -193,9 +193,9 @@ fn create_falls_back_to_stdin() {
 }
 ```
 
-The harness installs `MockStdin` / `MockClipboard` via `standout-input`'s process-global default readers, so `StdinSource::new()` and `ClipboardSource::new()` inside the chain transparently see the mocks. No source code changes are needed to make the chain testable.
+The harness constructs [`InputSources`](https://docs.rs/standout-input/latest/standout_input/struct.InputSources.html) with `MockStdin` / `MockClipboard` and passes them into `App::run_with`, so `StdinSource::new()` and `ClipboardSource::new()` inside a `CommandConfig::input` chain see the mocks at resolve time.
 
-For lower-level tests that don't need the harness, you can manipulate the readers directly with [`set_default_stdin_reader`](https://docs.rs/standout-input/latest/standout_input/fn.set_default_stdin_reader.html) and friends. Serialize tests that touch them with `#[serial]` from `serial_test`, and scope each installed override with an RAII guard whose `Drop` resets it so a panic cannot leak process-global state into later tests.
+For lower-level tests that don't need the harness, pass sources into [`InputChain::resolve_from`](https://docs.rs/standout-input/latest/standout_input/struct.InputChain.html#method.resolve_from).
 
 ---
 

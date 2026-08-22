@@ -5,13 +5,17 @@ use std::sync::Arc;
 use clap::ArgMatches;
 
 use crate::collector::InputCollector;
-use crate::env::{ClipboardReader, DefaultClipboard};
+use crate::env::{ClipboardReader, RealClipboard};
 use crate::InputError;
+use crate::InputSources;
 
 /// Collect input from the system clipboard.
 ///
 /// This source reads text from the system clipboard. It is available when
 /// the clipboard contains non-empty text content.
+///
+/// [`new`](Self::new) means "use this invocation's [`InputSources`]". An
+/// explicit reader from [`with_reader`](Self::with_reader) is not rebound.
 ///
 /// # Platform Support
 ///
@@ -31,7 +35,9 @@ use crate::InputError;
 ///
 /// # Testing
 ///
-/// Use [`ClipboardSource::with_reader`] to inject a mock for testing:
+/// Use [`ClipboardSource::with_reader`] to inject a mock for testing, or pass
+/// [`InputSources`] with a [`crate::MockClipboard`] into
+/// [`InputChain::resolve_from`](crate::InputChain::resolve_from):
 ///
 /// ```ignore
 /// use standout_input::{ClipboardSource, MockClipboard};
@@ -39,40 +45,40 @@ use crate::InputError;
 /// let source = ClipboardSource::with_reader(MockClipboard::with_content("clipboard text"));
 /// ```
 #[derive(Clone)]
-pub struct ClipboardSource<R: ClipboardReader = DefaultClipboard> {
-    reader: Arc<R>,
+pub struct ClipboardSource {
+    /// `None` binds to [`InputSources`] at resolve time.
+    reader: Option<Arc<dyn ClipboardReader>>,
     trim: bool,
 }
 
-impl ClipboardSource<DefaultClipboard> {
+impl ClipboardSource {
     /// Create a new clipboard source.
     ///
-    /// Reads via
-    /// [`DefaultClipboard`](crate::env::DefaultClipboard), which honors a
-    /// test override installed through
-    /// [`set_default_clipboard_reader`](crate::env::set_default_clipboard_reader)
-    /// and otherwise falls back to the platform clipboard.
+    /// Reads the invocation's clipboard when the chain is resolved against
+    /// [`InputSources`]. Standalone [`InputChain::resolve`] uses
+    /// [`InputSources::from_process`].
     pub fn new() -> Self {
         Self {
-            reader: Arc::new(DefaultClipboard),
+            reader: None,
             trim: true,
         }
     }
-}
 
-impl Default for ClipboardSource<DefaultClipboard> {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
-impl<R: ClipboardReader> ClipboardSource<R> {
     /// Create a clipboard source with a custom reader.
     ///
-    /// This is primarily used for testing to inject mock clipboard.
-    pub fn with_reader(reader: R) -> Self {
+    /// This is primarily used for testing to inject mock clipboard. The
+    /// explicit reader is not replaced when the chain binds [`InputSources`].
+    pub fn with_reader(reader: impl ClipboardReader + 'static) -> Self {
         Self {
-            reader: Arc::new(reader),
+            reader: Some(Arc::new(reader)),
+            trim: true,
+        }
+    }
+
+    /// Create a clipboard source from a shared reader handle.
+    pub fn with_shared_reader(reader: Arc<dyn ClipboardReader>) -> Self {
+        Self {
+            reader: Some(reader),
             trim: true,
         }
     }
@@ -84,21 +90,30 @@ impl<R: ClipboardReader> ClipboardSource<R> {
         self.trim = trim;
         self
     }
+
+    fn reader(&self) -> &dyn ClipboardReader {
+        self.reader
+            .as_deref()
+            .unwrap_or(&RealClipboard as &dyn ClipboardReader)
+    }
 }
 
-impl<R: ClipboardReader + 'static> InputCollector<String> for ClipboardSource<R> {
+impl Default for ClipboardSource {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl InputCollector<String> for ClipboardSource {
     fn name(&self) -> &'static str {
         "clipboard"
     }
 
     fn is_available(&self, _matches: &ArgMatches) -> bool {
-        // Clipboard is available if it has content
-        match self.reader.read() {
+        match self.reader().read() {
             Ok(Some(content)) => !content.trim().is_empty(),
             Ok(None) => false,
             Err(e) => {
-                // Log a warning for clipboard access errors (headless Linux, permission denied, etc.)
-                // This helps users diagnose why clipboard input isn't working
                 eprintln!("Warning: clipboard unavailable: {}", e);
                 false
             }
@@ -106,7 +121,7 @@ impl<R: ClipboardReader + 'static> InputCollector<String> for ClipboardSource<R>
     }
 
     fn collect(&self, _matches: &ArgMatches) -> Result<Option<String>, InputError> {
-        match self.reader.read()? {
+        match self.reader().read()? {
             Some(content) => {
                 let result = if self.trim {
                     content.trim().to_string()
@@ -122,6 +137,16 @@ impl<R: ClipboardReader + 'static> InputCollector<String> for ClipboardSource<R>
             }
             None => Ok(None),
         }
+    }
+
+    fn bind_sources(&self, sources: &InputSources) -> Option<Box<dyn InputCollector<String>>> {
+        if self.reader.is_some() {
+            return None;
+        }
+        Some(Box::new(Self {
+            reader: Some(sources.clipboard_arc()),
+            trim: self.trim,
+        }))
     }
 }
 
@@ -180,5 +205,15 @@ mod tests {
         let source = ClipboardSource::with_reader(MockClipboard::empty());
         let result = source.collect(&empty_matches()).unwrap();
         assert_eq!(result, None);
+    }
+
+    #[test]
+    fn bind_sources_uses_invocation_clipboard() {
+        let source = ClipboardSource::new();
+        let sources =
+            InputSources::from_process().with_clipboard(MockClipboard::with_content("bound"));
+        let bound = source.bind_sources(&sources).expect("unbound source binds");
+        let result = bound.collect(&empty_matches()).unwrap();
+        assert_eq!(result, Some("bound".to_string()));
     }
 }

@@ -7,15 +7,13 @@
 
 use std::sync::{Arc, Mutex};
 
-use serial_test::serial;
 use standout_input::env::MockStdin;
 use standout_input::questionnaire::{
     AnswerSheetDiagnostic, DynamicDefault, Group, Item, Questionnaire, QuestionnaireError,
     ScalarField, ScalarKind, ValidationDiagnostic,
 };
 use standout_input::{
-    reset_default_prompt_responder, set_default_prompt_responder, PromptContext, PromptResponder,
-    PromptResponse, ScriptedResponder,
+    InputSources, PromptContext, PromptResponder, PromptResponse, ScriptedResponder,
 };
 
 /// The wizard-motivating shape: a value-type question, then a cardinality
@@ -64,20 +62,22 @@ fn answer(sheet: &str, id: &str, answer: &str) -> String {
     out.join("\n") + "\n"
 }
 
-struct ResponderGuard;
+struct ResponderGuard {
+    sources: InputSources,
+}
 impl ResponderGuard {
     fn install(responses: impl IntoIterator<Item = PromptResponse>) -> Self {
         Self::install_with(Arc::new(ScriptedResponder::new(responses)))
     }
 
     fn install_with(responder: Arc<dyn PromptResponder>) -> Self {
-        set_default_prompt_responder(responder);
-        Self
+        Self {
+            sources: InputSources::from_process().with_responder(responder),
+        }
     }
-}
-impl Drop for ResponderGuard {
-    fn drop(&mut self) {
-        reset_default_prompt_responder();
+
+    fn sources(&self) -> &InputSources {
+        &self.sources
     }
 }
 
@@ -221,14 +221,15 @@ fn a_blank_answer_resolves_through_the_computed_default_from_a_sheet() {
 }
 
 #[test]
-#[serial(prompt_responder)]
 fn a_blank_interactive_entry_resolves_through_the_computed_default() {
     let q = questionnaire();
     let _guard = ResponderGuard::install([
         PromptResponse::text("bool"),
         PromptResponse::Skip, // cardinality: blank -> computed "boolean"
     ]);
-    let interactive = q.decode_answers(&q.collect_interactive().unwrap()).unwrap();
+    let interactive = q
+        .decode_answers(&q.collect_interactive_from(_guard.sources()).unwrap())
+        .unwrap();
     assert_eq!(interactive.get_text("input.cardinality"), Some("boolean"));
 
     // Equivalence: the same submission as a sheet decodes identically.
@@ -243,12 +244,13 @@ fn a_blank_interactive_entry_resolves_through_the_computed_default() {
 }
 
 #[test]
-#[serial(prompt_responder)]
 fn an_entered_answer_overrides_the_computed_default() {
     let q = questionnaire();
     let _guard =
         ResponderGuard::install([PromptResponse::text("bool"), PromptResponse::text("list")]);
-    let answers = q.decode_answers(&q.collect_interactive().unwrap()).unwrap();
+    let answers = q
+        .decode_answers(&q.collect_interactive_from(_guard.sources()).unwrap())
+        .unwrap();
     assert_eq!(answers.get_text("input.cardinality"), Some("list"));
 }
 
@@ -377,7 +379,6 @@ impl PromptResponder for RecordingResponder {
 }
 
 #[test]
-#[serial(prompt_responder)]
 fn the_interactive_prompt_displays_the_computed_default() {
     let q = questionnaire();
     let responder = Arc::new(RecordingResponder {
@@ -389,7 +390,7 @@ fn the_interactive_prompt_displays_the_computed_default() {
         ),
     });
     let _guard = ResponderGuard::install_with(responder.clone());
-    q.collect_interactive().unwrap();
+    q.collect_interactive_from(_guard.sources()).unwrap();
 
     let messages = responder.messages.lock().unwrap();
     let cardinality_prompt = messages

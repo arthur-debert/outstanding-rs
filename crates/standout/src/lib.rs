@@ -18,6 +18,10 @@
 //! - [`Theme`]: Named collection of adaptive styles that respond to light/dark mode
 //! - [`ColorMode`]: Light or dark color mode enum
 //! - [`OutputMode`]: Control output formatting (Auto/Term/Text/TermDebug)
+//! - [`TargetProperties`]: Destination facts for one invocation
+//! - [`RenderRequest`]: Owned explicit input to [`render_request`]
+//! - [`ColorPolicy`]: Resolved color axis on a [`RenderRequest`], independent of [`OutputMode`]
+//! - [`InputSources`]: Stdin, clipboard, and prompt-responder for one invocation
 //! - [`topics`]: Help topics system for extended documentation
 //! - Style syntax: Tag-based styling `[name]content[/name]`
 //! - [`Renderer`]: Pre-compile templates for repeated rendering
@@ -53,6 +57,10 @@
 //! ).unwrap();
 //! println!("{}", output);
 //! ```
+//!
+//! [`render_request`] is the contract. [`render`] and siblings detect at their
+//! edge, build a [`RenderRequest`], and delegate. Detector override APIs are
+//! removed; tests construct [`TargetProperties`].
 //!
 //! ## Tag-Based Styling
 //!
@@ -236,6 +244,7 @@ pub use standout_render::file_loader;
 pub use standout_render::style;
 pub use standout_render::tabular;
 pub use standout_render::warnings;
+pub use standout_render::warnings::WarningBuffer;
 
 // Error type (from standout-render)
 pub use standout_render::RenderError;
@@ -248,9 +257,13 @@ pub use standout_render::{
 };
 
 // Theme module exports (from standout-render)
+pub use standout_render::{ColorMode, IconDefinition, IconMode, IconSet, Theme};
+
+// Composition-contract types (from standout-render / standout-input)
+pub use standout_input::InputSources;
 pub use standout_render::{
-    detect_color_mode, detect_icon_mode, set_icon_detector, set_theme_detector, ColorMode,
-    IconDefinition, IconMode, IconSet, Theme,
+    default_template_engine, render_request, render_request_split, ColorPolicy, RenderRequest,
+    SharedTemplateEngine, TargetProperties, TemplateRef,
 };
 
 // Output module exports (from standout-render)
@@ -262,6 +275,7 @@ pub use standout_render::{
 
 // Render module exports (from standout-render)
 pub use standout_render::{
+    // Template registry
     render,
     render_auto,
     render_auto_with_context,
@@ -271,7 +285,6 @@ pub use standout_render::{
     render_with_output,
     render_with_vars,
     validate_template,
-    // Template registry
     walk_template_dir,
     // Template engine abstraction
     MiniJinjaEngine,

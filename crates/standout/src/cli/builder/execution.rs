@@ -2,13 +2,19 @@
 //!
 //! This module contains methods for dispatching and running commands:
 //! - `commands()` - dispatch macro integration
-//! - `dispatch()` - match and execute handler
-//! - `dispatch_from()` - parse args and dispatch
+//! - `dispatch()` - match and execute handler, returning [`crate::cli::CompletedRun`]
+//! - `dispatch_from()` - parse args and dispatch, returning [`crate::cli::CompletedRun`]
 //! - `run()` - dispatch and print
+//! - `run_with()` - inner public run taking target properties and input sources,
+//!   returning [`crate::cli::CompletedRun`]
 //! - `run_to_string()` - dispatch and return
 
-use crate::{write_binary_output, write_output, OutputDestination, OutputMode};
+use crate::{
+    write_binary_output, write_output, InputSources, OutputDestination, OutputMode, RenderRequest,
+    TargetProperties,
+};
 use clap::{Arg, ArgAction, ArgMatches, Command};
+use standout_render::warnings::WarningBuffer;
 use std::io::Write;
 use std::path::PathBuf;
 
@@ -16,13 +22,11 @@ use super::{
     inline_template_ref, App, AppBuilder, HookRegistrationSource, PendingCommand, TemplateRef,
 };
 use crate::cli::default_command::ParseFailure;
-use crate::cli::dispatch::{
-    dispatch, extract_command_path, get_deepest_matches, DispatchOutput, Presentation,
-};
+use crate::cli::dispatch::{dispatch, extract_command_path, get_deepest_matches, DispatchOutput};
 use crate::cli::group::{ErasedConfigRecipe, GroupBuilder, GroupEntry};
 use crate::cli::handler::{
-    ArtifactDestination, ArtifactReceipt, ArtifactRun, CommandContext, OutputKind, RunError,
-    RunErrorKind, RunOutput, RunResult, SuccessKind,
+    ArtifactDestination, ArtifactReceipt, ArtifactRun, CommandContext, DispatchResult, OutputKind,
+    RunError, RunErrorKind, RunOutput, SuccessKind,
 };
 use crate::cli::hooks::{ArtifactOutput, RenderedOutput, TextOutput};
 use crate::cli::questionnaire::{
@@ -128,12 +132,12 @@ impl App {
     /// Dispatches to a registered handler if one matches the command path.
     ///
     /// Returns:
-    /// - `RunResult::Handled(output)` if a handler was found and executed successfully,
-    /// - `RunResult::Binary(bytes, filename)` for binary output,
-    /// - `RunResult::Handled(RunOutput::command(String::new()))` if the handler
+    /// - `DispatchResult::Handled(output)` if a handler was found and executed successfully,
+    /// - `DispatchResult::Binary(bytes, filename)` for binary output,
+    /// - `DispatchResult::Handled(RunOutput::command(String::new()))` if the handler
     ///   completed silently (preserving the capture compatibility accessor),
-    /// - `RunResult::Error(msg)` if a handler, hook, or output step failed,
-    /// - `RunResult::NoMatch(matches)` if no handler matched.
+    /// - `DispatchResult::Error(msg)` if a handler, hook, or output step failed,
+    /// - `DispatchResult::NoMatch(matches)` if no handler matched.
     ///
     /// If hooks are registered for the command, they are executed:
     /// - Pre-dispatch hooks run before the handler
@@ -141,9 +145,51 @@ impl App {
     /// - Post-output hooks run after rendering
     ///
     /// Handler errors and hook errors both abort execution and return
-    /// `RunResult::Error(msg)`. Callers using `dispatch()` directly are
+    /// `DispatchResult::Error(msg)`. Callers using `dispatch()` directly are
     /// responsible for writing the error to stderr and choosing an exit code.
-    pub fn dispatch(&self, matches: ArgMatches, output_mode: OutputMode) -> RunResult {
+    ///
+    /// Returns [`crate::cli::CompletedRun`]: the dispatch outcome plus framework
+    /// warnings collected for this invocation (including embedded hot-reload
+    /// fallbacks recorded at build). Match on
+    /// [`outcome()`](crate::cli::CompletedRun::outcome) for variants.
+    pub fn dispatch(
+        &self,
+        matches: ArgMatches,
+        output_mode: OutputMode,
+    ) -> crate::cli::CompletedRun {
+        self.collect_run_warnings(|warnings| {
+            (
+                self.dispatch_with_target(
+                    matches,
+                    output_mode,
+                    self.process_edge_target(),
+                    InputSources::from_process(),
+                    warnings,
+                ),
+                output_mode,
+            )
+        })
+    }
+
+    /// Destination facts for public entries that detect at their own edge.
+    ///
+    /// [`detect`](TargetProperties::detect) fills terminal facts;
+    /// ambiguous-width is overwritten with this application's policy
+    /// (ADR-0026), matching [`run`](Self::run).
+    fn process_edge_target(&self) -> TargetProperties {
+        let mut target = TargetProperties::detect();
+        target.ambiguous_width = self.ambiguous_width;
+        target
+    }
+
+    fn dispatch_with_target(
+        &self,
+        matches: ArgMatches,
+        output_mode: OutputMode,
+        target: TargetProperties,
+        sources: InputSources,
+        warnings: WarningBuffer,
+    ) -> DispatchResult {
         // Ensure commands are finalized (creates dispatch closures with current theme)
         self.ensure_commands_finalized();
 
@@ -155,6 +201,8 @@ impl App {
         let commands = self.get_commands();
         if let Some(dispatch_fn) = commands.get(&path_str) {
             let mut ctx = CommandContext::new(path, self.app_state.clone());
+            ctx.extensions.insert(sources);
+            ctx.extensions.insert(warnings);
 
             // Get hooks for this command (used for pre-dispatch, post-dispatch, and post-output)
             let hooks = self.command_hooks.get(&path_str);
@@ -162,7 +210,7 @@ impl App {
             // Run pre-dispatch hooks if registered (hooks can inject state via ctx.extensions)
             if let Some(hooks) = hooks {
                 if let Err(e) = hooks.run_pre_dispatch(&matches, &mut ctx) {
-                    return RunResult::Error(super::super::dispatch::hook_run_error(
+                    return DispatchResult::Error(super::super::dispatch::hook_run_error(
                         e,
                         crate::cli::HookPhase::PreDispatch,
                     ));
@@ -174,35 +222,32 @@ impl App {
 
             // Run the handler (post-dispatch hooks are run inside dispatch function)
             // output_mode is passed separately because CommandContext is render-agnostic
-            // Late binding: theme is resolved here at dispatch time, not when commands were registered
-            let default_theme = crate::Theme::default();
-            let theme = self.theme.as_ref().unwrap_or(&default_theme);
+            // Late binding: theme is read here at dispatch time, not when commands were registered
             let dispatch_output = match dispatch(
                 dispatch_fn,
                 sub_matches,
                 &ctx,
                 hooks,
                 output_mode,
-                theme,
-                self.ambiguous_width,
+                &self.theme,
+                target,
             ) {
                 Ok(output) => output,
-                Err(e) => return RunResult::Error(e),
+                Err(e) => return DispatchResult::Error(e),
             };
 
             // Convert to Output enum for post-output hooks. An artifact's
             // presentation travels beside the hook payload: hooks may still
             // change the bytes or the report, so the report is only rendered
             // after the write, further down.
-            let (output, presentation) = match dispatch_output {
+            let (output, request) = match dispatch_output {
                 DispatchOutput::Text { formatted, raw } => {
                     (RenderedOutput::Text(TextOutput::new(formatted, raw)), None)
                 }
                 DispatchOutput::Binary(b, f) => (RenderedOutput::Binary(b, f), None),
-                DispatchOutput::Artifact {
-                    output,
-                    presentation,
-                } => (RenderedOutput::Artifact(output), Some(presentation)),
+                DispatchOutput::Artifact { output, request } => {
+                    (RenderedOutput::Artifact(output), Some(request))
+                }
                 DispatchOutput::Silent => (RenderedOutput::Silent, None),
             };
 
@@ -211,7 +256,7 @@ impl App {
                 match hooks.run_post_output(&matches, &ctx, output) {
                     Ok(o) => o,
                     Err(e) => {
-                        return RunResult::Error(super::super::dispatch::hook_run_error(
+                        return DispatchResult::Error(super::super::dispatch::hook_run_error(
                             e,
                             crate::cli::HookPhase::PostOutput,
                         ))
@@ -232,7 +277,7 @@ impl App {
             // The artifact path owns its own destination policy and write, so
             // it is resolved before the legacy override handling below.
             if let RenderedOutput::Artifact(artifact) = final_output {
-                return complete_artifact(artifact, presentation, override_path);
+                return complete_artifact(artifact, request, override_path);
             }
 
             // Handle file output if configured
@@ -243,7 +288,7 @@ impl App {
                     RenderedOutput::Text(t) => {
                         // Write raw output (without ANSI codes) to file
                         if let Err(e) = write_output(&t.raw, &dest) {
-                            return RunResult::Error(RunError::new(
+                            return DispatchResult::Error(RunError::new(
                                 format!("Error writing output: {}", e),
                                 RunErrorKind::FinalWrite(OutputKind::Text),
                             ));
@@ -253,7 +298,7 @@ impl App {
                     }
                     RenderedOutput::Binary(b, _) => {
                         if let Err(e) = write_binary_output(b, &dest) {
-                            return RunResult::Error(RunError::new(
+                            return DispatchResult::Error(RunError::new(
                                 format!("Error writing output: {}", e),
                                 RunErrorKind::FinalWrite(OutputKind::Binary),
                             ));
@@ -265,17 +310,19 @@ impl App {
                 }
             }
 
-            // Convert back to RunResult (using formatted for terminal display)
+            // Convert back to DispatchResult (using formatted for terminal display)
             match final_output {
-                RenderedOutput::Text(t) => RunResult::Handled(RunOutput::command(t.formatted)),
-                RenderedOutput::Binary(b, f) => RunResult::Binary(b, f),
+                RenderedOutput::Text(t) => DispatchResult::Handled(RunOutput::command(t.formatted)),
+                RenderedOutput::Binary(b, f) => DispatchResult::Binary(b, f),
                 RenderedOutput::Artifact(_) => unreachable!("artifacts returned above"),
                 // Preserve the 7.x capture contract: silent success is an
                 // empty handled string. `run()` still emits nothing.
-                RenderedOutput::Silent => RunResult::Handled(RunOutput::command(String::new())),
+                RenderedOutput::Silent => {
+                    DispatchResult::Handled(RunOutput::command(String::new()))
+                }
             }
         } else {
-            RunResult::NoMatch(matches)
+            DispatchResult::NoMatch(matches)
         }
     }
 
@@ -291,37 +338,67 @@ impl App {
     /// on the same terms as [`get_matches_from`](Self::get_matches_from): the
     /// `help` word where the install policy put it, and `--help` / `-h` through
     /// Clap's short-circuit, both rendered by standout and returned as
-    /// `RunResult::Handled`. A `--page` request rides back as
+    /// `DispatchResult::Handled`. A `--page` request rides back as
     /// [`SuccessKind::PagedHelp`](crate::cli::SuccessKind::PagedHelp); only
     /// [`run`](Self::run) acts on it, so this stays free of side effects.
     ///
     /// A command that declares its own `help` where standout installs the word
-    /// is refused on those same terms: `RunResult::Error` carrying
+    /// is refused on those same terms: `DispatchResult::Error` carrying
     /// [`SetupError::DuplicateCommand`](crate::SetupError::DuplicateCommand)'s
     /// report, before anything is parsed.
     ///
     /// # Returns
     ///
-    /// - `RunResult::Handled(output)` if a registered handler processed the command
-    /// - `RunResult::NoMatch(matches)` if no handler matched (for manual handling)
+    /// A [`crate::cli::CompletedRun`] wrapping the dispatch outcome plus any
+    /// framework warnings collected for this invocation. Inspect
+    /// [`warnings()`](crate::cli::CompletedRun::warnings), then match
+    /// [`outcome()`](crate::cli::CompletedRun::outcome):
+    ///
+    /// - `DispatchResult::Handled(output)` if a registered handler processed the command
+    /// - `DispatchResult::NoMatch(matches)` if no handler matched (for manual handling)
     ///
     /// # Example
     ///
     /// ```rust,ignore
-    /// use standout::cli::{App, HandlerResult, Output, RunResult};
+    /// use standout::cli::{App, DispatchResult, HandlerResult, Output};
     ///
     /// let result = App::builder()
     ///     .command("list", |_m, _ctx| Ok(HandlerOutput::Render(vec!["a", "b"]), "{{ . }}")
     ///     .dispatch_from(cmd, std::env::args());
     ///
-    /// match result {
-    ///     RunResult::Handled(output) => println!("{}", output),
-    ///     RunResult::NoMatch(matches) => {
+    /// let _ = result.warnings();
+    /// match result.into_outcome() {
+    ///     DispatchResult::Handled(output) => println!("{}", output),
+    ///     DispatchResult::NoMatch(matches) => {
     ///         // Handle manually
     ///     }
+    ///     _ => {}
     /// }
     /// ```
-    pub fn dispatch_from<I, T>(&self, cmd: Command, args: I) -> RunResult
+    pub fn dispatch_from<I, T>(&self, cmd: Command, args: I) -> crate::cli::CompletedRun
+    where
+        I: IntoIterator<Item = T>,
+        T: Into<std::ffi::OsString> + Clone,
+    {
+        self.collect_run_warnings(|warnings| {
+            self.dispatch_from_with_target(
+                cmd,
+                args,
+                self.process_edge_target(),
+                InputSources::from_process(),
+                warnings,
+            )
+        })
+    }
+
+    fn dispatch_from_with_target<I, T>(
+        &self,
+        cmd: Command,
+        args: I,
+        target: TargetProperties,
+        sources: InputSources,
+        warnings: WarningBuffer,
+    ) -> (DispatchResult, OutputMode)
     where
         I: IntoIterator<Item = T>,
         T: Into<std::ffi::OsString> + Clone,
@@ -330,7 +407,10 @@ impl App {
         let args: Vec<std::ffi::OsString> = args.into_iter().map(Into::into).collect();
 
         if let Err(error) = self.validate_questionnaire_surfaces(&cmd) {
-            return RunResult::Error(RunError::new(error.to_string(), RunErrorKind::ClapUsage));
+            return (
+                DispatchResult::Error(RunError::new(error.to_string(), RunErrorKind::ClapUsage)),
+                OutputMode::Auto,
+            );
         }
 
         // Augment command with framework-owned flags, the questionnaire command
@@ -343,30 +423,59 @@ impl App {
         // word just went has a configuration standout will not serve, and the
         // parse below is what would meet Clap's duplicate-subcommand assertion.
         // It is a setup failure, but it surfaces on a run, so it takes the kind
-        // a questionnaire-surface failure takes.
+        // a questionnaire-surface failure takes. The command is not parseable
+        // (clap debug-asserts on the duplicate `help` word), so argv is not
+        // scanned for `--output` here.
         if let Some(error) = self.help_word_collision(&augmented_cmd) {
-            return RunResult::Error(RunError::new(error.to_string(), RunErrorKind::ClapUsage));
+            return (
+                DispatchResult::Error(RunError::new(error.to_string(), RunErrorKind::ClapUsage)),
+                OutputMode::Auto,
+            );
         }
 
         // One parse seam for both paths: Clap decides which command the line
         // named, and a line that named none may take a default command.
-        let matches = match self.parse_with_default_command(&augmented_cmd, &args) {
+        let matches = match self.parse_with_default_command(&augmented_cmd, &args, sources.stdin())
+        {
             Ok(matches) => matches,
             Err(ParseFailure::UnknownDefault(e)) => {
-                return RunResult::Error(RunError::new(e.to_string(), RunErrorKind::DefaultCommand))
+                return (
+                    DispatchResult::Error(RunError::new(
+                        e.to_string(),
+                        RunErrorKind::DefaultCommand,
+                    )),
+                    self.extract_output_mode_from_unparsed(&args),
+                )
             }
             Err(ParseFailure::Clap(e)) => {
+                // Warning flush still needs `--output` on these short-circuits:
+                // `Text` opts the banner out of ANSI. Help *rendering* stays
+                // Auto (see `render_help_for_display_help_error`); only the
+                // run-result mode used for warnings is read from argv here.
+                let output_mode = self.extract_output_mode_from_unparsed(&args);
                 // Clap's native `--help`/`-h` short-circuits validation and
                 // arrives here; standout renders it when it owns help.
-                if let Some(display) = self.intercept_display_help(&mut augmented_cmd, &args, &e) {
-                    return display.into();
+                if let Some(display) = self.intercept_display_help(
+                    &mut augmented_cmd,
+                    &args,
+                    &e,
+                    Some(target),
+                    Some(warnings.clone()),
+                ) {
+                    return (display.into(), output_mode);
                 }
                 // Clap's remaining "errors" include `--version`, a successful
                 // display path (stdout, exit 0). Real parse errors get
-                // `use_stderr() == true` and surface as `RunResult::Error` so
+                // `use_stderr() == true` and surface as `DispatchResult::Error` so
                 // they exit non-zero on stderr.
                 if e.use_stderr() {
-                    return RunResult::Error(RunError::new(e.to_string(), RunErrorKind::ClapUsage));
+                    return (
+                        DispatchResult::Error(RunError::new(
+                            e.to_string(),
+                            RunErrorKind::ClapUsage,
+                        )),
+                        output_mode,
+                    );
                 }
                 let output = match e.kind() {
                     clap::error::ErrorKind::DisplayVersion => {
@@ -374,14 +483,21 @@ impl App {
                     }
                     _ => RunOutput::clap_help(e.to_string()),
                 };
-                return RunResult::Handled(output);
+                return (DispatchResult::Handled(output), output_mode);
             }
         };
 
+        let output_mode = self.extract_output_mode(&matches);
+
         // The `help` word is a subcommand Clap routed; standout answers it
         // before dispatch, sharing the arm with `get_matches_from`.
-        if let Some(display) = self.intercept_help_word(&mut augmented_cmd, &matches) {
-            return display.into();
+        if let Some(display) = self.intercept_help_word(
+            &mut augmented_cmd,
+            &matches,
+            Some(target),
+            Some(warnings.clone()),
+        ) {
+            return (display.into(), output_mode);
         }
 
         if let Some((path, questionnaire)) = self.questionnaire_questions_invocation(&matches) {
@@ -397,39 +513,35 @@ impl App {
                     .unwrap_or(None)
                     == Some(&true);
                 if has_answers || has_yes {
-                    return RunResult::Error(RunError::new(
-                        "`questions` renders the blank answer sheet and cannot be combined with --answers or --yes",
-                        RunErrorKind::ClapUsage,
-                    ));
+                    return (
+                        DispatchResult::Error(RunError::new(
+                            "`questions` renders the blank answer sheet and cannot be combined with --answers or --yes",
+                            RunErrorKind::ClapUsage,
+                        )),
+                        output_mode,
+                    );
                 }
             }
-            return render_questions_result(questionnaire, &matches);
+            return (
+                render_questions_result(questionnaire, &matches),
+                output_mode,
+            );
         }
 
-        // Extract output mode
-        let output_mode = if self.output_flag.is_some() {
-            match matches
-                .get_one::<String>("_output_mode")
-                .map(|s| s.as_str())
-            {
-                Some("term") => OutputMode::Term,
-                Some("text") => OutputMode::Text,
-                Some("term-debug") => OutputMode::TermDebug,
-                Some("json") => OutputMode::Json,
-                Some("yaml") => OutputMode::Yaml,
-                Some("xml") => OutputMode::Xml,
-                Some("csv") => OutputMode::Csv,
-                _ => OutputMode::Auto,
-            }
-        } else {
-            OutputMode::Auto
-        };
-
         // Dispatch to handler
-        self.dispatch(matches, output_mode)
+        (
+            self.dispatch_with_target(matches, output_mode, target, sources, warnings),
+            output_mode,
+        )
     }
 
     /// Runs the CLI: parses arguments, dispatches to handlers, and prints output.
+    ///
+    /// Detects [`TargetProperties`] once at the process edge, overwrites
+    /// ambiguous-width with this application's policy, constructs
+    /// [`InputSources`] from the real process, and forwards both to
+    /// [`run_with`](Self::run_with). This is the printing wrapper around that
+    /// inner method.
     ///
     /// This is the main entry point for command execution. It handles everything:
     /// parsing, dispatch, rendering, and output.
@@ -447,7 +559,7 @@ impl App {
     ///
     /// # Errors and exit codes
     ///
-    /// On `RunResult::Error`, this function writes the diagnostic to stderr
+    /// On `DispatchResult::Error`, this function writes the diagnostic to stderr
     /// and exits with its typed status: Clap usage errors use 2, runtime
     /// failures use 1, and an application-declared `ExternalFailure` preserves
     /// its exact nonzero status and verbatim diagnostic. Final text and binary
@@ -455,7 +567,7 @@ impl App {
     /// except that `BrokenPipe` while writing final rendered command text to stdout
     /// is treated as successful early consumer termination. Callers needing
     /// fine-grained control over exit codes should use [`Self::run_to_string`] or
-    /// [`Self::dispatch_from`] and match on `RunResult` themselves.
+    /// [`Self::dispatch_from`] and match [`crate::cli::CompletedRun::outcome`].
     ///
     /// # Example
     ///
@@ -483,15 +595,21 @@ impl App {
         // than leaving it open for every later run on the thread.
         let capture_window = standout_render::diagnostics::begin_capture();
 
-        let result = self.dispatch_from(cmd, args);
+        let mut target = TargetProperties::detect();
+        target.ambiguous_width = self.ambiguous_width;
+        let sources = InputSources::from_process();
+        let result = self.run_with(cmd, args, target, sources);
         let primary_status = result.exit_status();
+        let warnings = result.warnings().to_vec();
 
         // A `help --page` display is the one output `run()` hands to a pager
         // instead of writing itself, which is why it happens before the
         // handles are locked. With no pager available it falls through to the
         // normal writers, so help is never lost to a missing `less`.
-        let paged = match &result {
-            RunResult::Handled(output) if output.kind() == SuccessKind::PagedHelp => {
+        let paged = match result.outcome() {
+            crate::cli::DispatchResult::Handled(output)
+                if output.kind() == SuccessKind::PagedHelp =>
+            {
                 display_with_pager(output.as_str()).is_ok()
             }
             _ => false,
@@ -504,19 +622,22 @@ impl App {
         let (handled, final_write_failure) = if paged {
             (true, None)
         } else {
-            emit_run_result(&result, &mut stdout, &mut stderr)
+            emit_run_result(result.outcome(), &mut stdout, &mut stderr)
         };
         drop(stdout);
         drop(stderr);
 
         // After the primary output has been flushed to stdout, render any
         // framework warnings collected during setup/dispatch to stderr so
-        // they appear last on the user's terminal. `OutputMode::Auto` is a
-        // safe default here: the renderer's final decision on styling is
-        // driven by whether stderr itself is a color-capable TTY.
-        let default_theme = crate::Theme::default();
-        let theme = self.theme.as_ref().unwrap_or(&default_theme);
-        standout_render::warnings::flush_to_stderr(theme, OutputMode::Auto);
+        // they appear last on the user's terminal. The resolved `--output`
+        // mode travels on the run result: `Text` opts out of ANSI even when
+        // stderr is color-capable.
+        standout_render::warnings::flush_to_stderr(
+            &self.theme,
+            result.output_mode(),
+            target,
+            &warnings,
+        );
 
         // Closes this run's window for render diagnostics. Nothing prints them
         // — the framework does not react to an unresolved tag — but closing the
@@ -536,14 +657,63 @@ impl App {
         handled
     }
 
+    pub(crate) fn seed_startup_warnings(&self, warnings: &WarningBuffer) {
+        for message in &self.startup_warnings {
+            warnings.push(message.clone());
+        }
+    }
+
+    /// Seeds build-time framework warnings into a per-invocation buffer, runs
+    /// `inner`, and returns the dispatch outcome together with those warnings
+    /// and the output mode `inner` resolved.
+    fn collect_run_warnings(
+        &self,
+        inner: impl FnOnce(WarningBuffer) -> (DispatchResult, OutputMode),
+    ) -> crate::cli::CompletedRun {
+        let warnings = WarningBuffer::new();
+        self.seed_startup_warnings(&warnings);
+        let (outcome, output_mode) = inner(warnings.clone());
+        crate::cli::CompletedRun::from_dispatch(outcome, warnings.take(), output_mode)
+    }
+
+    /// Inner public run: destination properties and input sources as two arguments.
+    ///
+    /// Production [`run`](Self::run) calls [`TargetProperties::detect`] and
+    /// [`InputSources::from_process`] at the process edge, overwrites
+    /// ambiguous-width with the application's policy, and forwards both here.
+    /// Tests construct both values themselves and call this same method,
+    /// inspecting the [`CompletedRun`](crate::cli::CompletedRun) (output,
+    /// errors, artifacts, warnings) without intercepting process streams.
+    /// The two arguments are not a combined run-environment type and are not
+    /// stored on [`App`].
+    ///
+    /// Input resolution takes `sources` as an argument. Tests construct
+    /// mocks and pass them here; production `run` uses
+    /// [`InputSources::from_process`].
+    pub fn run_with<I, T>(
+        &self,
+        cmd: Command,
+        args: I,
+        target: TargetProperties,
+        sources: InputSources,
+    ) -> crate::cli::CompletedRun
+    where
+        I: IntoIterator<Item = T>,
+        T: Into<std::ffi::OsString> + Clone,
+    {
+        self.collect_run_warnings(|warnings| {
+            self.dispatch_from_with_target(cmd, args, target, sources, warnings)
+        })
+    }
+
     /// Runs the CLI and returns the rendered output as a string.
     ///
     /// Similar to `run()`, but returns the output instead of printing it.
     /// Useful for testing or when you need to capture and process the output.
-    /// Framework warnings queued during the run are drained into
-    /// [`standout_render::warnings::take_captured_warnings`] instead of
-    /// printing to stderr, so consecutive in-process runs do not leak warnings
-    /// into each other. The run's style-tag passes are likewise ended into
+    /// Framework warnings queued during the run are returned on the
+    /// [`crate::cli::CompletedRun`], not a thread-local, so consecutive
+    /// in-process runs do not leak warnings into each other. The run's
+    /// style-tag passes are ended into
     /// [`standout_render::diagnostics::take_captured`].
     ///
     /// Reentrant: a handler may drive another app through this entry point, and
@@ -553,35 +723,42 @@ impl App {
     ///
     /// # Returns
     ///
-    /// - `RunResult::Handled(output)` - Handler executed successfully, or Clap produced help/version.
+    /// A [`crate::cli::CompletedRun`] wrapping the dispatch outcome plus any
+    /// framework warnings collected during the run. Inspect
+    /// [`warnings()`](crate::cli::CompletedRun::warnings) as needed, then match
+    /// [`outcome()`](crate::cli::CompletedRun::outcome) or
+    /// [`into_outcome()`](crate::cli::CompletedRun::into_outcome):
+    ///
+    /// - `DispatchResult::Handled(output)` - Handler executed successfully, or Clap produced help/version.
     ///   Silent completion remains an empty handled string for capture compatibility.
-    /// - `RunResult::Binary(bytes, filename)` - Handler produced binary output
-    /// - `RunResult::Error(error)` - A typed handler, hook, render, write, Clap usage, or external failure
-    /// - `RunResult::NoMatch(matches)` - No handler matched
+    /// - `DispatchResult::Binary(bytes, filename)` - Handler produced binary output
+    /// - `DispatchResult::Error(error)` - A typed handler, hook, render, write, Clap usage, or external failure
+    /// - `DispatchResult::NoMatch(matches)` - No handler matched
     ///
     /// # Example
     ///
     /// ```rust,ignore
-    /// use standout::cli::{App, HandlerResult, Output, RunResult};
+    /// use standout::cli::{App, DispatchResult, HandlerResult, Output};
     ///
     /// let result = App::builder()
     ///     .command("list", |_m, _ctx| Ok(HandlerOutput::Render(vec!["a", "b"])), "{{ . }}")?
     ///     .build()?
     ///     .run_to_string(cmd, std::env::args());
     ///
-    /// match result {
-    ///     RunResult::Handled(output) => println!("{}", output),
-    ///     RunResult::Binary(bytes, filename) => std::fs::write(filename, bytes)?,
-    ///     RunResult::Error(error) => {
+    /// let _ = result.warnings();
+    /// match result.into_outcome() {
+    ///     DispatchResult::Handled(output) => println!("{}", output),
+    ///     DispatchResult::Binary(bytes, filename) => std::fs::write(filename, bytes)?,
+    ///     DispatchResult::Error(error) => {
     ///         eprintln!("{}", error);
     ///         std::process::exit(error.exit_status().code().into());
     ///     },
-    ///     RunResult::NoMatch(matches) => { /* handle manually */ },
-    ///     // RunResult is #[non_exhaustive]; cover Silent and any future variants.
+    ///     DispatchResult::NoMatch(matches) => { /* handle manually */ },
+    ///     // DispatchResult is #[non_exhaustive]; cover Silent and any future variants.
     ///     _ => {},
     /// }
     /// ```
-    pub fn run_to_string<I, T>(&self, cmd: Command, args: I) -> RunResult
+    pub fn run_to_string<I, T>(&self, cmd: Command, args: I) -> crate::cli::CompletedRun
     where
         I: IntoIterator<Item = T>,
         T: Into<std::ffi::OsString> + Clone,
@@ -590,8 +767,15 @@ impl App {
         // this same entry point nests a window inside this one instead of
         // ending it. See `standout_render::diagnostics` on nesting.
         let capture_window = standout_render::diagnostics::begin_capture();
-        let result = self.dispatch_from(cmd, args);
-        standout_render::warnings::capture_warnings_for_run();
+        let result = self.collect_run_warnings(|warnings| {
+            self.dispatch_from_with_target(
+                cmd,
+                args,
+                self.process_edge_target(),
+                InputSources::from_process(),
+                warnings,
+            )
+        });
         drop(capture_window);
         result
     }
@@ -761,21 +945,21 @@ fn report_envelope(
 ///
 /// The stdout destination is the one deferral: its bytes are handed to the
 /// framework's stdout writer (see `emit_run_result`) so that capture APIs stay
-/// side-effect-free, exactly as `RunResult::Binary` already behaves.
+/// side-effect-free, exactly as `DispatchResult::Binary` already behaves.
 fn complete_artifact(
     artifact: ArtifactOutput,
-    presentation: Option<Box<Presentation>>,
+    request: Option<Box<RenderRequest>>,
     override_path: Option<PathBuf>,
-) -> RunResult {
+) -> DispatchResult {
     let destination = match resolve_artifact_destination(&artifact, override_path) {
         Ok(destination) => destination,
-        Err(error) => return RunResult::Error(error),
+        Err(error) => return DispatchResult::Error(error),
     };
 
     if let ArtifactDestination::File(path) = &destination {
         let dest = OutputDestination::File(path.clone());
         if let Err(e) = write_binary_output(&artifact.bytes, &dest) {
-            return RunResult::Error(RunError::new(
+            return DispatchResult::Error(RunError::new(
                 format!("Error writing artifact: {}", e),
                 RunErrorKind::FinalWrite(OutputKind::Artifact),
             ));
@@ -788,10 +972,10 @@ fn complete_artifact(
         None => None,
         Some(report) => {
             // A post-output hook can turn text into an artifact, but it has no
-            // presentation configuration to render a report with. Say so
-            // rather than dropping the report on the floor.
-            let Some(presentation) = presentation else {
-                return RunResult::Error(RunError::new(
+            // request to render a report with. Say so rather than dropping
+            // the report on the floor.
+            let Some(mut request) = request else {
+                return DispatchResult::Error(RunError::new(
                     "Cannot render artifact report: the artifact carries a report but was not \
                      produced by a handler, so no template configuration is available",
                     RunErrorKind::Render,
@@ -799,16 +983,22 @@ fn complete_artifact(
             };
             let envelope = match report_envelope(Some(report), &receipt) {
                 Ok(envelope) => envelope,
-                Err(error) => return RunResult::Error(error),
+                Err(error) => return DispatchResult::Error(error),
             };
-            match presentation.render(&envelope) {
-                Ok((formatted, _raw)) => Some(formatted),
-                Err(error) => return RunResult::Error(error),
+            request.data = envelope;
+            match standout_render::render_request_split(&request) {
+                Ok(rendered) => Some(rendered.formatted),
+                Err(error) => {
+                    return DispatchResult::Error(RunError::new(
+                        error.to_string(),
+                        RunErrorKind::Render,
+                    ))
+                }
             }
         }
     };
 
-    RunResult::Artifact(ArtifactRun::new(
+    DispatchResult::Artifact(ArtifactRun::new(
         artifact.bytes,
         artifact.suggested_destination,
         receipt,
@@ -860,17 +1050,17 @@ fn emit_artifact<W: Write, E: Write>(
 /// Keeping this as a writer seam makes final text/binary failures typed and
 /// unit-testable while `run()` retains its public `bool` contract.
 fn emit_run_result<W: Write, E: Write>(
-    result: &RunResult,
+    result: &DispatchResult,
     stdout: &mut W,
     stderr: &mut E,
 ) -> (bool, Option<RunError>) {
     let failure = match result {
-        RunResult::Handled(output) if output.is_empty() => None,
-        RunResult::Handled(output) => writeln!(stdout, "{}", output)
+        DispatchResult::Handled(output) if output.is_empty() => None,
+        DispatchResult::Handled(output) => writeln!(stdout, "{}", output)
             .and_then(|()| stdout.flush())
             .err()
             .and_then(|error| final_write_error_unless_broken_pipe(error, OutputKind::Text)),
-        RunResult::Binary(bytes, _) => stdout
+        DispatchResult::Binary(bytes, _) => stdout
             .write_all(bytes)
             .and_then(|()| stdout.flush())
             .err()
@@ -880,9 +1070,9 @@ fn emit_run_result<W: Write, E: Write>(
                     RunErrorKind::FinalWrite(OutputKind::Binary),
                 )
             }),
-        RunResult::Artifact(run) => emit_artifact(run, stdout, stderr),
-        RunResult::Silent => None,
-        RunResult::Error(error) => (if error.kind() == RunErrorKind::External {
+        DispatchResult::Artifact(run) => emit_artifact(run, stdout, stderr),
+        DispatchResult::Silent => None,
+        DispatchResult::Error(error) => (if error.kind() == RunErrorKind::External {
             stderr.write_all(error.as_str().as_bytes())
         } else {
             writeln!(stderr, "{}", error)
@@ -895,7 +1085,7 @@ fn emit_run_result<W: Write, E: Write>(
                 RunErrorKind::FinalWrite(OutputKind::Text),
             )
         }),
-        RunResult::NoMatch(_) => return (false, None),
+        DispatchResult::NoMatch(_) => return (false, None),
         _ => return (false, None),
     };
 
@@ -2879,7 +3069,7 @@ header:
         let mut stdout = Vec::new();
         let mut stderr = Vec::new();
         let (handled, failure) = emit_run_result(
-            &RunResult::Handled(RunOutput::command("hello")),
+            &DispatchResult::Handled(RunOutput::command("hello")),
             &mut stdout,
             &mut stderr,
         );
@@ -2890,7 +3080,7 @@ header:
 
         stdout.clear();
         let (handled, failure) = emit_run_result(
-            &RunResult::Error(RunError::new("bad argv", RunErrorKind::ClapUsage)),
+            &DispatchResult::Error(RunError::new("bad argv", RunErrorKind::ClapUsage)),
             &mut stdout,
             &mut stderr,
         );
@@ -2904,7 +3094,7 @@ header:
     fn final_text_broken_pipe_is_successful_early_termination() {
         let mut stderr = Vec::new();
         let (_, text_failure) = emit_run_result(
-            &RunResult::Handled(RunOutput::command("hello")),
+            &DispatchResult::Handled(RunOutput::command("hello")),
             &mut FailingWriter,
             &mut stderr,
         );
@@ -2916,7 +3106,7 @@ header:
     fn final_binary_write_failures_keep_payload_kind() {
         let mut stderr = Vec::new();
         let (_, binary_failure) = emit_run_result(
-            &RunResult::Binary(vec![0, 1], "data.bin".into()),
+            &DispatchResult::Binary(vec![0, 1], "data.bin".into()),
             &mut FailingWriter,
             &mut stderr,
         );
@@ -2935,7 +3125,7 @@ header:
     fn final_text_broken_pipe_flush_is_successful_early_termination() {
         let mut text_stdout = FlushFailingWriter::default();
         let (_, text_failure) = emit_run_result(
-            &RunResult::Handled(RunOutput::command("hello")),
+            &DispatchResult::Handled(RunOutput::command("hello")),
             &mut text_stdout,
             &mut Vec::new(),
         );
@@ -2947,7 +3137,7 @@ header:
     fn final_binary_flush_failures_keep_payload_kind() {
         let mut binary_stdout = FlushFailingWriter::default();
         let (_, binary_failure) = emit_run_result(
-            &RunResult::Binary(vec![0, 1], "data.bin".into()),
+            &DispatchResult::Binary(vec![0, 1], "data.bin".into()),
             &mut binary_stdout,
             &mut Vec::new(),
         );
@@ -2967,7 +3157,7 @@ header:
             Some("wrote out.bin".into()),
         );
         let (_, file_report_failure) = emit_run_result(
-            &RunResult::Artifact(file_run),
+            &DispatchResult::Artifact(file_run),
             &mut FailingWriter,
             &mut Vec::new(),
         );
@@ -2984,7 +3174,7 @@ header:
         );
         let mut stdout = Vec::new();
         let (_, stdout_report_failure) = emit_run_result(
-            &RunResult::Artifact(stdout_run),
+            &DispatchResult::Artifact(stdout_run),
             &mut stdout,
             &mut FailingWriter,
         );

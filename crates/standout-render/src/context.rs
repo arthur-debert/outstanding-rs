@@ -71,6 +71,7 @@ use std::rc::Rc;
 /// - `theme`: The theme being used for rendering
 /// - `data`: The handler's output data as a JSON value
 /// - `extras`: Additional string key-value pairs for extension
+/// - `warnings`: Optional per-run warning buffer for unresolved-tag diagnostics
 ///
 /// # Example
 ///
@@ -78,13 +79,9 @@ use std::rc::Rc;
 /// use standout_render::context::RenderContext;
 /// use standout_render::{OutputMode, Theme};
 ///
-/// let ctx = RenderContext {
-///     output_mode: OutputMode::Term,
-///     terminal_width: Some(120),
-///     theme: &Theme::new(),
-///     data: &serde_json::json!({"count": 42}),
-///     extras: std::collections::HashMap::new(),
-/// };
+/// let data = serde_json::json!({"count": 42});
+/// let theme = Theme::new();
+/// let ctx = RenderContext::new(OutputMode::Term, Some(120), &theme, &data);
 ///
 /// // Use context to configure a formatter
 /// let width = ctx.terminal_width.unwrap_or(80);
@@ -116,6 +113,10 @@ pub struct RenderContext<'a> {
     /// This allows passing arbitrary metadata to context providers
     /// without modifying the struct definition.
     pub extras: HashMap<String, String>,
+
+    /// Optional per-run warning buffer. Style-tag application records
+    /// unresolved-tag warnings here when present.
+    pub warnings: Option<crate::warnings::WarningBuffer>,
 }
 
 impl<'a> RenderContext<'a> {
@@ -155,6 +156,7 @@ impl<'a> RenderContext<'a> {
             theme,
             data,
             extras,
+            warnings: None,
         }
     }
 

@@ -82,8 +82,9 @@ fn app() -> App {
         .unwrap()
         .command(
             "warn-ok",
-            |_, _| {
-                standout::warnings::push_warning("fixture warning");
+            |_, ctx| {
+                use standout::cli::CommandContextInput;
+                ctx.warn("fixture warning");
                 Ok(Output::Render(json!({ "message": "ok" })))
             },
             "{{ message }}",
@@ -91,8 +92,9 @@ fn app() -> App {
         .unwrap()
         .command_with(
             "warn-fail",
-            |_, _| -> HandlerResult<serde_json::Value> {
-                standout::warnings::push_warning("fixture warning");
+            |_, ctx| -> HandlerResult<serde_json::Value> {
+                use standout::cli::CommandContextInput;
+                ctx.warn("fixture warning");
                 Err(anyhow::anyhow!("fixture handler failed"))
             },
             |config| config.structured_only(),

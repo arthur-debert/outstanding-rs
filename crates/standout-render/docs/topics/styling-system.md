@@ -177,25 +177,19 @@ let theme = Theme::new()
 
 ### Color Mode Detection
 
-`standout-render` auto-detects the OS color scheme:
+`standout-render` auto-detects the OS color scheme when the caller probes the process:
 
 ```rust
-use standout_render::{detect_color_mode, ColorMode};
+use standout_render::{ColorMode, TargetProperties};
 
-let mode = detect_color_mode();
-match mode {
+let properties = TargetProperties::detect();
+match properties.color_scheme {
     ColorMode::Light => println!("Light mode"),
     ColorMode::Dark => println!("Dark mode"),
 }
 ```
 
-Override for testing:
-
-```rust
-use standout_render::set_theme_detector;
-
-set_theme_detector(|| ColorMode::Dark);  // Force dark mode
-```
+`TargetProperties::detect()` is the one process probe, at the crate edge. Convenience wrappers call it then pass the result into `render_request`. Tests construct `TargetProperties` with an explicit `color_scheme` rather than installing a detector; `set_theme_detector` and the other detector override APIs are removed.
 
 ---
 
@@ -389,11 +383,13 @@ let style = theme.get_for_mode("panel", ColorMode::Dark);
 ### Color Mode
 
 ```rust
-use standout_render::{detect_color_mode, set_theme_detector, ColorMode};
+use standout_render::{ColorMode, TargetProperties};
 
-// Auto-detect
-let mode = detect_color_mode();
+// Auto-detect at the crate edge
+let properties = TargetProperties::detect();
+let mode = properties.color_scheme;
 
-// Override (for testing)
-set_theme_detector(|| ColorMode::Light);
+// Tests construct TargetProperties instead of installing a detector
+let mut target = properties;
+target.color_scheme = ColorMode::Light;
 ```

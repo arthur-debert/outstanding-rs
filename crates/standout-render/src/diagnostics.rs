@@ -19,10 +19,9 @@
 //!   [`Strip`](UnknownTagBehavior::Strip), so an app-template tag the resolved
 //!   theme lacks degrades to unstyled inner text instead of leaking `[tag?]`
 //!   markup.
-//! - Unresolved tags become framework warnings on every render path. Run-bound
-//!   renders leave them for the run to flush; standalone renders expose them
-//!   through [`crate::warnings::take_captured_warnings`] so they cannot leak
-//!   into a later command.
+//! - Unresolved tags become framework warnings on every render path when a
+//!   [`crate::warnings::WarningBuffer`] is supplied. Run-bound renders put
+//!   that buffer on the request and return the messages on the run result.
 //! - **Nothing is recorded unless someone asked.** Structured records are kept
 //!   only inside a capture window — see below.
 //!
@@ -137,9 +136,10 @@ thread_local! {
     /// A stack rather than a single batch because runs nest — see the module's
     /// nesting section.
     ///
-    /// Thread-local for the same reason [`crate::warnings`] is: a CLI process
-    /// is effectively single-threaded across the run boundary, so this avoids
-    /// a mutex on the render path.
+    /// Thread-local because a CLI process is effectively single-threaded
+    /// across the run boundary, so this avoids a mutex on the render path.
+    /// Warning capture is a separate [`crate::warnings::WarningBuffer`] passed
+    /// as an argument, not a thread-local.
     static WINDOWS: RefCell<Vec<Vec<TagResolution>>> = const { RefCell::new(Vec::new()) };
 
     /// The batch ended by the most recently closed [`CaptureWindow`].
@@ -268,14 +268,25 @@ impl TagResolution {
 ///
 /// This is the render path's replacement for building a [`BBParser`] and
 /// calling `parse`: byte-for-byte the same output, with unresolved-style
-/// warnings routed to the framework warning collector and structured records
-/// kept only while a capture window is open, so a standalone render costs no
-/// diagnostic-memory growth.
+/// warnings routed to an optional [`crate::warnings::WarningBuffer`] and
+/// structured records kept only while a capture window is open, so a
+/// standalone render costs no diagnostic-memory growth.
 pub fn resolve_tags(
     input: &str,
     styles: HashMap<String, Style>,
     transform: TagTransform,
     unknown_behavior: UnknownTagBehavior,
+) -> String {
+    resolve_tags_with(input, styles, transform, unknown_behavior, None)
+}
+
+/// [`resolve_tags`] that records unresolved-tag warnings on `warnings`.
+pub fn resolve_tags_with(
+    input: &str,
+    styles: HashMap<String, Style>,
+    transform: TagTransform,
+    unknown_behavior: UnknownTagBehavior,
+    warnings: Option<&crate::warnings::WarningBuffer>,
 ) -> String {
     let parser = BBParser::new(styles, transform).unknown_behavior(unknown_behavior);
     let (output, errors) = parser.parse_with_diagnostics(input);
@@ -292,7 +303,7 @@ pub fn resolve_tags(
         .partition(|error| !parser.styles().contains_key(&error.tag));
 
     if !unresolved.is_empty() {
-        warn_unresolved_tags(&unresolved);
+        warn_unresolved_tags(&unresolved, warnings);
     }
 
     if !is_capturing() {
@@ -321,21 +332,22 @@ pub fn resolve_tags(
     output
 }
 
-fn warn_unresolved_tags(unresolved: &[UnknownTagError]) {
+fn warn_unresolved_tags(
+    unresolved: &[UnknownTagError],
+    warnings: Option<&crate::warnings::WarningBuffer>,
+) {
+    let Some(warnings) = warnings else {
+        return;
+    };
     let mut names: Vec<&str> = unresolved.iter().map(|error| error.tag.as_str()).collect();
     names.sort_unstable();
     names.dedup();
 
     if !names.is_empty() {
-        let warning = format!(
+        warnings.push_once(format!(
             "Unresolved style tag(s) degraded to unstyled text: {}",
             names.join(", ")
-        );
-        if is_capturing() {
-            crate::warnings::push_warning_once(warning);
-        } else {
-            crate::warnings::capture_warning_once(warning);
-        }
+        ));
     }
 }
 
@@ -568,8 +580,6 @@ mod tests {
     fn renders_outside_a_capture_window_accumulate_nothing() {
         drop(reset());
         take_captured();
-        crate::warnings::drain_warnings();
-        crate::warnings::take_captured_warnings();
 
         for _ in 0..1000 {
             resolve_tags(
@@ -585,15 +595,6 @@ mod tests {
             drain().is_empty(),
             "a render outside a capture window records nothing"
         );
-        assert_eq!(
-            crate::warnings::take_captured_warnings(),
-            vec!["Unresolved style tag(s) degraded to unstyled text: nope".to_string()],
-            "a render outside a capture window exposes its framework warning"
-        );
-        assert!(
-            crate::warnings::drain_warnings().is_empty(),
-            "a standalone warning cannot remain pending for a later run"
-        );
     }
 
     /// …and the second half of that defect: those renders must not turn up in
@@ -602,22 +603,24 @@ mod tests {
     fn a_render_before_a_run_cannot_contaminate_it() {
         drop(reset());
         take_captured();
-        crate::warnings::drain_warnings();
-        crate::warnings::take_captured_warnings();
 
-        resolve_tags(
+        let stray = crate::warnings::WarningBuffer::new();
+        resolve_tags_with(
             "[stray]before the run[/stray]",
             HashMap::new(),
             TagTransform::Remove,
             UnknownTagBehavior::Passthrough,
+            Some(&stray),
         );
 
         let window = begin_capture();
-        resolve_tags(
+        let run = crate::warnings::WarningBuffer::new();
+        resolve_tags_with(
             "[ok]during the run[/ok]",
             theme_with("ok"),
             TagTransform::Remove,
             UnknownTagBehavior::Passthrough,
+            Some(&run),
         );
         drop(window);
 
@@ -625,12 +628,12 @@ mod tests {
         assert_eq!(captured.len(), 1, "only the run's own pass is captured");
         assert!(captured[0].is_clean());
         assert_eq!(
-            crate::warnings::take_captured_warnings(),
+            stray.take(),
             vec!["Unresolved style tag(s) degraded to unstyled text: stray".to_string()],
-            "the standalone warning remains observable"
+            "the standalone warning stays on the buffer that observed it"
         );
         assert!(
-            crate::warnings::drain_warnings().is_empty(),
+            run.is_empty(),
             "the next run has no pending standalone warning to inherit"
         );
     }

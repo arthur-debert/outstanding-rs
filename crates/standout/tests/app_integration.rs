@@ -20,10 +20,10 @@ fn test_app_integration() {
 
     let cmd = Command::new("test").subcommand(Command::new("test"));
     let result = app.run_to_string(cmd, vec!["test", "test"]);
-    if let standout::cli::RunResult::Handled(output) = result {
+    if let standout::cli::DispatchResult::Handled(output) = result.outcome() {
         assert_eq!(output, "success");
     } else {
-        panic!("Expected RunResult::Handled, got {:?}", result);
+        panic!("Expected DispatchResult::Handled, got {:?}", result);
     }
 }
 
@@ -67,10 +67,10 @@ fn test_app_with_mutable_state() {
     let cmd = Command::new("test").subcommand(Command::new("inc"));
     let result = app.run_to_string(cmd, vec!["test", "inc"]);
 
-    if let standout::cli::RunResult::Handled(output) = result {
+    if let standout::cli::DispatchResult::Handled(output) = result.outcome() {
         assert_eq!(output, "1");
     } else {
-        panic!("Expected RunResult::Handled, got {:?}", result);
+        panic!("Expected DispatchResult::Handled, got {:?}", result);
     }
     assert_eq!(*counter.borrow(), 1);
 }
@@ -104,17 +104,17 @@ fn test_struct_handler_with_state() {
     let cmd = Command::new("test").subcommand(Command::new("add"));
     // First run
     let result1 = app.run_to_string(cmd.clone(), vec!["test", "add"]);
-    if let standout::cli::RunResult::Handled(output) = result1 {
+    if let standout::cli::DispatchResult::Handled(output) = result1.outcome() {
         assert_eq!(output, "10");
     } else {
-        panic!("Expected RunResult::Handled, got {:?}", result1);
+        panic!("Expected DispatchResult::Handled, got {:?}", result1);
     }
 
     // State persists across calls because handlers are stored in Rc<RefCell>
     let result2 = app.run_to_string(cmd, vec!["test", "add"]);
-    if let standout::cli::RunResult::Handled(output) = result2 {
+    if let standout::cli::DispatchResult::Handled(output) = result2.outcome() {
         assert_eq!(output, "20");
     } else {
-        panic!("Expected RunResult::Handled, got {:?}", result2);
+        panic!("Expected DispatchResult::Handled, got {:?}", result2);
     }
 }

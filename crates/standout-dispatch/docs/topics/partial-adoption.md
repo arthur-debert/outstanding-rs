@@ -26,24 +26,29 @@ if !app.run(command, args) {
 }
 ```
 
-When the legacy path needs `ArgMatches`, capture the result instead:
+When the legacy path needs `ArgMatches`, capture the result instead.
+Framework `App::run_to_string` returns `standout::cli::CompletedRun`, a wrapper
+around this crate's outcome enum (re-exported as `DispatchResult`) plus
+framework warnings. Match `into_outcome()`:
 
 ```rust
-match app.run_to_string(command, args) {
-    RunResult::NoMatch(matches) => legacy_dispatch(matches),
-    RunResult::Handled(output) => consume_text(output),
-    RunResult::Binary(bytes, filename) => consume_binary(bytes, filename),
-    RunResult::Artifact(run) => consume_artifact(run),
-    RunResult::Error(error) => {
+let result = app.run_to_string(command, args);
+let _ = result.warnings();
+match result.into_outcome() {
+    DispatchResult::NoMatch(matches) => legacy_dispatch(matches),
+    DispatchResult::Handled(output) => consume_text(output),
+    DispatchResult::Binary(bytes, filename) => consume_binary(bytes, filename),
+    DispatchResult::Artifact(run) => consume_artifact(run),
+    DispatchResult::Error(error) => {
         eprintln!("{}", error);
         std::process::exit(error.exit_status().code().into());
     }
-    RunResult::Silent => {}
+    DispatchResult::Silent => {}
     _ => {}
 }
 ```
 
-`RunResult::Artifact` only appears once dispatch owns the write. In a
+`DispatchResult::Artifact` only appears once dispatch owns the write. In a
 hand-rolled dispatcher (below) an `Output::Artifact` handler comes back through
 `run_command` as `RenderedOutput::Artifact` with the report serialized but
 **not** written: the manual seam performs no framework write, so a caller adopting

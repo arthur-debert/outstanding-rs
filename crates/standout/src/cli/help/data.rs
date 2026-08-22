@@ -10,10 +10,14 @@
 //! The split matters because width is a *display* measurement. Resolving it
 //! through [`crate::tabular`] counts terminal columns, so a CJK name measures
 //! its real width and a name carrying style tags measures its visible text —
-//! neither of which byte length gets right.
+//! neither of which byte length gets right. Name-column widths are resolved
+//! against the invocation's [`crate::TargetProperties`] (width and
+//! ambiguous-width policy), not a fresh process detect, so a harness-injected
+//! destination and the App's policy govern the same numbers the request uses.
 
 use crate::tabular::{Column, FlatDataSpec, Width};
 use crate::topics::TopicRegistry;
+use crate::{AmbiguousWidth, TargetProperties};
 use clap::Command;
 use serde::Serialize;
 use std::collections::BTreeMap;
@@ -35,7 +39,7 @@ const NAME_COLUMN_MIN: usize = 12;
 const COLUMN_SEPARATOR: &str = "  ";
 
 /// Terminal width assumed when the real one cannot be detected.
-const ASSUMED_TERMINAL_WIDTH: usize = 80;
+pub(crate) const ASSUMED_TERMINAL_WIDTH: usize = 80;
 
 /// Resolves the width of one section's name column from that section's names.
 ///
@@ -47,7 +51,15 @@ const ASSUMED_TERMINAL_WIDTH: usize = 80;
 /// Callers pass every name a section renders, including names split across
 /// groups: one width per section is what keeps a grouped command list aligned
 /// down the page instead of per group.
-pub(crate) fn resolve_name_column(names: &[&str]) -> usize {
+///
+/// `terminal_width` and `ambiguous_width` come from the same
+/// [`TargetProperties`] the render request will carry. Callers capture that
+/// target once; this function does not probe the process.
+pub(crate) fn resolve_name_column(
+    names: &[&str],
+    terminal_width: usize,
+    ambiguous_width: AmbiguousWidth,
+) -> usize {
     let spec = FlatDataSpec::builder()
         .column(Column::new(Width::Bounded {
             min: Some(NAME_COLUMN_MIN),
@@ -58,9 +70,7 @@ pub(crate) fn resolve_name_column(names: &[&str]) -> usize {
         .build();
 
     let rows: Vec<Vec<&str>> = names.iter().map(|name| vec![*name]).collect();
-    let terminal_width = standout_render::detect_terminal_width().unwrap_or(ASSUMED_TERMINAL_WIDTH);
-
-    spec.resolve_widths_from_data(terminal_width, &rows)
+    spec.resolve_widths_from_data_with_policy(terminal_width, &rows, ambiguous_width)
         .get(0)
         .unwrap_or(NAME_COLUMN_MIN)
 }
@@ -274,21 +284,33 @@ fn only_the_help_word(subs: &[&Command]) -> bool {
     matches!(subs, [single] if single.get_name() == "help")
 }
 
+/// Extracts help layout data for `cmd`.
+///
+/// Name-column widths are resolved against `target` so they match the
+/// destination the render request will use: unknown width falls back to
+/// [`ASSUMED_TERMINAL_WIDTH`], and [`TargetProperties::ambiguous_width`] is
+/// the measurement policy.
 pub(crate) fn extract_help_data(
     cmd: &Command,
     command_groups: Option<&[CommandGroup]>,
     length: HelpLength,
+    target: &TargetProperties,
 ) -> HelpData {
-    extract(cmd, command_groups, length, None)
+    extract(cmd, command_groups, length, None, target)
 }
 
+/// Extracts help layout data including the Learn More topic list.
+///
+/// Same destination contract as [`extract_help_data`]: `target` sizes the
+/// name columns, including `learn_more_width`.
 pub(crate) fn extract_help_data_with_topics(
     cmd: &Command,
     registry: &TopicRegistry,
     command_groups: Option<&[CommandGroup]>,
     length: HelpLength,
+    target: &TargetProperties,
 ) -> HelpData {
-    extract(cmd, command_groups, length, Some(registry))
+    extract(cmd, command_groups, length, Some(registry), target)
 }
 
 fn extract(
@@ -296,6 +318,7 @@ fn extract(
     command_groups: Option<&[CommandGroup]>,
     length: HelpLength,
     registry: Option<&TopicRegistry>,
+    target: &TargetProperties,
 ) -> HelpData {
     let name = cmd.get_name().to_string();
 
@@ -335,6 +358,8 @@ fn extract(
     } else {
         extract_default_subcommands(&subs)
     };
+    let terminal_width = target.width.unwrap_or(ASSUMED_TERMINAL_WIDTH);
+    let policy = target.ambiguous_width;
     let subcommands_width = resolve_name_column(
         &subcommands
             .iter()
@@ -346,6 +371,8 @@ fn extract(
                     .map(|item| item.name.as_str())
             })
             .collect::<Vec<_>>(),
+        terminal_width,
+        policy,
     );
 
     // Positionals get their own section, ahead of the flags, the way clap
@@ -367,7 +394,7 @@ fn extract(
             })
             .collect(),
     );
-    let arguments_width = resolve_name_column(&section_names(&arguments));
+    let arguments_width = resolve_name_column(&section_names(&arguments), terminal_width, policy);
 
     let options = group_by_heading(
         flags
@@ -381,8 +408,11 @@ fn extract(
             .collect(),
     );
     let option_names = option_section_names(&options);
-    let options_width =
-        resolve_name_column(&option_names.iter().map(String::as_str).collect::<Vec<_>>());
+    let options_width = resolve_name_column(
+        &option_names.iter().map(String::as_str).collect::<Vec<_>>(),
+        terminal_width,
+        policy,
+    );
 
     let learn_more: Vec<TopicListItem> = topics
         .iter()
@@ -396,6 +426,8 @@ fn extract(
             .iter()
             .map(|topic| topic.name.as_str())
             .collect::<Vec<_>>(),
+        terminal_width,
+        policy,
     );
 
     HelpData {
@@ -492,8 +524,21 @@ mod tests {
     use super::*;
     use clap::Arg;
 
+    fn layout_target() -> TargetProperties {
+        TargetProperties {
+            width: Some(ASSUMED_TERMINAL_WIDTH),
+            stdout_is_terminal: false,
+            stderr_is_terminal: false,
+            stdout_color_capability: false,
+            stderr_color_capability: false,
+            color_scheme: crate::ColorMode::Dark,
+            icon_mode: crate::IconMode::Classic,
+            ambiguous_width: crate::AmbiguousWidth::Narrow,
+        }
+    }
+
     fn extract_short(cmd: &Command) -> HelpData {
-        extract_help_data(cmd, None, HelpLength::Short)
+        extract_help_data(cmd, None, HelpLength::Short, &layout_target())
     }
 
     #[test]
@@ -564,6 +609,30 @@ mod tests {
         assert_eq!(data.options_width, 18);
     }
 
+    /// Name-column widths follow the invocation target's ambiguous-width
+    /// policy rather than a fresh process detect (always Narrow).
+    #[test]
+    fn test_name_column_uses_target_ambiguous_width_policy() {
+        let cmd = Command::new("root").disable_help_flag(true).arg(
+            Arg::new("wide")
+                .long("↦≈Δ↦≈Δ↦≈Δ↦≈Δ")
+                .action(clap::ArgAction::SetTrue)
+                .help("Ambiguous"),
+        );
+
+        let mut narrow = layout_target();
+        narrow.ambiguous_width = crate::AmbiguousWidth::Narrow;
+        let mut wide = layout_target();
+        wide.ambiguous_width = crate::AmbiguousWidth::Wide;
+
+        let narrow_width = extract_help_data(&cmd, None, HelpLength::Short, &narrow).options_width;
+        let wide_width = extract_help_data(&cmd, None, HelpLength::Short, &wide).options_width;
+        assert!(
+            wide_width > narrow_width,
+            "wide policy must measure ambiguous names wider: {wide_width} vs {narrow_width}"
+        );
+    }
+
     /// One column per section, shared across groups, so the auto "Other" group
     /// lines up with the named ones.
     #[test]
@@ -578,7 +647,7 @@ mod tests {
             commands: vec![Some("short".into())],
         }];
 
-        let data = extract_help_data(&cmd, Some(&groups), HelpLength::Short);
+        let data = extract_help_data(&cmd, Some(&groups), HelpLength::Short, &layout_target());
         assert_eq!(data.subcommands.len(), 2, "expected a Main and an Other");
         assert_eq!(data.subcommands_width, "a-very-long-command-name".len());
     }
@@ -600,7 +669,7 @@ mod tests {
 
         assert_eq!(extract_short(&cmd).about, "Terse");
         assert_eq!(
-            extract_help_data(&cmd, None, HelpLength::Long).about,
+            extract_help_data(&cmd, None, HelpLength::Long, &layout_target()).about,
             "The full story"
         );
     }
@@ -609,7 +678,7 @@ mod tests {
     fn test_long_length_falls_back_to_about() {
         let cmd = Command::new("root").about("Terse");
         assert_eq!(
-            extract_help_data(&cmd, None, HelpLength::Long).about,
+            extract_help_data(&cmd, None, HelpLength::Long, &layout_target()).about,
             "Terse"
         );
     }
@@ -763,7 +832,13 @@ mod tests {
         let mut registry = TopicRegistry::new();
         registry.add_topic(Topic::new("Storage", "content", TopicType::Text, None));
 
-        let data = extract_help_data_with_topics(&cmd, &registry, None, HelpLength::Short);
+        let data = extract_help_data_with_topics(
+            &cmd,
+            &registry,
+            None,
+            HelpLength::Short,
+            &layout_target(),
+        );
         assert_eq!(
             data.subcommands[0].items[0].name, "help",
             "`help <topic>` is a real destination, so the word stays listed"
@@ -795,7 +870,13 @@ mod tests {
         ));
         registry.add_topic(Topic::new("Short", "content", TopicType::Text, None));
 
-        let data = extract_help_data_with_topics(&cmd, &registry, None, HelpLength::Short);
+        let data = extract_help_data_with_topics(
+            &cmd,
+            &registry,
+            None,
+            HelpLength::Short,
+            &layout_target(),
+        );
         assert_eq!(data.learn_more.len(), 2);
         assert_eq!(
             data.learn_more_width,

@@ -32,7 +32,7 @@ use clap::Command;
 use console::Style;
 use proptest::prelude::*;
 use serde_json::{json, Value};
-use standout::cli::{App, Output, RunErrorKind, RunResult};
+use standout::cli::{App, DispatchResult, Output, RunErrorKind};
 use standout::{OutputMode, Theme};
 use standout_test::invariants::{
     assert_no_unresolved_tag_markers_in_page, assert_styling_preserves_layout_in_pages,
@@ -154,7 +154,7 @@ fn dispatch(
     theme: &ThemeCase,
     template: &TemplateCase,
     data: &Value,
-) -> RunResult {
+) -> DispatchResult {
     let payload = if mode.is_structured() {
         data.clone()
     } else {
@@ -176,7 +176,7 @@ fn dispatch(
     let app = builder.build().expect("Failed to build app");
     let cmd = Command::new("app").subcommand(Command::new("test"));
     let matches = cmd.try_get_matches_from(["app", "test"]).unwrap();
-    app.dispatch(matches, mode)
+    app.dispatch(matches, mode).into_outcome()
 }
 
 /// Structured output must parse as the format it claims to be.

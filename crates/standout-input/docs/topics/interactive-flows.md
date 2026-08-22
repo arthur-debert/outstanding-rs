@@ -214,21 +214,27 @@ You wrote ~50 lines of glue and got: themed dynamic text per step, polished TUI 
 
 ## Testing Wizards
 
-A wizard built on `.prompt()` is fully testable in process — no real TTY, no `expectrl` subprocess. Every interactive source consults a [`PromptResponder`](https://docs.rs/standout-input/latest/standout_input/trait.PromptResponder.html) before it touches stdin; in tests you install a `ScriptedResponder` and the production wizard code is unchanged.
+A wizard built on interactive sources is fully testable in process — no real TTY, no `expectrl` subprocess. Every interactive source consults a [`PromptResponder`](https://docs.rs/standout-input/latest/standout_input/trait.PromptResponder.html) on the run's [`InputSources`](https://docs.rs/standout-input/latest/standout_input/struct.InputSources.html) before it touches stdin. Production handler code calls `.prompt_from(ctx.input_sources())` (or `InputChain::resolve_from`); tests put a `ScriptedResponder` on those sources with `TestHarness::prompts(...)`.
 
 ```rust
-use serial_test::serial;
-use standout_input::{PromptResponse, ScriptedResponder};
+use standout::cli::CommandContextInput;
+use standout_input::{InquireSelect, InquireText, PromptResponse, ScriptedResponder};
 use standout_test::TestHarness;
 use std::sync::Arc;
 
+fn setup(_m: &ArgMatches, ctx: &CommandContext) -> HandlerResult<Value> {
+    let sources = ctx.input_sources();
+    let pack = InquireText::new("Pack name:").prompt_from(sources)?;
+    let env = InquireSelect::new("Environment:", vec!["dev", "staging", "prod"])
+        .prompt_from(sources)?;
+    Ok(Output::Render(json!({ "pack": pack, "env": env })))
+}
+
 #[test]
-#[serial]
 fn setup_wizard_creates_pack_and_picks_environment() {
     let result = TestHarness::new()
         .prompts(Arc::new(ScriptedResponder::new([
             PromptResponse::text("foo"),     // pack name
-            PromptResponse::Bool(true),      // confirm dirty
             PromptResponse::Choice(2),       // env: dev=0, staging=1, prod=2 -> "prod"
         ])))
         .run(&app(), command(), ["mycli", "setup"]);
@@ -237,6 +243,8 @@ fn setup_wizard_creates_pack_and_picks_environment() {
     result.assert_stdout_contains("Created pack `foo` in prod");
 }
 ```
+
+`.prompt()` still exists for standalone flows that have no `CommandContext`; it uses `InputSources::from_process()`. Harness tests of framework handlers must call `.prompt_from(ctx.input_sources())` so they see the scripted responder.
 
 Two design choices to keep tests honest:
 
@@ -254,30 +262,27 @@ PromptResponse::Skip    // -> Err(InputError::NoInput)        — same path as "
 
 Use them to test the wizard's abort and re-ask logic without involving real signal handling.
 
-For lower-level tests that don't need the harness, install the responder directly:
+For lower-level tests that don't need the harness, put the responder on [`InputSources`](https://docs.rs/standout-input/latest/standout_input/struct.InputSources.html):
 
 ```rust
 use std::sync::Arc;
-use standout_input::{
-    set_default_prompt_responder, reset_default_prompt_responder,
-    ScriptedResponder, PromptResponse,
-};
+use standout_input::{InputSources, ScriptedResponder, PromptResponse};
 
 #[test]
-#[serial(prompt_responder)]
 fn pack_name_validation_re_asks_on_invalid() {
-    set_default_prompt_responder(Arc::new(ScriptedResponder::new([
+    let sources = InputSources::from_process().with_responder(Arc::new(ScriptedResponder::new([
         PromptResponse::text("BadName!"),  // first try, rejected by validator
         PromptResponse::text("good-name"), // re-ask, accepted
     ])));
 
-    assert_eq!(prompt_pack_name(&Ctx::fresh()).unwrap(), Answer::Text("good-name".into()));
-
-    reset_default_prompt_responder();
+    assert_eq!(
+        prompt_pack_name_from(&sources).unwrap(),
+        Answer::Text("good-name".into())
+    );
 }
 ```
 
-This serializes on the `prompt_responder` axis (the global override is process-wide, like stdin / clipboard). The harness handles the install + reset for you when used as `.prompts(...)`.
+The harness places that responder on the run's `InputSources` when used as `.prompts(...)`.
 
 ---
 

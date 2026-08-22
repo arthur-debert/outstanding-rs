@@ -11,6 +11,10 @@
 //! - [`Renderer`]: Compile and reuse templates for fast repeated rendering
 //! - [`validate_template`]: Surface typos or unknown tags before you ship templates
 //! - [`OutputMode`]: Control how content is emitted (Auto/Term/Text/TermDebug/Json/Yaml)
+//! - [`TargetProperties`]: Destination facts for one invocation (per-stream terminal and color)
+//! - [`RenderRequest`]: Owned explicit input to [`render_request`]
+//! - [`ColorPolicy`]: Resolved color axis on a [`RenderRequest`], independent of [`OutputMode`]
+//! - [`TemplateRef`]: Named, inline, or absent template on a [`RenderRequest`]
 //! - Style syntax: Tag-based `[name]content[/name]` markup for inline styling
 //!
 //! ## Quick Start
@@ -46,6 +50,15 @@
 //! ).unwrap();
 //! println!("{}", output);
 //! ```
+//!
+//! [`render_request`] is the contract: an owned [`RenderRequest`] in, bytes out.
+//! [`render`], [`render_with_output`], and siblings stay as detect-then-call
+//! wrappers — they probe [`TargetProperties::detect`] at their edge, build a
+//! request, and delegate. They keep their own names (Rust has no free-function
+//! overloading). Tests construct [`TargetProperties`] rather than installing
+//! detector overrides; those APIs (`set_terminal_width_detector`,
+//! `set_color_capability_detector`, `set_theme_detector`, `set_icon_detector`,
+//! and the `detect_*` cluster they served) are removed.
 //!
 //! ## Tag-Based Styling
 //!
@@ -148,12 +161,13 @@ pub mod colorspace;
 pub mod context;
 pub mod diagnostics;
 mod embedded;
-pub mod environment;
+mod environment;
 mod error;
 pub mod file_loader;
 pub mod output;
 pub mod prelude;
 mod projection;
+mod request;
 pub mod style;
 pub mod tabular;
 pub mod template;
@@ -173,10 +187,7 @@ pub use style::{
 };
 
 // Theme module exports
-pub use theme::{
-    detect_color_mode, detect_icon_mode, set_icon_detector, set_theme_detector, ColorMode,
-    IconDefinition, IconMode, IconSet, Theme,
-};
+pub use theme::{ColorMode, IconDefinition, IconMode, IconSet, Theme};
 
 // Output module exports
 pub use output::{write_binary_output, write_output, OutputDestination, OutputMode};
@@ -185,15 +196,15 @@ pub use projection::{
 };
 pub use width::{AmbiguousWidth, WidthCalculator};
 
-// Environment detection exports
-pub use environment::{
-    detect_ambiguous_width_override, detect_color_capability, detect_terminal_width,
-    reset_detectors as reset_environment_detectors, set_ambiguous_width_detector,
-    set_color_capability_detector, set_terminal_width_detector, DetectorGuard,
+// Composition-contract types (explicit request; detect at the crate edge)
+pub use request::{
+    default_template_engine, render_request, render_request_split, ColorPolicy, RenderRequest,
+    SharedTemplateEngine, TargetProperties, TemplateRef,
 };
 
 // Render module exports
 pub use template::{
+    // Template registry
     render,
     render_auto,
     render_auto_with_context,
@@ -204,7 +215,6 @@ pub use template::{
     render_with_output,
     render_with_vars,
     validate_template,
-    // Template registry
     walk_template_dir,
     // Template engine abstraction
     MiniJinjaEngine,

@@ -20,7 +20,8 @@
 //! follows the shared blank rule where blank resolves — default or omission
 //! — but on a required field without a default it terminates the pass with
 //! [`InputError::NoInput`] instead of re-prompting a source that will never
-//! answer.
+//! answer. The prompt responder is an argument on [`crate::InputSources`],
+//! not a process-global override.
 
 use std::path::Path;
 
@@ -72,10 +73,8 @@ impl Questionnaire {
 
     /// Read one complete answer sheet from explicitly requested stdin
     /// (e.g. an `--answers -` style flag), against an explicit
-    /// [`StdinReader`] — [`DefaultStdin`](crate::env::DefaultStdin) for the
-    /// process's real stdin (which honors a test override installed via
-    /// [`set_default_stdin_reader`](crate::env::set_default_stdin_reader)),
-    /// or an injected reader in tests.
+    /// [`StdinReader`] — typically [`crate::InputSources::stdin`] for this
+    /// invocation, or an injected reader in tests.
     ///
     /// Selecting stdin is an explicit caller decision — this adapter never
     /// merges stdin answers with any other source.
@@ -106,10 +105,9 @@ impl Questionnaire {
     /// Collect answers interactively, one prompt per applicable field
     /// occurrence.
     ///
-    /// Prompts through [`TextPromptSource`] on the real terminal — and
-    /// therefore through any installed
-    /// [`PromptResponder`](crate::PromptResponder), which is how tests drive
-    /// this without a TTY. Every entered answer runs through the same field
+    /// Prompts through [`TextPromptSource`] on the real terminal. Tests drive
+    /// this without a TTY by putting a [`PromptResponder`](crate::PromptResponder)
+    /// on [`crate::InputSources`] and calling [`collect_interactive_from`]. Every entered answer runs through the same field
     /// decoders and validators as file and stdin answers; a failure on an
     /// entered answer is a *local, retryable* error — the question
     /// re-prompts with the diagnostic and all previously accepted answers
@@ -146,7 +144,17 @@ impl Questionnaire {
     /// - Any terminal I/O failure from the underlying prompt source.
     #[cfg(feature = "simple-prompts")]
     pub fn collect_interactive(&self) -> Result<RawAnswers, InputError> {
-        self.collect_interactive_with_terminal(Arc::new(RealTerminal))
+        self.collect_interactive_from(&crate::InputSources::from_process())
+    }
+
+    /// [`collect_interactive`](Self::collect_interactive) against explicit
+    /// [`crate::InputSources`].
+    #[cfg(feature = "simple-prompts")]
+    pub fn collect_interactive_from(
+        &self,
+        sources: &crate::InputSources,
+    ) -> Result<RawAnswers, InputError> {
+        self.collect_interactive_with_terminal_from(Arc::new(RealTerminal), sources)
     }
 
     /// [`collect_interactive`](Self::collect_interactive) against an
@@ -157,13 +165,25 @@ impl Questionnaire {
         &self,
         terminal: Arc<T>,
     ) -> Result<RawAnswers, InputError> {
-        if crate::responder::current_prompt_responder().is_none() && !terminal.is_terminal() {
+        self.collect_interactive_with_terminal_from(terminal, &crate::InputSources::from_process())
+    }
+
+    /// Interactive collection against an explicit terminal and
+    /// [`crate::InputSources`].
+    #[cfg(feature = "simple-prompts")]
+    pub fn collect_interactive_with_terminal_from<T: TerminalIO + 'static>(
+        &self,
+        terminal: Arc<T>,
+        sources: &crate::InputSources,
+    ) -> Result<RawAnswers, InputError> {
+        if sources.responder().is_none() && !terminal.is_terminal() {
             return Err(InputError::NoInput);
         }
 
         let mut collector = Collector {
             questionnaire: self,
             terminal,
+            responder: sources.responder_arc(),
             raw: BTreeMap::new(),
             occurrences: BTreeMap::new(),
             outcomes: BTreeMap::new(),
@@ -179,6 +199,7 @@ impl Questionnaire {
 struct Collector<'a, T: TerminalIO + 'static> {
     questionnaire: &'a Questionnaire,
     terminal: Arc<T>,
+    responder: Option<std::sync::Arc<dyn crate::PromptResponder>>,
     /// Accepted raw answer text per occurrence path.
     raw: BTreeMap<String, String>,
     /// Collected occurrences per repeatable-group path base.
@@ -328,7 +349,15 @@ impl<T: TerminalIO + 'static> Collector<'_, T> {
     /// (a responder `Skip`, or a lost terminal); cancellation and I/O
     /// failures propagate.
     fn prompt(&self, message: String) -> Result<Option<String>, InputError> {
-        TextPromptSource::with_terminal(message, self.terminal.clone()).prompt_entry()
+        let source = TextPromptSource::with_terminal(message, self.terminal.clone());
+        match &self.responder {
+            Some(responder) => {
+                let sources = crate::InputSources::from_process()
+                    .with_responder(std::sync::Arc::clone(responder));
+                source.prompt_entry_from(&sources)
+            }
+            None => source.prompt_entry(),
+        }
     }
 }
 

@@ -7,7 +7,7 @@
 //! - [`Output`]: What a handler produces (render data, silent, or binary)
 //! - [`HandlerResult`]: The result type for handlers (`Result<Output<T>, Error>`)
 //! - [`ExternalFailure`]: An intentional delegated-operation failure with an exact status/payload
-//! - [`RunResult`]: The result of running the CLI dispatcher
+//! - [`DispatchResult`]: The dispatch crate's outcome enum
 //! - [`Handler`]: Trait for command handlers (`&mut self`)
 //!
 //! # Design Note
@@ -56,9 +56,9 @@
 // Re-export all handler types from standout-dispatch.
 // These types are render-agnostic and focus on handler execution.
 pub use standout_dispatch::{
-    Artifact, ArtifactDestination, ArtifactReceipt, ArtifactRun, CommandContext, ExitStatus,
-    Extensions, ExternalFailure, FnHandler, Handler, HandlerResult, InvalidExternalStatus, Output,
-    OutputKind, RunError, RunErrorKind, RunOutput, RunResult, SuccessKind,
+    Artifact, ArtifactDestination, ArtifactReceipt, ArtifactRun, CommandContext, DispatchResult,
+    ExitStatus, Extensions, ExternalFailure, FnHandler, Handler, HandlerResult,
+    InvalidExternalStatus, Output, OutputKind, RunError, RunErrorKind, RunOutput, SuccessKind,
 };
 
 use standout_input::{InputSourceKind, Inputs, MissingInput};
@@ -106,6 +106,12 @@ pub trait CommandContextInput {
     /// Most handlers should prefer [`input`](Self::input); this is for cases
     /// where the handler needs to iterate over all resolved inputs.
     fn inputs(&self) -> Option<&Inputs>;
+
+    /// Stdin, clipboard, and prompt-responder for this invocation.
+    fn input_sources(&self) -> &standout_input::InputSources;
+
+    /// Records a framework warning returned on the run result.
+    fn warn(&self, message: impl Into<String>);
 }
 
 impl CommandContextInput for CommandContext {
@@ -128,6 +134,29 @@ impl CommandContextInput for CommandContext {
 
     fn inputs(&self) -> Option<&Inputs> {
         self.extensions.get::<Inputs>()
+    }
+
+    /// Stdin, clipboard, and prompt-responder for this invocation.
+    ///
+    /// Inserted by `App::run_with` / `dispatch_from` / `App::run_command`.
+    /// Standalone `dispatch` inserts [`InputSources::from_process`].
+    fn input_sources(&self) -> &standout_input::InputSources {
+        self.extensions
+            .get::<standout_input::InputSources>()
+            .expect("InputSources are inserted at the run/dispatch edge")
+    }
+
+    /// Records a framework warning on this run's buffer.
+    ///
+    /// The messages are returned on the run result / harness API. A dispatch
+    /// that never opened a run buffer drops the message.
+    fn warn(&self, message: impl Into<String>) {
+        if let Some(buffer) = self
+            .extensions
+            .get::<standout_render::warnings::WarningBuffer>()
+        {
+            buffer.push(message);
+        }
     }
 }
 

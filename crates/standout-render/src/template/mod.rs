@@ -108,6 +108,7 @@
 mod engine;
 pub mod filters;
 mod functions;
+mod load;
 pub mod registry;
 mod renderer;
 mod simple;
@@ -120,6 +121,8 @@ pub use functions::{
     render_auto_with_engine_split_named, render_auto_with_spec, render_with_context,
     render_with_mode, render_with_output, render_with_vars, validate_template, RenderResult,
 };
+pub(crate) use functions::{render_engine_split_inline, render_engine_split_named};
+pub(crate) use load::{load_inline_dependencies, load_named_template};
 pub use registry::{
     walk_template_dir, RegistryError, ResolvedTemplate, TemplateFile, TemplateRegistry,
     TEMPLATE_EXTENSIONS,

@@ -17,9 +17,15 @@
 //! ```
 
 // Core rendering functions
+pub use crate::{render, render_request, render_request_split, render_with_output};
 
 // Theme and styling
+pub use crate::{ColorMode, IconMode, Theme};
 
 // Output control
+pub use crate::{ColorPolicy, OutputMode};
+
+// Composition-contract types
+pub use crate::{RenderRequest, TargetProperties, TemplateRef};
 
 // Re-export console::Style for convenience

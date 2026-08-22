@@ -1352,51 +1352,42 @@ fn generated_harness_run(spec: &ProjectSpec, primary_value: &str, args: &[String
     }
 }
 
-/// Generates panic-safe setup for file and stdin sources in the handler test.
-fn handler_sample_setup(spec: &ProjectSpec) -> String {
-    let mut lines = Vec::new();
-    if spec
-        .inputs
+fn spec_reads_stdin(spec: &ProjectSpec) -> bool {
+    spec.inputs
         .iter()
-        .any(|input| input.sources[0] == InputSource::Stdin)
-    {
-        lines.push(
-            r#"        struct StdinGuard;
+        .any(|input| input.sources.contains(&InputSource::Stdin))
+}
 
-        impl StdinGuard {
-            fn install(reader: standout_input::MockStdin) -> Self {
-                standout_input::env::set_default_stdin_reader(std::sync::Arc::new(reader));
-                Self
-            }
-        }
-
-        impl Drop for StdinGuard {
-            fn drop(&mut self) {
-                standout_input::env::reset_default_stdin_reader();
-            }
-        }"#
-            .to_string(),
-        );
-    }
+/// Generates panic-safe setup for file sources in the handler test.
+fn handler_sample_files(spec: &ProjectSpec) -> String {
+    let mut lines = Vec::new();
     for (index, input) in spec.inputs.iter().enumerate() {
         let value = if index == 0 { "hello" } else { "sample" };
-        match input.sources[0] {
-            InputSource::File => {
-                lines.push(format!(
-                    "        let {0}_test_file =\n            std::env::temp_dir().join(format!(\"{1}-{0}-{{}}.txt\", std::process::id()));",
-                    input.name, spec.executable_name
-                ));
-                lines.push(format!(
-                    "        std::fs::write(&{}_test_file, {}).unwrap();",
-                    input.name,
-                    quote(value)
-                ));
-            }
-            InputSource::Stdin => lines.push(format!(
-                "        let _stdin = StdinGuard::install(standout_input::MockStdin::piped({}));",
+        if input.sources[0] == InputSource::File {
+            lines.push(format!(
+                "        let {0}_test_file =\n            std::env::temp_dir().join(format!(\"{1}-{0}-{{}}.txt\", std::process::id()));",
+                input.name, spec.executable_name
+            ));
+            lines.push(format!(
+                "        std::fs::write(&{}_test_file, {}).unwrap();",
+                input.name,
+                quote(value)
+            ));
+        }
+    }
+    lines.join("\n")
+}
+
+/// Generates InputSources injection for stdin-backed handler tests.
+fn handler_sample_stdin(spec: &ProjectSpec) -> String {
+    let mut lines = Vec::new();
+    for (index, input) in spec.inputs.iter().enumerate() {
+        let value = if index == 0 { "hello" } else { "sample" };
+        if input.sources.contains(&InputSource::Stdin) {
+            lines.push(format!(
+                "        ctx.extensions.insert(\n            standout_input::InputSources::from_process()\n                .with_stdin(standout_input::MockStdin::piped({})),\n        );",
                 quote(&format!("{value}\n"))
-            )),
-            InputSource::Argument => {}
+            ));
         }
     }
     lines.join("\n")
@@ -1475,7 +1466,11 @@ fn handler_imports(spec: &ProjectSpec) -> String {
         "use clap::ArgMatches;".to_string(),
         format!("use {} as core;", spec.lib_crate),
         "use serde::Serialize;".to_string(),
-        "use standout::cli::{CommandContext, Output};".to_string(),
+        if spec_reads_stdin(spec) {
+            "use standout::cli::{CommandContext, CommandContextInput, Output};".to_string()
+        } else {
+            "use standout::cli::{CommandContext, Output};".to_string()
+        },
         "use standout::handler;".to_string(),
     ];
     imports.sort();
@@ -1772,7 +1767,7 @@ impl CommandInput {
                     self.name
                 )),
                 InputSource::Stdin => lines.push(format!(
-                    "if {0}.is_none() {{\n        {0} = standout_input::read_if_piped()?;\n    }}",
+                    "if {0}.is_none() {{\n        {0} = standout_input::read_if_piped_from(ctx.input_sources())?;\n    }}",
                     self.name
                 )),
             }
@@ -1839,7 +1834,9 @@ fn model(spec: &ProjectSpec) -> minijinja::Value {
         pipeline_human_run => generated_harness_run(spec, "Ada", &sample_cli_args(spec, "Ada")),
         pipeline_json_test => generated_json_pipeline_test(spec),
         handler_args => rust_array(&sample_handler_args(spec), 16, 60),
-        handler_sample_setup => handler_sample_setup(spec),
+        handler_sample_files => handler_sample_files(spec),
+        handler_sample_stdin => handler_sample_stdin(spec),
+        handler_ctx_arg => if spec_reads_stdin(spec) { "ctx" } else { "_ctx" },
         handler_sample_cleanup => handler_sample_cleanup(spec),
         template_body => template_body(spec),
         human_expected => quote(&expected_first_field(spec, "Ada").1),
@@ -2066,7 +2063,7 @@ impl From<core::{{ view_name }}> for {{ view_name }} {
 #[handler]
 pub(crate) fn {{ command_ident }}(
     #[matches] matches: &ArgMatches,
-    #[ctx] _ctx: &CommandContext,
+    #[ctx] {{ handler_ctx_arg }}: &CommandContext,
 ) -> Result<Output<{{ view_name }}>, anyhow::Error> {
     {{ resolve_inputs }}
     let result = core::{{ operation_name }}({{ core_call_args }})?;
@@ -2081,14 +2078,19 @@ mod tests {
     #[test]
     #[serial]
     fn typed_handler_maps_input_to_core_and_view() {
-{%- if handler_sample_setup %}
-{{ handler_sample_setup }}
+{%- if handler_sample_files %}
+{{ handler_sample_files }}
 {%- endif %}
         let matches = crate::cli::command()
             .try_get_matches_from({{ handler_args }})
             .unwrap();
         let (_, matches) = matches.subcommand().unwrap();
-        let ctx = CommandContext::default();
+        let mut ctx = CommandContext::default();
+        ctx.extensions
+            .insert(standout_input::InputSources::from_process());
+{%- if handler_sample_stdin %}
+{{ handler_sample_stdin }}
+{%- endif %}
 
         let Output::Render(view) = {{ command_ident }}(matches, &ctx).unwrap() else {
             panic!("expected rendered data");
@@ -2167,25 +2169,26 @@ mod tests {
     use super::*;
     use serial_test::serial;
     use standout_input::{
-        questionnaire::QuestionnaireInput, reset_default_prompt_responder,
-        set_default_prompt_responder, PromptResponse, ScriptedResponder,
+        questionnaire::QuestionnaireInput, InputSources, PromptResponse, ScriptedResponder,
     };
     use std::process::Command;
     use std::sync::Arc;
     use tempfile::TempDir;
 
-    struct PromptResponderGuard;
+    struct PromptResponderGuard {
+        sources: InputSources,
+    }
 
     impl PromptResponderGuard {
         fn install(responses: impl IntoIterator<Item = PromptResponse>) -> Self {
-            set_default_prompt_responder(Arc::new(ScriptedResponder::new(responses)));
-            Self
+            Self {
+                sources: InputSources::from_process()
+                    .with_responder(Arc::new(ScriptedResponder::new(responses))),
+            }
         }
-    }
 
-    impl Drop for PromptResponderGuard {
-        fn drop(&mut self) {
-            reset_default_prompt_responder();
+        fn sources(&self) -> &InputSources {
+            &self.sources
         }
     }
 
@@ -3614,7 +3617,9 @@ mod tests {
             PromptResponse::Skip,
             PromptResponse::Skip,
         ]);
-        let interactive_raw = questionnaire.collect_interactive().unwrap();
+        let interactive_raw = questionnaire
+            .collect_interactive_from(_guard.sources())
+            .unwrap();
         let from_file_raw = questionnaire.read_answer_sheet_file(&path).unwrap();
         let from_stdin_raw = questionnaire
             .read_answer_sheet_stdin_with(&standout_input::MockStdin::piped(&sheet))

@@ -8,6 +8,7 @@
 //!
 //! | Function | Output Mode | Color Mode | Use When |
 //! |----------|-------------|------------|----------|
+//! | [`crate::render_request`] | On the request | On [`crate::TargetProperties`] | Pure entry; explicit [`crate::RenderRequest`] |
 //! | [`render`] | Auto-detect | Auto-detect | Simple cases, let Standout decide |
 //! | [`render_with_output`] | Explicit | Auto-detect | Honoring `--output` CLI flag |
 //! | [`render_with_mode`] | Explicit | Explicit | Tests, or forcing light/dark mode |
@@ -79,27 +80,27 @@ use super::engine::{MiniJinjaEngine, TemplateEngine};
 use crate::context::{ContextRegistry, RenderContext};
 use crate::error::RenderError;
 use crate::output::OutputMode;
+use crate::request::{convenience_request, TargetProperties};
 use crate::style::Styles;
 use crate::tabular::FlatDataSpec;
-use crate::theme::{detect_color_mode, detect_icon_mode, ColorMode, Theme};
+use crate::theme::{ColorMode, IconMode, Theme};
+use crate::{render_request, TemplateRef};
 
 /// Maps OutputMode to BBParser's TagTransform.
+///
+/// [`OutputMode::Auto`] must already have been resolved by the request
+/// (format + [`crate::ColorPolicy`] + stdout capability). Unresolved Auto
+/// strips tags rather than probing a detector.
 fn output_mode_to_transform(mode: OutputMode) -> TagTransform {
     match mode {
-        OutputMode::Auto => {
-            if mode.should_use_color() {
-                TagTransform::Apply
-            } else {
-                TagTransform::Remove
-            }
-        }
         OutputMode::Term => TagTransform::Apply,
-        OutputMode::Text => TagTransform::Remove,
         OutputMode::TermDebug => TagTransform::Keep,
-        // Structured modes shouldn't reach here (filtered out before)
-        OutputMode::Json | OutputMode::Yaml | OutputMode::Xml | OutputMode::Csv => {
-            TagTransform::Remove
-        }
+        OutputMode::Auto
+        | OutputMode::Text
+        | OutputMode::Json
+        | OutputMode::Yaml
+        | OutputMode::Xml
+        | OutputMode::Csv => TagTransform::Remove,
     }
 }
 
@@ -110,12 +111,32 @@ fn output_mode_to_transform(mode: OutputMode) -> TagTransform {
 /// and additionally records which tags the theme could not resolve — see that
 /// module for why the result is kept rather than discarded.
 pub fn apply_style_tags(output: &str, styles: &Styles, mode: OutputMode) -> String {
+    apply_style_tags_with(output, styles, mode, None)
+}
+
+/// [`apply_style_tags`] that records unresolved-tag warnings on `warnings`.
+pub fn apply_style_tags_with(
+    output: &str,
+    styles: &Styles,
+    mode: OutputMode,
+    warnings: Option<&crate::warnings::WarningBuffer>,
+) -> String {
     let transform = output_mode_to_transform(mode);
-    crate::diagnostics::resolve_tags(
+    let mut resolved = styles.to_resolved_map();
+    if transform == TagTransform::Apply {
+        // ANSI follows the request, not `console::colors_enabled()`. Term
+        // (and Auto resolved to Term) force styling so a non-TTY test
+        // process still emits escapes when the request asked for them.
+        for style in resolved.values_mut() {
+            *style = style.clone().force_styling(true);
+        }
+    }
+    crate::diagnostics::resolve_tags_with(
         output,
-        styles.to_resolved_map(),
+        resolved,
         transform,
         UnknownTagBehavior::Strip,
+        warnings,
     )
 }
 
@@ -201,7 +222,7 @@ pub fn validate_template<T: Serialize>(
     data: &T,
     theme: &Theme,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    let color_mode = detect_color_mode();
+    let color_mode = TargetProperties::detect().color_scheme;
     let styles = theme.resolve_styles(Some(color_mode));
 
     // First render with the engine to get the final output
@@ -222,6 +243,10 @@ pub fn validate_template<T: Serialize>(
 /// This is the simplest way to render styled output. It automatically detects
 /// whether stdout supports colors and applies styles accordingly. Color mode
 /// (light/dark) is detected from OS settings.
+///
+/// The pure request-taking entry is [`crate::render_request`]. This convenience
+/// wrapper detects destination facts at the crate edge, builds a request, and
+/// delegates.
 ///
 /// # Arguments
 ///
@@ -252,6 +277,30 @@ pub fn render<T: Serialize>(
     theme: &Theme,
 ) -> Result<String, RenderError> {
     render_with_output(template, data, theme, OutputMode::Auto)
+}
+
+/// Detects destination facts, builds a [`crate::RenderRequest`], and calls
+/// [`render_request`].
+fn detect_then_render<T: Serialize>(
+    template: &str,
+    data: &T,
+    theme: &Theme,
+    format: OutputMode,
+    overlay: impl FnOnce(&mut TargetProperties),
+) -> Result<String, RenderError> {
+    let mut target = TargetProperties::detect();
+    overlay(&mut target);
+    let request = convenience_request(
+        TemplateRef::Inline(template.to_string()),
+        serde_json::to_value(data)?,
+        theme.clone(),
+        format,
+        target,
+        None,
+        None,
+        None,
+    );
+    render_request(&request)
 }
 
 /// Renders a template with explicit output mode control.
@@ -303,9 +352,7 @@ pub fn render_with_output<T: Serialize>(
     theme: &Theme,
     mode: OutputMode,
 ) -> Result<String, RenderError> {
-    // Detect color mode and render with explicit mode
-    let color_mode = detect_color_mode();
-    render_with_mode(template, data, theme, mode, color_mode)
+    detect_then_render(template, data, theme, mode, |_| {})
 }
 
 /// Renders a template with explicit output mode and color mode control.
@@ -364,28 +411,9 @@ pub fn render_with_mode<T: Serialize>(
     output_mode: OutputMode,
     color_mode: ColorMode,
 ) -> Result<String, RenderError> {
-    // Validate style aliases before rendering
-    theme
-        .validate()
-        .map_err(|e| RenderError::StyleError(e.to_string()))?;
-
-    // Resolve styles for the specified color mode
-    let styles = theme.resolve_styles(Some(color_mode));
-
-    // Pass 1: Template rendering (with icons if defined)
-    let engine = MiniJinjaEngine::new();
-    let data_value = serde_json::to_value(data)?;
-    let icon_context = build_icon_context(theme);
-    let template_output = if icon_context.is_empty() {
-        engine.render_template(template, &data_value)?
-    } else {
-        engine.render_with_context(template, &data_value, icon_context)?
-    };
-
-    // Pass 2: BBParser style tag processing
-    let final_output = apply_style_tags(&template_output, &styles, output_mode);
-
-    Ok(final_output)
+    detect_then_render(template, data, theme, output_mode, |target| {
+        target.color_scheme = color_mode;
+    })
 }
 
 /// Renders a template with additional variables injected into the context.
@@ -441,29 +469,21 @@ where
     V: Into<serde_json::Value>,
     I: IntoIterator<Item = (K, V)>,
 {
-    let color_mode = detect_color_mode();
-    let styles = theme.resolve_styles(Some(color_mode));
-
-    // Validate style aliases before rendering
-    styles
-        .validate()
-        .map_err(|e| RenderError::StyleError(e.to_string()))?;
-
-    // Build context from icons + vars (vars take precedence over icons)
-    let mut context: HashMap<String, serde_json::Value> = build_icon_context(theme);
+    let mut registry = ContextRegistry::new();
     for (key, value) in vars {
-        context.insert(key.as_ref().to_string(), value.into());
+        registry.add_static(key.as_ref(), minijinja::Value::from_serialize(value.into()));
     }
-
-    // Pass 1: Template rendering with context
-    let engine = MiniJinjaEngine::new();
-    let data_value = serde_json::to_value(data)?;
-    let template_output = engine.render_with_context(template, &data_value, context)?;
-
-    // Pass 2: BBParser style tag processing
-    let final_output = apply_style_tags(&template_output, &styles, mode);
-
-    Ok(final_output)
+    let request = convenience_request(
+        TemplateRef::Inline(template.to_string()),
+        serde_json::to_value(data)?,
+        theme.clone(),
+        mode,
+        TargetProperties::detect(),
+        Some(registry),
+        None,
+        None,
+    );
+    render_request(&request)
 }
 
 /// Auto-dispatches between template rendering and direct serialization.
@@ -518,28 +538,7 @@ pub fn render_auto<T: Serialize>(
     theme: &Theme,
     mode: OutputMode,
 ) -> Result<String, RenderError> {
-    if mode.is_structured() {
-        match mode {
-            OutputMode::Json => Ok(serde_json::to_string_pretty(data)?),
-            OutputMode::Yaml => Ok(serde_yaml::to_string(data)?),
-            OutputMode::Xml => Ok(crate::util::serialize_to_xml(data)?),
-            OutputMode::Csv => {
-                let value = serde_json::to_value(data)?;
-                let (headers, rows) = crate::util::flatten_json_for_csv(&value);
-
-                let mut wtr = csv::Writer::from_writer(Vec::new());
-                wtr.write_record(&headers)?;
-                for row in rows {
-                    wtr.write_record(&row)?;
-                }
-                let bytes = wtr.into_inner()?;
-                Ok(String::from_utf8(bytes)?)
-            }
-            _ => unreachable!("is_structured() returned true for non-structured mode"),
-        }
-    } else {
-        render_with_output(template, data, theme, mode)
-    }
+    detect_then_render(template, data, theme, mode, |_| {})
 }
 
 /// Auto-dispatches with granular control over structured output.
@@ -562,42 +561,26 @@ pub fn render_auto_with_spec<T: Serialize>(
     mode: OutputMode,
     spec: Option<&FlatDataSpec>,
 ) -> Result<String, RenderError> {
-    if mode.is_structured() {
-        match mode {
-            OutputMode::Json => Ok(serde_json::to_string_pretty(data)?),
-            OutputMode::Yaml => Ok(serde_yaml::to_string(data)?),
-            OutputMode::Xml => Ok(crate::util::serialize_to_xml(data)?),
-            OutputMode::Csv => {
-                let value = serde_json::to_value(data)?;
-
-                let (headers, rows) = if let Some(s) = spec {
-                    // Use the spec for explicit extraction
-                    let headers = s.extract_header();
-                    let rows: Vec<Vec<String>> = match value {
-                        serde_json::Value::Array(items) => {
-                            items.iter().map(|item| s.extract_row(item)).collect()
-                        }
-                        _ => vec![s.extract_row(&value)],
-                    };
-                    (headers, rows)
-                } else {
-                    // Use automatic flattening
-                    crate::util::flatten_json_for_csv(&value)
-                };
-
-                let mut wtr = csv::Writer::from_writer(Vec::new());
-                wtr.write_record(&headers)?;
-                for row in rows {
-                    wtr.write_record(&row)?;
+    if mode == OutputMode::Csv {
+        if let Some(s) = spec {
+            let value = serde_json::to_value(data)?;
+            let headers = s.extract_header();
+            let rows: Vec<Vec<String>> = match value {
+                serde_json::Value::Array(items) => {
+                    items.iter().map(|item| s.extract_row(item)).collect()
                 }
-                let bytes = wtr.into_inner()?;
-                Ok(String::from_utf8(bytes)?)
+                _ => vec![s.extract_row(&value)],
+            };
+            let mut wtr = csv::Writer::from_writer(Vec::new());
+            wtr.write_record(&headers)?;
+            for row in rows {
+                wtr.write_record(&row)?;
             }
-            _ => unreachable!("is_structured() returned true for non-structured mode"),
+            let bytes = wtr.into_inner()?;
+            return Ok(String::from_utf8(bytes)?);
         }
-    } else {
-        render_with_output(template, data, theme, mode)
     }
+    detect_then_render(template, data, theme, mode, |_| {})
 }
 
 /// Renders a template with additional context objects injected.
@@ -673,56 +656,27 @@ pub fn render_with_context<T: Serialize>(
     render_context: &RenderContext,
     template_registry: Option<&super::TemplateRegistry>,
 ) -> Result<String, RenderError> {
-    let color_mode = detect_color_mode();
-    let styles = theme.resolve_styles(Some(color_mode));
-
-    // Validate style aliases before rendering
-    styles
-        .validate()
-        .map_err(|e| RenderError::StyleError(e.to_string()))?;
-
-    let mut engine = MiniJinjaEngine::new();
-
-    // Check if template is a registry key (name) or inline content.
-    // If the registry contains a template with this name, use its content.
-    // Otherwise, treat the template string as inline content.
-    let template_content = if let Some(registry) = template_registry {
-        if let Ok(content) = registry.get_content(template) {
-            content
-        } else {
-            template.to_string()
-        }
+    let mut target = TargetProperties::detect();
+    target.width = render_context.terminal_width;
+    target.ambiguous_width = render_context.ambiguous_width();
+    let named = template_registry.is_some_and(|registry| registry.get_content(template).is_ok());
+    let template_ref = if named {
+        TemplateRef::Named(template.to_string())
     } else {
-        template.to_string()
+        TemplateRef::Inline(template.to_string())
     };
-
-    // Load all templates from registry if available (enables {% include %})
-    if let Some(registry) = template_registry {
-        for name in registry.names() {
-            if let Ok(content) = registry.get_content(name) {
-                engine.add_template(name, &content)?;
-            }
-        }
-    }
-
-    // Build the combined context: icons + injected context + data
-    let icon_context = build_icon_context(theme);
-    let context = build_combined_context(data, context_registry, render_context, icon_context)?;
-
-    // Pass 1: Template rendering with context
-    let data_value = serde_json::to_value(data)?;
-    let template_output = engine.render_with_context_and_render_widths(
-        &template_content,
-        &data_value,
-        context,
-        render_context.terminal_width,
-        render_context.ambiguous_width(),
-    )?;
-
-    // Pass 2: BBParser style tag processing
-    let final_output = apply_style_tags(&template_output, &styles, mode);
-
-    Ok(final_output)
+    let mut request = convenience_request(
+        template_ref,
+        serde_json::to_value(data)?,
+        theme.clone(),
+        mode,
+        target,
+        Some(context_registry.clone()),
+        template_registry.map(|registry| std::rc::Rc::new(registry.clone())),
+        None,
+    );
+    request.extras = render_context.extras.clone();
+    render_request(&request)
 }
 
 /// Auto-dispatches with context injection support.
@@ -800,47 +754,25 @@ pub fn render_auto_with_context<T: Serialize>(
     render_context: &RenderContext,
     template_registry: Option<&super::TemplateRegistry>,
 ) -> Result<String, RenderError> {
-    if mode.is_structured() {
-        match mode {
-            OutputMode::Json => Ok(serde_json::to_string_pretty(data)?),
-            OutputMode::Yaml => Ok(serde_yaml::to_string(data)?),
-            OutputMode::Xml => Ok(crate::util::serialize_to_xml(data)?),
-            OutputMode::Csv => {
-                let value = serde_json::to_value(data)?;
-                let (headers, rows) = crate::util::flatten_json_for_csv(&value);
-
-                let mut wtr = csv::Writer::from_writer(Vec::new());
-                wtr.write_record(&headers)?;
-                for row in rows {
-                    wtr.write_record(&row)?;
-                }
-                let bytes = wtr.into_inner()?;
-                Ok(String::from_utf8(bytes)?)
-            }
-            _ => unreachable!("is_structured() returned true for non-structured mode"),
-        }
-    } else {
-        render_with_context(
-            template,
-            data,
-            theme,
-            mode,
-            context_registry,
-            render_context,
-            template_registry,
-        )
-    }
+    render_with_context(
+        template,
+        data,
+        theme,
+        mode,
+        context_registry,
+        render_context,
+        template_registry,
+    )
 }
 
 /// Builds an icon context from a theme's icon definitions.
 ///
 /// Returns a map with a single `"icons"` key mapping to the resolved icon strings,
 /// or an empty map if the theme has no icons defined.
-fn build_icon_context(theme: &Theme) -> HashMap<String, serde_json::Value> {
+fn build_icon_context(theme: &Theme, icon_mode: IconMode) -> HashMap<String, serde_json::Value> {
     if theme.icons().is_empty() {
         return HashMap::new();
     }
-    let icon_mode = detect_icon_mode();
     let resolved = theme.resolve_icons(icon_mode);
     let mut ctx = HashMap::new();
     ctx.insert("icons".to_string(), serde_json::to_value(resolved).unwrap());
@@ -898,63 +830,16 @@ pub fn render_auto_with_engine(
     context_registry: &ContextRegistry,
     render_context: &RenderContext,
 ) -> Result<String, RenderError> {
-    if mode.is_structured() {
-        match mode {
-            OutputMode::Json => Ok(serde_json::to_string_pretty(data)?),
-            OutputMode::Yaml => Ok(serde_yaml::to_string(data)?),
-            OutputMode::Xml => Ok(crate::util::serialize_to_xml(data)?),
-            OutputMode::Csv => {
-                let (headers, rows) = crate::util::flatten_json_for_csv(data);
-
-                let mut wtr = csv::Writer::from_writer(Vec::new());
-                wtr.write_record(&headers)?;
-                for row in rows {
-                    wtr.write_record(&row)?;
-                }
-                let bytes = wtr.into_inner()?;
-                Ok(String::from_utf8(bytes)?)
-            }
-            _ => unreachable!("is_structured() returned true for non-structured mode"),
-        }
-    } else {
-        let color_mode = detect_color_mode();
-        let styles = theme.resolve_styles(Some(color_mode));
-
-        // Validate style aliases before rendering
-        styles
-            .validate()
-            .map_err(|e| RenderError::StyleError(e.to_string()))?;
-
-        // Build the combined context: icons + injected context + data
-        let icon_context = build_icon_context(theme);
-        let context_map =
-            build_combined_context(data, context_registry, render_context, icon_context)?;
-
-        // Merge into a single Value for the engine
-        let combined_value = serde_json::Value::Object(context_map.into_iter().collect());
-
-        // Render template
-        let template_output = if engine.has_template(template) {
-            engine.render_named_with_render_widths(
-                template,
-                &combined_value,
-                render_context.terminal_width,
-                render_context.ambiguous_width(),
-            )?
-        } else {
-            engine.render_template_with_render_widths(
-                template,
-                &combined_value,
-                render_context.terminal_width,
-                render_context.ambiguous_width(),
-            )?
-        };
-
-        // Apply styles
-        let final_output = apply_style_tags(&template_output, &styles, mode);
-
-        Ok(final_output)
-    }
+    Ok(render_auto_with_engine_split(
+        engine,
+        template,
+        data,
+        theme,
+        mode,
+        context_registry,
+        render_context,
+    )?
+    .formatted)
 }
 
 /// Auto-dispatches rendering and returns both formatted and raw output.
@@ -975,6 +860,7 @@ pub fn render_auto_with_engine_split(
     context_registry: &ContextRegistry,
     render_context: &RenderContext,
 ) -> Result<RenderResult, RenderError> {
+    let detected = TargetProperties::detect();
     render_auto_with_engine_split_kind(
         engine,
         TemplateIdentity::Auto(template),
@@ -983,6 +869,8 @@ pub fn render_auto_with_engine_split(
         mode,
         context_registry,
         render_context,
+        detected.color_scheme,
+        detected.icon_mode,
     )
 }
 
@@ -991,6 +879,9 @@ pub fn render_auto_with_engine_split(
 /// Structured modes serialize `data` directly. Human-readable modes always
 /// render `template` as source text, even when a registered template has the
 /// same name.
+///
+/// Detects color-scheme and icon mode at this edge. The request path uses
+/// [`render_engine_split_inline`] with facts already on the request.
 pub fn render_auto_with_engine_split_inline(
     engine: &dyn super::TemplateEngine,
     template: &str,
@@ -1000,6 +891,34 @@ pub fn render_auto_with_engine_split_inline(
     context_registry: &ContextRegistry,
     render_context: &RenderContext,
 ) -> Result<RenderResult, RenderError> {
+    let detected = TargetProperties::detect();
+    render_engine_split_inline(
+        engine,
+        template,
+        data,
+        theme,
+        mode,
+        context_registry,
+        render_context,
+        detected.color_scheme,
+        detected.icon_mode,
+    )
+}
+
+/// Request-path inline render: color-scheme and icon mode come from the
+/// request, not from a detector.
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn render_engine_split_inline(
+    engine: &dyn super::TemplateEngine,
+    template: &str,
+    data: &serde_json::Value,
+    theme: &Theme,
+    mode: OutputMode,
+    context_registry: &ContextRegistry,
+    render_context: &RenderContext,
+    color_mode: ColorMode,
+    icon_mode: IconMode,
+) -> Result<RenderResult, RenderError> {
     render_auto_with_engine_split_kind(
         engine,
         TemplateIdentity::Inline(template),
@@ -1008,6 +927,8 @@ pub fn render_auto_with_engine_split_inline(
         mode,
         context_registry,
         render_context,
+        color_mode,
+        icon_mode,
     )
 }
 
@@ -1016,6 +937,9 @@ pub fn render_auto_with_engine_split_inline(
 /// Structured modes serialize `data` directly. Human-readable modes always
 /// render `name` through [`TemplateEngine::render_named_with_render_widths`]
 /// and never reinterpret it as inline source.
+///
+/// Detects color-scheme and icon mode at this edge. The request path uses
+/// [`render_engine_split_named`] with facts already on the request.
 pub fn render_auto_with_engine_split_named(
     engine: &dyn super::TemplateEngine,
     name: &str,
@@ -1025,6 +949,34 @@ pub fn render_auto_with_engine_split_named(
     context_registry: &ContextRegistry,
     render_context: &RenderContext,
 ) -> Result<RenderResult, RenderError> {
+    let detected = TargetProperties::detect();
+    render_engine_split_named(
+        engine,
+        name,
+        data,
+        theme,
+        mode,
+        context_registry,
+        render_context,
+        detected.color_scheme,
+        detected.icon_mode,
+    )
+}
+
+/// Request-path named render: color-scheme and icon mode come from the
+/// request, not from a detector.
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn render_engine_split_named(
+    engine: &dyn super::TemplateEngine,
+    name: &str,
+    data: &serde_json::Value,
+    theme: &Theme,
+    mode: OutputMode,
+    context_registry: &ContextRegistry,
+    render_context: &RenderContext,
+    color_mode: ColorMode,
+    icon_mode: IconMode,
+) -> Result<RenderResult, RenderError> {
     render_auto_with_engine_split_kind(
         engine,
         TemplateIdentity::Named(name),
@@ -1033,6 +985,8 @@ pub fn render_auto_with_engine_split_named(
         mode,
         context_registry,
         render_context,
+        color_mode,
+        icon_mode,
     )
 }
 
@@ -1042,6 +996,7 @@ enum TemplateIdentity<'a> {
     Named(&'a str),
 }
 
+#[allow(clippy::too_many_arguments)]
 fn render_auto_with_engine_split_kind(
     engine: &dyn super::TemplateEngine,
     template: TemplateIdentity<'_>,
@@ -1050,6 +1005,8 @@ fn render_auto_with_engine_split_kind(
     mode: OutputMode,
     context_registry: &ContextRegistry,
     render_context: &RenderContext,
+    color_mode: ColorMode,
+    icon_mode: IconMode,
 ) -> Result<RenderResult, RenderError> {
     if mode.is_structured() {
         // For structured modes, no style processing, so raw == formatted
@@ -1072,7 +1029,6 @@ fn render_auto_with_engine_split_kind(
         };
         Ok(RenderResult::plain(output))
     } else {
-        let color_mode = detect_color_mode();
         let styles = theme.resolve_styles(Some(color_mode));
 
         // Validate style aliases before rendering
@@ -1081,7 +1037,7 @@ fn render_auto_with_engine_split_kind(
             .map_err(|e| RenderError::StyleError(e.to_string()))?;
 
         // Build the combined context: icons + injected context + data
-        let icon_context = build_icon_context(theme);
+        let icon_context = build_icon_context(theme, icon_mode);
         let context_map =
             build_combined_context(data, context_registry, render_context, icon_context)?;
 
@@ -1112,8 +1068,10 @@ fn render_auto_with_engine_split_kind(
             )?,
         };
 
-        // Pass 2: Apply styles to get formatted output
-        let formatted_output = apply_style_tags(&raw_output, &styles, mode);
+        // Pass 2: Apply styles to get formatted output. Unresolved-tag
+        // warnings are recorded once, on the formatted pass.
+        let formatted_output =
+            apply_style_tags_with(&raw_output, &styles, mode, render_context.warnings.as_ref());
 
         // For raw output, strip style tags (OutputMode::Text behavior)
         let stripped_output = apply_style_tags(&raw_output, &styles, OutputMode::Text);
@@ -1126,7 +1084,7 @@ fn render_auto_with_engine_split_kind(
 mod tests {
     use super::*;
     use crate::tabular::{Column, FlatDataSpec, Width};
-    use crate::Theme;
+    use crate::{ColorPolicy, Theme};
     use console::Style;
     use minijinja::Value;
     use serde::Serialize;
@@ -1578,7 +1536,9 @@ mod tests {
 
         let output = render_auto("unused template", &data, &theme, OutputMode::Xml).unwrap();
 
-        assert!(output.contains("<root>"));
+        // RenderRequest carries JSON; XML of a named struct uses the JSON
+        // object root (`data`), not the original serde rename.
+        assert!(output.contains("<data>"));
         assert!(output.contains("<name>test</name>"));
     }
 
@@ -1724,6 +1684,31 @@ mod tests {
         .unwrap();
 
         assert_eq!(output, "Alice (v1.0.0)");
+    }
+
+    #[test]
+    fn render_with_context_preserves_caller_extras_for_providers() {
+        use crate::context::{ContextRegistry, RenderContext};
+
+        let theme = Theme::new();
+        let data = json!({"name": "Ada"});
+        let mut registry = ContextRegistry::new();
+        registry.add_provider("label", |ctx: &RenderContext| {
+            Value::from(ctx.get_extra("label").unwrap_or("missing"))
+        });
+        let render_ctx = RenderContext::new(OutputMode::Text, Some(80), &theme, &data)
+            .with_extra("label", "from-extra");
+        let output = render_with_context(
+            "{{ name }} {{ label }}",
+            &data,
+            &theme,
+            OutputMode::Text,
+            &registry,
+            &render_ctx,
+            None,
+        )
+        .unwrap();
+        assert_eq!(output, "Ada from-extra");
     }
 
     #[test]
@@ -2405,11 +2390,9 @@ mod tests {
     // =========================================================================
 
     #[test]
-    #[serial_test::serial]
     fn test_render_with_icons_classic() {
-        use crate::{set_icon_detector, IconDefinition, IconMode};
-
-        set_icon_detector(|| IconMode::Classic);
+        use crate::request::convenience_engine;
+        use crate::{AmbiguousWidth, IconDefinition, IconMode};
 
         let theme = Theme::new()
             .add_icon(
@@ -2418,49 +2401,74 @@ mod tests {
             )
             .add_icon("arrow", IconDefinition::new(">>"));
 
-        let data = SimpleData {
-            message: "done".into(),
+        let request = crate::RenderRequest {
+            data: serde_json::to_value(SimpleData {
+                message: "done".into(),
+            })
+            .unwrap(),
+            template: TemplateRef::Inline(
+                "{{ icons.check }} {{ message }} {{ icons.arrow }}".into(),
+            ),
+            theme,
+            format: OutputMode::Text,
+            color_policy: ColorPolicy::Auto,
+            target: TargetProperties {
+                width: Some(80),
+                stdout_is_terminal: false,
+                stderr_is_terminal: false,
+                stdout_color_capability: false,
+                stderr_color_capability: false,
+                color_scheme: ColorMode::Dark,
+                icon_mode: IconMode::Classic,
+                ambiguous_width: AmbiguousWidth::Narrow,
+            },
+            engine: convenience_engine(),
+            registry: None,
+            context_registry: None,
+            csv_projection: None,
+            extras: HashMap::new(),
+            warnings: None,
         };
-
-        let output = render_with_output(
-            "{{ icons.check }} {{ message }} {{ icons.arrow }}",
-            &data,
-            &theme,
-            OutputMode::Text,
-        )
-        .unwrap();
-
-        assert_eq!(output, "[ok] done >>");
+        assert_eq!(render_request(&request).unwrap(), "[ok] done >>");
     }
 
     #[test]
-    #[serial_test::serial]
     fn test_render_with_icons_nerdfont() {
-        use crate::{set_icon_detector, IconDefinition, IconMode};
-
-        set_icon_detector(|| IconMode::NerdFont);
+        use crate::request::convenience_engine;
+        use crate::{AmbiguousWidth, IconDefinition, IconMode};
 
         let theme = Theme::new().add_icon(
             "check",
             IconDefinition::new("[ok]").with_nerdfont("\u{f00c}"),
         );
 
-        let data = SimpleData {
-            message: "done".into(),
+        let request = crate::RenderRequest {
+            data: serde_json::to_value(SimpleData {
+                message: "done".into(),
+            })
+            .unwrap(),
+            template: TemplateRef::Inline("{{ icons.check }} {{ message }}".into()),
+            theme,
+            format: OutputMode::Text,
+            color_policy: ColorPolicy::Auto,
+            target: TargetProperties {
+                width: Some(80),
+                stdout_is_terminal: false,
+                stderr_is_terminal: false,
+                stdout_color_capability: false,
+                stderr_color_capability: false,
+                color_scheme: ColorMode::Dark,
+                icon_mode: IconMode::NerdFont,
+                ambiguous_width: AmbiguousWidth::Narrow,
+            },
+            engine: convenience_engine(),
+            registry: None,
+            context_registry: None,
+            csv_projection: None,
+            extras: HashMap::new(),
+            warnings: None,
         };
-
-        let output = render_with_output(
-            "{{ icons.check }} {{ message }}",
-            &data,
-            &theme,
-            OutputMode::Text,
-        )
-        .unwrap();
-
-        assert_eq!(output, "\u{f00c} done");
-
-        // Reset
-        set_icon_detector(|| IconMode::Classic);
+        assert_eq!(render_request(&request).unwrap(), "\u{f00c} done");
     }
 
     #[test]
@@ -2477,11 +2485,8 @@ mod tests {
     }
 
     #[test]
-    #[serial_test::serial]
     fn test_render_with_icons_and_styles() {
-        use crate::{set_icon_detector, IconDefinition, IconMode};
-
-        set_icon_detector(|| IconMode::Classic);
+        use crate::IconDefinition;
 
         let theme = Theme::new()
             .add("title", Style::new().bold())
@@ -2503,11 +2508,8 @@ mod tests {
     }
 
     #[test]
-    #[serial_test::serial]
     fn test_render_with_vars_includes_icons() {
-        use crate::{set_icon_detector, IconDefinition, IconMode};
-
-        set_icon_detector(|| IconMode::Classic);
+        use crate::IconDefinition;
 
         let theme = Theme::new().add_icon("star", IconDefinition::new("*"));
 
@@ -2530,12 +2532,9 @@ mod tests {
     }
 
     #[test]
-    #[serial_test::serial]
     fn test_render_with_context_includes_icons() {
         use crate::context::{ContextRegistry, RenderContext};
-        use crate::{set_icon_detector, IconDefinition, IconMode};
-
-        set_icon_detector(|| IconMode::Classic);
+        use crate::IconDefinition;
 
         let theme = Theme::new().add_icon("dot", IconDefinition::new("."));
 
@@ -2564,12 +2563,7 @@ mod tests {
     }
 
     #[test]
-    #[serial_test::serial]
     fn test_render_yaml_from_theme_with_icons() {
-        use crate::{set_icon_detector, IconMode};
-
-        set_icon_detector(|| IconMode::Classic);
-
         let theme = Theme::from_yaml(
             r#"
             title:

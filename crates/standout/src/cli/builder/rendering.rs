@@ -1,31 +1,42 @@
 //! Rendering methods for App.
 //!
-//! This module contains methods for rendering templates and serializing data
-//! across all output modes (Term, Text, JSON, YAML, XML, CSV).
+//! [`App::render`], [`App::render_with`], [`App::render_inline`], and
+//! [`App::render_inline_with`] build a [`crate::RenderRequest`] and call
+//! [`standout_render::render_request`], the same pipeline dispatch uses.
+//! [`App::render_with`] and [`App::render_inline_with`] take destination
+//! facts the caller already has; the detect-at-edge pair is [`App::render`]
+//! and [`App::render_inline`].
 
 use serde::Serialize;
 use std::collections::HashMap;
 
 use super::{refresh_named_template, App};
-use crate::context::RenderContext;
 use crate::setup::SetupError;
-use crate::{detect_color_mode, detect_icon_mode, OutputMode};
+use crate::{
+    render_request, ColorPolicy, OutputMode, RenderRequest, TargetProperties, TemplateRef,
+};
 use standout_render::RegistryError;
 
 impl App {
-    // =========================================================================
-    // Public Rendering API
-    // =========================================================================
-
     /// Renders a template by name with the given data.
     ///
-    /// Looks up the template in the registry and renders it.
-    /// Supports `{% include %}` directives via the template registry.
+    /// Looks up the template in the registry and renders it through
+    /// [`render_request`]. Supports `{% include %}` directives via the
+    /// template registry.
+    ///
+    /// Detects destination facts at this edge and overwrites ambiguous-width
+    /// with the application's configured policy. Callers that already have
+    /// [`TargetProperties`] (tests, `run_with` agreement) should use
+    /// [`render_with`](Self::render_with).
+    ///
+    /// Structured modes (JSON/YAML/XML/CSV) serialize `data` through
+    /// [`render_request`] with [`TemplateRef::Absent`] and do not look up or
+    /// refresh a named template.
     ///
     /// # Errors
     ///
     /// Returns an error if:
-    /// - No template registry is configured for a named template render
+    /// - No template registry is configured for a named human-mode render
     /// - The template is not found
     /// - Rendering fails
     pub fn render<T: Serialize>(
@@ -34,251 +45,142 @@ impl App {
         data: &T,
         mode: OutputMode,
     ) -> Result<String, SetupError> {
-        // For JSON/YAML/XML/CSV modes, serialize directly
+        self.render_named(template, data, mode, detected_target(self.ambiguous_width))
+    }
+
+    /// Renders a named template with caller-supplied destination facts.
+    ///
+    /// Same pipeline as [`render`](Self::render) and dispatch: builds a
+    /// [`crate::RenderRequest`] from the app's engine, registry, context
+    /// registry, and merged theme, and calls [`render_request`].
+    /// Ambiguous-width is overwritten with the application's policy
+    /// (ADR-0026), matching [`render_inline_with`](Self::render_inline_with)
+    /// and [`App::run_with`](super::App::run_with).
+    pub fn render_with<T: Serialize>(
+        &self,
+        template: &str,
+        data: &T,
+        mode: OutputMode,
+        mut target: TargetProperties,
+    ) -> Result<String, SetupError> {
+        target.ambiguous_width = self.ambiguous_width;
+        self.render_named(template, data, mode, target)
+    }
+
+    fn render_named<T: Serialize>(
+        &self,
+        template: &str,
+        data: &T,
+        mode: OutputMode,
+        target: TargetProperties,
+    ) -> Result<String, SetupError> {
         if mode.is_structured() {
-            return self.serialize_data(data, mode);
+            return self.render_named_or_inline(TemplateRef::Absent, data, mode, None, target);
         }
 
-        // Get template registry
-        let registry = self
-            .template_registry
-            .as_ref()
-            .ok_or_else(|| {
-                SetupError::Config(format!(
-                    "render({template:?}, ...) needs a template registry; add .templates(embed_templates!(\"src/templates\")) or .templates_dir(\"path/to/templates\") before .build(), or call render_inline(...) for inline template source"
+        let registry = self.template_registry.as_ref().ok_or_else(|| {
+            SetupError::Config(format!(
+                "render({template:?}, ...) needs a template registry; add .templates(embed_templates!(\"src/templates\")) or .templates_dir(\"path/to/templates\") before .build(), or call render_inline(...) for inline template source"
+            ))
+        })?;
+
+        refresh_named_template(registry, template).map_err(|error| {
+            if matches!(registry.get(template), Err(RegistryError::NotFound { .. })) {
+                SetupError::Template(format!(
+                    "render({template:?}, ...) could not find the named template; add it with .templates(embed_templates!(\"src/templates\")) or .templates_dir(\"path/to/templates\"): {error}"
                 ))
-            })?;
+            } else {
+                SetupError::Template(format!(
+                    "render({template:?}, ...) could not refresh the registered template: {error}"
+                ))
+            }
+        })?;
 
-        {
-            let mut engine = self.template_engine.borrow_mut();
-            refresh_named_template(&mut **engine, registry, template).map_err(|error| {
-                if matches!(
-                    registry.get(template),
-                    Err(RegistryError::NotFound { .. })
-                ) {
-                    SetupError::Template(format!(
-                        "render({template:?}, ...) could not find the named template; add it with .templates(embed_templates!(\"src/templates\")) or .templates_dir(\"path/to/templates\"): {error}"
-                    ))
-                } else {
-                    SetupError::Template(format!(
-                        "render({template:?}, ...) could not refresh the registered template: {error}"
-                    ))
-                }
-            })?;
-        }
-
-        self.render_template_name(template, data, mode)
+        self.render_named_or_inline(
+            TemplateRef::Named(template.to_string()),
+            data,
+            mode,
+            Some(registry.clone()),
+            target,
+        )
     }
 
     /// Renders an inline template string with the given data.
     ///
     /// Unlike `render`, this takes the template content directly.
     /// Still supports `{% include %}` if a template registry is configured.
+    ///
+    /// Detects destination facts at this edge. Callers that already have
+    /// [`TargetProperties`] (tests, `run_with` agreement) should use
+    /// [`render_inline_with`](Self::render_inline_with).
     pub fn render_inline<T: Serialize>(
         &self,
         template: &str,
         data: &T,
         mode: OutputMode,
     ) -> Result<String, SetupError> {
-        // For JSON/YAML/XML/CSV modes, serialize directly
-        if mode.is_structured() {
-            return self.serialize_data(data, mode);
-        }
-
-        self.render_template_content(template, data, mode)
-    }
-
-    // =========================================================================
-    // Internal Rendering
-    // =========================================================================
-
-    /// Internal: renders template content with full support for includes and context.
-    fn render_template_content<T: Serialize>(
-        &self,
-        template: &str,
-        data: &T,
-        mode: OutputMode,
-    ) -> Result<String, SetupError> {
-        use standout_bbparser::{TagTransform, UnknownTagBehavior};
-
-        let color_mode = detect_color_mode();
-        let theme = self.theme.clone().unwrap_or_default();
-        let styles = theme.resolve_styles(Some(color_mode));
-
-        // Validate style aliases before rendering
-        styles
-            .validate()
-            .map_err(|e| SetupError::Config(e.to_string()))?;
-
-        // Build render context for context providers
-        let json_data =
-            serde_json::to_value(data).map_err(|e| SetupError::Config(e.to_string()))?;
-        let ambiguous_width =
-            standout_render::detect_ambiguous_width_override().unwrap_or(self.ambiguous_width);
-        let render_ctx = RenderContext::with_ambiguous_width(
+        self.render_named_or_inline(
+            TemplateRef::Inline(template.to_string()),
+            data,
             mode,
-            standout_render::detect_terminal_width(),
-            ambiguous_width,
-            &theme,
-            &json_data,
-        );
-
-        // Build combined context: context providers + data
-        let combined_minijinja_map = self.build_combined_context(data, &render_ctx)?;
-
-        // Convert minijinja::Value map to serde_json::Value map for the template engine
-        let combined_json_map: serde_json::Map<String, serde_json::Value> = combined_minijinja_map
-            .into_iter()
-            .map(|(k, v)| {
-                (
-                    k,
-                    serde_json::to_value(v).unwrap_or(serde_json::Value::Null),
-                )
-            })
-            .collect();
-
-        // Pass 1: Template rendering via engine
-        let minijinja_output = self
-            .template_engine
-            .borrow()
-            .render_template_with_render_widths(
-                template,
-                &serde_json::Value::Object(combined_json_map),
-                render_ctx.terminal_width,
-                ambiguous_width,
-            )
-            .map_err(|e| SetupError::Template(e.to_string()))?;
-
-        // Pass 2: BBParser style tag processing
-        let transform = match mode {
-            OutputMode::Term | OutputMode::Auto => TagTransform::Apply,
-            OutputMode::TermDebug => TagTransform::Keep,
-            _ => TagTransform::Remove,
-        };
-        let final_output = standout_render::diagnostics::resolve_tags(
-            &minijinja_output,
-            styles.to_resolved_map(),
-            transform,
-            UnknownTagBehavior::Strip,
-        );
-
-        Ok(final_output)
-    }
-
-    /// Internal: renders a registered template name after refreshing its tree.
-    fn render_template_name<T: Serialize>(
-        &self,
-        template: &str,
-        data: &T,
-        mode: OutputMode,
-    ) -> Result<String, SetupError> {
-        let theme = self.theme.clone().unwrap_or_default();
-        let json_data =
-            serde_json::to_value(data).map_err(|e| SetupError::Config(e.to_string()))?;
-        let ambiguous_width =
-            standout_render::detect_ambiguous_width_override().unwrap_or(self.ambiguous_width);
-        let render_ctx = RenderContext::with_ambiguous_width(
-            mode,
-            standout_render::detect_terminal_width(),
-            ambiguous_width,
-            &theme,
-            &json_data,
-        );
-
-        let result = standout_render::template::render_auto_with_engine_split_named(
-            &**self.template_engine.borrow(),
-            template,
-            &json_data,
-            &theme,
-            mode,
-            &self.context_registry,
-            &render_ctx,
+            self.template_registry.clone(),
+            detected_target(self.ambiguous_width),
         )
-        .map_err(|e| SetupError::Template(e.to_string()))?;
-
-        Ok(result.formatted)
     }
 
-    /// Internal: builds combined context from icons, context providers, and data.
-    fn build_combined_context<T: Serialize>(
+    /// Renders an inline template with caller-supplied destination facts.
+    ///
+    /// Same pipeline as [`render_inline`](Self::render_inline) and dispatch:
+    /// builds a [`crate::RenderRequest`] from the app's engine, registry,
+    /// context registry, and merged theme, and calls [`render_request`].
+    /// Ambiguous-width is overwritten with the application's policy
+    /// (ADR-0026), matching [`App::run_with`](super::App::run_with).
+    pub fn render_inline_with<T: Serialize>(
         &self,
-        data: &T,
-        render_ctx: &RenderContext,
-    ) -> Result<HashMap<String, serde_json::Value>, SetupError> {
-        // Start with icon context (lowest priority)
-        let mut combined: HashMap<String, serde_json::Value> = HashMap::new();
-        if let Some(theme) = &self.theme {
-            if !theme.icons().is_empty() {
-                let icon_mode = detect_icon_mode();
-                let resolved_icons = theme.resolve_icons(icon_mode);
-                if let Ok(icons_value) = serde_json::to_value(resolved_icons) {
-                    combined.insert("icons".to_string(), icons_value);
-                }
-            }
-        }
-
-        // Resolve all context providers (medium priority)
-        let context_values_minijinja = self.context_registry.resolve(render_ctx);
-
-        // Convert data to a map of values
-        let data_value =
-            serde_json::to_value(data).map_err(|e| SetupError::Config(e.to_string()))?;
-
-        // Add context values (medium priority)
-        for (key, val) in context_values_minijinja {
-            let json_val = serde_json::to_value(val).map_err(|e| {
-                SetupError::Config(format!("Failed to convert context value: {}", e))
-            })?;
-            combined.insert(key, json_val);
-        }
-
-        // Add data values (highest priority - overwrites context)
-        if let Some(obj) = data_value.as_object() {
-            for (key, value) in obj {
-                combined.insert(key.clone(), value.clone());
-            }
-        }
-
-        Ok(combined)
-    }
-
-    /// Internal: serializes data for structured output modes.
-    pub(crate) fn serialize_data<T: Serialize>(
-        &self,
+        template: &str,
         data: &T,
         mode: OutputMode,
+        mut target: TargetProperties,
     ) -> Result<String, SetupError> {
-        match mode {
-            OutputMode::Json => {
-                serde_json::to_string_pretty(data).map_err(|e| SetupError::Config(e.to_string()))
-            }
-            OutputMode::Yaml => {
-                serde_yaml::to_string(data).map_err(|e| SetupError::Config(e.to_string()))
-            }
-            OutputMode::Xml => {
-                crate::serialize_to_xml(data).map_err(|e| SetupError::Config(e.to_string()))
-            }
-            OutputMode::Csv => {
-                let value =
-                    serde_json::to_value(data).map_err(|e| SetupError::Config(e.to_string()))?;
-                let (headers, rows) = crate::flatten_json_for_csv(&value);
-
-                let mut wtr = csv::Writer::from_writer(Vec::new());
-                wtr.write_record(&headers)
-                    .map_err(|e| SetupError::Config(e.to_string()))?;
-                for row in rows {
-                    wtr.write_record(&row)
-                        .map_err(|e| SetupError::Config(e.to_string()))?;
-                }
-                let bytes = wtr
-                    .into_inner()
-                    .map_err(|e| SetupError::Config(e.to_string()))?;
-                String::from_utf8(bytes).map_err(|e| SetupError::Config(e.to_string()))
-            }
-            _ => Err(SetupError::Config(format!(
-                "Unexpected output mode: {:?}",
-                mode
-            ))),
-        }
+        target.ambiguous_width = self.ambiguous_width;
+        self.render_named_or_inline(
+            TemplateRef::Inline(template.to_string()),
+            data,
+            mode,
+            self.template_registry.clone(),
+            target,
+        )
     }
+
+    fn render_named_or_inline<T: Serialize>(
+        &self,
+        template: TemplateRef,
+        data: &T,
+        mode: OutputMode,
+        registry: Option<std::rc::Rc<crate::TemplateRegistry>>,
+        target: TargetProperties,
+    ) -> Result<String, SetupError> {
+        let theme = self.theme.clone();
+        let request = RenderRequest {
+            data: serde_json::to_value(data).map_err(|e| SetupError::Config(e.to_string()))?,
+            template,
+            theme,
+            format: mode,
+            color_policy: ColorPolicy::Auto,
+            target,
+            engine: self.template_engine.clone(),
+            registry,
+            context_registry: Some(self.context_registry.clone()),
+            csv_projection: None,
+            extras: HashMap::new(),
+            warnings: None,
+        };
+        render_request(&request).map_err(|e| SetupError::Template(e.to_string()))
+    }
+}
+
+fn detected_target(ambiguous_width: crate::AmbiguousWidth) -> TargetProperties {
+    let mut target = TargetProperties::detect();
+    target.ambiguous_width = ambiguous_width;
+    target
 }

@@ -1,18 +1,22 @@
 //! Integration tests for `TestHarness`.
 //!
 //! All tests are `#[serial]` because the harness mutates process-global
-//! state (env vars, cwd, detectors, default input readers).
+//! state (env vars, cwd). Destination facts are injected on
+//! `TargetProperties` and do not need `#[serial]` for detector reasons.
 
 use clap::Command;
+use console::Style;
 use serde_json::json;
 use serial_test::serial;
 use standout::cli::{
-    App, Artifact, ExitStatus, ExternalFailure, HandlerResult, HookError, Hooks, Output,
-    OutputKind, RunErrorKind, SuccessKind,
+    App, Artifact, CommandContextInput, ExitStatus, ExternalFailure, HandlerResult, HookError,
+    Hooks, Output, OutputKind, RunErrorKind, SuccessKind,
 };
 use standout::tabular::{Column, Width};
 use standout::views::list_view;
-use standout::{CsvProjection, StructuredOutputProjection};
+use standout::{
+    ColorMode, CsvProjection, IconDefinition, IconMode, StructuredOutputProjection, Theme,
+};
 use standout_input::{ClipboardSource, EnvSource, InputChain, StdinSource};
 use standout_render::{AmbiguousWidth, OutputMode};
 use standout_test::TestHarness;
@@ -102,7 +106,10 @@ fn ambiguous_width_policy_can_be_injected_for_the_same_app_fixture() {
 fn terminal_width_cascades_through_the_framework_list_view_template() {
     let app = build_framework_list_view_app();
 
-    for width in [31, 47] {
+    // 37 is the width the former COLUMNS-env cascade used to assert via
+    // detect(). The assertion is that width on the request reaches the
+    // template, so it is injected — not read from `$COLUMNS`.
+    for width in [31, 37, 47] {
         let result =
             TestHarness::new()
                 .terminal_width(width)
@@ -116,22 +123,6 @@ fn terminal_width_cascades_through_the_framework_list_view_template() {
         assert_eq!(row.chars().count(), width);
         drop(result);
     }
-}
-
-#[test]
-#[serial]
-fn columns_environment_width_cascades_through_the_framework_list_view_template() {
-    let app = build_framework_list_view_app();
-    let result = TestHarness::new()
-        .env("COLUMNS", "37")
-        .run(&app, list_command(), ["app", "list"]);
-    result.assert_success();
-    let row = result
-        .stdout()
-        .lines()
-        .find(|line| line.contains("cascade"))
-        .expect("framework list view should render its tabular row");
-    assert_eq!(row.chars().count(), 37);
 }
 
 #[test]
@@ -172,6 +163,154 @@ fn unknown_terminal_width_uses_the_framework_list_view_fallback() {
         .find(|line| line.contains("cascade"))
         .expect("framework list view should render its tabular row");
     assert_eq!(row.chars().count(), 80);
+}
+
+/// An app whose output would change if the harness still called
+/// `TargetProperties::detect`: list-view width follows `$COLUMNS`, the
+/// icon follows `$NERD_FONT`, and the adaptive style follows OS appearance.
+fn build_detectable_facts_app() -> App {
+    let theme = Theme::new()
+        .add_icon("mark", IconDefinition::new("CLASSIC").with_nerdfont("NERD"))
+        .add_adaptive(
+            "tone",
+            Style::new(),
+            Some(Style::new().green()),
+            Some(Style::new().red()),
+        );
+    App::builder()
+        .theme(theme)
+        .command(
+            "say",
+            |_m, _ctx| Ok(Output::Render(json!({}))),
+            "[tone]{{ icons.mark }}[/tone]",
+        )
+        .unwrap()
+        .command_with(
+            "list",
+            |_matches, _ctx| {
+                let spec = standout::tabular::TabularSpec::builder()
+                    .column(Column::new(Width::Fill).right().key("name"))
+                    .build();
+                Ok(Output::Render(
+                    list_view(vec![WidthSensitiveItem { name: "cascade" }])
+                        .tabular_spec(spec)
+                        .build(),
+                ))
+            },
+            |config| config.template_name("standout/list-view"),
+        )
+        .unwrap()
+        .build()
+        .unwrap()
+}
+
+fn detectable_command() -> Command {
+    Command::new("app")
+        .subcommand(Command::new("say"))
+        .subcommand(Command::new("list"))
+}
+
+#[test]
+#[serial]
+fn harness_run_is_independent_of_detected_process_facts() {
+    let app = build_detectable_facts_app();
+    let cmd = detectable_command();
+
+    let baseline = || {
+        TestHarness::new()
+            .with_color()
+            .output_mode(OutputMode::Term)
+    };
+    let perturb = || {
+        // Env knobs detect() would read, plus the usual OS-scheme hints.
+        // The OS appearance API itself is not an env var; the contract pin
+        // below (unset scheme == Dark, != Light) is what makes scheme
+        // independence fail if detect() came back.
+        baseline()
+            .env("COLUMNS", "37")
+            .env("NERD_FONT", "1")
+            .env("GTK_THEME", "Adwaita:light")
+            .env("COLORFGBG", "0;15")
+    };
+
+    let (say_default, say_default_plain) = {
+        let result = baseline().run(&app, cmd.clone(), ["app", "say"]);
+        result.assert_success();
+        (
+            result.stdout().to_string(),
+            result.stdout_plain().to_string(),
+        )
+    };
+    let list_default = {
+        let result = baseline().run(&app, cmd.clone(), ["app", "list"]);
+        result.assert_success();
+        result.stdout().to_string()
+    };
+
+    let say_perturbed = {
+        let result = perturb().run(&app, cmd.clone(), ["app", "say"]);
+        result.assert_success();
+        result.stdout().to_string()
+    };
+    let list_perturbed = {
+        let result = perturb().run(&app, cmd.clone(), ["app", "list"]);
+        result.assert_success();
+        result.stdout().to_string()
+    };
+
+    assert_eq!(say_default, say_perturbed);
+    assert_eq!(list_default, list_perturbed);
+    assert!(
+        say_default_plain.contains("CLASSIC"),
+        "unset icon_mode is Classic, got {say_default_plain:?}"
+    );
+    assert!(
+        !say_default_plain.contains("NERD"),
+        "NERD_FONT must not select the nerd variant: {say_default_plain:?}"
+    );
+    let row = list_default
+        .lines()
+        .find(|line| line.contains("cascade"))
+        .expect("framework list view should render its tabular row");
+    assert_eq!(
+        row.chars().count(),
+        80,
+        "unset width is None, list-view fallback 80; got {row:?}"
+    );
+
+    let say_dark = {
+        let result =
+            baseline()
+                .color_scheme(ColorMode::Dark)
+                .run(&app, cmd.clone(), ["app", "say"]);
+        result.stdout().to_string()
+    };
+    let say_light = {
+        let result =
+            baseline()
+                .color_scheme(ColorMode::Light)
+                .run(&app, cmd.clone(), ["app", "say"]);
+        result.stdout().to_string()
+    };
+    assert_eq!(
+        say_default, say_dark,
+        "unset color_scheme is ColorMode::Dark"
+    );
+    assert_ne!(
+        say_default, say_light,
+        "Light vs Dark must be visible so scheme independence is meaningful"
+    );
+    let say_nerd = {
+        let result =
+            baseline()
+                .icon_mode(IconMode::NerdFont)
+                .run(&app, cmd.clone(), ["app", "say"]);
+        result.stdout().to_string()
+    };
+    assert_ne!(
+        say_default, say_nerd,
+        "Classic vs NerdFont must be visible so NERD_FONT independence is meaningful"
+    );
 }
 
 #[test]
@@ -354,11 +493,11 @@ fn piped_stdin_reaches_handler() {
     let app = App::builder()
         .command(
             "read",
-            |_m, _ctx| {
+            |_m, ctx| {
                 let v = InputChain::<String>::new()
                     .try_source(StdinSource::new())
                     .default("nothing".into())
-                    .resolve(_m)
+                    .resolve_from(_m, ctx.input_sources())
                     .unwrap();
                 Ok(Output::Render(json!({ "val": v })))
             },
@@ -381,11 +520,11 @@ fn interactive_stdin_falls_through_to_default() {
     let app = App::builder()
         .command(
             "read",
-            |_m, _ctx| {
+            |_m, ctx| {
                 let v = InputChain::<String>::new()
                     .try_source(StdinSource::new())
                     .default("no-pipe".into())
-                    .resolve(_m)
+                    .resolve_from(_m, ctx.input_sources())
                     .unwrap();
                 Ok(Output::Render(json!({ "val": v })))
             },
@@ -408,11 +547,11 @@ fn clipboard_reaches_handler() {
     let app = App::builder()
         .command(
             "paste",
-            |_m, _ctx| {
+            |_m, ctx| {
                 let v = InputChain::<String>::new()
                     .try_source(ClipboardSource::new())
                     .default("empty".into())
-                    .resolve(_m)
+                    .resolve_from(_m, ctx.input_sources())
                     .unwrap();
                 Ok(Output::Render(json!({ "val": v })))
             },
@@ -431,8 +570,9 @@ fn clipboard_reaches_handler() {
 }
 
 /// Drives a tiny three-step "wizard" handler from the harness, scripting
-/// every response. The handler talks to the simple-prompt sources via
-/// `.prompt()`; the responder intercepts each call before any TTY is touched.
+/// every response. The handler calls `.prompt_from(ctx.input_sources())`; the
+/// harness-provided responder is reached through those explicit sources
+/// before any TTY is touched.
 #[test]
 #[serial]
 fn scripted_prompts_drive_a_wizard_handler() {
@@ -444,10 +584,17 @@ fn scripted_prompts_drive_a_wizard_handler() {
     let app = App::builder()
         .command(
             "wizard",
-            |_m, _ctx| {
-                let name = TextPromptSource::new("Name: ").prompt().unwrap();
-                let proceed = ConfirmPromptSource::new("Continue? ").prompt().unwrap();
-                let title = TextPromptSource::new("Title: ").prompt().unwrap();
+            |_m, ctx| {
+                let sources = ctx.input_sources();
+                let name = TextPromptSource::new("Name: ")
+                    .prompt_from(sources)
+                    .unwrap();
+                let proceed = ConfirmPromptSource::new("Continue? ")
+                    .prompt_from(sources)
+                    .unwrap();
+                let title = TextPromptSource::new("Title: ")
+                    .prompt_from(sources)
+                    .unwrap();
                 Ok(Output::Render(json!({
                     "name": name,
                     "proceed": proceed,
@@ -485,8 +632,8 @@ fn scripted_cancel_propagates_to_handler() {
     let app = App::builder()
         .command(
             "wizard",
-            |_m, _ctx| {
-                let body = match TextPromptSource::new("Name: ").prompt() {
+            |_m, ctx| {
+                let body = match TextPromptSource::new("Name: ").prompt_from(ctx.input_sources()) {
                     Ok(name) => format!("ok:{name}"),
                     Err(e) => format!("err:{e}"),
                 };
@@ -521,8 +668,8 @@ fn responder_is_reset_between_runs() {
     let app = App::builder()
         .command(
             "wizard",
-            |_m, _ctx| {
-                let body = match TextPromptSource::new("Name: ").prompt() {
+            |_m, ctx| {
+                let body = match TextPromptSource::new("Name: ").prompt_from(ctx.input_sources()) {
                     Ok(name) => format!("ok:{name}"),
                     Err(e) => format!("err:{e}"),
                 };
@@ -657,10 +804,7 @@ fn rustloc_fixture_uses_configured_csv_projection() {
 
 #[test]
 #[serial]
-fn terminal_width_override_is_observable_via_detector() {
-    // The override stays installed for the lifetime of the TestResult
-    // (restored when it drops), so we can probe the detector directly
-    // while the result is still in scope.
+fn terminal_width_override_does_not_install_a_detector() {
     let app = build_echo_app("{{ msg }}");
     let result = TestHarness::new().terminal_width(42).no_color().run(
         &app,
@@ -668,12 +812,6 @@ fn terminal_width_override_is_observable_via_detector() {
         vec!["app", "echo", "hi"],
     );
     result.assert_stdout_eq("hi");
-    assert_eq!(standout_render::detect_terminal_width(), Some(42));
-    assert!(!standout_render::detect_color_capability());
-    drop(result);
-    // After drop, detectors are reset to library defaults — the override
-    // should no longer be visible.
-    let _ = standout_render::detect_terminal_width();
 }
 
 #[test]
@@ -776,7 +914,7 @@ fn no_match_reports_cleanly() {
     let app = build_echo_app("{{ msg }}");
     let result = TestHarness::new().run(&app, echo_command(), vec!["app", "unknown"]);
     // clap rejects unknown subcommands as a parse error; per #141, those
-    // surface as `RunResult::Error`. Older clap behavior could also produce
+    // surface as `DispatchResult::Error`. Older clap behavior could also produce
     // `NoMatch`, so accept either.
     assert!(
         result.is_error() || result.is_no_match(),

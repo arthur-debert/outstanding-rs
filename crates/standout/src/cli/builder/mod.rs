@@ -35,33 +35,43 @@ mod rendering;
 use crate::context::ContextRegistry;
 use crate::setup::SetupError;
 use crate::topics::{
-    default_topic_theme, display_with_pager, render_topic, render_topics_list, TopicRegistry,
-    TopicRenderConfig,
+    default_topic_theme, display_with_pager, topic_data, topics_list_data, TopicRegistry,
+    DEFAULT_TOPICS_LIST_TEMPLATE, DEFAULT_TOPIC_TEMPLATE,
 };
 use crate::TemplateRegistry;
-use crate::{render_auto, OutputMode, Theme, TEMPLATE_EXTENSIONS};
+use crate::{
+    render_request_split, ColorPolicy, InputSources, OutputMode, RenderError, RenderRequest,
+    TargetProperties, Theme, TEMPLATE_EXTENSIONS,
+};
 use clap::{Arg, ArgAction, ArgMatches, Command};
 use serde::Serialize;
 use std::cell::RefCell;
-use std::collections::{BTreeMap, HashMap, HashSet};
+use std::collections::{BTreeMap, HashMap};
 use std::rc::Rc;
 
 use super::default_command::ParseFailure;
 use super::dispatch::DispatchFn;
 use super::group::CommandRecipe;
 use super::handler::{CommandContext, Extensions, HandlerResult, Output as HandlerOutput};
+use super::help::data::{extract_help_data, extract_help_data_with_topics};
 use super::help::{
-    default_help_theme, render_help, render_help_with_topics, CommandGroup, HelpConfig, HelpLength,
+    default_help_theme, human_help_format, named_or_inline_template, render_via_request,
+    CommandGroup, HelpConfig, HelpLength, DEFAULT_HELP_TEMPLATE,
 };
 use super::hooks::{ArtifactOutput, HookError, HookPhase, Hooks, RenderedOutput, TextOutput};
 use super::questionnaire::QuestionnaireCommand;
 use super::result::{HelpDisplay, HelpResult};
 use standout_dispatch::verify::ExpectedArg;
+use standout_render::warnings::WarningBuffer;
 
 pub(crate) type SharedTemplateEngine =
     Rc<RefCell<Box<dyn standout_render::template::TemplateEngine>>>;
 
 /// The presentation configuration a command declared.
+///
+/// Glue-private: keeps [`TemplateRef::Convention`] until `build()` materializes
+/// it to a registry name. The public render-time [`crate::TemplateRef`] lives
+/// in `standout-render` and has only `Named` / `Inline` / `Absent`.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum TemplateRef {
     /// A named template that must resolve through the template registry.
@@ -138,19 +148,19 @@ impl TemplateRefreshError {
             message: message.into(),
         }
     }
-
-    fn is_not_found(&self) -> bool {
-        self.message.starts_with("Template not found:")
-    }
 }
 
 impl std::fmt::Display for TemplateRefreshError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(
-            f,
-            "template `{}`{} could not be refreshed: {}",
-            self.name, self.location, self.message
-        )
+        if self.name.is_empty() {
+            write!(f, "{}", self.message)
+        } else {
+            write!(
+                f,
+                "template `{}`{} could not be refreshed: {}",
+                self.name, self.location, self.message
+            )
+        }
     }
 }
 
@@ -181,254 +191,28 @@ pub(crate) fn refresh_engine_templates(
 }
 
 pub(crate) fn refresh_named_template(
-    engine: &mut dyn standout_render::template::TemplateEngine,
     registry: &TemplateRegistry,
     name: &str,
 ) -> Result<(), TemplateRefreshError> {
-    let mut seen = HashSet::new();
-    let result = refresh_template_tree(engine, registry, name, &mut seen);
-    if !matches!(&result, Err(error) if error.is_not_found()) {
-        return result;
-    }
-
-    let mut refreshed = registry.clone();
-    refreshed
-        .refresh()
-        .map_err(|error| TemplateRefreshError::new(name, &refreshed, error.to_string()))?;
-    let mut seen = HashSet::new();
-    refresh_template_tree(engine, &refreshed, name, &mut seen)
-}
-
-fn refresh_template_tree(
-    engine: &mut dyn standout_render::template::TemplateEngine,
-    registry: &TemplateRegistry,
-    name: &str,
-    seen: &mut HashSet<String>,
-) -> Result<(), TemplateRefreshError> {
-    if !seen.insert(name.to_string()) {
-        return Ok(());
-    }
-
-    let content = registry
-        .get_content(name)
-        .map_err(|error| TemplateRefreshError::new(name, registry, error.to_string()))?;
-    engine
-        .add_template(name, &content)
-        .map_err(|error| TemplateRefreshError::new(name, registry, error.to_string()))?;
-
-    let dependencies = template_dependencies(&content);
-    if dependencies.dynamic {
-        let mut refreshed = registry.clone();
-        refreshed
-            .refresh()
-            .map_err(|error| TemplateRefreshError::new(name, &refreshed, error.to_string()))?;
-        return refresh_engine_templates(engine, &refreshed);
-    }
-
-    for dependency in dependencies.names {
-        refresh_template_tree(engine, registry, &dependency, seen)?;
-    }
-
-    Ok(())
-}
-
-#[derive(Default)]
-struct TemplateDependencies {
-    names: Vec<String>,
-    dynamic: bool,
-}
-
-fn template_dependencies(source: &str) -> TemplateDependencies {
-    let mut dependencies = TemplateDependencies::default();
-    let mut cursor = 0;
-
-    while let Some(open) = find_next_template_syntax(source, cursor) {
-        if source[open..].starts_with("{#") {
-            let Some(close) = source[open + 2..].find("#}") else {
-                break;
-            };
-            cursor = open + 2 + close + 2;
-            continue;
+    // Existence / readability check only: `render_request` loads the whole
+    // registry into the engine (cached per registry generation). A registered
+    // file that disappeared must still error with its path (ADR-0019). A name
+    // missing from the original map is retried after a directory re-walk so
+    // a file that appeared after build() is still found.
+    match registry.get_content(name) {
+        Ok(_) => Ok(()),
+        Err(standout_render::RegistryError::NotFound { .. }) => {
+            let mut refreshed = registry.clone();
+            refreshed
+                .refresh()
+                .map_err(|error| TemplateRefreshError::new(name, registry, error.to_string()))?;
+            refreshed
+                .get_content(name)
+                .map_err(|error| TemplateRefreshError::new(name, &refreshed, error.to_string()))?;
+            Ok(())
         }
-
-        if source[open..].starts_with("{{") {
-            let after_start = open + 2;
-            let Some(close) = find_closing_delimiter(source, after_start, b"}}") else {
-                break;
-            };
-            cursor = close + 2;
-            continue;
-        }
-
-        let Some((tag, close)) = read_tag(source, open) else {
-            break;
-        };
-        let (keyword, body) = split_tag(&tag);
-        if keyword == "raw" {
-            cursor = find_endraw(source, close).unwrap_or(source.len());
-            continue;
-        }
-
-        let expression = match keyword {
-            "include" | "extends" | "import" => Some(body),
-            "from" => body
-                .split_once(" import ")
-                .map(|(template, _imports)| template.trim()),
-            _ => None,
-        };
-
-        if matches!(keyword, "include" | "extends" | "import" | "from") {
-            match expression.and_then(|expression| static_template_names(keyword, expression)) {
-                Some(names) => dependencies.names.extend(names),
-                None => dependencies.dynamic = true,
-            }
-        }
-        cursor = close;
+        Err(error) => Err(TemplateRefreshError::new(name, registry, error.to_string())),
     }
-
-    dependencies
-}
-
-fn find_next_template_syntax(source: &str, cursor: usize) -> Option<usize> {
-    let rest = &source[cursor..];
-    ["{%", "{{", "{#"]
-        .into_iter()
-        .filter_map(|marker| rest.find(marker).map(|index| cursor + index))
-        .min()
-}
-
-fn read_tag(source: &str, open: usize) -> Option<(String, usize)> {
-    if !source[open..].starts_with("{%") {
-        return None;
-    }
-    let after_start = open + 2;
-    let tag_end = find_closing_delimiter(source, after_start, b"%}")?;
-    let close = tag_end + 2;
-    Some((normalize_tag(&source[after_start..tag_end]), close))
-}
-
-fn find_closing_delimiter(source: &str, start: usize, delimiter: &[u8]) -> Option<usize> {
-    let bytes = source.as_bytes();
-    let mut cursor = start;
-    let mut quote = None;
-    let mut escaped = false;
-
-    while cursor < bytes.len() {
-        let byte = bytes[cursor];
-        if let Some(active_quote) = quote {
-            if escaped {
-                escaped = false;
-            } else if byte == b'\\' {
-                escaped = true;
-            } else if byte == active_quote {
-                quote = None;
-            }
-            cursor += 1;
-            continue;
-        }
-
-        if matches!(byte, b'\'' | b'"') {
-            quote = Some(byte);
-            cursor += 1;
-            continue;
-        }
-
-        if bytes[cursor..].starts_with(delimiter) {
-            return Some(cursor);
-        }
-        cursor += 1;
-    }
-
-    None
-}
-
-fn normalize_tag(tag: &str) -> String {
-    let tag = tag.trim();
-    let tag = tag
-        .strip_prefix('-')
-        .or_else(|| tag.strip_prefix('+'))
-        .unwrap_or(tag)
-        .trim_start();
-    let tag = tag
-        .strip_suffix('-')
-        .or_else(|| tag.strip_suffix('+'))
-        .unwrap_or(tag)
-        .trim_end();
-    tag.to_string()
-}
-
-fn split_tag(tag: &str) -> (&str, &str) {
-    let mut words = tag.splitn(2, char::is_whitespace);
-    let keyword = words.next().unwrap_or_default();
-    let body = words.next().unwrap_or_default().trim();
-    (keyword, body)
-}
-
-fn find_endraw(source: &str, cursor: usize) -> Option<usize> {
-    let mut cursor = cursor;
-    while let Some(open) = source[cursor..].find("{%").map(|index| cursor + index) {
-        let (tag, close) = read_tag(source, open)?;
-        if split_tag(&tag).0 == "endraw" {
-            return Some(close);
-        }
-        cursor = close;
-    }
-    None
-}
-
-fn static_template_names(keyword: &str, expression: &str) -> Option<Vec<String>> {
-    let expression = expression.trim();
-    if keyword == "include" && expression.starts_with('[') {
-        let list_end = expression.find(']')?;
-        let mut names = Vec::new();
-        for item in expression[1..list_end].split(',') {
-            let (name, remainder) = quoted_string(item.trim())?;
-            if !remainder.trim().is_empty() {
-                return None;
-            }
-            names.push(name);
-        }
-        return (!names.is_empty()
-            && is_static_dependency_suffix(keyword, &expression[list_end + 1..]))
-        .then_some(names);
-    }
-
-    let (name, remainder) = quoted_string(expression)?;
-    is_static_dependency_suffix(keyword, remainder).then_some(vec![name])
-}
-
-fn is_static_dependency_suffix(keyword: &str, suffix: &str) -> bool {
-    let suffix = suffix.trim();
-    match keyword {
-        "extends" | "from" => suffix.is_empty(),
-        "import" => suffix.starts_with("as "),
-        "include" => suffix
-            .split_whitespace()
-            .all(|word| matches!(word, "ignore" | "missing" | "with" | "without" | "context")),
-        _ => false,
-    }
-}
-
-fn quoted_string(input: &str) -> Option<(String, &str)> {
-    let mut chars = input.char_indices();
-    let (_, quote) = chars.next()?;
-    if quote != '\'' && quote != '"' {
-        return None;
-    }
-
-    for (index, ch) in chars {
-        if ch == '\\' {
-            return None;
-        }
-        if ch == quote {
-            return Some((
-                input[quote.len_utf8()..index].to_string(),
-                &input[index + ch.len_utf8()..],
-            ));
-        }
-    }
-
-    None
 }
 
 fn missing_template_message(
@@ -624,7 +408,8 @@ pub struct App {
     pub(crate) registry: TopicRegistry,
     pub(crate) output_flag: Option<String>,
     pub(crate) output_file_flag: Option<String>,
-    pub(crate) theme: Option<Theme>,
+    /// The one theme `build()` merged (ADR-0020). Always set.
+    pub(crate) theme: Theme,
     pub(crate) stylesheet_registry: Option<crate::StylesheetRegistry>,
     pub(crate) template_registry: Option<Rc<TemplateRegistry>>,
     pending_commands: RefCell<HashMap<String, PendingCommand>>,
@@ -641,6 +426,11 @@ pub struct App {
     pub(crate) help_word: bool,
     pub(crate) ambiguous_width: crate::AmbiguousWidth,
     pub(crate) version: Option<&'static str>,
+    /// Framework warnings collected while converting embedded templates/styles
+    /// at build time (hot-reload fallbacks). Copied into each run's
+    /// [`standout_render::warnings::WarningBuffer`] so they return on the run
+    /// result instead of printing at construction.
+    pub(crate) startup_warnings: Vec<String>,
 }
 
 impl App {
@@ -719,8 +509,10 @@ pub struct AppBuilder {
 
     /// Optional template engine.
     ///
-    /// If not provided, a default MiniJinja engine will be created.
-    pub(crate) template_engine: SharedTemplateEngine,
+    /// Unset until [`AppBuilder::template_engine`] or [`build`](Self::build).
+    /// `build()` constructs the default MiniJinja engine when this is `None`
+    /// — the only place glue may call `MiniJinjaEngine::new()`.
+    pub(crate) template_engine: Option<SharedTemplateEngine>,
 
     /// Command groups for organized help display.
     pub(crate) help_command_groups: Option<Vec<CommandGroup>>,
@@ -752,6 +544,11 @@ pub struct AppBuilder {
     /// only under its `string` feature; the borrow is leaked once, when the
     /// builder is configured, rather than on every parse.
     pub(crate) version: Option<&'static str>,
+
+    /// Framework warnings collected while converting embedded templates/styles
+    /// (hot-reload fallbacks). Copied onto [`App`] at build and into each
+    /// run's warning buffer.
+    pub(crate) startup_warnings: Vec<String>,
 }
 
 impl Default for AppBuilder {
@@ -787,14 +584,13 @@ impl AppBuilder {
             include_framework_templates: true,
             include_framework_styles: true,
             app_state: Extensions::new(),
-            template_engine: Rc::new(RefCell::new(Box::new(
-                standout_render::template::MiniJinjaEngine::new(),
-            ))),
+            template_engine: None,
             help_command_groups: None,
             help_handling: false,
             help_word: false,
             ambiguous_width: crate::AmbiguousWidth::Narrow,
             version: None,
+            startup_warnings: Vec::new(),
         }
     }
 
@@ -862,14 +658,15 @@ impl AppBuilder {
         self
     }
 
-    /// sets a custom template engine to be used for rendering.
+    /// Sets a custom template engine to be used for rendering.
     ///
-    /// If not set, the default MiniJinja engine will be used.
+    /// If not set, [`build`](Self::build) constructs the default MiniJinja
+    /// engine. That construction is the only `MiniJinjaEngine::new()` in glue.
     pub fn template_engine(
         mut self,
         engine: Box<dyn standout_render::template::TemplateEngine>,
     ) -> Self {
-        self.template_engine = Rc::new(RefCell::new(engine));
+        self.template_engine = Some(Rc::new(RefCell::new(engine)));
         self
     }
 
@@ -880,8 +677,10 @@ impl AppBuilder {
     }
 
     /// Finalizes the builder into an executable App, resolving one
-    /// framework-base-plus-application theme, validating typed template
-    /// declarations, loading templates, and preparing for dispatch and rendering.
+    /// framework-base-plus-application theme, constructing the template engine
+    /// if unset (the only `MiniJinjaEngine::new()` in glue), validating typed
+    /// template declarations, loading templates, and preparing for dispatch
+    /// and rendering.
     ///
     /// # Errors
     ///
@@ -925,7 +724,8 @@ impl AppBuilder {
             };
         }
 
-        // Resolve theme BEFORE finalization
+        // Resolve theme BEFORE finalization. `App.theme` is non-optional;
+        // this `Some` is only the builder's still-unset-until-build slot.
         let app_theme = self.resolve_configured_theme()?;
         self.theme = Some(
             self.framework_base_theme()?
@@ -981,6 +781,12 @@ impl AppBuilder {
             }
         }
 
+        let template_engine = self.template_engine.take().unwrap_or_else(|| {
+            Rc::new(RefCell::new(Box::new(
+                standout_render::template::MiniJinjaEngine::new(),
+            )))
+        });
+
         self.validate_command_templates()?;
         self.validate_framework_template_styles()?;
         self.materialize_convention_templates();
@@ -989,7 +795,7 @@ impl AppBuilder {
         // result. Named renders refresh this cache again so file-backed
         // templates can hot reload.
         if let Some(registry) = &self.template_registry {
-            refresh_engine_templates(&mut **self.template_engine.borrow_mut(), registry)
+            refresh_engine_templates(&mut **template_engine.borrow_mut(), registry)
                 .map_err(|error| SetupError::Template(error.to_string()))?;
         }
 
@@ -997,7 +803,10 @@ impl AppBuilder {
             registry: self.registry,
             output_flag: self.output_flag,
             output_file_flag: self.output_file_flag,
-            theme: self.theme,
+            theme: self
+                .theme
+                .take()
+                .expect("build always resolves a theme before constructing App"),
             stylesheet_registry: self.stylesheet_registry,
             template_registry: self.template_registry.map(Rc::new),
             pending_commands: self.pending_commands,
@@ -1008,12 +817,13 @@ impl AppBuilder {
             default_command: self.default_command,
             default_command_resolver: self.default_command_resolver,
             app_state: Rc::new(self.app_state),
-            template_engine: self.template_engine,
+            template_engine,
             help_command_groups: self.help_command_groups,
             help_handling: self.help_handling,
             help_word: self.help_word,
             ambiguous_width: self.ambiguous_width,
             version: self.version,
+            startup_warnings: self.startup_warnings,
         };
 
         // Finalize commands with built template and theme state in place.
@@ -1045,11 +855,6 @@ impl AppBuilder {
                 };
                 SetupError::Template(message)
             })?;
-            if matches!(pending.template, TemplateRef::Convention(_)) {
-                let mut engine = self.template_engine.borrow_mut();
-                refresh_named_template(&mut **engine, registry, &name)
-                    .map_err(|error| SetupError::Template(error.to_string()))?;
-            }
         }
         Ok(())
     }
@@ -1190,9 +995,39 @@ impl App {
         self.command_hooks.get(path)
     }
 
-    /// Returns the default theme, if configured.
-    pub fn get_default_theme(&self) -> Option<&Theme> {
-        self.theme.as_ref()
+    /// CSV projection registered for `path`, if the command declared one.
+    ///
+    /// Same fact dispatch captures into its request: a `run_command` of a
+    /// command with [`crate::StructuredOutputProjection`] must emit the
+    /// contract CSV, not generic flattening.
+    fn csv_projection_for(&self, path: &str) -> Option<crate::CsvProjection> {
+        self.pending_commands
+            .borrow()
+            .get(path)
+            .and_then(|pending| {
+                pending
+                    .recipe
+                    .structured_output_projection()
+                    .map(|projection| projection.csv_projection().clone())
+            })
+    }
+
+    /// Returns the theme `build()` merged (ADR-0020).
+    ///
+    /// Always present: `build()` computes the framework-base-plus-application
+    /// theme unconditionally, so a built [`App`] has no unset theme.
+    pub fn get_default_theme(&self) -> &Theme {
+        &self.theme
+    }
+
+    /// Output-mode fallback used when this invocation has no `--output` flag.
+    ///
+    /// `App` stores no configurable fallback (`AppBuilder::output_mode()` was
+    /// deleted in ROB02); `Auto` is the only value. Named here rather than
+    /// inlined at each call site so a later workstream can store a real field
+    /// without hunting literals.
+    fn output_mode_fallback() -> OutputMode {
+        OutputMode::Auto
     }
 
     /// Gets a theme by name from the stylesheet registry.
@@ -1303,6 +1138,22 @@ impl App {
         I: IntoIterator<Item = T>,
         T: Into<std::ffi::OsString> + Clone,
     {
+        self.get_matches_from_with_sources(cmd, itr, &crate::InputSources::from_process())
+    }
+
+    /// [`get_matches_from`](Self::get_matches_from) against explicit
+    /// [`crate::InputSources`] (stdin terminal fact for default-command
+    /// resolution).
+    pub fn get_matches_from_with_sources<I, T>(
+        &self,
+        cmd: Command,
+        itr: I,
+        sources: &crate::InputSources,
+    ) -> HelpResult
+    where
+        I: IntoIterator<Item = T>,
+        T: Into<std::ffi::OsString> + Clone,
+    {
         let mut cmd = self.augment_command_with_help(cmd);
 
         // The application's `Command` is only visible from a parse entry point,
@@ -1321,7 +1172,7 @@ impl App {
         // Verbatim, all the way to Clap: a non-UTF8 argument is a real argument.
         let args: Vec<std::ffi::OsString> = itr.into_iter().map(Into::into).collect();
 
-        let matches = match self.parse_with_default_command(&cmd, &args) {
+        let matches = match self.parse_with_default_command(&cmd, &args, sources.stdin()) {
             Ok(matches) => matches,
             Err(ParseFailure::UnknownDefault(e)) => {
                 return HelpResult::Error(
@@ -1330,14 +1181,14 @@ impl App {
                 )
             }
             Err(ParseFailure::Clap(e)) => {
-                return match self.intercept_display_help(&mut cmd, &args, &e) {
+                return match self.intercept_display_help(&mut cmd, &args, &e, None, None) {
                     Some(display) => display.into(),
                     None => HelpResult::Error(e),
                 }
             }
         };
 
-        match self.intercept_help_word(&mut cmd, &matches) {
+        match self.intercept_help_word(&mut cmd, &matches, None, None) {
             Some(display) => display.into(),
             None => HelpResult::Matches(matches),
         }
@@ -1355,12 +1206,14 @@ impl App {
         &self,
         cmd: &mut Command,
         matches: &ArgMatches,
+        target: Option<crate::TargetProperties>,
+        warnings: Option<standout_render::warnings::WarningBuffer>,
     ) -> Option<HelpDisplay> {
         if !self.help_handling {
             return None;
         }
         let (name, sub_matches) = matches.subcommand()?;
-        (name == "help").then(|| self.render_help_word(cmd, matches, sub_matches))
+        (name == "help").then(|| self.render_help_word(cmd, matches, sub_matches, target, warnings))
     }
 
     /// Answers Clap's `DisplayHelp` short-circuit, when standout owns help.
@@ -1376,25 +1229,108 @@ impl App {
         cmd: &mut Command,
         args: &[std::ffi::OsString],
         error: &clap::Error,
+        target: Option<crate::TargetProperties>,
+        warnings: Option<standout_render::warnings::WarningBuffer>,
     ) -> Option<HelpDisplay> {
         (self.help_handling && error.kind() == clap::error::ErrorKind::DisplayHelp)
-            .then(|| self.render_help_for_display_help_error(cmd, args))
+            .then(|| self.render_help_for_display_help_error(cmd, args, target, warnings))
+    }
+
+    /// Destination facts for a help/topics render.
+    ///
+    /// `run_with` supplies the invocation's target; parse-only entry points
+    /// detect at this edge. Ambiguous-width is application policy (ADR-0026).
+    fn help_target_properties(
+        &self,
+        target: Option<crate::TargetProperties>,
+    ) -> crate::TargetProperties {
+        let mut target = target.unwrap_or_else(crate::TargetProperties::detect);
+        target.ambiguous_width = self.ambiguous_width;
+        target
+    }
+
+    /// The one theme `build()` merged (ADR-0020), including help/topic tags.
+    fn help_theme(&self) -> Theme {
+        self.theme.clone()
+    }
+
+    /// Named registry template when `build()` registered it; otherwise the
+    /// default source as [`crate::TemplateRef::Inline`] with tag validation.
+    fn help_template(
+        &self,
+        override_source: Option<&str>,
+        named: &str,
+        default_source: &str,
+    ) -> Result<crate::TemplateRef, RenderError> {
+        let theme = self.help_theme();
+        if let Some(source) = override_source {
+            return super::help::inline_template_ref(source, &theme, named);
+        }
+        named_or_inline_template(
+            self.template_registry.as_deref(),
+            named,
+            default_source,
+            &theme,
+        )
+    }
+
+    /// Help and topics through [`render_request`] with the app engine, merged
+    /// theme, filters, and registry.
+    #[allow(clippy::too_many_arguments)]
+    fn render_help_surface<T: Serialize>(
+        &self,
+        data: &T,
+        template: crate::TemplateRef,
+        format: OutputMode,
+        target: crate::TargetProperties,
+        warnings: Option<standout_render::warnings::WarningBuffer>,
+    ) -> Result<String, RenderError> {
+        render_via_request(
+            data,
+            template,
+            self.help_theme(),
+            format,
+            target,
+            self.template_engine.clone(),
+            self.template_registry.clone(),
+            Some(self.context_registry.clone()),
+            warnings,
+        )
+    }
+
+    fn help_display(
+        &self,
+        cmd: &Command,
+        rendered: Result<String, RenderError>,
+        use_pager: bool,
+    ) -> HelpDisplay {
+        match rendered {
+            Ok(text) => HelpDisplay::Rendered {
+                text,
+                paged: use_pager,
+            },
+            Err(e) => Self::render_failure(cmd, e),
+        }
     }
 
     /// Renders the help the `help` word asked for.
     ///
     /// Its arguments come from Clap: `sub_matches` is the word's own parse
     /// (`topic`, `--page`), and the output mode is read from the root, where
-    /// the global flag that carries it lives.
+    /// the global flag that carries it lives. Structured modes map to
+    /// [`OutputMode::Auto`] (ADR-0029) on the request; the leaf has no help
+    /// flag.
     fn render_help_word(
         &self,
         cmd: &mut Command,
         matches: &ArgMatches,
         sub_matches: &ArgMatches,
+        target: Option<crate::TargetProperties>,
+        warnings: Option<standout_render::warnings::WarningBuffer>,
     ) -> HelpDisplay {
+        let format = human_help_format(self.extract_output_mode(matches));
+        let target = self.help_target_properties(target);
         let config = HelpConfig {
-            output_mode: Some(self.extract_output_mode(matches)),
-            theme: self.theme.clone(),
             command_groups: self.help_command_groups.clone(),
             // The word is the spelled-out request, so it reads like `--help`.
             length: HelpLength::Long,
@@ -1405,11 +1341,13 @@ impl App {
         if let Some(topic_args) = sub_matches.get_many::<String>("topic") {
             let keywords: Vec<_> = topic_args.map(|s| s.as_str()).collect();
             if !keywords.is_empty() {
-                return self.handle_help_request(cmd, &keywords, use_pager, Some(config));
+                return self.handle_help_request(
+                    cmd, &keywords, use_pager, config, format, target, warnings,
+                );
             }
         }
 
-        self.render_root_help(cmd, Some(config), use_pager)
+        self.render_root_help(cmd, config, format, target, warnings, use_pager)
     }
 
     /// Reports a failed help render.
@@ -1426,20 +1364,37 @@ impl App {
         ))
     }
 
-    /// Renders root help, returning an error if rendering fails.
+    /// Renders root help through [`render_request`].
+    #[allow(clippy::too_many_arguments)]
     fn render_root_help(
         &self,
         cmd: &Command,
-        config: Option<HelpConfig>,
+        config: HelpConfig,
+        format: OutputMode,
+        target: crate::TargetProperties,
+        warnings: Option<standout_render::warnings::WarningBuffer>,
         use_pager: bool,
     ) -> HelpDisplay {
-        match render_help_with_topics(cmd, &self.registry, config) {
-            Ok(text) => HelpDisplay::Rendered {
-                text,
-                paged: use_pager,
-            },
-            Err(e) => Self::render_failure(cmd, e),
-        }
+        let template = match self.help_template(
+            config.template.as_deref(),
+            crate::assets::HELP_TEMPLATE_NAME,
+            DEFAULT_HELP_TEMPLATE,
+        ) {
+            Ok(template) => template,
+            Err(e) => return Self::render_failure(cmd, e),
+        };
+        let data = extract_help_data_with_topics(
+            cmd,
+            &self.registry,
+            config.command_groups.as_deref(),
+            config.length,
+            &target,
+        );
+        self.help_display(
+            cmd,
+            self.render_help_surface(&data, template, format, target, warnings),
+            use_pager,
+        )
     }
 
     /// Handles a `DisplayHelp` error from clap by rendering standout help.
@@ -1465,22 +1420,24 @@ impl App {
         &self,
         cmd: &mut Command,
         args: &[std::ffi::OsString],
+        target: Option<crate::TargetProperties>,
+        warnings: Option<standout_render::warnings::WarningBuffer>,
     ) -> HelpDisplay {
         let request = Self::help_request(cmd, args);
-
+        let format = human_help_format(OutputMode::Auto);
+        let target = self.help_target_properties(target);
         let config = HelpConfig {
-            theme: self.theme.clone(),
             command_groups: self.help_command_groups.clone(),
             length: request.length,
             ..Default::default()
         };
 
         if request.target.is_empty() {
-            return self.render_root_help(cmd, Some(config), false);
+            return self.render_root_help(cmd, config, format, target, warnings, false);
         }
 
         let keywords: Vec<&str> = request.target.iter().map(|s| s.as_str()).collect();
-        self.handle_help_request(cmd, &keywords, false, Some(config))
+        self.handle_help_request(cmd, &keywords, false, config, format, target, warnings)
     }
 
     /// What a `DisplayHelp` line asked for, as Clap reads it.
@@ -1574,62 +1531,78 @@ impl App {
     }
 
     /// Handles a request for specific help e.g. `help foo`
+    #[allow(clippy::too_many_arguments)]
     fn handle_help_request(
         &self,
         cmd: &mut Command,
         keywords: &[&str],
         use_pager: bool,
-        config: Option<HelpConfig>,
+        config: HelpConfig,
+        format: OutputMode,
+        target: crate::TargetProperties,
+        warnings: Option<standout_render::warnings::WarningBuffer>,
     ) -> HelpDisplay {
         let sub_name = keywords[0];
 
         // 0. Check for "topics" - list all available topics
         if sub_name == "topics" {
-            let topic_config = TopicRenderConfig {
-                output_mode: config.as_ref().and_then(|c| c.output_mode),
-                theme: config.as_ref().and_then(|c| c.theme.clone()),
-                ..Default::default()
-            };
-            return match render_topics_list(
-                &self.registry,
-                &format!("{} help", cmd.get_name()),
-                Some(topic_config),
+            let template = match self.help_template(
+                None,
+                crate::assets::TOPICS_LIST_TEMPLATE_NAME,
+                DEFAULT_TOPICS_LIST_TEMPLATE,
             ) {
-                Ok(text) => HelpDisplay::Rendered {
-                    text,
-                    paged: use_pager,
-                },
-                Err(e) => Self::render_failure(cmd, e),
+                Ok(template) => template,
+                Err(e) => return Self::render_failure(cmd, e),
             };
+            let data =
+                topics_list_data(&self.registry, &format!("{} help", cmd.get_name()), &target);
+            return self.help_display(
+                cmd,
+                self.render_help_surface(&data, template, format, target, warnings),
+                use_pager,
+            );
         }
 
         // 1. Check if it's a real command
         if super::app::find_subcommand(cmd, sub_name).is_some() {
-            if let Some(target) = super::app::find_subcommand_recursive(cmd, keywords) {
-                return match render_help(target, config.clone()) {
-                    Ok(text) => HelpDisplay::Rendered {
-                        text,
-                        paged: use_pager,
-                    },
-                    Err(e) => Self::render_failure(cmd, e),
+            if let Some(help_cmd) = super::app::find_subcommand_recursive(cmd, keywords) {
+                let template = match self.help_template(
+                    config.template.as_deref(),
+                    crate::assets::HELP_TEMPLATE_NAME,
+                    DEFAULT_HELP_TEMPLATE,
+                ) {
+                    Ok(template) => template,
+                    Err(e) => return Self::render_failure(cmd, e),
                 };
+                let data = extract_help_data(
+                    help_cmd,
+                    config.command_groups.as_deref(),
+                    config.length,
+                    &target,
+                );
+                return self.help_display(
+                    cmd,
+                    self.render_help_surface(&data, template, format, target, warnings),
+                    use_pager,
+                );
             }
         }
 
         // 2. Check if it is a topic
         if let Some(topic) = self.registry.get_topic(sub_name) {
-            let topic_config = TopicRenderConfig {
-                output_mode: config.as_ref().and_then(|c| c.output_mode),
-                theme: config.as_ref().and_then(|c| c.theme.clone()),
-                ..Default::default()
+            let template = match self.help_template(
+                None,
+                crate::assets::TOPIC_TEMPLATE_NAME,
+                DEFAULT_TOPIC_TEMPLATE,
+            ) {
+                Ok(template) => template,
+                Err(e) => return Self::render_failure(cmd, e),
             };
-            return match render_topic(topic, Some(topic_config)) {
-                Ok(text) => HelpDisplay::Rendered {
-                    text,
-                    paged: use_pager,
-                },
-                Err(e) => Self::render_failure(cmd, e),
-            };
+            return self.help_display(
+                cmd,
+                self.render_help_surface(&topic_data(topic), template, format, target, warnings),
+                use_pager,
+            );
         }
 
         // 3. Not found
@@ -1781,24 +1754,50 @@ impl App {
     }
 
     /// Extracts the output mode from parsed ArgMatches.
+    ///
+    /// When this app installs `--output` and `matches` carries `_output_mode`,
+    /// that value is the invocation's mode. Otherwise the
+    /// [fallback](Self::output_mode_fallback) — including when the parse tree
+    /// never declared Standout's argument (`try_get_one` rather than
+    /// `get_one`, so an unaugmented manual parse does not panic).
     pub fn extract_output_mode(&self, matches: &ArgMatches) -> OutputMode {
-        if self.output_flag.is_some() {
-            match matches
-                .get_one::<String>("_output_mode")
-                .map(|s| s.as_str())
-            {
-                Some("term") => OutputMode::Term,
-                Some("text") => OutputMode::Text,
-                Some("term-debug") => OutputMode::TermDebug,
-                Some("json") => OutputMode::Json,
-                Some("yaml") => OutputMode::Yaml,
-                Some("xml") => OutputMode::Xml,
-                Some("csv") => OutputMode::Csv,
-                _ => OutputMode::Auto,
-            }
-        } else {
-            OutputMode::Auto
+        if self.output_flag.is_none() {
+            return Self::output_mode_fallback();
         }
+        match matches.try_get_one::<String>("_output_mode") {
+            Ok(Some(value)) => parse_output_mode_flag(Some(value.as_str())),
+            Ok(None) | Err(_) => Self::output_mode_fallback(),
+        }
+    }
+
+    /// Resolves `--output` when Clap did not produce matches.
+    ///
+    /// Usage errors, `--help`, and `--version` short-circuit before
+    /// [`extract_output_mode`](Self::extract_output_mode). Warning flush still
+    /// reads the run's output mode, so `--output=text` must opt the warning
+    /// block out of ANSI on those exits too.
+    ///
+    /// Scans the raw argument list for the long name the app configured
+    /// ([`AppBuilder::output_flag`]): `--flag=value` and `--flag value`. The
+    /// first element is the program name (Clap's argv[0]) and is not a flag.
+    /// A `--` terminator ends the scan, so arguments after it are not flags.
+    /// Unknown values, a missing value, a `--flag` whose next token is another
+    /// option, and a flag that appears only after `--` resolve to
+    /// [`OutputMode::Auto`]. So does an app that configured no output flag.
+    ///
+    /// This is a lexical look at that configured long name, not clap's parse:
+    /// it does not see aliases or a short spelling. Exactness is not required
+    /// here — the command line already failed, and this only styles the warning
+    /// block. The machine-contract Spec owns a parse-independent `--output`
+    /// reading.
+    pub(crate) fn extract_output_mode_from_unparsed(
+        &self,
+        args: &[std::ffi::OsString],
+    ) -> OutputMode {
+        let Some(flag) = self.output_flag.as_deref() else {
+            return OutputMode::Auto;
+        };
+        parse_output_mode_flag(last_unparsed_flag_value(flag, args))
     }
 
     // =========================================================================
@@ -1811,11 +1810,23 @@ impl App {
     /// to benefit from registered hooks.
     ///
     /// The method:
-    /// 1. Runs pre-dispatch hooks (if any)
-    /// 2. Calls your handler closure
-    /// 3. Renders the result using the template
-    /// 4. Runs post-output hooks (if any)
-    /// 5. Returns the final output
+    /// 1. Inserts [`InputSources::from_process`] and a
+    ///    [`standout_render::warnings::WarningBuffer`] into the context (the
+    ///    same run extensions `dispatch` / `run_with` insert). The buffer is
+    ///    seeded with build-time startup warnings so hooks and render see the
+    ///    same in-call destination as the other run edges; this method still
+    ///    returns only [`RenderedOutput`] (no final write, no warnings-return
+    ///    API)
+    /// 2. Runs pre-dispatch hooks (if any)
+    /// 3. Calls your handler closure
+    /// 4. Renders the result through [`crate::render_request_split`] using the
+    ///    app engine, template registry, context registry, merged theme, the
+    ///    output mode from [`extract_output_mode`](Self::extract_output_mode),
+    ///    and the command's structured-output projection when one is
+    ///    registered for `path`. Formatted and raw travel on [`TextOutput`]
+    ///    the same way dispatch does
+    /// 5. Runs post-output hooks (if any)
+    /// 6. Returns the final output
     ///
     /// # Final writes
     ///
@@ -1840,6 +1851,10 @@ impl App {
             path.split('.').map(String::from).collect(),
             self.app_state.clone(),
         );
+        let warnings = WarningBuffer::new();
+        self.seed_startup_warnings(&warnings);
+        ctx.extensions.insert(InputSources::from_process());
+        ctx.extensions.insert(warnings.clone());
 
         let hooks = self.command_hooks.get(path);
 
@@ -1861,9 +1876,26 @@ impl App {
                     json_data = hooks.run_post_dispatch(matches, &ctx, json_data)?;
                 }
 
-                let theme = self.theme.clone().unwrap_or_default();
-                match render_auto(template, &json_data, &theme, OutputMode::Auto) {
-                    Ok(rendered) => RenderedOutput::Text(TextOutput::plain(rendered)),
+                let mut target = TargetProperties::detect();
+                target.ambiguous_width = self.ambiguous_width;
+                let request = RenderRequest {
+                    data: json_data,
+                    template: crate::TemplateRef::Inline(template.to_string()),
+                    theme: self.theme.clone(),
+                    format: self.extract_output_mode(matches),
+                    color_policy: ColorPolicy::Auto,
+                    target,
+                    engine: self.template_engine.clone(),
+                    registry: self.template_registry.clone(),
+                    context_registry: Some(self.context_registry.clone()),
+                    csv_projection: self.csv_projection_for(path),
+                    extras: HashMap::new(),
+                    warnings: Some(warnings),
+                };
+                match render_request_split(&request) {
+                    Ok(rendered) => {
+                        RenderedOutput::Text(TextOutput::new(rendered.formatted, rendered.raw))
+                    }
                     Err(e) => return Err(HookError::post_output("Render error").with_source(e)),
                 }
             }
@@ -1986,6 +2018,58 @@ fn duplicate_help_word(claim: &str) -> SetupError {
 const HELP_PROBE_SHORT: &str = "__standout_help_short";
 const HELP_PROBE_LONG: &str = "__standout_help_long";
 
+fn parse_output_mode_flag(value: Option<&str>) -> OutputMode {
+    match value {
+        Some("term") => OutputMode::Term,
+        Some("text") => OutputMode::Text,
+        Some("term-debug") => OutputMode::TermDebug,
+        Some("json") => OutputMode::Json,
+        Some("yaml") => OutputMode::Yaml,
+        Some("xml") => OutputMode::Xml,
+        Some("csv") => OutputMode::Csv,
+        _ => OutputMode::Auto,
+    }
+}
+
+/// Last `--flag` / `--flag=value` before a `--` terminator, if any.
+///
+/// `args` is Clap-style: the first element is the program name and is not
+/// scanned. The look is the configured long name only: not clap aliases, not a
+/// short spelling. `--flag` with no following value, whose next token is `--`,
+/// or whose next token is another option (a token starting with `-`), is a
+/// miss — the following option is not consumed. Last occurrence wins, matching
+/// clap's `Set` action.
+fn last_unparsed_flag_value<'a>(flag: &str, args: &'a [std::ffi::OsString]) -> Option<&'a str> {
+    let long = format!("--{flag}");
+    let prefix = format!("--{flag}=");
+    let mut found = None;
+    let mut iter = args.iter().skip(1).peekable();
+    while let Some(arg) = iter.next() {
+        let Some(arg) = arg.to_str() else {
+            continue;
+        };
+        if arg == "--" {
+            break;
+        }
+        if let Some(value) = arg.strip_prefix(&prefix) {
+            found = Some(value);
+            continue;
+        }
+        if arg == long {
+            match iter.peek().and_then(|next| next.to_str()) {
+                None => found = None,
+                Some("--") => {
+                    found = None;
+                    break;
+                }
+                Some(next) if next.starts_with('-') => found = None,
+                Some(_) => found = iter.next().and_then(|next| next.to_str()),
+            }
+        }
+    }
+    found
+}
+
 /// What a help request named, once Clap has read the line.
 ///
 /// Defaults to the root and the terse description, which is what an
@@ -2039,39 +2123,6 @@ fn help_word_command(has_subcommands: bool) -> Command {
 mod tests {
     use super::*;
     use console::Style;
-
-    #[test]
-    fn template_dependencies_support_whitespace_controls() {
-        let dependencies = template_dependencies(
-            "{%+ extends 'base' +%}{%- include 'partial' -%}{%+ import 'macros' as macros -%}{%- from 'forms' import field +%}",
-        );
-
-        assert_eq!(dependencies.names, ["base", "partial", "macros", "forms"]);
-        assert!(!dependencies.dynamic);
-    }
-
-    #[test]
-    fn escaped_template_dependency_uses_full_registry_refresh() {
-        let dependencies = template_dependencies(r#"{% include "a\\b" %}"#);
-
-        assert!(dependencies.names.is_empty());
-        assert!(dependencies.dynamic);
-    }
-
-    #[test]
-    fn template_dependencies_ignore_delimiters_inside_quoted_strings() {
-        let dependencies = template_dependencies(concat!(
-            r#"{{ "}} {% include 'variable-double' %}" }}"#,
-            r#"{{ '}} {% import "variable-single" as dep %}' }}"#,
-            r#"{% set marker = "%} {% from 'statement-double' import dep %}" %}"#,
-            r#"{% set marker = '%} {% include "statement-single" %}' %}"#,
-            r#"{{ "escaped quote: \" }} {% include 'escaped' %}" }}"#,
-            r#"{% include 'actual' %}"#,
-        ));
-
-        assert_eq!(dependencies.names, ["actual"]);
-        assert!(!dependencies.dynamic);
-    }
 
     #[test]
     fn framework_template_validation_reports_malformed_markup_separately() {
@@ -2238,9 +2289,7 @@ mod tests {
             .build()
             .unwrap();
 
-        assert!(app.theme.is_some());
-        let theme = app.theme.as_ref().unwrap();
-        assert_eq!(theme.name(), Some("base"));
+        assert_eq!(app.theme.name(), Some("base"));
 
         // 2. theme.yaml exists (should override base)
         fs::write(temp_dir.path().join("theme.yaml"), "style: { fg: red }").unwrap();
@@ -2251,7 +2300,7 @@ mod tests {
             .build()
             .unwrap();
 
-        assert_eq!(app.theme.as_ref().unwrap().name(), Some("theme"));
+        assert_eq!(app.theme.name(), Some("theme"));
 
         // 3. default.yaml exists (should override theme)
         fs::write(temp_dir.path().join("default.yaml"), "style: { fg: green }").unwrap();
@@ -2262,7 +2311,7 @@ mod tests {
             .build()
             .unwrap();
 
-        assert_eq!(app.theme.as_ref().unwrap().name(), Some("default"));
+        assert_eq!(app.theme.name(), Some("default"));
     }
 
     // ============================================================================

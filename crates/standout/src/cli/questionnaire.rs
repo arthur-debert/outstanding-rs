@@ -13,8 +13,8 @@ use std::io::{self, BufRead, Write};
 use std::path::{Path, PathBuf};
 use std::rc::Rc;
 
+use crate::cli::CommandContextInput;
 use clap::{Arg, ArgAction, ArgMatches, Command};
-use standout_input::env::DefaultStdin;
 use standout_input::questionnaire::{
     AnswerSheetDiagnostic, FormError, QuestionnaireInput, QuestionnaireInputError, RawAnswers,
 };
@@ -104,11 +104,18 @@ where
     R: FnOnce(&T, &mut dyn Write) -> anyhow::Result<()>,
 {
     let sub_matches = get_deepest_matches(matches);
-    let resolved = collect_questionnaire_with::<T, F>(sub_matches, form).map_err(|error| {
-        HookError::pre_dispatch(format!(
-            "questionnaire input `{QUESTIONNAIRE_INPUT_NAME}`: {error}"
-        ))
-    })?;
+    let warnings = ctx
+        .extensions
+        .get::<standout_render::warnings::WarningBuffer>()
+        .cloned()
+        .unwrap_or_default();
+    let resolved =
+        collect_questionnaire_with::<T, F>(sub_matches, form, ctx.input_sources(), &warnings)
+            .map_err(|error| {
+                HookError::pre_dispatch(format!(
+                    "questionnaire input `{QUESTIONNAIRE_INPUT_NAME}`: {error}"
+                ))
+            })?;
 
     let assume_yes = sub_matches.get_flag(YES_ARG_ID);
     {
@@ -155,6 +162,8 @@ where
 fn collect_questionnaire_with<T, F>(
     matches: &ArgMatches,
     form: F,
+    sources: &standout_input::InputSources,
+    warnings: &standout_render::warnings::WarningBuffer,
 ) -> Result<ResolvedInput<T>, InputError>
 where
     T: QuestionnaireInput + Clone + Send + Sync + 'static,
@@ -169,7 +178,7 @@ where
         let raw = read().map_err(|diagnostics| {
             InputError::validation(format_diagnostics(label.clone(), &diagnostics))
         })?;
-        push_raw_answer_warnings(label, raw.warnings());
+        push_raw_answer_warnings(label, raw.warnings(), warnings);
         Ok(raw)
     };
 
@@ -179,7 +188,7 @@ where
     {
         Some("-") => (
             read_document("from stdin".to_string(), &|| {
-                questionnaire.read_answer_sheet_stdin_with(&DefaultStdin)
+                questionnaire.read_answer_sheet_stdin_with(sources.stdin())
             })?,
             InputSourceKind::Stdin,
         ),
@@ -192,7 +201,7 @@ where
             )
         }
         None => (
-            questionnaire.collect_interactive()?,
+            questionnaire.collect_interactive_from(sources)?,
             InputSourceKind::Prompt,
         ),
     };
@@ -217,9 +226,13 @@ fn format_diagnostics(label: String, diagnostics: &[AnswerSheetDiagnostic]) -> S
     )
 }
 
-fn push_raw_answer_warnings(label: String, diagnostics: &[AnswerSheetDiagnostic]) {
+fn push_raw_answer_warnings(
+    label: String,
+    diagnostics: &[AnswerSheetDiagnostic],
+    warnings: &standout_render::warnings::WarningBuffer,
+) {
     for diagnostic in diagnostics {
-        standout_render::warnings::push_warning(format!("answer sheet {label}: {diagnostic}"));
+        warnings.push(format!("answer sheet {label}: {diagnostic}"));
     }
 }
 
@@ -408,23 +421,23 @@ pub(crate) fn validate_questionnaire_surface(cmd: &Command, path: &str) -> Resul
 pub(crate) fn render_questions_result(
     questionnaire: &QuestionnaireCommand,
     matches: &ArgMatches,
-) -> crate::cli::handler::RunResult {
+) -> crate::cli::handler::DispatchResult {
     let sheet = match questionnaire.render_answer_sheet() {
         Ok(sheet) => sheet,
-        Err(error) => return crate::cli::handler::RunResult::Error(error),
+        Err(error) => return crate::cli::handler::DispatchResult::Error(error),
     };
     let sub_matches = get_deepest_matches(matches);
     if let Some(path) = sub_matches.get_one::<String>(QUESTIONS_FILE_ARG_ID) {
         if let Err(error) = std::fs::write(path, sheet) {
-            return crate::cli::handler::RunResult::Error(RunError::new(
+            return crate::cli::handler::DispatchResult::Error(RunError::new(
                 format!("Error writing questionnaire answer sheet: {error}"),
                 RunErrorKind::FinalWrite(crate::cli::handler::OutputKind::Text),
             ));
         }
-        crate::cli::handler::RunResult::Handled(crate::cli::handler::RunOutput::command(
+        crate::cli::handler::DispatchResult::Handled(crate::cli::handler::RunOutput::command(
             String::new(),
         ))
     } else {
-        crate::cli::handler::RunResult::Handled(crate::cli::handler::RunOutput::command(sheet))
+        crate::cli::handler::DispatchResult::Handled(crate::cli::handler::RunOutput::command(sheet))
     }
 }

@@ -1,16 +1,18 @@
 //! Test injection for interactive prompts.
 //!
-//! Wizard / setup-helper / REPL flows that build on the `.prompt()` shortcut
-//! on every interactive source ([`InquireText`](crate::InquireText),
-//! [`InquireSelect`](crate::InquireSelect), [`TextPromptSource`](crate::TextPromptSource),
-//! and friends) are otherwise untestable in process — the inquire backends
-//! reach for raw stdin and the simple-prompts and editor sources need a TTY.
+//! Wizard / setup-helper / REPL flows that build on interactive sources
+//! ([`InquireText`](crate::InquireText), [`InquireSelect`](crate::InquireSelect),
+//! [`TextPromptSource`](crate::TextPromptSource), and friends) are otherwise
+//! untestable in process — the inquire backends reach for raw stdin and the
+//! simple-prompts and editor sources need a TTY.
 //!
-//! [`PromptResponder`] is the test seam: every `.prompt()` call consults a
-//! process-global responder first, and falls through to the real backend
-//! only when none is installed. Tests install a [`ScriptedResponder`] with
-//! a queue of typed [`PromptResponse`] values; the production wizard code
-//! is unchanged.
+//! [`PromptResponder`] is the test seam: `.prompt_from`,
+//! [`InputChain::resolve_from`](crate::InputChain::resolve_from), and framework
+//! collection consult an explicit responder from [`crate::InputSources`] first,
+//! and fall through to the real backend only when none was supplied. Tests put
+//! a [`ScriptedResponder`] on [`crate::InputSources`] with a queue of typed
+//! [`PromptResponse`] values. Standalone `.prompt()` builds
+//! [`InputSources::from_process`] and never sees a scripted responder.
 //!
 //! # Why responses are typed by *kind*, not by message text
 //!
@@ -29,9 +31,6 @@
 //! [Interactive Flows topic](../../docs/topics/interactive-flows.md) for a
 //! full example.
 
-use std::sync::Arc;
-
-use once_cell::sync::Lazy;
 use std::sync::Mutex;
 
 /// The kind of prompt being responded to.
@@ -143,12 +142,13 @@ impl PromptResponse {
     }
 }
 
-/// Test seam for the `.prompt()` shortcut on interactive sources.
+/// Test seam for interactive sources.
 ///
-/// When a responder is installed via [`set_default_prompt_responder`],
-/// every `prompt()` call routes through it instead of opening a real prompt.
-/// Implement this trait for custom dispatch logic, or use the bundled
-/// [`ScriptedResponder`].
+/// When a responder is present on [`crate::InputSources`], `.prompt_from`,
+/// chain `resolve_from`, and framework collection route through it instead of
+/// opening a real prompt. Standalone `.prompt()` does not: it constructs
+/// [`InputSources::from_process`]. Implement this trait for custom dispatch
+/// logic, or use the bundled [`ScriptedResponder`].
 pub trait PromptResponder: Send + Sync {
     /// Produce a response for the given prompt.
     fn respond(&self, ctx: PromptContext<'_>) -> PromptResponse;
@@ -247,45 +247,12 @@ impl std::fmt::Debug for ScriptedResponder {
     }
 }
 
-// ============================================================================
-// Process-global responder override
-// ============================================================================
-
-type SharedResponder = Arc<dyn PromptResponder>;
-
-static RESPONDER_OVERRIDE: Lazy<Mutex<Option<SharedResponder>>> = Lazy::new(|| Mutex::new(None));
-
-/// Installs a process-global [`PromptResponder`] that every `.prompt()` call
-/// on an interactive source will route through until
-/// [`reset_default_prompt_responder`] is called.
-///
-/// Intended for test harnesses; the `standout-test` crate's
-/// `TestHarness::prompts(...)` wires this automatically. Tests using it must
-/// run serially (e.g. via `#[serial]`) because the override is process-global.
-pub fn set_default_prompt_responder(responder: SharedResponder) {
-    *RESPONDER_OVERRIDE.lock().unwrap() = Some(responder);
-}
-
-/// Clears the override installed by [`set_default_prompt_responder`].
-pub fn reset_default_prompt_responder() {
-    *RESPONDER_OVERRIDE.lock().unwrap() = None;
-}
-
-/// Returns a clone of the currently installed responder, if any.
-///
-/// Used by source `.prompt()` implementations to decide whether to short-
-/// circuit through the responder or fall through to the real backend.
-#[cfg(any(feature = "editor", feature = "simple-prompts", feature = "inquire"))]
-pub(crate) fn current_prompt_responder() -> Option<SharedResponder> {
-    RESPONDER_OVERRIDE.lock().unwrap().clone()
-}
-
-/// Helper used by source `.prompt()` shortcuts that return a free-form
+/// Helper used by source collect / `.prompt_from` paths that return a free-form
 /// `String` (text / password / editor prompts).
 ///
-/// If a responder is installed, dispatches and maps `Text(s) -> Ok(s)`,
+/// If a responder is supplied, dispatches and maps `Text(s) -> Ok(s)`,
 /// `Cancel -> PromptCancelled`, `Skip -> NoInput`. Returns `Ok(None)` (i.e.
-/// "fall through to the real backend") when no responder is installed, so
+/// "fall through to the real backend") when no responder is supplied, so
 /// the caller can use the original `is_available` + `collect` path.
 ///
 /// `Bool` / `Choice` / `Choices` responses against an open prompt panic
@@ -294,8 +261,9 @@ pub(crate) fn current_prompt_responder() -> Option<SharedResponder> {
 pub(crate) fn intercept_text(
     kind: PromptKind,
     message: &str,
+    responder: Option<&dyn PromptResponder>,
 ) -> Result<Option<String>, crate::InputError> {
-    let Some(responder) = current_prompt_responder() else {
+    let Some(responder) = responder else {
         return Ok(None);
     };
     let response = responder.respond(PromptContext {
@@ -321,8 +289,9 @@ pub(crate) fn intercept_text(
 pub(crate) fn intercept_bool(
     kind: PromptKind,
     message: &str,
+    responder: Option<&dyn PromptResponder>,
 ) -> Result<Option<bool>, crate::InputError> {
-    let Some(responder) = current_prompt_responder() else {
+    let Some(responder) = responder else {
         return Ok(None);
     };
     let response = responder.respond(PromptContext {
@@ -348,8 +317,9 @@ pub(crate) fn intercept_bool(
 pub(crate) fn intercept_choice(
     message: &str,
     n: usize,
+    responder: Option<&dyn PromptResponder>,
 ) -> Result<Option<usize>, crate::InputError> {
-    let Some(responder) = current_prompt_responder() else {
+    let Some(responder) = responder else {
         return Ok(None);
     };
     let response = responder.respond(PromptContext {
@@ -380,8 +350,9 @@ pub(crate) fn intercept_choice(
 pub(crate) fn intercept_choices(
     message: &str,
     n: usize,
+    responder: Option<&dyn PromptResponder>,
 ) -> Result<Option<Vec<usize>>, crate::InputError> {
-    let Some(responder) = current_prompt_responder() else {
+    let Some(responder) = responder else {
         return Ok(None);
     };
     let response = responder.respond(PromptContext {
@@ -409,10 +380,27 @@ pub(crate) fn intercept_choices(
     }
 }
 
+/// Maps a `.prompt()` intercept result into [`InputCollector::collect`](crate::InputCollector::collect).
+///
+/// `Ok(Some(v))` is an answered value (`Break(Some(v))`). `Ok(None)` means no
+/// responder was supplied, so the collector should use its real backend
+/// (`Continue`). `Err(NoInput)` is a responder `Skip`, returned as
+/// `Break(None)` so an input chain can try the next source instead of aborting.
+#[cfg(any(feature = "editor", feature = "simple-prompts", feature = "inquire"))]
+pub(crate) fn collect_intercept<T>(
+    intercepted: Result<Option<T>, crate::InputError>,
+) -> Result<std::ops::ControlFlow<Option<T>>, crate::InputError> {
+    match intercepted {
+        Ok(Some(value)) => Ok(std::ops::ControlFlow::Break(Some(value))),
+        Ok(None) => Ok(std::ops::ControlFlow::Continue(())),
+        Err(crate::InputError::NoInput) => Ok(std::ops::ControlFlow::Break(None)),
+        Err(error) => Err(error),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
-    use serial_test::serial;
 
     fn ctx(kind: PromptKind, options: Option<usize>) -> PromptContext<'static> {
         PromptContext {
@@ -508,21 +496,5 @@ mod tests {
         let r = ScriptedResponder::new([PromptResponse::text("only")]);
         let _ = r.respond(ctx(PromptKind::Text, None));
         let _ = r.respond(ctx(PromptKind::Text, None));
-    }
-
-    // current_prompt_responder() is only compiled when at least one
-    // prompt-producing feature is enabled, so the test that exercises it
-    // shares the same cfg gate. Under --no-default-features the install /
-    // reset path is unobservable from the public API, so there's no test
-    // to write.
-    #[cfg(any(feature = "editor", feature = "simple-prompts", feature = "inquire"))]
-    #[test]
-    #[serial(prompt_responder)]
-    fn install_and_reset_default_responder() {
-        assert!(current_prompt_responder().is_none());
-        set_default_prompt_responder(Arc::new(ScriptedResponder::new([])));
-        assert!(current_prompt_responder().is_some());
-        reset_default_prompt_responder();
-        assert!(current_prompt_responder().is_none());
     }
 }

@@ -119,7 +119,7 @@ to. Today it does none of it, and the gap undermines the framework's core pitch.
 ## Proposed Shape
 
 **1. The diagnostic model.** One diagnostic type (severity, summary, detail, kind,
-optional command path/source locus) produced from `RunResult`/`RunErrorKind` at the
+optional command path/source locus) produced from `DispatchResult`/`RunErrorKind` at the
 single emission seam; serialized per structured mode; stream placement (stdout document
 vs stderr, single-doc vs NDJSON) fixed by the grill informed by the survey precedents.
 

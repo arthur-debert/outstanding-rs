@@ -3,7 +3,7 @@
 use clap::Command;
 use console::Style;
 use serde_json::json;
-use standout::cli::{App, Output, RunResult};
+use standout::cli::{App, DispatchResult, Output};
 use standout::Theme;
 use std::sync::Arc;
 use std::time::Duration;
@@ -30,11 +30,11 @@ fn test_pipe_to_passthrough() {
     let cmd = Command::new("test").subcommand(Command::new("list"));
     let result = app.run_to_string(cmd, vec!["test", "list"]);
 
-    if let RunResult::Handled(output) = result {
+    if let DispatchResult::Handled(output) = result.outcome() {
         // Passthrough returns original input
         assert_eq!(output, "foo, bar, baz");
     } else {
-        panic!("Expected RunResult::Handled, got {:?}", result);
+        panic!("Expected DispatchResult::Handled, got {:?}", result);
     }
 }
 
@@ -64,11 +64,11 @@ fn test_pipe_through_capture() {
     let cmd = Command::new("test").subcommand(Command::new("filter"));
     let result = app.run_to_string(cmd, vec!["test", "filter"]);
 
-    if let RunResult::Handled(output) = result {
+    if let DispatchResult::Handled(output) = result.outcome() {
         // Capture returns grep's output (only the line containing "foo")
         assert_eq!(output.trim(), "foo");
     } else {
-        panic!("Expected RunResult::Handled, got {:?}", result);
+        panic!("Expected DispatchResult::Handled, got {:?}", result);
     }
 }
 
@@ -100,10 +100,10 @@ fn test_pipe_chaining() {
     let cmd = Command::new("test").subcommand(Command::new("chain"));
     let result = app.run_to_string(cmd, vec!["test", "chain"]);
 
-    if let RunResult::Handled(output) = result {
+    if let DispatchResult::Handled(output) = result.outcome() {
         assert!(output.contains("hello"));
     } else {
-        panic!("Expected RunResult::Handled, got {:?}", result);
+        panic!("Expected DispatchResult::Handled, got {:?}", result);
     }
 }
 
@@ -130,10 +130,10 @@ fn test_pipe_with_custom_timeout() {
     let cmd = Command::new("test").subcommand(Command::new("slow"));
     let result = app.run_to_string(cmd, vec!["test", "slow"]);
 
-    if let RunResult::Handled(output) = result {
+    if let DispatchResult::Handled(output) = result.outcome() {
         assert_eq!(output, "done");
     } else {
-        panic!("Expected RunResult::Handled, got {:?}", result);
+        panic!("Expected DispatchResult::Handled, got {:?}", result);
     }
 }
 
@@ -164,10 +164,10 @@ fn test_pipe_through_with_custom_timeout() {
     let cmd = Command::new("test").subcommand(Command::new("process"));
     let result = app.run_to_string(cmd, vec!["test", "process"]);
 
-    if let RunResult::Handled(output) = result {
+    if let DispatchResult::Handled(output) = result.outcome() {
         assert_eq!(output.trim(), "abc");
     } else {
-        panic!("Expected RunResult::Handled, got {:?}", result);
+        panic!("Expected DispatchResult::Handled, got {:?}", result);
     }
 }
 
@@ -199,10 +199,10 @@ fn test_pipe_with_custom_target() {
     let cmd = Command::new("test").subcommand(Command::new("upper"));
     let result = app.run_to_string(cmd, vec!["test", "upper"]);
 
-    if let RunResult::Handled(output) = result {
+    if let DispatchResult::Handled(output) = result.outcome() {
         assert_eq!(output, "HELLO");
     } else {
-        panic!("Expected RunResult::Handled, got {:?}", result);
+        panic!("Expected DispatchResult::Handled, got {:?}", result);
     }
 }
 
@@ -233,9 +233,9 @@ fn test_pipe_command_failure() {
         Some(RunErrorKind::Hook(HookPhase::PostOutput))
     );
 
-    // Hook error should produce RunResult::Error with the failure message
-    match result {
-        RunResult::Error(msg) => {
+    // Hook error should produce DispatchResult::Error with the failure message
+    match result.outcome() {
+        DispatchResult::Error(msg) => {
             // Error message should indicate the pipe command failed.
             // On macOS the error typically mentions "exit 1" or "failed";
             // on Linux it may surface as "Broken pipe" instead.
@@ -245,7 +245,7 @@ fn test_pipe_command_failure() {
                 msg
             );
         }
-        _ => panic!("Expected RunResult::Error, got {:?}", result),
+        _ => panic!("Expected DispatchResult::Error, got {:?}", result),
     }
 }
 
@@ -331,14 +331,14 @@ fn test_pipe_preserves_terminal_formatting_in_passthrough() {
     let result = app.run_to_string(cmd, vec!["app", "test"]);
 
     // Terminal output (from run_to_string) should have ANSI codes (formatted field)
-    if let RunResult::Handled(terminal_output) = result {
+    if let DispatchResult::Handled(terminal_output) = result.outcome() {
         assert!(
             terminal_output.contains("\x1b[") || terminal_output == "world",
             "Terminal output should have ANSI codes (or be plain if not a TTY), got: {:?}",
             terminal_output
         );
     } else {
-        panic!("Expected RunResult::Handled");
+        panic!("Expected DispatchResult::Handled");
     }
 }
 
