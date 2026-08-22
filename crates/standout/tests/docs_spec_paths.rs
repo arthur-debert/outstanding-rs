@@ -55,6 +55,10 @@ fn tracked_files() -> Vec<String> {
 /// character outside this set — a backtick, a quote, a paren, whitespace — so
 /// placeholder spellings such as `docs/spec/<slug>.md` stop before the `<` and
 /// then fail the `.md` test in [`spec_paths`] instead of being resolved.
+///
+/// A `.` is in the set because a filename needs one, which means a path
+/// written bare at the end of a sentence also takes the full stop with it;
+/// [`spec_paths`] trims that back off.
 fn is_path_char(c: char) -> bool {
     c.is_ascii_alphanumeric() || matches!(c, '.' | '_' | '-' | '/')
 }
@@ -70,7 +74,10 @@ fn spec_paths(text: &str) -> Vec<String> {
             .char_indices()
             .find(|(_, c)| !is_path_char(*c))
             .map_or(tail.len(), |(i, _)| i);
-        let candidate = &tail[..end];
+        // Trailing dots are the sentence's, not the filename's: an unquoted
+        // path ending a sentence reads as `…foo.md.`, which would otherwise
+        // miss the `.md` test and go unchecked.
+        let candidate = tail[..end].trim_end_matches('.');
         if candidate.ends_with(".md") {
             found.push(candidate.to_string());
         }
@@ -201,6 +208,11 @@ fn spec_path_scan_reads_only_complete_markdown_paths() {
     );
     // A directory mention and a placeholder name no file.
     assert!(spec_paths(&format!("write it to {dir} as {dir}<slug>.md")).is_empty());
+    // An unquoted path closing a sentence keeps its name and loses the stop.
+    assert_eq!(
+        spec_paths(&format!("it lives in {dir}c.md. Next sentence.")),
+        vec![format!("{dir}c.md")]
+    );
 }
 
 #[test]
