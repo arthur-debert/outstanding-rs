@@ -1,8 +1,8 @@
 # Robustness: The Downstream Corpus
 
 Fifth Spec in the **Robustness program**, and the one that ships in two phases (see the
-authoritative dependency graph in `docs/spec/robustness-test-net.md`). The **pilot** phase
-depends only on the test net (whose invariants are the corpus's oracles) and runs alongside
+authoritative dependency graph in `docs/spec/implemented/robustness-test-net.md`). The
+**pilot** phase depends only on the test net (whose invariants are the corpus's oracles) and runs alongside
 loud failures and composition contracts, so its scorecard reaches the blessed-surface ADR
 round in time to inform it. The pilot also authors the **gap-spec acceptance suites** as
 expected-fail, because each parity epic must hold its executable definition-of-done before
