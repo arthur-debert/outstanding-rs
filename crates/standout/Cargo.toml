@@ -9,16 +9,6 @@ categories = ["command-line-interface", "template-engine"]
 repository = "https://github.com/arthur-debert/standout"
 readme = "README.md"
 
-# Repository-only tests, kept out of the published package. They read the
-# repository around the crate — `git ls-files`, `docs/spec`, a workspace
-# `cargo build` — none of which an unpacked crates.io source carries, so
-# shipping them would make `cargo test` on that source fail on their absence
-# rather than run the crate's own tests.
-exclude = [
-    "tests/docs_spec_paths.rs",
-    "tests/process_outcomes.rs",
-]
-
 [dependencies]
 # Core rendering (re-exported from standout-render)
 standout-render = { version = "8.1.1", path = "../standout-render" }
@@ -70,7 +60,3 @@ serde_yaml = "0.9"
 quick-xml = { version = "0.36", features = ["serialize"] }
 csv = "1.3"
 toml = "0.8"
-# Markdown parsing for the docs_spec_paths link scan: a substring search for
-# `](` reads a link inside a code span as a link and misses reference-style
-# links entirely. Parser only — the html and getopts features are off.
-pulldown-cmark = { version = "0.13.4", default-features = false }

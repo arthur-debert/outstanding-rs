@@ -1,7 +1,7 @@
 # Robustness: Loud Failures
 
 Second Spec in the **Robustness program**. Depends on the test net
-(`docs/spec/implemented/robustness-test-net.md`); precedes composition contracts.
+(`docs/spec/robustness-test-net.md`); precedes composition contracts.
 
 ## Context
 
@@ -182,7 +182,7 @@ workstream issues predate these ADRs and must be read together with them.
 
 The grill produced three ADRs, which are authoritative where they sharpen this Spec:
 
-- [`docs/adr/0019-carry-a-template-as-a-typed-reference-resolved-at-render.md`](../../adr/0019-carry-a-template-as-a-typed-reference-resolved-at-render.md) — the
+- [`docs/adr/0019-carry-a-template-as-a-typed-reference-resolved-at-render.md`](../adr/0019-carry-a-template-as-a-typed-reference-resolved-at-render.md) — the
   `TemplateRef` shape (a named reference survives to render, resolved through the retained
   registry so file-backed entries still reread; `build()` validates it), typed absence
   carrying its reason, and the removal of `.template_dir()`. `StructuredOnly` defaults to
@@ -191,12 +191,12 @@ The grill produced three ADRs, which are authoritative where they sharpen this S
   modes" phrasing used in this Spec's Goals. Ordering independence is a consequence of
   late resolution rather than a separate mechanism, which narrows WS01: the Spec offered
   "late-bind or make misordering a build error", and the decision is late-bind.
-- [`docs/adr/0020-resolve-one-theme-at-build-over-a-single-framework-base.md`](../../adr/0020-resolve-one-theme-at-build-over-a-single-framework-base.md) — one
+- [`docs/adr/0020-resolve-one-theme-at-build-over-a-single-framework-base.md`](../adr/0020-resolve-one-theme-at-build-over-a-single-framework-base.md) — one
   resolved theme computed in `build()`, replacing the five scattered defaults; every
   registered template validated against it at build; hot-reloaded latecomers degrading to
   unstyled inner text with a warning. This also folds `FRAMEWORK_STYLES` into the base,
   which resolves part of WS04 inside WS02.
-- [`docs/adr/0021-split-the-configuring-builder-from-the-executable-app.md`](../../adr/0021-split-the-configuring-builder-from-the-executable-app.md) — `AppBuilder`
+- [`docs/adr/0021-split-the-configuring-builder-from-the-executable-app.md`](../adr/0021-split-the-configuring-builder-from-the-executable-app.md) — `AppBuilder`
   configures, `build(self)` returns `App`, which executes; the four uniqueness panics
   become structural.
 

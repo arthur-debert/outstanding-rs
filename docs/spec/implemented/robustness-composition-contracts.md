@@ -1,9 +1,9 @@
 # Robustness: Composition Contracts
 
 Third Spec in the **Robustness program** — the core redesign. Depends on the test net
-(`docs/spec/implemented/robustness-test-net.md`); benefits from loud failures
-(`docs/spec/implemented/robustness-loud-failures.md`); feeds one-blessed-surface and
-the parity program. ROB01, ROB02, ROB03, and ROC02 (Corpus Cleanup) have landed; this Spec is the
+(`docs/spec/robustness-test-net.md`); benefits from loud failures
+(`docs/spec/robustness-loud-failures.md`); feeds one-blessed-surface and the parity
+program. ROB01, ROB02, ROB03, and ROC02 (Corpus Cleanup) have landed; this Spec is the
 *why and what* against that code, not the 8.1.0 assessment.
 
 Interface and behaviour live here. Internal type layouts, which function computes each
@@ -22,15 +22,15 @@ the ~5–6k-line composition layer (`crates/standout/src/cli`), not the leaves.
 Predecessors already closed several of the original defects:
 
 - A command's template is a `TemplateRef` — named, inline, or typed absence — resolved
-  at render through the retained registry ([ADR-0019](../../adr/0019-carry-a-template-as-a-typed-reference-resolved-at-render.md)).
+  at render through the retained registry ([ADR-0019](../adr/0019-carry-a-template-as-a-typed-reference-resolved-at-render.md)).
 - `build()` computes one theme: framework base plus the application's merge
-  ([ADR-0020](../../adr/0020-resolve-one-theme-at-build-over-a-single-framework-base.md)).
+  ([ADR-0020](../adr/0020-resolve-one-theme-at-build-over-a-single-framework-base.md)).
 - `AppBuilder` configures; `build(self)` returns `App`, which runs
-  ([ADR-0021](../../adr/0021-split-the-configuring-builder-from-the-executable-app.md)).
+  ([ADR-0021](../adr/0021-split-the-configuring-builder-from-the-executable-app.md)).
 - The in-process TTY detector is gone. Terminal-dependent behaviour is evidence a real
   process produces; any later terminal facts must be stream-aware (stdout and stderr
   independently), because a single `is_tty` is the shape that already failed
-  ([ADR-0022](../../adr/0022-delete-the-in-process-tty-seam.md)).
+  ([ADR-0022](../adr/0022-delete-the-in-process-tty-seam.md)).
 - `standout-dispatch`'s unused `RenderFn` / `from_fn` render-callback API was deleted in
   ROB02 rather than adopted.
 
@@ -378,7 +378,7 @@ ADR-0019–0022.
 
 ADRs from the grill, authoritative where they sharpen this Spec:
 
-- [`docs/adr/0025-split-render-into-target-properties-and-render-request.md`](../../adr/0025-split-render-into-target-properties-and-render-request.md)
+- [`docs/adr/0025-split-render-into-target-properties-and-render-request.md`](../adr/0025-split-render-into-target-properties-and-render-request.md)
   — two public types in `standout-render`: `TargetProperties` (destination of this
   invocation, `Copy`, per-stream color capability and terminal-ness) and
   `RenderRequest` (what to render, owned, engine/registry behind `Rc`). Primary
@@ -386,17 +386,17 @@ ADRs from the grill, authoritative where they sharpen this Spec:
   build-time bundle (merged theme, output-mode fallback, registry,
   ambiguous-width policy); detected facts have no App fallback.
   `RenderContext` stays the provider view. No lifetime on the public API.
-- [`docs/adr/0026-detect-target-properties-at-the-crate-edge.md`](../../adr/0026-detect-target-properties-at-the-crate-edge.md)
+- [`docs/adr/0026-detect-target-properties-at-the-crate-edge.md`](../adr/0026-detect-target-properties-at-the-crate-edge.md)
   — `TargetProperties::detect()` is the one process probe, in `standout-render`,
   filling both streams. Convenience wrappers and `App::run` call it at their
   edge then pass the result into `render_request`; leaves and tests do not.
   Ambiguous-width defaults to `Narrow` and `App::run` then applies the app
   policy. The old `detect_*` / `set_*_detector` functions go away.
-- [`docs/adr/0027-pass-target-properties-and-input-sources-into-run.md`](../../adr/0027-pass-target-properties-and-input-sources-into-run.md)
+- [`docs/adr/0027-pass-target-properties-and-input-sources-into-run.md`](../adr/0027-pass-target-properties-and-input-sources-into-run.md)
   — inner public `run` takes `TargetProperties` and `InputSources` as two
   arguments, not a combined type. Production `run()` detects and uses real
   stdio; `TestHarness` constructs both and calls the inner method.
-- [`docs/adr/0028-render-takes-one-owned-request.md`](../../adr/0028-render-takes-one-owned-request.md)
+- [`docs/adr/0028-render-takes-one-owned-request.md`](../adr/0028-render-takes-one-owned-request.md)
   — `render_request` takes `&RenderRequest` (`RenderRequest` is owned: no
   lifetime). Existing `render(template, data, theme)` detects, builds a
   request, and delegates. `Presentation` is deleted. Render-time
@@ -404,16 +404,16 @@ ADRs from the grill, authoritative where they sharpen this Spec:
   Framework help/topics are named registry templates; standalone
   `HelpConfig::template` and siblings stay as `TemplateRef::Inline` with
   equivalent tag validation at request construction.
-- [`docs/adr/0029-hold-structured-help-back-in-glue.md`](../../adr/0029-hold-structured-help-back-in-glue.md)
+- [`docs/adr/0029-hold-structured-help-back-in-glue.md`](../adr/0029-hold-structured-help-back-in-glue.md)
   — glue maps structured `--output` to `Auto` when building the help/topics
   `RenderRequest`. The leaf has no help flag. No structured help bytes.
-- [`docs/adr/0030-apply-styles-from-the-request-not-process-globals.md`](../../adr/0030-apply-styles-from-the-request-not-process-globals.md)
+- [`docs/adr/0030-apply-styles-from-the-request-not-process-globals.md`](../adr/0030-apply-styles-from-the-request-not-process-globals.md)
   — ANSI follows the request (`force_styling` from format + per-stream
   `TargetProperties` color capability), not `console`'s process-global
   switch. Width lock deleted. Warnings return on the run result, not a
   thread-local. `TestHarness::with_color()` does not call
   `set_colors_enabled`.
-- [`docs/adr/0031-check-glue-invariants-with-tests.md`](../../adr/0031-check-glue-invariants-with-tests.md)
+- [`docs/adr/0031-check-glue-invariants-with-tests.md`](../adr/0031-check-glue-invariants-with-tests.md)
   — the four glue invariants are tests in `standout` (`Cargo.toml` parse, source
   scans). Defaults are enforced by App's build-time configuration (theme,
   output-mode, registry, ambiguous-width) plus the snapshot matrix, not a

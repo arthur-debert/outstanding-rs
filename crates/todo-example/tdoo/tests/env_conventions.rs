@@ -9,7 +9,7 @@
 //! lazy default is `(colors_supported && CLICOLOR != "0") || CLICOLOR_FORCE
 //! != "0"`. Nothing in standout implements, tests, or documents any of this;
 //! these tests pin it so a `console` upgrade cannot silently change color
-//! semantics (test-net Spec, `docs/spec/implemented/robustness-test-net.md`).
+//! semantics (test-net Spec, `docs/spec/robustness-test-net.md`).
 //!
 //! They live at the process boundary on purpose. ADR-0022
 //! (`docs/adr/0022-delete-the-in-process-tty-seam.md`) records why an

@@ -107,9 +107,9 @@ Natural seams, in dependency order: (1) choices derive + trait; (2) questionnair
 
 Feature planned in the WIZ03 planning session following the WIZ02 deep review; the review findings and their disposition (fix in WS06/WS07 vs defer here) are recorded in issues #265–#267 and the epic issue #258's history. The grill (`/grill-me-with-docs`) that follows this Spec writes the ADRs for the durable decisions it crystallizes; each links back here.
 
-- [ADR 0015 — Fill derived questionnaire structs without serde](../../adr/0015-fill-derived-questionnaire-structs-without-serde.md)
-- [ADR 0016 — Default scalar answers to single lines](../../adr/0016-default-scalar-answers-to-single-lines.md)
-- [ADR 0017 — Inject the answer-sheet CLI surface per questionnaire command](../../adr/0017-inject-the-answer-sheet-cli-surface-per-questionnaire-command.md)
+- [ADR 0015 — Fill derived questionnaire structs without serde](../adr/0015-fill-derived-questionnaire-structs-without-serde.md)
+- [ADR 0016 — Default scalar answers to single lines](../adr/0016-default-scalar-answers-to-single-lines.md)
+- [ADR 0017 — Inject the answer-sheet CLI surface per questionnaire command](../adr/0017-inject-the-answer-sheet-cli-surface-per-questionnaire-command.md)
 
 Decided at Spec level (no ADR: cosmetic or readily reversible): doc-comment prompts are the first paragraph unwrapped, later paragraphs reserved; `Vec<scalar>` lowers to one single-line, comma-separated list answer, with `#[question(repeated)]` opting into block form *(amended by WS07 (#289): removed — scalar-element `Vec<T>` is a compile error)*; choice enum fields use `#[question(choice)]` because otherwise a plain named type is ambiguous with a nested questionnaire struct; choice enums render kebab-case variant names with `#[question(rename = "…")]` per variant *(amended by WS07 (#289): `rename` is required, inference removed)*; `#[question(...)]` is the single attribute namespace in all positions (container, field, enum variant), following the serde precedent.
 
