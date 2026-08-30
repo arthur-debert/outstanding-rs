@@ -1,8 +1,7 @@
 //! Proc macros for Standout: compile-time resource embedding, dispatch
-//! configuration, tabular/seeker/questionnaire derives, and handler/command
-//! attribute macros.
+//! configuration, tabular/seeker/questionnaire derives, and the handler
+//! attribute macro.
 
-mod command;
 mod crate_path;
 mod dispatch;
 mod embed;
@@ -108,15 +107,6 @@ pub fn handler(attr: TokenStream, item: TokenStream) -> TokenStream {
     let attr = proc_macro2::TokenStream::from(attr);
     let item = proc_macro2::TokenStream::from(item);
     handler::handler_impl(attr, item)
-        .unwrap_or_else(|e| e.to_compile_error())
-        .into()
-}
-
-#[proc_macro_attribute]
-pub fn command(attr: TokenStream, item: TokenStream) -> TokenStream {
-    let attr = proc_macro2::TokenStream::from(attr);
-    let item = proc_macro2::TokenStream::from(item);
-    command::command_impl(attr, item)
         .unwrap_or_else(|e| e.to_compile_error())
         .into()
 }

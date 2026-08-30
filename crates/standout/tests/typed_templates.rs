@@ -1,9 +1,13 @@
 use clap::Command;
 use serde_json::json;
 use serial_test::serial;
+use standout::cli::FnHandler;
 use standout::cli::{App, AppBuilder, DispatchResult, Output};
+use standout::EmbeddedTemplates;
 use standout::{EmbeddedSource, OutputMode, TemplateResource};
 use standout_test::TestHarness;
+
+const TEMPLATES: &[(&str, &str)] = &[("show", "report.txt"), ("show-4", "docs/output")];
 
 static ORDERED_TEMPLATES: &[(&str, &str)] = &[("show.jinja", "Hello {{ name }}")];
 static BAD_TEMPLATES: &[(&str, &str)] = &[("show.jinja", "{% if")];
@@ -33,7 +37,7 @@ fn build_fails_for_missing_named_template_with_near_match() {
             ))
             .command_with(
                 "show",
-                |_m, _ctx| Ok(Output::Render(json!({"name": "Ada"}))),
+                FnHandler::new(|_m, _ctx| Ok(Output::Render(json!({"name": "Ada"})))),
                 |cfg| cfg.template_name("shoe.jinja"),
             )
             .unwrap(),
@@ -51,7 +55,7 @@ fn build_fails_for_missing_template_registry_with_builder_call() {
         App::builder()
             .command_with(
                 "show",
-                |_m, _ctx| Ok(Output::Render(json!({"name": "Ada"}))),
+                FnHandler::new(|_m, _ctx| Ok(Output::Render(json!({"name": "Ada"})))),
                 |cfg| cfg.template_name("show.jinja"),
             )
             .unwrap(),
@@ -77,7 +81,7 @@ fn build_fails_for_missing_named_template_with_available_names() {
             ))
             .command_with(
                 "show",
-                |_m, _ctx| Ok(Output::Render(json!({"name": "Ada"}))),
+                FnHandler::new(|_m, _ctx| Ok(Output::Render(json!({"name": "Ada"})))),
                 |cfg| cfg.template_name("unmatchable-template-name.jinja"),
             )
             .unwrap(),
@@ -105,7 +109,7 @@ fn available_template_names_are_sorted_unique_and_limited() {
             ))
             .command_with(
                 "show",
-                |_m, _ctx| Ok(Output::Render(json!({"name": "Ada"}))),
+                FnHandler::new(|_m, _ctx| Ok(Output::Render(json!({"name": "Ada"})))),
                 |cfg| cfg.template_name("unmatchable-template-name.jinja"),
             )
             .unwrap(),
@@ -133,7 +137,7 @@ fn template_suggestions_follow_extension_priority() {
             ))
             .command_with(
                 "show",
-                |_m, _ctx| Ok(Output::Render(json!({"name": "Ada"}))),
+                FnHandler::new(|_m, _ctx| Ok(Output::Render(json!({"name": "Ada"})))),
                 |cfg| cfg.template_name("report.jinj"),
             )
             .unwrap(),
@@ -179,7 +183,7 @@ fn build_fails_when_registered_template_does_not_compile() {
             ))
             .command_with(
                 "show",
-                |_m, _ctx| Ok(Output::Render(json!({"name": "Ada"}))),
+                FnHandler::new(|_m, _ctx| Ok(Output::Render(json!({"name": "Ada"})))),
                 |cfg| cfg.template_name("show.jinja"),
             )
             .unwrap(),
@@ -197,7 +201,7 @@ fn named_template_renders_through_extension_fallback() {
         ))
         .command_with(
             "show",
-            |_m, _ctx| Ok(Output::Render(json!({"name": "Ada"}))),
+            FnHandler::new(|_m, _ctx| Ok(Output::Render(json!({"name": "Ada"})))),
             |cfg| cfg.template_name("show.j2"),
         )
         .unwrap()
@@ -213,109 +217,12 @@ fn named_template_renders_through_extension_fallback() {
 }
 
 #[test]
-fn inline_template_does_not_render_registered_template_with_same_name() {
-    let app = App::builder()
-        .templates(EmbeddedSource::<TemplateResource>::new(
-            ORDERED_TEMPLATES,
-            "/path/that/does/not/exist",
-        ))
-        .command_with(
-            "show",
-            |_m, _ctx| Ok(Output::Render(json!({"name": "Ada"}))),
-            |cfg| cfg.template("show"),
-        )
-        .unwrap()
-        .build()
-        .unwrap();
-
-    let result = TestHarness::new()
-        .text_output()
-        .run(&app, command(), ["app", "show"]);
-
-    result.assert_success();
-    assert_eq!(result.stdout(), "show");
-}
-
-#[test]
-fn empty_inline_template_is_rejected() {
-    let error = match App::builder().command_with(
-        "show",
-        |_m, _ctx| Ok(Output::Render(json!({"name": "Ada"}))),
-        |cfg| cfg.template(""),
-    ) {
-        Ok(_) => panic!("expected empty inline template to fail"),
-        Err(error) => error.to_string(),
-    };
-
-    assert!(error.contains("empty template"));
-    assert!(error.contains(".structured_only()"));
-}
-
-#[test]
-fn filename_looking_command_template_renders_as_inline_source() {
-    let app = App::builder()
-        .command(
-            "show",
-            |_m, _ctx| Ok(Output::Render(json!({"name": "Ada"}))),
-            "report.txt",
-        )
-        .unwrap()
-        .build()
-        .unwrap();
-
-    let result = TestHarness::new()
-        .text_output()
-        .run(&app, command(), ["app", "show"]);
-
-    result.assert_success();
-    assert_eq!(result.stdout(), "report.txt");
-}
-
-#[test]
-fn path_looking_command_config_template_renders_as_inline_source() {
-    let app = App::builder()
-        .command_with(
-            "show",
-            |_m, _ctx| Ok(Output::Render(json!({"name": "Ada"}))),
-            |config| config.template("docs/output"),
-        )
-        .unwrap()
-        .build()
-        .unwrap();
-
-    let result = TestHarness::new()
-        .text_output()
-        .run(&app, command(), ["app", "show"]);
-
-    result.assert_success();
-    assert_eq!(result.stdout(), "docs/output");
-}
-
-#[test]
-fn convention_template_without_application_registry_fails_at_build() {
-    let error = build_error(
-        App::builder()
-            .command_with(
-                "show",
-                |_m, _ctx| Ok(Output::Render(json!({"name": "Ada"}))),
-                |cfg| cfg,
-            )
-            .unwrap(),
-    );
-
-    assert!(error.contains("command `show` references template `show.j2`"));
-    assert!(error.contains("no application templates are configured"));
-    assert!(error.contains(".structured_only()"));
-    assert!(error.contains(".silent()"));
-    assert!(error.contains(".binary()"));
-}
-
-#[test]
 fn explicit_structured_only_without_application_registry_allows_structured_output() {
     let app = App::builder()
+        .templates(EmbeddedTemplates::new(TEMPLATES, ""))
         .command_with(
             "show",
-            |_m, _ctx| Ok(Output::Render(json!({"name": "Ada"}))),
+            FnHandler::new(|_m, _ctx| Ok(Output::Render(json!({"name": "Ada"})))),
             |cfg| cfg.structured_only(),
         )
         .unwrap()
@@ -332,16 +239,15 @@ fn explicit_structured_only_without_application_registry_allows_structured_outpu
 }
 
 #[test]
-fn template_ext_before_command_applies_to_convention_template() {
+fn convention_resolves_a_jinja_entry_without_extension_configuration() {
     let app = App::builder()
-        .template_ext(".jinja")
         .templates(EmbeddedSource::<TemplateResource>::new(
             ORDERED_TEMPLATES,
             "/path/that/does/not/exist",
         ))
         .command_with(
             "show",
-            |_m, _ctx| Ok(Output::Render(json!({"name": "Ada"}))),
+            FnHandler::new(|_m, _ctx| Ok(Output::Render(json!({"name": "Ada"})))),
             |cfg| cfg,
         )
         .unwrap()
@@ -357,73 +263,22 @@ fn template_ext_before_command_applies_to_convention_template() {
 }
 
 #[test]
-fn template_ext_after_command_applies_to_convention_template() {
+fn convention_resolves_a_nested_jinja_entry_without_extension_configuration() {
     let app = App::builder()
-        .command_with(
-            "show",
-            |_m, _ctx| Ok(Output::Render(json!({"name": "Ada"}))),
-            |cfg| cfg,
-        )
-        .unwrap()
-        .template_ext(".jinja")
-        .templates(EmbeddedSource::<TemplateResource>::new(
-            ORDERED_TEMPLATES,
-            "/path/that/does/not/exist",
-        ))
-        .build()
-        .unwrap();
-
-    let result = TestHarness::new()
-        .text_output()
-        .run(&app, command(), ["app", "show"]);
-
-    result.assert_success();
-    assert_eq!(result.stdout(), "Hello Ada");
-}
-
-#[test]
-fn template_ext_after_commands_applies_to_convention_template() {
-    let app = App::builder()
-        .commands(|g| {
-            g.command_with(
-                "show",
-                |_m, _ctx| Ok(Output::Render(json!({"name": "Ada"}))),
-                |cfg| cfg,
-            )
-        })
-        .unwrap()
-        .template_ext(".jinja")
-        .templates(EmbeddedSource::<TemplateResource>::new(
-            ORDERED_TEMPLATES,
-            "/path/that/does/not/exist",
-        ))
-        .build()
-        .unwrap();
-
-    let result = TestHarness::new()
-        .text_output()
-        .run(&app, command(), ["app", "show"]);
-
-    result.assert_success();
-    assert_eq!(result.stdout(), "Hello Ada");
-}
-
-#[test]
-fn template_ext_after_group_applies_to_nested_convention_template() {
-    let app = App::builder()
-        .group("db", |g| {
-            g.command_with(
-                "show",
-                |_m, _ctx| Ok(Output::Render(json!({"name": "Ada"}))),
-                |cfg| cfg,
-            )
-        })
-        .unwrap()
-        .template_ext(".jinja")
         .templates(EmbeddedSource::<TemplateResource>::new(
             &[("db/show.jinja", "Hello {{ name }}")],
             "/path/that/does/not/exist",
         ))
+        .commands(|g| {
+            g.group("db", |g| {
+                g.command_with(
+                    "show",
+                    |_m, _ctx| Ok(Output::Render(json!({"name": "Ada"}))),
+                    |cfg| cfg,
+                )
+            })
+        })
+        .unwrap()
         .build()
         .unwrap();
 
@@ -446,7 +301,7 @@ fn templates_dir_hot_reloads_between_renders() {
         .unwrap()
         .command_with(
             "show",
-            |_m, _ctx| Ok(Output::Render(json!({"name": "Ada"}))),
+            FnHandler::new(|_m, _ctx| Ok(Output::Render(json!({"name": "Ada"})))),
             |cfg| cfg.template_name("show"),
         )
         .unwrap()
@@ -485,7 +340,7 @@ fn file_backed_extended_template_hot_reloads_between_renders() {
         .unwrap()
         .command_with(
             "show",
-            |_m, _ctx| Ok(Output::Render(json!({"name": "Ada"}))),
+            FnHandler::new(|_m, _ctx| Ok(Output::Render(json!({"name": "Ada"})))),
             |config| config.template_name("show"),
         )
         .unwrap()
@@ -528,7 +383,7 @@ fn file_backed_imported_template_hot_reloads_between_renders() {
         .unwrap()
         .command_with(
             "show",
-            |_m, _ctx| Ok(Output::Render(json!({"name": "Ada"}))),
+            FnHandler::new(|_m, _ctx| Ok(Output::Render(json!({"name": "Ada"})))),
             |config| config.template_name("show"),
         )
         .unwrap()
@@ -571,11 +426,11 @@ fn file_backed_dynamic_include_hot_reloads_between_renders() {
         .unwrap()
         .command_with(
             "show",
-            |_m, _ctx| {
+            FnHandler::new(|_m, _ctx| {
                 Ok(Output::Render(
                     json!({"name": "Ada", "partial": "partial", "suffix": ""}),
                 ))
-            },
+            }),
             |config| config.template_name("show"),
         )
         .unwrap()
@@ -613,11 +468,11 @@ fn file_backed_dynamic_include_discovers_new_template_between_renders() {
         .unwrap()
         .command_with(
             "show",
-            |_m, _ctx| {
+            FnHandler::new(|_m, _ctx| {
                 Ok(Output::Render(
                     json!({"name": "Ada", "partial": "partial", "suffix": ""}),
                 ))
-            },
+            }),
             |config| config.template_name("show"),
         )
         .unwrap()
@@ -646,7 +501,7 @@ fn file_backed_whitespace_control_include_hot_reloads_between_renders() {
         .unwrap()
         .command_with(
             "show",
-            |_m, _ctx| Ok(Output::Render(json!({"name": "Ada"}))),
+            FnHandler::new(|_m, _ctx| Ok(Output::Render(json!({"name": "Ada"})))),
             |config| config.template_name("show"),
         )
         .unwrap()
@@ -680,7 +535,7 @@ fn deleted_file_backed_template_errors_at_render() {
         .unwrap()
         .command_with(
             "show",
-            |_m, _ctx| Ok(Output::Render(json!({"name": "Ada"}))),
+            FnHandler::new(|_m, _ctx| Ok(Output::Render(json!({"name": "Ada"})))),
             |cfg| cfg.template_name("show"),
         )
         .unwrap()
@@ -708,7 +563,7 @@ fn corrupted_file_backed_template_errors_at_render() {
         .unwrap()
         .command_with(
             "show",
-            |_m, _ctx| Ok(Output::Render(json!({"name": "Ada"}))),
+            FnHandler::new(|_m, _ctx| Ok(Output::Render(json!({"name": "Ada"})))),
             |cfg| cfg.template_name("show"),
         )
         .unwrap()
@@ -738,7 +593,7 @@ fn corrupted_file_backed_include_names_include_path_at_render() {
         .unwrap()
         .command_with(
             "show",
-            |_m, _ctx| Ok(Output::Render(json!({"name": "Ada"}))),
+            FnHandler::new(|_m, _ctx| Ok(Output::Render(json!({"name": "Ada"})))),
             |cfg| cfg.template_name("show"),
         )
         .unwrap()
@@ -769,16 +624,26 @@ fn app_render_refreshes_changed_dependency() {
         .unwrap();
 
     assert_eq!(
-        app.render("show", &json!({"name": "Ada"}), OutputMode::Text)
-            .unwrap(),
+        app.render_with(
+            standout::TemplateRef::Named(("show").to_string()),
+            &json!({"name": "Ada"}),
+            OutputMode::Text,
+            standout::TargetProperties::detect()
+        )
+        .unwrap(),
         "Hello Ada"
     );
 
     std::fs::write(&partial_path, "Bye {{ name }}").unwrap();
 
     assert_eq!(
-        app.render("show", &json!({"name": "Ada"}), OutputMode::Text)
-            .unwrap(),
+        app.render_with(
+            standout::TemplateRef::Named(("show").to_string()),
+            &json!({"name": "Ada"}),
+            OutputMode::Text,
+            standout::TargetProperties::detect()
+        )
+        .unwrap(),
         "Bye Ada"
     );
 }
@@ -797,8 +662,13 @@ fn app_render_refreshes_newly_added_dependency() {
         .unwrap();
 
     assert_eq!(
-        app.render("show", &json!({"name": "Ada"}), OutputMode::Text)
-            .unwrap(),
+        app.render_with(
+            standout::TemplateRef::Named(("show").to_string()),
+            &json!({"name": "Ada"}),
+            OutputMode::Text,
+            standout::TargetProperties::detect()
+        )
+        .unwrap(),
         "Hello Ada"
     );
 
@@ -806,8 +676,13 @@ fn app_render_refreshes_newly_added_dependency() {
     std::fs::write(&show_path, "{% include '_partial' %}").unwrap();
 
     assert_eq!(
-        app.render("show", &json!({"name": "Ada"}), OutputMode::Text)
-            .unwrap(),
+        app.render_with(
+            standout::TemplateRef::Named(("show").to_string()),
+            &json!({"name": "Ada"}),
+            OutputMode::Text,
+            standout::TargetProperties::detect()
+        )
+        .unwrap(),
         "Bye Ada"
     );
 }
@@ -828,7 +703,12 @@ fn app_render_reports_deleted_dependency() {
     std::fs::remove_file(&partial_path).unwrap();
 
     let error = app
-        .render("show", &json!({"name": "Ada"}), OutputMode::Text)
+        .render_with(
+            standout::TemplateRef::Named(("show").to_string()),
+            &json!({"name": "Ada"}),
+            OutputMode::Text,
+            standout::TargetProperties::detect(),
+        )
         .unwrap_err()
         .to_string();
 
@@ -851,7 +731,12 @@ fn app_render_reports_corrupted_dependency() {
     std::fs::write(&partial_path, "{% if").unwrap();
 
     let error = app
-        .render("show", &json!({"name": "Ada"}), OutputMode::Text)
+        .render_with(
+            standout::TemplateRef::Named(("show").to_string()),
+            &json!({"name": "Ada"}),
+            OutputMode::Text,
+            standout::TargetProperties::detect(),
+        )
         .unwrap_err()
         .to_string();
 
@@ -874,7 +759,7 @@ fn standalone_app_render_warning_cannot_leak_into_a_later_run() {
         .unwrap()
         .command_with(
             "show",
-            |_m, _ctx| Ok(Output::Render(json!({"name": "Ada"}))),
+            FnHandler::new(|_m, _ctx| Ok(Output::Render(json!({"name": "Ada"})))),
             |cfg| cfg.template_name("show"),
         )
         .unwrap()
@@ -883,8 +768,13 @@ fn standalone_app_render_warning_cannot_leak_into_a_later_run() {
 
     std::fs::write(&template_path, "[missing]Hello {{ name }}[/missing]").unwrap();
     assert_eq!(
-        app.render("show", &json!({"name": "Ada"}), OutputMode::Text)
-            .unwrap(),
+        app.render_with(
+            standout::TemplateRef::Named(("show").to_string()),
+            &json!({"name": "Ada"}),
+            OutputMode::Text,
+            standout::TargetProperties::detect()
+        )
+        .unwrap(),
         "Hello Ada"
     );
 
@@ -922,8 +812,13 @@ fn dependency_scanner_ignores_non_tag_syntax_and_quoted_delimiters() {
         .unwrap();
 
     assert_eq!(
-        app.render("show", &json!({"name": "Ada"}), OutputMode::Text)
-            .unwrap(),
+        app.render_with(
+            standout::TemplateRef::Named(("show").to_string()),
+            &json!({"name": "Ada"}),
+            OutputMode::Text,
+            standout::TargetProperties::detect()
+        )
+        .unwrap(),
         concat!(
             "{% include 'missing-variable' %}",
             "}} {% include 'missing-variable-delimiter' %}",
@@ -937,9 +832,10 @@ fn dependency_scanner_ignores_non_tag_syntax_and_quoted_delimiters() {
 #[test]
 fn structured_only_maps_machine_modes_and_rejects_human_modes() {
     let app = App::builder()
+        .templates(EmbeddedTemplates::new(TEMPLATES, ""))
         .command_with(
             "show",
-            |_m, _ctx| Ok(Output::Render(json!({"name": "Ada"}))),
+            FnHandler::new(|_m, _ctx| Ok(Output::Render(json!({"name": "Ada"})))),
             |cfg| cfg.structured_only(),
         )
         .unwrap()
@@ -981,9 +877,10 @@ fn structured_only_maps_machine_modes_and_rejects_human_modes() {
 #[serial]
 fn structured_only_omitted_output_serializes_json_through_run_to_string() {
     let app = App::builder()
+        .templates(EmbeddedTemplates::new(TEMPLATES, ""))
         .command_with(
             "show",
-            |_m, _ctx| Ok(Output::Render(json!({"name": "Ada"}))),
+            FnHandler::new(|_m, _ctx| Ok(Output::Render(json!({"name": "Ada"})))),
             |cfg| cfg.structured_only(),
         )
         .unwrap()

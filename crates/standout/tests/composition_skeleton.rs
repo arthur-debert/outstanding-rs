@@ -1,8 +1,15 @@
 use clap::Command;
 use console::Style;
 use serde_json::json;
+use standout::cli::FnHandler;
 use standout::cli::{App, CompletedRun, DispatchResult, Output};
+use standout::EmbeddedTemplates;
 use standout::{AmbiguousWidth, ColorMode, IconMode, InputSources, TargetProperties, Theme};
+
+const TEMPLATES: &[(&str, &str)] = &[
+    ("list", "[tone]{{ msg }}[/tone]"),
+    ("show", "[tone]{{ msg }}[/tone]"),
+];
 
 fn list_command() -> Command {
     Command::new("app").subcommand(Command::new("list"))
@@ -40,11 +47,12 @@ fn styled_list_term_output_file_receives_raw_without_ansi() {
     let path = dir.path().join("out.txt");
     let theme = Theme::new().add("tone", Style::new().red().force_styling(true));
     let app = App::builder()
+        .templates(EmbeddedTemplates::new(TEMPLATES, ""))
         .theme(theme)
-        .command(
+        .command_with(
             "list",
-            |_m, _ctx| Ok(Output::Render(json!({"msg": "hello"}))),
-            "[tone]{{ msg }}[/tone]",
+            FnHandler::new(|_m, _ctx| Ok(Output::Render(json!({"msg": "hello"})))),
+            |cfg| cfg,
         )
         .unwrap()
         .build()
@@ -81,9 +89,10 @@ fn styled_list_term_output_file_receives_raw_without_ansi() {
 #[test]
 fn silent_list_rejects_rendered_data_through_run_with() {
     let app = App::builder()
+        .templates(EmbeddedTemplates::new(TEMPLATES, ""))
         .command_with(
             "list",
-            |_m, _ctx| Ok(Output::Render(json!({"name": "Ada"}))),
+            FnHandler::new(|_m, _ctx| Ok(Output::Render(json!({"name": "Ada"})))),
             |cfg| cfg.silent(),
         )
         .unwrap()
@@ -106,9 +115,10 @@ fn silent_list_rejects_rendered_data_through_run_with() {
 #[test]
 fn binary_list_rejects_rendered_data_through_run_with() {
     let app = App::builder()
+        .templates(EmbeddedTemplates::new(TEMPLATES, ""))
         .command_with(
             "list",
-            |_m, _ctx| Ok(Output::Render(json!({"name": "Ada"}))),
+            FnHandler::new(|_m, _ctx| Ok(Output::Render(json!({"name": "Ada"})))),
             |cfg| cfg.binary(),
         )
         .unwrap()
@@ -131,9 +141,10 @@ fn binary_list_rejects_rendered_data_through_run_with() {
 #[test]
 fn structured_only_list_serializes_json_through_run_with() {
     let app = App::builder()
+        .templates(EmbeddedTemplates::new(TEMPLATES, ""))
         .command_with(
             "list",
-            |_m, _ctx| Ok(Output::Render(json!({"name": "Ada"}))),
+            FnHandler::new(|_m, _ctx| Ok(Output::Render(json!({"name": "Ada"})))),
             |cfg| cfg.structured_only(),
         )
         .unwrap()
@@ -149,9 +160,10 @@ fn structured_only_list_serializes_json_through_run_with() {
 #[test]
 fn structured_only_list_rejects_term_through_run_with() {
     let app = App::builder()
+        .templates(EmbeddedTemplates::new(TEMPLATES, ""))
         .command_with(
             "list",
-            |_m, _ctx| Ok(Output::Render(json!({"name": "Ada"}))),
+            FnHandler::new(|_m, _ctx| Ok(Output::Render(json!({"name": "Ada"})))),
             |cfg| cfg.structured_only(),
         )
         .unwrap()
@@ -175,11 +187,12 @@ fn structured_only_list_rejects_term_through_run_with() {
 fn styled_show_term_goes_through_render_request() {
     let theme = Theme::new().add("tone", Style::new().red());
     let app = App::builder()
+        .templates(EmbeddedTemplates::new(TEMPLATES, ""))
         .theme(theme)
-        .command(
+        .command_with(
             "show",
-            |_m, _ctx| Ok(Output::Render(json!({"msg": "hello"}))),
-            "[tone]{{ msg }}[/tone]",
+            FnHandler::new(|_m, _ctx| Ok(Output::Render(json!({"msg": "hello"})))),
+            |cfg| cfg,
         )
         .unwrap()
         .build()

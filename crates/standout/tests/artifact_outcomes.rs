@@ -1,11 +1,13 @@
 use clap::{Arg, Command};
 use serde::Serialize;
 use serde_json::json;
+use standout::cli::FnHandler;
 use standout::cli::{
     App, ArtifactDestination, DispatchResult, ExitStatus, HandlerResult, HookError, Hooks, Output,
     OutputKind, RunErrorKind,
 };
 use standout::cli::{Artifact, RenderedOutput};
+use standout::EmbeddedTemplates;
 
 const BYTES: &[u8] = b"id,title\n1,buy milk\n";
 
@@ -34,13 +36,16 @@ fn command() -> Command {
 const TEMPLATE: &str =
     "Wrote {{ report.entries }} entries to {{ receipt.destination }}{% for w in report.warnings %}\nwarning: {{ w }}{% endfor %}";
 
+const TEMPLATES: &[(&str, &str)] = &[("export", TEMPLATE)];
+
 fn app_with(artifact: impl Fn() -> Artifact<ExportReport> + 'static) -> App {
     App::builder()
+        .templates(EmbeddedTemplates::new(TEMPLATES, ""))
         .output_file_flag(Some("output-file-path"))
-        .command(
+        .command_with(
             "export",
-            move |_matches, _ctx| Ok(Output::Artifact(artifact())),
-            TEMPLATE,
+            FnHandler::new(move |_matches, _ctx| Ok(Output::Artifact(artifact()))),
+            |cfg| cfg,
         )
         .unwrap()
         .build()
@@ -58,7 +63,12 @@ fn suggested_destination_is_written_and_reported() {
             .suggest_destination(&suggested)
             .with_report(report())
     })
-    .run_to_string(command(), ["app", "export"]);
+    .run_with(
+        command(),
+        ["app", "export"],
+        standout::TargetProperties::detect(),
+        standout::InputSources::from_process(),
+    );
 
     assert_eq!(std::fs::read(&path).unwrap(), BYTES);
 
@@ -86,7 +96,7 @@ fn explicit_override_wins_over_the_suggested_destination() {
             .suggest_destination(&suggestion)
             .with_report(report())
     })
-    .run_to_string(
+    .run_with(
         command(),
         [
             "app",
@@ -94,6 +104,8 @@ fn explicit_override_wins_over_the_suggested_destination() {
             "--output-file-path",
             override_path.to_str().unwrap(),
         ],
+        standout::TargetProperties::detect(),
+        standout::InputSources::from_process(),
     );
 
     assert_eq!(std::fs::read(&override_path).unwrap(), BYTES);
@@ -113,8 +125,12 @@ fn explicit_override_wins_over_the_suggested_destination() {
 
 #[test]
 fn stdout_fallback_requires_the_opt_in() {
-    let result = app_with(|| Artifact::new(BYTES.to_vec()).with_report(report()))
-        .run_to_string(command(), ["app", "export"]);
+    let result = app_with(|| Artifact::new(BYTES.to_vec()).with_report(report())).run_with(
+        command(),
+        ["app", "export"],
+        standout::TargetProperties::detect(),
+        standout::InputSources::from_process(),
+    );
 
     assert_eq!(
         result.error_kind(),
@@ -132,7 +148,12 @@ fn opted_in_stdout_is_the_last_resort_destination() {
             .allow_stdout()
             .with_report(report())
     })
-    .run_to_string(command(), ["app", "export"]);
+    .run_with(
+        command(),
+        ["app", "export"],
+        standout::TargetProperties::detect(),
+        standout::InputSources::from_process(),
+    );
 
     let run = result.artifact().expect("artifact run");
     assert_eq!(run.destination(), &ArtifactDestination::Stdout);
@@ -151,7 +172,7 @@ fn an_override_writes_an_artifact_that_only_allows_stdout() {
             .allow_stdout()
             .with_report(report())
     })
-    .run_to_string(
+    .run_with(
         command(),
         [
             "app",
@@ -159,6 +180,8 @@ fn an_override_writes_an_artifact_that_only_allows_stdout() {
             "--output-file-path",
             path.to_str().unwrap(),
         ],
+        standout::TargetProperties::detect(),
+        standout::InputSources::from_process(),
     );
 
     assert_eq!(std::fs::read(&path).unwrap(), BYTES);
@@ -179,7 +202,12 @@ fn a_failed_write_is_typed_and_emits_no_report() {
             .suggest_destination(&target)
             .with_report(report())
     })
-    .run_to_string(command(), ["app", "export"]);
+    .run_with(
+        command(),
+        ["app", "export"],
+        standout::TargetProperties::detect(),
+        standout::InputSources::from_process(),
+    );
 
     assert_eq!(
         result.error_kind(),
@@ -203,7 +231,7 @@ fn an_overridden_write_failure_shares_the_artifact_failure_path() {
             .suggest_destination(&suggestion)
             .with_report(report())
     })
-    .run_to_string(
+    .run_with(
         command(),
         [
             "app",
@@ -211,6 +239,8 @@ fn an_overridden_write_failure_shares_the_artifact_failure_path() {
             "--output-file-path",
             unwritable.to_str().unwrap(),
         ],
+        standout::TargetProperties::detect(),
+        standout::InputSources::from_process(),
     );
 
     assert_eq!(
@@ -230,19 +260,25 @@ fn an_artifact_without_a_report_completes_silently() {
     let target = path.clone();
 
     let result = App::builder()
-        .command(
+        .templates(EmbeddedTemplates::new(TEMPLATES, ""))
+        .command_with(
             "export",
-            move |_matches, _ctx| -> HandlerResult<ExportReport> {
+            FnHandler::new(move |_matches, _ctx| -> HandlerResult<ExportReport> {
                 Ok(Output::Artifact(
                     Artifact::new(Vec::new()).suggest_destination(&target),
                 ))
-            },
-            TEMPLATE,
+            }),
+            |cfg| cfg,
         )
         .unwrap()
         .build()
         .unwrap()
-        .run_to_string(command(), ["app", "export"]);
+        .run_with(
+            command(),
+            ["app", "export"],
+            standout::TargetProperties::detect(),
+            standout::InputSources::from_process(),
+        );
 
     let run = result.artifact().expect("artifact run");
     assert_eq!(std::fs::read(&path).unwrap(), Vec::<u8>::new());
@@ -254,16 +290,22 @@ fn an_artifact_without_a_report_completes_silently() {
 #[test]
 fn a_silent_handler_still_fabricates_no_file() {
     let result = App::builder()
+        .templates(EmbeddedTemplates::new(TEMPLATES, ""))
         .output_file_flag(Some("output-file-path"))
-        .command(
+        .command_with(
             "export",
-            |_matches, _ctx| -> HandlerResult<ExportReport> { Ok(Output::Silent) },
-            TEMPLATE,
+            FnHandler::new(|_matches, _ctx| -> HandlerResult<ExportReport> { Ok(Output::Silent) }),
+            |cfg| cfg,
         )
         .unwrap()
         .build()
         .unwrap()
-        .run_to_string(command(), ["app", "export"]);
+        .run_with(
+            command(),
+            ["app", "export"],
+            standout::TargetProperties::detect(),
+            standout::InputSources::from_process(),
+        );
 
     assert!(result.artifact().is_none());
     assert_eq!(result.output(), Some(""));
@@ -280,7 +322,12 @@ fn structured_mode_serializes_the_report_and_receipt_envelope() {
             .suggest_destination(&target)
             .with_report(report())
     })
-    .run_to_string(command(), ["app", "export", "--output=json"]);
+    .run_with(
+        command(),
+        ["app", "export", "--output=json"],
+        standout::TargetProperties::detect(),
+        standout::InputSources::from_process(),
+    );
 
     let report: serde_json::Value =
         serde_json::from_str(result.artifact().unwrap().report().unwrap()).unwrap();
@@ -308,16 +355,17 @@ fn post_dispatch_hooks_see_the_report_like_any_handler_data() {
     let target = path.clone();
 
     let result = App::builder()
-        .command(
+        .templates(EmbeddedTemplates::new(TEMPLATES, ""))
+        .command_with(
             "export",
-            move |_matches, _ctx| {
+            FnHandler::new(move |_matches, _ctx| {
                 Ok(Output::Artifact(
                     Artifact::new(BYTES.to_vec())
                         .suggest_destination(&target)
                         .with_report(report()),
                 ))
-            },
-            TEMPLATE,
+            }),
+            |cfg| cfg,
         )
         .unwrap()
         .hooks(
@@ -329,7 +377,12 @@ fn post_dispatch_hooks_see_the_report_like_any_handler_data() {
         )
         .build()
         .unwrap()
-        .run_to_string(command(), ["app", "export"]);
+        .run_with(
+            command(),
+            ["app", "export"],
+            standout::TargetProperties::detect(),
+            standout::InputSources::from_process(),
+        );
 
     assert!(result
         .artifact()
@@ -346,16 +399,17 @@ fn post_output_hooks_transform_bytes_before_the_framework_write() {
     let target = path.clone();
 
     let result = App::builder()
-        .command(
+        .templates(EmbeddedTemplates::new(TEMPLATES, ""))
+        .command_with(
             "export",
-            move |_matches, _ctx| {
+            FnHandler::new(move |_matches, _ctx| {
                 Ok(Output::Artifact(
                     Artifact::new(BYTES.to_vec())
                         .suggest_destination(&target)
                         .with_report(report()),
                 ))
-            },
-            TEMPLATE,
+            }),
+            |cfg| cfg,
         )
         .unwrap()
         .hooks(
@@ -368,7 +422,12 @@ fn post_output_hooks_transform_bytes_before_the_framework_write() {
         )
         .build()
         .unwrap()
-        .run_to_string(command(), ["app", "export"]);
+        .run_with(
+            command(),
+            ["app", "export"],
+            standout::TargetProperties::detect(),
+            standout::InputSources::from_process(),
+        );
 
     assert_eq!(std::fs::read(&path).unwrap(), b"replaced");
     assert_eq!(result.artifact().unwrap().receipt().byte_count(), 8);
@@ -381,16 +440,17 @@ fn a_failing_post_output_hook_prevents_the_write() {
     let target = path.clone();
 
     let result = App::builder()
-        .command(
+        .templates(EmbeddedTemplates::new(TEMPLATES, ""))
+        .command_with(
             "export",
-            move |_matches, _ctx| {
+            FnHandler::new(move |_matches, _ctx| {
                 Ok(Output::Artifact(
                     Artifact::new(BYTES.to_vec())
                         .suggest_destination(&target)
                         .with_report(report()),
                 ))
-            },
-            TEMPLATE,
+            }),
+            |cfg| cfg,
         )
         .unwrap()
         .hooks(
@@ -399,7 +459,12 @@ fn a_failing_post_output_hook_prevents_the_write() {
         )
         .build()
         .unwrap()
-        .run_to_string(command(), ["app", "export"]);
+        .run_with(
+            command(),
+            ["app", "export"],
+            standout::TargetProperties::detect(),
+            standout::InputSources::from_process(),
+        );
 
     assert!(result.is_error());
     assert!(!path.exists(), "an aborted run must not write the artifact");
@@ -411,21 +476,27 @@ fn a_binary_filename_still_authorizes_no_write() {
     let cwd_guard = dir.path().join("data.bin");
 
     let result = App::builder()
+        .templates(EmbeddedTemplates::new(TEMPLATES, ""))
         .output_file_flag(Some("output-file-path"))
         .command_with(
             "export",
-            |_matches, _ctx| -> HandlerResult<ExportReport> {
+            FnHandler::new(|_matches, _ctx| -> HandlerResult<ExportReport> {
                 Ok(Output::Binary {
                     data: BYTES.to_vec(),
                     filename: "data.bin".into(),
                 })
-            },
+            }),
             |config| config.binary(),
         )
         .unwrap()
         .build()
         .unwrap()
-        .run_to_string(command(), ["app", "export"]);
+        .run_with(
+            command(),
+            ["app", "export"],
+            standout::TargetProperties::detect(),
+            standout::InputSources::from_process(),
+        );
 
     assert_eq!(result.binary(), Some((BYTES, "data.bin")));
     assert!(!cwd_guard.exists());
@@ -438,21 +509,22 @@ fn binary_output_still_honors_the_explicit_override() {
     let path = dir.path().join("out.bin");
 
     let result = App::builder()
+        .templates(EmbeddedTemplates::new(TEMPLATES, ""))
         .output_file_flag(Some("output-file-path"))
         .command_with(
             "export",
-            |_matches, _ctx| -> HandlerResult<ExportReport> {
+            FnHandler::new(|_matches, _ctx| -> HandlerResult<ExportReport> {
                 Ok(Output::Binary {
                     data: BYTES.to_vec(),
                     filename: "data.bin".into(),
                 })
-            },
+            }),
             |config| config.binary(),
         )
         .unwrap()
         .build()
         .unwrap()
-        .run_to_string(
+        .run_with(
             command(),
             [
                 "app",
@@ -460,6 +532,8 @@ fn binary_output_still_honors_the_explicit_override() {
                 "--output-file-path",
                 path.to_str().unwrap(),
             ],
+            standout::TargetProperties::detect(),
+            standout::InputSources::from_process(),
         );
 
     assert_eq!(std::fs::read(&path).unwrap(), BYTES);
@@ -473,7 +547,10 @@ fn run_command_hands_back_the_pending_artifact_without_writing() {
     let path = dir.path().join("export.csv");
     let target = path.clone();
 
-    let app = App::builder().build().unwrap();
+    let app = App::builder()
+        .templates(EmbeddedTemplates::new(TEMPLATES, ""))
+        .build()
+        .unwrap();
     let matches = command().try_get_matches_from(["app", "export"]).unwrap();
 
     let output = app
@@ -487,7 +564,7 @@ fn run_command_hands_back_the_pending_artifact_without_writing() {
                         .with_report(report()),
                 ))
             },
-            TEMPLATE,
+            standout::TemplateRef::Inline((TEMPLATE).to_string()),
         )
         .unwrap();
 
@@ -504,11 +581,13 @@ fn run_command_hands_back_the_pending_artifact_without_writing() {
 
 #[test]
 fn no_match_still_falls_through_for_manual_dispatch() {
-    let result = app_with(|| Artifact::new(BYTES.to_vec()).allow_stdout()).run_to_string(
+    let result = app_with(|| Artifact::new(BYTES.to_vec()).allow_stdout()).run_with(
         Command::new("app")
             .subcommand(Command::new("export"))
             .subcommand(Command::new("other")),
         ["app"],
+        standout::TargetProperties::detect(),
+        standout::InputSources::from_process(),
     );
     assert!(matches!(result.outcome(), DispatchResult::NoMatch(_)));
 }

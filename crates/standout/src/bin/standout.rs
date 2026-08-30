@@ -9,8 +9,9 @@ use clap::{CommandFactory, Parser, Subcommand};
 use minijinja::context;
 use serde_json::json;
 use standout::cli::{
-    App, CommandContext, CommandContextInput, HandlerResult, Output as HandlerOutput,
+    App, CommandContext, CommandContextInput, FnHandler, HandlerResult, Output as HandlerOutput,
 };
+use standout::embed_templates;
 use standout_input::questionnaire::{AnswerValue, EarlierAnswers, FormError};
 use standout_render::template::new_environment;
 
@@ -36,13 +37,12 @@ fn build_app() -> Result<App> {
     Ok(App::builder()
         .no_output_flag()
         .no_output_file_flag()
-        .command_with("new-project", run_new_project, |config| {
-            config
-                .template("{{ transcript }}")
-                .questionnaire_with_form_and_review::<NewProjectAnswers, _, _>(
-                    new_project_form_rules,
-                    write_new_project_review,
-                )
+        .templates(embed_templates!("src/bin/templates"))
+        .command_with("new-project", FnHandler::new(run_new_project), |config| {
+            config.questionnaire_with_form_and_review::<NewProjectAnswers, _, _>(
+                new_project_form_rules,
+                write_new_project_review,
+            )
         })?
         .build()?)
 }
@@ -1951,6 +1951,7 @@ standout-test = "{{ standout_version }}"
 mod handlers;
 
 use anyhow::Result;
+use standout::cli::FnHandler;
 use standout::{embed_styles, embed_templates};
 
 fn main() -> Result<()> {
@@ -1964,9 +1965,11 @@ fn build_app() -> Result<standout::cli::App> {
         .templates(embed_templates!("src/templates"))
         .styles(embed_styles!("src/styles"))
         .default_theme("{{ project_name }}")
-        .command_with("{{ command_name }}", handlers::{{ command_ident }}__handler, |config| {
-            config.template_name("{{ command_name }}")
-        })?
+        .command_with(
+            "{{ command_name }}",
+            FnHandler::new(handlers::{{ command_ident }}__handler),
+            |config| config.template_name("{{ command_name }}"),
+        )?
         .build()?)
 }
 

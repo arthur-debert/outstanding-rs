@@ -18,7 +18,6 @@ struct ContainerAttrs {
 struct VariantAttrs {
     name: Option<String>,
     handler: Option<Path>,
-    template: Option<String>,
     template_name: Option<String>,
     silent: bool,
     binary: bool,
@@ -112,17 +111,6 @@ impl Parse for VariantAttrs {
                         attrs.handler = Some(expr_path.path.clone());
                     } else {
                         return Err(Error::new(nv.value.span(), "expected path"));
-                    }
-                }
-                Meta::NameValue(nv) if nv.path.is_ident("template") => {
-                    if let Expr::Lit(expr_lit) = &nv.value {
-                        if let syn::Lit::Str(lit_str) = &expr_lit.lit {
-                            attrs.template = Some(lit_str.value());
-                        } else {
-                            return Err(Error::new(nv.value.span(), "expected string literal"));
-                        }
-                    } else {
-                        return Err(Error::new(nv.value.span(), "expected string literal"));
                     }
                 }
                 Meta::NameValue(nv) if nv.path.is_ident("template_name") => {
@@ -230,7 +218,7 @@ impl Parse for VariantAttrs {
                 _ => {
                     return Err(Error::new(
                         meta.span(),
-                        "unknown attribute, expected one of: name, handler, template, template_name, silent, binary, structured_only, pre_dispatch, post_dispatch, post_output, questionnaire, nested, skip, default, list_view, item_type, pipe_to, pipe_through, pipe_to_clipboard, simple, pure",
+                        "unknown attribute, expected one of: name, handler, template_name, silent, binary, structured_only, pre_dispatch, post_dispatch, post_output, questionnaire, nested, skip, default, list_view, item_type, pipe_to, pipe_through, pipe_to_clipboard, simple, pure",
                     ));
                 }
             }
@@ -248,7 +236,6 @@ impl VariantAttrs {
         let VariantAttrs {
             name,
             handler,
-            template,
             template_name,
             silent,
             binary,
@@ -271,7 +258,6 @@ impl VariantAttrs {
 
         self.name = name.or(self.name.take());
         self.handler = handler.or(self.handler.take());
-        self.template = template.or(self.template.take());
         self.template_name = template_name.or(self.template_name.take());
         self.pre_dispatch = pre_dispatch.or(self.pre_dispatch.take());
         self.post_dispatch = post_dispatch.or(self.post_dispatch.take());
@@ -308,12 +294,6 @@ impl VariantAttrs {
                 "`pure` and `simple` cannot be used together: `simple` registers a function taking only `&ArgMatches`, while the wrapper `#[handler]` generates always takes `(&ArgMatches, &CommandContext)`. Drop `simple`; a `#[handler]` function declares what it needs through its parameter attributes",
             ));
         }
-        if self.template.is_some() && self.template_name.is_some() {
-            return Err(Error::new(
-                span,
-                "`template` and `template_name` cannot be used together",
-            ));
-        }
         let absence_count =
             usize::from(self.silent) + usize::from(self.binary) + usize::from(self.structured_only);
         if absence_count > 1 {
@@ -322,10 +302,10 @@ impl VariantAttrs {
                 "`silent`, `binary`, and `structured_only` cannot be used together",
             ));
         }
-        if absence_count == 1 && (self.template.is_some() || self.template_name.is_some()) {
+        if absence_count == 1 && self.template_name.is_some() {
             return Err(Error::new(
                 span,
-                "`silent`, `binary`, and `structured_only` cannot be combined with `template` or `template_name`",
+                "`silent`, `binary`, and `structured_only` cannot be combined with `template_name`",
             ));
         }
 
@@ -513,16 +493,13 @@ pub fn dispatch_derive_impl(input: DeriveInput) -> Result<TokenStream> {
                     path
                 });
 
-                let v_template = v.attrs.template.clone();
                 let mut v_template_name = v.attrs.template_name.clone();
-                let uses_framework_list_view =
-                    v.attrs.list_view && v_template.is_none() && v_template_name.is_none();
+                let uses_framework_list_view = v.attrs.list_view && v_template_name.is_none();
                 if uses_framework_list_view {
                     v_template_name = Some("standout/list-view".to_string());
                 }
 
-                let has_config = v_template.is_some()
-                    || v_template_name.is_some()
+                let has_config = v_template_name.is_some()
                     || v.attrs.silent
                     || v.attrs.binary
                     || v.attrs.structured_only
@@ -582,9 +559,6 @@ pub fn dispatch_derive_impl(input: DeriveInput) -> Result<TokenStream> {
                 };
 
                 if has_config {
-                    let template_call = v_template
-                        .as_ref()
-                        .map(|template| quote! { __cfg = __cfg.template(#template); });
                     let template_name_call = v_template_name.as_ref().map(
                         |template_name| quote! { __cfg = __cfg.template_name(#template_name); },
                     );
@@ -623,7 +597,6 @@ pub fn dispatch_derive_impl(input: DeriveInput) -> Result<TokenStream> {
 
                     quote! {
                         let __builder = __builder.command_with(#cmd_name, #handler_expr, |mut __cfg| {
-                            #template_call
                             #template_name_call
                             #absence_call
                             #questionnaire_call

@@ -1,3 +1,7 @@
+use standout::cli::FnHandler;
+use standout::EmbeddedTemplates;
+
+const TEMPLATES: &[(&str, &str)] = &[("root", "{{ name }}")];
 use clap::{Arg, ArgAction, Command};
 use standout::cli::{App, CommandContextInput, HelpResult};
 use standout_fixtures::downstream;
@@ -14,11 +18,11 @@ fn help_text(result: HelpResult) -> String {
 fn the_help_word_is_reachable_on_a_flat_command_with_required_args() {
     let fixture = downstream().flat().build();
 
-    let output = help_text(
-        fixture
-            .app()
-            .get_matches_from(fixture.command(), ["lookma", "help"]),
-    );
+    let output = help_text(fixture.app().get_matches_from(
+        fixture.command(),
+        ["lookma", "help"],
+        &standout::InputSources::from_process(),
+    ));
     assert!(output.contains("Diff a git range"), "output:\n{output}");
 }
 
@@ -26,10 +30,11 @@ fn the_help_word_is_reachable_on_a_flat_command_with_required_args() {
 fn a_flat_command_with_positionals_does_not_get_the_word_by_default() {
     let fixture = downstream().flat().without_help_word().build();
 
-    match fixture
-        .app()
-        .get_matches_from(fixture.command(), ["lookma", "help"])
-    {
+    match fixture.app().get_matches_from(
+        fixture.command(),
+        ["lookma", "help"],
+        &standout::InputSources::from_process(),
+    ) {
         HelpResult::Matches(m) => {
             assert_eq!(
                 m.get_one::<String>("range").map(String::as_str),
@@ -56,11 +61,11 @@ fn help_flags_still_render_themed_help_without_the_opt_in() {
     let fixture = downstream().flat().without_help_word().build();
 
     for flag in ["--help", "-h"] {
-        let output = help_text(
-            fixture
-                .app()
-                .get_matches_from(fixture.command(), ["lookma", flag]),
-        );
+        let output = help_text(fixture.app().get_matches_from(
+            fixture.command(),
+            ["lookma", flag],
+            &standout::InputSources::from_process(),
+        ));
         assert!(
             output.contains("Diff a git range"),
             "{flag} output:\n{output}"
@@ -78,7 +83,11 @@ fn a_flat_command_with_no_positionals_gets_the_word_automatically() {
             .required(true),
     );
 
-    let output = help_text(app.get_matches_from(cmd, ["app", "help"]));
+    let output = help_text(app.get_matches_from(
+        cmd,
+        ["app", "help"],
+        &standout::InputSources::from_process(),
+    ));
     assert!(output.contains("Flag-only app"), "output:\n{output}");
 }
 
@@ -86,10 +95,11 @@ fn a_flat_command_with_no_positionals_gets_the_word_automatically() {
 fn the_escape_delivers_the_literal_word_to_the_positional() {
     let fixture = downstream().flat().build();
 
-    match fixture
-        .app()
-        .get_matches_from(fixture.command(), ["lookma", "--", "help"])
-    {
+    match fixture.app().get_matches_from(
+        fixture.command(),
+        ["lookma", "--", "help"],
+        &standout::InputSources::from_process(),
+    ) {
         HelpResult::Matches(m) => {
             assert_eq!(
                 m.get_one::<String>("range").map(String::as_str),
@@ -107,15 +117,18 @@ fn the_help_word_parses_its_own_arguments() {
     let tagged = help_text(fixture.app().get_matches_from(
         fixture.command(),
         ["lookma", "help", "--output", "term-debug"],
+        &standout::InputSources::from_process(),
     ));
     assert!(
         tagged.contains("[header]USAGE[/header]"),
         "output:\n{tagged}"
     );
 
-    let paged = fixture
-        .app()
-        .get_matches_from(fixture.command(), ["lookma", "help", "--page"]);
+    let paged = fixture.app().get_matches_from(
+        fixture.command(),
+        ["lookma", "help", "--page"],
+        &standout::InputSources::from_process(),
+    );
     assert!(
         matches!(paged, HelpResult::PagedHelp(_)),
         "expected paged help, got: {paged:?}"
@@ -126,10 +139,11 @@ fn the_help_word_parses_its_own_arguments() {
 fn a_normal_invocation_is_untouched() {
     let fixture = downstream().flat().build();
 
-    match fixture
-        .app()
-        .get_matches_from(fixture.command(), ["lookma", "main..HEAD"])
-    {
+    match fixture.app().get_matches_from(
+        fixture.command(),
+        ["lookma", "main..HEAD"],
+        &standout::InputSources::from_process(),
+    ) {
         HelpResult::Matches(m) => {
             assert_eq!(
                 m.get_one::<String>("range").map(String::as_str),
@@ -144,10 +158,11 @@ fn a_normal_invocation_is_untouched() {
 fn a_missing_required_argument_is_still_a_usage_error() {
     let fixture = downstream().flat().build();
 
-    match fixture
-        .app()
-        .get_matches_from(fixture.command(), ["lookma"])
-    {
+    match fixture.app().get_matches_from(
+        fixture.command(),
+        ["lookma"],
+        &standout::InputSources::from_process(),
+    ) {
         HelpResult::Error(e) => {
             assert_eq!(e.kind(), clap::error::ErrorKind::MissingRequiredArgument);
         }
@@ -164,14 +179,17 @@ struct RootAnswers {
 #[test]
 fn the_policy_reads_the_shape_the_framework_leaves_behind() {
     let app = App::builder()
+        .templates(EmbeddedTemplates::new(TEMPLATES, ""))
         .help_handling(true)
         .command_with(
             "",
-            |_m, ctx| {
+            FnHandler::new(|_m, ctx| {
                 let answers: &RootAnswers = ctx.questionnaire()?;
-                Ok(standout::cli::Output::Render(answers.name.clone()))
-            },
-            |cfg| cfg.template("{{ . }}").questionnaire::<RootAnswers>(),
+                Ok(standout::cli::Output::Render(
+                    serde_json::json!({ "name": answers.name }),
+                ))
+            }),
+            |cfg| cfg.template_name("root").questionnaire::<RootAnswers>(),
         )
         .unwrap()
         .build()
@@ -188,7 +206,11 @@ fn the_policy_reads_the_shape_the_framework_leaves_behind() {
         "the word belongs on a root that has subcommands, however it got them"
     );
 
-    let output = help_text(app.get_matches_from(flat_root.command(), ["lookma", "help"]));
+    let output = help_text(app.get_matches_from(
+        flat_root.command(),
+        ["lookma", "help"],
+        &standout::InputSources::from_process(),
+    ));
     assert!(output.contains("Diff a git range"), "output:\n{output}");
 }
 

@@ -1,7 +1,9 @@
 use clap::{Arg, ArgAction, Command};
 use serde_json::json;
 use serial_test::serial;
+use standout::cli::FnHandler;
 use standout::cli::{App, HelpLength, Output};
+use standout::EmbeddedTemplates;
 use standout_fixtures::downstream;
 use standout_test::clap_parity::{
     assert_page_states_clap_facts, assert_page_states_clap_facts_with, assert_states_clap_facts,
@@ -12,6 +14,8 @@ use standout_test::invariants::{
     assert_no_possible_values_for_valueless_args, assert_no_unresolved_tag_markers,
 };
 use standout_test::TestHarness;
+
+const TEMPLATES: &[(&str, &str)] = &[("stat", "stat")];
 const ENTRY_POINTS: [(&str, HelpLength); 3] = [
     ("-h", HelpLength::Short),
     ("--help", HelpLength::Long),
@@ -742,7 +746,12 @@ fn fails_naming(needles: &[&str], assertion: impl FnOnce()) {
 }
 fn notes_app() -> App {
     App::builder()
-        .command("stat", |_m, _ctx| Ok(Output::Render(json!({}))), "stat")
+        .templates(EmbeddedTemplates::new(TEMPLATES, ""))
+        .command_with(
+            "stat",
+            FnHandler::new(|_m, _ctx| Ok(Output::Render(json!({})))),
+            |cfg| cfg,
+        )
         .unwrap()
         .build()
         .unwrap()

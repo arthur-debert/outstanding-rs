@@ -1,9 +1,13 @@
 use clap::Command;
 use serde_json::json;
+use standout::cli::FnHandler;
 use standout::cli::{
     App, DispatchResult, ExitStatus, ExternalFailure, HandlerResult, HookError, HookPhase, Hooks,
     Output, OutputKind, RunErrorKind, SuccessKind,
 };
+use standout::EmbeddedTemplates;
+
+const TEMPLATES: &[(&str, &str)] = &[("go", "{{ message }}")];
 
 fn command() -> Command {
     Command::new("app")
@@ -13,10 +17,11 @@ fn command() -> Command {
 
 fn success_app() -> App {
     App::builder()
-        .command(
+        .templates(EmbeddedTemplates::new(TEMPLATES, ""))
+        .command_with(
             "go",
-            |_matches, _ctx| Ok(Output::Render(json!({ "message": "ok" }))),
-            "{{ message }}",
+            FnHandler::new(|_matches, _ctx| Ok(Output::Render(json!({ "message": "ok" })))),
+            |cfg| cfg,
         )
         .unwrap()
         .build()
@@ -27,12 +32,22 @@ fn success_app() -> App {
 fn clap_help_and_version_are_typed_successes() {
     let app = success_app();
 
-    let help = app.run_to_string(command(), ["app", "--help"]);
+    let help = app.run_with(
+        command(),
+        ["app", "--help"],
+        standout::TargetProperties::detect(),
+        standout::InputSources::from_process(),
+    );
     assert_eq!(help.exit_status(), Some(ExitStatus::SUCCESS));
     assert_eq!(help.success_kind(), Some(SuccessKind::ClapHelp));
     assert!(help.output().unwrap().contains("USAGE"));
 
-    let version = app.run_to_string(command(), ["app", "--version"]);
+    let version = app.run_with(
+        command(),
+        ["app", "--version"],
+        standout::TargetProperties::detect(),
+        standout::InputSources::from_process(),
+    );
     assert_eq!(version.exit_status(), Some(ExitStatus::SUCCESS));
     assert_eq!(version.success_kind(), Some(SuccessKind::ClapVersion));
     assert!(version.output().unwrap().contains("1.2.3"));
@@ -40,7 +55,12 @@ fn clap_help_and_version_are_typed_successes() {
 
 #[test]
 fn clap_usage_error_is_status_two() {
-    let result = success_app().run_to_string(command(), ["app", "--unknown"]);
+    let result = success_app().run_with(
+        command(),
+        ["app", "--unknown"],
+        standout::TargetProperties::detect(),
+        standout::InputSources::from_process(),
+    );
     assert_eq!(result.exit_status(), Some(ExitStatus::USAGE_ERROR));
     assert_eq!(result.error_kind(), Some(RunErrorKind::ClapUsage));
     assert!(result.error().unwrap().contains("unexpected argument"));
@@ -48,38 +68,55 @@ fn clap_usage_error_is_status_two() {
 
 #[test]
 fn command_silent_and_binary_success_are_status_zero() {
-    let text = success_app().run_to_string(command(), ["app", "go"]);
+    let text = success_app().run_with(
+        command(),
+        ["app", "go"],
+        standout::TargetProperties::detect(),
+        standout::InputSources::from_process(),
+    );
     assert_eq!(text.exit_status(), Some(ExitStatus::SUCCESS));
     assert_eq!(text.output(), Some("ok"));
 
     let silent = App::builder()
+        .templates(EmbeddedTemplates::new(TEMPLATES, ""))
         .command_with(
             "go",
-            |_matches, _ctx| -> HandlerResult<()> { Ok(Output::Silent) },
+            FnHandler::new(|_matches, _ctx| -> HandlerResult<()> { Ok(Output::Silent) }),
             |config| config.silent(),
         )
         .unwrap()
         .build()
         .unwrap()
-        .run_to_string(command(), ["app", "go"]);
+        .run_with(
+            command(),
+            ["app", "go"],
+            standout::TargetProperties::detect(),
+            standout::InputSources::from_process(),
+        );
     assert_eq!(silent.exit_status(), Some(ExitStatus::SUCCESS));
     assert_eq!(silent.output(), Some(""));
 
     let binary = App::builder()
+        .templates(EmbeddedTemplates::new(TEMPLATES, ""))
         .command_with(
             "go",
-            |_matches, _ctx| -> HandlerResult<()> {
+            FnHandler::new(|_matches, _ctx| -> HandlerResult<()> {
                 Ok(Output::Binary {
                     data: vec![0, 1, 2],
                     filename: "data.bin".into(),
                 })
-            },
+            }),
             |config| config.binary(),
         )
         .unwrap()
         .build()
         .unwrap()
-        .run_to_string(command(), ["app", "go"]);
+        .run_with(
+            command(),
+            ["app", "go"],
+            standout::TargetProperties::detect(),
+            standout::InputSources::from_process(),
+        );
     assert_eq!(binary.exit_status(), Some(ExitStatus::SUCCESS));
     assert_eq!(binary.binary(), Some((&[0, 1, 2][..], "data.bin")));
 }
@@ -87,17 +124,23 @@ fn command_silent_and_binary_success_are_status_zero() {
 #[test]
 fn handler_and_each_hook_phase_keep_their_origin() {
     let handler = App::builder()
+        .templates(EmbeddedTemplates::new(TEMPLATES, ""))
         .command_with(
             "go",
-            |_matches, _ctx| -> HandlerResult<serde_json::Value> {
+            FnHandler::new(|_matches, _ctx| -> HandlerResult<serde_json::Value> {
                 Err(anyhow::anyhow!("handler failed"))
-            },
+            }),
             |config| config.structured_only(),
         )
         .unwrap()
         .build()
         .unwrap()
-        .run_to_string(command(), ["app", "go"]);
+        .run_with(
+            command(),
+            ["app", "go"],
+            standout::TargetProperties::detect(),
+            standout::InputSources::from_process(),
+        );
     assert_eq!(handler.exit_status(), Some(ExitStatus::FAILURE));
     assert_eq!(handler.error_kind(), Some(RunErrorKind::Handler));
 
@@ -116,16 +159,22 @@ fn handler_and_each_hook_phase_keep_their_origin() {
         ),
     ] {
         let result = App::builder()
-            .command(
+            .templates(EmbeddedTemplates::new(TEMPLATES, ""))
+            .command_with(
                 "go",
-                |_matches, _ctx| Ok(Output::Render(json!({ "message": "ok" }))),
-                "{{ message }}",
+                FnHandler::new(|_matches, _ctx| Ok(Output::Render(json!({ "message": "ok" })))),
+                |cfg| cfg,
             )
             .unwrap()
             .hooks("go", hooks)
             .build()
             .unwrap()
-            .run_to_string(command(), ["app", "go"]);
+            .run_with(
+                command(),
+                ["app", "go"],
+                standout::TargetProperties::detect(),
+                standout::InputSources::from_process(),
+            );
         assert_eq!(result.exit_status(), Some(ExitStatus::FAILURE));
         assert_eq!(result.error_kind(), Some(RunErrorKind::Hook(phase)));
     }
@@ -134,22 +183,28 @@ fn handler_and_each_hook_phase_keep_their_origin() {
 #[test]
 fn external_failure_metadata_crosses_handler_and_pre_dispatch_seams() {
     let handler = App::builder()
+        .templates(EmbeddedTemplates::new(TEMPLATES, ""))
         .command_with(
             "go",
-            |_matches, _ctx| -> HandlerResult<serde_json::Value> {
+            FnHandler::new(|_matches, _ctx| -> HandlerResult<serde_json::Value> {
                 Err(anyhow::Error::new(
                     ExternalFailure::new(128, "fatal: handler external\n")
                         .unwrap()
                         .with_source(std::io::Error::other("git failed")),
                 )
                 .context("delegated Git invocation"))
-            },
+            }),
             |config| config.structured_only(),
         )
         .unwrap()
         .build()
         .unwrap()
-        .run_to_string(command(), ["app", "go"]);
+        .run_with(
+            command(),
+            ["app", "go"],
+            standout::TargetProperties::detect(),
+            standout::InputSources::from_process(),
+        );
 
     assert_eq!(handler.exit_status().unwrap().code(), 128);
     assert_eq!(handler.error_kind(), Some(RunErrorKind::External));
@@ -166,10 +221,13 @@ fn external_failure_metadata_crosses_handler_and_pre_dispatch_seams() {
     );
 
     let pre_dispatch = App::builder()
-        .command(
+        .templates(EmbeddedTemplates::new(TEMPLATES, ""))
+        .command_with(
             "go",
-            |_matches, _ctx| Ok(Output::Render(json!({ "message": "unreachable" }))),
-            "{{ message }}",
+            FnHandler::new(|_matches, _ctx| {
+                Ok(Output::Render(json!({ "message": "unreachable" })))
+            }),
+            |cfg| cfg,
         )
         .unwrap()
         .hooks(
@@ -182,7 +240,12 @@ fn external_failure_metadata_crosses_handler_and_pre_dispatch_seams() {
         )
         .build()
         .unwrap()
-        .run_to_string(command(), ["app", "go"]);
+        .run_with(
+            command(),
+            ["app", "go"],
+            standout::TargetProperties::detect(),
+            standout::InputSources::from_process(),
+        );
 
     assert_eq!(pre_dispatch.exit_status().unwrap().code(), 128);
     assert_eq!(pre_dispatch.error_kind(), Some(RunErrorKind::External));
@@ -211,16 +274,22 @@ fn post_hooks_cannot_self_label_as_pre_dispatch_external() {
         ),
     ] {
         let result = App::builder()
-            .command(
+            .templates(EmbeddedTemplates::new(TEMPLATES, ""))
+            .command_with(
                 "go",
-                |_matches, _ctx| Ok(Output::Render(json!({ "message": "ok" }))),
-                "{{ message }}",
+                FnHandler::new(|_matches, _ctx| Ok(Output::Render(json!({ "message": "ok" })))),
+                |cfg| cfg,
             )
             .unwrap()
             .hooks("go", hooks)
             .build()
             .unwrap()
-            .run_to_string(command(), ["app", "go"]);
+            .run_with(
+                command(),
+                ["app", "go"],
+                standout::TargetProperties::detect(),
+                standout::InputSources::from_process(),
+            );
 
         assert_eq!(result.exit_status(), Some(ExitStatus::FAILURE));
         assert_eq!(result.error_kind(), Some(RunErrorKind::Hook(phase)));
@@ -229,23 +298,37 @@ fn post_hooks_cannot_self_label_as_pre_dispatch_external() {
 
 #[test]
 fn render_and_output_file_write_failures_are_typed() {
-    let render = App::builder()
-        .command(
+    let templates = tempfile::tempdir().unwrap();
+    std::fs::write(templates.path().join("go.j2"), "{{ message }}").unwrap();
+    let render_app = App::builder()
+        .templates_dir(templates.path())
+        .unwrap()
+        .command_with(
             "go",
-            |_matches, _ctx| Ok(Output::Render(json!({ "message": "ok" }))),
-            "{{",
+            FnHandler::new(|_matches, _ctx| Ok(Output::Render(json!({ "message": "ok" })))),
+            |cfg| cfg,
         )
         .unwrap()
         .build()
-        .unwrap()
-        .run_to_string(command(), ["app", "go"]);
+        .unwrap();
+    std::fs::write(templates.path().join("go.j2"), "{{").unwrap();
+    let render = render_app.run_with(
+        command(),
+        ["app", "go"],
+        standout::TargetProperties::detect(),
+        standout::InputSources::from_process(),
+    );
     assert_eq!(render.error_kind(), Some(RunErrorKind::Render));
     assert_eq!(render.exit_status(), Some(ExitStatus::FAILURE));
 
     let tempdir = tempfile::tempdir().unwrap();
     let directory = tempdir.path().to_str().unwrap();
-    let write =
-        success_app().run_to_string(command(), ["app", "--output-file-path", directory, "go"]);
+    let write = success_app().run_with(
+        command(),
+        ["app", "--output-file-path", directory, "go"],
+        standout::TargetProperties::detect(),
+        standout::InputSources::from_process(),
+    );
     assert_eq!(
         write.error_kind(),
         Some(RunErrorKind::FinalWrite(OutputKind::Text))
@@ -253,21 +336,26 @@ fn render_and_output_file_write_failures_are_typed() {
     assert_eq!(write.exit_status(), Some(ExitStatus::FAILURE));
 
     let binary_app = App::builder()
+        .templates(EmbeddedTemplates::new(TEMPLATES, ""))
         .command_with(
             "go",
-            |_matches, _ctx| -> HandlerResult<()> {
+            FnHandler::new(|_matches, _ctx| -> HandlerResult<()> {
                 Ok(Output::Binary {
                     data: vec![0, 1, 2],
                     filename: "data.bin".into(),
                 })
-            },
+            }),
             |config| config.binary(),
         )
         .unwrap()
         .build()
         .unwrap();
-    let binary_write =
-        binary_app.run_to_string(command(), ["app", "--output-file-path", directory, "go"]);
+    let binary_write = binary_app.run_with(
+        command(),
+        ["app", "--output-file-path", directory, "go"],
+        standout::TargetProperties::detect(),
+        standout::InputSources::from_process(),
+    );
     assert_eq!(
         binary_write.error_kind(),
         Some(RunErrorKind::FinalWrite(OutputKind::Binary))
@@ -280,13 +368,22 @@ fn output_file_success_is_silent_and_no_match_has_no_status() {
     let tempdir = tempfile::tempdir().unwrap();
     let path = tempdir.path().join("output.txt");
     let path_string = path.to_string_lossy().into_owned();
-    let result =
-        success_app().run_to_string(command(), ["app", "--output-file-path", &path_string, "go"]);
+    let result = success_app().run_with(
+        command(),
+        ["app", "--output-file-path", &path_string, "go"],
+        standout::TargetProperties::detect(),
+        standout::InputSources::from_process(),
+    );
     assert_eq!(result.exit_status(), Some(ExitStatus::SUCCESS));
     assert_eq!(result.output(), Some(""));
     assert_eq!(std::fs::read_to_string(path).unwrap(), "ok");
 
-    let no_match = success_app().run_to_string(command(), ["app"]);
+    let no_match = success_app().run_with(
+        command(),
+        ["app"],
+        standout::TargetProperties::detect(),
+        standout::InputSources::from_process(),
+    );
     assert!(matches!(no_match.outcome(), DispatchResult::NoMatch(_)));
     assert_eq!(no_match.exit_status(), None);
     assert_eq!(no_match.error_kind(), None);

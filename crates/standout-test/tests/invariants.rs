@@ -2,7 +2,9 @@ use clap::{Arg, Command};
 use console::Style;
 use serde_json::json;
 use serial_test::serial;
+use standout::cli::FnHandler;
 use standout::cli::{App, DispatchResult, Output};
+use standout::EmbeddedTemplates;
 use standout::Theme;
 use standout_fixtures::downstream;
 use standout_render::{OutputMode, TagResolution};
@@ -15,6 +17,14 @@ use standout_test::invariants::{
     assert_styling_preserves_layout_in_pages,
 };
 use standout_test::{TestHarness, TestResult};
+
+const TEMPLATES: &[(&str, &str)] = &[
+    ("say", "[headline]hello[/headline]"),
+    ("emit", "[inner_missing]from the inner run[/inner_missing]"),
+    ("say-2", "[headline]{{ embedded }}[/headline]"),
+    ("say-3", "[headline]nothing from the inner run[/headline]"),
+    ("say-4", "[shout]hello[/shout]"),
+];
 #[track_caller]
 fn fails_naming(needle: &str, assertion: impl FnOnce()) {
     let outcome = std::panic::catch_unwind(std::panic::AssertUnwindSafe(assertion));
@@ -61,11 +71,12 @@ fn the_fixture_page_resolves_every_tag_in_both_modes() {
 }
 fn undefined_tag_app() -> App {
     App::builder()
+        .templates(EmbeddedTemplates::new(TEMPLATES, ""))
         .theme(Theme::new().add("node", Style::new().cyan()))
-        .command(
+        .command_with(
             "say",
-            |_m, _ctx| Ok(Output::Render(json!({}))),
-            "[headline]hello[/headline]",
+            FnHandler::new(|_m, _ctx| Ok(Output::Render(json!({})))),
+            |cfg| cfg,
         )
         .unwrap()
         .build()
@@ -150,11 +161,12 @@ fn the_marker_check_passes_a_clean_page() {
 }
 fn embedded_app() -> App {
     App::builder()
+        .templates(EmbeddedTemplates::new(TEMPLATES, ""))
         .theme(Theme::new().add("node", Style::new().cyan()))
-        .command(
+        .command_with(
             "emit",
-            |_m, _ctx| Ok(Output::Render(json!({}))),
-            "[inner_missing]from the inner run[/inner_missing]",
+            FnHandler::new(|_m, _ctx| Ok(Output::Render(json!({})))),
+            |cfg| cfg,
         )
         .unwrap()
         .build()
@@ -162,21 +174,27 @@ fn embedded_app() -> App {
 }
 fn nesting_app() -> App {
     App::builder()
+        .templates(EmbeddedTemplates::new(TEMPLATES, ""))
         .theme(Theme::new().add("node", Style::new().cyan()))
-        .command(
+        .command_with(
             "say",
-            |_m, _ctx| {
-                let inner = embedded_app().run_to_string(
-                    Command::new("inner").subcommand(Command::new("emit")),
-                    ["inner", "emit"],
-                );
+            FnHandler::new(|_m, _ctx| {
+                let inner = {
+                    let _window = standout::diagnostics::begin_capture();
+                    embedded_app().run_with(
+                        Command::new("inner").subcommand(Command::new("emit")),
+                        ["inner", "emit"],
+                        standout::TargetProperties::detect(),
+                        standout::InputSources::from_process(),
+                    )
+                };
                 let embedded = match inner.outcome() {
                     DispatchResult::Handled(output) => output.as_str().to_string(),
                     other => panic!("the inner run must succeed, got {:?}", other),
                 };
                 Ok(Output::Render(json!({ "embedded": embedded })))
-            },
-            "[headline]{{ embedded }}[/headline]",
+            }),
+            |cfg| cfg.template_name("say-2"),
         )
         .unwrap()
         .build()
@@ -217,21 +235,27 @@ fn a_nested_run_cannot_hide_its_unresolved_tags_from_the_outer_one() {
 }
 fn discarding_app() -> App {
     App::builder()
+        .templates(EmbeddedTemplates::new(TEMPLATES, ""))
         .theme(Theme::new().add("headline", Style::new().bold()))
-        .command(
+        .command_with(
             "say",
-            |_m, _ctx| {
-                let discarded = embedded_app().run_to_string(
-                    Command::new("inner").subcommand(Command::new("emit")),
-                    ["inner", "emit"],
-                );
+            FnHandler::new(|_m, _ctx| {
+                let discarded = {
+                    let _window = standout::diagnostics::begin_capture();
+                    embedded_app().run_with(
+                        Command::new("inner").subcommand(Command::new("emit")),
+                        ["inner", "emit"],
+                        standout::TargetProperties::detect(),
+                        standout::InputSources::from_process(),
+                    )
+                };
                 assert!(
                     matches!(discarded.outcome(), DispatchResult::Handled(_)),
                     "the inner run must succeed"
                 );
                 Ok(Output::Render(json!({})))
-            },
-            "[headline]nothing from the inner run[/headline]",
+            }),
+            |cfg| cfg.template_name("say-3"),
         )
         .unwrap()
         .build()
@@ -279,11 +303,12 @@ fn the_styled_fixture_page_strips_back_to_the_plain_one() {
 #[serial]
 fn a_genuinely_styled_page_strips_back_to_its_plain_render() {
     let app = App::builder()
+        .templates(EmbeddedTemplates::new(TEMPLATES, ""))
         .theme(Theme::new().add("shout", Style::new().red().force_styling(true)))
-        .command(
+        .command_with(
             "say",
-            |_m, _ctx| Ok(Output::Render(json!({}))),
-            "[shout]hello[/shout]",
+            FnHandler::new(|_m, _ctx| Ok(Output::Render(json!({})))),
+            |cfg| cfg.template_name("say-4"),
         )
         .unwrap()
         .build()

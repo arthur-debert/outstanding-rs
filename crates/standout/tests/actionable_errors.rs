@@ -1,6 +1,10 @@
 use serde_json::json;
 use standout::cli::hooks::Hooks;
+use standout::cli::FnHandler;
 use standout::cli::{App, Output};
+use standout::EmbeddedTemplates;
+
+const TEMPLATES: &[(&str, &str)] = &[("show", "ok"), ("help", "ok"), ("show-2", "{{ name }}")];
 
 fn build_error(result: Result<standout::cli::App, standout::SetupError>) -> String {
     match result {
@@ -16,15 +20,21 @@ fn render_named_without_registry_names_the_builder_calls() {
         .build()
         .unwrap();
 
-    let error = app.render("missing", &json!({}), standout::OutputMode::Text);
+    let error = app.render_with(
+        standout::TemplateRef::Named(("missing").to_string()),
+        &json!({}),
+        standout::OutputMode::Text,
+        standout::TargetProperties::detect(),
+    );
     let message = error
         .expect_err("named render needs a template registry")
         .to_string();
 
-    assert!(message.contains("render(\"missing\", ...) needs a template registry"));
+    assert!(message
+        .contains("render_with(TemplateRef::Named(\"missing\"), ...) needs a template registry"));
     assert!(message.contains(".templates(embed_templates!"));
     assert!(message.contains(".templates_dir(\"path/to/templates\")"));
-    assert!(message.contains("render_inline(...)"));
+    assert!(message.contains("TemplateRef::Inline"));
 }
 
 #[test]
@@ -36,22 +46,42 @@ fn render_named_structured_without_registry_serializes() {
     let data = json!({"name": "Ada"});
 
     let json = app
-        .render("unused", &data, standout::OutputMode::Json)
+        .render_with(
+            standout::TemplateRef::Named(("unused").to_string()),
+            &data,
+            standout::OutputMode::Json,
+            standout::TargetProperties::detect(),
+        )
         .expect("structured render does not need a registry");
     assert!(json.contains("\"name\": \"Ada\""));
 
     let yaml = app
-        .render("unused", &data, standout::OutputMode::Yaml)
+        .render_with(
+            standout::TemplateRef::Named(("unused").to_string()),
+            &data,
+            standout::OutputMode::Yaml,
+            standout::TargetProperties::detect(),
+        )
         .expect("structured render does not need a registry");
     assert!(yaml.contains("name: Ada"));
 
     let xml = app
-        .render("unused", &data, standout::OutputMode::Xml)
+        .render_with(
+            standout::TemplateRef::Named(("unused").to_string()),
+            &data,
+            standout::OutputMode::Xml,
+            standout::TargetProperties::detect(),
+        )
         .expect("structured render does not need a registry");
     assert!(xml.contains("<name>Ada</name>"));
 
     let csv = app
-        .render("unused", &data, standout::OutputMode::Csv)
+        .render_with(
+            standout::TemplateRef::Named(("unused").to_string()),
+            &data,
+            standout::OutputMode::Csv,
+            standout::TargetProperties::detect(),
+        )
         .expect("structured render does not need a registry");
     assert!(csv.contains("name"));
     assert!(csv.contains("Ada"));
@@ -74,10 +104,13 @@ fn render_named_structured_with_unregistered_name_serializes() {
         standout::OutputMode::Xml,
         standout::OutputMode::Csv,
     ] {
-        app.render("not-registered", &data, mode)
-            .unwrap_or_else(|error| {
-                panic!("structured {mode:?} ignored the missing name: {error}")
-            });
+        app.render_with(
+            standout::TemplateRef::Named(("not-registered").to_string()),
+            &data,
+            mode,
+            standout::TargetProperties::detect(),
+        )
+        .unwrap_or_else(|error| panic!("structured {mode:?} ignored the missing name: {error}"));
     }
 }
 
@@ -95,7 +128,12 @@ fn render_named_file_refresh_error_keeps_read_context() {
     std::fs::remove_file(&template_path).unwrap();
 
     let message = app
-        .render("show", &json!({"name": "Ada"}), standout::OutputMode::Text)
+        .render_with(
+            standout::TemplateRef::Named(("show").to_string()),
+            &json!({"name": "Ada"}),
+            standout::OutputMode::Text,
+            standout::TargetProperties::detect(),
+        )
         .expect_err("deleted template should fail during render refresh")
         .to_string();
 
@@ -110,10 +148,11 @@ fn render_named_file_refresh_error_keeps_read_context() {
 #[test]
 fn hook_conflict_error_names_the_phase_and_single_registration_fix() {
     let result = App::builder()
+        .templates(EmbeddedTemplates::new(TEMPLATES, ""))
         .command_with(
             "show",
-            |_m, _ctx| Ok(Output::Render(json!({"name": "Ada"}))),
-            |config| config.template("{{ name }}").pre_dispatch(|_, _| Ok(())),
+            FnHandler::new(|_m, _ctx| Ok(Output::Render(json!({"name": "Ada"})))),
+            |config| config.template_name("show-2").pre_dispatch(|_, _| Ok(())),
         )
         .unwrap()
         .hooks("show", Hooks::new().pre_dispatch(|_, _| Ok(())))
@@ -130,6 +169,7 @@ fn hook_conflict_error_names_the_phase_and_single_registration_fix() {
 #[test]
 fn help_configuration_errors_name_the_call_that_turned_help_off() {
     let result = App::builder()
+        .templates(EmbeddedTemplates::new(TEMPLATES, ""))
         .help_handling(false)
         .command_groups(vec![standout::cli::help::CommandGroup {
             title: "Commands".into(),
@@ -148,9 +188,18 @@ fn help_configuration_errors_name_the_call_that_turned_help_off() {
 #[test]
 fn duplicate_command_still_names_the_conflicting_command() {
     let result = App::builder()
-        .command("show", |_m, _ctx| Ok(Output::Render(json!({}))), "ok")
+        .templates(EmbeddedTemplates::new(TEMPLATES, ""))
+        .command_with(
+            "show",
+            FnHandler::new(|_m, _ctx| Ok(Output::Render(json!({})))),
+            |cfg| cfg,
+        )
         .unwrap()
-        .command("show", |_m, _ctx| Ok(Output::Render(json!({}))), "ok");
+        .command_with(
+            "show",
+            FnHandler::new(|_m, _ctx| Ok(Output::Render(json!({})))),
+            |cfg| cfg,
+        );
 
     let message = match result {
         Ok(_) => panic!("duplicate command must fail"),
@@ -162,7 +211,12 @@ fn duplicate_command_still_names_the_conflicting_command() {
 #[test]
 fn registered_help_collision_names_the_setting_and_rename_fix() {
     let result = App::builder()
-        .command("help", |_m, _ctx| Ok(Output::Render(json!({}))), "ok")
+        .templates(EmbeddedTemplates::new(TEMPLATES, ""))
+        .command_with(
+            "help",
+            FnHandler::new(|_m, _ctx| Ok(Output::Render(json!({})))),
+            |cfg| cfg,
+        )
         .unwrap()
         .build();
 
@@ -178,7 +232,7 @@ fn command_named_template_without_registry_names_the_fix() {
         .include_framework_templates(false)
         .command_with(
             "show",
-            |_m, _ctx| Ok(Output::Render(json!({"name": "Ada"}))),
+            FnHandler::new(|_m, _ctx| Ok(Output::Render(json!({"name": "Ada"})))),
             |config| config.template_name("show"),
         )
         .unwrap()

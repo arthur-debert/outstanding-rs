@@ -1,6 +1,6 @@
 use clap::Command;
 use standout::cli::{
-    render_help, validate_command_groups, App, AppBuilder, CommandGroup, HelpConfig, HelpResult,
+    render_help, validate_command_groups, App, CommandGroup, HelpConfig, HelpResult,
 };
 use standout::OutputMode;
 
@@ -280,7 +280,11 @@ fn extract_help(result: HelpResult) -> String {
 fn test_help_subcommand_renders_grouped() {
     let app = app_with_groups();
     let cmd = test_cmd();
-    let result = app.get_matches_from(cmd, ["myapp", "help"]);
+    let result = app.get_matches_from(
+        cmd,
+        ["myapp", "help"],
+        &standout::InputSources::from_process(),
+    );
     let output = extract_help(result);
     assert!(output.contains("CORE"), "output:\n{output}");
     assert!(output.contains("status"), "output:\n{output}");
@@ -290,7 +294,11 @@ fn test_help_subcommand_renders_grouped() {
 fn test_help_flag_renders_grouped() {
     let app = app_with_groups();
     let cmd = test_cmd();
-    let result = app.get_matches_from(cmd, ["myapp", "--help"]);
+    let result = app.get_matches_from(
+        cmd,
+        ["myapp", "--help"],
+        &standout::InputSources::from_process(),
+    );
     let output = extract_help(result);
     assert!(output.contains("CORE"), "output:\n{output}");
     assert!(output.contains("status"), "output:\n{output}");
@@ -300,7 +308,11 @@ fn test_help_flag_renders_grouped() {
 fn test_help_short_flag_renders_grouped() {
     let app = app_with_groups();
     let cmd = test_cmd();
-    let result = app.get_matches_from(cmd, ["myapp", "-h"]);
+    let result = app.get_matches_from(
+        cmd,
+        ["myapp", "-h"],
+        &standout::InputSources::from_process(),
+    );
     let output = extract_help(result);
     assert!(output.contains("CORE"), "output:\n{output}");
     assert!(output.contains("status"), "output:\n{output}");
@@ -311,13 +323,25 @@ fn test_all_help_forms_produce_same_output() {
     let cmd_factory = || test_cmd();
 
     let app = app_with_groups();
-    let help_sub = extract_help(app.get_matches_from(cmd_factory(), ["myapp", "help"]));
+    let help_sub = extract_help(app.get_matches_from(
+        cmd_factory(),
+        ["myapp", "help"],
+        &standout::InputSources::from_process(),
+    ));
 
     let app = app_with_groups();
-    let help_long = extract_help(app.get_matches_from(cmd_factory(), ["myapp", "--help"]));
+    let help_long = extract_help(app.get_matches_from(
+        cmd_factory(),
+        ["myapp", "--help"],
+        &standout::InputSources::from_process(),
+    ));
 
     let app = app_with_groups();
-    let help_short = extract_help(app.get_matches_from(cmd_factory(), ["myapp", "-h"]));
+    let help_short = extract_help(app.get_matches_from(
+        cmd_factory(),
+        ["myapp", "-h"],
+        &standout::InputSources::from_process(),
+    ));
 
     assert_eq!(help_sub, help_long, "help vs --help differ");
     assert_eq!(help_sub, help_short, "help vs -h differ");
@@ -327,7 +351,11 @@ fn test_all_help_forms_produce_same_output() {
 fn test_subcommand_help_flag_renders_subcommand_help() {
     let app = app_with_groups();
     let cmd = test_cmd();
-    let result = app.get_matches_from(cmd, ["myapp", "status", "--help"]);
+    let result = app.get_matches_from(
+        cmd,
+        ["myapp", "status", "--help"],
+        &standout::InputSources::from_process(),
+    );
     let output = extract_help(result);
     assert!(output.contains("status"), "output:\n{output}");
     assert!(
@@ -340,15 +368,23 @@ fn test_subcommand_help_flag_renders_subcommand_help() {
 fn test_subcommand_help_short_flag() {
     let app = app_with_groups();
     let cmd = test_cmd();
-    let result = app.get_matches_from(cmd, ["myapp", "status", "-h"]);
+    let result = app.get_matches_from(
+        cmd,
+        ["myapp", "status", "-h"],
+        &standout::InputSources::from_process(),
+    );
     let output = extract_help(result);
     assert!(output.contains("status"), "output:\n{output}");
 }
 
 #[test]
 fn a_default_builder_renders_help_through_the_themed_path() {
-    let app = AppBuilder::default().build().unwrap();
-    let output = extract_help(app.get_matches_from(test_cmd(), ["myapp", "--help"]));
+    let app = App::builder().build().unwrap();
+    let output = extract_help(app.get_matches_from(
+        test_cmd(),
+        ["myapp", "--help"],
+        &standout::InputSources::from_process(),
+    ));
     assert!(output.contains("USAGE"), "output:\n{output}");
     assert!(output.contains("COMMANDS"), "output:\n{output}");
 }
@@ -356,7 +392,11 @@ fn a_default_builder_renders_help_through_the_themed_path() {
 #[test]
 fn help_handling_off_restores_claps_own_help() {
     let app = App::builder().help_handling(false).build().unwrap();
-    match app.get_matches_from(test_cmd(), ["myapp", "--help"]) {
+    match app.get_matches_from(
+        test_cmd(),
+        ["myapp", "--help"],
+        &standout::InputSources::from_process(),
+    ) {
         HelpResult::Error(e) => {
             assert_eq!(e.kind(), clap::error::ErrorKind::DisplayHelp);
             assert!(e.to_string().contains("Usage:"), "error:\n{e}");
@@ -369,7 +409,11 @@ fn help_handling_off_restores_claps_own_help() {
 fn test_help_handling_off_does_not_intercept() {
     let app = App::builder().help_handling(false).build().unwrap();
     let cmd = test_cmd();
-    let result = app.get_matches_from(cmd, ["myapp", "status"]);
+    let result = app.get_matches_from(
+        cmd,
+        ["myapp", "status"],
+        &standout::InputSources::from_process(),
+    );
     match result {
         HelpResult::Matches(m) => {
             assert_eq!(m.subcommand_name(), Some("status"));
@@ -382,7 +426,11 @@ fn test_help_handling_off_does_not_intercept() {
 fn test_help_handling_off_help_flag_returns_clap_error() {
     let app = App::builder().help_handling(false).build().unwrap();
     let cmd = test_cmd();
-    let result = app.get_matches_from(cmd, ["myapp", "--help"]);
+    let result = app.get_matches_from(
+        cmd,
+        ["myapp", "--help"],
+        &standout::InputSources::from_process(),
+    );
     match result {
         HelpResult::Error(e) => {
             assert_eq!(e.kind(), clap::error::ErrorKind::DisplayHelp);
@@ -473,7 +521,11 @@ fn test_help_flag_works_with_required_args() {
             .about("Greet someone")
             .arg(clap::Arg::new("name").required(true)),
     );
-    let result = app.get_matches_from(cmd, ["myapp", "greet", "--help"]);
+    let result = app.get_matches_from(
+        cmd,
+        ["myapp", "greet", "--help"],
+        &standout::InputSources::from_process(),
+    );
     let output = extract_help(result);
     assert!(output.contains("greet"), "output:\n{output}");
 }

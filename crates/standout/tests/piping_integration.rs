@@ -2,21 +2,33 @@ use clap::Command;
 use console::Style;
 use serde_json::json;
 use standout::cli::{App, DispatchResult, Output};
+use standout::EmbeddedTemplates;
 use standout::Theme;
 use std::sync::Arc;
 use std::time::Duration;
 
+const TEMPLATES: &[(&str, &str)] = &[
+    ("list", "{{ items | join(\", \") }}"),
+    ("filter", "{{ lines }}"),
+    ("chain", "{{ data }}"),
+    ("slow", "{{ msg }}"),
+    ("process", "{{ text }}"),
+    ("upper", "{{ text }}"),
+    ("fail", "{{ text }}"),
+    ("styled", "[highlight]{{ text }}[/highlight]"),
+    ("test", "[bold]{{ msg }}[/bold]"),
+    ("copy", "[red]{{ secret }}[/red]"),
+];
+
 #[test]
 fn test_pipe_to_passthrough() {
     let app = App::builder()
+        .templates(EmbeddedTemplates::new(TEMPLATES, ""))
         .commands(|g| {
             g.command_with(
                 "list",
                 |_m, _ctx| Ok(Output::Render(json!({"items": ["foo", "bar", "baz"]}))),
-                |cfg| {
-                    cfg.template("{{ items | join(\", \") }}")
-                        .pipe_to(if cfg!(windows) { "more" } else { "cat" })
-                },
+                |cfg| cfg.pipe_to(if cfg!(windows) { "more" } else { "cat" }),
             )
         })
         .unwrap()
@@ -24,7 +36,12 @@ fn test_pipe_to_passthrough() {
         .unwrap();
 
     let cmd = Command::new("test").subcommand(Command::new("list"));
-    let result = app.run_to_string(cmd, vec!["test", "list"]);
+    let result = app.run_with(
+        cmd,
+        vec!["test", "list"],
+        standout::TargetProperties::detect(),
+        standout::InputSources::from_process(),
+    );
 
     if let DispatchResult::Handled(output) = result.outcome() {
         assert_eq!(output, "foo, bar, baz");
@@ -36,12 +53,13 @@ fn test_pipe_to_passthrough() {
 #[test]
 fn test_pipe_through_capture() {
     let app = App::builder()
+        .templates(EmbeddedTemplates::new(TEMPLATES, ""))
         .commands(|g| {
             g.command_with(
                 "filter",
                 |_m, _ctx| Ok(Output::Render(json!({"lines": "foo\nbar\nbaz"}))),
                 |cfg| {
-                    cfg.template("{{ lines }}").pipe_through(if cfg!(windows) {
+                    cfg.pipe_through(if cfg!(windows) {
                         "findstr foo"
                     } else {
                         "grep foo"
@@ -54,7 +72,12 @@ fn test_pipe_through_capture() {
         .unwrap();
 
     let cmd = Command::new("test").subcommand(Command::new("filter"));
-    let result = app.run_to_string(cmd, vec!["test", "filter"]);
+    let result = app.run_with(
+        cmd,
+        vec!["test", "filter"],
+        standout::TargetProperties::detect(),
+        standout::InputSources::from_process(),
+    );
 
     if let DispatchResult::Handled(output) = result.outcome() {
         assert_eq!(output.trim(), "foo");
@@ -66,18 +89,18 @@ fn test_pipe_through_capture() {
 #[test]
 fn test_pipe_chaining() {
     let app = App::builder()
+        .templates(EmbeddedTemplates::new(TEMPLATES, ""))
         .commands(|g| {
             g.command_with(
                 "chain",
                 |_m, _ctx| Ok(Output::Render(json!({"data": "hello world"}))),
                 |cfg| {
-                    cfg.template("{{ data }}")
-                        .pipe_through(if cfg!(windows) {
-                            "findstr hello"
-                        } else {
-                            "grep hello"
-                        })
-                        .pipe_to(if cfg!(windows) { "more" } else { "cat" })
+                    cfg.pipe_through(if cfg!(windows) {
+                        "findstr hello"
+                    } else {
+                        "grep hello"
+                    })
+                    .pipe_to(if cfg!(windows) { "more" } else { "cat" })
                 },
             )
         })
@@ -86,7 +109,12 @@ fn test_pipe_chaining() {
         .unwrap();
 
     let cmd = Command::new("test").subcommand(Command::new("chain"));
-    let result = app.run_to_string(cmd, vec!["test", "chain"]);
+    let result = app.run_with(
+        cmd,
+        vec!["test", "chain"],
+        standout::TargetProperties::detect(),
+        standout::InputSources::from_process(),
+    );
 
     if let DispatchResult::Handled(output) = result.outcome() {
         assert!(output.contains("hello"));
@@ -98,12 +126,13 @@ fn test_pipe_chaining() {
 #[test]
 fn test_pipe_with_custom_timeout() {
     let app = App::builder()
+        .templates(EmbeddedTemplates::new(TEMPLATES, ""))
         .commands(|g| {
             g.command_with(
                 "slow",
                 |_m, _ctx| Ok(Output::Render(json!({"msg": "done"}))),
                 |cfg| {
-                    cfg.template("{{ msg }}").pipe_to_with_timeout(
+                    cfg.pipe_to_with_timeout(
                         if cfg!(windows) { "more" } else { "cat" },
                         Duration::from_secs(60),
                     )
@@ -115,7 +144,12 @@ fn test_pipe_with_custom_timeout() {
         .unwrap();
 
     let cmd = Command::new("test").subcommand(Command::new("slow"));
-    let result = app.run_to_string(cmd, vec!["test", "slow"]);
+    let result = app.run_with(
+        cmd,
+        vec!["test", "slow"],
+        standout::TargetProperties::detect(),
+        standout::InputSources::from_process(),
+    );
 
     if let DispatchResult::Handled(output) = result.outcome() {
         assert_eq!(output, "done");
@@ -127,12 +161,13 @@ fn test_pipe_with_custom_timeout() {
 #[test]
 fn test_pipe_through_with_custom_timeout() {
     let app = App::builder()
+        .templates(EmbeddedTemplates::new(TEMPLATES, ""))
         .commands(|g| {
             g.command_with(
                 "process",
                 |_m, _ctx| Ok(Output::Render(json!({"text": "abc\ndef"}))),
                 |cfg| {
-                    cfg.template("{{ text }}").pipe_through_with_timeout(
+                    cfg.pipe_through_with_timeout(
                         if cfg!(windows) {
                             "findstr abc"
                         } else {
@@ -148,7 +183,12 @@ fn test_pipe_through_with_custom_timeout() {
         .unwrap();
 
     let cmd = Command::new("test").subcommand(Command::new("process"));
-    let result = app.run_to_string(cmd, vec!["test", "process"]);
+    let result = app.run_with(
+        cmd,
+        vec!["test", "process"],
+        standout::TargetProperties::detect(),
+        standout::InputSources::from_process(),
+    );
 
     if let DispatchResult::Handled(output) = result.outcome() {
         assert_eq!(output.trim(), "abc");
@@ -170,11 +210,12 @@ fn test_pipe_with_custom_target() {
     }
 
     let app = App::builder()
+        .templates(EmbeddedTemplates::new(TEMPLATES, ""))
         .commands(|g| {
             g.command_with(
                 "upper",
                 |_m, _ctx| Ok(Output::Render(json!({"text": "hello"}))),
-                |cfg| cfg.template("{{ text }}").pipe_with(UppercasePipe),
+                |cfg| cfg.pipe_with(UppercasePipe),
             )
         })
         .unwrap()
@@ -182,7 +223,12 @@ fn test_pipe_with_custom_target() {
         .unwrap();
 
     let cmd = Command::new("test").subcommand(Command::new("upper"));
-    let result = app.run_to_string(cmd, vec!["test", "upper"]);
+    let result = app.run_with(
+        cmd,
+        vec!["test", "upper"],
+        standout::TargetProperties::detect(),
+        standout::InputSources::from_process(),
+    );
 
     if let DispatchResult::Handled(output) = result.outcome() {
         assert_eq!(output, "HELLO");
@@ -195,11 +241,12 @@ fn test_pipe_with_custom_target() {
 fn test_pipe_command_failure() {
     use standout::cli::{ExitStatus, HookPhase, RunErrorKind};
     let app = App::builder()
+        .templates(EmbeddedTemplates::new(TEMPLATES, ""))
         .commands(|g| {
             g.command_with(
                 "fail",
                 |_m, _ctx| Ok(Output::Render(json!({"text": "test"}))),
-                |cfg| cfg.template("{{ text }}").pipe_through("exit 1"),
+                |cfg| cfg.pipe_through("exit 1"),
             )
         })
         .unwrap()
@@ -207,7 +254,12 @@ fn test_pipe_command_failure() {
         .unwrap();
 
     let cmd = Command::new("test").subcommand(Command::new("fail"));
-    let result = app.run_to_string(cmd, vec!["test", "fail"]);
+    let result = app.run_with(
+        cmd,
+        vec!["test", "fail"],
+        standout::TargetProperties::detect(),
+        standout::InputSources::from_process(),
+    );
 
     assert_eq!(result.exit_status(), Some(ExitStatus::FAILURE));
     assert_eq!(
@@ -246,15 +298,13 @@ fn test_pipe_strips_ansi_codes() {
     let theme = Theme::new().add("highlight", Style::new().green().force_styling(true));
 
     let app = App::builder()
+        .templates(EmbeddedTemplates::new(TEMPLATES, ""))
         .theme(theme)
         .commands(|g| {
             g.command_with(
                 "styled",
                 |_m, _ctx| Ok(Output::Render(json!({"text": "hello"}))),
-                move |cfg| {
-                    cfg.template("[highlight]{{ text }}[/highlight]")
-                        .pipe_with(CapturePipe(capture_clone.clone()))
-                },
+                move |cfg| cfg.pipe_with(CapturePipe(capture_clone.clone())),
             )
         })
         .unwrap()
@@ -262,7 +312,12 @@ fn test_pipe_strips_ansi_codes() {
         .unwrap();
 
     let cmd = Command::new("test").subcommand(Command::new("styled"));
-    let _result = app.run_to_string(cmd, vec!["test", "styled"]);
+    let _result = app.run_with(
+        cmd,
+        vec!["test", "styled"],
+        standout::TargetProperties::detect(),
+        standout::InputSources::from_process(),
+    );
 
     let piped_content = captured.lock().unwrap();
     assert!(
@@ -282,15 +337,13 @@ fn test_pipe_preserves_terminal_formatting_in_passthrough() {
     let theme = Theme::new().add("bold", Style::new().bold().force_styling(true));
 
     let app = App::builder()
+        .templates(EmbeddedTemplates::new(TEMPLATES, ""))
         .theme(theme)
         .commands(|g| {
             g.command_with(
                 "test",
                 |_m, _ctx| Ok(Output::Render(json!({"msg": "world"}))),
-                move |cfg| {
-                    cfg.template("[bold]{{ msg }}[/bold]")
-                        .pipe_to(if cfg!(windows) { "more" } else { "cat" })
-                },
+                move |cfg| cfg.pipe_to(if cfg!(windows) { "more" } else { "cat" }),
             )
         })
         .unwrap()
@@ -298,7 +351,12 @@ fn test_pipe_preserves_terminal_formatting_in_passthrough() {
         .unwrap();
 
     let cmd = Command::new("app").subcommand(Command::new("test"));
-    let result = app.run_to_string(cmd, vec!["app", "test"]);
+    let result = app.run_with(
+        cmd,
+        vec!["app", "test"],
+        standout::TargetProperties::detect(),
+        standout::InputSources::from_process(),
+    );
 
     if let DispatchResult::Handled(terminal_output) = result.outcome() {
         assert!(
@@ -330,15 +388,13 @@ fn test_clipboard_receives_plain_text() {
     let theme = Theme::new().add("red", Style::new().red().force_styling(true));
 
     let app = App::builder()
+        .templates(EmbeddedTemplates::new(TEMPLATES, ""))
         .theme(theme)
         .commands(|g| {
             g.command_with(
                 "copy",
                 |_m, _ctx| Ok(Output::Render(json!({"secret": "password123"}))),
-                move |cfg| {
-                    cfg.template("[red]{{ secret }}[/red]")
-                        .pipe_with(MockClipboard(copied_clone.clone()))
-                },
+                move |cfg| cfg.pipe_with(MockClipboard(copied_clone.clone())),
             )
         })
         .unwrap()
@@ -346,7 +402,12 @@ fn test_clipboard_receives_plain_text() {
         .unwrap();
 
     let cmd = Command::new("test").subcommand(Command::new("copy"));
-    let _result = app.run_to_string(cmd, vec!["test", "copy"]);
+    let _result = app.run_with(
+        cmd,
+        vec!["test", "copy"],
+        standout::TargetProperties::detect(),
+        standout::InputSources::from_process(),
+    );
 
     let clipboard_content = copied.lock().unwrap();
     assert!(

@@ -13,9 +13,7 @@ use crate::{ColorPolicy, RenderRequest, StructuredOutputProjection, TargetProper
 use serde::Serialize;
 use standout_render::render_request_split;
 
-pub use standout_dispatch::{
-    extract_command_path, get_deepest_matches, has_subcommand, insert_default_command,
-};
+pub use standout_dispatch::{extract_command_path, get_deepest_matches};
 
 pub enum DispatchOutput {
     Text {
@@ -37,7 +35,7 @@ fn render_time_template(
     output_mode: crate::OutputMode,
 ) -> Result<standout_render::TemplateRef, RunError> {
     match template {
-        TemplateRef::Named(name) | TemplateRef::Convention(name) => {
+        TemplateRef::Named(name) => {
             if template_registry.is_none() {
                 return Err(RunError::new(
                     format!(
@@ -48,7 +46,6 @@ fn render_time_template(
             }
             Ok(standout_render::TemplateRef::Named(name.clone()))
         }
-        TemplateRef::Inline(source) => Ok(standout_render::TemplateRef::Inline(source.clone())),
         TemplateRef::Absent(reason) => {
             match reason {
                 TemplateAbsence::Silent | TemplateAbsence::Binary => Err(

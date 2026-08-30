@@ -1,21 +1,26 @@
 use clap::Command;
 use insta::{assert_json_snapshot, assert_snapshot};
 use serde_json::json;
+use standout::cli::FnHandler;
 use standout::cli::{App, Output};
+use standout::EmbeddedTemplates;
 use standout::{AmbiguousWidth, ColorMode, IconMode, InputSources, OutputMode, TargetProperties};
+
+const TEMPLATES: &[(&str, &str)] = &[("list", "Items: {{ items }}\nCount: {{ count }}")];
 
 #[test]
 fn test_snapshots_term_output() {
     let app = App::builder()
-        .command(
+        .templates(EmbeddedTemplates::new(TEMPLATES, ""))
+        .command_with(
             "list",
-            |_m, _ctx| {
+            FnHandler::new(|_m, _ctx| {
                 Ok(Output::Render(json!({
                     "items": ["apple", "banana", "cherry"],
                     "count": 3
                 })))
-            },
-            "Items: {{ items }}\nCount: {{ count }}",
+            }),
+            |cfg| cfg,
         )
         .unwrap()
         .build()
@@ -36,15 +41,16 @@ fn test_snapshots_term_output() {
 #[test]
 fn test_snapshots_json_output() {
     let app = App::builder()
-        .command(
+        .templates(EmbeddedTemplates::new(TEMPLATES, ""))
+        .command_with(
             "list",
-            |_m, _ctx| {
+            FnHandler::new(|_m, _ctx| {
                 Ok(Output::Render(json!({
                     "items": ["apple", "banana", "cherry"],
                     "count": 3
                 })))
-            },
-            "Items: {{ items }}\nCount: {{ count }}",
+            }),
+            |cfg| cfg,
         )
         .unwrap()
         .build()
@@ -66,11 +72,12 @@ fn test_snapshots_json_output() {
 #[test]
 fn test_snapshots_error_handling() {
     let app = App::builder()
+        .templates(EmbeddedTemplates::new(TEMPLATES, ""))
         .command_with(
             "fail",
-            |_m, _ctx| -> standout::cli::HandlerResult<()> {
+            FnHandler::new(|_m, _ctx| -> standout::cli::HandlerResult<()> {
                 Err(anyhow::anyhow!("Critical failure in operation"))
-            },
+            }),
             |config| config.silent(),
         )
         .unwrap()

@@ -1,11 +1,21 @@
 use clap::{Arg, Command};
 use serde_json::{json, Value};
 use standout::cli::hooks::TextOutput;
+use standout::cli::FnHandler;
 use standout::cli::{
     App, DispatchResult, ExitStatus, Output, RenderedOutput, RunErrorKind, SuccessKind,
 };
 use standout::tabular::{Column, Width};
+use standout::EmbeddedTemplates;
 use standout::{CsvProjection, OutputMode, StructuredOutputProjection};
+
+const TEMPLATES: &[(&str, &str)] = &[
+    ("summary", "unused"),
+    (
+        "summary-2",
+        "{{ totals.files }} files / {{ totals.code }} lines",
+    ),
+];
 
 const EXPECTED_CSV: &str =
     "LANGUAGE,FILES,CODE,NET\nRust,3,120,100\nPython,2,70,60\nTOTAL,5,190,160\nSKIPPED,1,-,-\n";
@@ -87,12 +97,13 @@ fn command_with_output() -> Command {
 
 fn app() -> App {
     App::builder()
+        .templates(EmbeddedTemplates::new(TEMPLATES, ""))
         .command_with(
             "summary",
-            |_matches, _ctx| Ok(Output::Render(response())),
+            FnHandler::new(|_matches, _ctx| Ok(Output::Render(response()))),
             |config| {
                 config
-                    .template("{{ totals.files }} files / {{ totals.code }} lines")
+                    .template_name("summary-2")
                     .structured_output_projection(rustloc_projection())
             },
         )
@@ -123,7 +134,9 @@ fn run_command_and_dispatch_agree_on_csv_projection() {
             "summary",
             sub,
             |_matches, _ctx| Ok(Output::Render(response())),
-            "{{ totals.files }} files / {{ totals.code }} lines",
+            standout::TemplateRef::Inline(
+                ("{{ totals.files }} files / {{ totals.code }} lines").to_string(),
+            ),
         )
         .expect("run_command should render csv");
 
@@ -157,10 +170,11 @@ fn csv_projection_preserves_canonical_output_in_other_modes() {
 #[test]
 fn commands_without_a_projection_keep_automatic_csv_flattening() {
     let app = App::builder()
-        .command(
+        .templates(EmbeddedTemplates::new(TEMPLATES, ""))
+        .command_with(
             "summary",
-            |_matches, _ctx| Ok(Output::Render(json!([{ "name": "alpha" }]))),
-            "unused",
+            FnHandler::new(|_matches, _ctx| Ok(Output::Render(json!([{ "name": "alpha" }])))),
+            |cfg| cfg,
         )
         .unwrap()
         .build()
@@ -172,7 +186,12 @@ fn commands_without_a_projection_keep_automatic_csv_flattening() {
 #[test]
 fn run_to_string_and_output_file_use_the_same_projection() {
     let app = app();
-    let result = app.run_to_string(command(), ["rustloc", "summary", "--output=csv"]);
+    let result = app.run_with(
+        command(),
+        ["rustloc", "summary", "--output=csv"],
+        standout::TargetProperties::detect(),
+        standout::InputSources::from_process(),
+    );
     assert_eq!(result.exit_status(), Some(ExitStatus::SUCCESS));
     assert_eq!(result.success_kind(), Some(SuccessKind::Command));
     let DispatchResult::Handled(output) = result.into_outcome() else {
@@ -183,9 +202,11 @@ fn run_to_string_and_output_file_use_the_same_projection() {
     let tempdir = tempfile::tempdir().unwrap();
     let output_path = tempdir.path().join("summary.csv");
     let output_arg = format!("--output-file-path={}", output_path.display());
-    let file_result = app.run_to_string(
+    let file_result = app.run_with(
         command(),
         ["rustloc", "summary", "--output=csv", &output_arg],
+        standout::TargetProperties::detect(),
+        standout::InputSources::from_process(),
     );
     assert_eq!(file_result.exit_status(), Some(ExitStatus::SUCCESS));
     let DispatchResult::Handled(stdout) = file_result.into_outcome() else {
@@ -203,9 +224,10 @@ fn projection_failures_are_typed_render_errors() {
             .build(),
     );
     let app = App::builder()
+        .templates(EmbeddedTemplates::new(TEMPLATES, ""))
         .command_with(
             "summary",
-            |_matches, _ctx| Ok(Output::Render(response())),
+            FnHandler::new(|_matches, _ctx| Ok(Output::Render(response()))),
             |config| {
                 config
                     .structured_only()
@@ -216,7 +238,12 @@ fn projection_failures_are_typed_render_errors() {
         .build()
         .unwrap();
 
-    let result = app.run_to_string(command(), ["rustloc", "summary", "--output=csv"]);
+    let result = app.run_with(
+        command(),
+        ["rustloc", "summary", "--output=csv"],
+        standout::TargetProperties::detect(),
+        standout::InputSources::from_process(),
+    );
 
     assert_eq!(result.exit_status(), Some(ExitStatus::FAILURE));
     assert_eq!(result.error_kind(), Some(RunErrorKind::Render));
@@ -226,9 +253,10 @@ fn projection_failures_are_typed_render_errors() {
 #[test]
 fn projection_runs_between_post_dispatch_and_post_output() {
     let app = App::builder()
+        .templates(EmbeddedTemplates::new(TEMPLATES, ""))
         .command_with(
             "summary",
-            |_matches, _ctx| Ok(Output::Render(response())),
+            FnHandler::new(|_matches, _ctx| Ok(Output::Render(response()))),
             |config| {
                 config
                     .structured_only()

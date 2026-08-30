@@ -1,80 +1,15 @@
 use clap::ArgMatches;
 use serde::Serialize;
 
-use super::{
-    inline_template_ref, AppBuilder, HookRegistrationSource, PendingCommand, TemplateAbsence,
-    TemplateRef,
-};
+use super::{AppBuilder, HookRegistrationSource, PendingCommand, TemplateAbsence, TemplateRef};
 use crate::cli::group::{
-    ClosureRecipe, CommandConfig, ErasedConfigRecipe, GroupBuilder, GroupEntry, PassthroughRecipe,
-    StructRecipe,
+    CommandConfig, ErasedConfigRecipe, GroupBuilder, GroupEntry, PassthroughRecipe, StructRecipe,
 };
-use crate::cli::handler::{CommandContext, FnHandler, Handler, HandlerResult};
+use crate::cli::handler::{CommandContext, Handler};
 use crate::cli::hooks::Hooks;
 use crate::setup::SetupError;
 
 impl AppBuilder {
-    pub fn group<F>(mut self, name: &str, configure: F) -> Result<Self, SetupError>
-    where
-        F: FnOnce(GroupBuilder) -> GroupBuilder,
-    {
-        let builder = configure(GroupBuilder::new());
-        self.register_group(name, builder)?;
-        Ok(self)
-    }
-
-    pub fn command_with<F, T, C>(
-        mut self,
-        path: &str,
-        handler: F,
-        configure: C,
-    ) -> Result<Self, SetupError>
-    where
-        F: FnMut(&ArgMatches, &CommandContext) -> HandlerResult<T> + 'static,
-        T: Serialize + 'static,
-        C: FnOnce(CommandConfig<FnHandler<F, T>>) -> CommandConfig<FnHandler<F, T>>,
-    {
-        let config = CommandConfig::new(FnHandler::new(handler));
-        let mut config = configure(config);
-
-        let template = if let Some(absence) = config.template_absence {
-            TemplateRef::Absent(absence)
-        } else if let Some(name) = config.template_name.clone() {
-            TemplateRef::Named(name)
-        } else if let Some(template) = config.template.clone() {
-            inline_template_ref(template, "CommandConfig::template")?
-        } else {
-            TemplateRef::convention(path)
-        };
-
-        if let Some(hooks) = config.hooks.take() {
-            self.register_command_hooks(path, hooks, HookRegistrationSource::CommandConfig)?;
-        }
-        if let Some(questionnaire) = config.questionnaire.take() {
-            self.questionnaire_commands
-                .insert(path.to_string(), questionnaire);
-        }
-
-        let mut recipe = ClosureRecipe::new(config.handler);
-        if let Some(projection) = config.structured_output_projection {
-            recipe = recipe.with_structured_output_projection(projection);
-        }
-
-        if self.pending_commands.borrow().contains_key(path) {
-            return Err(SetupError::DuplicateCommand(path.to_string()));
-        }
-
-        self.pending_commands.borrow_mut().insert(
-            path.to_string(),
-            PendingCommand {
-                recipe: Box::new(recipe),
-                template,
-            },
-        );
-
-        Ok(self)
-    }
-
     pub(crate) fn register_group(
         &mut self,
         prefix: &str,
@@ -89,8 +24,6 @@ impl AppBuilder {
                         TemplateRef::Absent(absence)
                     } else if let Some(name) = handler.template_name() {
                         TemplateRef::Named(name.to_string())
-                    } else if let Some(template) = handler.template() {
-                        inline_template_ref(template, "CommandConfig::template")?
                     } else {
                         TemplateRef::convention(&path)
                     };
@@ -129,36 +62,9 @@ impl AppBuilder {
         Ok(())
     }
 
-    pub fn command<F, T>(self, path: &str, handler: F, template: &str) -> Result<Self, SetupError>
-    where
-        F: FnMut(&ArgMatches, &CommandContext) -> HandlerResult<T> + 'static,
-        T: Serialize + 'static,
-    {
-        self.register_struct_config(
-            path,
-            CommandConfig::new(FnHandler::new(handler)).template(template),
-            "AppBuilder::command",
-        )
-    }
-
-    pub fn command_handler<H, T>(
-        self,
-        path: &str,
-        handler: H,
-        template: &str,
-    ) -> Result<Self, SetupError>
-    where
-        H: Handler<Output = T> + 'static,
-        T: Serialize + 'static,
-    {
-        self.register_struct_config(
-            path,
-            CommandConfig::new(handler).template(template),
-            "AppBuilder::command_handler",
-        )
-    }
-
-    pub fn command_handler_with<H, T, C>(
+    /// Secondary path (ADR-0032): the per-command escape hatch, for one command bolted onto a
+    /// derive-registered app or a handler the derive cannot spell.
+    pub fn command_with<H, T, C>(
         self,
         path: &str,
         handler: H,
@@ -169,18 +75,13 @@ impl AppBuilder {
         T: Serialize + 'static,
         C: FnOnce(CommandConfig<H>) -> CommandConfig<H>,
     {
-        self.register_struct_config(
-            path,
-            configure(CommandConfig::new(handler)),
-            "CommandConfig::template",
-        )
+        self.register_struct_config(path, configure(CommandConfig::new(handler)))
     }
 
     fn register_struct_config<H, T>(
         mut self,
         path: &str,
         mut config: CommandConfig<H>,
-        inline_api: &str,
     ) -> Result<Self, SetupError>
     where
         H: Handler<Output = T> + 'static,
@@ -190,8 +91,6 @@ impl AppBuilder {
             TemplateRef::Absent(absence)
         } else if let Some(name) = config.template_name.take() {
             TemplateRef::Named(name)
-        } else if let Some(template) = config.template.take() {
-            inline_template_ref(template, inline_api)?
         } else {
             TemplateRef::convention(path)
         };
@@ -224,6 +123,7 @@ impl AppBuilder {
         Ok(self)
     }
 
+    /// Secondary path (ADR-0032): a handler that owns its own bytes, with no serializable output and no render.
     pub fn command_passthrough<F>(self, path: &str, handler: F) -> Result<Self, SetupError>
     where
         F: FnMut(&ArgMatches, &CommandContext) -> Result<(), anyhow::Error> + 'static,
@@ -293,6 +193,18 @@ impl AppBuilder {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::EmbeddedTemplates;
+
+    const TEMPLATES: &[(&str, &str)] = &[
+        ("migrate-2", "{{ done }}"),
+        ("db/migrate", "Migrated {{ count }} tables"),
+        ("list-2", "{{ ok }}"),
+        ("list", "Items: {{ items }}"),
+        ("version", "{{ v }}"),
+        ("list-3", "Items: {{ items | length }}"),
+    ];
+
+    use crate::cli::handler::FnHandler;
     use crate::cli::handler::Output as HandlerOutput;
     use crate::OutputMode;
     use clap::Command;
@@ -302,10 +214,11 @@ mod tests {
         use serde_json::json;
 
         let builder = AppBuilder::new()
-            .command(
+            .templates(EmbeddedTemplates::new(TEMPLATES, ""))
+            .command_with(
                 "list",
-                |_m, _ctx| Ok(HandlerOutput::Render(json!({"items": ["a", "b"]}))),
-                "Items: {{ items }}",
+                FnHandler::new(|_m, _ctx| Ok(HandlerOutput::Render(json!({"items": ["a", "b"]})))),
+                |cfg| cfg,
             )
             .unwrap();
 
@@ -331,15 +244,15 @@ mod tests {
         let counter_clone = counter.clone();
 
         let builder = AppBuilder::new()
+            .templates(EmbeddedTemplates::new(TEMPLATES, ""))
             .command_with(
                 "list",
-                |_m, _ctx| Ok(HandlerOutput::Render(json!({"items": ["a", "b"]}))),
+                FnHandler::new(|_m, _ctx| Ok(HandlerOutput::Render(json!({"items": ["a", "b"]})))),
                 move |cfg| {
-                    cfg.template("Items: {{ items | length }}")
-                        .pre_dispatch(move |_, _| {
-                            counter_clone.fetch_add(1, Ordering::SeqCst);
-                            Ok(())
-                        })
+                    cfg.template_name("list-3").pre_dispatch(move |_, _| {
+                        counter_clone.fetch_add(1, Ordering::SeqCst);
+                        Ok(())
+                    })
                 },
             )
             .unwrap();
@@ -361,10 +274,11 @@ mod tests {
         use serde_json::json;
 
         let builder = AppBuilder::new()
+            .templates(EmbeddedTemplates::new(TEMPLATES, ""))
             .command_with(
                 "list",
-                |_m, _ctx| Ok(HandlerOutput::Render(json!({"ok": true}))),
-                |cfg| cfg.template("{{ ok }}").pre_dispatch(|_, _| Ok(())),
+                FnHandler::new(|_m, _ctx| Ok(HandlerOutput::Render(json!({"ok": true})))),
+                |cfg| cfg.template_name("list-2").pre_dispatch(|_, _| Ok(())),
             )
             .unwrap()
             .hooks("list", Hooks::new().pre_dispatch(|_, _| Ok(())));
@@ -386,12 +300,13 @@ mod tests {
         use serde_json::json;
 
         let error = match AppBuilder::new()
+            .templates(EmbeddedTemplates::new(TEMPLATES, ""))
             .hooks("list", Hooks::new().post_output(|_, _, output| Ok(output)))
             .command_with(
                 "list",
-                |_m, _ctx| Ok(HandlerOutput::Render(json!({"ok": true}))),
+                FnHandler::new(|_m, _ctx| Ok(HandlerOutput::Render(json!({"ok": true})))),
                 |cfg| {
-                    cfg.template("{{ ok }}")
+                    cfg.template_name("list-2")
                         .post_output(|_, _, output: RenderedOutput| Ok(output))
                 },
             ) {
@@ -415,6 +330,7 @@ mod tests {
         let post_calls = calls.clone();
 
         let app = AppBuilder::new()
+            .templates(EmbeddedTemplates::new(TEMPLATES, ""))
             .hooks(
                 "list",
                 Hooks::new().post_output(move |_, _, output: RenderedOutput| {
@@ -424,9 +340,9 @@ mod tests {
             )
             .command_with(
                 "list",
-                |_m, _ctx| Ok(HandlerOutput::Render(json!({"ok": true}))),
+                FnHandler::new(|_m, _ctx| Ok(HandlerOutput::Render(json!({"ok": true})))),
                 move |cfg| {
-                    cfg.template("{{ ok }}").pre_dispatch(move |_, _| {
+                    cfg.template_name("list-2").pre_dispatch(move |_, _| {
                         pre_calls.fetch_add(1, Ordering::SeqCst);
                         Ok(())
                     })
@@ -451,12 +367,13 @@ mod tests {
         use serde_json::json;
 
         let error = match AppBuilder::new()
+            .templates(EmbeddedTemplates::new(TEMPLATES, ""))
             .hooks("list", Hooks::new().pre_dispatch(|_, _| Ok(())))
             .commands(|g| {
                 g.command_with(
                     "list",
                     |_m, _ctx| Ok(HandlerOutput::Render(json!({"ok": true}))),
-                    |cfg| cfg.template("{{ ok }}").pre_dispatch(|_, _| Ok(())),
+                    |cfg| cfg.template_name("list-2").pre_dispatch(|_, _| Ok(())),
                 )
             }) {
             Ok(_) => panic!("expected duplicate hook registration to fail"),
@@ -469,12 +386,13 @@ mod tests {
         assert!(error.contains("AppBuilder::hooks"));
 
         let builder = AppBuilder::new()
+            .templates(EmbeddedTemplates::new(TEMPLATES, ""))
             .commands(|g| {
                 g.command_with(
                     "list",
                     |_m, _ctx| Ok(HandlerOutput::Render(json!({"ok": true}))),
                     |cfg| {
-                        cfg.template("{{ ok }}")
+                        cfg.template_name("list-2")
                             .post_output(|_, _, output: RenderedOutput| Ok(output))
                     },
                 )
@@ -503,6 +421,7 @@ mod tests {
         let post_calls = calls.clone();
 
         let app = AppBuilder::new()
+            .templates(EmbeddedTemplates::new(TEMPLATES, ""))
             .hooks(
                 "list",
                 Hooks::new().post_output(move |_, _, output: RenderedOutput| {
@@ -515,7 +434,7 @@ mod tests {
                     "list",
                     |_m, _ctx| Ok(HandlerOutput::Render(json!({"ok": true}))),
                     move |cfg| {
-                        cfg.template("{{ ok }}").pre_dispatch(move |_, _| {
+                        cfg.template_name("list-2").pre_dispatch(move |_, _| {
                             pre_calls.fetch_add(1, Ordering::SeqCst);
                             Ok(())
                         })
@@ -540,17 +459,20 @@ mod tests {
         use serde_json::json;
 
         let builder = AppBuilder::new()
-            .group("db", |g| {
-                g.command_with(
-                    "migrate",
-                    |_m, _ctx| Ok(HandlerOutput::Render(json!({"status": "migrated"}))),
-                    |cfg| cfg.structured_only(),
-                )
-                .command_with(
-                    "backup",
-                    |_m, _ctx| Ok(HandlerOutput::Render(json!({"status": "backed_up"}))),
-                    |cfg| cfg.structured_only(),
-                )
+            .templates(EmbeddedTemplates::new(TEMPLATES, ""))
+            .commands(|__g| {
+                __g.group("db", |g| {
+                    g.command_with(
+                        "migrate",
+                        |_m, _ctx| Ok(HandlerOutput::Render(json!({"status": "migrated"}))),
+                        |cfg| cfg.structured_only(),
+                    )
+                    .command_with(
+                        "backup",
+                        |_m, _ctx| Ok(HandlerOutput::Render(json!({"status": "backed_up"}))),
+                        |cfg| cfg.structured_only(),
+                    )
+                })
             })
             .unwrap();
         let app = builder.build().unwrap();
@@ -571,23 +493,26 @@ mod tests {
         use serde_json::json;
 
         let builder = AppBuilder::new()
-            .group("app", |g| {
-                g.command_with(
-                    "start",
-                    |_m, _ctx| Ok(HandlerOutput::Render(json!({"action": "start"}))),
-                    |cfg| cfg.structured_only(),
-                )
-                .group("config", |g| {
+            .templates(EmbeddedTemplates::new(TEMPLATES, ""))
+            .commands(|__g| {
+                __g.group("app", |g| {
                     g.command_with(
-                        "get",
-                        |_m, _ctx| Ok(HandlerOutput::Render(json!({"value": "test_value"}))),
+                        "start",
+                        |_m, _ctx| Ok(HandlerOutput::Render(json!({"action": "start"}))),
                         |cfg| cfg.structured_only(),
                     )
-                    .command_with(
-                        "set",
-                        |_m, _ctx| Ok(HandlerOutput::Render(json!({"ok": true}))),
-                        |cfg| cfg.structured_only(),
-                    )
+                    .group("config", |g| {
+                        g.command_with(
+                            "get",
+                            |_m, _ctx| Ok(HandlerOutput::Render(json!({"value": "test_value"}))),
+                            |cfg| cfg.structured_only(),
+                        )
+                        .command_with(
+                            "set",
+                            |_m, _ctx| Ok(HandlerOutput::Render(json!({"ok": true}))),
+                            |cfg| cfg.structured_only(),
+                        )
+                    })
                 })
             })
             .unwrap();
@@ -618,12 +543,15 @@ mod tests {
         use serde_json::json;
 
         let builder = AppBuilder::new()
-            .group("db", |g| {
-                g.command_with(
-                    "migrate",
-                    |_m, _ctx| Ok(HandlerOutput::Render(json!({"count": 5}))),
-                    |cfg| cfg.template("Migrated {{ count }} tables"),
-                )
+            .templates(EmbeddedTemplates::new(TEMPLATES, ""))
+            .commands(|__g| {
+                __g.group("db", |g| {
+                    g.command_with(
+                        "migrate",
+                        |_m, _ctx| Ok(HandlerOutput::Render(json!({"count": 5}))),
+                        |cfg| cfg,
+                    )
+                })
             })
             .unwrap();
         let app = builder.build().unwrap();
@@ -648,17 +576,20 @@ mod tests {
         let hook_called_clone = hook_called.clone();
 
         let builder = AppBuilder::new()
-            .group("db", |g| {
-                g.command_with(
-                    "migrate",
-                    |_m, _ctx| Ok(HandlerOutput::Render(json!({"done": true}))),
-                    move |cfg| {
-                        cfg.template("{{ done }}").pre_dispatch(move |_, _| {
-                            hook_called_clone.store(true, Ordering::SeqCst);
-                            Ok(())
-                        })
-                    },
-                )
+            .templates(EmbeddedTemplates::new(TEMPLATES, ""))
+            .commands(|__g| {
+                __g.group("db", |g| {
+                    g.command_with(
+                        "migrate",
+                        |_m, _ctx| Ok(HandlerOutput::Render(json!({"done": true}))),
+                        move |cfg| {
+                            cfg.template_name("migrate-2").pre_dispatch(move |_, _| {
+                                hook_called_clone.store(true, Ordering::SeqCst);
+                                Ok(())
+                            })
+                        },
+                    )
+                })
             })
             .unwrap();
         let app = builder.build().unwrap();
@@ -678,15 +609,20 @@ mod tests {
         use serde_json::json;
 
         let builder = AppBuilder::new()
-            .group("db", |g| {
-                g.command("migrate", |_m, _ctx| {
-                    Ok(HandlerOutput::Render(json!({"type": "db"})))
+            .templates(EmbeddedTemplates::new(TEMPLATES, ""))
+            .commands(|__g| {
+                __g.group("db", |g| {
+                    g.command("migrate", |_m, _ctx| {
+                        Ok(HandlerOutput::Render(json!({"type": "db"})))
+                    })
                 })
             })
             .unwrap()
-            .group("cache", |g| {
-                g.command("clear", |_m, _ctx| {
-                    Ok(HandlerOutput::Render(json!({"type": "cache"})))
+            .commands(|__g| {
+                __g.group("cache", |g| {
+                    g.command("clear", |_m, _ctx| {
+                        Ok(HandlerOutput::Render(json!({"type": "cache"})))
+                    })
                 })
             })
             .unwrap();
@@ -700,15 +636,18 @@ mod tests {
         use serde_json::json;
 
         let builder = AppBuilder::new()
-            .command(
+            .templates(EmbeddedTemplates::new(TEMPLATES, ""))
+            .command_with(
                 "version",
-                |_m, _ctx| Ok(HandlerOutput::Render(json!({"v": "1.0.0"}))),
-                "{{ v }}",
+                FnHandler::new(|_m, _ctx| Ok(HandlerOutput::Render(json!({"v": "1.0.0"})))),
+                |cfg| cfg,
             )
             .unwrap()
-            .group("db", |g| {
-                g.command("migrate", |_m, _ctx| {
-                    Ok(HandlerOutput::Render(json!({"ok": true})))
+            .commands(|__g| {
+                __g.group("db", |g| {
+                    g.command("migrate", |_m, _ctx| {
+                        Ok(HandlerOutput::Render(json!({"ok": true})))
+                    })
                 })
             })
             .unwrap();
@@ -726,6 +665,7 @@ mod tests {
         let called_clone = called.clone();
 
         let builder = AppBuilder::new()
+            .templates(EmbeddedTemplates::new(TEMPLATES, ""))
             .command_passthrough("init-sh", move |_m, _ctx| {
                 called_clone.store(true, Ordering::SeqCst);
                 Ok(())
@@ -753,10 +693,13 @@ mod tests {
         let called_clone = called.clone();
 
         let builder = AppBuilder::new()
-            .group("shell", |g| {
-                g.passthrough("init", move |_m, _ctx| {
-                    called_clone.store(true, Ordering::SeqCst);
-                    Ok(())
+            .templates(EmbeddedTemplates::new(TEMPLATES, ""))
+            .commands(|__g| {
+                __g.group("shell", |g| {
+                    g.passthrough("init", move |_m, _ctx| {
+                        called_clone.store(true, Ordering::SeqCst);
+                        Ok(())
+                    })
                 })
             })
             .unwrap();

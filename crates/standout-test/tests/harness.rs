@@ -2,30 +2,52 @@ use clap::Command;
 use console::Style;
 use serde_json::json;
 use serial_test::serial;
+use standout::cli::FnHandler;
 use standout::cli::{
     App, Artifact, CommandContextInput, ExitStatus, ExternalFailure, HandlerResult, HookError,
     Hooks, Output, OutputKind, RunErrorKind, SuccessKind,
 };
 use standout::tabular::{Column, Width};
 use standout::views::list_view;
+use standout::EmbeddedTemplates;
 use standout::{
     ColorMode, CsvProjection, IconDefinition, IconMode, StructuredOutputProjection, Theme,
 };
 use standout_input::{ClipboardSource, EnvSource, InputChain, StdinSource};
 use standout_render::{AmbiguousWidth, OutputMode};
 use standout_test::TestHarness;
-fn build_echo_app(template: &'static str) -> App {
+
+const TEMPLATES: &[(&str, &str)] = &[
+    ("say", "[tone]{{ icons.mark }}[/tone]"),
+    ("echo", "{{ msg }}"),
+    ("external-pre", "{{ message }}"),
+    ("whoami", "{{ user }}"),
+    ("tok", "{{ tok }}"),
+    ("read", "{{ val }}"),
+    ("paste", "{{ val }}"),
+    ("wizard", "{{ name }}/{{ proceed }}/{{ title }}"),
+    ("wizard-2", "{{ body }}"),
+    ("cat", "{{ text }}"),
+    ("echo", "{{ msg }}"),
+    ("echo-width", "{{ msg | display_width }}"),
+    (
+        "export",
+        "Wrote {{ report.entries }} entries to {{ receipt.destination }}",
+    ),
+];
+fn build_echo_app(template_name: &'static str) -> App {
     App::builder()
-        .command(
+        .templates(EmbeddedTemplates::new(TEMPLATES, ""))
+        .command_with(
             "echo",
-            |m, _ctx| {
+            FnHandler::new(|m: &clap::ArgMatches, _ctx: &_| {
                 let msg = m
                     .get_one::<String>("msg")
                     .cloned()
                     .unwrap_or_else(|| "no-arg".into());
                 Ok(Output::Render(json!({ "msg": msg })))
-            },
-            template,
+            }),
+            |cfg| cfg.template_name(template_name),
         )
         .unwrap()
         .build()
@@ -41,9 +63,10 @@ struct WidthSensitiveItem {
 }
 fn build_framework_list_view_app() -> App {
     App::builder()
+        .templates(EmbeddedTemplates::new(TEMPLATES, ""))
         .command_with(
             "list",
-            |_matches, _ctx| {
+            FnHandler::new(|_matches, _ctx| {
                 let spec = standout::tabular::TabularSpec::builder()
                     .column(Column::new(Width::Fill).right().key("name"))
                     .build();
@@ -52,7 +75,7 @@ fn build_framework_list_view_app() -> App {
                         .tabular_spec(spec)
                         .build(),
                 ))
-            },
+            }),
             |config| config.template_name("standout/list-view"),
         )
         .unwrap()
@@ -65,7 +88,7 @@ fn list_command() -> Command {
 #[test]
 #[serial]
 fn simple_handler_returns_rendered_text() {
-    let app = build_echo_app("{{ msg }}");
+    let app = build_echo_app("echo");
     let result = TestHarness::new().run(&app, echo_command(), vec!["app", "echo", "hello"]);
     result.assert_success();
     result.assert_stdout_eq("hello");
@@ -74,7 +97,7 @@ fn simple_handler_returns_rendered_text() {
 #[test]
 #[serial]
 fn ambiguous_width_policy_can_be_injected_for_the_same_app_fixture() {
-    let app = build_echo_app("{{ msg | display_width }}");
+    let app = build_echo_app("echo-width");
     let narrow = TestHarness::new()
         .ambiguous_width(AmbiguousWidth::Narrow)
         .run(&app, echo_command(), ["app", "echo", "↦≈Δ"]);
@@ -151,16 +174,17 @@ fn build_detectable_facts_app() -> App {
             Some(Style::new().red()),
         );
     App::builder()
+        .templates(EmbeddedTemplates::new(TEMPLATES, ""))
         .theme(theme)
-        .command(
+        .command_with(
             "say",
-            |_m, _ctx| Ok(Output::Render(json!({}))),
-            "[tone]{{ icons.mark }}[/tone]",
+            FnHandler::new(|_m, _ctx| Ok(Output::Render(json!({})))),
+            |cfg| cfg,
         )
         .unwrap()
         .command_with(
             "list",
-            |_matches, _ctx| {
+            FnHandler::new(|_matches, _ctx| {
                 let spec = standout::tabular::TabularSpec::builder()
                     .column(Column::new(Width::Fill).right().key("name"))
                     .build();
@@ -169,7 +193,7 @@ fn build_detectable_facts_app() -> App {
                         .tabular_spec(spec)
                         .build(),
                 ))
-            },
+            }),
             |config| config.template_name("standout/list-view"),
         )
         .unwrap()
@@ -277,7 +301,7 @@ fn harness_run_is_independent_of_detected_process_facts() {
 #[test]
 #[serial]
 fn harness_exposes_typed_clap_and_handler_outcomes() {
-    let app = build_echo_app("{{ msg }}");
+    let app = build_echo_app("echo");
     let help = TestHarness::new().run(&app, echo_command(), ["app", "--help"]);
     help.assert_success();
     help.assert_exit_status(ExitStatus::SUCCESS);
@@ -287,11 +311,12 @@ fn harness_exposes_typed_clap_and_handler_outcomes() {
     usage.assert_exit_status(ExitStatus::USAGE_ERROR);
     usage.assert_error_kind(RunErrorKind::ClapUsage);
     let failing = App::builder()
+        .templates(EmbeddedTemplates::new(TEMPLATES, ""))
         .command_with(
             "fail",
-            |_matches, _ctx| -> HandlerResult<serde_json::Value> {
+            FnHandler::new(|_matches, _ctx| -> HandlerResult<serde_json::Value> {
                 Err(std::io::Error::other("boom").into())
-            },
+            }),
             |config| config.structured_only(),
         )
         .unwrap()
@@ -307,11 +332,12 @@ fn harness_exposes_typed_clap_and_handler_outcomes() {
 #[serial]
 fn harness_answers_a_version_declared_on_the_builder() {
     let app = App::builder()
+        .templates(EmbeddedTemplates::new(TEMPLATES, ""))
         .version("4.5.6")
-        .command(
+        .command_with(
             "echo",
-            |_m, _ctx| Ok(Output::Render(json!({ "msg": "hi" }))),
-            "{{ msg }}",
+            FnHandler::new(|_m, _ctx| Ok(Output::Render(json!({ "msg": "hi" })))),
+            |cfg| cfg,
         )
         .unwrap()
         .build()
@@ -326,22 +352,25 @@ fn harness_answers_a_version_declared_on_the_builder() {
 #[serial]
 fn harness_exposes_external_failure_payload_status_and_origin() {
     let app = App::builder()
+        .templates(EmbeddedTemplates::new(TEMPLATES, ""))
         .command_with(
             "external",
-            |_matches, _ctx| -> HandlerResult<serde_json::Value> {
+            FnHandler::new(|_matches, _ctx| -> HandlerResult<serde_json::Value> {
                 Err(
                     ExternalFailure::new(128, "fatal: delegated command failed\n")
                         .unwrap()
                         .into(),
                 )
-            },
+            }),
             |config| config.structured_only(),
         )
         .unwrap()
-        .command(
+        .command_with(
             "external-pre",
-            |_matches, _ctx| Ok(Output::Render(json!({ "message": "unreachable" }))),
-            "{{ message }}",
+            FnHandler::new(|_matches, _ctx| {
+                Ok(Output::Render(json!({ "message": "unreachable" })))
+            }),
+            |cfg| cfg,
         )
         .unwrap()
         .hooks(
@@ -375,17 +404,18 @@ fn harness_exposes_external_failure_payload_status_and_origin() {
 #[serial]
 fn env_var_visible_to_handler() {
     let app = App::builder()
-        .command(
+        .templates(EmbeddedTemplates::new(TEMPLATES, ""))
+        .command_with(
             "whoami",
-            |_m, _ctx| {
+            FnHandler::new(|_m, _ctx| {
                 let v = InputChain::<String>::new()
                     .try_source(EnvSource::new("STANDOUT_TEST_USER"))
                     .default("anon".into())
                     .resolve(_m)
                     .unwrap();
                 Ok(Output::Render(json!({ "user": v })))
-            },
-            "{{ user }}",
+            }),
+            |cfg| cfg,
         )
         .unwrap()
         .build()
@@ -403,17 +433,18 @@ fn env_var_visible_to_handler() {
 fn env_remove_hides_existing_value() {
     std::env::set_var("STANDOUT_TEST_TOKEN", "real");
     let app = App::builder()
-        .command(
+        .templates(EmbeddedTemplates::new(TEMPLATES, ""))
+        .command_with(
             "tok",
-            |_m, _ctx| {
+            FnHandler::new(|_m, _ctx| {
                 let v = InputChain::<String>::new()
                     .try_source(EnvSource::new("STANDOUT_TEST_TOKEN"))
                     .default("missing".into())
                     .resolve(_m)
                     .unwrap();
                 Ok(Output::Render(json!({ "tok": v })))
-            },
-            "{{ tok }}",
+            }),
+            |cfg| cfg,
         )
         .unwrap()
         .build()
@@ -433,17 +464,18 @@ fn env_remove_hides_existing_value() {
 #[serial]
 fn piped_stdin_reaches_handler() {
     let app = App::builder()
-        .command(
+        .templates(EmbeddedTemplates::new(TEMPLATES, ""))
+        .command_with(
             "read",
-            |_m, ctx| {
+            FnHandler::new(|_m, ctx| {
                 let v = InputChain::<String>::new()
                     .try_source(StdinSource::new())
                     .default("nothing".into())
                     .resolve_from(_m, ctx.input_sources())
                     .unwrap();
                 Ok(Output::Render(json!({ "val": v })))
-            },
-            "{{ val }}",
+            }),
+            |cfg| cfg,
         )
         .unwrap()
         .build()
@@ -458,17 +490,18 @@ fn piped_stdin_reaches_handler() {
 #[serial]
 fn interactive_stdin_falls_through_to_default() {
     let app = App::builder()
-        .command(
+        .templates(EmbeddedTemplates::new(TEMPLATES, ""))
+        .command_with(
             "read",
-            |_m, ctx| {
+            FnHandler::new(|_m, ctx| {
                 let v = InputChain::<String>::new()
                     .try_source(StdinSource::new())
                     .default("no-pipe".into())
                     .resolve_from(_m, ctx.input_sources())
                     .unwrap();
                 Ok(Output::Render(json!({ "val": v })))
-            },
-            "{{ val }}",
+            }),
+            |cfg| cfg,
         )
         .unwrap()
         .build()
@@ -483,17 +516,18 @@ fn interactive_stdin_falls_through_to_default() {
 #[serial]
 fn clipboard_reaches_handler() {
     let app = App::builder()
-        .command(
+        .templates(EmbeddedTemplates::new(TEMPLATES, ""))
+        .command_with(
             "paste",
-            |_m, ctx| {
+            FnHandler::new(|_m, ctx| {
                 let v = InputChain::<String>::new()
                     .try_source(ClipboardSource::new())
                     .default("empty".into())
                     .resolve_from(_m, ctx.input_sources())
                     .unwrap();
                 Ok(Output::Render(json!({ "val": v })))
-            },
-            "{{ val }}",
+            }),
+            |cfg| cfg,
         )
         .unwrap()
         .build()
@@ -513,9 +547,10 @@ fn scripted_prompts_drive_a_wizard_handler() {
     };
     use std::sync::Arc;
     let app = App::builder()
-        .command(
+        .templates(EmbeddedTemplates::new(TEMPLATES, ""))
+        .command_with(
             "wizard",
-            |_m, ctx| {
+            FnHandler::new(|_m, ctx| {
                 let sources = ctx.input_sources();
                 let name = TextPromptSource::new("Name: ")
                     .prompt_from(sources)
@@ -531,8 +566,8 @@ fn scripted_prompts_drive_a_wizard_handler() {
                     "proceed": proceed,
                     "title": title,
                 })))
-            },
-            "{{ name }}/{{ proceed }}/{{ title }}",
+            }),
+            |cfg| cfg,
         )
         .unwrap()
         .build()
@@ -554,16 +589,17 @@ fn scripted_cancel_propagates_to_handler() {
     use standout_input::{PromptResponse, ScriptedResponder, TextPromptSource};
     use std::sync::Arc;
     let app = App::builder()
-        .command(
+        .templates(EmbeddedTemplates::new(TEMPLATES, ""))
+        .command_with(
             "wizard",
-            |_m, ctx| {
+            FnHandler::new(|_m, ctx| {
                 let body = match TextPromptSource::new("Name: ").prompt_from(ctx.input_sources()) {
                     Ok(name) => format!("ok:{name}"),
                     Err(e) => format!("err:{e}"),
                 };
                 Ok(Output::Render(json!({ "body": body })))
-            },
-            "{{ body }}",
+            }),
+            |cfg| cfg.template_name("wizard-2"),
         )
         .unwrap()
         .build()
@@ -582,16 +618,17 @@ fn responder_is_reset_between_runs() {
     use standout_input::{PromptResponse, ScriptedResponder, TextPromptSource};
     use std::sync::Arc;
     let app = App::builder()
-        .command(
+        .templates(EmbeddedTemplates::new(TEMPLATES, ""))
+        .command_with(
             "wizard",
-            |_m, ctx| {
+            FnHandler::new(|_m, ctx| {
                 let body = match TextPromptSource::new("Name: ").prompt_from(ctx.input_sources()) {
                     Ok(name) => format!("ok:{name}"),
                     Err(e) => format!("err:{e}"),
                 };
                 Ok(Output::Render(json!({ "body": body })))
-            },
-            "{{ body }}",
+            }),
+            |cfg| cfg.template_name("wizard-2"),
         )
         .unwrap()
         .build()
@@ -611,14 +648,15 @@ fn responder_is_reset_between_runs() {
 #[serial]
 fn fixture_files_are_materialized_in_cwd() {
     let app = App::builder()
-        .command(
+        .templates(EmbeddedTemplates::new(TEMPLATES, ""))
+        .command_with(
             "cat",
-            |m, _ctx| {
+            FnHandler::new(|m, _ctx| {
                 let path = m.get_one::<String>("path").cloned().unwrap();
                 let text = std::fs::read_to_string(path).unwrap();
                 Ok(Output::Render(json!({ "text": text })))
-            },
-            "{{ text }}",
+            }),
+            |cfg| cfg,
         )
         .unwrap()
         .build()
@@ -634,7 +672,7 @@ fn fixture_files_are_materialized_in_cwd() {
 #[test]
 #[serial]
 fn output_mode_override_forces_json() {
-    let app = build_echo_app("{{ msg }}");
+    let app = build_echo_app("echo");
     let result = TestHarness::new().output_mode(OutputMode::Json).run(
         &app,
         echo_command(),
@@ -675,9 +713,10 @@ fn rustloc_fixture_uses_configured_csv_projection() {
             .build(),
     );
     let app = App::builder()
+        .templates(EmbeddedTemplates::new(TEMPLATES, ""))
         .command_with(
             "summary",
-            |_matches, _ctx| {
+            FnHandler::new(|_matches, _ctx| {
                 Ok(Output::Render(json!({
                     "items": [
                         { "language": "Rust", "code": 120, "comments": 20 },
@@ -686,7 +725,7 @@ fn rustloc_fixture_uses_configured_csv_projection() {
                     "totals": { "code": 190, "comments": 30 },
                     "skipped": 1
                 })))
-            },
+            }),
             |config| {
                 config
                     .structured_only()
@@ -708,7 +747,7 @@ fn rustloc_fixture_uses_configured_csv_projection() {
 #[test]
 #[serial]
 fn terminal_width_override_does_not_install_a_detector() {
-    let app = build_echo_app("{{ msg }}");
+    let app = build_echo_app("echo");
     let result = TestHarness::new().terminal_width(42).no_color().run(
         &app,
         echo_command(),
@@ -732,7 +771,7 @@ fn fixture_rejects_parent_dir_escape() {
 #[serial]
 fn env_set_then_remove_restores_true_original() {
     std::env::set_var("STANDOUT_DOUBLE_PROBE", "original");
-    let app = build_echo_app("{{ msg }}");
+    let app = build_echo_app("echo");
     {
         let _result = TestHarness::new()
             .env("STANDOUT_DOUBLE_PROBE", "transient")
@@ -749,17 +788,18 @@ fn env_set_then_remove_restores_true_original() {
 #[serial]
 fn output_flag_name_is_configurable() {
     let app = standout::cli::App::builder()
+        .templates(EmbeddedTemplates::new(TEMPLATES, ""))
         .output_flag(Some("format"))
-        .command(
+        .command_with(
             "echo",
-            |m, _ctx| {
+            FnHandler::new(|m, _ctx| {
                 let msg = m
                     .get_one::<String>("msg")
                     .cloned()
                     .unwrap_or_else(|| "no-arg".into());
                 Ok(Output::Render(json!({ "msg": msg })))
-            },
-            "{{ msg }}",
+            }),
+            |cfg| cfg,
         )
         .unwrap()
         .build()
@@ -778,7 +818,7 @@ fn overrides_are_restored_on_drop() {
     let original = std::env::var("STANDOUT_RESTORE_PROBE").ok();
     std::env::set_var("STANDOUT_RESTORE_PROBE", "before");
     {
-        let app = build_echo_app("{{ msg }}");
+        let app = build_echo_app("echo");
         let _result = TestHarness::new()
             .env("STANDOUT_RESTORE_PROBE", "during")
             .env("STANDOUT_BRAND_NEW", "new")
@@ -797,7 +837,7 @@ fn overrides_are_restored_on_drop() {
 #[test]
 #[serial]
 fn no_match_reports_cleanly() {
-    let app = build_echo_app("{{ msg }}");
+    let app = build_echo_app("echo");
     let result = TestHarness::new().run(&app, echo_command(), vec!["app", "unknown"]);
     assert!(
         result.is_error() || result.is_no_match(),
@@ -808,10 +848,11 @@ fn no_match_reports_cleanly() {
 const ARTIFACT_BYTES: &[u8] = b"id,title\n1,buy milk\n";
 fn build_export_app(destination: Option<std::path::PathBuf>) -> App {
     App::builder()
+        .templates(EmbeddedTemplates::new(TEMPLATES, ""))
         .output_file_flag(Some("output-file-path"))
-        .command(
+        .command_with(
             "export",
-            move |_m, _ctx| {
+            FnHandler::new(move |_m, _ctx| {
                 let mut artifact = Artifact::new(ARTIFACT_BYTES.to_vec())
                     .with_report(json!({ "entries": 1, "warnings": ["no due date"] }));
                 artifact = match &destination {
@@ -819,8 +860,8 @@ fn build_export_app(destination: Option<std::path::PathBuf>) -> App {
                     None => artifact.allow_stdout(),
                 };
                 Ok(Output::Artifact(artifact))
-            },
-            "Wrote {{ report.entries }} entries to {{ receipt.destination }}",
+            }),
+            |cfg| cfg,
         )
         .unwrap()
         .build()
