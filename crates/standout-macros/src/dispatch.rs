@@ -19,6 +19,7 @@ struct VariantAttrs {
     name: Option<String>,
     handler: Option<Path>,
     template_name: Option<String>,
+    inputs: Option<Path>,
     silent: bool,
     binary: bool,
     structured_only: bool,
@@ -124,6 +125,13 @@ impl Parse for VariantAttrs {
                         return Err(Error::new(nv.value.span(), "expected string literal"));
                     }
                 }
+                Meta::NameValue(nv) if nv.path.is_ident("inputs") => {
+                    if let Expr::Path(expr_path) = &nv.value {
+                        attrs.inputs = Some(expr_path.path.clone());
+                    } else {
+                        return Err(Error::new(nv.value.span(), "expected path"));
+                    }
+                }
                 Meta::Path(p) if p.is_ident("silent") => {
                     attrs.silent = true;
                 }
@@ -218,7 +226,7 @@ impl Parse for VariantAttrs {
                 _ => {
                     return Err(Error::new(
                         meta.span(),
-                        "unknown attribute, expected one of: name, handler, template_name, silent, binary, structured_only, pre_dispatch, post_dispatch, post_output, questionnaire, nested, skip, default, list_view, item_type, pipe_to, pipe_through, pipe_to_clipboard, simple, pure",
+                        "unknown attribute, expected one of: name, handler, template_name, inputs, silent, binary, structured_only, pre_dispatch, post_dispatch, post_output, questionnaire, nested, skip, default, list_view, item_type, pipe_to, pipe_through, pipe_to_clipboard, simple, pure",
                     ));
                 }
             }
@@ -237,6 +245,7 @@ impl VariantAttrs {
             name,
             handler,
             template_name,
+            inputs,
             silent,
             binary,
             structured_only,
@@ -259,6 +268,7 @@ impl VariantAttrs {
         self.name = name.or(self.name.take());
         self.handler = handler.or(self.handler.take());
         self.template_name = template_name.or(self.template_name.take());
+        self.inputs = inputs.or(self.inputs.take());
         self.pre_dispatch = pre_dispatch.or(self.pre_dispatch.take());
         self.post_dispatch = post_dispatch.or(self.post_dispatch.take());
         self.post_output = post_output.or(self.post_output.take());
@@ -500,6 +510,7 @@ pub fn dispatch_derive_impl(input: DeriveInput) -> Result<TokenStream> {
                 }
 
                 let has_config = v_template_name.is_some()
+                    || v.attrs.inputs.is_some()
                     || v.attrs.silent
                     || v.attrs.binary
                     || v.attrs.structured_only
@@ -571,6 +582,9 @@ pub fn dispatch_derive_impl(input: DeriveInput) -> Result<TokenStream> {
                     } else {
                         None
                     };
+                    let inputs_call = v.attrs.inputs.as_ref().map(|p| {
+                        quote! { __cfg = #p(__cfg); }
+                    });
                     let pre_dispatch_call = v.attrs.pre_dispatch.as_ref().map(|p| {
                         quote! { __cfg = __cfg.pre_dispatch(#p); }
                     });
@@ -600,6 +614,7 @@ pub fn dispatch_derive_impl(input: DeriveInput) -> Result<TokenStream> {
                             #template_name_call
                             #absence_call
                             #questionnaire_call
+                            #inputs_call
                             #pre_dispatch_call
                             #post_dispatch_call
                             #post_output_call

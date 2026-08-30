@@ -275,3 +275,71 @@ fn test_default_command_registers_commands() {
     assert!(builder.contains("list"));
     assert!(builder.contains("add"));
 }
+
+mod input_handlers {
+    use super::*;
+    use clap::ArgMatches;
+    use standout::cli::{CommandConfig, CommandContextInput};
+    use standout::input::{ArgSource, InputChain, StdinSource};
+
+    pub fn note_inputs<H>(config: CommandConfig<H>) -> CommandConfig<H> {
+        config.input(
+            "note",
+            InputChain::<String>::new()
+                .try_source(ArgSource::new("note"))
+                .try_source(StdinSource::new())
+                .validate(
+                    |note: &String| !note.trim().is_empty(),
+                    "note cannot be empty",
+                ),
+        )
+    }
+
+    pub fn write(_matches: &ArgMatches, ctx: &CommandContext) -> HandlerResult<serde_json::Value> {
+        let note: &String = ctx.input("note").expect("note is resolved before dispatch");
+        Ok(Output::Render(json!({ "note": note })))
+    }
+}
+
+#[derive(Subcommand, Dispatch)]
+#[dispatch(handlers = input_handlers)]
+enum InputCommands {
+    #[dispatch(inputs = input_handlers::note_inputs, structured_only)]
+    Write { note: Option<String> },
+}
+
+fn input_command() -> clap::Command {
+    clap::Command::new("app")
+        .subcommand(clap::Command::new("write").arg(clap::Arg::new("note").long("note")))
+}
+
+#[test]
+fn inputs_attribute_resolves_a_chain_for_a_derive_registered_command() {
+    let app = App::builder()
+        .commands(InputCommands::dispatch_config())
+        .unwrap()
+        .build()
+        .unwrap();
+
+    let from_arg = TestHarness::new().output_mode(OutputMode::Json).run(
+        &app,
+        input_command(),
+        ["app", "write", "--note", "from the argument"],
+    );
+    from_arg.assert_success();
+    assert!(from_arg.stdout().contains("from the argument"));
+
+    let from_stdin = TestHarness::new()
+        .output_mode(OutputMode::Json)
+        .piped_stdin("from stdin\n")
+        .run(&app, input_command(), ["app", "write"]);
+    from_stdin.assert_success();
+    assert!(from_stdin.stdout().contains("from stdin"));
+
+    let rejected = TestHarness::new().output_mode(OutputMode::Json).run(
+        &app,
+        input_command(),
+        ["app", "write", "--note", "   "],
+    );
+    rejected.assert_error_contains("note cannot be empty");
+}

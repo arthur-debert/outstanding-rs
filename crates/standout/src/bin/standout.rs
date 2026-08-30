@@ -346,6 +346,14 @@ impl CommandInput {
         {
             bail!("{} repeated inputs only support argument source", self.name);
         }
+        if self.cardinality == InputCardinality::Optional
+            && self
+                .sources
+                .iter()
+                .any(|source| *source != InputSource::Argument)
+        {
+            bail!("{} optional inputs only support argument source", self.name);
+        }
         Ok(())
     }
 
@@ -1257,31 +1265,6 @@ fn sample_json_cli_args(spec: &ProjectSpec, primary_value: &str) -> Vec<String> 
     args
 }
 
-fn sample_handler_args(spec: &ProjectSpec) -> Vec<String> {
-    let mut args = vec![
-        format!("{}.to_string()", quote(&spec.executable_name)),
-        format!("{}.to_string()", quote(&spec.command_name)),
-    ];
-    for (index, input) in spec.inputs.iter().enumerate() {
-        let value = if index == 0 { "hello" } else { "sample" };
-        if input.sources[0] == InputSource::File {
-            args.push(format!(
-                "{}.to_string()",
-                quote(&format!("--{}-file", input.name.replace('_', "-")))
-            ));
-            args.push(format!("{}_test_file.display().to_string()", input.name));
-        } else {
-            args.extend(
-                input
-                    .sample_args_for_source(input.sources[0], value)
-                    .into_iter()
-                    .map(|arg| format!("{arg}.to_string()")),
-            );
-        }
-    }
-    args
-}
-
 fn sample_command_args(spec: &ProjectSpec, primary_value: &str) -> Vec<String> {
     let mut args = Vec::new();
     for (index, input) in spec.inputs.iter().enumerate() {
@@ -1347,58 +1330,6 @@ fn generated_harness_run(spec: &ProjectSpec, primary_value: &str, args: &[String
     }
 }
 
-fn spec_reads_stdin(spec: &ProjectSpec) -> bool {
-    spec.inputs
-        .iter()
-        .any(|input| input.sources.contains(&InputSource::Stdin))
-}
-
-fn handler_sample_files(spec: &ProjectSpec) -> String {
-    let mut lines = Vec::new();
-    for (index, input) in spec.inputs.iter().enumerate() {
-        let value = if index == 0 { "hello" } else { "sample" };
-        if input.sources[0] == InputSource::File {
-            lines.push(format!(
-                "        let {0}_test_file =\n            std::env::temp_dir().join(format!(\"{1}-{0}-{{}}.txt\", std::process::id()));",
-                input.name, spec.executable_name
-            ));
-            lines.push(format!(
-                "        std::fs::write(&{}_test_file, {}).unwrap();",
-                input.name,
-                quote(value)
-            ));
-        }
-    }
-    lines.join("\n")
-}
-
-fn handler_sample_stdin(spec: &ProjectSpec) -> String {
-    let mut lines = Vec::new();
-    for (index, input) in spec.inputs.iter().enumerate() {
-        let value = if index == 0 { "hello" } else { "sample" };
-        if input.sources.contains(&InputSource::Stdin) {
-            lines.push(format!(
-                "        ctx.extensions.insert(\n            standout_input::InputSources::from_process()\n                .with_stdin(standout_input::MockStdin::piped({})),\n        );",
-                quote(&format!("{value}\n"))
-            ));
-        }
-    }
-    lines.join("\n")
-}
-
-fn handler_sample_cleanup(spec: &ProjectSpec) -> String {
-    let mut lines = Vec::new();
-    for input in &spec.inputs {
-        if input.sources[0] == InputSource::File {
-            lines.push(format!(
-                "        std::fs::remove_file({}_test_file).unwrap();",
-                input.name
-            ));
-        }
-    }
-    lines.join("\n")
-}
-
 fn generated_json_pipeline_test(spec: &ProjectSpec) -> String {
     let primary_value = match spec.inputs[0].value_type {
         InputValueType::Path => "config.toml",
@@ -1453,20 +1384,243 @@ fn readme_validation_note(spec: &ProjectSpec) -> String {
     }
 }
 
+fn has_chain_inputs(spec: &ProjectSpec) -> bool {
+    spec.inputs.iter().any(CommandInput::is_chain)
+}
+
+fn has_file_source(spec: &ProjectSpec) -> bool {
+    spec.inputs
+        .iter()
+        .any(|input| input.sources.contains(&InputSource::File))
+}
+
 fn handler_imports(spec: &ProjectSpec) -> String {
-    let mut imports = [
-        "use clap::ArgMatches;".to_string(),
+    let mut imports = vec![
         format!("use {} as core;", spec.lib_crate),
         "use serde::Serialize;".to_string(),
-        if spec_reads_stdin(spec) {
-            "use standout::cli::{CommandContext, CommandContextInput, Output};".to_string()
-        } else {
-            "use standout::cli::{CommandContext, Output};".to_string()
-        },
         "use standout::handler;".to_string(),
     ];
+    if has_file_source(spec) {
+        imports.push("use clap::ArgMatches;".to_string());
+    }
+    if has_chain_inputs(spec) {
+        imports.push(
+            "use standout::cli::{CommandConfig, CommandContext, CommandContextInput, Output};"
+                .to_string(),
+        );
+        let mut chain = vec!["InputChain"];
+        if spec
+            .inputs
+            .iter()
+            .any(|input| input.sources.contains(&InputSource::Argument))
+        {
+            chain.push("ArgSource");
+        }
+        if spec
+            .inputs
+            .iter()
+            .any(|input| input.sources.contains(&InputSource::Stdin))
+        {
+            chain.push("StdinSource");
+        }
+        chain.sort_unstable();
+        imports.push(match chain.as_slice() {
+            [single] => format!("use standout::input::{single};"),
+            several => format!("use standout::input::{{{}}};", several.join(", ")),
+        });
+    } else {
+        imports.push("use standout::cli::Output;".to_string());
+    }
     imports.sort();
     imports.join("\n")
+}
+
+/// The handler's signature: its typed `#[handler]` parameters, plus the context
+/// the chain-resolved values are read from. Written the way rustfmt would — on
+/// one line while it fits `max_width`, one parameter per line when it does not.
+fn handler_signature(spec: &ProjectSpec) -> String {
+    use unicode_width::UnicodeWidthStr;
+
+    let mut params = spec
+        .inputs
+        .iter()
+        .filter(|input| !input.is_chain())
+        .map(CommandInput::handler_param)
+        .collect::<Vec<_>>();
+    if has_chain_inputs(spec) {
+        params.push("#[ctx] ctx: &CommandContext".to_string());
+    }
+    let command_ident = spec.command_name.replace('-', "_");
+    let return_type = format!("-> Result<Output<{}>, anyhow::Error> {{", spec.view_name);
+    let one_line = format!(
+        "pub(crate) fn {command_ident}({}) {return_type}",
+        params.join(", ")
+    );
+    if one_line.width() <= MAX_WIDTH {
+        return one_line;
+    }
+    let lines = params
+        .iter()
+        .map(|param| format!("    {param},"))
+        .collect::<Vec<_>>()
+        .join("\n");
+    format!("pub(crate) fn {command_ident}(\n{lines}\n) {return_type}")
+}
+
+fn handler_input_reads(spec: &ProjectSpec) -> String {
+    spec.inputs
+        .iter()
+        .filter(|input| input.is_chain())
+        .map(|input| {
+            format!(
+                "    let {}: &String = ctx.input({})?;",
+                input.name,
+                quote(&input.name)
+            )
+        })
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
+/// The `fn(CommandConfig) -> CommandConfig` the command's `#[dispatch(inputs =
+/// ...)]` names, empty when every value arrives as a typed parameter.
+fn command_inputs_fn(spec: &ProjectSpec) -> String {
+    let chained = spec
+        .inputs
+        .iter()
+        .filter(|input| input.is_chain())
+        .collect::<Vec<_>>();
+    let body = match chained.as_slice() {
+        [] => return String::new(),
+        [input] => format!(
+            "    config.input(\n        {},\n        {},\n    )",
+            quote(&input.name),
+            input.chain_expr(8)
+        ),
+        inputs => {
+            let entries = inputs
+                .iter()
+                .map(|input| {
+                    format!(
+                        "        .input(\n            {},\n            {},\n        )",
+                        quote(&input.name),
+                        input.chain_expr(12)
+                    )
+                })
+                .collect::<Vec<_>>()
+                .join("\n");
+            format!("    config\n{entries}")
+        }
+    };
+    format!(
+        "/// Where the command's values come from, tried in the order listed.\npub(crate) fn {}_inputs<H>(config: CommandConfig<H>) -> CommandConfig<H> {{\n{body}\n}}",
+        spec.command_name.replace('-', "_")
+    )
+}
+
+/// The chain source that reads a value out of the file a path argument names.
+/// `standout-input` ships the argument and stdin sources; a file source is the
+/// application's own `InputCollector`.
+fn file_source_item(spec: &ProjectSpec) -> String {
+    if !has_file_source(spec) {
+        return String::new();
+    }
+    r#"struct FileSource {
+    arg: &'static str,
+}
+
+impl FileSource {
+    fn new(arg: &'static str) -> Self {
+        Self { arg }
+    }
+}
+
+impl standout::input::InputCollector<String> for FileSource {
+    fn name(&self) -> &'static str {
+        "argument"
+    }
+
+    fn is_available(&self, matches: &ArgMatches) -> bool {
+        matches.get_one::<std::path::PathBuf>(self.arg).is_some()
+    }
+
+    fn collect(&self, matches: &ArgMatches) -> Result<Option<String>, standout::input::InputError> {
+        let Some(path) = matches.get_one::<std::path::PathBuf>(self.arg) else {
+            return Ok(None);
+        };
+        std::fs::read_to_string(path)
+            .map(Some)
+            .map_err(|error| standout::input::InputError::parse(self.arg, error.to_string()))
+    }
+}"#
+    .to_string()
+}
+
+fn handler_sample_value(index: usize) -> &'static str {
+    if index == 0 {
+        "hello"
+    } else {
+        "sample"
+    }
+}
+
+/// The generated handler test's `let ... else` header, written the way rustfmt
+/// would: arguments on one line while they fit `fn_call_width` and the line
+/// fits `max_width`, then `else` on its own line, then one argument per line.
+fn handler_call(spec: &ProjectSpec) -> String {
+    use unicode_width::UnicodeWidthStr;
+
+    let mut args = spec
+        .inputs
+        .iter()
+        .enumerate()
+        .filter(|(_, input)| !input.is_chain())
+        .map(|(index, input)| input.handler_test_value(handler_sample_value(index)))
+        .collect::<Vec<_>>();
+    if has_chain_inputs(spec) {
+        args.push("&ctx".to_string());
+    }
+    let command_ident = spec.command_name.replace('-', "_");
+    let inline = args.join(", ");
+    let one_line = format!("        let Output::Render(view) = {command_ident}({inline}).unwrap()");
+    if inline.width() <= FN_CALL_WIDTH && one_line.width() <= MAX_WIDTH {
+        if one_line.width() + " else {".width() <= MAX_WIDTH {
+            return format!("{one_line} else {{");
+        }
+        return format!("{one_line}\n        else {{");
+    }
+    let lines = args
+        .iter()
+        .map(|arg| format!("            {arg},"))
+        .collect::<Vec<_>>()
+        .join("\n");
+    format!(
+        "        let Output::Render(view) = {command_ident}(\n{lines}\n        )\n        .unwrap() else {{"
+    )
+}
+
+/// The chain-resolved values the generated handler test seeds the context with,
+/// standing in for the pre-dispatch resolution the app does.
+fn handler_test_inputs(spec: &ProjectSpec) -> String {
+    if !has_chain_inputs(spec) {
+        return String::new();
+    }
+    let mut lines = vec![
+        "        let mut ctx = CommandContext::default();".to_string(),
+        "        let mut inputs = standout_input::Inputs::new();".to_string(),
+    ];
+    for (index, input) in spec.inputs.iter().enumerate() {
+        if !input.is_chain() {
+            continue;
+        }
+        lines.push(format!(
+            "        inputs.insert(\n            {},\n            standout_input::ResolvedInput {{\n                value: {}.to_string(),\n                source: standout_input::InputSourceKind::Arg,\n            }},\n        );",
+            quote(&input.name),
+            quote(handler_sample_value(index))
+        ));
+    }
+    lines.push("        ctx.extensions.insert(inputs);".to_string());
+    lines.join("\n")
 }
 
 fn readme_examples(spec: &ProjectSpec) -> String {
@@ -1507,18 +1661,54 @@ fn quote(value: &str) -> String {
 }
 
 const ATTR_FN_LIKE_WIDTH: usize = 70;
+const MAX_WIDTH: usize = 100;
+const FN_CALL_WIDTH: usize = 60;
 
-fn cli_command_attribute(spec: &ProjectSpec) -> String {
+/// One attribute, written the way rustfmt would: on one line while its
+/// arguments fit `attr_fn_like_width` at the attribute's own indent, split one
+/// argument per line when they do not.
+fn attribute(name: &str, arguments: &[String], indent: usize) -> String {
     use unicode_width::UnicodeWidthStr;
 
+    let inline = arguments.join(", ");
+    if inline.width() <= ATTR_FN_LIKE_WIDTH.saturating_sub(indent) {
+        return format!("#[{name}({inline})]");
+    }
+    let pad = " ".repeat(indent);
+    let lines = arguments
+        .iter()
+        .map(|argument| format!("{pad}    {argument}"))
+        .collect::<Vec<_>>()
+        .join(",\n");
+    format!("#[{name}(\n{lines}\n{pad})]")
+}
+
+/// The `#[dispatch(...)]` the generated command variant carries: the blessed
+/// registration reads the enum, `pure` points it at the wrapper `#[handler]`
+/// generates, `name` holds the derive to the spelling clap declares, and
+/// `inputs` names the command's input chains.
+fn dispatch_attribute(spec: &ProjectSpec) -> String {
+    let mut arguments = vec!["pure".to_string(), "default".to_string()];
+    // The derive registers a variant under its kebab-case name, which is the
+    // command name back again unless the answer sheet spelled it with an
+    // underscore; that is the one case the registration has to be told.
+    if spec.command_name.contains('_') {
+        arguments.push(format!("name = {}", quote(&spec.command_name)));
+    }
+    if has_chain_inputs(spec) {
+        arguments.push(format!(
+            "inputs = crate::handlers::{}_inputs",
+            spec.command_name.replace('-', "_")
+        ));
+    }
+    attribute("dispatch", &arguments, 4)
+}
+
+fn cli_command_attribute(spec: &ProjectSpec) -> String {
     let name = quote(&spec.executable_name);
     let about = quote(&spec.command_description);
-    let arguments = format!("name = {name}, about = {about}");
-    if arguments.width() <= ATTR_FN_LIKE_WIDTH {
-        format!("#[command({arguments})]")
-    } else {
-        format!("#[command(\n    name = {name},\n    about = {about}\n)]")
-    }
+    let arguments = [format!("name = {name}"), format!("about = {about}")];
+    attribute("command", &arguments, 0)
 }
 
 fn toml_basic_string_content(path: &Path) -> String {
@@ -1559,6 +1749,92 @@ fn rust_array(items: &[String], indent: usize, max_inline_len: usize) -> String 
 }
 
 impl CommandInput {
+    /// True when the value reaches the command through an `InputChain` rather
+    /// than a typed `#[handler]` parameter: it has a source other than the
+    /// argument, so more than one place can carry it.
+    fn is_chain(&self) -> bool {
+        self.sources != [InputSource::Argument]
+    }
+
+    /// The `InputChain` expression for this input, written the way rustfmt
+    /// would at `indent`: one line while the whole chain fits `chain_width`,
+    /// one source per line when it does not.
+    fn chain_expr(&self, indent: usize) -> String {
+        use unicode_width::UnicodeWidthStr;
+
+        let sources = self
+            .sources
+            .iter()
+            .map(|source| match source {
+                InputSource::Argument => {
+                    format!(".try_source(ArgSource::new({}))", quote(&self.name))
+                }
+                InputSource::File => format!(
+                    ".try_source(FileSource::new({}))",
+                    quote(&format!("{}_file", self.name))
+                ),
+                InputSource::Stdin => ".try_source(StdinSource::new())".to_string(),
+            })
+            .collect::<Vec<_>>();
+        let inline = format!("InputChain::<String>::new(){}", sources.concat());
+        // The chain sits on its own line, and a trailing comma follows it.
+        if indent + inline.width() < MAX_WIDTH {
+            return inline;
+        }
+        let pad = " ".repeat(indent + 4);
+        let lines = sources
+            .iter()
+            .map(|source| format!("{pad}{source}"))
+            .collect::<Vec<_>>()
+            .join("\n");
+        format!("InputChain::<String>::new()\n{lines}")
+    }
+
+    /// The typed `#[handler]` parameter an argument-only input becomes. An
+    /// underscore in the name is the case the id rule splits on: clap's derive
+    /// ids the argument after the field, `#[handler]` hyphenates, so the name
+    /// is spelled out.
+    fn handler_param(&self) -> String {
+        let attribute = if self.cardinality == InputCardinality::Boolean {
+            "flag"
+        } else {
+            "arg"
+        };
+        let attribute = if self.name.contains('_') {
+            format!("#[{attribute}(name = {})]", quote(&self.name))
+        } else {
+            format!("#[{attribute}]")
+        };
+        format!("{attribute} {}: {}", self.name, self.rust_type())
+    }
+
+    /// The literal the generated handler test passes for this input.
+    fn handler_test_value(&self, value: &str) -> String {
+        match (self.value_type, self.cardinality) {
+            (InputValueType::String, InputCardinality::Required) => {
+                format!("{}.to_string()", quote(value))
+            }
+            (InputValueType::String, InputCardinality::Optional) => {
+                format!("Some({}.to_string())", quote(value))
+            }
+            (InputValueType::String, InputCardinality::Repeated) => {
+                format!("vec![{}.to_string(), \"extra\".to_string()]", quote(value))
+            }
+            (InputValueType::Bool, InputCardinality::Boolean) => "true".into(),
+            (InputValueType::Path, InputCardinality::Required) => {
+                format!("std::path::PathBuf::from({})", quote(value))
+            }
+            (InputValueType::Path, InputCardinality::Optional) => {
+                format!("Some(std::path::PathBuf::from({}))", quote(value))
+            }
+            (InputValueType::Path, InputCardinality::Repeated) => format!(
+                "vec![std::path::PathBuf::from({}), std::path::PathBuf::from(\"extra.toml\")]",
+                quote(value)
+            ),
+            _ => unreachable!("validated input combinations are renderable"),
+        }
+    }
+
     fn rust_type(&self) -> &'static str {
         match (self.value_type, self.cardinality) {
             (InputValueType::String, InputCardinality::Required) => "String",
@@ -1686,7 +1962,11 @@ impl CommandInput {
     }
 
     fn core_call_arg(&self) -> String {
-        self.name.clone()
+        if self.is_chain() {
+            format!("{}.clone()", self.name)
+        } else {
+            self.name.clone()
+        }
     }
 
     fn core_validation(&self) -> Option<String> {
@@ -1701,64 +1981,6 @@ impl CommandInput {
         } else {
             None
         }
-    }
-
-    fn resolve_statement(&self) -> String {
-        match (self.value_type, self.cardinality) {
-            (InputValueType::Bool, InputCardinality::Boolean) => {
-                format!("let {} = matches.get_flag(\"{}\");", self.name, self.name)
-            }
-            (InputValueType::Path, InputCardinality::Required) => format!(
-                "let {} = matches\n        .get_one::<std::path::PathBuf>(\"{}\")\n        .cloned()\n        .ok_or_else(|| anyhow::anyhow!(\"{} is required\"))?;",
-                self.name, self.name, self.name
-            ),
-            (InputValueType::Path, InputCardinality::Optional) => format!(
-                "let {} = matches.get_one::<std::path::PathBuf>(\"{}\").cloned();",
-                self.name, self.name
-            ),
-            (InputValueType::Path, InputCardinality::Repeated) => format!(
-                "let {} = matches\n        .get_many::<std::path::PathBuf>(\"{}\")\n        .map(|values| values.cloned().collect())\n        .unwrap_or_default();",
-                self.name, self.name
-            ),
-            (InputValueType::String, InputCardinality::Repeated) => format!(
-                "let {} = matches\n        .get_many::<String>(\"{}\")\n        .map(|values| values.cloned().collect())\n        .unwrap_or_default();",
-                self.name, self.name
-            ),
-            (InputValueType::String, InputCardinality::Optional) => {
-                self.string_resolver(false)
-            }
-            (InputValueType::String, InputCardinality::Required) => {
-                self.string_resolver(true)
-            }
-            _ => unreachable!("validated input combinations are renderable"),
-        }
-    }
-
-    fn string_resolver(&self, required: bool) -> String {
-        let mut lines = vec![format!("let mut {} = None;", self.name)];
-        for source in &self.sources {
-            match source {
-                InputSource::Argument => lines.push(format!(
-                    "if {0}.is_none() {{\n        {0} = matches.get_one::<String>(\"{0}\").cloned();\n    }}",
-                    self.name
-                )),
-                InputSource::File => lines.push(format!(
-                    "if {0}.is_none() {{\n        if let Some(path) = matches.get_one::<std::path::PathBuf>(\"{0}_file\") {{\n            {0} =\n                Some(std::fs::read_to_string(path).map_err(|error| {{\n                    anyhow::anyhow!(\"failed to read {{}}: {{error}}\", path.display())\n                }})?);\n        }}\n    }}",
-                    self.name
-                )),
-                InputSource::Stdin => lines.push(format!(
-                    "if {0}.is_none() {{\n        {0} = standout_input::read_if_piped_from(ctx.input_sources())?;\n    }}",
-                    self.name
-                )),
-            }
-        }
-        if required {
-            lines.push(format!(
-                "let {} = match {} {{\n        Some(value) => value,\n        None => return Err(anyhow::anyhow!(\"{} is required\")),\n    }};",
-                self.name, self.name, self.name
-            ));
-        }
-        lines.join("\n    ")
     }
 }
 
@@ -1795,7 +2017,7 @@ fn model(spec: &ProjectSpec) -> minijinja::Value {
         core_validations => spec.inputs.iter().filter_map(CommandInput::core_validation).collect::<Vec<_>>().join("\n    "),
         core_unused_inputs => core_unused_inputs(spec),
         cli_args => spec.inputs.iter().map(CommandInput::cli_arg).collect::<Vec<_>>().join("\n        "),
-        resolve_inputs => spec.inputs.iter().map(CommandInput::resolve_statement).collect::<Vec<_>>().join("\n    "),
+        dispatch_attribute => dispatch_attribute(spec),
         lib_crate => spec.lib_crate,
         lib_package => spec.lib_crate.replace('_', "-"),
         operation_name => spec.operation_name,
@@ -1811,13 +2033,14 @@ fn model(spec: &ProjectSpec) -> minijinja::Value {
         core_invalid_test => core_invalid_test(spec),
         handler_expected_fields => handler_expected_fields(spec),
         handler_imports => handler_imports(spec),
+        handler_signature => handler_signature(spec),
+        handler_input_reads => handler_input_reads(spec),
+        handler_call => handler_call(spec),
+        handler_test_inputs => handler_test_inputs(spec),
+        command_inputs_fn => command_inputs_fn(spec),
+        file_source_item => file_source_item(spec),
         pipeline_human_run => generated_harness_run(spec, "Ada", &sample_cli_args(spec, "Ada")),
         pipeline_json_test => generated_json_pipeline_test(spec),
-        handler_args => rust_array(&sample_handler_args(spec), 16, 60),
-        handler_sample_files => handler_sample_files(spec),
-        handler_sample_stdin => handler_sample_stdin(spec),
-        handler_ctx_arg => if spec_reads_stdin(spec) { "ctx" } else { "_ctx" },
-        handler_sample_cleanup => handler_sample_cleanup(spec),
         template_body => template_body(spec),
         human_expected => quote(&expected_first_field(spec, "Ada").1),
         readme_input_policy => readme_input_policy(spec),
@@ -1951,7 +2174,6 @@ standout-test = "{{ standout_version }}"
 mod handlers;
 
 use anyhow::Result;
-use standout::cli::FnHandler;
 use standout::{embed_styles, embed_templates};
 
 fn main() -> Result<()> {
@@ -1962,14 +2184,11 @@ fn main() -> Result<()> {
 
 fn build_app() -> Result<standout::cli::App> {
     Ok(standout::cli::App::builder()
+        .version(env!("CARGO_PKG_VERSION"))
         .templates(embed_templates!("src/templates"))
         .styles(embed_styles!("src/styles"))
         .default_theme("{{ project_name }}")
-        .command_with(
-            "{{ command_name }}",
-            FnHandler::new(handlers::{{ command_ident }}__handler),
-            |config| config.template_name("{{ command_name }}"),
-        )?
+        .commands(cli::Commands::dispatch_config())?
         .build()?)
 }
 
@@ -1998,18 +2217,21 @@ mod tests {
     (
         "cli",
         r#"use clap::{CommandFactory, Parser, Subcommand};
+use standout::cli::Dispatch;
 
 #[derive(Parser)]
 {{ cli_command_attribute }}
 pub(crate) struct Cli {
     #[command(subcommand)]
-    command: Commands,
+    command: Option<Commands>,
 }
 
-#[derive(Subcommand)]
+#[derive(Subcommand, Dispatch)]
+#[dispatch(handlers = crate::handlers)]
 pub(crate) enum Commands {
     /// {{ command_description }}
     #[command(name = "{{ command_name }}")]
+    {{ dispatch_attribute }}
     {{ command_variant }} {
         {{ cli_args }}
     },
@@ -2022,9 +2244,7 @@ pub(crate) fn command() -> clap::Command {
     ),
     (
         "handlers",
-        r#"#![allow(non_snake_case)]
-
-{{ handler_imports }}
+        r#"{{ handler_imports }}
 
 #[derive(Debug, Serialize, PartialEq, Eq)]
 pub(crate) struct {{ view_name }} {
@@ -2038,17 +2258,25 @@ impl From<core::{{ view_name }}> for {{ view_name }} {
         }
     }
 }
+{%- if file_source_item %}
+
+{{ file_source_item }}
+{%- endif %}
+{%- if command_inputs_fn %}
+
+{{ command_inputs_fn }}
+{%- endif %}
 
 /// Adapts typed shell input into the CLI-free core operation.
 ///
-/// The handler owns CLI-only source resolution, including file-content reads,
-/// then returns data for Standout to render or serialize.
+/// Values that can come from more than one place are resolved before dispatch
+/// by the command's input chains; the rest arrive as typed parameters. The
+/// handler returns data for Standout to render or serialize.
 #[handler]
-pub(crate) fn {{ command_ident }}(
-    #[matches] matches: &ArgMatches,
-    #[ctx] {{ handler_ctx_arg }}: &CommandContext,
-) -> Result<Output<{{ view_name }}>, anyhow::Error> {
-    {{ resolve_inputs }}
+{{ handler_signature }}
+{%- if handler_input_reads %}
+{{ handler_input_reads }}
+{%- endif %}
     let result = core::{{ operation_name }}({{ core_call_args }})?;
     Ok(Output::Render(result.into()))
 }
@@ -2056,31 +2284,16 @@ pub(crate) fn {{ command_ident }}(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use serial_test::serial;
 
     #[test]
-    #[serial]
     fn typed_handler_maps_input_to_core_and_view() {
-{%- if handler_sample_files %}
-{{ handler_sample_files }}
-{%- endif %}
-        let matches = crate::cli::command()
-            .try_get_matches_from({{ handler_args }})
-            .unwrap();
-        let (_, matches) = matches.subcommand().unwrap();
-        let mut ctx = CommandContext::default();
-        ctx.extensions
-            .insert(standout_input::InputSources::from_process());
-{%- if handler_sample_stdin %}
-{{ handler_sample_stdin }}
-{%- endif %}
+{%- if handler_test_inputs %}
+{{ handler_test_inputs }}
 
-        let Output::Render(view) = {{ command_ident }}(matches, &ctx).unwrap() else {
+{%- endif %}
+{{ handler_call }}
             panic!("expected rendered data");
         };
-{%- if handler_sample_cleanup %}
-{{ handler_sample_cleanup }}
-{%- endif %}
 
         assert_eq!(
             view,
@@ -2485,8 +2698,7 @@ mod tests {
         assert!(cli.contains("long = \"document-file\""));
         assert!(!cli.contains("long = \"document\""));
         assert!(!cli.contains("long = \"subject\""));
-        assert!(handlers.contains("use serial_test::serial;"));
-        assert!(handlers.contains("#[serial]\n    fn typed_handler_maps_input_to_core_and_view()"));
+        assert!(handlers.contains("    fn typed_handler_maps_input_to_core_and_view()"));
         assert!(core.contains("CoreError::EmptyInput { field: \"document\" }"));
         assert!(core.contains("CoreError::EmptyInput { field: \"subject\" }"));
         assert!(readme.contains("demo send_email --document-file <PATH> <piped stdin>"));
@@ -2792,6 +3004,154 @@ mod tests {
         spec
     }
 
+    fn generated_source(generated: &GeneratedFiles, path: &str) -> String {
+        generated
+            .files
+            .get(Path::new(path))
+            .unwrap_or_else(|| panic!("{path} is generated"))
+            .clone()
+    }
+
+    /// The generated project is the canonical example, so its source is checked
+    /// against [ADR-0032]'s blessed item on each axis one at a time — the derive
+    /// that registers, the `#[handler]` that adapts, clap-derive that declares,
+    /// the macros that provide templates and styles, the chain that resolves an
+    /// input that has more than one source — and only then against the
+    /// unblessed forms it must not carry. The negative half alone would pass on
+    /// output that dropped the concern entirely.
+    ///
+    /// [ADR-0032]: ../../../../docs/adr/0032-bless-one-item-per-axis-behind-a-capability-map.md
+    #[test]
+    fn generated_project_uses_the_blessed_idioms() {
+        let dir = TempDir::new().unwrap();
+        let generated = GeneratedFiles::render(&rich_questionnaire_spec(dir.path())).unwrap();
+        let cli = generated_source(&generated, "crates/inspect-tool/src/cli.rs");
+        let main = generated_source(&generated, "crates/inspect-tool/src/main.rs");
+        let handlers = generated_source(&generated, "crates/inspect-tool/src/handlers.rs");
+
+        // Registration: one enum declares the command set, the derive writes it.
+        assert!(cli.contains("#[derive(Subcommand, Dispatch)]"));
+        assert!(cli.contains("#[dispatch(handlers = crate::handlers)]"));
+        assert!(
+            cli.contains("#[dispatch(pure, default, inputs = crate::handlers::inspect_inputs)]")
+        );
+        assert!(main.contains(".commands(cli::Commands::dispatch_config())?"));
+
+        // Adaptation: a `#[handler]` fn with typed parameters.
+        assert!(handlers.contains("#[handler]"));
+        assert!(handlers.contains("#[flag] verbose: bool"));
+        assert!(handlers.contains("#[arg] config: Option<std::path::PathBuf>"));
+
+        // Declaration: clap-derive owns the `Command`.
+        assert!(cli.contains("#[derive(Parser)]"));
+        assert!(cli.contains("Cli::command()"));
+
+        // Templates: embedded at compile time, selected by the convention.
+        assert!(main.contains(".templates(embed_templates!(\"src/templates\"))"));
+
+        // Themes: embedded stylesheets, one named theme.
+        assert!(main.contains(".styles(embed_styles!(\"src/styles\"))"));
+        assert!(main.contains(".default_theme(\"inspect-tool\")"));
+
+        // Input: a chain per value that has more than one source.
+        assert!(cli.contains("inputs = crate::handlers::inspect_inputs"));
+        assert!(handlers.contains(
+            "pub(crate) fn inspect_inputs<H>(config: CommandConfig<H>) -> CommandConfig<H>"
+        ));
+        assert!(handlers.contains("InputChain::<String>::new()"));
+        assert!(handlers.contains(".try_source(ArgSource::new(\"document\"))"));
+        assert!(handlers.contains(".try_source(StdinSource::new())"));
+        assert!(handlers.contains("ctx.input(\"document\")?"));
+
+        // Entry point, version, and themed help by default.
+        assert!(main.contains("app.run(cli::command(), std::env::args());"));
+        assert!(main.contains(".version(env!(\"CARGO_PKG_VERSION\"))"));
+
+        // The unblessed forms, on top of the positive checks above.
+        assert!(!main.contains("command_with"));
+        assert!(!main.contains("FnHandler"));
+        assert!(!main.contains("AppBuilder::default"));
+        assert!(!main.contains("template_name"));
+        assert!(!main.contains("help_handling"));
+        assert!(!main.contains("Theme::"));
+        assert!(!handlers.contains("#[matches]"));
+        assert!(!handlers.contains("matches.get_one::<String>"));
+        assert!(!cli.contains("#[derive(Subcommand)]"));
+    }
+
+    /// A command whose every value comes from its own argument reaches the
+    /// handler as typed parameters, with no chain and no context.
+    #[test]
+    fn argument_only_input_stays_a_typed_handler_parameter() {
+        let dir = TempDir::new().unwrap();
+        let spec = single_input_spec(
+            dir.path(),
+            "bool-tool",
+            CommandInput {
+                name: "verbose".into(),
+                value_type: InputValueType::Bool,
+                cardinality: InputCardinality::Boolean,
+                sources: vec![InputSource::Argument],
+            },
+        );
+        let generated = GeneratedFiles::render(&spec).unwrap();
+        let cli = generated_source(&generated, "crates/bool-tool/src/cli.rs");
+        let handlers = generated_source(&generated, "crates/bool-tool/src/handlers.rs");
+
+        assert!(handlers.contains("pub(crate) fn inspect(#[flag] verbose: bool)"));
+        assert!(!handlers.contains("InputChain"));
+        assert!(!handlers.contains("CommandContext"));
+        assert!(!cli.contains("inputs = "));
+    }
+
+    /// An input name that carries an underscore is where clap's derive and
+    /// `#[handler]` disagree by default: clap ids the argument after the field,
+    /// `#[handler]` hyphenates. The generated parameter spells the id out.
+    #[test]
+    fn an_underscored_input_name_spells_out_the_argument_id() {
+        let dir = TempDir::new().unwrap();
+        let spec = single_input_spec(
+            dir.path(),
+            "note-tool",
+            CommandInput {
+                name: "note_text".into(),
+                value_type: InputValueType::String,
+                cardinality: InputCardinality::Required,
+                sources: vec![InputSource::Argument],
+            },
+        );
+        let generated = GeneratedFiles::render(&spec).unwrap();
+        let handlers = generated_source(&generated, "crates/note-tool/src/handlers.rs");
+
+        assert!(handlers.contains("#[arg(name = \"note_text\")] note_text: String"));
+    }
+
+    /// The blessed input entry resolves a value or fails, so an optional value
+    /// with a second source has no spelling in it and the wizard refuses the
+    /// combination rather than generating an unblessed fallback.
+    #[test]
+    fn an_optional_input_cannot_take_a_second_source() {
+        let error = ProjectSpec::from_answers(TestProjectAnswers {
+            project_name: "demo".into(),
+            executable_name: "demo".into(),
+            command_name: "inspect".into(),
+            command_description: "Inspect one value".into(),
+            inputs: vec![CommandInput {
+                name: "note".into(),
+                value_type: InputValueType::String,
+                cardinality: InputCardinality::Optional,
+                sources: vec![InputSource::Argument, InputSource::Stdin],
+            }],
+            result_shape: ResultShape::Message,
+            record_fields: Vec::new(),
+        })
+        .unwrap_err();
+
+        assert!(error
+            .to_string()
+            .contains("optional inputs only support argument source"));
+    }
+
     #[test]
     fn generated_project_matrix_formats_checks_tests_and_runs() {
         let dir = TempDir::new().unwrap();
@@ -2910,6 +3270,25 @@ mod tests {
         );
         let stdout = String::from_utf8(message_human.stdout).unwrap();
         assert!(stdout.contains("Processed Ada"));
+
+        // Themed help, from the default the generated project never sets: the
+        // page is standout's `USAGE` block, not clap's `Usage:` line.
+        let help = run_binary(
+            &message.destination,
+            ["run", "-q", "-p", "hello-tool", "--", "--help"],
+        );
+        let help = String::from_utf8(help.stdout).unwrap();
+        assert!(help.contains("USAGE"), "unexpected help page:\n{help}");
+        assert!(!help.contains("Usage:"), "unexpected help page:\n{help}");
+
+        // The default command answers a bare invocation.
+        let bare = run_binary(
+            &message.destination,
+            ["run", "-q", "-p", "hello-tool", "--", "--name", "Ada"],
+        );
+        assert!(String::from_utf8(bare.stdout)
+            .unwrap()
+            .contains("Processed Ada"));
 
         let human = run_binary(
             &rich.destination,
@@ -3039,7 +3418,15 @@ mod tests {
             .output()
             .unwrap();
         assert!(!missing.status.success());
-        assert!(String::from_utf8_lossy(&missing.stderr).contains("document is required"));
+        let missing = String::from_utf8_lossy(&missing.stderr);
+        assert!(
+            missing.contains("input `document`"),
+            "unexpected stderr: {missing}"
+        );
+        assert!(
+            missing.contains("No input provided"),
+            "unexpected stderr: {missing}"
+        );
     }
 
     fn cargo_metadata(manifest: &Path) -> serde_json::Value {

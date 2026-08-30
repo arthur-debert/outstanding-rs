@@ -1,4 +1,5 @@
 use clap::{CommandFactory, Parser, Subcommand};
+use standout::cli::Dispatch;
 use std::ffi::OsString;
 use std::path::PathBuf;
 
@@ -9,22 +10,31 @@ pub(crate) struct Cli {
     pub(crate) command: Option<Commands>,
 }
 
-#[derive(Subcommand)]
+#[derive(Subcommand, Dispatch)]
+#[dispatch(handlers = crate::handlers)]
 pub(crate) enum Commands {
     /// Add a new todo. Title comes from --title or piped stdin.
+    #[dispatch(
+        pure,
+        inputs = crate::handlers::add_inputs,
+        post_dispatch = crate::handlers::audit_hook
+    )]
     Add {
         #[arg(short, long)]
         title: Option<String>,
     },
     /// List todos. By default only pending ones; pass --all for everything.
+    #[dispatch(pure)]
     List {
         #[arg(short, long)]
         all: bool,
     },
     /// Mark a todo done.
+    #[dispatch(pure, post_dispatch = crate::handlers::audit_hook)]
     Done { id: u32 },
     /// Export todos as CSV. Writes ./todos.csv unless --stdout or
     /// --output-file-path redirects it.
+    #[dispatch(pure)]
     Export {
         #[arg(short, long)]
         all: bool,

@@ -47,14 +47,14 @@ use standout::{embed_styles, embed_templates, handler};
 #[command(name = "my-todo")]
 struct Cli {
     #[command(subcommand)]
-    command: Commands,
+    command: Option<Commands>,
 }
 
 #[derive(Subcommand, Dispatch)]
 #[dispatch(handlers = handlers)]
 enum Commands {
-    /// List all todos.
-    #[dispatch(pure)]
+    /// List all todos. Running the binary with no command lists too.
+    #[dispatch(pure, default)]
     List,
 }
 
@@ -89,6 +89,7 @@ mod handlers {
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let app = App::builder()
+        .version(env!("CARGO_PKG_VERSION"))
         .templates(embed_templates!("src/templates"))
         .styles(embed_styles!("src/styles"))
         .default_theme("default")
@@ -125,12 +126,14 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 ## Run it
 
 ```bash
+cargo run
 cargo run -- list
 cargo run -- list --output json
 cargo run -- list --output text
 ```
 
 This demonstrates command dispatch, template rendering, structured output, hot
-reload in debug builds, and adaptive styles. It intentionally does not teach
-package ownership or the testing pyramid; the
+reload in debug builds, adaptive styles, and standout's themed `--help`, which
+is on unless an application calls `.help_handling(false)`. It intentionally
+does not teach package ownership or the testing pyramid; the
 [production-shaped example](production-shaped-example.md) does.
