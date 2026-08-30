@@ -14,9 +14,11 @@ test net
 │   └── gap-spec suites ───────────────┐     │    also authors the red gap-spec suites)
 └── composition contracts              │     │
     ├── one blessed surface ◄──────────│─────┘   (consumes the pilot's scorecard)
-    │   └── corpus COMPLETION          │         (ROB07; after BOTH blessed surface — as a
-    │                                  │          published release — and adopter seams:
-    │                                  │          re-run, full roster, CI gate, lookma)
+    │   └── corpus COMPLETION          │         (ROB07; the re-run, produced apps, CI gate
+    │                                  │          and lookma port wait for BOTH blessed
+    │                                  │          surface — as a published release — and
+    │                                  │          adopter seams; the validity run and
+    │                                  │          spec-only archetype authoring may go first)
     ├── adopter seams                  │         (ROB06; minted 2026-08-30 from the pilot's
     │                                  │          escape-hatch findings, parallel to ROB05)
     └── parity: config layering        │
@@ -35,7 +37,9 @@ binary's stdout and exit codes, so they neither wait on the blessed idioms nor o
 capabilities they describe, and each parity epic must have its executable
 definition-of-done in hand before it starts. Corpus **completion** — the full archetype
 roster implemented on the blessed idioms, the CI gate, real downstreams joined — lands
-after the blessed surface, since corpus apps pin idioms that epic deliberately breaks.
+after the blessed surface, since corpus apps pin idioms that epic deliberately breaks;
+only its validity run and its spec-only archetype authoring, which produce no app, may
+start before the release.
 Terminal citizenship depends on machine contract, not merely on config layering: its
 progress seam emits machine events into the model that epic defines. Ordering is by
 dependency, not calendar: siblings under one parent may run concurrently.

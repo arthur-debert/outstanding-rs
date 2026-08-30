@@ -4,8 +4,11 @@ Last epic of the **Robustness program** (ROB07). The completion phase of the cor
 Spec whose pilot phase ROB03 (#322) and the corpus cleanup ROC02 (#367) delivered — the
 pilot record is now `implemented/robustness-corpus.md`. Depends on the blessed surface
 (ROB05) **as a published release**: the runner pins crates.io versions by design
-(ADR-0023, no path or git dependencies), so nothing here can run until the 9.0 line is
-on crates.io. Also depends on the adopter seams (`robustness-adopter-seams.md`), because
+(ADR-0023, no path or git dependencies), so the comparative re-run and every produced
+application wait until the 9.0 line is on crates.io. Two items do not: the `validity`
+run (a method check against the latest published 8.x, excluded from the comparison) and
+the spec-only authoring of the six remaining archetypes; the authoritative graph in
+`implemented/robustness-test-net.md` records the same split. Also depends on the adopter seams (`robustness-adopter-seams.md`), because
 the re-run is the measurement of whether those seams removed the pilot's workarounds.
 Long-lived: the corpus outlives the program.
 
@@ -68,11 +71,18 @@ the archetypes are sharp enough to find *known* defects has never run.
   allowlisted environment variable does not satisfy that (descendants inherit the
   environment, and the agent/build phases have network), which is exactly why ADR-0023
   rejects it; the mechanism is one where the secret never enters the agent's process
-  tree — a brokered backend or local proxy holding the credential outside the sandbox
-  is the expected shape, decided in the grill and recorded as an ADR-0023 amendment.
-  Whatever is admitted is written into the report's existing
-  `blindness.credential_exceptions` field, and a regression test proves the agent can
-  authenticate while a spawned build script cannot observe the credential. The
+  tree *and* the broker that holds it answers only the agent process. A proxy any
+  process in the sandbox can reach fails the second half — the agent and build phases
+  have network, so a build script could authenticate through it without ever reading
+  the token. The broker therefore has an enforced caller boundary: it identifies the
+  agent process itself (process-bound IPC with peer-credential checks, or a one-shot
+  capability the agent consumes before it spawns anything), and descendants are denied
+  by construction, not by convention. The shape is decided in the grill and recorded
+  as an ADR-0023 amendment. Whatever is admitted is written into the report's existing
+  `blindness.credential_exceptions` field, and a negative integration test spawns a
+  build script from the agent session that attempts an authenticated request through
+  the mechanism and is denied — the test is about using the credential, not about
+  printing it. The
   scorecard's validity section is replaced with the sanitized outcome. This run is
   against the latest published 8.x at the time — it checks the method (do the
   archetypes rediscover known defects), not the framework — and is excluded from the
@@ -140,7 +150,8 @@ member. The grill settles the cargo patch/workspace mechanics and the trigger.
 - **Running before the release.** A re-run against 8.1.1 measures nothing new. The
   dependency on a published 9.0 is hard; do not substitute a git pin.
 - **The credential exception widening.** One scoped credential, held outside the
-  agent's process tree, recorded in every report; if the agent backend needs more (host
+  agent's process tree behind a caller boundary only the agent passes, recorded in
+  every report; if the agent backend needs more (host
   HOME, Keychain, an inherited variable), the answer is a different backend invocation,
   not a wider policy.
 - **Archetype authoring drifting from the survey.** The six sketches are in a session
