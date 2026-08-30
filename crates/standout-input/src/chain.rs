@@ -191,6 +191,7 @@ fn source_kind_from_name(name: &str) -> InputSourceKind {
     match name {
         "argument" => InputSourceKind::Arg,
         "flag" => InputSourceKind::Flag,
+        "file" => InputSourceKind::File,
         "stdin" => InputSourceKind::Stdin,
         "environment variable" => InputSourceKind::Env,
         "clipboard" => InputSourceKind::Clipboard,

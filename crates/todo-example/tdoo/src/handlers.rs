@@ -1,9 +1,50 @@
-#![allow(non_snake_case)]
-
+use clap::ArgMatches;
 use serde::Serialize;
-use standout::cli::{Artifact, CommandContext, CommandContextInput, Output};
+use serde_json::Value as JsonValue;
+use standout::cli::{
+    Artifact, CommandConfig, CommandContext, CommandContextInput, HookError, Output,
+};
 use standout::handler;
+use standout::input::{ArgSource, InputChain, StdinSource};
 use todo_core::{ExportWarning, Todo, TodoFilter, TodoStore};
+
+/// The title a new todo carries: `--title`, else piped stdin.
+pub(crate) fn add_inputs<H>(config: CommandConfig<H>) -> CommandConfig<H> {
+    config.input(
+        "title",
+        InputChain::<String>::new()
+            .try_source(ArgSource::new("title"))
+            .try_source(StdinSource::new())
+            .validate(
+                |title: &String| !title.trim().is_empty(),
+                "title cannot be empty",
+            ),
+    )
+}
+
+/// Appends the mutated todo's id to the file named by `TODO_AUDIT_LOG`.
+pub(crate) fn audit_hook(
+    _matches: &ArgMatches,
+    ctx: &CommandContext,
+    value: JsonValue,
+) -> Result<JsonValue, HookError> {
+    if let Ok(path) = std::env::var("TODO_AUDIT_LOG") {
+        let line = format!(
+            "{}\t{}\n",
+            ctx.command_path.join("."),
+            value
+                .get("todo")
+                .and_then(|todo| todo.get("id"))
+                .unwrap_or(&JsonValue::Null)
+        );
+        let _ = std::fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(path)
+            .and_then(|mut file| std::io::Write::write_all(&mut file, line.as_bytes()));
+    }
+    Ok(value)
+}
 
 #[derive(Debug, Serialize)]
 pub(crate) struct TodoView {

@@ -1,9 +1,6 @@
-use crate::handlers;
+use crate::cli::Commands;
 use anyhow::Result;
-use clap::ArgMatches;
-use serde_json::Value as JsonValue;
-use standout::cli::{App, CommandContext, FnHandler, HookError};
-use standout::input::{ArgSource, InputChain, StdinSource};
+use standout::cli::App;
 use standout::{embed_styles, embed_templates};
 use todo_core::TodoStore;
 
@@ -17,59 +14,15 @@ pub(crate) fn build(store: TodoStore) -> Result<App> {
         .templates(embed_templates!("src/templates"))
         .styles(embed_styles!("src/styles"))
         .default_theme("todo")
-        .command_with("add", FnHandler::new(handlers::add__handler), |config| {
-            config
-                .template_name("add")
-                .input(
-                    "title",
-                    InputChain::<String>::new()
-                        .try_source(ArgSource::new("title"))
-                        .try_source(StdinSource::new())
-                        .validate(|title| !title.trim().is_empty(), "title cannot be empty"),
-                )
-                .post_dispatch(audit_hook)
-        })?
-        .command_with("list", FnHandler::new(handlers::list__handler), |config| {
-            config.template_name("list")
-        })?
-        .command_with("done", FnHandler::new(handlers::done__handler), |config| {
-            config.template_name("done").post_dispatch(audit_hook)
-        })?
-        .command_with(
-            "export",
-            FnHandler::new(handlers::export__handler),
-            |config| config.template_name("export"),
-        )?
+        .commands(Commands::dispatch_config())?
         .build()?)
-}
-
-fn audit_hook(
-    _matches: &ArgMatches,
-    ctx: &CommandContext,
-    value: JsonValue,
-) -> std::result::Result<JsonValue, HookError> {
-    if let Ok(path) = std::env::var("TODO_AUDIT_LOG") {
-        let line = format!(
-            "{}\t{}\n",
-            ctx.command_path.join("."),
-            value
-                .get("todo")
-                .and_then(|todo| todo.get("id"))
-                .unwrap_or(&JsonValue::Null)
-        );
-        let _ = std::fs::OpenOptions::new()
-            .create(true)
-            .append(true)
-            .open(path)
-            .and_then(|mut file| std::io::Write::write_all(&mut file, line.as_bytes()));
-    }
-    Ok(value)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::cli;
+    use serde_json::Value as JsonValue;
     use serial_test::serial;
     use standout::OutputMode;
     use standout_test::TestHarness;

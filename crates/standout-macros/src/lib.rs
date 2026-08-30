@@ -37,6 +37,11 @@ pub fn embed_styles(input: TokenStream) -> TokenStream {
 /// which is how a `#[handler]`-annotated function is registered under any
 /// `#[dispatch(...)]` form, questionnaire commands included.
 ///
+/// `#[dispatch(inputs = path)]` names a `fn(CommandConfig) -> CommandConfig`
+/// that declares the command's input chains, so a command whose value comes
+/// from an argument, a file or piped stdin keeps `CommandConfig::input` and
+/// `InputChain` while the enum stays the one place its command set is written.
+///
 /// A renamed command is one command: dispatch splits registration paths on
 /// `.`, so a `name` carrying one is rejected, and nesting is
 /// `#[dispatch(nested)]`. A variant may carry several `#[dispatch(...)]`

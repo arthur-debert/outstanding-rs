@@ -134,37 +134,70 @@ the wording stays the CLI's — visible in both the human report and
 `--output json`. The report channel follows the bytes: for a file it prints on
 stdout, and for `--stdout` it moves to stderr so it cannot corrupt the CSV.
 
-### `app.rs`: framework assembly
+### `cli.rs` and `app.rs`: declaration and assembly
 
-The app builder registers the core store as application state, embeds the CLI's
-presentation assets, connects handlers, and configures shell pipeline features:
+`cli.rs` holds both halves of the command set: clap's derive declares the
+`Command`, and `#[derive(Dispatch)]` on the same enum registers each variant
+against the handler of the same name. `pure` points the registration at the
+wrapper `#[handler]` generates, `inputs` names the function that declares the
+command's input chains, and `post_dispatch` names the hook the mutation runs
+through:
+
+```rust
+#[derive(Subcommand, Dispatch)]
+#[dispatch(handlers = crate::handlers)]
+pub(crate) enum Commands {
+    /// Add a new todo. Title comes from --title or piped stdin.
+    #[dispatch(
+        pure,
+        inputs = crate::handlers::add_inputs,
+        post_dispatch = crate::handlers::audit_hook
+    )]
+    Add {
+        #[arg(short, long)]
+        title: Option<String>,
+    },
+    // list, done and export omitted here; see tdoo/src/cli.rs
+}
+```
+
+```rust
+// handlers.rs
+pub(crate) fn add_inputs<H>(config: CommandConfig<H>) -> CommandConfig<H> {
+    config.input(
+        "title",
+        InputChain::<String>::new()
+            .try_source(ArgSource::new("title"))
+            .try_source(StdinSource::new())
+            .validate(|title: &String| !title.trim().is_empty(), "title cannot be empty"),
+    )
+}
+```
+
+`app.rs` is then wiring and nothing else: application state, the version clap
+reports, the invocation policy for a bare `tdoo`, the presentation assets, and
+the one call that registers the whole command set.
 
 ```rust
 App::builder()
     .app_state(store)
+    .version(env!("CARGO_PKG_VERSION"))
+    .default_command_with(|ctx| {
+        Some(if ctx.stdin_is_piped() { "add" } else { "list" }.to_string())
+    })
     .templates(embed_templates!("src/templates"))
     .styles(embed_styles!("src/styles"))
     .default_theme("todo")
-    .command_with("add", handlers::add__handler, |config| {
-        config
-            .template_name("add")
-            .input(
-                "title",
-                InputChain::<String>::new()
-                    .try_source(ArgSource::new("title"))
-                    .try_source(StdinSource::new())
-                    .validate(|title| !title.trim().is_empty(), "title cannot be empty"),
-            )
-            .post_dispatch(audit_hook)
-    })?
-    // list and done omitted here; see tdoo/src/app.rs
+    .commands(Commands::dispatch_config())?
     .build()?;
 ```
 
-The InputChain provides early CLI feedback, while `TodoStore::add` repeats the
-essential non-empty-title invariant for every caller. The `TODO_AUDIT_LOG` hook
-also stays here because environment-driven audit output is a cross-cutting shell
-concern.
+No command names its template: a command's template is the registry entry its
+path resolves to, so `add` renders `src/templates/add.jinja`. The InputChain
+provides early CLI feedback, while `TodoStore::add` repeats the essential
+non-empty-title invariant for every caller. The `TODO_AUDIT_LOG` hook lives
+beside the handlers it wraps, because environment-driven audit output is a
+cross-cutting shell concern.
 
 ### Templates and styles: final presentation
 

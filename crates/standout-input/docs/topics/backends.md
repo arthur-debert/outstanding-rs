@@ -36,6 +36,8 @@ pub trait InputCollector<T>: Send + Sync {
 }
 ```
 
+`name()` is not only for humans: the chain turns it into the `InputSourceKind` a handler reads back through `ctx.input_source(...)`, matching `argument`, `flag`, `file`, `stdin`, `environment variable`, `clipboard`, `editor`, `prompt` and `default`. A name outside that set reports `InputSourceKind::Default`, so a custom source that wants a provenance of its own registers with `try_source_with_kind` instead of `try_source`.
+
 The chain calls `is_available()` first. If it returns `false`, the source is skipped. Otherwise, `collect()` is called. If validation fails and `can_retry()` is `true`, the source is retried (for interactive sources).
 
 ---
