@@ -1,8 +1,3 @@
-//! Helper functions for CLI integration.
-//!
-//! This module contains utility functions used by the App (formerly split
-//! between App and AppBuilder).
-
 use crate::setup::SetupError;
 use clap::Command;
 use standout_dispatch::verify::{verify_handler_args, ExpectedArg};
@@ -39,13 +34,11 @@ pub(crate) fn verify_recursive(
         current_path.push(cmd.get_name());
     }
 
-    // Check current command
     let path_str = current_path.join(".");
     if let Some(expected) = expected_args.get(&path_str) {
         verify_handler_args(cmd, &path_str, expected)?;
     }
 
-    // Check subcommands
     for sub in cmd.get_subcommands() {
         verify_recursive(sub, expected_args, &current_path, false)?;
     }

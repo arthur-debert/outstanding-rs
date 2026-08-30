@@ -1,17 +1,6 @@
-//! Archetype loading: a spec plus its pre-written acceptance suite.
-//!
-//! An archetype is a directory under `corpus/archetypes/<name>/` holding
-//! `spec.md` (the agent-facing behavioral spec) and `acceptance.toml` —
-//! authored before any implementation, so "did it work" is never judged by
-//! the implementer. There is one acceptance schema (`corpus/README.md`): the
-//! **roster case schema** (`schema = 1`, `[[case]]` tables) — black-box
-//! cases with full run semantics — scrubbed baseline env, sandbox files,
-//! pty attachment, scripted stdin, per-case timeout — and the documented
-//! assertion vocabulary, including `expected = "fail"` gap markers. The
-//! binary name is the archetype name (the roster's naming rule).
-//!
-//! A suite may carry an `[invariants]` table naming the commands the ROB01
-//! invariant matrix sweeps.
+// Archetype loading: a directory under `corpus/archetypes/<name>/` holding
+// `spec.md` and `acceptance.toml`. See `corpus/README.md` for the roster
+// case schema (`schema = 1`, `[[case]]` tables).
 
 use std::collections::{BTreeMap, HashSet};
 use std::path::Path;
@@ -21,20 +10,14 @@ use serde::Deserialize;
 
 use crate::digest;
 
-/// One archetype as loaded from disk.
 #[derive(Debug)]
 pub struct Archetype {
     pub name: String,
-    /// The exact spec text the agent will receive.
     pub spec: String,
     pub suite: CaseSuite,
     acceptance_sha256: String,
 }
 
-/// Declarative ROB01 matrix plan. The global axes define the stable planned
-/// cells; each command declares only whether its output is
-/// framework-rendered or intentionally opaque bytes — every command runs on
-/// every global axis combination.
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Invariants {
@@ -134,18 +117,10 @@ fn default_themes() -> Vec<InvariantTheme> {
     }]
 }
 
-/// The roster case schema (`corpus/README.md`, "Acceptance case format").
-///
-/// This is the schema's single definition: the runner loads suites through
-/// it, and the roster structural test (`tests/corpus_roster.rs`) parses the
-/// committed roster through [`CaseSuite::parse`], so a suite cannot pass one
-/// consumer and fail the other.
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct CaseSuite {
-    /// Schema version; only 1 exists.
     pub schema: u32,
-    /// Must match the directory name; doubles as the binary name.
     pub archetype: String,
     #[serde(rename = "case")]
     pub cases: Vec<Case>,
@@ -153,26 +128,19 @@ pub struct CaseSuite {
     pub invariants: Invariants,
 }
 
-/// One roster acceptance case.
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Case {
     pub name: String,
-    /// Optional milestone/topic grouping, echoed into the report.
     pub group: Option<String>,
-    /// One line naming the interaction under test.
     pub stresses: String,
     pub expected: Expected,
-    /// The epic that closes the gap; required when `expected = "fail"`.
     pub gap: Option<String>,
-    /// Why the case fails today; required when `expected = "fail"`.
     pub reason: Option<String>,
     pub run: CaseRun,
     pub expect: CaseExpect,
 }
 
-/// Whether the case is expected to pass, or is specced past current
-/// capability (`fail`, with `gap`/`reason` naming the parity signal).
 #[derive(Debug, Deserialize, Clone, Copy, PartialEq, Eq)]
 #[serde(rename_all = "lowercase")]
 pub enum Expected {
@@ -180,30 +148,21 @@ pub enum Expected {
     Fail,
 }
 
-/// How to run the binary for one case (`corpus/README.md`, Run semantics).
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct CaseRun {
-    /// Arguments after the binary name; may be empty (a naked invocation).
     pub argv: Vec<String>,
-    /// Explicit env on top of the scrubbed baseline.
     #[serde(default)]
     pub env: BTreeMap<String, String>,
-    /// Streams attached to a pty; all others are pipes.
     #[serde(default)]
     pub tty: Vec<TtyStream>,
-    /// Scripted input; omitted means stdin is piped and already at EOF.
     pub stdin: Option<String>,
-    /// Working directory, relative to the sandbox root (default `.`).
     pub cwd: Option<String>,
-    /// Hard bound; exceeding it fails the case.
     pub timeout_seconds: u64,
-    /// Sandbox files created before the run, keyed by relative path.
     #[serde(default)]
     pub files: BTreeMap<String, String>,
 }
 
-/// A standard stream a case may attach to the pty.
 #[derive(Debug, Deserialize, Clone, Copy, PartialEq, Eq)]
 #[serde(rename_all = "lowercase")]
 pub enum TtyStream {
@@ -212,43 +171,30 @@ pub enum TtyStream {
     Stderr,
 }
 
-/// The case's assertions (`corpus/README.md`, Assertion vocabulary).
 #[derive(Debug, Default, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct CaseExpect {
     pub exit_code: Option<i32>,
-    /// Exact stream contents, LF-normalized.
     pub stdout: Option<String>,
     pub stderr: Option<String>,
-    /// stdout parses as JSON semantically equal to this JSON string.
     pub stdout_json: Option<String>,
     #[serde(default)]
     pub stdout_contains: Vec<String>,
     #[serde(default)]
     pub stderr_contains: Vec<String>,
-    /// Row-association groups: every value in a group must co-occur on one
-    /// single stdout line (e.g. a star with *its* constellation and
-    /// magnitude), which flat `stdout_contains` cannot express.
     #[serde(default)]
     pub stdout_row_contains: Vec<Vec<String>>,
-    /// JSON row-association groups: stdout must parse as JSON and every
-    /// value in a group must co-occur among the scalars of one single JSON
-    /// array element (numbers match their decimal literal).
     #[serde(default)]
     pub stdout_json_rows: Vec<Vec<String>>,
     #[serde(default)]
     pub stdout_not_contains: Vec<String>,
     #[serde(default)]
     pub stderr_not_contains: Vec<String>,
-    /// Each suffix must terminate exactly one non-empty stdout line. This is
-    /// the answer-sheet assertion: tags cannot be duplicated or collapsed
-    /// into prose and still pass.
     #[serde(default)]
     pub stdout_lines_end_with_once: Vec<String>,
 }
 
 impl CaseExpect {
-    /// True when the case asserts nothing — a schema error at load time.
     fn is_empty(&self) -> bool {
         self.exit_code.is_none()
             && self.stdout.is_none()
@@ -265,7 +211,6 @@ impl CaseExpect {
 }
 
 impl Archetype {
-    /// Loads `archetypes_dir/<name>/{spec.md,acceptance.toml}`.
     pub fn load(archetypes_dir: &Path, name: &str) -> anyhow::Result<Self> {
         let dir = archetypes_dir.join(name);
         let spec_path = dir.join("spec.md");
@@ -283,18 +228,14 @@ impl Archetype {
         })
     }
 
-    /// The binary the produced app must build: the roster rule is that
-    /// archetype names double as binary names.
     pub fn binary(&self) -> &str {
         &self.name
     }
 
-    /// The commands the ROB01 invariant matrix sweeps.
     pub fn invariants(&self) -> &Invariants {
         &self.suite.invariants
     }
 
-    /// sha256 (hex) of the spec text, pinning the run to spec content.
     pub fn spec_sha256(&self) -> String {
         digest::sha256_hex(&self.spec)
     }
@@ -305,10 +246,6 @@ impl Archetype {
 }
 
 impl CaseSuite {
-    /// Parses and validates `text` as a case suite for archetype `name`
-    /// (the owning directory name); `path` labels diagnostics. This is the
-    /// one entry point every consumer shares — [`Archetype::load`] and the
-    /// roster structural test alike.
     pub fn parse(text: &str, name: &str, path: &Path) -> anyhow::Result<Self> {
         let suite: CaseSuite =
             toml::from_str(text).with_context(|| format!("parsing {}", path.display()))?;
@@ -317,14 +254,6 @@ impl CaseSuite {
     }
 }
 
-/// The semantic rules the case schema carries beyond its shape: version 1,
-/// archetype/directory agreement, a non-empty suite of uniquely named
-/// kebab-case cases, a non-empty `stresses` line, a positive timeout, at
-/// least one assertion per case, no vacuous assertion elements (an empty
-/// row group or an empty string in a substring/row/suffix list matches any
-/// output), no exact-`stdout` + semantic-`stdout_json` contradiction,
-/// `stdout_json` that parses as JSON, and non-empty `gap`/`reason` exactly
-/// on expected-fail cases.
 fn validate_case_suite(suite: &CaseSuite, name: &str, path: &Path) -> anyhow::Result<()> {
     if suite.schema != 1 {
         bail!(
@@ -378,10 +307,6 @@ fn validate_case_suite(suite: &CaseSuite, name: &str, path: &Path) -> anyhow::Re
         if case.expect.is_empty() {
             bail!("{}: case {:?} asserts nothing", path.display(), case.name);
         }
-        // A vacuous element asserts nothing while counting as an assertion:
-        // an empty row group is satisfied by any output, and an empty
-        // string is a substring of everything. Reject both at load time so
-        // a malformed case cannot silently pass.
         for (key, rows) in [
             ("stdout_row_contains", &case.expect.stdout_row_contains),
             ("stdout_json_rows", &case.expect.stdout_json_rows),
@@ -419,8 +344,6 @@ fn validate_case_suite(suite: &CaseSuite, name: &str, path: &Path) -> anyhow::Re
                 );
             }
         }
-        // Exact-stdout and semantic-JSON assertions on the same stream
-        // contradict each other's reason to exist; a case picks one.
         if case.expect.stdout.is_some() && case.expect.stdout_json.is_some() {
             bail!(
                 "{}: case {:?} — use `stdout` (exact) or `stdout_json` (semantic), not both",
@@ -465,13 +388,8 @@ fn validate_case_suite(suite: &CaseSuite, name: &str, path: &Path) -> anyhow::Re
 
 #[cfg(test)]
 mod tests {
-    //! One fixture per reconciled validation rule: the case-schema rules the
-    //! runner and the roster structural test used to disagree on, now all
-    //! enforced by the shared parser above.
-
     use super::*;
 
-    /// A minimal valid suite; `extra` splices fields into the one case.
     fn suite(case: &str) -> String {
         format!("schema = 1\narchetype = \"fake\"\n{case}")
     }
@@ -517,9 +435,6 @@ exit_code = 0
 
     #[test]
     fn empty_suite_is_rejected() {
-        // An absent `[[case]]` already fails shape-wise (`case` is a
-        // required field); `case = []` is the shape-valid empty suite the
-        // semantic rule must catch.
         let err = parse("schema = 1\narchetype = \"fake\"\ncase = []\n").unwrap_err();
         assert!(
             err.to_string().contains("empty acceptance suite"),
@@ -560,8 +475,6 @@ exit_code = 0
         assert!(err.to_string().contains("asserts nothing"), "{err:#}");
     }
 
-    /// An empty assertion list is no assertion: presence of the key alone
-    /// must not satisfy the at-least-one-assertion rule.
     #[test]
     fn empty_assertion_lists_do_not_count() {
         for key in ["stdout_contains", "stdout_row_contains", "stdout_json_rows"] {
@@ -573,8 +486,6 @@ exit_code = 0
         }
     }
 
-    /// `[[]]` counts as a present assertion but is satisfied by any
-    /// output; the vacuous-element rule must reject it.
     #[test]
     fn empty_row_groups_are_rejected() {
         for key in ["stdout_row_contains", "stdout_json_rows"] {
@@ -589,8 +500,6 @@ exit_code = 0
         }
     }
 
-    /// An empty cell is a substring of every line (and matching an empty
-    /// scalar is `stdout_json` territory); the rule rejects it.
     #[test]
     fn empty_row_cells_are_rejected() {
         for key in ["stdout_row_contains", "stdout_json_rows"] {
@@ -605,8 +514,6 @@ exit_code = 0
         }
     }
 
-    /// The empty string is a substring (and suffix) of everything, so an
-    /// empty entry in any flat assertion list is equally vacuous.
     #[test]
     fn empty_list_entries_are_rejected() {
         for key in [
@@ -627,8 +534,6 @@ exit_code = 0
         }
     }
 
-    /// The two row-association kinds ported from the retired check schema
-    /// parse and each satisfies the at-least-one-assertion rule alone.
     #[test]
     fn row_association_assertions_parse_and_count() {
         for key in ["stdout_row_contains", "stdout_json_rows"] {
@@ -692,8 +597,6 @@ exit_code = 0
         assert!(err.to_string().contains("gap+reason"), "{err:#}");
     }
 
-    /// The documented default: `[invariants]` keys may be omitted
-    /// individually — omitted axes mean the full global plan, not an error.
     #[test]
     fn invariants_keys_default_individually() {
         let suite = parse(&suite(&format!(

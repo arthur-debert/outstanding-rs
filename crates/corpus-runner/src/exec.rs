@@ -1,13 +1,6 @@
-//! The one subprocess supervisor: every external process the runner spawns —
-//! agent session, cargo build, acceptance checks and cases, invariant cells —
-//! runs under [`supervise`], which enforces a hard deadline over the child
-//! AND its output streams, terminates the child's whole process group on
-//! expiry (so a shell's grandchildren cannot outlive the run or hold the
-//! pipes open), and caps in-memory output capture. [`run`] is the
-//! pipes-only convenience over it; the roster case executor (`cases`) wires
-//! its own stdio — ptys included — and calls [`supervise`] directly. A
-//! phase that overruns its deadline becomes a recorded finding, never a
-//! hung runner: the durable `report.json` is always written.
+// The one subprocess supervisor: every external process the runner spawns
+// runs under `supervise`, which enforces a hard deadline over the child and
+// its output streams and kills the child's whole process group on expiry.
 
 use std::io::Read;
 use std::process::{Child, Command, ExitStatus, Stdio};
@@ -15,47 +8,18 @@ use std::sync::{Arc, Mutex};
 use std::thread::JoinHandle;
 use std::time::{Duration, Instant};
 
-/// Cap on each captured stream; excess is discarded with a truncation marker.
 pub const CAPTURE_CAP_BYTES: usize = 2 * 1024 * 1024;
 
-/// After a deadline group-kill, how long to wait for the pipe readers to see
-/// EOF before abandoning them. Killing the group closes every writer inside
-/// it; only a descendant that escaped the group (its own setsid) can still
-/// hold a pipe, and that one must not block the run.
 const READER_GRACE: Duration = Duration::from_secs(2);
 
-/// How one supervised subprocess ended.
 #[derive(Debug)]
 pub struct Outcome {
-    /// The exit code; `None` when killed by a signal (including our own
-    /// deadline kill).
     pub exit_code: Option<i32>,
-    /// True when the deadline expired before the run fully completed — the
-    /// child still running, or its output streams still open (a descendant
-    /// inheriting stdout/stderr keeps a stream open past the child's own
-    /// exit). Either way the process group was killed at the deadline.
     pub timed_out: bool,
-    /// Captured stdout (empty when `capture` was false), lossy UTF-8,
-    /// truncated at [`CAPTURE_CAP_BYTES`].
     pub stdout: String,
-    /// Captured stderr, same rules as `stdout`.
     pub stderr: String,
 }
 
-/// Runs `command` to completion or `deadline`, whichever comes first.
-///
-/// The child is placed in its own process group. Supervision covers both the
-/// child process and (with `capture` true) its piped stdout/stderr until EOF,
-/// under one absolute deadline: a descendant that inherits a pipe and
-/// outlives the child cannot stall the run. On expiry the whole group is
-/// killed; a reader still open after the group kill (an escaped descendant)
-/// is abandoned after a short grace, returning whatever was captured so far.
-/// With `capture` false the caller's stdio configuration stands (e.g. the
-/// session phase writes straight to the transcript file).
-///
-/// Errors only when the process cannot be spawned at all — a deadline kill
-/// or nonzero exit is an `Outcome`, not an error, because those are
-/// reportable findings.
 pub fn run(command: &mut Command, deadline: Duration, capture: bool) -> Result<Outcome, String> {
     place_in_own_group(command);
     if capture {
@@ -80,9 +44,6 @@ pub fn run(command: &mut Command, deadline: Duration, capture: bool) -> Result<O
     })
 }
 
-/// Configures `command` to become its own process-group leader, so the
-/// deadline kill can take out its whole descendant tree. Every supervised
-/// spawn must pass through this before `spawn()`.
 pub fn place_in_own_group(command: &mut Command) {
     #[cfg(unix)]
     {
@@ -91,18 +52,11 @@ pub fn place_in_own_group(command: &mut Command) {
     }
 }
 
-/// How a supervised child ended: its exit code (None when signal-killed)
-/// and whether the deadline expired first.
 pub struct Supervised {
     pub exit_code: Option<i32>,
     pub timed_out: bool,
 }
 
-/// The deadline loop shared by every supervised spawn: waits for the child
-/// AND all `captures` to finish, killing the child's whole process group
-/// when `deadline` expires. The caller owns stdio wiring and the capture
-/// threads — this is what lets the case executor put streams on a pty
-/// while keeping the one deadline discipline.
 pub fn supervise(
     child: &mut Child,
     deadline: Duration,
@@ -131,9 +85,6 @@ pub fn supervise(
                     Err(err) => return Err(format!("reaping timed-out child: {err}")),
                 }
             }
-            // The group kill closed every in-group writer; give the readers a
-            // bounded window to reach EOF, then abandon any still blocked on
-            // an escaped descendant's write end.
             let grace_ends = Instant::now() + READER_GRACE;
             while !captures.iter().all(|c| c.is_finished()) && Instant::now() < grace_ends {
                 std::thread::sleep(Duration::from_millis(10));
@@ -149,8 +100,6 @@ pub fn supervise(
     })
 }
 
-/// Kills the child's whole process group (the child is its own group leader
-/// via `process_group(0)`), then the child itself as a fallback.
 fn kill_group(child: &mut Child) {
     #[cfg(unix)]
     {
@@ -163,9 +112,6 @@ fn kill_group(child: &mut Child) {
     let _ = child.kill();
 }
 
-/// One stream's capture: the draining thread plus the shared buffer it fills,
-/// so the captured text stays reachable even when the thread must be
-/// abandoned (blocked on a pipe an escaped descendant holds open).
 pub struct Capture {
     handle: JoinHandle<()>,
     state: Arc<Mutex<CaptureState>>,
@@ -177,15 +123,10 @@ struct CaptureState {
 }
 
 impl Capture {
-    /// True when the reader thread drained its stream to EOF (or gave up
-    /// on an error).
     pub fn is_finished(&self) -> bool {
         self.handle.is_finished()
     }
 
-    /// The captured text so far — complete when the stream reached EOF,
-    /// partial when the reader was abandoned. Never blocks: joins the thread
-    /// only when it has already finished.
     pub fn text(self) -> String {
         if self.handle.is_finished() {
             let _ = self.handle.join();
@@ -199,8 +140,6 @@ impl Capture {
     }
 }
 
-/// Drains a stream on its own thread into a shared buffer, keeping at most
-/// [`CAPTURE_CAP_BYTES`] and flagging truncation when output exceeded the cap.
 pub fn capped_reader<R: Read + Send + 'static>(mut stream: R) -> Capture {
     let state = Arc::new(Mutex::new(CaptureState {
         kept: Vec::new(),
@@ -249,9 +188,6 @@ mod tests {
 
     #[test]
     fn descendant_holding_the_pipe_cannot_outlive_the_deadline() {
-        // The direct child exits immediately, but its backgrounded descendant
-        // inherits stdout and would hold the pipe open for 30s: the run must
-        // still return at the deadline, reporting the overrun.
         let started = Instant::now();
         let outcome = run(
             Command::new("sh").args(["-c", "echo before-exit; sleep 30 & exit 0"]),

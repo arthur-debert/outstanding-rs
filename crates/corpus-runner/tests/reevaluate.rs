@@ -1,14 +1,5 @@
-//! Typed re-evaluation of preserved historical runs: the source report is
-//! read through `report::HistoricalRun` — schema-2 reports (with retired
-//! keys like `session.attempts` and the `isolation_backend` strings) load
-//! cleanly, schema versions outside the supported historical range are
-//! refused, off-shape input is a diagnostic error naming the file, and the
-//! rewritten report regenerates every objective section while preserving
-//! the historical identity, session, and questionnaire verbatim (pins keep
-//! every value except the recomputed acceptance-suite hash).
+// Typed re-evaluation of preserved historical runs via `report::HistoricalRun`.
 
-// Unix-only: the fake produced binary is a `sh` script made executable via
-// `PermissionsExt`; gating keeps the workspace buildable elsewhere.
 #![cfg(unix)]
 
 use std::fs;
@@ -17,12 +8,8 @@ use std::path::PathBuf;
 
 use corpus_runner::{reevaluate, ReevaluationConfig, Timeouts};
 
-/// One case-schema archetype plus an external workspace and a produced
-/// binary, mirroring a preserved run. `docs_dir` is the real repo's docs
-/// directory: re-evaluation derives the denied source root from it, and the
-/// checkout is the one source-shaped path guaranteed not to sit beneath an
-/// admitted system read root (a tempdir source would sit under the admitted
-/// `/private/var` on macOS and be refused by the sandbox policy).
+// `docs_dir` is the real repo's docs directory, since a tempdir source
+// would sit under the admitted `/private/var` on macOS.
 struct Fixture {
     _scratch: tempfile::TempDir,
     archetypes_dir: PathBuf,
@@ -61,10 +48,8 @@ stdout_contains = ["hello"]
     let workspace_root = scratch.path().join("ws");
     fs::create_dir_all(&workspace_root).unwrap();
 
-    // The fake produced binary lives beneath the workspace root: the
-    // evaluation sandbox admits only the workspace and system roots, so an
-    // out-of-workspace sibling would be unexecutable under Landlock (and is
-    // refused up front by the produced-binary contract).
+    // The evaluation sandbox admits only the workspace and system roots, so
+    // the fake produced binary must live beneath the workspace root.
     let binary = workspace_root.join("fake");
     fs::write(&binary, "#!/bin/sh\necho hello\n").unwrap();
     fs::set_permissions(&binary, fs::Permissions::from_mode(0o755)).unwrap();
@@ -96,9 +81,6 @@ fn config(fixture: &Fixture) -> ReevaluationConfig {
     }
 }
 
-/// A complete schema-2 report, including the keys schema 3 retired
-/// (`session.attempts`, string `isolation_backend`s) — historical pilot
-/// evidence must keep loading without rewrites.
 fn historical_v2_report(archetype: &str) -> String {
     format!(
         r#"{{
@@ -157,12 +139,8 @@ fn reevaluation_preserves_history_and_regenerates_objective_sections() {
 
     let report = reevaluate(&config(&fixture)).unwrap();
 
-    // Rewritten identity and stamps.
     assert_eq!(report.schema_version, corpus_runner::report::SCHEMA_VERSION);
     assert_eq!(report.evaluation.origin, "isolated-re-evaluation");
-    // Isolation records are policy-derived: the historical agent boundary
-    // claims nothing, while the regenerated results' record carries the
-    // check policy's network denial as this backend actually lands it.
     assert_eq!(
         report.blindness.isolation.network,
         corpus_runner::report::NetworkEnforcement::NotEnforced
@@ -180,12 +158,9 @@ fn reevaluation_preserves_history_and_regenerates_objective_sections() {
     assert_eq!(report.blindness.isolation.backend, "historical-partial");
     assert!(!report.blindness.framework_source_excluded);
     assert!(!report.blindness.credential_exceptions.is_empty());
-    // The acceptance pin is recomputed from the loaded archetype — once,
-    // through one path — so it no longer matches the historical value.
     assert_ne!(report.pins.acceptance_sha256, "ef".repeat(32));
     assert_eq!(report.pins.acceptance_sha256.len(), 64);
 
-    // Preserved verbatim from the historical report.
     assert_eq!(report.run_id, "fake-1700000000");
     assert_eq!(report.pins.framework_version, "8.1.1");
     assert_eq!(report.pins.docs_commit, "cafecafe");
@@ -201,7 +176,6 @@ fn reevaluation_preserves_history_and_regenerates_objective_sections() {
         "built it"
     );
 
-    // Regenerated objective results: the provided binary ran the suite.
     assert!(report.acceptance.built);
     assert_eq!(report.acceptance.cases.len(), 1);
     assert_eq!(
@@ -213,7 +187,6 @@ fn reevaluation_preserves_history_and_regenerates_objective_sections() {
         Some(64)
     );
 
-    // The rewritten report is on disk and loads as the current schema.
     let restored: corpus_runner::report::RunReport =
         serde_json::from_str(&fs::read_to_string(&fixture.output_report).unwrap()).unwrap();
     assert_eq!(
@@ -222,7 +195,6 @@ fn reevaluation_preserves_history_and_regenerates_objective_sections() {
     );
 }
 
-/// Rewrites (or removes) the top-level `schema_version` of a report JSON.
 fn with_schema_version(report: &str, version: Option<u64>) -> String {
     let mut value: serde_json::Value = serde_json::from_str(report).unwrap();
     let object = value.as_object_mut().unwrap();
@@ -290,8 +262,6 @@ fn out_of_workspace_binary_override_is_a_loud_finding() {
 
     let report = reevaluate(&config).unwrap();
 
-    // The refusal is a finding, not a runner error: the report records a
-    // failed build with the workspace-residency contract in the detail.
     assert!(!report.acceptance.built);
     assert!(report
         .acceptance

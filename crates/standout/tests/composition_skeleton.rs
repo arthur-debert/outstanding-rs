@@ -1,8 +1,3 @@
-//! Walking-skeleton request path: `list` through `run_with`.
-//!
-//! These tests cover review findings that only show up on the `list` adapter:
-//! split formatted/raw output, and glue-side template absence.
-
 use clap::Command;
 use console::Style;
 use serde_json::json;

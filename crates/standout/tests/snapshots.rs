@@ -59,8 +59,6 @@ fn test_snapshots_json_output() {
     );
     let output = result.output().unwrap();
 
-    // Use assert_json_snapshot for semantic comparison
-    // This normalizes key ordering, preventing spurious failures across platforms
     let json_value: serde_json::Value = serde_json::from_str(output).unwrap();
     assert_json_snapshot!("json_list_output", json_value);
 }
@@ -84,8 +82,6 @@ fn test_snapshots_error_handling() {
 
     let result = app.dispatch(matches, OutputMode::Term);
 
-    // Handler errors surface as DispatchResult::Error("Error: {message}").
-    // Consumers should write this to stderr and exit non-zero.
     assert!(
         result.is_error(),
         "expected DispatchResult::Error, got {:?}",

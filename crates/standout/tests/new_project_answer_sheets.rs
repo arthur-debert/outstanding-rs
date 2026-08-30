@@ -1,18 +1,3 @@
-//! Real CLI flows for the bootstrap wizard's answer sheets: questionnaire
-//! rendering to stdout and a file, successful and failing `--answers FILE`
-//! and `--answers -` submissions through the review and confirmation gate,
-//! attended and rejected terminal confirmation, missing-terminal failure,
-//! automated `--yes` runs, stale fingerprints, accumulated batch errors, and
-//! the no-partial-write guarantee.
-//!
-//! Every test runs the production `standout` binary in a fresh temporary
-//! working directory without a real terminal. Confirmation never reads
-//! stdin — stdin only ever carries an answer sheet — so every run pins the
-//! framework's attended-terminal seam (`STANDOUT_QUESTIONNAIRE_TERMINAL`): to
-//! `absent` by default (a regression that reaches the confirmation gate
-//! fails fast instead of prompting the developer's terminal), or to a
-//! scripted replies file for attended flows.
-
 use std::fs;
 use std::io::Write as _;
 use std::path::Path;
@@ -20,18 +5,8 @@ use std::process::{Command, Output, Stdio};
 
 use tempfile::TempDir;
 
-/// The framework's attended-terminal test seam: `absent` simulates no
-/// terminal; any other value names a file of scripted reply lines. Debug
-/// builds only — these tests exercise the debug-profile binary; a release
-/// binary never reads the variable.
 const TERMINAL_SEAM_VAR: &str = "STANDOUT_QUESTIONNAIRE_TERMINAL";
 
-/// Run the production wizard binary in `cwd` with `stdin` piped in and the
-/// attended-terminal seam pinned to `terminal_seam`. A run that fails fast
-/// (a missing answers file, a rejected sheet) may exit before reading
-/// stdin; the broken pipe that write then reports is an expected outcome,
-/// so the helper still returns the child's output for failure-mode
-/// assertions.
 fn run_seamed(
     cwd: &Path,
     args: &[&str],
@@ -57,15 +32,10 @@ fn run_seamed(
     child.wait_with_output().unwrap()
 }
 
-/// [`run_seamed`] with no attended terminal — the default, so any run that
-/// unexpectedly reaches the confirmation gate fails fast.
 fn run_standout(cwd: &Path, args: &[&str], stdin: &str) -> Output {
     run_seamed(cwd, args, stdin, "absent")
 }
 
-/// [`run_seamed`] with an attended terminal scripted to answer `replies`
-/// (one line per prompt). The replies file lives outside `cwd`, keeping
-/// whole-directory no-partial-write assertions exact.
 fn run_attended(cwd: &Path, args: &[&str], stdin: &str, replies: &str) -> Output {
     let terminal = TempDir::new().unwrap();
     let script = terminal.path().join("replies.txt");
@@ -94,9 +64,6 @@ fn assert_in_order(text: &str, earlier: &str, later: &str) {
     );
 }
 
-/// The entries of `dir`, sorted, for whole-directory no-partial-write
-/// assertions (a failed run must leave nothing behind — no destination and
-/// no staging leftovers).
 fn dir_entries(dir: &Path) -> Vec<String> {
     let mut entries: Vec<String> = fs::read_dir(dir)
         .unwrap()
@@ -106,9 +73,6 @@ fn dir_entries(dir: &Path) -> Vec<String> {
     entries
 }
 
-/// Set `value` as the answer text below the first question line ending
-/// with `<id:...>`, replacing a pre-filled default line when one is
-/// rendered.
 fn fill(sheet: &str, id: &str, value: &str) -> String {
     let tag = format!("<id:{id}>");
     let lines: Vec<&str> = sheet.lines().collect();
@@ -121,8 +85,6 @@ fn fill(sheet: &str, id: &str, value: &str) -> String {
         i += 1;
         if !found && line.trim_end().ends_with(&tag) {
             found = true;
-            // A non-blank line right below the question is a pre-filled
-            // default: the answer replaces it.
             if lines.get(i).is_some_and(|next| !next.trim().is_empty()) {
                 i += 1;
             }
@@ -133,8 +95,6 @@ fn fill(sheet: &str, id: &str, value: &str) -> String {
     out.join("\n") + "\n"
 }
 
-/// A completed sheet for a minimal `hello-tool` project, produced by the
-/// binary's own `questions` rendering.
 fn completed_sheet(cwd: &Path) -> String {
     let rendered = run_standout(cwd, &["new-project", "questions"], "");
     assert!(rendered.status.success());
@@ -145,9 +105,6 @@ fn completed_sheet(cwd: &Path) -> String {
     fill(&sheet, "command.inputs.name", "name")
 }
 
-/// A valid completed sheet whose answer text contains a suspected tag
-/// fragment. The parser accepts the answer but reports a warning so users
-/// can catch accidentally mangled question tags.
 fn completed_sheet_with_suspected_tag(cwd: &Path) -> String {
     let sheet = completed_sheet(cwd);
     fill(
@@ -488,9 +445,6 @@ fn stdin_sheet_accumulates_errors_and_writes_nothing() {
 
 #[test]
 fn interactive_stdin_cannot_supply_the_dash_answer_sheet() {
-    // Piped-but-empty stdin is the closest a real CLI test can get to the
-    // no-document case; the unit tests cover the interactive-terminal
-    // refusal through the injected reader.
     let dir = TempDir::new().unwrap();
 
     let output = run_standout(dir.path(), &["new-project", "--answers", "-", "--yes"], "");

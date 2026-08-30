@@ -1,14 +1,3 @@
-//! Framework-owned questionnaire command surface.
-//!
-//! A command configured with a questionnaire gets reserved clap surface from
-//! the app builder (`--answers`, `--yes`, and a `questions` subcommand). The
-//! framework resolves and validates the filled application type before
-//! dispatch, optionally lets the application render a review, runs the
-//! attended confirmation gate, and then the handler reads the filled type from
-//! [`CommandContextInput::questionnaire`](crate::cli::CommandContextInput::questionnaire).
-//! File and stdin sheets keep non-fatal parse diagnostics visible by queuing
-//! their `RawAnswers` warnings for the framework warning flush.
-
 use std::io::{self, BufRead, Write};
 use std::path::{Path, PathBuf};
 use std::rc::Rc;
@@ -152,13 +141,6 @@ where
     Ok(())
 }
 
-/// Collect one questionnaire submission from exactly one source — the
-/// `--answers` file, explicit stdin (`--answers -`), or interactive
-/// prompting when the flag is absent — then decode it into the typed value.
-///
-/// Document sources surface their non-fatal parse warnings through the
-/// framework warning flush, labeled by origin; fatal parse diagnostics
-/// become one validation error carrying every accumulated diagnostic.
 fn collect_questionnaire_with<T, F>(
     matches: &ArgMatches,
     form: F,

@@ -1,29 +1,16 @@
-//! Color mode detection for adaptive themes.
-//!
-//! [`probe_color_mode`] queries the OS for the user's preferred scheme. Callers
-//! detect at the crate edge via [`crate::TargetProperties::detect`]; tests
-//! construct [`crate::TargetProperties`] with an explicit
-//! [`ColorMode`](ColorMode). Template functions never call this probe.
+//! [`probe_color_mode`] queries the OS for the user's preferred scheme.
+//! Callers detect at the crate edge via [`crate::TargetProperties::detect`];
+//! tests construct [`crate::TargetProperties`] with an explicit
+//! [`ColorMode`]. Template functions never call this probe.
 
 use dark_light::{detect as detect_os_theme, Mode as OsThemeMode};
 
-/// The user's preferred color mode.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ColorMode {
-    /// Light mode (light background, dark text).
     Light,
-    /// Dark mode (dark background, light text).
     Dark,
 }
 
-/// Detects the user's preferred color mode from the OS.
-///
-/// Uses the `dark-light` crate to query the OS for the current theme preference.
-///
-/// # Returns
-///
-/// - [`ColorMode::Light`] if the OS is in light mode
-/// - [`ColorMode::Dark`] if the OS is in dark mode
 pub(crate) fn probe_color_mode() -> ColorMode {
     match detect_os_theme() {
         OsThemeMode::Dark => ColorMode::Dark,

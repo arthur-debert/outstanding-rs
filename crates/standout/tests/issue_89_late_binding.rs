@@ -7,15 +7,9 @@ use standout::Theme;
 
 #[test]
 fn test_late_binding_theme_sequencing() {
-    // 1. Create a theme with a custom style
-    // Note: force_styling(true) is required in tests because there's no TTY
     let style = Style::new().cyan().force_styling(true);
     let theme = Theme::new().add("issue_89_style", style);
 
-    // 2. Build the app with OUT-OF-ORDER configuration:
-    //    Command is registered BEFORE the theme is set.
-    //    Prior to the fix, this would capture the default (empty) theme.
-    //    With Late Binding, it should use the theme provided at runtime.
     let app = App::builder()
         .command(
             "late_bind",
@@ -27,15 +21,12 @@ fn test_late_binding_theme_sequencing() {
         .build()
         .expect("Failed to build app");
 
-    // 3. Run to string
     let cmd = Command::new("app").subcommand(Command::new("late_bind"));
 
-    // We simulate passing "--output=term" to force terminal output with colors
     let result = app.run_to_string(cmd, ["app", "--output=term", "late_bind"]);
 
     match result.outcome() {
         standout::cli::DispatchResult::Handled(output) => {
-            // 4. Verification: If theme works, output should contain ANSI cyan code: \x1b[36m
             assert!(
                 output.contains("\x1b[36m"),
                 "Output should contain Cyan ANSI code for late bound theme, but got: {:?}",
@@ -46,14 +37,11 @@ fn test_late_binding_theme_sequencing() {
     }
 }
 
-/// Test that the dispatch! macro works correctly with late binding.
-/// The theme is set AFTER the dispatch! macro, which should still work.
 #[test]
 fn test_late_binding_with_dispatch_macro() {
     let style = Style::new().magenta().force_styling(true);
     let theme = Theme::new().add("macro_style", style);
 
-    // dispatch! macro is called BEFORE .theme()
     let app = App::builder()
         .commands(dispatch! {
             macro_cmd => {
@@ -71,13 +59,11 @@ fn test_late_binding_with_dispatch_macro() {
 
     match result.outcome() {
         standout::cli::DispatchResult::Handled(output) => {
-            // Magenta ANSI code: \x1b[35m
             assert!(
                 output.contains("\x1b[35m"),
                 "dispatch! macro should use late-bound theme, but got: {:?}",
                 output
             );
-            // Also verify the style tag wasn't rendered as [macro_style?]
             assert!(
                 !output.contains("[macro_style?]"),
                 "Style should be found, but got unknown style marker: {:?}",
@@ -88,14 +74,11 @@ fn test_late_binding_with_dispatch_macro() {
     }
 }
 
-/// Test that nested groups work correctly with late binding.
-/// Commands in nested groups should also receive the late-bound theme.
 #[test]
 fn test_late_binding_with_nested_groups() {
     let style = Style::new().green().force_styling(true);
     let theme = Theme::new().add("nested_style", style);
 
-    // Nested group commands registered BEFORE .theme()
     let app = App::builder()
         .group("db", |g| {
             g.command_with(
@@ -129,7 +112,6 @@ fn test_late_binding_with_nested_groups() {
 
     match result.outcome() {
         standout::cli::DispatchResult::Handled(output) => {
-            // Green ANSI code: \x1b[32m
             assert!(
                 output.contains("\x1b[32m"),
                 "Nested group command should use late-bound theme, but got: {:?}",
@@ -145,14 +127,6 @@ fn test_late_binding_with_nested_groups() {
     }
 }
 
-// ============================================================================
-// Invariant Tests
-// ============================================================================
-
-/// Test the invariant: unknown style tags degrade to unstyled text.
-///
-/// The runtime warning channel carries the missing-style signal; rendered user
-/// output must not leak `[tag?]` template markup.
 #[test]
 fn test_unknown_style_degrades_to_unstyled_text() {
     let app = App::builder()
@@ -162,7 +136,6 @@ fn test_unknown_style_degrades_to_unstyled_text() {
             "[unknown_style]content[/unknown_style]",
         )
         .unwrap()
-        // No .theme() call - intentionally missing
         .build()
         .expect("Failed to build app");
 
@@ -178,10 +151,6 @@ fn test_unknown_style_degrades_to_unstyled_text() {
     }
 }
 
-/// Test that a defined style does NOT render as [tag?].
-///
-/// This is the complement to the previous test - when a style IS defined,
-/// it should be applied and NOT show the "?" suffix.
 #[test]
 fn test_defined_style_does_not_render_as_tag_question_mark() {
     let style = Style::new().yellow().force_styling(true);
@@ -203,13 +172,11 @@ fn test_defined_style_does_not_render_as_tag_question_mark() {
 
     match result.outcome() {
         standout::cli::DispatchResult::Handled(output) => {
-            // Defined style should NOT render as [tag?]
             assert!(
                 !output.contains("[defined_style?]"),
                 "Defined style should NOT show ? marker, but got: {:?}",
                 output
             );
-            // Should contain yellow ANSI code: \x1b[33m
             assert!(
                 output.contains("\x1b[33m"),
                 "Defined style should apply yellow color, but got: {:?}",

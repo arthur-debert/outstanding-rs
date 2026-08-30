@@ -1,9 +1,3 @@
-//! Thin CLI adapters.
-//!
-//! Each handler translates parsed shell input into a `todo-core` call and
-//! translates the result into a serializable view model. Domain validation,
-//! filtering, state transitions, and persistence stay in `todo-core`.
-
 #![allow(non_snake_case)]
 
 use serde::Serialize;
@@ -40,20 +34,12 @@ pub(crate) struct TodoActionView {
     pub(crate) todo: TodoView,
 }
 
-/// The semantic report that rides along with the export artifact.
-///
-/// It carries no destination: only Standout knows where the bytes went, and it
-/// merges its own receipt in after the write.
 #[derive(Debug, Serialize)]
 pub(crate) struct ExportReportView {
     pub(crate) exported: usize,
     pub(crate) warnings: Vec<ExportWarningView>,
 }
 
-/// A core warning as this CLI presents it.
-///
-/// The taxonomy (`kind`) is the core's, so `--output json` consumers can match
-/// on it; the wording is the CLI's, because prose is presentation.
 #[derive(Debug, Serialize)]
 pub(crate) struct ExportWarningView {
     pub(crate) kind: &'static str,
@@ -115,14 +101,6 @@ pub(crate) fn done(
     }))
 }
 
-/// Exports todos as CSV.
-///
-/// This is the whole ownership boundary in one function. The core produces the
-/// bytes, the filename suggestion, and the typed warnings. The handler maps
-/// those into a view model and states which destination opt-ins apply. It does
-/// not open a file, pick a directory, or claim success: Standout selects the
-/// destination, performs the write, and renders `export.jinja` afterwards with
-/// its own receipt merged in.
 #[handler]
 pub(crate) fn export(
     #[flag] all: bool,
@@ -148,11 +126,8 @@ pub(crate) fn export(
 
     let artifact = Artifact::new(export.csv).with_report(report);
     let artifact = if stdout {
-        // `tdoo export --stdout > todos.csv`: the user placed the bytes, so
-        // Standout routes the report to stderr instead of corrupting them.
         artifact.allow_stdout()
     } else {
-        // A suggestion Standout is authorized to write, absent an override.
         artifact.suggest_destination(export.suggested_filename)
     };
 
@@ -239,7 +214,6 @@ mod tests {
         assert!(!artifact.stdout_allowed());
         assert!(!dir.path().join("todos.csv").exists());
 
-        // The core's fact, worded by the CLI, still typed for JSON consumers.
         let report = artifact.report().unwrap();
         assert_eq!(report.exported, 1);
         assert_eq!(report.warnings[0].kind, "completed_omitted");

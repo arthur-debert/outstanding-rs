@@ -1,32 +1,8 @@
-//! Style value types for concrete styles and aliases.
-
 use console::Style;
 
-/// A style value that can be either a concrete style or an alias to another style.
-///
-/// This enables layered styling where semantic styles can reference presentation
-/// styles, which in turn reference visual styles with concrete formatting.
-///
-/// # Example
-///
-/// ```rust
-/// use standout_render::{Theme, StyleValue};
-/// use console::Style;
-///
-/// let theme = Theme::new()
-///     // Visual layer - concrete styles
-///     .add("muted", Style::new().dim())
-///     .add("accent", Style::new().cyan().bold())
-///     // Presentation layer - aliases to visual
-///     .add("disabled", "muted")
-///     // Semantic layer - aliases to presentation
-///     .add("timestamp", "disabled");
-/// ```
 #[derive(Debug, Clone)]
 pub enum StyleValue {
-    /// A concrete style with actual formatting (colors, bold, etc.)
     Concrete(Style),
-    /// An alias referencing another style by name
     Alias(String),
 }
 

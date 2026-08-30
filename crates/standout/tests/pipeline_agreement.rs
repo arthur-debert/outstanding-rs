@@ -1,10 +1,3 @@
-//! Dispatch, `render_inline_with`, `render_with` of a named template, and
-//! `render_request` of the same facts agree.
-//!
-//! Help stays human under structured `--output` (ADR-0029): glue maps those
-//! modes to `Auto` on the help/topics request. Structured help pages of the
-//! same invocation facts are compared byte-for-byte.
-
 use std::cell::RefCell;
 use std::rc::Rc;
 
@@ -49,11 +42,6 @@ fn greet_command() -> Command {
     Command::new("app").subcommand(Command::new("greet"))
 }
 
-/// Clap tree with Standout's `--output` argument (id `_output_mode`).
-///
-/// `run_command` reads the invocation's mode from matches; `run_with` /
-/// `dispatch_from` install this flag themselves. Manual parse for
-/// `run_command` has to carry it the same way Standout's parse API does.
 fn greet_command_with_output() -> Command {
     greet_command().arg(
         Arg::new("_output_mode")

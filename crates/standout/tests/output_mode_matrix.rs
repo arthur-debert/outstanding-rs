@@ -1,7 +1,3 @@
-//! Matrix tests for output mode combinations.
-//!
-//! These tests ensure that all output modes work correctly with App.
-
 use clap::ArgMatches;
 use serde::Serialize;
 use standout::cli::handler::{CommandContext, Output};
@@ -28,10 +24,6 @@ impl TestData {
 fn simple_template() -> &'static str {
     "Name: {{ name }}, Count: {{ count }}"
 }
-
-// ============================================================================
-// App Output Mode Tests
-// ============================================================================
 
 #[test]
 fn test_app_output_mode_auto() {
@@ -109,7 +101,6 @@ fn test_app_output_mode_json() {
         .render_inline(simple_template(), &TestData::sample(), OutputMode::Json)
         .expect("Render failed");
 
-    // Should be valid JSON
     let parsed: serde_json::Value = serde_json::from_str(&output).expect("Invalid JSON output");
     assert_eq!(parsed["name"], "test");
     assert_eq!(parsed["count"], 42);
@@ -131,7 +122,6 @@ fn test_app_output_mode_yaml() {
         .render_inline(simple_template(), &TestData::sample(), OutputMode::Yaml)
         .expect("Render failed");
 
-    // Should contain YAML format
     assert!(output.contains("name: test"));
     assert!(output.contains("count: 42"));
 }
@@ -152,16 +142,11 @@ fn test_app_output_mode_csv() {
         .render_inline(simple_template(), &TestData::sample(), OutputMode::Csv)
         .expect("Render failed");
 
-    // Should contain CSV headers and data
     assert!(output.contains("name"));
     assert!(output.contains("count"));
     assert!(output.contains("test"));
     assert!(output.contains("42"));
 }
-
-// ============================================================================
-// Additional Output Mode Tests
-// ============================================================================
 
 #[test]
 fn test_local_app_output_mode_auto() {
@@ -239,7 +224,6 @@ fn test_local_app_output_mode_json() {
         .render_inline(simple_template(), &TestData::sample(), OutputMode::Json)
         .expect("Render failed");
 
-    // Should be valid JSON
     let parsed: serde_json::Value = serde_json::from_str(&output).expect("Invalid JSON output");
     assert_eq!(parsed["name"], "test");
     assert_eq!(parsed["count"], 42);
@@ -261,7 +245,6 @@ fn test_local_app_output_mode_yaml() {
         .render_inline(simple_template(), &TestData::sample(), OutputMode::Yaml)
         .expect("Render failed");
 
-    // Should contain YAML format
     assert!(output.contains("name: test"));
     assert!(output.contains("count: 42"));
 }
@@ -282,16 +265,11 @@ fn test_local_app_output_mode_csv() {
         .render_inline(simple_template(), &TestData::sample(), OutputMode::Csv)
         .expect("Render failed");
 
-    // Should contain CSV headers and data
     assert!(output.contains("name"));
     assert!(output.contains("count"));
     assert!(output.contains("test"));
     assert!(output.contains("42"));
 }
-
-// ============================================================================
-// Consistency Tests
-// ============================================================================
 
 #[test]
 fn test_render_inline_json_consistency() {
@@ -307,7 +285,6 @@ fn test_render_inline_json_consistency() {
         .build()
         .expect("Failed to build app");
 
-    // Render same data twice - should be identical
     let output1 = app
         .render_inline(simple_template(), &data, OutputMode::Json)
         .expect("First render failed");
@@ -335,7 +312,6 @@ fn test_render_inline_text_consistency() {
         .build()
         .expect("Failed to build app");
 
-    // Render same data twice - should be identical
     let output1 = app
         .render_inline(simple_template(), &data, OutputMode::Text)
         .expect("First render failed");
@@ -345,10 +321,6 @@ fn test_render_inline_text_consistency() {
 
     assert_eq!(output1, output2);
 }
-
-// ============================================================================
-// Style Tag Processing Tests
-// ============================================================================
 
 #[test]
 fn test_style_tags_in_term_mode() {
@@ -375,7 +347,6 @@ fn test_style_tags_in_term_mode() {
         .render_inline(template, &TestData::sample(), OutputMode::Term)
         .expect("Render failed");
 
-    // In Term mode, style tags should be processed (contains ANSI codes or just the text)
     assert!(output.contains("test") || output.contains("\x1b"));
 }
 
@@ -404,7 +375,6 @@ fn test_style_tags_stripped_in_text_mode() {
         .render_inline(template, &TestData::sample(), OutputMode::Text)
         .expect("Render failed");
 
-    // In Text mode, style tags should be stripped, no ANSI codes
     assert!(output.contains("test"));
     assert!(!output.contains("\x1b"));
     assert!(!output.contains("[title]"));
@@ -435,7 +405,6 @@ fn test_style_tags_kept_in_term_debug_mode() {
         .render_inline(template, &TestData::sample(), OutputMode::TermDebug)
         .expect("Render failed");
 
-    // In TermDebug mode, style tags should be kept for debugging
     assert!(output.contains("[title]"));
     assert!(output.contains("[/title]"));
     assert!(output.contains("test"));

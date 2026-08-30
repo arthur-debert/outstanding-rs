@@ -5,7 +5,6 @@ use standout::AmbiguousWidth;
 use std::cell::RefCell;
 use std::rc::Rc;
 
-// Test App with closure handlers
 #[test]
 fn test_app_integration() {
     let app = App::builder()
@@ -45,7 +44,6 @@ fn app_builder_wide_policy_reaches_dispatch_rendering() {
     assert_eq!(result.output(), Some("5"));
 }
 
-// Test App with mutable state (FnMut closures)
 #[test]
 fn test_app_with_mutable_state() {
     let counter = Rc::new(RefCell::new(0));
@@ -75,7 +73,6 @@ fn test_app_with_mutable_state() {
     assert_eq!(*counter.borrow(), 1);
 }
 
-// Test stateful struct handler
 #[test]
 fn test_struct_handler_with_state() {
     struct StatefulHandler {
@@ -102,7 +99,6 @@ fn test_struct_handler_with_state() {
         .unwrap();
 
     let cmd = Command::new("test").subcommand(Command::new("add"));
-    // First run
     let result1 = app.run_to_string(cmd.clone(), vec!["test", "add"]);
     if let standout::cli::DispatchResult::Handled(output) = result1.outcome() {
         assert_eq!(output, "10");
@@ -110,7 +106,6 @@ fn test_struct_handler_with_state() {
         panic!("Expected DispatchResult::Handled, got {:?}", result1);
     }
 
-    // State persists across calls because handlers are stored in Rc<RefCell>
     let result2 = app.run_to_string(cmd, vec!["test", "add"]);
     if let standout::cli::DispatchResult::Handled(output) = result2.outcome() {
         assert_eq!(output, "20");

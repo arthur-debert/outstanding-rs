@@ -1,30 +1,10 @@
-//! Glue invariants from ADR-0031 / ROB04-WS06.
-//!
-//! These are tests, not `cargo deny`. Point-of-use defaults are not grepped:
-//! `App` after `build()` holds theme, output-mode fallback, registry, and
-//! ambiguous-width policy, and the ROB01 snapshot matrix fails if a call site
-//! invents another.
-//!
-//! Serialization copies are forbidden three ways:
-//! - production deps on `serde_yaml` / `csv` / `quick-xml` (Cargo.toml);
-//! - source uses of those crates' paths or the leaf serializer helpers
-//!   (a copied `serialize_to_xml` would not show up as a Cargo.toml dep);
-//! - any glue `OutputMode::<variant> =>` match arm. Glue already depends on
-//!   `serde_json`, so `OutputMode::Json => serde_json::to_string(...)` would
-//!   pass the first two scans while duplicating leaf serialization.
-
 use std::fs;
 use std::path::{Path, PathBuf};
 
 const BANNED_SERIALIZER_CRATES: &[&str] = &["serde_yaml", "csv", "quick-xml"];
 
-/// Glue may match on `OutputMode::<variant>` only in these functions, which
-/// route without serializing (help mapping, flag parsing). Serialization
-/// arms belong in `standout-render`. None exist in glue today.
 const ALLOWED_OUTPUT_MODE_ARM_FNS: &[&str] = &[];
 
-/// Leaf helpers glue must not copy. `pub use` re-exports from standout-render
-/// are allowed; a local definition or a call is not.
 const BANNED_SERIALIZER_HELPERS: &[&str] = &[
     "serialize_to_xml",
     "flatten_json_for_csv",
@@ -57,8 +37,6 @@ fn is_comment_line(line: &str) -> bool {
     line.trim_start().starts_with("//")
 }
 
-/// True for a re-export statement, not a line that merely contains the
-/// substring `"pub use"` (a string literal, a comment already skipped, …).
 fn is_reexport_line(line: &str) -> bool {
     line.trim_start().starts_with("pub use ")
 }
@@ -144,7 +122,6 @@ fn skip_balanced_closer(text: &str, mut i: usize, open: char, close: char) -> Op
     None
 }
 
-/// Tuple/struct variant payload after `OutputMode::Ident`.
 fn skip_optional_payload(text: &str, mut i: usize) -> usize {
     i = skip_ws(text, i);
     match text[i..].chars().next() {
@@ -182,7 +159,6 @@ fn consume_output_mode_variant(text: &str, i: &mut usize) -> bool {
     true
 }
 
-/// Skip a match-guard expression until `=>` at nesting depth 0.
 fn skip_guard_to_arrow(text: &str, mut i: usize) -> Option<usize> {
     let mut depth = 0i32;
     while i < text.len() {
@@ -200,8 +176,6 @@ fn skip_guard_to_arrow(text: &str, mut i: usize) -> Option<usize> {
     None
 }
 
-/// True when `OutputMode::<variant>` at `after_ident` is a match arm:
-/// optional payload, `|` alternatives, optional `if` guard, then `=>`.
 fn arm_arrow_ahead(text: &str, mut i: usize) -> bool {
     i = skip_optional_payload(text, i);
     loop {
@@ -238,7 +212,6 @@ fn line_index(text: &str, byte: usize) -> usize {
         .count()
 }
 
-/// `(line, variant)` for each `OutputMode::<variant> =>` arm.
 fn output_mode_match_arms(source: &str) -> Vec<(usize, String)> {
     let text = uncommented_source(source);
     let mut arms = Vec::new();
@@ -273,7 +246,6 @@ fn output_mode_arm_variants(source: &str) -> Vec<String> {
         .collect()
 }
 
-/// Crate names from a Cargo dependency table: the key, or `package` when set.
 fn collect_dep_crates(deps: &toml::Value, names: &mut Vec<String>) {
     let Some(table) = deps.as_table() else {
         return;
@@ -292,9 +264,6 @@ fn collect_dep_crates(deps: &toml::Value, names: &mut Vec<String>) {
     }
 }
 
-/// Production crate names from `[dependencies]`, `[dependencies.NAME]`,
-/// and `[target.'.'.dependencies]` (including `package` aliases).
-/// Dev-dependencies are ignored.
 fn production_dependency_crates(manifest: &str) -> Result<Vec<String>, String> {
     let value: toml::Value =
         toml::from_str(manifest).map_err(|e| format!("Cargo.toml is not valid TOML: {e}"))?;
@@ -322,10 +291,6 @@ fn banned_production_serializers(manifest: &str) -> Result<Vec<String>, String> 
         .collect())
 }
 
-/// `(line, needle)` for each uncommented use of a banned serializer path or
-/// helper. `pub use` re-exports are allowed. A helper is a copy when it is
-/// defined (`fn serialize_to_xml`) or called (`serialize_to_xml(`), not when
-/// it appears in a re-export list.
 fn banned_serializer_uses(source: &str) -> Vec<(usize, String)> {
     let mut uses = Vec::new();
     for (idx, line) in source.lines().enumerate() {

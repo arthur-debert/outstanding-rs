@@ -1,5 +1,3 @@
-//! Integration tests for ListView functionality.
-
 use clap::Command;
 use serde::Serialize;
 use standout::cli::{App, DispatchResult, Output};
@@ -81,7 +79,6 @@ fn test_list_view_with_filter_info() {
 
 #[test]
 fn test_list_view_renders_with_framework_template() {
-    // Create an app with a list command using the framework template
     let app = App::builder()
         .command_with(
             "list",
@@ -96,14 +93,11 @@ fn test_list_view_renders_with_framework_template() {
         .build()
         .unwrap();
 
-    // Build the clap command
     let cmd = Command::new("test").subcommand(Command::new("list"));
 
-    // Run and check output
     let result = app.run_to_string(cmd, vec!["test", "list"]);
     if let DispatchResult::Handled(output) = result.outcome() {
         assert!(output.contains("Tasks:"), "Output should contain intro");
-        // The template should render the items
         assert!(
             output.contains("Implement auth"),
             "Output should contain task name"
@@ -151,7 +145,7 @@ fn test_list_view_with_filter_summary_renders() {
         .command_with(
             "list",
             |_m, _ctx| {
-                let tasks = vec![test_tasks()[0].clone()]; // Just one task
+                let tasks = vec![test_tasks()[0].clone()];
                 let result = list_view(tasks)
                     .total_count(3)
                     .filter_summary("status=pending")
@@ -168,7 +162,6 @@ fn test_list_view_with_filter_summary_renders() {
     let result = app.run_to_string(cmd, vec!["test", "list"]);
 
     if let DispatchResult::Handled(output) = result.outcome() {
-        // Should show "Showing X of Y"
         assert!(
             output.contains("Showing 1 of 3"),
             "Output should show count: {}",
@@ -186,7 +179,6 @@ fn test_list_view_with_filter_summary_renders() {
 
 #[test]
 fn test_framework_template_can_be_disabled() {
-    // Build an app without framework templates
     let result = App::builder()
         .include_framework_templates(false)
         .command_with(

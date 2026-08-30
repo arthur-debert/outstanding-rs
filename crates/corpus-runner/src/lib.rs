@@ -1,13 +1,5 @@
-//! The downstream-corpus runner: one command runs the full blind-agent loop
-//! for one archetype and files a structured run report.
-//!
-//! The five phases (spec `docs/spec/implemented/robustness-corpus.md`, Proposed Shape
-//! piece 2): provision a blind workspace, execute the instrumented
-//! implementation session, collect the exit questionnaire, run the
-//! acceptance suite plus the ROB01 invariant matrix against the produced
-//! binary, and write `report.json`. The runner is a means, not a product:
-//! it is the minimum that makes runs reproducible and comparable. Decisions
-//! (blindness protocol, report schema) are recorded in `corpus/README.md`.
+//! The downstream-corpus runner: runs the blind-agent loop for one archetype
+//! and files a structured run report. See `corpus/README.md`.
 
 pub mod acceptance;
 pub mod archetype;
@@ -31,24 +23,16 @@ use crate::report::{
     IsolationRecord, NetworkEnforcement, Pins, RunReport, HISTORICAL_SCHEMA_MIN, SCHEMA_VERSION,
 };
 
-/// Everything one run needs to start. The agent command is a seam: any
-/// shell command that implements the workspace's `INSTRUCTIONS.md`.
 pub struct RunConfig {
     pub archetype: String,
-    /// `corpus/archetypes/` — where archetypes live.
     pub archetypes_dir: PathBuf,
-    /// Where run directories are created.
     pub runs_dir: PathBuf,
-    /// The checkout's `docs/` directory (published-set snapshot source).
     pub docs_dir: PathBuf,
     pub agent_cmd: String,
-    /// Exact crates.io version the blind scaffold pins.
     pub framework_version: String,
-    /// Per-phase deadlines; an expired phase is a reported finding.
     pub timeouts: Timeouts,
 }
 
-/// Inputs for objective re-evaluation of one preserved historical run.
 pub struct ReevaluationConfig {
     pub archetype: String,
     pub archetypes_dir: PathBuf,
@@ -56,26 +40,13 @@ pub struct ReevaluationConfig {
     pub workspace_root: PathBuf,
     pub source_report: PathBuf,
     pub output_report: PathBuf,
-    /// Explicit already-built executable to evaluate instead of rebuilding
-    /// the preserved app. It must be a regular file beneath
-    /// `workspace_root`: the check sandbox admits only the workspace and
-    /// system roots, so an outside path would be unexecutable under
-    /// Landlock's default-deny model — the contract is validated up front
-    /// and refused identically on every backend.
     pub produced_binary: Option<PathBuf>,
     pub timeouts: Timeouts,
 }
 
-/// Per-phase deadlines. A phase that overruns is killed (whole process
-/// group) and recorded in the report — the durable-report contract must
-/// survive a prompting, deadlocked, or looping produced CLI.
 pub struct Timeouts {
-    /// The whole agent session.
     pub agent: Duration,
-    /// The cargo build of the produced app.
     pub build: Duration,
-    /// Each invariant-cell invocation (acceptance cases carry their own
-    /// per-case `timeout_seconds`).
     pub check: Duration,
 }
 
@@ -89,18 +60,11 @@ impl Default for Timeouts {
     }
 }
 
-/// The one-line blindness policy statement recorded in every report.
 const BLINDNESS_POLICY: &str = "workspace contains spec + published docs + crates.io pins only; \
      agent, build, and produced-binary descendants use disposable homes and a \
      kernel filesystem sandbox that excludes the source checkout and host user-data roots; \
      consulted sources are self-reported in the exit questionnaire";
 
-/// Runs the full loop and returns the written report plus the run directory.
-///
-/// A run that completes the loop always writes `report.json`, even when the
-/// app never built or every case failed — those are findings. Errors are
-/// reserved for the runner's own failures (unloadable archetype, unwritable
-/// run directory, unspawnable agent).
 pub fn run(config: &RunConfig) -> anyhow::Result<(RunReport, PathBuf)> {
     let archetype = Archetype::load(&config.archetypes_dir, &config.archetype)?;
 
@@ -127,7 +91,6 @@ pub fn run(config: &RunConfig) -> anyhow::Result<(RunReport, PathBuf)> {
     let base = format!("{}-{}", archetype.name, unix_timestamp());
     let (run_id, run_dir) = claim_run_dir(&config.runs_dir, &base)?;
 
-    // Phase 1: provision the blind workspace.
     eprintln!(
         "[corpus] provisioning blind workspace in {}",
         run_dir.display()
@@ -144,7 +107,6 @@ pub fn run(config: &RunConfig) -> anyhow::Result<(RunReport, PathBuf)> {
         .map_err(anyhow::Error::msg)
         .context("verifying blind-workspace isolation")?;
 
-    // Phase 2: the instrumented implementation session.
     eprintln!(
         "[corpus] running implementation session: {}",
         config.agent_cmd
@@ -162,14 +124,12 @@ pub fn run(config: &RunConfig) -> anyhow::Result<(RunReport, PathBuf)> {
         session_report.wall_seconds, session_report.exit_code
     );
 
-    // Phase 3: collect the exit questionnaire.
     let questionnaire_report = questionnaire::collect(&workspace.root);
     eprintln!(
         "[corpus] questionnaire collected: {}",
         questionnaire_report.collected
     );
 
-    // Phase 4: acceptance suite + invariant matrix against the produced binary.
     eprintln!("[corpus] building produced app and running acceptance suite");
     let evaluation = evaluate_binary(
         &archetype,
@@ -184,7 +144,6 @@ pub fn run(config: &RunConfig) -> anyhow::Result<(RunReport, PathBuf)> {
         &workspace.isolation,
     );
 
-    // Phase 5: file the report.
     let report = RunReport {
         schema_version: SCHEMA_VERSION,
         run_id: run_id.clone(),
@@ -231,24 +190,11 @@ pub fn run(config: &RunConfig) -> anyhow::Result<(RunReport, PathBuf)> {
     Ok((report, run_dir))
 }
 
-/// The blindness statement re-evaluation records: the historical session's
-/// partial blindness plus the regenerated objective results' provenance.
 const HISTORICAL_BLINDNESS_POLICY: &str =
     "historical session was partially blind: its workspace was nested beneath a source \
      checkout and inherited host homes; acceptance and ROB01 matrix results were later \
      regenerated from an external workspace under the recorded evaluation sandbox";
 
-/// Re-evaluates a preserved produced workspace against the current suite and
-/// matrix without rerunning or rewriting the historical agent session.
-///
-/// The historical report is read typed ([`HistoricalRun`]): its identity,
-/// session instrumentation, questionnaire, and agent-reported sources are
-/// preserved verbatim, and its pins are preserved except
-/// `acceptance_sha256`, which is recomputed from the loaded suite so the
-/// pin identifies the suite behind the regenerated objective results. The
-/// source's `schema_version` must fall in the supported historical range;
-/// an off-shape or out-of-range source report is a diagnostic error naming
-/// the file, never a panic.
 pub fn reevaluate(config: &ReevaluationConfig) -> anyhow::Result<RunReport> {
     let archetype = Archetype::load(&config.archetypes_dir, &config.archetype)?;
     let source_root = config
@@ -350,12 +296,6 @@ pub fn reevaluate(config: &ReevaluationConfig) -> anyhow::Result<RunReport> {
     Ok(report)
 }
 
-/// Validates an explicit produced-binary override: it must be a regular
-/// file beneath the preserved workspace, because the check sandbox admits
-/// only the workspace and system roots — under Landlock's default-deny
-/// model an outside path would be unexecutable, so the contract is refused
-/// up front, loudly and identically on every backend. A refusal is a
-/// finding (a build-failed report), consistent with the missing-path case.
 fn provided_binary(path: &Path, workspace_root: &Path) -> Result<PathBuf, String> {
     if !path.is_file() {
         return Err(format!(
@@ -385,20 +325,12 @@ fn provided_binary(path: &Path, workspace_root: &Path) -> Result<PathBuf, String
     Ok(canonical)
 }
 
-/// The objective evaluation both entry points share: acceptance suite plus
-/// invariant matrix against one produced binary, or their build-failed /
-/// not-run shapes when no binary exists.
 struct Evaluation {
     acceptance: AcceptanceReport,
     invariants: Vec<InvariantCell>,
     binary_sha256: Option<String>,
 }
 
-/// Runs the archetype's suite and the ROB01 matrix against the outcome of a
-/// build. A build failure is a finding — it becomes a build-failed
-/// acceptance report with the full not-run matrix — never a runner error.
-/// `check_timeout` bounds only the invariant cells; each case runs under its
-/// own authored `timeout_seconds`.
 fn evaluate_binary(
     archetype: &Archetype,
     binary: Result<PathBuf, String>,
@@ -426,7 +358,6 @@ fn evaluate_binary(
     }
 }
 
-/// Prints a human summary of the report to stderr.
 pub fn print_summary(report: &RunReport) {
     use crate::report::CaseOutcome;
     let passed = report
@@ -487,7 +418,6 @@ pub fn print_summary(report: &RunReport) {
     }
 }
 
-/// Seconds since the epoch, as the run-id suffix.
 fn unix_timestamp() -> u64 {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -495,11 +425,9 @@ fn unix_timestamp() -> u64 {
         .unwrap_or(0)
 }
 
-/// Claims a fresh run directory atomically: `create_dir` (never
-/// `create_dir_all`, which would silently adopt an existing directory) with
-/// a numeric suffix retry, so two runs claiming the same base id — parallel
-/// runs of one archetype, or two scripted runs inside one second — can
-/// never share a workspace, transcript, or report.
+// `create_dir` (never `create_dir_all`, which would silently adopt an
+// existing directory), retried with a numeric suffix, so two runs claiming
+// the same base id can never share a workspace, transcript, or report.
 fn claim_run_dir(runs_dir: &Path, base: &str) -> anyhow::Result<(String, PathBuf)> {
     for attempt in 0..1000u32 {
         let run_id = if attempt == 0 {
@@ -520,7 +448,6 @@ fn claim_run_dir(runs_dir: &Path, base: &str) -> anyhow::Result<(String, PathBuf
     anyhow::bail!("could not claim a run directory for {base} after 1000 attempts");
 }
 
-/// Resolves a possibly-relative CLI path against the current directory.
 pub fn absolute(path: &Path) -> PathBuf {
     if path.is_absolute() {
         path.to_path_buf()

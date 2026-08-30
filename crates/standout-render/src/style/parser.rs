@@ -1,28 +1,8 @@
-//! Main stylesheet parser and theme variant builder.
-//!
-//! This module provides the entry point for parsing YAML stylesheets and
-//! building [`ThemeVariants`] that can be resolved based on color mode.
-//!
-//! # Architecture
-//!
-//! The parsing process has two phases:
-//!
-//! 1. Parse: YAML → `HashMap<String, StyleDefinition>`
-//! 2. Build: StyleDefinitions → `ThemeVariants` (base/light/dark style maps)
-//!
-//! During the build phase:
-//! - Aliases are recorded for later resolution
-//! - Base styles are computed from attribute definitions
-//! - Light/dark variants are computed by merging mode overrides onto base
-//!
-//! # Mode Resolution
-//!
-//! When resolving styles for a specific mode, the variant merger:
-//! - Returns the mode-specific style if one was defined
-//! - Falls back to base style if no mode override exists
-//!
-//! This means styles with no `light:` or `dark:` sections work in all modes,
-//! while adaptive styles provide mode-specific overrides.
+//! Parses a YAML stylesheet into [`ThemeVariants`]: base/light/dark style maps
+//! plus alias definitions. During the build phase, light/dark variants are
+//! stored only when a style actually overrides that mode (merged onto base);
+//! [`ThemeVariants::resolve`] falls back to the base style for any mode with
+//! no override, so most styles need no per-mode entry at all.
 
 use std::collections::HashMap;
 
@@ -35,43 +15,15 @@ use super::definition::StyleDefinition;
 use super::error::StylesheetError;
 use super::value::StyleValue;
 
-/// Theme variants containing styles for base, light, and dark modes.
-///
-/// Each variant is a map of style names to concrete `console::Style` values.
-/// Alias definitions are stored separately and resolved at lookup time.
-///
-/// # Resolution Strategy
-///
-/// When looking up a style for a given mode:
-///
-/// 1. If the style is an alias, follow the chain to find the concrete style
-/// 2. For concrete styles, check if a mode-specific variant exists
-/// 3. If yes, return the mode variant (base merged with mode overrides)
-/// 4. If no, return the base style
-///
-/// # Pruning
-///
-/// During construction, mode variants are only stored if they differ from base.
-/// This optimization means:
-/// - Styles with no `light:` or `dark:` sections only have base entries
-/// - Styles with overrides have entries in the relevant mode map
 #[derive(Debug, Clone)]
 pub struct ThemeVariants {
-    /// Base styles (always populated for non-alias definitions).
     base: HashMap<String, Style>,
-
-    /// Light mode styles (only populated for styles with light overrides).
     light: HashMap<String, Style>,
-
-    /// Dark mode styles (only populated for styles with dark overrides).
     dark: HashMap<String, Style>,
-
-    /// Alias definitions: style name → target style name.
     aliases: HashMap<String, String>,
 }
 
 impl ThemeVariants {
-    /// Creates empty theme variants.
     pub fn new() -> Self {
         Self {
             base: HashMap::new(),
@@ -81,31 +33,20 @@ impl ThemeVariants {
         }
     }
 
-    /// Resolves styles for the given color mode.
-    ///
-    /// Returns a `HashMap<String, StyleValue>` where:
-    /// - Aliases are preserved as `StyleValue::Alias`
-    /// - Concrete styles are `StyleValue::Concrete` with the mode-appropriate style
-    ///
-    /// For light/dark modes, mode-specific styles take precedence over base.
-    /// For unknown mode (None), only base styles are used.
     pub fn resolve(&self, mode: Option<ColorMode>) -> HashMap<String, StyleValue> {
         let mut result = HashMap::new();
 
-        // Add aliases
         for (name, target) in &self.aliases {
             result.insert(name.clone(), StyleValue::Alias(target.clone()));
         }
 
-        // Add concrete styles based on mode
         let mode_styles = match mode {
             Some(ColorMode::Light) => &self.light,
             Some(ColorMode::Dark) => &self.dark,
-            None => &HashMap::new(), // No mode-specific overrides
+            None => &HashMap::new(),
         };
 
         for (name, style) in &self.base {
-            // Check for mode-specific override
             let style = mode_styles.get(name).unwrap_or(style);
             result.insert(name.clone(), StyleValue::Concrete(style.clone()));
         }
@@ -113,32 +54,26 @@ impl ThemeVariants {
         result
     }
 
-    /// Returns the base styles map.
     pub fn base(&self) -> &HashMap<String, Style> {
         &self.base
     }
 
-    /// Returns the light mode styles map.
     pub fn light(&self) -> &HashMap<String, Style> {
         &self.light
     }
 
-    /// Returns the dark mode styles map.
     pub fn dark(&self) -> &HashMap<String, Style> {
         &self.dark
     }
 
-    /// Returns the aliases map.
     pub fn aliases(&self) -> &HashMap<String, String> {
         &self.aliases
     }
 
-    /// Returns true if no styles are defined.
     pub fn is_empty(&self) -> bool {
         self.base.is_empty() && self.aliases.is_empty()
     }
 
-    /// Returns the number of defined styles (base + aliases).
     pub fn len(&self) -> usize {
         self.base.len() + self.aliases.len()
     }
@@ -150,53 +85,10 @@ impl Default for ThemeVariants {
     }
 }
 
-/// Parses a YAML stylesheet and builds theme variants.
-///
-/// # Arguments
-///
-/// * `yaml` - YAML content as a string
-///
-/// # Returns
-///
-/// A `ThemeVariants` containing base, light, and dark style maps.
-///
-/// # Errors
-///
-/// Returns `StylesheetError` if:
-/// - YAML parsing fails
-/// - Style definitions are invalid
-/// - Colors or attributes are unrecognized
-///
-/// # Example
-///
-/// ```rust
-/// use standout_render::style::parse_stylesheet;
-///
-/// let yaml = r#"
-/// header:
-///   fg: cyan
-///   bold: true
-///
-/// muted:
-///   dim: true
-///
-/// footer:
-///   fg: gray
-///   light:
-///     fg: black
-///   dark:
-///     fg: white
-///
-/// disabled: muted
-/// "#;
-///
-/// let variants = parse_stylesheet(yaml, None).unwrap();
-/// ```
 pub fn parse_stylesheet(
     yaml: &str,
     palette: Option<&ThemePalette>,
 ) -> Result<ThemeVariants, StylesheetError> {
-    // Parse YAML into a mapping
     let root: serde_yaml::Value =
         serde_yaml::from_str(yaml).map_err(|e| StylesheetError::Parse {
             path: None,
@@ -208,7 +100,6 @@ pub fn parse_stylesheet(
         message: "Stylesheet must be a YAML mapping".to_string(),
     })?;
 
-    // Parse each style definition
     let mut definitions: HashMap<String, StyleDefinition> = HashMap::new();
 
     for (key, value) in mapping {
@@ -217,7 +108,7 @@ pub fn parse_stylesheet(
             message: format!("Style name must be a string, got {:?}", key),
         })?;
 
-        // Skip the 'icons' section — it is parsed separately by Theme
+        // The 'icons' section is parsed separately by Theme.
         if name == "icons" {
             continue;
         }
@@ -226,11 +117,9 @@ pub fn parse_stylesheet(
         definitions.insert(name.to_string(), def);
     }
 
-    // Build theme variants from definitions
     build_variants(&definitions, palette)
 }
 
-/// Builds theme variants from parsed style definitions.
 pub(crate) fn build_variants(
     definitions: &HashMap<String, StyleDefinition>,
     palette: Option<&ThemePalette>,
@@ -243,11 +132,9 @@ pub(crate) fn build_variants(
                 variants.aliases.insert(name.clone(), target.clone());
             }
             StyleDefinition::Attributes { base, light, dark } => {
-                // Build base style
                 let base_style = base.to_style(palette);
                 variants.base.insert(name.clone(), base_style);
 
-                // Build light variant if overrides exist
                 if let Some(light_attrs) = light {
                     let merged = base.merge(light_attrs);
                     variants
@@ -255,7 +142,6 @@ pub(crate) fn build_variants(
                         .insert(name.clone(), merged.to_style(palette));
                 }
 
-                // Build dark variant if overrides exist
                 if let Some(dark_attrs) = dark {
                     let merged = base.merge(dark_attrs);
                     variants.dark.insert(name.clone(), merged.to_style(palette));
@@ -270,10 +156,6 @@ pub(crate) fn build_variants(
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    // =========================================================================
-    // parse_stylesheet basic tests
-    // =========================================================================
 
     #[test]
     fn test_parse_empty_stylesheet() {
@@ -377,10 +259,6 @@ mod tests {
         assert!(variants.dark().contains_key("panel"));
     }
 
-    // =========================================================================
-    // ThemeVariants::resolve tests
-    // =========================================================================
-
     #[test]
     fn test_resolve_no_mode() {
         let yaml = r#"
@@ -396,7 +274,6 @@ mod tests {
         let variants = parse_stylesheet(yaml, None).unwrap();
         let resolved = variants.resolve(None);
 
-        // Should have both styles from base
         assert!(matches!(
             resolved.get("header"),
             Some(StyleValue::Concrete(_))
@@ -420,7 +297,6 @@ mod tests {
         let variants = parse_stylesheet(yaml, None).unwrap();
         let resolved = variants.resolve(Some(ColorMode::Light));
 
-        // footer should use light variant
         assert!(matches!(
             resolved.get("footer"),
             Some(StyleValue::Concrete(_))
@@ -440,7 +316,6 @@ mod tests {
         let variants = parse_stylesheet(yaml, None).unwrap();
         let resolved = variants.resolve(Some(ColorMode::Dark));
 
-        // footer should use dark variant
         assert!(matches!(
             resolved.get("footer"),
             Some(StyleValue::Concrete(_))
@@ -457,12 +332,10 @@ mod tests {
         let variants = parse_stylesheet(yaml, None).unwrap();
         let resolved = variants.resolve(Some(ColorMode::Light));
 
-        // muted should be concrete
         assert!(matches!(
             resolved.get("muted"),
             Some(StyleValue::Concrete(_))
         ));
-        // disabled should be alias
         assert!(matches!(resolved.get("disabled"), Some(StyleValue::Alias(t)) if t == "muted"));
     }
 
@@ -475,22 +348,15 @@ mod tests {
         "#;
         let variants = parse_stylesheet(yaml, None).unwrap();
 
-        // Light mode
         let light = variants.resolve(Some(ColorMode::Light));
         assert!(matches!(light.get("header"), Some(StyleValue::Concrete(_))));
 
-        // Dark mode
         let dark = variants.resolve(Some(ColorMode::Dark));
         assert!(matches!(dark.get("header"), Some(StyleValue::Concrete(_))));
 
-        // No mode
         let none = variants.resolve(None);
         assert!(matches!(none.get("header"), Some(StyleValue::Concrete(_))));
     }
-
-    // =========================================================================
-    // Error tests
-    // =========================================================================
 
     #[test]
     fn test_parse_invalid_yaml() {
@@ -528,10 +394,6 @@ mod tests {
             Err(StylesheetError::UnknownAttribute { .. })
         ));
     }
-
-    // =========================================================================
-    // Complex stylesheet tests
-    // =========================================================================
 
     #[test]
     fn test_parse_complete_stylesheet() {
@@ -576,13 +438,9 @@ mod tests {
 
         let variants = parse_stylesheet(yaml, None).unwrap();
 
-        // Check counts
-        // Base: muted, accent, background, text, border, error, success, warning = 8
-        // Aliases: header, footer, timestamp, title = 4
         assert_eq!(variants.base().len(), 8);
         assert_eq!(variants.aliases().len(), 4);
 
-        // Check adaptive styles have light/dark variants
         assert!(variants.light().contains_key("background"));
         assert!(variants.light().contains_key("text"));
         assert!(variants.light().contains_key("border"));
@@ -590,17 +448,12 @@ mod tests {
         assert!(variants.dark().contains_key("text"));
         assert!(variants.dark().contains_key("border"));
 
-        // Check aliases
         assert_eq!(
             variants.aliases().get("header"),
             Some(&"accent".to_string())
         );
         assert_eq!(variants.aliases().get("footer"), Some(&"muted".to_string()));
     }
-
-    // =========================================================================
-    // Cube color integration tests
-    // =========================================================================
 
     #[test]
     fn test_parse_cube_color_in_stylesheet() {

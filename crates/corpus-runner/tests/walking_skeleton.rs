@@ -1,20 +1,9 @@
-//! The walking skeleton, end to end: blind workspace → implementation →
-//! questionnaire → acceptance + invariant matrix → report, with the agent
-//! seam filled by a script that installs the canned smoke solution
-//! (`tests/fixtures/smoke-solution`) and answers the questionnaire.
-//!
-//! Ignored by default: the acceptance phase builds the produced app against
-//! the crates.io `standout` pin, which needs the network and a full
-//! dependency compile. The always-on hermetic twin (fake `cargo` on PATH,
-//! no network) lives in `hermetic_loop.rs`; this test proves the same loop
-//! against the real crates.io pin. Run it with:
-//!
-//! ```bash
-//! cargo test -p corpus-runner --test walking_skeleton -- --ignored
-//! ```
+// The walking skeleton, end to end, against the real crates.io `standout`
+// pin (network + full compile). Ignored by default; the always-on hermetic
+// twin lives in `hermetic_loop.rs`. Run with:
+//
+//   cargo test -p corpus-runner --test walking_skeleton -- --ignored
 
-// Unix-only: the scripted agent is a `sh` script made executable via
-// `PermissionsExt`; gating keeps the workspace buildable elsewhere.
 #![cfg(unix)]
 
 mod common;
@@ -29,15 +18,9 @@ fn smoke_archetype_completes_the_loop() {
     let repo = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
     let scratch = tempfile::tempdir().unwrap();
 
-    // The agent script and its canned solution both need to be readable by
-    // the sandboxed agent phase, which admits only the run workspace (whose
-    // name is claimed inside `run()`, so it can't be staged into ahead of
-    // time), system roots, and PATH directories. `tools_dir` is prepended to
-    // PATH (like `install_fake_cargo`'s `bin_dir`), which makes it — and
-    // everything staged beneath it — an explicitly admitted read root on
-    // both the macOS Seatbelt and Linux Landlock backends; this test runs
-    // alone in its own binary because prepending to PATH is process-wide
-    // state (see `common::install_fake_cargo`'s doc comment).
+    // The sandbox admits only the workspace, system roots, and PATH
+    // directories, so the agent script and solution are staged here instead
+    // of referenced by an absolute path into the checkout.
     let tools_dir = scratch.path().join("tools");
     std::fs::create_dir_all(&tools_dir).unwrap();
     std::env::set_var(
@@ -49,22 +32,12 @@ fn smoke_archetype_completes_the_loop() {
         ),
     );
 
-    // The canned solution is staged into the PATH-admitted tools directory
-    // host-side first: the agent runs under the kernel sandbox, which denies
-    // reads under the source checkout, so the script cannot copy the fixture
-    // from the repo.
     let solution = tools_dir.join("smoke-solution");
     common::stage_dir(
         &Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/smoke-solution"),
         &solution,
     );
 
-    // The scripted agent: install the canned solution into app/, then answer
-    // the questionnaire in place (an answer line under each question tag),
-    // and end with a stream-json result event so instrumentation has data.
-    // Placed in `tools_dir` and invoked by bare name (resolved via PATH,
-    // like `hermetic_loop.rs`'s `agent_cmd`) rather than an absolute path,
-    // so the sandboxed `sh` that reads it also stays within an admitted root.
     common::questionnaire_agent(
         &tools_dir,
         "agent.sh",
@@ -93,7 +66,6 @@ fn smoke_archetype_completes_the_loop() {
 
     let (report, run_dir) = run(&config).unwrap();
 
-    // The report is on disk and complete.
     assert!(run_dir.join("report.json").is_file());
     assert!(run_dir.join(&report.session.transcript).is_file());
     assert_eq!(report.schema_version, corpus_runner::report::SCHEMA_VERSION);
@@ -101,21 +73,16 @@ fn smoke_archetype_completes_the_loop() {
     assert_eq!(report.pins.framework_version, "8.1.1");
     assert_ne!(report.pins.docs_commit, "unknown");
 
-    // Session instrumentation flowed from the transcript.
     assert_eq!(report.session.exit_code, Some(0));
     assert_eq!(report.session.turns, Some(1));
     assert_eq!(report.session.output_tokens, Some(20));
 
-    // Subjective: the questionnaire was collected, and its blindness record
-    // landed in the blindness section.
     assert!(report.questionnaire.collected);
     assert_eq!(
         report.blindness.agent_reported_external_sources.as_deref(),
         Some("none")
     );
 
-    // Objective: the produced binary built, and every acceptance case and
-    // invariant cell passed.
     assert!(
         report.acceptance.built,
         "{:?}",

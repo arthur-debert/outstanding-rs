@@ -1,55 +1,8 @@
-//! Context injection for template rendering.
-//!
-//! This module provides types for injecting additional context objects into templates
-//! beyond the handler's serialized data. This enables templates to access utilities,
-//! formatters, and runtime-computed values that cannot be represented as JSON.
-//!
-//! # Overview
-//!
-//! The context injection system has two main components:
-//!
-//! 1. [`RenderContext`]: Information available at render time (output mode, terminal
-//!    width, theme, etc.)
-//! 2. [`ContextProvider`]: Trait for objects that can produce context values, either
-//!    statically or dynamically based on `RenderContext`
-//!
-//! # Use Cases
-//!
-//! - Table formatters: Inject `TabularFormatter` instances with resolved terminal width
-//! - Terminal info: Provide `terminal.width`, `terminal.is_tty` to templates
-//! - Environment: Expose environment variables or paths
-//! - User preferences: Date formats, timezone, locale
-//! - Utilities: Custom formatters, validators callable from templates
-//!
-//! # Example
-//!
-//! ```rust,ignore
-//! use standout_render::context::{RenderContext, ContextProvider};
-//! use minijinja::value::Object;
-//! use std::sync::Arc;
-//!
-//! // A simple context object
-//! struct TerminalInfo {
-//!     width: usize,
-//!     is_tty: bool,
-//! }
-//!
-//! impl Object for TerminalInfo {
-//!     fn get_value(self: &Arc<Self>, key: &minijinja::Value) -> Option<minijinja::Value> {
-//!         match key.as_str()? {
-//!             "width" => Some(minijinja::Value::from(self.width)),
-//!             "is_tty" => Some(minijinja::Value::from(self.is_tty)),
-//!             _ => None,
-//!         }
-//!     }
-//! }
-//!
-//! // Create a dynamic provider using a closure
-//! let provider = |ctx: &RenderContext| TerminalInfo {
-//!     width: ctx.terminal_width.unwrap_or(80),
-//!     is_tty: ctx.output_mode == OutputMode::Term,
-//! };
-//! ```
+//! Injects extra objects into template rendering beyond the handler's
+//! serialized data — table formatters, terminal info, environment values —
+//! via [`ContextProvider`]s that receive a [`RenderContext`] and return a
+//! MiniJinja [`Value`], either statically or computed from render-time
+//! conditions (output mode, terminal width, theme, data).
 
 use super::output::OutputMode;
 use super::theme::Theme;
@@ -59,68 +12,22 @@ use std::collections::HashMap;
 use std::fmt::Debug;
 use std::rc::Rc;
 
-/// Information available at render time for dynamic context providers.
-///
-/// This struct is passed to [`ContextProvider::provide`] to allow context objects
-/// to be configured based on runtime conditions.
-///
-/// # Fields
-///
-/// - `output_mode`: The current output mode (Term, Text, Json, etc.)
-/// - `terminal_width`: Terminal width in columns, if known
-/// - `theme`: The theme being used for rendering
-/// - `data`: The handler's output data as a JSON value
-/// - `extras`: Additional string key-value pairs for extension
-/// - `warnings`: Optional per-run warning buffer for unresolved-tag diagnostics
-///
-/// # Example
-///
-/// ```rust
-/// use standout_render::context::RenderContext;
-/// use standout_render::{OutputMode, Theme};
-///
-/// let data = serde_json::json!({"count": 42});
-/// let theme = Theme::new();
-/// let ctx = RenderContext::new(OutputMode::Term, Some(120), &theme, &data);
-///
-/// // Use context to configure a formatter
-/// let width = ctx.terminal_width.unwrap_or(80);
-/// ```
 #[derive(Debug, Clone)]
 pub struct RenderContext<'a> {
-    /// The output mode for rendering (Term, Text, Json, etc.)
     pub output_mode: OutputMode,
 
-    /// Terminal width in columns, if available.
-    ///
-    /// This is `None` when:
-    /// - Output is not to a terminal (piped, redirected)
-    /// - Terminal width cannot be determined
-    /// - Running in a non-TTY environment
     pub terminal_width: Option<usize>,
 
-    /// The theme being used for rendering.
     pub theme: &'a Theme,
 
-    /// The handler's output data, serialized as JSON.
-    ///
-    /// This allows context providers to inspect the data being rendered
-    /// and adjust their behavior accordingly.
     pub data: &'a serde_json::Value,
 
-    /// Additional string key-value pairs for extension.
-    ///
-    /// This allows passing arbitrary metadata to context providers
-    /// without modifying the struct definition.
     pub extras: HashMap<String, String>,
 
-    /// Optional per-run warning buffer. Style-tag application records
-    /// unresolved-tag warnings here when present.
     pub warnings: Option<crate::warnings::WarningBuffer>,
 }
 
 impl<'a> RenderContext<'a> {
-    /// Creates a new render context with the given parameters.
     pub fn new(
         output_mode: OutputMode,
         terminal_width: Option<usize>,
@@ -136,7 +43,6 @@ impl<'a> RenderContext<'a> {
         )
     }
 
-    /// Creates a render context with an explicit ambiguous-width policy.
     pub fn with_ambiguous_width(
         output_mode: OutputMode,
         terminal_width: Option<usize>,
@@ -160,7 +66,6 @@ impl<'a> RenderContext<'a> {
         }
     }
 
-    /// Returns the explicit ambiguous-width policy for this render.
     pub fn ambiguous_width(&self) -> AmbiguousWidth {
         match self.get_extra("standout.ambiguous_width") {
             Some("wide") => AmbiguousWidth::Wide,
@@ -168,56 +73,20 @@ impl<'a> RenderContext<'a> {
         }
     }
 
-    /// Adds an extra key-value pair to the context.
     pub fn with_extra(mut self, key: impl Into<String>, value: impl Into<String>) -> Self {
         self.extras.insert(key.into(), value.into());
         self
     }
 
-    /// Gets an extra value by key.
     pub fn get_extra(&self, key: &str) -> Option<&str> {
         self.extras.get(key).map(|s| s.as_str())
     }
 }
 
-/// Trait for types that can provide context objects for template rendering.
-///
-/// Context providers are called at render time to produce objects that will
-/// be available in templates. They receive a [`RenderContext`] with information
-/// about the current render environment.
-///
-/// # Static vs Dynamic Providers
-///
-/// - Static providers: Return the same object regardless of context
-/// - Dynamic providers: Use context to configure the returned object
-///
-/// # Implementing for Closures
-///
-/// A blanket implementation is provided for closures, making it easy to
-/// create dynamic providers:
-///
-/// ```rust,ignore
-/// use standout_render::context::{RenderContext, ContextProvider};
-///
-/// // Closure-based provider
-/// let provider = |ctx: &RenderContext| MyObject {
-///     width: ctx.terminal_width.unwrap_or(80),
-/// };
-/// ```
-///
-/// # Single-Threaded Design
-///
-/// CLI applications are single-threaded, so context providers don't require
-/// `Send + Sync` bounds.
 pub trait ContextProvider {
-    /// Produce a context object for the given render context.
-    ///
-    /// The returned value will be made available in templates under the
-    /// name specified when registering the provider.
     fn provide(&self, ctx: &RenderContext) -> Value;
 }
 
-/// Blanket implementation for closures that return values convertible to minijinja::Value.
 impl<F> ContextProvider for F
 where
     F: Fn(&RenderContext) -> Value,
@@ -227,17 +96,12 @@ where
     }
 }
 
-/// A static context provider that always returns the same value.
-///
-/// This is used internally for `.context(name, value)` calls where
-/// the value doesn't depend on render context.
 #[derive(Debug, Clone)]
 pub struct StaticProvider {
     value: Value,
 }
 
 impl StaticProvider {
-    /// Creates a new static provider with the given value.
     pub fn new(value: Value) -> Self {
         Self { value }
     }
@@ -249,31 +113,21 @@ impl ContextProvider for StaticProvider {
     }
 }
 
-/// Storage for context entries, supporting both static and dynamic providers.
-///
-/// `ContextRegistry` is cheap to clone since it stores providers as `Rc`.
 #[derive(Default, Clone)]
 pub struct ContextRegistry {
     providers: HashMap<String, Rc<dyn ContextProvider>>,
 }
 
 impl ContextRegistry {
-    /// Creates a new empty context registry.
     pub fn new() -> Self {
         Self::default()
     }
 
-    /// Registers a static context value.
-    ///
-    /// The value will be available in templates under the given name.
     pub fn add_static(&mut self, name: impl Into<String>, value: Value) {
         self.providers
             .insert(name.into(), Rc::new(StaticProvider::new(value)));
     }
 
-    /// Registers a dynamic context provider.
-    ///
-    /// The provider will be called at render time to produce a value.
     pub fn add_provider<P: ContextProvider + 'static>(
         &mut self,
         name: impl Into<String>,
@@ -282,19 +136,14 @@ impl ContextRegistry {
         self.providers.insert(name.into(), Rc::new(provider));
     }
 
-    /// Returns true if the registry has no entries.
     pub fn is_empty(&self) -> bool {
         self.providers.is_empty()
     }
 
-    /// Returns the number of registered context entries.
     pub fn len(&self) -> usize {
         self.providers.len()
     }
 
-    /// Resolves all context providers into values for the given render context.
-    ///
-    /// Returns a map of names to values that can be merged into the template context.
     pub fn resolve(&self, ctx: &RenderContext) -> HashMap<String, Value> {
         self.providers
             .iter()
@@ -302,7 +151,6 @@ impl ContextRegistry {
             .collect()
     }
 
-    /// Gets the names of all registered context entries.
     pub fn names(&self) -> impl Iterator<Item = &str> {
         self.providers.keys().map(|s| s.as_str())
     }

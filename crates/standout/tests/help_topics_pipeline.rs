@@ -1,9 +1,3 @@
-//! Help and topics through `render_request` (ROB04-WS04).
-//!
-//! Framework defaults are named registry templates registered at `build()`.
-//! App overrides with the same name win. The help path uses the app engine
-//! from `build()`, not a fresh `MiniJinjaEngine`.
-
 use clap::Command;
 use serial_test::serial;
 use standout::assets::{HELP_TEMPLATE_NAME, TOPICS_LIST_TEMPLATE_NAME, TOPIC_TEMPLATE_NAME};

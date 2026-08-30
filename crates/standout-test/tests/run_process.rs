@@ -1,32 +1,8 @@
-//! What `run_process` refuses to pretend it can do.
-//!
-//! The escape hatch shares one builder with the in-process runner, and most
-//! of that builder describes *injection seams* — destination facts and
-//! input sources a same-process run installs on the request. A child
-//! process inherits none of them: it resolves width, color, stdin, and
-//! prompts from its own environment. Carrying such a setting silently into a
-//! `run_process` call would produce the worst kind of test — one that reads
-//! as if it pinned the terminal and in fact asked the CI machine.
-//!
-//! So each is a loud panic, and these tests pin the message. The settings
-//! that *do* cross the boundary — environment variables, working directory,
-//! fixture files, argv — are exercised against a real binary in
-//! `crates/todo-example/tdoo/tests/process_boundary.rs`, which has one to
-//! run.
-//!
-//! No `#[serial]` here, deliberately: `run_process` mutates nothing
-//! process-global in the test's own process, and this binary runs no
-//! in-process `run()` whose env and cwd overrides a spawned child could
-//! otherwise inherit.
-
 use standout_input::{PromptResponse, ScriptedResponder};
 use standout_render::AmbiguousWidth;
 use standout_test::TestHarness;
 use std::sync::Arc;
-
-/// Never spawned: every test below panics before the fork.
 const UNSPAWNED: &str = "standout-test-never-spawned";
-
 #[test]
 #[should_panic(expected = "terminal_width()/no_terminal_width()")]
 fn a_forced_width_is_refused() {
@@ -34,7 +10,6 @@ fn a_forced_width_is_refused() {
         .terminal_width(80)
         .run_process(UNSPAWNED, ["--version"]);
 }
-
 #[test]
 #[should_panic(expected = "ambiguous_width()")]
 fn a_forced_ambiguous_width_policy_is_refused() {
@@ -42,7 +17,6 @@ fn a_forced_ambiguous_width_policy_is_refused() {
         .ambiguous_width(AmbiguousWidth::Wide)
         .run_process(UNSPAWNED, ["--version"]);
 }
-
 #[test]
 #[should_panic(expected = "with_color()/no_color()")]
 fn a_forced_color_capability_is_refused() {
@@ -50,7 +24,6 @@ fn a_forced_color_capability_is_refused() {
         .with_color()
         .run_process(UNSPAWNED, ["--version"]);
 }
-
 #[test]
 #[should_panic(expected = "piped_stdin()/interactive_stdin()")]
 fn simulated_stdin_is_refused() {
@@ -58,7 +31,6 @@ fn simulated_stdin_is_refused() {
         .piped_stdin("note\n")
         .run_process(UNSPAWNED, ["--version"]);
 }
-
 #[test]
 #[should_panic(expected = "clipboard()")]
 fn a_mock_clipboard_is_refused() {
@@ -66,7 +38,6 @@ fn a_mock_clipboard_is_refused() {
         .clipboard("copied")
         .run_process(UNSPAWNED, ["--version"]);
 }
-
 #[test]
 #[should_panic(expected = "prompts()")]
 fn scripted_prompts_are_refused() {
@@ -76,9 +47,6 @@ fn scripted_prompts_are_refused() {
         )])))
         .run_process(UNSPAWNED, ["--version"]);
 }
-
-/// Three settings, one run, one message: the fix is one edit rather than
-/// three rounds of trial and error.
 #[test]
 fn every_refused_setting_is_named_in_one_message() {
     let panic = std::panic::catch_unwind(|| {
@@ -89,7 +57,6 @@ fn every_refused_setting_is_named_in_one_message() {
             .run_process(UNSPAWNED, ["--version"]);
     })
     .expect_err("the run must panic");
-
     let message = panic
         .downcast_ref::<String>()
         .expect("panic payload should be a String");

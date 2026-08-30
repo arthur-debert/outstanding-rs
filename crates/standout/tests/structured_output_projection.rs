@@ -1,5 +1,3 @@
-//! App-path coverage for per-command structured-output projections.
-
 use clap::{Arg, Command};
 use serde_json::{json, Value};
 use standout::cli::hooks::TextOutput;

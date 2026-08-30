@@ -13,22 +13,16 @@ use crate::tabular::{Column, FlatDataSpec};
 type DerivedCell = Rc<dyn Fn(&Value, &Value) -> Value>;
 type SyntheticRow = Rc<dyn Fn(&Value) -> Option<Value>>;
 
-/// A per-command projection for structured output modes.
-///
-/// CSV is the first supported projection. The wrapper keeps command
-/// configuration mode-aware without exposing output-mode details to handlers.
 #[derive(Clone)]
 pub struct StructuredOutputProjection {
     csv: CsvProjection,
 }
 
 impl StructuredOutputProjection {
-    /// Creates a structured-output projection for CSV.
     pub fn csv(projection: CsvProjection) -> Self {
         Self { csv: projection }
     }
 
-    /// Returns the configured CSV projection.
     pub fn csv_projection(&self) -> &CsvProjection {
         &self.csv
     }
@@ -42,12 +36,6 @@ impl fmt::Debug for StructuredOutputProjection {
     }
 }
 
-/// A declarative CSV view over a command's canonical JSON response.
-///
-/// The projection selects a nested array as its row source, evaluates columns
-/// in registration order, and may append synthetic rows derived from the root
-/// response. Direct columns use [`Column::key`] dot paths. Derived columns can
-/// inspect both the current row and the root response.
 #[derive(Clone)]
 pub struct CsvProjection {
     row_source: String,
@@ -56,7 +44,6 @@ pub struct CsvProjection {
 }
 
 impl CsvProjection {
-    /// Starts a projection whose rows come from the nested `row_source` path.
     pub fn builder(row_source: impl Into<String>) -> CsvProjectionBuilder {
         CsvProjectionBuilder {
             row_source: row_source.into(),
@@ -65,7 +52,6 @@ impl CsvProjection {
         }
     }
 
-    /// Projects the canonical response and serializes the result as CSV.
     pub fn render(&self, root: &Value) -> Result<String, ProjectionError> {
         let rows = value_at_path(root, &self.row_source).ok_or_else(|| {
             ProjectionError::MissingRowSource {
@@ -160,7 +146,6 @@ impl ProjectionColumn {
     }
 }
 
-/// Builder for [`CsvProjection`].
 pub struct CsvProjectionBuilder {
     row_source: String,
     columns: Vec<ProjectionColumn>,
@@ -168,13 +153,11 @@ pub struct CsvProjectionBuilder {
 }
 
 impl CsvProjectionBuilder {
-    /// Adds a direct column. Its key is resolved against each selected row.
     pub fn column(mut self, column: Column) -> Self {
         self.columns.push(ProjectionColumn::Direct(column));
         self
     }
 
-    /// Adds a derived column whose callback receives `(row, root)`.
     pub fn derived_column<F>(mut self, column: Column, derive: F) -> Self
     where
         F: Fn(&Value, &Value) -> Value + 'static,
@@ -186,7 +169,6 @@ impl CsvProjectionBuilder {
         self
     }
 
-    /// Appends an unconditional synthetic row derived from the root response.
     pub fn synthetic_row<F>(self, row: F) -> Self
     where
         F: Fn(&Value) -> Value + 'static,
@@ -194,7 +176,6 @@ impl CsvProjectionBuilder {
         self.conditional_row(move |root| Some(row(root)))
     }
 
-    /// Appends a synthetic row when the callback returns `Some`.
     pub fn conditional_row<F>(mut self, row: F) -> Self
     where
         F: Fn(&Value) -> Option<Value> + 'static,
@@ -203,7 +184,6 @@ impl CsvProjectionBuilder {
         self
     }
 
-    /// Finishes the projection.
     pub fn build(self) -> CsvProjection {
         CsvProjection {
             row_source: self.row_source,
@@ -213,22 +193,16 @@ impl CsvProjectionBuilder {
     }
 }
 
-/// Failure while applying or serializing a structured-output projection.
 #[derive(Debug, thiserror::Error)]
 pub enum ProjectionError {
-    /// The configured row-source path was not present in the response.
     #[error("projection row source `{path}` was not found")]
     MissingRowSource { path: String },
-    /// The configured row-source path did not resolve to a collection.
     #[error("projection row source `{path}` is not an array")]
     RowSourceNotArray { path: String },
-    /// CSV serialization failed.
     #[error(transparent)]
     Csv(#[from] csv::Error),
-    /// The CSV writer failed while finalizing its buffer.
     #[error(transparent)]
     Io(#[from] std::io::Error),
-    /// The CSV encoder produced non-UTF-8 bytes.
     #[error(transparent)]
     Utf8(#[from] std::string::FromUtf8Error),
 }

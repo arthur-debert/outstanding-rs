@@ -1,8 +1,3 @@
-//! Integration tests for framework-injected questionnaire command wiring.
-
-use std::sync::atomic::{AtomicUsize, Ordering};
-use std::sync::Arc;
-
 use clap::{Arg, Command, Subcommand};
 use serde_json::json;
 use serial_test::serial;
@@ -12,20 +7,17 @@ use standout::cli::{
 use standout::input::questionnaire::QuestionnaireInput;
 use standout::input::{DefaultSource, InputChain, PromptResponse, ScriptedResponder};
 use standout_test::{TestHarness, TestResult};
-
+use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::Arc;
 #[derive(Debug, Clone, PartialEq, Eq, standout::Questionnaire)]
 #[question(id = "fixture.profile")]
 struct FixtureAnswers {
-    /// Project name.
     name: String,
 }
-
 #[derive(Clone)]
 struct Calls(Arc<AtomicUsize>);
-
 mod handlers {
     use super::*;
-
     pub fn collect(
         _matches: &clap::ArgMatches,
         ctx: &CommandContext,
@@ -35,7 +27,6 @@ mod handlers {
         let answers: &FixtureAnswers = ctx.questionnaire()?;
         Ok(Output::Render(json!({ "name": answers.name })))
     }
-
     pub fn other(
         _matches: &clap::ArgMatches,
         ctx: &CommandContext,
@@ -45,7 +36,6 @@ mod handlers {
         Ok(Output::Render(json!({ "name": "other" })))
     }
 }
-
 #[derive(Subcommand, Dispatch)]
 #[dispatch(handlers = handlers)]
 enum Commands {
@@ -54,14 +44,12 @@ enum Commands {
     #[dispatch(template = "{{ name }}")]
     Other,
 }
-
 fn command() -> Command {
     Command::new("fixture")
         .subcommand_required(true)
         .subcommand(Command::new("collect"))
         .subcommand(Command::new("other"))
 }
-
 fn derived_app(calls: Arc<AtomicUsize>) -> standout::cli::App {
     App::builder()
         .app_state(Calls(calls))
@@ -70,7 +58,6 @@ fn derived_app(calls: Arc<AtomicUsize>) -> standout::cli::App {
         .build()
         .unwrap()
 }
-
 fn builder_app(calls: Arc<AtomicUsize>) -> standout::cli::App {
     App::builder()
         .app_state(Calls(calls))
@@ -83,27 +70,23 @@ fn builder_app(calls: Arc<AtomicUsize>) -> standout::cli::App {
         .build()
         .unwrap()
 }
-
 fn answered_sheet(name: &str) -> String {
     FixtureAnswers::questionnaire()
         .unwrap()
         .render_answer_sheet()
         .replace("<id:name>\n", &format!("<id:name>\n{name}\n"))
 }
-
 fn error_text(result: &TestResult) -> String {
     match result.outcome() {
         DispatchResult::Error(error) => error.to_string(),
         other => panic!("expected error, got {other:?}"),
     }
 }
-
 #[test]
 #[serial(questionnaire)]
 fn derive_injects_answers_flag_and_yes_gate() {
     let calls = Arc::new(AtomicUsize::new(0));
     let app = derived_app(calls.clone());
-
     let result = TestHarness::new()
         .fixture("answers.txt", answered_sheet("from-file"))
         .run(
@@ -111,18 +94,15 @@ fn derive_injects_answers_flag_and_yes_gate() {
             command(),
             ["fixture", "collect", "--answers", "answers.txt", "--yes"],
         );
-
     result.assert_success();
     assert_eq!(result.stdout(), "from-file");
     assert_eq!(calls.load(Ordering::SeqCst), 1);
 }
-
 #[test]
 #[serial(questionnaire)]
 fn builder_config_injects_equivalent_answers_surface() {
     let calls = Arc::new(AtomicUsize::new(0));
     let app = builder_app(calls.clone());
-
     let result = TestHarness::new()
         .fixture("answers.txt", answered_sheet("from-builder"))
         .run(
@@ -130,18 +110,15 @@ fn builder_config_injects_equivalent_answers_surface() {
             command(),
             ["fixture", "collect", "--answers", "answers.txt", "--yes"],
         );
-
     result.assert_success();
     assert_eq!(result.stdout(), "from-builder");
     assert_eq!(calls.load(Ordering::SeqCst), 1);
 }
-
 #[test]
 #[serial(questionnaire)]
 fn stdin_answers_decode_through_shared_pipeline() {
     let calls = Arc::new(AtomicUsize::new(0));
     let app = derived_app(calls);
-
     let result = TestHarness::new()
         .piped_stdin(answered_sheet("from-stdin"))
         .run(
@@ -149,17 +126,14 @@ fn stdin_answers_decode_through_shared_pipeline() {
             command(),
             ["fixture", "collect", "--answers", "-", "--yes"],
         );
-
     result.assert_success();
     assert_eq!(result.stdout(), "from-stdin");
 }
-
 #[test]
 #[serial(questionnaire)]
 fn answer_sheet_warnings_are_captured_and_do_not_leak() {
     let calls = Arc::new(AtomicUsize::new(0));
     let app = derived_app(calls);
-
     let warned = TestHarness::new()
         .fixture(
             "answers.txt",
@@ -170,33 +144,27 @@ fn answer_sheet_warnings_are_captured_and_do_not_leak() {
             command(),
             ["fixture", "collect", "--answers", "answers.txt", "--yes"],
         );
-
     warned.assert_success();
     warned.assert_warning_contains("answer sheet answers.txt");
     warned.assert_warning_contains("name");
-
     let clean = TestHarness::new()
         .prompts(Arc::new(ScriptedResponder::new([PromptResponse::text(
             "interactive",
         )])))
         .run(&app, command(), ["fixture", "collect", "--yes"]);
-
     clean.assert_success();
     assert!(clean.warnings().is_empty(), "{:?}", clean.warnings());
 }
-
 #[test]
 #[serial(questionnaire)]
 fn terminal_stdin_is_rejected_for_explicit_answers_dash() {
     let calls = Arc::new(AtomicUsize::new(0));
     let app = derived_app(calls.clone());
-
     let result = TestHarness::new().interactive_stdin().run(
         &app,
         command(),
         ["fixture", "collect", "--answers", "-", "--yes"],
     );
-
     assert!(result.stdout().is_empty());
     let error = error_text(&result);
     assert!(
@@ -205,13 +173,11 @@ fn terminal_stdin_is_rejected_for_explicit_answers_dash() {
     );
     assert_eq!(calls.load(Ordering::SeqCst), 0);
 }
-
 #[test]
 #[serial(questionnaire)]
 fn invalid_answer_sheet_does_not_fall_back_to_prompts() {
     let calls = Arc::new(AtomicUsize::new(0));
     let app = derived_app(calls.clone());
-
     let result = TestHarness::new()
         .fixture("answers.txt", "")
         .prompts(Arc::new(ScriptedResponder::new([PromptResponse::text(
@@ -222,36 +188,29 @@ fn invalid_answer_sheet_does_not_fall_back_to_prompts() {
             command(),
             ["fixture", "collect", "--answers", "answers.txt", "--yes"],
         );
-
     let error = error_text(&result);
     assert!(error.contains("answer sheet answers.txt has"), "{error}");
     assert_eq!(calls.load(Ordering::SeqCst), 0);
 }
-
 #[test]
 #[serial(questionnaire)]
 fn no_flags_collects_interactively_before_handler() {
     let calls = Arc::new(AtomicUsize::new(0));
     let app = derived_app(calls);
-
     let result = TestHarness::new()
         .prompts(Arc::new(ScriptedResponder::new([PromptResponse::text(
             "interactive",
         )])))
         .run(&app, command(), ["fixture", "collect", "--yes"]);
-
     result.assert_success();
     assert_eq!(result.stdout(), "interactive");
 }
-
 #[test]
 #[serial(questionnaire)]
 fn questions_renders_blank_sheet_without_running_handler() {
     let calls = Arc::new(AtomicUsize::new(0));
     let app = derived_app(calls.clone());
-
     let result = TestHarness::new().run(&app, command(), ["fixture", "collect", "questions"]);
-
     result.assert_success();
     assert!(result
         .stdout()
@@ -259,7 +218,6 @@ fn questions_renders_blank_sheet_without_running_handler() {
     assert!(result.stdout().contains("<id:name>"));
     assert_eq!(calls.load(Ordering::SeqCst), 0);
 }
-
 #[test]
 #[serial(questionnaire)]
 fn questions_writes_file_without_running_handler() {
@@ -268,26 +226,22 @@ fn questions_writes_file_without_running_handler() {
     let dir = tempfile::tempdir().unwrap();
     let output = dir.path().join("questions.txt");
     let output_arg = output.to_str().unwrap();
-
     let result = TestHarness::new().run(
         &app,
         command(),
         ["fixture", "collect", "questions", "--file", output_arg],
     );
-
     result.assert_success();
     assert_eq!(result.stdout(), "");
     let written = std::fs::read_to_string(output).unwrap();
     assert!(written.contains("#! questionnaire: fixture.profile"));
     assert_eq!(calls.load(Ordering::SeqCst), 0);
 }
-
 #[test]
 #[serial(questionnaire)]
 fn questions_rejects_answers_and_yes_combination() {
     let calls = Arc::new(AtomicUsize::new(0));
     let app = derived_app(calls.clone());
-
     let result = TestHarness::new()
         .fixture("answers.txt", answered_sheet("x"))
         .run(
@@ -302,7 +256,6 @@ fn questions_rejects_answers_and_yes_combination() {
                 "questions",
             ],
         );
-
     let error = error_text(&result);
     assert!(
         error.contains("cannot be combined with --answers or --yes"),
@@ -310,13 +263,11 @@ fn questions_rejects_answers_and_yes_combination() {
     );
     assert_eq!(calls.load(Ordering::SeqCst), 0);
 }
-
 #[test]
 #[serial(questionnaire)]
 fn confirmation_gate_rejects_missing_attended_terminal() {
     let calls = Arc::new(AtomicUsize::new(0));
     let app = derived_app(calls.clone());
-
     let result = TestHarness::new()
         .fixture("answers.txt", answered_sheet("from-file"))
         .env("STANDOUT_QUESTIONNAIRE_TERMINAL", "absent")
@@ -325,7 +276,6 @@ fn confirmation_gate_rejects_missing_attended_terminal() {
             command(),
             ["fixture", "collect", "--answers", "answers.txt"],
         );
-
     let error = error_text(&result);
     assert!(
         error.contains("confirmation requires an attended terminal"),
@@ -333,7 +283,6 @@ fn confirmation_gate_rejects_missing_attended_terminal() {
     );
     assert_eq!(calls.load(Ordering::SeqCst), 0);
 }
-
 #[test]
 #[serial(questionnaire)]
 fn confirmation_gate_accepts_scripted_attended_yes() {
@@ -344,7 +293,6 @@ fn confirmation_gate_accepts_scripted_attended_yes() {
         .fixture("terminal.txt", "yes\n");
     let terminal = harness.tempdir().unwrap().join("terminal.txt");
     let terminal_arg = terminal.to_str().unwrap().to_string();
-
     let result = harness
         .env("STANDOUT_QUESTIONNAIRE_TERMINAL", terminal_arg)
         .run(
@@ -352,26 +300,21 @@ fn confirmation_gate_accepts_scripted_attended_yes() {
             command(),
             ["fixture", "collect", "--answers", "answers.txt"],
         );
-
     result.assert_success();
     assert_eq!(result.stdout(), "confirmed");
 }
-
 #[test]
 #[serial(questionnaire)]
 fn non_questionnaire_command_is_unaffected() {
     let calls = Arc::new(AtomicUsize::new(0));
     let app = derived_app(calls.clone());
-
     let ok = TestHarness::new().run(&app, command(), ["fixture", "other"]);
     ok.assert_success();
     assert_eq!(ok.stdout(), "other");
-
     let unknown = TestHarness::new().run(&app, command(), ["fixture", "other", "--answers", "x"]);
     let error = error_text(&unknown);
     assert!(error.contains("unexpected argument '--answers'"), "{error}");
 }
-
 #[test]
 fn reserved_answers_collision_fails_verification() {
     let app = App::builder()
@@ -383,12 +326,10 @@ fn reserved_answers_collision_fails_verification() {
         .unwrap();
     let cmd = Command::new("fixture")
         .subcommand(Command::new("collect").arg(Arg::new("answers").long("answers")));
-
     let error = app.verify_command(&cmd).unwrap_err().to_string();
     assert!(error.contains("reserved name"), "{error}");
     assert!(error.contains("--answers"), "{error}");
 }
-
 #[test]
 fn reserved_answer_alias_collision_fails_verification() {
     let app = App::builder()
@@ -400,12 +341,10 @@ fn reserved_answer_alias_collision_fails_verification() {
         .unwrap();
     let cmd = Command::new("fixture")
         .subcommand(Command::new("collect").arg(Arg::new("other").long("other").alias("answers")));
-
     let error = app.verify_command(&cmd).unwrap_err().to_string();
     assert!(error.contains("reserved name"), "{error}");
     assert!(error.contains("--answers"), "{error}");
 }
-
 #[test]
 fn reserved_questions_alias_collision_fails_verification() {
     let app = App::builder()
@@ -417,12 +356,10 @@ fn reserved_questions_alias_collision_fails_verification() {
         .unwrap();
     let cmd = Command::new("fixture")
         .subcommand(Command::new("collect").subcommand(Command::new("local").alias("questions")));
-
     let error = app.verify_command(&cmd).unwrap_err().to_string();
     assert!(error.contains("reserved name"), "{error}");
     assert!(error.contains("questions"), "{error}");
 }
-
 #[test]
 #[serial(questionnaire)]
 fn questionnaire_rejects_existing_input_name() {
@@ -440,7 +377,6 @@ fn questionnaire_rejects_existing_input_name() {
         .unwrap()
         .build()
         .unwrap();
-
     let result = TestHarness::new()
         .fixture("answers.txt", answered_sheet("from-file"))
         .run(
@@ -448,7 +384,6 @@ fn questionnaire_rejects_existing_input_name() {
             command(),
             ["fixture", "collect", "--answers", "answers.txt", "--yes"],
         );
-
     let error = error_text(&result);
     assert!(
         error.contains("reserved for command questionnaires"),
@@ -456,7 +391,6 @@ fn questionnaire_rejects_existing_input_name() {
     );
     assert_eq!(calls.load(Ordering::SeqCst), 0);
 }
-
 #[test]
 #[serial(questionnaire)]
 fn generic_input_rejects_questionnaire_name_after_questionnaire() {
@@ -474,7 +408,6 @@ fn generic_input_rejects_questionnaire_name_after_questionnaire() {
         .unwrap()
         .build()
         .unwrap();
-
     let result = TestHarness::new()
         .fixture("answers.txt", answered_sheet("from-file"))
         .run(
@@ -482,7 +415,6 @@ fn generic_input_rejects_questionnaire_name_after_questionnaire() {
             command(),
             ["fixture", "collect", "--answers", "answers.txt", "--yes"],
         );
-
     let error = error_text(&result);
     assert!(
         error.contains("duplicate input names are not supported"),

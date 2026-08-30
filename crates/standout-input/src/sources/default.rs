@@ -1,36 +1,18 @@
-//! Default value input source.
-
 use clap::ArgMatches;
 
 use crate::collector::InputCollector;
 use crate::InputError;
 
-/// Provide a default value when no other source has input.
-///
-/// This source is always available and always returns the configured value.
-/// It should typically be the last source in a chain.
-///
-/// # Example
-///
-/// ```ignore
-/// use standout_input::{InputChain, ArgSource, DefaultSource};
-///
-/// let chain = InputChain::<String>::new()
-///     .try_source(ArgSource::new("message"))
-///     .try_source(DefaultSource::new("default message"));
-/// ```
 #[derive(Debug, Clone)]
 pub struct DefaultSource<T: Clone + Send + Sync> {
     value: T,
 }
 
 impl<T: Clone + Send + Sync> DefaultSource<T> {
-    /// Create a new default source with the given value.
     pub fn new(value: T) -> Self {
         Self { value }
     }
 
-    /// Get the default value.
     pub fn value(&self) -> &T {
         &self.value
     }
@@ -42,7 +24,7 @@ impl<T: Clone + Send + Sync + 'static> InputCollector<T> for DefaultSource<T> {
     }
 
     fn is_available(&self, _matches: &ArgMatches) -> bool {
-        true // Always available
+        true
     }
 
     fn collect(&self, _matches: &ArgMatches) -> Result<Option<T>, InputError> {

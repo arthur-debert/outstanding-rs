@@ -1,12 +1,6 @@
-//! Objective evaluation of the produced binary: build it and sweep the ROB01
-//! invariant matrix (the archetype's acceptance cases run in `cases`).
-//!
-//! Everything here is black-box — the binary is spawned as a real process,
-//! exactly as an adopter's user would run it — and nothing here consults the
-//! agent's self-assessment. The produced code is untrusted: the build and
-//! every binary invocation run env-cleared to the recorded allowlist and
-//! under a hard deadline (via `exec`). Invariant failures, build failures,
-//! and timeouts are findings recorded in the report, never runner errors.
+// Objective evaluation of the produced binary: build it and sweep the ROB01
+// invariant matrix. Everything here is black-box and treats the produced
+// code as untrusted.
 
 use std::collections::BTreeMap;
 use std::panic::{catch_unwind, AssertUnwindSafe};
@@ -26,12 +20,6 @@ use crate::exec;
 use crate::report::{InvariantCell, InvariantStatus};
 use crate::workspace;
 
-/// Builds the workspace app with cargo; returns the produced binary path.
-///
-/// The build runs env-cleared with disposable HOME/CARGO_HOME directories and
-/// kernel filesystem isolation because the produced build script is
-/// untrusted. An explicit `--target-dir` makes the binary location independent
-/// of host cargo configuration, and `timeout` bounds the whole build.
 pub fn build_app(
     app_dir: &Path,
     binary: &str,
@@ -79,10 +67,6 @@ const MATRIX_CHECKS: [&str; 5] = [
     "opaque output preserves text bytes",
 ];
 
-/// Sweeps the declarative ROB01 matrix. Every global
-/// command×mode×color×theme×check identity is emitted exactly once; an
-/// invocation failure leaves dependent checks `not-run` rather than
-/// silently shrinking the denominator.
 pub fn run_invariants(
     binary: &Path,
     invariants: &Invariants,
@@ -125,19 +109,12 @@ pub fn run_invariants(
     )
 }
 
-/// Stable matrix identities for a build that never produced a binary: the
-/// same cell plan as [`run_invariants`], with every applicable cell
-/// `not-run` for `reason` instead of executed.
 pub fn not_run_invariants(invariants: &Invariants, reason: &str) -> Vec<InvariantCell> {
     sweep_plan(invariants, |_, _, _| ModeRuns::new(), reason)
 }
 
 type ModeRuns = BTreeMap<&'static str, Result<(Option<i32>, String), String>>;
 
-/// The one walk of the planned cell identities. `mode_runs` supplies the
-/// per-mode invocation outcomes for one command×color×theme group (empty
-/// when nothing ran); a planned mode absent from the map is emitted as
-/// `not-run` with `not_run_reason`.
 fn sweep_plan(
     invariants: &Invariants,
     mut mode_runs: impl FnMut(&InvariantCommand, ColorState, &InvariantTheme) -> ModeRuns,
@@ -294,8 +271,6 @@ fn applicability_reason(contract: InvariantContract, mode: InvariantMode, check:
     }
 }
 
-/// Runs the binary with `command` plus `--output <mode>` appended (the same
-/// argv edit `standout-test`'s harness makes), returning exit code + stdout.
 struct MatrixInvocation<'a> {
     mode: InvariantMode,
     color: ColorState,
@@ -337,8 +312,6 @@ fn run_mode(
     run_binary(binary, &args, timeout, isolation, invocation.home, &env)
 }
 
-/// One deadlined, env-scrubbed invocation of the produced (untrusted)
-/// binary, returning exit code + captured stdout.
 fn run_binary(
     binary: &Path,
     args: &[String],
@@ -361,14 +334,10 @@ fn run_binary(
     Ok((outcome.exit_code, outcome.stdout))
 }
 
-/// Serializes swaps of the global panic hook in `caught`: the hook is
-/// process-wide, so concurrent swaps (parallel test threads) could restore
-/// a stale hook or mute an unrelated thread's panic report.
+// The hook is process-wide, so concurrent swaps (parallel test threads)
+// could restore a stale hook or mute an unrelated thread's panic report.
 static PANIC_HOOK_LOCK: Mutex<()> = Mutex::new(());
 
-/// Runs a panicking `standout-test` invariant assertion as a pass/fail
-/// outcome, keeping the panic message as the failure detail and the runner's
-/// stderr free of hook noise.
 fn caught(assertion: impl FnOnce()) -> Result<(), String> {
     let _guard = PANIC_HOOK_LOCK
         .lock()

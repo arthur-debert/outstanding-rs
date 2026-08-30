@@ -1,175 +1,38 @@
-//! File-based resource loading for templates and stylesheets.
+//! File-based resource loading for templates and stylesheets, with a
+//! release mode that embeds everything into the binary at compile time.
 //!
-//! Standout supports file-based configuration for templates and stylesheets,
-//! enabling a web-app-like development workflow for CLI applications.
+//! Resources are referenced by a resolution name: the file's path relative
+//! to a registered root, without extension (`templates/report/summary.jinja`
+//! resolves as `"report/summary"`). Extensions are matched against a
+//! priority-ordered list; when several files share a base name, the
+//! extension earlier in the list wins for extensionless lookups. Lookups
+//! are also extension-agnostic in the other direction: a recognized
+//! suffix on a lookup name is stripped and retried against the base name,
+//! so `get("config.j2")` can resolve to a file registered as `"config"`.
 //!
-//! # Problem
+//! [`FileRegistry`] holds entries as either [`LoadedEntry::File`] (dev mode:
+//! re-read and transformed from disk on every access, so edits are visible
+//! immediately) or [`LoadedEntry::Embedded`] (release mode: content baked in
+//! at compile time via the `standout_macros` embedding macros). Embedded
+//! entries always shadow file-based ones of the same name.
 //!
-//! CLI applications need to manage templates and stylesheets. Developers want:
-//!
-//! - Separation of concerns - Keep templates and styles in files, not Rust code
-//! - Accessible to non-developers - Designers can edit YAML/Jinja without Rust
-//! - Rapid iteration - Changes visible immediately without recompilation
-//! - Single-binary distribution - Released apps should be self-contained
-//!
-//! These requirements create tension: development wants external files for flexibility,
-//! while release wants everything embedded for distribution.
-//!
-//! # Solution
-//!
-//! The file loader provides a unified system that:
-//!
-//! - Development mode: Reads files from disk with hot reload on each access
-//! - Release mode: Embeds all files into the binary at compile time via proc macros
-//!
-//! ## Directory Structure
-//!
-//! Organize resources in dedicated directories:
-//!
-//! ```text
-//! my-app/
-//! ├── templates/
-//! │   ├── list.jinja
-//! │   └── report/
-//! │       └── summary.jinja
-//! └── styles/
-//!     ├── default.css
-//!     └── themes/
-//!         └── dark.css
-//! ```
-//!
-//! ## Name Resolution
-//!
-//! Files are referenced by their relative path from the root, without extension:
-//!
-//! | File Path | Resolution Name |
-//! |-----------|-----------------|
-//! | `templates/list.jinja` | `"list"` |
-//! | `templates/report/summary.jinja` | `"report/summary"` |
-//! | `styles/themes/dark.css` | `"themes/dark"` |
-//!
-//! ## Development Usage
-//!
-//! Register directories and access resources by name:
-//!
-//! ```rust,ignore
-//! use standout_render::file_loader::{FileRegistry, FileRegistryConfig};
-//!
-//! let config = FileRegistryConfig {
-//!     extensions: &[".css", ".yaml", ".yml"],
-//!     transform: |content| Ok(content.to_string()),
-//! };
-//!
-//! let mut registry = FileRegistry::new(config);
-//! registry.add_dir("./styles")?;
-//!
-//! // Re-reads from disk each call - edits are immediately visible
-//! let content = registry.get("themes/dark")?;
-//! ```
-//!
-//! ## Release Embedding
-//!
-//! For release builds, use the embedding macros to bake files into the binary:
-//!
-//! ```rust,ignore
-//! // At compile time, walks directory and embeds all files
-//! let styles = standout_render::embed_styles!("./styles");
-//!
-//! // Same API - resources accessed by name
-//! let theme = styles.get("themes/dark")?;
-//! ```
-//!
-//! The macros walk the directory at compile time, read each file, and generate
-//! code that registers all resources with their derived names.
-//!
-//! See the `standout_macros` crate for detailed documentation on
-//! `embed_templates!` and `embed_styles!`.
-//!
-//! # Extension Priority
-//!
-//! Extensions are specified in priority order. When multiple files share the same
-//! base name, the extension appearing earlier wins for extensionless lookups:
-//!
-//! ```rust,ignore
-//! // With extensions: [".css", ".yaml", ".yml"]
-//! // If both default.css and default.yaml exist:
-//! registry.get("default")      // → default.css (higher priority)
-//! registry.get("default.yaml") // → default.yaml (explicit)
-//! ```
-//!
-//! # Extension-Agnostic Resolution
-//!
-//! Lookups are extension-agnostic: if a name with a recognized extension isn't
-//! found, the extension is stripped and the base name is tried. This allows
-//! callers to use any known extension regardless of the actual file extension:
-//!
-//! ```rust,ignore
-//! // File on disk: theme.css
-//! // Registry has: "theme" and "theme.css"
-//! registry.get("theme")        // → found (extensionless key)
-//! registry.get("theme.css")    // → found (exact match)
-//! registry.get("theme.yaml")   // → found (strips .yaml, falls back to "theme")
-//! ```
-//!
-//! # Collision Detection
-//!
-//! Cross-directory collisions (same name from different directories) cause a panic
-//! with detailed diagnostics. This catches configuration mistakes early.
-//!
-//! Same-directory, different-extension scenarios are resolved by priority (not errors).
-//!
-//! # Supported Resource Types
-//!
-//! | Resource | Extensions | Transform |
-//! |----------|------------|-----------|
-//! | Templates | `.jinja`, `.jinja2`, `.j2`, `.txt` | Identity |
-//! | Stylesheets | `.css`, `.yaml`, `.yml` | Auto-detect CSS or YAML |
-//! | Custom | User-defined | User-defined |
-//!
-//! The registry is generic over content type `T`, enabling consistent behavior
-//! across all resource types with type-specific parsing via the transform function.
+//! A name resolving to files in two different registered directories is a
+//! configuration error and panics with [`LoadError::Collision`]; the same
+//! name at different extensions within one directory is resolved by
+//! priority instead.
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
-/// A file discovered during directory walking.
-///
-/// This struct captures essential metadata about a file without reading its content,
-/// enabling lazy loading and hot reloading.
-///
-/// # Fields
-///
-/// - `name`: The resolution name without extension (e.g., `"todos/list"`)
-/// - `name_with_ext`: The resolution name with extension (e.g., `"todos/list.tmpl"`)
-/// - `path`: Absolute filesystem path for reading content
-/// - `source_dir`: The root directory this file came from (for collision reporting)
-///
-/// # Example
-///
-/// For a file at `/app/templates/todos/list.tmpl` with root `/app/templates`:
-///
-/// ```rust,ignore
-/// LoadedFile {
-///     name: "todos/list".to_string(),
-///     name_with_ext: "todos/list.tmpl".to_string(),
-///     path: PathBuf::from("/app/templates/todos/list.tmpl"),
-///     source_dir: PathBuf::from("/app/templates"),
-/// }
-/// ```
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct LoadedFile {
-    /// Resolution name without extension (e.g., "config" or "todos/list").
     pub name: String,
-    /// Resolution name with extension (e.g., "config.tmpl" or "todos/list.tmpl").
     pub name_with_ext: String,
-    /// Absolute path to the file.
     pub path: PathBuf,
-    /// The source directory this file belongs to.
     pub source_dir: PathBuf,
 }
 
 impl LoadedFile {
-    /// Creates a new loaded file descriptor.
     pub fn new(
         name: impl Into<String>,
         name_with_ext: impl Into<String>,
@@ -184,34 +47,11 @@ impl LoadedFile {
         }
     }
 
-    /// Returns the extension priority for this file given a list of extensions.
-    ///
-    /// Lower values indicate higher priority. Returns `usize::MAX` if the file's
-    /// extension is not in the list.
     pub fn extension_priority(&self, extensions: &[&str]) -> usize {
         extension_priority(&self.name_with_ext, extensions)
     }
 }
 
-// =============================================================================
-// Shared helper functions for extension handling
-// =============================================================================
-
-/// Returns the extension priority for a filename (lower = higher priority).
-///
-/// Extensions are matched in order against the provided list. The index of the
-/// first matching extension is returned. If no extension matches, returns `usize::MAX`.
-///
-/// # Example
-///
-/// ```rust
-/// use standout_render::file_loader::extension_priority;
-///
-/// let extensions = &[".yaml", ".yml"];
-/// assert_eq!(extension_priority("config.yaml", extensions), 0);
-/// assert_eq!(extension_priority("config.yml", extensions), 1);
-/// assert_eq!(extension_priority("config.txt", extensions), usize::MAX);
-/// ```
 pub fn extension_priority(name: &str, extensions: &[&str]) -> usize {
     for (i, ext) in extensions.iter().enumerate() {
         if name.ends_with(ext) {
@@ -221,21 +61,6 @@ pub fn extension_priority(name: &str, extensions: &[&str]) -> usize {
     usize::MAX
 }
 
-/// Strips a recognized extension from a filename.
-///
-/// Returns the base name without extension if a recognized extension is found,
-/// otherwise returns the original name.
-///
-/// # Example
-///
-/// ```rust
-/// use standout_render::file_loader::strip_extension;
-///
-/// let extensions = &[".yaml", ".yml"];
-/// assert_eq!(strip_extension("config.yaml", extensions), "config");
-/// assert_eq!(strip_extension("themes/dark.yml", extensions), "themes/dark");
-/// assert_eq!(strip_extension("readme.txt", extensions), "readme.txt");
-/// ```
 pub fn strip_extension(name: &str, extensions: &[&str]) -> String {
     for ext in extensions {
         if let Some(base) = name.strip_suffix(ext) {
@@ -245,34 +70,6 @@ pub fn strip_extension(name: &str, extensions: &[&str]) -> String {
     name.to_string()
 }
 
-/// Looks up a key in a HashMap with extension-agnostic fallback.
-///
-/// Tries the exact name first. If not found and the name has a recognized
-/// extension, strips the extension and tries the base name. This enables
-/// lookups like `"config.j2"` to find entries registered as `"config"`.
-///
-/// # Example
-///
-/// ```rust
-/// use std::collections::HashMap;
-/// use standout_render::file_loader::resolve_in_map;
-///
-/// let mut map = HashMap::new();
-/// map.insert("config".to_string(), "content");
-/// map.insert("config.yaml".to_string(), "yaml content");
-///
-/// let extensions = &[".yaml", ".yml", ".j2"];
-///
-/// // Exact match
-/// assert_eq!(resolve_in_map(&map, "config", extensions), Some(&"content"));
-/// assert_eq!(resolve_in_map(&map, "config.yaml", extensions), Some(&"yaml content"));
-///
-/// // Extension-agnostic fallback: .j2 is stripped, finds "config"
-/// assert_eq!(resolve_in_map(&map, "config.j2", extensions), Some(&"content"));
-///
-/// // No match
-/// assert_eq!(resolve_in_map(&map, "missing", extensions), None::<&&str>);
-/// ```
 pub fn resolve_in_map<'a, V>(
     map: &'a HashMap<String, V>,
     name: &str,
@@ -289,46 +86,6 @@ pub fn resolve_in_map<'a, V>(
     }
 }
 
-/// Builds a registry map from embedded entries with extension priority handling.
-///
-/// This is the core logic for creating registries from compile-time embedded resources.
-/// It handles:
-///
-/// 1. Extension priority: Entries are sorted so higher-priority extensions are processed first
-/// 2. Dual registration: Each entry is accessible by both base name and full name with extension
-/// 3. Transform: Each entry's content is transformed via the provided function
-///
-/// # Arguments
-///
-/// * `entries` - Slice of `(name_with_ext, content)` pairs
-/// * `extensions` - Extension list in priority order (first = highest)
-/// * `transform` - Function to transform content into target type
-///
-/// # Returns
-///
-/// A `HashMap<String, T>` where each entry is accessible by both its base name
-/// (without extension) and its full name (with extension).
-///
-/// # Example
-///
-/// ```rust,ignore
-/// use standout_render::file_loader::build_embedded_registry;
-///
-/// let entries = &[
-///     ("config.yaml", "key: value"),
-///     ("config.yml", "other: data"),
-///     ("themes/dark.yaml", "bg: black"),
-/// ];
-///
-/// let registry = build_embedded_registry(
-///     entries,
-///     &[".yaml", ".yml"],
-///     |content| Ok(content.to_string()),
-/// )?;
-///
-/// // "config" resolves to config.yaml (higher priority)
-/// // Both "config.yaml" and "config.yml" are accessible explicitly
-/// ```
 pub fn build_embedded_registry<T, E, F>(
     entries: &[(&str, &str)],
     extensions: &[&str],
@@ -340,7 +97,6 @@ where
 {
     let mut registry = HashMap::new();
 
-    // Sort by extension priority so higher-priority extensions are processed first
     let mut sorted: Vec<_> = entries.iter().collect();
     sorted.sort_by_key(|(name, _)| extension_priority(name, extensions));
 
@@ -350,11 +106,8 @@ where
         let value = transform(content)?;
         let base_name = strip_extension(name_with_ext, extensions);
 
-        // Register under full name with extension
         registry.insert((*name_with_ext).to_string(), value.clone());
 
-        // Register under base name only if not already registered
-        // (higher priority extension was already processed)
         if seen_base_names.insert(base_name.clone()) {
             registry.insert(base_name, value);
         }
@@ -363,105 +116,39 @@ where
     Ok(registry)
 }
 
-/// How a resource is stored—file path (dev) or content (release).
-///
-/// This enum enables different storage strategies:
-///
-/// - [`File`](LoadedEntry::File): Store the path, read on demand (hot reload in dev)
-/// - [`Embedded`](LoadedEntry::Embedded): Store content directly (no filesystem access)
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum LoadedEntry<T> {
-    /// Path to read from disk (dev mode, enables hot reload).
-    ///
-    /// On each access, the file is re-read and transformed, picking up any changes.
     File(PathBuf),
-
-    /// Pre-loaded/embedded content (release mode).
-    ///
-    /// Content is stored directly, avoiding filesystem access at runtime.
     Embedded(T),
 }
 
-/// Configuration for a file registry.
-///
-/// Specifies which file extensions to recognize and how to transform file content
-/// into the target type.
-///
-/// # Example
-///
-/// ```rust,ignore
-/// // For template files (identity transform)
-/// FileRegistryConfig {
-///     extensions: &[".tmpl", ".jinja2", ".j2"],
-///     transform: |content| Ok(content.to_string()),
-/// }
-///
-/// // For stylesheet files (auto-detects CSS or YAML)
-/// FileRegistryConfig {
-///     extensions: &[".css", ".yaml", ".yml"],
-///     transform: |content| parse_style_definitions(content),
-/// }
-/// ```
 #[derive(Clone)]
 pub struct FileRegistryConfig<T> {
-    /// Valid file extensions in priority order (first = highest priority).
-    ///
-    /// When multiple files exist with the same base name but different extensions,
-    /// the extension appearing earlier in this list wins for extensionless lookups.
     pub extensions: &'static [&'static str],
-
-    /// Transform function: file content → typed value.
-    ///
-    /// Called when reading a file to convert raw string content into the target type.
-    /// Return `Err(LoadError::Transform { .. })` for parse failures.
     pub transform: fn(&str) -> Result<T, LoadError>,
 }
 
-/// Error type for file loading operations.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum LoadError {
-    /// Directory does not exist or is not accessible.
     DirectoryNotFound {
-        /// Path to the directory that was not found.
         path: PathBuf,
     },
-
-    /// IO error reading a file.
     Io {
-        /// Path that failed to read.
         path: PathBuf,
-        /// Error message.
         message: String,
     },
-
-    /// Resource not found in registry.
     NotFound {
-        /// The name that was requested.
         name: String,
     },
-
-    /// Cross-directory collision detected.
-    ///
-    /// Two directories contain files that resolve to the same name.
-    /// This is a configuration error that must be fixed.
     Collision {
-        /// The resource name that has conflicting sources.
         name: String,
-        /// Path to the existing resource.
         existing_path: PathBuf,
-        /// Directory containing the existing resource.
         existing_dir: PathBuf,
-        /// Path to the conflicting resource.
         conflicting_path: PathBuf,
-        /// Directory containing the conflicting resource.
         conflicting_dir: PathBuf,
     },
-
-    /// Transform function failed.
     Transform {
-        /// The resource name.
         name: String,
-        /// Error message from the transform.
         message: String,
     },
 }
@@ -506,51 +193,16 @@ impl std::fmt::Display for LoadError {
 
 impl std::error::Error for LoadError {}
 
-/// Generic registry for file-based resources.
-///
-/// Manages loading and accessing resources from multiple directories with consistent
-/// behavior for extension priority, collision detection, and dev/release modes.
-///
-/// # Type Parameter
-///
-/// - `T`: The content type. Must implement `Clone` for `get()` to return owned values.
-///
-/// # Example
-///
-/// ```rust,ignore
-/// let config = FileRegistryConfig {
-///     extensions: &[".yaml", ".yml"],
-///     transform: |content| serde_yaml::from_str(content).map_err(|e| LoadError::Transform {
-///         name: String::new(),
-///         message: e.to_string(),
-///     }),
-/// };
-///
-/// let mut registry = FileRegistry::new(config);
-/// registry.add_dir("./styles")?;
-///
-/// let definitions = registry.get("darcula")?;
-/// ```
 #[derive(Clone)]
 pub struct FileRegistry<T> {
-    /// Configuration for this registry.
     config: FileRegistryConfig<T>,
-    /// Registered source directories.
     dirs: Vec<PathBuf>,
-    /// Map from name to loaded entry.
     entries: HashMap<String, LoadedEntry<T>>,
-    /// Tracks source info for collision detection: name → (path, source_dir).
     sources: HashMap<String, (PathBuf, PathBuf)>,
-    /// Whether the registry has been initialized from directories.
     initialized: bool,
 }
 
 impl<T: Clone> FileRegistry<T> {
-    /// Creates a new registry with the given configuration.
-    ///
-    /// The registry starts empty. Call [`add_dir`](Self::add_dir) to register
-    /// directories, then [`refresh`](Self::refresh) or access resources to
-    /// trigger initialization.
     pub fn new(config: FileRegistryConfig<T>) -> Self {
         Self {
             config,
@@ -561,20 +213,6 @@ impl<T: Clone> FileRegistry<T> {
         }
     }
 
-    /// Adds a directory to search for files.
-    ///
-    /// Directories are searched in registration order. If files with the same name
-    /// exist in multiple directories, a collision error is raised.
-    ///
-    /// # Lazy Initialization
-    ///
-    /// The directory is validated but not walked immediately. Walking happens on
-    /// first access or explicit [`refresh`](Self::refresh) call.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`LoadError::DirectoryNotFound`] if the path doesn't exist or
-    /// isn't a directory.
     pub fn add_dir<P: AsRef<Path>>(&mut self, path: P) -> Result<(), LoadError> {
         let path = path.as_ref();
 
@@ -594,56 +232,27 @@ impl<T: Clone> FileRegistry<T> {
         Ok(())
     }
 
-    /// Adds pre-embedded content (for release builds).
-    ///
-    /// Embedded resources are stored directly in memory, avoiding filesystem
-    /// access at runtime. Useful for deployment scenarios.
-    ///
-    /// # Note
-    ///
-    /// Embedded resources shadow file-based resources with the same name.
     pub fn add_embedded(&mut self, name: &str, content: T) {
         self.entries
             .insert(name.to_string(), LoadedEntry::Embedded(content));
     }
 
-    /// Initializes/refreshes the registry from registered directories.
-    ///
-    /// This walks all registered directories, discovers files, and builds the
-    /// resolution map. Call this to:
-    ///
-    /// - Pick up newly added files (in dev mode)
-    /// - Force re-initialization after adding directories
-    ///
-    /// # Panics
-    ///
-    /// Panics if a collision is detected (same name from different directories).
-    /// This is intentional—collisions are configuration errors that must be fixed.
-    ///
-    /// # Errors
-    ///
-    /// Returns an error if directory walking fails.
     pub fn refresh(&mut self) -> Result<(), LoadError> {
-        // Collect all files from all directories
         let mut all_files = Vec::new();
         for dir in &self.dirs {
             let files = walk_dir(dir, self.config.extensions)?;
             all_files.extend(files);
         }
 
-        // Clear existing file-based entries (keep embedded)
         self.entries
             .retain(|_, v| matches!(v, LoadedEntry::Embedded(_)));
         self.sources.clear();
 
-        // Sort by extension priority so higher-priority extensions are processed first
         all_files.sort_by_key(|f| f.extension_priority(self.config.extensions));
 
-        // Process files
         for file in all_files {
             let entry = LoadedEntry::File(file.path.clone());
 
-            // Check for cross-directory collision on the base name
             if let Some((existing_path, existing_dir)) = self.sources.get(&file.name) {
                 if existing_dir != &file.source_dir {
                     panic!(
@@ -657,27 +266,21 @@ impl<T: Clone> FileRegistry<T> {
                         }
                     );
                 }
-                // Same directory, different extension—only register the explicit name with extension
-                // (the extensionless name already points to higher-priority extension)
-                // But only if there's no embedded entry for this explicit name
                 if !self.entries.contains_key(&file.name_with_ext) {
                     self.entries.insert(file.name_with_ext.clone(), entry);
                 }
                 continue;
             }
 
-            // Track source for collision detection
             self.sources.insert(
                 file.name.clone(),
                 (file.path.clone(), file.source_dir.clone()),
             );
 
-            // Add under extensionless name (only if no embedded entry exists)
             if !self.entries.contains_key(&file.name) {
                 self.entries.insert(file.name.clone(), entry.clone());
             }
 
-            // Add under name with extension (only if no embedded entry exists)
             if !self.entries.contains_key(&file.name_with_ext) {
                 self.entries.insert(file.name_with_ext.clone(), entry);
             }
@@ -687,7 +290,6 @@ impl<T: Clone> FileRegistry<T> {
         Ok(())
     }
 
-    /// Ensures the registry is initialized, doing so lazily if needed.
     fn ensure_initialized(&mut self) -> Result<(), LoadError> {
         if !self.initialized && !self.dirs.is_empty() {
             self.refresh()?;
@@ -695,28 +297,9 @@ impl<T: Clone> FileRegistry<T> {
         Ok(())
     }
 
-    /// Gets a resource by name, applying the transform if reading from disk.
-    ///
-    /// Names are resolved with extension-agnostic fallback: if the exact name
-    /// isn't found and it has a recognized extension, the extension is stripped
-    /// and the base name is tried. This allows lookups like `"config.j2"` to
-    /// find a file registered as `"config"` (from `config.jinja`).
-    ///
-    /// In dev mode (when using [`LoadedEntry::File`]): re-reads file and transforms
-    /// on each call, enabling hot reload.
-    ///
-    /// In release mode (when using [`LoadedEntry::Embedded`]): returns embedded
-    /// content directly.
-    ///
-    /// # Errors
-    ///
-    /// - [`LoadError::NotFound`] if the name doesn't exist
-    /// - [`LoadError::Io`] if the file can't be read
-    /// - [`LoadError::Transform`] if the transform function fails
     pub fn get(&mut self, name: &str) -> Result<T, LoadError> {
         self.ensure_initialized()?;
 
-        // Try exact name first, fall back to base name (extension stripped)
         if self.entries.contains_key(name) {
             return self.get_by_key(name);
         }
@@ -731,7 +314,6 @@ impl<T: Clone> FileRegistry<T> {
         })
     }
 
-    /// Resolves an entry by key, reading from disk if necessary.
     fn get_by_key(&self, key: &str) -> Result<T, LoadError> {
         match self.entries.get(key) {
             Some(LoadedEntry::Embedded(content)) => Ok(content.clone()),
@@ -757,14 +339,6 @@ impl<T: Clone> FileRegistry<T> {
         }
     }
 
-    /// Returns a reference to the entry if it exists.
-    ///
-    /// Names are resolved with extension-agnostic fallback: if the exact name
-    /// isn't found and it has a recognized extension, the extension is stripped
-    /// and the base name is tried.
-    ///
-    /// Unlike [`get`](Self::get), this doesn't trigger initialization or file reading.
-    /// Useful for checking if a name exists without side effects.
     pub fn get_entry(&self, name: &str) -> Option<&LoadedEntry<T>> {
         if let Some(entry) = self.entries.get(name) {
             return Some(entry);
@@ -777,47 +351,29 @@ impl<T: Clone> FileRegistry<T> {
         }
     }
 
-    /// Returns an iterator over all registered names.
     pub fn names(&self) -> impl Iterator<Item = &str> {
         self.entries.keys().map(|s| s.as_str())
     }
 
-    /// Returns the number of registered resources.
-    ///
-    /// Note: This counts both extensionless and with-extension entries,
-    /// so it may be higher than the number of unique files.
     pub fn len(&self) -> usize {
         self.entries.len()
     }
 
-    /// Returns true if no resources are registered.
     pub fn is_empty(&self) -> bool {
         self.entries.is_empty()
     }
 
-    /// Clears all entries from the registry.
     pub fn clear(&mut self) {
         self.entries.clear();
         self.sources.clear();
         self.initialized = false;
     }
 
-    /// Returns the registered directories.
     pub fn dirs(&self) -> &[PathBuf] {
         &self.dirs
     }
 }
 
-/// Walks a directory recursively and collects files with recognized extensions.
-///
-/// # Arguments
-///
-/// - `root`: The directory to walk
-/// - `extensions`: Recognized file extensions
-///
-/// # Returns
-///
-/// A vector of [`LoadedFile`] entries, one for each discovered file.
 pub fn walk_dir(root: &Path, extensions: &[&str]) -> Result<Vec<LoadedFile>, LoadError> {
     let root_canonical = root.canonicalize().map_err(|e| LoadError::Io {
         path: root.to_path_buf(),
@@ -829,7 +385,6 @@ pub fn walk_dir(root: &Path, extensions: &[&str]) -> Result<Vec<LoadedFile>, Loa
     Ok(files)
 }
 
-/// Recursive helper for directory walking.
 fn walk_dir_recursive(
     current: &Path,
     root: &Path,
@@ -860,23 +415,16 @@ fn walk_dir_recursive(
     Ok(())
 }
 
-/// Attempts to parse a file path as a loadable file.
-///
-/// Returns `None` if the file doesn't have a recognized extension.
 fn try_parse_file(path: &Path, root: &Path, extensions: &[&str]) -> Option<LoadedFile> {
     let path_str = path.to_string_lossy();
 
-    // Find which extension this file has
     let extension = extensions.iter().find(|ext| path_str.ends_with(*ext))?;
 
-    // Compute relative path from root
     let relative = path.strip_prefix(root).ok()?;
     let relative_str = relative.to_string_lossy();
 
-    // Name with extension (using forward slashes for consistency)
     let name_with_ext = relative_str.replace(std::path::MAIN_SEPARATOR, "/");
 
-    // Name without extension
     let name = name_with_ext.strip_suffix(extension)?.to_string();
 
     Some(LoadedFile::new(name, name_with_ext, path, root))
@@ -904,10 +452,6 @@ mod tests {
         }
     }
 
-    // =========================================================================
-    // LoadedFile tests
-    // =========================================================================
-
     #[test]
     fn test_loaded_file_extension_priority() {
         let extensions = &[".tmpl", ".jinja2", ".j2"];
@@ -922,10 +466,6 @@ mod tests {
         assert_eq!(j2.extension_priority(extensions), 2);
         assert_eq!(unknown.extension_priority(extensions), usize::MAX);
     }
-
-    // =========================================================================
-    // FileRegistry basic tests
-    // =========================================================================
 
     #[test]
     fn test_registry_new_is_empty() {
@@ -962,10 +502,6 @@ mod tests {
         let result = registry.get("nonexistent");
         assert!(matches!(result, Err(LoadError::NotFound { .. })));
     }
-
-    // =========================================================================
-    // Directory-based tests
-    // =========================================================================
 
     #[test]
     fn test_registry_add_dir_nonexistent() {
@@ -1007,7 +543,6 @@ mod tests {
         let mut registry = FileRegistry::new(string_config());
         registry.add_dir(temp_dir.path()).unwrap();
 
-        // Both with and without extension should work
         assert!(registry.get("config").is_ok());
         assert!(registry.get("config.tmpl").is_ok());
     }
@@ -1021,11 +556,9 @@ mod tests {
         let mut registry = FileRegistry::new(string_config());
         registry.add_dir(temp_dir.path()).unwrap();
 
-        // Extensionless should resolve to .tmpl (higher priority)
         let content = registry.get("config").unwrap();
         assert_eq!(content, "From tmpl");
 
-        // Explicit extension access still works
         assert_eq!(registry.get("config.j2").unwrap(), "From j2");
         assert_eq!(registry.get("config.tmpl").unwrap(), "From tmpl");
     }
@@ -1043,7 +576,6 @@ mod tests {
         registry.add_dir(temp_dir1.path()).unwrap();
         registry.add_dir(temp_dir2.path()).unwrap();
 
-        // This should panic due to collision
         registry.refresh().unwrap();
     }
 
@@ -1056,7 +588,6 @@ mod tests {
         registry.add_dir(temp_dir.path()).unwrap();
         registry.add_embedded("config", "From embedded".to_string());
 
-        // Embedded should shadow file
         let content = registry.get("config").unwrap();
         assert_eq!(content, "From embedded");
     }
@@ -1069,13 +600,10 @@ mod tests {
         let mut registry = FileRegistry::new(string_config());
         registry.add_dir(temp_dir.path()).unwrap();
 
-        // First read
         assert_eq!(registry.get("hot").unwrap(), "Version 1");
 
-        // Modify file
         create_file(temp_dir.path(), "hot.tmpl", "Version 2");
 
-        // Second read should see change (hot reload)
         assert_eq!(registry.get("hot").unwrap(), "Version 2");
     }
 
@@ -1112,19 +640,13 @@ mod tests {
         assert!(registry.get("first").is_ok());
         assert!(registry.get("second").is_err());
 
-        // Add new file
         create_file(temp_dir.path(), "second.tmpl", "Second content");
 
-        // Refresh to pick up new file
         registry.refresh().unwrap();
 
         assert!(registry.get("second").is_ok());
         assert_eq!(registry.get("second").unwrap(), "Second content");
     }
-
-    // =========================================================================
-    // Transform tests
-    // =========================================================================
 
     #[test]
     fn test_registry_transform_success() {
@@ -1176,10 +698,6 @@ mod tests {
         assert!(matches!(result, Err(LoadError::Transform { name, .. }) if name == "bad"));
     }
 
-    // =========================================================================
-    // walk_dir tests
-    // =========================================================================
-
     #[test]
     fn test_walk_dir_empty() {
         let temp_dir = TempDir::new().unwrap();
@@ -1217,10 +735,6 @@ mod tests {
         assert!(names.contains(&"sub/nested"));
         assert!(names.contains(&"sub/deep/very"));
     }
-
-    // =========================================================================
-    // Error display tests
-    // =========================================================================
 
     #[test]
     fn test_error_display_directory_not_found() {
@@ -1265,10 +779,6 @@ mod tests {
         assert!(display.contains("parse error"));
     }
 
-    // =========================================================================
-    // Extension-agnostic resolution tests
-    // =========================================================================
-
     #[test]
     fn test_resolve_in_map_exact_match() {
         let mut map = HashMap::new();
@@ -1291,12 +801,10 @@ mod tests {
 
         let extensions = &[".tmpl", ".j2"];
 
-        // "config.j2" not in map, but .j2 is known → strips to "config" → found
         assert_eq!(
             resolve_in_map(&map, "config.j2", extensions),
             Some(&"content")
         );
-        // "config.tmpl" not in map either → strips to "config" → found
         assert_eq!(
             resolve_in_map(&map, "config.tmpl", extensions),
             Some(&"content")
@@ -1310,7 +818,6 @@ mod tests {
 
         let extensions = &[".tmpl", ".j2"];
 
-        // ".txt" is not a known extension → no stripping → not found
         assert_eq!(resolve_in_map(&map, "config.txt", extensions), None);
     }
 
@@ -1326,16 +833,13 @@ mod tests {
     #[test]
     fn test_registry_get_cross_extension_fallback() {
         let temp_dir = TempDir::new().unwrap();
-        // File has .tmpl extension
         create_file(temp_dir.path(), "config.tmpl", "Template content");
 
         let mut registry = FileRegistry::new(string_config());
         registry.add_dir(temp_dir.path()).unwrap();
 
-        // Lookup with different known extension should fall back to base name
         assert_eq!(registry.get("config.j2").unwrap(), "Template content");
         assert_eq!(registry.get("config.jinja2").unwrap(), "Template content");
-        // Direct access still works
         assert_eq!(registry.get("config").unwrap(), "Template content");
         assert_eq!(registry.get("config.tmpl").unwrap(), "Template content");
     }
@@ -1349,7 +853,6 @@ mod tests {
         registry.add_dir(temp_dir.path()).unwrap();
         registry.refresh().unwrap();
 
-        // get_entry with different extension should fall back to base name
         assert!(registry.get_entry("list.j2").is_some());
         assert!(registry.get_entry("list.jinja2").is_some());
         assert!(registry.get_entry("list").is_some());
@@ -1364,7 +867,6 @@ mod tests {
         let mut registry = FileRegistry::new(string_config());
         registry.add_dir(temp_dir.path()).unwrap();
 
-        // Nested path with different extension
         assert_eq!(registry.get("todos/list.j2").unwrap(), "Todos list");
         assert_eq!(registry.get("todos/list").unwrap(), "Todos list");
     }

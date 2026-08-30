@@ -1,18 +1,14 @@
-//! Standout spells booleans and none `true`/`false`/`none`, whatever minijinja
-//! version resolves.
-//!
-//! minijinja 2.22 switched its own rendering to Jinja2's Python spellings
-//! (`True`/`False`/`None`). These assertions are written against standout's
-//! output only — no minijinja version appears in them — so they hold across the
-//! open `minijinja = "2"` range and fail the moment the normalization is
-//! removed.
+//! Standout spells booleans and none `true`/`false`/`none` regardless of
+//! minijinja version, even though minijinja 2.22+ switched its own rendering
+//! to Jinja2's Python spellings (`True`/`False`/`None`). Assertions here
+//! check standout's output only, so they hold across the open
+//! `minijinja = "2"` range and fail the moment the normalization is removed.
 
 use minijinja::{context, Environment};
 use serde_json::json;
 use standout_render::template::{new_environment, register_filters, MiniJinjaEngine};
 use standout_render::TemplateEngine;
 
-/// A rendering environment built the way standout builds every one of its own.
 fn env() -> Environment<'static> {
     let mut env = new_environment();
     register_filters(&mut env);
@@ -120,8 +116,6 @@ fn width_and_padding_filters() {
     assert_eq!(render("{{ off | truncate_at(3) }}"), "fa…");
 }
 
-/// The runtime path — `App` renders through `MiniJinjaEngine`, and its data
-/// arrives as JSON, where `null` is a none and `true` is a bool.
 #[test]
 fn minijinja_engine_runtime_path() {
     let engine = MiniJinjaEngine::new();
@@ -134,8 +128,6 @@ fn minijinja_engine_runtime_path() {
     );
 }
 
-/// A downstream user who builds their own environment and only calls
-/// `register_filters` still gets the spelling.
 #[test]
 fn bare_environment_plus_register_filters() {
     let mut env = Environment::new();

@@ -1,23 +1,9 @@
-//! Explicit stdin, clipboard, and prompt-responder for one invocation.
-//!
-//! Production `App::run` constructs [`InputSources`] from the real process;
-//! tests put mocks in the same type. It is owned and not `Copy` (readers, not
-//! scalars). It is not bundled with destination properties into a combined
-//! run-environment type.
-
 use std::fmt;
 use std::sync::Arc;
 
 use crate::env::{ClipboardReader, RealClipboard, RealStdin, StdinReader};
 use crate::responder::PromptResponder;
 
-/// Stdin, clipboard, and prompt-responder used for one invocation.
-///
-/// Constructed from the real process in production ([`from_process`](Self::from_process));
-/// constructed with mocks by tests ([`new`](Self::new), [`with_stdin`](Self::with_stdin)
-/// and siblings). Passed into `App` next to target properties as a second
-/// argument, not stored on `App`. Input collection takes this value as an
-/// argument; it does not read process-global default readers.
 #[derive(Clone)]
 pub struct InputSources {
     stdin: Arc<dyn StdinReader>,
@@ -34,11 +20,6 @@ impl fmt::Debug for InputSources {
 }
 
 impl InputSources {
-    /// Builds sources from explicit readers.
-    ///
-    /// Tests inject [`crate::MockStdin`], [`crate::MockClipboard`], and an
-    /// optional [`crate::PromptResponder`] here. This stores the values; it
-    /// does not probe the process.
     pub fn new(
         stdin: impl StdinReader + 'static,
         clipboard: impl ClipboardReader + 'static,
@@ -51,65 +32,45 @@ impl InputSources {
         }
     }
 
-    /// Constructs sources from the real process (stdin, clipboard, no prompt
-    /// responder).
-    ///
-    /// Production `App::run` calls this at the process edge. Interactive
-    /// prompts then use the real backend; tests that need a scripted responder
-    /// call [`with_responder`](Self::with_responder) on a value they construct.
     pub fn from_process() -> Self {
         Self::new(RealStdin, RealClipboard, None)
     }
 
-    /// Replaces the stdin reader.
     pub fn with_stdin(mut self, stdin: impl StdinReader + 'static) -> Self {
         self.stdin = Arc::new(stdin);
         self
     }
 
-    /// Replaces the clipboard reader.
     pub fn with_clipboard(mut self, clipboard: impl ClipboardReader + 'static) -> Self {
         self.clipboard = Arc::new(clipboard);
         self
     }
 
-    /// Sets the prompt responder used by `.prompt_from`, `resolve_from`, and
-    /// framework interactive collection.
-    ///
-    /// Standalone `.prompt()` builds [`InputSources::from_process`] and never
-    /// sees this responder. Harness tests call `.prompt_from(ctx.input_sources())`
-    /// (or resolve chains against those sources).
     pub fn with_responder(mut self, responder: Arc<dyn PromptResponder>) -> Self {
         self.responder = Some(responder);
         self
     }
 
-    /// Stdin reader for this invocation.
     pub fn stdin(&self) -> &dyn StdinReader {
         self.stdin.as_ref()
     }
 
-    /// Shared stdin reader handle, for binding collectors at resolve time.
     pub fn stdin_arc(&self) -> Arc<dyn StdinReader> {
         Arc::clone(&self.stdin)
     }
 
-    /// Clipboard reader for this invocation.
     pub fn clipboard(&self) -> &dyn ClipboardReader {
         self.clipboard.as_ref()
     }
 
-    /// Shared clipboard reader handle, for binding collectors at resolve time.
     pub fn clipboard_arc(&self) -> Arc<dyn ClipboardReader> {
         Arc::clone(&self.clipboard)
     }
 
-    /// Prompt responder for this invocation, if one was supplied.
     pub fn responder(&self) -> Option<&dyn PromptResponder> {
         self.responder.as_deref()
     }
 
-    /// Shared prompt-responder handle, if one was supplied.
     pub fn responder_arc(&self) -> Option<Arc<dyn PromptResponder>> {
         self.responder.clone()
     }
@@ -135,9 +96,6 @@ mod tests {
 
     #[test]
     fn input_sources_is_not_copy() {
-        // Probe the concrete type. A generic helper would pick the unconstrained
-        // impl while type-checking the helper and stay green if `InputSources`
-        // later gained `Copy`.
         struct Probe<U>(std::marker::PhantomData<U>);
         trait AmbiguousIfImpl<A> {
             fn check() {}

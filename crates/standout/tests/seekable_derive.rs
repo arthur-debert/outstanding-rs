@@ -1,17 +1,8 @@
-//! Integration tests for the Seekable derive macro.
-//!
-//! These tests verify that the `#[derive(Seekable)]` macro generates correct
-//! accessor functions and field constants from struct field annotations.
-
 #![cfg(feature = "macros")]
 #![allow(dead_code)] // Some fields are intentionally skipped for testing
 
 use standout::seeker::{Query, Seekable, SeekerEnum, SeekerTimestamp, Timestamp, Value};
 use standout_macros::Seekable as DeriveSeekable;
-
-// =============================================================================
-// Basic derive tests
-// =============================================================================
 
 #[derive(DeriveSeekable)]
 struct BasicTask {
@@ -33,7 +24,6 @@ fn test_basic_derive_compiles() {
         done: false,
     };
 
-    // Should be able to access fields
     assert!(matches!(
         task.seeker_field_value("name"),
         Value::String("Test")
@@ -50,7 +40,6 @@ fn test_basic_derive_compiles() {
 
 #[test]
 fn test_field_constants_generated() {
-    // Field constants should be generated
     assert_eq!(BasicTask::NAME, "name");
     assert_eq!(BasicTask::PRIORITY, "priority");
     assert_eq!(BasicTask::DONE, "done");
@@ -76,14 +65,9 @@ fn test_accessor_function() {
         done: false,
     };
 
-    // The accessor function should work
     let value = BasicTask::accessor(&task, "name");
     assert_eq!(value, Value::String("Test"));
 }
-
-// =============================================================================
-// Number type tests
-// =============================================================================
 
 #[derive(DeriveSeekable)]
 struct NumericTask {
@@ -133,7 +117,6 @@ fn test_numeric_types() {
         value_f64: 2.5,
     };
 
-    // All should be numbers
     assert!(matches!(
         task.seeker_field_value("count_i8"),
         Value::Number(_)
@@ -147,10 +130,6 @@ fn test_numeric_types() {
         Value::Number(_)
     ));
 }
-
-// =============================================================================
-// Enum type tests
-// =============================================================================
 
 #[derive(Clone, Copy, PartialEq, Debug)]
 enum Status {
@@ -195,10 +174,6 @@ fn test_enum_constants() {
     assert_eq!(EnumTask::STATUS, "status");
 }
 
-// =============================================================================
-// Timestamp type tests
-// =============================================================================
-
 #[derive(Clone, Copy)]
 struct MyTimestamp(i64);
 
@@ -217,7 +192,7 @@ struct TimestampTask {
     created_at: MyTimestamp,
 
     #[seek(Timestamp)]
-    updated_at: i64, // i64 has built-in SeekerTimestamp impl
+    updated_at: i64,
 }
 
 #[test]
@@ -237,10 +212,6 @@ fn test_timestamp_field() {
         Value::Timestamp(Timestamp(2000))
     );
 }
-
-// =============================================================================
-// Skip attribute tests
-// =============================================================================
 
 #[derive(DeriveSeekable)]
 struct SkipTask {
@@ -262,10 +233,8 @@ fn test_skip_field() {
         priority: 5,
     };
 
-    // Skipped field should return None
     assert_eq!(task.seeker_field_value("internal_id"), Value::None);
 
-    // Other fields should work
     assert_eq!(task.seeker_field_value("name"), Value::String("Test"));
     assert!(matches!(
         task.seeker_field_value("priority"),
@@ -275,17 +244,9 @@ fn test_skip_field() {
 
 #[test]
 fn test_skip_field_no_constant() {
-    // NAME and PRIORITY constants should exist
     assert_eq!(SkipTask::NAME, "name");
     assert_eq!(SkipTask::PRIORITY, "priority");
-
-    // INTERNAL_ID constant should NOT exist (skipped)
-    // This is a compile-time check - if SkipTask::INTERNAL_ID existed, it would be a compile error
 }
-
-// =============================================================================
-// Rename attribute tests
-// =============================================================================
 
 #[derive(DeriveSeekable)]
 struct RenameTask {
@@ -303,25 +264,18 @@ fn test_rename_field() {
         priority: 5,
     };
 
-    // Should use the renamed field name
     assert_eq!(task.seeker_field_value("title"), Value::String("Test"));
     assert!(matches!(task.seeker_field_value("prio"), Value::Number(_)));
 
-    // Original names should not work
     assert_eq!(task.seeker_field_value("name"), Value::None);
     assert_eq!(task.seeker_field_value("priority"), Value::None);
 }
 
 #[test]
 fn test_rename_constants() {
-    // Constants should use the renamed names
     assert_eq!(RenameTask::TITLE, "title");
     assert_eq!(RenameTask::PRIO, "prio");
 }
-
-// =============================================================================
-// Integration with Query tests
-// =============================================================================
 
 #[derive(DeriveSeekable, Clone, Debug)]
 struct QueryableTask {
@@ -446,16 +400,11 @@ fn test_query_find() {
     assert_eq!(found.unwrap().priority, 5);
 }
 
-// =============================================================================
-// Fields without seek attribute are skipped
-// =============================================================================
-
 #[derive(DeriveSeekable)]
 struct PartialTask {
     #[seek(String)]
     name: String,
 
-    // No #[seek] attribute - should be skipped
     internal_counter: u32,
 
     #[seek(Number)]
@@ -470,20 +419,14 @@ fn test_unannotated_fields_skipped() {
         priority: 5,
     };
 
-    // Annotated fields work
     assert_eq!(task.seeker_field_value("name"), Value::String("Test"));
     assert!(matches!(
         task.seeker_field_value("priority"),
         Value::Number(_)
     ));
 
-    // Unannotated field returns None
     assert_eq!(task.seeker_field_value("internal_counter"), Value::None);
 }
-
-// =============================================================================
-// Complex combined test
-// =============================================================================
 
 #[derive(DeriveSeekable, Clone, Debug)]
 struct CompleteTask {
@@ -508,7 +451,6 @@ struct CompleteTask {
     #[seek(skip)]
     internal_state: u32,
 
-    // No attribute - also skipped
     metadata: String,
 }
 
@@ -525,12 +467,11 @@ fn test_complete_task_all_fields() {
         metadata: "some data".to_string(),
     };
 
-    // All seekable fields work
     assert_eq!(task.seeker_field_value("id"), Value::String("TSK-001"));
     assert_eq!(
         task.seeker_field_value("title"),
         Value::String("Implement feature")
-    ); // renamed
+    );
     assert!(matches!(
         task.seeker_field_value("priority"),
         Value::Number(_)
@@ -542,16 +483,15 @@ fn test_complete_task_all_fields() {
         Value::Timestamp(Timestamp(1706500000000))
     );
 
-    // Skipped/unannotated fields return None
     assert_eq!(task.seeker_field_value("internal_state"), Value::None);
     assert_eq!(task.seeker_field_value("metadata"), Value::None);
-    assert_eq!(task.seeker_field_value("name"), Value::None); // original name, not accessible
+    assert_eq!(task.seeker_field_value("name"), Value::None);
 }
 
 #[test]
 fn test_complete_task_constants() {
     assert_eq!(CompleteTask::ID, "id");
-    assert_eq!(CompleteTask::TITLE, "title"); // renamed constant
+    assert_eq!(CompleteTask::TITLE, "title");
     assert_eq!(CompleteTask::PRIORITY, "priority");
     assert_eq!(CompleteTask::ARCHIVED, "archived");
     assert_eq!(CompleteTask::STATUS, "status");
@@ -593,7 +533,6 @@ fn test_complete_task_query() {
         },
     ];
 
-    // Complex query using field constants
     let query = Query::new()
         .not_eq(CompleteTask::ARCHIVED, true)
         .and_gte(CompleteTask::PRIORITY, 3i32)
@@ -603,19 +542,14 @@ fn test_complete_task_query() {
 
     let results = query.filter(&tasks, CompleteTask::accessor);
     assert_eq!(results.len(), 2);
-    assert_eq!(results[0].id, "TSK-003"); // priority 4
-    assert_eq!(results[1].id, "TSK-001"); // priority 3
+    assert_eq!(results[0].id, "TSK-003");
+    assert_eq!(results[1].id, "TSK-001");
 }
-
-// =============================================================================
-// SeekerSchema derive tests
-// =============================================================================
 
 use standout::seeker::{parse_query, SeekType, SeekerSchema};
 
 #[test]
 fn test_seeker_schema_field_type() {
-    // BasicTask has: name (String), priority (Number), done (Bool)
     assert_eq!(BasicTask::field_type("name"), Some(SeekType::String));
     assert_eq!(BasicTask::field_type("priority"), Some(SeekType::Number));
     assert_eq!(BasicTask::field_type("done"), Some(SeekType::Bool));
@@ -633,20 +567,17 @@ fn test_seeker_schema_field_names() {
 
 #[test]
 fn test_seeker_schema_with_rename() {
-    // RenameTask: name renamed to "title", priority renamed to "prio"
     assert_eq!(RenameTask::field_type("title"), Some(SeekType::String));
     assert_eq!(RenameTask::field_type("prio"), Some(SeekType::Number));
-    // Original names should not be accessible
     assert_eq!(RenameTask::field_type("name"), None);
     assert_eq!(RenameTask::field_type("priority"), None);
 }
 
 #[test]
 fn test_seeker_schema_skipped_fields() {
-    // SkipTask: name (String), internal_id (skipped), priority (Number)
     assert_eq!(SkipTask::field_type("name"), Some(SeekType::String));
     assert_eq!(SkipTask::field_type("priority"), Some(SeekType::Number));
-    assert_eq!(SkipTask::field_type("internal_id"), None); // skipped
+    assert_eq!(SkipTask::field_type("internal_id"), None);
 
     let names = SkipTask::field_names();
     assert!(!names.contains(&"internal_id"));
@@ -654,9 +585,8 @@ fn test_seeker_schema_skipped_fields() {
 
 #[test]
 fn test_seeker_schema_all_types() {
-    // CompleteTask has all field types
     assert_eq!(CompleteTask::field_type("id"), Some(SeekType::String));
-    assert_eq!(CompleteTask::field_type("title"), Some(SeekType::String)); // renamed from name
+    assert_eq!(CompleteTask::field_type("title"), Some(SeekType::String));
     assert_eq!(CompleteTask::field_type("priority"), Some(SeekType::Number));
     assert_eq!(CompleteTask::field_type("archived"), Some(SeekType::Bool));
     assert_eq!(CompleteTask::field_type("status"), Some(SeekType::Enum));
@@ -664,7 +594,6 @@ fn test_seeker_schema_all_types() {
         CompleteTask::field_type("created_at"),
         Some(SeekType::Timestamp)
     );
-    // Skipped and unannotated fields
     assert_eq!(CompleteTask::field_type("internal_state"), None);
     assert_eq!(CompleteTask::field_type("metadata"), None);
 }
@@ -689,7 +618,6 @@ fn test_parse_query_with_derived_schema() {
         },
     ];
 
-    // Parse query using the derived SeekerSchema
     let pairs = vec![("name-contains".to_string(), "docs".to_string())];
     let query = parse_query::<BasicTask>(pairs).unwrap();
 
@@ -739,7 +667,6 @@ fn test_parse_query_unknown_field_error() {
 
 #[test]
 fn test_parse_query_invalid_operator_error() {
-    // "gt" is not valid for String fields
     let pairs = vec![("name-gt".to_string(), "value".to_string())];
     let result = parse_query::<BasicTask>(pairs);
     assert!(result.is_err());

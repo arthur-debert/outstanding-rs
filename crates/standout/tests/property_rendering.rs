@@ -1,33 +1,3 @@
-//! Property tests over the rendering pipeline: (mode × theme × template ×
-//! data), with the WS04 invariants as postconditions.
-//!
-//! The original version of this file generated the exact shape of #303 — an
-//! incomplete theme, a template using a styled tag, `Term` mode — and passed
-//! it, twice over: its only postcondition was `is_handled() || is_error()`,
-//! and its templates all spelled `{{ . }}`, which MiniJinja rejects as a
-//! syntax error — so every generated case exercised the error path and the
-//! "rendering" property test never rendered anything.
-//!
-//! Both are fixed here. The templates are valid, each one declares which
-//! style tags it emits, and the theme strategy says which tags it defines —
-//! including *incomplete* themes, which define some of the vocabulary but not
-//! all of it. That lets the postconditions be real:
-//!
-//! - A valid template over generated data must **render**, not error, in the
-//!   template modes.
-//! - Structured modes see the *raw* generated value — top-level scalars and
-//!   arrays included, not just objects. JSON and YAML serialize every JSON
-//!   value, so they must **render**; XML and CSV may refuse a shape (#107 is
-//!   the known XML case), but only as a `Render`-kind error — any other
-//!   failure is a dispatch defect, not a serializer refusal.
-//! - Structured output must parse as what it claims to be.
-//! - The WS04 invariants hold unconditionally: no `[tag?]` marker reaches the
-//!   page, and the `Term` page, stripped of ANSI, is exactly the `Text` page.
-//!
-//! The unconditional form of those two invariants is the #303-shaped property:
-//! an incomplete theme, a styled template, and terminal output must still render
-//! one clean page.
-
 use clap::Command;
 use console::Style;
 use proptest::prelude::*;
@@ -38,11 +8,6 @@ use standout_test::invariants::{
     assert_no_unresolved_tag_markers_in_page, assert_styling_preserves_layout_in_pages,
 };
 
-// ---------------------------------------------------------------------------
-// Strategies
-// ---------------------------------------------------------------------------
-
-/// All 8 output modes, per design guidelines.
 fn output_mode_strategy() -> impl Strategy<Value = OutputMode> {
     prop_oneof![
         Just(OutputMode::Auto),
@@ -56,14 +21,11 @@ fn output_mode_strategy() -> impl Strategy<Value = OutputMode> {
     ]
 }
 
-/// A template variant.
 #[derive(Debug, Clone)]
 struct TemplateCase {
     source: &'static str,
 }
 
-/// Template variations: the plain MiniJinja path, one styled tag, and nested
-/// styled tags.
 fn template_strategy() -> impl Strategy<Value = TemplateCase> {
     prop_oneof![
         Just(TemplateCase {
@@ -78,18 +40,11 @@ fn template_strategy() -> impl Strategy<Value = TemplateCase> {
     ]
 }
 
-/// A theme variant.
 #[derive(Debug, Clone)]
 struct ThemeCase {
     theme: Option<Theme>,
 }
 
-/// Themes from absent through incomplete to complete.
-///
-/// The incomplete cases are the point (and were missing before): a theme that
-/// defines *some* of the vocabulary is the downstream shape — an app themes
-/// what it knows about — and is exactly where #303-class defects live. The
-/// search space deliberately contains the bug.
 fn theme_strategy() -> impl Strategy<Value = ThemeCase> {
     prop_oneof![
         Just(ThemeCase { theme: None }),
@@ -113,10 +68,6 @@ fn theme_strategy() -> impl Strategy<Value = ThemeCase> {
     ]
 }
 
-/// Arbitrary JSON data. [`dispatch`] hands it to structured modes as-is —
-/// so serializers meet top-level scalars and arrays, not just objects — and
-/// wraps it as `{"data": …}` for template modes, so the templates have a
-/// name to reference.
 fn json_data_strategy() -> impl Strategy<Value = Value> {
     let leaf = prop_oneof![
         Just(Value::Null),
@@ -124,31 +75,15 @@ fn json_data_strategy() -> impl Strategy<Value = Value> {
         any::<f64>().prop_map(|f| json!(f)),
         "[a-zA-Z0-9]*".prop_map(Value::String),
     ];
-    leaf.prop_recursive(
-        4,  // 4 levels deep
-        64, // Max size 64 nodes
-        10, // Items per collection
-        |inner| {
-            prop_oneof![
-                prop::collection::vec(inner.clone(), 0..10).prop_map(Value::Array),
-                prop::collection::hash_map("[a-zA-Z0-9]*", inner, 0..10)
-                    .prop_map(|m| { Value::Object(m.into_iter().collect()) })
-            ]
-        },
-    )
+    leaf.prop_recursive(4, 64, 10, |inner| {
+        prop_oneof![
+            prop::collection::vec(inner.clone(), 0..10).prop_map(Value::Array),
+            prop::collection::hash_map("[a-zA-Z0-9]*", inner, 0..10)
+                .prop_map(|m| { Value::Object(m.into_iter().collect()) })
+        ]
+    })
 }
 
-// ---------------------------------------------------------------------------
-// Dispatch plumbing
-// ---------------------------------------------------------------------------
-
-/// Builds the generated app and dispatches `test` under `mode`.
-///
-/// Structured modes serialize the handler's value directly and never read
-/// the template, so they get the generated value untouched — wrapping it
-/// would hide every top-level scalar and array from the serializers.
-/// Template modes get it wrapped as `{"data": …}`, the name the templates
-/// reference.
 fn dispatch(
     mode: OutputMode,
     theme: &ThemeCase,
@@ -179,7 +114,6 @@ fn dispatch(
     app.dispatch(matches, mode).into_outcome()
 }
 
-/// Structured output must parse as the format it claims to be.
 fn validate_structured_output(output: &str, mode: OutputMode) {
     match mode {
         OutputMode::Json => {
@@ -199,8 +133,6 @@ fn validate_structured_output(output: &str, mode: OutputMode) {
             );
         }
         OutputMode::Xml => {
-            // XML output must be non-empty and parse as XML: quick-xml (the
-            // emitting crate) must read it back event by event without error.
             assert!(!output.is_empty(), "XML output should not be empty");
             let mut reader = quick_xml::Reader::from_str(output);
             loop {
@@ -212,8 +144,6 @@ fn validate_structured_output(output: &str, mode: OutputMode) {
             }
         }
         OutputMode::Csv => {
-            // CSV output must be non-empty and parse as CSV: every record
-            // reads cleanly and carries the header's width.
             assert!(!output.is_empty(), "CSV output should not be empty");
             let mut reader = csv::ReaderBuilder::new()
                 .has_headers(false)
@@ -227,12 +157,6 @@ fn validate_structured_output(output: &str, mode: OutputMode) {
     }
 }
 
-/// The mode-agreement invariant for one already-rendered page: `styled_page`
-/// with its escapes stripped is exactly the `Text` page over the same input.
-///
-/// Takes the caller's page instead of re-dispatching it — the property case
-/// already holds the `Term` (or `Auto`) render it is making a claim about,
-/// so the only extra dispatch is the `Text` side of the comparison.
 fn assert_agrees_with_text_mode(
     styled_page: &str,
     theme: &ThemeCase,
@@ -246,18 +170,7 @@ fn assert_agrees_with_text_mode(
     assert_styling_preserves_layout_in_pages(&console::strip_ansi_codes(styled_page), text_page);
 }
 
-// ---------------------------------------------------------------------------
-// The properties
-// ---------------------------------------------------------------------------
-
 proptest! {
-    /// The invariants that hold on today's framework, over the whole space —
-    /// incomplete themes included.
-    ///
-    /// The tag invariants are unconditional: an uncovered tag degrades to
-    /// unstyled text and must not change the rendered page beyond color.
-    /// A valid template renders, JSON/YAML serialize any value, XML/CSV refuse
-    /// a shape only as a `Render` error, and whatever a serializer emits parses.
     #[test]
     fn rendering_upholds_the_invariants(
         mode in output_mode_strategy(),
@@ -267,7 +180,6 @@ proptest! {
     ) {
         let result = dispatch(mode, &theme, &template, &data);
 
-        // Dispatch must never silently fall through to NoMatch/Silent.
         prop_assert!(
             result.is_handled() || result.is_error(),
             "expected Handled or Error, got {:?}",
@@ -276,8 +188,6 @@ proptest! {
 
         if mode.is_structured() {
             match mode {
-                // JSON and YAML serialize every JSON value: an error here
-                // is a regression, not a refusal.
                 OutputMode::Json | OutputMode::Yaml => {
                     prop_assert!(
                         result.is_handled(),
@@ -286,11 +196,6 @@ proptest! {
                         result
                     );
                 }
-                // XML (#107: quick-xml's root/shape limits) and CSV (shapes
-                // that flatten to no columns) may refuse a shape — but only
-                // as a Render error, the serializer-refusal kind. Any other
-                // outcome is a dispatch defect hiding behind "structured
-                // modes may error".
                 _ => {
                     prop_assert!(
                         result.is_handled()
@@ -301,13 +206,10 @@ proptest! {
                     );
                 }
             }
-            // What a serializer does emit must parse as what it claims.
             if let Some(output) = result.output() {
                 validate_structured_output(output, mode);
             }
         } else {
-            // A valid template over valid data must render in every
-            // template mode — the error path is not an acceptable rendering.
             prop_assert!(
                 result.is_handled(),
                 "a valid template must render, got {:?}",
@@ -322,10 +224,6 @@ proptest! {
         }
     }
 
-    /// The unconditional tag invariants — the #303-shaped property.
-    ///
-    /// A tag the theme does not define must not corrupt the page, and `Term`
-    /// must agree with `Text` after stripping ANSI.
     #[test]
     fn no_theme_gap_corrupts_a_page_or_splits_the_modes(
         theme in theme_strategy(),

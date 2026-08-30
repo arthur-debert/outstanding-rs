@@ -1,39 +1,8 @@
-//! Table decorator for adding borders, headers, and formatting.
-//!
-//! This module provides a `Table` type that wraps a `TabularSpec` and adds
-//! decorative elements like borders, headers, and separators.
-//!
-//! # Example
-//!
-//! ```rust
-//! use standout_render::tabular::{Table, TabularSpec, Col, BorderStyle};
-//!
-//! let spec = TabularSpec::builder()
-//!     .column(Col::fixed(20))
-//!     .column(Col::fixed(10))
-//!     .column(Col::fixed(8))
-//!     .separator("  ")
-//!     .build();
-//!
-//! let table = Table::new(spec, 80)
-//!     .border(BorderStyle::Light)
-//!     .header(vec!["Name", "Status", "Count"]);
-//!
-//! // Render header
-//! println!("{}", table.header_row());
-//! println!("{}", table.separator_row());
-//!
-//! // Render data rows
-//! println!("{}", table.row(&["Alice", "Active", "42"]));
-//! println!("{}", table.row(&["Bob", "Pending", "17"]));
-//!
-//! // Or render everything at once
-//! let data = vec![
-//!     vec!["Alice", "Active", "42"],
-//!     vec!["Bob", "Pending", "17"],
-//! ];
-//! println!("{}", table.render(&data));
-//! ```
+//! [`Table`] wraps a `TabularSpec`/`FlatDataSpec` and adds borders, headers,
+//! row separators, and alternating row styles on top of the plain formatted
+//! rows. Alternating styles wrap each data row in `[style]...[/style]` tags;
+//! `Table` also implements `minijinja::value::Object` so templates can call
+//! `.row(...)`, `.header_row()`, etc. directly.
 
 use std::sync::atomic::{AtomicUsize, Ordering};
 
@@ -44,29 +13,18 @@ use super::util::display_width_with_policy;
 use crate::template::stringify;
 use crate::{AmbiguousWidth, WidthCalculator};
 
-/// Border style for table decoration.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum BorderStyle {
-    /// No borders.
     #[default]
     None,
-    /// ASCII borders: +, -, |
     Ascii,
-    /// Light Unicode box-drawing characters: ┌, ─, ┐, │, └, ┘, ├, ┼, ┤, ┬, ┴
     Light,
-    /// Heavy Unicode box-drawing characters: ┏, ━, ┓, ┃, ┗, ┛, ┣, ╋, ┫, ┳, ┻
     Heavy,
-    /// Double-line Unicode box-drawing: ╔, ═, ╗, ║, ╚, ╝, ╠, ╬, ╣, ╦, ╩
     Double,
-    /// Rounded corners with light lines: ╭, ─, ╮, │, ╰, ╯, ├, ┼, ┤, ┬, ┴
     Rounded,
 }
 
 impl BorderStyle {
-    /// Get the box-drawing characters for this border style.
-    ///
-    /// Returns a tuple of (horizontal, vertical, top_left, top_right, bottom_left,
-    /// bottom_right, left_t, cross, right_t, top_t, bottom_t).
     fn chars(&self) -> BorderChars {
         match self {
             BorderStyle::None => BorderChars::empty(),
@@ -139,7 +97,6 @@ impl BorderStyle {
     }
 }
 
-/// Box-drawing characters for a border style.
 #[derive(Clone, Copy, Debug)]
 struct BorderChars {
     horizontal: char,
@@ -173,30 +130,15 @@ impl BorderChars {
     }
 }
 
-/// A decorated table with borders, headers, and separators.
-///
-/// Supports alternating row styles (odd/even) via [`row_styles`](Table::row_styles).
-/// When set, data rows are automatically wrapped in `[style]...[/style]` tags
-/// that alternate between the two style names.
 pub struct Table {
-    /// The underlying formatter.
     formatter: TabularFormatter,
-    /// Original specification, retained so border selection can re-resolve Wide layouts.
     spec: FlatDataSpec,
-    /// Requested width passed to the constructor.
     requested_width: usize,
-    /// Column headers.
     headers: Option<Vec<String>>,
-    /// Border style.
     border: BorderStyle,
-    /// Header style name (for styling header cells).
     header_style: Option<String>,
-    /// Whether to add separators between data rows.
     row_separator: bool,
-    /// Alternating row style names: (odd_style, even_style).
-    /// Row 0 uses even, row 1 uses odd, etc.
     row_styles: Option<(String, String)>,
-    /// Counter for tracking data row index (for alternating styles).
     row_counter: AtomicUsize,
 }
 
@@ -232,12 +174,10 @@ impl std::fmt::Debug for Table {
 }
 
 impl Table {
-    /// Create a new table with the given spec and total width.
     pub fn new(spec: TabularSpec, total_width: usize) -> Self {
         Self::with_ambiguous_width(spec, total_width, AmbiguousWidth::Narrow)
     }
 
-    /// Creates a table with an explicit ambiguous-width policy.
     pub fn with_ambiguous_width(
         spec: TabularSpec,
         total_width: usize,
@@ -257,12 +197,10 @@ impl Table {
         }
     }
 
-    /// Create a table from a raw FlatDataSpec.
     pub fn from_spec(spec: &FlatDataSpec, total_width: usize) -> Self {
         Self::from_spec_with_ambiguous_width(spec, total_width, AmbiguousWidth::Narrow)
     }
 
-    /// Creates a table from a raw spec with an explicit policy.
     pub fn from_spec_with_ambiguous_width(
         spec: &FlatDataSpec,
         total_width: usize,
@@ -271,35 +209,10 @@ impl Table {
         Self::with_ambiguous_width(spec.clone(), total_width, policy)
     }
 
-    /// Create a table from a type that implements `Tabular`.
-    ///
-    /// This constructor uses the `TabularSpec` generated by the `#[derive(Tabular)]`
-    /// macro to configure the table.
-    ///
-    /// # Example
-    ///
-    /// ```rust,ignore
-    /// use standout_render::tabular::{Tabular, Table, BorderStyle};
-    /// use serde::Serialize;
-    ///
-    /// #[derive(Serialize, Tabular)]
-    /// #[tabular(separator = " | ")]
-    /// struct Task {
-    ///     #[col(width = 8, header = "ID")]
-    ///     id: String,
-    ///     #[col(width = "fill", header = "Title")]
-    ///     title: String,
-    /// }
-    ///
-    /// let table = Table::from_type::<Task>(80)
-    ///     .header_from_columns()
-    ///     .border(BorderStyle::Light);
-    /// ```
     pub fn from_type<T: Tabular>(total_width: usize) -> Self {
         Self::from_type_with_ambiguous_width::<T>(total_width, AmbiguousWidth::Narrow)
     }
 
-    /// Creates a table from a `Tabular` type with an explicit policy.
     pub fn from_type_with_ambiguous_width<T: Tabular>(
         total_width: usize,
         policy: AmbiguousWidth,
@@ -308,7 +221,6 @@ impl Table {
         Self::with_ambiguous_width(spec, total_width, policy)
     }
 
-    /// Set the border style.
     pub fn border(mut self, border: BorderStyle) -> Self {
         self.border = border;
         self.rebuild_formatter_for_border();
@@ -344,62 +256,26 @@ impl Table {
         }
     }
 
-    /// Set the column headers.
     pub fn header<S: Into<String>, I: IntoIterator<Item = S>>(mut self, headers: I) -> Self {
         self.headers = Some(headers.into_iter().map(|s| s.into()).collect());
         self
     }
 
-    /// Set headers automatically from column specifications.
-    ///
-    /// For each column, uses (in order of preference):
-    /// 1. The `header` field if set
-    /// 2. The `key` field if set
-    /// 3. The `name` field if set
-    /// 4. Empty string
-    ///
-    /// # Example
-    ///
-    /// ```rust,ignore
-    /// let spec = TabularSpec::builder()
-    ///     .column(Col::fixed(8).header("ID"))
-    ///     .column(Col::min(10).key("author").header("Author"))
-    ///     .column(Col::fill().named("message"))  // Uses name as fallback
-    ///     .build();
-    ///
-    /// let table = Table::new(spec, 80)
-    ///     .header_from_columns()  // Headers: ["ID", "Author", "message"]
-    ///     .border(BorderStyle::Light);
-    /// ```
     pub fn header_from_columns(mut self) -> Self {
         self.headers = Some(self.formatter.extract_headers());
         self
     }
 
-    /// Set the header style name.
     pub fn header_style(mut self, style: impl Into<String>) -> Self {
         self.header_style = Some(style.into());
         self
     }
 
-    /// Enable row separators between data rows.
     pub fn row_separator(mut self, enable: bool) -> Self {
         self.row_separator = enable;
         self
     }
 
-    /// Set alternating row styles for even and odd data rows.
-    ///
-    /// When set, each data row is wrapped in `[style]...[/style]` tags
-    /// that alternate between the two style names. Row 0 uses `even_style`,
-    /// row 1 uses `odd_style`, and so on.
-    ///
-    /// # Example
-    ///
-    /// ```rust,ignore
-    /// let table = Table::new(spec, 80)
-    ///     .row_styles("table_row_even", "table_row_odd");
-    /// ```
     pub fn row_styles(
         mut self,
         even_style: impl Into<String>,
@@ -409,93 +285,39 @@ impl Table {
         self
     }
 
-    /// Get the border style.
     pub fn get_border(&self) -> BorderStyle {
         self.border
     }
 
-    /// Get the number of columns.
     pub fn num_columns(&self) -> usize {
         self.formatter.num_columns()
     }
 
-    /// Format a data row.
     pub fn row<S: AsRef<str>>(&self, values: &[S]) -> String {
         let content = self.formatter.format_row(values);
         self.wrap_data_row(&content)
     }
 
-    /// Format a data row with sub-column support.
-    ///
-    /// Cells that correspond to columns with sub-columns should be
-    /// [`CellValue::Sub`]; all others should be [`CellValue::Single`].
     pub fn row_cells(&self, values: &[CellValue<'_>]) -> String {
         let content = self.formatter.format_row_cells(values);
         self.wrap_data_row(&content)
     }
 
-    /// Format a data row by extracting values from a serializable struct.
-    ///
-    /// This method extracts field values based on each column's `key` or `name`.
-    /// See [`TabularFormatter::row_from`] for details on field extraction.
-    ///
-    /// # Example
-    ///
-    /// ```rust,ignore
-    /// use serde::Serialize;
-    ///
-    /// #[derive(Serialize)]
-    /// struct Record { name: String, status: String }
-    ///
-    /// let table = Table::new(spec, 80);
-    /// let record = Record { name: "Alice".into(), status: "active".into() };
-    /// println!("{}", table.row_from(&record));
-    /// ```
     pub fn row_from<T: serde::Serialize>(&self, value: &T) -> String {
         let content = self.formatter.row_from(value);
         self.wrap_data_row(&content)
     }
 
-    /// Format a data row using the `TabularRow` trait.
-    ///
-    /// This method uses the optimized `to_row()` implementation generated by
-    /// `#[derive(TabularRow)]`, avoiding JSON serialization overhead.
-    ///
-    /// # Example
-    ///
-    /// ```rust,ignore
-    /// use standout_render::tabular::{TabularRow, Tabular, Table, BorderStyle};
-    ///
-    /// #[derive(Tabular, TabularRow)]
-    /// #[tabular(separator = " | ")]
-    /// struct Task {
-    ///     #[col(width = 8)]
-    ///     id: String,
-    ///     #[col(width = "fill")]
-    ///     title: String,
-    /// }
-    ///
-    /// let table = Table::from_type::<Task>(80).border(BorderStyle::Light);
-    /// let task = Task {
-    ///     id: "TSK-001".to_string(),
-    ///     title: "Implement feature".to_string(),
-    /// };
-    ///
-    /// println!("{}", table.row_from_trait(&task));
-    /// ```
     pub fn row_from_trait<T: TabularRow>(&self, value: &T) -> String {
         let content = self.formatter.row_from_trait(value);
         self.wrap_data_row(&content)
     }
 
-    /// Format the header row.
     pub fn header_row(&self) -> String {
         match &self.headers {
             Some(headers) => {
-                // Format the headers first (handles truncation/padding)
                 let content = self.formatter.format_row(headers);
 
-                // Apply style after formatting to avoid style tags being truncated
                 let styled_content = if let Some(style) = &self.header_style {
                     format!("[{}]{}[/{}]", style, content, style)
                 } else {
@@ -508,22 +330,18 @@ impl Table {
         }
     }
 
-    /// Generate a horizontal separator row.
     pub fn separator_row(&self) -> String {
         self.horizontal_line(LineType::Middle)
     }
 
-    /// Generate the top border row.
     pub fn top_border(&self) -> String {
         self.horizontal_line(LineType::Top)
     }
 
-    /// Generate the bottom border row.
     pub fn bottom_border(&self) -> String {
         self.horizontal_line(LineType::Bottom)
     }
 
-    /// Wrap a data row with alternating style (if set) and borders.
     fn wrap_data_row(&self, content: &str) -> String {
         let bordered = self.wrap_row(content);
         if let Some((odd_style, even_style)) = &self.row_styles {
@@ -539,7 +357,6 @@ impl Table {
         }
     }
 
-    /// Wrap a row content with vertical borders.
     fn wrap_row(&self, content: &str) -> String {
         if self.border == BorderStyle::None {
             return content.to_string();
@@ -549,7 +366,6 @@ impl Table {
         format!("{}{}{}", chars.vertical, content, chars.vertical)
     }
 
-    /// Generate a horizontal line (top, middle, or bottom).
     fn horizontal_line(&self, line_type: LineType) -> String {
         if self.border == BorderStyle::None {
             return String::new();
@@ -558,7 +374,6 @@ impl Table {
         let chars = self.border.chars();
         let widths = self.formatter.widths();
 
-        // Calculate total content width
         let content_width: usize = widths.iter().sum();
         let sep_width = display_width_with_policy(
             &self.formatter_separator(),
@@ -589,21 +404,15 @@ impl Table {
 
         for (i, &width) in widths.iter().enumerate() {
             if i > 0 {
-                // Add joint for separator
                 for _ in 0..sep_width {
                     line.push(chars.horizontal);
                 }
-                // The joint replaces the middle horizontal char
-                // Actually, for proper box drawing, we need joint at column boundaries
             }
             for _ in 0..width {
                 line.push(chars.horizontal);
             }
         }
 
-        // Add separators between columns
-        // For simplicity, we'll just draw a continuous line
-        // A more sophisticated version would place joints at column boundaries
         let horizontal_width = WidthCalculator::new(self.formatter.ambiguous_width())
             .char_width(chars.horizontal)
             .max(1);
@@ -618,9 +427,7 @@ impl Table {
         line
     }
 
-    /// Get the separator string from formatter.
     fn formatter_separator(&self) -> String {
-        // Access separator through the Object trait
         use minijinja::value::{Object, Value};
         use std::sync::Arc;
         let arc_formatter = Arc::new(self.formatter.clone());
@@ -630,32 +437,25 @@ impl Table {
             .unwrap_or_default()
     }
 
-    /// Render the complete table with all rows.
-    ///
-    /// Includes top border, header (if set), separator, data rows, and bottom border.
     pub fn render<S: AsRef<str>>(&self, rows: &[Vec<S>]) -> String {
         self.row_counter.store(0, Ordering::Relaxed);
         let mut output = Vec::new();
 
-        // Top border
         let top = self.top_border();
         if !top.is_empty() {
             output.push(top);
         }
 
-        // Header
         let header = self.header_row();
         if !header.is_empty() {
             output.push(header);
 
-            // Separator after header
             let sep = self.separator_row();
             if !sep.is_empty() {
                 output.push(sep);
             }
         }
 
-        // Data rows (with optional separators between them)
         let separator = if self.row_separator {
             let sep = self.separator_row();
             if sep.is_empty() {
@@ -676,7 +476,6 @@ impl Table {
             output.push(self.row(row));
         }
 
-        // Bottom border
         let bottom = self.bottom_border();
         if !bottom.is_empty() {
             output.push(bottom);
@@ -686,17 +485,12 @@ impl Table {
     }
 }
 
-/// Type of horizontal line.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum LineType {
     Top,
     Middle,
     Bottom,
 }
-
-// ============================================================================
-// MiniJinja Object Implementation
-// ============================================================================
 
 impl minijinja::value::Object for Table {
     fn get_value(self: &std::sync::Arc<Self>, key: &minijinja::Value) -> Option<minijinja::Value> {
@@ -719,7 +513,6 @@ impl minijinja::value::Object for Table {
     ) -> Result<minijinja::Value, minijinja::Error> {
         match name {
             "row" => {
-                // row([value1, value2, ...]) - format a data row
                 if args.is_empty() {
                     return Err(minijinja::Error::new(
                         minijinja::ErrorKind::MissingArgument,
@@ -730,7 +523,6 @@ impl minijinja::value::Object for Table {
                 let values_arg = &args[0];
 
                 if self.formatter.has_sub_columns() {
-                    // Sub-column aware path: detect nested arrays
                     let outer_iter = match values_arg.try_iter() {
                         Ok(iter) => iter,
                         Err(_) => {
@@ -785,7 +577,6 @@ impl minijinja::value::Object for Table {
                 }
             }
             "row_from" => {
-                // row_from(object) - format a row by extracting values from an object
                 if args.is_empty() {
                     return Err(minijinja::Error::new(
                         minijinja::ErrorKind::MissingArgument,
@@ -793,29 +584,15 @@ impl minijinja::value::Object for Table {
                     ));
                 }
 
-                // Convert MiniJinja Value to serde_json::Value for field extraction
                 let json_value = minijinja::value::Value::from_serialize(&args[0]);
                 let formatted = self.formatter.row_from(&json_value);
                 Ok(minijinja::Value::from(self.wrap_data_row(&formatted)))
             }
-            "header_row" => {
-                // header_row() - format the header row
-                Ok(minijinja::Value::from(self.header_row()))
-            }
-            "separator_row" => {
-                // separator_row() - format a separator row
-                Ok(minijinja::Value::from(self.separator_row()))
-            }
-            "top_border" => {
-                // top_border() - format the top border
-                Ok(minijinja::Value::from(self.top_border()))
-            }
-            "bottom_border" => {
-                // bottom_border() - format the bottom border
-                Ok(minijinja::Value::from(self.bottom_border()))
-            }
+            "header_row" => Ok(minijinja::Value::from(self.header_row())),
+            "separator_row" => Ok(minijinja::Value::from(self.separator_row())),
+            "top_border" => Ok(minijinja::Value::from(self.top_border())),
+            "bottom_border" => Ok(minijinja::Value::from(self.bottom_border())),
             "render_all" => {
-                // render_all(rows) - render complete table with all rows
                 if args.is_empty() {
                     return Err(minijinja::Error::new(
                         minijinja::ErrorKind::MissingArgument,
@@ -867,7 +644,6 @@ mod tests {
     fn table_no_border() {
         let table = Table::new(simple_spec(), 80);
         let row = table.row(&["Hello", "World"]);
-        // No border, just formatted content
         assert!(!row.contains('│'));
         assert!(row.contains("Hello"));
     }
@@ -876,7 +652,6 @@ mod tests {
     fn table_with_ascii_border() {
         let table = Table::new(simple_spec(), 80).border(BorderStyle::Ascii);
         let row = table.row(&["Hello", "World"]);
-        // Should have vertical bars
         assert!(row.starts_with('|'));
         assert!(row.ends_with('|'));
     }
@@ -885,7 +660,6 @@ mod tests {
     fn table_with_light_border() {
         let table = Table::new(simple_spec(), 80).border(BorderStyle::Light);
         let row = table.row(&["Hello", "World"]);
-        // Should have light box characters
         assert!(row.starts_with('│'));
         assert!(row.ends_with('│'));
     }
@@ -982,19 +756,13 @@ mod tests {
         let output = table.render(&data);
         let lines: Vec<&str> = output.lines().collect();
 
-        // Should have: top border, header, separator, 2 data rows, bottom border
         assert!(lines.len() >= 5);
 
-        // Top border
         assert!(lines[0].starts_with('┌'));
-        // Header
         assert!(lines[1].contains("Name"));
-        // Separator
         assert!(lines[2].starts_with('├'));
-        // Data rows
         assert!(lines[3].contains("Alice"));
         assert!(lines[4].contains("Bob"));
-        // Bottom border
         assert!(lines[5].starts_with('└'));
     }
 
@@ -1007,7 +775,6 @@ mod tests {
         let output = table.render(&data);
         let lines: Vec<&str> = output.lines().collect();
 
-        // No borders, just header and data
         assert!(lines.len() >= 2);
         assert!(lines[0].contains("Name"));
         assert!(lines[1].contains("Alice"));
@@ -1096,8 +863,6 @@ mod tests {
         let output = table.render(&data);
         let lines: Vec<&str> = output.lines().collect();
 
-        // Should have: top, A, sep, B, sep, C, bottom = 7 lines
-        // Count separator lines between data rows
         let sep_count = lines.iter().filter(|l| l.starts_with('├')).count();
         assert_eq!(sep_count, 2, "Expected 2 separators between 3 rows");
     }
@@ -1115,8 +880,6 @@ mod tests {
         let output = table.render(&data);
         let lines: Vec<&str> = output.lines().collect();
 
-        // No separators between data rows (only after header if present)
-        // Lines: top, A, B, bottom = 4 lines
         assert_eq!(lines.len(), 4);
     }
 
@@ -1169,7 +932,6 @@ mod tests {
 
     #[test]
     fn table_header_from_columns_priority_order() {
-        // header > key > name
         let spec = TabularSpec::builder()
             .column(Col::fixed(10).header("Header").key("key").named("name"))
             .column(Col::fixed(10).key("key_only").named("name_only"))
@@ -1200,7 +962,6 @@ mod tests {
         let data = vec![vec!["Alice", "100"]];
         let output = table.render(&data);
 
-        // Should have header row with proper values
         assert!(output.contains("Name"));
         assert!(output.contains("Value"));
         assert!(output.contains("Alice"));

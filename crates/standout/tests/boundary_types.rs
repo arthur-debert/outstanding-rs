@@ -1,8 +1,3 @@
-//! Data-model checks for ROB04-WS01 public signatures.
-//!
-//! These tests do not call `todo!()` bodies and do not assert rendering or
-//! detection behaviour.
-
 use clap::Command;
 use standout::cli::{App, CompletedRun};
 use standout::{InputSources, TargetProperties};

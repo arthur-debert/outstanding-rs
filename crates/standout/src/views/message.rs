@@ -1,25 +1,15 @@
-//! Message types for view status and feedback.
-
 use serde::{Deserialize, Serialize};
 
-/// Severity level for status messages.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum MessageLevel {
-    /// Informational message (neutral)
     Info,
-    /// Success message (positive outcome)
     Success,
-    /// Warning message (attention needed)
     Warning,
-    /// Error message (something went wrong)
     Error,
 }
 
 impl MessageLevel {
-    /// Returns the style name used for this level in templates.
-    ///
-    /// Maps to framework styles: `standout-info`, `standout-success`, etc.
     pub fn style_name(&self) -> &'static str {
         match self {
             MessageLevel::Info => "standout-info",
@@ -41,20 +31,13 @@ impl std::fmt::Display for MessageLevel {
     }
 }
 
-/// A status message with severity level.
-///
-/// Messages appear at the end of view output and are styled
-/// according to their level.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Message {
-    /// The severity level
     pub level: MessageLevel,
-    /// The message text
     pub text: String,
 }
 
 impl Message {
-    /// Create a new message.
     pub fn new(level: MessageLevel, text: impl Into<String>) -> Self {
         Self {
             level,
@@ -62,22 +45,18 @@ impl Message {
         }
     }
 
-    /// Create an info message.
     pub fn info(text: impl Into<String>) -> Self {
         Self::new(MessageLevel::Info, text)
     }
 
-    /// Create a success message.
     pub fn success(text: impl Into<String>) -> Self {
         Self::new(MessageLevel::Success, text)
     }
 
-    /// Create a warning message.
     pub fn warning(text: impl Into<String>) -> Self {
         Self::new(MessageLevel::Warning, text)
     }
 
-    /// Create an error message.
     pub fn error(text: impl Into<String>) -> Self {
         Self::new(MessageLevel::Error, text)
     }

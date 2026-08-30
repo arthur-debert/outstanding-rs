@@ -1,54 +1,19 @@
-//! Help topics system for extended CLI documentation.
-//!
-//! Topics provide documentation beyond `--help` — longer guides, tutorials,
-//! and reference material accessible via `myapp help <topic>`.
-//!
-//! ## When to Use Topics
-//!
-//! - Explaining concepts that don't fit in `--help` output
-//! - Providing tutorials, configuration guides, or format references
-//! - Shipping documentation with your binary (no external files needed)
-//!
-//! ## Quick Start
+//! Help topics: documentation beyond `--help` (guides, tutorials, reference
+//! material) accessible via `myapp help <topic>`, either registered inline
+//! or loaded from a directory of `.txt`/`.md` files (first non-blank line is
+//! the title; filename minus extension is the topic name).
 //!
 //! ```rust
 //! use standout::topics::{Topic, TopicRegistry, TopicType, render_topic};
 //!
 //! let mut registry = TopicRegistry::new();
-//! registry.add_topic(Topic::new(
-//!     "Storage",
-//!     "Notes are stored in ~/.notes/\n\nEach note is a separate file.",
-//!     TopicType::Text,
-//!     Some("storage".to_string()),
-//! ));
-//!
-//! // In your help handler:
-//! if let Some(topic) = registry.get_topic("storage") {
-//!     let output = render_topic(topic, None).unwrap();
-//!     println!("{}", output);
-//! }
+//! registry.add_topic(Topic::new("Storage", "Notes live in ~/.notes/", TopicType::Text, Some("storage".into())));
+//! let output = render_topic(registry.get_topic("storage").unwrap(), None).unwrap();
 //! ```
 //!
-//! ## Loading Topics from Files
-//!
-//! Topics can be loaded from a directory of `.txt` or `.md` files:
-//!
-//! ```rust,ignore
-//! registry.add_from_directory("docs/topics")?;
-//! // Or silently skip if directory doesn't exist:
-//! registry.add_from_directory_if_exists("~/.myapp/topics")?;
-//! ```
-//!
-//! File format: first non-blank line is the title, rest is content.
-//! Filename (minus extension) becomes the topic name.
-//!
-//! ## Key Types
-//!
-//! - [`Topic`]: A single help topic with title, content, and name
-//! - [`TopicRegistry`]: Collection of topics with lookup by name
-//! - [`TopicType`]: Text or Markdown (affects rendering)
-//! - [`render_topic`] / [`render_topics_list`]: Rendering functions
-//! - [`display_with_pager`]: Show long content through less/more
+//! Key types: [`Topic`], [`TopicRegistry`], [`TopicType`], [`render_topic`] /
+//! [`render_topics_list`], [`display_with_pager`] (show long content through
+//! less/more).
 
 use deunicode::deunicode;
 use std::collections::HashMap;
@@ -84,8 +49,6 @@ pub struct Topic {
 }
 
 impl Topic {
-    /// Creates a new topic.
-    /// If name is None, it is generated from the title.
     pub fn new(
         title: impl Into<String>,
         content: impl Into<String>,
@@ -111,7 +74,6 @@ impl Topic {
             .chars()
             .filter(|c| c.is_ascii_alphanumeric() || *c == '-')
             .collect();
-        // Collapse consecutive dashes
         while slug.contains("--") {
             slug = slug.replace("--", "-");
         }
@@ -131,8 +93,6 @@ impl TopicRegistry {
         }
     }
 
-    /// Adds a topic to the registry.
-    /// Panics if a topic with the same name already exists.
     pub fn add_topic(&mut self, topic: Topic) {
         if self.topics.contains_key(&topic.name) {
             panic!(
@@ -153,10 +113,6 @@ impl TopicRegistry {
         topics
     }
 
-    /// Adds topics from files in the specified directory.
-    /// Only .txt and .md files are processed.
-    /// Empty files or files with only one line are ignored.
-    /// Returns an error if the path does not exist or is not a directory.
     pub fn add_from_directory(&mut self, path: impl AsRef<Path>) -> std::io::Result<()> {
         let path = path.as_ref();
         if !path.exists() {
@@ -174,10 +130,6 @@ impl TopicRegistry {
         self.load_from_directory(path)
     }
 
-    /// Adds topics from files in the specified directory if it exists.
-    /// Silently ignores non-existent paths.
-    /// Only .txt and .md files are processed.
-    /// Empty files or files with only one line are ignored.
     pub fn add_from_directory_if_exists(&mut self, path: impl AsRef<Path>) -> std::io::Result<()> {
         let path = path.as_ref();
         if !path.exists() || !path.is_dir() {
@@ -205,17 +157,14 @@ impl TopicRegistry {
             let content = fs::read_to_string(&path)?;
             let lines: Vec<&str> = content.lines().collect();
 
-            // Skip empty or single-line files
             if lines.len() < 2 {
                 continue;
             }
 
-            // Title is first non-blank line
             let title_idx = lines.iter().position(|l| !l.trim().is_empty());
             if let Some(idx) = title_idx {
                 let title = lines[idx].trim().to_string();
 
-                // Content starts after title, skipping any leading blank lines
                 let content_lines = &lines[idx + 1..];
                 let content_start = content_lines
                     .iter()
@@ -230,7 +179,6 @@ impl TopicRegistry {
                     continue;
                 }
 
-                // Name is filename sans extension
                 let name = path
                     .file_stem()
                     .and_then(|s| s.to_str())
@@ -244,46 +192,14 @@ impl TopicRegistry {
     }
 }
 
-// ============================================================================
-// TOPIC RENDERING
-// ============================================================================
-
-/// Configuration for topic rendering.
 #[derive(Debug, Clone, Default)]
 pub struct TopicRenderConfig {
-    /// Custom template string for a single topic. If None, uses the built-in
-    /// template.
-    ///
-    /// Standalone [`render_topic`] carries this as [`TemplateRef::Inline`]
-    /// and validates literal style tags at request construction. Framework
-    /// topics use the named `standout/topic` registry entry instead.
     pub topic_template: Option<String>,
-    /// Custom template string for the topic list. If None, uses the built-in
-    /// template.
-    ///
-    /// Standalone [`render_topics_list`] carries this as
-    /// [`TemplateRef::Inline`] with the same tag check. Framework listings
-    /// use the named `standout/topics-list` registry entry.
     pub list_template: Option<String>,
-    /// Theme overlaid on [`default_topic_theme`]: per style name an entry
-    /// here wins, and tags it leaves undefined keep their default styling.
-    /// If None, the default topic theme alone is used.
-    ///
-    /// Framework topics on `App` ignore this field and use the one theme
-    /// `build()` merged (ADR-0020).
     pub theme: Option<Theme>,
-    /// Output mode. If None, uses Auto (auto-detects).
-    ///
-    /// Structured modes still print human topics: glue maps them to
-    /// [`OutputMode::Auto`] on the request (ADR-0029).
     pub output_mode: Option<OutputMode>,
 }
 
-/// Returns the default theme for topic rendering.
-///
-/// Every render starts from this theme; a configured
-/// [`TopicRenderConfig::theme`] overlays it rather than replacing it, so
-/// every tag the templates emit always resolves.
 pub fn default_topic_theme() -> Theme {
     Theme::new()
         .add("header", Style::new().bold())
@@ -293,14 +209,6 @@ pub fn default_topic_theme() -> Theme {
         .add("about", Style::new())
 }
 
-/// Resolves the theme a topic render styles with.
-///
-/// [`default_topic_theme`] is the base and the configured theme overlays it —
-/// per style name, a configured entry wins. The help entry points hand the
-/// *application* theme through here, which carries the app's output
-/// vocabulary, not the topic templates'; replacing the default with it would
-/// leave the topic tags unresolved and render as literal `[tag?]` markup in
-/// terminal output.
 fn resolve_topic_theme(configured: Option<Theme>) -> Theme {
     match configured {
         Some(theme) => default_topic_theme().merge(theme),
@@ -318,8 +226,6 @@ pub(crate) struct TopicData {
 pub(crate) struct TopicsListData {
     usage: String,
     topics: Vec<TopicListItem>,
-    /// Width of the name column, resolved from the topic names; the template
-    /// aligns each row against it.
     name_width: usize,
 }
 
@@ -329,9 +235,7 @@ struct TopicListItem {
     title: String,
 }
 
-/// Default single-topic template source.
 pub(crate) const DEFAULT_TOPIC_TEMPLATE: &str = include_str!("topic_template.txt");
-/// Default topics-list template source.
 pub(crate) const DEFAULT_TOPICS_LIST_TEMPLATE: &str = include_str!("topics_list_template.txt");
 
 pub(crate) fn topic_data(topic: &Topic) -> TopicData {
@@ -341,10 +245,6 @@ pub(crate) fn topic_data(topic: &Topic) -> TopicData {
     }
 }
 
-/// Builds the topics-list page data.
-///
-/// `name_width` is resolved against `target` so the list aligns using the
-/// same destination the render request will carry.
 pub(crate) fn topics_list_data(
     registry: &TopicRegistry,
     usage_prefix: &str,
@@ -385,26 +285,6 @@ fn standalone_topic_template(
     }
 }
 
-/// Renders a single topic using standout templating.
-///
-/// # Example
-///
-/// ```rust
-/// use standout::topics::{Topic, TopicType, render_topic, TopicRenderConfig};
-///
-/// let topic = Topic::new(
-///     "Storage",
-///     "Notes are stored in ~/.notes/\n\nEach note is a separate file.",
-///     TopicType::Text,
-///     Some("storage".to_string()),
-/// );
-///
-/// let output = render_topic(&topic, None).unwrap();
-/// println!("{}", output);
-/// ```
-///
-/// Standalone: no `App` is required. The template string becomes
-/// [`TemplateRef::Inline`] with tag validation at request construction.
 pub fn render_topic(
     topic: &Topic,
     config: Option<TopicRenderConfig>,
@@ -430,31 +310,6 @@ pub fn render_topic(
     )
 }
 
-/// Renders a list of all available topics.
-///
-/// # Arguments
-///
-/// * `registry` - The topic registry containing all topics
-/// * `usage_prefix` - The command prefix for usage display (e.g., "myapp help")
-/// * `config` - Optional rendering configuration
-///
-/// # Example
-///
-/// ```rust
-/// use standout::topics::{TopicRegistry, Topic, TopicType, render_topics_list};
-///
-/// let mut registry = TopicRegistry::new();
-/// registry.add_topic(Topic::new("Storage", "Where data is stored", TopicType::Text, None));
-/// registry.add_topic(Topic::new("Syntax", "Note syntax reference", TopicType::Text, None));
-///
-/// let output = render_topics_list(&registry, "myapp help", None).unwrap();
-/// println!("{}", output);
-/// ```
-///
-/// Standalone: no `App` is required. The template string becomes
-/// [`TemplateRef::Inline`] with tag validation at request construction.
-/// Destination facts are detected once and reused for list layout and the
-/// request.
 pub fn render_topics_list(
     registry: &TopicRegistry,
     usage_prefix: &str,
@@ -482,27 +337,6 @@ pub fn render_topics_list(
     )
 }
 
-// ============================================================================
-// PAGER SUPPORT
-// ============================================================================
-
-/// Displays content through a pager.
-///
-/// Tries pagers in this order:
-/// 1. `$PAGER` environment variable
-/// 2. `less`
-/// 3. `more`
-///
-/// If all pagers fail, falls back to printing directly to stdout.
-///
-/// # Example
-///
-/// ```rust,no_run
-/// use standout::topics::display_with_pager;
-///
-/// let long_content = "Line 1\nLine 2\n...";
-/// display_with_pager(long_content).unwrap();
-/// ```
 pub fn display_with_pager(content: &str) -> std::io::Result<()> {
     let pagers = get_pager_candidates();
 
@@ -512,12 +346,10 @@ pub fn display_with_pager(content: &str) -> std::io::Result<()> {
         }
     }
 
-    // Fallback: print directly
     print!("{}", content);
     std::io::stdout().flush()
 }
 
-/// Returns the list of pager candidates to try.
 fn get_pager_candidates() -> Vec<String> {
     let mut pagers = Vec::new();
 
@@ -533,7 +365,6 @@ fn get_pager_candidates() -> Vec<String> {
     pagers
 }
 
-/// Attempts to run content through a specific pager.
 fn try_pager(pager: &str, content: &str) -> std::io::Result<()> {
     let mut child = ProcessCommand::new(pager).stdin(Stdio::piped()).spawn()?;
 
@@ -559,7 +390,7 @@ mod tests {
     #[test]
     fn test_slug_generation() {
         assert_eq!(Topic::generate_slug("Hello World"), "hello-world");
-        assert_eq!(Topic::generate_slug("Testing  123"), "testing-123"); // Consecutive dashes are collapsed
+        assert_eq!(Topic::generate_slug("Testing  123"), "testing-123");
         assert_eq!(Topic::generate_slug("Olá Mundo"), "ola-mundo");
         assert_eq!(Topic::generate_slug("Café"), "cafe");
     }
@@ -598,25 +429,21 @@ mod tests {
     fn test_load_from_dir() {
         let dir = tempdir().unwrap();
 
-        // Good file
         let p1 = dir.path().join("intro.txt");
         let mut f1 = File::create(&p1).unwrap();
         writeln!(f1, "Introduction\nThis is the content.").unwrap();
 
-        // Markdown file
         let p2 = dir.path().join("guide.md");
         let mut f2 = File::create(&p2).unwrap();
         writeln!(f2, "Guide Title\n# Header\nBody").unwrap();
 
-        // Too short
         let p3 = dir.path().join("short.txt");
         let mut f3 = File::create(&p3).unwrap();
         writeln!(f3, "One line only").unwrap();
 
-        // Empty body (title found but no content after)
         let p4 = dir.path().join("empty_body.txt");
         let mut f4 = File::create(&p4).unwrap();
-        writeln!(f4, "Just Title\n").unwrap(); // Trim might make body empty if only newline
+        writeln!(f4, "Just Title\n").unwrap();
 
         let mut registry = TopicRegistry::new();
         registry.add_from_directory(dir.path()).unwrap();
@@ -649,7 +476,6 @@ mod tests {
     #[test]
     fn test_add_from_directory_if_exists_nonexistent() {
         let mut registry = TopicRegistry::new();
-        // Should succeed silently for non-existent directory
         let result = registry.add_from_directory_if_exists("/nonexistent/path");
         assert!(result.is_ok());
         assert_eq!(registry.list_topics().len(), 0);
@@ -661,7 +487,6 @@ mod tests {
         let dir1 = tempdir().unwrap();
         let dir2 = tempdir().unwrap();
 
-        // Same filename in both directories
         let p1 = dir1.path().join("shared.txt");
         let mut f1 = File::create(&p1).unwrap();
         writeln!(f1, "Title 1\nContent 1").unwrap();
@@ -672,7 +497,7 @@ mod tests {
 
         let mut registry = TopicRegistry::new();
         registry.add_from_directory(dir1.path()).unwrap();
-        registry.add_from_directory(dir2.path()).unwrap(); // Should panic
+        registry.add_from_directory(dir2.path()).unwrap();
     }
 
     #[test]
@@ -722,10 +547,6 @@ mod tests {
         assert!(output.contains("myapp help <topic>"));
     }
 
-    /// Issue #297: the standalone topics listing carried its own copy of the
-    /// column arithmetic, and its own copy of the bug. A topic name past the
-    /// floor must widen the column for the whole list rather than run into its
-    /// title.
     #[test]
     fn test_render_topics_list_long_name_keeps_separator() {
         let mut registry = TopicRegistry::new();
@@ -751,7 +572,6 @@ mod tests {
             output
         );
 
-        // Both titles start at the same column.
         let short = row_containing(&output, "short");
         assert_eq!(
             long.find("A Very Long Topic Name Here"),
@@ -761,7 +581,6 @@ mod tests {
         );
     }
 
-    /// The first rendered line containing `needle`, for column assertions.
     fn row_containing<'a>(output: &'a str, needle: &str) -> &'a str {
         output
             .lines()
@@ -771,8 +590,6 @@ mod tests {
 
     #[test]
     fn test_get_pager_candidates_includes_defaults() {
-        // Don't modify env vars (not thread-safe in tests)
-        // Just verify the function always includes less and more
         let candidates = get_pager_candidates();
         assert!(candidates.contains(&"less".to_string()));
         assert!(candidates.contains(&"more".to_string()));

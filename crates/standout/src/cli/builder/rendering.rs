@@ -1,12 +1,3 @@
-//! Rendering methods for App.
-//!
-//! [`App::render`], [`App::render_with`], [`App::render_inline`], and
-//! [`App::render_inline_with`] build a [`crate::RenderRequest`] and call
-//! [`standout_render::render_request`], the same pipeline dispatch uses.
-//! [`App::render_with`] and [`App::render_inline_with`] take destination
-//! facts the caller already has; the detect-at-edge pair is [`App::render`]
-//! and [`App::render_inline`].
-
 use serde::Serialize;
 use std::collections::HashMap;
 
@@ -18,27 +9,6 @@ use crate::{
 use standout_render::RegistryError;
 
 impl App {
-    /// Renders a template by name with the given data.
-    ///
-    /// Looks up the template in the registry and renders it through
-    /// [`render_request`]. Supports `{% include %}` directives via the
-    /// template registry.
-    ///
-    /// Detects destination facts at this edge and overwrites ambiguous-width
-    /// with the application's configured policy. Callers that already have
-    /// [`TargetProperties`] (tests, `run_with` agreement) should use
-    /// [`render_with`](Self::render_with).
-    ///
-    /// Structured modes (JSON/YAML/XML/CSV) serialize `data` through
-    /// [`render_request`] with [`TemplateRef::Absent`] and do not look up or
-    /// refresh a named template.
-    ///
-    /// # Errors
-    ///
-    /// Returns an error if:
-    /// - No template registry is configured for a named human-mode render
-    /// - The template is not found
-    /// - Rendering fails
     pub fn render<T: Serialize>(
         &self,
         template: &str,
@@ -48,14 +18,6 @@ impl App {
         self.render_named(template, data, mode, detected_target(self.ambiguous_width))
     }
 
-    /// Renders a named template with caller-supplied destination facts.
-    ///
-    /// Same pipeline as [`render`](Self::render) and dispatch: builds a
-    /// [`crate::RenderRequest`] from the app's engine, registry, context
-    /// registry, and merged theme, and calls [`render_request`].
-    /// Ambiguous-width is overwritten with the application's policy
-    /// (ADR-0026), matching [`render_inline_with`](Self::render_inline_with)
-    /// and [`App::run_with`](super::App::run_with).
     pub fn render_with<T: Serialize>(
         &self,
         template: &str,
@@ -105,14 +67,6 @@ impl App {
         )
     }
 
-    /// Renders an inline template string with the given data.
-    ///
-    /// Unlike `render`, this takes the template content directly.
-    /// Still supports `{% include %}` if a template registry is configured.
-    ///
-    /// Detects destination facts at this edge. Callers that already have
-    /// [`TargetProperties`] (tests, `run_with` agreement) should use
-    /// [`render_inline_with`](Self::render_inline_with).
     pub fn render_inline<T: Serialize>(
         &self,
         template: &str,
@@ -128,13 +82,6 @@ impl App {
         )
     }
 
-    /// Renders an inline template with caller-supplied destination facts.
-    ///
-    /// Same pipeline as [`render_inline`](Self::render_inline) and dispatch:
-    /// builds a [`crate::RenderRequest`] from the app's engine, registry,
-    /// context registry, and merged theme, and calls [`render_request`].
-    /// Ambiguous-width is overwritten with the application's policy
-    /// (ADR-0026), matching [`App::run_with`](super::App::run_with).
     pub fn render_inline_with<T: Serialize>(
         &self,
         template: &str,

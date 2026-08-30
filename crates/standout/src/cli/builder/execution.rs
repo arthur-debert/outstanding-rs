@@ -1,14 +1,3 @@
-//! Dispatch and execution methods for built Apps.
-//!
-//! This module contains methods for dispatching and running commands:
-//! - `commands()` - dispatch macro integration
-//! - `dispatch()` - match and execute handler, returning [`crate::cli::CompletedRun`]
-//! - `dispatch_from()` - parse args and dispatch, returning [`crate::cli::CompletedRun`]
-//! - `run()` - dispatch and print
-//! - `run_with()` - inner public run taking target properties and input sources,
-//!   returning [`crate::cli::CompletedRun`]
-//! - `run_to_string()` - dispatch and return
-
 use crate::{
     write_binary_output, write_output, InputSources, OutputDestination, OutputMode, RenderRequest,
     TargetProperties,
@@ -37,45 +26,16 @@ use crate::topics::display_with_pager;
 use crate::SetupError;
 
 impl AppBuilder {
-    /// Registers commands from a dispatch closure (used by the `dispatch!` macro).
-    ///
-    /// This method accepts a closure that configures a [`GroupBuilder`] with commands
-    /// and nested groups. It's typically used with the [`dispatch!`] macro:
-    ///
-    /// ```rust,ignore
-    /// use standout::cli::{dispatch, App};
-    ///
-    /// App::builder()
-    ///     .templates_dir("templates")?
-    ///     .commands(dispatch! {
-    ///         db: {
-    ///             migrate => db::migrate,
-    ///             backup => db::backup,
-    ///         },
-    ///         version => version,
-    ///     })
-    ///     .build()
-    /// ```
-    ///
-    /// The closure receives an empty [`GroupBuilder`] and should return it with
-    /// commands added. Each top-level entry becomes a command or group.
-    ///
-    /// Top-level command hooks declared here use the same conflict rules as
-    /// [`command_with`](Self::command_with): a command can collect different
-    /// phases from `CommandConfig` and [`hooks`](Self::hooks), but the same
-    /// phase cannot be registered through both APIs.
     pub fn commands<F>(mut self, configure: F) -> Result<Self, SetupError>
     where
         F: FnOnce(GroupBuilder) -> GroupBuilder,
     {
         let builder = configure(GroupBuilder::new());
 
-        // Extract default command if set in the builder
         if let Some(ref default_cmd) = builder.default_command {
             self.default_command = Some(default_cmd.clone());
         }
 
-        // Register all entries from the group builder with deferred closure creation
         for (name, entry) in builder.entries {
             match entry {
                 GroupEntry::Command { mut handler } => {
@@ -101,15 +61,12 @@ impl AppBuilder {
                             .insert(name.clone(), questionnaire);
                     }
 
-                    // Create a recipe for deferred closure creation
                     let recipe = ErasedConfigRecipe::from_handler(handler);
 
-                    // Check for duplicates
                     if self.pending_commands.borrow().contains_key(&name) {
                         return Err(SetupError::DuplicateCommand(name));
                     }
 
-                    // Store pending command
                     self.pending_commands.borrow_mut().insert(
                         name,
                         PendingCommand {
@@ -129,29 +86,6 @@ impl AppBuilder {
 }
 
 impl App {
-    /// Dispatches to a registered handler if one matches the command path.
-    ///
-    /// Returns:
-    /// - `DispatchResult::Handled(output)` if a handler was found and executed successfully,
-    /// - `DispatchResult::Binary(bytes, filename)` for binary output,
-    /// - `DispatchResult::Handled(RunOutput::command(String::new()))` if the handler
-    ///   completed silently (preserving the capture compatibility accessor),
-    /// - `DispatchResult::Error(msg)` if a handler, hook, or output step failed,
-    /// - `DispatchResult::NoMatch(matches)` if no handler matched.
-    ///
-    /// If hooks are registered for the command, they are executed:
-    /// - Pre-dispatch hooks run before the handler
-    /// - Post-dispatch hooks run after the handler but before rendering
-    /// - Post-output hooks run after rendering
-    ///
-    /// Handler errors and hook errors both abort execution and return
-    /// `DispatchResult::Error(msg)`. Callers using `dispatch()` directly are
-    /// responsible for writing the error to stderr and choosing an exit code.
-    ///
-    /// Returns [`crate::cli::CompletedRun`]: the dispatch outcome plus framework
-    /// warnings collected for this invocation (including embedded hot-reload
-    /// fallbacks recorded at build). Match on
-    /// [`outcome()`](crate::cli::CompletedRun::outcome) for variants.
     pub fn dispatch(
         &self,
         matches: ArgMatches,
@@ -171,11 +105,6 @@ impl App {
         })
     }
 
-    /// Destination facts for public entries that detect at their own edge.
-    ///
-    /// [`detect`](TargetProperties::detect) fills terminal facts;
-    /// ambiguous-width is overwritten with this application's policy
-    /// (ADR-0026), matching [`run`](Self::run).
     fn process_edge_target(&self) -> TargetProperties {
         let mut target = TargetProperties::detect();
         target.ambiguous_width = self.ambiguous_width;
@@ -190,24 +119,19 @@ impl App {
         sources: InputSources,
         warnings: WarningBuffer,
     ) -> DispatchResult {
-        // Ensure commands are finalized (creates dispatch closures with current theme)
         self.ensure_commands_finalized();
 
-        // Build command path from matches
         let path = extract_command_path(&matches);
         let path_str = path.join(".");
 
-        // Look up handler
         let commands = self.get_commands();
         if let Some(dispatch_fn) = commands.get(&path_str) {
             let mut ctx = CommandContext::new(path, self.app_state.clone());
             ctx.extensions.insert(sources);
             ctx.extensions.insert(warnings);
 
-            // Get hooks for this command (used for pre-dispatch, post-dispatch, and post-output)
             let hooks = self.command_hooks.get(&path_str);
 
-            // Run pre-dispatch hooks if registered (hooks can inject state via ctx.extensions)
             if let Some(hooks) = hooks {
                 if let Err(e) = hooks.run_pre_dispatch(&matches, &mut ctx) {
                     return DispatchResult::Error(super::super::dispatch::hook_run_error(
@@ -217,12 +141,8 @@ impl App {
                 }
             }
 
-            // Get the subcommand matches for the deepest command
             let sub_matches = get_deepest_matches(&matches);
 
-            // Run the handler (post-dispatch hooks are run inside dispatch function)
-            // output_mode is passed separately because CommandContext is render-agnostic
-            // Late binding: theme is read here at dispatch time, not when commands were registered
             let dispatch_output = match dispatch(
                 dispatch_fn,
                 sub_matches,
@@ -236,10 +156,6 @@ impl App {
                 Err(e) => return DispatchResult::Error(e),
             };
 
-            // Convert to Output enum for post-output hooks. An artifact's
-            // presentation travels beside the hook payload: hooks may still
-            // change the bytes or the report, so the report is only rendered
-            // after the write, further down.
             let (output, request) = match dispatch_output {
                 DispatchOutput::Text { formatted, raw } => {
                     (RenderedOutput::Text(TextOutput::new(formatted, raw)), None)
@@ -251,7 +167,6 @@ impl App {
                 DispatchOutput::Silent => (RenderedOutput::Silent, None),
             };
 
-            // Run post-output hooks if registered
             let mut final_output = if let Some(hooks) = hooks {
                 match hooks.run_post_output(&matches, &ctx, output) {
                     Ok(o) => o,
@@ -266,7 +181,6 @@ impl App {
                 output
             };
 
-            // The explicit output-file override, when the app enabled the flag.
             let override_path = self.output_file_flag.as_ref().and_then(|_| {
                 matches
                     .try_get_one::<String>("_output_file_path")
@@ -274,26 +188,21 @@ impl App {
                     .map(PathBuf::from)
             });
 
-            // The artifact path owns its own destination policy and write, so
-            // it is resolved before the legacy override handling below.
             if let RenderedOutput::Artifact(artifact) = final_output {
                 return complete_artifact(artifact, request, override_path);
             }
 
-            // Handle file output if configured
             if let Some(path) = override_path {
                 let dest = OutputDestination::File(path);
 
                 match &final_output {
                     RenderedOutput::Text(t) => {
-                        // Write raw output (without ANSI codes) to file
                         if let Err(e) = write_output(&t.raw, &dest) {
                             return DispatchResult::Error(RunError::new(
                                 format!("Error writing output: {}", e),
                                 RunErrorKind::FinalWrite(OutputKind::Text),
                             ));
                         }
-                        // Suppress further output
                         final_output = RenderedOutput::Silent;
                     }
                     RenderedOutput::Binary(b, _) => {
@@ -310,13 +219,10 @@ impl App {
                 }
             }
 
-            // Convert back to DispatchResult (using formatted for terminal display)
             match final_output {
                 RenderedOutput::Text(t) => DispatchResult::Handled(RunOutput::command(t.formatted)),
                 RenderedOutput::Binary(b, f) => DispatchResult::Binary(b, f),
                 RenderedOutput::Artifact(_) => unreachable!("artifacts returned above"),
-                // Preserve the 7.x capture contract: silent success is an
-                // empty handled string. `run()` still emits nothing.
                 RenderedOutput::Silent => {
                     DispatchResult::Handled(RunOutput::command(String::new()))
                 }
@@ -326,55 +232,6 @@ impl App {
         }
     }
 
-    /// Parses arguments and dispatches to registered handlers.
-    ///
-    /// This is the recommended entry point when using the command handler system.
-    /// It augments the command with `--output` flag, parses arguments, and
-    /// dispatches to registered handlers.
-    ///
-    /// # Help
-    ///
-    /// When [`help_handling`](Self::help_handling) is on, help is answered here
-    /// on the same terms as [`get_matches_from`](Self::get_matches_from): the
-    /// `help` word where the install policy put it, and `--help` / `-h` through
-    /// Clap's short-circuit, both rendered by standout and returned as
-    /// `DispatchResult::Handled`. A `--page` request rides back as
-    /// [`SuccessKind::PagedHelp`](crate::cli::SuccessKind::PagedHelp); only
-    /// [`run`](Self::run) acts on it, so this stays free of side effects.
-    ///
-    /// A command that declares its own `help` where standout installs the word
-    /// is refused on those same terms: `DispatchResult::Error` carrying
-    /// [`SetupError::DuplicateCommand`](crate::SetupError::DuplicateCommand)'s
-    /// report, before anything is parsed.
-    ///
-    /// # Returns
-    ///
-    /// A [`crate::cli::CompletedRun`] wrapping the dispatch outcome plus any
-    /// framework warnings collected for this invocation. Inspect
-    /// [`warnings()`](crate::cli::CompletedRun::warnings), then match
-    /// [`outcome()`](crate::cli::CompletedRun::outcome):
-    ///
-    /// - `DispatchResult::Handled(output)` if a registered handler processed the command
-    /// - `DispatchResult::NoMatch(matches)` if no handler matched (for manual handling)
-    ///
-    /// # Example
-    ///
-    /// ```rust,ignore
-    /// use standout::cli::{App, DispatchResult, HandlerResult, Output};
-    ///
-    /// let result = App::builder()
-    ///     .command("list", |_m, _ctx| Ok(HandlerOutput::Render(vec!["a", "b"]), "{{ . }}")
-    ///     .dispatch_from(cmd, std::env::args());
-    ///
-    /// let _ = result.warnings();
-    /// match result.into_outcome() {
-    ///     DispatchResult::Handled(output) => println!("{}", output),
-    ///     DispatchResult::NoMatch(matches) => {
-    ///         // Handle manually
-    ///     }
-    ///     _ => {}
-    /// }
-    /// ```
     pub fn dispatch_from<I, T>(&self, cmd: Command, args: I) -> crate::cli::CompletedRun
     where
         I: IntoIterator<Item = T>,
@@ -403,7 +260,6 @@ impl App {
         I: IntoIterator<Item = T>,
         T: Into<std::ffi::OsString> + Clone,
     {
-        // Verbatim, all the way to Clap: a non-UTF8 argument is a real argument.
         let args: Vec<std::ffi::OsString> = args.into_iter().map(Into::into).collect();
 
         if let Err(error) = self.validate_questionnaire_surfaces(&cmd) {
@@ -413,19 +269,8 @@ impl App {
             );
         }
 
-        // Augment command with framework-owned flags, the questionnaire command
-        // surface, and — when standout owns help — the `help` word. The word's
-        // install policy is the command's shape, not the entry point used, so
-        // this is the same augmentation `get_matches_from` performs.
         let mut augmented_cmd = self.augment_command_with_help(cmd);
 
-        // And the same refusal: an application that declares `help` where the
-        // word just went has a configuration standout will not serve, and the
-        // parse below is what would meet Clap's duplicate-subcommand assertion.
-        // It is a setup failure, but it surfaces on a run, so it takes the kind
-        // a questionnaire-surface failure takes. The command is not parseable
-        // (clap debug-asserts on the duplicate `help` word), so argv is not
-        // scanned for `--output` here.
         if let Some(error) = self.help_word_collision(&augmented_cmd) {
             return (
                 DispatchResult::Error(RunError::new(error.to_string(), RunErrorKind::ClapUsage)),
@@ -433,8 +278,6 @@ impl App {
             );
         }
 
-        // One parse seam for both paths: Clap decides which command the line
-        // named, and a line that named none may take a default command.
         let matches = match self.parse_with_default_command(&augmented_cmd, &args, sources.stdin())
         {
             Ok(matches) => matches,
@@ -448,13 +291,7 @@ impl App {
                 )
             }
             Err(ParseFailure::Clap(e)) => {
-                // Warning flush still needs `--output` on these short-circuits:
-                // `Text` opts the banner out of ANSI. Help *rendering* stays
-                // Auto (see `render_help_for_display_help_error`); only the
-                // run-result mode used for warnings is read from argv here.
                 let output_mode = self.extract_output_mode_from_unparsed(&args);
-                // Clap's native `--help`/`-h` short-circuits validation and
-                // arrives here; standout renders it when it owns help.
                 if let Some(display) = self.intercept_display_help(
                     &mut augmented_cmd,
                     &args,
@@ -464,10 +301,6 @@ impl App {
                 ) {
                     return (display.into(), output_mode);
                 }
-                // Clap's remaining "errors" include `--version`, a successful
-                // display path (stdout, exit 0). Real parse errors get
-                // `use_stderr() == true` and surface as `DispatchResult::Error` so
-                // they exit non-zero on stderr.
                 if e.use_stderr() {
                     return (
                         DispatchResult::Error(RunError::new(
@@ -489,8 +322,6 @@ impl App {
 
         let output_mode = self.extract_output_mode(&matches);
 
-        // The `help` word is a subcommand Clap routed; standout answers it
-        // before dispatch, sharing the arm with `get_matches_from`.
         if let Some(display) = self.intercept_help_word(
             &mut augmented_cmd,
             &matches,
@@ -528,71 +359,17 @@ impl App {
             );
         }
 
-        // Dispatch to handler
         (
             self.dispatch_with_target(matches, output_mode, target, sources, warnings),
             output_mode,
         )
     }
 
-    /// Runs the CLI: parses arguments, dispatches to handlers, and prints output.
-    ///
-    /// Detects [`TargetProperties`] once at the process edge, overwrites
-    /// ambiguous-width with this application's policy, constructs
-    /// [`InputSources`] from the real process, and forwards both to
-    /// [`run_with`](Self::run_with). This is the printing wrapper around that
-    /// inner method.
-    ///
-    /// This is the main entry point for command execution. It handles everything:
-    /// parsing, dispatch, rendering, and output.
-    ///
-    /// Being the printing entry point, this is also the one that may page: a
-    /// help display the user asked to page
-    /// ([`SuccessKind::PagedHelp`](crate::cli::SuccessKind::PagedHelp)) goes to
-    /// the pager instead of stdout, falling back to the normal writers when no
-    /// pager is available.
-    ///
-    /// # Returns
-    ///
-    /// - `true` if a handler processed and printed output
-    /// - `false` if no handler matched (caller should handle manually)
-    ///
-    /// # Errors and exit codes
-    ///
-    /// On `DispatchResult::Error`, this function writes the diagnostic to stderr
-    /// and exits with its typed status: Clap usage errors use 2, runtime
-    /// failures use 1, and an application-declared `ExternalFailure` preserves
-    /// its exact nonzero status and verbatim diagnostic. Final text and binary
-    /// writes are framework-owned; a write failure is diagnosed on stderr and exits 1,
-    /// except that `BrokenPipe` while writing final rendered command text to stdout
-    /// is treated as successful early consumer termination. Callers needing
-    /// fine-grained control over exit codes should use [`Self::run_to_string`] or
-    /// [`Self::dispatch_from`] and match [`crate::cli::CompletedRun::outcome`].
-    ///
-    /// # Example
-    ///
-    /// ```rust,ignore
-    /// use standout::cli::{App, HandlerResult, Output};
-    ///
-    /// let handled = App::builder()
-    ///     .command("list", |_m, _ctx| Ok(HandlerOutput::Render(vec!["a", "b"])), "{{ . }}")?
-    ///     .build()?
-    ///     .run(cmd, std::env::args());
-    ///
-    /// if !handled {
-    ///     // Handle unregistered commands manually
-    /// }
-    /// ```
     pub fn run<I, T>(&self, cmd: Command, args: I) -> bool
     where
         I: IntoIterator<Item = T>,
         T: Into<std::ffi::OsString> + Clone,
     {
-        // Opens this run's window for render diagnostics; the collector is off
-        // outside one, so a standalone render never accumulates. The guard is
-        // held across dispatch: a run nested inside this one gets a window of
-        // its own, and a panicking handler closes this one by unwinding rather
-        // than leaving it open for every later run on the thread.
         let capture_window = standout_render::diagnostics::begin_capture();
 
         let mut target = TargetProperties::detect();
@@ -602,10 +379,6 @@ impl App {
         let primary_status = result.exit_status();
         let warnings = result.warnings().to_vec();
 
-        // A `help --page` display is the one output `run()` hands to a pager
-        // instead of writing itself, which is why it happens before the
-        // handles are locked. With no pager available it falls through to the
-        // normal writers, so help is never lost to a missing `less`.
         let paged = match result.outcome() {
             crate::cli::DispatchResult::Handled(output)
                 if output.kind() == SuccessKind::PagedHelp =>
@@ -627,11 +400,6 @@ impl App {
         drop(stdout);
         drop(stderr);
 
-        // After the primary output has been flushed to stdout, render any
-        // framework warnings collected during setup/dispatch to stderr so
-        // they appear last on the user's terminal. The resolved `--output`
-        // mode travels on the run result: `Text` opts out of ANSI even when
-        // stderr is color-capable.
         standout_render::warnings::flush_to_stderr(
             &self.theme,
             result.output_mode(),
@@ -639,11 +407,6 @@ impl App {
             &warnings,
         );
 
-        // Closes this run's window for render diagnostics. Nothing prints them
-        // — the framework does not react to an unresolved tag — but closing the
-        // window here keeps a long-lived embedding's collector bounded by one
-        // run, exactly as the warning collector is. Explicit rather than
-        // scope-end because the exit below never unwinds.
         drop(capture_window);
 
         let status = final_write_failure
@@ -663,9 +426,6 @@ impl App {
         }
     }
 
-    /// Seeds build-time framework warnings into a per-invocation buffer, runs
-    /// `inner`, and returns the dispatch outcome together with those warnings
-    /// and the output mode `inner` resolved.
     fn collect_run_warnings(
         &self,
         inner: impl FnOnce(WarningBuffer) -> (DispatchResult, OutputMode),
@@ -676,20 +436,6 @@ impl App {
         crate::cli::CompletedRun::from_dispatch(outcome, warnings.take(), output_mode)
     }
 
-    /// Inner public run: destination properties and input sources as two arguments.
-    ///
-    /// Production [`run`](Self::run) calls [`TargetProperties::detect`] and
-    /// [`InputSources::from_process`] at the process edge, overwrites
-    /// ambiguous-width with the application's policy, and forwards both here.
-    /// Tests construct both values themselves and call this same method,
-    /// inspecting the [`CompletedRun`](crate::cli::CompletedRun) (output,
-    /// errors, artifacts, warnings) without intercepting process streams.
-    /// The two arguments are not a combined run-environment type and are not
-    /// stored on [`App`].
-    ///
-    /// Input resolution takes `sources` as an argument. Tests construct
-    /// mocks and pass them here; production `run` uses
-    /// [`InputSources::from_process`].
     pub fn run_with<I, T>(
         &self,
         cmd: Command,
@@ -706,66 +452,11 @@ impl App {
         })
     }
 
-    /// Runs the CLI and returns the rendered output as a string.
-    ///
-    /// Similar to `run()`, but returns the output instead of printing it.
-    /// Useful for testing or when you need to capture and process the output.
-    /// Framework warnings queued during the run are returned on the
-    /// [`crate::cli::CompletedRun`], not a thread-local, so consecutive
-    /// in-process runs do not leak warnings into each other. The run's
-    /// style-tag passes are ended into
-    /// [`standout_render::diagnostics::take_captured`].
-    ///
-    /// Reentrant: a handler may drive another app through this entry point, and
-    /// the inner run's diagnostics window nests inside the outer one's rather
-    /// than ending it — the inner run observes itself, and the outer batch
-    /// still accounts for everything rendered inside it.
-    ///
-    /// # Returns
-    ///
-    /// A [`crate::cli::CompletedRun`] wrapping the dispatch outcome plus any
-    /// framework warnings collected during the run. Inspect
-    /// [`warnings()`](crate::cli::CompletedRun::warnings) as needed, then match
-    /// [`outcome()`](crate::cli::CompletedRun::outcome) or
-    /// [`into_outcome()`](crate::cli::CompletedRun::into_outcome):
-    ///
-    /// - `DispatchResult::Handled(output)` - Handler executed successfully, or Clap produced help/version.
-    ///   Silent completion remains an empty handled string for capture compatibility.
-    /// - `DispatchResult::Binary(bytes, filename)` - Handler produced binary output
-    /// - `DispatchResult::Error(error)` - A typed handler, hook, render, write, Clap usage, or external failure
-    /// - `DispatchResult::NoMatch(matches)` - No handler matched
-    ///
-    /// # Example
-    ///
-    /// ```rust,ignore
-    /// use standout::cli::{App, DispatchResult, HandlerResult, Output};
-    ///
-    /// let result = App::builder()
-    ///     .command("list", |_m, _ctx| Ok(HandlerOutput::Render(vec!["a", "b"])), "{{ . }}")?
-    ///     .build()?
-    ///     .run_to_string(cmd, std::env::args());
-    ///
-    /// let _ = result.warnings();
-    /// match result.into_outcome() {
-    ///     DispatchResult::Handled(output) => println!("{}", output),
-    ///     DispatchResult::Binary(bytes, filename) => std::fs::write(filename, bytes)?,
-    ///     DispatchResult::Error(error) => {
-    ///         eprintln!("{}", error);
-    ///         std::process::exit(error.exit_status().code().into());
-    ///     },
-    ///     DispatchResult::NoMatch(matches) => { /* handle manually */ },
-    ///     // DispatchResult is #[non_exhaustive]; cover Silent and any future variants.
-    ///     _ => {},
-    /// }
-    /// ```
     pub fn run_to_string<I, T>(&self, cmd: Command, args: I) -> crate::cli::CompletedRun
     where
         I: IntoIterator<Item = T>,
         T: Into<std::ffi::OsString> + Clone,
     {
-        // Held across dispatch, so a handler that drives another app through
-        // this same entry point nests a window inside this one instead of
-        // ending it. See `standout_render::diagnostics` on nesting.
         let capture_window = standout_render::diagnostics::begin_capture();
         let result = self.collect_run_warnings(|warnings| {
             self.dispatch_from_with_target(
@@ -780,21 +471,9 @@ impl App {
         result
     }
 
-    /// Adds the framework-owned surface every parse path shares: the
-    /// questionnaire command surface, the configured version metadata, and the
-    /// `--output` / output-file flags.
-    ///
-    /// The `help` word is deliberately not here. Whether it is installed is a
-    /// policy question about the command's shape, which
-    /// [`augment_command_with_help`](Self::augment_command_with_help) owns and
-    /// answers around this.
     pub(crate) fn augment_framework_surface(&self, mut cmd: Command) -> Command {
         self.augment_questionnaire_commands(&mut cmd, &[]);
 
-        // A version declared on the builder is the application's, said in the
-        // one place standout can see; clap still owns `--version` itself, so
-        // this hands it the value and nothing else. Unset writes nothing, which
-        // is what leaves a version set on the supplied command alone.
         if let Some(version) = self.version {
             cmd = cmd.version(version);
         }
@@ -821,7 +500,6 @@ impl App {
             );
         }
 
-        // Add output file flag if enabled
         if let Some(ref flag_name) = self.output_file_flag {
             let flag: &'static str = Box::leak(flag_name.clone().into_boxed_str());
             cmd = cmd.arg(
@@ -885,16 +563,6 @@ fn command_matches_for_path<'a>(matches: &'a ArgMatches, path: &[&str]) -> Optio
     Some(current)
 }
 
-/// Selects the destination for an artifact, deterministically.
-///
-/// The policy is, in order:
-///
-/// 1. the explicit output-file override;
-/// 2. the application's suggested destination (opt-in);
-/// 3. stdout, if the application opted in.
-///
-/// An artifact that matches none of these is a typed final-write failure: the
-/// framework refuses to invent a file, and refuses to drop the bytes silently.
 fn resolve_artifact_destination(
     artifact: &ArtifactOutput,
     override_path: Option<PathBuf>,
@@ -915,12 +583,6 @@ fn resolve_artifact_destination(
     ))
 }
 
-/// Builds the value the artifact report is rendered from.
-///
-/// The shape is always `{"report": <report or null>, "receipt": {…}}`. Fixing
-/// the envelope keeps the framework's receipt from colliding with an
-/// application key and lets templates rely on `{{ receipt.destination }}`
-/// whatever the report's own type is.
 fn report_envelope(
     report: Option<serde_json::Value>,
     receipt: &ArtifactReceipt,
@@ -937,15 +599,6 @@ fn report_envelope(
     }))
 }
 
-/// Completes an artifact: select a destination, write, and only then report.
-///
-/// The ordering is the whole point of the shape. A report rendered before the
-/// write could promise a file that never appeared; a write failure therefore
-/// returns a typed error and no report at all.
-///
-/// The stdout destination is the one deferral: its bytes are handed to the
-/// framework's stdout writer (see `emit_run_result`) so that capture APIs stay
-/// side-effect-free, exactly as `DispatchResult::Binary` already behaves.
 fn complete_artifact(
     artifact: ArtifactOutput,
     request: Option<Box<RenderRequest>>,
@@ -971,9 +624,6 @@ fn complete_artifact(
     let report = match artifact.report {
         None => None,
         Some(report) => {
-            // A post-output hook can turn text into an artifact, but it has no
-            // request to render a report with. Say so rather than dropping
-            // the report on the floor.
             let Some(mut request) = request else {
                 return DispatchResult::Error(RunError::new(
                     "Cannot render artifact report: the artifact carries a report but was not \
@@ -1006,13 +656,6 @@ fn complete_artifact(
     ))
 }
 
-/// Emits a completed artifact run through the framework-owned writers.
-///
-/// The report channel follows the destination: an artifact written to a file
-/// leaves stdout free for its report, while an artifact written to stdout owns
-/// stdout entirely, so its report goes to stderr where it cannot corrupt the
-/// bytes. Either way the bytes go first — a stdout write that fails must not be
-/// preceded by a success report.
 fn emit_artifact<W: Write, E: Write>(
     run: &ArtifactRun,
     stdout: &mut W,
@@ -1045,10 +688,6 @@ fn emit_artifact<W: Write, E: Write>(
     })
 }
 
-/// Emits one captured result through framework-owned writers.
-///
-/// Keeping this as a writer seam makes final text/binary failures typed and
-/// unit-testable while `run()` retains its public `bool` contract.
 fn emit_run_result<W: Write, E: Write>(
     result: &DispatchResult,
     stdout: &mut W,
@@ -1090,9 +729,6 @@ fn emit_run_result<W: Write, E: Write>(
     };
 
     if let Some(error) = &failure {
-        // Best effort: if stderr itself is broken there is nowhere else to
-        // report the final-write diagnostic, but the typed failure still
-        // determines status 1.
         let _ = writeln!(stderr, "{}", error).and_then(|()| stderr.flush());
     }
     (true, failure)
@@ -1118,10 +754,6 @@ mod tests {
     use crate::cli::handler::HandlerResult;
     use crate::cli::handler::Output as HandlerOutput;
     use crate::cli::hooks::{HookError, Hooks, RenderedOutput};
-
-    // ============================================================================
-    // Dispatch Macro Integration Tests
-    // ============================================================================
 
     #[test]
     fn test_dispatch_macro_simple() {
@@ -1176,7 +808,6 @@ mod tests {
         assert!(builder.has_command("db.backup"));
         assert!(builder.has_command("version"));
 
-        // Test dispatch to nested command
         let cmd = Command::new("app")
             .subcommand(
                 Command::new("db")
@@ -1268,10 +899,6 @@ mod tests {
         assert!(builder.has_command("app.config.set"));
         assert!(builder.has_command("app.start"));
     }
-
-    // ============================================================================
-    // Core Dispatch Tests
-    // ============================================================================
 
     #[test]
     fn test_dispatch_to_handler() {
@@ -1469,10 +1096,6 @@ mod tests {
 
         assert!(!result.is_handled());
     }
-
-    // ============================================================================
-    // Hook Execution Tests
-    // ============================================================================
 
     #[test]
     fn test_dispatch_with_pre_dispatch_hook() {
@@ -1680,7 +1303,6 @@ mod tests {
     fn test_dispatch_no_hooks_for_command() {
         use serde_json::json;
 
-        // Register hooks for "list" but dispatch "other"
         let builder = AppBuilder::new()
             .command(
                 "list",
@@ -1884,7 +1506,6 @@ mod tests {
             .hooks(
                 "export",
                 Hooks::new().post_output(|_, _ctx, output| {
-                    // Verify we receive binary output
                     assert!(output.is_binary());
                     Ok(output)
                 }),
@@ -1915,10 +1536,6 @@ mod tests {
         assert_eq!(bytes, &[0xDE, 0xAD]);
         assert_eq!(filename, "data.bin");
     }
-
-    // ============================================================================
-    // Post-dispatch Hook Tests
-    // ============================================================================
 
     #[test]
     fn test_dispatch_with_post_dispatch_hook() {
@@ -1966,7 +1583,6 @@ mod tests {
             .hooks(
                 "list",
                 Hooks::new().post_dispatch(|_, _ctx, data| {
-                    // Abort if no items
                     if data
                         .get("items")
                         .and_then(|v| v.as_array())
@@ -2005,14 +1621,12 @@ mod tests {
                 "list",
                 Hooks::new()
                     .post_dispatch(|_, _ctx, mut data| {
-                        // First hook: multiply by 2
                         if let Some(v) = data.get_mut("value") {
                             *v = json!(v.as_i64().unwrap_or(0) * 2);
                         }
                         Ok(data)
                     })
                     .post_dispatch(|_, _ctx, mut data| {
-                        // Second hook: add 10
                         if let Some(v) = data.get_mut("value") {
                             *v = json!(v.as_i64().unwrap_or(0) + 10);
                         }
@@ -2026,7 +1640,6 @@ mod tests {
         let result = builder.build().unwrap().dispatch(matches, OutputMode::Text);
 
         assert!(result.is_handled());
-        // 1 * 2 = 2, 2 + 10 = 12
         assert_eq!(result.output(), Some("12"));
     }
 
@@ -2153,10 +1766,6 @@ mod tests {
         assert_eq!(err.phase, HookPhase::PostDispatch);
     }
 
-    // ============================================================================
-    // Default Command Tests
-    // ============================================================================
-
     #[test]
     fn test_default_command_builder() {
         let builder = AppBuilder::new().default_command("list");
@@ -2187,7 +1796,6 @@ mod tests {
             .subcommand(Command::new("list"))
             .subcommand(Command::new("add"));
 
-        // Naked invocation should dispatch to default command
         let result = builder.build().unwrap().dispatch_from(cmd, ["app"]);
         assert!(result.is_handled());
         assert_eq!(result.output(), Some("Items: [\"a\", \"b\"]"));
@@ -2208,7 +1816,6 @@ mod tests {
 
         let cmd = Command::new("app").subcommand(Command::new("list"));
 
-        // Naked invocation with --output flag should work
         let result = builder
             .build()
             .unwrap()
@@ -2241,7 +1848,6 @@ mod tests {
             .subcommand(Command::new("list"))
             .subcommand(Command::new("add"));
 
-        // Explicit command should override default
         let result = builder.build().unwrap().dispatch_from(cmd, ["app", "add"]);
         assert!(result.is_handled());
         assert_eq!(result.output(), Some("add"));
@@ -2261,14 +1867,9 @@ mod tests {
 
         let cmd = Command::new("app").subcommand(Command::new("list"));
 
-        // Without default command, naked invocation should return NoMatch
         let result = builder.build().unwrap().dispatch_from(cmd, ["app"]);
         assert!(!result.is_handled());
     }
-
-    // ============================================================================
-    // Output File Flag Tests
-    // ============================================================================
 
     #[test]
     fn test_dispatch_with_output_file_flag() {
@@ -2293,10 +1894,8 @@ mod tests {
             .dispatch_from(cmd, ["app", "--output-file-path", path_str, "list"]);
 
         assert!(result.is_handled());
-        // Verify output is suppressed (silent)
         assert_eq!(result.output(), Some(""));
 
-        // Verify file content
         let content = std::fs::read_to_string(file_path).unwrap();
         assert_eq!(content, "Count: 42");
     }
@@ -2420,16 +2019,11 @@ mod tests {
 
         let cmd = Command::new("app").subcommand(Command::new("show"));
 
-        // Without the flag, output goes to stdout normally
         let result = builder.build().unwrap().dispatch_from(cmd, ["app", "show"]);
 
         assert!(result.is_handled());
         assert!(result.output().unwrap().contains("Count: 42"));
     }
-
-    // ============================================================================
-    // Theme Ordering Tests (issue #31 fix)
-    // ============================================================================
 
     #[test]
     fn test_theme_ordering_command_before_theme() {
@@ -2437,11 +2031,8 @@ mod tests {
         use console::Style;
         use serde_json::json;
 
-        // Create a theme with a custom "late" style
         let theme = Theme::new().add("late", Style::new().bold());
 
-        // BUG TEST: Register command BEFORE setting theme
-        // This tests if the closure captures the theme at registration time
         let builder = AppBuilder::new()
             .command(
                 "list",
@@ -2460,8 +2051,6 @@ mod tests {
         assert!(result.is_handled());
         let output = result.output().unwrap();
 
-        // This will FAIL if closures capture theme at registration time
-        // (because theme was None when .command() was called)
         assert!(
             !output.contains("[late?]"),
             "ORDERING BUG: Theme set after .command() was not applied - output: {}",
@@ -2475,10 +2064,8 @@ mod tests {
         use console::Style;
         use serde_json::json;
 
-        // Create a theme with a "test_style" tag
         let theme = Theme::new().add("test_style", Style::new().bold());
 
-        // Build with theme set BEFORE command registration
         let builder = AppBuilder::new()
             .theme(theme)
             .command(
@@ -2497,8 +2084,6 @@ mod tests {
         assert!(result.is_handled());
         let output = result.output().unwrap();
 
-        // If theme was passed correctly, there should be NO "[test_style?]" in output
-        // (unknown style indicators appear when style is not found)
         assert!(
             !output.contains("[test_style?]"),
             "Theme was not passed to dispatch - output: {}",
@@ -2508,17 +2093,12 @@ mod tests {
 
     #[test]
     fn test_styles_and_default_theme_with_command() {
-        // This is the exact bug reported by a user: using .styles() + .default_theme()
-        // instead of .theme() directly caused styles to not be found.
-        // The fix ensures theme is resolved from stylesheet registry BEFORE
-        // commands are finalized.
         use serde_json::json;
         use std::fs;
         use tempfile::TempDir;
 
         let temp_dir = TempDir::new().unwrap();
 
-        // Create a theme file with a custom style
         fs::write(
             temp_dir.path().join("dark.yaml"),
             r#"
@@ -2529,8 +2109,6 @@ header:
         )
         .unwrap();
 
-        // This is the pattern that was broken:
-        // .styles_dir() + .default_theme() + .command()
         let app = AppBuilder::new()
             .styles_dir(temp_dir.path())
             .unwrap()
@@ -2550,18 +2128,12 @@ header:
         assert!(result.is_handled());
         let output = result.output().unwrap();
 
-        // The bug caused [header?] to appear instead of styled text
         assert!(
             !output.contains("[header?]"),
             "ORDERING BUG: .styles() + .default_theme() not applied - output: {}",
             output
         );
     }
-
-    // ============================================================================
-    // Builder Ordering Permutation Tests (issue #89)
-    // These tests verify that builder methods work in any order.
-    // ============================================================================
 
     #[test]
     fn test_builder_ordering_theme_before_command() {
@@ -2571,7 +2143,6 @@ header:
 
         let theme = Theme::new().add("mystyle", Style::new().bold());
 
-        // Order: theme -> command
         let app = AppBuilder::new()
             .theme(theme)
             .command(
@@ -2600,7 +2171,6 @@ header:
 
         let theme = Theme::new().add("mystyle", Style::new().bold());
 
-        // Order: command -> theme
         let app = AppBuilder::new()
             .command(
                 "test",
@@ -2634,7 +2204,6 @@ header:
         )
         .unwrap();
 
-        // Order: styles -> default_theme -> command
         let app = AppBuilder::new()
             .styles_dir(temp_dir.path())
             .unwrap()
@@ -2670,7 +2239,6 @@ header:
         )
         .unwrap();
 
-        // Order: command -> styles -> default_theme (command FIRST)
         let app = AppBuilder::new()
             .command(
                 "test",
@@ -2706,7 +2274,6 @@ header:
         )
         .unwrap();
 
-        // Order: default_theme -> styles -> command (default_theme BEFORE styles)
         let app = AppBuilder::new()
             .default_theme("mytheme")
             .styles_dir(temp_dir.path())
@@ -2731,7 +2298,6 @@ header:
 
     #[test]
     fn test_builder_ordering_all_permutations_with_explicit_theme() {
-        // Test multiple orderings with explicit .theme() to ensure order independence
         use crate::Theme;
         use console::Style;
         use serde_json::json;
@@ -2749,7 +2315,6 @@ header:
 
         let template = "[perm]{{ val }}[/perm]";
 
-        // Permutation 1: theme -> command -> context
         let app1 = AppBuilder::new()
             .theme(make_theme())
             .command("test", make_handler(), template)
@@ -2758,7 +2323,6 @@ header:
             .build()
             .unwrap();
 
-        // Permutation 2: command -> theme -> context
         let app2 = AppBuilder::new()
             .command("test", make_handler(), template)
             .unwrap()
@@ -2767,7 +2331,6 @@ header:
             .build()
             .unwrap();
 
-        // Permutation 3: context -> command -> theme
         let app3 = AppBuilder::new()
             .context("extra", minijinja::Value::from("x"))
             .command("test", make_handler(), template)
@@ -2776,7 +2339,6 @@ header:
             .build()
             .unwrap();
 
-        // Permutation 4: context -> theme -> command
         let app4 = AppBuilder::new()
             .context("extra", minijinja::Value::from("x"))
             .theme(make_theme())
@@ -2785,7 +2347,6 @@ header:
             .build()
             .unwrap();
 
-        // Permutation 5: command -> context -> theme
         let app5 = AppBuilder::new()
             .command("test", make_handler(), template)
             .unwrap()
@@ -2794,7 +2355,6 @@ header:
             .build()
             .unwrap();
 
-        // Permutation 6: theme -> context -> command
         let app6 = AppBuilder::new()
             .theme(make_theme())
             .context("extra", minijinja::Value::from("x"))
@@ -2815,10 +2375,6 @@ header:
         }
     }
 
-    // ============================================================================
-    // App State Tests
-    // ============================================================================
-
     #[test]
     fn test_dispatch_with_app_state() {
         use serde_json::json;
@@ -2834,7 +2390,6 @@ header:
             .command(
                 "list",
                 |_m, ctx| {
-                    // Handler should have access to app_state
                     let db = ctx.app_state.get::<Database>().unwrap();
                     Ok(HandlerOutput::Render(json!({"db_url": db.url.clone()})))
                 },
@@ -2862,7 +2417,6 @@ header:
             .command(
                 "list",
                 |_m, ctx| {
-                    // Use get_required for better error handling
                     let config = ctx.app_state.get_required::<Config>()?;
                     Ok(HandlerOutput::Render(json!({"debug": config.debug})))
                 },
@@ -2883,12 +2437,10 @@ header:
 
         struct NotProvided;
 
-        // Note: No app_state registered
         let builder = AppBuilder::new()
             .command_with(
                 "list",
                 |_m, ctx| {
-                    // This should fail because NotProvided wasn't registered
                     let _missing = ctx.app_state.get_required::<NotProvided>()?;
                     Ok(HandlerOutput::Render(json!({})))
                 },
@@ -2963,10 +2515,8 @@ header:
             .command(
                 "list",
                 |_m, ctx| {
-                    // app_state: immutable, shared
                     let db = ctx.app_state.get_required::<Database>()?;
 
-                    // extensions: mutable, per-request (set by pre-dispatch hook)
                     let scope = ctx.extensions.get_required::<UserScope>()?;
 
                     Ok(HandlerOutput::Render(json!({
@@ -2980,7 +2530,6 @@ header:
             .hooks(
                 "list",
                 Hooks::new().pre_dispatch(|_, ctx| {
-                    // Extensions are per-request, injected by hooks
                     ctx.extensions.insert(UserScope {
                         user_id: "user123".into(),
                     });
@@ -3003,7 +2552,6 @@ header:
             base_url: String,
         }
 
-        // Test that app_state works after .build() is called
         let app = AppBuilder::new()
             .app_state(ApiConfig {
                 base_url: "https://api.example.com".into(),

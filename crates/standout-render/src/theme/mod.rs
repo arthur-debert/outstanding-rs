@@ -1,76 +1,18 @@
 //! Adaptive themes with automatic light/dark mode support.
 //!
-//! Themes are named collections of styles that automatically adapt to the user's
-//! OS color scheme. Unlike systems with separate "light theme" and "dark theme"
-//! files, Standout's themes define mode-specific variations at the style level,
-//! eliminating duplication for styles that don't change between modes.
+//! Themes are named collections of styles that adapt to the OS color scheme.
+//! Adaptation happens at the style level, not the theme level: a style has
+//! base attributes plus optional light/dark overrides, so shared attributes
+//! are declared once and only the differences need overriding per mode.
 //!
-//! ## Design Decision: Style-Level Adaptation
+//! Resolving a style merges the active mode's overrides onto the base:
+//! present values in the override replace the base, missing values fall
+//! through to it. Color-scheme mode is a fact on [`crate::TargetProperties`];
+//! convenience wrappers and `App::run` detect it, tests construct
+//! `TargetProperties` with an explicit [`ColorMode`].
 //!
-//! Most styles (bold, italic, semantic colors) look fine in both modes. Only a
-//! handful need adjustment — typically foreground colors for contrast. By making
-//! adaptation per-style rather than per-theme, you define shared styles once and
-//! override only what differs:
-//!
-//! ```yaml
-//! # Shared across all modes
-//! header:
-//!   fg: cyan
-//!   bold: true
-//!
-//! # Mode-specific overrides
-//! panel:
-//!   fg: gray          # Base (fallback)
-//!   light:
-//!     fg: black       # Override for light mode
-//!   dark:
-//!     fg: white       # Override for dark mode
-//! ```
-//!
-//! ## How Merging Works
-//!
-//! When resolving a style in Dark mode:
-//! 1. Start with base attributes (`fg: gray`)
-//! 2. Merge dark overrides — each attribute in `dark:` replaces the base
-//! 3. Result: `fg: white` (from dark), other attributes preserved from base
-//!
-//! This is additive: `Some` values in overrides replace, missing values preserve base.
-//!
-//! ## Color Mode Detection
-//!
-//! Color-scheme is a fact on [`crate::TargetProperties`]. Convenience wrappers
-//! and `App::run` detect it at their edge; tests construct
-//! [`crate::TargetProperties`] with an explicit [`ColorMode`].
-//!
-//! ## Construction
-//!
-//! Programmatic (for compile-time themes):
-//! ```rust
-//! use standout_render::Theme;
-//! use console::Style;
-//!
-//! let theme = Theme::new()
-//!     .add("header", Style::new().bold().cyan())
-//!     .add_adaptive("panel", Style::new(),
-//!         Some(Style::new().fg(console::Color::Black)),
-//!         Some(Style::new().fg(console::Color::White)));
-//! ```
-//!
-//! YAML (for user-customizable themes):
-//! ```rust
-//! let theme = standout_render::Theme::from_yaml(r#"
-//! header: { fg: cyan, bold: true }
-//! panel:
-//!   fg: gray
-//!   light: { fg: black }
-//!   dark: { fg: white }
-//! "#).unwrap();
-//! ```
-//!
-//! ## See Also
-//!
-//! - [`crate::stylesheet`]: YAML parsing details and color format reference
-//! - [`crate::style`]: Low-level style primitives and aliasing
+//! See [`crate::stylesheet`] for the YAML format and [`crate::style`] for the
+//! underlying style primitives.
 
 mod adaptive;
 mod icon_def;

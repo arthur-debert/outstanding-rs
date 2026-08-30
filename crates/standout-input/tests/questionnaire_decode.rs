@@ -1,16 +1,8 @@
-//! Shared decode/validation engine tests: extended scalar definitions
-//! (kinds, defaults, constraints, conditions, validator revisions),
-//! fingerprint coverage of every semantic property, default pre-filling,
-//! blank resolution, conditional applicability, and accumulated batch
-//! diagnostics.
-
 use standout_input::questionnaire::{
     AnswerValue, FieldValidator, FormError, Questionnaire, QuestionnaireError, ScalarField,
     ScalarKind, ValidationDiagnostic,
 };
 
-/// A questionnaire exercising every scalar property: kinds, optionality,
-/// defaults, choices, a condition, and an application validator.
 fn full() -> Questionnaire {
     Questionnaire::new(
         "demo.full",
@@ -37,8 +29,6 @@ fn full() -> Questionnaire {
     .unwrap()
 }
 
-/// Set `answer` as the answer text directly below the question line tagged
-/// `id`, replacing a rendered pre-filled default line when one is present.
 fn answer(sheet: &str, id: &str, answer: &str) -> String {
     let tag = format!("<id:{id}>");
     let lines: Vec<&str> = sheet.lines().collect();
@@ -51,8 +41,6 @@ fn answer(sheet: &str, id: &str, answer: &str) -> String {
         i += 1;
         if !found && line.trim_end().ends_with(&tag) {
             found = true;
-            // A non-blank line right below the question is a pre-filled
-            // default: the answer replaces it.
             if lines.get(i).is_some_and(|next| !next.trim().is_empty()) {
                 i += 1;
             }
@@ -71,10 +59,6 @@ fn decode(
     q.decode_answers(&raw)
 }
 
-// ============================================================================
-// Definition validation for the extended properties
-// ============================================================================
-
 #[test]
 fn choices_on_bool_field_are_rejected() {
     let err = Questionnaire::new(
@@ -88,8 +72,6 @@ fn choices_on_bool_field_are_rejected() {
 
 #[test]
 fn empty_and_duplicate_choices_are_rejected() {
-    // Answers are trimmed before matching, so a choice with outer whitespace
-    // is unsatisfiable (and would shadow its trimmed twin in dup detection).
     for choices in [vec![], vec!["x", "x"], vec![" x", "y"], vec!["x", "x "]] {
         let err = Questionnaire::new(
             "demo.q",
@@ -102,7 +84,6 @@ fn empty_and_duplicate_choices_are_rejected() {
 
 #[test]
 fn default_must_decode_cleanly() {
-    // A bool default outside the yes/no vocabulary.
     let err = Questionnaire::new(
         "demo.q",
         vec![ScalarField::new("a", "A?", ScalarKind::Bool).with_default("maybe")],
@@ -111,7 +92,6 @@ fn default_must_decode_cleanly() {
     assert!(matches!(&err, QuestionnaireError::Item { id, .. } if id == "a"));
     assert!(err.to_string().contains("Invalid default on field 'a'"));
 
-    // A default outside the declared choices.
     let err = Questionnaire::new(
         "demo.q",
         vec![ScalarField::new("a", "A?", ScalarKind::String)
@@ -121,7 +101,6 @@ fn default_must_decode_cleanly() {
     .unwrap_err();
     assert!(err.to_string().contains("Invalid default on field 'a'"));
 
-    // A multiline default cannot render as a single pre-filled line.
     let err = Questionnaire::new(
         "demo.q",
         vec![ScalarField::new("a", "A?", ScalarKind::Text).with_default("one\ntwo")],
@@ -129,8 +108,6 @@ fn default_must_decode_cleanly() {
     .unwrap_err();
     assert!(err.to_string().contains("Invalid default on field 'a'"));
 
-    // A default with outer whitespace could never survive the render/parse
-    // round trip (parsed answers are trimmed).
     let err = Questionnaire::new(
         "demo.q",
         vec![ScalarField::new("a", "A?", ScalarKind::String).with_default(" x ")],
@@ -165,7 +142,6 @@ fn condition_must_reference_an_earlier_known_field() {
 
 #[test]
 fn condition_expected_value_must_be_reachable() {
-    // A bool controller with a non-boolean expected value.
     let err = Questionnaire::new(
         "demo.q",
         vec![
@@ -176,7 +152,6 @@ fn condition_expected_value_must_be_reachable() {
     .unwrap_err();
     assert!(err.to_string().contains("Invalid condition on field 'b'"));
 
-    // A constrained controller whose choices never include the expected value.
     let err = Questionnaire::new(
         "demo.q",
         vec![
@@ -187,8 +162,6 @@ fn condition_expected_value_must_be_reachable() {
     .unwrap_err();
     assert!(err.to_string().contains("Invalid condition on field 'b'"));
 
-    // An unconstrained controller never decodes to a blank value or one with
-    // outer whitespace (answers are trimmed, blanks resolve to omission).
     for expected in ["", " x "] {
         let err = Questionnaire::new(
             "demo.q",
@@ -215,10 +188,6 @@ fn validator_revision_must_be_non_empty() {
         .to_string()
         .contains("Field 'a' attaches a validator with an empty revision"));
 }
-
-// ============================================================================
-// Fingerprint: every semantic property participates; presentation does not
-// ============================================================================
 
 fn fp(fields: Vec<ScalarField>) -> String {
     Questionnaire::new("demo.q", fields)
@@ -269,7 +238,6 @@ fn default_constraint_condition_and_revision_all_enter_the_fingerprint() {
 
 #[test]
 fn presentation_only_properties_stay_out_of_the_fingerprint() {
-    // Choice order is presentation; the choice set is semantic.
     assert_eq!(
         fp(vec![
             ScalarField::new("a", "A?", ScalarKind::String).one_of(["x", "y"])
@@ -278,7 +246,6 @@ fn presentation_only_properties_stay_out_of_the_fingerprint() {
             ScalarField::new("a", "Reworded?", ScalarKind::String).one_of(["y", "x"])
         ])
     );
-    // A validator closure's behavior is invisible; only the revision counts.
     assert_eq!(
         fp(vec![ScalarField::new("a", "A?", ScalarKind::String)
             .with_validator(FieldValidator::new("v1", |_| Ok(())))]),
@@ -302,10 +269,6 @@ fn bool_condition_values_are_canonicalized_for_identity() {
     assert_ne!(declare("yes"), declare("no"));
 }
 
-// ============================================================================
-// Rendering: defaults pre-filled, hints stay cosmetic
-// ============================================================================
-
 #[test]
 fn defaults_render_pre_filled_and_round_trip() {
     let q = full();
@@ -313,8 +276,6 @@ fn defaults_render_pre_filled_and_round_trip() {
     assert!(sheet.contains("(mit, bsd, or gpl) <id:project.license>\nmit\n"));
     assert!(sheet.contains("<id:project.docker>\nno\n"));
 
-    // An untouched sheet decodes: name is missing (required, no default),
-    // everything else resolves through defaults and omission.
     let filled = answer(&sheet, "project.name", "demo");
     let answers = decode(&q, &filled).unwrap();
     assert_eq!(answers.get_text("project.name"), Some("demo"));
@@ -324,15 +285,10 @@ fn defaults_render_pre_filled_and_round_trip() {
     assert_eq!(answers.get("project.notes"), None);
 }
 
-// ============================================================================
-// Blank resolution: default first, then optionality
-// ============================================================================
-
 #[test]
 fn blank_resolves_default_before_optionality() {
     let q = full();
     let sheet = q.render_answer_sheet();
-    // Blank out the pre-filled license default entirely.
     let blanked = answer(&sheet, "project.license", "");
     let filled = answer(&blanked, "project.name", "demo");
     let answers = decode(&q, &filled).unwrap();
@@ -353,18 +309,12 @@ fn required_blank_without_default_is_missing() {
     );
 }
 
-// ============================================================================
-// Kind conversion and constraints
-// ============================================================================
-
 #[test]
 fn bool_vocabulary_is_shared_and_case_insensitive() {
     let q = full();
     let sheet = answer(&q.render_answer_sheet(), "project.name", "demo");
     for (text, expected) in [("TRUE", true), ("Yes", true), ("y", true), ("n", false)] {
         let answers = decode(&q, &answer(&sheet, "project.docker", text));
-        // Answering docker=true activates the image question, which is then
-        // missing — so only check the docker decode for the true cases.
         match answers {
             Ok(a) => assert_eq!(a.get_bool("project.docker"), Some(expected)),
             Err(d) => {
@@ -429,10 +379,6 @@ fn application_validator_runs_in_the_shared_pipeline() {
     );
 }
 
-// ============================================================================
-// Conditional applicability
-// ============================================================================
-
 #[test]
 fn active_required_conditional_field_must_be_answered() {
     let q = full();
@@ -462,7 +408,6 @@ fn active_required_conditional_field_must_be_answered() {
 fn populated_inactive_field_is_an_error() {
     let q = full();
     let sheet = answer(&q.render_answer_sheet(), "project.name", "demo");
-    // docker stays "no" (default): the image question is inactive.
     let stale = answer(&sheet, "project.docker_image", "debian:stable");
     let diagnostics = decode(&q, &stale).unwrap_err();
     assert_eq!(
@@ -486,7 +431,6 @@ fn inactive_field_keeps_untouched_pre_filled_default() {
         ],
     )
     .unwrap();
-    // Untouched sheet: b's pre-filled default remains while b is inactive.
     let answers = decode(&q, &q.render_answer_sheet()).unwrap();
     assert_eq!(answers.get("b"), None);
 }
@@ -495,20 +439,15 @@ fn inactive_field_keeps_untouched_pre_filled_default() {
 fn errored_controller_skips_dependents_without_piling_on() {
     let q = full();
     let sheet = answer(&q.render_answer_sheet(), "project.name", "demo");
-    // The controller fails to decode; its dependent must not add noise.
     let diagnostics = decode(&q, &answer(&sheet, "project.docker", "maybe")).unwrap_err();
     assert_eq!(diagnostics.len(), 1);
 }
 
-// ============================================================================
-// Accumulation and whole-form validation
-// ============================================================================
-
 #[test]
 fn independent_diagnostics_accumulate_in_one_pass() {
     let q = full();
-    let sheet = q.render_answer_sheet(); // name left blank: missing
-    let bad = answer(&sheet, "project.license", "wtfpl"); // constraint violation
+    let sheet = q.render_answer_sheet();
+    let bad = answer(&sheet, "project.license", "wtfpl");
     let diagnostics = decode(&q, &bad).unwrap_err();
     assert_eq!(diagnostics.len(), 2);
     assert!(diagnostics.iter().any(|d| matches!(
@@ -577,10 +516,6 @@ fn form_success_passes_the_answers_through() {
     let answers = q.decode_answers_with(&raw, |_| Vec::new()).unwrap();
     assert_eq!(answers.get_text("project.name"), Some("demo"));
 }
-
-// ============================================================================
-// Decoded value surface
-// ============================================================================
 
 #[test]
 fn answer_values_expose_typed_accessors() {

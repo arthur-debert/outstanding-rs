@@ -14,26 +14,18 @@ use std::sync::{
 };
 use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
 
-/// How East Asian Ambiguous characters are measured.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub enum AmbiguousWidth {
-    /// Treat ambiguous characters as one terminal column.
     #[default]
     Narrow,
-    /// Treat ambiguous characters as two terminal columns.
     Wide,
 }
 
-/// Centralized character and string width calculator.
-///
-/// Rendering, tabular formatting, and template filters use this same interface
-/// so a selected ambiguous-width policy cannot drift between pipeline stages.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct WidthCalculator {
     policy: AmbiguousWidth,
 }
 
-/// Which visible portion to retain when tagged text is truncated.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum VisibleTruncateAt {
     End,
@@ -105,11 +97,8 @@ impl RenderWidthSource {
         policy: AmbiguousWidth,
         terminal_width: Option<usize>,
     ) -> RenderWidthGuard<'_> {
-        // Width is on the request; this stores it for MiniJinja filters
-        // registered at engine construction. There is no mutex (ADR-0030).
-        // MiniJinjaEngine is !Send/!Sync so concurrent renders cannot
-        // interleave scoped() on a shared engine. Restoration is handled
-        // by RenderWidthGuard, including after a template/filter panic.
+        // No mutex (ADR-0030): MiniJinjaEngine is !Send/!Sync so concurrent
+        // renders cannot interleave scoped() on a shared engine.
         let previous_ambiguous_width = self.ambiguous_width();
         let previous_terminal_width = self.terminal_width();
         self.store_ambiguous_width(policy);
@@ -123,17 +112,14 @@ impl RenderWidthSource {
 }
 
 impl WidthCalculator {
-    /// Creates a calculator for `policy`.
     pub const fn new(policy: AmbiguousWidth) -> Self {
         Self { policy }
     }
 
-    /// Returns the selected policy.
     pub const fn policy(self) -> AmbiguousWidth {
         self.policy
     }
 
-    /// Measures a single character in terminal columns.
     pub fn char_width(self, character: char) -> usize {
         let narrow = character.width().unwrap_or(0);
         match self.policy {
@@ -147,7 +133,6 @@ impl WidthCalculator {
         }
     }
 
-    /// Measures plain text in terminal columns.
     pub fn text_width(self, text: &str) -> usize {
         match self.policy {
             AmbiguousWidth::Narrow => UnicodeWidthStr::width(text),
@@ -166,15 +151,10 @@ impl WidthCalculator {
         }
     }
 
-    /// Measures text while ignoring ANSI escape sequences.
     pub fn display_width(self, text: &str) -> usize {
         self.text_width(&strip_ansi_codes(text))
     }
 
-    /// Measures text while ignoring ANSI sequences and Standout style tags.
-    ///
-    /// Semantic tags are parsed as zero-width structure; this does not render a
-    /// tag-free copy of the input.
     pub fn visible_width(self, text: &str) -> usize {
         let styled = StyledText::parse(text);
         let mut width = 0;
@@ -182,8 +162,6 @@ impl WidthCalculator {
         width
     }
 
-    /// Truncates tagged text by visible terminal width while preserving balanced
-    /// semantic style tags around every retained fragment.
     pub(crate) fn truncate_visible(
         self,
         text: &str,

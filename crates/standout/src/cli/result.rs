@@ -1,24 +1,6 @@
-//! Help interception result types.
-//!
-//! Help is decided once, in [`HelpDisplay`], and projected onto whichever
-//! result type the calling parse path speaks: [`HelpResult`] for configured
-//! parsing (`get_matches_from` / `parse_from`), [`CompletedRun`] for dispatch
-//! (`dispatch_from` / `run` / `run_to_string`). Two projections of one decision
-//! are what keep `myapp help` from meaning one thing through one entry point
-//! and something else through the other.
-
 use crate::cli::handler::{DispatchResult, RunError, RunErrorKind, RunOutput};
 use crate::OutputMode;
 
-/// Outcome of [`App::run_with`](crate::cli::App::run_with) /
-/// [`App::run_to_string`](crate::cli::App::run_to_string) /
-/// [`App::dispatch`](crate::cli::App::dispatch) /
-/// [`App::dispatch_from`](crate::cli::App::dispatch_from):
-/// the dispatch result plus framework warnings collected during the run.
-///
-/// Warnings are an argument of the run, not a thread-local. [`Deref`] to the
-/// inner [`DispatchResult`] so `is_handled`, `exit_status`, and similar
-/// methods keep working. Match on [`outcome`](Self::outcome) for variants.
 #[derive(Debug)]
 pub struct CompletedRun {
     inner: DispatchResult,
@@ -27,8 +9,6 @@ pub struct CompletedRun {
 }
 
 impl CompletedRun {
-    /// Wraps a dispatch outcome with the warnings collected during the run
-    /// and the output mode that dispatch resolved.
     pub fn from_dispatch(
         inner: DispatchResult,
         warnings: Vec<String>,
@@ -41,28 +21,18 @@ impl CompletedRun {
         }
     }
 
-    /// The dispatch outcome (handled, error, artifact, …).
     pub fn outcome(&self) -> &DispatchResult {
         &self.inner
     }
 
-    /// Consumes this result and returns the dispatch outcome.
     pub fn into_outcome(self) -> DispatchResult {
         self.inner
     }
 
-    /// Framework warnings collected during the run, one per entry.
     pub fn warnings(&self) -> &[String] {
         &self.warnings
     }
 
-    /// Output mode resolved for this invocation (`--output`, else Auto).
-    ///
-    /// [`App::run`](crate::cli::App::run) passes this to warning flush so
-    /// `--output=text` opts out of ANSI on the warning block. Clap usage,
-    /// `--help`, and `--version` short-circuits still honour the flag: they
-    /// never produce matches, so the mode is probed from the same augmented
-    /// command the failing parse used.
     pub fn output_mode(&self) -> OutputMode {
         self.output_mode
     }
@@ -76,50 +46,18 @@ impl std::ops::Deref for CompletedRun {
     }
 }
 
-/// Result of the help interception.
-///
-/// After processing a command, the CLI returns this enum to indicate
-/// what action should be taken.
 #[derive(Debug)]
 pub enum HelpResult {
-    /// Normal matches found (no help requested).
     Matches(clap::ArgMatches),
-    /// Help was rendered. Caller should print or display as needed.
     Help(String),
-    /// Help was rendered and should be displayed through a pager.
     PagedHelp(String),
-    /// Error: Subcommand or topic not found.
     Error(clap::Error),
 }
 
-/// A help request answered instead of the root's parse.
-///
-/// Deliberately narrower than [`HelpResult`]: this is only ever produced when
-/// help *was* the request, so it carries no "and here are your matches" case
-/// for either projection to invent a meaning for.
 #[derive(Debug)]
 pub(crate) enum HelpDisplay {
-    /// Help rendered. `paged` carries the `--page` request, which only the
-    /// printing entry points can honour.
-    Rendered {
-        /// The rendered help text.
-        text: String,
-        /// Whether `--page` asked for a pager.
-        paged: bool,
-    },
-    /// Clap answered the help arm itself: a bad flag on the word, a topic that
-    /// names nothing, or a display Clap wants to make. The user's line is what
-    /// is at fault (or nothing is), and Clap's own `use_stderr` split says
-    /// which.
+    Rendered { text: String, paged: bool },
     Clap(clap::Error),
-    /// Help could not be rendered — a broken template or theme. Never the
-    /// user's mistake, whatever the line said.
-    ///
-    /// It carries a Clap error because that is the currency of the configured
-    /// path: `get_matches_from` hands its caller a `clap::Error` for every
-    /// failure. Classifying at the point of failure rather than re-deriving it
-    /// downstream is the point of the variant — a render failure and a rejected
-    /// flag are indistinguishable by the time they are both `clap::Error`.
     RenderFailed(clap::Error),
 }
 
@@ -134,19 +72,6 @@ impl From<HelpDisplay> for HelpResult {
 }
 
 impl From<HelpDisplay> for DispatchResult {
-    /// Projects a help display onto the dispatch path's result type.
-    ///
-    /// A rendered help is a typed success — the pager request rides along in
-    /// [`SuccessKind::PagedHelp`](crate::cli::SuccessKind::PagedHelp), since
-    /// only `run()` can act on it and the capture APIs must stay
-    /// side-effect-free.
-    ///
-    /// Failures keep their origin. Clap's answer to the help arm keeps Clap's
-    /// own split — a rejected line goes to stderr as
-    /// [`RunErrorKind::ClapUsage`], a display it wants to make stays a success
-    /// — while a render failure is [`RunErrorKind::Render`]: a broken template
-    /// or theme is the application's bug and must not be reported to the user
-    /// as a usage error, nor exit with the usage status.
     fn from(display: HelpDisplay) -> Self {
         match display {
             HelpDisplay::Rendered { text, paged } => DispatchResult::Handled(if paged {

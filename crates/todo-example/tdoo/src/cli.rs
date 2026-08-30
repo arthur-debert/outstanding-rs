@@ -5,9 +5,6 @@ use std::path::PathBuf;
 #[derive(Parser)]
 #[command(name = "tdoo", about = "A tiny todo list - the Standout sample app")]
 pub(crate) struct Cli {
-    /// Optional so a naked `tdoo` parses successfully and reaches Standout's
-    /// default-command resolution (see `app::build`) instead of failing as a
-    /// clap usage error.
     #[command(subcommand)]
     pub(crate) command: Option<Commands>,
 }
@@ -41,7 +38,6 @@ pub(crate) fn command() -> clap::Command {
     Cli::command()
 }
 
-/// Resolves CLI configuration before constructing the core store.
 pub(crate) fn resolve_store_path() -> PathBuf {
     store_path_from_env(
         std::env::var_os("TODO_FILE"),

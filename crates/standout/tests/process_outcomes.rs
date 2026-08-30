@@ -48,7 +48,6 @@ fn run(binary: &PathBuf, args: &[&str]) -> Output {
     Command::new(binary).args(args).output().unwrap()
 }
 
-/// Runs the fixture with the artifact fixtures' suggested destination set.
 fn run_with_artifact_path(
     binary: &PathBuf,
     args: &[&str],
@@ -66,7 +65,6 @@ fn real_process_routes_artifact_bytes_and_reports_to_separate_channels() {
     let binary = fixture_binary();
     let tempdir = tempfile::tempdir().unwrap();
 
-    // A file destination leaves stdout free, so the report lands there.
     let to_file = tempdir.path().join("artifact.bin");
     let file_run = run_with_artifact_path(&binary, &["artifact"], &to_file);
     assert_eq!(file_run.status.code(), Some(0));
@@ -77,7 +75,6 @@ fn real_process_routes_artifact_bytes_and_reports_to_separate_channels() {
     );
     assert!(file_run.stderr.is_empty());
 
-    // An explicit override redirects the artifact, and the report follows it.
     let override_path = tempdir.path().join("override.bin");
     let override_run = run_with_artifact_path(
         &binary,
@@ -95,8 +92,6 @@ fn real_process_routes_artifact_bytes_and_reports_to_separate_channels() {
         format!("wrote 3 entries to {}\n", override_path.display())
     );
 
-    // Artifact-to-stdout: the bytes own stdout byte-for-byte, and the report
-    // is pushed to the diagnostic channel so it cannot corrupt them.
     let stdout_run = run_with_artifact_path(&binary, &["artifact-stdout"], &to_file);
     assert_eq!(stdout_run.status.code(), Some(0));
     assert_eq!(stdout_run.stdout, [0, 1, 2]);
@@ -105,8 +100,6 @@ fn real_process_routes_artifact_bytes_and_reports_to_separate_channels() {
         "wrote 3 entries to -\n"
     );
 
-    // No destination at all: non-zero, diagnosed on stderr, and no success
-    // report anywhere.
     let no_destination = run_with_artifact_path(&binary, &["artifact-no-destination"], &to_file);
     assert_eq!(no_destination.status.code(), Some(1));
     assert!(no_destination.stdout.is_empty());
@@ -114,7 +107,6 @@ fn real_process_routes_artifact_bytes_and_reports_to_separate_channels() {
     assert!(stderr.contains("no destination selected"));
     assert!(!stderr.contains("wrote 3 entries"));
 
-    // A failed write is non-zero and emits no success report.
     let unwritable = tempdir.path().join("missing").join("artifact.bin");
     let write_failure = run_with_artifact_path(&binary, &["artifact"], &unwritable);
     assert_eq!(write_failure.status.code(), Some(1));

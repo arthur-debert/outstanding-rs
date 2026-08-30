@@ -16,20 +16,6 @@ pub enum ShellError {
     InvalidUtf8(#[from] std::string::FromUtf8Error),
 }
 
-/// Execute a shell command with the given input piped to stdin.
-///
-/// Returns the command's stdout on success.
-///
-/// # Arguments
-///
-/// * `command_str` - The shell command to execute
-/// * `input` - Data to write to the command's stdin
-/// * `timeout` - Optional timeout; if exceeded, the process is killed
-///
-/// # Notes
-///
-/// The entire stdout is buffered in memory before being returned.
-/// For very large outputs (multi-megabyte), consider streaming alternatives.
 pub fn run_piped(
     command_str: &str,
     input: &str,

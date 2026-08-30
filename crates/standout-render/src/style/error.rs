@@ -1,15 +1,10 @@
-//! Style-related error types.
-//!
-//! This module contains errors for both style validation and stylesheet parsing.
+//! Error types for style validation and stylesheet parsing.
 
 use std::path::PathBuf;
 
-/// Error returned when style validation fails.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum StyleValidationError {
-    /// An alias references a style that doesn't exist
     UnresolvedAlias { from: String, to: String },
-    /// A cycle was detected in alias resolution
     CycleDetected { path: Vec<String> },
 }
 
@@ -28,66 +23,42 @@ impl std::fmt::Display for StyleValidationError {
 
 impl std::error::Error for StyleValidationError {}
 
-/// Error type for stylesheet parsing failures.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum StylesheetError {
-    /// YAML parse error.
     Parse {
-        /// Optional source file path.
         path: Option<PathBuf>,
-        /// Error message from the YAML parser.
         message: String,
     },
 
-    /// Invalid color format.
     InvalidColor {
-        /// Style name where the error occurred.
         style: String,
-        /// The invalid color value.
         value: String,
-        /// Optional source file path.
         path: Option<PathBuf>,
     },
 
-    /// Unknown attribute in style definition.
     UnknownAttribute {
-        /// Style name where the error occurred.
         style: String,
-        /// The unknown attribute name.
         attribute: String,
-        /// Optional source file path.
         path: Option<PathBuf>,
     },
 
-    /// Invalid shorthand syntax.
     InvalidShorthand {
-        /// Style name where the error occurred.
         style: String,
-        /// The invalid shorthand value.
         value: String,
-        /// Optional source file path.
         path: Option<PathBuf>,
     },
 
-    /// Alias validation error (dangling reference or cycle).
     AliasError {
-        /// The underlying validation error.
         source: StyleValidationError,
     },
 
-    /// Invalid style definition structure.
     InvalidDefinition {
-        /// Style name where the error occurred.
         style: String,
-        /// Description of what was wrong.
         message: String,
-        /// Optional source file path.
         path: Option<PathBuf>,
     },
 
-    /// File loading error.
     Load {
-        /// Error message from the file loader.
         message: String,
     },
 }

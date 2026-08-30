@@ -1,10 +1,3 @@
-//! Compound artifacts: destination policy, write-then-report ordering, and
-//! the typed failure path.
-//!
-//! These tests pin the transaction Standout owns for an artifact command: the
-//! application produces bytes and facts, the framework picks the destination,
-//! writes, and only then renders a report that can name where the bytes landed.
-
 use clap::{Arg, Command};
 use serde::Serialize;
 use serde_json::json;
@@ -16,7 +9,6 @@ use standout::cli::{Artifact, RenderedOutput};
 
 const BYTES: &[u8] = b"id,title\n1,buy milk\n";
 
-/// The report a handler owns: domain facts, including its own warnings.
 #[derive(Serialize)]
 struct ExportReport {
     entries: usize,
@@ -39,8 +31,6 @@ fn command() -> Command {
     )
 }
 
-/// The canonical report template: it can only say this because the write
-/// already happened.
 const TEMPLATE: &str =
     "Wrote {{ report.entries }} entries to {{ receipt.destination }}{% for w in report.warnings %}\nwarning: {{ w }}{% endfor %}";
 
@@ -57,10 +47,6 @@ fn app_with(artifact: impl Fn() -> Artifact<ExportReport> + 'static) -> App {
         .unwrap()
 }
 
-// ---------------------------------------------------------------------------
-// Destination policy
-// ---------------------------------------------------------------------------
-
 #[test]
 fn suggested_destination_is_written_and_reported() {
     let dir = tempfile::tempdir().unwrap();
@@ -74,7 +60,6 @@ fn suggested_destination_is_written_and_reported() {
     })
     .run_to_string(command(), ["app", "export"]);
 
-    // The write happened, byte-for-byte.
     assert_eq!(std::fs::read(&path).unwrap(), BYTES);
 
     let run = result.artifact().expect("artifact run");
@@ -84,8 +69,6 @@ fn suggested_destination_is_written_and_reported() {
     assert_eq!(run.receipt().byte_count(), BYTES.len());
     assert_eq!(result.exit_status(), Some(ExitStatus::SUCCESS));
 
-    // The report names the destination that actually completed, and the
-    // application's warning survived as a typed fact.
     let report = run.report().unwrap();
     assert!(report.contains(&format!("Wrote 1 entries to {}", path.display())));
     assert!(report.contains("warning: 1 entry had no due date"));
@@ -117,7 +100,6 @@ fn explicit_override_wins_over_the_suggested_destination() {
     assert!(!suggested.exists(), "the suggestion must not be written");
 
     let run = result.artifact().expect("artifact run");
-    // The suggestion is still observable — it just didn't win.
     assert_eq!(run.suggested_destination(), Some(suggested.as_path()));
     assert_eq!(
         run.destination(),
@@ -134,8 +116,6 @@ fn stdout_fallback_requires_the_opt_in() {
     let result = app_with(|| Artifact::new(BYTES.to_vec()).with_report(report()))
         .run_to_string(command(), ["app", "export"]);
 
-    // No override, no suggestion, no stdout opt-in: a typed failure rather
-    // than an invented file or silently discarded bytes.
     assert_eq!(
         result.error_kind(),
         Some(RunErrorKind::FinalWrite(OutputKind::Artifact))
@@ -158,7 +138,6 @@ fn opted_in_stdout_is_the_last_resort_destination() {
     assert_eq!(run.destination(), &ArtifactDestination::Stdout);
     assert_eq!(run.suggested_destination(), None);
     assert_eq!(run.bytes(), BYTES);
-    // `-` is the destination label a stdout artifact reports.
     assert!(run.report().unwrap().contains("Wrote 1 entries to -"));
 }
 
@@ -189,10 +168,6 @@ fn an_override_writes_an_artifact_that_only_allows_stdout() {
     );
 }
 
-// ---------------------------------------------------------------------------
-// Write-then-report ordering and the failure path
-// ---------------------------------------------------------------------------
-
 #[test]
 fn a_failed_write_is_typed_and_emits_no_report() {
     let dir = tempfile::tempdir().unwrap();
@@ -212,7 +187,6 @@ fn a_failed_write_is_typed_and_emits_no_report() {
     );
     assert_eq!(result.exit_status(), Some(ExitStatus::FAILURE));
     assert!(result.error().unwrap().contains("Error writing artifact"));
-    // The whole point: no success survived a failed write.
     assert!(result.artifact().is_none());
     assert!(!unwritable.exists());
 }
@@ -249,10 +223,6 @@ fn an_overridden_write_failure_shares_the_artifact_failure_path() {
     );
 }
 
-// ---------------------------------------------------------------------------
-// Empty and report-free outcomes
-// ---------------------------------------------------------------------------
-
 #[test]
 fn an_artifact_without_a_report_completes_silently() {
     let dir = tempfile::tempdir().unwrap();
@@ -275,7 +245,6 @@ fn an_artifact_without_a_report_completes_silently() {
         .run_to_string(command(), ["app", "export"]);
 
     let run = result.artifact().expect("artifact run");
-    // An empty artifact is still a real, written file — not a fabrication.
     assert_eq!(std::fs::read(&path).unwrap(), Vec::<u8>::new());
     assert_eq!(run.receipt().byte_count(), 0);
     assert_eq!(run.report(), None);
@@ -299,10 +268,6 @@ fn a_silent_handler_still_fabricates_no_file() {
     assert!(result.artifact().is_none());
     assert_eq!(result.output(), Some(""));
 }
-
-// ---------------------------------------------------------------------------
-// Structured modes
-// ---------------------------------------------------------------------------
 
 #[test]
 fn structured_mode_serializes_the_report_and_receipt_envelope() {
@@ -335,10 +300,6 @@ fn structured_mode_serializes_the_report_and_receipt_envelope() {
         })
     );
 }
-
-// ---------------------------------------------------------------------------
-// Hook coherence
-// ---------------------------------------------------------------------------
 
 #[test]
 fn post_dispatch_hooks_see_the_report_like_any_handler_data() {
@@ -409,8 +370,6 @@ fn post_output_hooks_transform_bytes_before_the_framework_write() {
         .unwrap()
         .run_to_string(command(), ["app", "export"]);
 
-    // The hook changed the bytes; the framework still owns the write, and the
-    // receipt counts what was actually written.
     assert_eq!(std::fs::read(&path).unwrap(), b"replaced");
     assert_eq!(result.artifact().unwrap().receipt().byte_count(), 8);
 }
@@ -446,10 +405,6 @@ fn a_failing_post_output_hook_prevents_the_write() {
     assert!(!path.exists(), "an aborted run must not write the artifact");
 }
 
-// ---------------------------------------------------------------------------
-// Binary compatibility
-// ---------------------------------------------------------------------------
-
 #[test]
 fn a_binary_filename_still_authorizes_no_write() {
     let dir = tempfile::tempdir().unwrap();
@@ -472,8 +427,6 @@ fn a_binary_filename_still_authorizes_no_write() {
         .unwrap()
         .run_to_string(command(), ["app", "export"]);
 
-    // Unchanged 7.x behavior: bytes come back for the caller to place, and the
-    // suggested filename touched nothing on disk.
     assert_eq!(result.binary(), Some((BYTES, "data.bin")));
     assert!(!cwd_guard.exists());
     assert!(!std::path::Path::new("data.bin").exists());
@@ -513,10 +466,6 @@ fn binary_output_still_honors_the_explicit_override() {
     assert_eq!(result.output(), Some(""));
     assert!(result.artifact().is_none());
 }
-
-// ---------------------------------------------------------------------------
-// Partial adoption
-// ---------------------------------------------------------------------------
 
 #[test]
 fn run_command_hands_back_the_pending_artifact_without_writing() {

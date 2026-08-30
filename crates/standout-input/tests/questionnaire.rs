@@ -1,8 +1,3 @@
-//! Pure answer-sheet engine tests: deterministic rendering, round trips,
-//! multiline and whitespace behavior, cosmetic edits, demoted question
-//! lines, unknown or duplicate tags, tag-fragment warnings, and
-//! compatibility failures.
-
 use standout_input::questionnaire::{
     AnswerSheetDiagnostic, Questionnaire, ScalarField, ScalarKind,
 };
@@ -34,8 +29,6 @@ fn two_fields() -> Questionnaire {
     .unwrap()
 }
 
-/// Set `answer` as the answer text directly below the question line tagged
-/// `id`, replacing a rendered pre-filled default line when one is present.
 fn answer(sheet: &str, id: &str, answer: &str) -> String {
     let tag = format!("<id:{id}>");
     let lines: Vec<&str> = sheet.lines().collect();
@@ -48,8 +41,6 @@ fn answer(sheet: &str, id: &str, answer: &str) -> String {
         i += 1;
         if !found && line.trim_end().ends_with(&tag) {
             found = true;
-            // A non-blank line right below the question is a pre-filled
-            // default: the answer replaces it.
             if lines.get(i).is_some_and(|next| !next.trim().is_empty()) {
                 i += 1;
             }
@@ -59,10 +50,6 @@ fn answer(sheet: &str, id: &str, answer: &str) -> String {
     assert!(found, "answer sheet has no question line for {tag}");
     out.join("\n") + "\n"
 }
-
-// ============================================================================
-// Definition validation
-// ============================================================================
 
 #[test]
 fn definition_rejects_invalid_questionnaire_id() {
@@ -111,10 +98,6 @@ fn definition_rejects_empty_field_list() {
         .contains("must declare at least one item (field or group)"));
 }
 
-// ============================================================================
-// Deterministic rendering
-// ============================================================================
-
 #[test]
 fn rendering_is_deterministic_and_carries_all_declared_parts() {
     let q = two_fields();
@@ -138,10 +121,6 @@ fn rendering_is_deterministic_and_carries_all_declared_parts() {
     assert_eq!(sheet, expected);
     assert!(q.fingerprint().starts_with("sha256:"));
 }
-
-// ============================================================================
-// Round trips
-// ============================================================================
 
 #[test]
 fn blank_sheet_round_trips_to_empty_answers() {
@@ -177,9 +156,6 @@ fn multiline_answer_preserves_internal_breaks_and_trims_outer_whitespace() {
 
 #[test]
 fn a_blank_line_between_question_and_answer_still_binds_the_answer() {
-    // Regression: the old format's header/marker adjacency rule silently
-    // swallowed a header separated from its answer by a blank line. The
-    // answer is simply everything up to the next question line.
     let q = one_field();
     let edited = q
         .render_answer_sheet()
@@ -190,8 +166,6 @@ fn a_blank_line_between_question_and_answer_still_binds_the_answer() {
 
 #[test]
 fn bracketed_prose_and_marker_bullets_inside_an_answer_are_inert() {
-    // Regression: under the old format, bracketed IDs and `->` lines were
-    // structural. Both are now ordinary answer text.
     let q = two_fields();
     let edited = answer(
         &q.render_answer_sheet(),
@@ -205,10 +179,6 @@ fn bracketed_prose_and_marker_bullets_inside_an_answer_are_inert() {
     );
     assert!(answers.warnings().is_empty());
 }
-
-// ============================================================================
-// Cosmetic freedom: numbers, wording, indentation, hints
-// ============================================================================
 
 #[test]
 fn display_edits_do_not_change_parsing() {
@@ -252,16 +222,8 @@ fn field_order_in_document_is_cosmetic() {
     assert_eq!(answers.get("project.notes"), Some("noted"));
 }
 
-// ============================================================================
-// Demotion and the accepted misparse limitation
-// ============================================================================
-
 #[test]
 fn trailing_text_after_the_tag_demotes_the_line_to_prose() {
-    // Regression: a trailing annotation after the ID must not
-    // half-recognize the line; any non-blank character after the tag makes
-    // the whole line ordinary prose (which then trips the tag-fragment
-    // warning as a hint that a tag may have been mangled).
     let q = two_fields();
     let edited = answer(
         &q.render_answer_sheet(),
@@ -279,8 +241,6 @@ fn trailing_text_after_the_tag_demotes_the_line_to_prose() {
 
 #[test]
 fn an_answer_line_ending_with_a_valid_tag_is_misparsed_by_design() {
-    // The documented limitation: there is no escaping, so an answer line
-    // that itself ends with a schema-valid tag reads as a question line.
     let q = two_fields();
     let sheet = format!(
         "#! standout-answers 1\n\
@@ -295,10 +255,6 @@ fn an_answer_line_ending_with_a_valid_tag_is_misparsed_by_design() {
     assert_eq!(answers.get("project.name"), Some(""));
     assert_eq!(answers.get("project.notes"), Some(""));
 }
-
-// ============================================================================
-// Tag-fragment warnings
-// ============================================================================
 
 #[test]
 fn a_tag_fragment_inside_an_answer_raises_a_warning() {
@@ -325,10 +281,6 @@ fn a_tag_fragment_inside_an_answer_raises_a_warning() {
         "warnings never echo answer text: {message}"
     );
 }
-
-// ============================================================================
-// Fingerprint semantics
-// ============================================================================
 
 #[test]
 fn fingerprint_ignores_wording_and_field_order() {
@@ -419,10 +371,6 @@ fn fingerprint_changes_on_semantic_edits() {
     assert_ne!(base.fingerprint(), other_questionnaire.fingerprint());
 }
 
-// ============================================================================
-// Compatibility failures
-// ============================================================================
-
 #[test]
 fn wrong_answer_format_version_is_rejected() {
     let q = one_field();
@@ -462,7 +410,6 @@ fn wrong_questionnaire_id_is_rejected() {
 fn stale_fingerprint_is_rejected_not_migrated() {
     let old = one_field();
     let sheet = answer(&old.render_answer_sheet(), "project.name", "kept");
-    // The application later renames the field: a semantic change.
     let new = Questionnaire::new(
         "demo.profile",
         vec![ScalarField::new(
@@ -511,17 +458,12 @@ fn compatibility_failure_skips_body_parsing() {
         .replace("#! standout-answers 1", "#! standout-answers 9")
         .replace("<id:project.name>", "<id:unknown.field>");
     let diags = q.parse_answer_sheet(&sheet).unwrap_err();
-    // Only the compatibility diagnostic: the body is never interpreted.
     assert!(matches!(
         &diags[..],
         [AnswerSheetDiagnostic::Incompatible { message }]
             if message.contains("Unsupported answer-format version '9'")
     ));
 }
-
-// ============================================================================
-// Unknown and duplicate tags
-// ============================================================================
 
 #[test]
 fn unknown_tag_on_a_question_line_is_a_diagnostic() {

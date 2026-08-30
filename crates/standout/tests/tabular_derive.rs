@@ -1,17 +1,8 @@
-//! Integration tests for the Tabular derive macro.
-//!
-//! These tests verify that the `#[derive(Tabular)]` macro generates correct
-//! `TabularSpec` configurations from struct field annotations.
-
 #![cfg(feature = "macros")]
 
 use serde::Serialize;
 use standout::tabular::{Align, Anchor, Overflow, Tabular, TabularRow, TruncateAt, Width};
 use standout_macros::Tabular as DeriveTabular;
-
-// =============================================================================
-// Basic derive tests
-// =============================================================================
 
 #[derive(Serialize, DeriveTabular)]
 struct BasicTask {
@@ -37,7 +28,6 @@ fn test_basic_derive_field_names() {
 #[test]
 fn test_basic_derive_default_keys() {
     let spec = BasicTask::tabular_spec();
-    // Keys default to field names
     assert_eq!(spec.columns[0].key.as_deref(), Some("id"));
     assert_eq!(spec.columns[1].key.as_deref(), Some("title"));
     assert_eq!(spec.columns[2].key.as_deref(), Some("status"));
@@ -46,15 +36,10 @@ fn test_basic_derive_default_keys() {
 #[test]
 fn test_basic_derive_default_headers() {
     let spec = BasicTask::tabular_spec();
-    // Headers default to field names
     assert_eq!(spec.columns[0].header.as_deref(), Some("id"));
     assert_eq!(spec.columns[1].header.as_deref(), Some("title"));
     assert_eq!(spec.columns[2].header.as_deref(), Some("status"));
 }
-
-// =============================================================================
-// Width attribute tests
-// =============================================================================
 
 #[derive(Serialize, DeriveTabular)]
 struct WidthTask {
@@ -101,10 +86,6 @@ fn test_width_bounded() {
     );
 }
 
-// =============================================================================
-// Alignment and anchor tests
-// =============================================================================
-
 #[derive(Serialize, DeriveTabular)]
 struct AlignTask {
     #[col(align = "left")]
@@ -143,10 +124,6 @@ fn test_anchor_right() {
     let spec = AlignTask::tabular_spec();
     assert_eq!(spec.columns[3].anchor, Anchor::Right);
 }
-
-// =============================================================================
-// Overflow tests
-// =============================================================================
 
 #[derive(Serialize, DeriveTabular)]
 struct OverflowTask {
@@ -208,10 +185,6 @@ fn test_overflow_truncate_start() {
     );
 }
 
-// =============================================================================
-// Style tests
-// =============================================================================
-
 #[derive(Serialize, DeriveTabular)]
 struct StyleTask {
     #[col(style = "muted")]
@@ -233,10 +206,6 @@ fn test_style_from_value() {
     let spec = StyleTask::tabular_spec();
     assert!(spec.columns[1].style_from_value);
 }
-
-// =============================================================================
-// Header and null_repr tests
-// =============================================================================
 
 #[derive(Serialize, DeriveTabular)]
 struct HeaderTask {
@@ -268,10 +237,6 @@ fn test_custom_key() {
     assert_eq!(spec.columns[2].key.as_deref(), Some("nested.value"));
 }
 
-// =============================================================================
-// Skip attribute tests
-// =============================================================================
-
 #[derive(Serialize, DeriveTabular)]
 struct SkipTask {
     id: String,
@@ -285,15 +250,10 @@ struct SkipTask {
 #[test]
 fn test_skip_field() {
     let spec = SkipTask::tabular_spec();
-    // Should only have 2 columns (id and title), not 3
     assert_eq!(spec.columns.len(), 2);
     assert_eq!(spec.columns[0].name.as_deref(), Some("id"));
     assert_eq!(spec.columns[1].name.as_deref(), Some("title"));
 }
-
-// =============================================================================
-// Container attribute tests
-// =============================================================================
 
 #[derive(Serialize, DeriveTabular)]
 #[tabular(separator = " │ ")]
@@ -321,10 +281,6 @@ fn test_prefix_suffix() {
     assert_eq!(spec.decorations.row_suffix, " │");
 }
 
-// =============================================================================
-// Combined attributes test
-// =============================================================================
-
 #[derive(Serialize, DeriveTabular)]
 #[tabular(separator = " │ ")]
 struct CompleteTask {
@@ -347,7 +303,6 @@ struct CompleteTask {
 #[test]
 fn test_complete_task_columns() {
     let spec = CompleteTask::tabular_spec();
-    // Should have 4 columns (internal is skipped)
     assert_eq!(spec.columns.len(), 4);
 }
 
@@ -401,10 +356,6 @@ fn test_complete_task_decorations() {
     let spec = CompleteTask::tabular_spec();
     assert_eq!(spec.decorations.column_sep, " │ ");
 }
-
-// =============================================================================
-// TabularRow derive tests
-// =============================================================================
 
 use standout_macros::TabularRow as DeriveTabularRow;
 
@@ -469,7 +420,6 @@ fn test_tabular_row_skip() {
         title: "Task title".to_string(),
     };
     let values = row.to_row();
-    // Should have 2 fields (internal is skipped)
     assert_eq!(values.len(), 2);
     assert_eq!(values[0], "TSK-001");
     assert_eq!(values[1], "Task title");
@@ -492,7 +442,6 @@ fn test_tabular_row_bool() {
     assert_eq!(values[1], "Test");
 }
 
-// Test that both macros can be used together
 #[derive(Serialize, DeriveTabular, DeriveTabularRow)]
 #[tabular(separator = " | ")]
 struct CombinedTask {
@@ -512,7 +461,6 @@ struct CombinedTask {
 #[test]
 fn test_combined_macros_spec() {
     let spec = CombinedTask::tabular_spec();
-    // Should have 3 columns (internal is skipped)
     assert_eq!(spec.columns.len(), 3);
     assert_eq!(spec.columns[0].name.as_deref(), Some("id"));
     assert_eq!(spec.columns[1].name.as_deref(), Some("title"));
@@ -528,7 +476,6 @@ fn test_combined_macros_row() {
         status: "pending".to_string(),
     };
     let values = task.to_row();
-    // Should have 3 values (internal is skipped)
     assert_eq!(values.len(), 3);
     assert_eq!(values[0], "TSK-001");
     assert_eq!(values[1], "Implement feature");
@@ -537,7 +484,6 @@ fn test_combined_macros_row() {
 
 #[test]
 fn test_combined_row_matches_spec_columns() {
-    // Verify that the number of row values matches the number of spec columns
     let spec = CombinedTask::tabular_spec();
     let task = CombinedTask {
         id: "TSK-001".to_string(),
@@ -550,18 +496,12 @@ fn test_combined_row_matches_spec_columns() {
     assert_eq!(spec.columns.len(), values.len());
 }
 
-// =============================================================================
-// Integration with TabularFormatter tests
-// =============================================================================
-
 use standout::tabular::{BorderStyle, Table, TabularFormatter};
 
 #[test]
 fn test_formatter_from_type() {
-    // TabularFormatter::from_type<T> should create a formatter using the derived spec
     let formatter = TabularFormatter::from_type::<CombinedTask>(80);
 
-    // Should have 3 columns (internal is skipped)
     assert_eq!(formatter.num_columns(), 3);
 }
 
@@ -577,11 +517,9 @@ fn test_formatter_row_from_trait() {
 
     let row = formatter.row_from_trait(&task);
 
-    // Row should contain the field values
     assert!(row.contains("TSK-001"));
     assert!(row.contains("Implement feature"));
     assert!(row.contains("pending"));
-    // Internal field should not be present
     assert!(!row.contains("42"));
 }
 
@@ -597,20 +535,16 @@ fn test_formatter_row_lines_from_trait() {
 
     let lines = formatter.row_lines_from_trait(&task);
 
-    // Should have at least one line
     assert!(!lines.is_empty());
-    // First line should contain the values
     assert!(lines[0].contains("TSK-001"));
 }
 
 #[test]
 fn test_table_from_type() {
-    // Table::from_type<T> should create a table using the derived spec
     let table = Table::from_type::<CombinedTask>(80)
         .header_from_columns()
         .border(BorderStyle::Light);
 
-    // Should have 3 columns
     assert_eq!(table.num_columns(), 3);
 }
 
@@ -626,11 +560,9 @@ fn test_table_row_from_trait() {
 
     let row = table.row_from_trait(&task);
 
-    // Row should have border characters
     assert!(row.starts_with('│'));
     assert!(row.ends_with('│'));
 
-    // Row should contain the field values
     assert!(row.contains("TSK-001"));
     assert!(row.contains("Implement feature"));
     assert!(row.contains("pending"));
@@ -638,18 +570,15 @@ fn test_table_row_from_trait() {
 
 #[test]
 fn test_table_header_from_columns_with_derived_spec() {
-    // The CompleteTask struct has explicit headers defined
     let table = Table::from_type::<CompleteTask>(80).header_from_columns();
 
     let header = table.header_row();
 
-    // "ID" is explicitly set as header for the id field
     assert!(header.contains("ID"));
 }
 
 #[test]
 fn test_full_table_workflow_with_macros() {
-    // Demonstrate the complete workflow: define struct, derive macros, create table, render rows
     let table = Table::from_type::<CombinedTask>(80)
         .header_from_columns()
         .border(BorderStyle::Light);
@@ -669,7 +598,6 @@ fn test_full_table_workflow_with_macros() {
         },
     ];
 
-    // Render all rows using the trait
     let mut output = Vec::new();
     output.push(table.top_border());
     output.push(table.header_row());
@@ -681,7 +609,6 @@ fn test_full_table_workflow_with_macros() {
 
     let rendered = output.join("\n");
 
-    // Verify the complete table structure
     assert!(rendered.contains("TSK-001"));
     assert!(rendered.contains("TSK-002"));
     assert!(rendered.contains("First task"));
@@ -690,10 +617,6 @@ fn test_full_table_workflow_with_macros() {
     assert!(rendered.contains("done"));
 }
 
-// =============================================================================
-// Template integration tests
-// =============================================================================
-
 use minijinja::{context, Environment};
 use standout::tabular::filters::{
     formatter_from_type, formatter_from_type_with_ambiguous_width, register_tabular_filters,
@@ -701,7 +624,6 @@ use standout::tabular::filters::{
 };
 use standout::{AmbiguousWidth, WidthCalculator};
 
-// Define a struct for template tests
 #[derive(Serialize, DeriveTabular, DeriveTabularRow)]
 #[tabular(separator = "  ")]
 struct DemoTask {
@@ -723,10 +645,8 @@ fn setup_template_env() -> Environment<'static> {
 
 #[test]
 fn test_helper_formatter_from_type() {
-    // Create a formatter from the derived spec
     let formatter = formatter_from_type::<DemoTask>(60);
 
-    // Use it in a template
     let mut env = setup_template_env();
     env.add_template(
         "test",
@@ -775,10 +695,8 @@ fn policy_aware_derive_helpers_use_wide_measurement() {
 
 #[test]
 fn test_helper_table_from_type_with_border() {
-    // Create a table from the derived spec with border
     let table = table_from_type::<DemoTask>(80, BorderStyle::Light, true);
 
-    // Use it in a template
     let mut env = setup_template_env();
     env.add_template(
         "test",
@@ -794,22 +712,18 @@ fn test_helper_table_from_type_with_border() {
         .render(context!(tbl => table))
         .unwrap();
 
-    // Should have header with our custom names
     assert!(result.contains("Task ID"));
     assert!(result.contains("Title"));
     assert!(result.contains("Status"));
 
-    // Should have border characters
     assert!(result.contains("│"));
     assert!(result.contains("─"));
 
-    // Should have our data
     assert!(result.contains("TSK-001"));
 }
 
 #[test]
 fn test_helper_table_from_type_without_headers() {
-    // Create a table without headers
     let table = table_from_type::<DemoTask>(80, BorderStyle::None, false);
 
     let mut env = setup_template_env();
@@ -822,13 +736,11 @@ fn test_helper_table_from_type_without_headers() {
         .render(context!(tbl => table))
         .unwrap();
 
-    // Header should be empty when not requested
     assert!(result.is_empty());
 }
 
 #[test]
 fn test_helper_full_template_workflow() {
-    // Demonstrate the complete workflow with derived macros and templates
     let table = table_from_type::<DemoTask>(80, BorderStyle::Light, true);
 
     let mut env = setup_template_env();
@@ -853,26 +765,19 @@ fn test_helper_full_template_workflow() {
         .render(context!(tbl => table, tasks => tasks))
         .unwrap();
 
-    // Verify complete table structure
     let lines: Vec<&str> = result.lines().collect();
-    assert!(lines.len() >= 6); // top, header, sep, 2 rows, bottom
+    assert!(lines.len() >= 6);
 
-    // Top border
     assert!(lines[0].starts_with('┌'));
-    // Header row
     assert!(lines[1].contains("Task ID"));
-    // Separator
     assert!(lines[2].starts_with('├'));
-    // Data rows
     assert!(lines[3].contains("TSK-001"));
     assert!(lines[4].contains("TSK-002"));
-    // Bottom border
     assert!(lines[5].starts_with('└'));
 }
 
 #[test]
 fn test_spec_columns_match_derived_demo_task() {
-    // Verify the derived spec has correct column configuration
     let spec = DemoTask::tabular_spec();
 
     assert_eq!(spec.columns.len(), 3);
@@ -885,7 +790,6 @@ fn test_spec_columns_match_derived_demo_task() {
 
 #[test]
 fn test_row_extraction_matches_derived_demo_task() {
-    // Verify TabularRow generates correct values
     let task = DemoTask {
         id: "TSK-001".to_string(),
         title: "Test".to_string(),
@@ -899,18 +803,12 @@ fn test_row_extraction_matches_derived_demo_task() {
     assert_eq!(row[2], "pending");
 }
 
-// =============================================================================
-// Option field tests (Regression test for TabularRow derive)
-// =============================================================================
-
 #[derive(DeriveTabularRow)]
 struct OptionRow {
     id: String,
 
-    // This should work (None -> empty string, Some(s) -> s)
     description: Option<String>,
 
-    // This should also work with non-string options
     score: Option<i32>,
 }
 
@@ -925,6 +823,5 @@ fn test_tabular_row_option() {
     assert_eq!(values.len(), 3);
     assert_eq!(values[0], "TSK-001");
     assert_eq!(values[1], "desc");
-    // Default behavior for None is empty string
     assert_eq!(values[2], "");
 }

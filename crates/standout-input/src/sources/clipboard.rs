@@ -1,5 +1,3 @@
-//! Clipboard input source.
-
 use std::sync::Arc;
 
 use clap::ArgMatches;
@@ -9,54 +7,13 @@ use crate::env::{ClipboardReader, RealClipboard};
 use crate::InputError;
 use crate::InputSources;
 
-/// Collect input from the system clipboard.
-///
-/// This source reads text from the system clipboard. It is available when
-/// the clipboard contains non-empty text content.
-///
-/// [`new`](Self::new) means "use this invocation's [`InputSources`]". An
-/// explicit reader from [`with_reader`](Self::with_reader) is not rebound.
-///
-/// # Platform Support
-///
-/// - **macOS**: Uses `pbpaste`
-/// - **Linux**: Uses `xclip -selection clipboard -o`
-/// - **Other**: Returns an error
-///
-/// # Example
-///
-/// ```ignore
-/// use standout_input::{InputChain, ArgSource, ClipboardSource};
-///
-/// let chain = InputChain::<String>::new()
-///     .try_source(ArgSource::new("content"))
-///     .try_source(ClipboardSource::new());
-/// ```
-///
-/// # Testing
-///
-/// Use [`ClipboardSource::with_reader`] to inject a mock for testing, or pass
-/// [`InputSources`] with a [`crate::MockClipboard`] into
-/// [`InputChain::resolve_from`](crate::InputChain::resolve_from):
-///
-/// ```ignore
-/// use standout_input::{ClipboardSource, MockClipboard};
-///
-/// let source = ClipboardSource::with_reader(MockClipboard::with_content("clipboard text"));
-/// ```
 #[derive(Clone)]
 pub struct ClipboardSource {
-    /// `None` binds to [`InputSources`] at resolve time.
     reader: Option<Arc<dyn ClipboardReader>>,
     trim: bool,
 }
 
 impl ClipboardSource {
-    /// Create a new clipboard source.
-    ///
-    /// Reads the invocation's clipboard when the chain is resolved against
-    /// [`InputSources`]. Standalone [`InputChain::resolve`] uses
-    /// [`InputSources::from_process`].
     pub fn new() -> Self {
         Self {
             reader: None,
@@ -64,10 +21,6 @@ impl ClipboardSource {
         }
     }
 
-    /// Create a clipboard source with a custom reader.
-    ///
-    /// This is primarily used for testing to inject mock clipboard. The
-    /// explicit reader is not replaced when the chain binds [`InputSources`].
     pub fn with_reader(reader: impl ClipboardReader + 'static) -> Self {
         Self {
             reader: Some(Arc::new(reader)),
@@ -75,7 +28,6 @@ impl ClipboardSource {
         }
     }
 
-    /// Create a clipboard source from a shared reader handle.
     pub fn with_shared_reader(reader: Arc<dyn ClipboardReader>) -> Self {
         Self {
             reader: Some(reader),
@@ -83,9 +35,6 @@ impl ClipboardSource {
         }
     }
 
-    /// Control whether to trim whitespace from the clipboard content.
-    ///
-    /// Default is `true`.
     pub fn trim(mut self, trim: bool) -> Self {
         self.trim = trim;
         self

@@ -1,9 +1,3 @@
-//! `App::builder().version(...)` as seen from every parse path.
-//!
-//! The builder setting only supplies the value; clap keeps answering
-//! `--version` with it, so what these assert is where the value reaches and
-//! that leaving it unset changes nothing.
-
 use clap::Command;
 use serde_json::json;
 use standout::cli::{App, ExitStatus, HelpResult, Output, RunErrorKind, SuccessKind};
@@ -62,8 +56,6 @@ fn an_owned_string_version_is_accepted() {
 
 #[test]
 fn the_parse_only_path_sees_the_same_version() {
-    // `get_matches_from` speaks `clap::Error` for everything clap displays,
-    // `--version` included; what matters is that the value arrived.
     let result =
         app_with(Some("9.9.9")).get_matches_from(versionless_command(), ["app", "--version"]);
 
@@ -102,8 +94,6 @@ fn an_unset_version_leaves_a_versionless_command_versionless() {
 
 #[test]
 fn a_configured_version_wins_over_one_set_on_the_command() {
-    // The application said it twice; the builder is the later word, and the
-    // one standout can see.
     let command = versionless_command().version("1.2.3");
     let result = app_with(Some("9.9.9")).run_to_string(command, ["app", "--version"]);
 

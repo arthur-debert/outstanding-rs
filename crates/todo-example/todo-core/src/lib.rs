@@ -1,14 +1,10 @@
 //! CLI-free todo application logic and JSON persistence.
 //!
-//! This crate deliberately knows nothing about clap, Standout, environment
-//! variables, templates, or terminal output. Both Rust callers and tests use
-//! the same small interface: load a store from an explicit path, then add,
-//! list, complete, or export todos.
-//!
-//! [`TodoStore::export_csv`] shows where that line falls for artifacts: the
-//! core returns exact bytes, a *suggested* filename, and typed warnings, and
-//! stops there. Choosing a destination, writing the file, and wording the
-//! result belong to the shell.
+//! Knows nothing about clap, Standout, environment variables, templates, or
+//! terminal output. Load a store from an explicit path, then add, list,
+//! complete, or export todos. [`TodoStore::export_csv`] returns exact bytes,
+//! a suggested filename, and typed warnings — choosing a destination,
+//! writing the file, and wording the result belong to the caller.
 
 mod export;
 mod model;

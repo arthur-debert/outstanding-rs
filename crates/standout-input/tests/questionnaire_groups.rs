@@ -1,15 +1,8 @@
-//! Pure answer-sheet engine tests for nested and repeatable groups:
-//! definition validation, minimum-count rendering, copied blocks, occurrence
-//! paths, malformed boundaries, cosmetic edits, structural fingerprinting,
-//! conditional repeated fields, and accumulated diagnostics.
-
 use standout_input::questionnaire::{
     AnswerSheetDiagnostic, FormError, Group, Item, Questionnaire, QuestionnaireError, ScalarField,
     ScalarKind, ValidationDiagnostic,
 };
 
-/// A nested fixture: a root field, a section, and inside the section a
-/// repeatable group (minimum 1, maximum 3) with a defaulted child.
 fn commands() -> Questionnaire {
     Questionnaire::new(
         "demo.commands",
@@ -56,9 +49,6 @@ fn commands() -> Questionnaire {
     .unwrap()
 }
 
-/// A repeatable fixture with conditions: a per-occurrence controller
-/// (`inputs.flag` gates `inputs.flag_name`) and a root controller
-/// (`advanced` gates `inputs.doc` in every occurrence).
 fn conditional_inputs() -> Questionnaire {
     Questionnaire::new(
         "demo.cond",
@@ -87,8 +77,6 @@ fn conditional_inputs() -> Questionnaire {
     .unwrap()
 }
 
-/// Set `answer` below the `n`th (0-based) question line tagged `id`,
-/// replacing a rendered pre-filled default line when one is present.
 fn answer_nth(sheet: &str, id: &str, n: usize, answer: &str) -> String {
     let tag = format!("<id:{id}>");
     let lines: Vec<&str> = sheet.lines().collect();
@@ -101,8 +89,6 @@ fn answer_nth(sheet: &str, id: &str, n: usize, answer: &str) -> String {
         i += 1;
         if line.trim_end().ends_with(&tag) {
             if seen == n {
-                // A non-blank line right below the question is a pre-filled
-                // default: the answer replaces it.
                 if lines.get(i).is_some_and(|next| !next.trim().is_empty()) {
                     i += 1;
                 }
@@ -115,8 +101,6 @@ fn answer_nth(sheet: &str, id: &str, n: usize, answer: &str) -> String {
     out.join("\n") + "\n"
 }
 
-/// Split a sheet at the first question line tagged `id`: everything before
-/// it, and the block from that line to the end of the sheet.
 fn split_at_tag(sheet: &str, id: &str) -> (String, String) {
     let tag = format!("<id:{id}>");
     let mut offset = 0;
@@ -129,17 +113,12 @@ fn split_at_tag(sheet: &str, id: &str) -> (String, String) {
     panic!("no question line found for {id}");
 }
 
-/// The `commands()` sheet with every scalar answered and one input block.
 fn answered_commands_sheet(q: &Questionnaire) -> String {
     let sheet = q.render_answer_sheet();
     let sheet = answer_nth(&sheet, "project.name", 0, "demo");
     let sheet = answer_nth(&sheet, "command.name", 0, "generate");
     answer_nth(&sheet, "command.inputs.name", 0, "definition")
 }
-
-// ============================================================================
-// Definition validation
-// ============================================================================
 
 #[test]
 fn definition_rejects_empty_group() {
@@ -247,8 +226,6 @@ fn definition_rejects_duplicate_ids_across_fields_and_groups() {
 
 #[test]
 fn definition_rejects_a_condition_into_a_sibling_group() {
-    // g2.b's controller lives inside sibling group g1: with repeats there
-    // would be no single occurrence to resolve it against.
     let err = Questionnaire::new(
         "demo",
         vec![
@@ -288,10 +265,6 @@ fn definition_rejects_a_condition_on_a_group() {
     assert!(matches!(&err, QuestionnaireError::Item { id, .. } if id == "b"));
     assert!(err.to_string().contains("Invalid condition on field 'b'"));
 }
-
-// ============================================================================
-// Rendering
-// ============================================================================
 
 #[test]
 fn render_emits_exactly_the_declared_minimum_of_blocks() {
@@ -363,10 +336,6 @@ fn render_is_deterministic_for_nested_definitions() {
     assert_eq!(q.render_answer_sheet(), q.render_answer_sheet());
 }
 
-// ============================================================================
-// Round trips and copied blocks
-// ============================================================================
-
 #[test]
 fn minimum_sheet_round_trips_with_occurrence_paths() {
     let q = commands();
@@ -410,8 +379,6 @@ fn occurrence_counts_come_from_tag_lines_not_numbers_or_wording() {
     let q = commands();
     let sheet = answered_commands_sheet(&q);
     let (_, block) = split_at_tag(&sheet, "command.inputs");
-    // The copied block keeps the same display numbers, gets reworded, and
-    // even claims a count in prose — none of which means anything.
     let copy = block
         .replace(
             "Describe a command input.",
@@ -450,15 +417,8 @@ fn a_root_field_after_a_group_block_closes_the_group_scope() {
     assert_eq!(raw.get("notes"), Some("outside"));
 }
 
-// ============================================================================
-// Malformed boundaries
-// ============================================================================
-
 #[test]
 fn a_group_tag_mentioned_inside_answer_prose_is_inert() {
-    // Regression: under the old format a group ID mentioned in prose could
-    // satisfy the group contract. A mid-line tag mention is now inert
-    // answer content — flagged only by the tag-fragment warning.
     let q = Questionnaire::new(
         "demo",
         vec![
@@ -492,8 +452,6 @@ fn a_group_tag_mentioned_inside_answer_prose_is_inert() {
 fn a_child_without_its_group_tag_line_is_misplaced() {
     let q = commands();
     let sheet = answered_commands_sheet(&q);
-    // Delete the group tag line: its children now sit in the enclosing
-    // scope, where they are not valid.
     let sheet: String = sheet
         .lines()
         .filter(|line| !line.contains("<id:command.inputs>"))
@@ -547,9 +505,6 @@ fn a_duplicate_child_in_one_occurrence_reports_the_indexed_path() {
 
 #[test]
 fn a_bare_group_tag_line_opens_one_more_occurrence() {
-    // Occurrence counting is exactly counting the group's tag lines: a
-    // stray tag line opens an (empty) occurrence, whose missing required
-    // children then surface as decode diagnostics — never silently.
     let q = commands();
     let sheet = answered_commands_sheet(&q);
     let sheet = format!("{sheet}\n9. Inputs again. <id:command.inputs>\n");
@@ -570,8 +525,6 @@ fn an_unknown_child_inside_a_block_is_a_diagnostic() {
     let q = conditional_inputs();
     let sheet = q.render_answer_sheet();
     let sheet = answer_nth(&sheet, "inputs.name", 0, "alpha");
-    // A question line with an ID the schema never declared, inside a group
-    // block: diagnosed, not silently swallowed.
     let sheet = format!("{sheet}9. Ghost? (string) <id:inputs.ghost>\nboo\n");
     let diags = q.parse_answer_sheet(&sheet).unwrap_err();
     assert_eq!(diags.len(), 1);
@@ -580,10 +533,6 @@ fn an_unknown_child_inside_a_block_is_a_diagnostic() {
         "{diags:?}"
     );
 }
-
-// ============================================================================
-// Decoding: bounds, indexed paths, conditions, accumulation
-// ============================================================================
 
 #[test]
 fn under_minimum_occurrences_is_a_structural_diagnostic() {
@@ -634,7 +583,6 @@ fn missing_required_answers_use_indexed_occurrence_paths() {
     let q = commands();
     let sheet = answered_commands_sheet(&q);
     let (_, block) = split_at_tag(&sheet, "command.inputs");
-    // The copied block's name is left blank.
     let copied = format!("{sheet}\n{}", block.replace("\ndefinition\n", "\n\n"));
     let diags = q
         .decode_answers(&q.parse_answer_sheet(&copied).unwrap())
@@ -656,8 +604,6 @@ fn a_condition_inside_a_repeatable_group_controls_per_occurrence() {
     let sheet = answer_nth(&sheet, "inputs.flag", 0, "yes");
     let sheet = answer_nth(&sheet, "inputs.flag_name", 0, "alpha-flag");
     let (_, block) = split_at_tag(&sheet, "inputs");
-    // Second occurrence keeps flag=no (the default), so its flag_name must
-    // stay blank — and does.
     let copy = block
         .replace("\nalpha-flag\n", "\n\n")
         .replace("\nyes\n", "\nno\n")
@@ -677,7 +623,6 @@ fn a_populated_inactive_field_in_an_occurrence_is_indexed() {
     let q = conditional_inputs();
     let sheet = q.render_answer_sheet();
     let sheet = answer_nth(&sheet, "inputs.name", 0, "alpha");
-    // flag stays "no" (default) but flag_name is populated anyway.
     let sheet = answer_nth(&sheet, "inputs.flag_name", 0, "stale");
     let diags = q
         .decode_answers(&q.parse_answer_sheet(&sheet).unwrap())
@@ -703,7 +648,6 @@ fn a_root_controller_gates_fields_in_every_occurrence() {
         .unwrap();
     assert_eq!(answers.get_text("inputs[0].doc"), Some("documented"));
 
-    // With advanced left at its default (no), a populated doc is an error.
     let sheet = q.render_answer_sheet();
     let sheet = answer_nth(&sheet, "inputs.name", 0, "alpha");
     let sheet = answer_nth(&sheet, "inputs.doc", 0, "stale");
@@ -723,7 +667,6 @@ fn a_root_controller_gates_fields_in_every_occurrence() {
 fn diagnostics_accumulate_across_occurrences() {
     let q = conditional_inputs();
     let sheet = q.render_answer_sheet();
-    // Occurrence 0: name blank (missing). Occurrence 1: flag not a bool.
     let (_, block) = split_at_tag(&sheet, "inputs");
     let copy = block
         .replace("\nno\n", "\nmaybe\n")
@@ -747,13 +690,11 @@ fn diagnostics_accumulate_across_occurrences() {
 fn whole_form_rules_run_over_indexed_answers() {
     let q = commands();
     let sheet = answered_commands_sheet(&q);
-    // The copied block keeps the same name answer, violating the app rule.
     let (_, block) = split_at_tag(&sheet, "command.inputs");
     let copied = format!("{sheet}\n{block}");
     let raw = q.parse_answer_sheet(&copied).unwrap();
     let diags = q
         .decode_answers_with(&raw, |answers| {
-            // An application rule spanning occurrences: input names unique.
             let count = answers.occurrence_count("command.inputs");
             let mut names: Vec<&str> = (0..count)
                 .filter_map(|i| answers.get_text(&format!("command.inputs[{i}].name")))
@@ -774,11 +715,6 @@ fn whole_form_rules_run_over_indexed_answers() {
     assert!(matches!(&diags[0], ValidationDiagnostic::Form { .. }));
 }
 
-// ============================================================================
-// Fingerprint: structure and bounds are semantic; wording and order are not
-// ============================================================================
-
-/// The `commands()` fixture with different wording and item order.
 fn reworded_commands() -> Questionnaire {
     Questionnaire::new(
         "demo.commands",
@@ -832,8 +768,6 @@ fn fingerprint_ignores_wording_and_presentation_order() {
 
 #[test]
 fn a_reworded_sheet_still_parses_for_the_equivalent_definition() {
-    // A sheet rendered by one wording parses under the other: cosmetic
-    // definition changes never invalidate distributed sheets.
     let rendered_by = commands();
     let parsed_by = reworded_commands();
     let raw = parsed_by
@@ -863,7 +797,6 @@ fn fingerprint_covers_repeat_bounds() {
 
 #[test]
 fn fingerprint_covers_group_structure() {
-    // Same ID set, different nesting: a.c inside the group vs at the root.
     let nested = Questionnaire::new(
         "demo",
         vec![Item::from(Group::new(

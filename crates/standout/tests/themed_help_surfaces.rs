@@ -1,29 +1,8 @@
-//! What themed help puts on the page, asserted on rendered output.
-//!
-//! Covers the three defects that surfaced together when lookma migrated off
-//! clap's formatter — a name column that collided with its descriptions
-//! (#297), information clap surfaces that the template had no slot for (#298),
-//! and a `help` word that described subcommands a flat CLI does not have
-//! (#299). They are one test file because they are one page: each is only
-//! visible in what the reader ends up seeing.
-//!
-//! The page comes from the shared downstream fixture
-//! ([`standout_fixtures`]), so the shape these assertions read is the same
-//! shape every other help suite reads — and the app and the `clap::Command`
-//! behind it cannot drift apart, which is what a per-file copy allowed. The
-//! two bespoke commands below are deliberate: a floor-width probe needs an
-//! option set narrower than the fixture's, and a fallback probe needs a
-//! command that declares no `long_about` at all.
-//!
-//! Assertions run in `Text` mode, so a row is its final characters and column
-//! positions are directly comparable.
-
 use clap::{Arg, Command};
 use standout::cli::{render_help, HelpConfig, HelpLength, HelpResult};
 use standout::OutputMode;
 use standout_fixtures::{downstream, Fixture};
 
-/// The page the fixture renders for `args`.
 fn page(fixture: &Fixture, args: &[&str]) -> String {
     match fixture.app().get_matches_from(fixture.command(), args) {
         HelpResult::Help(text) | HelpResult::PagedHelp(text) => text,
@@ -31,19 +10,14 @@ fn page(fixture: &Fixture, args: &[&str]) -> String {
     }
 }
 
-/// The full downstream shape: subcommands, a positional, presence flags,
-/// valued options, an enumerated option, a theme, and topics.
 fn help_for(args: &[&str]) -> String {
     page(&downstream().build(), args)
 }
 
-/// The same declaration without the subcommands: the flat CLI whose `help`
-/// word has no namespace to describe.
 fn flat_help_for(args: &[&str]) -> String {
     page(&downstream().flat().build(), args)
 }
 
-/// The row whose name cell starts with `name`.
 fn row<'a>(output: &'a str, name: &str) -> &'a str {
     output
         .lines()
@@ -51,20 +25,12 @@ fn row<'a>(output: &'a str, name: &str) -> &'a str {
         .unwrap_or_else(|| panic!("no row for {name} in:\n{output}"))
 }
 
-/// The column its description starts at.
 fn description_column(output: &str, name: &str, description: &str) -> usize {
     let line = row(output, name);
     line.find(description)
         .unwrap_or_else(|| panic!("{name} row has no description {description:?}: {line:?}"))
 }
 
-// ---------------------------------------------------------------------------
-// #297 — the name column
-// ---------------------------------------------------------------------------
-
-/// The reported symptom: `--output-file-path` ran straight into its
-/// description, because the column was fixed at 14 and padding saturated to
-/// zero.
 #[test]
 fn long_option_name_keeps_its_separator() {
     let output = help_for(&["lookma", "--help"]);
@@ -98,8 +64,6 @@ fn every_option_description_starts_at_one_column() {
     );
 }
 
-/// Sections size independently, the way clap's do: the long flag in OPTIONS
-/// must not drag the ARGUMENTS column out with it.
 #[test]
 fn arguments_and_options_columns_are_independent() {
     let output = help_for(&["lookma", "--help"]);
@@ -113,9 +77,6 @@ fn arguments_and_options_columns_are_independent() {
     );
 }
 
-/// A short option set keeps the layout it had before the column could widen.
-/// Bespoke by design: the fixture's longest option is what widens the column,
-/// so the floor is only observable on a command narrower than it.
 #[test]
 fn short_names_keep_the_floor_width() {
     let cmd = Command::new("app")
@@ -129,17 +90,12 @@ fn short_names_keep_the_floor_width() {
     };
     let output = render_help(&cmd, Some(config)).unwrap();
 
-    // Two-space indent, a 12-column name cell, then the two-column gap.
     assert_eq!(
         description_column(&output, "--out", "Output"),
         16,
         "{output}"
     );
 }
-
-// ---------------------------------------------------------------------------
-// #298 — the information clap surfaces
-// ---------------------------------------------------------------------------
 
 #[test]
 fn short_help_renders_about_and_long_help_renders_long_about() {
@@ -157,7 +113,6 @@ fn short_help_renders_about_and_long_help_renders_long_about() {
     );
 }
 
-/// The `help` word is the spelled-out request, so it reads like `--help`.
 #[test]
 fn help_word_renders_long_about() {
     let word = help_for(&["lookma", "help"]);
@@ -167,8 +122,6 @@ fn help_word_renders_long_about() {
     );
 }
 
-/// Bespoke by design: the fixture declares a `long_about`, so the fallback is
-/// only observable on a command that declares none.
 #[test]
 fn long_help_falls_back_to_about_when_no_long_about() {
     let cmd = Command::new("app")
@@ -184,8 +137,6 @@ fn long_help_falls_back_to_about_when_no_long_about() {
     assert!(output.contains("Only terse"), "{output}");
 }
 
-/// `--output` is standout's own flag, so every app enabling themed help lost
-/// the list of modes standout itself provides.
 #[test]
 fn option_rows_carry_defaults_and_possible_values() {
     let output = help_for(&["lookma", "--help"]);
@@ -197,8 +148,6 @@ fn option_rows_carry_defaults_and_possible_values() {
     );
 }
 
-/// The app's own enumerated option, spelled in a vocabulary of its own so this
-/// cannot pass on `--output`'s rows.
 #[test]
 fn an_apps_own_enumerated_option_carries_its_default_and_values() {
     let output = help_for(&["lookma", "--help"]);
@@ -237,7 +186,6 @@ fn presence_flags_do_not_render_bool_values() {
     );
 }
 
-/// The continuation lines hang under the description column, not the name.
 #[test]
 fn default_and_values_lines_align_with_descriptions() {
     let output = help_for(&["lookma", "--help"]);
@@ -252,8 +200,6 @@ fn default_and_values_lines_align_with_descriptions() {
     assert_eq!(values, description, "values line must hang:\n{output}");
 }
 
-/// The line index of a section header — matched as a whole line, since
-/// "OPTIONS" also appears inside the usage line as `[OPTIONS]`.
 fn section_line(output: &str, header: &str) -> usize {
     output
         .lines()
@@ -261,8 +207,6 @@ fn section_line(output: &str, header: &str) -> usize {
         .unwrap_or_else(|| panic!("no {header} section in:\n{output}"))
 }
 
-/// Positionals used to be filed under OPTIONS behind every flag, which read as
-/// though the primary argument were an afterthought.
 #[test]
 fn positionals_get_their_own_section_before_options() {
     let output = help_for(&["lookma", "--help"]);
@@ -284,13 +228,6 @@ fn positionals_get_their_own_section_before_options() {
     );
 }
 
-// ---------------------------------------------------------------------------
-// #299 — the flat-CLI `help` word
-// ---------------------------------------------------------------------------
-
-/// A COMMANDS section whose only entry is the machinery printing it. The
-/// fixture drops its topics here, since a registered topic is precisely what
-/// gives the word somewhere to go.
 #[test]
 fn flat_cli_suppresses_a_help_only_commands_section() {
     let output = page(
@@ -304,8 +241,6 @@ fn flat_cli_suppresses_a_help_only_commands_section() {
     );
 }
 
-/// Registered topics earn the section back: `help <topic>` is a real
-/// destination, and the word is how a reader reaches it.
 #[test]
 fn registered_topics_keep_the_help_word_listed() {
     let output = flat_help_for(&["lookma", "--help"]);
@@ -317,7 +252,6 @@ fn registered_topics_keep_the_help_word_listed() {
     );
 }
 
-/// The wording clap ships points at a namespace a flat CLI does not have.
 #[test]
 fn flat_cli_help_word_does_not_mention_subcommands() {
     let fixture = downstream().flat().build();
@@ -348,8 +282,6 @@ fn nested_cli_help_word_still_mentions_subcommands() {
     );
 }
 
-/// A root that has commands of its own keeps its COMMANDS section, `help`
-/// included.
 #[test]
 fn nested_cli_keeps_its_commands_section() {
     let output = help_for(&["lookma", "--help"]);

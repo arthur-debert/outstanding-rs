@@ -1,8 +1,3 @@
-//! Inquire-based input sources.
-//!
-//! Rich TUI prompts using the [inquire](https://crates.io/crates/inquire) crate.
-//! These provide a more polished interactive experience than simple-prompts.
-
 use std::fmt::Display;
 use std::io::IsTerminal;
 use std::ops::ControlFlow;
@@ -19,7 +14,6 @@ use crate::responder::PromptResponder;
 use crate::InputError;
 use crate::InputSources;
 
-/// Convert inquire errors to InputError.
 fn map_inquire_error(e: InquireError) -> InputError {
     match e {
         InquireError::OperationCanceled | InquireError::OperationInterrupted => {
@@ -29,22 +23,6 @@ fn map_inquire_error(e: InquireError) -> InputError {
     }
 }
 
-/// Text input prompt using inquire.
-///
-/// Provides a rich text input experience with:
-/// - Autocomplete suggestions
-/// - Input validation feedback
-/// - Help messages
-///
-/// # Example
-///
-/// ```ignore
-/// use standout_input::{InputChain, ArgSource, InquireText};
-///
-/// let chain = InputChain::<String>::new()
-///     .try_source(ArgSource::new("name"))
-///     .try_source(InquireText::new("What is your name?"));
-/// ```
 #[derive(Clone)]
 pub struct InquireText {
     message: String,
@@ -55,7 +33,6 @@ pub struct InquireText {
 }
 
 impl InquireText {
-    /// Create a new text prompt.
     pub fn new(message: impl Into<String>) -> Self {
         Self {
             message: message.into(),
@@ -66,40 +43,25 @@ impl InquireText {
         }
     }
 
-    /// Set a default value shown in the prompt.
     pub fn default(mut self, default: impl Into<String>) -> Self {
         self.default = Some(default.into());
         self
     }
 
-    /// Set placeholder text shown when empty.
     pub fn placeholder(mut self, placeholder: impl Into<String>) -> Self {
         self.placeholder = Some(placeholder.into());
         self
     }
 
-    /// Set a help message shown below the prompt.
     pub fn help(mut self, help: impl Into<String>) -> Self {
         self.help_message = Some(help.into());
         self
     }
 
-    /// Show the prompt and return the entered value.
-    ///
-    /// Standalone counterpart to [`InputCollector::collect`] for wizard /
-    /// REPL flows that drive standout themselves and have no `&ArgMatches`
-    /// to plumb through. Returns [`InputError::PromptCancelled`] on Esc /
-    /// Ctrl+C, and [`InputError::NoInput`] if stdin is not a TTY or the
-    /// user submits empty input.
-    ///
-    /// In tests, pass a [`PromptResponder`](crate::PromptResponder) on
-    /// [`InputSources`] (or the `TestHarness::prompts(...)` builder) to
-    /// intercept this call without touching the production wizard code.
     pub fn prompt(&self) -> Result<String, InputError> {
         self.prompt_from(&InputSources::from_process())
     }
 
-    /// [`prompt`](Self::prompt) against explicit [`InputSources`].
     pub fn prompt_from(&self, sources: &InputSources) -> Result<String, InputError> {
         crate::collector::prompt_value_from(self, sources)
     }
@@ -157,19 +119,6 @@ impl InputCollector<String> for InquireText {
     }
 }
 
-/// Confirmation prompt using inquire.
-///
-/// Provides a yes/no selection with clear visual feedback.
-///
-/// # Example
-///
-/// ```ignore
-/// use standout_input::{InputChain, FlagSource, InquireConfirm};
-///
-/// let chain = InputChain::<bool>::new()
-///     .try_source(FlagSource::new("yes"))
-///     .try_source(InquireConfirm::new("Proceed with deployment?"));
-/// ```
 #[derive(Clone)]
 pub struct InquireConfirm {
     message: String,
@@ -179,7 +128,6 @@ pub struct InquireConfirm {
 }
 
 impl InquireConfirm {
-    /// Create a new confirmation prompt.
     pub fn new(message: impl Into<String>) -> Self {
         Self {
             message: message.into(),
@@ -189,31 +137,20 @@ impl InquireConfirm {
         }
     }
 
-    /// Set the default value.
     pub fn default(mut self, default: bool) -> Self {
         self.default = Some(default);
         self
     }
 
-    /// Set a help message.
     pub fn help(mut self, help: impl Into<String>) -> Self {
         self.help_message = Some(help.into());
         self
     }
 
-    /// Show the prompt and return the user's yes/no answer.
-    ///
-    /// Standalone counterpart to [`InputCollector::collect`] for wizard /
-    /// REPL flows that drive standout themselves. Returns
-    /// [`InputError::PromptCancelled`] on Esc / Ctrl+C, and
-    /// [`InputError::NoInput`] if stdin is not a TTY. Routes through any
-    /// installed [`PromptResponder`](crate::PromptResponder) so wizard
-    /// tests can script the answer.
     pub fn prompt(&self) -> Result<bool, InputError> {
         self.prompt_from(&InputSources::from_process())
     }
 
-    /// [`prompt`](Self::prompt) against explicit [`InputSources`].
     pub fn prompt_from(&self, sources: &InputSources) -> Result<bool, InputError> {
         crate::collector::prompt_value_from(self, sources)
     }
@@ -263,22 +200,6 @@ impl InputCollector<bool> for InquireConfirm {
     }
 }
 
-/// Selection prompt using inquire.
-///
-/// Presents a list of options for single selection with arrow key navigation.
-///
-/// # Example
-///
-/// ```ignore
-/// use standout_input::{InputChain, InquireSelect};
-///
-/// let chain = InputChain::<String>::new()
-///     .try_source(InquireSelect::new("Choose environment:", vec![
-///         "development",
-///         "staging",
-///         "production",
-///     ]));
-/// ```
 #[derive(Clone)]
 pub struct InquireSelect<T> {
     message: String,
@@ -289,7 +210,6 @@ pub struct InquireSelect<T> {
 }
 
 impl<T: Display + Clone + Send + Sync + 'static> InquireSelect<T> {
-    /// Create a new selection prompt.
     pub fn new(message: impl Into<String>, options: Vec<T>) -> Self {
         Self {
             message: message.into(),
@@ -300,35 +220,20 @@ impl<T: Display + Clone + Send + Sync + 'static> InquireSelect<T> {
         }
     }
 
-    /// Set a help message.
     pub fn help(mut self, help: impl Into<String>) -> Self {
         self.help_message = Some(help.into());
         self
     }
 
-    /// Set the page size for scrolling.
     pub fn page_size(mut self, size: usize) -> Self {
         self.page_size = size;
         self
     }
 
-    /// Show the selection prompt and return the chosen option.
-    ///
-    /// Standalone counterpart to [`InputCollector::collect`] for wizard /
-    /// REPL flows that drive standout themselves. Returns
-    /// [`InputError::PromptCancelled`] on Esc / Ctrl+C, and
-    /// [`InputError::NoInput`] if stdin is not a TTY or the option list
-    /// is empty.
-    ///
-    /// Routes through any installed
-    /// [`PromptResponder`](crate::PromptResponder); a scripted test
-    /// returns a `PromptResponse::Choice(i)` and the source clones
-    /// `options[i]`.
     pub fn prompt(&self) -> Result<T, InputError> {
         self.prompt_from(&InputSources::from_process())
     }
 
-    /// [`prompt`](Self::prompt) against explicit [`InputSources`].
     pub fn prompt_from(&self, sources: &InputSources) -> Result<T, InputError> {
         crate::collector::prompt_value_from(self, sources)
     }
@@ -380,22 +285,6 @@ impl<T: Display + Clone + Send + Sync + 'static> InputCollector<T> for InquireSe
     }
 }
 
-/// Multi-selection prompt using inquire.
-///
-/// Presents a list of options for multiple selection with checkboxes.
-///
-/// # Example
-///
-/// ```ignore
-/// use standout_input::{InputChain, InquireMultiSelect};
-///
-/// let chain = InputChain::<Vec<String>>::new()
-///     .try_source(InquireMultiSelect::new("Select features:", vec![
-///         "logging",
-///         "metrics",
-///         "tracing",
-///     ]));
-/// ```
 #[derive(Clone)]
 pub struct InquireMultiSelect<T> {
     message: String,
@@ -408,7 +297,6 @@ pub struct InquireMultiSelect<T> {
 }
 
 impl<T: Display + Clone + Send + Sync + 'static> InquireMultiSelect<T> {
-    /// Create a new multi-selection prompt.
     pub fn new(message: impl Into<String>, options: Vec<T>) -> Self {
         Self {
             message: message.into(),
@@ -421,47 +309,30 @@ impl<T: Display + Clone + Send + Sync + 'static> InquireMultiSelect<T> {
         }
     }
 
-    /// Set a help message.
     pub fn help(mut self, help: impl Into<String>) -> Self {
         self.help_message = Some(help.into());
         self
     }
 
-    /// Set the page size for scrolling.
     pub fn page_size(mut self, size: usize) -> Self {
         self.page_size = size;
         self
     }
 
-    /// Set minimum required selections.
     pub fn min_selections(mut self, min: usize) -> Self {
         self.min_selections = Some(min);
         self
     }
 
-    /// Set maximum allowed selections.
     pub fn max_selections(mut self, max: usize) -> Self {
         self.max_selections = Some(max);
         self
     }
 
-    /// Show the multi-selection prompt and return the chosen options.
-    ///
-    /// Standalone counterpart to [`InputCollector::collect`] for wizard /
-    /// REPL flows that drive standout themselves. Returns
-    /// [`InputError::PromptCancelled`] on Esc / Ctrl+C, and
-    /// [`InputError::NoInput`] if stdin is not a TTY or the option list
-    /// is empty.
-    ///
-    /// Routes through any installed
-    /// [`PromptResponder`](crate::PromptResponder); a scripted test
-    /// returns a `PromptResponse::Choices([..])` and the source clones
-    /// the corresponding entries from `options`.
     pub fn prompt(&self) -> Result<Vec<T>, InputError> {
         self.prompt_from(&InputSources::from_process())
     }
 
-    /// [`prompt`](Self::prompt) against explicit [`InputSources`].
     pub fn prompt_from(&self, sources: &InputSources) -> Result<Vec<T>, InputError> {
         crate::collector::prompt_value_from(self, sources)
     }
@@ -499,8 +370,6 @@ impl<T: Display + Clone + Send + Sync + 'static> InputCollector<Vec<T>> for Inqu
                 prompt = prompt.with_help_message(help);
             }
 
-            // Note: inquire's min/max validation is done via validators,
-            // but we simplify by checking after the fact
             prompt.prompt().map_err(map_inquire_error)?
         };
 
@@ -539,18 +408,6 @@ impl<T: Display + Clone + Send + Sync + 'static> InputCollector<Vec<T>> for Inqu
     }
 }
 
-/// Password prompt using inquire.
-///
-/// Provides secure password entry with masked input.
-///
-/// # Example
-///
-/// ```ignore
-/// use standout_input::{InputChain, InquirePassword};
-///
-/// let chain = InputChain::<String>::new()
-///     .try_source(InquirePassword::new("Enter API token:"));
-/// ```
 #[derive(Clone)]
 pub struct InquirePassword {
     message: String,
@@ -561,7 +418,6 @@ pub struct InquirePassword {
 }
 
 impl InquirePassword {
-    /// Create a new password prompt.
     pub fn new(message: impl Into<String>) -> Self {
         Self {
             message: message.into(),
@@ -572,49 +428,35 @@ impl InquirePassword {
         }
     }
 
-    /// Set a help message.
     pub fn help(mut self, help: impl Into<String>) -> Self {
         self.help_message = Some(help.into());
         self
     }
 
-    /// Hide input completely (no asterisks).
     pub fn hidden(mut self) -> Self {
         self.display_mode = PasswordDisplayMode::Hidden;
         self
     }
 
-    /// Show asterisks for each character (default).
     pub fn masked(mut self) -> Self {
         self.display_mode = PasswordDisplayMode::Masked;
         self
     }
 
-    /// Show the full password as typed.
     pub fn full(mut self) -> Self {
         self.display_mode = PasswordDisplayMode::Full;
         self
     }
 
-    /// Require password confirmation with a second prompt.
     pub fn with_confirmation(mut self, message: impl Into<String>) -> Self {
         self.confirmation = Some(message.into());
         self
     }
 
-    /// Show the password prompt and return the entered value.
-    ///
-    /// Standalone counterpart to [`InputCollector::collect`] for wizard /
-    /// REPL flows that drive standout themselves. Returns
-    /// [`InputError::PromptCancelled`] on Esc / Ctrl+C, and
-    /// [`InputError::NoInput`] if stdin is not a TTY or the user submits
-    /// empty input. Routes through any installed
-    /// [`PromptResponder`](crate::PromptResponder).
     pub fn prompt(&self) -> Result<String, InputError> {
         self.prompt_from(&InputSources::from_process())
     }
 
-    /// [`prompt`](Self::prompt) against explicit [`InputSources`].
     pub fn prompt_from(&self, sources: &InputSources) -> Result<String, InputError> {
         crate::collector::prompt_value_from(self, sources)
     }
@@ -671,19 +513,6 @@ impl InputCollector<String> for InquirePassword {
     }
 }
 
-/// Editor prompt using inquire.
-///
-/// Opens an external editor for multi-line input with a preview.
-///
-/// # Example
-///
-/// ```ignore
-/// use standout_input::{InputChain, ArgSource, InquireEditor};
-///
-/// let chain = InputChain::<String>::new()
-///     .try_source(ArgSource::new("message"))
-///     .try_source(InquireEditor::new("Enter commit message:"));
-/// ```
 #[derive(Clone)]
 pub struct InquireEditor {
     message: String,
@@ -695,7 +524,6 @@ pub struct InquireEditor {
 }
 
 impl InquireEditor {
-    /// Create a new editor prompt.
     pub fn new(message: impl Into<String>) -> Self {
         Self {
             message: message.into(),
@@ -707,43 +535,30 @@ impl InquireEditor {
         }
     }
 
-    /// Set a help message.
     pub fn help(mut self, help: impl Into<String>) -> Self {
         self.help_message = Some(help.into());
         self
     }
 
-    /// Set the file extension for syntax highlighting.
     pub fn extension(mut self, ext: impl Into<String>) -> Self {
         self.file_extension = ext.into();
         self
     }
 
-    /// Set predefined text to populate the editor.
     pub fn predefined_text(mut self, text: impl Into<String>) -> Self {
         self.predefined_text = Some(text.into());
         self
     }
 
-    /// Set a custom render config.
     pub fn render_config(mut self, config: RenderConfig<'static>) -> Self {
         self.render_config = Some(config);
         self
     }
 
-    /// Show the editor prompt (press 'e' to open) and return the saved text.
-    ///
-    /// Standalone counterpart to [`InputCollector::collect`] for wizard /
-    /// REPL flows that drive standout themselves. Returns
-    /// [`InputError::PromptCancelled`] on Esc / Ctrl+C, and
-    /// [`InputError::NoInput`] if stdin is not a TTY or the user submits
-    /// empty content. Routes through any installed
-    /// [`PromptResponder`](crate::PromptResponder).
     pub fn prompt(&self) -> Result<String, InputError> {
         self.prompt_from(&InputSources::from_process())
     }
 
-    /// [`prompt`](Self::prompt) against explicit [`InputSources`].
     pub fn prompt_from(&self, sources: &InputSources) -> Result<String, InputError> {
         crate::collector::prompt_value_from(self, sources)
     }
@@ -806,10 +621,6 @@ impl InputCollector<String> for InquireEditor {
 mod tests {
     use super::*;
 
-    // Note: Inquire prompts are interactive and can't be easily unit tested
-    // without mocking the terminal. These tests verify basic construction
-    // and is_available behavior.
-
     fn empty_matches() -> ArgMatches {
         clap::Command::new("test")
             .try_get_matches_from(["test"])
@@ -850,8 +661,6 @@ mod tests {
     #[test]
     fn inquire_select_empty_options_unavailable() {
         let source: InquireSelect<String> = InquireSelect::new("Choose:", vec![]);
-        // Even with terminal, empty options makes it unavailable
-        // (we can't easily test terminal state, so just verify the method exists)
         let _ = source.is_available(&empty_matches());
     }
 
@@ -895,12 +704,6 @@ mod tests {
         assert_eq!(source.name(), "editor");
         assert!(source.can_retry());
     }
-
-    // === .prompt() via PromptResponder ===
-    //
-    // Inquire sources can't be unit-tested with a real terminal in CI, but
-    // a PromptResponder on InputSources short-circuits each .prompt_from()
-    // before any raw-mode work happens.
 
     use crate::{InputSources, PromptResponse, ScriptedResponder};
     use std::sync::Arc;

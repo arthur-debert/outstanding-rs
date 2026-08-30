@@ -1,9 +1,6 @@
-//! The committed-pilot sanitizer as an external command — path specificity,
-//! host inventory removal, and preservation of ordinary transcript text —
-//! plus the secret-shape scan: the review's manual leak pass (home paths,
-//! usernames, hostnames, email and token shapes) as a permanent regression
-//! test over every committed run artifact in `corpus/pilot/` and
-//! `corpus/demo/`.
+// The committed-pilot sanitizer as an external command, plus a secret-shape
+// scan over every committed run artifact in `corpus/pilot/` and
+// `corpus/demo/`.
 
 #![cfg(unix)]
 
@@ -85,23 +82,10 @@ fn committed_pilot_transcripts_use_the_specific_workspace_placeholder() {
     }
 }
 
-// ---------------------------------------------------------------------------
-// Secret-shape scan over the committed artifacts
-// ---------------------------------------------------------------------------
+// Known fixture strings that match a secret shape but are not leaks; each
+// entry is the exact matched value, so vouching one never silences another.
+const ALLOWED_MATCHES: &[&str] = &["valid@email.com"];
 
-/// Strings that match a secret shape but are known committed fixture data,
-/// not leaks. Every detector class honors this list: each entry is the exact
-/// matched *value* a detector reports (the email address, the token, the
-/// path — not the surrounding excerpt), so vouching for one fixture never
-/// silences a different value of the same class. Additions need the same
-/// scrutiny the original manual leak scan applied: a new secret-shaped
-/// string fails the scan until a human vouches for it here.
-const ALLOWED_MATCHES: &[&str] = &[
-    // formlike's own test fixture address, written by the blind agent.
-    "valid@email.com",
-];
-
-/// Every committed run-artifact root the scan sweeps, relative to the repo.
 const SCANNED_ROOTS: &[&str] = &[
     "corpus/pilot/runs",
     "corpus/pilot/scorecard.md",
@@ -116,9 +100,6 @@ fn is_email_domain(c: char) -> bool {
     c.is_ascii_alphanumeric() || matches!(c, '.' | '-')
 }
 
-/// Extracts the email-shaped string around the `@` at `at`, if one is there:
-/// a non-empty local part, and a domain whose final label is alphabetic and
-/// at least two characters.
 fn email_at(text: &str, at: usize) -> Option<String> {
     let local: String = text[..at]
         .chars()
@@ -144,16 +125,11 @@ fn email_at(text: &str, at: usize) -> Option<String> {
     }
 }
 
-/// One secret-shaped match: `value` is the exact matched string an
-/// [`ALLOWED_MATCHES`] entry must equal to vouch for it; `shown` is the
-/// classified, excerpted failure-message line.
 struct Hit {
     value: String,
     shown: String,
 }
 
-/// The contiguous path token starting at `at` — what an allowlist entry for
-/// a vouched path-shaped fixture must equal.
 fn path_token(text: &str, at: usize) -> String {
     text[at..]
         .chars()
@@ -161,9 +137,6 @@ fn path_token(text: &str, at: usize) -> String {
         .collect()
 }
 
-/// The contiguous token starting at `at` over `extra` characters beyond
-/// ASCII alphanumerics — what an allowlist entry for a vouched token-shaped
-/// fixture must equal.
 fn token_at(text: &str, at: usize, extra: &[char]) -> String {
     text[at..]
         .chars()
@@ -171,9 +144,6 @@ fn token_at(text: &str, at: usize, extra: &[char]) -> String {
         .collect()
 }
 
-/// Reports every home-directory shape: any `/Users/…` (the macOS form — the
-/// pilot host), and `/home/<name>` for any concrete account name except the
-/// generic `user` the agents write into their own examples.
 fn home_path_hits(text: &str, hits: &mut Vec<Hit>) {
     for (at, _) in text.match_indices("/Users/") {
         hits.push(Hit {
@@ -197,9 +167,6 @@ fn home_path_hits(text: &str, hits: &mut Vec<Hit>) {
     }
 }
 
-/// The pilot host's account name, in any form a path substitution could
-/// have missed. The matched value is the surrounding word, so one vouched
-/// mention could be allowlisted without disabling the detector.
 fn username_hits(text: &str, hits: &mut Vec<Hit>) {
     let is_word = |c: char| c.is_ascii_alphanumeric() || matches!(c, '.' | '_' | '-');
     for (at, needle) in text.match_indices("adebert") {
@@ -221,7 +188,6 @@ fn username_hits(text: &str, hits: &mut Vec<Hit>) {
     }
 }
 
-/// Reports every email-shaped string (see [`email_at`]).
 fn email_hits(text: &str, hits: &mut Vec<Hit>) {
     for (at, _) in text.match_indices('@') {
         if let Some(email) = email_at(text, at) {
@@ -233,15 +199,8 @@ fn email_hits(text: &str, hits: &mut Vec<Hit>) {
     }
 }
 
-/// The pilot host's known machine names — the hostname leak class of the
-/// manual review, matched as exact identifiers (case-insensitive, bounded by
-/// non-name characters) rather than a broad domain regex, so ordinary URLs
-/// and prose stay quiet.
 const PILOT_HOST_IDENTIFIERS: &[&str] = &["astron", "imac-de-arthur"];
 
-/// Host-inventory JSON keys the sanitizer strips from init events; their
-/// presence in a committed artifact means a hostname-bearing structure
-/// slipped through, whatever its value.
 const HOST_INVENTORY_KEYS: &[&str] = &[
     "\"hostname\"",
     "\"host_name\"",
@@ -251,10 +210,6 @@ const HOST_INVENTORY_KEYS: &[&str] = &[
     "\"fqdn\"",
 ];
 
-/// Reports hostname shapes: the pilot host's exact identifiers, structured
-/// host-inventory fields, and hyphenated mDNS `.local` names — the shape
-/// macOS mints by default ("iMac-de-Arthur.local"). The hyphen requirement
-/// keeps code idioms like `threading.local` quiet.
 fn hostname_hits(text: &str, hits: &mut Vec<Hit>) {
     let lower = text.to_ascii_lowercase();
     for identifier in PILOT_HOST_IDENTIFIERS {
@@ -279,9 +234,6 @@ fn hostname_hits(text: &str, hits: &mut Vec<Hit>) {
             });
         }
     }
-    // DNS names are case-insensitive, so the suffix is matched on `lower`
-    // (`to_ascii_lowercase` preserves byte offsets) while slices come from
-    // the original text, keeping the matched value and excerpt exact.
     for (at, _) in lower.match_indices(".local") {
         let is_label = |c: char| c.is_ascii_alphanumeric() || c == '-';
         let label_len: usize = text[..at]
@@ -303,10 +255,6 @@ fn hostname_hits(text: &str, hits: &mut Vec<Hit>) {
     }
 }
 
-/// Reports token-shaped strings: known credential prefixes, AWS access-key
-/// ids, Slack tokens, private-key armor, and two-segment JWTs. Armor's
-/// matched value is the marker itself — key material is never fixture data,
-/// so it has no per-value vouching story.
 fn token_hits(text: &str, hits: &mut Vec<Hit>) {
     for prefix in ["ghp_", "gho_", "ghs_", "ghu_", "github_pat_", "sk-ant-"] {
         for (at, _) in text.match_indices(prefix) {
@@ -357,21 +305,16 @@ fn token_hits(text: &str, hits: &mut Vec<Hit>) {
     }
 }
 
-/// A short context window around a hit, for the failure message.
 fn excerpt(text: &str, at: usize) -> String {
     let before: usize = text[..at].chars().rev().take(20).map(char::len_utf8).sum();
     let after: usize = text[at..].chars().take(60).map(char::len_utf8).sum();
     format!("…{}…", text[at - before..at + after].escape_debug())
 }
 
-/// Scans one artifact's text, returning every secret-shaped hit whose exact
-/// matched value is not an allowlisted fixture string.
 fn secret_shaped_hits(text: &str) -> Vec<String> {
     hits_against(text, ALLOWED_MATCHES)
 }
 
-/// The scan against an explicit allowlist — split from [`secret_shaped_hits`]
-/// so a test can prove vouching works for every detector class.
 fn hits_against(text: &str, allowed: &[&str]) -> Vec<String> {
     let mut hits = Vec::new();
     home_path_hits(text, &mut hits);
@@ -383,7 +326,6 @@ fn hits_against(text: &str, allowed: &[&str]) -> Vec<String> {
     hits.into_iter().map(|hit| hit.shown).collect()
 }
 
-/// Collects every file under `root` (or `root` itself when it is a file).
 fn artifact_files(root: &Path, files: &mut Vec<PathBuf>) {
     if root.is_file() {
         files.push(root.to_path_buf());
@@ -394,9 +336,6 @@ fn artifact_files(root: &Path, files: &mut Vec<PathBuf>) {
     }
 }
 
-/// The manual leak scan of the pilot review, permanent: no committed report,
-/// transcript, or scorecard may carry a home path, the host username, or an
-/// email/token shape beyond the vouched-for fixture strings.
 #[test]
 fn committed_run_artifacts_carry_no_secret_shapes() {
     let repo = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
@@ -427,8 +366,6 @@ fn committed_run_artifacts_carry_no_secret_shapes() {
     );
 }
 
-/// The scanner itself catches each shape class — so a green scan means the
-/// artifacts are clean, not that the patterns rotted.
 #[test]
 fn secret_shape_patterns_catch_each_class() {
     for leak in [
@@ -469,9 +406,6 @@ fn secret_shape_patterns_catch_each_class() {
     }
 }
 
-/// A vouched fixture of any detector class can be allowlisted by its exact
-/// matched value — and vouching one value silences neither other classes nor
-/// other values of the same class.
 #[test]
 fn allowlisting_is_exact_and_works_for_every_class() {
     let text = "token ghp_abcdefghij beside path /Users/carol/checkout";

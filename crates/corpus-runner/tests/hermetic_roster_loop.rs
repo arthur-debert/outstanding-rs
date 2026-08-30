@@ -1,15 +1,8 @@
-//! The full `run()` orchestration over a fixture archetype, hermetically:
-//! the same fake-`cargo` seam as `hermetic_loop.rs`, but with a suite
-//! authored to exercise the expected-fail mapping — proving case results
-//! (pass, fail, expected-fail) in the report, per-case sandboxes under the
-//! run directory, and the invariant matrix swept under the cases' scrubbed
-//! baseline env.
-//!
-//! Runs in its own test binary because it prepends to the process-wide
-//! PATH.
+// The full `run()` orchestration over a fixture archetype, hermetically,
+// exercising the expected-fail mapping (the same fake-`cargo` seam as
+// `hermetic_loop.rs`). Runs in its own test binary because it prepends to
+// the process-wide PATH.
 
-// Unix-only: the fake `cargo` and scripted agent are `sh` scripts made
-// executable via `PermissionsExt`.
 #![cfg(unix)]
 
 mod common;
@@ -20,9 +13,6 @@ use std::path::Path;
 use corpus_runner::report::CaseOutcome;
 use corpus_runner::{run, RunConfig, Timeouts};
 
-/// A canned `caselike` implementation as a shell-script body: `greet` prints
-/// a line (JSON under `--output json`), `home` prints `$HOME`, and everything
-/// else exits 2.
 const CASELIKE: &str = r#"cmd="$1"
 mode=text
 prev=""
@@ -95,15 +85,12 @@ fn roster_archetype_completes_the_loop_with_case_results() {
     let repo = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
     let scratch = tempfile::tempdir().unwrap();
 
-    // A roster-schema fixture archetype.
     let archetypes = scratch.path().join("archetypes");
     let archetype_dir = archetypes.join("caselike");
     fs::create_dir_all(&archetype_dir).unwrap();
     fs::write(archetype_dir.join("spec.md"), "# caselike\n").unwrap();
     fs::write(archetype_dir.join("acceptance.toml"), ACCEPTANCE).unwrap();
 
-    // The fake toolchain installs the canned binary as `caselike` — the
-    // roster rule that archetype names double as binary names.
     let bin_dir = scratch.path().join("bin");
     common::install_fake_cargo(&bin_dir, "caselike", CASELIKE);
 
@@ -139,7 +126,6 @@ fn roster_archetype_completes_the_loop_with_case_results() {
         report.acceptance.build_detail
     );
 
-    // One result per case, expected-fail mapping applied.
     let outcomes: Vec<CaseOutcome> = report.acceptance.cases.iter().map(|c| c.outcome).collect();
     assert_eq!(
         outcomes,
@@ -150,11 +136,8 @@ fn roster_archetype_completes_the_loop_with_case_results() {
         ]
     );
 
-    // Case sandboxes are part of the run directory's inspectable residue.
     assert!(run_dir.join("cases/greet-exact").is_dir());
 
-    // The invariant matrix ran under the case baseline and all cells pass
-    // for the well-behaved fixture.
     assert!(!report.invariants.is_empty());
     let failed: Vec<_> = report
         .invariants
@@ -163,7 +146,6 @@ fn roster_archetype_completes_the_loop_with_case_results() {
         .collect();
     assert!(failed.is_empty(), "{failed:?}");
 
-    // The report round-trips with its cases section.
     let json = fs::read_to_string(run_dir.join("report.json")).unwrap();
     assert!(json.contains("\"expected-fail\""), "cases serialized");
 }

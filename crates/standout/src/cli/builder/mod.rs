@@ -1,31 +1,12 @@
-//! App builder and built entry point for CLI integration.
+//! [`AppBuilder`] configures a CLI application (commands, hooks, templates,
+//! themes, app-level state); [`AppBuilder::build`] consumes it into the
+//! executable [`App`] that owns parsing, dispatch, rendering, and run entry
+//! points. Split into submodules by concern: [`config`] (themes, templates,
+//! context, flags), [`commands`] (registration), [`execution`] (dispatch and
+//! run), [`rendering`] (template rendering and serialization).
 //!
-//! This module provides [`AppBuilder`] for configuring CLI applications with
-//! commands, hooks, templates, themes, and app-level state. Calling
-//! [`AppBuilder::build`] consumes the builder and returns the executable
-//! [`App`] that owns parsing, dispatch, rendering, and run entry points.
-//!
-//! # App State
-//!
-//! App-level state (database connections, configuration, API clients) can be
-//! injected via `.app_state()` and accessed in handlers via `ctx.app_state`:
-//!
-//! ```rust,ignore
-//! App::builder()
-//!     .app_state(Database::connect()?)
-//!     .app_state(Config::load()?)
-//!     .command("list", |matches, ctx| {
-//!         let db = ctx.app_state.get_required::<Database>()?;
-//!         Ok(Output::Render(db.list()?))
-//!     }, "{{ items }}")
-//!     .build()?
-//! ```
-//!
-//! The builder is split into submodules by concern:
-//! - [`config`]: Configuration methods (themes, templates, context, flags)
-//! - [`commands`]: Command and handler registration
-//! - [`execution`]: Dispatch macro integration and command execution
-//! - [`rendering`]: Template rendering and data serialization
+//! App-level state (DB connections, config, API clients) is injected via
+//! `.app_state()` and read in handlers via `ctx.app_state`.
 
 mod commands;
 mod config;
@@ -67,36 +48,18 @@ use standout_render::warnings::WarningBuffer;
 pub(crate) type SharedTemplateEngine =
     Rc<RefCell<Box<dyn standout_render::template::TemplateEngine>>>;
 
-/// The presentation configuration a command declared.
-///
-/// Glue-private: keeps [`TemplateRef::Convention`] until `build()` materializes
-/// it to a registry name. The public render-time [`crate::TemplateRef`] lives
-/// in `standout-render` and has only `Named` / `Inline` / `Absent`.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum TemplateRef {
-    /// A named template that must resolve through the template registry.
     Named(String),
-    /// A convention-derived template name.
-    ///
-    /// The command path is stored until `build()` so `.template_ext(...)`
-    /// applies regardless of whether it was called before or after command
-    /// registration. Build validation materializes it to the final registry
-    /// name.
     Convention(String),
-    /// Inline MiniJinja source carried directly on the command.
     Inline(String),
-    /// A command that deliberately has no human template.
     Absent(TemplateAbsence),
 }
 
-/// Why a command has no human template.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum TemplateAbsence {
-    /// The command performs side effects and intentionally emits no output.
     Silent,
-    /// Rendered data is available only through structured output modes.
     StructuredOnly,
-    /// The command's success channel is binary data, not presentation text.
     Binary,
 }
 
@@ -194,11 +157,6 @@ pub(crate) fn refresh_named_template(
     registry: &TemplateRegistry,
     name: &str,
 ) -> Result<(), TemplateRefreshError> {
-    // Existence / readability check only: `render_request` loads the whole
-    // registry into the engine (cached per registry generation). A registered
-    // file that disappeared must still error with its path (ADR-0019). A name
-    // missing from the original map is retried after a directory re-walk so
-    // a file that appeared after build() is still found.
     match registry.get_content(name) {
         Ok(_) => Ok(()),
         Err(standout_render::RegistryError::NotFound { .. }) => {
@@ -375,7 +333,6 @@ fn validate_framework_template_content(
     Ok(())
 }
 
-/// Stores a pending command recipe along with its typed template declaration.
 struct PendingCommand {
     recipe: Box<dyn CommandRecipe>,
     template: TemplateRef,
@@ -387,28 +344,10 @@ pub(crate) enum HookRegistrationSource {
     CommandConfig,
 }
 
-/// Main entry point for running a configured standout-clap application.
-///
-/// `App` is produced by [`AppBuilder::build`]. It owns command dispatch,
-/// rendering, parsing, and run entry points; the configuring builder does not.
-/// Create one with [`App::builder`] and finish configuration with `build()`.
-///
-/// # Example
-///
-/// ```rust
-/// use standout::cli::App;
-///
-/// let standout = App::builder()
-///     .help_handling(true)
-///     .topics_dir(".").unwrap()
-///     .output_flag(Some("format"))
-///     .build();
-/// ```
 pub struct App {
     pub(crate) registry: TopicRegistry,
     pub(crate) output_flag: Option<String>,
     pub(crate) output_file_flag: Option<String>,
-    /// The one theme `build()` merged (ADR-0020). Always set.
     pub(crate) theme: Theme,
     pub(crate) stylesheet_registry: Option<crate::StylesheetRegistry>,
     pub(crate) template_registry: Option<Rc<TemplateRegistry>>,
@@ -426,68 +365,24 @@ pub struct App {
     pub(crate) help_word: bool,
     pub(crate) ambiguous_width: crate::AmbiguousWidth,
     pub(crate) version: Option<&'static str>,
-    /// Framework warnings collected while converting embedded templates/styles
-    /// at build time (hot-reload fallbacks). Copied into each run's
-    /// [`standout_render::warnings::WarningBuffer`] so they return on the run
-    /// result instead of printing at construction.
     pub(crate) startup_warnings: Vec<String>,
 }
 
 impl App {
-    /// Starts configuring a standout CLI application.
-    ///
-    /// This is the public constructor for the configuring builder. Call
-    /// [`AppBuilder::build`] when configuration is complete to obtain the
-    /// executable [`App`].
     pub fn builder() -> AppBuilder {
         AppBuilder::new()
     }
 }
 
-/// Configures a standout-clap application before it can run.
-///
-/// `AppBuilder` owns configuration methods only. Running, dispatching,
-/// parsing, and rendering are available after [`build`](Self::build) returns
-/// an [`App`].
-///
-/// # Context Injection
-///
-/// You can inject additional context objects into templates using `.context()` for
-/// static values and `.context_fn()` for dynamic values computed at render time:
-///
-/// ```rust,ignore
-/// use standout::cli::App;
-/// use crate::context::RenderContext;
-/// use minijinja::Value;
-///
-/// App::builder()
-///     // Static context
-///     .context("app_version", Value::from("1.0.0"))
-///
-///     // Dynamic context (computed at render time)
-///     .context_fn("terminal", |ctx: &RenderContext| {
-///         Value::from_iter([
-///             ("width", Value::from(ctx.terminal_width.unwrap_or(80))),
-///             ("is_tty", Value::from(ctx.output_mode == standout::OutputMode::Term)),
-///         ])
-///     })
-///     .command("list", handler, "Width: {{ terminal.width }}")
-///     .build()?
-///     .run(cmd, args);
-/// ```
 pub struct AppBuilder {
     pub(crate) registry: TopicRegistry,
     pub(crate) output_flag: Option<String>,
     pub(crate) output_file_flag: Option<String>,
     pub(crate) theme: Option<Theme>,
-    /// Stylesheet registry (built from embedded styles)
     pub(crate) stylesheet_registry: Option<crate::StylesheetRegistry>,
-    /// Template registry (built from embedded templates)
     pub(crate) template_registry: Option<TemplateRegistry>,
     pub(crate) default_theme_name: Option<String>,
-    /// Pending commands - closures are created lazily at dispatch time
     pending_commands: RefCell<HashMap<String, PendingCommand>>,
-    /// Finalized dispatch functions (lazily created from pending_commands)
     finalized_commands: RefCell<Option<HashMap<String, DispatchFn>>>,
     pub(crate) command_hooks: HashMap<String, Hooks>,
     pub(crate) hook_phase_sources: HashMap<(String, HookPhase), HookRegistrationSource>,
@@ -495,59 +390,24 @@ pub struct AppBuilder {
     pub(crate) questionnaire_commands: HashMap<String, QuestionnaireCommand>,
     pub(crate) context_registry: ContextRegistry,
     pub(crate) template_ext: String,
-    /// Static default command to use when no subcommand is specified
     pub(crate) default_command: Option<String>,
-    /// Invocation-aware default command chooser, consulted before the static
-    /// default. See [`crate::cli::default_command`].
     pub(crate) default_command_resolver: Option<crate::cli::DefaultCommandResolver>,
-    /// Whether to include framework-supplied templates (default: true)
     pub(crate) include_framework_templates: bool,
-    /// Whether to include framework-supplied styles (default: true)
     pub(crate) include_framework_styles: bool,
-    /// App-level state that will be shared across all dispatches after build.
     pub(crate) app_state: Extensions,
 
-    /// Optional template engine.
-    ///
-    /// Unset until [`AppBuilder::template_engine`] or [`build`](Self::build).
-    /// `build()` constructs the default MiniJinja engine when this is `None`
-    /// — the only place glue may call `MiniJinjaEngine::new()`.
     pub(crate) template_engine: Option<SharedTemplateEngine>,
 
-    /// Command groups for organized help display.
     pub(crate) help_command_groups: Option<Vec<CommandGroup>>,
 
-    /// Whether standout intercepts and renders help (default: false).
-    ///
-    /// When true, standout replaces clap's built-in help subcommand with its
-    /// own — where the install policy allows, see `help_word` — and renders
-    /// themed, grouped help for every invocation form (`help`, `--help`, `-h`).
-    /// Required when using `command_groups` or topics.
     pub(crate) help_handling: bool,
 
-    /// Whether a flat CLI with positionals opts into the `help` word.
-    ///
-    /// Only consulted for the one shape standout will not decide on its own —
-    /// see [`installs_help_word`](AppBuilder::installs_help_word).
     pub(crate) help_word: bool,
 
-    /// Explicit East Asian Ambiguous width policy.
     pub(crate) ambiguous_width: crate::AmbiguousWidth,
 
-    /// Application version metadata, applied to the root clap command.
-    ///
-    /// `None` leaves the supplied command's own version — whatever the
-    /// application configured on clap directly — untouched. See
-    /// [`version`](AppBuilder::version).
-    ///
-    /// Held as `&'static str` because clap's `Str` takes runtime-built strings
-    /// only under its `string` feature; the borrow is leaked once, when the
-    /// builder is configured, rather than on every parse.
     pub(crate) version: Option<&'static str>,
 
-    /// Framework warnings collected while converting embedded templates/styles
-    /// (hot-reload fallbacks). Copied onto [`App`] at build and into each
-    /// run's warning buffer.
     pub(crate) startup_warnings: Vec<String>,
 }
 
@@ -558,14 +418,10 @@ impl Default for AppBuilder {
 }
 
 impl AppBuilder {
-    /// Creates a new builder with default settings.
-    ///
-    /// By default, the `--output` flag is enabled, framework templates and styles
-    /// are included, and no hooks are registered.
     pub(crate) fn new() -> Self {
         Self {
             registry: TopicRegistry::new(),
-            output_flag: Some("output".to_string()), // Enabled by default
+            output_flag: Some("output".to_string()),
             output_file_flag: Some("output-file-path".to_string()),
             theme: None,
             stylesheet_registry: None,
@@ -594,74 +450,11 @@ impl AppBuilder {
         }
     }
 
-    /// Adds app-level state that will be available to all handlers.
-    ///
-    /// App state is immutable and shared across all dispatches via `Rc<Extensions>`.
-    /// Use for long-lived resources like database connections, configuration, and
-    /// API clients.
-    ///
-    /// # Shared Mutable State
-    ///
-    /// To share mutable state (like metrics or caches), use interior mutability:
-    ///
-    /// ```rust
-    /// use standout::cli::{App, Output};
-    /// use std::sync::atomic::{AtomicUsize, Ordering};
-    ///
-    /// struct Metrics {
-    ///     requests: AtomicUsize,
-    /// }
-    ///
-    /// let app = App::builder()
-    ///     .app_state(Metrics { requests: AtomicUsize::new(0) })
-    ///     .command_with("test", |_m, ctx| {
-    ///         let metrics = ctx.app_state.get_required::<Metrics>()?;
-    ///         metrics.requests.fetch_add(1, Ordering::SeqCst);
-    ///         Ok(Output::<()>::Silent)
-    ///     }, |cfg| cfg.silent()).unwrap()
-    ///     .build()
-    ///     .unwrap();
-    /// ```
-    ///
-    /// # Example
-    ///
-    /// ```rust,ignore
-    /// use standout::cli::App;
-    ///
-    /// struct Database { url: String }
-    /// struct Config { debug: bool }
-    ///
-    /// let app = App::builder()
-    ///     .app_state(Database { url: "postgres://localhost".into() })
-    ///     .app_state(Config { debug: true })
-    ///     .command("list", |matches, ctx| {
-    ///         let db = ctx.app_state.get_required::<Database>()?;
-    ///         let config = ctx.app_state.get_required::<Config>()?;
-    ///         // Use db and config...
-    ///         Ok(Output::Render(vec!["item1", "item2"]))
-    ///     }, "{{ items }}")
-    ///     .build()?;
-    /// ```
-    ///
-    /// # Type Safety
-    ///
-    /// Each type can only be stored once. Inserting a second value of the same
-    /// type replaces the first:
-    ///
-    /// ```rust,ignore
-    /// App::builder()
-    ///     .app_state(Config { debug: false })
-    ///     .app_state(Config { debug: true })  // Replaces previous Config
-    /// ```
     pub fn app_state<T: 'static>(mut self, value: T) -> Self {
         self.app_state.insert(value);
         self
     }
 
-    /// Sets a custom template engine to be used for rendering.
-    ///
-    /// If not set, [`build`](Self::build) constructs the default MiniJinja
-    /// engine. That construction is the only `MiniJinjaEngine::new()` in glue.
     pub fn template_engine(
         mut self,
         engine: Box<dyn standout_render::template::TemplateEngine>,
@@ -670,40 +463,11 @@ impl AppBuilder {
         self
     }
 
-    /// Test helper: Check if a command path is registered.
     #[cfg(test)]
     pub(crate) fn has_command(&self, path: &str) -> bool {
         self.pending_commands.borrow().contains_key(path)
     }
 
-    /// Finalizes the builder into an executable App, resolving one
-    /// framework-base-plus-application theme, constructing the template engine
-    /// if unset (the only `MiniJinjaEngine::new()` in glue), validating typed
-    /// template declarations, loading templates, and preparing for dispatch
-    /// and rendering.
-    ///
-    /// # Errors
-    ///
-    /// Returns an error if:
-    /// - A `default_theme()` was specified but the theme wasn't found in the stylesheet registry
-    /// - a command references a named or convention template that is not in the template registry
-    /// - a command relies on a convention template without configuring application templates
-    ///   or declaring absence with `.structured_only()`, `.silent()`, or `.binary()`
-    /// - a registered template fails to compile
-    /// - `command_groups` or topics are configured without `.help_handling(true)`
-    /// - a command is registered under the root `help` with `.help_handling(true)`,
-    ///   which is the name standout installs its own word under
-    /// - the same command path and hook phase are configured through both
-    ///   `CommandConfig` and [`hooks`](Self::hooks)
-    ///
-    /// # Example
-    ///
-    /// ```rust,ignore
-    /// let standout = App::builder()
-    ///     .styles(embed_styles!("src/styles"))
-    ///     .default_theme("dark")
-    ///     .build()?;
-    /// ```
     pub fn build(mut self) -> Result<App, SetupError> {
         use crate::assets::FRAMEWORK_TEMPLATES;
 
@@ -711,12 +475,10 @@ impl AppBuilder {
             return Err(self.setup_errors.remove(0));
         }
 
-        // Add framework templates if enabled (BEFORE finalizing commands)
         if self.include_framework_templates {
             match self.template_registry.as_mut() {
                 Some(registry) => registry.add_framework_entries(FRAMEWORK_TEMPLATES),
                 None => {
-                    // Create new registry with just framework templates
                     let mut registry = TemplateRegistry::new();
                     registry.add_framework_entries(FRAMEWORK_TEMPLATES);
                     self.template_registry = Some(registry);
@@ -724,16 +486,12 @@ impl AppBuilder {
             };
         }
 
-        // Resolve theme BEFORE finalization. `App.theme` is non-optional;
-        // this `Some` is only the builder's still-unset-until-build slot.
         let app_theme = self.resolve_configured_theme()?;
         self.theme = Some(
             self.framework_base_theme()?
                 .merge(app_theme.unwrap_or_else(Theme::new)),
         );
 
-        // Validate help configuration: features that require help interception
-        // must not be used without enabling it.
         if !self.help_handling {
             let has_groups = self.help_command_groups.is_some();
             let has_topics = !self.registry.list_topics().is_empty();
@@ -758,17 +516,7 @@ impl AppBuilder {
             }
         }
 
-        // A command registered under the root `help` is the same collision the
-        // parse paths catch on a declared one, seen one step earlier — and
-        // unconditionally, without the assembled shape the install policy
-        // reads. It needs none: a registered `help` only ever runs if the
-        // application's `Command` declares the word too, and a root with
-        // subcommands always gets standout's (see `installs_help_word`). So the
-        // registration is either shadowed by the word or dead, and both are the
-        // author's to resolve.
         if self.help_handling {
-            // Lowest path first, so a root carrying several registrations under
-            // `help` names the same one on every run.
             let claim = self
                 .pending_commands
                 .borrow()
@@ -791,9 +539,6 @@ impl AppBuilder {
         self.validate_framework_template_styles()?;
         self.materialize_convention_templates();
 
-        // Populate engine with templates from the registry and keep the compile
-        // result. Named renders refresh this cache again so file-backed
-        // templates can hot reload.
         if let Some(registry) = &self.template_registry {
             refresh_engine_templates(&mut **template_engine.borrow_mut(), registry)
                 .map_err(|error| SetupError::Template(error.to_string()))?;
@@ -826,7 +571,6 @@ impl AppBuilder {
             startup_warnings: self.startup_warnings,
         };
 
-        // Finalize commands with built template and theme state in place.
         app.ensure_commands_finalized();
 
         Ok(app)
@@ -942,12 +686,6 @@ impl AppBuilder {
 }
 
 impl App {
-    /// Ensures all pending commands have been finalized into dispatch functions.
-    ///
-    /// This method is called lazily on first dispatch. It creates the actual
-    /// dispatch closures from the stored recipes. The theme is passed at
-    /// dispatch time via late binding, which allows `.theme()` to be called in
-    /// any order relative to `.command()` before build.
     fn ensure_commands_finalized(&self) {
         if self.finalized_commands.borrow().is_some() {
             return;
@@ -967,7 +705,6 @@ impl App {
         *self.finalized_commands.borrow_mut() = Some(commands);
     }
 
-    /// Returns the finalized commands map, creating it if necessary.
     fn get_commands(&self) -> std::cell::Ref<'_, HashMap<String, DispatchFn>> {
         self.ensure_commands_finalized();
         std::cell::Ref::map(self.finalized_commands.borrow(), |opt| match opt.as_ref() {
@@ -976,30 +713,18 @@ impl App {
         })
     }
 
-    // =========================================================================
-    // Accessors
-    // =========================================================================
-
-    /// Returns a reference to the topic registry.
     pub fn registry(&self) -> &TopicRegistry {
         &self.registry
     }
 
-    /// Returns a mutable reference to the topic registry.
     pub fn registry_mut(&mut self) -> &mut TopicRegistry {
         &mut self.registry
     }
 
-    /// Returns the hooks registered for a specific command path.
     pub fn get_hooks(&self, path: &str) -> Option<&Hooks> {
         self.command_hooks.get(path)
     }
 
-    /// CSV projection registered for `path`, if the command declared one.
-    ///
-    /// Same fact dispatch captures into its request: a `run_command` of a
-    /// command with [`crate::StructuredOutputProjection`] must emit the
-    /// contract CSV, not generic flattening.
     fn csv_projection_for(&self, path: &str) -> Option<crate::CsvProjection> {
         self.pending_commands
             .borrow()
@@ -1012,32 +737,14 @@ impl App {
             })
     }
 
-    /// Returns the theme `build()` merged (ADR-0020).
-    ///
-    /// Always present: `build()` computes the framework-base-plus-application
-    /// theme unconditionally, so a built [`App`] has no unset theme.
     pub fn get_default_theme(&self) -> &Theme {
         &self.theme
     }
 
-    /// Output-mode fallback used when this invocation has no `--output` flag.
-    ///
-    /// `App` stores no configurable fallback (`AppBuilder::output_mode()` was
-    /// deleted in ROB02); `Auto` is the only value. Named here rather than
-    /// inlined at each call site so a later workstream can store a real field
-    /// without hunting literals.
     fn output_mode_fallback() -> OutputMode {
         OutputMode::Auto
     }
 
-    /// Gets a theme by name from the stylesheet registry.
-    ///
-    /// This allows using themes other than the default at runtime.
-    ///
-    /// # Errors
-    ///
-    /// Returns an error if no stylesheet registry is configured or if the theme
-    /// is not found.
     pub fn get_theme(&mut self, name: &str) -> Result<Theme, SetupError> {
         self.stylesheet_registry
             .as_mut()
@@ -1046,9 +753,6 @@ impl App {
             .map_err(|_| SetupError::ThemeNotFound(name.to_string()))
     }
 
-    /// Returns the names of all available templates.
-    ///
-    /// Returns an empty iterator if no template registry is configured.
     pub fn template_names(&self) -> impl Iterator<Item = &str> {
         self.template_registry
             .as_ref()
@@ -1057,9 +761,6 @@ impl App {
             .flatten()
     }
 
-    /// Returns the names of all available themes.
-    ///
-    /// Returns an empty vector if no stylesheet registry is configured.
     pub fn theme_names(&self) -> Vec<String> {
         self.stylesheet_registry
             .as_ref()
@@ -1067,23 +768,14 @@ impl App {
             .unwrap_or_default()
     }
 
-    // =========================================================================
-    // Parsing & Help
-    // =========================================================================
-
-    /// Parses CLI arguments with this built App instance.
-    ///
-    /// This compatibility entry point is equivalent to [`parse_with`](Self::parse_with).
     pub fn parse(&self, cmd: Command) -> clap::ArgMatches {
         self.parse_with(cmd)
     }
 
-    /// Parses CLI arguments with this built App instance.
     pub fn parse_with(&self, cmd: Command) -> clap::ArgMatches {
         self.parse_from(cmd, std::env::args())
     }
 
-    /// Like `parse_with`, but takes arguments from an iterator.
     pub fn parse_from<I, T>(&self, cmd: Command, itr: I) -> clap::ArgMatches
     where
         I: IntoIterator<Item = T>,
@@ -1105,34 +797,10 @@ impl App {
         }
     }
 
-    /// Attempts to get matches, intercepting `help` requests.
-    ///
-    /// For most use cases, prefer `parse_with()` which handles help display automatically.
     pub fn get_matches(&self, cmd: Command) -> HelpResult {
         self.get_matches_from(cmd, std::env::args())
     }
 
-    /// Attempts to get matches from the given arguments, intercepting `help` requests.
-    ///
-    /// When `help_handling` is enabled, every help invocation is intercepted and
-    /// rendered through standout: `--help` / `-h` always, and the bare `help`
-    /// word where the install policy put it (see
-    /// [`help_word`](Self::help_word)). When disabled, only output flags are
-    /// augmented and clap handles help natively.
-    ///
-    /// Which command a line means is Clap's answer, read off the parse. Only a
-    /// parse that selected no command is naked, and only a naked line resolves
-    /// a default command — statically via
-    /// [`default_command`](Self::default_command) or per-invocation via
-    /// [`default_command_with`](Self::default_command_with). `dispatch_from`
-    /// parses through the same seam, so consumers that parse first and build
-    /// dispatch state afterwards see one consistent answer.
-    ///
-    /// A command that declares its own `help` where standout installs the word
-    /// is a configuration standout will not serve: it comes back as
-    /// [`HelpResult::Error`] carrying
-    /// [`SetupError::DuplicateCommand`](crate::SetupError::DuplicateCommand)'s
-    /// report, before anything is parsed.
     pub fn get_matches_from<I, T>(&self, cmd: Command, itr: I) -> HelpResult
     where
         I: IntoIterator<Item = T>,
@@ -1141,9 +809,6 @@ impl App {
         self.get_matches_from_with_sources(cmd, itr, &crate::InputSources::from_process())
     }
 
-    /// [`get_matches_from`](Self::get_matches_from) against explicit
-    /// [`crate::InputSources`] (stdin terminal fact for default-command
-    /// resolution).
     pub fn get_matches_from_with_sources<I, T>(
         &self,
         cmd: Command,
@@ -1156,12 +821,6 @@ impl App {
     {
         let mut cmd = self.augment_command_with_help(cmd);
 
-        // The application's `Command` is only visible from a parse entry point,
-        // so a `help` it declares is only refusable here — and only before the
-        // parse, which is where Clap's duplicate-subcommand assertion would
-        // fire. It is the application's configuration at fault, not the line,
-        // but this path speaks `clap::Error` for every failure, so the setup
-        // error is raised as one rather than routed around the return type.
         if let Some(error) = self.help_word_collision(&cmd) {
             return HelpResult::Error(clap::Error::raw(
                 clap::error::ErrorKind::InvalidSubcommand,
@@ -1169,7 +828,6 @@ impl App {
             ));
         }
 
-        // Verbatim, all the way to Clap: a non-UTF8 argument is a real argument.
         let args: Vec<std::ffi::OsString> = itr.into_iter().map(Into::into).collect();
 
         let matches = match self.parse_with_default_command(&cmd, &args, sources.stdin()) {
@@ -1194,14 +852,6 @@ impl App {
         }
     }
 
-    /// Answers the `help` word, when Clap routed the line to it.
-    ///
-    /// The word is a declared subcommand, so Clap parses it and its arguments
-    /// like any other; this reads the result. `None` means the line went
-    /// somewhere else, which is when the caller's matches stand.
-    ///
-    /// Both parse paths call this on their parse, so `get_matches_from` and
-    /// `dispatch_from` answer the word identically.
     pub(crate) fn intercept_help_word(
         &self,
         cmd: &mut Command,
@@ -1216,14 +866,6 @@ impl App {
         (name == "help").then(|| self.render_help_word(cmd, matches, sub_matches, target, warnings))
     }
 
-    /// Answers Clap's `DisplayHelp` short-circuit, when standout owns help.
-    ///
-    /// Clap's native `--help`/`-h` is kept on purpose — it short-circuits
-    /// argument validation — so the request arrives as an "error" from the
-    /// authoritative parse. Both parse paths hand it here to be rendered
-    /// through standout instead of surfaced as Clap's own text. `None` means
-    /// the error was not a help request (or standout does not own help), and
-    /// belongs to the caller.
     pub(crate) fn intercept_display_help(
         &self,
         cmd: &mut Command,
@@ -1236,10 +878,6 @@ impl App {
             .then(|| self.render_help_for_display_help_error(cmd, args, target, warnings))
     }
 
-    /// Destination facts for a help/topics render.
-    ///
-    /// `run_with` supplies the invocation's target; parse-only entry points
-    /// detect at this edge. Ambiguous-width is application policy (ADR-0026).
     fn help_target_properties(
         &self,
         target: Option<crate::TargetProperties>,
@@ -1249,13 +887,10 @@ impl App {
         target
     }
 
-    /// The one theme `build()` merged (ADR-0020), including help/topic tags.
     fn help_theme(&self) -> Theme {
         self.theme.clone()
     }
 
-    /// Named registry template when `build()` registered it; otherwise the
-    /// default source as [`crate::TemplateRef::Inline`] with tag validation.
     fn help_template(
         &self,
         override_source: Option<&str>,
@@ -1274,8 +909,6 @@ impl App {
         )
     }
 
-    /// Help and topics through [`render_request`] with the app engine, merged
-    /// theme, filters, and registry.
     #[allow(clippy::too_many_arguments)]
     fn render_help_surface<T: Serialize>(
         &self,
@@ -1313,13 +946,6 @@ impl App {
         }
     }
 
-    /// Renders the help the `help` word asked for.
-    ///
-    /// Its arguments come from Clap: `sub_matches` is the word's own parse
-    /// (`topic`, `--page`), and the output mode is read from the root, where
-    /// the global flag that carries it lives. Structured modes map to
-    /// [`OutputMode::Auto`] (ADR-0029) on the request; the leaf has no help
-    /// flag.
     fn render_help_word(
         &self,
         cmd: &mut Command,
@@ -1332,7 +958,6 @@ impl App {
         let target = self.help_target_properties(target);
         let config = HelpConfig {
             command_groups: self.help_command_groups.clone(),
-            // The word is the spelled-out request, so it reads like `--help`.
             length: HelpLength::Long,
             ..Default::default()
         };
@@ -1350,13 +975,6 @@ impl App {
         self.render_root_help(cmd, config, format, target, warnings, use_pager)
     }
 
-    /// Reports a failed help render.
-    ///
-    /// Every rendering step funnels here, because a broken template or theme is
-    /// the application's bug however help was asked for. Reporting it as
-    /// [`HelpDisplay::RenderFailed`] is what keeps it from reaching the user as
-    /// a usage error — or, worse, as "that topic wasn't recognized", which is
-    /// what a swallowed render failure used to look like.
     fn render_failure(cmd: &Command, error: impl std::fmt::Display) -> HelpDisplay {
         HelpDisplay::RenderFailed(cmd.clone().error(
             clap::error::ErrorKind::Io,
@@ -1364,7 +982,6 @@ impl App {
         ))
     }
 
-    /// Renders root help through [`render_request`].
     #[allow(clippy::too_many_arguments)]
     fn render_root_help(
         &self,
@@ -1397,25 +1014,6 @@ impl App {
         )
     }
 
-    /// Handles a `DisplayHelp` error from clap by rendering standout help.
-    ///
-    /// Which command's help to render is Clap's answer, not a reading of the
-    /// arguments: `--help` short-circuits before producing matches and its
-    /// error does not name the command it was raised for, so the line is handed
-    /// back to Clap with the help flag disabled. Everything that could name a
-    /// command precedes the flag, so `ignore_errors` tolerating the now-unknown
-    /// flag (and whatever follows it) costs nothing here.
-    ///
-    /// No output mode is threaded through: the request short-circuited, so
-    /// `--output` written after it was never parsed, and honouring only the
-    /// half written before it would make the mode depend on where the user put
-    /// it. The render falls back to [`OutputMode::Auto`]; the `help` word does
-    /// honour the flag, because Clap parses the word's line in full. The
-    /// asymmetry is documented in `docs/topics/standout-help.md`.
-    ///
-    /// Which *spelling* asked is read off the raw line, by
-    /// [`help_request`], which reads it off the same re-parse that answers
-    /// *which* command was asked about — the error carries neither.
     fn render_help_for_display_help_error(
         &self,
         cmd: &mut Command,
@@ -1440,20 +1038,6 @@ impl App {
         self.handle_help_request(cmd, &keywords, false, config, format, target, warnings)
     }
 
-    /// What a `DisplayHelp` line asked for, as Clap reads it.
-    ///
-    /// Two facts Clap's error does not carry: which command the request was
-    /// raised for, and which spelling raised it. Both are read off a parse
-    /// rather than off the argument list, per
-    /// [ADR-0018](../../../../docs/adr/0018-let-the-parser-classify-the-command-line.md)
-    /// — a scan looking for `-h` would have to reimplement `--` termination,
-    /// `--flag=value`, short-option clusters, and which options consume the
-    /// token after them (`-o h` is not a help request), and a scan wrong about
-    /// any of those is a parser with unknown coverage.
-    ///
-    /// It takes *two* parses, because the two questions want opposite
-    /// declarations of the same flag. See [`help_target`](Self::help_target)
-    /// and [`help_length`](Self::help_length).
     fn help_request(cmd: &Command, args: &[std::ffi::OsString]) -> HelpRequest {
         HelpRequest {
             target: Self::help_target(cmd, args),
@@ -1461,17 +1045,6 @@ impl App {
         }
     }
 
-    /// Which spelling raised the request: `--help` (long) or `-h` (short).
-    ///
-    /// The flags are re-declared as ordinary global arguments on a throwaway
-    /// clone whose own help flag is disabled, so Clap classifies them instead
-    /// of short-circuiting on them. Global, so a request raised deep in the
-    /// tree still reports at the root.
-    ///
-    /// `-h` is declared but never read. Its value is not the answer — absence
-    /// of `--help` already is — but declaring it keeps Clap's lexer accurate
-    /// for the rest of the line, rather than leaving an unknown token for
-    /// `ignore_errors` to absorb.
     fn help_length(cmd: &Command, args: &[std::ffi::OsString]) -> HelpLength {
         let probe = cmd
             .clone()
@@ -1498,19 +1071,6 @@ impl App {
         }
     }
 
-    /// The command chain a help request was raised for, as Clap reads it.
-    ///
-    /// Empty means the root. Disabling the help flag is what lets the parse run
-    /// far enough to answer: with it enabled the parse short-circuits again and
-    /// reports nothing.
-    ///
-    /// The help flag is deliberately left *undeclared* here, which is the
-    /// opposite of what [`help_length`](Self::help_length) needs and the reason
-    /// the two are separate parses. An undeclared `--help` is an unknown token,
-    /// so `ignore_errors` truncates the parse where it appears — and that is
-    /// exactly the wanted reading: in `app --help list`, help was asked before
-    /// any command was named, so it is the root's, and the walk has to stop at
-    /// the flag rather than stride past it to `list`.
     fn help_target(cmd: &Command, args: &[std::ffi::OsString]) -> Vec<String> {
         let Ok(matches) = cmd
             .clone()
@@ -1530,7 +1090,6 @@ impl App {
         chain
     }
 
-    /// Handles a request for specific help e.g. `help foo`
     #[allow(clippy::too_many_arguments)]
     fn handle_help_request(
         &self,
@@ -1544,7 +1103,6 @@ impl App {
     ) -> HelpDisplay {
         let sub_name = keywords[0];
 
-        // 0. Check for "topics" - list all available topics
         if sub_name == "topics" {
             let template = match self.help_template(
                 None,
@@ -1563,7 +1121,6 @@ impl App {
             );
         }
 
-        // 1. Check if it's a real command
         if super::app::find_subcommand(cmd, sub_name).is_some() {
             if let Some(help_cmd) = super::app::find_subcommand_recursive(cmd, keywords) {
                 let template = match self.help_template(
@@ -1588,7 +1145,6 @@ impl App {
             }
         }
 
-        // 2. Check if it is a topic
         if let Some(topic) = self.registry.get_topic(sub_name) {
             let template = match self.help_template(
                 None,
@@ -1605,7 +1161,6 @@ impl App {
             );
         }
 
-        // 3. Not found
         let err = cmd.error(
             clap::error::ErrorKind::InvalidSubcommand,
             format!("The subcommand or topic '{}' wasn't recognized", sub_name),
@@ -1613,59 +1168,6 @@ impl App {
         HelpDisplay::Clap(err)
     }
 
-    /// Augments a command with the `help` word and output flags.
-    ///
-    /// When `help_handling` is enabled, this disables clap's built-in help
-    /// subcommand and installs standout's own, where the install policy allows
-    /// it (see [`help_word`](Self::help_word)). Clap's native
-    /// `--help`/`-h` flag is kept so it short-circuits arg validation (showing
-    /// help even when required args are missing), but `DisplayHelp` errors are
-    /// intercepted — by `get_matches_from` and `dispatch_from` alike — and
-    /// rendered through standout.
-    ///
-    /// When `help_handling` is disabled, clap's built-in help is left intact.
-    ///
-    /// Both parse paths augment through here, so the word's install policy is
-    /// the command's shape and never the entry point the application chose.
-    ///
-    /// The word is installed whether or not the application already claims the
-    /// name; what comes back is then a root with two `help` subcommands, which
-    /// is a configuration standout refuses rather than serves. Refusing is the
-    /// caller's move, not this seam's: augmentation has no error currency, and
-    /// Clap's duplicate-subcommand assertion fires when a command is *parsed*,
-    /// not when a subcommand is registered — so both parse entry points read
-    /// the collision off the augmented root (`help_word_collision`) and refuse
-    /// before the parse that would panic. Augmenting by hand and parsing the
-    /// result yourself is the one path standout is not on: there Clap answers
-    /// first, with the assertion, as it always has.
-    ///
-    /// # Ordering: shape-dependent decisions come last
-    ///
-    /// The framework's own surface is augmented **first**, and only then is the
-    /// install policy evaluated. The rule behind that is general, and this is
-    /// the easiest place to break it:
-    ///
-    /// > A decision that branches on the command's *assembled* shape may only
-    /// > be evaluated once all structural augmentation has completed.
-    ///
-    /// [`augment_framework_surface`](Self::augment_framework_surface) is the
-    /// augmentation in question: it injects the questionnaire surface through
-    /// `augment_questionnaire_commands`, which adds a `questions` subcommand at
-    /// every registered questionnaire path — the root included. So a root that
-    /// declares no subcommands of its own can still have one by the time a user
-    /// meets it, and "does this root have subcommands?" asked any earlier
-    /// answers for a shape nobody runs.
-    ///
-    /// [`installs_help_word`](Self::installs_help_word) is the decision that
-    /// rule exists for, and the duplicate-`help` refusal reads the same
-    /// assembled root one step later, in the callers. A third such decision
-    /// belongs below the same line, not above it.
-    ///
-    /// The opposite constraint exists and is not a contradiction: the
-    /// questionnaire *validators* (`validate_questionnaire_surfaces`,
-    /// `validate_command_groups`) read the shape the application author wrote,
-    /// precisely to catch names that collide with what the framework is about
-    /// to inject, so they run before augmentation and must keep doing so.
     pub fn augment_command_with_help(&self, cmd: Command) -> Command {
         let cmd = self.augment_framework_surface(cmd);
 
@@ -1673,23 +1175,9 @@ impl App {
             return cmd;
         }
 
-        // Disable clap's help subcommand and replace with standout's.
-        // Keep clap's native --help/-h flag — it short-circuits validation
-        // so `myapp subcmd --help` works even with required args.
-        // The resulting DisplayHelp error is intercepted by both parse paths.
         let cmd = cmd.disable_help_subcommand(true);
         if self.installs_help_word(&cmd) {
-            // Read before the word is added, so it answers "does the
-            // application have commands of its own?" — the shape the word's
-            // wording has to be true of. Asked after, every root has one.
             let has_subcommands = cmd.get_subcommands().next().is_some();
-            // `subcommand_negates_reqs` is what makes the installed word
-            // reachable: without it a root that requires arguments rejects
-            // `myapp help` before Clap can route it, which is the defect this
-            // whole surface exists to fix. It is set *here*, and only here,
-            // because it relaxes the root's requirements for the application's
-            // own subcommands too — a semantic an app that did not get the word
-            // never asked for.
             cmd.subcommand(help_word_command(has_subcommands))
                 .subcommand_negates_reqs(true)
         } else {
@@ -1697,20 +1185,6 @@ impl App {
         }
     }
 
-    /// The collision, when the application claims `help` on a root standout
-    /// installed its own word on.
-    ///
-    /// Read off the *augmented* root, where standout's word is already there,
-    /// so two claims on the name means one of them is the application's. That
-    /// is the whole reason it is asked here rather than before augmentation: no
-    /// caller re-derives whether the word was installed, or under what policy —
-    /// it reads what the policy left behind. The `help_handling` guard is what
-    /// keeps the report true: with interception off standout claims nothing, so
-    /// two `help`s are both the application's and none of standout's business.
-    ///
-    /// A registration claiming the word is caught earlier, by
-    /// [`build`](Self::build); this is the half that cannot be, since the
-    /// application's `Command` reaches standout only at parse time.
     pub(crate) fn help_word_collision(&self, augmented: &Command) -> Option<SetupError> {
         if !self.help_handling {
             return None;
@@ -1722,44 +1196,12 @@ impl App {
         (claims > 1).then(|| duplicate_help_word(DECLARED_CLAIM))
     }
 
-    /// Whether the bare `help` word is installed on this root.
-    ///
-    /// Installing it reserves the word out of the root's data namespace, which
-    /// is only standout's call to make when nothing else could claim it:
-    ///
-    /// - the root **has subcommands** — a bare word there is already a command;
-    /// - the root is **flat with no positionals** — there is nothing to collide
-    ///   with;
-    /// - the root is **flat with positionals** — a bare word is data
-    ///   (`echo help`), so the word is installed only behind
-    ///   [`help_word(true)`](Self::help_word).
-    ///
-    /// `--help` / `-h` are unaffected either way: they are Clap's flags, always
-    /// present, and their `DisplayHelp` is rendered through standout.
-    ///
-    /// # `cmd` must be the assembled command
-    ///
-    /// This branches on the command's shape, so it may only be asked once all
-    /// structural augmentation has run: the framework injects subcommands of
-    /// its own (the questionnaire `questions` command, at the root among other
-    /// paths), and a root that gains one is a root where a bare word is already
-    /// a command. [`augment_command_with_help`](Self::augment_command_with_help)
-    /// is the only caller and orders itself accordingly — see the ordering rule
-    /// on it, which is the general form of this requirement and the thing to
-    /// preserve if a second shape-dependent decision is ever added.
     pub(crate) fn installs_help_word(&self, cmd: &Command) -> bool {
         self.help_word
             || cmd.get_subcommands().next().is_some()
             || cmd.get_positionals().next().is_none()
     }
 
-    /// Extracts the output mode from parsed ArgMatches.
-    ///
-    /// When this app installs `--output` and `matches` carries `_output_mode`,
-    /// that value is the invocation's mode. Otherwise the
-    /// [fallback](Self::output_mode_fallback) — including when the parse tree
-    /// never declared Standout's argument (`try_get_one` rather than
-    /// `get_one`, so an unaugmented manual parse does not panic).
     pub fn extract_output_mode(&self, matches: &ArgMatches) -> OutputMode {
         if self.output_flag.is_none() {
             return Self::output_mode_fallback();
@@ -1770,26 +1212,6 @@ impl App {
         }
     }
 
-    /// Resolves `--output` when Clap did not produce matches.
-    ///
-    /// Usage errors, `--help`, and `--version` short-circuit before
-    /// [`extract_output_mode`](Self::extract_output_mode). Warning flush still
-    /// reads the run's output mode, so `--output=text` must opt the warning
-    /// block out of ANSI on those exits too.
-    ///
-    /// Scans the raw argument list for the long name the app configured
-    /// ([`AppBuilder::output_flag`]): `--flag=value` and `--flag value`. The
-    /// first element is the program name (Clap's argv[0]) and is not a flag.
-    /// A `--` terminator ends the scan, so arguments after it are not flags.
-    /// Unknown values, a missing value, a `--flag` whose next token is another
-    /// option, and a flag that appears only after `--` resolve to
-    /// [`OutputMode::Auto`]. So does an app that configured no output flag.
-    ///
-    /// This is a lexical look at that configured long name, not clap's parse:
-    /// it does not see aliases or a short spelling. Exactness is not required
-    /// here — the command line already failed, and this only styles the warning
-    /// block. The machine-contract Spec owns a parse-independent `--output`
-    /// reading.
     pub(crate) fn extract_output_mode_from_unparsed(
         &self,
         args: &[std::ffi::OsString],
@@ -1800,42 +1222,6 @@ impl App {
         parse_output_mode_flag(last_unparsed_flag_value(flag, args))
     }
 
-    // =========================================================================
-    // Manual Command Execution
-    // =========================================================================
-
-    /// Executes a command handler with hooks applied automatically.
-    ///
-    /// This is for when you handle dispatch manually but still want
-    /// to benefit from registered hooks.
-    ///
-    /// The method:
-    /// 1. Inserts [`InputSources::from_process`] and a
-    ///    [`standout_render::warnings::WarningBuffer`] into the context (the
-    ///    same run extensions `dispatch` / `run_with` insert). The buffer is
-    ///    seeded with build-time startup warnings so hooks and render see the
-    ///    same in-call destination as the other run edges; this method still
-    ///    returns only [`RenderedOutput`] (no final write, no warnings-return
-    ///    API)
-    /// 2. Runs pre-dispatch hooks (if any)
-    /// 3. Calls your handler closure
-    /// 4. Renders the result through [`crate::render_request_split`] using the
-    ///    app engine, template registry, context registry, merged theme, the
-    ///    output mode from [`extract_output_mode`](Self::extract_output_mode),
-    ///    and the command's structured-output projection when one is
-    ///    registered for `path`. Formatted and raw travel on [`TextOutput`]
-    ///    the same way dispatch does
-    /// 5. Runs post-output hooks (if any)
-    /// 6. Returns the final output
-    ///
-    /// # Final writes
-    ///
-    /// This is the manual-dispatch seam, so it performs no final write. An
-    /// [`Output::Artifact`](crate::cli::Output::Artifact) comes back as
-    /// [`RenderedOutput::Artifact`] with its report serialized but not
-    /// rendered: destination selection, the write, and the receipt-bearing
-    /// report belong to [`dispatch`](Self::dispatch) / [`run`](Self::run),
-    /// which own that transaction end to end.
     pub fn run_command<F, T>(
         &self,
         path: &str,
@@ -1858,15 +1244,12 @@ impl App {
 
         let hooks = self.command_hooks.get(path);
 
-        // Run pre-dispatch hooks
         if let Some(hooks) = hooks {
             hooks.run_pre_dispatch(matches, &mut ctx)?;
         }
 
-        // Run handler
         let result = handler(matches, &ctx);
 
-        // Convert result to RenderedOutput
         let output = match result {
             Ok(HandlerOutput::Render(data)) => {
                 let mut json_data = serde_json::to_value(&data)
@@ -1932,7 +1315,6 @@ impl App {
             }
         };
 
-        // Run post-output hooks
         if let Some(hooks) = hooks {
             hooks.run_post_output(matches, &ctx, output)
         } else {
@@ -1940,14 +1322,6 @@ impl App {
         }
     }
 
-    // =========================================================================
-    // Verification
-    // =========================================================================
-
-    /// Verifies that registered handlers match the CLI command definition.
-    ///
-    /// Checks that all required arguments expected by handlers are present
-    /// in the clap Command definition with compatible types.
     pub fn verify_command(&self, cmd: &Command) -> Result<(), SetupError> {
         self.validate_questionnaire_surfaces(cmd)?;
         let expected_args: HashMap<String, Vec<ExpectedArg>> = self
@@ -1960,29 +1334,17 @@ impl App {
     }
 }
 
-/// Whether this subcommand claims the name `help`.
-///
-/// Aliases count: Clap resolves an alias to its command, so a subcommand
-/// aliased `help` is as much a claim on the word as one named it.
 fn claims_help(cmd: &Command) -> bool {
     cmd.get_name() == "help" || cmd.get_all_aliases().any(|alias| alias == "help")
 }
 
-/// Whether a registered command path claims the root `help` word.
-///
-/// The first segment is the claim: `help` is the word itself, and `help.topic`
-/// — or anything a `.group("help", …)` registers — hangs a command off it, so
-/// the word standout installs is in its way just the same. Deeper segments are
-/// the application's own: `db.help` sits where the word is never installed.
 fn claims_root_help(path: &str) -> bool {
     path == "help" || path.starts_with("help.")
 }
 
-/// The clause naming a `help` declared on the application's clap `Command`.
 const DECLARED_CLAIM: &str =
     "this application's clap `Command` declares `help` (as a subcommand name or alias)";
 
-/// The clause naming a registered claim on the root `help`.
 fn registered_claim(path: &str) -> String {
     if path == "help" {
         "this application registers a `help` command".to_string()
@@ -1991,16 +1353,6 @@ fn registered_claim(path: &str) -> String {
     }
 }
 
-/// The collision report for an application `help` meeting standout's word.
-///
-/// [`SetupError::DuplicateCommand`] renders as `duplicate command: {payload}`,
-/// which is complete guidance when both colliding commands are the author's:
-/// they can see both and delete one. Here one of the two is standout's,
-/// injected by an install policy the author may not know exists — so the
-/// payload carries what the name alone cannot: the setting that installs the
-/// word, and the two ways out. `claim` is the clause naming where the
-/// application's own `help` was found, the one thing the author has to go look
-/// at.
 fn duplicate_help_word(claim: &str) -> SetupError {
     SetupError::DuplicateCommand(format!(
         "help — {claim}, and standout installs a `help` word of its own under \
@@ -2010,11 +1362,6 @@ fn duplicate_help_word(claim: &str) -> SetupError {
     ))
 }
 
-/// Argument ids for the flags [`App::help_request`] re-declares.
-///
-/// Named out of the application's namespace: they exist only on a throwaway
-/// clone, but a collision with a real argument would silently change what the
-/// probe reports.
 const HELP_PROBE_SHORT: &str = "__standout_help_short";
 const HELP_PROBE_LONG: &str = "__standout_help_long";
 
@@ -2031,14 +1378,6 @@ fn parse_output_mode_flag(value: Option<&str>) -> OutputMode {
     }
 }
 
-/// Last `--flag` / `--flag=value` before a `--` terminator, if any.
-///
-/// `args` is Clap-style: the first element is the program name and is not
-/// scanned. The look is the configured long name only: not clap aliases, not a
-/// short spelling. `--flag` with no following value, whose next token is `--`,
-/// or whose next token is another option (a token starting with `-`), is a
-/// miss — the following option is not consumed. Last occurrence wins, matching
-/// clap's `Set` action.
 fn last_unparsed_flag_value<'a>(flag: &str, args: &'a [std::ffi::OsString]) -> Option<&'a str> {
     let long = format!("--{flag}");
     let prefix = format!("--{flag}=");
@@ -2070,29 +1409,12 @@ fn last_unparsed_flag_value<'a>(flag: &str, args: &'a [std::ffi::OsString]) -> O
     found
 }
 
-/// What a help request named, once Clap has read the line.
-///
-/// Defaults to the root and the terse description, which is what an
-/// unparseable line gets.
 #[derive(Debug, Default, PartialEq, Eq)]
 struct HelpRequest {
-    /// The command chain the request was raised for; empty means the root.
     target: Vec<String>,
-    /// Which description to render.
     length: HelpLength,
 }
 
-/// Standout's `help` word, the replacement for clap's built-in one.
-///
-/// Built in one place because it is both installed on the root and parsed
-/// standalone when the word is dispatched, and the two must agree on what
-/// arguments the word takes.
-///
-/// `has_subcommands` is the root's shape, and it is the whole reason this takes
-/// an argument: clap's wording points at "the given subcommand(s)", which on a
-/// flat CLI names a namespace that cannot exist. The flat shape is the one
-/// [`help_word`](AppBuilder::help_word) exists to serve, so it gets a sentence
-/// that is true of it.
 fn help_word_command(has_subcommands: bool) -> Command {
     let (about, topic_help) = if has_subcommands {
         (
@@ -2167,8 +1489,6 @@ mod tests {
         assert!(!error.contains("malformed style markup"), "{error}");
     }
 
-    /// A root with a value-taking option, a flag, and a positional — enough
-    /// shape for the lexing the scan would have had to reimplement.
     fn probe_command() -> Command {
         Command::new("app")
             .arg(Arg::new("out").short('o').long("out"))
@@ -2197,10 +1517,6 @@ mod tests {
         assert!(request(&["app", "--help"]).target.is_empty());
     }
 
-    /// The two parses answer independently: help was asked before any command
-    /// was named, so the target is the root — while the spelling is still
-    /// long. Reading both off one parse got this wrong, rendering `build`'s
-    /// help for a request that never named it.
     #[test]
     fn test_help_request_separates_the_spelling_from_the_target() {
         let early = request(&["app", "--help", "build"]);
@@ -2216,7 +1532,6 @@ mod tests {
         assert_eq!(short.length, HelpLength::Short);
     }
 
-    /// `-vh` is a cluster ending in the help flag.
     #[test]
     fn test_help_request_reads_short_flag_clusters() {
         assert_eq!(request(&["app", "-vh"]).length, HelpLength::Short);
@@ -2230,16 +1545,12 @@ mod tests {
         );
     }
 
-    /// The case a hand-rolled scan gets wrong: `h` here is `-o`'s value, not a
-    /// help request. Clap consumes it as one, so the parse reports no help
-    /// flag and the fallback stands.
     #[test]
     fn test_help_request_does_not_mistake_an_option_value_for_a_flag() {
         assert_eq!(request(&["app", "-o", "h"]).length, HelpLength::Short);
         assert!(request(&["app", "-o", "h"]).target.is_empty());
     }
 
-    /// Past `--`, a `--help` is the application's data.
     #[test]
     fn test_help_request_respects_the_terminator() {
         assert_eq!(request(&["app", "--", "--help"]).length, HelpLength::Short);
@@ -2279,10 +1590,8 @@ mod tests {
 
         let temp_dir = TempDir::new().unwrap();
 
-        // Create base.yaml
         fs::write(temp_dir.path().join("base.yaml"), "style: { fg: blue }").unwrap();
 
-        // 1. Only base exists
         let app = AppBuilder::new()
             .styles_dir(temp_dir.path())
             .unwrap()
@@ -2291,7 +1600,6 @@ mod tests {
 
         assert_eq!(app.theme.name(), Some("base"));
 
-        // 2. theme.yaml exists (should override base)
         fs::write(temp_dir.path().join("theme.yaml"), "style: { fg: red }").unwrap();
 
         let app = AppBuilder::new()
@@ -2302,7 +1610,6 @@ mod tests {
 
         assert_eq!(app.theme.name(), Some("theme"));
 
-        // 3. default.yaml exists (should override theme)
         fs::write(temp_dir.path().join("default.yaml"), "style: { fg: green }").unwrap();
 
         let app = AppBuilder::new()
@@ -2313,10 +1620,6 @@ mod tests {
 
         assert_eq!(app.theme.name(), Some("default"));
     }
-
-    // ============================================================================
-    // App State Tests
-    // ============================================================================
 
     #[test]
     fn test_app_state_single_type() {
@@ -2367,7 +1670,7 @@ mod tests {
 
         let app = AppBuilder::new()
             .app_state(Config { value: 1 })
-            .app_state(Config { value: 2 }) // Replaces first
+            .app_state(Config { value: 2 })
             .build()
             .unwrap();
 

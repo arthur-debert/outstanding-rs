@@ -1,5 +1,3 @@
-//! Environment variable input source.
-
 use std::sync::Arc;
 
 use clap::ArgMatches;
@@ -8,32 +6,6 @@ use crate::collector::InputCollector;
 use crate::env::{EnvReader, RealEnv};
 use crate::InputError;
 
-/// Collect input from an environment variable.
-///
-/// This source reads from an environment variable. It is available when
-/// the variable is set and non-empty.
-///
-/// # Example
-///
-/// ```ignore
-/// use standout_input::{InputChain, ArgSource, EnvSource};
-///
-/// // For: MY_TOKEN=secret myapp
-/// let chain = InputChain::<String>::new()
-///     .try_source(ArgSource::new("token"))
-///     .try_source(EnvSource::new("MY_TOKEN"));
-/// ```
-///
-/// # Testing
-///
-/// Use [`EnvSource::with_reader`] to inject a mock for testing:
-///
-/// ```ignore
-/// use standout_input::{EnvSource, MockEnv};
-///
-/// let env = MockEnv::new().with_var("MY_TOKEN", "secret");
-/// let source = EnvSource::with_reader("MY_TOKEN", env);
-/// ```
 #[derive(Clone)]
 pub struct EnvSource<R: EnvReader = RealEnv> {
     var_name: String,
@@ -41,7 +13,6 @@ pub struct EnvSource<R: EnvReader = RealEnv> {
 }
 
 impl EnvSource<RealEnv> {
-    /// Create a new environment variable source.
     pub fn new(var_name: impl Into<String>) -> Self {
         Self {
             var_name: var_name.into(),
@@ -51,9 +22,6 @@ impl EnvSource<RealEnv> {
 }
 
 impl<R: EnvReader> EnvSource<R> {
-    /// Create an environment source with a custom reader.
-    ///
-    /// This is primarily used for testing to inject mock environment.
     pub fn with_reader(var_name: impl Into<String>, reader: R) -> Self {
         Self {
             var_name: var_name.into(),
@@ -61,7 +29,6 @@ impl<R: EnvReader> EnvSource<R> {
         }
     }
 
-    /// Get the environment variable name.
     pub fn var_name(&self) -> &str {
         &self.var_name
     }

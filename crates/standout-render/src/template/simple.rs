@@ -1,43 +1,7 @@
-//! Simple template engine using format-string style substitution.
-//!
-//! This module provides [`SimpleEngine`], a lightweight template engine that uses
-//! `{variable}` syntax for variable substitution. It's much lighter than MiniJinja
-//! and suitable for simple templates that don't need loops, conditionals, or filters.
-//!
-//! # Syntax
-//!
-//! - `{name}` - Simple variable substitution
-//! - `{user.name}` - Nested property access via dot notation
-//! - `{items.0}` - Array index access
-//! - `{{` and `}}` - Escaped braces (renders as `{` and `}`)
-//!
-//! # Example
-//!
-//! ```rust
-//! use standout_render::template::{SimpleEngine, TemplateEngine};
-//! use serde_json::json;
-//!
-//! let engine = SimpleEngine::new();
-//! let data = json!({"name": "World", "user": {"email": "test@example.com"}});
-//!
-//! let output = engine.render_template(
-//!     "Hello, {name}! Contact: {user.email}",
-//!     &data,
-//! ).unwrap();
-//!
-//! assert_eq!(output, "Hello, World! Contact: test@example.com");
-//! ```
-//!
-//! # Limitations
-//!
-//! SimpleEngine intentionally does NOT support:
-//! - Loops (`{% for %}`)
-//! - Conditionals (`{% if %}`)
-//! - Filters (`| upper`)
-//! - Template includes
-//! - Macros or blocks
-//!
-//! For these features, use [`MiniJinjaEngine`](super::MiniJinjaEngine).
+//! [`SimpleEngine`]: format-string style `{variable}` substitution, with
+//! `{a.b.0}` dotted/indexed path access and `{{`/`}}` as escaped braces.
+//! Deliberately has no loops, conditionals, filters, includes, or macros —
+//! use [`MiniJinjaEngine`](super::MiniJinjaEngine) when those are needed.
 
 use std::collections::HashMap;
 
@@ -45,54 +9,17 @@ use crate::error::RenderError;
 
 use super::TemplateEngine;
 
-/// A lightweight template engine using format-string style substitution.
-///
-/// This engine provides simple `{variable}` substitution without the overhead
-/// of a full template engine. It's ideal for:
-///
-/// - Simple output templates
-/// - Configuration messages
-/// - Status displays
-/// - Any template that just needs variable substitution
-///
-/// # Thread Safety
-///
-/// `SimpleEngine` is `Send + Sync` and can be shared across threads.
-///
-/// # Example
-///
-/// ```rust
-/// use standout_render::template::{SimpleEngine, TemplateEngine};
-/// use serde_json::json;
-///
-/// let engine = SimpleEngine::new();
-/// let data = json!({"status": "ok", "count": 42});
-///
-/// let output = engine.render_template(
-///     "Status: {status}, Count: {count}",
-///     &data,
-/// ).unwrap();
-///
-/// assert_eq!(output, "Status: ok, Count: 42");
-/// ```
 pub struct SimpleEngine {
     templates: HashMap<String, String>,
 }
 
 impl SimpleEngine {
-    /// Creates a new SimpleEngine.
     pub fn new() -> Self {
         Self {
             templates: HashMap::new(),
         }
     }
 
-    /// Resolves a dotted path in a JSON value.
-    ///
-    /// Supports:
-    /// - Simple keys: `name`
-    /// - Nested objects: `user.profile.name`
-    /// - Array indices: `items.0` or `items.0.name`
     fn resolve_path<'a>(value: &'a serde_json::Value, path: &str) -> Option<&'a serde_json::Value> {
         let mut current = value;
 
@@ -110,19 +37,16 @@ impl SimpleEngine {
         Some(current)
     }
 
-    /// Formats a JSON value as a string for output.
     fn format_value(value: &serde_json::Value) -> String {
         match value {
             serde_json::Value::String(s) => s.clone(),
             serde_json::Value::Number(n) => n.to_string(),
             serde_json::Value::Bool(b) => b.to_string(),
             serde_json::Value::Null => String::new(),
-            // For arrays and objects, use JSON representation
             serde_json::Value::Array(_) | serde_json::Value::Object(_) => value.to_string(),
         }
     }
 
-    /// Renders a template string with the given data.
     fn render_impl(
         &self,
         template: &str,
@@ -135,11 +59,9 @@ impl SimpleEngine {
         while let Some(ch) = chars.next() {
             if ch == '{' {
                 if chars.peek() == Some(&'{') {
-                    // Escaped brace: {{ -> {
                     chars.next();
                     result.push('{');
                 } else {
-                    // Variable substitution
                     let mut var_name = String::new();
                     let mut found_close = false;
 
@@ -166,9 +88,7 @@ impl SimpleEngine {
                         ));
                     }
 
-                    // Try to resolve from context first (if provided), then from data
                     let value = if let Some(ctx) = context {
-                        // For simple (non-dotted) names, check context first
                         if !var_name.contains('.') {
                             if let Some(ctx_val) = ctx.get(var_name) {
                                 Some(ctx_val)
@@ -176,15 +96,13 @@ impl SimpleEngine {
                                 Self::resolve_path(data, var_name)
                             }
                         } else {
-                            // For dotted paths, check if first segment is in context
                             let first_segment = var_name.split('.').next().unwrap_or(var_name);
                             if let Some(ctx_val) = ctx.get(first_segment) {
-                                // Resolve rest of path in context value
                                 let rest = &var_name[first_segment.len()..];
                                 if rest.is_empty() {
                                     Some(ctx_val)
                                 } else {
-                                    Self::resolve_path(ctx_val, &rest[1..]) // Skip leading dot
+                                    Self::resolve_path(ctx_val, &rest[1..])
                                 }
                             } else {
                                 Self::resolve_path(data, var_name)
@@ -197,18 +115,15 @@ impl SimpleEngine {
                     match value {
                         Some(v) => result.push_str(&Self::format_value(v)),
                         None => {
-                            // Variable not found - leave placeholder for debugging
                             result.push_str(&format!("{{{}}}", var_name));
                         }
                     }
                 }
             } else if ch == '}' {
                 if chars.peek() == Some(&'}') {
-                    // Escaped brace: }} -> }
                     chars.next();
                     result.push('}');
                 } else {
-                    // Stray closing brace - just include it
                     result.push(ch);
                 }
             } else {
@@ -403,7 +318,6 @@ mod tests {
         let data = json!({"name": "test"});
 
         let output = engine.render_template("Hello {missing}!", &data).unwrap();
-        // Missing variables are left as-is for debugging
         assert_eq!(output, "Hello {missing}!");
     }
 
@@ -432,7 +346,6 @@ mod tests {
         let engine = SimpleEngine::new();
         let data = json!({"name": "World"});
 
-        // Whitespace around variable name should be trimmed
         let output = engine.render_template("Hello { name }!", &data).unwrap();
         assert_eq!(output, "Hello World!");
     }
@@ -489,7 +402,6 @@ mod tests {
         let mut context = HashMap::new();
         context.insert("value".to_string(), json!("from_context"));
 
-        // Context is checked first for simple names
         let output = engine
             .render_with_context("{value}", &data, context)
             .unwrap();
@@ -509,12 +421,9 @@ mod tests {
         let engine = SimpleEngine::new();
         let data = json!({"items": [1, 2, 3]});
 
-        // Jinja-style syntax is NOT interpreted - it's passed through as-is
-        // Note: {{i}} becomes {i} due to brace escaping ({{ -> {, }} -> })
         let output = engine
             .render_template("{% for i in items %}{{i}}{% endfor %}", &data)
             .unwrap();
-        // The Jinja control flow is preserved, but {{ }} are unescaped to { }
         assert_eq!(output, "{% for i in items %}{i}{% endfor %}");
     }
 
@@ -537,7 +446,6 @@ mod tests {
             "arr": [1, 2, 3]
         });
 
-        // Objects and arrays are rendered as JSON
         let output = engine.render_template("Obj: {obj}", &data).unwrap();
         assert!(output.contains("\"a\":1") || output.contains("\"a\": 1"));
     }

@@ -1,56 +1,18 @@
-//! Output mode control: ANSI, plain text, or structured data.
-//!
 //! [`OutputMode`] controls how rendering behaves, from terminal colors to
-//! JSON serialization. This is the mechanism behind the `--output` CLI flag.
-//!
-//! ## Output Mode Categories
-//!
-//! | Category | Modes | Template? | ANSI? |
-//! |----------|-------|-----------|-------|
-//! | Templated | Auto, Term, Text | Yes | Varies |
-//! | Debug | TermDebug | Yes | Tags kept as `[name]...[/name]` |
-//! | Structured | Json, Yaml, Xml, Csv | No — serializes directly | No |
-//!
-//! ## How Modes Are Selected
-//!
-//! 1. Default: `Auto` — detects terminal capabilities at render time
-//! 2. CLI flag: `--output=json` overrides to structured mode
-//! 3. Programmatic: Pass explicit mode to render functions
-//!
-//! ## Auto Mode Resolution
-//!
-//! `Auto` is resolved from the request: [`crate::ColorPolicy::Auto`] plus
-//! stdout color capability on [`crate::TargetProperties`]. Convenience
-//! wrappers and `App::run` detect those facts at their edge. The leaf does
-//! not probe the process while applying styles.
-//!
-//! ## Structured Modes
-//!
-//! JSON, YAML, XML, and CSV modes skip template rendering entirely.
-//! Handler data is serialized directly, which means:
-//! - Template content is ignored
-//! - Style tags never apply
-//! - Context injection is skipped
-//!
-//! Use [`render_auto`](crate::render_auto) to automatically dispatch between
-//! templated and structured rendering based on output mode.
+//! structured serialization (JSON/YAML/XML/CSV, which skip template
+//! rendering entirely). `Auto` is resolved from the request
+//! ([`crate::ColorPolicy::Auto`] plus stdout capability on
+//! [`crate::TargetProperties`]) by callers at the edge — this module never
+//! probes the process itself while applying styles.
 
 use std::io::Write;
 
-/// Destination for rendered output.
-///
-/// Determines where the output should be written.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum OutputDestination {
-    /// Write to standard output
     Stdout,
-    /// Write to a specific file
     File(std::path::PathBuf),
 }
 
-/// Validates that a file path is safe to write to.
-///
-/// Returns an error if the parent directory doesn't exist.
 fn validate_path(path: &std::path::Path) -> std::io::Result<()> {
     if let Some(parent) = path.parent() {
         if !parent.as_os_str().is_empty() && !parent.exists() {
@@ -63,14 +25,9 @@ fn validate_path(path: &std::path::Path) -> std::io::Result<()> {
     Ok(())
 }
 
-/// Writes text content to the specified destination.
-///
-/// - `Stdout`: Writes to stdout with a newline
-/// - `File`: Writes to the file (overwriting)
 pub fn write_output(content: &str, dest: &OutputDestination) -> std::io::Result<()> {
     match dest {
         OutputDestination::Stdout => {
-            // Use println! logic (writeln to stdout)
             let stdout = std::io::stdout();
             let mut handle = stdout.lock();
             writeln!(handle, "{}", content)
@@ -82,10 +39,6 @@ pub fn write_output(content: &str, dest: &OutputDestination) -> std::io::Result<
     }
 }
 
-/// Writes binary content to the specified destination.
-///
-/// - `Stdout`: Writes raw bytes to stdout
-/// - `File`: Writes to the file (overwriting)
 pub fn write_binary_output(content: &[u8], dest: &OutputDestination) -> std::io::Result<()> {
     match dest {
         OutputDestination::Stdout => {
@@ -100,98 +53,28 @@ pub fn write_binary_output(content: &[u8], dest: &OutputDestination) -> std::io:
     }
 }
 
-/// Controls how output is rendered.
-///
-/// This determines whether ANSI escape codes are included in the output,
-/// or whether to output structured data formats like JSON.
-///
-/// # Variants
-///
-/// - `Auto` - Detect terminal capabilities automatically (default behavior)
-/// - `Term` - Always include ANSI escape codes (for terminal output)
-/// - `Text` - Never include ANSI escape codes (plain text)
-/// - `TermDebug` - Render style names as bracket tags for debugging
-/// - `Json` - Serialize data as JSON (skips template rendering)
-///
-/// # Example
-///
-/// ```rust
-/// use standout_render::{render_with_output, Theme, OutputMode};
-/// use console::Style;
-/// use serde::Serialize;
-///
-/// #[derive(Serialize)]
-/// struct Data { message: String }
-///
-/// let theme = Theme::new().add("ok", Style::new().green());
-/// let data = Data { message: "Hello".into() };
-///
-/// // Auto-detect (default)
-/// let auto = render_with_output(
-///     r#"[ok]{{ message }}[/ok]"#,
-///     &data,
-///     &theme,
-///     OutputMode::Auto,
-/// ).unwrap();
-///
-/// // Force plain text
-/// let plain = render_with_output(
-///     r#"[ok]{{ message }}[/ok]"#,
-///     &data,
-///     &theme,
-///     OutputMode::Text,
-/// ).unwrap();
-/// assert_eq!(plain, "Hello");
-///
-/// // Debug mode - renders bracket tags
-/// let debug = render_with_output(
-///     r#"[ok]{{ message }}[/ok]"#,
-///     &data,
-///     &theme,
-///     OutputMode::TermDebug,
-/// ).unwrap();
-/// assert_eq!(debug, "[ok]Hello[/ok]");
-/// ```
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum OutputMode {
-    /// Auto-detect terminal capabilities
     #[default]
     Auto,
-    /// Always use ANSI escape codes (terminal output)
     Term,
-    /// Never use ANSI escape codes (plain text)
     Text,
-    /// Debug mode: render style names as bracket tags `[name]text[/name]`
     TermDebug,
-    /// Structured output: serialize data as JSON (skips template rendering)
     Json,
-    /// Structured output: serialize data as YAML (skips template rendering)
     Yaml,
-    /// Structured output: serialize data as XML (skips template rendering)
     Xml,
-    /// Structured output: serialize flattened data as CSV (skips template rendering)
     Csv,
 }
 
 impl OutputMode {
-    /// Whether this mode itself means ANSI color.
-    ///
-    /// [`OutputMode::Auto`] is not a color decision: it is resolved from
-    /// [`crate::ColorPolicy`] and stdout capability on the request. This
-    /// method returns `false` for Auto so leftover callers cannot probe a
-    /// detector from inside the leaf.
     pub fn should_use_color(&self) -> bool {
         matches!(self, OutputMode::Term)
     }
 
-    /// Returns true if this is debug mode (bracket tags instead of ANSI).
     pub fn is_debug(&self) -> bool {
         matches!(self, OutputMode::TermDebug)
     }
 
-    /// Returns true if this is a structured output mode (JSON, etc.).
-    ///
-    /// Structured modes serialize data directly instead of rendering templates.
     pub fn is_structured(&self) -> bool {
         matches!(
             self,

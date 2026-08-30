@@ -22,10 +22,4 @@ fn test_nesting_complex() {
 
     let output = renderer.render("outer", &Empty {}).unwrap();
     println!("Output Complex: {:?}", output);
-
-    // Validate output contains expected sequences
-    // We expect "Outer" to be bold
-    // "Inner: " to be bold (inherited from outer)
-    // "CRIT" to be bold AND red
-    // "End" to be bold
 }

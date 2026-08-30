@@ -1,49 +1,12 @@
-//! Compile-time resource embedding macros.
-//!
-//! This module provides proc macros that walk directories at compile time and
-//! embed file contents into the binary. The macros are intentionally "dumb" -
-//! they only handle file discovery and content reading. All smart logic
-//! (extension priority, name normalization, collision detection) lives in
-//! the `standout` crate's registries.
-//!
-//! # Design
-//!
-//! The macros produce raw `(name_with_extension, content)` pairs and delegate
-//! to `from_embedded_entries()` methods in the standout crate. This design:
-//!
-//! - Avoids duplication: Priority/collision logic lives in one place
-//! - Simplifies debugging: Macros just read files, easier to troubleshoot
-//! - Ensures consistency: Same logic for runtime and compile-time loading
-//!
-//! # Relationship to file_loader
-//!
-//! These macros are the compile-time counterpart to runtime file loading.
-//! See [`standout::file_loader`] for the full file loading infrastructure
-//! and [`standout::TemplateRegistry`] / [`standout::StylesheetRegistry`]
-//! for the registry APIs that handle both runtime and embedded resources.
-//!
-//! For working examples, see `standout/tests/embed_macros.rs`.
-
 use proc_macro2::TokenStream;
 use quote::quote;
 use std::path::{Path, PathBuf};
 use syn::LitStr;
 
-/// Template file extensions (must match standout::render::registry::TEMPLATE_EXTENSIONS).
 pub const TEMPLATE_EXTENSIONS: &[&str] = &[".jinja", ".jinja2", ".j2", ".txt"];
 
-/// Stylesheet file extensions (must match standout::style::STYLESHEET_EXTENSIONS).
 pub const STYLESHEET_EXTENSIONS: &[&str] = &[".css", ".yaml", ".yml"];
 
-/// Generates code to create an EmbeddedTemplates source.
-///
-/// This function:
-/// 1. Walks the directory at compile time
-/// 2. Collects all files matching template extensions
-/// 3. Generates an `EmbeddedSource<TemplateResource>` with entries and source path
-///
-/// The returned `EmbeddedSource` can be passed to `RenderSetup` or converted
-/// to a `TemplateRegistry` via `into()`.
 pub fn embed_templates_impl(input: LitStr) -> TokenStream {
     let source_path = input.value();
     let dir_path = resolve_path(&source_path);
@@ -55,10 +18,8 @@ pub fn embed_templates_impl(input: LitStr) -> TokenStream {
         }
     };
 
-    // Store the absolute path for runtime hot-reload to work correctly
     let absolute_path = dir_path.to_string_lossy().to_string();
 
-    // Generate array of (name_with_ext, content) tuples
     let entries: Vec<_> = files
         .iter()
         .map(|(name, content)| {
@@ -79,15 +40,6 @@ pub fn embed_templates_impl(input: LitStr) -> TokenStream {
     }
 }
 
-/// Generates code to create an EmbeddedStyles source.
-///
-/// This function:
-/// 1. Walks the directory at compile time
-/// 2. Collects all files matching stylesheet extensions
-/// 3. Generates an `EmbeddedSource<StylesheetResource>` with entries and source path
-///
-/// The returned `EmbeddedSource` can be passed to `RenderSetup` or converted
-/// to a `StylesheetRegistry` via `into()`.
 pub fn embed_styles_impl(input: LitStr) -> TokenStream {
     let source_path = input.value();
     let dir_path = resolve_path(&source_path);
@@ -99,10 +51,8 @@ pub fn embed_styles_impl(input: LitStr) -> TokenStream {
         }
     };
 
-    // Store the absolute path for runtime hot-reload to work correctly
     let absolute_path = dir_path.to_string_lossy().to_string();
 
-    // Generate array of (name_with_ext, content) tuples
     let entries: Vec<_> = files
         .iter()
         .map(|(name, content)| {
@@ -123,22 +73,12 @@ pub fn embed_styles_impl(input: LitStr) -> TokenStream {
     }
 }
 
-/// Resolves a path relative to the crate's manifest directory.
-///
-/// CARGO_MANIFEST_DIR is set during compilation to the directory containing
-/// the Cargo.toml of the crate being compiled (not the proc-macro crate).
 fn resolve_path(path: &str) -> PathBuf {
     let manifest_dir = std::env::var("CARGO_MANIFEST_DIR")
         .expect("CARGO_MANIFEST_DIR should be set during compilation");
     Path::new(&manifest_dir).join(path)
 }
 
-/// Collects all files from a directory with matching extensions.
-///
-/// Returns a vector of (name_with_ext, content) pairs where name_with_ext
-/// is the relative path from root INCLUDING the extension (e.g., "themes/dark.css").
-///
-/// NO extension stripping or priority logic is done here - that's the registry's job.
 fn collect_files(dir: &Path, extensions: &[&str]) -> Result<Vec<(String, String)>, String> {
     if !dir.exists() {
         return Err(format!("Directory not found: {}", dir.display()));
@@ -150,13 +90,11 @@ fn collect_files(dir: &Path, extensions: &[&str]) -> Result<Vec<(String, String)
     let mut files = Vec::new();
     collect_files_recursive(dir, dir, extensions, &mut files)?;
 
-    // Sort for deterministic output (helps with reproducible builds)
     files.sort_by(|a, b| a.0.cmp(&b.0));
 
     Ok(files)
 }
 
-/// Recursively collects files from a directory.
 fn collect_files_recursive(
     current: &Path,
     root: &Path,
@@ -175,9 +113,7 @@ fn collect_files_recursive(
         } else if path.is_file() {
             let path_str = path.to_string_lossy();
 
-            // Check if file has a recognized extension
             if extensions.iter().any(|ext| path_str.ends_with(ext)) {
-                // Compute relative path from root (with extension)
                 let relative = path.strip_prefix(root).map_err(|_| {
                     format!("Failed to compute relative path for {}", path.display())
                 })?;
@@ -219,7 +155,7 @@ mod tests {
         let files = collect_files(temp_dir.path(), STYLESHEET_EXTENSIONS).unwrap();
 
         assert_eq!(files.len(), 1);
-        assert_eq!(files[0].0, "config.yaml"); // Extension preserved
+        assert_eq!(files[0].0, "config.yaml");
         assert_eq!(files[0].1, "key: value");
     }
 
@@ -271,7 +207,6 @@ mod tests {
 
         let files = collect_files(temp_dir.path(), STYLESHEET_EXTENSIONS).unwrap();
 
-        // Both should be collected - registry handles priority
         assert_eq!(files.len(), 2);
     }
 

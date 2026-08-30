@@ -1,22 +1,7 @@
-//! Utility functions for text processing and color conversion.
-
 use serde::Serialize;
 use serde_json::Value;
 use std::collections::{BTreeMap, BTreeSet};
 
-/// Converts an RGB triplet to the nearest ANSI 256-color palette index.
-///
-/// # Example
-///
-/// ```rust
-/// use standout_render::rgb_to_ansi256;
-///
-/// // Pure red maps to ANSI 196
-/// assert_eq!(rgb_to_ansi256((255, 0, 0)), 196);
-///
-/// // Pure green maps to ANSI 46
-/// assert_eq!(rgb_to_ansi256((0, 255, 0)), 46);
-/// ```
 pub fn rgb_to_ansi256((r, g, b): (u8, u8, u8)) -> u8 {
     if r == g && g == b {
         if r < 8 {
@@ -34,68 +19,32 @@ pub fn rgb_to_ansi256((r, g, b): (u8, u8, u8)) -> u8 {
     }
 }
 
-/// Placeholder helper for true-color output.
-///
-/// Currently returns the RGB triplet unchanged so it can be handed
-/// to future true-color aware APIs.
 pub fn rgb_to_truecolor(rgb: (u8, u8, u8)) -> (u8, u8, u8) {
     rgb
 }
 
-/// Truncates a string to fit within a maximum display width, adding ellipsis if needed.
-///
-/// Uses Unicode width calculations for proper handling of CJK and other wide
-/// characters. Semantic style tags are zero-width and remain balanced around
-/// the retained prefix. If the string fits within `max_width`, it is returned
-/// unchanged. If truncation is needed, characters are removed from the end and
-/// replaced with `…` (ellipsis).
-///
-/// # Arguments
-///
-/// * `s` - The string to truncate
-/// * `max_width` - Maximum display width (in terminal columns)
-///
-/// # Example
-///
-/// ```rust
-/// use standout_render::truncate_to_width;
-///
-/// assert_eq!(truncate_to_width("Hello", 10), "Hello");
-/// assert_eq!(truncate_to_width("Hello World", 6), "Hello…");
-/// ```
 pub fn truncate_to_width(s: &str, max_width: usize) -> String {
     truncate_to_width_with_policy(s, max_width, crate::AmbiguousWidth::Narrow)
 }
 
-/// Policy-aware variant of [`truncate_to_width`].
 pub fn truncate_to_width_with_policy(
     s: &str,
     max_width: usize,
     policy: crate::AmbiguousWidth,
 ) -> String {
     let calculator = crate::WidthCalculator::new(policy);
-    // Preserve this utility's historical width-zero behavior. Tabular
-    // truncation uses the strict width-bounded interface directly.
+    // Zero width still yields a lone ellipsis rather than an empty string, for
+    // backward compatibility with this function's original behavior.
     if max_width == 0 && calculator.visible_width(s) > 0 {
         return "…".to_string();
     }
     calculator.truncate_visible(s, max_width, "…", crate::width::VisibleTruncateAt::End)
 }
 
-/// Serializes data to XML, handling all serializable types.
-///
-/// Named structs serialize directly (using the struct name as root element).
-/// Map-like types are wrapped in a `<data>` root tag with keys sanitized to
-/// valid XML element names. Primitive types (strings, numbers, booleans) are
-/// wrapped as `<data><value>...</value></data>`. Null values produce an empty
-/// `<data/>` element.
 pub fn serialize_to_xml<T: Serialize + ?Sized>(data: &T) -> Result<String, quick_xml::DeError> {
-    // Direct serialization works for named structs (keys are known valid)
     if let Ok(xml) = quick_xml::se::to_string(data) {
         return Ok(xml);
     }
-    // For types that need a root element (maps, primitives, arrays),
-    // convert to JSON Value, sanitize keys, and serialize with root tag
     let value = serde_json::to_value(data).unwrap_or(serde_json::Value::Null);
     let sanitized = sanitize_xml_keys(&value);
     match sanitized {
@@ -112,7 +61,6 @@ pub fn serialize_to_xml<T: Serialize + ?Sized>(data: &T) -> Result<String, quick
     }
 }
 
-/// Recursively sanitizes JSON object keys to be valid XML element names.
 fn sanitize_xml_keys(value: &serde_json::Value) -> serde_json::Value {
     match value {
         serde_json::Value::Object(map) => {
@@ -130,11 +78,6 @@ fn sanitize_xml_keys(value: &serde_json::Value) -> serde_json::Value {
     }
 }
 
-/// Ensures a string is a valid XML element name.
-///
-/// XML names must start with a letter or underscore. Subsequent characters
-/// may be letters, digits, hyphens, underscores, or periods. Invalid
-/// characters are replaced with underscores.
 fn sanitize_xml_name(name: &str) -> String {
     if name.is_empty() {
         return "_".to_string();
@@ -159,14 +102,6 @@ fn sanitize_xml_name(name: &str) -> String {
     result
 }
 
-/// Flattens a JSON Value into a list of records for CSV export.
-///
-/// Returns a tuple of `(headers, rows)`, where rows are vectors of strings corresponding to headers.
-///
-/// - If `value` is an Array, each element becomes a row.
-/// - If `value` is an Object, it becomes a single row.
-/// - Nested objects are flattened with dot notation.
-/// - Arrays inside objects are flattened with indexed keys (e.g., items.0, items.1).
 pub fn flatten_json_for_csv(value: &Value) -> (Vec<String>, Vec<Vec<String>>) {
     let mut rows: Vec<BTreeMap<String, String>> = Vec::new();
 
@@ -181,7 +116,6 @@ pub fn flatten_json_for_csv(value: &Value) -> (Vec<String>, Vec<Vec<String>>) {
         }
     }
 
-    // Collect all unique keys
     let mut headers_set = BTreeSet::new();
     for row in &rows {
         for key in row.keys() {
@@ -190,7 +124,6 @@ pub fn flatten_json_for_csv(value: &Value) -> (Vec<String>, Vec<Vec<String>>) {
     }
     let headers: Vec<String> = headers_set.into_iter().collect();
 
-    // Map rows to value lists based on headers
     let mut data = Vec::new();
     for row in rows {
         let mut row_data = Vec::new();
@@ -417,7 +350,6 @@ mod tests {
         let data = serde_json::json!({"0": "zero", "1": "one"});
         let xml = serialize_to_xml(&data).unwrap();
         assert!(xml.contains("<data>"));
-        // Keys starting with digits get prefixed with underscore
         assert!(xml.contains("<_0>zero</_0>"));
         assert!(xml.contains("<_1>one</_1>"));
     }
@@ -447,10 +379,6 @@ mod tests {
         assert_eq!(sanitize_xml_name("a b"), "a_b");
         assert_eq!(sanitize_xml_name("a@b"), "a_b");
     }
-
-    // =========================================================================
-    // flatten_json_for_csv tests
-    // =========================================================================
 
     #[test]
     fn test_flatten_csv_simple_object() {
@@ -489,7 +417,6 @@ mod tests {
         assert!(headers.contains(&"tags.0".to_string()));
         assert!(headers.contains(&"tags.1".to_string()));
         assert!(headers.contains(&"tags.2".to_string()));
-        // Check values
         let name_idx = headers.iter().position(|h| h == "name").unwrap();
         let t0_idx = headers.iter().position(|h| h == "tags.0").unwrap();
         let t1_idx = headers.iter().position(|h| h == "tags.1").unwrap();
@@ -525,7 +452,6 @@ mod tests {
 
     #[test]
     fn test_flatten_csv_mixed_array_rows() {
-        // Array of objects where some have arrays and some don't
         let data = serde_json::json!([
             {"name": "Alice", "tags": ["x"]},
             {"name": "Bob"}
@@ -534,7 +460,6 @@ mod tests {
         assert!(headers.contains(&"name".to_string()));
         assert!(headers.contains(&"tags.0".to_string()));
         assert_eq!(rows.len(), 2);
-        // Bob's tags.0 should be empty
         let t0_idx = headers.iter().position(|h| h == "tags.0").unwrap();
         assert_eq!(rows[1][t0_idx], "");
     }

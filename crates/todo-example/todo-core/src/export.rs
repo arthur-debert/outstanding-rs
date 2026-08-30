@@ -1,54 +1,21 @@
-//! CSV export: the domain half of a compound artifact.
-//!
-//! The core produces exact bytes, a *suggested* filename, and the domain facts
-//! a caller needs to describe what happened. It deliberately does not choose a
-//! destination, touch the filesystem, or word a success message: those are
-//! shell concerns, and `tdoo` (via Standout) owns them.
-
 use crate::{Todo, TodoFilter};
 use serde::Serialize;
 
-/// A finished CSV export, ready for a caller to place somewhere.
-///
-/// `csv` is the artifact; everything else is a fact about producing it.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CsvExport {
-    /// The exact export bytes.
     pub csv: Vec<u8>,
-    /// What this export would like to be called. A suggestion, not a path:
-    /// the core has no opinion on which directory a caller writes into.
     pub suggested_filename: String,
-    /// How many todos the export contains.
     pub exported: usize,
-    /// Domain warnings about what the export could not fully represent. The
-    /// taxonomy is the core's, not the CLI's.
     pub warnings: Vec<ExportWarning>,
 }
 
-/// Something the export could not represent faithfully.
-///
-/// Modeled as data rather than prose so both a human report and `--output json`
-/// can present it without either one re-deriving the meaning.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum ExportWarning {
-    /// Completed todos exist but the requested filter excluded them.
-    CompletedOmitted {
-        /// How many were left out.
-        count: usize,
-    },
-    /// A title contained a newline, which the CSV row flattened to a space.
-    TitleFlattened {
-        /// The todo whose title was rewritten.
-        id: u32,
-    },
+    CompletedOmitted { count: usize },
+    TitleFlattened { id: u32 },
 }
 
-/// Renders `todos` as CSV, reporting what the rendering cost.
-///
-/// `omitted_completed` is the number of completed todos the caller's filter
-/// excluded; it becomes a warning rather than a silent difference between the
-/// store and the file.
 pub(crate) fn export_csv(
     todos: &[Todo],
     filter: TodoFilter,
@@ -84,7 +51,6 @@ pub(crate) fn export_csv(
     }
 }
 
-/// Quotes a CSV field when it contains a separator or a quote.
 fn escape_field(field: &str) -> String {
     if field.contains(',') || field.contains('"') {
         format!("\"{}\"", field.replace('"', "\"\""))
