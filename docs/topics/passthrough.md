@@ -50,8 +50,16 @@ things that come from having one:
 - No structured output modes. `Output::Render` is what `--output json` (and
   `yaml`/`xml`/`csv`) serializes; a passthrough handler never produces an
   `Output` value, so those modes have nothing to act on.
-- No post-dispatch or post-output hooks run against its result, since both
-  operate on a rendered or serializable value that never exists here.
+- No post-dispatch hooks. The passthrough dispatch closure is handed the
+  command's `Hooks` and ignores them, so nothing runs between the handler
+  returning and the empty result leaving dispatch.
+
+App-level hooks registered for the command's path *do* still run, because they
+sit outside the dispatch closure: a pre-dispatch hook runs before the handler
+as it would for any command, and a post-output hook runs after it, receiving
+`RenderedOutput::Silent`. A post-output hook attached to a passthrough command
+is therefore not inert — it observes and can act, it just has no rendered text
+to transform.
 
 Concretely, under `--output json` (or any other output mode) a passthrough
 command runs exactly the same as under the default: the dispatch closure

@@ -15,7 +15,9 @@ instead of each one inventing its own flags.
 ## Where it lives
 
 ```rust
-use standout::seeker::{Query, Op, OrderBy, Dir, parse_query, SeekerSchema, SeekType};
+use standout::seeker::{
+    Dir, Op, OrderBy, Query, SeekType, SeekerEnum, SeekerSchema, Seekable, Value, parse_query,
+};
 use standout::Seekable; // #[derive(Seekable)]
 ```
 
@@ -27,13 +29,16 @@ use standout::Seekable; // #[derive(Seekable)]
 
 `#[derive(Seekable)]` on a struct with named fields generates:
 
-- An implementation of the `Seekable` trait, providing
-  `seeker_field_value(&self, field: &str) -> Value<'_>` and the
-  `Self::accessor(item, field)` function `Query::filter` and friends expect.
-- An implementation of `SeekerSchema`, providing `field_type(field)`,
-  `field_names()`, and (when an enum field resolves variant names)
-  `resolve_enum_variant(field, variant)` — this is what `parse_query` uses to
-  validate a query string against the struct's actual fields.
+- An implementation of the `Seekable` trait: `seeker_field_value(&self, field:
+  &str) -> Value<'_>`, the trait's one required method. The
+  `Self::accessor(item, field)` function `Query::filter` and friends expect is
+  a provided method on the trait, so it comes with any implementation, derived
+  or written by hand.
+- An implementation of `SeekerSchema`, providing `field_type(field)` and
+  `field_names()` — this is what `parse_query` uses to validate a query string
+  against the struct's actual fields. It does **not** provide
+  `resolve_enum_variant(field, variant)`, which keeps the trait's default
+  `None`; see [Enum fields](#enum-fields) for what that costs.
 - One `pub const` per seekable field, upper-cased (`NAME`, `CREATED_AT`), so
   callers write `Task::PRIORITY` instead of the string literal `"priority"`.
 
@@ -82,7 +87,7 @@ other common shapes.
 ## The query string grammar
 
 `parse_query::<S>(pairs)` turns an ordered sequence of `(key, value)` string
-pairs into a `Query`, validating every field and operator against `S:
+pairs into a `Query`, validating every *clause* field and operator against `S:
 SeekerSchema`. This is the shape a `--filter` flag or a raw query string
 typically produces.
 
@@ -95,7 +100,8 @@ name=docs                  # name eq "docs"
 name-contains=docs         # name contains "docs"
 priority-gte=4             # priority >= 4
 created-at-before=2024-01-01
-status-in=pending,active   # enum field, comma-separated variant names or discriminants
+status-in=1,2              # enum field, comma-separated discriminants
+                           # (variant names too, on a hand-written schema)
 done                       # bare boolean flag => done eq true
 ```
 
@@ -121,7 +127,12 @@ limit=10
 offset=5              # also: skip
 ```
 
-`order`'s value is `field` (ascending) or `field-asc`/`field-desc`.
+`order`'s value is `field` (ascending) or `field-asc`/`field-desc`. The
+ordering field is **not** checked against the schema: `parse_query` reads the
+reserved `order`/`sort` key before it consults `S::field_type`, so
+`order=does-not-exist` parses without error and then sorts every item on
+`Value::None`, leaving the input order. Validate an ordering field yourself
+against `S::field_names()` if a typo there should be an error.
 
 **Value parsing per field type:**
 
@@ -132,14 +143,84 @@ offset=5              # also: skip
   datetime (`YYYY-MM-DDTHH:MM:SS[.fff]Z`), or a bare four-digit year.
 - Enum: a numeric discriminant, or a variant name resolved through
   `SeekerSchema::resolve_enum_variant`; `in` accepts a comma-separated list
-  of either.
+  of either. See [Enum fields](#enum-fields) — a derived schema takes
+  discriminants only.
 - Bool: `true`/`1`/`yes`/`on` or `false`/`0`/`no`/`off` (case-insensitive);
   an empty value defaults to `true`.
 
-An unknown field, an operator invalid for the field's type (`name-gt`, since
-strings don't support `Gt`), or an unparsable value each produce a
-`ParseError` naming the field and, for unknown fields, the schema's actual
-`field_names()`.
+An unknown *clause* field, an operator invalid for the field's type
+(`name-gt`, since strings don't support `Gt`), or an unparsable value each
+produce a `ParseError` naming the field and, for unknown fields, the schema's
+actual `field_names()`. The reserved `order`/`sort` key is the exception noted
+above.
+
+## Enum fields
+
+`SeekerSchema::resolve_enum_variant(field, variant)` is what turns
+`status=pending` into a discriminant, and it defaults to returning `None`.
+`#[derive(Seekable)]` does not override it, so a **derived schema matches enum
+fields on numeric discriminants only** — `status=pending` fails with a parse
+error, `status=0` works. Because the derive owns the whole `SeekerSchema`
+implementation, a second `impl` cannot add the method beside it.
+
+To match on variant names, drop the derive for that struct and write both
+traits by hand — `Seekable` for the values, `SeekerSchema` for the schema plus
+the variant mapping. You give up the generated field constants along with it — `accessor` still
+comes from the trait:
+
+```rust
+#[derive(Clone, Copy)]
+enum Status {
+    Pending = 0,
+    Active = 1,
+}
+
+impl SeekerEnum for Status {
+    fn seeker_discriminant(&self) -> u32 {
+        *self as u32
+    }
+}
+
+struct Task {
+    name: String,
+    status: Status,
+}
+
+impl Seekable for Task {
+    fn seeker_field_value(&self, field: &str) -> Value<'_> {
+        match field {
+            "name" => Value::String(&self.name),
+            "status" => Value::Enum(self.status.seeker_discriminant()),
+            _ => Value::None,
+        }
+    }
+}
+
+impl SeekerSchema for Task {
+    fn field_type(field: &str) -> Option<SeekType> {
+        match field {
+            "name" => Some(SeekType::String),
+            "status" => Some(SeekType::Enum),
+            _ => None,
+        }
+    }
+
+    fn field_names() -> &'static [&'static str] {
+        &["name", "status"]
+    }
+
+    fn resolve_enum_variant(field: &str, variant: &str) -> Option<u32> {
+        match (field, variant) {
+            ("status", "pending") => Some(Status::Pending as u32),
+            ("status", "active") => Some(Status::Active as u32),
+            _ => None,
+        }
+    }
+}
+```
+
+`parse_query::<Task>` now accepts `status=pending` and `status-in=pending,active`
+as well as the discriminants.
 
 ## Example
 

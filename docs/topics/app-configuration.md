@@ -14,14 +14,14 @@ See also:
 ## Basic Setup
 
 ```rust
-use standout::cli::App;
+use standout::cli::{App, FnHandler};
 use standout_macros::{embed_templates, embed_styles};
 
 let app = App::builder()
     .templates(embed_templates!("src/templates"))
     .styles(embed_styles!("src/styles"))
     .default_theme("default")
-    .command_with("list", list_handler, |config| config.template_name("list"))?
+    .command_with("list", FnHandler::new(list_handler), |config| config.template_name("list"))?
     .build()?;
 
 app.run(Cli::command(), std::env::args());
@@ -79,19 +79,25 @@ In debug builds, embedded resources are re-read from disk on each render—edit 
 
 This is automatic when the source path exists on disk.
 
-## Runtime Overrides
+## Resources Read at Run Time
 
-Users can override embedded resources with local files:
+`templates_dir` and `styles_dir` add a directory read at run time, for
+resources that live outside the crate source tree and so cannot be embedded:
 
 ```rust
 App::builder()
     .templates(embed_templates!("src/templates"))
-    .templates_dir("~/.myapp/templates")  // Overrides embedded
+    .templates_dir("~/.myapp/templates")  // Adds names the binary does not embed
     .styles(embed_styles!("src/styles"))
-    .styles_dir("~/.myapp/themes")        // Overrides embedded
+    .styles_dir("~/.myapp/themes")        // Likewise for themes
 ```
 
-Local directories take precedence. This enables user customization without recompiling.
+These directories **add** names; they do not replace them. A registry resolves
+an embedded name before it looks at any directory registered this way, so a
+`~/.myapp/templates/list.jinja` sitting beside an embedded `list` never
+renders — see [Resolution Priority](../crates/render/topics/file-system-resources.md#resolution-priority).
+To let a user directory win, register only the directory, without the
+`embed_templates!` call, when that directory exists.
 
 ## Theme Selection
 
@@ -130,9 +136,17 @@ both.
 
 ```rust
 App::builder()
-    .command_with("list", list_handler, |cfg| cfg)?
-    .command_with("add", add_handler, |cfg| cfg)?
+    .command_with("list", FnHandler::new(list_handler), |cfg| cfg)?
+    .command_with("add", FnHandler::new(add_handler), |cfg| cfg)?
 ```
+
+`AppBuilder::command_with` takes an `impl Handler`, not a bare function, so a
+plain `fn(&ArgMatches, &CommandContext) -> HandlerResult<T>` is wrapped in
+`FnHandler::new(...)` first; a `#[handler]`-annotated function registers as the
+`name_Handler` struct the macro generates instead. (`GroupBuilder::command_with`
+— the entry `.commands(...)` and `#[derive(Dispatch)]` reach — takes the bare
+closure and wraps it for you, which is why the nested-group example below does
+not name `FnHandler`.)
 
 With no `.template_name(...)` set on the `CommandConfig`, the template
 resolves by convention: the command path with `.` replaced by `/` (`list`,
@@ -143,10 +157,10 @@ resolves by convention: the command path with `.` replaced by `/` (`list`,
 
 ```rust
 App::builder()
-    .command_with("delete", delete_handler, |cfg| cfg
+    .command_with("delete", FnHandler::new(delete_handler), |cfg| cfg
         .template_name("delete")
         .pre_dispatch(require_confirmation)
-        .post_dispatch(log_deletion))
+        .post_dispatch(log_deletion))?
 ```
 
 Inline command configuration can also attach a
@@ -296,7 +310,7 @@ Attach hooks to specific command paths:
 
 ```rust
 App::builder()
-    .command_with("db.migrate", migrate_handler, |cfg| cfg)?
+    .command_with("db.migrate", FnHandler::new(migrate_handler), |cfg| cfg)?
     .hooks("db.migrate", Hooks::new()
         .pre_dispatch(require_admin)
         .post_dispatch(add_timestamp)
@@ -533,7 +547,7 @@ What's NOT validated at build time:
 ## Complete Example
 
 ```rust
-use standout::cli::{App, CommandContext, HandlerResult, Output};
+use standout::cli::{App, CommandContext, FnHandler, HandlerResult, Output};
 use standout_macros::{embed_templates, embed_styles};
 use clap::{Command, ArgMatches};
 use serde::Serialize;
@@ -558,7 +572,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         .default_theme("default")
         .version(env!("CARGO_PKG_VERSION"))
         .context("version", env!("CARGO_PKG_VERSION").into())
-        .command_with("list", list_handler, |config| {
+        .command_with("list", FnHandler::new(list_handler), |config| {
             config.template_name("list")
         })?
         .topics_dir("docs/topics")?

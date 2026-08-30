@@ -406,9 +406,14 @@ use standout::cli::Dispatch;
 #[dispatch(handlers = handlers)]
 pub enum Commands {
     #[dispatch(pure)]
-    List,
+    List {
+        #[arg(short, long)]
+        all: bool,
+    },
     #[dispatch(pure)]
-    Add,
+    Add {
+        title: String,
+    },
 }
 ```
 
@@ -418,6 +423,14 @@ variant resolves to the wrapper `#[handler]` generated for the function —
 `List` → `handlers::list__handler`. Without `pure`, the variant calls
 `handlers::list` directly, and that function must already have the
 `fn(&ArgMatches, &CommandContext) -> HandlerResult<T>` dispatch signature.
+
+The `Dispatch` derive connects a variant to a handler; it does not declare the
+variant's arguments. Those stay clap's, so each variant keeps the fields its
+handler's `#[flag]` and `#[arg]` parameters read — `all` for `list`, `title`
+for `add` — exactly as in the plain-clap version at the top of this guide.
+`app.verify_command(&cmd)` reports a handler asking for an argument the
+variant does not declare, which otherwise surfaces as a `get_flag` panic at
+run time.
 
 > **Verify:** Run `cargo build` - it should compile without errors.
 

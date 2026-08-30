@@ -87,11 +87,14 @@ let mut renderer = Renderer::new(Theme::new())?;
 renderer.with_embedded_source(templates);
 ```
 
-`EmbeddedSource::should_hot_reload()` is `true` in debug builds when the original source directory (recorded at compile time) still exists on disk — that's what lets a debug build behave like a file-based one even though the content is also embedded. `App::builder().templates(embedded)` / `.styles(embedded)` consume the same value; see the standout framework docs for that wiring.
+`EmbeddedSource::should_hot_reload()` is `true` in debug builds when the original source directory (recorded at compile time) still exists on disk. What that buys depends on which consumer takes the value, and the two differ:
+
+- **`App::builder().templates(embedded)` / `.styles(embedded)`** call `EmbeddedSource::into_registry`, which under `should_hot_reload()` walks the source directory and registers the entries as **file-backed**. A debug build therefore re-reads them per render, exactly like `add_template_dir`. See the standout framework docs for that wiring.
+- **`Renderer::with_embedded_source`** builds that registry and then copies every resolved entry in with `add_inline`. The content is **snapshotted at registration**, so a `Renderer` does not re-read the source directory afterwards — `should_hot_reload()` changes nothing a caller can observe on this path.
 
 ### Hybrid Approach
 
-Combine embedded defaults with an optional file directory that, for any name it defines, is only consulted when that name isn't already inline or embedded:
+Combine embedded defaults with an optional file directory. The directory **adds** names; it cannot replace one, because tier 1 is consulted first (see [Resolution Priority](#resolution-priority)) and `with_embedded_source` has already put every embedded name there:
 
 ```rust
 use standout_render::{embed_templates, Renderer, Theme};
@@ -108,7 +111,7 @@ if Path::new("./templates").exists() {
 }
 ```
 
-This pattern lets users override individual templates by placing a same-named file in `./templates`, without touching the binary — as long as that name isn't already inline or embedded, since those take priority (see below).
+So `./templates` supplies templates the binary does not embed. A same-named file there is **not** an override: `render("report")` still resolves the embedded `report`. To let a directory win over the binary's copy, do not register the embedded source at all when the directory exists.
 
 ---
 
@@ -145,8 +148,8 @@ my-cli/
 │   └── styles/              # Stylesheets for embedding
 │       ├── default.css
 │       └── colorblind.css
-├── templates/               # Development overrides (gitignored)
-└── styles/                  # Development overrides (gitignored)
+├── templates/               # Extra development templates (gitignored)
+└── styles/                  # Extra development stylesheets (gitignored)
 ```
 
 In `main.rs`:
@@ -159,7 +162,8 @@ let embedded_templates = embed_templates!("src/templates");
 let mut renderer = Renderer::new(theme)?;
 renderer.with_embedded_source(embedded_templates);
 
-// In debug, also check local directories for overrides
+// In debug, also pick up local templates the binary does not embed.
+// Names the binary already embeds keep resolving to the embedded copy.
 #[cfg(debug_assertions)]
 {
     if Path::new("./templates").exists() {

@@ -31,9 +31,12 @@ The macro leaves `list` alone and adds three items beside it:
 The `Result<T, E>` to `Output::Render` wrap happens inside `list_Handler`'s
 `Handler::handle`, which calls `IntoHandlerResult::into_handler_result` on
 whatever `list__handler` returned. It is not applied by `list__handler` itself.
-That is the same wrap on every registration path: `AppBuilder::command_with`
-takes an `impl Handler`, and `#[derive(Dispatch)]` reaches the same trait
-object, so both end at the one `into_handler_result` call.
+Only registration of `list_Handler` runs that wrap. `#[derive(Dispatch)]` does
+not reach the trait object at all: it registers the closure
+`handlers::list__handler` through `GroupBuilder::command_with`, so nothing
+calls `Handler::handle` and the annotated return type has to be a
+`HandlerResult` shape already. That is the difference the next two tables
+spell out.
 
 The un-suffixed `handlers::list` is not registrable — it has the wrong
 signature by design, so that a test can call it directly. Which of the other

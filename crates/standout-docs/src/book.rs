@@ -7,9 +7,13 @@
 //! a relative link between two pages must name a file that exists, and a link
 //! carrying a `#fragment` must name a heading that exists on that page.
 //!
-//! The scanner ignores fenced code blocks and inline code spans, because a
-//! template's `[tag]` vocabulary and a Rust example's `#` lines otherwise read
-//! as links and headings. Anchors are computed with mdbook's own rule — keep
+//! Both of CommonMark's link forms count, since either can name a page that
+//! moved: inline links, and reference links resolved through a `[label]:`
+//! definition on the same page. The scanner ignores fenced code blocks and
+//! inline code spans, because a template's `[tag]` vocabulary and a Rust
+//! example's `#` lines otherwise read as links and headings; outside code, a
+//! bare `[tag]` is a link only when a definition gives that label a
+//! destination. Anchors are computed with mdbook's own rule — keep
 //! alphanumerics, `_` and `-`, turn whitespace into `-`, lowercase, and suffix
 //! a repeated anchor with `-1`, `-2` and so on.
 
@@ -217,29 +221,137 @@ pub fn broken_site_links(root: &Path, page: &Path) -> io::Result<Vec<Broken>> {
 }
 
 /// Every markdown link on a page, in source order, skipping code.
+///
+/// Both link forms CommonMark defines are collected, because either one can go
+/// stale. Inline links carry their destination in `(…)`. Reference links —
+/// full (`[text][label]`), collapsed (`[label][]`) and shortcut (`[label]`) —
+/// carry a label that a `[label]: destination` definition elsewhere on the
+/// page resolves; each usage is reported at the line the usage opened on, not
+/// the line the definition was written on, because that is where a reader
+/// follows it from. A label with no definition is not a link at all, which is
+/// what keeps a template's `[tag]` vocabulary from reading as one.
+///
+/// The scan runs over the page's prose as one string rather than line by line,
+/// because a link's text may be wrapped across lines while its destination
+/// stays on the last of them.
 pub fn links(markdown: &str) -> Vec<Link> {
+    let lines: Vec<(usize, String)> = prose_lines(markdown)
+        .into_iter()
+        .map(|(index, raw)| (index, blank_code_spans(&raw)))
+        .collect();
+    let definitions = reference_definitions(&lines);
+
+    // Every line keeps an entry, so an offset still maps to its source line;
+    // a definition line contributes no text, so its own `[label]` is not read
+    // back as a shortcut usage of itself.
+    let mut prose = String::new();
+    let mut starts: Vec<(usize, usize)> = Vec::new();
+    for (index, line) in &lines {
+        starts.push((prose.len(), *index));
+        if !is_reference_definition(line) {
+            prose.push_str(line);
+        }
+        prose.push('\n');
+    }
+
+    let line_of = |offset: usize| {
+        starts
+            .partition_point(|(start, _)| *start <= offset)
+            .checked_sub(1)
+            .map_or(1, |position| starts[position].1)
+    };
+
     let mut found = Vec::new();
-    for (index, raw) in prose_lines(markdown) {
-        let line = blank_code_spans(&raw);
-        let mut rest = line.as_str();
-        let mut consumed = 0usize;
-        while let Some(open) = rest.find("](") {
-            let after = open + 2;
-            let Some(close) = matching_paren(&rest[after..]) else {
-                break;
-            };
-            let target = rest[after..after + close].trim();
+    let mut cursor = 0usize;
+    while let Some(offset) = prose[cursor..].find('[') {
+        let open = cursor + offset;
+        let Some(close) = matching_bracket(&prose[open + 1..]).map(|end| open + 1 + end) else {
+            // An unpaired `[` is prose, not the start of a link.
+            cursor = open + 1;
+            continue;
+        };
+        let text = &prose[open + 1..close];
+        let after = &prose[close + 1..];
+        let (target, consumed) = if let Some(inline) = after.strip_prefix('(') {
+            match matching_paren(inline) {
+                Some(end) => (Some(inline[..end].trim().to_string()), close + 2 + end + 1),
+                None => (None, close + 1),
+            }
+        } else if let Some(reference) = after.strip_prefix('[') {
+            match matching_bracket(reference) {
+                Some(end) => {
+                    let label = &reference[..end];
+                    let label = if label.trim().is_empty() { text } else { label };
+                    (
+                        definitions.get(&normalize_label(label)).cloned(),
+                        close + 2 + end + 1,
+                    )
+                }
+                None => (None, close + 1),
+            }
+        } else {
+            (definitions.get(&normalize_label(text)).cloned(), close + 1)
+        };
+        if let Some(target) = target {
             if !target.is_empty() {
                 found.push(Link {
-                    target: target.to_string(),
-                    line: index,
+                    target,
+                    line: line_of(open),
                 });
             }
-            consumed += after + close + 1;
-            rest = &line[consumed..];
         }
+        cursor = consumed.max(open + 1);
     }
     found
+}
+
+/// Every `[label]: destination` definition on the page, by normalized label.
+fn reference_definitions(lines: &[(usize, String)]) -> HashMap<String, String> {
+    let mut definitions = HashMap::new();
+    for (_, line) in lines {
+        let Some((label, destination)) = split_reference_definition(line) else {
+            continue;
+        };
+        // CommonMark: the first definition of a label is the one that counts.
+        definitions.entry(label).or_insert(destination);
+    }
+    definitions
+}
+
+fn is_reference_definition(line: &str) -> bool {
+    split_reference_definition(line).is_some()
+}
+
+/// A definition line split into its normalized label and its destination.
+///
+/// The destination stops at the first whitespace, which drops the optional
+/// title; [`split_target`] strips any `<…>` around what remains.
+fn split_reference_definition(line: &str) -> Option<(String, String)> {
+    let trimmed = line.trim_start();
+    // More than three leading spaces would make it an indented code block.
+    if line.len() - trimmed.len() > 3 {
+        return None;
+    }
+    let rest = trimmed.strip_prefix('[')?;
+    let close = matching_bracket(rest)?;
+    let destination = rest[close + 1..].strip_prefix(':')?.trim();
+    if destination.is_empty() {
+        return None;
+    }
+    let destination = match destination.split_once(char::is_whitespace) {
+        Some((destination, _title)) => destination,
+        None => destination,
+    };
+    Some((normalize_label(&rest[..close]), destination.to_string()))
+}
+
+/// CommonMark's label matching: case-insensitive, whitespace-collapsed.
+fn normalize_label(label: &str) -> String {
+    label
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ")
+        .to_lowercase()
 }
 
 /// Every heading anchor on a page, in mdbook's spelling.
@@ -331,6 +443,23 @@ fn target_path(page: &Path, target: &str) -> Option<PathBuf> {
         return None;
     }
     Some(normalize_dots(&page.parent()?.join(path)))
+}
+
+/// The offset of the `]` closing a `[` already consumed, counting nesting.
+///
+/// Link text may itself bracket something — `[![alt](img.png)][home]` — so the
+/// first `]` is not always the closing one.
+fn matching_bracket(rest: &str) -> Option<usize> {
+    let mut depth = 0usize;
+    for (index, ch) in rest.char_indices() {
+        match ch {
+            '[' => depth += 1,
+            ']' if depth == 0 => return Some(index),
+            ']' => depth -= 1,
+            _ => {}
+        }
+    }
+    None
 }
 
 fn matching_paren(rest: &str) -> Option<usize> {
@@ -497,6 +626,74 @@ let s = \"[fenced](never.md)\";
         assert_eq!(targets, ["a.md", "b.md#frag", "c.md"]);
         assert_eq!(found[0].line, 1);
         assert_eq!(found[2].line, 8);
+    }
+
+    #[test]
+    fn a_link_whose_text_wraps_is_still_read() {
+        let markdown = "\
+See the [execution
+outcomes](./execution-outcomes.md) page.
+";
+        let found = links(markdown);
+        assert_eq!(found.len(), 1, "{found:?}");
+        assert_eq!(found[0].target, "./execution-outcomes.md");
+        assert_eq!(found[0].line, 1, "reported where the link opened");
+    }
+
+    #[test]
+    fn reference_links_are_read_in_all_three_forms() {
+        let markdown = "\
+A [full][setup] one, a [collapsed][] one, and a [shortcut] one.
+An [undefined][nowhere] label is not a link, and neither is [tag].
+`[setup]` in code stays out.
+
+[setup]: a.md
+[collapsed]: b.md#frag
+[shortcut]: c.md \"A title\"
+";
+        let found = links(markdown);
+        let targets: Vec<&str> = found.iter().map(|link| link.target.as_str()).collect();
+        assert_eq!(targets, ["a.md", "b.md#frag", "c.md"]);
+        assert!(
+            found.iter().all(|link| link.line == 1),
+            "a usage is reported where it is written, not where it is defined: {found:?}"
+        );
+    }
+
+    #[test]
+    fn a_reference_link_to_a_missing_file_is_reported() {
+        let fixture = Fixture::new("missing-reference");
+        fixture
+            .write("docs/SUMMARY.md", "# Summary\n\n- [One](./topics/one.md)\n")
+            .write(
+                "docs/topics/one.md",
+                "# One\n\nSee [the guide][two], [three][] and [four].\n\n\
+                 [two]: two.md\n[three]: three.md\n[four]: four.md\n",
+            );
+
+        let found = broken_links(fixture.root()).unwrap();
+        let targets: Vec<&str> = found.iter().map(|b| b.link.target.as_str()).collect();
+        assert_eq!(targets, ["two.md", "three.md", "four.md"], "{found:?}");
+    }
+
+    #[test]
+    fn a_reference_link_to_a_missing_heading_is_reported() {
+        let fixture = Fixture::new("missing-reference-heading");
+        fixture
+            .write("docs/SUMMARY.md", "# Summary\n\n- [One](./topics/one.md)\n")
+            .write(
+                "docs/topics/one.md",
+                "# One\n\nSee [two][].\n\n[two]: two.md#gone\n",
+            )
+            .write("docs/topics/two.md", "# Two\n\n## Here\n");
+
+        let found = broken_links(fixture.root()).unwrap();
+        assert_eq!(found.len(), 1, "{found:?}");
+        assert!(
+            found[0].reason.contains("no heading anchored `#gone`"),
+            "{}",
+            found[0]
+        );
     }
 
     #[test]

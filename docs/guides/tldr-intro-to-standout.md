@@ -89,7 +89,9 @@ Configure the app:
 
 > Handlers access shared state via `ctx.app_state.get_required::<Database>()?`. See [App State and Extensions](../crates/dispatch/topics/app-state.md) for details.
 
-Connect your logic to a command name and template:
+Connect your logic to a command name and template. The variant declares every
+argument its handler asks for — `list` takes `#[flag] all`, so `List` carries
+an `all` field for it to read:
 
 ```rust
     #[derive(Subcommand, Dispatch)]
@@ -97,7 +99,10 @@ Connect your logic to a command name and template:
     pub enum Commands {
           // ...
           #[dispatch(pure)]
-          List,
+          List {
+              #[arg(long)]
+              all: bool,
+          },
     }
 ```
 

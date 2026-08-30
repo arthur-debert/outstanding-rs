@@ -130,8 +130,10 @@ choose, which is how two commands share one template.
 
 ### Parameter attributes
 
-Every typed parameter carries one of four attributes. A parameter whose type is
-a reference may go unannotated.
+Every typed parameter carries one of four attributes, references included: the
+macro reads the value out of `ArgMatches` (or hands over the dispatcher's own
+reference) by the attribute, never by the type, so a `&CommandContext` still
+needs `#[ctx]` and an `&ArgMatches` still needs `#[matches]`.
 
 | Attribute | Type | Where the value comes from |
 | --- | --- | --- |
@@ -195,7 +197,7 @@ Every attribute below is exercised by
 `deny(warnings)` against a single `standout` dependency.
 
 ```rust
-use clap::ArgMatches;
+use clap::{Arg, ArgAction, ArgMatches, Command};
 use standout::cli::{App, CommandContext, Dispatch, Output};
 use standout::{handler, EmbeddedTemplates};
 
@@ -243,18 +245,35 @@ const TEMPLATES: &[(&str, &str)] = &[
     ("about-this", "{{ names | join(', ') }}"),
 ];
 
+/// The clap surface `Commands` is registered against. `Dispatch` connects a
+/// variant to a handler; declaring the handler's arguments stays clap's job,
+/// so `list-units` carries the `all` its handler reads.
+fn command() -> Command {
+    Command::new("unitctl")
+        .subcommand(
+            Command::new("list-units")
+                .arg(Arg::new("all").long("all").action(ArgAction::SetTrue)),
+        )
+        .subcommand(Command::new("about-this"))
+        .subcommand(Command::new("reload"))
+}
+
 fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let _app: App = App::builder()
+    let app: App = App::builder()
         .templates(EmbeddedTemplates::new(TEMPLATES, ""))
         .commands(Commands::dispatch_config())?
         .build()?;
+    app.verify_command(&command())?;
     Ok(())
 }
 ```
 
 `ListUnits` registers the command `list-units`, calls
 `handlers::list_units__handler`, renders the registry entry `list-units`, and
-runs on a naked invocation. `About` registers `about-this` and renders the
+runs on a naked invocation. Its `#[flag] all` parameter reads the clap argument
+`all` that `command()` declares on that subcommand; `verify_command` is what
+reports the two drifting apart, instead of leaving it to a `get_flag` panic on
+the first invocation. `About` registers `about-this` and renders the
 entry of the same name, because `name` changes the registration path and the
 convention follows it. `Reload` registers `reload`, calls
 `handlers::reload__handler` and renders nothing, so it needs no template.

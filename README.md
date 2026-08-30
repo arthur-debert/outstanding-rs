@@ -126,7 +126,10 @@ struct Cli {
 #[dispatch(handlers = handlers)]
 enum Commands {
     #[dispatch(pure)]
-    List,
+    List {
+        #[arg(long)]
+        all: bool,
+    },
 }
 
 mod handlers {
@@ -154,7 +157,10 @@ fn main() -> anyhow::Result<()> {
 The `List` variant registers the command under its kebab-case name, `list`;
 `#[dispatch(pure)]` points it at the wrapper `#[handler]` generated,
 `handlers::list__handler`; and with no template named, the convention renders
-`src/templates/list.jinja`. Themed help is on by default.
+`src/templates/list.jinja`. Themed help is on by default. Each `#[flag]` or
+`#[arg]` parameter reads a clap argument by id, so the variant declares `all`
+for the handler to find it — `app.verify_command(&cmd)` reports a pair that
+does not line up.
 
 ```bash
 myapp list                  # Rich terminal output

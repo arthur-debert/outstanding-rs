@@ -178,6 +178,7 @@ attach a presentation-layer projection through `CommandConfig`:
 
 ```rust
 use serde_json::json;
+use standout::cli::FnHandler;
 use standout::tabular::{Column, Width};
 use standout::{CsvProjection, StructuredOutputProjection};
 
@@ -204,9 +205,9 @@ let projection = StructuredOutputProjection::csv(
         .build(),
 );
 
-App::builder().command_with("summary", summary_handler, |config| {
+App::builder().command_with("summary", FnHandler::new(summary_handler), |config| {
     config.structured_output_projection(projection)
-});
+})?;
 ```
 
 Direct-column dot paths are resolved against each selected row. Derived
