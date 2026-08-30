@@ -33,6 +33,26 @@ mod handlers {
             filename: "data.bin".to_string(),
         })
     }
+
+    macro_rules! silent_handlers {
+        ($($name:ident),* $(,)?) => {
+            $(
+                pub fn $name(_matches: &ArgMatches, _ctx: &CommandContext) -> HandlerResult<()> {
+                    Ok(Output::Silent)
+                }
+            )*
+        };
+    }
+
+    silent_handlers!(
+        x2fa,
+        a1b2,
+        sha256_sum,
+        utf8_check,
+        http_server,
+        list_units,
+        r#move
+    );
 }
 
 #[derive(Subcommand, Dispatch)]
@@ -51,13 +71,92 @@ fn test_basic_dispatch_compiles() {
 
 #[derive(Subcommand, Dispatch)]
 #[dispatch(handlers = handlers)]
-enum SnakeCaseCommands {
+enum MultiWordCommands {
     ShowAll,
 }
 
 #[test]
-fn test_snake_case_dispatch_compiles() {
-    let _ = SnakeCaseCommands::dispatch_config();
+fn multi_word_variant_registers_the_kebab_case_name() {
+    let builder = MultiWordCommands::dispatch_config()(GroupBuilder::new());
+    assert!(builder.contains("show-all"));
+    assert!(!builder.contains("show_all"));
+}
+
+/// Digit/acronym runs and raw identifiers are where a hand-rolled word
+/// splitter and clap's `heck` conversion part ways, so this pins both derives
+/// against each other rather than against a literal.
+#[derive(Subcommand, Dispatch)]
+#[dispatch(handlers = handlers)]
+enum ParityCommands {
+    X2FA,
+    A1B2,
+    Sha256Sum,
+    Utf8Check,
+    HTTPServer,
+    ListUnits,
+    r#Move,
+}
+
+#[test]
+fn derived_names_match_the_ones_clap_registers() {
+    let clap_names: Vec<String> = ParityCommands::augment_subcommands(clap::Command::new("app"))
+        .get_subcommands()
+        .map(|sub| sub.get_name().to_string())
+        .collect();
+    assert_eq!(
+        clap_names,
+        [
+            "x2fa",
+            "a1b2",
+            "sha256-sum",
+            "utf8-check",
+            "http-server",
+            "list-units",
+            "move"
+        ]
+    );
+
+    let builder = ParityCommands::dispatch_config()(GroupBuilder::new());
+    for name in &clap_names {
+        assert!(builder.contains(name), "dispatch did not register `{name}`");
+    }
+}
+
+/// Every `#[dispatch(...)]` on a variant speaks for that variant, so the
+/// values of all of them apply rather than the first attribute winning.
+#[derive(Subcommand, Dispatch)]
+#[dispatch(handlers = handlers)]
+enum SplitAttrCommands {
+    #[dispatch(name = "listing")]
+    #[dispatch(default)]
+    ListUnits,
+}
+
+#[test]
+fn attributes_spread_over_several_dispatch_attrs_all_apply() {
+    let builder = SplitAttrCommands::dispatch_config()(GroupBuilder::new());
+    assert!(builder.contains("listing"));
+    assert!(!builder.contains("list-units"));
+    assert_eq!(builder.get_default_command(), Some("listing"));
+}
+
+#[derive(Subcommand, Dispatch)]
+#[dispatch(handlers = handlers)]
+enum RenamedCommands {
+    #[dispatch(name = "ls", handler = handlers::list)]
+    List,
+    #[dispatch(name = "show", default)]
+    ShowAll,
+}
+
+#[test]
+fn variant_rename_replaces_the_derived_name() {
+    let builder = RenamedCommands::dispatch_config()(GroupBuilder::new());
+    assert!(builder.contains("ls"));
+    assert!(builder.contains("show"));
+    assert!(!builder.contains("list"));
+    assert!(!builder.contains("show-all"));
+    assert_eq!(builder.get_default_command(), Some("show"));
 }
 
 #[derive(Subcommand, Dispatch)]
@@ -113,7 +212,7 @@ fn test_template_absence_attributes_build_mixed_apps() {
             .subcommand(clap::Command::new("export"))
             .subcommand(clap::Command::new("add"))
             .subcommand(clap::Command::new("download"))
-            .subcommand(clap::Command::new("show_all"))
+            .subcommand(clap::Command::new("show-all"))
     };
 
     let rendered = TestHarness::new()
@@ -133,7 +232,7 @@ fn test_template_absence_attributes_build_mixed_apps() {
     let structured =
         TestHarness::new()
             .output_mode(OutputMode::Json)
-            .run(&app, command(), ["app", "show_all"]);
+            .run(&app, command(), ["app", "show-all"]);
     structured.assert_success();
     assert_eq!(structured.stdout(), "{\n  \"name\": \"Ada\"\n}");
 }

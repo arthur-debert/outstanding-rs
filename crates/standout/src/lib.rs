@@ -87,6 +87,7 @@ pub use standout_macros::{Tabular, TabularRow};
 
 pub use standout_seeker as seeker;
 
+pub use standout_dispatch as dispatch;
 pub use standout_input as input;
 
 pub use standout_macros::{Questionnaire, QuestionnaireChoices, Seekable};

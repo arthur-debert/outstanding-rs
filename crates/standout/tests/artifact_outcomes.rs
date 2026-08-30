@@ -505,7 +505,9 @@ fn run_command_hands_back_the_pending_artifact_without_writing() {
 #[test]
 fn no_match_still_falls_through_for_manual_dispatch() {
     let result = app_with(|| Artifact::new(BYTES.to_vec()).allow_stdout()).run_to_string(
-        Command::new("app").subcommand(Command::new("other")),
+        Command::new("app")
+            .subcommand(Command::new("export"))
+            .subcommand(Command::new("other")),
         ["app"],
     );
     assert!(matches!(result.outcome(), DispatchResult::NoMatch(_)));

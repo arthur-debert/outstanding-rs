@@ -1326,6 +1326,7 @@ impl App {
 
     pub fn verify_command(&self, cmd: &Command) -> Result<(), SetupError> {
         self.validate_questionnaire_surfaces(cmd)?;
+        self.unreachable_registrations(cmd)?;
         let expected_args: HashMap<String, Vec<ExpectedArg>> = self
             .pending_commands
             .borrow()

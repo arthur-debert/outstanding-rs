@@ -7,6 +7,11 @@
 //! vocabulary consumed by `#[question(choice)]` fields; every variant
 //! declares its user-facing choice string explicitly with
 //! `#[question(rename = "...")]`.
+//!
+//! Both derives name the runtime through `__standout_input`, an alias bound
+//! inside the const block that wraps every expansion, so a consumer needs
+//! either `standout-input` or `standout` (which re-exports it as
+//! `standout::input`) as a dependency, not both.
 
 use std::collections::HashSet;
 
@@ -189,6 +194,17 @@ impl QuestionAttr {
     }
 }
 
+fn scoped(expanded: TokenStream) -> TokenStream {
+    let input_crate = crate::crate_path::input();
+    quote! {
+        const _: () = {
+            use #input_crate as __standout_input;
+
+            #expanded
+        };
+    }
+}
+
 pub fn questionnaire_derive_impl(input: DeriveInput) -> Result<TokenStream> {
     let struct_name = &input.ident;
     let (impl_generics, ty_generics, where_clause) = input.generics.split_for_impl();
@@ -267,34 +283,34 @@ pub fn questionnaire_derive_impl(input: DeriveInput) -> Result<TokenStream> {
     }
 
     let expanded = quote! {
-        impl #impl_generics ::standout_input::questionnaire::QuestionnaireInput for #struct_name #ty_generics #where_clause {
+        impl #impl_generics __standout_input::questionnaire::QuestionnaireInput for #struct_name #ty_generics #where_clause {
             fn questionnaire() -> ::core::result::Result<
-                ::standout_input::questionnaire::Questionnaire,
-                ::standout_input::questionnaire::QuestionnaireError,
+                __standout_input::questionnaire::Questionnaire,
+                __standout_input::questionnaire::QuestionnaireError,
             > {
-                ::standout_input::questionnaire::Questionnaire::new(
+                __standout_input::questionnaire::Questionnaire::new(
                     #questionnaire_id,
-                    <Self as ::standout_input::questionnaire::QuestionnaireInput>::questionnaire_items(""),
+                    <Self as __standout_input::questionnaire::QuestionnaireInput>::questionnaire_items(""),
                 )
             }
 
             fn from_decoded_answers(
-                answers: &::standout_input::questionnaire::Answers,
+                answers: &__standout_input::questionnaire::Answers,
             ) -> Self {
-                <Self as ::standout_input::questionnaire::QuestionnaireInput>::from_decoded_answers_at(
+                <Self as __standout_input::questionnaire::QuestionnaireInput>::from_decoded_answers_at(
                     answers,
                     "",
                 )
             }
 
-            fn questionnaire_items(__prefix: &str) -> ::std::vec::Vec<::standout_input::questionnaire::Item> {
+            fn questionnaire_items(__prefix: &str) -> ::std::vec::Vec<__standout_input::questionnaire::Item> {
                 vec![
                     #(#builder_fields),*
                 ]
             }
 
             fn from_decoded_answers_at(
-                answers: &::standout_input::questionnaire::Answers,
+                answers: &__standout_input::questionnaire::Answers,
                 __prefix: &str,
             ) -> Self {
                 Self {
@@ -304,7 +320,7 @@ pub fn questionnaire_derive_impl(input: DeriveInput) -> Result<TokenStream> {
         }
     };
 
-    Ok(expanded)
+    Ok(scoped(expanded))
 }
 
 struct FieldInfo {
@@ -549,7 +565,7 @@ impl FieldInfo {
             let revision = self.revision.as_deref().unwrap_or_default();
             quote! {
                 .with_dynamic_default(
-                    ::standout_input::questionnaire::DynamicDefault::new(#revision, #path)
+                    __standout_input::questionnaire::DynamicDefault::new(#revision, #path)
                 )
             }
         });
@@ -557,7 +573,7 @@ impl FieldInfo {
             let revision = self.revision.as_deref().unwrap_or_default();
             quote! {
                 .with_validator(
-                    ::standout_input::questionnaire::FieldValidator::new(#revision, #path)
+                    __standout_input::questionnaire::FieldValidator::new(#revision, #path)
                 )
             }
         });
@@ -573,7 +589,7 @@ impl FieldInfo {
                 quote! {
                     {
                         let __id = #id;
-                        ::standout_input::questionnaire::ScalarField::new(
+                        __standout_input::questionnaire::ScalarField::new(
                             __id,
                             #prompt,
                             #kind,
@@ -597,14 +613,14 @@ impl FieldInfo {
                 quote! {
                     {
                         let __id = #id;
-                        ::standout_input::questionnaire::ScalarField::new(
+                        __standout_input::questionnaire::ScalarField::new(
                             __id,
                             #prompt,
-                            ::standout_input::questionnaire::ScalarKind::String,
+                            __standout_input::questionnaire::ScalarKind::String,
                         )
                         #optional
                         .one_of(
-                            <#ty as ::standout_input::questionnaire::QuestionnaireChoices>::choices()
+                            <#ty as __standout_input::questionnaire::QuestionnaireChoices>::choices()
                                 .iter()
                                 .copied()
                         )
@@ -619,10 +635,10 @@ impl FieldInfo {
             FieldKind::Nested { ty } => quote! {
                 {
                     let __group_id = #id;
-                    ::standout_input::questionnaire::Group::new(
+                    __standout_input::questionnaire::Group::new(
                         __group_id.clone(),
                         #prompt,
-                        <#ty as ::standout_input::questionnaire::QuestionnaireInput>::questionnaire_items(
+                        <#ty as __standout_input::questionnaire::QuestionnaireInput>::questionnaire_items(
                             &__group_id,
                         ),
                     )
@@ -634,10 +650,10 @@ impl FieldInfo {
                 quote! {
                     {
                         let __group_id = #id;
-                        ::standout_input::questionnaire::Group::new(
+                        __standout_input::questionnaire::Group::new(
                             __group_id.clone(),
                             #prompt,
-                            <#ty as ::standout_input::questionnaire::QuestionnaireInput>::questionnaire_items(
+                            <#ty as __standout_input::questionnaire::QuestionnaireInput>::questionnaire_items(
                                 &__group_id,
                             ),
                         )
@@ -664,7 +680,7 @@ impl FieldInfo {
             FieldKind::Nested { ty } => quote! {
                 {
                     let __id = #id;
-                    <#ty as ::standout_input::questionnaire::QuestionnaireInput>::from_decoded_answers_at(
+                    <#ty as __standout_input::questionnaire::QuestionnaireInput>::from_decoded_answers_at(
                         answers,
                         &__id,
                     )
@@ -677,7 +693,7 @@ impl FieldInfo {
                     (0..__count)
                         .map(|__index| {
                             let __occurrence = ::std::format!("{}[{}]", __group_id, __index);
-                            <#ty as ::standout_input::questionnaire::QuestionnaireInput>::from_decoded_answers_at(
+                            <#ty as __standout_input::questionnaire::QuestionnaireInput>::from_decoded_answers_at(
                                 answers,
                                 &__occurrence,
                             )
@@ -791,10 +807,10 @@ impl ScalarKind {
 
     fn tokens(self) -> TokenStream {
         match self {
-            Self::String => quote! { ::standout_input::questionnaire::ScalarKind::String },
-            Self::Text => quote! { ::standout_input::questionnaire::ScalarKind::Text },
-            Self::Bool => quote! { ::standout_input::questionnaire::ScalarKind::Bool },
-            Self::Path => quote! { ::standout_input::questionnaire::ScalarKind::Path },
+            Self::String => quote! { __standout_input::questionnaire::ScalarKind::String },
+            Self::Text => quote! { __standout_input::questionnaire::ScalarKind::Text },
+            Self::Bool => quote! { __standout_input::questionnaire::ScalarKind::Bool },
+            Self::Path => quote! { __standout_input::questionnaire::ScalarKind::Path },
         }
     }
 }
@@ -1113,21 +1129,21 @@ pub fn questionnaire_choices_derive_impl(input: DeriveInput) -> Result<TokenStre
     }
 
     let expanded = quote! {
-        impl ::standout_input::questionnaire::QuestionnaireChoices for #enum_name {
+        impl __standout_input::questionnaire::QuestionnaireChoices for #enum_name {
             fn choices() -> &'static [&'static str] {
                 &[#(#choice_literals),*]
             }
         }
 
         impl ::core::str::FromStr for #enum_name {
-            type Err = ::standout_input::questionnaire::QuestionnaireChoiceParseError;
+            type Err = __standout_input::questionnaire::QuestionnaireChoiceParseError;
 
             fn from_str(value: &str) -> ::core::result::Result<Self, Self::Err> {
                 match value.trim() {
                     #(#parse_arms,)*
                     _ => ::core::result::Result::Err(
-                        ::standout_input::questionnaire::QuestionnaireChoiceParseError::new(
-                            <Self as ::standout_input::questionnaire::QuestionnaireChoices>::choices()
+                        __standout_input::questionnaire::QuestionnaireChoiceParseError::new(
+                            <Self as __standout_input::questionnaire::QuestionnaireChoices>::choices()
                         )
                     ),
                 }
@@ -1143,7 +1159,7 @@ pub fn questionnaire_choices_derive_impl(input: DeriveInput) -> Result<TokenStre
         }
     };
 
-    Ok(expanded)
+    Ok(scoped(expanded))
 }
 
 struct ChoiceVariant {

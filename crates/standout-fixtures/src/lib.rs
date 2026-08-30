@@ -21,6 +21,8 @@
 //! assert_eq!(fixture.command().get_name(), "lookma");
 //! ```
 
+pub mod derive_surface;
+
 use clap::{Arg, ArgAction, ArgGroup, Command};
 use console::Style;
 use serde_json::json;

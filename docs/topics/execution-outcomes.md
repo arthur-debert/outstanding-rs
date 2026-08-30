@@ -107,6 +107,21 @@ no framework exit status: `exit_status()` returns `None`, `run()` returns
 `false`, and Standout emits nothing. The fallback dispatcher still owns that
 command and its eventual status.
 
+The reverse direction never hands off. Before parsing, `run` and
+`dispatch_from` check every registered path against the clap `Command`: a
+handler registered under a path the CLI declares no subcommand for is
+unreachable — no invocation can name it and no fallback owns it, since the app
+did register a handler. That returns `DispatchResult::Error` naming the
+registered path, and the clap spelling too when the two differ only by `-`
+versus `_` (`list_units` registered against a CLI declaring `list-units`).
+`App::verify_command` reports the same mismatch at setup time.
+
+That check reads canonical command names only. Clap resolves an alias to the
+command it names before `ArgMatches` reports it, so dispatch never sees the
+alias: a handler registered as `ls` against `Command::new("list").alias("ls")`
+is reached by neither spelling and is reported as unreachable. Registering
+`list` is what makes both `list` and `ls` run the handler.
+
 ## Framework-owned final writes
 
 `run()` writes successful text and binary bytes to stdout, diagnostics to

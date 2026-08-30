@@ -262,7 +262,10 @@ impl App {
     {
         let args: Vec<std::ffi::OsString> = args.into_iter().map(Into::into).collect();
 
-        if let Err(error) = self.validate_questionnaire_surfaces(&cmd) {
+        if let Err(error) = self
+            .validate_questionnaire_surfaces(&cmd)
+            .and_then(|()| self.unreachable_registrations(&cmd))
+        {
             return (
                 DispatchResult::Error(RunError::new(error.to_string(), RunErrorKind::ClapUsage)),
                 OutputMode::Auto,
@@ -528,10 +531,63 @@ impl App {
         }
     }
 
+    /// A registration no invocation can reach: the app registered a handler
+    /// under a path its clap `Command` declares no subcommand for, so `run`
+    /// would report "no handler" for a command the app believes it owns. The
+    /// reverse direction — a clap subcommand with no registration — is partial
+    /// adoption and stays a `NoMatch` handoff to the fallback that owns it.
+    ///
+    /// A clap alias is not a name a registration can use: clap reports the
+    /// canonical command for an alias, so `ls` registered against
+    /// `Command::new("list").alias("ls")` is unreachable from either spelling.
+    pub(crate) fn unreachable_registrations(&self, cmd: &Command) -> Result<(), SetupError> {
+        let mut unreachable: Vec<String> = self
+            .pending_commands
+            .borrow()
+            .keys()
+            .filter(|path| {
+                crate::cli::app::find_canonical_subcommand_recursive(cmd, &path_segments(path))
+                    .is_none()
+            })
+            .cloned()
+            .collect();
+        unreachable.sort();
+
+        let Some(path) = unreachable.first() else {
+            return Ok(());
+        };
+
+        let hint = match declared_variant_in(cmd, path) {
+            Some(DeclaredAs::SeparatorVariant(declared)) => format!(
+                " The CLI declares `{}` — a registered name must match the CLI \
+                 definition exactly (clap's derive names subcommands in kebab-case).",
+                declared.replace('.', " "),
+            ),
+            Some(DeclaredAs::Alias(declared)) => format!(
+                " The CLI declares `{}` and accepts `{}` as an alias for it — clap \
+                 reports the declared name to dispatch, so register the handler under \
+                 `{}`.",
+                declared.replace('.', " "),
+                path.replace('.', " "),
+                declared.replace('.', " "),
+            ),
+            None => " Register the handler under a name the CLI declares, or drop the \
+                     registration."
+                .to_string(),
+        };
+
+        Err(SetupError::Config(format!(
+            "No invocation reaches `{}`: this application registers a handler for it, \
+             but its clap `Command` declares no such subcommand.{hint}",
+            path.replace('.', " "),
+        )))
+    }
+
     pub(crate) fn validate_questionnaire_surfaces(&self, cmd: &Command) -> Result<(), SetupError> {
         for path in self.questionnaire_commands.keys() {
             let parts = path.split('.').collect::<Vec<_>>();
-            let Some(command) = crate::cli::app::find_subcommand_recursive(cmd, &parts) else {
+            let Some(command) = crate::cli::app::find_canonical_subcommand_recursive(cmd, &parts)
+            else {
                 continue;
             };
             validate_questionnaire_surface(command, path)?;
@@ -553,6 +609,51 @@ impl App {
             .get_key_value(&parent_path)
             .map(|(path, command)| (path.as_str(), command))
     }
+}
+
+/// The empty registration path is the root command of a flat app, which every
+/// clap `Command` has, so it walks to no segments rather than to one blank one.
+fn path_segments(path: &str) -> Vec<&str> {
+    path.split('.')
+        .filter(|segment| !segment.is_empty())
+        .collect()
+}
+
+/// What an unreachable registration names, when the CLI does declare the
+/// command under some other spelling: the same path modulo `-` versus `_` (the
+/// mismatch a kebab-case derive produces against a snake_case registration),
+/// or an alias of it. Both carry the declared path the app should register.
+enum DeclaredAs {
+    SeparatorVariant(String),
+    Alias(String),
+}
+
+fn declared_variant_in(cmd: &Command, path: &str) -> Option<DeclaredAs> {
+    let mut current = cmd;
+    let mut declared = Vec::new();
+    let mut through_alias = false;
+
+    for segment in path_segments(path) {
+        let wanted = segment.replace('-', "_");
+        let sub = current
+            .get_subcommands()
+            .find(|sub| sub.get_name().replace('-', "_") == wanted)
+            .or_else(|| {
+                through_alias = true;
+                current
+                    .get_subcommands()
+                    .find(|sub| sub.get_aliases().any(|alias| alias == segment))
+            })?;
+        declared.push(sub.get_name().to_string());
+        current = sub;
+    }
+
+    let declared = declared.join(".");
+    Some(if through_alias {
+        DeclaredAs::Alias(declared)
+    } else {
+        DeclaredAs::SeparatorVariant(declared)
+    })
 }
 
 fn command_matches_for_path<'a>(matches: &'a ArgMatches, path: &[&str]) -> Option<&'a ArgMatches> {
