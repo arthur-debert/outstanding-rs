@@ -442,7 +442,7 @@ impl AppBuilder {
             app_state: Extensions::new(),
             template_engine: None,
             help_command_groups: None,
-            help_handling: false,
+            help_handling: true,
             help_word: false,
             ambiguous_width: crate::AmbiguousWidth::Narrow,
             version: None,
@@ -502,15 +502,17 @@ impl AppBuilder {
                     "topics"
                 };
                 return Err(SetupError::Config(format!(
-                    "{feature} requires .help_handling(true) — \
-                     standout cannot render grouped/topic help without intercepting help"
+                    "{feature} is configured while help handling is off — \
+                     standout cannot render grouped/topic help without intercepting help. \
+                     Drop the .help_handling(false) call, or drop the {feature}"
                 )));
             }
             if self.help_word {
                 return Err(SetupError::Config(
-                    "help_word requires .help_handling(true) — the `help` word is \
+                    "help_word is set while help handling is off — the `help` word is \
                      standout's own subcommand, so there is nothing to install without \
-                     help interception"
+                     help interception. Drop the .help_handling(false) call, or drop \
+                     .help_word(true)"
                         .to_string(),
                 ));
             }
@@ -1355,9 +1357,9 @@ fn registered_claim(path: &str) -> String {
 
 fn duplicate_help_word(claim: &str) -> SetupError {
     SetupError::DuplicateCommand(format!(
-        "help — {claim}, and standout installs a `help` word of its own under \
-         .help_handling(true). Rename the application's command, or drop \
-         .help_handling(true) to keep the name (help is then clap's own, and \
+        "help — {claim}, and standout installs a `help` word of its own, since help \
+         handling is on by default. Rename the application's command, or call \
+         .help_handling(false) to keep the name (help is then clap's own, and \
          command_groups and topics become unavailable)"
     ))
 }

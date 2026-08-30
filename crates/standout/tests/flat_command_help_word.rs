@@ -193,13 +193,13 @@ fn the_policy_reads_the_shape_the_framework_leaves_behind() {
 }
 
 #[test]
-fn help_word_without_help_handling_is_a_setup_error() {
-    match App::builder().help_word(true).build() {
+fn help_word_with_help_handling_off_is_a_setup_error() {
+    match App::builder().help_handling(false).help_word(true).build() {
         Err(e) => assert!(
             e.to_string()
-                .contains("help_word requires .help_handling(true)"),
+                .contains("help_word is set while help handling is off"),
             "error: {e}"
         ),
-        Ok(_) => panic!("help_word without help_handling must not build"),
+        Ok(_) => panic!("help_word without help interception must not build"),
     }
 }

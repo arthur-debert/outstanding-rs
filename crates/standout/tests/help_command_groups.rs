@@ -1,6 +1,6 @@
 use clap::Command;
 use standout::cli::{
-    render_help, validate_command_groups, App, CommandGroup, HelpConfig, HelpResult,
+    render_help, validate_command_groups, App, AppBuilder, CommandGroup, HelpConfig, HelpResult,
 };
 use standout::OutputMode;
 
@@ -346,8 +346,28 @@ fn test_subcommand_help_short_flag() {
 }
 
 #[test]
+fn a_default_builder_renders_help_through_the_themed_path() {
+    let app = AppBuilder::default().build().unwrap();
+    let output = extract_help(app.get_matches_from(test_cmd(), ["myapp", "--help"]));
+    assert!(output.contains("USAGE"), "output:\n{output}");
+    assert!(output.contains("COMMANDS"), "output:\n{output}");
+}
+
+#[test]
+fn help_handling_off_restores_claps_own_help() {
+    let app = App::builder().help_handling(false).build().unwrap();
+    match app.get_matches_from(test_cmd(), ["myapp", "--help"]) {
+        HelpResult::Error(e) => {
+            assert_eq!(e.kind(), clap::error::ErrorKind::DisplayHelp);
+            assert!(e.to_string().contains("Usage:"), "error:\n{e}");
+        }
+        other => panic!("Expected clap's own help, got: {other:?}"),
+    }
+}
+
+#[test]
 fn test_help_handling_off_does_not_intercept() {
-    let app = App::builder().build().unwrap();
+    let app = App::builder().help_handling(false).build().unwrap();
     let cmd = test_cmd();
     let result = app.get_matches_from(cmd, ["myapp", "status"]);
     match result {
@@ -360,7 +380,7 @@ fn test_help_handling_off_does_not_intercept() {
 
 #[test]
 fn test_help_handling_off_help_flag_returns_clap_error() {
-    let app = App::builder().build().unwrap();
+    let app = App::builder().help_handling(false).build().unwrap();
     let cmd = test_cmd();
     let result = app.get_matches_from(cmd, ["myapp", "--help"]);
     match result {
@@ -372,8 +392,9 @@ fn test_help_handling_off_help_flag_returns_clap_error() {
 }
 
 #[test]
-fn test_build_errors_on_groups_without_help_handling() {
+fn test_build_errors_on_groups_with_help_handling_off() {
     let result = App::builder()
+        .help_handling(false)
         .command_groups(vec![CommandGroup {
             title: "Core".into(),
             help: None,
@@ -384,7 +405,7 @@ fn test_build_errors_on_groups_without_help_handling() {
         Err(e) => {
             let msg = e.to_string();
             assert!(
-                msg.contains("command_groups requires .help_handling(true)"),
+                msg.contains("command_groups is configured while help handling is off"),
                 "error: {msg}"
             );
         }
@@ -393,9 +414,10 @@ fn test_build_errors_on_groups_without_help_handling() {
 }
 
 #[test]
-fn test_build_errors_on_topics_without_help_handling() {
+fn test_build_errors_on_topics_with_help_handling_off() {
     use standout::topics::{Topic, TopicType};
     let result = App::builder()
+        .help_handling(false)
         .add_topic(Topic::new(
             "Guide",
             "Some guide content here.",
@@ -407,7 +429,7 @@ fn test_build_errors_on_topics_without_help_handling() {
         Err(e) => {
             let msg = e.to_string();
             assert!(
-                msg.contains("topics requires .help_handling(true)"),
+                msg.contains("topics is configured while help handling is off"),
                 "error: {msg}"
             );
         }

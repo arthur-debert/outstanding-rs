@@ -742,7 +742,6 @@ fn fails_naming(needles: &[&str], assertion: impl FnOnce()) {
 }
 fn notes_app() -> App {
     App::builder()
-        .help_handling(true)
         .command("stat", |_m, _ctx| Ok(Output::Render(json!({}))), "stat")
         .unwrap()
         .build()

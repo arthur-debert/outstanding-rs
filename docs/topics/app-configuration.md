@@ -465,8 +465,8 @@ Parses with Standout's augmented command but doesn't dispatch.
 - convention templates resolve when application templates are configured; without application templates, human-mode rendering reports the missing convention template at runtime
 - registered templates compile
 - framework templates only use tags defined by the resolved theme
-- `command_groups`, topics, and `help_word(true)` are paired with `.help_handling(true)`
-- commands do not collide with the `help` word installed by `.help_handling(true)`
+- `command_groups`, topics, and `help_word(true)` are not combined with `.help_handling(false)`
+- commands do not collide with the `help` word standout installs when help handling is on
 - the same command path and hook phase are not configured through both `CommandConfig` and `AppBuilder::hooks`
 
 What's NOT validated at build time:
@@ -506,7 +506,6 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             config.template_name("list")
         })?
         .topics_dir("docs/topics")?
-        .help_handling(true)
         .build()?;
 
     app.run(cli, std::env::args());

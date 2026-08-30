@@ -26,8 +26,12 @@ fn a_declared_help_subcommand_is_a_setup_error_not_a_panic() {
         "error: {message}"
     );
     assert!(
-        message.contains("help_handling(true)"),
+        message.contains("help handling is on by default"),
         "the message must name the setting that installs the word: {message}"
+    );
+    assert!(
+        message.contains(".help_handling(false)"),
+        "the message must name the way out: {message}"
     );
     assert!(
         message.contains("Rename"),
@@ -151,6 +155,7 @@ fn a_nested_help_command_is_not_the_root_word() {
 #[test]
 fn without_help_handling_the_application_keeps_the_name() {
     let app = App::builder()
+        .help_handling(false)
         .command("help", |_m, _ctx| Ok(Output::Render("mine")), "mine")
         .unwrap()
         .build()

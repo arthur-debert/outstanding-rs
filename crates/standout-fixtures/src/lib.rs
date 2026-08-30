@@ -9,7 +9,7 @@
 //! presence flag next to a valued positional, a `Count` flag (valueless but
 //! not boolean), a valued option with and without a metavar, an enumerated
 //! option with a default, a long option name, an app theme that overlays
-//! rather than replaces the help theme, and `help_handling` with topics
+//! rather than replaces the help theme, and default help handling with topics
 //! registered. [`Downstream::flat`] swaps the subcommands for a required
 //! `ArgGroup` on the same arguments, so nested and flat shapes never disagree
 //! about what an option is called.
@@ -87,7 +87,7 @@ impl Downstream {
     }
 
     fn app(&self) -> App {
-        let mut builder = App::builder().help_handling(true).help_word(self.help_word);
+        let mut builder = App::builder().help_word(self.help_word);
 
         if self.topics {
             builder = builder
