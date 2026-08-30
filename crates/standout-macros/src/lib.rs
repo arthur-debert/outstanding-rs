@@ -93,8 +93,8 @@ pub fn questionnaire_choices_derive(input: TokenStream) -> TokenStream {
 /// `no-legend`. Clap's derive ids an argument by the *field* name, so a
 /// clap-derive `no_legend` field is declared `#[arg(id = "no-legend")]`, or the
 /// handler parameter names the id itself with `#[flag(name = "no_legend")]` /
-/// `#[arg(name = "...")]`. `App::verify_command` reports a mismatch before the
-/// argument is read.
+/// `#[arg(name = "...")]`. `app.verify_command(&cmd)` reports a mismatch before
+/// the argument is read.
 #[proc_macro_attribute]
 pub fn handler(attr: TokenStream, item: TokenStream) -> TokenStream {
     let attr = proc_macro2::TokenStream::from(attr);

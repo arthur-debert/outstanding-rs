@@ -227,17 +227,6 @@ impl App {
                     DispatchResult::Handled(RunOutput::command(String::new()))
                 }
             }
-        } else if let Some(registered) = separator_variant(&path_str, &commands) {
-            DispatchResult::Error(RunError::new(
-                format!(
-                    "No handler runs for `{}`: the command is registered as `{}`. \
-                     Registered names must match the CLI definition exactly \
-                     (clap's derive names subcommands in kebab-case).",
-                    path_str.replace('.', " "),
-                    registered.replace('.', " "),
-                ),
-                RunErrorKind::ClapUsage,
-            ))
         } else {
             DispatchResult::NoMatch(matches)
         }
@@ -273,7 +262,10 @@ impl App {
     {
         let args: Vec<std::ffi::OsString> = args.into_iter().map(Into::into).collect();
 
-        if let Err(error) = self.validate_questionnaire_surfaces(&cmd) {
+        if let Err(error) = self
+            .validate_questionnaire_surfaces(&cmd)
+            .and_then(|()| self.unreachable_registrations(&cmd))
+        {
             return (
                 DispatchResult::Error(RunError::new(error.to_string(), RunErrorKind::ClapUsage)),
                 OutputMode::Auto,
@@ -539,6 +531,45 @@ impl App {
         }
     }
 
+    /// A registration no invocation can reach: the app registered a handler
+    /// under a path its clap `Command` declares no subcommand for, so `run`
+    /// would report "no handler" for a command the app believes it owns. The
+    /// reverse direction — a clap subcommand with no registration — is partial
+    /// adoption and stays a `NoMatch` handoff to the fallback that owns it.
+    pub(crate) fn unreachable_registrations(&self, cmd: &Command) -> Result<(), SetupError> {
+        let mut unreachable: Vec<String> = self
+            .pending_commands
+            .borrow()
+            .keys()
+            .filter(|path| {
+                crate::cli::app::find_subcommand_recursive(cmd, &path_segments(path)).is_none()
+            })
+            .cloned()
+            .collect();
+        unreachable.sort();
+
+        let Some(path) = unreachable.first() else {
+            return Ok(());
+        };
+
+        let hint = match separator_variant_in(cmd, path) {
+            Some(declared) => format!(
+                " The CLI declares `{}` — a registered name must match the CLI \
+                 definition exactly (clap's derive names subcommands in kebab-case).",
+                declared.replace('.', " "),
+            ),
+            None => " Register the handler under a name the CLI declares, or drop the \
+                     registration."
+                .to_string(),
+        };
+
+        Err(SetupError::Config(format!(
+            "No invocation reaches `{}`: this application registers a handler for it, \
+             but its clap `Command` declares no such subcommand.{hint}",
+            path.replace('.', " "),
+        )))
+    }
+
     pub(crate) fn validate_questionnaire_surfaces(&self, cmd: &Command) -> Result<(), SetupError> {
         for path in self.questionnaire_commands.keys() {
             let parts = path.split('.').collect::<Vec<_>>();
@@ -566,16 +597,28 @@ impl App {
     }
 }
 
-fn separator_variant<V>(
-    path: &str,
-    commands: &std::collections::HashMap<String, V>,
-) -> Option<String> {
-    let normalize = |name: &str| name.replace('-', "_");
-    let wanted = normalize(path);
-    commands
-        .keys()
-        .find(|registered| normalize(registered) == wanted)
-        .cloned()
+/// The empty registration path is the root command of a flat app, which every
+/// clap `Command` has, so it walks to no segments rather than to one blank one.
+fn path_segments(path: &str) -> Vec<&str> {
+    path.split('.')
+        .filter(|segment| !segment.is_empty())
+        .collect()
+}
+
+/// The path clap declares for the same command modulo `-` versus `_` — the
+/// mismatch a kebab-case derive produces against a snake_case registration.
+fn separator_variant_in(cmd: &Command, path: &str) -> Option<String> {
+    let mut current = cmd;
+    let mut declared = Vec::new();
+    for segment in path_segments(path) {
+        let wanted = segment.replace('-', "_");
+        let sub = current
+            .get_subcommands()
+            .find(|sub| sub.get_name().replace('-', "_") == wanted)?;
+        declared.push(sub.get_name().to_string());
+        current = sub;
+    }
+    Some(declared.join("."))
 }
 
 fn command_matches_for_path<'a>(matches: &'a ArgMatches, path: &[&str]) -> Option<&'a ArgMatches> {

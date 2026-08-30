@@ -107,11 +107,14 @@ no framework exit status: `exit_status()` returns `None`, `run()` returns
 `false`, and Standout emits nothing. The fallback dispatcher still owns that
 command and its eventual status.
 
-One invocation does not hand off: one whose command path matches a registered
-command up to `-` versus `_` — `list-units` invoked against a handler
-registered as `list_units`. No fallback owns that command, since the app did
-register a handler for it, so dispatch returns `DispatchResult::Error` naming
-both spellings rather than a `NoMatch` the caller would read as "not mine".
+The reverse direction never hands off. Before parsing, `run` and
+`dispatch_from` check every registered path against the clap `Command`: a
+handler registered under a path the CLI declares no subcommand for is
+unreachable — no invocation can name it and no fallback owns it, since the app
+did register a handler. That returns `DispatchResult::Error` naming the
+registered path, and the clap spelling too when the two differ only by `-`
+versus `_` (`list_units` registered against a CLI declaring `list-units`).
+`App::verify_command` reports the same mismatch at setup time.
 
 ## Framework-owned final writes
 

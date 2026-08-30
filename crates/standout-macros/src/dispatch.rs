@@ -1,10 +1,12 @@
+use heck::{ToKebabCase, ToSnakeCase};
 use proc_macro2::TokenStream;
-use quote::{format_ident, quote};
+use quote::quote;
 use syn::{
+    ext::IdentExt,
     parse::{Parse, ParseStream},
     punctuated::Punctuated,
     spanned::Spanned,
-    Data, DeriveInput, Error, Expr, Fields, Meta, Path, Result, Token,
+    Data, DeriveInput, Error, Expr, Fields, Ident, Meta, Path, Result, Token,
 };
 
 #[derive(Default)]
@@ -263,43 +265,29 @@ impl Parse for VariantAttrs {
     }
 }
 
-fn split_words(s: &str) -> Vec<String> {
-    let chars: Vec<char> = s.chars().collect();
-    let mut words: Vec<String> = Vec::new();
-    let mut current = String::new();
-
-    for (i, c) in chars.iter().copied().enumerate() {
-        if c == '_' || c == '-' {
-            if !current.is_empty() {
-                words.push(std::mem::take(&mut current));
-            }
-            continue;
-        }
-
-        let starts_word = !current.is_empty() && {
-            let prev = chars[i - 1];
-            let next_is_lower = chars.get(i + 1).is_some_and(|n| n.is_lowercase());
-            (!prev.is_uppercase() && c.is_uppercase())
-                || (prev.is_uppercase() && c.is_uppercase() && next_is_lower)
-        };
-        if starts_word {
-            words.push(std::mem::take(&mut current));
-        }
-        current.extend(c.to_lowercase());
-    }
-
-    if !current.is_empty() {
-        words.push(current);
-    }
-    words
+/// Clap's own conversions, so a variant registers under the name clap's derive
+/// gives its subcommand: `heck` on the unraw'd identifier, exactly as
+/// `clap_derive` does. Approximating the split diverges on digit/acronym runs
+/// (`X2FA` is `x2fa` to clap, `x2-fa` to a hand-rolled splitter) and on raw
+/// identifiers.
+fn to_snake_case(ident: &Ident) -> String {
+    ident.unraw().to_string().to_snake_case()
 }
 
-fn to_snake_case(s: &str) -> String {
-    split_words(s).join("_")
+fn to_kebab_case(ident: &Ident) -> String {
+    ident.unraw().to_string().to_kebab_case()
 }
 
-fn to_kebab_case(s: &str) -> String {
-    split_words(s).join("-")
+/// `move` is a valid handler-function name behind `r#`, so a derived name that
+/// is a keyword becomes a raw identifier rather than a syntax error.
+fn path_ident(name: &str, span: proc_macro2::Span) -> Ident {
+    match syn::parse_str::<Ident>(name) {
+        Ok(mut ident) => {
+            ident.set_span(span);
+            ident
+        }
+        Err(_) => Ident::new_raw(name, span),
+    }
 }
 
 fn parse_container_attrs(input: &DeriveInput) -> Result<ContainerAttrs> {
@@ -358,6 +346,7 @@ pub fn dispatch_derive_impl(input: DeriveInput) -> Result<TokenStream> {
     };
 
     let mut variants: Vec<VariantInfo> = Vec::new();
+    let mut claimed_names: Vec<(String, String)> = Vec::new();
 
     for variant in &data.variants {
         let attrs = parse_variant_attrs(&variant.attrs)?;
@@ -366,12 +355,28 @@ pub fn dispatch_derive_impl(input: DeriveInput) -> Result<TokenStream> {
             continue;
         }
 
-        let variant_ident = variant.ident.to_string();
-        let snake_name = to_snake_case(&variant_ident);
+        let snake_name = to_snake_case(&variant.ident);
         let command_name = attrs
             .name
             .clone()
-            .unwrap_or_else(|| to_kebab_case(&variant_ident));
+            .unwrap_or_else(|| to_kebab_case(&variant.ident));
+
+        if let Some((_, first_variant)) = claimed_names
+            .iter()
+            .find(|(claimed, _)| *claimed == command_name)
+        {
+            return Err(Error::new(
+                variant.span(),
+                format!(
+                    "`{}` and `{}` both register the command `{command_name}`, so only \
+                     the last one would run. Rename one variant, or give it a \
+                     `#[dispatch(name = \"...\")]` of its own.",
+                    first_variant, variant.ident,
+                ),
+            ));
+        }
+        claimed_names.push((command_name.clone(), variant.ident.to_string()));
+
         let nested_type_candidate = is_nested_subcommand(&variant.fields);
 
         let is_nested = attrs.nested;
@@ -425,7 +430,7 @@ pub fn dispatch_derive_impl(input: DeriveInput) -> Result<TokenStream> {
                     if v.attrs.pure {
                         handler_name = format!("{}__handler", handler_name);
                     }
-                    let handler_ident = format_ident!("{}", handler_name);
+                    let handler_ident = path_ident(&handler_name, proc_macro2::Span::call_site());
                     let mut path = handlers_path.clone();
                     path.segments.push(syn::PathSegment {
                         ident: handler_ident,
@@ -591,25 +596,63 @@ pub fn dispatch_derive_impl(input: DeriveInput) -> Result<TokenStream> {
 mod tests {
     use super::*;
 
+    fn ident(s: &str) -> Ident {
+        syn::parse_str::<Ident>(s).unwrap()
+    }
+
     #[test]
     fn test_to_snake_case() {
-        assert_eq!(to_snake_case("Add"), "add");
-        assert_eq!(to_snake_case("ListAll"), "list_all");
-        assert_eq!(to_snake_case("HTTPServer"), "http_server");
-        assert_eq!(to_snake_case("getHTTPResponse"), "get_http_response");
+        assert_eq!(to_snake_case(&ident("Add")), "add");
+        assert_eq!(to_snake_case(&ident("ListAll")), "list_all");
+        assert_eq!(to_snake_case(&ident("HTTPServer")), "http_server");
+        assert_eq!(
+            to_snake_case(&ident("getHTTPResponse")),
+            "get_http_response"
+        );
     }
 
     #[test]
     fn test_to_snake_case_simple() {
-        assert_eq!(to_snake_case("Complete"), "complete");
-        assert_eq!(to_snake_case("Delete"), "delete");
+        assert_eq!(to_snake_case(&ident("Complete")), "complete");
+        assert_eq!(to_snake_case(&ident("Delete")), "delete");
+    }
+
+    /// The right-hand sides are what clap's own derive registers; the
+    /// `crates/standout/tests/dispatch_derive.rs` parity test reads them back
+    /// off a `Command` built by `#[derive(Subcommand)]`.
+    #[test]
+    fn test_to_kebab_case_matches_clap_derive() {
+        assert_eq!(to_kebab_case(&ident("Add")), "add");
+        assert_eq!(to_kebab_case(&ident("ListUnits")), "list-units");
+        assert_eq!(to_kebab_case(&ident("HTTPServer")), "http-server");
+        assert_eq!(
+            to_kebab_case(&ident("getHTTPResponse")),
+            "get-http-response"
+        );
     }
 
     #[test]
-    fn test_to_kebab_case_matches_clap_derive() {
-        assert_eq!(to_kebab_case("Add"), "add");
-        assert_eq!(to_kebab_case("ListUnits"), "list-units");
-        assert_eq!(to_kebab_case("HTTPServer"), "http-server");
-        assert_eq!(to_kebab_case("getHTTPResponse"), "get-http-response");
+    fn digit_runs_keep_clap_word_boundaries() {
+        assert_eq!(to_kebab_case(&ident("X2FA")), "x2fa");
+        assert_eq!(to_kebab_case(&ident("A1B2")), "a1b2");
+        assert_eq!(to_kebab_case(&ident("Sha256Sum")), "sha256-sum");
+        assert_eq!(to_kebab_case(&ident("Utf8Check")), "utf8-check");
+        assert_eq!(to_snake_case(&ident("X2FA")), "x2fa");
+        assert_eq!(to_snake_case(&ident("Sha256Sum")), "sha256_sum");
+    }
+
+    #[test]
+    fn raw_identifiers_drop_the_prefix_as_clap_does() {
+        let span = proc_macro2::Span::call_site();
+        assert_eq!(to_kebab_case(&Ident::new_raw("Move", span)), "move");
+        assert_eq!(to_snake_case(&Ident::new_raw("Move", span)), "move");
+        assert_eq!(to_kebab_case(&Ident::new_raw("TypeOf", span)), "type-of");
+    }
+
+    #[test]
+    fn a_keyword_handler_name_stays_a_usable_path_segment() {
+        let span = proc_macro2::Span::call_site();
+        assert_eq!(path_ident("move", span).to_string(), "r#move");
+        assert_eq!(path_ident("list_units", span).to_string(), "list_units");
     }
 }

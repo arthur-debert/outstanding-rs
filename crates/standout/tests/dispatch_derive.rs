@@ -33,6 +33,26 @@ mod handlers {
             filename: "data.bin".to_string(),
         })
     }
+
+    macro_rules! silent_handlers {
+        ($($name:ident),* $(,)?) => {
+            $(
+                pub fn $name(_matches: &ArgMatches, _ctx: &CommandContext) -> HandlerResult<()> {
+                    Ok(Output::Silent)
+                }
+            )*
+        };
+    }
+
+    silent_handlers!(
+        x2fa,
+        a1b2,
+        sha256_sum,
+        utf8_check,
+        http_server,
+        list_units,
+        r#move
+    );
 }
 
 #[derive(Subcommand, Dispatch)]
@@ -60,6 +80,46 @@ fn multi_word_variant_registers_the_kebab_case_name() {
     let builder = MultiWordCommands::dispatch_config()(GroupBuilder::new());
     assert!(builder.contains("show-all"));
     assert!(!builder.contains("show_all"));
+}
+
+/// Digit/acronym runs and raw identifiers are where a hand-rolled word
+/// splitter and clap's `heck` conversion part ways, so this pins both derives
+/// against each other rather than against a literal.
+#[derive(Subcommand, Dispatch)]
+#[dispatch(handlers = handlers)]
+enum ParityCommands {
+    X2FA,
+    A1B2,
+    Sha256Sum,
+    Utf8Check,
+    HTTPServer,
+    ListUnits,
+    r#Move,
+}
+
+#[test]
+fn derived_names_match_the_ones_clap_registers() {
+    let clap_names: Vec<String> = ParityCommands::augment_subcommands(clap::Command::new("app"))
+        .get_subcommands()
+        .map(|sub| sub.get_name().to_string())
+        .collect();
+    assert_eq!(
+        clap_names,
+        [
+            "x2fa",
+            "a1b2",
+            "sha256-sum",
+            "utf8-check",
+            "http-server",
+            "list-units",
+            "move"
+        ]
+    );
+
+    let builder = ParityCommands::dispatch_config()(GroupBuilder::new());
+    for name in &clap_names {
+        assert!(builder.contains(name), "dispatch did not register `{name}`");
+    }
 }
 
 #[derive(Subcommand, Dispatch)]

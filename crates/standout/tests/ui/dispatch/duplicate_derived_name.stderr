@@ -1,0 +1,14 @@
+error: `ShowAll` and `ShowALL` both register the command `show-all`, so only the last one would run. Rename one variant, or give it a `#[dispatch(name = "...")]` of its own.
+  --> tests/ui/dispatch/duplicate_derived_name.rs:16:5
+   |
+16 |     #[dispatch(handler = handlers::show_all)]
+   |     ^
+
+error[E0599]: no variant, associated function, or constant named `dispatch_config` found for enum `Commands` in the current scope
+  --> tests/ui/dispatch/duplicate_derived_name.rs:21:23
+   |
+14 | enum Commands {
+   | ------------- variant, associated function, or constant `dispatch_config` not found for this enum
+...
+21 |     let _ = Commands::dispatch_config();
+   |                       ^^^^^^^^^^^^^^^ variant, associated function, or constant not found in `Commands`

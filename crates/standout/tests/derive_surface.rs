@@ -87,3 +87,55 @@ fn a_command_registered_under_another_spelling_is_an_error() {
     assert!(error.contains("show-all"), "{error}");
     assert!(error.contains("show_all"), "{error}");
 }
+
+#[test]
+fn a_registration_the_cli_never_declares_is_an_error() {
+    let app = App::builder()
+        .command_with("provision", show_all, |cfg| cfg.silent())
+        .unwrap()
+        .build()
+        .unwrap();
+    let cmd = Command::new("app").subcommand(Command::new("prepare"));
+    let result = TestHarness::new().run(&app, cmd.clone(), ["app", "prepare"]);
+    let error = result.stderr();
+    assert!(error.contains("provision"), "{error}");
+    assert!(
+        App::builder()
+            .command_with("provision", show_all, |cfg| cfg.silent())
+            .unwrap()
+            .build()
+            .unwrap()
+            .verify_command(&cmd)
+            .is_err(),
+        "verify_command should report the same unreachable registration"
+    );
+}
+
+#[test]
+fn a_flat_app_registers_the_root_command_reachably() {
+    let app = App::builder()
+        .command_with("", show_all, |cfg| cfg.silent())
+        .unwrap()
+        .build()
+        .unwrap();
+    let cmd = Command::new("app");
+    assert!(app.verify_command(&cmd).is_ok());
+    TestHarness::new().run(&app, cmd, ["app"]).assert_success();
+}
+
+#[test]
+fn a_cli_command_with_no_registration_still_hands_off() {
+    let app = App::builder()
+        .command_with("list-units", show_all, |cfg| cfg.silent())
+        .unwrap()
+        .build()
+        .unwrap();
+    let cmd = Command::new("app")
+        .subcommand(Command::new("list-units"))
+        .subcommand(Command::new("legacy"));
+    assert!(app.verify_command(&cmd).is_ok());
+    assert!(matches!(
+        app.dispatch_from(cmd, ["app", "legacy"]).into_outcome(),
+        standout::cli::DispatchResult::NoMatch(_)
+    ));
+}
