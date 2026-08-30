@@ -122,6 +122,24 @@ fn derived_names_match_the_ones_clap_registers() {
     }
 }
 
+/// Every `#[dispatch(...)]` on a variant speaks for that variant, so the
+/// values of all of them apply rather than the first attribute winning.
+#[derive(Subcommand, Dispatch)]
+#[dispatch(handlers = handlers)]
+enum SplitAttrCommands {
+    #[dispatch(name = "listing")]
+    #[dispatch(default)]
+    ListUnits,
+}
+
+#[test]
+fn attributes_spread_over_several_dispatch_attrs_all_apply() {
+    let builder = SplitAttrCommands::dispatch_config()(GroupBuilder::new());
+    assert!(builder.contains("listing"));
+    assert!(!builder.contains("list-units"));
+    assert_eq!(builder.get_default_command(), Some("listing"));
+}
+
 #[derive(Subcommand, Dispatch)]
 #[dispatch(handlers = handlers)]
 enum RenamedCommands {

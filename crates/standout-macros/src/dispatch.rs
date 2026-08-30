@@ -90,6 +90,15 @@ impl Parse for VariantAttrs {
                             if value.is_empty() {
                                 return Err(Error::new(nv.value.span(), "`name` cannot be empty"));
                             }
+                            if value.contains('.') {
+                                return Err(Error::new(
+                                    nv.value.span(),
+                                    "`name` cannot contain `.`: dispatch splits a registration \
+                                     path on `.`, so `parent.child` registers a nested path no \
+                                     clap subcommand declares. Name the single command the \
+                                     variant is, and nest with `#[dispatch(nested)]`",
+                                ));
+                            }
                             attrs.name = Some(value);
                         } else {
                             return Err(Error::new(nv.value.span(), "expected string literal"));
@@ -227,41 +236,100 @@ impl Parse for VariantAttrs {
             }
         }
 
-        if attrs.pure && attrs.handler.is_some() {
+        Ok(attrs)
+    }
+}
+
+impl VariantAttrs {
+    /// A variant may carry more than one `#[dispatch(...)]`; every one of them
+    /// speaks for the same variant, so their values fold into one set before
+    /// anything reads or validates them.
+    fn merge(&mut self, other: VariantAttrs) {
+        let VariantAttrs {
+            name,
+            handler,
+            template,
+            template_name,
+            silent,
+            binary,
+            structured_only,
+            pre_dispatch,
+            post_dispatch,
+            post_output,
+            questionnaire,
+            nested,
+            skip,
+            default,
+            list_view,
+            item_type,
+            pipe_to,
+            pipe_through,
+            pipe_to_clipboard,
+            simple,
+            pure,
+        } = other;
+
+        self.name = name.or(self.name.take());
+        self.handler = handler.or(self.handler.take());
+        self.template = template.or(self.template.take());
+        self.template_name = template_name.or(self.template_name.take());
+        self.pre_dispatch = pre_dispatch.or(self.pre_dispatch.take());
+        self.post_dispatch = post_dispatch.or(self.post_dispatch.take());
+        self.post_output = post_output.or(self.post_output.take());
+        self.questionnaire = questionnaire.or(self.questionnaire.take());
+        self.item_type = item_type.or(self.item_type.take());
+        self.pipe_to = pipe_to.or(self.pipe_to.take());
+        self.pipe_through = pipe_through.or(self.pipe_through.take());
+        self.silent |= silent;
+        self.binary |= binary;
+        self.structured_only |= structured_only;
+        self.nested |= nested;
+        self.skip |= skip;
+        self.default |= default;
+        self.list_view |= list_view;
+        self.pipe_to_clipboard |= pipe_to_clipboard;
+        self.simple |= simple;
+        self.pure |= pure;
+    }
+
+    /// The pairs that cannot both hold, checked once the variant's attributes
+    /// are merged: spreading them over two `#[dispatch(...)]` attributes is the
+    /// same request as writing them in one.
+    fn validate(&self, span: proc_macro2::Span) -> Result<()> {
+        if self.pure && self.handler.is_some() {
             return Err(Error::new(
-                input.span(),
+                span,
                 "`pure` and `handler` cannot be used together: `pure` registers the wrapper `#[handler]` generates for the variant's own function, while `handler = path` names a function to register. Drop `pure` and point `handler` at the wrapper (`handler = handlers::name__handler`) to register another `#[handler]` function",
             ));
         }
-        if attrs.pure && attrs.simple {
+        if self.pure && self.simple {
             return Err(Error::new(
-                input.span(),
+                span,
                 "`pure` and `simple` cannot be used together: `simple` registers a function taking only `&ArgMatches`, while the wrapper `#[handler]` generates always takes `(&ArgMatches, &CommandContext)`. Drop `simple`; a `#[handler]` function declares what it needs through its parameter attributes",
             ));
         }
-        if attrs.template.is_some() && attrs.template_name.is_some() {
+        if self.template.is_some() && self.template_name.is_some() {
             return Err(Error::new(
-                input.span(),
+                span,
                 "`template` and `template_name` cannot be used together",
             ));
         }
-        let absence_count = usize::from(attrs.silent)
-            + usize::from(attrs.binary)
-            + usize::from(attrs.structured_only);
+        let absence_count =
+            usize::from(self.silent) + usize::from(self.binary) + usize::from(self.structured_only);
         if absence_count > 1 {
             return Err(Error::new(
-                input.span(),
+                span,
                 "`silent`, `binary`, and `structured_only` cannot be used together",
             ));
         }
-        if absence_count == 1 && (attrs.template.is_some() || attrs.template_name.is_some()) {
+        if absence_count == 1 && (self.template.is_some() || self.template_name.is_some()) {
             return Err(Error::new(
-                input.span(),
+                span,
                 "`silent`, `binary`, and `structured_only` cannot be combined with `template` or `template_name`",
             ));
         }
 
-        Ok(attrs)
+        Ok(())
     }
 }
 
@@ -278,23 +346,20 @@ fn to_kebab_case(ident: &Ident) -> String {
     ident.unraw().to_string().to_kebab_case()
 }
 
-/// `move` is a valid handler-function name behind `r#`, so a derived name that
-/// is a keyword becomes a raw identifier rather than a syntax error.
-fn path_ident(name: &str, span: proc_macro2::Span) -> Ident {
-    match syn::parse_str::<Ident>(name) {
-        Ok(mut ident) => {
-            ident.set_span(span);
-            ident
-        }
-        Err(_) => Ident::new_raw(name, span),
-    }
-}
-
 fn parse_container_attrs(input: &DeriveInput) -> Result<ContainerAttrs> {
+    let mut merged = ContainerAttrs::default();
+    let mut found = false;
+
     for attr in &input.attrs {
         if attr.path().is_ident("dispatch") {
-            return attr.parse_args::<ContainerAttrs>();
+            let attrs = attr.parse_args::<ContainerAttrs>()?;
+            merged.handlers = attrs.handlers.or(merged.handlers);
+            found = true;
         }
+    }
+
+    if found {
+        return Ok(merged);
     }
 
     Err(Error::new(
@@ -304,12 +369,21 @@ fn parse_container_attrs(input: &DeriveInput) -> Result<ContainerAttrs> {
 }
 
 fn parse_variant_attrs(attrs: &[syn::Attribute]) -> Result<VariantAttrs> {
+    let mut merged = VariantAttrs::default();
+    let mut span = None;
+
     for attr in attrs {
         if attr.path().is_ident("dispatch") {
-            return attr.parse_args::<VariantAttrs>();
+            merged.merge(attr.parse_args::<VariantAttrs>()?);
+            span.get_or_insert_with(|| attr.span());
         }
     }
-    Ok(VariantAttrs::default())
+
+    if let Some(span) = span {
+        merged.validate(span)?;
+    }
+
+    Ok(merged)
 }
 
 fn is_nested_subcommand(fields: &Fields) -> Option<Path> {
@@ -430,7 +504,7 @@ pub fn dispatch_derive_impl(input: DeriveInput) -> Result<TokenStream> {
                     if v.attrs.pure {
                         handler_name = format!("{}__handler", handler_name);
                     }
-                    let handler_ident = path_ident(&handler_name, proc_macro2::Span::call_site());
+                    let handler_ident = crate::ident::safe_ident(&handler_name, proc_macro2::Span::call_site());
                     let mut path = handlers_path.clone();
                     path.segments.push(syn::PathSegment {
                         ident: handler_ident,
@@ -652,7 +726,10 @@ mod tests {
     #[test]
     fn a_keyword_handler_name_stays_a_usable_path_segment() {
         let span = proc_macro2::Span::call_site();
-        assert_eq!(path_ident("move", span).to_string(), "r#move");
-        assert_eq!(path_ident("list_units", span).to_string(), "list_units");
+        assert_eq!(crate::ident::safe_ident("move", span).to_string(), "r#move");
+        assert_eq!(
+            crate::ident::safe_ident("list_units", span).to_string(),
+            "list_units"
+        );
     }
 }

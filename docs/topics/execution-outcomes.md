@@ -116,6 +116,12 @@ registered path, and the clap spelling too when the two differ only by `-`
 versus `_` (`list_units` registered against a CLI declaring `list-units`).
 `App::verify_command` reports the same mismatch at setup time.
 
+That check reads canonical command names only. Clap resolves an alias to the
+command it names before `ArgMatches` reports it, so dispatch never sees the
+alias: a handler registered as `ls` against `Command::new("list").alias("ls")`
+is reached by neither spelling and is reported as unreachable. Registering
+`list` is what makes both `list` and `ls` run the handler.
+
 ## Framework-owned final writes
 
 `run()` writes successful text and binary bytes to stdout, diagnostics to

@@ -1,8 +1,8 @@
 error: `pure` and `handler` cannot be used together: `pure` registers the wrapper `#[handler]` generates for the variant's own function, while `handler = path` names a function to register. Drop `pure` and point `handler` at the wrapper (`handler = handlers::name__handler`) to register another `#[handler]` function
-  --> tests/ui/dispatch/pure_with_handler_path.rs:16:55
+  --> tests/ui/dispatch/pure_with_handler_path.rs:16:5
    |
 16 |     #[dispatch(pure, handler = handlers::list__handler)]
-   |                                                       ^
+   |     ^
 
 error[E0599]: no variant, associated function, or constant named `dispatch_config` found for enum `Commands` in the current scope
   --> tests/ui/dispatch/pure_with_handler_path.rs:21:23

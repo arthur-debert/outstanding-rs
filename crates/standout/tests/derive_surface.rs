@@ -67,6 +67,21 @@ fn handler_function_drives_a_questionnaire_command() {
     assert_eq!(result.stdout(), "db-1:basic");
 }
 
+/// `r#Move` / `r#move` / `r#type` reach the derives as raw identifiers; the
+/// names they register and read are the unraw'd ones, so `move --type` runs.
+#[test]
+fn handler_function_runs_under_a_keyword_named_variant() {
+    let builder = Commands::dispatch_config()(GroupBuilder::new());
+    assert!(builder.contains("move"));
+
+    let result =
+        TestHarness::new()
+            .text_output()
+            .run(&app(), command(), ["unitctl", "move", "--type"]);
+    result.assert_success();
+    assert_eq!(result.stdout(), "typed");
+}
+
 fn show_all(_matches: &clap::ArgMatches, _ctx: &CommandContext) -> HandlerResult<()> {
     Ok(Output::Silent)
 }
@@ -138,4 +153,37 @@ fn a_cli_command_with_no_registration_still_hands_off() {
         app.dispatch_from(cmd, ["app", "legacy"]).into_outcome(),
         standout::cli::DispatchResult::NoMatch(_)
     ));
+}
+
+#[test]
+fn a_command_registered_under_a_clap_alias_is_an_error() {
+    let cmd = Command::new("app").subcommand(Command::new("list").alias("ls"));
+    let app = App::builder()
+        .command_with("ls", show_all, |cfg| cfg.silent())
+        .unwrap()
+        .build()
+        .unwrap();
+    let error = app.verify_command(&cmd).unwrap_err().to_string();
+    assert!(error.contains("ls"), "{error}");
+    assert!(error.contains("list"), "{error}");
+
+    let result = TestHarness::new().run(&app, cmd, ["app", "ls"]);
+    assert!(result.stderr().contains("ls"), "{}", result.stderr());
+}
+
+#[test]
+fn an_alias_invokes_the_handler_registered_under_the_declared_name() {
+    let cmd = Command::new("app").subcommand(Command::new("list").alias("ls"));
+    let app = App::builder()
+        .command_with("list", show_all, |cfg| cfg.silent())
+        .unwrap()
+        .build()
+        .unwrap();
+    assert!(app.verify_command(&cmd).is_ok());
+    TestHarness::new()
+        .run(&app, cmd.clone(), ["app", "ls"])
+        .assert_success();
+    TestHarness::new()
+        .run(&app, cmd, ["app", "list"])
+        .assert_success();
 }

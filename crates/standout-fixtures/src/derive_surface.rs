@@ -77,6 +77,17 @@ pub mod handlers {
     pub fn reload(#[matches] _matches: &ArgMatches) -> Result<(), anyhow::Error> {
         Ok(())
     }
+
+    /// A handler and a parameter whose names are Rust keywords: both reach the
+    /// macros as `r#move` and `r#type`, and the items they generate
+    /// (`move__handler`, the `type` argument id) drop the `r#` the way clap's
+    /// own derive does.
+    #[handler]
+    pub fn r#move(#[flag] r#type: bool) -> Result<Output<Units>, anyhow::Error> {
+        Ok(Output::Render(Units {
+            names: vec![if r#type { "typed" } else { "plain" }.to_string()],
+        }))
+    }
 }
 
 #[derive(Dispatch)]
@@ -90,6 +101,8 @@ pub enum Commands {
     Provision,
     #[dispatch(pure, silent)]
     Reload,
+    #[dispatch(pure, template = "{{ names | join(', ') }}")]
+    r#Move,
 }
 
 pub fn app() -> App {
@@ -112,4 +125,11 @@ pub fn command() -> Command {
         .subcommand(Command::new("about-this"))
         .subcommand(Command::new("provision"))
         .subcommand(Command::new("reload"))
+        .subcommand(
+            Command::new("move").arg(
+                clap::Arg::new("type")
+                    .long("type")
+                    .action(clap::ArgAction::SetTrue),
+            ),
+        )
 }

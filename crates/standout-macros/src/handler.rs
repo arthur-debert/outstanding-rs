@@ -1,6 +1,8 @@
-use proc_macro2::TokenStream;
+use crate::ident::safe_ident;
+use proc_macro2::{Span, TokenStream};
 use quote::{format_ident, quote};
 use syn::{
+    ext::IdentExt,
     parse::{Parse, ParseStream},
     punctuated::Punctuated,
     spanned::Spanned,
@@ -95,9 +97,11 @@ fn parse_param_kind(pat_type: &PatType) -> Result<ParamKind> {
     Ok(ParamKind::None)
 }
 
+/// A parameter's name without its `r#`: `r#type` reads the argument id `type`
+/// and binds `r#type`, the way clap's own derive unraws a field name.
 fn extract_param_name(pat: &Pat) -> Result<String> {
     match pat {
-        Pat::Ident(ident) => Ok(ident.ident.to_string()),
+        Pat::Ident(ident) => Ok(ident.ident.unraw().to_string()),
         _ => Err(Error::new(
             pat.span(),
             "expected identifier pattern for parameter",
@@ -190,7 +194,7 @@ fn generate_expected_arg(param: &ParamInfo, dispatch: &TokenStream) -> Option<To
 }
 
 fn generate_extraction(param: &ParamInfo) -> TokenStream {
-    let rust_name = format_ident!("{}", param.rust_name);
+    let rust_name = safe_ident(&param.rust_name, Span::call_site());
     let cli_name = &param.cli_name;
     let ty = &param.ty;
 
@@ -229,7 +233,7 @@ fn generate_extraction(param: &ParamInfo) -> TokenStream {
 }
 
 fn generate_call_arg(param: &ParamInfo) -> TokenStream {
-    let rust_name = format_ident!("{}", param.rust_name);
+    let rust_name = safe_ident(&param.rust_name, Span::call_site());
 
     match &param.kind {
         ParamKind::Flag { .. } | ParamKind::Arg { .. } => {
@@ -270,7 +274,7 @@ pub fn handler_impl(attr: TokenStream, item: TokenStream) -> Result<TokenStream>
     let dispatch = crate::crate_path::dispatch();
 
     let fn_name = &fn_item.sig.ident;
-    let wrapper_name = format_ident!("{}__handler", fn_name);
+    let wrapper_name = format_ident!("{}__handler", fn_name.unraw());
     let fn_vis = &fn_item.vis;
 
     let mut params: Vec<ParamInfo> = Vec::new();
@@ -328,7 +332,7 @@ pub fn handler_impl(attr: TokenStream, item: TokenStream) -> Result<TokenStream>
         .iter()
         .filter_map(|param| generate_expected_arg(param, &dispatch))
         .collect();
-    let expected_args_name = format_ident!("{}__expected_args", fn_name);
+    let expected_args_name = format_ident!("{}__expected_args", fn_name.unraw());
 
     let _wrapper_params = if has_ctx {
         quote! { __matches: &::clap::ArgMatches, __ctx: &#dispatch::CommandContext }
@@ -367,7 +371,7 @@ pub fn handler_impl(attr: TokenStream, item: TokenStream) -> Result<TokenStream>
         }
     }
 
-    let handler_struct_name = format_ident!("{}_Handler", fn_name);
+    let handler_struct_name = format_ident!("{}_Handler", fn_name.unraw());
     let ok_type = extract_result_ok_type(&fn_item).ok_or_else(|| {
         Error::new(
             fn_item.sig.output.span(),

@@ -7,6 +7,7 @@ mod crate_path;
 mod dispatch;
 mod embed;
 mod handler;
+mod ident;
 mod questionnaire;
 mod seeker;
 mod tabular;
@@ -36,6 +37,12 @@ pub fn embed_styles(input: TokenStream) -> TokenStream {
 /// registers the wrapper `#[handler]` generates for that function instead,
 /// which is how a `#[handler]`-annotated function is registered under any
 /// `#[dispatch(...)]` form, questionnaire commands included.
+///
+/// A renamed command is one command: dispatch splits registration paths on
+/// `.`, so a `name` carrying one is rejected, and nesting is
+/// `#[dispatch(nested)]`. A variant may carry several `#[dispatch(...)]`
+/// attributes; they all speak for that variant, so their values merge and the
+/// pairs that cannot both hold are rejected across them.
 #[proc_macro_derive(Dispatch, attributes(dispatch))]
 pub fn dispatch_derive(input: TokenStream) -> TokenStream {
     let input = parse_macro_input!(input as DeriveInput);
@@ -94,7 +101,8 @@ pub fn questionnaire_choices_derive(input: TokenStream) -> TokenStream {
 /// clap-derive `no_legend` field is declared `#[arg(id = "no-legend")]`, or the
 /// handler parameter names the id itself with `#[flag(name = "no_legend")]` /
 /// `#[arg(name = "...")]`. `app.verify_command(&cmd)` reports a mismatch before
-/// the argument is read.
+/// the argument is read. A raw identifier drops its `r#` first, as clap's
+/// derive does for a field: `r#type` reads the argument id `type`.
 #[proc_macro_attribute]
 pub fn handler(attr: TokenStream, item: TokenStream) -> TokenStream {
     let attr = proc_macro2::TokenStream::from(attr);

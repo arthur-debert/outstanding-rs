@@ -1,0 +1,14 @@
+error: `name` cannot contain `.`: dispatch splits a registration path on `.`, so `parent.child` registers a nested path no clap subcommand declares. Name the single command the variant is, and nest with `#[dispatch(nested)]`
+  --> tests/ui/dispatch/name_with_dot.rs:15:23
+   |
+15 |     #[dispatch(name = "units.list")]
+   |                       ^^^^^^^^^^^^
+
+error[E0599]: no variant, associated function, or constant named `dispatch_config` found for enum `Commands` in the current scope
+  --> tests/ui/dispatch/name_with_dot.rs:20:23
+   |
+14 | enum Commands {
+   | ------------- variant, associated function, or constant `dispatch_config` not found for this enum
+...
+20 |     let _ = Commands::dispatch_config();
+   |                       ^^^^^^^^^^^^^^^ variant, associated function, or constant not found in `Commands`

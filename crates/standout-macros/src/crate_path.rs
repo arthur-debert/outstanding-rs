@@ -6,7 +6,8 @@
 //! so each path is read from that crate's manifest at expansion time rather
 //! than hard-coded.
 
-use proc_macro2::{Ident, Span, TokenStream};
+use crate::ident::safe_ident;
+use proc_macro2::{Span, TokenStream};
 use proc_macro_crate::{crate_name, FoundCrate};
 use quote::quote;
 
@@ -39,6 +40,6 @@ fn resolve(leaf: &str, re_export: TokenStream) -> TokenStream {
     }
 }
 
-fn ident(crate_name: &str) -> Ident {
-    Ident::new(&crate_name.replace('-', "_"), Span::call_site())
+fn ident(crate_name: &str) -> proc_macro2::Ident {
+    safe_ident(&crate_name.replace('-', "_"), Span::call_site())
 }
