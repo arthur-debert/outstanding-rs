@@ -33,274 +33,142 @@ Your CLI should support these patterns, but the logic doesn't belong in handlers
 - **Testability**: Handler adapters receive already-resolved data through an explicit seam
 - **Composability**: Different commands can mix input sources
 
-Standout's input system integrates as a pre-handler phase, running *before* your handler executes. Your handler receives resolved content—input acquisition is transparent.
+An `InputChain` runs as a pre-dispatch phase, before your handler executes. The handler receives the resolved value; input acquisition is transparent.
 
 ---
 
 ## Source Types
 
-Input sources fall into two categories:
+Every source implements `InputCollector<T>` and composes into an `InputChain<T>`. See [Backends](backends.md) for the full constructor and feature-flag reference for each one.
 
 ### Non-Interactive Sources at a Glance
 
 These work in scripts and CI pipelines:
 
-| Source | Use Case |
-| -------- | ---------- |
-| **Arg** | Short content as CLI arguments |
-| **Stdin** | Piped content (`cat file \| cmd`) |
-| **Clipboard** | Pre-filled content from clipboard |
-| **Env** | Environment variable |
-| **Default** | Hardcoded fallback |
+| Source | Type | Use Case |
+| -------- | ------ | ---------- |
+| `ArgSource` | `String` | Short content as a CLI argument |
+| `FlagSource` | `bool` | A CLI flag, with an optional `.inverted()` |
+| `StdinSource` | `String` | Piped content (`cat file \| cmd`) |
+| `EnvSource` | `String` | Environment variable |
+| `ClipboardSource` | `String` | Pre-filled content from the clipboard |
+| `DefaultSource<T>` | `T` | Hardcoded fallback |
 
 ### Interactive Sources at a Glance
 
-These require a TTY and user interaction:
+These require a terminal and are grouped by feature flag:
 
-| Source | Use Case | Output Type |
-| -------- | ---------- | ------------- |
-| **Editor** | Long-form text (commit messages) | `String` |
-| **Text** | Short text input ("Enter name:") | `String` |
-| **Confirm** | Yes/no questions ("Proceed?") | `bool` |
-| **Select** | Pick one from list | `T` |
-| **MultiSelect** | Pick many from list | `Vec<T>` |
-| **Password** | Hidden text input | `String` |
-
----
-
-## Non-Interactive Sources
-
-### Arg Source
-
-Read directly from a clap argument:
-
-```rust
-InputSource::arg("message")
-```
-
-### Stdin Source
-
-Read piped content when stdin is not a TTY:
-
-```rust
-InputSource::stdin()
-```
-
-Only reads if stdin is actually piped. Returns `None` if stdin is a terminal.
-
-### Clipboard Source
-
-Read from system clipboard:
-
-```rust
-InputSource::clipboard()
-```
-
-### Env Source
-
-Read from environment variable:
-
-```rust
-InputSource::env("MY_APP_TOKEN")
-```
+| Source | Feature | Type | Use Case |
+| -------- | --------- | ------ | ---------- |
+| `TextPromptSource` | `simple-prompts` (default) | `String` | Short text input |
+| `ConfirmPromptSource` | `simple-prompts` (default) | `bool` | Yes/no questions |
+| `EditorSource` | `editor` (default) | `String` | Long-form text (commit messages) |
+| `InquireText` | `inquire` | `String` | Rich text input with autocomplete |
+| `InquireConfirm` | `inquire` | `bool` | Polished yes/no prompt |
+| `InquireSelect<T>` | `inquire` | `T` | Pick one from a list |
+| `InquireMultiSelect<T>` | `inquire` | `Vec<T>` | Pick many from a list |
+| `InquirePassword` | `inquire` | `String` | Hidden text input |
+| `InquireEditor` | `inquire` | `String` | Editor with an inquire preview |
 
 ---
 
-## Interactive Sources
+## Building a Chain
 
-### Editor Source
-
-Open the user's preferred editor:
+Chain sources in priority order with `InputChain`:
 
 ```rust
-InputSource::editor()
-    .initial("# Enter your message\n\n")
-    .extension(".md")
-    .require_save(true)
+use standout_input::{InputChain, ArgSource, StdinSource, EditorSource};
+
+let body = InputChain::<String>::new()
+    .try_source(ArgSource::new("body"))   // First: try the CLI argument
+    .try_source(StdinSource::new())       // Second: try piped stdin
+    .try_source(EditorSource::new()       // Third: open the editor
+        .extension(".md"))
+    .resolve(&matches)?;
 ```
 
-Use for multi-line content like commit messages or descriptions.
+The chain stops at the first source whose `is_available()` returns `true` and whose `collect()` returns `Some(_)`. This is the `gh pr create` pattern:
 
-### Text Prompt
+- `gh pr create --body "text"` → uses the argument
+- `echo "text" | gh pr create` → uses stdin
+- `gh pr create` → opens the editor
 
-Prompt for short text input:
-
-```rust
-InputSource::text("Enter your name:")
-    .default("Anonymous")
-    .placeholder("John Doe")
-```
-
-### Confirm Prompt
-
-Ask a yes/no question:
-
-```rust
-InputSource::confirm("Delete 5 items?")
-    .default(false)  // Default to "no"
-```
-
-Returns `bool`. In chains, use with `#[input]` on a `bool` parameter.
-
-### Select Prompt
-
-Pick one from a list:
-
-```rust
-InputSource::select("Choose format:")
-    .option("json", "JSON output")
-    .option("yaml", "YAML output")
-    .option("csv", "CSV output")
-    .default("json")
-```
-
-### Multi-Select Prompt
-
-Pick multiple from a list:
-
-```rust
-InputSource::multi_select("Select features:")
-    .option("auth", "Authentication")
-    .option("logging", "Request logging")
-    .option("cache", "Response caching")
-```
-
-### Password Prompt
-
-Hidden text input:
-
-```rust
-InputSource::password("Enter API token:")
-    .confirm("Confirm token:")  // Optional confirmation
-```
+Add `.default(value)` to fall back to a literal value instead of erroring with `InputError::NoInput` when every source is skipped, and `.validate(f, "message")` to apply a rule regardless of which source produced the value. See [Introduction to Input](../guides/intro-to-input.md) for the full walkthrough.
 
 ---
 
-## Quick Start
+## Wiring a Chain to a Command
 
-The simplest integration uses the handler macro:
+Outside the framework, a handler resolves a chain itself, passing the run's `InputSources` so stdin/clipboard/prompt mocks are honored in tests:
 
 ```rust
-use standout_macros::handler;
+fn create(matches: &ArgMatches, ctx: &CommandContext) -> HandlerResult<Pad> {
+    let body = InputChain::<String>::new()
+        .try_source(ArgSource::new("body"))
+        .try_source(StdinSource::new())
+        .try_source(EditorSource::new())
+        .resolve_from(matches, ctx.input_sources())?;
 
-#[handler]
-pub fn create(
-    #[input(fallback = "editor")] message: String,
-    #[flag] verbose: bool,
-) -> Result<CreateResult, Error> {
-    // `message` is resolved from: arg → stdin → editor
-    Ok(CreateResult { message, verbose })
+    /* business logic ... */
 }
 ```
 
-Or use the builder API for more control:
+With the `standout` framework, `CommandConfig::input(name, chain)` registers the same chain to run in pre-dispatch, and the handler reads the resolved value with `ctx.input::<T>(name)` instead of resolving it itself. See [Framework Integration](framework-integration.md) for the full wiring and the `CommandContextInput` trait.
+
+---
+
+## Skipping Interactive Sources
+
+Some commands want a flag like `--no-editor` to skip interactive input entirely. Since chain construction is ordinary Rust, build the chain conditionally instead of adding sources that would prompt:
 
 ```rust
-let app = App::builder()
-    .command_with("create", handlers::create, |cfg| {
-        cfg.template_name("create")
-           .input("message", InputSource::chain()
-               .try_arg("message")
-               .try_stdin()
-               .fallback_editor(EditorConfig::new()
-                   .initial("# Enter message")
-                   .extension(".md")))
-    })
-    .build()?;
+let no_editor = matches.get_flag("no-editor");
+
+let mut chain = InputChain::<String>::new()
+    .try_source(ArgSource::new("body"))
+    .try_source(StdinSource::new());
+
+if !no_editor {
+    chain = chain.try_source(EditorSource::new());
+}
+
+let body = chain.default(String::new()).resolve(&matches)?;
 ```
 
 ---
 
-## Input Chains
+## Direct Use Without a Chain
 
-Chain multiple sources with fallback behavior:
-
-```rust
-InputSource::chain()
-    .try_arg("body")           // First: try CLI arg
-    .try_stdin()               // Second: try piped stdin
-    .fallback_editor(config)   // Third: open editor
-```
-
-The chain stops at the first source that provides content. This enables the `gh pr create` pattern:
-
-- `gh pr create --body "text"` → uses arg
-- `echo "text" | gh pr create` → uses stdin
-- `gh pr create` → opens editor
-
-### Chain with Skip Flag
-
-Some commands want `--no-editor` to skip interactive input:
+For commands with input logic too specific for a declarative chain, call the primitives directly. Every interactive source also has a `.prompt()` shortcut that skips the chain and the `&ArgMatches` plumbing (see [Standalone Prompts](../guides/intro-to-input.md#standalone-prompts-no-chain)):
 
 ```rust
-InputSource::chain()
-    .try_arg("body")
-    .try_stdin()
-    .fallback_editor_unless("no-editor", config)
-    .default("")  // If --no-editor and no other source, use empty
-```
+use standout_input::{read_if_piped, EditorSource};
 
----
+fn create(matches: &ArgMatches, _ctx: &CommandContext) -> HandlerResult<Pad> {
+    let no_editor = matches.get_flag("no-editor");
+    let title_arg = matches.get_one::<String>("title");
 
-## API Reference
+    let content = if let Some(piped) = read_if_piped()? {
+        // Piped input takes precedence
+        piped
+    } else if let Some(title) = title_arg {
+        if no_editor {
+            title.clone()
+        } else {
+            let body = EditorSource::new()
+                .initial_content(format!("# {}\n\n", title))
+                .extension(".md")
+                .prompt()?;
+            format!("{}\n\n{}", title, body)
+        }
+    } else if no_editor {
+        return Err(anyhow!("No content provided. Use --title or pipe input."));
+    } else {
+        EditorSource::new().prompt()?
+    };
 
-### Macro Attributes
-
-| Attribute | Behavior |
-| ----------- | ---------- |
-| `#[input]` | Resolve from arg of same name |
-| `#[input(fallback = "editor")]` | Arg → stdin → editor chain |
-| `#[input(fallback = "stdin")]` | Arg → stdin chain |
-| `#[input(source = "editor")]` | Editor only |
-
-### Builder Methods
-
-```rust
-// Single sources
-InputSource::arg("name")      // From CLI argument
-InputSource::stdin()          // From piped stdin
-InputSource::editor()         // Always open editor
-InputSource::clipboard()      // From system clipboard
-
-// Editor configuration
-InputSource::editor()
-    .initial("prefilled content")
-    .extension(".md")          // For syntax highlighting
-    .require_save(true)        // Abort if user doesn't save
-    .trim_newlines(true)       // Strip trailing newlines
-
-// Chains
-InputSource::chain()
-    .try_arg("message")
-    .try_stdin()
-    .fallback_editor(config)
-    .default("fallback value")
-
-// With validation
-InputSource::chain()
-    .try_arg("message")
-    .validate(|s| !s.is_empty(), "Message cannot be empty")
-```
-
-### Low-Level API
-
-For standalone use without the framework:
-
-```rust
-use standout_input::{Editor, detect_editor, read_stdin_if_piped};
-
-// Detect preferred editor
-let editor = detect_editor()?;  // Checks: VISUAL, EDITOR, then fallbacks
-
-// Read stdin only if piped
-let piped: Option<String> = read_stdin_if_piped()?;
-
-// Open editor with content
-let content = Editor::new()
-    .executable(&editor)
-    .initial("# Enter message\n")
-    .extension(".md")
-    .edit()?;  // Returns Option<String>, None if user aborted
+    // ... rest of handler
+}
 ```
 
 ---
@@ -313,118 +181,22 @@ Editor detection follows established conventions:
 | ---------- | -------- | --------- |
 | 1 | `VISUAL` env var | `VISUAL=code` |
 | 2 | `EDITOR` env var | `EDITOR=vim` |
-| 3 | Platform default | `vim` (Unix), `notepad` (Windows) |
+| 3 | Platform default | `vim`, `vi`, `nano` (Unix), `notepad` (Windows) |
 
-For apps that want custom precedence (like `gh` with `GH_EDITOR`):
-
-```rust
-let editor = detect_editor_with_precedence(&[
-    "GH_EDITOR",    // App-specific first
-    "VISUAL",
-    "EDITOR",
-])?;
-```
-
----
-
-## Integration with Handlers
-
-Resolved input is injected into `CommandContext.extensions`:
-
-```rust
-// Framework resolves input before handler runs
-// Handler receives it via #[input] attribute or ctx.extensions
-
-#[handler]
-pub fn create(
-    #[input(fallback = "editor")] body: String,
-    #[ctx] ctx: &CommandContext,
-) -> Result<Pad, Error> {
-    // `body` is already resolved
-    // Can also access: ctx.extensions.get::<ResolvedInput<"body">>()
-}
-```
-
-For complex cases that need the resolution metadata:
-
-```rust
-fn create(matches: &ArgMatches, ctx: &CommandContext) -> HandlerResult<Pad> {
-    let input = ctx.extensions.get_required::<ResolvedInput>()?;
-
-    match input.source {
-        InputSourceKind::Arg => log::debug!("Got body from --body arg"),
-        InputSourceKind::Stdin => log::debug!("Got body from piped stdin"),
-        InputSourceKind::Editor => log::debug!("Got body from editor"),
-    }
-
-    let body = input.content;
-    // ...
-}
-```
-
----
-
-## Direct Use in Handlers
-
-For commands with complex input logic (like padz's "smart create"), use the library directly:
-
-```rust
-use standout_input::{Editor, read_stdin_if_piped, read_clipboard};
-
-fn create(matches: &ArgMatches, ctx: &CommandContext) -> HandlerResult<Pad> {
-    let no_editor = matches.get_flag("no-editor");
-    let title_arg = matches.get_one::<String>("title");
-
-    let content = if let Some(piped) = read_stdin_if_piped()? {
-        // Piped input takes precedence
-        piped
-    } else if let Some(title) = title_arg {
-        if no_editor {
-            // Title only, no body
-            title.clone()
-        } else {
-            // Title provided, open editor for body
-            let body = Editor::new()
-                .initial(&format!("# {}\n\n", title))
-                .extension(".md")
-                .edit()?
-                .unwrap_or_default();
-            format!("{}\n\n{}", title, body)
-        }
-    } else if no_editor {
-        // No input and no editor - error
-        return Err(anyhow!("No content provided. Use --title or pipe input."));
-    } else {
-        // No args - prefill from clipboard, open editor
-        let clipboard = read_clipboard().unwrap_or_default();
-        Editor::new()
-            .initial(&clipboard)
-            .edit()?
-            .ok_or_else(|| anyhow!("Editor cancelled"))?
-    };
-
-    // ... rest of handler
-}
-```
-
-This gives full control while still using standardized primitives.
+`EditorSource::is_available()` also requires stdin to be a terminal, so a piped invocation never blocks on an editor.
 
 ---
 
 ## Clipboard Integration
 
-Read from system clipboard as an input source:
-
 ```rust
-// As part of a chain
-InputSource::chain()
-    .try_arg("content")
-    .try_clipboard()
-    .fallback_editor(config)
+use standout_input::ClipboardSource;
 
-// Or for prefilling editor
-let initial = read_clipboard().unwrap_or_default();
-Editor::new().initial(&initial).edit()?
+let content = InputChain::<String>::new()
+    .try_source(ArgSource::new("content"))
+    .try_source(ClipboardSource::new())
+    .try_source(EditorSource::new())
+    .resolve(&matches)?;
 ```
 
 Platform support:
@@ -433,7 +205,7 @@ Platform support:
 | ---------- | -------------- |
 | macOS | `pbpaste` |
 | Linux | `xclip -selection clipboard -o` |
-| Windows | PowerShell `Get-Clipboard` |
+| Other | `InputError::ClipboardFailed` — not supported |
 
 ---
 
@@ -444,8 +216,8 @@ Input sources and output piping are symmetric but opposite:
 | Aspect | Input Sources | Output Piping |
 | -------- | --------------- | --------------- |
 | Direction | External → Handler | Handler → External |
-| Pipeline position | Pre-handler | Post-output |
-| Interactive | Can be (editor) | Never |
+| Pipeline position | Pre-dispatch | Post-output |
+| Interactive | Can be (editor, prompts) | Never |
 | Purpose | Acquire content | Transform/route output |
 
 ```text
@@ -458,21 +230,17 @@ Input sources and output piping are symmetric but opposite:
 
 ## Error Handling
 
-Input errors are returned before handler execution:
+`InputError` carries the failure reason so a chain-level `?` produces an actionable message:
 
-```rust
-// Editor not found
-// Error: No editor found. Set VISUAL or EDITOR environment variable.
-
-// User cancelled editor (with require_save)
-// Error: Editor cancelled without saving.
-
-// Stdin read failed
-// Error: Failed to read from stdin: <io error>
-
-// Validation failed
-// Error: Input validation failed: Message cannot be empty
+```text
+No editor found. Set VISUAL or EDITOR environment variable.  // InputError::NoEditor
+Editor cancelled without saving.                              // InputError::EditorCancelled
+Failed to read stdin: <io error>                              // InputError::StdinFailed
+Validation failed: Message cannot be empty                    // InputError::ValidationFailed
+No input provided and no default available.                   // InputError::NoInput
 ```
+
+For interactive sources, a validation failure re-prompts instead of returning an error — see [Backends](backends.md) for the retry semantics.
 
 ---
 
@@ -480,25 +248,22 @@ Input errors are returned before handler execution:
 
 **Editor execution**: The editor command is resolved from environment variables. Ensure `VISUAL`/`EDITOR` are set by the user, not from untrusted sources.
 
-**Temp file handling**: Editor content is written to a temp file. The file is deleted after reading. Content may briefly exist on disk.
-
-```rust
-// Files are created in system temp directory with random names
-// e.g., /tmp/standout-input-a7b3c9.md
-```
+**Temp file handling**: `EditorSource` writes the initial content to a named temp file and hands it to the editor process; the file is removed when the collector drops it. Content may briefly exist on disk in the system temp directory.
 
 ---
 
 ## Summary
 
-| Feature | Method/Attribute |
-| --------- | ------------------ |
-| From CLI arg | `InputSource::arg("name")` |
-| From piped stdin | `InputSource::stdin()` |
-| From editor | `InputSource::editor()` |
-| From clipboard | `InputSource::clipboard()` |
-| Chain with fallback | `InputSource::chain().try_arg().fallback_editor()` |
-| Prefill editor | `.initial("content")` |
-| File extension | `.extension(".md")` |
-| Require save | `.require_save(true)` |
-| Validation | `.validate(fn, "error message")` |
+| Feature | Method |
+| --------- | -------- |
+| From a CLI argument | `ArgSource::new("name")` |
+| From a CLI flag | `FlagSource::new("name")` |
+| From piped stdin | `StdinSource::new()` |
+| From an environment variable | `EnvSource::new("VAR")` |
+| From the clipboard | `ClipboardSource::new()` |
+| From the editor | `EditorSource::new()` |
+| Fallback value | `.default(value)` |
+| Validation | `.validate(f, "error message")` |
+| Chain multiple sources | `InputChain::new().try_source(...).try_source(...)` |
+
+For the full constructor reference and feature flags, see [Backends](backends.md). For wiring a chain into a `standout` command, see [Framework Integration](framework-integration.md).

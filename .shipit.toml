@@ -59,6 +59,15 @@ run = "test"
 required = true
 local = true
 
+# The book's examples. Separate from `test` because `cargo nextest run` does not
+# run doctests, and the examples ARE doctests (see the `doc-examples` task in
+# pixi.toml). Required: a page teaching an API that no longer exists is the
+# failure this lane exists to catch.
+[lanes.docs]
+run = "doc-examples"
+required = true
+local = true
+
 [toolchains]
 "." = "rust"
 

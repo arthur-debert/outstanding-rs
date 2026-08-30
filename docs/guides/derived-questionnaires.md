@@ -125,7 +125,7 @@ With `#[derive(Dispatch)]`, attach the questionnaire to the command variant:
 #[derive(clap::Subcommand, standout::cli::Dispatch)]
 #[dispatch(handlers = handlers)]
 enum Commands {
-    #[dispatch(questionnaire = ImportAnswers, template = "import.jinja")]
+    #[dispatch(questionnaire = ImportAnswers, template_name = "import")]
     Import,
 }
 ```
@@ -151,11 +151,11 @@ dynamic defaults, validators, and whole-form rules.
 The same configuration is available through `CommandConfig`:
 
 ```rust
-use standout::cli::App;
+use standout::cli::{App, FnHandler};
 
 let app = App::builder()
-    .command_with("import", handlers::import, |cfg| {
-        cfg.template("import.jinja")
+    .command_with("import", FnHandler::new(handlers::import), |cfg| {
+        cfg.template_name("import")
             .questionnaire_with_form_and_review::<ImportAnswers, _, _>(
                 validate_form,
                 write_review,

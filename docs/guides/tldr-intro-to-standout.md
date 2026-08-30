@@ -83,19 +83,21 @@ Configure the app:
         .templates(embed_templates!("src/templates"))    // Sets the root template path
         .styles(embed_styles!("src/styles"))             // Likewise the styles root
         .default_theme("default")                        // Use styles/default.css
-        .commands(Commands::dispatch_config()?)          // Register handlers from derive macro
+        .commands(Commands::dispatch_config())?          // Register handlers from derive macro
         .build()?;
 ```
 
 > Handlers access shared state via `ctx.app_state.get_required::<Database>()?`. See [App State and Extensions](../crates/dispatch/topics/app-state.md) for details.
 
-Connect your logic to a command name and template :
+Connect your logic to a command name and template:
 
 ```rust
+    #[derive(Subcommand, Dispatch)]
     #[dispatch(handlers = handlers)]
     pub enum Commands {
-          ...
-          list,
+          // ...
+          #[dispatch(pure)]
+          List,
     }
 ```
 
@@ -108,5 +110,6 @@ And finally, run in main, the autodispatcher:
     }
 ```
 
-When the fallback needs the unmatched `ArgMatches`, call `run_to_string(...)`
-and match `DispatchResult::NoMatch(matches)` on `into_outcome()` instead.
+When the fallback needs the unmatched `ArgMatches`, call `run_with(cmd, args,
+target, sources)` instead of `run`, and match `DispatchResult::NoMatch(matches)`
+on the result's `into_outcome()`.

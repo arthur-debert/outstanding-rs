@@ -33,7 +33,7 @@ let app = App::builder()
     .app_state(Database::connect()?)
     .app_state(Config::load()?)
     .app_state(ApiClient { base_url: "https://api.example.com".into() })
-    .command("list", list_handler, "{{ items }}")
+    .commands(|g| g.command_with("list", list_handler, |c| c.template_name("list")))?
     .build()?;
 ```
 
@@ -153,7 +153,7 @@ A common pattern is using pre-dispatch hooks to set up request-scoped state that
 App::builder()
     .app_state(Database::connect()?)
     .app_state(PermissionService::new())
-    .command("admin.delete", admin_delete_handler, "Deleted {{ id }}")
+    .commands(|g| g.command_with("admin.delete", admin_delete_handler, |c| c.template_name("admin.delete")))?
     .hooks("admin.delete", Hooks::new()
         .pre_dispatch(|matches, ctx| {
             // Validate admin permissions using app state

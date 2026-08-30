@@ -31,9 +31,9 @@ Subcommand-level help (e.g. `myapp build --help`) also works, rendering that sub
 
 ### Whichever entry point you use
 
-Help is answered the same way through both parse paths — `run()` / `run_to_string()` / `dispatch_from()` and `get_matches_from()` / `parse_from()`. Same install policy for the word, same interception of `--help` / `-h`, same rendering: an application's entry point is not a fact about what `myapp help` means.
+Help is answered the same way through both parse paths — `run()` / `run_with()` and `get_matches_from()`. Same install policy for the word, same interception of `--help` / `-h`, same rendering: an application's entry point is not a fact about what `myapp help` means.
 
-The one thing the two paths cannot share is `--page`, because paging is a terminal side effect and only a *printing* entry point may perform it. `run()` and `parse_from()` hand the text to the pager; the capture APIs return it instead — `run_to_string()` marks it `SuccessKind::PagedHelp`, `get_matches_from()` returns `HelpResult::PagedHelp` — and leave the decision to you.
+The one thing the two paths cannot share is `--page`, because paging is a terminal side effect and only a *printing* entry point may perform it. `run()` hands the text to the pager; the capture APIs return it instead — `run_with()` marks it `SuccessKind::PagedHelp`, `get_matches_from()` returns `HelpResult::PagedHelp` — and leave the decision to you.
 
 ## The `help` Word
 
@@ -85,7 +85,7 @@ own always keeps its section, `help` included.
 
 ### If your CLI already has a `help`
 
-Where standout installs the word, the name is standout's. An application that claims it too — a clap subcommand called `help` (or aliased to it), or a registration whose first path segment is `help` (`.command("help", …)`, `.command("help.topic", …)`, a `.group("help", …)`) — is a configuration standout refuses rather than serves:
+Where standout installs the word, the name is standout's. An application that claims it too — a clap subcommand called `help` (or aliased to it), or a registration whose first path segment is `help` (`.command_with("help", …)`, `.command_with("help.topic", …)`, a `.commands(|g| g.group("help", …))`) — is a configuration standout refuses rather than serves:
 
 ```text
 duplicate command: help — this application's clap `Command` declares `help` (as a
@@ -440,7 +440,7 @@ The template receives a `HelpData` struct with these fields:
 
 There are no `padding` fields. A row aligns itself by padding its name to its
 section's width with `pad_right`, one of [standout-render's tabular
-filters](../../crates/standout-render/docs/topics/tabular.md):
+filters](../crates/render/guides/intro-to-tabular.md):
 
 ```jinja
 {%- set opt_label = "[item]" ~ opt.name ~ "[/item]" -%}

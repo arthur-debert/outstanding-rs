@@ -5,6 +5,7 @@ members = [
     "crates/standout",
     "crates/standout-bbparser",
     "crates/standout-dispatch",
+    "crates/standout-docs",
     "crates/standout-fixtures",
     "crates/standout-input",
     "crates/standout-macros",

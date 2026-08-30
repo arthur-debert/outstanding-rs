@@ -1400,19 +1400,26 @@ THEME: App Configuration
 
 59. How are templates resolved at runtime?
 
-	Template resolution order:
+	A command names one registry entry. The name is either what
+	CommandConfig::template_name sets, or -- with no such call -- the
+	convention: the registration path with each "." replaced by "/", and
+	no extension appended. So "db.migrate" names "db/migrate".
 
-	1. Inline templates (highest priority)
-	2. Embedded templates (from embed_templates!)
-	3. File templates (from .templates_dir())
-	4. Convention path: template_dir + command_name + template_ext
+	The registry resolves that name against four tiers, highest first:
 
-	When resolving "db/migrate":
-	  - Check inline: "db/migrate"
-	  - Check embedded: "db/migrate.jinja", "db/migrate.j2", etc.
-	  - Check file dirs for matching files
+	1. Inline templates
+	2. Templates added from files (add_from_files)
+	3. Directory-registered templates (.templates_dir(), embed_templates!)
+	4. Framework defaults, namespaced under "standout/"
 
-	If nothing found and structured mode (JSON), template is ignored anyway.
+	Within a tier the recognized extensions are tried in order: .jinja,
+	.jinja2, .j2, .stpl, .txt. A name may be looked up with or without an
+	extension, and even with the "wrong" recognized extension -- the
+	extension is stripped and the base name retried.
+
+	build() resolves each name only to check it exists, reporting the
+	reference and its near matches when it does not. A command declared
+	silent, binary or structured_only names no template at all.
 
 
 ================================================================================

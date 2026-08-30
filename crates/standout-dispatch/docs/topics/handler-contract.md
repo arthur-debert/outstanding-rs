@@ -11,22 +11,91 @@ permissive, so adapters remain testable and decoupled from output formatting.
 
 For most handlers, use the `#[handler]` macro to write typed adapter functions:
 
-```rust
+```rust,ignore
 use standout_macros::handler;
 
 #[handler]
 pub fn list(#[flag] all: bool, #[arg] limit: Option<usize>) -> Result<Vec<Item>, anyhow::Error> {
     storage::list(all, limit)
 }
-
-// Generates: list__handler(&ArgMatches, &CommandContext) -> HandlerResult<Vec<Item>>
 ```
 
-The macro:
+The macro leaves `list` alone and adds three items beside it:
 
-- Extracts CLI arguments from `ArgMatches` based on annotations
-- Auto-wraps `Result<T, E>` in `Output::Render` via `IntoHandlerResult`
-- Preserves the original function for direct testing
+| Item | What it is |
+| --- | --- |
+| `list__handler(&ArgMatches, &CommandContext)` | reads the arguments out of `ArgMatches` and calls `list`. It returns **the annotated return type verbatim** — here `Result<Vec<Item>, anyhow::Error>`, not `HandlerResult<Vec<Item>>` |
+| `list__expected_args() -> Vec<ExpectedArg>` | what `App::verify_command` reads |
+| `list_Handler` | a unit struct implementing [`Handler`](#the-handler-trait) — **the registrable item** |
+
+The `Result<T, E>` to `Output::Render` wrap happens inside `list_Handler`'s
+`Handler::handle`, which calls `IntoHandlerResult::into_handler_result` on
+whatever `list__handler` returned. It is not applied by `list__handler` itself.
+That is the same wrap on every registration path: `AppBuilder::command_with`
+takes an `impl Handler`, and `#[derive(Dispatch)]` reaches the same trait
+object, so both end at the one `into_handler_result` call.
+
+The un-suffixed `handlers::list` is not registrable — it has the wrong
+signature by design, so that a test can call it directly. Which of the other
+two items you register depends on the method:
+
+| Method | What it takes | What to pass |
+| --- | --- | --- |
+| `AppBuilder::command_with` | `impl Handler` | `handlers::list_Handler` |
+| `GroupBuilder::command` / `command_with`, and therefore `#[derive(Dispatch)]` | a closure returning `HandlerResult<T>` | `handlers::list__handler` |
+
+That second row constrains the return type, and it is the one place the two
+registration paths genuinely differ. `list__handler` returns the annotated type
+verbatim, so it satisfies `HandlerResult<T>` only when the function was written
+`-> Result<Output<T>, E>` (or `-> Result<(), E>`, whose wrapper returns
+`HandlerResult<()>`). **A handler annotated `-> Result<T, E>` cannot be
+registered through `#[derive(Dispatch)]`**: expansion fails with `expected
+list__handler to return Result<Output<_>, Error>, but it returns Result<Items,
+Error>`. Write it `-> Result<Output<T>, E>`, or register `list_Handler` through
+`AppBuilder::command_with`, where `Handler::handle` applies the wrap for you.
+
+The three return shapes, and the original functions still being callable:
+
+```rust
+use standout::cli::{CommandContext, Output};
+use standout::handler;
+
+#[derive(serde::Serialize)]
+pub struct Items {
+    pub names: Vec<String>,
+}
+
+/// `Handler::Output` is `Items`; `handle` wraps the value in `Output::Render`.
+#[handler]
+pub fn list(#[flag] all: bool) -> Result<Items, anyhow::Error> {
+    let mut names = vec!["ssh".to_string()];
+    if all {
+        names.push("cron".to_string());
+    }
+    Ok(Items { names })
+}
+
+/// `Handler::Output` is `Items`; the `Output` passes through untouched.
+#[handler]
+pub fn about(#[ctx] _ctx: &CommandContext) -> Result<Output<Items>, anyhow::Error> {
+    Ok(Output::Render(Items { names: vec!["unitctl".to_string()] }))
+}
+
+/// `Handler::Output` is `()`; `handle` produces `Output::Silent`.
+#[handler]
+pub fn reload(#[flag] _force: bool) -> Result<(), anyhow::Error> {
+    Ok(())
+}
+
+fn main() {
+    // No ArgMatches, no dispatcher: the annotated function is what a unit test calls.
+    assert_eq!(list(true).unwrap().names, ["ssh", "cron"]);
+    reload(false).unwrap();
+}
+```
+
+Every `#[dispatch(…)]` and `#[handler]` attribute is listed in the
+[`#[dispatch(…)]` and `#[handler]` reference](../../../topics/dispatch-attributes.md).
 
 **Parameter Annotations:**
 
@@ -51,12 +120,15 @@ runtime `get_flag` panic. A parameter named with a raw identifier drops the
 `r#` first, the way clap's derive drops it from a field name: `r#type` reads
 the argument id `type`.
 
-**Return Type Handling:**
+**Return Type Handling:** the function must return `Result<T, E>`; the macro
+rejects anything else with `handler must return Result<T, E>`. What `T` is
+decides what `Handler::Output` becomes and whether anything is wrapped.
 
-| Return Type     | Generated Wrapper                |
-| --------------- | -------------------------------- |
-| `Result<T, E>`  | Auto-wrapped in `Output::Render` |
-| `Result<(), E>` | Wrapped in `Output::Silent`      |
+| Annotated return type | `Handler::Output` | What `handle` produces |
+| --- | --- | --- |
+| `Result<T, E>` | `T` | `Ok(value)` wrapped in `Output::Render(value)` |
+| `Result<Output<T>, E>` (that is, `HandlerResult<T>`) | `T` | the `Output` you returned, unchanged |
+| `Result<(), E>` | `()` | `Output::Silent` |
 
 > **Testing:** The original function is preserved, so you can test directly: `list(true, Some(10))`.
 
@@ -64,7 +136,7 @@ the argument id `type`.
 
 ## The Handler Trait
 
-```rust
+```rust,ignore
 pub trait Handler {
     type Output: Serialize;
     fn handle(&mut self, matches: &ArgMatches, ctx: &CommandContext) -> HandlerResult<Self::Output>;
@@ -80,7 +152,7 @@ Implementing the trait directly is useful when your handler needs internal state
 
 ### Example: Struct Handler with State
 
-```rust
+```rust,ignore
 use standout_dispatch::{Handler, Output, CommandContext, HandlerResult};
 use clap::ArgMatches;
 use serde::Serialize;
@@ -118,7 +190,7 @@ impl Handler for CachingDatabase {
 
 Most handlers are simple closures using `FnHandler`:
 
-```rust
+```rust,ignore
 use standout_dispatch::{FnHandler, Output, HandlerResult};
 
 let mut counter = 0;
@@ -131,7 +203,7 @@ let handler = FnHandler::new(move |_matches, _ctx| {
 
 The closure signature:
 
-```rust
+```rust,ignore
 fn(&ArgMatches, &CommandContext) -> HandlerResult<T>
 where T: Serialize
 ```
@@ -144,7 +216,7 @@ Closures are `FnMut`, allowing captured variables to be mutated.
 
 When your handler doesn't need `CommandContext`, use `SimpleFnHandler` for a cleaner signature:
 
-```rust
+```rust,ignore
 use standout_dispatch::SimpleFnHandler;
 
 let handler = SimpleFnHandler::new(|matches| {
@@ -156,7 +228,7 @@ let handler = SimpleFnHandler::new(|matches| {
 
 The closure signature:
 
-```rust
+```rust,ignore
 fn(&ArgMatches) -> Result<T, E>
 where T: Serialize, E: Into<anyhow::Error>
 ```
@@ -169,7 +241,7 @@ where T: Serialize, E: Into<anyhow::Error>
 
 The `IntoHandlerResult` trait enables handlers to return `Result<T, E>` directly instead of `HandlerResult<T>`:
 
-```rust
+```rust,ignore
 use standout_dispatch::IntoHandlerResult;
 
 // Before: explicit Output wrapping
@@ -197,13 +269,13 @@ This is used internally by `SimpleFnHandler` and the `#[handler]` macro.
 
 `HandlerResult<T>` is a standard `Result` type:
 
-```rust
+```rust,ignore
 pub type HandlerResult<T> = Result<Output<T>, anyhow::Error>;
 ```
 
 The `?` operator works naturally for error propagation:
 
-```rust
+```rust,ignore
 fn list_handler(matches: &ArgMatches, ctx: &CommandContext) -> HandlerResult<Items> {
     let items = storage::load()?;           // Propagates errors
     let filtered = filter_items(&items)?;   // Propagates errors
@@ -217,7 +289,7 @@ When a handler delegates to another executable and the application's contract
 requires that executable's exact nonzero status and stderr, return the public
 `ExternalFailure` type through the same `HandlerResult` seam:
 
-```rust
+```rust,ignore
 let failure = ExternalFailure::new(128, git_stderr)?;
 Err(failure.into())
 ```
@@ -233,7 +305,7 @@ mapping mechanism. Handlers must not print or call `process::exit` themselves.
 
 `Output<T>` represents what a handler produces:
 
-```rust
+```rust,ignore
 #[non_exhaustive]
 pub enum Output<T: Serialize> {
     Render(T),
@@ -250,7 +322,7 @@ can be added without breaking downstream code.
 
 The common case. Data is passed to the render function:
 
-```rust
+```rust,ignore
 #[derive(Serialize)]
 struct ListResult {
     items: Vec<Item>,
@@ -270,7 +342,7 @@ fn list_handler(_m: &ArgMatches, _ctx: &CommandContext) -> HandlerResult<ListRes
 
 No output produced. Useful for commands with side effects only:
 
-```rust
+```rust,ignore
 fn delete_handler(matches: &ArgMatches, _ctx: &CommandContext) -> HandlerResult<()> {
     let id: &String = matches.get_one("id").unwrap();
     storage::delete(id)?;
@@ -288,7 +360,7 @@ Silent behavior:
 
 Raw bytes for file output:
 
-```rust
+```rust,ignore
 fn export_handler(matches: &ArgMatches, _ctx: &CommandContext) -> HandlerResult<()> {
     let data = generate_report()?;
     let pdf_bytes = render_to_pdf(&data)?;
@@ -315,7 +387,7 @@ and nothing renders after its write, so a command that wants to say "exported 12
 rows to /tmp/report.csv (2 warnings)" would otherwise have to write the file
 itself — pulling destination policy back into the application core.
 
-```rust
+```rust,ignore
 use standout::cli::{Artifact, HandlerResult, Output};
 
 #[derive(Serialize)]
@@ -407,7 +479,7 @@ Bytes are owned; streaming is deliberately not part of this contract.
 
 `CommandContext` provides execution environment information and state access:
 
-```rust
+```rust,ignore
 pub struct CommandContext {
     pub command_path: Vec<String>,
     pub app_state: Rc<Extensions>,
@@ -440,7 +512,7 @@ Handlers access state through two distinct mechanisms with different semantics:
 
 Configure long-lived resources at build time:
 
-```rust
+```rust,ignore
 App::builder()
     .app_state(Database::connect()?)
     .app_state(Config::load()?)
@@ -450,7 +522,7 @@ App::builder()
 
 Access in handlers via `ctx.app_state`:
 
-```rust
+```rust,ignore
 fn list_handler(matches: &ArgMatches, ctx: &CommandContext) -> HandlerResult<Vec<Item>> {
     let db = ctx.app_state.get_required::<Database>()?;
     let config = ctx.app_state.get_required::<Config>()?;
@@ -464,7 +536,7 @@ fn list_handler(matches: &ArgMatches, ctx: &CommandContext) -> HandlerResult<Vec
 
 Pre-dispatch hooks inject request-scoped state:
 
-```rust
+```rust,ignore
 use standout_dispatch::{Hooks, HookError};
 
 struct UserScope { user_id: String, permissions: Vec<String> }
@@ -484,7 +556,7 @@ let hooks = Hooks::new()
 
 Handlers retrieve from extensions:
 
-```rust
+```rust,ignore
 fn list_handler(matches: &ArgMatches, ctx: &CommandContext) -> HandlerResult<Vec<Item>> {
     let db = ctx.app_state.get_required::<Database>()?;       // shared
     let scope = ctx.extensions.get_required::<UserScope>()?;  // per-request
@@ -534,7 +606,7 @@ The separation exists because:
 2. **App-level resources shouldn't be created per-request** — database pools and config are expensive
 3. **Per-request state needs mutable injection** — hooks compute values at runtime
 
-```rust
+```rust,ignore
 // App state: configured once at build time
 App::builder()
     .app_state(Database::connect()?)  // Shared via Arc
@@ -556,7 +628,7 @@ App::builder()
 
 The `ArgMatches` parameter provides access to parsed arguments through clap's standard API:
 
-```rust
+```rust,ignore
 fn handler(matches: &ArgMatches, _ctx: &CommandContext) -> HandlerResult<Data> {
     // Flags
     let verbose = matches.get_flag("verbose");
@@ -586,7 +658,7 @@ Because handlers have explicit inputs and outputs, their adapter behavior is
 straightforward to test directly. Test validation, filtering, and state
 transitions through the CLI-free library instead:
 
-```rust
+```rust,ignore
 #[test]
 fn test_list_handler() {
     let cmd = Command::new("test")
@@ -613,7 +685,7 @@ No mocking frameworks needed—construct `ArgMatches` with clap, create a `Comma
 
 When handlers depend on app_state, inject test fixtures:
 
-```rust
+```rust,ignore
 #[test]
 fn test_handler_with_app_state() {
     use std::sync::Arc;
@@ -645,7 +717,7 @@ fn test_handler_with_app_state() {
 
 Handler tests can verify state mutation across calls:
 
-```rust
+```rust,ignore
 #[test]
 fn test_handler_state_mutation() {
     struct Counter { count: u32 }

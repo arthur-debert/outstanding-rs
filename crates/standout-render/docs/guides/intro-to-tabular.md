@@ -129,10 +129,21 @@ Hardcoded widths are fragile. What if the terminal is wider or narrower? Tabular
 | Width | Meaning |
 | ----- | ------- |
 | `8` | Exactly 8 columns (fixed) |
-| `{"min": 10}` | At least 10, grows to fit content |
-| `{"min": 10, "max": 30}` | Between 10 and 30 |
+| `{"min": 10}` | At least 10 columns; see the note below for how this is set today |
+| `{"min": 10, "max": 30}` | Between 10 and 30, alongside a `"fill"` column |
 | `"fill"` | Takes all remaining space |
 | `"2fr"` | 2 parts of remaining (proportional) |
+
+A `{"min": ..., "max": ...}` column is resolved once, when `tabular()` or
+`table()` builds the formatter, before any row is seen — it does not measure
+row content. With no `"fill"` (or fractional) column in the table, any
+leftover terminal width is added to the rightmost such column instead,
+regardless of its `max`. Content-based growth does happen for *sub-columns*
+(see Step 7): there, a bounded sub-column measures its own row's content and
+resizes independently on every call to `.row(...)`. Resolving a top-level
+column's width from every row's content — the whole table, not just one row
+— is issue #359 in the ROB06 adopter-seams epic, which changes `tabular()` to
+reach the whole-table width resolver that already exists internally.
 
 Let's make the title column expand to fill available space:
 
@@ -600,17 +611,16 @@ Features in use:
 Everything shown in templates is also available in Rust:
 
 ```rust
-use standout_render::tabular::{TabularFormatter, ColumnSpec, Overflow, Alignment};
+use standout_render::tabular::{Col, TabularFormatter, TabularSpec};
 
-let columns = vec![
-    ColumnSpec::fixed(4).header("#").style("muted"),
-    ColumnSpec::fixed(10).header("Status"),
-    ColumnSpec::fill().header("Title").overflow(Overflow::truncate_middle()),
-];
-
-let formatter = TabularFormatter::new(columns)
+let spec = TabularSpec::builder()
+    .column(Col::fixed(4).header("#").style("muted"))
+    .column(Col::fixed(10).header("Status"))
+    .column(Col::fill().header("Title").truncate_middle())
     .separator(" | ")
-    .terminal_width(80);
+    .build();
+
+let formatter = TabularFormatter::new(&spec, 80);
 
 // Format individual rows
 for (i, task) in tasks.iter().enumerate() {

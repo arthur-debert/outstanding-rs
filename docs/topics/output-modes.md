@@ -64,7 +64,8 @@ The flag is global—it applies to all subcommands.
 
 ## Term vs Text
 
-**Term**: Always applies ANSI escape codes, even when piping:
+**Term**: turns every resolved style tag into ANSI escape codes, including
+when the destination is a pipe rather than a terminal:
 
 ```bash
 myapp list --output=term > colored.txt
@@ -72,13 +73,29 @@ myapp list --output=term > colored.txt
 
 Useful when you want to preserve colors for later display (e.g., `less -R`).
 
-**Text**: Never applies ANSI codes:
+That said, a `term` request does not unconditionally reach ANSI: under a
+never-color policy (for example `NO_COLOR` set in the environment), a `term`
+request resolves to `text` instead. `auto` is the mode that inspects the
+destination — it resolves to `term` when the destination reports color
+capability and to `text` when it does not.
+
+**Text**: removes Standout's own style tags and adds no ANSI of its own:
 
 ```bash
 myapp list --output=text
 ```
 
 Useful for clean output regardless of terminal capabilities, or when processing output with other tools.
+
+Neither `term` nor `text` touches ANSI bytes that a handler or template
+writes literally into the rendered text — the framework does not sanitize
+those bytes and does not promise to. A caller that needs them gone strips
+them itself.
+
+`term-debug` (which shows tags as `[name]...[/name]` rather than resolving
+them) is internal: its tag vocabulary and exact spelling may change in any
+release, so don't build automation against its output the way you might
+against `term` or `text`.
 
 ## TermDebug Mode
 
@@ -143,7 +160,8 @@ a caller needs explicit columns and headers:
 
 ```rust
 use standout::tabular::{Column, FlatDataSpec, Width};
-use standout::{render_auto_with_spec, OutputMode};
+use standout::OutputMode;
+use standout_render::render_auto_with_spec;
 
 let spec = FlatDataSpec::builder()
     .column(Column::new(Width::Fixed(10)).key("name").header("Name"))
@@ -199,8 +217,8 @@ ordering, headers, and `null_repr` use the existing `FlatDataSpec` behavior.
 The projection applies only to CSV. Text and terminal modes still use the
 template, while JSON, YAML, and XML serialize the canonical response. In the
 pipeline, post-dispatch hooks run before projection and post-output hooks run
-after it; `run_to_string`, output-file handling, and final emission therefore
-observe the same projected CSV.
+after it; `run`, `run_with`, output-file handling, and final emission
+therefore all observe the same projected CSV.
 
 See [Introduction to Tabular](../crates/render/guides/intro-to-tabular.md) for
 tabular specifications and layout.
