@@ -122,7 +122,7 @@ fn real_process_status_and_stream_matrix() {
 
     let help = run(&binary, &["--help"]);
     assert_eq!(help.status.code(), Some(0));
-    assert!(String::from_utf8_lossy(&help.stdout).contains("Usage:"));
+    assert!(String::from_utf8_lossy(&help.stdout).contains("USAGE"));
     assert!(help.stderr.is_empty());
 
     let version = run(&binary, &["--version"]);

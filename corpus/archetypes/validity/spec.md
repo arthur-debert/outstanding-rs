@@ -46,8 +46,8 @@ The produced binary is named `validity`.
 6. **Incomplete application theme.** Ship one application theme that
    defines *only* the application tag used by the `ok` template. Do
    **not** define help or topic tags: `about`, `usage`, `header`,
-   `item`, `metavar`, `desc`, `default`, `values`, `example`. Enable
-   standout help handling (`.help_handling(true)`). Framework-rendered
+   `item`, `metavar`, `desc`, `default`, `values`, `example`. Leave
+   standout help handling at its default (on). Framework-rendered
    help at the root and at the deep leaf must still resolve every help
    tag and still present clap's facts.
 

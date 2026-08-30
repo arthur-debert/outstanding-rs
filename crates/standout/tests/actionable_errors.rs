@@ -128,8 +128,9 @@ fn hook_conflict_error_names_the_phase_and_single_registration_fix() {
 }
 
 #[test]
-fn help_configuration_errors_name_the_required_call() {
+fn help_configuration_errors_name_the_call_that_turned_help_off() {
     let result = App::builder()
+        .help_handling(false)
         .command_groups(vec![standout::cli::help::CommandGroup {
             title: "Commands".into(),
             help: None,
@@ -139,8 +140,9 @@ fn help_configuration_errors_name_the_required_call() {
 
     let message = build_error(result);
 
-    assert!(message.contains("command_groups requires .help_handling(true)"));
+    assert!(message.contains("command_groups is configured while help handling is off"));
     assert!(message.contains("intercepting help"));
+    assert!(message.contains(".help_handling(false)"));
 }
 
 #[test]
@@ -160,14 +162,13 @@ fn duplicate_command_still_names_the_conflicting_command() {
 #[test]
 fn registered_help_collision_names_the_setting_and_rename_fix() {
     let result = App::builder()
-        .help_handling(true)
         .command("help", |_m, _ctx| Ok(Output::Render(json!({}))), "ok")
         .unwrap()
         .build();
 
     let message = build_error(result);
     assert!(message.contains("duplicate command: help"));
-    assert!(message.contains(".help_handling(true)"));
+    assert!(message.contains(".help_handling(false)"));
     assert!(message.contains("Rename"));
 }
 

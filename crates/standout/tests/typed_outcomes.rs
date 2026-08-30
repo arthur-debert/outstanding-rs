@@ -30,7 +30,7 @@ fn clap_help_and_version_are_typed_successes() {
     let help = app.run_to_string(command(), ["app", "--help"]);
     assert_eq!(help.exit_status(), Some(ExitStatus::SUCCESS));
     assert_eq!(help.success_kind(), Some(SuccessKind::ClapHelp));
-    assert!(help.output().unwrap().contains("Usage:"));
+    assert!(help.output().unwrap().contains("USAGE"));
 
     let version = app.run_to_string(command(), ["app", "--version"]);
     assert_eq!(version.exit_status(), Some(ExitStatus::SUCCESS));

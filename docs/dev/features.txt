@@ -252,7 +252,8 @@ HELP SYSTEM
 -----------
 
 Help Rendering:
-  - .help_handling(true): standout renders help instead of clap
+  - on by default: standout renders help instead of clap;
+    .help_handling(false) hands help back to clap
   - .help_word(true): opt a flat CLI with positionals into the bare `help`
     word (installed automatically for CLIs with subcommands and for flat
     CLIs with no positionals)

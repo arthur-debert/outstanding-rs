@@ -179,7 +179,7 @@ fn help_is_unchanged() {
         ["app", "--help"],
     );
     assert_eq!(result.success_kind(), Some(SuccessKind::ClapHelp));
-    result.assert_stdout_contains("Usage:");
+    result.assert_stdout_contains("USAGE");
     assert_eq!(calls.load(Ordering::SeqCst), 0, "resolver must not run");
 }
 #[test]
