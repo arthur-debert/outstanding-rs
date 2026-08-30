@@ -1,88 +1,45 @@
 //! Style system for named styles, aliases, and stylesheets.
 //!
-//! Stylesheets can be written in CSS (preferred) or YAML (legacy). The
+//! Stylesheets can be written in CSS (preferred) or YAML (legacy); the
 //! [`StylesheetRegistry`] auto-detects the format from content when loading.
+//! A [`StyleValue`] is either a concrete style or an alias to another named
+//! style, and a style can carry `light`/`dark` overrides resolved by
+//! [`ThemeVariants::resolve`] against the active [`ColorMode`](crate::ColorMode).
 //!
-//! This module provides the complete styling infrastructure:
-//!
-//! ## Core Types
-//!
-//! - [`StyleValue`]: A style that can be either concrete or an alias
-//! - [`Styles`]: A registry of named styles
-//! - [`StyleValidationError`]: Errors from style validation
-//!
-//! ## Stylesheet Parsing
-//!
-//! - [`parse_css`]: Parse CSS source into theme variants
-//! - [`parse_stylesheet`]: Parse YAML source into theme variants (legacy)
-//! - [`ThemeVariants`]: Styles resolved for base/light/dark modes
-//! - [`StylesheetRegistry`]: File-based theme management (auto-detects CSS/YAML)
-//!
-//! ## YAML Schema
+//! ## YAML schema (legacy)
 //!
 //! ```yaml
-//! # Simple style with attributes
 //! header:
 //!   fg: cyan
 //!   bold: true
 //!
-//! # Shorthand for single attribute
-//! bold_text: bold
-//! accent: cyan
+//! bold_text: bold          # shorthand for a single attribute
+//! warning: "yellow italic" # shorthand for multiple attributes
 //!
-//! # Shorthand for multiple attributes
-//! warning: "yellow italic"
-//!
-//! # Adaptive style with mode-specific overrides
-//! panel:
+//! panel:                   # adaptive: mode-specific overrides
 //!   bg: gray
 //!   light:
 //!     bg: "#f5f5f5"
 //!   dark:
 //!     bg: "#1a1a1a"
 //!
-//! # Aliases
-//! disabled: muted
+//! disabled: muted          # alias
 //! ```
 //!
-//! ## Color Formats
+//! ## Color formats
 //!
 //! ```yaml
-//! fg: red               # Named (16 ANSI colors)
-//! fg: bright_yellow     # Bright variants
+//! fg: red               # named (16 ANSI colors)
+//! fg: bright_yellow     # bright variants
 //! fg: 208               # 256-color palette
 //! fg: "#ff6b35"         # RGB hex
 //! fg: [255, 107, 53]    # RGB tuple
 //! ```
-//!
-//! ## Example
-//!
-//! ```rust
-//! use standout_render::style::{parse_stylesheet, ThemeVariants};
-//! use standout_render::ColorMode;
-//!
-//! let yaml = r#"
-//! header:
-//!   fg: cyan
-//!   bold: true
-//! footer:
-//!   dim: true
-//!   light:
-//!     fg: black
-//!   dark:
-//!     fg: white
-//! "#;
-//!
-//! let variants = parse_stylesheet(yaml, None).unwrap();
-//! let dark_styles = variants.resolve(Some(ColorMode::Dark));
-//! ```
 
-// Core style types
 mod error;
 mod registry;
 mod value;
 
-// Stylesheet parsing (YAML and CSS)
 mod attributes;
 mod color;
 mod css_parser;
@@ -90,12 +47,10 @@ mod definition;
 mod file_registry;
 mod parser;
 
-// Core exports
 pub use error::{StyleValidationError, StylesheetError};
 pub use registry::{Styles, DEFAULT_MISSING_STYLE_INDICATOR};
 pub use value::StyleValue;
 
-// Stylesheet parsing exports
 pub use attributes::StyleAttributes;
 pub use color::ColorDef;
 pub use css_parser::parse_css;

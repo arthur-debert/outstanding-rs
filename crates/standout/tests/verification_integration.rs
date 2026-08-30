@@ -8,10 +8,6 @@ use standout::handler;
 #[derive(Serialize)]
 struct Empty;
 
-// =============================================================================
-// Test handlers
-// =============================================================================
-
 #[handler]
 #[allow(clippy::disallowed_names)] // tests below assert error messages reference the literal arg name "foo"
 fn my_verified_handler(#[arg] foo: String) -> Result<standout::cli::Output<Empty>, anyhow::Error> {
@@ -21,11 +17,9 @@ fn my_verified_handler(#[arg] foo: String) -> Result<standout::cli::Output<Empty
 
 #[test]
 fn test_verification_success() {
-    // Correct command definition: "test" subcommand with required "foo" arg
     let cmd_def =
         Command::new("app").subcommand(Command::new("test").arg(Arg::new("foo").required(true)));
 
-    // Register handler using the generated struct "my_verified_handler_Handler"
     let app = App::builder()
         .command_handler_with("test", my_verified_handler_Handler, |config| {
             config.structured_only()
@@ -34,13 +28,11 @@ fn test_verification_success() {
         .build()
         .unwrap();
 
-    // Verification should pass
     assert!(app.verify_command(&cmd_def).is_ok());
 }
 
 #[test]
 fn test_verification_failure_missing_arg() {
-    // Incorrect definition: missing "foo" arg
     let cmd_def = Command::new("app").subcommand(Command::new("test"));
 
     let app = App::builder()
@@ -57,16 +49,13 @@ fn test_verification_failure_missing_arg() {
     let err = res.unwrap_err();
     let msg = err.to_string();
     assert!(msg.contains("verification failed"));
-    assert!(msg.contains("foo")); // Should mention missing arg
+    assert!(msg.contains("foo"));
 }
 
 #[test]
 fn test_verification_failure_wrong_type() {
-    // Incorrect definition: "foo" is flag instead of taking value (or vice versa? String implies required arg)
-    // If we define "foo" as a flag, it won't match "required_arg".
-    let cmd_def = Command::new("app").subcommand(
-        Command::new("test").arg(Arg::new("foo").action(clap::ArgAction::SetTrue)), // Flag
-    );
+    let cmd_def = Command::new("app")
+        .subcommand(Command::new("test").arg(Arg::new("foo").action(clap::ArgAction::SetTrue)));
 
     let app = App::builder()
         .command_handler_with("test", my_verified_handler_Handler, |config| {
@@ -83,10 +72,6 @@ fn test_verification_failure_wrong_type() {
     assert!(msg.contains("foo"));
 }
 
-// =============================================================================
-// Nested command verification
-// =============================================================================
-
 #[handler]
 fn nested_handler(#[flag] verbose: bool) -> Result<standout::cli::Output<Empty>, anyhow::Error> {
     let _ = verbose;
@@ -95,7 +80,6 @@ fn nested_handler(#[flag] verbose: bool) -> Result<standout::cli::Output<Empty>,
 
 #[test]
 fn test_verification_nested_command_success() {
-    // Correct nested command definition: app -> db -> migrate with verbose flag
     let cmd_def = Command::new("app").subcommand(
         Command::new("db").subcommand(
             Command::new("migrate").arg(
@@ -106,7 +90,6 @@ fn test_verification_nested_command_success() {
         ),
     );
 
-    // Register handler at nested path "db.migrate"
     let app = App::builder()
         .command_handler_with("db.migrate", nested_handler_Handler, |config| {
             config.structured_only()
@@ -115,13 +98,11 @@ fn test_verification_nested_command_success() {
         .build()
         .unwrap();
 
-    // Verification should pass
     assert!(app.verify_command(&cmd_def).is_ok());
 }
 
 #[test]
 fn test_verification_nested_command_failure() {
-    // Missing the verbose flag in nested command
     let cmd_def =
         Command::new("app").subcommand(Command::new("db").subcommand(Command::new("migrate")));
 
@@ -143,7 +124,6 @@ fn test_verification_nested_command_failure() {
 
 #[test]
 fn test_verification_preserves_structured_error() {
-    // Test that we can access the structured error for programmatic handling
     let cmd_def = Command::new("app").subcommand(Command::new("test"));
 
     let app = App::builder()
@@ -156,7 +136,6 @@ fn test_verification_preserves_structured_error() {
 
     let err = app.verify_command(&cmd_def).unwrap_err();
 
-    // Can match on the structured variant
     match err {
         standout::SetupError::VerificationFailed(mismatch_err) => {
             assert_eq!(mismatch_err.handler_name, "test");

@@ -1,29 +1,19 @@
-//! Process probes used by [`TargetProperties::detect`](crate::TargetProperties::detect).
-//!
-//! These functions ask the process what the destination looks like. They are
-//! crate-private: detection lives at the crate edge on
-//! [`TargetProperties::detect`](crate::TargetProperties::detect). Template
-//! functions, tabular, and width helpers never call them. There is no
+//! Crate-private process probes used by
+//! [`TargetProperties::detect`](crate::TargetProperties::detect). There is no
 //! override API — tests construct [`crate::TargetProperties`] directly.
 
 use console::Term;
 
-/// Resolves the current terminal width in columns.
-///
-/// A valid positive `$COLUMNS` value takes precedence over probing the
-/// terminal. Returns `None` when neither source provides a width.
 pub(crate) fn probe_terminal_width() -> Option<usize> {
     resolve_terminal_width(std::env::var_os("COLUMNS").as_deref(), || {
         terminal_size::terminal_size().map(|(width, _)| width.0 as usize)
     })
 }
 
-/// Returns `true` when ANSI color output is supported on stdout.
 pub(crate) fn probe_stdout_color_capability() -> bool {
     Term::stdout().features().colors_supported()
 }
 
-/// Returns `true` when ANSI color output is supported on stderr.
 pub(crate) fn probe_stderr_color_capability() -> bool {
     Term::stderr().features().colors_supported()
 }

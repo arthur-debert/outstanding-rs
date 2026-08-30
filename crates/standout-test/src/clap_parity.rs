@@ -1,56 +1,14 @@
-//! The clap-parity differential: themed help against clap's own metadata.
+//! Checks that a rendered help page actually states what the `clap::Command`
+//! declares.
 //!
-//! Every other help assertion in the workspace checks standout's rendering
-//! against standout's data model. That is the shape of the themed-help defect
-//! cluster (#292–#303): the extractor copies the clap fields someone thought
-//! of into a template context, and everything clap knows but the extractor did
-//! not copy — `long_about`, defaults, possible values, metavars, the
-//! positional-vs-option split — vanishes with nothing to notice. Before the
-//! #298 fix `OptionData` had no `default` field at all, so its ten unit tests
-//! could not have failed on its absence: they asserted counts and ordering of
-//! a struct that was itself the bug.
-//!
-//! This module states the missing contract, and states it against an oracle
-//! outside standout:
-//!
-//! > **Themed help renders every user-facing fact clap's own formatter would
-//! > render for the same [`Command`] — or exempts it explicitly.**
-//!
-//! [`clap_facts`] walks a command's clap metadata and derives that fact list;
-//! [`assert_states_clap_facts`] checks each fact against a rendered page.
-//! Dropping a field from the extractor deletes rows from the page and fails
-//! here, naming the argument and the value that went missing.
-//!
-//! # Presence of facts, never layout
-//!
-//! The differential asserts that a fact **is on the page**, never that the
-//! page looks like clap's. Themed help exists to look different: standout
-//! renders `default: brief` where clap renders `[default: brief]`, spells its
-//! sections `OPTIONS` where clap spells them `Options:`, and drops clap's
-//! requiredness brackets in favour of a `[metavar]` tag. Chasing byte parity
-//! with clap's formatter is the trap this test must not fall into, so every
-//! check here is a search for a value inside the row that owns it.
-//!
-//! # The allowlist
-//!
-//! [`DELIBERATE_OMISSIONS`] is the single place a "we do not render this"
-//! lives. An exemption is visible in review, carries its reason, and is
-//! *provably load-bearing*: the suite asserts that clap's own page states each
-//! exempted fact (so nothing is exempted that clap would not have rendered)
-//! and that removing the entry turns the page red.
-//!
-//! # What grounds the derivation
-//!
-//! The fact list is only an oracle if clap agrees it is clap's. Run the same
-//! assertion over [`Command::render_long_help`]'s output with no exemptions
-//! and it passes — that is the suite's grounding test, and it is what stops
-//! this module from drifting into asserting standout's habits back at itself.
-
-use std::collections::HashSet;
-use std::fmt;
-
-use clap::{Arg, Command};
-use standout::cli::HelpLength;
+//! [`clap_facts`] walks a `Command` and produces one [`Fact`] per
+//! declared detail (an arg's spelling, metavar, default, help text, a
+//! subcommand's name/about/alias, ...). [`assert_page_states_clap_facts`]
+//! then finds each fact's row in the page (via [`crate::page`]) and asserts
+//! its text is present — catching a metavar or default that clap knows
+//! about but the rendered help silently drops. [`Exemption`] opts specific
+//! facts out where a framework-level convention (not clap's) legitimately
+//! changes what's shown.
 
 use crate::page::{
     candidate_metavars, contains_flag_token, contains_token, declared_metavars, find_row,
@@ -58,54 +16,26 @@ use crate::page::{
     Row,
 };
 use crate::TestResult;
-
-// ---------------------------------------------------------------------------
-// The fact model
-// ---------------------------------------------------------------------------
-
-/// The kind of user-facing fact a [`Fact`] carries.
-///
-/// A kind decides *where* the fact is looked for — a possible value belongs on
-/// its argument's possible-values line, an about paragraph anywhere on the
-/// page — and it is the granularity [`DELIBERATE_OMISSIONS`] exempts at.
+use clap::{Arg, Command};
+use standout::cli::HelpLength;
+use std::collections::HashSet;
+use std::fmt;
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum FactKind {
-    /// The command's `about` (`-h`) or `long_about` (`--help`, the `help`
-    /// word), which is what makes the two help lengths differ at all.
     Purpose,
-    /// A subcommand is listed, under the name the user types.
     SubcommandName,
-    /// A subcommand's `about`.
     SubcommandAbout,
-    /// A subcommand's visible alias.
     SubcommandAlias,
-    /// An argument is listed, under a spelling the user types (`-c`,
-    /// `--color`, or a positional's metavar).
     ArgSpelling,
-    /// A value-taking argument's value name, so the row says it takes a value.
     ArgMetavar,
-    /// An argument's `help`.
     ArgHelp,
-    /// An argument's `long_help`, which clap renders in place of `help` under
-    /// `--help`.
     ArgLongHelp,
-    /// An argument's default value.
     ArgDefault,
-    /// One of an argument's possible values.
     ArgPossibleValue,
-    /// An argument's visible alias.
     ArgAlias,
-    /// Positionals are listed apart from options, the way clap splits
-    /// `Arguments:` from `Options:` — the classification #302's cluster made
-    /// invisible by rendering a valued option as if it were a flag. The fact
-    /// is about the arguments under clap's default headings only, since an
-    /// application's own `help_heading` is what clap files an argument by
-    /// instead.
     Classification,
 }
-
 impl FactKind {
-    /// The kind's name as an exemption or a failure spells it.
     fn label(self) -> &'static str {
         match self {
             FactKind::Purpose => "about",
@@ -123,19 +53,12 @@ impl FactKind {
         }
     }
 }
-
-/// What a fact is about: the command itself, one of its arguments, or one of
-/// its subcommands.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Subject {
-    /// The command whose page was rendered.
     Command(String),
-    /// An argument, by clap id.
     Argument(String),
-    /// A subcommand, by name.
     Subcommand(String),
 }
-
 impl fmt::Display for Subject {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
@@ -145,25 +68,11 @@ impl fmt::Display for Subject {
         }
     }
 }
-
-/// Whether the page must state a fact or must not.
-///
-/// Clap's formatter suppresses as deliberately as it prints: no possible
-/// values and no default for an argument that takes no value (`--staged true`
-/// is not syntax the user may type — #301), nothing at all for a hidden
-/// argument — hidden outright, or from the requested help length — or a
-/// hidden possible value. A differential that only checked presence would
-/// call a page that prints all of them parity-clean.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Presence {
-    /// Clap's formatter would print this; themed help must too.
     Stated,
-    /// Clap's formatter suppresses this; themed help must not print it.
     Suppressed,
 }
-
-/// One user-facing fact clap's own formatter would state — or suppress — for a
-/// command.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Fact {
     kind: FactKind,
@@ -172,35 +81,22 @@ pub struct Fact {
     presence: Presence,
     generated: bool,
 }
-
 impl Fact {
-    /// What kind of fact this is.
     pub fn kind(&self) -> FactKind {
         self.kind
     }
-
-    /// What the fact is about.
     pub fn subject(&self) -> &Subject {
         &self.subject
     }
-
-    /// The text the page must state (or must not).
     pub fn expected(&self) -> &str {
         &self.expected
     }
-
-    /// Whether clap would print this fact or suppress it.
     pub fn presence(&self) -> Presence {
         self.presence
     }
-
-    /// Whether clap generated the subject itself while building the command —
-    /// its `-h/--help` and `-V/--version` arguments, which no application
-    /// declared.
     pub fn is_clap_generated(&self) -> bool {
         self.generated
     }
-
     fn new(kind: FactKind, subject: Subject, expected: impl Into<String>) -> Self {
         Self {
             kind,
@@ -210,18 +106,15 @@ impl Fact {
             generated: false,
         }
     }
-
     fn suppressed(mut self) -> Self {
         self.presence = Presence::Suppressed;
         self
     }
-
     fn generated(mut self, generated: bool) -> Self {
         self.generated = generated;
         self
     }
 }
-
 impl fmt::Display for Fact {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "{} {}", self.subject, self.kind.label())?;
@@ -231,43 +124,16 @@ impl fmt::Display for Fact {
         Ok(())
     }
 }
-
-// ---------------------------------------------------------------------------
-// The allowlist
-// ---------------------------------------------------------------------------
-
-/// What one [`Exemption`] covers.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Omission {
-    /// Every fact owned by a subject clap generated while building the command
-    /// — its `-h/--help` and `-V/--version` arguments and its `help`
-    /// subcommand — rather than one the application declared.
     ClapGeneratedSubjects,
-    /// Every fact of one kind.
     Kind(FactKind),
 }
-
-/// One deliberate omission, with the reason it is deliberate.
-///
-/// The reason is the point: an unexplained exemption is indistinguishable from
-/// a forgotten field, which is the failure mode this differential exists to
-/// end.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Exemption {
-    /// What is not asserted.
     pub omission: Omission,
-    /// Why it is not asserted.
     pub reason: &'static str,
 }
-
-/// The single allowlist of facts themed help deliberately does not render.
-///
-/// Everything clap's formatter prints and standout's does not is either a bug
-/// or an entry here. Each entry is proved load-bearing by the suite: clap's
-/// own page states the fact (so the exemption is a real difference, not an
-/// invented one), and removing the entry turns standout's page red (so the
-/// exemption is doing work rather than describing something already
-/// rendered).
 pub const DELIBERATE_OMISSIONS: &[Exemption] = &[
     Exemption {
         omission: Omission::ClapGeneratedSubjects,
@@ -305,9 +171,7 @@ pub const DELIBERATE_OMISSIONS: &[Exemption] = &[
                  the same reason as argument aliases.",
     },
 ];
-
 impl Exemption {
-    /// Whether this exemption covers `fact`.
     fn covers(&self, fact: &Fact) -> bool {
         match self.omission {
             Omission::ClapGeneratedSubjects => fact.generated,
@@ -315,20 +179,6 @@ impl Exemption {
         }
     }
 }
-
-// ---------------------------------------------------------------------------
-// Deriving the facts from clap
-// ---------------------------------------------------------------------------
-
-/// Every user-facing fact clap's own formatter would state for `cmd` at
-/// `length`, plus the ones it deliberately suppresses.
-///
-/// The command is built first (clap resolves value parsers, arities and its
-/// own `--help` argument during build), so the derivation reads the same
-/// metadata clap's formatter reads rather than a half-populated declaration.
-/// Facts owned by arguments that appear only after the build are marked
-/// [`Fact::is_clap_generated`], which is how the allowlist can exempt clap's
-/// machinery without naming `--help` in a string.
 pub fn clap_facts(cmd: &Command, length: HelpLength) -> Vec<Fact> {
     let declared: HashSet<String> = cmd
         .get_arguments()
@@ -338,13 +188,10 @@ pub fn clap_facts(cmd: &Command, length: HelpLength) -> Vec<Fact> {
         .get_subcommands()
         .map(|sub| sub.get_name().to_string())
         .collect();
-
     let mut built = cmd.clone();
     built.build();
-
     let mut facts = Vec::new();
     let name = built.get_name().to_string();
-
     let purpose = match length {
         HelpLength::Long => built.get_long_about().or_else(|| built.get_about()),
         HelpLength::Short => built.get_about(),
@@ -356,7 +203,6 @@ pub fn clap_facts(cmd: &Command, length: HelpLength) -> Vec<Fact> {
             about.to_string(),
         ));
     }
-
     for sub in built.get_subcommands() {
         let generated = !declared_subcommands.contains(sub.get_name());
         facts.extend(
@@ -365,7 +211,6 @@ pub fn clap_facts(cmd: &Command, length: HelpLength) -> Vec<Fact> {
                 .map(|fact| fact.generated(generated)),
         );
     }
-
     for arg in built.get_arguments() {
         let generated = !declared.contains(arg.get_id().as_str());
         facts.extend(
@@ -374,7 +219,6 @@ pub fn clap_facts(cmd: &Command, length: HelpLength) -> Vec<Fact> {
                 .map(|fact| fact.generated(generated)),
         );
     }
-
     if classifiable(&built, &declared, length) {
         facts.push(Fact::new(
             FactKind::Classification,
@@ -382,19 +226,14 @@ pub fn clap_facts(cmd: &Command, length: HelpLength) -> Vec<Fact> {
             "",
         ));
     }
-
     facts
 }
-
-/// The facts a parent page states about one subcommand.
 fn subcommand_facts(sub: &Command) -> Vec<Fact> {
     let name = sub.get_name().to_string();
     let subject = Subject::Subcommand(name.clone());
-
     if sub.is_hide_set() {
         return vec![Fact::new(FactKind::SubcommandName, subject, name).suppressed()];
     }
-
     let mut facts = vec![Fact::new(
         FactKind::SubcommandName,
         subject.clone(),
@@ -412,13 +251,8 @@ fn subcommand_facts(sub: &Command) -> Vec<Fact> {
     }
     facts
 }
-
-/// The facts a page states about one argument, at one help length.
 fn argument_facts(arg: &Arg, length: HelpLength) -> Vec<Fact> {
     let subject = Subject::Argument(arg.get_id().to_string());
-
-    // Hidden means hidden *from this page*: `hide` outright, or the
-    // length-specific hide clap applies to the entry point being rendered.
     if !visible_at(arg, length) {
         return spellings(arg)
             .into_iter()
@@ -427,20 +261,15 @@ fn argument_facts(arg: &Arg, length: HelpLength) -> Vec<Fact> {
             })
             .collect();
     }
-
     let mut facts: Vec<Fact> = spellings(arg)
         .into_iter()
         .map(|spelling| Fact::new(FactKind::ArgSpelling, subject.clone(), spelling))
         .collect();
-
     if takes_values(arg) {
         for metavar in candidate_metavars(arg) {
             facts.push(Fact::new(FactKind::ArgMetavar, subject.clone(), metavar));
         }
     }
-
-    // Clap renders `long_help` *instead of* `help` under `--help`, so the two
-    // are one fact whose kind says which text the page owes the reader.
     let (kind, text) = match length {
         HelpLength::Long => match arg.get_long_help() {
             Some(long) => (FactKind::ArgLongHelp, Some(long)),
@@ -451,11 +280,7 @@ fn argument_facts(arg: &Arg, length: HelpLength) -> Vec<Fact> {
     if let Some(text) = text {
         facts.push(Fact::new(kind, subject.clone(), text.to_string()));
     }
-
-    // Clap suppresses a default and a possible-values list for an argument
-    // that takes no value: they name syntax the user cannot type.
     let shows_values = takes_values(arg);
-
     for default in arg.get_default_values() {
         let fact = Fact::new(
             FactKind::ArgDefault,
@@ -468,7 +293,6 @@ fn argument_facts(arg: &Arg, length: HelpLength) -> Vec<Fact> {
             fact.suppressed()
         });
     }
-
     for value in arg.get_possible_values() {
         let fact = Fact::new(
             FactKind::ArgPossibleValue,
@@ -483,7 +307,6 @@ fn argument_facts(arg: &Arg, length: HelpLength) -> Vec<Fact> {
             },
         );
     }
-
     if let Some(aliases) = arg.get_visible_aliases() {
         for alias in aliases {
             facts.push(Fact::new(
@@ -502,15 +325,8 @@ fn argument_facts(arg: &Arg, length: HelpLength) -> Vec<Fact> {
             ));
         }
     }
-
     facts
 }
-
-/// Whether clap's formatter lists `arg` on the page for `length` — clap's
-/// `should_show_arg` semantics: `hide` suppresses the argument everywhere,
-/// each length then has its own hide (`hide_short_help` for `-h`,
-/// `hide_long_help` for `--help`), and `next_line_help` forces the argument
-/// back onto both pages.
 fn visible_at(arg: &Arg, length: HelpLength) -> bool {
     if arg.is_hide_set() {
         return false;
@@ -520,9 +336,6 @@ fn visible_at(arg: &Arg, length: HelpLength) -> bool {
         || (!long && !arg.is_hide_short_help_set())
         || arg.is_next_line_help_set()
 }
-
-/// Every spelling the page may list an argument under: a positional's value
-/// name, or a flag's short and long forms.
 fn spellings(arg: &Arg) -> Vec<String> {
     if arg.is_positional() {
         candidate_metavars(arg)
@@ -530,13 +343,6 @@ fn spellings(arg: &Arg) -> Vec<String> {
         flag_spellings(arg)
     }
 }
-
-/// Whether the command has both a positional and a declared option visible at
-/// `length` *under clap's default headings*, which is what makes "listed
-/// apart" a statement about it at all.
-///
-/// An argument carrying an explicit `help_heading` is not counted: see
-/// [`classification`] for why clap makes it no promise.
 fn classifiable(built: &Command, declared: &HashSet<String>, length: HelpLength) -> bool {
     let mut positionals = false;
     let mut options = false;
@@ -555,43 +361,17 @@ fn classifiable(built: &Command, declared: &HashSet<String>, length: HelpLength)
     }
     positionals && options
 }
-
-/// Whether clap files the argument under one of its own default headings
-/// (`Arguments:` / `Options:`) rather than under a heading the application
-/// named with `Arg::help_heading`.
 fn default_headed(arg: &Arg) -> bool {
     arg.get_help_heading().is_none()
 }
-
-// ---------------------------------------------------------------------------
-// Checking the facts against a page
-// ---------------------------------------------------------------------------
-
-/// Panics unless the run's page states every fact clap's own formatter would
-/// state for `cmd`, save the [`DELIBERATE_OMISSIONS`].
-///
-/// `length` is the help length the entry point asked for: [`HelpLength::Short`]
-/// for `-h`, [`HelpLength::Long`] for `--help` and the `help` word. It is not
-/// a cosmetic axis — it decides whether the page owes `about` or `long_about`,
-/// and which arguments the page owes rows at all: clap hides
-/// `hide_short_help` arguments from `-h` and `hide_long_help` arguments from
-/// `--help`.
 #[track_caller]
 pub fn assert_states_clap_facts(result: &TestResult, cmd: &Command, length: HelpLength) {
     assert_page_states_clap_facts(&result.stdout_plain(), cmd, length);
 }
-
-/// [`assert_states_clap_facts`] against a page directly.
 #[track_caller]
 pub fn assert_page_states_clap_facts(page: &str, cmd: &Command, length: HelpLength) {
     assert_page_states_clap_facts_with(page, cmd, length, DELIBERATE_OMISSIONS);
 }
-
-/// [`assert_page_states_clap_facts`] with an explicit allowlist.
-///
-/// Pass `&[]` to assert full parity — that is how the suite grounds the
-/// derivation against clap's own rendered page, and how it proves each entry
-/// of [`DELIBERATE_OMISSIONS`] is load-bearing rather than decorative.
 #[track_caller]
 pub fn assert_page_states_clap_facts_with(
     page: &str,
@@ -602,11 +382,9 @@ pub fn assert_page_states_clap_facts_with(
     let facts = clap_facts(cmd, length);
     let mut built = cmd.clone();
     built.build();
-
     let rows = rows(page);
     let mut failures: Vec<String> = Vec::new();
     let mut exempted = 0usize;
-
     for fact in &facts {
         if exemptions.iter().any(|exemption| exemption.covers(fact)) {
             exempted += 1;
@@ -616,11 +394,9 @@ pub fn assert_page_states_clap_facts_with(
             failures.push(format!("  - {fact}: {detail}"));
         }
     }
-
     if failures.is_empty() {
         return;
     }
-
     panic!(
         "the rendered page drops {} of the {} fact(s) clap states for `{}` \
          ({} exempted by the allowlist):\n{}\n--- page ---\n{}\n------------",
@@ -632,13 +408,6 @@ pub fn assert_page_states_clap_facts_with(
         page
     );
 }
-
-/// Checks one fact against the parsed page, describing the failure.
-///
-/// Where a fact is looked for follows its subject: a paragraph belongs to the
-/// page, everything else to the row that lists its owner. Reading an
-/// argument's default off the whole page would let another argument's row
-/// satisfy it.
 fn check(
     fact: &Fact,
     built: &Command,
@@ -661,8 +430,6 @@ fn check(
         )),
     }
 }
-
-/// Checks a fact owned by a subcommand, against the row that lists it.
 fn subcommand_check(
     fact: &Fact,
     name: &str,
@@ -670,18 +437,12 @@ fn subcommand_check(
     rows: &[Row<'_>],
 ) -> Result<(), String> {
     let row = rows.iter().find(|row| contains_token(row.label, name));
-
     if kind == FactKind::SubcommandName {
         return present(row.is_some(), fact, "no row is listed under that name");
     }
-
     let Some(row) = row else {
-        // The name is the fact that fails first; a subcommand with no row
-        // cannot state its about or its aliases either, and saying so twice
-        // buries the one failure worth reading.
         return Ok(());
     };
-
     let found = match kind {
         FactKind::SubcommandAlias => contains_token(&row.block_text(), &fact.expected),
         _ => row.block_text().contains(&normalize(&fact.expected)),
@@ -692,10 +453,6 @@ fn subcommand_check(
         &format!("the row reads {:?}", row.block_text()),
     )
 }
-
-/// Checks a fact owned by an argument, which is looked for inside that
-/// argument's own row rather than anywhere on the page: a value that appears
-/// under some *other* argument is not this argument's row stating it.
 fn argument_check(fact: &Fact, built: &Command, rows: &[Row<'_>]) -> Result<(), String> {
     let Subject::Argument(id) = &fact.subject else {
         return Err("the fact is not about an argument".to_string());
@@ -703,19 +460,6 @@ fn argument_check(fact: &Fact, built: &Command, rows: &[Row<'_>]) -> Result<(), 
     let Some(arg) = built.get_arguments().find(|arg| arg.get_id() == id) else {
         return Err(format!("`{id}` is not an argument of the command"));
     };
-
-    // A spelling is what identifies a row, so it is checked against every
-    // row's label rather than through the row lookup it would otherwise be
-    // assumed by — and against the labels of the right *kind* of row, since
-    // the two kinds spell an argument differently. A flag is listed under its
-    // flag token, matched flag-aware so a counted flag's label may wear clap's
-    // repetition ellipsis (`-v...`) without loosening any other argument's
-    // comparison. A positional is listed under its value names, of which it
-    // may declare several: `.num_args(2)` with `value_names(["SRC", "DEST"])`
-    // renders one row labelled `[SRC] [DEST]`, so every placeholder of a
-    // positional row answers, not only the first. Searching every label for
-    // the bare token instead would let `--into <DEST>` state that a positional
-    // named `DEST` is listed.
     if fact.kind == FactKind::ArgSpelling {
         let listed = if arg.is_positional() {
             rows.iter()
@@ -731,25 +475,17 @@ fn argument_check(fact: &Fact, built: &Command, rows: &[Row<'_>]) -> Result<(), 
         };
         return present(listed, fact, "no row is listed under that spelling");
     }
-
     let Some(row) = find_row(rows, arg) else {
-        // A suppressed fact is satisfied by the row's absence; a stated one
-        // cannot be, and the missing row is the more useful failure.
         return match fact.presence {
             Presence::Suppressed => Ok(()),
             Presence::Stated => Err("the argument has no row on the page".to_string()),
         };
     };
-
     match fact.kind {
         FactKind::ArgMetavar => {
             let placeholders = value_placeholders(row.label);
             let shown = match declared_metavars(arg) {
-                // A declared value name must appear as declared: an app writes
-                // `value_name = "RATIO"` precisely so the user reads `RATIO`.
                 Some(_) => placeholders.iter().any(|shown| *shown == fact.expected),
-                // Clap's fallback uppercases the id and standout's does not,
-                // and neither spelling loses the reader.
                 None => placeholders
                     .iter()
                     .any(|shown| shown.eq_ignore_ascii_case(&fact.expected)),
@@ -769,12 +505,6 @@ fn argument_check(fact: &Fact, built: &Command, rows: &[Row<'_>]) -> Result<(), 
             )
         }
         FactKind::ArgDefault => {
-            // The row's stated defaults, decoded under the grammar of the line
-            // that states them — [`Row::labelled_values`] dispatches on the
-            // bracket, so clap's quoting is undone on clap's clause and
-            // standout's unquoted comma list is read by its commas. The decode
-            // is bounded by whole values, so a page that states `briefly`
-            // still does not state `brief`.
             let stated = row.labelled_values("default:", ClapJoint::Spaces);
             present(
                 stated.contains(&fact.expected),
@@ -812,8 +542,6 @@ fn argument_check(fact: &Fact, built: &Command, rows: &[Row<'_>]) -> Result<(), 
         kind => Err(format!("no check is defined for {}", kind.label())),
     }
 }
-
-/// Turns a boolean observation into a result, respecting the fact's polarity.
 fn present(found: bool, fact: &Fact, detail: &str) -> Result<(), String> {
     match (fact.presence, found) {
         (Presence::Stated, true) | (Presence::Suppressed, false) => Ok(()),
@@ -825,25 +553,9 @@ fn present(found: bool, fact: &Fact, detail: &str) -> Result<(), String> {
         )),
     }
 }
-
-/// Checks that positionals and options are listed apart.
-///
-/// The sections are matched by identity, never by name: standout spells them
-/// `ARGUMENTS`/`OPTIONS` and clap `Arguments:`/`Options:`, and asserting
-/// either spelling would be asserting layout. What has to hold is that a
-/// reader can tell which arguments are typed by position and which by flag —
-/// the distinction a single merged list destroys.
-///
-/// Only arguments under clap's *default* headings are the subject. An
-/// application may name a heading with `Arg::help_heading`, and clap then
-/// files whatever carries it under that name — a positional and an option
-/// together, or options split across several headings. Both break the
-/// default split, and clap's own page does it, so asserting the split over
-/// custom-headed arguments would reject clap's own correct rendering.
 fn classification(built: &Command, rows: &[Row<'_>], length: HelpLength) -> Result<(), String> {
     let mut positional_sections: Vec<(String, &str)> = Vec::new();
     let mut option_sections: Vec<(String, &str)> = Vec::new();
-
     for arg in built
         .get_arguments()
         .filter(|arg| visible_at(arg, length) && default_headed(arg))
@@ -858,13 +570,11 @@ fn classification(built: &Command, rows: &[Row<'_>], length: HelpLength) -> Resu
             option_sections.push(entry);
         }
     }
-
     let (Some((_, positional_section)), Some((_, option_section))) =
         (positional_sections.first(), option_sections.first())
     else {
         return Ok(());
     };
-
     if let Some((id, section)) = positional_sections
         .iter()
         .find(|(_, section)| section != positional_section)
@@ -889,6 +599,5 @@ fn classification(built: &Command, rows: &[Row<'_>], length: HelpLength) -> Resu
              page does not say which arguments are typed by position"
         ));
     }
-
     Ok(())
 }

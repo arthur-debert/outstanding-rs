@@ -1,14 +1,8 @@
-//! Integration tests for the #[handler] proc macro.
-
 #![allow(non_snake_case)] // Generated handler names use __handler suffix
 
 use clap::ArgMatches;
 use standout::cli::handler::{CommandContext, Output};
 use standout_macros::handler;
-
-// =============================================================================
-// Basic flag extraction
-// =============================================================================
 
 #[handler]
 fn simple_flag(#[flag] verbose: bool) -> Result<bool, anyhow::Error> {
@@ -47,10 +41,6 @@ fn test_simple_flag_false() {
     assert!(!result.unwrap());
 }
 
-// =============================================================================
-// Flag with custom name
-// =============================================================================
-
 #[handler]
 fn flag_with_name(#[flag(name = "show-all")] all: bool) -> Result<bool, anyhow::Error> {
     Ok(all)
@@ -72,10 +62,6 @@ fn test_flag_with_custom_name() {
     assert!(result.unwrap());
 }
 
-// =============================================================================
-// Required argument
-// =============================================================================
-
 #[handler]
 fn required_arg(#[arg] name: String) -> Result<String, anyhow::Error> {
     Ok(format!("Hello, {}!", name))
@@ -92,10 +78,6 @@ fn test_required_arg() {
     assert!(result.is_ok());
     assert_eq!(result.unwrap(), "Hello, world!");
 }
-
-// =============================================================================
-// Optional argument
-// =============================================================================
 
 #[handler]
 fn optional_arg(#[arg] limit: Option<usize>) -> Result<String, anyhow::Error> {
@@ -129,10 +111,6 @@ fn test_optional_arg_missing() {
     assert_eq!(result.unwrap(), "No limit");
 }
 
-// =============================================================================
-// Vec argument
-// =============================================================================
-
 #[handler]
 fn vec_arg(#[arg] tags: Vec<String>) -> Result<usize, anyhow::Error> {
     Ok(tags.len())
@@ -162,10 +140,6 @@ fn test_vec_arg_empty() {
     assert_eq!(result.unwrap(), 0);
 }
 
-// =============================================================================
-// Argument with custom name
-// =============================================================================
-
 #[handler]
 fn arg_with_name(#[arg(name = "num")] count: usize) -> Result<usize, anyhow::Error> {
     Ok(count * 2)
@@ -186,10 +160,6 @@ fn test_arg_with_custom_name() {
     assert!(result.is_ok());
     assert_eq!(result.unwrap(), 10);
 }
-
-// =============================================================================
-// Multiple parameters
-// =============================================================================
 
 #[handler]
 fn multiple_params(
@@ -222,10 +192,6 @@ fn test_multiple_params() {
     assert_eq!(result.unwrap(), "verbose=true, name=alice, count=42");
 }
 
-// =============================================================================
-// Context access
-// =============================================================================
-
 #[handler]
 fn with_context(#[ctx] ctx: &CommandContext) -> Result<usize, anyhow::Error> {
     Ok(ctx.command_path.len())
@@ -240,10 +206,6 @@ fn test_with_context() {
     assert!(result.is_ok());
     assert_eq!(result.unwrap(), 0);
 }
-
-// =============================================================================
-// Raw matches access
-// =============================================================================
 
 #[handler]
 fn with_matches(#[matches] m: &ArgMatches) -> Result<bool, anyhow::Error> {
@@ -266,13 +228,8 @@ fn test_with_matches() {
     assert!(result.unwrap());
 }
 
-// =============================================================================
-// Unit result (silent output)
-// =============================================================================
-
 #[handler]
 fn silent_handler(#[arg] path: String) -> Result<(), anyhow::Error> {
-    // In real code, this would do something with path
     let _ = path;
     Ok(())
 }
@@ -289,13 +246,8 @@ fn test_silent_handler() {
     assert!(matches!(result.unwrap(), Output::Silent));
 }
 
-// =============================================================================
-// Original function is preserved for direct testing
-// =============================================================================
-
 #[test]
 fn test_original_function_preserved() {
-    // Can call the original function directly
     let result = simple_flag(true);
     assert!(result.is_ok());
     assert!(result.unwrap());
@@ -304,10 +256,6 @@ fn test_original_function_preserved() {
     assert!(result.is_ok());
     assert_eq!(result.unwrap(), "Hello, test!");
 }
-
-// =============================================================================
-// Mixed context and args
-// =============================================================================
 
 #[handler]
 fn mixed_params(
@@ -339,10 +287,6 @@ fn test_mixed_params() {
     assert!(result.is_ok());
     assert_eq!(result.unwrap(), "verbose=true, path_len=0, limit=Some(5)");
 }
-
-// =============================================================================
-// Expected args generation for verification
-// =============================================================================
 
 use standout_dispatch::verify::{verify_handler_args, ArgKind, ExpectedArg};
 
@@ -394,17 +338,12 @@ fn test_expected_args_generated_for_vec_arg() {
 #[test]
 fn test_expected_args_excludes_ctx_and_matches() {
     let expected = mixed_params__expected_args();
-    // Should only have verbose (flag) and limit (optional arg), not ctx
     assert_eq!(expected.len(), 2);
     assert_eq!(expected[0].cli_name, "verbose");
     assert_eq!(expected[0].kind, ArgKind::Flag);
     assert_eq!(expected[1].cli_name, "limit");
     assert_eq!(expected[1].kind, ArgKind::OptionalArg);
 }
-
-// =============================================================================
-// Verification against clap Command
-// =============================================================================
 
 #[test]
 fn test_verification_passes_for_matching_command() {
@@ -421,7 +360,6 @@ fn test_verification_passes_for_matching_command() {
 #[test]
 fn test_verification_fails_for_missing_arg() {
     let command = clap::Command::new("test");
-    // No arguments defined
 
     let expected = simple_flag__expected_args();
     let err = verify_handler_args(&command, "simple_flag", &expected).unwrap_err();
@@ -438,7 +376,7 @@ fn test_verification_fails_for_wrong_action() {
     let command = clap::Command::new("test").arg(
         clap::Arg::new("verbose")
             .long("verbose")
-            .action(clap::ArgAction::Set), // Wrong! Should be SetTrue for bool flag
+            .action(clap::ArgAction::Set),
     );
 
     let expected = simple_flag__expected_args();
@@ -448,7 +386,7 @@ fn test_verification_fails_for_wrong_action() {
     let msg = err.to_string();
     assert!(msg.contains("boolean flag"));
     assert!(msg.contains("ArgAction::Set"));
-    assert!(msg.contains("SetTrue")); // Suggestion in fix
+    assert!(msg.contains("SetTrue"));
 }
 
 #[test]
@@ -464,15 +402,12 @@ fn test_verification_error_message_is_helpful() {
 
     let msg = err.to_string();
 
-    // Should include handler name and command name
     assert!(msg.contains("Handler `list_handler`"));
     assert!(msg.contains("command `list`"));
 
-    // Should explain the mismatch
     assert!(msg.contains("Handler expects: boolean flag"));
     assert!(msg.contains("Command defines:"));
 
-    // Should provide actionable fix
     assert!(msg.contains("Fix:"));
     assert!(msg.contains("ArgAction::SetTrue"));
 }

@@ -1,19 +1,7 @@
-//! Framework template definitions.
-//!
-//! Templates are stored as `(name, content)` pairs for registration
-//! with the template registry.
-
-/// Registry name for the framework help page (ADR-0028).
 pub const HELP_TEMPLATE_NAME: &str = "standout/help";
-/// Registry name for a single help topic.
 pub const TOPIC_TEMPLATE_NAME: &str = "standout/topic";
-/// Registry name for the topics listing page.
 pub const TOPICS_LIST_TEMPLATE_NAME: &str = "standout/topics-list";
 
-/// Framework-supplied templates.
-///
-/// Each entry is `(name_with_extension, content)`.
-/// The registry will make them available both with and without extension.
 pub const FRAMEWORK_TEMPLATES: &[(&str, &str)] = &[
     ("standout/list-view.jinja", LIST_VIEW_TEMPLATE),
     ("standout/empty-list.jinja", EMPTY_LIST_TEMPLATE),
@@ -32,23 +20,6 @@ pub const FRAMEWORK_TEMPLATES: &[(&str, &str)] = &[
     ),
 ];
 
-/// Default list view template.
-///
-/// This template renders `ListViewResult<T>` with support for:
-/// - Introduction text (header)
-/// - Items (tabular or custom rendering)
-/// - Ending text (footer)
-/// - Filter summary
-/// - Status messages
-///
-/// Template variables:
-/// - `items`: The items to display
-/// - `intro`: Optional header text
-/// - `ending`: Optional footer text
-/// - `messages`: Status messages (level, text)
-/// - `total_count`: Total before filtering (for "showing X of Y")
-/// - `filter_summary`: Description of applied filters
-/// - `empty_message`: Custom message when list is empty
 const LIST_VIEW_TEMPLATE: &str = r#"{% if intro %}
 {{ intro }}
 
@@ -89,11 +60,9 @@ const LIST_VIEW_TEMPLATE: &str = r#"{% if intro %}
 {% endfor %}
 "#;
 
-/// Template for empty list message.
 const EMPTY_LIST_TEMPLATE: &str = r#"{{ message | default("No items found.") }}
 "#;
 
-/// Template for filter summary display.
 const FILTER_SUMMARY_TEMPLATE: &str = r#"[standout-muted]{{ summary }}[/standout-muted]
 "#;
 

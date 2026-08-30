@@ -1,80 +1,3 @@
-//! `#[command]` proc macro for single-source command definitions.
-//!
-//! This macro extends `#[handler]` to generate both the handler wrapper AND
-//! the complete clap `Command` definition from a single source. This eliminates
-//! the possibility of mismatches between handler expectations and CLI definitions.
-//!
-//! # Example
-//!
-//! ```rust,ignore
-//! use standout_macros::command;
-//!
-//! #[command(name = "list", about = "List all items")]
-//! fn list_items(
-//!     #[flag(short = 'a', long = "all", help = "Show all items")] all: bool,
-//!     #[arg(short = 'f', long = "filter", help = "Filter pattern")] filter: Option<String>,
-//!     #[ctx] ctx: &CommandContext,
-//! ) -> Result<Vec<Item>, Error> {
-//!     storage::list(all, filter)
-//! }
-//!
-//! // Generates:
-//! // - list_items (original function, preserved for testing)
-//! // - list_items__handler (wrapper for dispatch)
-//! // - list_items__expected_args (for verification)
-//! // - list_items__command() -> clap::Command
-//! // - list_items__template() -> &'static str (defaults to "list")
-//! // - list_items_Handler (struct implementing Handler trait)
-//! ```
-//!
-//! # Command Attributes
-//!
-//! | Attribute | Type | Required | Description |
-//! |-----------|------|----------|-------------|
-//! | `name` | string | Yes | Command name |
-//! | `about` | string | No | Short description |
-//! | `long_about` | string | No | Detailed description |
-//! | `visible_alias` | string | No | Command alias |
-//! | `hide` | bool | No | Hide from help |
-//! | `template` | string | No | Template name (defaults to command name) |
-//!
-//! # Parameter Attributes
-//!
-//! ## `#[flag(...)]`
-//!
-//! | Attribute | Type | Description |
-//! |-----------|------|-------------|
-//! | `short` | char | Short flag (e.g., `-a`) |
-//! | `long` | string | Long flag (e.g., `--all`), defaults to param name |
-//! | `help` | string | Help text |
-//! | `hide` | bool | Hide from help |
-//!
-//! ## `#[arg(...)]`
-//!
-//! | Attribute | Type | Description |
-//! |-----------|------|-------------|
-//! | `short` | char | Short option (e.g., `-f`) |
-//! | `long` | string | Long option (e.g., `--filter`), defaults to param name |
-//! | `help` | string | Help text |
-//! | `value_name` | string | Placeholder in help (e.g., "PATTERN") |
-//! | `default` | string | Default value |
-//! | `hide` | bool | Hide from help |
-//! | `positional` | bool | Positional argument (no `--` prefix) |
-//! | `allow_negative_numbers` | bool | Allow negative number values (e.g., -5) |
-//!
-//! ## Pass-through annotations
-//!
-//! | Annotation | Type | Description |
-//! |------------|------|-------------|
-//! | `#[ctx]` | `&CommandContext` | Pass CommandContext to handler |
-//! | `#[matches]` | `&ArgMatches` | Pass raw ArgMatches to handler |
-//!
-//! # Template Convention
-//!
-//! The `template` attribute is optional. When omitted, it defaults to the
-//! command name. For example, `#[command(name = "list")]` will use template
-//! name `"list"` (resolving to `list.jinja`, `list.j2`, etc.).
-
 use proc_macro2::TokenStream;
 use quote::{format_ident, quote};
 use syn::{
@@ -84,11 +7,6 @@ use syn::{
     Error, Expr, FnArg, ItemFn, Lit, Meta, Pat, PatType, Result, Token, Type,
 };
 
-// =============================================================================
-// Command-level attributes
-// =============================================================================
-
-/// Parsed command-level attributes from `#[command(...)]`
 #[derive(Default)]
 struct CommandAttrs {
     name: Option<String>,
@@ -166,26 +84,15 @@ impl Parse for CommandAttrs {
     }
 }
 
-// =============================================================================
-// Parameter-level attributes
-// =============================================================================
-
-/// What kind of parameter this is
 #[derive(Debug, Clone)]
 enum ParamKind {
-    /// `#[flag(...)]` - boolean flag
     Flag(FlagAttrs),
-    /// `#[arg(...)]` - argument (required, optional, or vec)
     Arg(ArgAttrs),
-    /// `#[ctx]` - CommandContext reference
     Ctx,
-    /// `#[matches]` - ArgMatches reference
     Matches,
-    /// No annotation
     None,
 }
 
-/// Attributes for `#[flag(...)]`
 #[derive(Debug, Clone, Default)]
 struct FlagAttrs {
     short: Option<char>,
@@ -194,7 +101,6 @@ struct FlagAttrs {
     hide: bool,
 }
 
-/// Attributes for `#[arg(...)]`
 #[derive(Debug, Clone, Default)]
 struct ArgAttrs {
     short: Option<char>,
@@ -207,17 +113,12 @@ struct ArgAttrs {
     allow_negative_numbers: bool,
 }
 
-/// Parsed parameter information
 struct ParamInfo {
     rust_name: String,
     cli_name: String,
     ty: Type,
     kind: ParamKind,
 }
-
-// =============================================================================
-// Attribute parsing helpers
-// =============================================================================
 
 fn parse_string_value(expr: &Expr) -> Result<String> {
     if let Expr::Lit(expr_lit) = expr {
@@ -237,8 +138,6 @@ fn parse_bool_value(expr: &Expr) -> Result<bool> {
     Err(Error::new(expr.span(), "expected boolean literal"))
 }
 
-// Note: parse_char_value is available for future use but currently
-// char parsing is done inline in parse_nested_meta handlers
 #[allow(dead_code)]
 fn parse_char_value(expr: &Expr) -> Result<char> {
     if let Expr::Lit(expr_lit) = expr {
@@ -296,7 +195,6 @@ fn parse_flag_attrs(attr: &syn::Attribute) -> Result<FlagAttrs> {
                 }
             }
             Some("name") => {
-                // Support legacy `name = "x"` for backwards compat with #[handler]
                 let value: Lit = meta.value()?.parse()?;
                 if let Lit::Str(s) = value {
                     attrs.long = Some(s.value());
@@ -407,7 +305,6 @@ fn parse_arg_attrs(attr: &syn::Attribute) -> Result<ArgAttrs> {
                 }
             }
             Some("name") => {
-                // Support legacy `name = "x"` for backwards compat with #[handler]
                 let value: Lit = meta.value()?.parse()?;
                 if let Lit::Str(s) = value {
                     attrs.long = Some(s.value());
@@ -459,10 +356,6 @@ fn extract_param_name(pat: &Pat) -> Result<String> {
     }
 }
 
-// =============================================================================
-// Type helpers
-// =============================================================================
-
 fn is_option_type(ty: &Type) -> bool {
     if let Type::Path(type_path) = ty {
         if let Some(segment) = type_path.path.segments.last() {
@@ -498,7 +391,6 @@ fn is_reference_type(ty: &Type) -> bool {
     matches!(ty, Type::Reference(_))
 }
 
-/// Get the base type name (e.g., "usize" from Option<usize> or Vec<usize>)
 fn get_base_type(ty: &Type) -> Option<&Type> {
     if is_option_type(ty) || is_vec_type(ty) {
         extract_inner_type(ty)
@@ -507,22 +399,18 @@ fn get_base_type(ty: &Type) -> Option<&Type> {
     }
 }
 
-/// Check if a type needs value_parser (i.e., is not String)
 fn needs_value_parser(ty: &Type) -> bool {
     let base = match get_base_type(ty) {
         Some(t) => t,
         None => return false,
     };
 
-    // Check if it's a simple path type
     if let Type::Path(type_path) = base {
         if let Some(segment) = type_path.path.segments.last() {
             let type_name = segment.ident.to_string();
-            // String types don't need value_parser
             if type_name == "String" || type_name == "OsString" {
                 return false;
             }
-            // All other types need it
             return true;
         }
     }
@@ -530,7 +418,6 @@ fn needs_value_parser(ty: &Type) -> bool {
     false
 }
 
-/// Generate value_parser call for a type
 fn generate_value_parser(ty: &Type) -> Option<TokenStream> {
     let base = get_base_type(ty)?;
 
@@ -576,10 +463,6 @@ fn extract_output_type(ty: &Type) -> Option<&Type> {
     }
     None
 }
-
-// =============================================================================
-// Code generation
-// =============================================================================
 
 fn generate_extraction(param: &ParamInfo) -> TokenStream {
     let rust_name = format_ident!("{}", param.rust_name);
@@ -681,7 +564,6 @@ fn generate_clap_arg(param: &ParamInfo) -> Option<TokenStream> {
                 arg = quote! { #arg.short(#short) };
             }
 
-            // Add long flag (either explicit or derived from cli_name)
             let long_name = attrs.long.as_deref().unwrap_or(cli_name);
             arg = quote! { #arg.long(#long_name) };
 
@@ -702,29 +584,24 @@ fn generate_clap_arg(param: &ParamInfo) -> Option<TokenStream> {
 
             let mut arg = quote! { ::clap::Arg::new(#cli_name) };
 
-            // Set action based on type
             if is_vec {
                 arg = quote! { #arg.action(::clap::ArgAction::Append) };
             } else {
                 arg = quote! { #arg.action(::clap::ArgAction::Set) };
             }
 
-            // Add value_parser for non-String types
             if let Some(value_parser) = generate_value_parser(ty) {
                 arg = quote! { #arg #value_parser };
             }
 
-            // Required if not optional and no default
             if !is_optional && !is_vec && attrs.default.is_none() {
                 arg = quote! { #arg.required(true) };
             }
 
-            // Add short if specified
             if let Some(short) = attrs.short {
                 arg = quote! { #arg.short(#short) };
             }
 
-            // Add long flag (unless positional)
             if !attrs.positional {
                 let long_name = attrs.long.as_deref().unwrap_or(cli_name);
                 arg = quote! { #arg.long(#long_name) };
@@ -756,15 +633,9 @@ fn generate_clap_arg(param: &ParamInfo) -> Option<TokenStream> {
     }
 }
 
-// =============================================================================
-// Main implementation
-// =============================================================================
-
 pub fn command_impl(attr: TokenStream, item: TokenStream) -> Result<TokenStream> {
-    // Parse command attributes
     let cmd_attrs: CommandAttrs = syn::parse2(attr)?;
 
-    // Command name is required
     let command_name = cmd_attrs.name.ok_or_else(|| {
         Error::new(
             proc_macro2::Span::call_site(),
@@ -772,22 +643,18 @@ pub fn command_impl(attr: TokenStream, item: TokenStream) -> Result<TokenStream>
         )
     })?;
 
-    // Template defaults to command name
     let template_name = cmd_attrs.template.unwrap_or_else(|| command_name.clone());
 
-    // Parse the function
     let fn_item: ItemFn = syn::parse2(item)?;
     let fn_name = &fn_item.sig.ident;
     let fn_vis = &fn_item.vis;
 
-    // Generated identifiers
     let handler_fn_name = format_ident!("{}__handler", fn_name);
     let expected_args_fn_name = format_ident!("{}__expected_args", fn_name);
     let command_fn_name = format_ident!("{}__command", fn_name);
     let template_fn_name = format_ident!("{}__template", fn_name);
     let handler_struct_name = format_ident!("{}_Handler", fn_name);
 
-    // Analyze parameters
     let mut params: Vec<ParamInfo> = Vec::new();
 
     for fn_arg in &fn_item.sig.inputs {
@@ -796,7 +663,6 @@ pub fn command_impl(attr: TokenStream, item: TokenStream) -> Result<TokenStream>
                 let kind = parse_param_kind(pat_type)?;
                 let rust_name = extract_param_name(&pat_type.pat)?;
 
-                // Determine CLI name
                 let cli_name = match &kind {
                     ParamKind::Flag(attrs) => attrs
                         .long
@@ -809,7 +675,6 @@ pub fn command_impl(attr: TokenStream, item: TokenStream) -> Result<TokenStream>
                     _ => rust_name.clone(),
                 };
 
-                // Validate: non-reference types must have annotation
                 if matches!(kind, ParamKind::None) && !is_reference_type(&pat_type.ty) {
                     return Err(Error::new(
                         pat_type.span(),
@@ -833,22 +698,16 @@ pub fn command_impl(attr: TokenStream, item: TokenStream) -> Result<TokenStream>
         }
     }
 
-    // Generate extraction code
     let extractions: Vec<TokenStream> = params.iter().map(generate_extraction).collect();
 
-    // Generate call arguments
     let call_args: Vec<TokenStream> = params.iter().map(generate_call_arg).collect();
 
-    // Generate expected args
     let expected_args: Vec<TokenStream> = params.iter().filter_map(generate_expected_arg).collect();
 
-    // Generate clap args
     let clap_args: Vec<TokenStream> = params.iter().filter_map(generate_clap_arg).collect();
 
-    // Get return type info
     let return_type = &fn_item.sig.output;
 
-    // Handle unit result specially
     let call_and_return = if is_unit_result(&fn_item) {
         quote! {
             #fn_name(#(#call_args),*)?;
@@ -866,7 +725,6 @@ pub fn command_impl(attr: TokenStream, item: TokenStream) -> Result<TokenStream>
         quote! { #return_type }
     };
 
-    // Determine output type for Handler impl
     let ok_type = extract_result_ok_type(&fn_item).ok_or_else(|| {
         Error::new(
             fn_item.sig.output.span(),
@@ -882,7 +740,6 @@ pub fn command_impl(attr: TokenStream, item: TokenStream) -> Result<TokenStream>
         quote! { #ok_type }
     };
 
-    // Strip attributes from the original function's parameters
     let mut clean_fn = fn_item.clone();
     for fn_arg in &mut clean_fn.sig.inputs {
         if let FnArg::Typed(pat_type) = fn_arg {
@@ -895,7 +752,6 @@ pub fn command_impl(attr: TokenStream, item: TokenStream) -> Result<TokenStream>
         }
     }
 
-    // Build command generation
     let mut cmd_builder = quote! {
         ::clap::Command::new(#command_name)
     };
@@ -916,17 +772,13 @@ pub fn command_impl(attr: TokenStream, item: TokenStream) -> Result<TokenStream>
         cmd_builder = quote! { #cmd_builder.hide(true) };
     }
 
-    // Add all clap args
     for arg in &clap_args {
         cmd_builder = quote! { #cmd_builder #arg };
     }
 
-    // Generate output
     Ok(quote! {
-        // Original function (with annotations stripped)
         #clean_fn
 
-        // Handler wrapper
         #fn_vis fn #handler_fn_name(
             __matches: &::clap::ArgMatches,
             __ctx: &::standout_dispatch::CommandContext
@@ -935,22 +787,18 @@ pub fn command_impl(attr: TokenStream, item: TokenStream) -> Result<TokenStream>
             #call_and_return
         }
 
-        // Expected args for verification
         #fn_vis fn #expected_args_fn_name() -> ::std::vec::Vec<::standout_dispatch::verify::ExpectedArg> {
             vec![#(#expected_args),*]
         }
 
-        // Clap Command definition
         #fn_vis fn #command_fn_name() -> ::clap::Command {
             #cmd_builder
         }
 
-        // Template name
         #fn_vis fn #template_fn_name() -> &'static str {
             #template_name
         }
 
-        // Handler struct
         #[allow(non_camel_case_types)]
         #[derive(Clone, Copy)]
         #fn_vis struct #handler_struct_name;

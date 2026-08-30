@@ -32,37 +32,18 @@
 use super::attributes::{parse_shorthand, StyleAttributes};
 use super::error::StylesheetError;
 
-/// Parsed style definition from YAML.
-///
-/// Represents a single style entry before building into `console::Style`.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum StyleDefinition {
-    /// Alias to another style by name.
-    ///
-    /// Alias chains are resolved during theme building.
     Alias(String),
 
-    /// Concrete style definition with optional mode overrides.
-    ///
-    /// - `base`: Attributes shared across all modes
-    /// - `light`: Optional overrides for light mode (merged onto base)
-    /// - `dark`: Optional overrides for dark mode (merged onto base)
     Attributes {
-        /// Base style attributes (used when no mode override exists).
         base: StyleAttributes,
-        /// Light mode overrides (merged onto base).
         light: Option<StyleAttributes>,
-        /// Dark mode overrides (merged onto base).
         dark: Option<StyleAttributes>,
     },
 }
 
 impl StyleDefinition {
-    /// Parses a style definition from a YAML value.
-    ///
-    /// Determines the definition type based on the value structure:
-    /// - String → Alias or Shorthand (depends on content)
-    /// - Mapping → Full definition with optional light/dark
     pub fn parse(value: &serde_yaml::Value, style_name: &str) -> Result<Self, StylesheetError> {
         match value {
             serde_yaml::Value::String(s) => Self::parse_string(s, style_name),
@@ -75,14 +56,9 @@ impl StyleDefinition {
         }
     }
 
-    /// Parses a string value as either an alias or shorthand.
-    ///
-    /// Heuristic: If the string contains spaces or known attribute keywords,
-    /// treat it as shorthand. Otherwise, treat it as an alias.
     fn parse_string(s: &str, style_name: &str) -> Result<Self, StylesheetError> {
         let s = s.trim();
 
-        // Empty string is invalid
         if s.is_empty() {
             return Err(StylesheetError::InvalidDefinition {
                 style: style_name.to_string(),
@@ -91,7 +67,6 @@ impl StyleDefinition {
             });
         }
 
-        // If it contains spaces, it's definitely shorthand
         if s.contains(' ') {
             let attrs = parse_shorthand(s, style_name)?;
             return Ok(StyleDefinition::Attributes {
@@ -101,16 +76,11 @@ impl StyleDefinition {
             });
         }
 
-        // Single word: could be alias, color shorthand, or attribute shorthand
-        // Try to parse as shorthand first (covers colors and attributes like "bold")
         match parse_shorthand(s, style_name) {
             Ok(attrs) => {
-                // Check if this looks like an alias (valid identifier, not a color or attribute)
                 if is_likely_alias(s) {
-                    // It's an alias
                     Ok(StyleDefinition::Alias(s.to_string()))
                 } else {
-                    // It's shorthand (color or attribute)
                     Ok(StyleDefinition::Attributes {
                         base: attrs,
                         light: None,
@@ -118,19 +88,13 @@ impl StyleDefinition {
                     })
                 }
             }
-            Err(_) => {
-                // Not valid shorthand, must be an alias
-                Ok(StyleDefinition::Alias(s.to_string()))
-            }
+            Err(_) => Ok(StyleDefinition::Alias(s.to_string())),
         }
     }
 
-    /// Parses a mapping value as a full style definition.
     fn parse_mapping(map: &serde_yaml::Mapping, style_name: &str) -> Result<Self, StylesheetError> {
-        // Parse base attributes (excludes light/dark keys)
         let base = StyleAttributes::parse_mapping(map, style_name)?;
 
-        // Parse light mode overrides if present
         let light = if let Some(light_val) = map.get(serde_yaml::Value::String("light".into())) {
             let light_map =
                 light_val
@@ -145,7 +109,6 @@ impl StyleDefinition {
             None
         };
 
-        // Parse dark mode overrides if present
         let dark = if let Some(dark_val) = map.get(serde_yaml::Value::String("dark".into())) {
             let dark_map =
                 dark_val
@@ -163,12 +126,10 @@ impl StyleDefinition {
         Ok(StyleDefinition::Attributes { base, light, dark })
     }
 
-    /// Returns true if this is an alias definition.
     pub fn is_alias(&self) -> bool {
         matches!(self, StyleDefinition::Alias(_))
     }
 
-    /// Returns the alias target if this is an alias, None otherwise.
     pub fn alias_target(&self) -> Option<&str> {
         match self {
             StyleDefinition::Alias(target) => Some(target),
@@ -177,13 +138,9 @@ impl StyleDefinition {
     }
 }
 
-/// Checks if a single-word string is likely an alias rather than shorthand.
-///
-/// Returns true for strings that don't match known colors or attributes.
 fn is_likely_alias(s: &str) -> bool {
     let lower = s.to_lowercase();
 
-    // Known attribute keywords (not aliases)
     let attributes = [
         "bold",
         "dim",
@@ -199,7 +156,6 @@ fn is_likely_alias(s: &str) -> bool {
         return false;
     }
 
-    // Known color names (not aliases)
     let colors = [
         "black", "red", "green", "yellow", "blue", "magenta", "cyan", "white", "gray", "grey",
     ];
@@ -208,17 +164,14 @@ fn is_likely_alias(s: &str) -> bool {
         return false;
     }
 
-    // Bright colors (not aliases)
     if lower.starts_with("bright_") {
         return false;
     }
 
-    // Hex colors (not aliases)
     if s.starts_with('#') {
         return false;
     }
 
-    // Everything else is likely an alias
     true
 }
 
@@ -227,10 +180,6 @@ mod tests {
     use super::super::color::ColorDef;
     use super::*;
     use console::Color;
-
-    // =========================================================================
-    // Alias parsing tests
-    // =========================================================================
 
     #[test]
     fn test_parse_alias() {
@@ -252,10 +201,6 @@ mod tests {
         let def = StyleDefinition::parse(&value, "test").unwrap();
         assert!(matches!(def, StyleDefinition::Alias(s) if s == "my-style"));
     }
-
-    // =========================================================================
-    // Shorthand parsing tests
-    // =========================================================================
 
     #[test]
     fn test_parse_shorthand_single_attribute() {
@@ -297,10 +242,6 @@ mod tests {
         }
     }
 
-    // =========================================================================
-    // Full definition parsing tests
-    // =========================================================================
-
     #[test]
     fn test_parse_mapping_simple() {
         let yaml = r#"
@@ -336,16 +277,16 @@ mod tests {
 
         match def {
             StyleDefinition::Attributes { base, light, dark } => {
-                assert_eq!(base.fg, Some(ColorDef::Named(Color::White))); // gray maps to white
+                assert_eq!(base.fg, Some(ColorDef::Named(Color::White)));
                 assert_eq!(base.bold, Some(true));
 
                 let light = light.expect("light should be Some");
                 assert_eq!(light.fg, Some(ColorDef::Named(Color::Black)));
-                assert!(light.bold.is_none()); // Not overridden in light
+                assert!(light.bold.is_none());
 
                 let dark = dark.expect("dark should be Some");
                 assert_eq!(dark.fg, Some(ColorDef::Named(Color::White)));
-                assert!(dark.bold.is_none()); // Not overridden in dark
+                assert!(dark.bold.is_none());
             }
             _ => panic!("Expected Attributes"),
         }
@@ -389,10 +330,6 @@ mod tests {
         }
     }
 
-    // =========================================================================
-    // Edge cases
-    // =========================================================================
-
     #[test]
     fn test_parse_empty_string_error() {
         let value = serde_yaml::Value::String("".into());
@@ -428,10 +365,6 @@ mod tests {
         ));
     }
 
-    // =========================================================================
-    // is_alias and alias_target tests
-    // =========================================================================
-
     #[test]
     fn test_is_alias_true() {
         let def = StyleDefinition::Alias("target".into());
@@ -449,10 +382,6 @@ mod tests {
         assert!(!def.is_alias());
         assert!(def.alias_target().is_none());
     }
-
-    // =========================================================================
-    // is_likely_alias tests
-    // =========================================================================
 
     #[test]
     fn test_is_likely_alias_true() {

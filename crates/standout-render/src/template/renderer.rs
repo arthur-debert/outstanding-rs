@@ -1,34 +1,10 @@
-//! Pre-compiled template renderer.
-//!
-//! This module provides [`Renderer`], a high-level interface for template
-//! rendering that supports both inline and file-based templates.
-//!
-//! # File-Based Templates
-//!
-//! Templates can be loaded from directories on the filesystem:
-//!
-//! ```rust,ignore
-//! use standout_render::{Renderer, Theme};
-//!
-//! let mut renderer = Renderer::new(Theme::new())?;
-//! renderer.add_template_dir("./templates")?;
-//!
-//! // Renders templates/todos/list.jinja
-//! let output = renderer.render("todos/list", &data)?;
-//! ```
-//!
-//! See [`Renderer::add_template_dir`] for details on template resolution
-//! and the [`super::registry`] module for the underlying mechanism.
-//!
-//! # Development vs Release
-//!
-//! In development mode (`debug_assertions` enabled):
-//! - Template content is re-read from disk on each render
-//! - This enables hot reloading without recompilation
-//!
-//! In release mode:
-//! - Templates can be embedded at compile time for deployment
-//! - Use [`Renderer::with_embedded`] to load pre-embedded templates
+//! [`Renderer`] registers templates once (inline, from a directory, or
+//! embedded) and reuses them across renders. Lookup priority is inline >
+//! file-based > embedded when names collide. In debug builds, file-based
+//! templates are re-read from disk on each render (hot reload); embedded
+//! content is used otherwise. File-based template names must be unique
+//! across all registered directories — a collision is an error, not a
+//! silent shadow.
 
 use std::cell::RefCell;
 use std::collections::HashMap;
@@ -47,128 +23,27 @@ use crate::AmbiguousWidth;
 use crate::ColorPolicy;
 use crate::EmbeddedTemplates;
 
-/// A renderer with pre-registered templates.
-///
-/// Use this when your application has multiple templates that are rendered
-/// repeatedly. Templates are compiled once and reused.
-///
-/// # Template Sources
-///
-/// Templates can come from multiple sources:
-///
-/// 1. Inline strings via [`add_template`](Self::add_template) - highest priority
-/// 2. Filesystem directories via [`add_template_dir`](Self::add_template_dir)
-/// 3. Embedded content via [`with_embedded`](Self::with_embedded)
-///
-/// When the same name exists in multiple sources, inline templates take
-/// precedence over file-based templates.
-///
-/// Note: File-based templates must have unique names across all registered
-/// directories. If the same name exists in multiple directories, it is treated
-/// as a collision error.
-///
-/// # Example: Inline Templates
-///
-/// ```rust
-/// use standout_render::{Renderer, Theme};
-/// use console::Style;
-/// use serde::Serialize;
-///
-/// let theme = Theme::new()
-///     .add("title", Style::new().bold())
-///     .add("count", Style::new().cyan());
-///
-/// let mut renderer = Renderer::new(theme).unwrap();
-/// renderer.add_template("header", r#"[title]{{ title }}[/title]"#).unwrap();
-/// renderer.add_template("stats", r#"Count: [count]{{ n }}[/count]"#).unwrap();
-///
-/// #[derive(Serialize)]
-/// struct Header { title: String }
-///
-/// #[derive(Serialize)]
-/// struct Stats { n: usize }
-///
-/// let h = renderer.render("header", &Header { title: "Report".into() }).unwrap();
-/// let s = renderer.render("stats", &Stats { n: 42 }).unwrap();
-/// ```
-///
-/// # Example: File-Based Templates
-///
-/// ```rust,ignore
-/// use standout_render::{Renderer, Theme};
-///
-/// let mut renderer = Renderer::new(Theme::new())?;
-///
-/// // Register template directory
-/// renderer.add_template_dir("./templates")?;
-///
-/// // Templates are resolved by relative path:
-/// // "config" -> ./templates/config.jinja
-/// // "todos/list" -> ./templates/todos/list.jinja
-/// let output = renderer.render("config", &data)?;
-/// ```
-///
-/// # Hot Reloading (Development)
-///
-/// In debug builds, file-based templates are re-read from disk on each render.
-/// This enables editing templates without recompiling:
-///
-/// ```bash
-/// # Edit template
-/// vim templates/todos/list.jinja
-///
-/// # Re-run - changes are picked up immediately
-/// cargo run -- todos list
-/// ```
 pub struct Renderer {
     engine: SharedTemplateEngine,
-    /// Registry for file-based template resolution
     registry: TemplateRegistry,
-    /// Whether the registry has been initialized from directories
     registry_initialized: bool,
-    /// Registered template directories (for lazy initialization)
     template_dirs: Vec<std::path::PathBuf>,
-    /// Theme carried onto each [`crate::RenderRequest`].
     theme: Theme,
-    /// Output mode for this renderer.
     output_mode: OutputMode,
-    /// Explicit ambiguous-width policy; narrow preserves existing behavior.
     ambiguous_width: AmbiguousWidth,
-    /// Optional icon-mode overlay applied over [`TargetProperties::detect`].
     icon_mode: Option<crate::IconMode>,
-    /// Optional color-scheme overlay applied over [`TargetProperties::detect`].
     color_scheme: Option<crate::ColorMode>,
 }
 
 impl Renderer {
-    /// Creates a new renderer with automatic color detection.
-    ///
-    /// Color mode is detected automatically from the OS settings.
-    /// Styles are resolved for the detected mode.
-    ///
-    /// # Errors
-    ///
-    /// Returns an error if any style aliases are invalid (dangling or cyclic).
-    /// Returns an error if any style aliases are invalid (dangling or cyclic).
     pub fn new(theme: Theme) -> Result<Self, RenderError> {
         Self::with_output(theme, OutputMode::Auto)
     }
 
-    /// Creates a new renderer with explicit output mode.
-    ///
-    /// Color mode is detected automatically from the OS settings.
-    /// Styles are resolved for the detected mode.
-    ///
-    /// # Errors
-    ///
-    /// Returns an error if any style aliases are invalid (dangling or cyclic).
     pub fn with_output(theme: Theme, mode: OutputMode) -> Result<Self, RenderError> {
         Self::with_output_and_engine(theme, mode, Box::new(MiniJinjaEngine::new()))
     }
 
-    /// Creates a new renderer with explicit output mode and template engine.
-    ///
-    /// This allows injecting a custom template engine implementation.
     pub fn with_output_and_engine(
         theme: Theme,
         mode: OutputMode,
@@ -191,104 +66,37 @@ impl Renderer {
         })
     }
 
-    /// Sets how East Asian Ambiguous characters are measured.
-    ///
-    /// Standout does not infer this from locale settings. The default is
-    /// [`AmbiguousWidth::Narrow`] for compatibility.
     pub fn set_ambiguous_width(&mut self, policy: AmbiguousWidth) {
         self.ambiguous_width = policy;
     }
 
-    /// Configures how East Asian Ambiguous characters are measured.
     pub fn with_ambiguous_width(mut self, policy: AmbiguousWidth) -> Self {
         self.set_ambiguous_width(policy);
         self
     }
 
-    /// Overlays icon mode on the detected [`TargetProperties`] for each render.
     pub fn set_icon_mode(&mut self, mode: crate::IconMode) {
         self.icon_mode = Some(mode);
     }
 
-    /// Overlays icon mode on the detected [`TargetProperties`] for each render.
     pub fn with_icon_mode(mut self, mode: crate::IconMode) -> Self {
         self.set_icon_mode(mode);
         self
     }
 
-    /// Overlays color-scheme on the detected [`TargetProperties`] for each render.
     pub fn set_color_scheme(&mut self, scheme: crate::ColorMode) {
         self.color_scheme = Some(scheme);
     }
 
-    /// Registers a named inline template.
-    ///
-    /// Inline templates have the highest priority and will shadow any
-    /// file-based templates with the same name.
-    ///
-    /// The template is compiled immediately; errors are returned if syntax is invalid.
-    ///
-    /// # Example
-    ///
-    /// ```rust,ignore
-    /// renderer.add_template("header", r#"[title]{{ title }}[/title]"#)?;
-    /// ```
     pub fn add_template(&mut self, name: &str, source: &str) -> Result<(), RenderError> {
         self.engine.borrow_mut().add_template(name, source)?;
         self.registry.add_inline(name, source);
         Ok(())
     }
 
-    /// Adds a directory to search for template files.
-    ///
-    /// Templates in the directory are resolved by their relative path without
-    /// extension. For example, with directory `./templates`:
-    ///
-    /// - `"config"` → `./templates/config.jinja`
-    /// - `"todos/list"` → `./templates/todos/list.jinja`
-    ///
-    /// # Extension Priority
-    ///
-    /// Recognized extensions in priority order: `.jinja`, `.jinja2`, `.j2`, `.txt`
-    ///
-    /// If multiple files share the same base name with different extensions,
-    /// the higher-priority extension wins for extensionless lookups.
-    ///
-    /// # Multiple Directories
-    ///
-    /// Multiple directories can be registered. However, template names must be
-    /// unique across all directories.
-    ///
-    /// # Collision Detection
-    ///
-    /// If the same template name exists in multiple directories, an error
-    /// is returned (either immediately or during `refresh()`) with details
-    /// about the conflicting files. Strict uniqueness is enforced to prevent
-    /// ambiguous template resolution.
-    ///
-    /// # Lazy Initialization
-    ///
-    /// Directory walking happens lazily on first render (or explicit [`refresh`](Self::refresh)).
-    /// In development mode, this is automatic. Call `refresh()` if you add
-    /// directories after the first render.
-    ///
-    /// # Errors
-    ///
-    /// Returns an error if the directory doesn't exist or isn't readable.
-    ///
-    /// # Example
-    ///
-    /// ```rust,ignore
-    /// renderer.add_template_dir("./templates")?;
-    /// renderer.add_template_dir("./plugin-templates")?;
-    ///
-    /// // "config" resolves from first directory that has it
-    /// let output = renderer.render("config", &data)?;
-    /// ```
     pub fn add_template_dir<P: AsRef<Path>>(&mut self, path: P) -> Result<(), RenderError> {
         let path = path.as_ref();
 
-        // Validate the directory exists
         if !path.exists() {
             return Err(RenderError::OperationError(format!(
                 "Template directory does not exist: {}",
@@ -303,118 +111,36 @@ impl Renderer {
         }
 
         self.template_dirs.push(path.to_path_buf());
-        // Mark as needing re-initialization
         self.registry_initialized = false;
         Ok(())
     }
 
-    /// Loads pre-embedded templates for release builds.
-    ///
-    /// Embedded templates are stored directly in memory, avoiding filesystem
-    /// access at runtime. This is useful for deployment where template files
-    /// may not be available.
-    ///
-    /// # Arguments
-    ///
-    /// * `templates` - Map of template name to content
-    ///
-    /// # Example
-    ///
-    /// ```rust,ignore
-    /// // Generated at build time
-    /// let embedded = standout_render::embed_templates!("./templates");
-    ///
-    /// let mut renderer = Renderer::new(theme)?;
-    /// renderer.with_embedded(embedded);
-    /// ```
     pub fn with_embedded(&mut self, templates: HashMap<String, String>) -> &mut Self {
         self.registry.add_embedded(templates);
         self
     }
 
-    /// Loads templates from an `EmbeddedTemplates` source.
-    ///
-    /// This is the recommended way to use `embed_templates!` with `Renderer`.
-    /// The embedded templates are converted to a registry that supports both
-    /// extensionless and with-extension lookups.
-    ///
-    /// In debug mode, if the source path exists, templates are loaded from disk
-    /// (enabling hot-reload). Otherwise, embedded content is used.
-    ///
-    /// # Example
-    ///
-    /// ```rust,ignore
-    /// use standout_render::{embed_templates, Renderer, Theme};
-    ///
-    /// let mut renderer = Renderer::new(Theme::new())?;
-    /// renderer.with_embedded_source(embed_templates!("./templates"));
-    ///
-    /// // Now you can render any template from the embedded source
-    /// let output = renderer.render("list", &data)?;
-    /// ```
     pub fn with_embedded_source(&mut self, source: EmbeddedTemplates) -> &mut Self {
-        // Convert EmbeddedTemplates to TemplateRegistry
         let template_registry = TemplateRegistry::from(source);
 
-        // Add all templates from the registry to both engine and registry
-        // This mirrors the behavior of add_template()
         for name in template_registry.names() {
             if let Ok(content) = template_registry.get_content(name) {
-                // Add to engine (required for includes to work)
-                // Ignore errors for duplicate names (e.g., "foo" and "foo.jinja" have same content)
                 let _ = self.engine.borrow_mut().add_template(name, &content);
-                // Add to registry for name resolution
                 self.registry.add_inline(name, &content);
             }
         }
         self
     }
 
-    /// Sets the output mode for subsequent renders.
-    ///
-    /// This allows changing the output mode without creating a new renderer,
-    /// which is useful when the same templates need to be rendered with
-    /// different output modes.
-    ///
-    /// # Example
-    ///
-    /// ```rust,ignore
-    /// let mut renderer = Renderer::new(theme)?;
-    ///
-    /// // Render with terminal colors
-    /// renderer.set_output_mode(OutputMode::Term);
-    /// let colored = renderer.render("list", &data)?;
-    ///
-    /// // Render plain text
-    /// renderer.set_output_mode(OutputMode::Text);
-    /// let plain = renderer.render("list", &data)?;
-    /// ```
     pub fn set_output_mode(&mut self, mode: OutputMode) {
         self.output_mode = mode;
     }
 
-    /// Forces a rebuild of the template resolution map.
-    ///
-    /// This re-walks all registered template directories and rebuilds the
-    /// resolution map. Call this if:
-    ///
-    /// - You've added template directories after the first render
-    /// - Template files have been added/removed from disk
-    ///
-    /// In development mode, this is called automatically on first render.
-    ///
-    /// # Errors
-    ///
-    /// Returns an error if directory walking fails or template collisions are detected.
     pub fn refresh(&mut self) -> Result<(), RenderError> {
         self.initialize_registry()
     }
 
-    /// Initializes the registry from registered template directories.
-    ///
-    /// Called lazily on first render or explicitly via `refresh()`.
     fn initialize_registry(&mut self) -> Result<(), RenderError> {
-        // Clear existing file-based templates (keep inline)
         let mut new_registry = TemplateRegistry::new();
         for name in self.registry.names() {
             if let Ok(ResolvedTemplate::Inline(content)) = self.registry.get(name) {
@@ -422,7 +148,6 @@ impl Renderer {
             }
         }
 
-        // Walk each directory and collect templates
         for dir in &self.template_dirs {
             let files = walk_template_dir(dir).map_err(|e| {
                 RenderError::OperationError(format!(
@@ -442,7 +167,6 @@ impl Renderer {
         Ok(())
     }
 
-    /// Ensures the registry is initialized, doing so lazily if needed.
     fn ensure_registry_initialized(&mut self) -> Result<(), RenderError> {
         if !self.registry_initialized && !self.template_dirs.is_empty() {
             self.initialize_registry()?;
@@ -450,27 +174,6 @@ impl Renderer {
         Ok(())
     }
 
-    /// Renders a registered template with the given data.
-    ///
-    /// Templates are looked up in this order:
-    ///
-    /// 1. Inline templates (added via [`add_template`](Self::add_template))
-    /// 2. File-based templates (from [`add_template_dir`](Self::add_template_dir))
-    ///
-    /// # Hot Reloading (Development)
-    ///
-    /// In debug builds, file-based templates are re-read from disk on each render.
-    /// This enables editing templates without recompiling the application.
-    ///
-    /// # Errors
-    ///
-    /// Returns an error if the template name is not found or rendering fails.
-    ///
-    /// # Example
-    ///
-    /// ```rust,ignore
-    /// let output = renderer.render("todos/list", &data)?;
-    /// ```
     pub fn render<T: Serialize>(&mut self, name: &str, data: &T) -> Result<String, RenderError> {
         self.ensure_registry_initialized()?;
         let is_inline = self
@@ -507,7 +210,6 @@ impl Renderer {
         render_request(&request)
     }
 
-    /// Gets template content, re-reading from disk in debug mode.
     fn get_template_content(&self, name: &str) -> Result<String, RenderError> {
         let resolved = self
             .registry
@@ -516,25 +218,16 @@ impl Renderer {
 
         match resolved {
             ResolvedTemplate::Inline(content) => Ok(content),
-            ResolvedTemplate::File(path) => {
-                // In debug mode, always re-read for hot reloading
-                // In release mode, we still read (could optimize with caching)
-                std::fs::read_to_string(&path).map_err(|e| {
-                    RenderError::IoError(std::io::Error::other(format!(
-                        "Failed to read template {}: {}",
-                        path.display(),
-                        e
-                    )))
-                })
-            }
+            ResolvedTemplate::File(path) => std::fs::read_to_string(&path).map_err(|e| {
+                RenderError::IoError(std::io::Error::other(format!(
+                    "Failed to read template {}: {}",
+                    path.display(),
+                    e
+                )))
+            }),
         }
     }
 
-    /// Returns the number of registered templates.
-    ///
-    /// This includes both inline and file-based templates.
-    /// Note: File-based templates are counted with both extensionless and
-    /// with-extension names, so this may be higher than the number of files.
     pub fn template_count(&self) -> usize {
         self.registry.len()
     }
@@ -626,10 +319,6 @@ mod tests {
         assert!(result.is_ok());
     }
 
-    // =========================================================================
-    // File-based template tests
-    // =========================================================================
-
     fn create_template_file(dir: &Path, relative_path: &str, content: &str) {
         let full_path = dir.join(relative_path);
         if let Some(parent) = full_path.parent() {
@@ -704,7 +393,6 @@ mod tests {
         #[derive(Serialize)]
         struct Empty {}
 
-        // Both with and without extension should work
         assert!(renderer.render("config", &Empty {}).is_ok());
         assert!(renderer.render("config.jinja", &Empty {}).is_ok());
     }
@@ -717,7 +405,6 @@ mod tests {
         let mut renderer = Renderer::new(Theme::new()).unwrap();
         renderer.add_template_dir(temp_dir.path()).unwrap();
 
-        // Add inline template with same name (should shadow file)
         renderer.add_template("config", "From inline").unwrap();
 
         #[derive(Serialize)]
@@ -745,14 +432,11 @@ mod tests {
         #[derive(Serialize)]
         struct Empty {}
 
-        // First render
         let output1 = renderer.render("hot", &Empty {}).unwrap();
         assert_eq!(output1, "Version 1");
 
-        // Modify the file
         create_template_file(temp_dir.path(), "hot.jinja", "Version 2");
 
-        // Second render should see the change (hot reload)
         let output2 = renderer.render("hot", &Empty {}).unwrap();
         assert_eq!(output2, "Version 2");
     }
@@ -760,7 +444,6 @@ mod tests {
     #[test]
     fn test_renderer_extension_priority() {
         let temp_dir = TempDir::new().unwrap();
-        // Create files with different extensions
         create_template_file(temp_dir.path(), "config.j2", "From j2");
         create_template_file(temp_dir.path(), "config.jinja", "From jinja");
 
@@ -770,7 +453,6 @@ mod tests {
         #[derive(Serialize)]
         struct Empty {}
 
-        // Extensionless should resolve to .jinja (higher priority)
         let output = renderer.render("config", &Empty {}).unwrap();
         assert_eq!(output, "From jinja");
     }
@@ -798,7 +480,6 @@ mod tests {
     fn test_renderer_set_output_mode() {
         use console::Style;
 
-        // Use force_styling(true) to ensure ANSI codes are output even in tests
         let theme = Theme::new().add("highlight", Style::new().green().force_styling(true));
         let mut renderer = Renderer::with_output(theme, OutputMode::Term).unwrap();
         renderer
@@ -808,7 +489,6 @@ mod tests {
         #[derive(Serialize)]
         struct Empty {}
 
-        // With Term mode, should have ANSI codes
         let term_output = renderer.render("test", &Empty {}).unwrap();
         assert!(
             term_output.contains("\x1b["),
@@ -816,7 +496,6 @@ mod tests {
             term_output
         );
 
-        // Switch to Text mode
         renderer.set_output_mode(OutputMode::Text);
         let text_output = renderer.render("test", &Empty {}).unwrap();
         assert_eq!(text_output, "hello", "Expected plain text in Text mode");
@@ -826,7 +505,6 @@ mod tests {
     fn test_renderer_with_embedded_source() {
         use crate::{EmbeddedSource, TemplateResource};
 
-        // Create an EmbeddedTemplates source (simulating embed_templates! output)
         static ENTRIES: &[(&str, &str)] = &[
             ("greeting.jinja", "Hello, {{ name }}!"),
             ("_partial.jinja", "PARTIAL"),
@@ -846,7 +524,6 @@ mod tests {
             name: String,
         }
 
-        // Test basic rendering
         let output = renderer
             .render(
                 "greeting",
@@ -857,7 +534,6 @@ mod tests {
             .unwrap();
         assert_eq!(output, "Hello, World!");
 
-        // Test extensionless access
         let output2 = renderer
             .render(
                 "greeting.jinja",
@@ -868,7 +544,6 @@ mod tests {
             .unwrap();
         assert_eq!(output2, "Hello, Test!");
 
-        // Test includes work with extensionless names
         #[derive(Serialize)]
         struct Empty {}
         let output3 = renderer.render("with_include", &Empty {}).unwrap();
@@ -946,11 +621,6 @@ mod tests {
         }
 
         let output = renderer.render("test", &Data { val: 42 }).unwrap();
-        // The mock engine formats as "Mock Render: {}" or "Mock Named: {}"
-        // Since we added it as named template, render() calls render_named logic.
-        // Wait, render() logic:
-        // if debug_assertions || is_inline -> render_named
-        // The MockEngine::render_named returns "Mock Named: content data={...}"
         assert_eq!(output, "Mock Named: content data={\"val\":42}");
     }
 
@@ -962,7 +632,6 @@ mod tests {
         let mut renderer =
             Renderer::with_output_and_engine(Theme::new(), OutputMode::Text, engine).unwrap();
 
-        // Add an inline template using SimpleEngine syntax
         renderer.add_template("welcome", "Hello, {name}!").unwrap();
 
         #[derive(Serialize)]
@@ -970,7 +639,6 @@ mod tests {
             name: String,
         }
 
-        // Render it
         let output = renderer
             .render(
                 "welcome",
@@ -981,10 +649,6 @@ mod tests {
             .unwrap();
         assert_eq!(output, "Hello, Standout!");
     }
-
-    // =========================================================================
-    // Renderer icon tests
-    // =========================================================================
 
     #[test]
     fn test_renderer_with_icons() {
@@ -1040,7 +704,6 @@ mod tests {
 
     #[test]
     fn test_renderer_without_icons() {
-        // Ensure renderer works fine without icons
         let theme = Theme::new().add("ok", Style::new().green());
         let mut renderer = Renderer::with_output(theme, OutputMode::Text).unwrap();
         renderer

@@ -1,15 +1,3 @@
-//! Input source implementations.
-//!
-//! This module contains the built-in input sources:
-//!
-//! - [`ArgSource`] - Read from CLI arguments
-//! - [`FlagSource`] - Read from CLI flags
-//! - [`StdinSource`] - Read from piped stdin
-//! - [`EnvSource`] - Read from environment variables
-//! - [`ClipboardSource`] - Read from system clipboard
-//! - [`DefaultSource`] - Provide a fallback value
-//! - [`EditorSource`] - Read from external text editor (requires `editor` feature)
-
 mod arg;
 mod clipboard;
 mod default;

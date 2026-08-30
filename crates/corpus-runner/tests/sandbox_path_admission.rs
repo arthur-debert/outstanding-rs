@@ -1,16 +1,7 @@
-//! Regression coverage for the PATH-directory admission mechanism the agent
-//! phase's sandbox policy relies on (`sandbox::system_read_roots`):
-//! directories prepended to PATH before a run become explicitly admitted
-//! read roots on both the macOS Seatbelt and Linux Landlock backends, so
-//! fixture bytes staged there (rather than relying on macOS's allow-default
-//! fallback for anything not explicitly denied) are readable under the
-//! enforced sandbox on both platforms. This is the mechanism
-//! `walking_skeleton.rs` uses to stage its canned solution and agent script
-//! outside the run workspace, whose name isn't known until `run()` claims
-//! it, so nothing can be pre-staged into it directly.
-//!
-//! Runs alone in its own test binary: prepending to PATH is process-wide
-//! state (see `common::install_fake_cargo`'s doc comment).
+// Regression coverage for PATH-directory admission (`sandbox::system_read_roots`):
+// directories prepended to PATH become admitted read roots under the
+// enforced sandbox, on both backends. Runs alone in its own test binary
+// since prepending to PATH is process-wide state.
 
 #![cfg(unix)]
 
@@ -28,8 +19,6 @@ fn sandboxed_agent_can_read_a_file_staged_in_a_path_admitted_directory() {
     let staged = tools_dir.join("solution.txt");
     fs::write(&staged, "canned solution\n").unwrap();
 
-    // Prepending `tools_dir` to PATH is exactly what admits it: see
-    // `sandbox::system_read_roots`'s PATH-directory handling.
     std::env::set_var(
         "PATH",
         format!(

@@ -1,47 +1,21 @@
-//! Environment abstractions for testability.
-//!
-//! This module provides traits that abstract over OS interactions,
-//! allowing tests to run without depending on actual terminal state,
-//! stdin piping, or clipboard contents.
-//!
-//! Production collection receives readers through [`crate::InputSources`].
-//! Tests construct mocks ([`MockStdin`], [`MockClipboard`]) and put them on
-//! that same type; there is no process-global default-reader override.
-
 use std::io::{self, IsTerminal, Read};
 
 use crate::InputError;
 
-/// Abstraction over stdin reading.
-///
-/// This trait allows tests to mock stdin without actually piping data.
 pub trait StdinReader: Send + Sync {
-    /// Check if stdin is a terminal (TTY).
-    ///
-    /// Returns `true` if stdin is interactive, `false` if piped.
     fn is_terminal(&self) -> bool;
 
-    /// Read all content from stdin.
-    ///
-    /// This should only be called if `is_terminal()` returns `false`.
     fn read_to_string(&self) -> io::Result<String>;
 }
 
-/// Abstraction over environment variables.
 pub trait EnvReader: Send + Sync {
-    /// Get an environment variable value.
     fn var(&self, name: &str) -> Option<String>;
 }
 
-/// Abstraction over clipboard access.
 pub trait ClipboardReader: Send + Sync {
-    /// Read text from the system clipboard.
     fn read(&self) -> Result<Option<String>, InputError>;
 }
 
-// === Real implementations ===
-
-/// Real stdin reader using std::io.
 #[derive(Debug, Default, Clone, Copy)]
 pub struct RealStdin;
 
@@ -57,7 +31,6 @@ impl StdinReader for RealStdin {
     }
 }
 
-/// Real environment variable reader.
 #[derive(Debug, Default, Clone, Copy)]
 pub struct RealEnv;
 
@@ -67,7 +40,6 @@ impl EnvReader for RealEnv {
     }
 }
 
-/// Real clipboard reader using platform commands.
 #[derive(Debug, Default, Clone, Copy)]
 pub struct RealClipboard;
 
@@ -121,11 +93,6 @@ fn read_clipboard_impl() -> Result<Option<String>, InputError> {
     ))
 }
 
-// === Mock implementations for testing ===
-
-/// Mock stdin reader for testing.
-///
-/// Allows tests to simulate both terminal and piped stdin.
 #[derive(Debug, Clone)]
 pub struct MockStdin {
     is_terminal: bool,
@@ -133,7 +100,6 @@ pub struct MockStdin {
 }
 
 impl MockStdin {
-    /// Create a mock that simulates a terminal (no piped input).
     pub fn terminal() -> Self {
         Self {
             is_terminal: true,
@@ -141,7 +107,6 @@ impl MockStdin {
         }
     }
 
-    /// Create a mock that simulates piped input.
     pub fn piped(content: impl Into<String>) -> Self {
         Self {
             is_terminal: false,
@@ -149,7 +114,6 @@ impl MockStdin {
         }
     }
 
-    /// Create a mock that simulates empty piped input.
     pub fn piped_empty() -> Self {
         Self {
             is_terminal: false,
@@ -168,19 +132,16 @@ impl StdinReader for MockStdin {
     }
 }
 
-/// Mock environment variable reader for testing.
 #[derive(Debug, Clone, Default)]
 pub struct MockEnv {
     vars: std::collections::HashMap<String, String>,
 }
 
 impl MockEnv {
-    /// Create an empty mock environment.
     pub fn new() -> Self {
         Self::default()
     }
 
-    /// Add an environment variable.
     pub fn with_var(mut self, name: impl Into<String>, value: impl Into<String>) -> Self {
         self.vars.insert(name.into(), value.into());
         self
@@ -193,19 +154,16 @@ impl EnvReader for MockEnv {
     }
 }
 
-/// Mock clipboard reader for testing.
 #[derive(Debug, Clone, Default)]
 pub struct MockClipboard {
     content: Option<String>,
 }
 
 impl MockClipboard {
-    /// Create an empty clipboard mock.
     pub fn empty() -> Self {
         Self { content: None }
     }
 
-    /// Create a clipboard mock with content.
     pub fn with_content(content: impl Into<String>) -> Self {
         Self {
             content: Some(content.into()),

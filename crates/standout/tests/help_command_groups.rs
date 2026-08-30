@@ -32,21 +32,17 @@ fn test_grouped_help_renders_titles() {
 
     let output = render_help(&cmd, Some(config)).unwrap();
 
-    // Group titles appear uppercased
     assert!(output.contains("COMMANDS"), "output:\n{output}");
     assert!(output.contains("DANGER ZONE"), "output:\n{output}");
 
-    // Group help text renders
     assert!(
         output.contains("These commands are destructive."),
         "output:\n{output}"
     );
 
-    // Ungrouped command auto-appended to "Other"
     assert!(output.contains("OTHER"), "output:\n{output}");
     assert!(output.contains("config"), "output:\n{output}");
 
-    // Commands appear in the right order
     assert!(output.contains("init"), "output:\n{output}");
     assert!(output.contains("list"), "output:\n{output}");
     assert!(output.contains("delete"), "output:\n{output}");
@@ -68,7 +64,7 @@ fn test_separators_produce_blank_lines() {
             commands: vec![
                 Some("open".into()),
                 Some("view".into()),
-                None, // separator
+                None,
                 Some("pin".into()),
                 Some("unpin".into()),
             ],
@@ -78,16 +74,12 @@ fn test_separators_produce_blank_lines() {
 
     let output = render_help(&cmd, Some(config)).unwrap();
 
-    // All commands appear
     assert!(output.contains("open"), "output:\n{output}");
     assert!(output.contains("view"), "output:\n{output}");
     assert!(output.contains("pin"), "output:\n{output}");
     assert!(output.contains("unpin"), "output:\n{output}");
 
-    // The separator produces a blank line between "view" line and "pin" line
     let lines: Vec<&str> = output.lines().collect();
-    // Match the row's own name at the start of the cell — "pin" is a substring
-    // of "unpin", which a bare `contains` would find first.
     let row = |name: &str| {
         lines
             .iter()
@@ -96,7 +88,6 @@ fn test_separators_produce_blank_lines() {
     };
     let view_idx = row("view");
     let pin_idx = row("pin");
-    // There should be a blank line between them
     assert!(
         pin_idx > view_idx + 1,
         "Expected blank line separator between view and pin, lines:\n{}",
@@ -124,12 +115,10 @@ fn test_no_groups_backward_compat() {
 
     let output = render_help(&cmd, Some(config)).unwrap();
 
-    // Default "COMMANDS" header
     assert!(output.contains("COMMANDS"), "output:\n{output}");
     assert!(output.contains("foo"), "output:\n{output}");
     assert!(output.contains("bar"), "output:\n{output}");
 
-    // No "OTHER" group when no groups are configured
     assert!(!output.contains("OTHER"), "output:\n{output}");
 }
 
@@ -214,12 +203,10 @@ fn test_multiple_groups_preserve_order() {
 
     let output = render_help(&cmd, Some(config)).unwrap();
 
-    // Alpha group appears before Zeta group
     let alpha_pos = output.find("ALPHA").unwrap();
     let zeta_pos = output.find("ZETA").unwrap();
     assert!(alpha_pos < zeta_pos, "output:\n{output}");
 
-    // Ungrouped m_middle goes to Other
     let other_pos = output.find("OTHER").unwrap();
     assert!(zeta_pos < other_pos, "output:\n{output}");
     assert!(output.contains("m_middle"), "output:\n{output}");
@@ -245,7 +232,6 @@ fn test_group_help_text_renders_below_title() {
 
     let output = render_help(&cmd, Some(config)).unwrap();
 
-    // Help text appears between title and first command
     let title_pos = output.find("PER PAD").unwrap();
     let help_pos = output.find("These commands accept").unwrap();
     let first_cmd_pos = output.find("  view").unwrap();
@@ -256,11 +242,6 @@ fn test_group_help_text_renders_below_title() {
     );
 }
 
-// =========================================================================
-// Help handling opt-in and uniform interception tests
-// =========================================================================
-
-/// Helper: build an App with help_handling enabled and command groups.
 fn app_with_groups() -> App {
     App::builder()
         .help_handling(true)
@@ -349,7 +330,6 @@ fn test_subcommand_help_flag_renders_subcommand_help() {
     let result = app.get_matches_from(cmd, ["myapp", "status", "--help"]);
     let output = extract_help(result);
     assert!(output.contains("status"), "output:\n{output}");
-    // Should show the subcommand's help, not the root help
     assert!(
         !output.contains("CORE"),
         "should not show root groups:\n{output}"
@@ -367,11 +347,9 @@ fn test_subcommand_help_short_flag() {
 
 #[test]
 fn test_help_handling_off_does_not_intercept() {
-    // Without help_handling, the "help" subcommand is NOT added by standout
     let app = App::builder().build().unwrap();
     let cmd = test_cmd();
     let result = app.get_matches_from(cmd, ["myapp", "status"]);
-    // Should get normal matches, not help
     match result {
         HelpResult::Matches(m) => {
             assert_eq!(m.subcommand_name(), Some("status"));
@@ -382,7 +360,6 @@ fn test_help_handling_off_does_not_intercept() {
 
 #[test]
 fn test_help_handling_off_help_flag_returns_clap_error() {
-    // Without help_handling, --help goes through clap's error path
     let app = App::builder().build().unwrap();
     let cmd = test_cmd();
     let result = app.get_matches_from(cmd, ["myapp", "--help"]);
@@ -468,8 +445,6 @@ fn test_build_succeeds_with_help_handling_and_topics() {
 
 #[test]
 fn test_help_flag_works_with_required_args() {
-    // A subcommand with required positional args should still show help
-    // when --help is passed (clap's native short-circuit behavior).
     let app = App::builder().help_handling(true).build().unwrap();
     let cmd = Command::new("myapp").subcommand(
         Command::new("greet")

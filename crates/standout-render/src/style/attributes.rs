@@ -1,24 +1,8 @@
-//! Style attribute types and merging logic.
-//!
-//! This module defines [`StyleAttributes`], the intermediate representation of
-//! style properties parsed from YAML before conversion to `console::Style`.
-//!
-//! # Attribute Merging
-//!
-//! When resolving adaptive styles, mode-specific attributes merge onto base:
-//!
-//! ```yaml
-//! footer:
-//!   fg: gray        # Base
-//!   bold: true      # Shared
-//!   light:
-//!     fg: black     # Override in light mode
-//!   dark:
-//!     fg: white     # Override in dark mode
-//! ```
-//!
-//! The merge uses `Option<T>` semantics: `Some` values in the override replace
-//! base values, `None` values preserve the base.
+//! [`StyleAttributes`] is the intermediate form of style properties parsed
+//! from YAML before conversion to `console::Style`. Adaptive resolution
+//! merges mode-specific attributes onto a base using `Option<T>` semantics —
+//! `Some` in the override replaces the base, `None` preserves it — e.g. a
+//! `light:`/`dark:` block overrides only the keys it sets.
 
 use console::Style;
 
@@ -27,43 +11,25 @@ use crate::colorspace::ThemePalette;
 use super::color::ColorDef;
 use super::error::StylesheetError;
 
-/// Parsed style attributes from YAML.
-///
-/// All fields are optional to support both full definitions and partial overrides.
-/// When merging, `Some` values override, `None` values preserve the base.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct StyleAttributes {
-    /// Foreground (text) color.
     pub fg: Option<ColorDef>,
-    /// Background color.
     pub bg: Option<ColorDef>,
-    /// Bold text.
     pub bold: Option<bool>,
-    /// Dimmed/faded text.
     pub dim: Option<bool>,
-    /// Italic text.
     pub italic: Option<bool>,
-    /// Underlined text.
     pub underline: Option<bool>,
-    /// Blinking text (limited terminal support).
     pub blink: Option<bool>,
-    /// Swap fg/bg colors.
     pub reverse: Option<bool>,
-    /// Hidden text.
     pub hidden: Option<bool>,
-    /// Strikethrough text.
     pub strikethrough: Option<bool>,
 }
 
 impl StyleAttributes {
-    /// Creates empty attributes (all None).
     pub fn new() -> Self {
         Self::default()
     }
 
-    /// Parses attributes from a YAML mapping.
-    ///
-    /// Ignores `light` and `dark` keys (handled separately by the parser).
     pub fn parse_mapping(
         map: &serde_yaml::Mapping,
         style_name: &str,
@@ -79,7 +45,6 @@ impl StyleAttributes {
                     path: None,
                 })?;
 
-            // Skip mode sections (handled by parent parser)
             if key_str == "light" || key_str == "dark" {
                 continue;
             }
@@ -90,7 +55,6 @@ impl StyleAttributes {
         Ok(attrs)
     }
 
-    /// Sets a single attribute from a YAML value.
     fn set_attribute(
         &mut self,
         name: &str,
@@ -152,12 +116,6 @@ impl StyleAttributes {
         Ok(())
     }
 
-    /// Merges another set of attributes onto this one.
-    ///
-    /// `Some` values in `other` override values in `self`.
-    /// `None` values in `other` preserve values in `self`.
-    ///
-    /// Returns a new `StyleAttributes` with the merged result.
     pub fn merge(&self, other: &StyleAttributes) -> StyleAttributes {
         StyleAttributes {
             fg: other.fg.clone().or_else(|| self.fg.clone()),
@@ -173,7 +131,6 @@ impl StyleAttributes {
         }
     }
 
-    /// Returns true if all attributes are None.
     pub fn is_empty(&self) -> bool {
         self.fg.is_none()
             && self.bg.is_none()
@@ -187,9 +144,6 @@ impl StyleAttributes {
             && self.strikethrough.is_none()
     }
 
-    /// Converts these attributes to a `console::Style`.
-    ///
-    /// The optional [`ThemePalette`] is used to resolve [`ColorDef::Cube`] colors.
     pub fn to_style(&self, palette: Option<&ThemePalette>) -> Style {
         let mut style = Style::new();
 
@@ -228,7 +182,6 @@ impl StyleAttributes {
     }
 }
 
-/// Parses a boolean value from YAML.
 fn parse_bool(
     value: &serde_yaml::Value,
     attr: &str,
@@ -243,19 +196,9 @@ fn parse_bool(
         })
 }
 
-/// Parses a shorthand string into attributes.
-///
-/// Shorthand format: space-separated attribute names and/or a color.
-///
-/// Examples:
-/// - `"bold"` → bold: true
-/// - `"cyan"` → fg: cyan
-/// - `"cyan bold"` → fg: cyan, bold: true
-/// - `"yellow italic"` → fg: yellow, italic: true
 pub fn parse_shorthand(s: &str, style_name: &str) -> Result<StyleAttributes, StylesheetError> {
     let mut attrs = StyleAttributes::new();
 
-    // Split by comma or whitespace
     let parts: Vec<&str> = s
         .split(|c: char| c == ',' || c.is_whitespace())
         .filter(|s| !s.is_empty())
@@ -271,7 +214,6 @@ pub fn parse_shorthand(s: &str, style_name: &str) -> Result<StyleAttributes, Sty
             "reverse" => attrs.reverse = Some(true),
             "hidden" => attrs.hidden = Some(true),
             "strikethrough" => attrs.strikethrough = Some(true),
-            // If not a known attribute, try as a color
             _ => {
                 if attrs.fg.is_some() {
                     return Err(StylesheetError::InvalidShorthand {
@@ -310,10 +252,6 @@ mod tests {
     use super::*;
     use console::Color;
     use serde_yaml::{Mapping, Value};
-
-    // =========================================================================
-    // StyleAttributes::parse_mapping tests
-    // =========================================================================
 
     #[test]
     fn test_parse_mapping_fg_only() {
@@ -355,7 +293,6 @@ mod tests {
 
         let attrs = StyleAttributes::parse_mapping(&map, "test").unwrap();
         assert_eq!(attrs.fg, Some(ColorDef::Named(Color::Red)));
-        // light and dark should be ignored, not cause errors
     }
 
     #[test]
@@ -381,10 +318,6 @@ mod tests {
         let attrs = StyleAttributes::parse_mapping(&map, "test").unwrap();
         assert_eq!(attrs.fg, Some(ColorDef::Rgb(255, 107, 53)));
     }
-
-    // =========================================================================
-    // StyleAttributes::merge tests
-    // =========================================================================
 
     #[test]
     fn test_merge_empty_onto_full() {
@@ -427,9 +360,7 @@ mod tests {
         };
 
         let merged = base.merge(&override_attrs);
-        // fg overridden
         assert_eq!(merged.fg, Some(ColorDef::Named(Color::Blue)));
-        // bold preserved
         assert_eq!(merged.bold, Some(true));
     }
 
@@ -455,15 +386,10 @@ mod tests {
         assert_eq!(merged.dim, Some(true)); // preserved
     }
 
-    // =========================================================================
-    // StyleAttributes::to_style tests
-    // =========================================================================
-
     #[test]
     fn test_to_style_empty() {
         let attrs = StyleAttributes::new();
         let style = attrs.to_style(None);
-        // Empty style - hard to test directly, but should not panic
         let _ = style.apply_to("test");
     }
 
@@ -477,14 +403,9 @@ mod tests {
         };
         let style = attrs.to_style(None).force_styling(true);
         let output = style.apply_to("test").to_string();
-        // Should contain ANSI codes
         assert!(output.contains("\x1b["));
         assert!(output.contains("test"));
     }
-
-    // =========================================================================
-    // parse_shorthand tests
-    // =========================================================================
 
     #[test]
     fn test_parse_shorthand_single_attribute() {
@@ -573,10 +494,6 @@ mod tests {
         assert_eq!(attrs.italic, Some(true));
         assert_eq!(attrs.underline, Some(true));
     }
-
-    // =========================================================================
-    // StyleAttributes::is_empty tests
-    // =========================================================================
 
     #[test]
     fn test_is_empty_true() {

@@ -1,38 +1,18 @@
-//! CLI argument input sources.
-
 use clap::ArgMatches;
 
 use crate::collector::{InputCollector, InputSourceKind, ResolvedInput};
 use crate::InputError;
 
-/// Collect input from a CLI argument.
-///
-/// This source reads a string value from a clap argument. It is available
-/// when the argument was provided by the user.
-///
-/// # Example
-///
-/// ```ignore
-/// use standout_input::{InputChain, ArgSource};
-///
-/// // For: myapp --message "hello"
-/// let chain = InputChain::<String>::new()
-///     .try_source(ArgSource::new("message"));
-/// ```
 #[derive(Debug, Clone)]
 pub struct ArgSource {
     name: String,
 }
 
 impl ArgSource {
-    /// Create a new argument source.
-    ///
-    /// The `name` should match the argument name defined in clap.
     pub fn new(name: impl Into<String>) -> Self {
         Self { name: name.into() }
     }
 
-    /// Get the argument name.
     pub fn arg_name(&self) -> &str {
         &self.name
     }
@@ -52,20 +32,6 @@ impl InputCollector<String> for ArgSource {
     }
 }
 
-/// Collect input from a CLI flag.
-///
-/// This source reads a boolean flag value. It is always available since
-/// flags have a default value of `false`.
-///
-/// # Example
-///
-/// ```ignore
-/// use standout_input::{InputChain, FlagSource};
-///
-/// // For: myapp --verbose
-/// let chain = InputChain::<bool>::new()
-///     .try_source(FlagSource::new("verbose"));
-/// ```
 #[derive(Debug, Clone)]
 pub struct FlagSource {
     name: String,
@@ -73,9 +39,6 @@ pub struct FlagSource {
 }
 
 impl FlagSource {
-    /// Create a new flag source.
-    ///
-    /// The `name` should match the flag name defined in clap.
     pub fn new(name: impl Into<String>) -> Self {
         Self {
             name: name.into(),
@@ -83,16 +46,11 @@ impl FlagSource {
         }
     }
 
-    /// Invert the flag value.
-    ///
-    /// Useful for patterns like `--no-editor` where the flag being set
-    /// means "don't use editor" (i.e., `false` for "use editor").
     pub fn inverted(mut self) -> Self {
         self.invert = true;
         self
     }
 
-    /// Get the flag name.
     pub fn flag_name(&self) -> &str {
         &self.name
     }
@@ -104,7 +62,6 @@ impl InputCollector<bool> for FlagSource {
     }
 
     fn is_available(&self, matches: &ArgMatches) -> bool {
-        // Flags are always "available" - they default to false
         matches.contains_id(&self.name)
     }
 
@@ -112,8 +69,6 @@ impl InputCollector<bool> for FlagSource {
         let value = matches.get_flag(&self.name);
         let result = if self.invert { !value } else { value };
 
-        // Only return Some if the flag was explicitly set (true)
-        // This allows the chain to continue if the flag wasn't provided
         if matches.get_flag(&self.name) {
             Ok(Some(result))
         } else {
@@ -122,9 +77,7 @@ impl InputCollector<bool> for FlagSource {
     }
 }
 
-/// Resolve a flag source to a [`ResolvedInput`].
 impl FlagSource {
-    /// Resolve the flag, returning metadata about the source.
     pub fn resolve(&self, matches: &ArgMatches) -> Result<ResolvedInput<bool>, InputError> {
         let value = matches.get_flag(&self.name);
         let result = if self.invert { !value } else { value };
@@ -191,7 +144,6 @@ mod tests {
         let matches = make_matches(&["test"]);
         let source = FlagSource::new("verbose");
 
-        // Flag is "available" (defined) but returns None if not explicitly set
         assert!(source.is_available(&matches));
         assert_eq!(source.collect(&matches).unwrap(), None);
     }
@@ -201,7 +153,6 @@ mod tests {
         let matches = make_matches(&["test", "--no-editor"]);
         let source = FlagSource::new("no-editor").inverted();
 
-        // --no-editor is set (true), but inverted means "use editor = false"
         assert_eq!(source.collect(&matches).unwrap(), Some(false));
     }
 
@@ -210,7 +161,6 @@ mod tests {
         let matches = make_matches(&["test"]);
         let source = FlagSource::new("no-editor").inverted();
 
-        // Flag not set, so returns None (not inverted false)
         assert_eq!(source.collect(&matches).unwrap(), None);
     }
 }

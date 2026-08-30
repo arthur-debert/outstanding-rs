@@ -1,11 +1,3 @@
-//! Command dispatch logic.
-//!
-//! Internal types and functions for dispatching commands to handlers.
-//!
-//! This module provides the dispatch function type for single-threaded CLI apps:
-//!
-//! - [`DispatchFn`]: Dispatch using `Rc<RefCell<dyn FnMut>>` (single-threaded)
-
 use clap::ArgMatches;
 use std::cell::RefCell;
 use std::collections::HashMap;
@@ -21,45 +13,23 @@ use crate::{ColorPolicy, RenderRequest, StructuredOutputProjection, TargetProper
 use serde::Serialize;
 use standout_render::render_request_split;
 
-// Re-export pure dispatch utilities from standout-dispatch
 pub use standout_dispatch::{
     extract_command_path, get_deepest_matches, has_subcommand, insert_default_command,
 };
 
-/// Internal result type for dispatch functions.
 pub enum DispatchOutput {
-    /// Text output with both formatted (ANSI) and raw versions.
     Text {
-        /// The formatted output with ANSI codes (for terminal display)
         formatted: String,
-        /// The raw output without ANSI codes (for piping)
         raw: String,
     },
-    /// Binary output (bytes, filename)
     Binary(Vec<u8>, String),
-    /// A compound artifact whose report is deliberately *not* rendered yet.
-    ///
-    /// The report can only name the destination once the framework has
-    /// selected one and the write has succeeded, so the artifact travels with
-    /// the [`RenderRequest`] needed to render it later, in `App::dispatch`,
-    /// after the write.
     Artifact {
-        /// Bytes, suggestion, stdout opt-in, and the serialized report.
         output: ArtifactOutput,
-        /// How to render that report once the receipt exists. Boxed: the
-        /// request dwarfs the other variants' payloads.
         request: Box<RenderRequest>,
     },
-    /// No output (silent)
     Silent,
 }
 
-/// Maps glue [`TemplateRef`] onto the render-time type.
-///
-/// Silent and binary absence cannot serialize: they keep the actionable
-/// [`absent_template_render_error`]. Only structured-only maps to
-/// render-time [`standout_render::TemplateRef::Absent`]. Named templates
-/// still require a registry; the leaf loads the include tree from it.
 fn render_time_template(
     command_path: &str,
     template: &TemplateRef,
@@ -178,13 +148,6 @@ impl std::error::Error for HandlerErrorSource {
     }
 }
 
-/// Helper to render output from a handler.
-///
-/// This shared logic ensures consistent hook execution, context injection, and rendering.
-///
-/// Note: `output_mode` is passed separately from `ctx` because CommandContext is
-/// render-agnostic (from standout-dispatch), while output_mode is a rendering concern
-/// managed by standout.
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn render_handler_output<T: Serialize>(
     result: crate::cli::HandlerResult<T>,
@@ -239,9 +202,6 @@ pub(crate) fn render_handler_output<T: Serialize>(
         HandlerOutput::Artifact(artifact) => {
             let (bytes, suggested_destination, stdout_allowed, report) = artifact.into_parts();
 
-            // The report is handler data like any other, so it passes through
-            // post-dispatch hooks on the same seam `Output::Render` uses. It
-            // is *not* rendered here: rendering waits for the receipt.
             let report = match report {
                 Some(report) => {
                     let json = serialize_handler_data(&report)?;
@@ -261,9 +221,6 @@ pub(crate) fn render_handler_output<T: Serialize>(
                 },
             })
         }
-        // `Output` is `#[non_exhaustive]`, so this arm is required from
-        // outside standout-dispatch. It is unreachable for any variant this
-        // version knows; a future one lands here loudly rather than silently.
         _ => Err(RunError::new(
             "Unsupported handler output variant: this standout version cannot present it",
             RunErrorKind::Render,
@@ -271,7 +228,6 @@ pub(crate) fn render_handler_output<T: Serialize>(
     }
 }
 
-/// Serializes handler data, mapping failure onto the render origin.
 fn serialize_handler_data<T: Serialize>(data: &T) -> Result<serde_json::Value, RunError> {
     serde_json::to_value(data).map_err(|e| {
         RunError::new(
@@ -281,7 +237,6 @@ fn serialize_handler_data<T: Serialize>(data: &T) -> Result<serde_json::Value, R
     })
 }
 
-/// Runs post-dispatch hooks over serialized handler data, if any are registered.
 fn run_post_dispatch_hooks(
     json_data: serde_json::Value,
     matches: &ArgMatches,
@@ -296,8 +251,6 @@ fn run_post_dispatch_hooks(
     }
 }
 
-/// Converts the one application-declared escape hatch without changing the
-/// status policy for ordinary handler errors.
 pub(crate) fn handler_run_error(error: anyhow::Error) -> RunError {
     let error = match error.downcast::<ExternalFailure>() {
         Ok(external) => return RunError::from(external),
@@ -308,11 +261,6 @@ pub(crate) fn handler_run_error(error: anyhow::Error) -> RunError {
         .with_source(HandlerErrorSource(error.into_boxed_dyn_error()))
 }
 
-/// Converts a hook failure using the phase that actually executed.
-///
-/// Only the pre-dispatch seam recognizes `ExternalFailure`; a post-dispatch or
-/// post-output hook cannot opt into external status handling by self-labeling
-/// its `HookError` as pre-dispatch.
 pub(crate) fn hook_run_error(mut error: HookError, phase: crate::cli::HookPhase) -> RunError {
     if phase == crate::cli::HookPhase::PreDispatch {
         if let Some(source) = error.source.take() {
@@ -327,17 +275,6 @@ pub(crate) fn hook_run_error(mut error: HookError, phase: crate::cli::HookPhase)
     RunError::new(format!("Hook error: {}", error), RunErrorKind::Hook(phase)).with_source(error)
 }
 
-/// Type-erased dispatch function for single-threaded handlers.
-///
-/// Takes ArgMatches, CommandContext, optional Hooks, OutputMode, Theme,
-/// and destination facts from the caller's edge (`App::run`, `App::dispatch`).
-/// Ambiguous-width rides `TargetProperties`; callers apply App policy before
-/// invoking. The hooks parameter allows post-dispatch hooks to run between
-/// handler execution and rendering. OutputMode is passed separately because
-/// CommandContext is render-agnostic, while output_mode is a rendering concern.
-/// Theme is passed at runtime (late binding) to ensure the correct theme is used.
-///
-/// Uses `Rc<RefCell<_>>` and `FnMut` for single-threaded CLI apps.
 pub type DispatchFn = Rc<
     RefCell<
         dyn FnMut(
@@ -351,7 +288,6 @@ pub type DispatchFn = Rc<
     >,
 >;
 
-/// Dispatches the command with the given context.
 #[allow(clippy::too_many_arguments)]
 pub fn dispatch(
     dispatch_fn: &DispatchFn,
@@ -364,7 +300,3 @@ pub fn dispatch(
 ) -> Result<DispatchOutput, RunError> {
     (dispatch_fn.borrow_mut())(matches, ctx, hooks, output_mode, theme, target)
 }
-
-// Note: extract_command_path, get_deepest_matches, has_subcommand, insert_default_command,
-// path_to_string, and string_to_path are now re-exported from standout-dispatch at the top
-// of this file. Tests for these functions are in the standout-dispatch crate.

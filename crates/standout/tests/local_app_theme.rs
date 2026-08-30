@@ -5,12 +5,9 @@ use standout::Theme;
 
 #[test]
 fn test_theme_preservation_bug() {
-    // 1. Create a theme with a custom style
-    // Note: force_styling(true) is required in tests because there's no TTY
     let style = Style::new().red().force_styling(true);
     let theme = Theme::new().add("custom_error", style);
 
-    // 2. Build the app
     let app = App::builder()
         .theme(theme)
         .command(
@@ -22,16 +19,12 @@ fn test_theme_preservation_bug() {
         .build()
         .expect("Failed to build app");
 
-    // 3. Run to string (verify output mode handling too)
-    // We register the subcommand "test" so clap parses it correctly.
     let cmd = Command::new("app").subcommand(Command::new("test"));
 
-    // We simulate passing "--output=term" to force terminal output with colors
     let result = app.run_to_string(cmd, ["app", "--output=term", "test"]);
 
     match result.into_outcome() {
         standout::cli::DispatchResult::Handled(output) => {
-            // 4. Verification: If theme works, output should contain ANSI red code: \x1b[31m
             assert!(
                 output.contains("\x1b[31m"),
                 "Output should contain Red ANSI code, but got: {:?}",

@@ -1,17 +1,3 @@
-//! Reachability and install policy for the `help` word on flat CLIs.
-//!
-//! The shape that surfaced the bug is the shared fixture's flat form
-//! ([`standout_fixtures`]): one optional positional, one flag, and an
-//! `ArgGroup` making "one of them" required. On a root like that, Clap
-//! validates the requirements before routing, so an injected `help`
-//! subcommand is unreachable until the declaration says otherwise — which is
-//! what `subcommand_negates_reqs` does, and standout sets it exactly where it
-//! installs the word.
-//!
-//! Two commands here are still built by hand, because their shape *is* the
-//! test: a root with no positional at all, and an app whose questionnaire
-//! makes the framework inject a subcommand of its own.
-
 use clap::{Arg, ArgAction, Command};
 use standout::cli::{App, CommandContextInput, HelpResult};
 use standout_fixtures::downstream;
@@ -24,8 +10,6 @@ fn help_text(result: HelpResult) -> String {
     }
 }
 
-/// The reported bug: this was `MissingRequiredArgument`, because the root's
-/// `target` group was validated before Clap would route the word.
 #[test]
 fn the_help_word_is_reachable_on_a_flat_command_with_required_args() {
     let fixture = downstream().flat().build();
@@ -42,8 +26,6 @@ fn the_help_word_is_reachable_on_a_flat_command_with_required_args() {
 fn a_flat_command_with_positionals_does_not_get_the_word_by_default() {
     let fixture = downstream().flat().without_help_word().build();
 
-    // Not installed, so `help` is data: it reaches the positional and the
-    // required group is satisfied by it.
     match fixture
         .app()
         .get_matches_from(fixture.command(), ["lookma", "help"])
@@ -86,9 +68,6 @@ fn help_flags_still_render_themed_help_without_the_opt_in() {
     }
 }
 
-/// A root with nothing for a bare word to be mistaken for: the word installs
-/// itself, no opt-in asked. Built by hand because the fixture always carries
-/// a positional.
 #[test]
 fn a_flat_command_with_no_positionals_gets_the_word_automatically() {
     let app = App::builder().help_handling(true).build().unwrap();
@@ -125,11 +104,6 @@ fn the_escape_delivers_the_literal_word_to_the_positional() {
 fn the_help_word_parses_its_own_arguments() {
     let fixture = downstream().flat().build();
 
-    // `--output` is a root global; the help arm still has to honour it.
-    // `term-debug` leaves style tags visible, which is only true if the mode
-    // reached the renderer. The fixture's app theme defines none of those
-    // tags, so a resolved `[header]` is also the overlay working: an app theme
-    // that replaced the help theme would leave the tag unresolved.
     let tagged = help_text(fixture.app().get_matches_from(
         fixture.command(),
         ["lookma", "help", "--output", "term-debug"],
@@ -139,7 +113,6 @@ fn the_help_word_parses_its_own_arguments() {
         "output:\n{tagged}"
     );
 
-    // `--page` routes the same rendering through the pager.
     let paged = fixture
         .app()
         .get_matches_from(fixture.command(), ["lookma", "help", "--page"]);
@@ -182,25 +155,14 @@ fn a_missing_required_argument_is_still_a_usage_error() {
     }
 }
 
-/// A questionnaire registered at the root path, which makes the framework
-/// inject a `questions` subcommand onto the root itself.
 #[derive(Debug, Clone, standout::Questionnaire)]
 #[question(id = "flat.profile")]
 struct RootAnswers {
-    /// Project name.
     name: String,
 }
 
 #[test]
 fn the_policy_reads_the_shape_the_framework_leaves_behind() {
-    // `questions` is injected by the framework, so a root that declares no
-    // subcommands of its own still has one by the time anybody meets it — and a
-    // root with subcommands is a root where a bare word is already a command.
-    // Deciding the install before augmentation answered for a shape that never
-    // reaches the user.
-    //
-    // The app is bespoke because the questionnaire is the subject; the command
-    // is the fixture's flat root, so the shape under test is the shared one.
     let app = App::builder()
         .help_handling(true)
         .command_with(
@@ -226,8 +188,6 @@ fn the_policy_reads_the_shape_the_framework_leaves_behind() {
         "the word belongs on a root that has subcommands, however it got them"
     );
 
-    // And it is reachable, without the opt-in the flat-with-positionals rule
-    // would otherwise have required.
     let output = help_text(app.get_matches_from(flat_root.command(), ["lookma", "help"]));
     assert!(output.contains("Diff a git range"), "output:\n{output}");
 }

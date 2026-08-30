@@ -1,9 +1,3 @@
-//! Attribute parsing for tabular derive macros.
-//!
-//! This module provides parsers for the `#[col(...)]` and `#[tabular(...)]` attributes
-//! used by the `Tabular` and `TabularRow` derive macros.
-
-// Allow dead_code during incremental development - these will be used in Phase 2 and 3
 #![allow(dead_code)]
 
 use proc_macro2::TokenStream;
@@ -15,49 +9,29 @@ use syn::{
     Attribute, Error, Expr, Lit, Meta, Result, Token,
 };
 
-/// Field-level attributes from `#[col(...)]`.
 #[derive(Debug, Default, Clone)]
 pub struct ColAttr {
-    /// Fixed width: `width = 8`
     pub width_fixed: Option<usize>,
-    /// Fill width: `width = "fill"`
     pub width_fill: bool,
-    /// Fraction width: `width = "2fr"`
     pub width_fraction: Option<usize>,
-    /// Minimum width: `min = 10`
     pub min: Option<usize>,
-    /// Maximum width: `max = 30`
     pub max: Option<usize>,
-    /// Alignment: `align = "right"`
     pub align: Option<String>,
-    /// Anchor: `anchor = "right"`
     pub anchor: Option<String>,
-    /// Overflow mode: `overflow = "wrap"`
     pub overflow: Option<String>,
-    /// Truncation position: `truncate_at = "middle"`
     pub truncate_at: Option<String>,
-    /// Style name: `style = "muted"`
     pub style: Option<String>,
-    /// Style from value: `style_from_value`
     pub style_from_value: bool,
-    /// Header title: `header = "Due Date"`
     pub header: Option<String>,
-    /// Null representation: `null_repr = "N/A"`
     pub null_repr: Option<String>,
-    /// Key override: `key = "user.name"`
     pub key: Option<String>,
-    /// Skip this field: `skip`
     pub skip: bool,
 }
 
-/// Container-level attributes from `#[tabular(...)]`.
 #[derive(Debug, Default, Clone)]
 pub struct TabularAttr {
-    /// Column separator: `separator = " │ "`
     pub separator: Option<String>,
-    /// Row prefix: `prefix = "│ "`
     pub prefix: Option<String>,
-    /// Row suffix: `suffix = " │"`
     pub suffix: Option<String>,
 }
 
@@ -69,67 +43,54 @@ impl Parse for ColAttr {
 
         for meta in content {
             match &meta {
-                // width = 8 or width = "fill" or width = "2fr"
                 Meta::NameValue(nv) if nv.path.is_ident("width") => {
                     parse_width_value(&nv.value, &mut attr)?;
                 }
 
-                // min = 10
                 Meta::NameValue(nv) if nv.path.is_ident("min") => {
                     attr.min = Some(parse_usize_expr(&nv.value)?);
                 }
 
-                // max = 30
                 Meta::NameValue(nv) if nv.path.is_ident("max") => {
                     attr.max = Some(parse_usize_expr(&nv.value)?);
                 }
 
-                // align = "right"
                 Meta::NameValue(nv) if nv.path.is_ident("align") => {
                     attr.align = Some(parse_string_expr(&nv.value)?);
                 }
 
-                // anchor = "right"
                 Meta::NameValue(nv) if nv.path.is_ident("anchor") => {
                     attr.anchor = Some(parse_string_expr(&nv.value)?);
                 }
 
-                // overflow = "wrap"
                 Meta::NameValue(nv) if nv.path.is_ident("overflow") => {
                     attr.overflow = Some(parse_string_expr(&nv.value)?);
                 }
 
-                // truncate_at = "middle"
                 Meta::NameValue(nv) if nv.path.is_ident("truncate_at") => {
                     attr.truncate_at = Some(parse_string_expr(&nv.value)?);
                 }
 
-                // style = "muted"
                 Meta::NameValue(nv) if nv.path.is_ident("style") => {
                     attr.style = Some(parse_string_expr(&nv.value)?);
                 }
 
-                // style_from_value (flag)
                 Meta::Path(p) if p.is_ident("style_from_value") => {
                     attr.style_from_value = true;
                 }
 
-                // header = "Due Date"
                 Meta::NameValue(nv) if nv.path.is_ident("header") => {
                     attr.header = Some(parse_string_expr(&nv.value)?);
                 }
 
-                // null_repr = "N/A"
                 Meta::NameValue(nv) if nv.path.is_ident("null_repr") => {
                     attr.null_repr = Some(parse_string_expr(&nv.value)?);
                 }
 
-                // key = "user.name"
                 Meta::NameValue(nv) if nv.path.is_ident("key") => {
                     attr.key = Some(parse_string_expr(&nv.value)?);
                 }
 
-                // skip (flag)
                 Meta::Path(p) if p.is_ident("skip") => {
                     attr.skip = true;
                 }
@@ -158,17 +119,14 @@ impl Parse for TabularAttr {
 
         for meta in content {
             match &meta {
-                // separator = " │ "
                 Meta::NameValue(nv) if nv.path.is_ident("separator") => {
                     attr.separator = Some(parse_string_expr(&nv.value)?);
                 }
 
-                // prefix = "│ "
                 Meta::NameValue(nv) if nv.path.is_ident("prefix") => {
                     attr.prefix = Some(parse_string_expr(&nv.value)?);
                 }
 
-                // suffix = " │"
                 Meta::NameValue(nv) if nv.path.is_ident("suffix") => {
                     attr.suffix = Some(parse_string_expr(&nv.value)?);
                 }
@@ -186,13 +144,8 @@ impl Parse for TabularAttr {
     }
 }
 
-/// Parse width value which can be:
-/// - Integer: `width = 8` → Fixed(8)
-/// - String "fill": `width = "fill"` → Fill
-/// - String "Nfr": `width = "2fr"` → Fraction(2)
 fn parse_width_value(expr: &Expr, attr: &mut ColAttr) -> Result<()> {
     match expr {
-        // width = 8
         Expr::Lit(expr_lit) => match &expr_lit.lit {
             Lit::Int(lit_int) => {
                 attr.width_fixed = Some(lit_int.base10_parse()?);
@@ -234,7 +187,6 @@ fn parse_width_value(expr: &Expr, attr: &mut ColAttr) -> Result<()> {
     Ok(())
 }
 
-/// Parse a usize from an expression.
 fn parse_usize_expr(expr: &Expr) -> Result<usize> {
     if let Expr::Lit(expr_lit) = expr {
         if let Lit::Int(lit_int) = &expr_lit.lit {
@@ -244,7 +196,6 @@ fn parse_usize_expr(expr: &Expr) -> Result<usize> {
     Err(Error::new(expr.span(), "expected integer literal"))
 }
 
-/// Parse a string from an expression.
 fn parse_string_expr(expr: &Expr) -> Result<String> {
     if let Expr::Lit(expr_lit) = expr {
         if let Lit::Str(lit_str) = &expr_lit.lit {
@@ -254,7 +205,6 @@ fn parse_string_expr(expr: &Expr) -> Result<String> {
     Err(Error::new(expr.span(), "expected string literal"))
 }
 
-/// Extract `#[col(...)]` attributes from a field's attributes.
 pub fn parse_col_attrs(attrs: &[Attribute]) -> Result<ColAttr> {
     for attr in attrs {
         if attr.path().is_ident("col") {
@@ -264,7 +214,6 @@ pub fn parse_col_attrs(attrs: &[Attribute]) -> Result<ColAttr> {
     Ok(ColAttr::default())
 }
 
-/// Extract `#[tabular(...)]` attributes from a struct's attributes.
 pub fn parse_tabular_attrs(attrs: &[Attribute]) -> Result<TabularAttr> {
     for attr in attrs {
         if attr.path().is_ident("tabular") {
@@ -274,9 +223,7 @@ pub fn parse_tabular_attrs(attrs: &[Attribute]) -> Result<TabularAttr> {
     Ok(TabularAttr::default())
 }
 
-/// Generate token stream for Width enum variant.
 pub fn generate_width_tokens(attr: &ColAttr) -> TokenStream {
-    // Priority: width_fixed > width_fill > width_fraction > bounded(min, max) > default
     if let Some(w) = attr.width_fixed {
         quote! { ::standout::tabular::Width::Fixed(#w) }
     } else if attr.width_fill {
@@ -294,12 +241,10 @@ pub fn generate_width_tokens(attr: &ColAttr) -> TokenStream {
             .unwrap_or(quote! { None });
         quote! { ::standout::tabular::Width::Bounded { min: #min, max: #max } }
     } else {
-        // Default: unbounded
         quote! { ::standout::tabular::Width::default() }
     }
 }
 
-/// Generate token stream for Align enum variant.
 pub fn generate_align_tokens(align: &Option<String>) -> Result<TokenStream> {
     match align.as_deref() {
         None => Ok(quote! { ::standout::tabular::Align::default() }),
@@ -316,7 +261,6 @@ pub fn generate_align_tokens(align: &Option<String>) -> Result<TokenStream> {
     }
 }
 
-/// Generate token stream for Anchor enum variant.
 pub fn generate_anchor_tokens(anchor: &Option<String>) -> Result<TokenStream> {
     match anchor.as_deref() {
         None => Ok(quote! { ::standout::tabular::Anchor::default() }),
@@ -332,7 +276,6 @@ pub fn generate_anchor_tokens(anchor: &Option<String>) -> Result<TokenStream> {
     }
 }
 
-/// Generate token stream for Overflow enum variant.
 pub fn generate_overflow_tokens(attr: &ColAttr) -> Result<TokenStream> {
     let truncate_at = match attr.truncate_at.as_deref() {
         None | Some("end") => quote! { ::standout::tabular::TruncateAt::End },
@@ -373,12 +316,10 @@ pub fn generate_overflow_tokens(attr: &ColAttr) -> Result<TokenStream> {
 mod tests {
     use super::*;
 
-    // Helper to parse ColAttr from tokens
     fn parse_col(tokens: &str) -> Result<ColAttr> {
         syn::parse_str::<ColAttr>(tokens)
     }
 
-    // Helper to parse TabularAttr from tokens
     fn parse_tabular(tokens: &str) -> Result<TabularAttr> {
         syn::parse_str::<TabularAttr>(tokens)
     }
@@ -532,7 +473,6 @@ mod tests {
         };
         let tokens = generate_width_tokens(&attr);
         let output = tokens.to_string();
-        // Check that it contains the key parts
         assert!(output.contains("standout"));
         assert!(output.contains("tabular"));
         assert!(output.contains("Width"));

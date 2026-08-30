@@ -6,42 +6,8 @@ use std::collections::HashMap;
 use super::error::StyleValidationError;
 use super::value::StyleValue;
 
-/// Default prefix shown when a style name is not found.
 pub const DEFAULT_MISSING_STYLE_INDICATOR: &str = "(!?)";
 
-/// A collection of named styles.
-///
-/// Styles are registered by name and applied via the `style` filter in templates.
-/// Styles can be concrete (with actual formatting) or aliases to other styles,
-/// enabling layered styling (semantic -> presentation -> visual).
-///
-/// When a style name is not found, a configurable indicator is prepended to the text
-/// to help catch typos in templates (defaults to `(!?)`).
-///
-/// # Example
-///
-/// ```rust
-/// use standout_render::Styles;
-/// use console::Style;
-///
-/// let styles = Styles::new()
-///     // Concrete styles
-///     .add("error", Style::new().bold().red())
-///     .add("warning", Style::new().yellow())
-///     .add("dim", Style::new().dim())
-///     // Alias styles
-///     .add("muted", "dim");
-///
-/// // Apply a style (returns styled string)
-/// let styled = styles.apply("error", "Something went wrong");
-///
-/// // Aliases resolve to their target
-/// let muted = styles.apply("muted", "Quiet");  // Uses "dim" style
-///
-/// // Unknown style shows indicator
-/// let unknown = styles.apply("typo", "Hello");
-/// assert!(unknown.starts_with("(!?)"));
-/// ```
 #[derive(Debug, Clone)]
 pub struct Styles {
     styles: HashMap<String, StyleValue>,
@@ -58,66 +24,27 @@ impl Default for Styles {
 }
 
 impl Styles {
-    /// Creates an empty style registry with the default missing style indicator.
     pub fn new() -> Self {
         Self::default()
     }
 
-    /// Sets a custom indicator to prepend when a style name is not found.
-    ///
-    /// This helps catch typos in templates. Set to empty string to disable.
-    ///
-    /// # Example
-    ///
-    /// ```rust
-    /// use standout_render::Styles;
-    ///
-    /// let styles = Styles::new()
-    ///     .missing_indicator("[MISSING]")
-    ///     .add("ok", console::Style::new().green());
-    ///
-    /// // Typo in style name
-    /// let output = styles.apply("typo", "Hello");
-    /// assert_eq!(output, "[MISSING] Hello");
-    /// ```
     pub fn missing_indicator(mut self, indicator: &str) -> Self {
         self.missing_indicator = indicator.to_string();
         self
     }
 
-    /// Adds a named style. Returns self for chaining.
-    ///
-    /// The value can be either a concrete `Style` or a `&str`/`String` alias
-    /// to another style name.
-    ///
-    /// # Example
-    ///
-    /// ```rust
-    /// use standout_render::Styles;
-    /// use console::Style;
-    ///
-    /// let styles = Styles::new()
-    ///     .add("dim", Style::new().dim())      // Concrete style
-    ///     .add("muted", "dim");                 // Alias to "dim"
-    /// ```
-    ///
-    /// If a style with the same name exists, it is replaced.
     pub fn add<V: Into<StyleValue>>(mut self, name: &str, value: V) -> Self {
         self.styles.insert(name.to_string(), value.into());
         self
     }
 
-    /// Resolves a style name to a concrete `Style`, following alias chains.
-    ///
-    /// Returns `None` if the style doesn't exist or if a cycle is detected.
-    /// For detailed error information, use `validate()` instead.
     pub(crate) fn resolve(&self, name: &str) -> Option<&Style> {
         let mut current = name;
         let mut visited = std::collections::HashSet::new();
 
         loop {
             if !visited.insert(current) {
-                return None; // Cycle detected
+                return None;
             }
             match self.styles.get(current)? {
                 StyleValue::Concrete(style) => return Some(style),
@@ -126,45 +53,10 @@ impl Styles {
         }
     }
 
-    /// Checks if a style name can be resolved (exists and has no cycles).
     fn can_resolve(&self, name: &str) -> bool {
         self.resolve(name).is_some()
     }
 
-    /// Validates that all style aliases resolve correctly.
-    ///
-    /// Returns `Ok(())` if all aliases point to existing styles with no cycles.
-    /// Returns an error describing the first problem found.
-    ///
-    /// # Example
-    ///
-    /// ```rust
-    /// use standout_render::{Styles, StyleValidationError};
-    /// use console::Style;
-    ///
-    /// // Valid: alias chain resolves
-    /// let valid = Styles::new()
-    ///     .add("dim", Style::new().dim())
-    ///     .add("muted", "dim");
-    /// assert!(valid.validate().is_ok());
-    ///
-    /// // Invalid: dangling alias
-    /// let dangling = Styles::new()
-    ///     .add("orphan", "nonexistent");
-    /// assert!(matches!(
-    ///     dangling.validate(),
-    ///     Err(StyleValidationError::UnresolvedAlias { .. })
-    /// ));
-    ///
-    /// // Invalid: cycle
-    /// let cycle = Styles::new()
-    ///     .add("a", "b")
-    ///     .add("b", "a");
-    /// assert!(matches!(
-    ///     cycle.validate(),
-    ///     Err(StyleValidationError::CycleDetected { .. })
-    /// ));
-    /// ```
     pub fn validate(&self) -> Result<(), StyleValidationError> {
         for (name, value) in &self.styles {
             if let StyleValue::Alias(target) = value {
@@ -174,13 +66,11 @@ impl Styles {
         Ok(())
     }
 
-    /// Validates a single alias chain starting from `name` -> `target`.
     fn validate_alias_chain(&self, name: &str, target: &str) -> Result<(), StyleValidationError> {
         let mut current = target;
         let mut path = vec![name.to_string()];
 
         loop {
-            // Check if target exists
             let value =
                 self.styles
                     .get(current)
@@ -191,7 +81,6 @@ impl Styles {
 
             path.push(current.to_string());
 
-            // Check for cycle (if we've seen this name before in our path)
             if path[..path.len() - 1].contains(&current.to_string()) {
                 return Err(StyleValidationError::CycleDetected { path });
             }
@@ -203,10 +92,6 @@ impl Styles {
         }
     }
 
-    /// Applies a named style to text.
-    ///
-    /// Resolves aliases to find the concrete style, then applies it.
-    /// If the style doesn't exist or can't be resolved, prepends the missing indicator.
     pub fn apply(&self, name: &str, text: &str) -> String {
         match self.resolve(name) {
             Some(style) => style.apply_to(text).to_string(),
@@ -215,10 +100,6 @@ impl Styles {
         }
     }
 
-    /// Applies style checking without ANSI codes (plain text mode).
-    ///
-    /// If the style exists and resolves, returns the text unchanged.
-    /// If not found or unresolvable, prepends the missing indicator (unless it's empty).
     pub fn apply_plain(&self, name: &str, text: &str) -> String {
         if self.can_resolve(name) || self.missing_indicator.is_empty() {
             text.to_string()
@@ -227,14 +108,6 @@ impl Styles {
         }
     }
 
-    /// Applies a style based on the output mode.
-    ///
-    /// - `Term` - Applies ANSI styling
-    /// - `Text` - Returns plain text (no ANSI codes)
-    /// - `Auto` - Should be resolved before calling this method
-    ///
-    /// Note: For `Auto` mode, call `OutputMode::should_use_color()` first
-    /// to determine whether to use `Term` or `Text`.
     pub fn apply_with_mode(&self, name: &str, text: &str, use_color: bool) -> String {
         if use_color {
             self.apply(name, text)
@@ -243,30 +116,6 @@ impl Styles {
         }
     }
 
-    /// Applies a style in debug mode, rendering as bracket tags.
-    ///
-    /// Returns `[name]text[/name]` for styles that resolve correctly,
-    /// or applies the missing indicator for unknown/unresolvable styles.
-    ///
-    /// # Example
-    ///
-    /// ```rust
-    /// use standout_render::Styles;
-    /// use console::Style;
-    ///
-    /// let styles = Styles::new()
-    ///     .add("bold", Style::new().bold())
-    ///     .add("emphasis", "bold");  // Alias
-    ///
-    /// // Direct style renders as bracket tags
-    /// assert_eq!(styles.apply_debug("bold", "hello"), "[bold]hello[/bold]");
-    ///
-    /// // Alias also renders with its own name (not the target)
-    /// assert_eq!(styles.apply_debug("emphasis", "hello"), "[emphasis]hello[/emphasis]");
-    ///
-    /// // Unknown style shows indicator
-    /// assert_eq!(styles.apply_debug("unknown", "hello"), "(!?) hello");
-    /// ```
     pub fn apply_debug(&self, name: &str, text: &str) -> String {
         if self.can_resolve(name) {
             format!("[{}]{}[/{}]", name, text, name)
@@ -277,42 +126,18 @@ impl Styles {
         }
     }
 
-    /// Returns true if a style with the given name exists (concrete or alias).
     pub fn has(&self, name: &str) -> bool {
         self.styles.contains_key(name)
     }
 
-    /// Returns the number of registered styles (both concrete and aliases).
     pub fn len(&self) -> usize {
         self.styles.len()
     }
 
-    /// Returns true if no styles are registered.
     pub fn is_empty(&self) -> bool {
         self.styles.is_empty()
     }
 
-    /// Returns a map of all style names to their resolved concrete styles.
-    ///
-    /// This is useful for passing styles to external processors like BBParser.
-    /// Aliases are resolved to their target concrete styles, and styles that
-    /// cannot be resolved (cycles, dangling aliases) are omitted.
-    ///
-    /// # Example
-    ///
-    /// ```rust
-    /// use standout_render::Styles;
-    /// use console::Style;
-    ///
-    /// let styles = Styles::new()
-    ///     .add("bold", Style::new().bold())
-    ///     .add("emphasis", "bold");  // Alias
-    ///
-    /// let resolved = styles.to_resolved_map();
-    /// assert!(resolved.contains_key("bold"));
-    /// assert!(resolved.contains_key("emphasis"));
-    /// assert_eq!(resolved.len(), 2);
-    /// ```
     pub fn to_resolved_map(&self) -> HashMap<String, Style> {
         let mut result = HashMap::new();
         for name in self.styles.keys() {
@@ -372,7 +197,6 @@ mod tests {
     fn test_styles_apply_plain_known_style() {
         let styles = Styles::new().add("bold", Style::new().bold());
         let result = styles.apply_plain("bold", "hello");
-        // apply_plain returns text without ANSI codes
         assert_eq!(result, "hello");
     }
 
@@ -387,9 +211,7 @@ mod tests {
     fn test_styles_apply_known_style() {
         let styles = Styles::new().add("bold", Style::new().bold().force_styling(true));
         let result = styles.apply("bold", "hello");
-        // The result should contain ANSI codes for bold
         assert!(result.contains("hello"));
-        // Bold ANSI code is \x1b[1m
         assert!(result.contains("\x1b[1m"));
     }
 
@@ -397,9 +219,8 @@ mod tests {
     fn test_styles_can_be_replaced() {
         let styles = Styles::new()
             .add("x", Style::new().red())
-            .add("x", Style::new().green()); // Replace
+            .add("x", Style::new().green());
 
-        // Should only have one style
         assert_eq!(styles.len(), 1);
         assert!(styles.has("x"));
     }
@@ -408,7 +229,6 @@ mod tests {
     fn test_styles_apply_with_mode_color() {
         let styles = Styles::new().add("bold", Style::new().bold().force_styling(true));
         let result = styles.apply_with_mode("bold", "hello", true);
-        // Should contain ANSI codes
         assert!(result.contains("\x1b[1m"));
         assert!(result.contains("hello"));
     }
@@ -417,17 +237,14 @@ mod tests {
     fn test_styles_apply_with_mode_no_color() {
         let styles = Styles::new().add("bold", Style::new().bold());
         let result = styles.apply_with_mode("bold", "hello", false);
-        // Should not contain ANSI codes
         assert_eq!(result, "hello");
     }
 
     #[test]
     fn test_styles_apply_with_mode_missing_style() {
         let styles = Styles::new();
-        // With color
         let result = styles.apply_with_mode("nonexistent", "hello", true);
         assert_eq!(result, "(!?) hello");
-        // Without color
         let result = styles.apply_with_mode("nonexistent", "hello", false);
         assert_eq!(result, "(!?) hello");
     }
@@ -452,8 +269,6 @@ mod tests {
         let result = styles.apply_debug("unknown", "hello");
         assert_eq!(result, "hello");
     }
-
-    // --- Resolution Tests ---
 
     #[test]
     fn test_resolve_concrete_style() {
@@ -484,7 +299,6 @@ mod tests {
             .add("presentation", "visual")
             .add("semantic", "presentation");
 
-        // All should resolve to the same concrete style
         assert!(styles.resolve("visual").is_some());
         assert!(styles.resolve("presentation").is_some());
         assert!(styles.resolve("semantic").is_some());
@@ -530,8 +344,6 @@ mod tests {
         assert!(styles.resolve("b").is_none());
         assert!(styles.resolve("c").is_none());
     }
-
-    // --- Validation Tests ---
 
     #[test]
     fn test_validate_empty_styles() {
@@ -656,8 +468,6 @@ mod tests {
 
         assert!(styles.validate().is_err());
     }
-
-    // --- Apply with Aliases Tests ---
 
     #[test]
     fn test_apply_through_alias() {

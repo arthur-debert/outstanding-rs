@@ -1,8 +1,3 @@
-//! Attribute parsing for the Seekable derive macro.
-//!
-//! This module provides parsers for the `#[seek(...)]` field attributes
-//! used by the `Seekable` derive macro.
-
 use proc_macro2::Span;
 use syn::{
     parse::{Parse, ParseStream},
@@ -11,23 +6,16 @@ use syn::{
     Attribute, Error, Ident, Lit, Meta, Result, Token,
 };
 
-/// The type of a seekable field.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SeekType {
-    /// String field: `#[seek(String)]`
     String,
-    /// Number field: `#[seek(Number)]`
     Number,
-    /// Timestamp field: `#[seek(Timestamp)]`
     Timestamp,
-    /// Enum field: `#[seek(Enum)]`
     Enum,
-    /// Boolean field: `#[seek(Bool)]`
     Bool,
 }
 
 impl SeekType {
-    /// Parse a seek type from an identifier.
     pub fn from_ident(ident: &Ident) -> Result<Self> {
         match ident.to_string().as_str() {
             "String" | "string" => Ok(SeekType::String),
@@ -45,7 +33,6 @@ impl SeekType {
         }
     }
 
-    /// Parse a seek type from a string literal.
     pub fn from_str(s: &str, span: Span) -> Result<Self> {
         match s {
             "string" | "String" => Ok(SeekType::String),
@@ -64,16 +51,11 @@ impl SeekType {
     }
 }
 
-/// Field-level attributes from `#[seek(...)]`.
 #[derive(Debug, Clone)]
 pub struct SeekAttr {
-    /// The type of this seekable field.
     pub seek_type: Option<SeekType>,
-    /// Skip this field from seeking.
     pub skip: bool,
-    /// Custom field name for queries (default: field name).
     pub rename: Option<String>,
-    /// The span for error reporting.
     pub span: Span,
 }
 
@@ -96,7 +78,6 @@ impl Parse for SeekAttr {
 
         for meta in content {
             match &meta {
-                // Type identifier: seek(String), seek(Number), etc.
                 Meta::Path(p) => {
                     if p.is_ident("skip") {
                         attr.skip = true;
@@ -111,7 +92,6 @@ impl Parse for SeekAttr {
                     }
                 }
 
-                // rename = "custom_name" or ty = "enum"
                 Meta::NameValue(nv) => {
                     if nv.path.is_ident("rename") {
                         if let syn::Expr::Lit(syn::ExprLit {
@@ -126,7 +106,6 @@ impl Parse for SeekAttr {
                             ));
                         }
                     } else if nv.path.is_ident("ty") {
-                        // ty = "enum" syntax for keywords
                         if let syn::Expr::Lit(syn::ExprLit {
                             lit: Lit::Str(s), ..
                         }) = &nv.value
@@ -157,7 +136,6 @@ impl Parse for SeekAttr {
     }
 }
 
-/// Extract `#[seek(...)]` attributes from a field's attributes.
 pub fn parse_seek_attrs(attrs: &[Attribute]) -> Result<SeekAttr> {
     for attr in attrs {
         if attr.path().is_ident("seek") {
@@ -202,15 +180,12 @@ mod tests {
 
     #[test]
     fn test_seek_enum_via_ty() {
-        // Can't use "Enum" directly as it would conflict with keywords
-        // Use ty = "enum" syntax instead
         let attr = parse_seek(r#"ty = "enum""#).unwrap();
         assert_eq!(attr.seek_type, Some(SeekType::Enum));
     }
 
     #[test]
     fn test_seek_enum_capitalized() {
-        // Enum (capital E) works as an identifier
         let attr = parse_seek("Enum").unwrap();
         assert_eq!(attr.seek_type, Some(SeekType::Enum));
     }
@@ -223,7 +198,6 @@ mod tests {
 
     #[test]
     fn test_seek_bool_lowercase() {
-        // Note: lowercase "bool" is a keyword, use Bool instead
         let attr = parse_seek("boolean").unwrap();
         assert_eq!(attr.seek_type, Some(SeekType::Bool));
     }

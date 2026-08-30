@@ -1,10 +1,7 @@
-//! BBCode-style tag parser for terminal styling.
-//!
-//! This crate provides a parser for `[tag]content[/tag]` style markup,
-//! designed for terminal output styling. It handles nested tags correctly
-//! and supports multiple output modes.
-//!
-//! # Example
+//! BBCode-style tag parser for terminal styling: `[tag]content[/tag]`
+//! markup with nested tags and multiple output modes (see [`TagTransform`]).
+//! Tag names follow CSS identifier rules (`[a-z_][a-z0-9_-]*`); a literal
+//! `[`/`]` is written `\[`/`\]`.
 //!
 //! ```rust
 //! use standout_bbparser::{BBParser, TagTransform};
@@ -13,117 +10,42 @@
 //!
 //! let mut styles = HashMap::new();
 //! styles.insert("bold".to_string(), Style::new().bold());
-//! styles.insert("red".to_string(), Style::new().red());
 //!
-//! // Apply ANSI codes
-//! let parser = BBParser::new(styles.clone(), TagTransform::Apply);
-//! let output = parser.parse("[bold]hello[/bold]");
-//! // output contains ANSI escape codes for bold
-//!
-//! // Strip tags (plain text)
-//! let parser = BBParser::new(styles.clone(), TagTransform::Remove);
-//! let output = parser.parse("[bold]hello[/bold]");
-//! assert_eq!(output, "hello");
-//!
-//! // Keep tags visible (debug mode)
-//! let parser = BBParser::new(styles, TagTransform::Keep);
-//! let output = parser.parse("[bold]hello[/bold]");
-//! assert_eq!(output, "[bold]hello[/bold]");
+//! let parser = BBParser::new(styles, TagTransform::Remove);
+//! assert_eq!(parser.parse("[bold]hello[/bold]"), "hello");
 //! ```
-//!
-//! # Unknown Tag Handling
-//!
-//! Tags not found in the styles map can be handled in two ways:
-//!
-//! - [`UnknownTagBehavior::Passthrough`]: Keep tags with a `?` marker: `[foo]` → `[foo?]`
-//! - [`UnknownTagBehavior::Strip`]: Remove tags entirely, keep content: `[foo]text[/foo]` → `text`
-//!
-//! For validation, use [`BBParser::validate`] to check for unknown tags before parsing.
-//!
-//! # Tag Name Syntax
-//!
-//! Tag names follow CSS identifier rules:
-//! - Start with a letter (`a-z`) or underscore (`_`)
-//! - Followed by letters, digits (`0-9`), underscores, or hyphens (`-`)
-//! - Cannot start with a digit or hyphen followed by digit
-//! - Case-sensitive (lowercase recommended)
-//!
-//! Pattern: `[a-z_][a-z0-9_-]*`
-//!
-//! # Escaping
-//!
-//! To emit a literal `[` or `]` without it being treated as a tag delimiter,
-//! prefix it with a backslash:
-//!
-//! - `\[` → `[`
-//! - `\]` → `]`
-//!
-//! A backslash that is not followed by `[` or `]` is left alone, so file
-//! paths, regex examples, and other content containing `\` pass through
-//! unchanged. To emit a literal `\[` in the output, write `\\[` (the first
-//! `\` is kept as-is because `\\` is not a recognized escape, then `\[` is
-//! consumed as an escape and emits `[`).
 
 use console::{AnsiCodeIterator, Style};
 use std::collections::HashMap;
 use std::ops::Range;
 
-/// How to transform matched tags in the output.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum TagTransform {
-    /// Apply ANSI escape codes from the associated Style.
-    /// Used for terminal output with color support.
     Apply,
-
-    /// Remove all tags, outputting only the content.
-    /// Used for plain text output without styling.
     Remove,
-
-    /// Keep tags as-is in the output.
-    /// Used for debug mode to visualize tag structure.
     Keep,
 }
 
-/// How to handle tags not found in the styles map.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum UnknownTagBehavior {
-    /// Keep unknown tags as literal text with a `?` marker.
-    /// `[foo]text[/foo]` → `[foo?]text[/foo?]`
-    ///
-    /// This makes unknown tags visible without breaking output.
     #[default]
     Passthrough,
-
-    /// Strip unknown tags entirely, keeping only inner content.
-    /// `[foo]text[/foo]` → `text`
-    ///
-    /// Use this for graceful degradation in production.
     Strip,
 }
 
-/// The kind of unknown tag encountered.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum UnknownTagKind {
-    /// An opening tag: `[foo]`
     Open,
-    /// A closing tag: `[/foo]`
     Close,
-    /// An unbalanced opening tag: `[foo]...` (no matching close)
     Unbalanced,
-    /// An unexpected closing tag: `...[/foo]` (no matching open)
     UnexpectedClose,
 }
 
-/// An error representing an unknown tag in the input.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct UnknownTagError {
-    /// The tag name that was not found in styles.
     pub tag: String,
-    /// The kind of tag (open or close).
     pub kind: UnknownTagKind,
-    /// Byte offset of the opening `[` in the input.
     pub start: usize,
-    /// Byte offset after the closing `]` in the input.
     pub end: usize,
 }
 
@@ -145,30 +67,24 @@ impl std::fmt::Display for UnknownTagError {
 
 impl std::error::Error for UnknownTagError {}
 
-/// A collection of unknown tag errors found during parsing.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct UnknownTagErrors {
-    /// The list of unknown tag errors.
     pub errors: Vec<UnknownTagError>,
 }
 
 impl UnknownTagErrors {
-    /// Creates an empty error collection.
     pub fn new() -> Self {
         Self::default()
     }
 
-    /// Returns true if no errors were found.
     pub fn is_empty(&self) -> bool {
         self.errors.is_empty()
     }
 
-    /// Returns the number of errors.
     pub fn len(&self) -> usize {
         self.errors.len()
     }
 
-    /// Adds an error to the collection.
     pub fn push(&mut self, error: UnknownTagError) {
         self.errors.push(error);
     }
@@ -204,38 +120,14 @@ impl<'a> IntoIterator for &'a UnknownTagErrors {
     }
 }
 
-/// Strips all BBCode-style tags from input, returning only visible content.
-///
-/// This is a convenience function that creates a parser in [`TagTransform::Remove`] mode
-/// with [`UnknownTagBehavior::Strip`] to remove all tags (both known and unknown).
-///
-/// Use this only when producing plain-text output. Width measurement and layout
-/// should inspect [`StyledText`] so semantic styling remains available for later
-/// rendering.
-///
-/// # Example
-///
-/// ```rust
-/// use standout_bbparser::strip_tags;
-///
-/// assert_eq!(strip_tags("[bold]hello[/bold]"), "hello");
-/// assert_eq!(strip_tags("[additions]+32[/additions]/[deletions]-0[/deletions]/32"), "+32/-0/32");
-/// assert_eq!(strip_tags("no tags here"), "no tags here");
-/// ```
 pub fn strip_tags(input: &str) -> String {
     let parser = BBParser::new(HashMap::new(), TagTransform::Remove)
         .unknown_behavior(UnknownTagBehavior::Strip);
     parser.parse(input)
 }
 
-/// Parsed semantic style text that can be measured or selected without
-/// converting the whole value to plain text.
-///
-/// The parser keeps style tags out of the visible character stream. Selecting
-/// one or more character ranges preserves the styles that cover each range and
-/// closes every emitted tag, including when a range ends inside nested tags.
-/// ANSI controls recognized by [`console::strip_ansi_codes`] are likewise
-/// zero-width and are preserved when their position falls inside a selection.
+// Style tags stay out of the visible character stream; selecting a range
+// preserves covering styles and closes every emitted tag.
 #[derive(Debug, Clone)]
 pub struct StyledText<'a> {
     events: Vec<StyledEvent<'a>>,
@@ -252,11 +144,6 @@ enum StyledEvent<'a> {
 }
 
 impl<'a> StyledText<'a> {
-    /// Parses semantic style tags while retaining the original tagged source.
-    ///
-    /// Balanced tags form zero-width style events. Invalid, unexpected, or
-    /// unbalanced tag syntax remains visible literal text, matching
-    /// [`BBParser`] behavior.
     pub fn parse(input: &'a str) -> Self {
         let tokens = Tokenizer::new(input).collect::<Vec<_>>();
         let valid_opens = compute_valid_tags(&tokens);
@@ -307,10 +194,6 @@ impl<'a> StyledText<'a> {
         Self { events }
     }
 
-    /// Visits each visible character in rendered order.
-    ///
-    /// Style tag bytes are never visited. Escaped brackets are visited as the
-    /// single literal bracket they render as.
     pub fn visit_visible_chars(&self, mut visitor: impl FnMut(char)) {
         for event in &self.events {
             if let StyledEvent::Text {
@@ -327,11 +210,7 @@ impl<'a> StyledText<'a> {
         }
     }
 
-    /// Renders selected visible-character ranges with balanced semantic tags.
-    ///
-    /// Ranges use character offsets from [`Self::visit_visible_chars`]. Each
-    /// range is rendered as a self-contained balanced fragment. `separator` is
-    /// inserted outside styling between non-empty ranges.
+    // `separator` is inserted outside styling between non-empty ranges.
     pub fn select(&self, ranges: &[Range<usize>], separator: &str) -> String {
         let mut result = String::new();
         let mut rendered_any = false;
@@ -347,9 +226,6 @@ impl<'a> StyledText<'a> {
         result
     }
 
-    /// Render one visible character range as a balanced styled fragment.
-    ///
-    /// The range uses character offsets from [`Self::visit_visible_chars`].
     pub fn select_range(&self, range: Range<usize>) -> String {
         self.render_range(range)
     }
@@ -470,10 +346,6 @@ fn visit_plain_text_units<'a>(
     }
 }
 
-/// A BBCode-style tag parser for terminal styling.
-///
-/// The parser processes `[tag]content[/tag]` patterns and transforms them
-/// according to the configured [`TagTransform`] mode.
 #[derive(Debug, Clone)]
 pub struct BBParser {
     styles: HashMap<String, Style>,
@@ -482,15 +354,8 @@ pub struct BBParser {
 }
 
 impl BBParser {
-    /// Creates a new parser with the given styles and transform mode.
-    ///
-    /// # Arguments
-    ///
-    /// * `styles` - Map of tag names to console styles.
-    ///   Note: These styles are used directly; no alias resolution is performed.
-    /// * `transform` - How to handle matched tags
-    ///
-    /// Unknown tags default to [`UnknownTagBehavior::Passthrough`].
+    // Styles are used directly; no alias resolution is performed. Unknown
+    // tags default to `UnknownTagBehavior::Passthrough`.
     pub fn new(styles: HashMap<String, Style>, transform: TagTransform) -> Self {
         Self {
             styles,
@@ -499,86 +364,24 @@ impl BBParser {
         }
     }
 
-    /// Returns the tag vocabulary this parser resolves against.
-    ///
-    /// The map's keys are exactly the tags that will *not* be reported as
-    /// unknown. A caller reporting an [`UnknownTagError`] reads this to say
-    /// what was on offer instead.
     pub fn styles(&self) -> &HashMap<String, Style> {
         &self.styles
     }
 
-    /// Sets the behavior for unknown tags.
-    ///
-    /// # Example
-    ///
-    /// ```rust
-    /// use standout_bbparser::{BBParser, TagTransform, UnknownTagBehavior};
-    /// use std::collections::HashMap;
-    ///
-    /// let parser = BBParser::new(HashMap::new(), TagTransform::Remove)
-    ///     .unknown_behavior(UnknownTagBehavior::Strip);
-    ///
-    /// // Unknown tags are stripped
-    /// assert_eq!(parser.parse("[foo]text[/foo]"), "text");
-    /// ```
     pub fn unknown_behavior(mut self, behavior: UnknownTagBehavior) -> Self {
         self.unknown_behavior = behavior;
         self
     }
 
-    /// Parses and transforms input.
-    ///
-    /// Unknown tags are handled according to the configured [`UnknownTagBehavior`].
     pub fn parse(&self, input: &str) -> String {
         let (output, _) = self.parse_internal(input);
         output
     }
 
-    /// Parses input and collects any unknown tag errors.
-    ///
-    /// Returns the transformed output AND any errors found.
-    /// The output uses the configured [`UnknownTagBehavior`] for transformation.
-    ///
-    /// # Example
-    ///
-    /// ```rust
-    /// use standout_bbparser::{BBParser, TagTransform};
-    /// use std::collections::HashMap;
-    ///
-    /// let parser = BBParser::new(HashMap::new(), TagTransform::Remove);
-    /// let (output, errors) = parser.parse_with_diagnostics("[unknown]text[/unknown]");
-    ///
-    /// assert!(!errors.is_empty());
-    /// assert_eq!(errors.len(), 2); // open and close tags
-    /// ```
     pub fn parse_with_diagnostics(&self, input: &str) -> (String, UnknownTagErrors) {
         self.parse_internal(input)
     }
 
-    /// Validates input for unknown tags without producing transformed output.
-    ///
-    /// Returns `Ok(())` if all tags are known, `Err` with details otherwise.
-    ///
-    /// # Example
-    ///
-    /// ```rust
-    /// use standout_bbparser::{BBParser, TagTransform};
-    /// use std::collections::HashMap;
-    /// use console::Style;
-    ///
-    /// let mut styles = HashMap::new();
-    /// styles.insert("bold".to_string(), Style::new().bold());
-    ///
-    /// let parser = BBParser::new(styles, TagTransform::Apply);
-    ///
-    /// // Known tag passes validation
-    /// assert!(parser.validate("[bold]text[/bold]").is_ok());
-    ///
-    /// // Unknown tag fails validation
-    /// let result = parser.validate("[unknown]text[/unknown]");
-    /// assert!(result.is_err());
-    /// ```
     pub fn validate(&self, input: &str) -> Result<(), UnknownTagErrors> {
         let (_, errors) = self.parse_internal(input);
         if errors.is_empty() {
@@ -588,7 +391,6 @@ impl BBParser {
         }
     }
 
-    /// Internal parsing that returns both output and errors.
     fn parse_internal(&self, input: &str) -> (String, UnknownTagErrors) {
         let tokens = Tokenizer::new(input).collect::<Vec<_>>();
         let valid_opens = compute_valid_tags(&tokens);
@@ -596,8 +398,6 @@ impl BBParser {
         let mut errors = UnknownTagErrors::new();
         let mut stack: Vec<&str> = Vec::new();
 
-        // ...
-        // ...
         let mut i = 0;
         while i < tokens.len() {
             match &tokens[i] {
@@ -609,20 +409,14 @@ impl BBParser {
                         stack.push(name);
                         self.emit_open_tag_event(&mut events, &mut errors, name, *start, *end);
                     } else {
-                        // Check if this looks like a valid tag name but was just unclosed/unbalanced
                         let is_valid_name = Tokenizer::is_valid_tag_name(name);
                         if is_valid_name {
-                            // Strictly error on unbalanced tags
                             errors.push(UnknownTagError {
                                 tag: name.to_string(),
-                                kind: UnknownTagKind::Unbalanced, // NEW VARIANT
+                                kind: UnknownTagKind::Unbalanced,
                                 start: *start,
                                 end: *end,
                             });
-                            // Also treat as literal to not break output entirely?
-                            // Or just error? Issue says "Unbalanced tags must error".
-                            // We record error. Output depends on transform.
-                            // We'll output literal text for visual feedback?
                             events.push(ParseEvent::Literal(std::borrow::Cow::Owned(format!(
                                 "[{}]",
                                 name
@@ -647,12 +441,11 @@ impl BBParser {
                             }
                         }
                     } else {
-                        // Unexpected close tag
                         let is_valid_name = Tokenizer::is_valid_tag_name(name);
                         if is_valid_name {
                             errors.push(UnknownTagError {
                                 tag: name.to_string(),
-                                kind: UnknownTagKind::UnexpectedClose, // NEW VARIANT
+                                kind: UnknownTagKind::UnexpectedClose,
                                 start: *start,
                                 end: *end,
                             });
@@ -704,9 +497,7 @@ impl BBParser {
                     tag
                 ))));
             }
-            TagTransform::Remove => {
-                // Nothing to emit for known or stripped unknown tags
-            }
+            TagTransform::Remove => {}
             TagTransform::Apply => {
                 if is_known {
                     events.push(ParseEvent::StyleStart(tag));
@@ -718,9 +509,7 @@ impl BBParser {
                                 tag
                             ))));
                         }
-                        UnknownTagBehavior::Strip => {
-                            // Nothing to emit
-                        }
+                        UnknownTagBehavior::Strip => {}
                     }
                 }
             }
@@ -754,9 +543,7 @@ impl BBParser {
                     tag
                 ))));
             }
-            TagTransform::Remove => {
-                // Nothing to emit
-            }
+            TagTransform::Remove => {}
             TagTransform::Apply => {
                 if is_known {
                     events.push(ParseEvent::StyleEnd(tag));
@@ -768,16 +555,13 @@ impl BBParser {
                                 tag
                             ))));
                         }
-                        UnknownTagBehavior::Strip => {
-                            // Nothing to emit
-                        }
+                        UnknownTagBehavior::Strip => {}
                     }
                 }
             }
         }
     }
 
-    /// Renders events to a string.
     fn render(&self, events: Vec<ParseEvent>) -> String {
         let mut result = String::new();
         let mut style_stack: Vec<&Style> = Vec::new();
@@ -802,7 +586,6 @@ impl BBParser {
         result
     }
 
-    /// Helper to append styled text.
     fn append_styled(&self, output: &mut String, text: &str, style_stack: &[&Style]) {
         if text.is_empty() {
             return;
@@ -812,9 +595,8 @@ impl BBParser {
             output.push_str(text);
         } else {
             let mut current = text.to_string();
-            // Apply styles from innermost (top of stack) to outermost (bottom).
-            // This ensures that inner styles override outer styles (ANSI rules: last code wins).
-            // Also optimizes by stripping nested resets.
+            // Innermost to outermost, so inner styles win (ANSI: last code
+            // wins), stripping nested resets along the way.
             for style in style_stack.iter().rev() {
                 if current.ends_with("\x1b[0m") {
                     current.truncate(current.len() - 4);
@@ -832,28 +614,23 @@ enum ParseEvent<'a> {
     StyleEnd(&'a str),
 }
 
-/// Token types produced by the tokenizer.
 #[derive(Debug, Clone, PartialEq, Eq)]
 enum Token<'a> {
-    /// Plain text content.
     Text {
         content: &'a str,
         start: usize,
         end: usize,
     },
-    /// Opening tag: `[tagname]`
     OpenTag {
         name: &'a str,
         start: usize,
         end: usize,
     },
-    /// Closing tag: `[/tagname]`
     CloseTag {
         name: &'a str,
         start: usize,
         end: usize,
     },
-    /// Invalid tag syntax (passed through as text).
     InvalidTag {
         content: &'a str,
         start: usize,
@@ -861,8 +638,8 @@ enum Token<'a> {
     },
 }
 
-/// Pre-computes which OpenTag tokens have a matching CloseTag.
-/// This is O(N) instead of O(N^2).
+// O(N) instead of O(N^2): pre-computes which OpenTag tokens have a matching
+// CloseTag.
 fn compute_valid_tags(tokens: &[Token<'_>]) -> std::collections::HashSet<usize> {
     use std::collections::{HashMap, HashSet};
     let mut valid_indices = HashSet::new();
@@ -887,18 +664,8 @@ fn compute_valid_tags(tokens: &[Token<'_>]) -> std::collections::HashSet<usize> 
     valid_indices
 }
 
-/// Finds the byte offset of the next `[` that is not preceded by a `\` escape.
-///
-/// Both `\[` and `\]` are treated as escape sequences and skipped. Other
-/// backslashes (e.g. `\n`, `\\`, trailing `\`) are not consumed and don't
-/// affect bracket detection. ANSI controls recognized by
-/// [`console::strip_ansi_codes`] are skipped as terminal syntax rather than
-/// parsed as semantic tags. This deliberately shares the parser used by the
-/// established visible-width interface instead of maintaining a CSI-only
-/// approximation here.
-///
-/// Byte-level scanning is safe here: `\`, `[`, and `]` are ASCII and cannot
-/// appear as continuation bytes in a UTF-8 sequence.
+// ANSI controls are skipped as terminal syntax. Byte-level scanning is safe
+// here: `\`, `[`, `]` are ASCII and cannot be UTF-8 continuation bytes.
 fn find_unescaped_bracket(s: &str) -> Option<usize> {
     let mut source_offset = 0;
     for (unit, is_ansi) in AnsiCodeIterator::new(s) {
@@ -924,11 +691,8 @@ fn find_unescaped_bracket(s: &str) -> Option<usize> {
     None
 }
 
-/// Replaces `\[` with `[` and `\]` with `]` in a text segment. Other
-/// backslashes pass through unchanged. Returns `Cow::Borrowed` when no
-/// actual `\[` or `\]` escape sequence is present, so backslash-containing
-/// but escape-free inputs (Windows paths, `\d+` regex examples, etc.) stay
-/// allocation-free.
+// Returns `Cow::Borrowed` when no `\[`/`\]` escape is present, so
+// escape-free inputs (Windows paths, regexes) stay allocation-free.
 fn unescape(s: &str) -> std::borrow::Cow<'_, str> {
     let bytes = s.as_bytes();
     let has_escape = bytes
@@ -954,7 +718,6 @@ fn unescape(s: &str) -> std::borrow::Cow<'_, str> {
     std::borrow::Cow::Owned(out)
 }
 
-/// Tokenizer for BBCode-style tags.
 struct Tokenizer<'a> {
     input: &'a str,
     pos: usize,
@@ -965,7 +728,6 @@ impl<'a> Tokenizer<'a> {
         Self { input, pos: 0 }
     }
 
-    /// Checks if a string is a valid tag name (CSS identifier rules).
     fn is_valid_tag_name(s: &str) -> bool {
         if s.is_empty() {
             return false;
@@ -974,12 +736,10 @@ impl<'a> Tokenizer<'a> {
         let mut chars = s.chars();
         let first = chars.next().unwrap();
 
-        // First char must be letter or underscore
         if !first.is_ascii_lowercase() && first != '_' {
             return false;
         }
 
-        // Rest can be letter, digit, underscore, or hyphen
         for c in chars {
             if !c.is_ascii_lowercase() && !c.is_ascii_digit() && c != '_' && c != '-' {
                 return false;
@@ -1001,11 +761,8 @@ impl<'a> Iterator for Tokenizer<'a> {
         let remaining = &self.input[self.pos..];
         let start_pos = self.pos;
 
-        // Look for the next unescaped '['. `\[` and `\]` are skipped so they
-        // can be emitted as literal characters by the text path.
         if let Some(bracket_pos) = find_unescaped_bracket(remaining) {
             if bracket_pos > 0 {
-                // There's text before the bracket
                 let text = &remaining[..bracket_pos];
                 self.pos += bracket_pos;
                 return Some(Token::Text {
@@ -1015,14 +772,11 @@ impl<'a> Iterator for Tokenizer<'a> {
                 });
             }
 
-            // We're at a '['
-            // Try to parse a tag
             if let Some(close_bracket) = remaining.find(']') {
                 let tag_content = &remaining[1..close_bracket];
                 let full_tag = &remaining[..=close_bracket];
                 let end_pos = start_pos + close_bracket + 1;
 
-                // Check for closing tag
                 if let Some(tag_name) = tag_content.strip_prefix('/') {
                     if Self::is_valid_tag_name(tag_name) {
                         self.pos = end_pos;
@@ -1055,7 +809,6 @@ impl<'a> Iterator for Tokenizer<'a> {
                     })
                 }
             } else {
-                // No closing bracket - rest is text
                 let end_pos = self.input.len();
                 self.pos = end_pos;
                 Some(Token::Text {
@@ -1065,7 +818,6 @@ impl<'a> Iterator for Tokenizer<'a> {
                 })
             }
         } else {
-            // No more brackets - rest is text
             let end_pos = self.input.len();
             self.pos = end_pos;
             Some(Token::Text {
@@ -1092,8 +844,6 @@ mod tests {
         styles.insert("style-with-dash".to_string(), Style::new().yellow());
         styles
     }
-
-    // ==================== strip_tags Tests ====================
 
     mod strip_tags_tests {
         use super::super::strip_tags;
@@ -1208,8 +958,6 @@ mod tests {
         }
     }
 
-    // ==================== TagTransform::Keep Tests ====================
-
     mod keep_mode {
         use super::*;
 
@@ -1262,8 +1010,6 @@ mod tests {
         }
     }
 
-    // ==================== TagTransform::Remove Tests ====================
-
     mod remove_mode {
         use super::*;
 
@@ -1307,8 +1053,6 @@ mod tests {
             assert_eq!(parser.parse("[unknown]text[/unknown]"), "text");
         }
     }
-
-    // ==================== Unknown Tag Behavior Tests ====================
 
     mod unknown_tag_behavior {
         use super::*;
@@ -1356,14 +1100,12 @@ mod tests {
             let parser = BBParser::new(styles, TagTransform::Apply)
                 .unknown_behavior(UnknownTagBehavior::Strip);
             let result = parser.parse("[bold][unknown]text[/unknown][/bold]");
-            // Should have bold styling but no unknown tag markers
             assert!(!result.contains("[unknown"));
             assert!(result.contains("text"));
         }
 
         #[test]
         fn keep_mode_ignores_unknown_behavior() {
-            // In Keep mode, all tags are preserved as-is regardless of unknown_behavior
             let parser = BBParser::new(test_styles(), TagTransform::Keep)
                 .unknown_behavior(UnknownTagBehavior::Strip);
             assert_eq!(
@@ -1374,14 +1116,11 @@ mod tests {
 
         #[test]
         fn remove_mode_always_strips_tags() {
-            // In Remove mode, all tags are stripped regardless of unknown_behavior
             let parser = BBParser::new(test_styles(), TagTransform::Remove)
                 .unknown_behavior(UnknownTagBehavior::Passthrough);
             assert_eq!(parser.parse("[unknown]text[/unknown]"), "text");
         }
     }
-
-    // ==================== Validation Tests ====================
 
     mod validation {
         use super::*;
@@ -1410,7 +1149,7 @@ mod tests {
             let parser = BBParser::new(test_styles(), TagTransform::Apply);
             let result = parser.validate("[unknown]text[/unknown]");
             let errors = result.unwrap_err();
-            assert_eq!(errors.len(), 2); // open and close
+            assert_eq!(errors.len(), 2);
         }
 
         #[test]
@@ -1455,7 +1194,7 @@ mod tests {
                 .find(|e| e.kind == UnknownTagKind::Open)
                 .unwrap();
             assert_eq!(open_error.start, 0);
-            assert_eq!(open_error.end, 9); // "[unknown]"
+            assert_eq!(open_error.end, 9);
 
             let close_error = errors
                 .errors
@@ -1463,7 +1202,7 @@ mod tests {
                 .find(|e| e.kind == UnknownTagKind::Close)
                 .unwrap();
             assert_eq!(close_error.start, 13);
-            assert_eq!(close_error.end, 23); // "[/unknown]"
+            assert_eq!(close_error.end, 23);
         }
 
         #[test]
@@ -1471,7 +1210,7 @@ mod tests {
             let parser = BBParser::new(test_styles(), TagTransform::Apply);
             let result = parser.validate("[foo]a[/foo][bar]b[/bar]");
             let errors = result.unwrap_err();
-            assert_eq!(errors.len(), 4); // 2 opens + 2 closes
+            assert_eq!(errors.len(), 4);
 
             let tags: std::collections::HashSet<_> =
                 errors.errors.iter().map(|e| e.tag.as_str()).collect();
@@ -1484,7 +1223,7 @@ mod tests {
             let parser = BBParser::new(test_styles(), TagTransform::Apply);
             let result = parser.validate("[bold][unknown]text[/unknown][/bold]");
             let errors = result.unwrap_err();
-            assert_eq!(errors.len(), 2); // only unknown tag errors
+            assert_eq!(errors.len(), 2);
 
             for error in &errors.errors {
                 assert_eq!(error.tag, "unknown");
@@ -1503,8 +1242,6 @@ mod tests {
             assert!(parser.validate("").is_ok());
         }
     }
-
-    // ==================== Parse With Diagnostics Tests ====================
 
     mod parse_with_diagnostics {
         use super::*;
@@ -1549,8 +1286,6 @@ mod tests {
             assert_eq!(count, 4);
         }
     }
-
-    // ==================== Tag Name Validation Tests ====================
 
     mod tag_names {
         use super::*;
@@ -1614,8 +1349,6 @@ mod tests {
             assert!(!Tokenizer::is_valid_tag_name(""));
         }
     }
-
-    // ==================== Edge Cases ====================
 
     mod edge_cases {
         use super::*;
@@ -1723,8 +1456,6 @@ mod tests {
         }
     }
 
-    // ==================== Escape Sequence Tests ====================
-
     mod escapes {
         use super::*;
 
@@ -1768,9 +1499,6 @@ mod tests {
 
         #[test]
         fn unescape_borrows_when_no_bracket_escape_present() {
-            // Backslash-containing inputs without `\[` or `\]` (Windows paths,
-            // `\d+` regex examples) must not allocate — they should round-trip
-            // through `Cow::Borrowed`.
             assert!(matches!(
                 unescape("plain text"),
                 std::borrow::Cow::Borrowed(_)
@@ -1784,7 +1512,6 @@ mod tests {
                 unescape("trailing\\"),
                 std::borrow::Cow::Borrowed(_)
             ));
-            // Actual escape sequences must take the owned path.
             assert!(matches!(unescape("\\["), std::borrow::Cow::Owned(_)));
             assert!(matches!(unescape("\\]"), std::borrow::Cow::Owned(_)));
         }
@@ -1826,9 +1553,7 @@ mod tests {
 
         #[test]
         fn escape_does_not_apply_inside_tag_name() {
-            // `\` is not a valid tag-name char, so the bracket scanner still
-            // sees the opening `[` and the malformed content becomes an
-            // InvalidTag passthrough rather than a styled tag.
+            // `\` is not a valid tag-name char, so this becomes InvalidTag.
             let parser = BBParser::new(test_styles(), TagTransform::Keep);
             assert_eq!(parser.parse("[bo\\ld]"), "[bo\\ld]");
         }
@@ -1841,9 +1566,7 @@ mod tests {
 
         #[test]
         fn only_open_escaped_leaves_close_unmatched() {
-            // Escaping only the open turns it into literal text; the close
-            // becomes an unexpected close. Output contains both literally,
-            // and validation surfaces the error.
+            // Escaping only the open leaves the close unmatched.
             let parser = BBParser::new(test_styles(), TagTransform::Apply);
             let (output, errors) = parser.parse_with_diagnostics("\\[bold]hi[/bold]");
             assert!(output.contains("[bold]hi"));
@@ -1855,8 +1578,6 @@ mod tests {
                 .any(|e| e.kind == UnknownTagKind::UnexpectedClose));
         }
     }
-
-    // ==================== Tokenizer Tests ====================
 
     mod tokenizer {
         use super::*;
@@ -1995,8 +1716,6 @@ mod tests {
         }
     }
 
-    // ==================== Apply Mode Tests ====================
-
     mod apply_mode {
         use super::*;
 
@@ -2026,8 +1745,6 @@ mod tests {
             assert!(result.contains("\x1b[1m") || result.contains("hello"));
         }
     }
-
-    // ==================== Error Display Tests ====================
 
     mod error_display {
         use super::*;
@@ -2185,7 +1902,7 @@ mod proptests {
 
             prop_assert!(result.is_err());
             let errors = result.unwrap_err();
-            prop_assert_eq!(errors.len(), 2); // open + close
+            prop_assert_eq!(errors.len(), 2);
         }
 
         #[test]

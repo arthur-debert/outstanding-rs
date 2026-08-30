@@ -1,48 +1,6 @@
-//! Proc macros for Standout.
-//!
-//! This crate provides macros for compile-time resource embedding and
-//! declarative command dispatch configuration.
-//!
-//! # Available Macros
-//!
-//! ## Embedding Macros
-//!
-//! - [`embed_templates!`] - Embed template files (`.jinja`, `.jinja2`, `.j2`, `.txt`)
-//! - [`embed_styles!`] - Embed stylesheet files (`.css`, `.yaml`, `.yml`)
-//!
-//! ## Derive Macros
-//!
-//! - [`Dispatch`] - Generate dispatch configuration from clap `Subcommand` enums
-//! - [`Tabular`] - Generate `TabularSpec` from struct field annotations
-//! - [`TabularRow`] - Generate optimized row extraction without JSON serialization
-//! - [`Seekable`] - Generate query-enabled accessor functions for Seeker
-//! - [`Questionnaire`] - Generate questionnaire definitions and typed filling
-//! - [`QuestionnaireChoices`] - Generate enum-backed questionnaire vocabularies
-//!
-//! ## Attribute Macros
-//!
-//! - [`handler`] - Transform typed adapter functions into Standout-compatible handlers
-//!
-//! # Design Philosophy
-//!
-//! These macros return [`EmbeddedSource`] types that contain:
-//!
-//! 1. Embedded content (baked into binary at compile time)
-//! 2. Source path (for debug hot-reload)
-//!
-//! This design enables:
-//!
-//! - Release builds: Use embedded content, zero file I/O
-//! - Debug builds: Hot-reload from disk if source path exists
-//!
-//! # Examples
-//!
-//! For working examples, see:
-//! - `standout/tests/embed_macros.rs` - embedding macros
-//! - `standout/tests/dispatch_derive.rs` - dispatch derive macro
-//!
-//! [`EmbeddedSource`]: standout::EmbeddedSource
-//! [`RenderSetup`]: standout::RenderSetup
+//! Proc macros for Standout: compile-time resource embedding, dispatch
+//! configuration, tabular/seeker/questionnaire derives, and handler/command
+//! attribute macros. See each macro's rustdoc for usage.
 
 mod command;
 mod dispatch;
@@ -55,126 +13,18 @@ mod tabular;
 use proc_macro::TokenStream;
 use syn::{parse_macro_input, DeriveInput, LitStr};
 
-/// Embeds all template files from a directory at compile time.
-///
-/// This macro walks the specified directory, reads all files with recognized
-/// template extensions, and returns an [`EmbeddedTemplates`] source that can
-/// be used with [`RenderSetup`] or converted to a [`TemplateRegistry`].
-///
-/// # Supported Extensions
-///
-/// Files are recognized by extension (in priority order):
-/// - `.jinja` (highest priority)
-/// - `.jinja2`
-/// - `.j2`
-/// - `.txt` (lowest priority)
-///
-/// When multiple files share the same base name with different extensions
-/// (e.g., `config.jinja` and `config.txt`), the higher-priority extension wins
-/// for extensionless lookups.
-///
-/// # Hot Reload Behavior
-///
-/// - Release builds: Uses embedded content (zero file I/O)
-/// - Debug builds: Reads from disk if source path exists (hot-reload)
-///
-/// For working examples, see `standout/tests/embed_macros.rs`.
-///
-/// # Compile-Time Errors
-///
-/// The macro will fail to compile if:
-/// - The directory doesn't exist
-/// - The directory is not readable
-/// - Any file content is not valid UTF-8
-///
-/// [`EmbeddedTemplates`]: standout::EmbeddedTemplates
-/// [`RenderSetup`]: standout::RenderSetup
-/// [`TemplateRegistry`]: standout::TemplateRegistry
 #[proc_macro]
 pub fn embed_templates(input: TokenStream) -> TokenStream {
     let path_lit = parse_macro_input!(input as LitStr);
     embed::embed_templates_impl(path_lit).into()
 }
 
-/// Embeds all stylesheet files from a directory at compile time.
-///
-/// This macro walks the specified directory, reads all files with recognized
-/// stylesheet extensions, and returns an [`EmbeddedStyles`] source that can
-/// be used with [`RenderSetup`] or converted to a [`StylesheetRegistry`].
-///
-/// # Supported Extensions
-///
-/// Files are recognized by extension (in priority order):
-/// - `.css` (highest priority — preferred format)
-/// - `.yaml` (legacy)
-/// - `.yml` (legacy, lowest priority)
-///
-/// The format is auto-detected from the content itself at parse time, so the
-/// extension only matters for file discovery and priority resolution.
-///
-/// When multiple files share the same base name with different extensions
-/// (e.g., `dark.css` and `dark.yaml`), the higher-priority extension wins.
-///
-/// # Hot Reload Behavior
-///
-/// - Release builds: Uses embedded content (zero file I/O)
-/// - Debug builds: Reads from disk if source path exists (hot-reload)
-///
-/// For working examples, see `standout/tests/embed_macros.rs`.
-///
-/// # Compile-Time Errors
-///
-/// The macro will fail to compile if:
-/// - The directory doesn't exist
-/// - The directory is not readable
-/// - Any file content is not valid UTF-8
-///
-/// [`EmbeddedStyles`]: standout::EmbeddedStyles
-/// [`RenderSetup`]: standout::RenderSetup
-/// [`StylesheetRegistry`]: standout::StylesheetRegistry
 #[proc_macro]
 pub fn embed_styles(input: TokenStream) -> TokenStream {
     let path_lit = parse_macro_input!(input as LitStr);
     embed::embed_styles_impl(path_lit).into()
 }
 
-/// Derives dispatch configuration from a clap `Subcommand` enum.
-///
-/// This macro eliminates boilerplate command-to-handler mappings by using
-/// naming conventions with explicit overrides when needed.
-///
-/// For working examples, see `standout/tests/dispatch_derive.rs`.
-///
-/// # Convention-Based Defaults
-///
-/// - Handler: `{handlers_module}::{variant_snake_case}`
-///   - `Add` → `handlers::add`
-///   - `ListAll` → `handlers::list_all`
-/// - Template: `{variant_snake_case}.j2`
-///
-/// # Container Attributes
-///
-/// | Attribute | Required | Description |
-/// |-----------|----------|-------------|
-/// | `handlers = path` | Yes | Module containing handler functions |
-///
-/// # Variant Attributes
-///
-/// | Attribute | Description | Default |
-/// |-----------|-------------|---------|
-/// | `handler = path` | Handler function | `{handlers}::{snake_case}` |
-/// | `template = "source"` | Inline MiniJinja source | None |
-/// | `template_name = "name"` | Registered template name | `{snake_case}.j2` by convention |
-/// | `pre_dispatch = fn` | Pre-dispatch hook | None |
-/// | `post_dispatch = fn` | Post-dispatch hook | None |
-/// | `post_output = fn` | Post-output hook | None |
-/// | `nested` | Treat as nested subcommand | false |
-/// | `skip` | Skip this variant | false |
-///
-/// # Generated Code
-///
-/// Generates a `dispatch_config()` method returning a closure for
-/// use with `App::builder().commands()`.
 #[proc_macro_derive(Dispatch, attributes(dispatch))]
 pub fn dispatch_derive(input: TokenStream) -> TokenStream {
     let input = parse_macro_input!(input as DeriveInput);
@@ -183,60 +33,6 @@ pub fn dispatch_derive(input: TokenStream) -> TokenStream {
         .into()
 }
 
-/// Derives a `TabularSpec` from struct field annotations.
-///
-/// This macro generates an implementation of the `Tabular` trait, which provides
-/// a `tabular_spec()` method that returns a `TabularSpec` for the struct.
-///
-/// For working examples, see `standout/tests/tabular_derive.rs`.
-///
-/// # Field Attributes
-///
-/// | Attribute | Type | Description |
-/// |-----------|------|-------------|
-/// | `width` | `usize` or `"fill"` or `"Nfr"` | Column width strategy |
-/// | `min` | `usize` | Minimum width (for bounded) |
-/// | `max` | `usize` | Maximum width (for bounded) |
-/// | `align` | `"left"`, `"right"`, `"center"` | Text alignment |
-/// | `anchor` | `"left"`, `"right"` | Column position |
-/// | `overflow` | `"truncate"`, `"wrap"`, `"clip"`, `"expand"` | Overflow handling |
-/// | `truncate_at` | `"end"`, `"start"`, `"middle"` | Truncation position |
-/// | `style` | string | Style name for the column |
-/// | `style_from_value` | flag | Use cell value as style name |
-/// | `header` | string | Header title (default: field name) |
-/// | `null_repr` | string | Representation for null values |
-/// | `key` | string | Data extraction key (supports dot notation) |
-/// | `skip` | flag | Exclude this field from the spec |
-///
-/// # Container Attributes
-///
-/// | Attribute | Type | Description |
-/// |-----------|------|-------------|
-/// | `separator` | string | Column separator (default: "  ") |
-/// | `prefix` | string | Row prefix |
-/// | `suffix` | string | Row suffix |
-///
-/// # Example
-///
-/// ```ignore
-/// use standout::tabular::Tabular;
-/// use serde::Serialize;
-///
-/// #[derive(Serialize, Tabular)]
-/// #[tabular(separator = " │ ")]
-/// struct Task {
-///     #[col(width = 8, style = "muted")]
-///     id: String,
-///
-///     #[col(width = "fill", overflow = "wrap")]
-///     title: String,
-///
-///     #[col(width = 12, align = "right")]
-///     status: String,
-/// }
-///
-/// let spec = Task::tabular_spec();
-/// ```
 #[proc_macro_derive(Tabular, attributes(col, tabular))]
 pub fn tabular_derive(input: TokenStream) -> TokenStream {
     let input = parse_macro_input!(input as DeriveInput);
@@ -245,45 +41,6 @@ pub fn tabular_derive(input: TokenStream) -> TokenStream {
         .into()
 }
 
-/// Derives optimized row extraction for tabular formatting.
-///
-/// This macro generates an implementation of the `TabularRow` trait, which provides
-/// a `to_row()` method that converts the struct to a `Vec<String>` without JSON serialization.
-///
-/// For working examples, see `standout/tests/tabular_derive.rs`.
-///
-/// # Field Attributes
-///
-/// | Attribute | Description |
-/// |-----------|-------------|
-/// | `skip` | Exclude this field from the row |
-///
-/// # Example
-///
-/// ```ignore
-/// use standout::tabular::TabularRow;
-///
-/// #[derive(TabularRow)]
-/// struct Task {
-///     id: String,
-///     title: String,
-///
-///     #[col(skip)]
-///     internal_state: u32,
-///
-///     status: String,
-/// }
-///
-/// let task = Task {
-///     id: "TSK-001".to_string(),
-///     title: "Implement feature".to_string(),
-///     internal_state: 42,
-///     status: "pending".to_string(),
-/// };
-///
-/// let row = task.to_row();
-/// assert_eq!(row, vec!["TSK-001", "Implement feature", "pending"]);
-/// ```
 #[proc_macro_derive(TabularRow, attributes(col))]
 pub fn tabular_row_derive(input: TokenStream) -> TokenStream {
     let input = parse_macro_input!(input as DeriveInput);
@@ -292,115 +49,6 @@ pub fn tabular_row_derive(input: TokenStream) -> TokenStream {
         .into()
 }
 
-/// Derives the `Seekable` trait for query-enabled structs.
-///
-/// This macro generates an implementation of the `Seekable` trait from
-/// `standout-seeker`, enabling type-safe field access for query operations.
-///
-/// # Field Attributes
-///
-/// | Attribute | Description |
-/// |-----------|-------------|
-/// | `String` | String field (supports Eq, Ne, Contains, StartsWith, EndsWith, Regex) |
-/// | `Number` | Numeric field (supports Eq, Ne, Gt, Gte, Lt, Lte) |
-/// | `Timestamp` | Timestamp field (supports Eq, Ne, Before, After, Gt, Gte, Lt, Lte) |
-/// | `Enum` | Enum field (supports Eq, Ne, In) - requires `SeekerEnum` impl |
-/// | `Bool` | Boolean field (supports Eq, Ne, Is) |
-/// | `skip` | Exclude this field from queries |
-/// | `rename = "..."` | Use a custom name for queries |
-///
-/// # Generated Code
-///
-/// The macro generates:
-///
-/// 1. Field name constants (e.g., `Task::NAME`, `Task::PRIORITY`)
-/// 2. Implementation of `Seekable::seeker_field_value()`
-///
-/// # Example
-///
-/// ```ignore
-/// use standout_macros::Seekable;
-/// use standout_seeker::{Query, Seekable};
-///
-/// #[derive(Seekable)]
-/// struct Task {
-/// struct Task {
-///     #[seek(String)]
-///     name: String,
-///
-///     #[seek(Number)]
-///     priority: u8,
-///
-///     #[seek(Bool)]
-///     done: bool,
-///
-///     #[seek(skip)]
-///     internal_id: u64,
-/// }
-///
-/// let tasks = vec![
-///     Task { name: "Write docs".into(), priority: 3, done: false, internal_id: 1 },
-///     Task { name: "Fix bug".into(), priority: 5, done: true, internal_id: 2 },
-/// ];
-///
-/// let query = Query::new()
-///     .and_gte(Task::PRIORITY, 3u8)
-///     .not_eq(Task::DONE, true)
-///     .build();
-///
-/// let results = query.filter(&tasks, Task::accessor);
-/// assert_eq!(results.len(), 1);
-/// assert_eq!(results[0].name, "Write docs");
-/// ```
-///
-/// # Enum Fields
-///
-/// For enum fields, implement `SeekerEnum` on your enum type:
-///
-/// ```ignore
-/// use standout_seeker::SeekerEnum;
-///
-/// #[derive(Clone, Copy)]
-/// enum Status { Pending, Active, Done }
-///
-/// impl SeekerEnum for Status {
-///     fn seeker_discriminant(&self) -> u32 {
-///         match self {
-///             Status::Pending => 0,
-///             Status::Active => 1,
-///             Status::Done => 2,
-///         }
-///     }
-/// }
-///
-/// #[derive(Seekable)]
-/// struct Task {
-///     #[seek(Enum)]
-///     status: Status,
-/// }
-/// ```
-///
-/// # Timestamp Fields
-///
-/// For timestamp fields, implement `SeekerTimestamp` on your datetime type:
-///
-/// ```ignore
-/// use standout_seeker::{SeekerTimestamp, Timestamp};
-///
-/// struct MyDateTime(i64);
-///
-/// impl SeekerTimestamp for MyDateTime {
-///     fn seeker_timestamp(&self) -> Timestamp {
-///         Timestamp::from_millis(self.0)
-///     }
-/// }
-///
-/// #[derive(Seekable)]
-/// struct Event {
-///     #[seek(Timestamp)]
-///     created_at: MyDateTime,
-/// }
-/// ```
 #[proc_macro_derive(Seekable, attributes(seek))]
 pub fn seekable_derive(input: TokenStream) -> TokenStream {
     let input = parse_macro_input!(input as DeriveInput);
@@ -409,38 +57,6 @@ pub fn seekable_derive(input: TokenStream) -> TokenStream {
         .into()
 }
 
-/// Derives a questionnaire definition and typed filling for a questionnaire struct.
-///
-/// The generated implementation lowers through `standout-input`'s public
-/// builder. Container `#[question(id = "...")]` declares the questionnaire ID;
-/// field doc comments become prompts; field identifiers become stable field
-/// or group IDs unless overridden with `#[question(id = "...")]`; supported
-/// scalar field types are `String`, `PathBuf`, `bool`, and `Option<T>` over
-/// scalar or `#[question(choice)]` enum fields. Nested questionnaire structs
-/// lower to groups; child paths inherit parent `id` remapping. `#[question(choice)]`
-/// enum fields lower to `one_of`, `Vec<NestedStruct>` lowers to a repeatable
-/// group, and repeat bounds come from `#[question(min = N, max = M)]`; omitted
-/// `min` defaults to `1` because the runtime renderer needs one complete block
-/// to copy. `Vec<T>` over a scalar element type is a compile error: collect a
-/// list as a `String` field (splitting in application code) or as a `Vec` of
-/// a nested questionnaire struct.
-///
-/// `#[question(default = "...")]` declares a static default, and
-/// `#[question(default_with = path::to::fn, revision = "...")]` declares a
-/// dynamic default whose function is `fn(&EarlierAnswers<'_>) -> String`.
-/// `#[question(validate = path::to::fn, revision = "...")]` attaches a field
-/// validator whose function is `fn(&AnswerValue) -> Result<(), String>`.
-/// A non-empty revision is required for either hook and enters the
-/// questionnaire fingerprint; when both hooks are attached to one field, the
-/// same revision identifies both hook contracts.
-///
-/// `#[question(active_when(field = "...", is = "..."))]` declares conditional
-/// applicability on an `Option<T>` field. The controller must name an
-/// earlier scalar or choice field of the same derived struct (a name that
-/// does not resolve within the struct is a compile error); the derive
-/// resolves the Rust field name through any explicit `id` remapping before
-/// the runtime builder validates order. `#[question(prose)]` opts a
-/// `String` field into multi-line text.
 #[proc_macro_derive(Questionnaire, attributes(question))]
 pub fn questionnaire_derive(input: TokenStream) -> TokenStream {
     let input = parse_macro_input!(input as DeriveInput);
@@ -449,10 +65,6 @@ pub fn questionnaire_derive(input: TokenStream) -> TokenStream {
         .into()
 }
 
-/// Derives a questionnaire choice vocabulary from a unit-variant enum.
-///
-/// Every variant declares its user-facing spelling explicitly with
-/// `#[question(rename = "...")]`; a variant without one is a compile error.
 #[proc_macro_derive(QuestionnaireChoices, attributes(question))]
 pub fn questionnaire_choices_derive(input: TokenStream) -> TokenStream {
     let input = parse_macro_input!(input as DeriveInput);
@@ -461,74 +73,6 @@ pub fn questionnaire_choices_derive(input: TokenStream) -> TokenStream {
         .into()
 }
 
-/// Transforms a pure function into a Standout-compatible handler.
-///
-/// This macro generates a wrapper function that extracts CLI arguments from
-/// `ArgMatches` and calls your pure function. The original function is preserved
-/// for direct testing.
-///
-/// # Parameter Annotations
-///
-/// | Annotation | Type | Description |
-/// |------------|------|-------------|
-/// | `#[flag]` | `bool` | Boolean CLI flag |
-/// | `#[flag(name = "x")]` | `bool` | Flag with custom CLI name |
-/// | `#[arg]` | `T` | Required CLI argument |
-/// | `#[arg]` | `Option<T>` | Optional CLI argument |
-/// | `#[arg]` | `Vec<T>` | Multiple CLI arguments |
-/// | `#[arg(name = "x")]` | `T` | Argument with custom CLI name |
-/// | `#[ctx]` | `&CommandContext` | Access to command context |
-/// | `#[matches]` | `&ArgMatches` | Raw matches (escape hatch) |
-///
-/// # Return Type Handling
-///
-/// | Return Type | Behavior |
-/// |-------------|----------|
-/// | `Result<T, E>` | Passed through (dispatch auto-wraps in Output::Render) |
-/// | `Result<(), E>` | Wrapped in `HandlerResult<()>` with `Output::Silent` |
-///
-/// # Generated Code
-///
-/// For a function `fn foo(...)`, the macro generates `fn foo__handler(...)`.
-///
-/// # Example
-///
-/// ```rust,ignore
-/// use standout_macros::handler;
-///
-/// // Pure function - easy to test
-/// #[handler]
-/// pub fn list(#[flag] all: bool, #[arg] limit: Option<usize>) -> Result<Vec<Item>, Error> {
-///     storage::list(all, limit)
-/// }
-///
-/// // Generates:
-/// // pub fn list__handler(m: &ArgMatches) -> Result<Vec<Item>, Error> {
-/// //     let all = m.get_flag("all");
-/// //     let limit = m.get_one::<usize>("limit").cloned();
-/// //     list(all, limit)
-/// // }
-///
-/// // Use with Dispatch derive:
-/// #[derive(Subcommand, Dispatch)]
-/// #[dispatch(handlers = handlers)]
-/// enum Commands {
-///     #[dispatch(handler = list)]  // Uses list__handler
-///     List { ... },
-/// }
-/// ```
-///
-/// # Testing
-///
-/// The original function is preserved, so you can test it directly:
-///
-/// ```rust,ignore
-/// #[test]
-/// fn test_list() {
-///     let result = list(true, Some(10));
-///     assert!(result.is_ok());
-/// }
-/// ```
 #[proc_macro_attribute]
 pub fn handler(attr: TokenStream, item: TokenStream) -> TokenStream {
     let attr = proc_macro2::TokenStream::from(attr);
@@ -538,87 +82,6 @@ pub fn handler(attr: TokenStream, item: TokenStream) -> TokenStream {
         .into()
 }
 
-/// Defines a complete command with handler, clap Command, and template from a single source.
-///
-/// This macro extends `#[handler]` to generate both the handler wrapper AND the complete
-/// clap `Command` definition. This eliminates mismatches between handler expectations
-/// and CLI definitions since everything is derived from one source.
-///
-/// # Command Attributes
-///
-/// | Attribute | Type | Required | Description |
-/// |-----------|------|----------|-------------|
-/// | `name` | string | Yes | Command name |
-/// | `about` | string | No | Short description |
-/// | `long_about` | string | No | Detailed description |
-/// | `visible_alias` | string | No | Command alias |
-/// | `hide` | bool | No | Hide from help |
-/// | `template` | string | No | Template name (defaults to command name) |
-///
-/// # Parameter Annotations
-///
-/// ## Flags (`#[flag(...)]`)
-///
-/// | Attribute | Type | Description |
-/// |-----------|------|-------------|
-/// | `short` | char | Short flag (e.g., `-a`) |
-/// | `long` | string | Long flag, defaults to param name with `_` → `-` |
-/// | `help` | string | Help text |
-/// | `hide` | bool | Hide from help |
-///
-/// ## Arguments (`#[arg(...)]`)
-///
-/// | Attribute | Type | Description |
-/// |-----------|------|-------------|
-/// | `short` | char | Short option (e.g., `-f`) |
-/// | `long` | string | Long option, defaults to param name with `_` → `-` |
-/// | `help` | string | Help text |
-/// | `value_name` | string | Placeholder in help |
-/// | `default` | string | Default value |
-/// | `hide` | bool | Hide from help |
-/// | `positional` | bool | Positional argument (no `--` prefix) |
-///
-/// ## Pass-through
-///
-/// | Annotation | Type | Description |
-/// |------------|------|-------------|
-/// | `#[ctx]` | `&CommandContext` | Access command context |
-/// | `#[matches]` | `&ArgMatches` | Access raw matches |
-///
-/// # Generated Code
-///
-/// For a function `fn foo(...)`, the macro generates:
-///
-/// - `fn foo(...)` - original function (preserved for testing)
-/// - `fn foo__handler(...)` - wrapper for dispatch
-/// - `fn foo__expected_args()` - verification metadata
-/// - `fn foo__command()` - clap `Command` definition
-/// - `fn foo__template()` - template name
-/// - `struct foo_Handler` - implements `Handler` trait
-///
-/// # Template Convention
-///
-/// The `template` attribute is optional. When omitted, it defaults to the command name.
-/// For example, `#[command(name = "list")]` will use template `"list"`.
-///
-/// # Example
-///
-/// ```rust,ignore
-/// use standout_macros::command;
-///
-/// #[command(name = "list", about = "List all items")]
-/// fn list_items(
-///     #[flag(short = 'a', help = "Show all")] all: bool,
-///     #[arg(short = 'f', help = "Filter")] filter: Option<String>,
-/// ) -> Result<Vec<Item>, Error> {
-///     storage::list(all, filter)
-/// }
-///
-/// // Use:
-/// // - list_items__command() returns the clap Command
-/// // - list_items__template() returns "list"
-/// // - list_items_Handler implements Handler
-/// ```
 #[proc_macro_attribute]
 pub fn command(attr: TokenStream, item: TokenStream) -> TokenStream {
     let attr = proc_macro2::TokenStream::from(attr);

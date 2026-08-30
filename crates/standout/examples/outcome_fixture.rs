@@ -2,10 +2,8 @@ use clap::Command;
 use serde_json::json;
 use standout::cli::{App, Artifact, ExternalFailure, HandlerResult, HookError, Hooks, Output};
 
-/// Where the artifact fixtures suggest their bytes should land.
 const ARTIFACT_PATH_ENV: &str = "STANDOUT_FIXTURE_ARTIFACT_PATH";
 
-/// The report template every artifact fixture renders after the write.
 const ARTIFACT_TEMPLATE: &str = "wrote {{ report.entries }} entries to {{ receipt.destination }}";
 
 fn command() -> Command {

@@ -1,30 +1,8 @@
-//! Embedded resource source types for compile-time embedding with debug hot-reload.
-//!
-//! This module provides types that hold both embedded content (for release builds)
-//! and source paths (for debug hot-reload). The macros `embed_templates!` and
-//! `embed_styles!` return these types, and `App::builder()` consumes them.
-//!
-//! # Design
-//!
-//! The key insight is that we want:
-//! - Release builds: Use embedded content, zero file I/O
-//! - Debug builds: Hot-reload from disk if source path exists
-//!
-//! By storing both the embedded content AND the source path, we can make this
-//! decision at runtime based on `cfg!(debug_assertions)` and path existence.
-//!
-//! # Example
-//!
-//! ```rust,ignore
-//! use standout_render::{EmbeddedSource, TemplateResource, TemplateRegistry};
-//!
-//! // Create from macro output (typically done by embed_templates!/embed_styles!)
-//! static ENTRIES: &[(&str, &str)] = &[("list.jinja", "{{ items }}")];
-//! let source: EmbeddedSource<TemplateResource> = EmbeddedSource::new(ENTRIES, "src/templates");
-//!
-//! // Convert to registry
-//! let registry: TemplateRegistry = source.into();
-//! ```
+//! Holds both embedded content (for release builds) and a source path (for
+//! debug hot-reload) so the choice between them can be made at runtime via
+//! `cfg!(debug_assertions)` and path existence, rather than at compile time.
+//! `embed_templates!`/`embed_styles!` produce these; `App::builder()`
+//! consumes them.
 
 use std::marker::PhantomData;
 use std::path::Path;
@@ -34,8 +12,6 @@ use crate::style::{parse_theme_content, StylesheetRegistry, STYLESHEET_EXTENSION
 use crate::template::{walk_template_dir, TemplateRegistry};
 use crate::warnings::WarningBuffer;
 
-/// Records a setup warning on `buffer`, or prints it when the caller is the
-/// standalone [`From`] conversion (no run-scoped collector yet).
 fn emit_setup_warning(warnings: Option<&WarningBuffer>, message: impl Into<String>) {
     let message = message.into();
     match warnings {
@@ -44,40 +20,22 @@ fn emit_setup_warning(warnings: Option<&WarningBuffer>, message: impl Into<Strin
     }
 }
 
-/// Marker type for template resources.
 #[derive(Debug, Clone, Copy)]
 pub struct TemplateResource;
 
-/// Marker type for stylesheet resources.
 #[derive(Debug, Clone, Copy)]
 pub struct StylesheetResource;
 
-/// Embedded resource source with optional debug hot-reload.
-///
-/// This type holds:
-/// - Embedded entries (name, content) pairs baked in at compile time
-/// - The source path for debug hot-reload
-///
-/// The type parameter `R` is a marker indicating the resource type
-/// (templates or stylesheets).
 #[derive(Debug, Clone)]
 pub struct EmbeddedSource<R> {
-    /// The embedded entries as (name_with_extension, content) pairs.
-    /// This is `'static` because it's baked into the binary at compile time.
     pub entries: &'static [(&'static str, &'static str)],
 
-    /// The source path used for embedding.
-    /// In debug mode, if this path exists, files are read from disk instead.
     pub source_path: &'static str,
 
-    /// Marker for the resource type.
     _marker: PhantomData<R>,
 }
 
 impl<R> EmbeddedSource<R> {
-    /// Creates a new embedded source.
-    ///
-    /// This is typically called by the `embed_templates!` and `embed_styles!` macros.
     #[doc(hidden)]
     pub const fn new(
         entries: &'static [(&'static str, &'static str)],
@@ -90,43 +48,26 @@ impl<R> EmbeddedSource<R> {
         }
     }
 
-    /// Returns the embedded entries.
     pub fn entries(&self) -> &'static [(&'static str, &'static str)] {
         self.entries
     }
 
-    /// Returns the source path.
     pub fn source_path(&self) -> &'static str {
         self.source_path
     }
 
-    /// Returns true if hot-reload should be used.
-    ///
-    /// Hot-reload is enabled when:
-    /// - We're in debug mode (`debug_assertions` enabled)
-    /// - The source path exists on disk
     pub fn should_hot_reload(&self) -> bool {
         cfg!(debug_assertions) && std::path::Path::new(self.source_path).exists()
     }
 }
 
-/// Type alias for embedded templates.
 pub type EmbeddedTemplates = EmbeddedSource<TemplateResource>;
 
-/// Type alias for embedded stylesheets.
 pub type EmbeddedStyles = EmbeddedSource<StylesheetResource>;
 
 impl EmbeddedTemplates {
-    /// Converts into a [`TemplateRegistry`], recording hot-reload fallbacks.
-    ///
-    /// When `warnings` is `Some`, fallback messages go on that buffer so a
-    /// later run can return them on the run result. When `None` (the
-    /// standalone [`From`] conversion), they print to stderr.
     pub fn into_registry(self, warnings: Option<&WarningBuffer>) -> TemplateRegistry {
         if self.should_hot_reload() {
-            // Debug mode with existing source path: load from filesystem
-            // Use walk_template_dir + add_from_files for immediate loading
-            // (add_template_dir uses lazy loading which doesn't work well here)
             let files = match walk_template_dir(self.source_path) {
                 Ok(files) => files,
                 Err(e) => {
@@ -154,40 +95,20 @@ impl EmbeddedTemplates {
             }
             registry
         } else {
-            // Release mode or missing source: use embedded content
             TemplateRegistry::from_embedded_entries(self.entries)
         }
     }
 }
 
 impl From<EmbeddedTemplates> for TemplateRegistry {
-    /// Converts embedded templates into a TemplateRegistry.
-    ///
-    /// In debug mode, if the source path exists, templates are loaded from disk
-    /// (enabling hot-reload). Otherwise, embedded content is used. Hot-reload
-    /// fallbacks print to stderr; [`EmbeddedTemplates::into_registry`] records
-    /// them on a [`WarningBuffer`] instead.
     fn from(source: EmbeddedTemplates) -> Self {
         source.into_registry(None)
     }
 }
 
 impl EmbeddedStyles {
-    /// Converts into a [`StylesheetRegistry`], recording hot-reload fallbacks.
-    ///
-    /// When `warnings` is `Some`, fallback messages go on that buffer so a
-    /// later run can return them on the run result. When `None` (the
-    /// standalone [`From`] conversion), they print to stderr.
-    ///
-    /// # Panics
-    ///
-    /// Panics if embedded stylesheet content (CSS or YAML) fails to parse
-    /// (should be caught in dev).
     pub fn into_registry(self, warnings: Option<&WarningBuffer>) -> StylesheetRegistry {
         if self.should_hot_reload() {
-            // Debug mode with existing source path: load from filesystem
-            // Walk directory and load immediately (add_dir uses lazy loading which
-            // doesn't work well for names() iteration)
             let files = match walk_dir(Path::new(self.source_path), STYLESHEET_EXTENSIONS) {
                 Ok(files) => files,
                 Err(e) => {
@@ -203,7 +124,6 @@ impl EmbeddedStyles {
                 }
             };
 
-            // Read file contents into (name_with_ext, content) pairs
             let entries: Vec<(String, String)> = files
                 .into_iter()
                 .filter_map(|file| match std::fs::read_to_string(&file.path) {
@@ -218,7 +138,6 @@ impl EmbeddedStyles {
                 })
                 .collect();
 
-            // Build registry with extension priority handling
             let entries_refs: Vec<(&str, &str)> = entries
                 .iter()
                 .map(|(n, c)| (n.as_str(), c.as_str()))
@@ -246,7 +165,6 @@ impl EmbeddedStyles {
             registry.add_embedded(inline);
             registry
         } else {
-            // Release mode or missing source: use embedded content
             StylesheetRegistry::from_embedded_entries(self.entries)
                 .expect("embedded stylesheets should parse")
         }
@@ -254,17 +172,6 @@ impl EmbeddedStyles {
 }
 
 impl From<EmbeddedStyles> for StylesheetRegistry {
-    /// Converts embedded styles into a StylesheetRegistry.
-    ///
-    /// In debug mode, if the source path exists, styles are loaded from disk
-    /// (enabling hot-reload). Otherwise, embedded content is used. Hot-reload
-    /// fallbacks print to stderr; [`EmbeddedStyles::into_registry`] records
-    /// them on a [`WarningBuffer`] instead.
-    ///
-    /// # Panics
-    ///
-    /// Panics if embedded stylesheet content (CSS or YAML) fails to parse
-    /// (should be caught in dev).
     fn from(source: EmbeddedStyles) -> Self {
         source.into_registry(None)
     }
@@ -288,14 +195,11 @@ mod tests {
         static ENTRIES: &[(&str, &str)] = &[];
         let source: EmbeddedTemplates = EmbeddedSource::new(ENTRIES, "/nonexistent/path");
 
-        // Should be false because path doesn't exist
         assert!(!source.should_hot_reload());
     }
 
     #[test]
     fn hot_reload_walk_failure_records_warning_buffer() {
-        // A file (not a directory) exists, so debug hot-reload attempts a walk
-        // and falls back to the embedded copy.
         const CARGO_TOML: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/Cargo.toml");
         static ENTRIES: &[(&str, &str)] = &[("ok.jinja", "hi")];
         let source: EmbeddedTemplates = EmbeddedSource::new(ENTRIES, CARGO_TOML);

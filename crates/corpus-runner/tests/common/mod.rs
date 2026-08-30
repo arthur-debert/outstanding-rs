@@ -1,19 +1,11 @@
-//! Scaffolding shared by the corpus-runner integration tests: executable
-//! stand-in scripts, the fake `cargo` that installs a canned binary where the
-//! runner's `--target-dir` points, and the awk-scripted questionnaire agent.
-//! Each test binary pulls this in with `mod common;`; every caller is
-//! `#![cfg(unix)]`-gated, so nothing here needs its own gate.
-
-// Each test binary uses its own subset of these helpers; the unused rest is
-// not dead weight, just unclaimed by that binary.
+// Scaffolding shared by the corpus-runner integration tests. Every caller
+// is `#![cfg(unix)]`-gated, so nothing here needs its own gate.
 #![allow(dead_code)]
 
 use std::fs;
 use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
 
-/// Writes `body` as an executable `#!/bin/sh` script named `name` in `dir`
-/// and returns its path.
 pub fn script(dir: &Path, name: &str, body: &str) -> PathBuf {
     let path = dir.join(name);
     fs::write(&path, format!("#!/bin/sh\n{body}\n")).unwrap();
@@ -21,15 +13,8 @@ pub fn script(dir: &Path, name: &str, body: &str) -> PathBuf {
     path
 }
 
-/// Installs a fake toolchain in `bin_dir` and prepends it to the
-/// process-wide PATH: a `cargo` that, instead of compiling, copies a canned
-/// implementation (`impl_body`, a shell-script body) to
-/// `<--target-dir>/debug/<binary_name>` — proving the runner's target-dir
-/// plumbing without a network or a real compile.
-///
-/// PATH is process-wide state: a test binary that calls this must run alone
-/// in its own integration-test file (as `hermetic_loop.rs` and
-/// `hermetic_roster_loop.rs` do).
+// PATH is process-wide state: a caller must run alone in its own
+// integration-test file.
 pub fn install_fake_cargo(bin_dir: &Path, binary_name: &str, impl_body: &str) {
     fs::create_dir_all(bin_dir).unwrap();
     let impl_path = script(bin_dir, &format!("{binary_name}-impl"), impl_body);
@@ -59,10 +44,8 @@ cp "{impl_path}" "$td/debug/{binary_name}""#,
     );
 }
 
-/// Recursively copies `src` into `dest`, host-side. Tests use this to stage
-/// checkout fixtures into scratch space before a sandboxed phase runs: the
-/// agent sandbox denies reads under the source checkout, so a script that
-/// `cp`s a fixture straight from the repo fails with EPERM.
+// The agent sandbox denies reads under the source checkout, so fixtures
+// must be staged here first rather than `cp`'d from the repo at run time.
 pub fn stage_dir(src: &Path, dest: &Path) {
     fs::create_dir_all(dest).unwrap();
     for entry in fs::read_dir(src).unwrap() {
@@ -76,15 +59,8 @@ pub fn stage_dir(src: &Path, dest: &Path) {
     }
 }
 
-/// Writes the scripted questionnaire agent as `name` in `dir` and returns
-/// its path: after running `preamble` (shell lines, may be empty), it answers
-/// the rendered answer sheet in place — one `(question id, answer)` line
-/// inserted under each tagged question via awk — and, when `result_event` is
-/// set, ends with a Claude Code stream-json result event so session
-/// instrumentation has data.
-///
-/// Answers are spliced into an awk program verbatim: keep them free of awk
-/// and shell metacharacters (the fixtures' plain sentences are).
+// Answers are spliced into an awk program verbatim: keep them free of awk
+// and shell metacharacters (the fixtures' plain sentences are).
 pub fn questionnaire_agent(
     dir: &Path,
     name: &str,

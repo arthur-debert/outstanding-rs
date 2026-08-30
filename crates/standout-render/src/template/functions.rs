@@ -86,11 +86,9 @@ use crate::tabular::FlatDataSpec;
 use crate::theme::{ColorMode, IconMode, Theme};
 use crate::{render_request, TemplateRef};
 
-/// Maps OutputMode to BBParser's TagTransform.
-///
-/// [`OutputMode::Auto`] must already have been resolved by the request
-/// (format + [`crate::ColorPolicy`] + stdout capability). Unresolved Auto
-/// strips tags rather than probing a detector.
+// OutputMode::Auto must already be resolved by the request (format +
+// ColorPolicy + stdout capability); unresolved Auto strips tags rather than
+// probing a detector.
 fn output_mode_to_transform(mode: OutputMode) -> TagTransform {
     match mode {
         OutputMode::Term => TagTransform::Apply,
@@ -104,17 +102,10 @@ fn output_mode_to_transform(mode: OutputMode) -> TagTransform {
     }
 }
 
-/// Post-processes rendered output with BBParser to apply style tags.
-///
-/// This is the second pass of the two-pass rendering system. The pass runs
-/// through [`crate::diagnostics::resolve_tags`], which produces the same bytes
-/// and additionally records which tags the theme could not resolve — see that
-/// module for why the result is kept rather than discarded.
 pub fn apply_style_tags(output: &str, styles: &Styles, mode: OutputMode) -> String {
     apply_style_tags_with(output, styles, mode, None)
 }
 
-/// [`apply_style_tags`] that records unresolved-tag warnings on `warnings`.
 pub fn apply_style_tags_with(
     output: &str,
     styles: &Styles,
@@ -124,9 +115,8 @@ pub fn apply_style_tags_with(
     let transform = output_mode_to_transform(mode);
     let mut resolved = styles.to_resolved_map();
     if transform == TagTransform::Apply {
-        // ANSI follows the request, not `console::colors_enabled()`. Term
-        // (and Auto resolved to Term) force styling so a non-TTY test
-        // process still emits escapes when the request asked for them.
+        // Forces ANSI regardless of console::colors_enabled(), so a non-TTY
+        // test process still emits escapes when the request asked for them.
         for style in resolved.values_mut() {
             *style = style.clone().force_styling(true);
         }
@@ -140,30 +130,17 @@ pub fn apply_style_tags_with(
     )
 }
 
-/// Result of rendering that includes both formatted and raw output.
-///
-/// This struct is used when the caller needs both the terminal-formatted output
-/// (with ANSI codes) and the raw output (with style tags but no ANSI codes).
-/// The raw output is useful for piping to external commands.
 #[derive(Debug, Clone)]
 pub struct RenderResult {
-    /// The formatted output with ANSI codes applied (for terminal display)
     pub formatted: String,
-    /// The raw output with `[tag]...[/tag]` markers but no ANSI codes.
-    /// This is the intermediate output after template rendering but before
-    /// style tag processing. Suitable for piping.
     pub raw: String,
 }
 
 impl RenderResult {
-    /// Creates a new RenderResult with both formatted and raw versions.
     pub fn new(formatted: String, raw: String) -> Self {
         Self { formatted, raw }
     }
 
-    /// Creates a RenderResult where formatted and raw are the same.
-    /// Use this for output that doesn't need style tag processing
-    /// (e.g., JSON output, error messages).
     pub fn plain(text: String) -> Self {
         Self {
             formatted: text.clone(),
@@ -172,51 +149,6 @@ impl RenderResult {
     }
 }
 
-/// Validates a template for unknown style tags.
-///
-/// This function renders the template (performing variable substitution) and then
-/// checks for any style tags that are not defined in the theme. Use this during
-/// development or CI to catch typos in templates.
-///
-/// # Arguments
-///
-/// * `template` - A minijinja template string
-/// * `data` - Any serializable data to pass to the template
-/// * `theme` - Theme definitions that define valid style names
-///
-/// # Returns
-///
-/// Returns `Ok(())` if all style tags in the template are defined in the theme.
-/// Returns `Err` with the list of unknown tags if any are found.
-///
-/// # Example
-///
-/// ```rust
-/// use standout_render::{validate_template, Theme};
-/// use console::Style;
-/// use serde::Serialize;
-///
-/// #[derive(Serialize)]
-/// struct Data { name: String }
-///
-/// let theme = Theme::new().add("title", Style::new().bold());
-///
-/// // Valid template passes
-/// let result = validate_template(
-///     "[title]{{ name }}[/title]",
-///     &Data { name: "Hello".into() },
-///     &theme,
-/// );
-/// assert!(result.is_ok());
-///
-/// // Unknown tag fails validation
-/// let result = validate_template(
-///     "[unknown]{{ name }}[/unknown]",
-///     &Data { name: "Hello".into() },
-///     &theme,
-/// );
-/// assert!(result.is_err());
-/// ```
 pub fn validate_template<T: Serialize>(
     template: &str,
     data: &T,
@@ -225,12 +157,10 @@ pub fn validate_template<T: Serialize>(
     let color_mode = TargetProperties::detect().color_scheme;
     let styles = theme.resolve_styles(Some(color_mode));
 
-    // First render with the engine to get the final output
     let engine = MiniJinjaEngine::new();
     let data_value = serde_json::to_value(data)?;
     let minijinja_output = engine.render_template(template, &data_value)?;
 
-    // Now validate the style tags
     let resolved_styles = styles.to_resolved_map();
     let parser = BBParser::new(resolved_styles, TagTransform::Remove);
     parser.validate(&minijinja_output)?;
@@ -238,39 +168,6 @@ pub fn validate_template<T: Serialize>(
     Ok(())
 }
 
-/// Renders a template with automatic terminal color detection.
-///
-/// This is the simplest way to render styled output. It automatically detects
-/// whether stdout supports colors and applies styles accordingly. Color mode
-/// (light/dark) is detected from OS settings.
-///
-/// The pure request-taking entry is [`crate::render_request`]. This convenience
-/// wrapper detects destination facts at the crate edge, builds a request, and
-/// delegates.
-///
-/// # Arguments
-///
-/// * `template` - A minijinja template string
-/// * `data` - Any serializable data to pass to the template
-/// * `theme` - Theme definitions to use for the `style` filter
-///
-/// # Example
-///
-/// ```rust
-/// use standout_render::{render, Theme};
-/// use console::Style;
-/// use serde::Serialize;
-///
-/// #[derive(Serialize)]
-/// struct Data { message: String }
-///
-/// let theme = Theme::new().add("ok", Style::new().green());
-/// let output = render(
-///     r#"[ok]{{ message }}[/ok]"#,
-///     &Data { message: "Success!".into() },
-///     &theme,
-/// ).unwrap();
-/// ```
 pub fn render<T: Serialize>(
     template: &str,
     data: &T,
@@ -279,8 +176,6 @@ pub fn render<T: Serialize>(
     render_with_output(template, data, theme, OutputMode::Auto)
 }
 
-/// Detects destination facts, builds a [`crate::RenderRequest`], and calls
-/// [`render_request`].
 fn detect_then_render<T: Serialize>(
     template: &str,
     data: &T,
@@ -303,49 +198,6 @@ fn detect_then_render<T: Serialize>(
     render_request(&request)
 }
 
-/// Renders a template with explicit output mode control.
-///
-/// Use this when you need to override automatic terminal detection,
-/// for example when honoring a `--output=text` CLI flag. Color mode
-/// (light/dark) is detected from OS settings.
-///
-/// # Arguments
-///
-/// * `template` - A minijinja template string
-/// * `data` - Any serializable data to pass to the template
-/// * `theme` - Theme definitions to use for styling
-/// * `mode` - Output mode: `Auto`, `Term`, or `Text`
-///
-/// # Example
-///
-/// ```rust
-/// use standout_render::{render_with_output, Theme, OutputMode};
-/// use console::Style;
-/// use serde::Serialize;
-///
-/// #[derive(Serialize)]
-/// struct Data { status: String }
-///
-/// let theme = Theme::new().add("ok", Style::new().green());
-///
-/// // Force plain text output
-/// let plain = render_with_output(
-///     r#"[ok]{{ status }}[/ok]"#,
-///     &Data { status: "done".into() },
-///     &theme,
-///     OutputMode::Text,
-/// ).unwrap();
-/// assert_eq!(plain, "done"); // No ANSI codes
-///
-/// // Force terminal output (with ANSI codes)
-/// let term = render_with_output(
-///     r#"[ok]{{ status }}[/ok]"#,
-///     &Data { status: "done".into() },
-///     &theme,
-///     OutputMode::Term,
-/// ).unwrap();
-/// // Contains ANSI codes for green
-/// ```
 pub fn render_with_output<T: Serialize>(
     template: &str,
     data: &T,
@@ -355,55 +207,6 @@ pub fn render_with_output<T: Serialize>(
     detect_then_render(template, data, theme, mode, |_| {})
 }
 
-/// Renders a template with explicit output mode and color mode control.
-///
-/// Use this when you need to force a specific color mode (light/dark),
-/// for example in tests or when honoring user preferences.
-///
-/// # Arguments
-///
-/// * `template` - A minijinja template string
-/// * `data` - Any serializable data to pass to the template
-/// * `theme` - Theme definitions to use for the `style` filter
-/// * `output_mode` - Output mode: `Auto`, `Term`, `Text`, etc.
-/// * `color_mode` - Color mode: `Light` or `Dark`
-///
-/// # Example
-///
-/// ```rust
-/// use standout_render::{render_with_mode, Theme, OutputMode, ColorMode};
-/// use console::Style;
-/// use serde::Serialize;
-///
-/// #[derive(Serialize)]
-/// struct Data { status: String }
-///
-/// let theme = Theme::new()
-///     .add_adaptive(
-///         "panel",
-///         Style::new(),
-///         Some(Style::new().black()),  // Light mode
-///         Some(Style::new().white()),  // Dark mode
-///     );
-///
-/// // Force dark mode rendering
-/// let dark = render_with_mode(
-///     r#"[panel]{{ status }}[/panel]"#,
-///     &Data { status: "test".into() },
-///     &theme,
-///     OutputMode::Term,
-///     ColorMode::Dark,
-/// ).unwrap();
-///
-/// // Force light mode rendering
-/// let light = render_with_mode(
-///     r#"[panel]{{ status }}[/panel]"#,
-///     &Data { status: "test".into() },
-///     &theme,
-///     OutputMode::Term,
-///     ColorMode::Light,
-/// ).unwrap();
-/// ```
 pub fn render_with_mode<T: Serialize>(
     template: &str,
     data: &T,
@@ -416,46 +219,6 @@ pub fn render_with_mode<T: Serialize>(
     })
 }
 
-/// Renders a template with additional variables injected into the context.
-///
-/// This is a convenience function for adding simple key-value pairs to the template
-/// context without the complexity of the full [`ContextRegistry`] system. The data
-/// fields take precedence over the injected variables.
-///
-/// # Arguments
-///
-/// * `template` - A minijinja template string
-/// * `data` - The primary serializable data to render
-/// * `theme` - Theme definitions for style tag processing
-/// * `vars` - Additional variables to inject into the template context
-///
-/// # Example
-///
-/// ```rust
-/// use standout_render::{render_with_vars, Theme, OutputMode};
-/// use serde::Serialize;
-/// use std::collections::HashMap;
-///
-/// #[derive(Serialize)]
-/// struct User { name: String }
-///
-/// let theme = Theme::new();
-/// let user = User { name: "Alice".into() };
-///
-/// let mut vars = HashMap::new();
-/// vars.insert("version", "1.0.0");
-/// vars.insert("app_name", "MyApp");
-///
-/// let output = render_with_vars(
-///     "{{ name }} - {{ app_name }} v{{ version }}",
-///     &user,
-///     &theme,
-///     OutputMode::Text,
-///     vars,
-/// ).unwrap();
-///
-/// assert_eq!(output, "Alice - MyApp v1.0.0");
-/// ```
 pub fn render_with_vars<T, K, V, I>(
     template: &str,
     data: &T,
@@ -486,52 +249,6 @@ where
     render_request(&request)
 }
 
-/// Auto-dispatches between template rendering and direct serialization.
-///
-/// This is the recommended function when you want to support both human-readable
-/// output (terminal, text) and machine-readable output (JSON, YAML, etc.). For
-/// structured modes like `Json`, the data is serialized directly, skipping
-/// template rendering entirely.
-///
-/// # Arguments
-///
-/// * `template` - A minijinja template string (ignored for structured modes)
-/// * `data` - Any serializable data to render or serialize
-/// * `theme` - Theme definitions for the `style` filter (ignored for structured modes)
-/// * `mode` - Output mode determining the output format
-///
-/// # Example
-///
-/// ```rust
-/// use standout_render::{render_auto, Theme, OutputMode};
-/// use console::Style;
-/// use serde::Serialize;
-///
-/// #[derive(Serialize)]
-/// struct Report { title: String, count: usize }
-///
-/// let theme = Theme::new().add("title", Style::new().bold());
-/// let data = Report { title: "Summary".into(), count: 42 };
-///
-/// // Terminal output uses the template
-/// let term = render_auto(
-///     r#"[title]{{ title }}[/title]: {{ count }}"#,
-///     &data,
-///     &theme,
-///     OutputMode::Text,
-/// ).unwrap();
-/// assert_eq!(term, "Summary: 42");
-///
-/// // JSON output serializes directly
-/// let json = render_auto(
-///     r#"[title]{{ title }}[/title]: {{ count }}"#,
-///     &data,
-///     &theme,
-///     OutputMode::Json,
-/// ).unwrap();
-/// assert!(json.contains("\"title\": \"Summary\""));
-/// assert!(json.contains("\"count\": 42"));
-/// ```
 pub fn render_auto<T: Serialize>(
     template: &str,
     data: &T,
@@ -541,19 +258,6 @@ pub fn render_auto<T: Serialize>(
     detect_then_render(template, data, theme, mode, |_| {})
 }
 
-/// Auto-dispatches with granular control over structured output.
-///
-/// Similar to `render_auto`, but allows passing an optional `FlatDataSpec`.
-/// This is particularly useful for controlling CSV output structure (columns, headers)
-/// instead of relying on automatic JSON flattening.
-///
-/// # Arguments
-///
-/// * `template` - A minijinja template string
-/// * `data` - Any serializable data to render or serialize
-/// * `theme` - Theme definitions for the `style` filter
-/// * `mode` - Output mode determining the output format
-/// * `spec` - Optional `FlatDataSpec` for defining CSV/Table structure
 pub fn render_auto_with_spec<T: Serialize>(
     template: &str,
     data: &T,
@@ -583,70 +287,6 @@ pub fn render_auto_with_spec<T: Serialize>(
     detect_then_render(template, data, theme, mode, |_| {})
 }
 
-/// Renders a template with additional context objects injected.
-///
-/// This is the most flexible rendering function, allowing you to inject
-/// additional objects into the template context beyond the serialized data.
-/// Use this when templates need access to utilities, formatters, or runtime
-/// values that cannot be represented as JSON.
-///
-/// # Arguments
-///
-/// * `template` - A minijinja template string
-/// * `data` - Any serializable data to pass to the template
-/// * `theme` - Theme definitions for the `style` filter
-/// * `mode` - Output mode: `Auto`, `Term`, `Text`, etc.
-/// * `context_registry` - Additional context objects to inject
-/// * `render_context` - Information about the render environment
-///
-/// # Context Resolution
-///
-/// Context objects are resolved from the registry using the provided
-/// `RenderContext`. Each registered provider is called to produce a value,
-/// which is then merged into the template context.
-///
-/// If a context key conflicts with a data field, the data field wins.
-/// Context is supplementary to the handler's data, not a replacement.
-///
-/// # Example
-///
-/// ```rust
-/// use standout_render::{render_with_context, Theme, OutputMode};
-/// use standout_render::context::{RenderContext, ContextRegistry};
-/// use minijinja::Value;
-/// use serde::Serialize;
-///
-/// #[derive(Serialize)]
-/// struct Data { name: String }
-///
-/// let theme = Theme::new();
-/// let data = Data { name: "Alice".into() };
-///
-/// // Create context with a static value
-/// let mut registry = ContextRegistry::new();
-/// registry.add_static("version", Value::from("1.0.0"));
-///
-/// // Create render context
-/// let json_data = serde_json::to_value(&data).unwrap();
-/// let render_ctx = RenderContext::new(
-///     OutputMode::Text,
-///     Some(80),
-///     &theme,
-///     &json_data,
-/// );
-///
-/// let output = render_with_context(
-///     "{{ name }} (v{{ version }})",
-///     &data,
-///     &theme,
-///     OutputMode::Text,
-///     &registry,
-///     &render_ctx,
-///     None,
-/// ).unwrap();
-///
-/// assert_eq!(output, "Alice (v1.0.0)");
-/// ```
 pub fn render_with_context<T: Serialize>(
     template: &str,
     data: &T,
@@ -679,72 +319,6 @@ pub fn render_with_context<T: Serialize>(
     render_request(&request)
 }
 
-/// Auto-dispatches with context injection support.
-///
-/// This combines `render_with_context` with JSON serialization support.
-/// For structured modes like `Json`, the data is serialized directly,
-/// skipping template rendering (and context injection).
-///
-/// # Arguments
-///
-/// * `template` - A minijinja template string (ignored for structured modes)
-/// * `data` - Any serializable data to render or serialize
-/// * `theme` - Theme definitions for the `style` filter
-/// * `mode` - Output mode determining the output format
-/// * `context_registry` - Additional context objects to inject
-/// * `render_context` - Information about the render environment
-///
-/// # Example
-///
-/// ```rust
-/// use standout_render::{render_auto_with_context, Theme, OutputMode};
-/// use standout_render::context::{RenderContext, ContextRegistry};
-/// use minijinja::Value;
-/// use serde::Serialize;
-///
-/// #[derive(Serialize)]
-/// struct Report { title: String, count: usize }
-///
-/// let theme = Theme::new();
-/// let data = Report { title: "Summary".into(), count: 42 };
-///
-/// let mut registry = ContextRegistry::new();
-/// registry.add_provider("terminal_width", |ctx: &RenderContext| {
-///     Value::from(ctx.terminal_width.unwrap_or(80))
-/// });
-///
-/// let json_data = serde_json::to_value(&data).unwrap();
-/// let render_ctx = RenderContext::new(
-///     OutputMode::Text,
-///     Some(120),
-///     &theme,
-///     &json_data,
-/// );
-///
-/// // Text mode uses the template with context
-/// let text = render_auto_with_context(
-///     "{{ title }} (width={{ terminal_width }}): {{ count }}",
-///     &data,
-///     &theme,
-///     OutputMode::Text,
-///     &registry,
-///     &render_ctx,
-///     None,
-/// ).unwrap();
-/// assert_eq!(text, "Summary (width=120): 42");
-///
-/// // JSON mode ignores template and context, serializes data directly
-/// let json = render_auto_with_context(
-///     "unused",
-///     &data,
-///     &theme,
-///     OutputMode::Json,
-///     &registry,
-///     &render_ctx,
-///     None,
-/// ).unwrap();
-/// assert!(json.contains("\"title\": \"Summary\""));
-/// ```
 pub fn render_auto_with_context<T: Serialize>(
     template: &str,
     data: &T,
@@ -765,10 +339,6 @@ pub fn render_auto_with_context<T: Serialize>(
     )
 }
 
-/// Builds an icon context from a theme's icon definitions.
-///
-/// Returns a map with a single `"icons"` key mapping to the resolved icon strings,
-/// or an empty map if the theme has no icons defined.
 fn build_icon_context(theme: &Theme, icon_mode: IconMode) -> HashMap<String, serde_json::Value> {
     if theme.icons().is_empty() {
         return HashMap::new();
@@ -779,35 +349,24 @@ fn build_icon_context(theme: &Theme, icon_mode: IconMode) -> HashMap<String, ser
     ctx
 }
 
-/// Builds a combined context from data and injected context.
-///
-/// Data fields take precedence over context fields.
 fn build_combined_context<T: Serialize>(
     data: &T,
     context_registry: &ContextRegistry,
     render_context: &RenderContext,
     icon_context: HashMap<String, serde_json::Value>,
 ) -> Result<HashMap<String, serde_json::Value>, RenderError> {
-    // First, resolve all context providers
     let context_values = context_registry.resolve(render_context);
 
-    // Convert data to a map of values
     let data_value = serde_json::to_value(data)?;
 
-    // Start with icon context (lowest priority)
     let mut combined: HashMap<String, serde_json::Value> = icon_context;
 
-    // Add context values (medium priority)
     for (key, value) in context_values {
-        // Convert minijinja::Value to serde_json::Value
-        // This is a bit inefficient but necessary for the abstraction
-        // In the future, ContextRegistry should probably return serde_json::Value
         let json_val =
             serde_json::to_value(value).map_err(|e| RenderError::ContextError(e.to_string()))?;
         combined.insert(key, json_val);
     }
 
-    // Add data values (highest priority - overwrites context)
     if let Some(obj) = data_value.as_object() {
         for (key, value) in obj {
             combined.insert(key.clone(), value.clone());
@@ -817,10 +376,6 @@ fn build_combined_context<T: Serialize>(
     Ok(combined)
 }
 
-/// Auto-dispatches rendering using a provided TemplateEngine.
-///
-/// This is similar to `render_auto_with_context` but allows using a pre-configured
-/// `TemplateEngine` trait object instead of creating a new dictionary-based engine.
 pub fn render_auto_with_engine(
     engine: &dyn super::TemplateEngine,
     template: &str,
@@ -842,15 +397,6 @@ pub fn render_auto_with_engine(
     .formatted)
 }
 
-/// Auto-dispatches rendering and returns both formatted and raw output.
-///
-/// This is similar to `render_auto_with_engine` but returns a `RenderResult`
-/// containing both the formatted output (with ANSI codes) and the raw output
-/// (with style tags but no ANSI codes). The raw output is useful for piping
-/// to external commands.
-///
-/// For structured modes (JSON, YAML, etc.), both formatted and raw are the same
-/// since no style processing occurs.
 pub fn render_auto_with_engine_split(
     engine: &dyn super::TemplateEngine,
     template: &str,
@@ -874,14 +420,6 @@ pub fn render_auto_with_engine_split(
     )
 }
 
-/// Auto-dispatches rendering with an explicitly inline template source.
-///
-/// Structured modes serialize `data` directly. Human-readable modes always
-/// render `template` as source text, even when a registered template has the
-/// same name.
-///
-/// Detects color-scheme and icon mode at this edge. The request path uses
-/// [`render_engine_split_inline`] with facts already on the request.
 pub fn render_auto_with_engine_split_inline(
     engine: &dyn super::TemplateEngine,
     template: &str,
@@ -905,8 +443,7 @@ pub fn render_auto_with_engine_split_inline(
     )
 }
 
-/// Request-path inline render: color-scheme and icon mode come from the
-/// request, not from a detector.
+// Request path: color_mode/icon_mode come from the request, not a detector.
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn render_engine_split_inline(
     engine: &dyn super::TemplateEngine,
@@ -932,14 +469,6 @@ pub(crate) fn render_engine_split_inline(
     )
 }
 
-/// Auto-dispatches rendering with an explicitly named template.
-///
-/// Structured modes serialize `data` directly. Human-readable modes always
-/// render `name` through [`TemplateEngine::render_named_with_render_widths`]
-/// and never reinterpret it as inline source.
-///
-/// Detects color-scheme and icon mode at this edge. The request path uses
-/// [`render_engine_split_named`] with facts already on the request.
 pub fn render_auto_with_engine_split_named(
     engine: &dyn super::TemplateEngine,
     name: &str,
@@ -963,8 +492,7 @@ pub fn render_auto_with_engine_split_named(
     )
 }
 
-/// Request-path named render: color-scheme and icon mode come from the
-/// request, not from a detector.
+// Request path: color_mode/icon_mode come from the request, not a detector.
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn render_engine_split_named(
     engine: &dyn super::TemplateEngine,
@@ -1009,7 +537,6 @@ fn render_auto_with_engine_split_kind(
     icon_mode: IconMode,
 ) -> Result<RenderResult, RenderError> {
     if mode.is_structured() {
-        // For structured modes, no style processing, so raw == formatted
         let output = match mode {
             OutputMode::Json => serde_json::to_string_pretty(data)?,
             OutputMode::Yaml => serde_yaml::to_string(data)?,
@@ -1031,20 +558,16 @@ fn render_auto_with_engine_split_kind(
     } else {
         let styles = theme.resolve_styles(Some(color_mode));
 
-        // Validate style aliases before rendering
         styles
             .validate()
             .map_err(|e| RenderError::StyleError(e.to_string()))?;
 
-        // Build the combined context: icons + injected context + data
         let icon_context = build_icon_context(theme, icon_mode);
         let context_map =
             build_combined_context(data, context_registry, render_context, icon_context)?;
 
-        // Merge into a single Value for the engine
         let combined_value = serde_json::Value::Object(context_map.into_iter().collect());
 
-        // Pass 1: Render template (this is the raw/intermediate output)
         let raw_output = match template {
             TemplateIdentity::Auto(template) if engine.has_template(template) => engine
                 .render_named_with_render_widths(
@@ -1068,12 +591,10 @@ fn render_auto_with_engine_split_kind(
             )?,
         };
 
-        // Pass 2: Apply styles to get formatted output. Unresolved-tag
-        // warnings are recorded once, on the formatted pass.
+        // Unresolved-tag warnings are recorded once, on this formatted pass.
         let formatted_output =
             apply_style_tags_with(&raw_output, &styles, mode, render_context.warnings.as_ref());
 
-        // For raw output, strip style tags (OutputMode::Text behavior)
         let stripped_output = apply_style_tags(&raw_output, &styles, OutputMode::Text);
 
         Ok(RenderResult::new(formatted_output, stripped_output))
@@ -1172,7 +693,6 @@ mod tests {
         )
         .unwrap();
 
-        // In text mode (Remove), unknown tags are stripped like known tags
         assert_eq!(output, "hello");
     }
 
@@ -1320,7 +840,6 @@ mod tests {
             message: "hello".into(),
         };
 
-        // In TermDebug (Keep mode), unknown tags are preserved as-is
         let output = render_with_output(
             r#"[unknown]{{ message }}[/unknown]"#,
             &data,
@@ -1331,7 +850,6 @@ mod tests {
 
         assert_eq!(output, "[unknown]hello[/unknown]");
 
-        // Known tags are also preserved as-is in debug mode
         let output = render_with_output(
             r#"[known]{{ message }}[/known]"#,
             &data,
@@ -1501,10 +1019,6 @@ mod tests {
         assert_eq!(output, "12:00 - Report");
     }
 
-    // ============================================================================
-    // YAML/XML/CSV Output Tests
-    // ============================================================================
-
     #[test]
     fn test_render_auto_yaml_mode() {
         use serde_json::json;
@@ -1536,8 +1050,8 @@ mod tests {
 
         let output = render_auto("unused template", &data, &theme, OutputMode::Xml).unwrap();
 
-        // RenderRequest carries JSON; XML of a named struct uses the JSON
-        // object root (`data`), not the original serde rename.
+        // RenderRequest carries JSON, so XML uses the JSON object root
+        // (`data`), not the struct's `#[serde(rename = "root")]`.
         assert!(output.contains("<data>"));
         assert!(output.contains("<name>test</name>"));
     }
@@ -1639,18 +1153,12 @@ mod tests {
 
         let output = render_auto("unused", &data, &theme, OutputMode::Csv).unwrap();
 
-        // Array fields should be flattened with indexed keys
         assert!(output.contains("tags.0"));
         assert!(output.contains("tags.1"));
         assert!(output.contains("admin"));
         assert!(output.contains("user"));
-        // Should NOT contain JSON array syntax
         assert!(!output.contains("[\""));
     }
-
-    // ============================================================================
-    // Context Injection Tests
-    // ============================================================================
 
     #[test]
     fn test_render_with_context_basic() {
@@ -1958,8 +1466,6 @@ mod tests {
             status: String,
         }
 
-        // Create an adaptive theme with different colors for light/dark
-        // Note: force_styling(true) is needed in tests since there's no TTY
         let theme = Theme::new().add_adaptive(
             "status",
             Style::new(),                                   // Base
@@ -1971,7 +1477,6 @@ mod tests {
             status: "test".into(),
         };
 
-        // Force dark mode
         let dark_output = render_with_mode(
             r#"[status]{{ status }}[/status]"#,
             &data,
@@ -1981,7 +1486,6 @@ mod tests {
         )
         .unwrap();
 
-        // Force light mode
         let light_output = render_with_mode(
             r#"[status]{{ status }}[/status]"#,
             &data,
@@ -1991,25 +1495,18 @@ mod tests {
         )
         .unwrap();
 
-        // They should be different (different colors applied)
         assert_ne!(dark_output, light_output);
 
-        // Dark mode should use white (ANSI 37)
         assert!(
             dark_output.contains("\x1b[37"),
             "Expected white (37) in dark mode"
         );
 
-        // Light mode should use black (ANSI 30)
         assert!(
             light_output.contains("\x1b[30"),
             "Expected black (30) in light mode"
         );
     }
-
-    // ============================================================================
-    // BBParser Tag Syntax Tests
-    // ============================================================================
 
     #[test]
     fn test_tag_syntax_text_mode() {
@@ -2030,7 +1527,6 @@ mod tests {
         )
         .unwrap();
 
-        // Tags should be stripped in text mode
         assert_eq!(output, "Hello");
     }
 
@@ -2053,7 +1549,6 @@ mod tests {
         )
         .unwrap();
 
-        // Should contain ANSI bold codes
         assert!(output.contains("\x1b[1m"));
         assert!(output.contains("Hello"));
     }
@@ -2077,7 +1572,6 @@ mod tests {
         )
         .unwrap();
 
-        // Tags should be preserved in debug mode
         assert_eq!(output, "[title]Hello[/title]");
     }
 
@@ -2136,7 +1630,6 @@ mod tests {
         )
         .unwrap();
 
-        // Should contain both bold and red ANSI codes
         assert!(output.contains("\x1b[1m")); // Bold
         assert!(output.contains("\x1b[31m")); // Red
         assert!(output.contains("test"));
@@ -2192,7 +1685,6 @@ mod tests {
 
     #[test]
     fn test_tag_syntax_literal_brackets() {
-        // Tags that don't match our pattern should pass through
         let theme = Theme::new();
 
         #[derive(Serialize)]
@@ -2208,13 +1700,8 @@ mod tests {
         )
         .unwrap();
 
-        // Non-tag brackets preserved
         assert_eq!(output, "Array: [1, 2, 3] and done");
     }
-
-    // ============================================================================
-    // Template Validation Tests
-    // ============================================================================
 
     #[test]
     fn test_validate_template_all_known_tags() {
@@ -2328,7 +1815,6 @@ mod tests {
         let errors = err
             .downcast_ref::<standout_bbparser::UnknownTagErrors>()
             .expect("Expected UnknownTagErrors");
-        // Only unknown tags should be reported
         assert_eq!(errors.len(), 2);
         assert!(errors.errors.iter().any(|e| e.tag == "unknown"));
     }
@@ -2339,16 +1825,13 @@ mod tests {
         #[derive(Serialize)]
         struct Data {}
 
-        // Missing closing braces
         let result = validate_template("{{ unclosed", &Data {}, &theme);
         assert!(result.is_err());
 
         let err = result.unwrap_err();
-        // Should NOT be UnknownTagErrors
         assert!(err
             .downcast_ref::<standout_bbparser::UnknownTagErrors>()
             .is_none());
-        // Should be a minijinja error
         let msg = err.to_string();
         assert!(
             msg.contains("syntax error") || msg.contains("unexpected"),
@@ -2365,11 +1848,9 @@ mod tests {
         let theme = Theme::new();
         let data = json!({"name": "test", "count": 42});
 
-        // Setup context registry (though strictly not used for structured output)
         let registry = ContextRegistry::new();
         let render_ctx = RenderContext::new(OutputMode::Yaml, Some(80), &theme, &data);
 
-        // This call previously panicked
         let output = render_auto_with_context(
             "unused template",
             &data,
@@ -2384,10 +1865,6 @@ mod tests {
         assert!(output.contains("name: test"));
         assert!(output.contains("count: 42"));
     }
-
-    // =========================================================================
-    // Icon integration tests
-    // =========================================================================
 
     #[test]
     fn test_render_with_icons_classic() {
@@ -2478,7 +1955,6 @@ mod tests {
             message: "hello".into(),
         };
 
-        // Should work fine without icons
         let output = render_with_output("{{ message }}", &data, &theme, OutputMode::Text).unwrap();
 
         assert_eq!(output, "hello");

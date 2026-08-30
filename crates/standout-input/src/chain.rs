@@ -1,8 +1,3 @@
-//! Input chain builder for composing multiple sources.
-//!
-//! The [`InputChain`] allows chaining multiple input sources with fallback
-//! behavior. Sources are tried in order until one provides input.
-
 use std::fmt;
 
 use clap::ArgMatches;
@@ -11,40 +6,8 @@ use crate::collector::{InputCollector, InputSourceKind, ResolvedInput};
 use crate::InputError;
 use crate::InputSources;
 
-/// Validator function type.
 type ValidatorFn<T> = Box<dyn Fn(&T) -> Result<(), String> + Send + Sync>;
 
-/// Chain multiple input sources with fallback behavior.
-///
-/// Sources are tried in the order they were added. The first source that
-/// returns `Some(value)` wins. If all sources return `None`, the chain
-/// uses the default value or returns [`InputError::NoInput`].
-///
-/// # Example
-///
-/// ```ignore
-/// use standout_input::{InputChain, ArgSource, StdinSource, DefaultSource};
-///
-/// // Try argument first, then stdin, then use default
-/// let chain = InputChain::<String>::new()
-///     .try_source(ArgSource::new("message"))
-///     .try_source(StdinSource::new())
-///     .try_source(DefaultSource::new("default message".to_string()));
-///
-/// let value = chain.resolve(&matches)?;
-/// ```
-///
-/// # Validation
-///
-/// Add validators to check the resolved value:
-///
-/// ```ignore
-/// let chain = InputChain::<String>::new()
-///     .try_source(ArgSource::new("email"))
-///     .validate(|s| s.contains('@'), "Must be a valid email");
-/// ```
-///
-/// Interactive sources (prompts, editor) can retry on validation failure.
 pub struct InputChain<T> {
     sources: Vec<(Box<dyn InputCollector<T>>, InputSourceKind)>,
     validators: Vec<(ValidatorFn<T>, String)>,
@@ -52,7 +15,6 @@ pub struct InputChain<T> {
 }
 
 impl<T: Clone + Send + Sync + 'static> InputChain<T> {
-    /// Create a new empty input chain.
     pub fn new() -> Self {
         Self {
             sources: Vec::new(),
@@ -61,18 +23,12 @@ impl<T: Clone + Send + Sync + 'static> InputChain<T> {
         }
     }
 
-    /// Add a source to the chain.
-    ///
-    /// Sources are tried in the order they are added.
     pub fn try_source<C: InputCollector<T> + 'static>(mut self, source: C) -> Self {
         let kind = source_kind_from_name(source.name());
         self.sources.push((Box::new(source), kind));
         self
     }
 
-    /// Add a source with an explicit kind.
-    ///
-    /// Use this when the source name doesn't map to a standard kind.
     pub fn try_source_with_kind<C: InputCollector<T> + 'static>(
         mut self,
         source: C,
@@ -82,14 +38,6 @@ impl<T: Clone + Send + Sync + 'static> InputChain<T> {
         self
     }
 
-    /// Add a validation rule.
-    ///
-    /// The validator is called after a source successfully provides input.
-    /// If validation fails:
-    /// - Interactive sources (where `can_retry()` is true) will re-prompt
-    /// - Non-interactive sources will return a validation error
-    ///
-    /// Multiple validators are checked in order; all must pass.
     pub fn validate<F>(mut self, f: F, error_msg: impl Into<String>) -> Self
     where
         F: Fn(&T) -> bool + Send + Sync + 'static,
@@ -109,10 +57,6 @@ impl<T: Clone + Send + Sync + 'static> InputChain<T> {
         self
     }
 
-    /// Add a validation rule that returns a Result.
-    ///
-    /// Unlike [`validate`](Self::validate), this allows custom error messages
-    /// per validation failure.
     pub fn validate_with<F>(mut self, f: F) -> Self
     where
         F: Fn(&T) -> Result<(), String> + Send + Sync + 'static,
@@ -122,29 +66,15 @@ impl<T: Clone + Send + Sync + 'static> InputChain<T> {
         self
     }
 
-    /// Set a default value to use when no source provides input.
-    ///
-    /// This is equivalent to adding a [`DefaultSource`](crate::DefaultSource)
-    /// at the end of the chain.
     pub fn default(mut self, value: T) -> Self {
         self.default = Some(value);
         self
     }
 
-    /// Resolve the chain and return the input value.
-    ///
-    /// Tries each source in order until one provides input, then runs
-    /// validation. Returns the value or an error. Uses
-    /// [`InputSources::from_process`]; prefer [`resolve_from`] when the
-    /// caller already has invocation sources.
     pub fn resolve(&self, matches: &ArgMatches) -> Result<T, InputError> {
         self.resolve_from(matches, &InputSources::from_process())
     }
 
-    /// Resolve against explicit [`InputSources`].
-    ///
-    /// Stdin, clipboard, and (for interactive collection) the prompt
-    /// responder come from `sources` rather than process-global defaults.
     pub fn resolve_from(
         &self,
         matches: &ArgMatches,
@@ -154,10 +84,6 @@ impl<T: Clone + Send + Sync + 'static> InputChain<T> {
             .map(|r| r.value)
     }
 
-    /// Resolve the chain and return the input with source metadata.
-    ///
-    /// Like [`resolve`](Self::resolve), but also returns which source
-    /// provided the value.
     pub fn resolve_with_source(
         &self,
         matches: &ArgMatches,
@@ -165,7 +91,6 @@ impl<T: Clone + Send + Sync + 'static> InputChain<T> {
         self.resolve_from_with_source(matches, &InputSources::from_process())
     }
 
-    /// Resolve against explicit [`InputSources`] and return source metadata.
     pub fn resolve_from_with_source(
         &self,
         matches: &ArgMatches,
@@ -181,14 +106,10 @@ impl<T: Clone + Send + Sync + 'static> InputChain<T> {
                 continue;
             }
 
-            // Interactive sources (where can_retry() is true) re-prompt on
-            // validation failure. `continue 'collect` retries this source;
-            // `break` moves to the next source in the chain.
             #[allow(clippy::while_let_loop)]
             'collect: loop {
                 match source.collect(matches)? {
                     Some(value) => {
-                        // Run source-level validation
                         if let Err(msg) = source.validate(&value) {
                             if source.can_retry() {
                                 eprintln!("Invalid: {}", msg);
@@ -197,7 +118,6 @@ impl<T: Clone + Send + Sync + 'static> InputChain<T> {
                             return Err(InputError::ValidationFailed(msg));
                         }
 
-                        // Run chain-level validators
                         for (validator, _) in &self.validators {
                             if let Err(msg) = validator(&value) {
                                 if source.can_retry() {
@@ -213,12 +133,11 @@ impl<T: Clone + Send + Sync + 'static> InputChain<T> {
                             source: *kind,
                         });
                     }
-                    None => break, // Try next source
+                    None => break,
                 }
             }
         }
 
-        // No source provided input; try default
         if let Some(value) = &self.default {
             return Ok(ResolvedInput {
                 value: value.clone(),
@@ -229,18 +148,10 @@ impl<T: Clone + Send + Sync + 'static> InputChain<T> {
         Err(InputError::NoInput)
     }
 
-    /// Check if any source is available to provide input.
-    ///
-    /// Uses [`InputSources::from_process`]; prefer
-    /// [`has_available_source_from`] when the caller already has invocation
-    /// sources (a scripted responder makes interactive sources available
-    /// without a TTY).
     pub fn has_available_source(&self, matches: &ArgMatches) -> bool {
         self.has_available_source_from(matches, &InputSources::from_process())
     }
 
-    /// [`has_available_source`](Self::has_available_source) against explicit
-    /// [`InputSources`].
     pub fn has_available_source_from(&self, matches: &ArgMatches, sources: &InputSources) -> bool {
         self.sources.iter().any(|(source, _)| {
             let bound = source.bind_sources(sources);
@@ -252,7 +163,6 @@ impl<T: Clone + Send + Sync + 'static> InputChain<T> {
         }) || self.default.is_some()
     }
 
-    /// Get the number of sources in the chain.
     pub fn source_count(&self) -> usize {
         self.sources.len()
     }
@@ -277,7 +187,6 @@ impl<T> fmt::Debug for InputChain<T> {
     }
 }
 
-/// Map source name to InputSourceKind.
 fn source_kind_from_name(name: &str) -> InputSourceKind {
     match name {
         "argument" => InputSourceKind::Arg,
@@ -321,7 +230,7 @@ mod tests {
 
     #[test]
     fn chain_falls_back_to_next_source() {
-        let matches = make_matches(&["test"]); // No --message
+        let matches = make_matches(&["test"]);
 
         let chain = InputChain::<String>::new()
             .try_source(ArgSource::new("message"))
@@ -399,7 +308,6 @@ mod tests {
     fn chain_complex_fallback() {
         let matches = make_matches(&["test"]);
 
-        // arg → stdin → env → clipboard → default
         let chain = InputChain::<String>::new()
             .try_source(ArgSource::new("message"))
             .try_source(StdinSource::with_reader(MockStdin::terminal()))

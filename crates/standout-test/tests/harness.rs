@@ -1,9 +1,3 @@
-//! Integration tests for `TestHarness`.
-//!
-//! All tests are `#[serial]` because the harness mutates process-global
-//! state (env vars, cwd). Destination facts are injected on
-//! `TargetProperties` and do not need `#[serial]` for detector reasons.
-
 use clap::Command;
 use console::Style;
 use serde_json::json;
@@ -20,7 +14,6 @@ use standout::{
 use standout_input::{ClipboardSource, EnvSource, InputChain, StdinSource};
 use standout_render::{AmbiguousWidth, OutputMode};
 use standout_test::TestHarness;
-
 fn build_echo_app(template: &'static str) -> App {
     App::builder()
         .command(
@@ -38,17 +31,14 @@ fn build_echo_app(template: &'static str) -> App {
         .build()
         .unwrap()
 }
-
 fn echo_command() -> Command {
     Command::new("app")
         .subcommand(Command::new("echo").arg(clap::Arg::new("msg").required(false).index(1)))
 }
-
 #[derive(Clone, serde::Serialize)]
 struct WidthSensitiveItem {
     name: &'static str,
 }
-
 fn build_framework_list_view_app() -> App {
     App::builder()
         .command_with(
@@ -69,11 +59,9 @@ fn build_framework_list_view_app() -> App {
         .build()
         .unwrap()
 }
-
 fn list_command() -> Command {
     Command::new("app").subcommand(Command::new("list"))
 }
-
 #[test]
 #[serial]
 fn simple_handler_returns_rendered_text() {
@@ -83,32 +71,24 @@ fn simple_handler_returns_rendered_text() {
     result.assert_stdout_eq("hello");
     result.assert_exit_status(ExitStatus::SUCCESS);
 }
-
 #[test]
 #[serial]
 fn ambiguous_width_policy_can_be_injected_for_the_same_app_fixture() {
     let app = build_echo_app("{{ msg | display_width }}");
-
     let narrow = TestHarness::new()
         .ambiguous_width(AmbiguousWidth::Narrow)
         .run(&app, echo_command(), ["app", "echo", "↦≈Δ"]);
     narrow.assert_stdout_eq("3");
     drop(narrow);
-
     let wide = TestHarness::new()
         .ambiguous_width(AmbiguousWidth::Wide)
         .run(&app, echo_command(), ["app", "echo", "↦≈Δ"]);
     wide.assert_stdout_eq("5");
 }
-
 #[test]
 #[serial]
 fn terminal_width_cascades_through_the_framework_list_view_template() {
     let app = build_framework_list_view_app();
-
-    // 37 is the width the former COLUMNS-env cascade used to assert via
-    // detect(). The assertion is that width on the request reaches the
-    // template, so it is injected — not read from `$COLUMNS`.
     for width in [31, 37, 47] {
         let result =
             TestHarness::new()
@@ -124,13 +104,11 @@ fn terminal_width_cascades_through_the_framework_list_view_template() {
         drop(result);
     }
 }
-
 #[test]
 #[serial]
 fn terminal_width_places_right_aligned_field_at_the_right_edge() {
     let app = build_framework_list_view_app();
     let field = "cascade";
-
     for width in [80, 120] {
         let result =
             TestHarness::new()
@@ -148,7 +126,6 @@ fn terminal_width_places_right_aligned_field_at_the_right_edge() {
         drop(result);
     }
 }
-
 #[test]
 #[serial]
 fn unknown_terminal_width_uses_the_framework_list_view_fallback() {
@@ -164,10 +141,6 @@ fn unknown_terminal_width_uses_the_framework_list_view_fallback() {
         .expect("framework list view should render its tabular row");
     assert_eq!(row.chars().count(), 80);
 }
-
-/// An app whose output would change if the harness still called
-/// `TargetProperties::detect`: list-view width follows `$COLUMNS`, the
-/// icon follows `$NERD_FONT`, and the adaptive style follows OS appearance.
 fn build_detectable_facts_app() -> App {
     let theme = Theme::new()
         .add_icon("mark", IconDefinition::new("CLASSIC").with_nerdfont("NERD"))
@@ -203,36 +176,28 @@ fn build_detectable_facts_app() -> App {
         .build()
         .unwrap()
 }
-
 fn detectable_command() -> Command {
     Command::new("app")
         .subcommand(Command::new("say"))
         .subcommand(Command::new("list"))
 }
-
 #[test]
 #[serial]
 fn harness_run_is_independent_of_detected_process_facts() {
     let app = build_detectable_facts_app();
     let cmd = detectable_command();
-
     let baseline = || {
         TestHarness::new()
             .with_color()
             .output_mode(OutputMode::Term)
     };
     let perturb = || {
-        // Env knobs detect() would read, plus the usual OS-scheme hints.
-        // The OS appearance API itself is not an env var; the contract pin
-        // below (unset scheme == Dark, != Light) is what makes scheme
-        // independence fail if detect() came back.
         baseline()
             .env("COLUMNS", "37")
             .env("NERD_FONT", "1")
             .env("GTK_THEME", "Adwaita:light")
             .env("COLORFGBG", "0;15")
     };
-
     let (say_default, say_default_plain) = {
         let result = baseline().run(&app, cmd.clone(), ["app", "say"]);
         result.assert_success();
@@ -246,7 +211,6 @@ fn harness_run_is_independent_of_detected_process_facts() {
         result.assert_success();
         result.stdout().to_string()
     };
-
     let say_perturbed = {
         let result = perturb().run(&app, cmd.clone(), ["app", "say"]);
         result.assert_success();
@@ -257,7 +221,6 @@ fn harness_run_is_independent_of_detected_process_facts() {
         result.assert_success();
         result.stdout().to_string()
     };
-
     assert_eq!(say_default, say_perturbed);
     assert_eq!(list_default, list_perturbed);
     assert!(
@@ -277,7 +240,6 @@ fn harness_run_is_independent_of_detected_process_facts() {
         80,
         "unset width is None, list-view fallback 80; got {row:?}"
     );
-
     let say_dark = {
         let result =
             baseline()
@@ -312,7 +274,6 @@ fn harness_run_is_independent_of_detected_process_facts() {
         "Classic vs NerdFont must be visible so NERD_FONT independence is meaningful"
     );
 }
-
 #[test]
 #[serial]
 fn harness_exposes_typed_clap_and_handler_outcomes() {
@@ -321,12 +282,10 @@ fn harness_exposes_typed_clap_and_handler_outcomes() {
     help.assert_success();
     help.assert_exit_status(ExitStatus::SUCCESS);
     assert_eq!(help.success_kind(), Some(SuccessKind::ClapHelp));
-
     let usage = TestHarness::new().run(&app, echo_command(), ["app", "--unknown"]);
     usage.assert_error();
     usage.assert_exit_status(ExitStatus::USAGE_ERROR);
     usage.assert_error_kind(RunErrorKind::ClapUsage);
-
     let failing = App::builder()
         .command_with(
             "fail",
@@ -344,13 +303,9 @@ fn harness_exposes_typed_clap_and_handler_outcomes() {
     failure.assert_exit_status(ExitStatus::FAILURE);
     failure.assert_error_kind(RunErrorKind::Handler);
 }
-
 #[test]
 #[serial]
 fn harness_answers_a_version_declared_on_the_builder() {
-    // The harness parses through the same augmentation a real run does, so a
-    // version configured on the builder is answered here too — no separate
-    // clap `Command` wiring for tests to keep in sync.
     let app = App::builder()
         .version("4.5.6")
         .command(
@@ -361,15 +316,12 @@ fn harness_answers_a_version_declared_on_the_builder() {
         .unwrap()
         .build()
         .unwrap();
-
     let result = TestHarness::new().run(&app, echo_command(), ["app", "--version"]);
-
     result.assert_success();
     result.assert_exit_status(ExitStatus::SUCCESS);
     assert_eq!(result.success_kind(), Some(SuccessKind::ClapVersion));
     result.assert_stdout_contains("4.5.6");
 }
-
 #[test]
 #[serial]
 fn harness_exposes_external_failure_payload_status_and_origin() {
@@ -405,14 +357,12 @@ fn harness_exposes_external_failure_payload_status_and_origin() {
     let command = Command::new("app")
         .subcommand(Command::new("external"))
         .subcommand(Command::new("external-pre"));
-
     let handler = TestHarness::new().run(&app, command.clone(), ["app", "external"]);
     handler.assert_error();
     handler.assert_exit_status(ExternalFailure::new(128, "").unwrap().exit_status());
     handler.assert_error_kind(RunErrorKind::External);
     assert_eq!(handler.error(), Some("fatal: delegated command failed\n"));
     handler.assert_stdout_eq("");
-
     drop(handler);
     let pre_dispatch = TestHarness::new().run(&app, command, ["app", "external-pre"]);
     pre_dispatch.assert_error();
@@ -421,7 +371,6 @@ fn harness_exposes_external_failure_payload_status_and_origin() {
     assert_eq!(pre_dispatch.error(), Some("fatal: pre-dispatch failed\n"));
     pre_dispatch.assert_stdout_eq("");
 }
-
 #[test]
 #[serial]
 fn env_var_visible_to_handler() {
@@ -441,7 +390,6 @@ fn env_var_visible_to_handler() {
         .unwrap()
         .build()
         .unwrap();
-
     let cmd = Command::new("app").subcommand(Command::new("whoami"));
     let result = TestHarness::new().env("STANDOUT_TEST_USER", "arthur").run(
         &app,
@@ -450,12 +398,10 @@ fn env_var_visible_to_handler() {
     );
     result.assert_stdout_eq("arthur");
 }
-
 #[test]
 #[serial]
 fn env_remove_hides_existing_value() {
     std::env::set_var("STANDOUT_TEST_TOKEN", "real");
-
     let app = App::builder()
         .command(
             "tok",
@@ -472,7 +418,6 @@ fn env_remove_hides_existing_value() {
         .unwrap()
         .build()
         .unwrap();
-
     let cmd = Command::new("app").subcommand(Command::new("tok"));
     {
         let result =
@@ -481,12 +426,9 @@ fn env_remove_hides_existing_value() {
                 .run(&app, cmd, vec!["app", "tok"]);
         result.assert_stdout_eq("missing");
     }
-
-    // Restore should bring the original back.
     assert_eq!(std::env::var("STANDOUT_TEST_TOKEN").as_deref(), Ok("real"));
     std::env::remove_var("STANDOUT_TEST_TOKEN");
 }
-
 #[test]
 #[serial]
 fn piped_stdin_reaches_handler() {
@@ -506,14 +448,12 @@ fn piped_stdin_reaches_handler() {
         .unwrap()
         .build()
         .unwrap();
-
     let cmd = Command::new("app").subcommand(Command::new("read"));
     let result = TestHarness::new()
         .piped_stdin("piped-in")
         .run(&app, cmd, vec!["app", "read"]);
     result.assert_stdout_eq("piped-in");
 }
-
 #[test]
 #[serial]
 fn interactive_stdin_falls_through_to_default() {
@@ -533,14 +473,12 @@ fn interactive_stdin_falls_through_to_default() {
         .unwrap()
         .build()
         .unwrap();
-
     let cmd = Command::new("app").subcommand(Command::new("read"));
     let result = TestHarness::new()
         .interactive_stdin()
         .run(&app, cmd, vec!["app", "read"]);
     result.assert_stdout_eq("no-pipe");
 }
-
 #[test]
 #[serial]
 fn clipboard_reaches_handler() {
@@ -560,7 +498,6 @@ fn clipboard_reaches_handler() {
         .unwrap()
         .build()
         .unwrap();
-
     let cmd = Command::new("app").subcommand(Command::new("paste"));
     let result =
         TestHarness::new()
@@ -568,11 +505,6 @@ fn clipboard_reaches_handler() {
             .run(&app, cmd, vec!["app", "paste"]);
     result.assert_stdout_eq("clipboard-content");
 }
-
-/// Drives a tiny three-step "wizard" handler from the harness, scripting
-/// every response. The handler calls `.prompt_from(ctx.input_sources())`; the
-/// harness-provided responder is reached through those explicit sources
-/// before any TTY is touched.
 #[test]
 #[serial]
 fn scripted_prompts_drive_a_wizard_handler() {
@@ -580,7 +512,6 @@ fn scripted_prompts_drive_a_wizard_handler() {
         ConfirmPromptSource, PromptResponse, ScriptedResponder, TextPromptSource,
     };
     use std::sync::Arc;
-
     let app = App::builder()
         .command(
             "wizard",
@@ -606,29 +537,22 @@ fn scripted_prompts_drive_a_wizard_handler() {
         .unwrap()
         .build()
         .unwrap();
-
     let cmd = Command::new("app").subcommand(Command::new("wizard"));
     let responder = Arc::new(ScriptedResponder::new([
         PromptResponse::text("Ada"),
         PromptResponse::Bool(true),
         PromptResponse::text("Engineer"),
     ]));
-
     let result = TestHarness::new()
         .prompts(responder)
         .run(&app, cmd, vec!["app", "wizard"]);
-
     result.assert_stdout_eq("Ada/true/Engineer");
 }
-
-/// Scripted Cancel surfaces as PromptCancelled inside the handler — the
-/// handler propagates it however it wants (here, a fixed "cancelled" body).
 #[test]
 #[serial]
 fn scripted_cancel_propagates_to_handler() {
     use standout_input::{PromptResponse, ScriptedResponder, TextPromptSource};
     use std::sync::Arc;
-
     let app = App::builder()
         .command(
             "wizard",
@@ -644,27 +568,19 @@ fn scripted_cancel_propagates_to_handler() {
         .unwrap()
         .build()
         .unwrap();
-
     let cmd = Command::new("app").subcommand(Command::new("wizard"));
     let responder = Arc::new(ScriptedResponder::new([PromptResponse::Cancel]));
-
     let result = TestHarness::new()
         .prompts(responder)
         .run(&app, cmd, vec!["app", "wizard"]);
-
     result.assert_stdout_contains("err:");
     result.assert_stdout_contains("cancelled");
 }
-
-/// Confirms the responder is reset on `TestResult` drop — a second harness
-/// run with no `.prompts(...)` falls back to the real backend (which under
-/// `cargo test` means no TTY, so prompt() returns NoInput).
 #[test]
 #[serial]
 fn responder_is_reset_between_runs() {
     use standout_input::{PromptResponse, ScriptedResponder, TextPromptSource};
     use std::sync::Arc;
-
     let app = App::builder()
         .command(
             "wizard",
@@ -681,23 +597,16 @@ fn responder_is_reset_between_runs() {
         .build()
         .unwrap();
     let cmd = Command::new("app").subcommand(Command::new("wizard"));
-
-    // First run: scripted responder, gets the value.
     let first = TestHarness::new()
         .prompts(Arc::new(ScriptedResponder::new([PromptResponse::text(
             "Ada",
         )])))
         .run(&app, cmd.clone(), vec!["app", "wizard"]);
     first.assert_stdout_eq("ok:Ada");
-    drop(first); // ensure restore runs before the next harness builds
-
-    // Second run: no .prompts(...). The responder should be cleared, so
-    // prompt() falls through to TextPromptSource's no-TTY path and returns
-    // NoInput.
+    drop(first);
     let second = TestHarness::new().run(&app, cmd, vec!["app", "wizard"]);
     second.assert_stdout_contains("err:");
 }
-
 #[test]
 #[serial]
 fn fixture_files_are_materialized_in_cwd() {
@@ -714,7 +623,6 @@ fn fixture_files_are_materialized_in_cwd() {
         .unwrap()
         .build()
         .unwrap();
-
     let cmd = Command::new("app")
         .subcommand(Command::new("cat").arg(clap::Arg::new("path").required(true).index(1)));
     let result = TestHarness::new()
@@ -723,7 +631,6 @@ fn fixture_files_are_materialized_in_cwd() {
     result.assert_stdout_contains("buy milk");
     result.assert_stdout_contains("write tests");
 }
-
 #[test]
 #[serial]
 fn output_mode_override_forces_json() {
@@ -737,7 +644,6 @@ fn output_mode_override_forces_json() {
     assert!(out.contains("\"msg\""));
     assert!(out.contains("\"hello\""));
 }
-
 #[test]
 #[serial]
 fn rustloc_fixture_uses_configured_csv_projection() {
@@ -791,17 +697,14 @@ fn rustloc_fixture_uses_configured_csv_projection() {
         .build()
         .unwrap();
     let cmd = Command::new("rustloc").subcommand(Command::new("summary"));
-
     let result =
         TestHarness::new()
             .output_mode(OutputMode::Csv)
             .run(&app, cmd, ["rustloc", "summary"]);
-
     result.assert_stdout_eq(
         "LANGUAGE,CODE,NET\nRust,120,100\nPython,70,60\nTOTAL,190,160\nSKIPPED,-,0\n",
     );
 }
-
 #[test]
 #[serial]
 fn terminal_width_override_does_not_install_a_detector() {
@@ -813,26 +716,22 @@ fn terminal_width_override_does_not_install_a_detector() {
     );
     result.assert_stdout_eq("hi");
 }
-
 #[test]
 #[serial]
 #[should_panic(expected = "absolute")]
 fn fixture_rejects_absolute_path() {
     let _ = TestHarness::new().fixture("/etc/passwd", "nope");
 }
-
 #[test]
 #[serial]
 #[should_panic(expected = "..")]
 fn fixture_rejects_parent_dir_escape() {
     let _ = TestHarness::new().fixture("../outside", "nope");
 }
-
 #[test]
 #[serial]
 fn env_set_then_remove_restores_true_original() {
     std::env::set_var("STANDOUT_DOUBLE_PROBE", "original");
-
     let app = build_echo_app("{{ msg }}");
     {
         let _result = TestHarness::new()
@@ -840,21 +739,15 @@ fn env_set_then_remove_restores_true_original() {
             .env_remove("STANDOUT_DOUBLE_PROBE")
             .run(&app, echo_command(), vec!["app", "echo", "x"]);
     }
-
-    // If the harness recorded the mid-run value as the "original" it
-    // would restore "transient" here; the fix records only the first
-    // value seen per key.
     assert_eq!(
         std::env::var("STANDOUT_DOUBLE_PROBE").as_deref(),
         Ok("original")
     );
     std::env::remove_var("STANDOUT_DOUBLE_PROBE");
 }
-
 #[test]
 #[serial]
 fn output_flag_name_is_configurable() {
-    // Build an app whose output flag is renamed to --format.
     let app = standout::cli::App::builder()
         .output_flag(Some("format"))
         .command(
@@ -871,7 +764,6 @@ fn output_flag_name_is_configurable() {
         .unwrap()
         .build()
         .unwrap();
-
     let result = TestHarness::new()
         .output_mode(OutputMode::Json)
         .output_flag_name("format")
@@ -880,13 +772,11 @@ fn output_flag_name_is_configurable() {
     assert!(out.contains("\"msg\""), "expected JSON output, got: {out}");
     assert!(out.contains("\"hello\""));
 }
-
 #[test]
 #[serial]
 fn overrides_are_restored_on_drop() {
     let original = std::env::var("STANDOUT_RESTORE_PROBE").ok();
     std::env::set_var("STANDOUT_RESTORE_PROBE", "before");
-
     {
         let app = build_echo_app("{{ msg }}");
         let _result = TestHarness::new()
@@ -894,44 +784,28 @@ fn overrides_are_restored_on_drop() {
             .env("STANDOUT_BRAND_NEW", "new")
             .run(&app, echo_command(), vec!["app", "echo", "x"]);
     }
-
     assert_eq!(
         std::env::var("STANDOUT_RESTORE_PROBE").as_deref(),
         Ok("before")
     );
     assert!(std::env::var("STANDOUT_BRAND_NEW").is_err());
-
-    // Cleanup
     std::env::remove_var("STANDOUT_RESTORE_PROBE");
     if let Some(v) = original {
         std::env::set_var("STANDOUT_RESTORE_PROBE", v);
     }
 }
-
 #[test]
 #[serial]
 fn no_match_reports_cleanly() {
     let app = build_echo_app("{{ msg }}");
     let result = TestHarness::new().run(&app, echo_command(), vec!["app", "unknown"]);
-    // clap rejects unknown subcommands as a parse error; per #141, those
-    // surface as `DispatchResult::Error`. Older clap behavior could also produce
-    // `NoMatch`, so accept either.
     assert!(
         result.is_error() || result.is_no_match(),
         "expected Error or NoMatch, got: {:?}",
         result.outcome()
     );
 }
-
-// ---------------------------------------------------------------------------
-// Compound artifacts
-// ---------------------------------------------------------------------------
-
 const ARTIFACT_BYTES: &[u8] = b"id,title\n1,buy milk\n";
-
-/// An export app whose artifact suggests `destination`, mirroring the
-/// application/framework split: the app produces bytes and facts, the harness
-/// observes what the framework did with them.
 fn build_export_app(destination: Option<std::path::PathBuf>) -> App {
     App::builder()
         .output_file_flag(Some("output-file-path"))
@@ -952,20 +826,16 @@ fn build_export_app(destination: Option<std::path::PathBuf>) -> App {
         .build()
         .unwrap()
 }
-
 fn export_command() -> Command {
     Command::new("app").subcommand(Command::new("export"))
 }
-
 #[test]
 #[serial]
 fn harness_asserts_bytes_destinations_receipt_and_report() {
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("export.csv");
     let app = build_export_app(Some(path.clone()));
-
     let result = TestHarness::new().run(&app, export_command(), ["app", "export"]);
-
     result.assert_success();
     result.assert_exit_status(ExitStatus::SUCCESS);
     result.assert_artifact_bytes(ARTIFACT_BYTES);
@@ -973,7 +843,6 @@ fn harness_asserts_bytes_destinations_receipt_and_report() {
     result.assert_artifact_written_to(&path);
     result.assert_artifact_report_contains("Wrote 1 entries to");
     result.assert_artifact_report_contains(&path.display().to_string());
-
     assert_eq!(result.artifact_bytes(), Some(ARTIFACT_BYTES));
     assert_eq!(
         result.artifact().unwrap().receipt().byte_count(),
@@ -981,32 +850,27 @@ fn harness_asserts_bytes_destinations_receipt_and_report() {
     );
     assert_eq!(std::fs::read(&path).unwrap(), ARTIFACT_BYTES);
 }
-
 #[test]
 #[serial]
 fn harness_asserts_the_stdout_artifact_destination() {
     let app = build_export_app(None);
     let result = TestHarness::new().run(&app, export_command(), ["app", "export"]);
-
     result.assert_success();
     result.assert_artifact_to_stdout();
     result.assert_artifact_report_contains("Wrote 1 entries to -");
     assert!(result.artifact_destination().unwrap().is_stdout());
 }
-
 #[test]
 #[serial]
 fn harness_asserts_the_report_data_in_structured_mode() {
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("export.csv");
     let app = build_export_app(Some(path.clone()));
-
     let result = TestHarness::new().output_mode(OutputMode::Json).run(
         &app,
         export_command(),
         ["app", "export"],
     );
-
     let report: serde_json::Value =
         serde_json::from_str(result.artifact_report().unwrap()).unwrap();
     assert_eq!(report["report"]["entries"], json!(1));
@@ -1017,16 +881,13 @@ fn harness_asserts_the_report_data_in_structured_mode() {
     );
     assert_eq!(report["receipt"]["stdout"], json!(false));
 }
-
 #[test]
 #[serial]
 fn harness_asserts_a_typed_artifact_write_failure() {
     let dir = tempfile::tempdir().unwrap();
     let unwritable = dir.path().join("missing").join("export.csv");
     let app = build_export_app(Some(unwritable));
-
     let result = TestHarness::new().run(&app, export_command(), ["app", "export"]);
-
     result.assert_error();
     result.assert_error_kind(RunErrorKind::FinalWrite(OutputKind::Artifact));
     result.assert_exit_status(ExitStatus::FAILURE);

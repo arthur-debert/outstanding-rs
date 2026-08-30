@@ -28,72 +28,26 @@ use crate::template::{
 use crate::theme::{probe_color_mode, probe_icon_mode, ColorMode, IconMode, Theme};
 use crate::AmbiguousWidth;
 
-/// Shared handle to the template engine stored on a [`RenderRequest`].
-///
-/// The glue crate already shares the engine as `Rc<RefCell<Box<dyn TemplateEngine>>>`
-/// so an owned request can outlive the call (the artifact path stores the
-/// snapshot until after the write). There is no lifetime on the public API.
 pub type SharedTemplateEngine = Rc<RefCell<Box<dyn TemplateEngine>>>;
 
-/// Properties of the destination being rendered to for one invocation.
-///
-/// Width, stream terminal-ness, per-stream color capability, color-scheme,
-/// and icon mode are detected facts: they have no App fallback. Ambiguous-width
-/// rides this type as application policy; [`detect`](Self::detect) documents
-/// [`AmbiguousWidth::Narrow`] as that field's default, and `App::run` later
-/// overwrites it with the configured policy.
-///
-/// Color capability and terminal-ness are per stream because stdout and stderr
-/// can differ (piped command, TTY warnings). Primary render consumes stdout
-/// facts; warnings and progress consume stderr facts.
-///
-/// This type is `Copy`. Construct it directly in tests; do not call [`detect`]
-/// from leaves or tests.
+// Color capability and terminal-ness are per stream because stdout and
+// stderr can differ (piped command, TTY warnings). This type is `Copy`;
+// construct it directly in tests, don't call `detect`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct TargetProperties {
-    /// Terminal width in columns, if known.
-    ///
-    /// `None` means the width was not determined. There is no silent 80-column
-    /// default on this type.
     pub width: Option<usize>,
-
-    /// Whether stdout is a terminal.
     pub stdout_is_terminal: bool,
-
-    /// Whether stderr is a terminal.
     pub stderr_is_terminal: bool,
-
-    /// Whether ANSI color is supported on stdout.
     pub stdout_color_capability: bool,
-
-    /// Whether ANSI color is supported on stderr.
-    ///
-    /// Independent of [`Self::stdout_color_capability`]: a piped stdout with
-    /// a TTY stderr must be representable.
     pub stderr_color_capability: bool,
-
-    /// Light or dark color-scheme (the existing [`ColorMode`] enum).
     pub color_scheme: ColorMode,
-
-    /// Icon rendering mode (the existing [`IconMode`] enum).
     pub icon_mode: IconMode,
-
-    /// East Asian Ambiguous width policy.
-    ///
-    /// Not a detected terminal fact. [`detect`](Self::detect) defaults this to
-    /// [`AmbiguousWidth::Narrow`]; `App::run` overwrites it with the
-    /// application's configured policy.
+    // Not a detected terminal fact: `detect` defaults this to `Narrow`, and
+    // `App::run` overwrites it with the application's configured policy.
     pub ambiguous_width: AmbiguousWidth,
 }
 
 impl TargetProperties {
-    /// Probes the process for destination properties.
-    ///
-    /// Fills width, stdout and stderr terminal-ness, stdout and stderr color
-    /// capability, color-scheme, and icon mode. Ambiguous-width defaults to
-    /// [`AmbiguousWidth::Narrow`]. Convenience wrappers and `App::run` call
-    /// this at their edge; template functions, tabular, width helpers, and
-    /// tests do not.
     pub fn detect() -> Self {
         Self {
             width: probe_terminal_width(),
@@ -108,91 +62,38 @@ impl TargetProperties {
     }
 }
 
-/// Resolved color axis for one invocation.
-///
-/// Independent of [`OutputMode`] (format) and of per-stream color capability
-/// on [`TargetProperties`]. Later `--color=auto|always|never` and the env
-/// ladder (`NO_COLOR`, `CLICOLOR_FORCE`, …) resolve into this field; they are
-/// not `--output`.
-///
-/// [`render_request`] applies this policy to style-tag transformation for
-/// human formats: [`Always`](Self::Always) emits ANSI, [`Never`](Self::Never)
-/// never does, and [`Auto`](Self::Auto) follows stdout color capability.
-/// [`OutputMode::TermDebug`] keeps bracket tags regardless of policy.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ColorPolicy {
-    /// Defer to the requested format: [`OutputMode::Term`] colors,
-    /// [`OutputMode::Text`] strips, and [`OutputMode::Auto`] follows stdout
-    /// color capability.
     Auto,
-    /// Color even when the consumed stream is not a TTY, including
-    /// [`OutputMode::Text`].
     Always,
-    /// Never emit ANSI, including on a color-capable TTY and
-    /// [`OutputMode::Term`].
     Never,
 }
 
-/// Named, inline, or declared-absent template carried on a [`RenderRequest`].
-///
-/// This is the render-time type. It has no `Convention` variant: convention
-/// names exist only on the glue builder until `build()` materializes them to
-/// [`Named`](Self::Named). Standalone help and topic template strings become
-/// [`Inline`](Self::Inline).
+// No `Convention` variant: convention names exist only on the glue builder
+// until `build()` materializes them to `Named`.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum TemplateRef {
-    /// A named template that must resolve through the template registry.
     Named(String),
-    /// Inline template source carried directly on the request.
     Inline(String),
-    /// No human template; structured modes serialize data directly.
     Absent,
 }
 
-/// What to render for one invocation.
-///
-/// Owned, no lifetime: the artifact path can store this type until after the
-/// write instead of keeping a second snapshot type. The engine and template
-/// registry sit behind `Rc` as glue already does. File-backed templates and
-/// context-provider callbacks are explicit external dependencies of the
-/// request; the leaf does not read framework-owned detectors or process
-/// globals.
-///
-/// Format ([`OutputMode`]), color policy ([`ColorPolicy`]), and per-stream
-/// color capability on [`TargetProperties`] are independent facts. A later
-/// `--color` flag must have a home that is not `--output`. Caller extras
-/// for context providers ride [`Self::extras`].
+// Owned, no lifetime: the artifact path can store this until after the
+// write instead of keeping a second snapshot type.
 pub struct RenderRequest {
-    /// Handler data, already serialized.
     pub data: serde_json::Value,
-    /// Render-time template: named, inline, or absent.
     pub template: TemplateRef,
-    /// Resolved theme for this invocation.
     pub theme: Theme,
-    /// Output format (`--output`), independent of [`Self::color_policy`].
     pub format: OutputMode,
-    /// Resolved color policy, independent of [`Self::format`] and of
-    /// per-stream capability on [`Self::target`].
     pub color_policy: ColorPolicy,
-    /// Destination properties for this invocation.
     pub target: TargetProperties,
-    /// Template engine, shared the way glue already shares it.
     pub engine: SharedTemplateEngine,
-    /// Optional template registry for named templates and includes.
     pub registry: Option<Rc<TemplateRegistry>>,
-    /// Optional context providers invoked at render time.
     pub context_registry: Option<ContextRegistry>,
-    /// Optional CSV projection for structured CSV output.
     pub csv_projection: Option<CsvProjection>,
-    /// Caller-supplied extras forwarded onto [`RenderContext`] for providers.
-    ///
-    /// Convenience wrappers that take a [`RenderContext`] copy these through
-    /// so [`RenderContext::with_extra`] values survive `render_request`.
-    /// The reserved `standout.ambiguous_width` key is owned by
-    /// [`TargetProperties::ambiguous_width`] and is not copied from here.
+    // The reserved `standout.ambiguous_width` key is owned by
+    // `TargetProperties::ambiguous_width` and is not copied from here.
     pub extras: HashMap<String, String>,
-    /// Optional per-run warning buffer. Unresolved-tag warnings land here
-    /// when the request path threads it through style-tag application.
     pub warnings: Option<crate::warnings::WarningBuffer>,
 }
 
@@ -214,78 +115,14 @@ impl fmt::Debug for RenderRequest {
     }
 }
 
-/// Pure render entry: a function of an explicit [`RenderRequest`].
-///
-/// Takes the owned request by reference and returns the formatted string
-/// (ANSI applied when [`ColorPolicy`] and capability say so). Convenience
-/// [`crate::render`] and [`crate::render_with_output`] detect at their edge,
-/// build a request, and delegate here.
-///
-/// ```rust
-/// use std::collections::HashMap;
-/// use serde_json::json;
-/// use standout_render::{
-///     AmbiguousWidth, ColorMode, ColorPolicy, IconMode, OutputMode, RenderRequest,
-///     TargetProperties, TemplateRef, Theme, default_template_engine, render_request,
-/// };
-/// use console::Style;
-///
-/// let theme = Theme::new().add("title", Style::new().cyan().bold());
-/// let request = RenderRequest {
-///     data: json!({"name": "Tasks", "count": 42}),
-///     template: TemplateRef::Inline("[title]{{ name }}[/title]: {{ count }} items".into()),
-///     theme,
-///     format: OutputMode::Text,
-///     color_policy: ColorPolicy::Auto,
-///     target: TargetProperties {
-///         width: Some(80),
-///         stdout_is_terminal: true,
-///         stderr_is_terminal: true,
-///         stdout_color_capability: true,
-///         stderr_color_capability: true,
-///         color_scheme: ColorMode::Dark,
-///         icon_mode: IconMode::Classic,
-///         ambiguous_width: AmbiguousWidth::Narrow,
-///     },
-///     engine: default_template_engine(),
-///     registry: None,
-///     context_registry: None,
-///     csv_projection: None,
-///     extras: HashMap::new(),
-///     warnings: None,
-/// };
-/// let output = render_request(&request).unwrap();
-/// assert_eq!(output.trim(), "Tasks: 42 items");
-/// ```
-///
-/// Callers that need both formatted and stripped output (CLI pipes, output
-/// files, post-output hooks) should use [`render_request_split`].
-///
-/// Width and ambiguous-width come from [`RenderRequest::target`]. Style-tag
-/// transformation honors [`RenderRequest::color_policy`] for every human
-/// format: [`ColorPolicy::Always`] forces ANSI, [`ColorPolicy::Never`] never
-/// emits it, and [`ColorPolicy::Auto`] defers to the requested format
-/// (`Term` colors, `Text` strips, `Auto` follows stdout capability).
-/// [`OutputMode::TermDebug`] keeps bracket tags. Named templates and their
-/// includes are loaded from [`RenderRequest::registry`] when present.
-/// Color-scheme and icon mode come from [`RenderRequest::target`]. ANSI
-/// is applied via `force_styling` on the request's styles, not
-/// `console::colors_enabled()`.
 pub fn render_request(request: &RenderRequest) -> Result<String, RenderError> {
     Ok(render_request_split(request)?.formatted)
 }
 
-/// Pure render entry that returns both formatted and stripped output.
-///
-/// Same request function as [`render_request`]: formatted carries ANSI when
-/// the color policy and stdout capability say so; raw is the same text with
-/// style tags stripped, for pipes and output files.
 pub fn render_request_split(request: &RenderRequest) -> Result<RenderResult, RenderError> {
     render_from_request(request)
 }
 
-/// Format fact passed to [`RenderContext`]: `Auto` resolves via color policy
-/// and capability; an explicit human format is left as requested.
 fn resolve_render_format(request: &RenderRequest) -> OutputMode {
     match request.format {
         OutputMode::Auto => resolve_style_mode(request),
@@ -293,13 +130,6 @@ fn resolve_render_format(request: &RenderRequest) -> OutputMode {
     }
 }
 
-/// Style-tag transformation from [`ColorPolicy`], format, and stdout capability.
-///
-/// [`ColorPolicy::Always`] forces ANSI and [`ColorPolicy::Never`] never emits
-/// it, including when the requested format is [`OutputMode::Term`] or
-/// [`OutputMode::Text`]. [`ColorPolicy::Auto`] defers to that format:
-/// `Term` still colors, `Text` still strips, and `Auto` follows stdout
-/// capability. [`OutputMode::TermDebug`] keeps bracket tags.
 fn resolve_style_mode(request: &RenderRequest) -> OutputMode {
     if request.format == OutputMode::TermDebug {
         return OutputMode::TermDebug;
@@ -408,22 +238,14 @@ fn render_from_request(request: &RenderRequest) -> Result<RenderResult, RenderEr
     }
 }
 
-/// Shared engine for callers that do not retain one from `AppBuilder::build()`.
-///
-/// Convenience wrappers and standalone `render_help` / `render_topic` use this
-/// so the glue crate never constructs [`MiniJinjaEngine`] outside `build()`.
 pub fn default_template_engine() -> SharedTemplateEngine {
     Rc::new(RefCell::new(Box::new(MiniJinjaEngine::new())))
 }
 
-/// Shared engine handle for a convenience wrapper that detects, then calls
-/// [`render_request`].
 pub(crate) fn convenience_engine() -> SharedTemplateEngine {
     default_template_engine()
 }
 
-/// Builds a [`RenderRequest`] for a convenience wrapper that already detected
-/// destination facts at its edge.
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn convenience_request(
     template: TemplateRef,
@@ -451,10 +273,8 @@ pub(crate) fn convenience_request(
     }
 }
 
-/// Provider view reconstructed from the request, including caller extras.
-///
-/// Ambiguous-width on [`TargetProperties`] wins over a reserved extra of the
-/// same name so width stays a destination fact, not a leftover context key.
+// Ambiguous-width on `TargetProperties` wins over a reserved extra of the
+// same name so width stays a destination fact, not a leftover context key.
 fn render_context_from_request(request: &RenderRequest) -> RenderContext<'_> {
     let mut ctx = RenderContext::with_ambiguous_width(
         resolve_render_format(request),
@@ -956,7 +776,7 @@ mod tests {
         assert_eq!(render_request(&request).unwrap(), r#"{% "unclosed hello"#);
     }
 
-    /// Restores `console` colour globals on drop, including unwind.
+    // Restores `console` colour globals on drop, including unwind.
     struct RestoreConsoleColors {
         stdout: bool,
         stderr: bool,
@@ -981,7 +801,7 @@ mod tests {
         }
     }
 
-    /// Restores one process env var on drop, including unwind.
+    // Restores one process env var on drop, including unwind.
     struct RestoreEnvVar {
         key: &'static str,
         original: Option<std::ffi::OsString>,

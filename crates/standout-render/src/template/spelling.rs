@@ -2,17 +2,15 @@
 //!
 //! minijinja renders booleans and none with Jinja2's Python spellings —
 //! `True`, `False`, `None`. Standout renders `true`, `false`, and `none`.
-//! Two seams keep that true everywhere:
+//! Two seams keep that true everywhere: [`new_environment`] installs a
+//! formatter that normalizes top-level interpolation, and [`stringify`]
+//! replaces `Value::to_string()` wherever standout itself turns a value into
+//! text (filters, table cells, borders) — a formatter cannot reach those,
+//! since they go through `Display for Value` directly.
 //!
-//! - [`new_environment`] builds every rendering [`Environment`] standout uses,
-//!   with a formatter that normalizes top-level interpolation.
-//! - [`stringify`] replaces `Value::to_string()` wherever standout itself turns
-//!   a value into text — filters, table cells, borders. A formatter cannot
-//!   reach those: they go through `Display for Value` directly.
-//!
-//! Known limitation: the `~` concatenation operator formats its operands inside
-//! minijinja's evaluator, which exposes no hook, so `{{ "x" ~ flag }}` still
-//! yields `xTrue`. Use `{{ "x" }}{{ flag }}` or `{{ "x" ~ flag|string }}`.
+//! Known limitation: the `~` concatenation operator formats its operands
+//! inside minijinja's evaluator, which exposes no hook, so `{{ "x" ~ flag }}`
+//! still yields `xTrue`. Use `{{ "x" }}{{ flag }}` or `{{ "x" ~ flag|string }}`.
 
 use std::borrow::Cow;
 
@@ -22,30 +20,21 @@ use minijinja::{
     Value,
 };
 
-/// Builds a minijinja environment that spells values the standout way.
-///
-/// This is the only sanctioned constructor for a rendering environment inside
-/// standout; `tests/environment_construction.rs` fails if any crate's `src/`
-/// calls `minijinja::Environment::new()` directly.
+// The only sanctioned constructor for a rendering environment inside
+// standout; `tests/environment_construction.rs` fails if any crate's `src/`
+// calls `minijinja::Environment::new()` directly.
 pub fn new_environment() -> Environment<'static> {
     let mut env = Environment::new();
     install(&mut env);
     env
 }
 
-/// Installs the spelling on an environment built elsewhere: the formatter, plus
-/// replacements for the two built-in filters that stringify their input without
-/// going through it.
-///
-/// Registering standout's filters implies this, so a downstream user who builds
-/// their own environment and calls `register_filters` gets the spelling too.
 pub(crate) fn install(env: &mut Environment<'static>) {
     env.set_formatter(spelling_formatter);
     env.add_filter("string", string_filter);
     env.add_filter("join", join_filter);
 }
 
-/// `{{ value | string }}` — minijinja's own writes `True`/`False`/`None` here.
 fn string_filter(state: &State, value: Value) -> Result<Value, Error> {
     if value.is_undefined()
         && matches!(
@@ -61,12 +50,6 @@ fn string_filter(state: &State, value: Value) -> Result<Value, Error> {
     })
 }
 
-/// `{{ seq | join(sep) }}` — minijinja's own writes the elements it stringifies
-/// with `Display`, which spells booleans and none the Python way.
-///
-/// The auto-escaping branches mirror minijinja: safe items pass through
-/// untouched, everything else goes through the environment formatter, and the
-/// result is safe only when some part of it was.
 fn join_filter(state: &State, value: Value, joiner: Option<Value>) -> Result<Value, Error> {
     let items = value
         .try_iter()
@@ -106,8 +89,6 @@ fn join_filter(state: &State, value: Value, joiner: Option<Value>) -> Result<Val
     Ok(Value::from(output))
 }
 
-/// Renders `value` as text with standout's spelling, recursively inside
-/// sequences and maps. Every other type keeps minijinja's own formatting.
 pub fn stringify(value: &Value) -> Cow<'_, str> {
     match value.kind() {
         ValueKind::Bool => Cow::Borrowed(bool_str(value)),
@@ -134,8 +115,6 @@ fn bool_str(value: &Value) -> &'static str {
     }
 }
 
-/// Normalizes interpolation, then hands off to minijinja's default formatter so
-/// auto-escaping stays byte-identical.
 fn spelling_formatter(out: &mut Output, state: &State, value: &Value) -> Result<(), Error> {
     match value.kind() {
         ValueKind::Bool
@@ -149,8 +128,8 @@ fn spelling_formatter(out: &mut Output, state: &State, value: &Value) -> Result<
     }
 }
 
-/// The in-container form of [`stringify`]: minijinja renders container elements
-/// with `Debug`, which quotes strings, so this does too.
+// minijinja renders container elements with Debug, which quotes strings, so
+// this in-container form of `stringify` does too.
 fn repr(value: &Value) -> Cow<'_, str> {
     match value.kind() {
         ValueKind::Bool => Cow::Borrowed(bool_str(value)),
@@ -163,9 +142,6 @@ fn repr(value: &Value) -> Cow<'_, str> {
     }
 }
 
-/// Reproduces minijinja's `[a, b]` and `{k: v}` rendering over [`repr`]
-/// elements. `None` when the value cannot be walked — the same condition under
-/// which minijinja falls back to its own debug print.
 fn container(value: &Value) -> Option<String> {
     let mut out = String::new();
     if value.kind() == ValueKind::Map {

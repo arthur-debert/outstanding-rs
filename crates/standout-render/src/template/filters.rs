@@ -2,32 +2,17 @@
 
 use minijinja::{Environment, Error, ErrorKind, Value};
 
-/// Registers all built-in filters on a minijinja environment.
-///
-/// Styling is now handled by BBParser tags (e.g., `[title]text[/title]`) in a
-/// second pass after MiniJinja rendering. This function registers utility filters
-/// like `nl` and table formatting filters.
-///
-/// # Arguments
-///
-/// * `env` - The MiniJinja environment to register filters on
 pub fn register_filters(env: &mut Environment<'static>) {
     register_filters_with_policy(env, crate::AmbiguousWidth::Narrow);
 }
 
-/// Registers built-in filters with an explicit ambiguous-width policy.
 pub fn register_filters_with_policy(env: &mut Environment<'static>, policy: crate::AmbiguousWidth) {
     crate::template::spelling::install(env);
 
-    // Filter to append a newline to the value, enabling explicit line break control.
-    // Usage: {{ content | nl }} outputs content followed by \n
-    //        {{ "" | nl }} outputs just \n (a blank line)
     env.add_filter("nl", |value: Value| -> String {
         format!("{}\n", crate::template::spelling::stringify(&value))
     });
 
-    // Deprecated style filter - provide helpful migration message
-    // The old style() filter was replaced with BBCode-style tags in Standout 1.0
     env.add_filter(
         "style",
         |_value: Value, _name: String| -> Result<String, Error> {
@@ -40,7 +25,6 @@ pub fn register_filters_with_policy(env: &mut Environment<'static>, policy: crat
         },
     );
 
-    // Register tabular formatting filters (col, pad_left, pad_right, truncate_at, etc.)
     crate::tabular::filters::register_tabular_filters_with_policy(env, policy);
 }
 
@@ -67,7 +51,6 @@ mod tests {
         let err = result.unwrap_err();
         let err_msg = err.to_string();
 
-        // Verify the error message is helpful
         assert!(
             err_msg.contains("style()"),
             "Error should mention the filter name"

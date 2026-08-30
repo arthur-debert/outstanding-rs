@@ -14,29 +14,13 @@ use crate::template::spelling::{self, stringify};
 use crate::width::RenderWidthSource;
 use crate::AmbiguousWidth;
 
-/// A template engine that can render templates with data.
-///
-/// This trait abstracts over the template rendering backend, allowing
-/// different implementations (e.g., MiniJinja, simple string substitution).
-///
-/// Template engines handle:
-/// - Template compilation and caching
-/// - Variable substitution
-/// - Template logic (loops, conditionals) - if supported
-/// - Custom filters and functions - if supported
 pub trait TemplateEngine {
-    /// Renders a template string with the given data.
-    ///
-    /// This compiles and renders the template in one step. For repeated
-    /// rendering of the same template, use [`add_template`](Self::add_template)
-    /// and [`render_named`](Self::render_named).
     fn render_template(
         &self,
         template: &str,
         data: &serde_json::Value,
     ) -> Result<String, RenderError>;
 
-    /// Renders with an explicit ambiguous-width policy.
     fn render_template_with_width(
         &self,
         template: &str,
@@ -46,7 +30,6 @@ pub trait TemplateEngine {
         self.render_template(template, data)
     }
 
-    /// Renders with terminal columns and an explicit ambiguous-width policy.
     fn render_template_with_render_widths(
         &self,
         template: &str,
@@ -57,17 +40,10 @@ pub trait TemplateEngine {
         self.render_template_with_width(template, data, policy)
     }
 
-    /// Adds a named template to the engine.
-    ///
-    /// The template is compiled and cached for later use via [`render_named`](Self::render_named).
     fn add_template(&mut self, name: &str, source: &str) -> Result<(), RenderError>;
 
-    /// Renders a previously registered template.
-    ///
-    /// The template must have been added via [`add_template`](Self::add_template).
     fn render_named(&self, name: &str, data: &serde_json::Value) -> Result<String, RenderError>;
 
-    /// Renders a named template with an explicit ambiguous-width policy.
     fn render_named_with_width(
         &self,
         name: &str,
@@ -77,8 +53,6 @@ pub trait TemplateEngine {
         self.render_named(name, data)
     }
 
-    /// Renders a named template with terminal columns and an explicit
-    /// ambiguous-width policy.
     fn render_named_with_render_widths(
         &self,
         name: &str,
@@ -89,13 +63,8 @@ pub trait TemplateEngine {
         self.render_named_with_width(name, data, policy)
     }
 
-    /// Checks if a template with the given name exists.
     fn has_template(&self, name: &str) -> bool;
 
-    /// Renders a template with additional context values merged in.
-    ///
-    /// The `context` values are merged with the serialized `data`. If there are
-    /// key conflicts, `data` takes precedence.
     fn render_with_context(
         &self,
         template: &str,
@@ -103,7 +72,6 @@ pub trait TemplateEngine {
         context: HashMap<String, serde_json::Value>,
     ) -> Result<String, RenderError>;
 
-    /// Renders with context and an explicit ambiguous-width policy.
     fn render_with_context_and_width(
         &self,
         template: &str,
@@ -114,8 +82,6 @@ pub trait TemplateEngine {
         self.render_with_context(template, data, context)
     }
 
-    /// Renders with additional context, terminal columns, and an explicit
-    /// ambiguous-width policy.
     fn render_with_context_and_render_widths(
         &self,
         template: &str,
@@ -127,49 +93,15 @@ pub trait TemplateEngine {
         self.render_with_context_and_width(template, data, context, policy)
     }
 
-    /// Whether this engine supports template includes (`{% include %}`).
     fn supports_includes(&self) -> bool;
 
-    /// Whether this engine supports filters (`{{ value | filter }}`).
     fn supports_filters(&self) -> bool;
 
-    /// Whether this engine supports control flow (`{% for %}`, `{% if %}`).
     fn supports_control_flow(&self) -> bool;
 }
 
-/// MiniJinja-based template engine.
-///
-/// This is the default template engine, providing full template functionality:
-/// - Jinja2-compatible syntax
-/// - Loops, conditionals, macros
-/// - Custom filters and functions
-/// - Template includes
-///
-/// # Example
-///
-/// ```rust
-/// use standout_render::template::MiniJinjaEngine;
-/// use standout_render::template::TemplateEngine;
-/// use serde::Serialize;
-/// use serde_json::json;
-///
-/// #[derive(Serialize)]
-/// struct Data { name: String }
-///
-/// let engine = MiniJinjaEngine::new();
-/// let data = Data { name: "World".into() };
-/// let data_value = serde_json::to_value(&data).unwrap();
-///
-/// let output = engine.render_template(
-///     "Hello, {{ name }}!",
-///     &data_value,
-/// ).unwrap();
-/// assert_eq!(output, "Hello, World!");
-/// ```
-///
-/// Not `Send` or `Sync`: the framework is single-threaded (#84). Filter width
-/// state is scoped per render without a mutex (ADR-0030). Concurrent renders
-/// on a shared engine are unsupported at the type level.
+// Not Send/Sync: filter width state is scoped per render without a mutex,
+// so a shared engine sent across threads would race it.
 pub struct MiniJinjaEngine {
     env: Environment<'static>,
     render_widths: RenderWidthSource,
@@ -177,7 +109,6 @@ pub struct MiniJinjaEngine {
 }
 
 impl MiniJinjaEngine {
-    /// Creates a new MiniJinja engine with default filters registered.
     pub fn new() -> Self {
         let mut env = spelling::new_environment();
         let render_widths = RenderWidthSource::new(AmbiguousWidth::Narrow);
@@ -189,18 +120,10 @@ impl MiniJinjaEngine {
         }
     }
 
-    /// Returns a reference to the underlying MiniJinja environment.
-    ///
-    /// This allows advanced users to register custom filters, functions,
-    /// or configure the environment directly.
     pub fn environment(&self) -> &Environment<'static> {
         &self.env
     }
 
-    /// Returns a mutable reference to the underlying MiniJinja environment.
-    ///
-    /// This allows advanced users to register custom filters, functions,
-    /// or configure the environment directly.
     pub fn environment_mut(&mut self) -> &mut Environment<'static> {
         &mut self.env
     }
@@ -351,7 +274,6 @@ impl MiniJinjaEngine {
         data: &serde_json::Value,
         context: HashMap<String, serde_json::Value>,
     ) -> Result<String, RenderError> {
-        // Merge data into context (data takes precedence)
         let mut combined = HashMap::new();
         for (key, value) in context {
             combined.insert(key, Value::from_serialize(value));
@@ -367,15 +289,10 @@ impl MiniJinjaEngine {
     }
 }
 
-/// Registers standout's custom filters with a MiniJinja environment.
-///
-/// This is called automatically by [`MiniJinjaEngine::new`]. If you're using
-/// the environment directly, call this to get standout's filters.
 pub fn register_filters(env: &mut Environment<'static>) {
     register_filters_with_policy(env, AmbiguousWidth::Narrow);
 }
 
-/// Registers Standout's custom filters with an explicit ambiguous-width policy.
 pub fn register_filters_with_policy(env: &mut Environment<'static>, policy: AmbiguousWidth) {
     register_filters_with_source(env, RenderWidthSource::new(policy));
 }
@@ -385,12 +302,10 @@ fn register_filters_with_source(env: &mut Environment<'static>, widths: RenderWi
 
     spelling::install(env);
 
-    // Newline filter
     env.add_filter("nl", |value: Value| -> String {
         format!("{}\n", stringify(&value))
     });
 
-    // Deprecated style filter with helpful error message
     env.add_filter(
         "style",
         |_value: Value, _name: String| -> Result<String, Error> {
@@ -402,7 +317,6 @@ fn register_filters_with_source(env: &mut Environment<'static>, widths: RenderWi
         },
     );
 
-    // Register tabular filters
     crate::tabular::filters::register_tabular_filters_with_source(env, widths);
 }
 
@@ -417,13 +331,9 @@ mod tests {
         count: usize,
     }
 
-    /// The engine's thread-affinity is a claim its docstring makes, so the
-    /// compiler is made to check it: filter width state is scoped per render
-    /// without a mutex, and a shared engine sent across threads would race it.
-    ///
-    /// `Probe`'s inherent method exists only when `T: Send`, and an inherent
-    /// method wins over a trait method of the same name — so resolution lands on
-    /// the trait's `false` exactly when the bound does not hold.
+    // An inherent method wins over a trait method of the same name, so
+    // `Probe::<T>::is_send()` resolves to the trait's `false` exactly when
+    // `T: Send` does not hold.
     #[test]
     fn minijinja_engine_is_neither_send_nor_sync() {
         struct Probe<T>(PhantomData<T>);
@@ -575,7 +485,6 @@ mod tests {
         }));
         assert!(panic.is_err());
 
-        // Width is restored after unwind; the default remains Narrow.
         assert_eq!(
             engine
                 .render_template("{{ '≈' | display_width }}", &serde_json::Value::Null)

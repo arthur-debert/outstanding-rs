@@ -1,29 +1,3 @@
-//! Storage for resolved inputs, keyed by name.
-//!
-//! [`Inputs`] is a name-keyed, type-safe container for values produced by
-//! [`InputChain`](crate::InputChain) resolution. It exists because
-//! `TypeId`-keyed containers (the common pattern for request-scoped state in
-//! frameworks) cannot disambiguate two inputs of the same type — for example,
-//! a command with both a `body: String` and a `title: String` input.
-//!
-//! Framework integrations resolve each registered chain and stash the result
-//! here under the user-chosen name. Handlers retrieve by `(name, type)`.
-//!
-//! # Example
-//!
-//! ```
-//! use standout_input::{InputSourceKind, Inputs, ResolvedInput};
-//!
-//! let mut inputs = Inputs::new();
-//! inputs.insert(
-//!     "body",
-//!     ResolvedInput { value: "hello".to_string(), source: InputSourceKind::Arg },
-//! );
-//!
-//! let body: &String = inputs.get("body").unwrap();
-//! assert_eq!(body, "hello");
-//! ```
-
 use std::any::{Any, TypeId};
 use std::borrow::Cow;
 use std::collections::HashMap;
@@ -31,16 +5,6 @@ use std::fmt;
 
 use crate::collector::{InputSourceKind, ResolvedInput};
 
-/// Name-keyed storage for resolved inputs.
-///
-/// Each entry stores the resolved `T` value boxed as `dyn Any + Send + Sync`,
-/// while its [`InputSourceKind`] metadata is tracked separately on the
-/// internal entry. Lookups are by `(name, T)` — wrong-type lookups return
-/// `None` rather than panicking.
-///
-/// Names are stored as `Cow<'static, str>` so both string literals and
-/// runtime-generated names (e.g. config-driven command setups) work without
-/// leaking memory.
 #[derive(Default)]
 pub struct Inputs {
     entries: HashMap<Cow<'static, str>, Entry>,
@@ -54,20 +18,12 @@ struct Entry {
 }
 
 impl Inputs {
-    /// Create an empty `Inputs` bag.
     pub fn new() -> Self {
         Self {
             entries: HashMap::new(),
         }
     }
 
-    /// Insert a resolved input under `name`.
-    ///
-    /// `name` accepts anything convertible into `Cow<'static, str>` —
-    /// string literals (`"body"`), owned `String`s, and explicit `Cow`s
-    /// all work.
-    ///
-    /// Returns the previous entry's source kind if `name` was already present.
     pub fn insert<T>(
         &mut self,
         name: impl Into<Cow<'static, str>>,
@@ -88,10 +44,6 @@ impl Inputs {
         prev.map(|e| e.source)
     }
 
-    /// Get a reference to the value stored under `name`, if it exists and has
-    /// type `T`.
-    ///
-    /// Returns `None` if no entry exists or the stored type does not match.
     pub fn get<T: 'static>(&self, name: &str) -> Option<&T> {
         let entry = self.entries.get(name)?;
         if entry.type_id != TypeId::of::<T>() {
@@ -100,8 +52,6 @@ impl Inputs {
         entry.value.downcast_ref::<T>()
     }
 
-    /// Get the value stored under `name`, returning a descriptive error if
-    /// missing or of the wrong type.
     pub fn get_required<T: 'static>(&self, name: &str) -> Result<&T, MissingInput> {
         let Some(entry) = self.entries.get(name) else {
             return Err(MissingInput::NotRegistered {
@@ -125,27 +75,22 @@ impl Inputs {
             })
     }
 
-    /// Get the [`InputSourceKind`] that provided `name`, if it exists.
     pub fn source_of(&self, name: &str) -> Option<InputSourceKind> {
         self.entries.get(name).map(|e| e.source)
     }
 
-    /// Returns true if `name` has been resolved.
     pub fn contains(&self, name: &str) -> bool {
         self.entries.contains_key(name)
     }
 
-    /// Number of resolved inputs.
     pub fn len(&self) -> usize {
         self.entries.len()
     }
 
-    /// Returns true if no inputs have been resolved.
     pub fn is_empty(&self) -> bool {
         self.entries.is_empty()
     }
 
-    /// Iterate over `(name, source)` pairs.
     pub fn iter_sources(&self) -> impl Iterator<Item = (&str, InputSourceKind)> + '_ {
         self.entries
             .iter()
@@ -166,23 +111,14 @@ impl fmt::Debug for Inputs {
     }
 }
 
-/// Error returned when a named input is missing or stored under a different type.
 #[derive(Debug, thiserror::Error)]
 pub enum MissingInput {
-    /// No input was registered for the given name.
     #[error("no input named `{name}` was registered for this command")]
-    NotRegistered {
-        /// The requested input name.
-        name: String,
-    },
-    /// An input is registered but stored under a different type.
+    NotRegistered { name: String },
     #[error("input `{name}` is registered as `{actual}`, not `{expected}`")]
     TypeMismatch {
-        /// The requested input name.
         name: String,
-        /// The type the caller asked for.
         expected: &'static str,
-        /// The type actually stored.
         actual: &'static str,
     },
 }
@@ -253,8 +189,6 @@ mod tests {
         let runtime_name: String = format!("input_{}", 42);
         inputs.insert(runtime_name.clone(), arg("x".to_string()));
 
-        // Look up using a borrowed &str slice of an unrelated owned string —
-        // proves storage by value, not by pointer identity.
         assert_eq!(inputs.get::<String>(runtime_name.as_str()).unwrap(), "x");
     }
 

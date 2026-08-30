@@ -1,57 +1,21 @@
-//! Color value parsing for stylesheets.
-//!
-//! Supports multiple color formats:
-//!
-//! - Named colors: `red`, `green`, `blue`, etc. (16 ANSI colors)
-//! - Bright variants: `bright_red`, `bright_green`, etc.
-//! - 256-color palette: `0` through `255`
-//! - RGB hex: `"#ff6b35"` or `"#fff"` (3 or 6 digit)
-//! - RGB tuple: `[255, 107, 53]`
-//! - Cube coordinates: `cube(60%, 20%, 0%)` (theme-relative color)
-//!
-//! # Example
-//!
-//! ```rust
-//! use standout_render::style::ColorDef;
-//!
-//! // Parse from YAML values
-//! let red = ColorDef::parse_value(&serde_yaml::Value::String("red".into())).unwrap();
-//! let hex = ColorDef::parse_value(&serde_yaml::Value::String("#ff6b35".into())).unwrap();
-//! let palette = ColorDef::parse_value(&serde_yaml::Value::Number(208.into())).unwrap();
-//! let rgb = ColorDef::parse_value(&serde_yaml::Value::Sequence(vec![
-//!     serde_yaml::Value::Number(255.into()),
-//!     serde_yaml::Value::Number(107.into()),
-//!     serde_yaml::Value::Number(53.into()),
-//! ])).unwrap();
-//!
-//! // Parse cube coordinate
-//! let cube = ColorDef::parse_string("cube(60%, 20%, 0%)").unwrap();
-//! ```
+//! Color value parsing for stylesheets: named colors (`red`, `bright_red`,
+//! ...), 256-color palette indices, RGB hex (`#ff6b35`/`#fff`), RGB tuples
+//! (`[255, 107, 53]`), and theme-relative cube coordinates (`cube(60%, 20%,
+//! 0%)`, resolved via [`ThemePalette`]).
 
 use console::Color;
 
 use crate::colorspace::{CubeCoord, ThemePalette};
 
-/// Parsed color definition from stylesheet.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ColorDef {
-    /// Named ANSI color.
     Named(Color),
-    /// 256-color palette index.
     Color256(u8),
-    /// True color RGB.
     Rgb(u8, u8, u8),
-    /// Theme-relative cube coordinate, resolved via [`ThemePalette`] at style build time.
     Cube(CubeCoord),
 }
 
 impl ColorDef {
-    /// Parses a color definition from a YAML value.
-    ///
-    /// Supports:
-    /// - Strings: named colors, bright variants, hex codes
-    /// - Numbers: 256-color palette indices
-    /// - Sequences: RGB tuples `[r, g, b]`
     pub fn parse_value(value: &serde_yaml::Value) -> Result<Self, String> {
         match value {
             serde_yaml::Value::String(s) => Self::parse_string(s),
@@ -72,35 +36,22 @@ impl ColorDef {
         }
     }
 
-    /// Parses a color from a string value.
-    ///
-    /// Supports:
-    /// - Named colors: `red`, `green`, `blue`, etc.
-    /// - Bright variants: `bright_red`, `bright_green`, etc.
-    /// - Hex codes: `#ff6b35` or `#fff`
-    /// - Cube coordinates: `cube(60%, 20%, 0%)`
     pub fn parse_string(s: &str) -> Result<Self, String> {
         let s = s.trim();
 
-        // Check for cube() function
         if s.starts_with("cube(") && s.ends_with(')') {
             return Self::parse_cube(s);
         }
 
-        // Check for hex color
         if let Some(hex) = s.strip_prefix('#') {
             return Self::parse_hex(hex);
         }
 
-        // Check for named color
         Self::parse_named(s)
     }
 
-    /// Parses a `cube(r%, g%, b%)` color specification.
-    ///
-    /// Each component is a percentage (0–100). The `%` suffix is optional.
     fn parse_cube(s: &str) -> Result<Self, String> {
-        let inner = &s[5..s.len() - 1]; // strip "cube(" and ")"
+        let inner = &s[5..s.len() - 1];
         let parts: Vec<&str> = inner.split(',').map(|p| p.trim()).collect();
         if parts.len() != 3 {
             return Err(format!(
@@ -121,10 +72,8 @@ impl ColorDef {
         Ok(ColorDef::Cube(coord))
     }
 
-    /// Parses a hex color code (without the # prefix).
     fn parse_hex(hex: &str) -> Result<Self, String> {
         match hex.len() {
-            // 3-digit hex: #rgb -> #rrggbb
             3 => {
                 let r = u8::from_str_radix(&hex[0..1], 16)
                     .map_err(|_| format!("Invalid hex: {}", hex))?
@@ -137,7 +86,6 @@ impl ColorDef {
                     * 17;
                 Ok(ColorDef::Rgb(r, g, b))
             }
-            // 6-digit hex: #rrggbb
             6 => {
                 let r = u8::from_str_radix(&hex[0..2], 16)
                     .map_err(|_| format!("Invalid hex: {}", hex))?;
@@ -154,16 +102,13 @@ impl ColorDef {
         }
     }
 
-    /// Parses a named color (including bright variants).
     fn parse_named(name: &str) -> Result<Self, String> {
         let name_lower = name.to_lowercase();
 
-        // Check for bright_ prefix
         if let Some(base) = name_lower.strip_prefix("bright_") {
             return Self::parse_bright_color(base);
         }
 
-        // Standard colors
         let color = match name_lower.as_str() {
             "black" => Color::Black,
             "red" => Color::Red,
@@ -173,7 +118,6 @@ impl ColorDef {
             "magenta" => Color::Magenta,
             "cyan" => Color::Cyan,
             "white" => Color::White,
-            // Also accept gray/grey as aliases
             "gray" | "grey" => Color::White,
             _ => return Err(format!("Unknown color name: {}", name)),
         };
@@ -181,9 +125,7 @@ impl ColorDef {
         Ok(ColorDef::Named(color))
     }
 
-    /// Parses a bright color variant.
     fn parse_bright_color(base: &str) -> Result<Self, String> {
-        // console crate uses Color256 for bright colors (indices 8-15)
         let index = match base {
             "black" => 8,
             "red" => 9,
@@ -199,7 +141,6 @@ impl ColorDef {
         Ok(ColorDef::Color256(index))
     }
 
-    /// Parses an RGB tuple from a YAML sequence.
     fn parse_rgb_tuple(seq: &[serde_yaml::Value]) -> Result<Self, String> {
         if seq.len() != 3 {
             return Err(format!(
@@ -222,11 +163,6 @@ impl ColorDef {
         Ok(ColorDef::Rgb(components[0], components[1], components[2]))
     }
 
-    /// Converts this color definition to a `console::Color`.
-    ///
-    /// For [`Cube`](ColorDef::Cube) colors, a [`ThemePalette`] is required to resolve
-    /// the cube coordinate to an actual RGB value. If no palette is provided,
-    /// the default xterm palette is used.
     pub fn to_console_color(&self, palette: Option<&ThemePalette>) -> Color {
         match self {
             ColorDef::Named(c) => *c,
@@ -252,10 +188,6 @@ impl ColorDef {
 mod tests {
     use super::*;
     use serde_yaml::Value;
-
-    // =========================================================================
-    // Named color tests
-    // =========================================================================
 
     #[test]
     fn test_parse_named_colors() {
@@ -323,10 +255,6 @@ mod tests {
         assert!(ColorDef::parse_string("orange").is_err());
     }
 
-    // =========================================================================
-    // Bright color tests
-    // =========================================================================
-
     #[test]
     fn test_parse_bright_colors() {
         assert_eq!(
@@ -355,10 +283,6 @@ mod tests {
     fn test_parse_unknown_bright_color() {
         assert!(ColorDef::parse_string("bright_purple").is_err());
     }
-
-    // =========================================================================
-    // Hex color tests
-    // =========================================================================
 
     #[test]
     fn test_parse_hex_6_digit() {
@@ -410,10 +334,6 @@ mod tests {
         assert!(ColorDef::parse_string("#ffff").is_err());
         assert!(ColorDef::parse_string("#gggggg").is_err());
     }
-
-    // =========================================================================
-    // YAML value tests
-    // =========================================================================
 
     #[test]
     fn test_parse_value_string() {
@@ -468,10 +388,6 @@ mod tests {
         assert!(ColorDef::parse_value(&val).is_err());
     }
 
-    // =========================================================================
-    // to_console_color tests
-    // =========================================================================
-
     #[test]
     fn test_to_console_color_named() {
         let c = ColorDef::Named(Color::Red);
@@ -487,17 +403,11 @@ mod tests {
     #[test]
     fn test_to_console_color_rgb() {
         let c = ColorDef::Rgb(255, 107, 53);
-        // RGB gets converted to 256 color via rgb_to_ansi256
         if let Color::Color256(_) = c.to_console_color(None) {
-            // OK - it converted
         } else {
             panic!("Expected Color256");
         }
     }
-
-    // =========================================================================
-    // Cube color tests
-    // =========================================================================
 
     #[test]
     fn test_parse_cube_percentages() {
@@ -527,11 +437,9 @@ mod tests {
 
     #[test]
     fn test_parse_cube_corners() {
-        // Origin
         let c = ColorDef::parse_string("cube(0%, 0%, 0%)").unwrap();
         assert!(matches!(c, ColorDef::Cube(_)));
 
-        // Opposite corner
         let c = ColorDef::parse_string("cube(100%, 100%, 100%)").unwrap();
         assert!(matches!(c, ColorDef::Cube(_)));
     }
@@ -558,9 +466,7 @@ mod tests {
         use crate::colorspace::CubeCoord;
         let coord = CubeCoord::from_percentages(60.0, 20.0, 0.0).unwrap();
         let c = ColorDef::Cube(coord);
-        // Should resolve without panic
         if let Color::Color256(_) = c.to_console_color(None) {
-            // OK
         } else {
             panic!("Expected Color256 from cube resolution");
         }
@@ -581,9 +487,7 @@ mod tests {
         ]);
         let coord = CubeCoord::from_percentages(0.0, 0.0, 0.0).unwrap();
         let c = ColorDef::Cube(coord);
-        // Origin should resolve to bg (anchors[0])
         if let Color::Color256(_) = c.to_console_color(Some(&palette)) {
-            // OK
         } else {
             panic!("Expected Color256");
         }

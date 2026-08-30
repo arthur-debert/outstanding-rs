@@ -1,8 +1,3 @@
-//! Simple terminal prompts.
-//!
-//! Basic interactive prompts that work without external dependencies.
-//! For richer TUI prompts, use the `inquire` feature instead.
-
 use std::io::{self, BufRead, IsTerminal, Write};
 use std::ops::ControlFlow;
 use std::sync::Arc;
@@ -14,22 +9,14 @@ use crate::responder::PromptResponder;
 use crate::InputError;
 use crate::InputSources;
 
-/// Abstraction over terminal I/O for testability.
 pub trait TerminalIO: Send + Sync {
-    /// Check if stdin is a terminal.
     fn is_terminal(&self) -> bool;
 
-    /// Write a prompt to stdout.
     fn write_prompt(&self, prompt: &str) -> io::Result<()>;
 
-    /// Read a line from stdin.
     fn read_line(&self) -> io::Result<String>;
 }
 
-/// Sharing one terminal across several prompt sources: an `Arc<T>` delegates
-/// to the wrapped terminal, so a single (possibly stateful mock) terminal can
-/// back a sequence of [`TextPromptSource`] / [`ConfirmPromptSource`] values —
-/// e.g. one prompt per questionnaire field.
 impl<T: TerminalIO + ?Sized> TerminalIO for Arc<T> {
     fn is_terminal(&self) -> bool {
         (**self).is_terminal()
@@ -44,7 +31,6 @@ impl<T: TerminalIO + ?Sized> TerminalIO for Arc<T> {
     }
 }
 
-/// Real terminal I/O.
 #[derive(Debug, Default, Clone, Copy)]
 pub struct RealTerminal;
 
@@ -65,22 +51,6 @@ impl TerminalIO for RealTerminal {
     }
 }
 
-/// Simple text input prompt.
-///
-/// Prompts the user for text input in the terminal. Only available when
-/// stdin is a TTY (not piped).
-///
-/// # Example
-///
-/// ```ignore
-/// use standout_input::{InputChain, ArgSource, TextPromptSource};
-///
-/// let chain = InputChain::<String>::new()
-///     .try_source(ArgSource::new("name"))
-///     .try_source(TextPromptSource::new("Enter your name: "));
-///
-/// let name = chain.resolve(&matches)?;
-/// ```
 #[derive(Clone)]
 pub struct TextPromptSource<T: TerminalIO = RealTerminal> {
     terminal: Arc<T>,
@@ -90,7 +60,6 @@ pub struct TextPromptSource<T: TerminalIO = RealTerminal> {
 }
 
 impl TextPromptSource<RealTerminal> {
-    /// Create a new text prompt source.
     pub fn new(prompt: impl Into<String>) -> Self {
         Self {
             terminal: Arc::new(RealTerminal),
@@ -102,7 +71,6 @@ impl TextPromptSource<RealTerminal> {
 }
 
 impl<T: TerminalIO> TextPromptSource<T> {
-    /// Create a text prompt with a custom terminal for testing.
     pub fn with_terminal(prompt: impl Into<String>, terminal: T) -> Self {
         Self {
             terminal: Arc::new(terminal),
@@ -112,9 +80,6 @@ impl<T: TerminalIO> TextPromptSource<T> {
         }
     }
 
-    /// Control whether to trim whitespace from the input.
-    ///
-    /// Default is `true`.
     pub fn trim(mut self, trim: bool) -> Self {
         self.trim = trim;
         self
@@ -122,42 +87,18 @@ impl<T: TerminalIO> TextPromptSource<T> {
 }
 
 impl<T: TerminalIO + 'static> TextPromptSource<T> {
-    /// Prompt the user for text and return the entered value.
-    ///
-    /// Standalone counterpart to [`InputCollector::collect`] for wizard /
-    /// REPL flows that drive standout themselves and have no `&ArgMatches`
-    /// to plumb through. Returns the entered text on success. Uses
-    /// [`InputSources::from_process`]; prefer [`prompt_from`] when the
-    /// caller has invocation sources (including a scripted responder).
-    ///
-    /// Errors:
-    /// - [`InputError::PromptCancelled`] on EOF (Ctrl+D)
-    /// - [`InputError::NoInput`] if stdin is not a TTY *or* the user
-    ///   submits empty input
-    /// - [`InputError::PromptFailed`] on terminal I/O failure
     pub fn prompt(&self) -> Result<String, InputError> {
         self.prompt_from(&InputSources::from_process())
     }
 
-    /// [`prompt`](Self::prompt) against explicit [`InputSources`].
     pub fn prompt_from(&self, sources: &InputSources) -> Result<String, InputError> {
         crate::collector::prompt_value_from(self, sources)
     }
 
-    /// One prompt round trip preserving the entry / non-input distinction
-    /// that [`prompt`](Self::prompt) collapses into [`InputError::NoInput`]:
-    /// `Ok(Some(text))` is an entered answer — a blank line arrives as
-    /// `Some("")` — while `Ok(None)` is a non-input outcome (a responder
-    /// `Skip`, or no terminal to ask). Cancellation and I/O failures
-    /// propagate as errors. Callers that must react differently to "the
-    /// user entered nothing" versus "no input can ever arrive" (e.g.
-    /// questionnaire collection's retry-or-terminate rule) use this instead
-    /// of [`prompt`](Self::prompt).
     pub fn prompt_entry(&self) -> Result<Option<String>, InputError> {
         self.prompt_entry_from(&InputSources::from_process())
     }
 
-    /// [`prompt_entry`](Self::prompt_entry) against explicit [`InputSources`].
     pub fn prompt_entry_from(&self, sources: &InputSources) -> Result<Option<String>, InputError> {
         match crate::responder::intercept_text(
             crate::PromptKind::Text,
@@ -173,7 +114,6 @@ impl<T: TerminalIO + 'static> TextPromptSource<T> {
         if !self.is_available(matches) {
             return Ok(None);
         }
-        // `collect` yields `None` for a blank line — still an entry.
         Ok(Some(self.collect(matches)?.unwrap_or_default()))
     }
 }
@@ -211,7 +151,6 @@ impl<T: TerminalIO + 'static> InputCollector<String> for TextPromptSource<T> {
             .read_line()
             .map_err(|e| InputError::PromptFailed(e.to_string()))?;
 
-        // Check for EOF (user pressed Ctrl+D)
         if line.is_empty() {
             return Err(InputError::PromptCancelled);
         }
@@ -219,7 +158,6 @@ impl<T: TerminalIO + 'static> InputCollector<String> for TextPromptSource<T> {
         let result = if self.trim {
             line.trim().to_string()
         } else {
-            // Still need to remove trailing newline from read_line
             line.trim_end_matches('\n')
                 .trim_end_matches('\r')
                 .to_string()
@@ -246,21 +184,6 @@ impl<T: TerminalIO + 'static> InputCollector<String> for TextPromptSource<T> {
     }
 }
 
-/// Simple yes/no confirmation prompt.
-///
-/// Prompts the user for a yes/no response. Accepts y/yes/n/no (case-insensitive).
-///
-/// # Example
-///
-/// ```ignore
-/// use standout_input::{InputChain, FlagSource, ConfirmPromptSource};
-///
-/// let chain = InputChain::<bool>::new()
-///     .try_source(FlagSource::new("yes"))
-///     .try_source(ConfirmPromptSource::new("Proceed?"));
-///
-/// let confirmed = chain.resolve(&matches)?;
-/// ```
 #[derive(Clone)]
 pub struct ConfirmPromptSource<T: TerminalIO = RealTerminal> {
     terminal: Arc<T>,
@@ -270,7 +193,6 @@ pub struct ConfirmPromptSource<T: TerminalIO = RealTerminal> {
 }
 
 impl ConfirmPromptSource<RealTerminal> {
-    /// Create a new confirmation prompt.
     pub fn new(prompt: impl Into<String>) -> Self {
         Self {
             terminal: Arc::new(RealTerminal),
@@ -282,7 +204,6 @@ impl ConfirmPromptSource<RealTerminal> {
 }
 
 impl<T: TerminalIO> ConfirmPromptSource<T> {
-    /// Create a confirm prompt with a custom terminal for testing.
     pub fn with_terminal(prompt: impl Into<String>, terminal: T) -> Self {
         Self {
             terminal: Arc::new(terminal),
@@ -292,12 +213,6 @@ impl<T: TerminalIO> ConfirmPromptSource<T> {
         }
     }
 
-    /// Set a default value for when the user presses Enter without input.
-    ///
-    /// The prompt suffix will change to indicate the default:
-    /// - `None`: `[y/n]`
-    /// - `Some(true)`: `[Y/n]`
-    /// - `Some(false)`: `[y/N]`
     pub fn default(mut self, default: bool) -> Self {
         self.default = Some(default);
         self
@@ -305,25 +220,10 @@ impl<T: TerminalIO> ConfirmPromptSource<T> {
 }
 
 impl<T: TerminalIO + 'static> ConfirmPromptSource<T> {
-    /// Prompt the user for a yes/no answer and return the resolved boolean.
-    ///
-    /// Standalone counterpart to [`InputCollector::collect`] for wizard /
-    /// REPL flows that drive standout themselves and have no `&ArgMatches`
-    /// to plumb through. Uses [`InputSources::from_process`]; prefer
-    /// [`prompt_from`] when the caller has invocation sources.
-    ///
-    /// Errors:
-    /// - [`InputError::PromptCancelled`] on EOF (Ctrl+D)
-    /// - [`InputError::NoInput`] if stdin is not a TTY, *or* if the user
-    ///   submits an empty line and no [`default`](Self::default) was set
-    /// - [`InputError::ValidationFailed`] if the user enters something
-    ///   that isn't a y/yes/n/no variant
-    /// - [`InputError::PromptFailed`] on terminal I/O failure
     pub fn prompt(&self) -> Result<bool, InputError> {
         self.prompt_from(&InputSources::from_process())
     }
 
-    /// [`prompt`](Self::prompt) against explicit [`InputSources`].
     pub fn prompt_from(&self, sources: &InputSources) -> Result<bool, InputError> {
         crate::collector::prompt_value_from(self, sources)
     }
@@ -370,7 +270,6 @@ impl<T: TerminalIO + 'static> InputCollector<bool> for ConfirmPromptSource<T> {
             .read_line()
             .map_err(|e| InputError::PromptFailed(e.to_string()))?;
 
-        // Check for EOF
         if line.is_empty() {
             return Err(InputError::PromptCancelled);
         }
@@ -378,19 +277,15 @@ impl<T: TerminalIO + 'static> InputCollector<bool> for ConfirmPromptSource<T> {
         let input = line.trim().to_lowercase();
 
         if input.is_empty() {
-            // Use default if available, otherwise return None to continue chain
             return Ok(self.default);
         }
 
         match input.as_str() {
             "y" | "yes" => Ok(Some(true)),
             "n" | "no" => Ok(Some(false)),
-            _ => {
-                // Invalid input - for non-interactive we'd fail, but prompt can retry
-                Err(InputError::ValidationFailed(
-                    "Please enter 'y' or 'n'".to_string(),
-                ))
-            }
+            _ => Err(InputError::ValidationFailed(
+                "Please enter 'y' or 'n'".to_string(),
+            )),
         }
     }
 
@@ -408,12 +303,10 @@ impl<T: TerminalIO + 'static> InputCollector<bool> for ConfirmPromptSource<T> {
     }
 }
 
-/// Mock terminal for testing prompts.
 #[derive(Debug)]
 pub struct MockTerminal {
     is_terminal: bool,
     responses: Vec<String>,
-    /// Index of the next response to return.
     response_index: std::sync::atomic::AtomicUsize,
 }
 
@@ -431,7 +324,6 @@ impl Clone for MockTerminal {
 }
 
 impl MockTerminal {
-    /// Create a mock that simulates a non-terminal.
     pub fn non_terminal() -> Self {
         Self {
             is_terminal: false,
@@ -440,7 +332,6 @@ impl MockTerminal {
         }
     }
 
-    /// Create a mock terminal that returns the given response.
     pub fn with_response(response: impl Into<String>) -> Self {
         Self {
             is_terminal: true,
@@ -449,9 +340,6 @@ impl MockTerminal {
         }
     }
 
-    /// Create a mock terminal that returns multiple responses in sequence.
-    ///
-    /// Useful for testing retry scenarios.
     pub fn with_responses(responses: impl IntoIterator<Item = impl Into<String>>) -> Self {
         Self {
             is_terminal: true,
@@ -460,11 +348,10 @@ impl MockTerminal {
         }
     }
 
-    /// Create a mock that simulates EOF (Ctrl+D).
     pub fn eof() -> Self {
         Self {
             is_terminal: true,
-            responses: vec![], // Empty vec means EOF
+            responses: vec![],
             response_index: std::sync::atomic::AtomicUsize::new(0),
         }
     }
@@ -476,7 +363,6 @@ impl TerminalIO for MockTerminal {
     }
 
     fn write_prompt(&self, _prompt: &str) -> io::Result<()> {
-        // Mock doesn't actually write
         Ok(())
     }
 
@@ -485,10 +371,8 @@ impl TerminalIO for MockTerminal {
             .response_index
             .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
         if idx < self.responses.len() {
-            // Add newline like real read_line does
             Ok(format!("{}\n", self.responses[idx]))
         } else {
-            // EOF
             Ok(String::new())
         }
     }
@@ -502,8 +386,6 @@ mod tests {
     fn empty_matches() -> ArgMatches {
         Command::new("test").try_get_matches_from(["test"]).unwrap()
     }
-
-    // === TextPromptSource tests ===
 
     #[test]
     fn text_prompt_unavailable_when_not_terminal() {
@@ -568,8 +450,6 @@ mod tests {
         let source = TextPromptSource::with_terminal("Name: ", MockTerminal::with_response("test"));
         assert!(source.can_retry());
     }
-
-    // === ConfirmPromptSource tests ===
 
     #[test]
     fn confirm_prompt_unavailable_when_not_terminal() {
@@ -661,8 +541,6 @@ mod tests {
         assert!(source.can_retry());
     }
 
-    // === .prompt() shortcut ===
-
     use crate::{InputSources, PromptResponse, ScriptedResponder};
     use std::sync::Arc;
 
@@ -694,8 +572,6 @@ mod tests {
 
     #[test]
     fn text_prompt_shortcut_skips_when_not_terminal() {
-        // .prompt() should still surface NoInput when the underlying source
-        // declines (e.g. no TTY) — the wizard caller can decide what to do.
         let source = TextPromptSource::with_terminal("Name: ", MockTerminal::non_terminal());
         let err = source.prompt().unwrap_err();
         assert!(matches!(err, InputError::NoInput));
@@ -725,12 +601,8 @@ mod tests {
         assert!(value);
     }
 
-    // === .prompt() via PromptResponder ===
-
     #[test]
     fn text_prompt_routes_through_responder_even_without_tty() {
-        // The non-terminal MockTerminal would normally return NoInput from
-        // prompt(); the responder gate runs *first*, so the responder wins.
         let sources = sources_with(ScriptedResponder::new([PromptResponse::text("Ada")]));
         let source = TextPromptSource::with_terminal("Name: ", MockTerminal::non_terminal());
         let value = source.prompt_from(&sources).unwrap();

@@ -1,10 +1,6 @@
-//! The roster case schema, executed for real: loading, the documented run
-//! semantics (scrubbed baseline env, sandbox files and cwd, pty attachment,
-//! scripted stdin, per-case timeout), the assertion vocabulary, and the
-//! expected-fail mapping — all against scripted stand-in binaries.
+// The roster case schema, executed for real against scripted stand-in
+// binaries.
 
-// Unix-only: the stand-in binaries are `sh` scripts made executable via
-// `PermissionsExt`, and pty attachment is a Unix object.
 #![cfg(unix)]
 
 mod common;
@@ -18,8 +14,6 @@ use corpus_runner::cases::run_cases;
 use corpus_runner::report::{CaseOutcome, CaseResult};
 use corpus_runner::workspace::Isolation;
 
-/// Loads `toml` as archetype `fake`'s acceptance suite and runs its cases
-/// against `binary_body`, returning the per-case results.
 fn run_suite(toml: &str, binary_body: &str) -> Vec<CaseResult> {
     let dir = tempfile::tempdir().unwrap();
     let binary = script(dir.path(), "fake", binary_body);
@@ -52,10 +46,6 @@ fn one(toml: &str, binary_body: &str) -> CaseResult {
     assert_eq!(results.len(), 1);
     results.remove(0)
 }
-
-// ---------------------------------------------------------------------------
-// Loading and validation
-// ---------------------------------------------------------------------------
 
 #[test]
 fn pilot_roster_suites_load_as_case_suites() {
@@ -141,10 +131,6 @@ timeout_seconds = 5
     let err = Archetype::load(&dir.path().join("archetypes"), "fake").unwrap_err();
     assert!(err.to_string().contains("asserts nothing"), "{err:#}");
 }
-
-// ---------------------------------------------------------------------------
-// Assertion vocabulary
-// ---------------------------------------------------------------------------
 
 #[test]
 fn exact_stream_and_exit_assertions_pass_and_fail() {
@@ -279,8 +265,7 @@ esac"#,
     assert_eq!(results[2].outcome, CaseOutcome::Fail);
 }
 
-/// A binary emitting associated rows in text and JSON: rows carry name,
-/// constellation, and magnitude together.
+// Rows carry name, constellation, and magnitude together, in text and JSON.
 const ROWS: &str = r#"
 mode=text
 prev=""
@@ -294,8 +279,6 @@ case "$mode" in
 esac
 "#;
 
-/// The two assertion kinds ported from the retired check schema: each group
-/// must co-occur on one single row, so a cross-row bag of substrings fails.
 #[test]
 fn row_assertions_bind_values_to_one_row() {
     let results = run_suite(
@@ -380,10 +363,6 @@ stdout_json_rows = [["Aldebaran", "Taurus", "0.86"]]
         .unwrap()
         .contains("not valid JSON"));
 }
-
-// ---------------------------------------------------------------------------
-// Run semantics: environment, sandbox, stdin, tty, timeout
-// ---------------------------------------------------------------------------
 
 #[test]
 fn baseline_env_is_scrubbed_and_case_env_is_complete() {
@@ -636,10 +615,6 @@ exit_code = 0
         result.detail
     );
 }
-
-// ---------------------------------------------------------------------------
-// Expected-fail mapping
-// ---------------------------------------------------------------------------
 
 #[test]
 fn gap_cases_report_expected_fail_and_unexpected_pass() {

@@ -1,5 +1,3 @@
-//! Stdin input source.
-
 use std::sync::Arc;
 
 use clap::ArgMatches;
@@ -9,50 +7,13 @@ use crate::env::{RealStdin, StdinReader};
 use crate::InputError;
 use crate::InputSources;
 
-/// Collect input from piped stdin.
-///
-/// This source reads from stdin only when it is piped (not a terminal).
-/// If stdin is a TTY, the source returns `None` to allow the chain to
-/// continue to the next source.
-///
-/// [`new`](Self::new) means "use this invocation's [`InputSources`]". An
-/// explicit reader from [`with_reader`](Self::with_reader) is not rebound.
-///
-/// # Example
-///
-/// ```ignore
-/// use standout_input::{InputChain, ArgSource, StdinSource};
-///
-/// // For: echo "hello" | myapp
-/// let chain = InputChain::<String>::new()
-///     .try_source(ArgSource::new("message"))
-///     .try_source(StdinSource::new());
-/// ```
-///
-/// # Testing
-///
-/// Use [`StdinSource::with_reader`] to inject a mock for testing, or pass
-/// [`InputSources`] with a [`crate::MockStdin`] into
-/// [`InputChain::resolve_from`](crate::InputChain::resolve_from):
-///
-/// ```ignore
-/// use standout_input::{StdinSource, MockStdin};
-///
-/// let source = StdinSource::with_reader(MockStdin::piped("test input"));
-/// ```
 #[derive(Clone)]
 pub struct StdinSource {
-    /// `None` binds to [`InputSources`] at resolve time.
     reader: Option<Arc<dyn StdinReader>>,
     trim: bool,
 }
 
 impl StdinSource {
-    /// Create a new stdin source.
-    ///
-    /// Reads the invocation's stdin when the chain is resolved against
-    /// [`InputSources`]. Standalone [`InputChain::resolve`] uses
-    /// [`InputSources::from_process`].
     pub fn new() -> Self {
         Self {
             reader: None,
@@ -60,10 +21,6 @@ impl StdinSource {
         }
     }
 
-    /// Create a stdin source with a custom reader.
-    ///
-    /// This is primarily used for testing to inject mock stdin. The explicit
-    /// reader is not replaced when the chain binds [`InputSources`].
     pub fn with_reader(reader: impl StdinReader + 'static) -> Self {
         Self {
             reader: Some(Arc::new(reader)),
@@ -71,7 +28,6 @@ impl StdinSource {
         }
     }
 
-    /// Create a stdin source from a shared reader handle.
     pub fn with_shared_reader(reader: Arc<dyn StdinReader>) -> Self {
         Self {
             reader: Some(reader),
@@ -79,9 +35,6 @@ impl StdinSource {
         }
     }
 
-    /// Control whether to trim whitespace from the input.
-    ///
-    /// Default is `true`.
     pub fn trim(mut self, trim: bool) -> Self {
         self.trim = trim;
         self
@@ -147,17 +100,10 @@ impl InputCollector<String> for StdinSource {
     }
 }
 
-/// Convenience function to read stdin if piped.
-///
-/// Returns `Ok(Some(content))` if stdin is piped and has content,
-/// `Ok(None)` if stdin is a terminal or empty. Uses
-/// [`InputSources::from_process`]. Prefer [`read_if_piped_from`] when the
-/// caller already has invocation sources.
 pub fn read_if_piped() -> Result<Option<String>, InputError> {
     read_if_piped_from(&InputSources::from_process())
 }
 
-/// Read piped stdin from an explicit [`InputSources`].
 pub fn read_if_piped_from(sources: &InputSources) -> Result<Option<String>, InputError> {
     let reader = sources.stdin();
     if reader.is_terminal() {

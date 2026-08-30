@@ -1,82 +1,8 @@
-//! Universal and negative invariants, as reusable assertions.
-//!
-//! The suite's existing help assertions are **existential over hand-picked
-//! strings** — `assert_stdout_contains("default: auto")`. Every defect that
-//! escaped to a downstream app was the other two shapes: a **universal**
-//! ("every value-taking option shows a metavar") or a **negative** ("no
-//! presence flag shows a possible-values row"). Neither can be expressed by
-//! listing strings that should be there, which is why the bogus
-//! `possible values: true, false` row of #301 rendered inside the test suite's
-//! own output on every run with no oracle to reject it.
-//!
-//! These assertions are that missing vocabulary. Each states a property of a
-//! *whole page* and names the offending element — the argument, the tag, the
-//! row — when the property does not hold.
-//!
-//! # The two forms
-//!
-//! Every invariant *about the text of a page* comes in two functions:
-//!
-//! - `assert_*(result, …)` takes a [`TestResult`] and is what tests call.
-//! - `assert_*_in_page(page, …)` takes the rendered page (and any oracle it
-//!   needs) directly — `assert_styling_preserves_layout_in_pages` takes the
-//!   two pages it compares.
-//!
-//! The page form exists because an oracle that cannot fail is worse than none:
-//! it lets the assertion library's own tests feed it a page that violates the
-//! invariant, without having to find or build a framework defect first. It is
-//! also what a caller with a page from somewhere else — a process run, a
-//! snapshot file — reaches for.
-//!
-//! [`assert_every_tag_resolved`] is the one exception, and necessarily so: it
-//! reads the run's structured render diagnostics, which a rendered page does
-//! not carry — that is the whole reason it can name a tag in a mode where the
-//! page shows no evidence at all. Its page-shaped counterpart is
-//! [`assert_no_unresolved_tag_markers_in_page`], which proves the weaker thing
-//! a page *can* state.
-//!
-//! # The two forms of "no unresolved tag"
-//!
-//! [`assert_every_tag_resolved`] and [`assert_no_unresolved_tag_markers`] look
-//! like the same check and are not. The first reads the structured record of
-//! what the style-tag pass resolved ([`standout::diagnostics`]) and proves *the
-//! theme is incomplete*, in every output mode, naming the tag. The second
-//! searches the page for the historical `[tag?]` marker and proves template
-//! markup did not leak into the user-facing page.
-//!
-//! # What these do not do
-//!
-//! They do not check that a row exists for every argument — that is the
-//! [clap-parity differential](crate::clap_parity)'s job. These state
-//! properties of the rows that *are* rendered; an argument with no row at all
-//! is simply not their subject. Both read the page through the same parser
-//! ([`crate::page`]), so "the row for `--summary`" means one thing to both.
-
-use clap::Command;
-
 use crate::page::{
     declared_metavars, find_row, rows, takes_values, value_placeholders, visible_args,
 };
 use crate::TestResult;
-
-// ---------------------------------------------------------------------------
-// Tag resolution
-// ---------------------------------------------------------------------------
-
-/// Panics unless every tag the run's renders emitted was defined in the
-/// resolved theme.
-///
-/// This is the structural form: it reads what the style-tag pass recorded, so
-/// it holds in `Text` and `TermDebug` as strongly as in `Term`, needs no ANSI
-/// and no TTY, and names the tag rather than a substring of the page.
-///
-/// "The run's renders" includes a run the handler itself drove — an app
-/// invoking another app — whatever it then did with that run's output, because
-/// the capture layer cannot see whether the output was embedded or discarded
-/// and the safe total policy is the one with no false pass. The failure marks
-/// those offenders as coming from a nested run, and
-/// [`TagResolution::nesting_depth`](standout_render::TagResolution::nesting_depth)
-/// is what to filter on to state the narrower property.
+use clap::Command;
 #[track_caller]
 pub fn assert_every_tag_resolved(result: &TestResult) {
     let offenders: Vec<String> = result
@@ -99,18 +25,15 @@ pub fn assert_every_tag_resolved(result: &TestResult) {
             })
         })
         .collect();
-
     if offenders.is_empty() {
         return;
     }
-
     let defined: Vec<&str> = result
         .tag_resolutions()
         .iter()
         .find(|pass| !pass.is_clean())
         .map(|pass| pass.defined_tags().iter().map(String::as_str).collect())
         .unwrap_or_default();
-
     panic!(
         "the run emitted {} tag(s) the resolved theme does not define:\n{}\n\
          the resolved theme defines: {}",
@@ -123,26 +46,16 @@ pub fn assert_every_tag_resolved(result: &TestResult) {
         }
     );
 }
-
-/// Panics if any `[tag?]` marker reached the rendered page.
-///
-/// Current framework render paths degrade unresolved tags to unstyled text, but
-/// snapshots, fixtures, and assertion-library tests can still contain the old
-/// marker form. This catches any regression that lets it reach user-facing
-/// output again.
 #[track_caller]
 pub fn assert_no_unresolved_tag_markers(result: &TestResult) {
     assert_no_unresolved_tag_markers_in_page(&result.stdout_plain());
 }
-
-/// [`assert_no_unresolved_tag_markers`] against a page directly.
 #[track_caller]
 pub fn assert_no_unresolved_tag_markers_in_page(page: &str) {
     let markers = unresolved_tag_markers(page);
     if markers.is_empty() {
         return;
     }
-
     panic!(
         "{} unresolved tag marker(s) reached the page: {}\n--- page ---\n{}\n------------",
         markers.len(),
@@ -154,12 +67,9 @@ pub fn assert_no_unresolved_tag_markers_in_page(page: &str) {
         page
     );
 }
-
-/// The distinct tag names marked unresolved in `page`, in first-seen order.
 fn unresolved_tag_markers(page: &str) -> Vec<String> {
     let mut found: Vec<String> = Vec::new();
     let mut cursor = 0;
-
     while let Some(offset) = page[cursor..].find("?]") {
         let marker_end = cursor + offset;
         if let Some(open) = page[..marker_end].rfind('[') {
@@ -171,42 +81,23 @@ fn unresolved_tag_markers(page: &str) -> Vec<String> {
         }
         cursor = marker_end + 2;
     }
-
     found
 }
-
 fn is_tag_name(candidate: &str) -> bool {
     !candidate.is_empty()
         && candidate
             .chars()
             .all(|c| c.is_ascii_alphanumeric() || matches!(c, '_' | '-' | '.'))
 }
-
-// ---------------------------------------------------------------------------
-// Styling may not change layout or content
-// ---------------------------------------------------------------------------
-
-/// Panics unless the styled page, with its escapes stripped, is exactly the
-/// unstyled page.
-///
-/// Styling is allowed to add color and nothing else: any difference in layout
-/// or content between the two modes is a rendering defect in one of them. This
-/// is the second direction #303 was visible from — a page whose tags resolve in
-/// `Text` and corrupt in `Term` differs here even before anyone looks for a
-/// marker.
 #[track_caller]
 pub fn assert_styling_preserves_layout(styled: &TestResult, plain: &TestResult) {
     assert_styling_preserves_layout_in_pages(&styled.stdout_plain(), plain.stdout());
 }
-
-/// [`assert_styling_preserves_layout`] against two pages directly. `styled` is
-/// expected to have already had its escapes stripped.
 #[track_caller]
 pub fn assert_styling_preserves_layout_in_pages(styled_stripped: &str, plain: &str) {
     if styled_stripped == plain {
         return;
     }
-
     let detail = match first_difference(styled_stripped, plain) {
         Some((line_number, styled_line, plain_line)) => format!(
             "first difference at line {}:\n  styled (stripped): {:?}\n  plain            : {:?}",
@@ -216,25 +107,16 @@ pub fn assert_styling_preserves_layout_in_pages(styled_stripped: &str, plain: &s
                  line-ending bytes"
             .to_string(),
     };
-
     panic!(
         "styling changed the page beyond color; {}\n\
          --- styled (stripped) ---\n{}\n--- plain ---\n{}\n-------------",
         detail, styled_stripped, plain
     );
 }
-
-/// The 1-based line number of the first differing line, with both sides.
-///
-/// `None` when the two pages have the same lines and differ only in bytes
-/// [`str::lines`] does not yield — a trailing newline, a `\r` before one. The
-/// caller says so rather than reporting a difference at a line that does not
-/// exist.
 fn first_difference(left: &str, right: &str) -> Option<(usize, String, String)> {
     let mut left_lines = left.lines();
     let mut right_lines = right.lines();
     let mut line_number = 0;
-
     loop {
         line_number += 1;
         match (left_lines.next(), right_lines.next()) {
@@ -250,30 +132,13 @@ fn first_difference(left: &str, right: &str) -> Option<(usize, String, String)> 
         }
     }
 }
-
-// ---------------------------------------------------------------------------
-// Argument rows, against clap's own metadata
-// ---------------------------------------------------------------------------
-
-/// Panics if any argument that takes no value shows a possible-values row.
-///
-/// Clap's own formatter suppresses possible values for `SetTrue`, `SetFalse`,
-/// and `Count`, because the underlying bool parser's `true`/`false` are not
-/// things the user may type: `--staged true` is not valid syntax. A row that
-/// lists them invites exactly that mistake (#301).
-///
-/// `cmd` is the command whose help was rendered — clap's metadata is the
-/// oracle for which arguments take a value.
 #[track_caller]
 pub fn assert_no_possible_values_for_valueless_args(result: &TestResult, cmd: &Command) {
     assert_no_possible_values_for_valueless_args_in_page(&result.stdout_plain(), cmd);
 }
-
-/// [`assert_no_possible_values_for_valueless_args`] against a page directly.
 #[track_caller]
 pub fn assert_no_possible_values_for_valueless_args_in_page(page: &str, cmd: &Command) {
     let rows = rows(page);
-
     for arg in visible_args(cmd) {
         if takes_values(arg) {
             continue;
@@ -295,34 +160,13 @@ pub fn assert_no_possible_values_for_valueless_args_in_page(page: &str, cmd: &Co
         }
     }
 }
-
-/// Panics unless every value-taking argument's row shows a metavar.
-///
-/// An option that takes a value must say so where the user reads it — in the
-/// row's label, not by luck in its prose. Before #302 was fixed,
-/// `--threshold <RATIO>` rendered as `--threshold`, indistinguishable from a
-/// presence flag.
-///
-/// The expected metavar is clap's: a declared value name must appear exactly
-/// as declared — an app writes `value_name = "RATIO"` precisely so the user
-/// reads `RATIO` — while an argument that declared none is matched against its
-/// id case-insensitively, since clap's fallback uppercases the id and
-/// standout's does not.
-///
-/// It is matched against the row's *value placeholders* alone, never against
-/// the whole label: `--output` spells its own id, so a row that lost its
-/// metavar entirely would satisfy a substring search of the label while telling
-/// the user nothing about the value it takes.
 #[track_caller]
 pub fn assert_metavar_for_valued_args(result: &TestResult, cmd: &Command) {
     assert_metavar_for_valued_args_in_page(&result.stdout_plain(), cmd);
 }
-
-/// [`assert_metavar_for_valued_args`] against a page directly.
 #[track_caller]
 pub fn assert_metavar_for_valued_args_in_page(page: &str, cmd: &Command) {
     let rows = rows(page);
-
     for arg in visible_args(cmd) {
         if !takes_values(arg) {
             continue;
@@ -330,7 +174,6 @@ pub fn assert_metavar_for_valued_args_in_page(page: &str, cmd: &Command) {
         let Some(row) = find_row(&rows, arg) else {
             continue;
         };
-
         let placeholders = value_placeholders(row.label);
         let missing: Vec<String> = match declared_metavars(arg) {
             Some(declared) => declared
@@ -349,7 +192,6 @@ pub fn assert_metavar_for_valued_args_in_page(page: &str, cmd: &Command) {
                 }
             }
         };
-
         if !missing.is_empty() {
             panic!(
                 "`{}` takes a value, so its row must show the value name(s) {:?}; \
@@ -363,29 +205,10 @@ pub fn assert_metavar_for_valued_args_in_page(page: &str, cmd: &Command) {
         }
     }
 }
-
-// ---------------------------------------------------------------------------
-// Whole-page column alignment
-// ---------------------------------------------------------------------------
-
-/// Panics unless every row in a section starts its description at the same
-/// column.
-///
-/// The suite's existing alignment check names two rows by hand and compares
-/// them; this parses the whole page, so a third row that drifts out of the
-/// column fails without anyone having remembered to list it.
-///
-/// A section's rows are the lines indented two spaces with a label and a
-/// description separated by a gap; continuation lines (a default, a
-/// possible-values list) sit under that same column and are checked with them.
-/// A section holding no such lines — usage, an examples block — has no column
-/// to state anything about and is skipped.
 #[track_caller]
 pub fn assert_descriptions_aligned(result: &TestResult) {
     assert_descriptions_aligned_in_page(&result.stdout_plain());
 }
-
-/// [`assert_descriptions_aligned`] against a page directly.
 #[track_caller]
 pub fn assert_descriptions_aligned_in_page(page: &str) {
     for section in sections(page) {
@@ -396,11 +219,9 @@ pub fn assert_descriptions_aligned_in_page(page: &str) {
                 description_column(line).map(|column| (*number, column, *line))
             })
             .collect();
-
         let Some((first_number, first_column, first_line)) = columns.first().copied() else {
             continue;
         };
-
         for (number, column, line) in columns.iter().copied() {
             if column != first_column {
                 panic!(
@@ -413,18 +234,12 @@ pub fn assert_descriptions_aligned_in_page(page: &str) {
         }
     }
 }
-
-/// A page section: a line at column zero, and the indented lines under it.
 struct Section<'a> {
     title: &'a str,
     lines: Vec<(usize, &'a str)>,
 }
-
-/// Splits a page into sections. Lines before the first heading (the about
-/// paragraph) form a leading section titled by their own text.
 fn sections(page: &str) -> Vec<Section<'_>> {
     let mut sections: Vec<Section<'_>> = Vec::new();
-
     for (index, line) in page.lines().enumerate() {
         if line.trim().is_empty() {
             continue;
@@ -440,20 +255,8 @@ fn sections(page: &str) -> Vec<Section<'_>> {
             });
         }
     }
-
     sections
 }
-
-/// The column a line's description starts at, or `None` when the line is not a
-/// two-column row.
-///
-/// A row is `  <label><gap><description>`, where the gap is two or more spaces;
-/// a continuation line is indentation followed by the description alone. A
-/// label with no description after it (an empty about, a bare usage line)
-/// states nothing about the column and returns `None`.
-///
-/// The column is counted in characters, not bytes, so a label carrying
-/// non-ASCII text reports the column a reader sees.
 fn description_column(line: &str) -> Option<usize> {
     let indent = line.len() - line.trim_start().len();
     if indent < 2 {
@@ -462,7 +265,6 @@ fn description_column(line: &str) -> Option<usize> {
     if indent > 2 {
         return Some(line[..indent].chars().count());
     }
-
     let rest = &line[indent..];
     let gap = rest.find("  ")?;
     let after_gap = rest[gap..].trim_start_matches(' ');
@@ -471,26 +273,20 @@ fn description_column(line: &str) -> Option<usize> {
     }
     Some(line[..line.len() - after_gap.len()].chars().count())
 }
-
 #[cfg(test)]
 mod tests {
     use super::*;
-
     const PAGE: &str = "\
 Keep short notes
-
 USAGE
   notes [OPTIONS] <RANGE>
-
 ARGUMENTS
   RANGE            A range of notes
-
 OPTIONS
   -f, --file <PATH>  Notes file to read
                      default: notes.txt
   --all              Include archived notes
 ";
-
     #[test]
     fn a_bare_line_has_no_description_column() {
         assert_eq!(description_column("  notes [OPTIONS] <RANGE>"), None);
@@ -498,7 +294,6 @@ OPTIONS
         assert_eq!(description_column("  RANGE            A range"), Some(19));
         assert_eq!(description_column("      default: x"), Some(6));
     }
-
     #[test]
     fn markers_are_named_once_each() {
         let page = "[header?]USAGE[/header?]\n  [item?]list[/item?]  [desc?]List[/desc?]";
@@ -507,7 +302,6 @@ OPTIONS
             ["header".to_string(), "item".to_string(), "desc".to_string()]
         );
     }
-
     #[test]
     fn a_clean_page_names_no_markers() {
         assert!(unresolved_tag_markers(PAGE).is_empty());

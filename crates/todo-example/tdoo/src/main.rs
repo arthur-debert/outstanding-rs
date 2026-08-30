@@ -1,8 +1,6 @@
-//! `tdoo` owns the shell-facing application.
-//!
-//! The sibling `todo-core` package owns reusable todo behavior and persistence;
-//! this binary package owns clap, Standout, environment lookup, handlers,
-//! presentation assets, and final process execution.
+//! `tdoo` owns the shell-facing application: clap, Standout, environment
+//! lookup, handlers, presentation assets, and process execution. The
+//! sibling `todo-core` crate owns reusable todo behavior and persistence.
 
 mod app;
 mod cli;

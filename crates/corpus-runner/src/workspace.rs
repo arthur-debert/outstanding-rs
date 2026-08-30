@@ -1,12 +1,6 @@
-//! Blind-workspace provisioning: everything the agent sees, and nothing more.
-//!
-//! The workspace materializes exactly the archetype spec, an instructions
-//! file, the rendered exit questionnaire, a snapshot of the *published*
-//! documentation set, and a cargo scaffold whose standout dependencies are
-//! exact-version crates.io pins — no path or git dependencies, so cargo
-//! cannot resolve into a local checkout. This is the enforcement half of the
-//! blindness protocol recorded in `corpus/README.md`; the recording half is
-//! the questionnaire's sources questions.
+// Blind-workspace provisioning: everything the agent sees, and nothing
+// more — spec, instructions, questionnaire, a published-docs snapshot, and
+// a cargo scaffold pinned to exact-version crates.io dependencies.
 
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -20,13 +14,8 @@ use crate::questionnaire;
 use crate::report::IsolationRecord;
 use crate::sandbox::{self, Policy};
 
-/// The published documentation set: what the mdbook ships, relative to the
-/// repo's `docs/` directory. ADRs, internal specs, proposals, and dev notes
-/// are deliberately absent.
 const PUBLISHED_DOCS: &[&str] = &["index.md", "intro.md", "guides", "topics", "crates"];
 
-/// Names present in every phase after scrubbing. Values are phase-local:
-/// HOME, CARGO_HOME, and TMPDIR never point at their host counterparts.
 pub const ENV_ALLOWLIST: &[&str] = &[
     "PATH",
     "HOME",
@@ -51,12 +40,6 @@ fn apply_phase_env(command: &mut Command, home: &Path) {
     command.env("TMPDIR", home.join("tmp"));
 }
 
-/// Applies the roster cases' scrubbed baseline (`corpus/README.md`, Run
-/// semantics): `env_clear()` plus `PATH` from the runner, `HOME` pointing
-/// into the sandbox, and `LANG`/`LC_ALL` = `C.UTF-8`. Everything that
-/// steers output — `TERM`, `NO_COLOR`, pager variables, tool variables —
-/// is unset unless the case sets it, so a case's env is complete rather
-/// than a delta against whatever the host exports.
 pub fn apply_case_baseline_env(command: &mut Command, home: &Path) {
     command.env_clear();
     if let Ok(path) = std::env::var("PATH") {
@@ -68,8 +51,6 @@ pub fn apply_case_baseline_env(command: &mut Command, home: &Path) {
     command.env("TMPDIR", home.join("tmp"));
 }
 
-/// Enforced isolation roots for a run. Each phase has a disposable home,
-/// while the source checkout is absent from every child policy.
 #[derive(Debug, Clone)]
 pub struct Isolation {
     pub workspace_root: PathBuf,
@@ -116,10 +97,8 @@ impl Isolation {
         read.push(writable.to_path_buf());
         Policy::new(
             read,
-            // `/dev/null` is writable in every phase: `Stdio::null()` opens
-            // it for writing inside `posix_spawn`, so a write policy without
-            // it makes any child that nulls a stream (cargo build scripts
-            // probing the compiler, e.g. rustix's) fail at spawn with EPERM.
+            // `Stdio::null()` opens `/dev/null` for writing, so it must
+            // stay admitted or a child that nulls a stream fails with EPERM.
             vec![
                 writable.to_path_buf(),
                 home.to_path_buf(),
@@ -153,51 +132,26 @@ impl Isolation {
         sandbox::apply(command, &self.policy(sandbox_root, &self.check_home, false))
     }
 
-    /// The isolation record for the boundary [`Self::apply_agent`] and
-    /// [`Self::apply_build`] install: filesystem enforced, network
-    /// deliberately allowed by policy (both phases fetch crates.io). Kept
-    /// beside the `apply_*` methods so the recorded state can never drift
-    /// from the network flag they actually pass.
     pub fn agent_capability(&self) -> IsolationRecord {
         sandbox::capability(true)
     }
 
-    /// The isolation record for the boundary [`Self::apply_check`] installs
-    /// around acceptance/invariant invocations: a network denial is
-    /// requested, and the record states whether this backend enforced it.
     pub fn evaluation_capability(&self) -> IsolationRecord {
         sandbox::capability(false)
     }
 
-    /// Proves the source checkout and host home are unreadable from the same
-    /// enforced boundary the agent receives. A run refuses to start if the
-    /// kernel policy is missing or porous.
     pub fn verify_boundary(&self, source_root: &Path) -> Result<(), String> {
         let host_probe = std::env::var_os("HOME")
             .map(PathBuf::from)
             .unwrap_or_else(|| source_root.to_path_buf())
             .join(".gitconfig");
-        // A host-readable log the probe appends checkpoints (and anything
-        // the shell/`true` printed) to, so a failure names the exact step
-        // reached instead of leaving only a bare, unhelpful exit status.
         let probe_log = self.workspace_root.join(".boundary-probe.log");
         let _ = std::fs::remove_file(&probe_log);
         let mut command = Command::new("sh");
-        // Perform real opens through shell redirections. A permission query
-        // such as `test -r` may use access(2), which Landlock deliberately
-        // leaves unrestricted and therefore cannot prove file readability.
-        //
-        // The probed command is `true` — a POSIX *regular* builtin — not
-        // `:` (colon), a POSIX *special* builtin: per POSIX, a redirection
-        // error on a special builtin forces a non-interactive shell to exit
-        // immediately, bypassing the enclosing `if`/`then` entirely. dash
-        // (Linux's default `/bin/sh`) enforces this strictly; bash-as-
-        // `/bin/sh` (macOS) does not. So `: < denied-file` silently killed
-        // this whole probe script on Linux the moment the read was denied
-        // — the shell aborted before the `if` ever got a chance to see a
-        // clean nonzero status — instead of the intended "command failed,
-        // `if` reports denial" outcome `test -r` exists to avoid needing.
-        // `true` forces the identical real open() without that hazard.
+        // Real opens via shell redirection, not `test -r`, since Landlock
+        // leaves access(2) unrestricted. `true` (a regular builtin), not
+        // `:` (a special builtin), avoids dash aborting the whole script on
+        // a redirection error before the enclosing `if` sees the denial.
         command
             .args([
                 "-c",
@@ -239,23 +193,14 @@ impl Isolation {
     }
 }
 
-/// A provisioned blind workspace.
 #[derive(Debug)]
 pub struct Workspace {
-    /// The directory the agent works in.
     pub root: PathBuf,
-    /// The cargo project directory inside it.
     pub app_dir: PathBuf,
-    /// sha256 (hex) over the provisioned docs snapshot's actual bytes.
     pub docs_sha256: String,
     pub isolation: Isolation,
 }
 
-/// Provisions the blind workspace under `run_dir/workspace`.
-///
-/// `framework_version` is the exact crates.io version the scaffold pins
-/// (`=x.y.z`); `docs_dir` is the checkout's `docs/` directory the published
-/// set is snapshotted from.
 pub fn provision(
     run_dir: &Path,
     archetype: &Archetype,
@@ -310,10 +255,6 @@ pub fn provision(
     })
 }
 
-/// sha256 (hex) over the provisioned docs snapshot: every file in sorted
-/// relative-path order, each hashed as `<relpath>\0<bytes>`. This pins the
-/// bytes the agent actually saw — `docs_commit` alone says nothing when the
-/// source working tree is dirty or drifts after provisioning.
 pub fn docs_digest(docs_root: &Path) -> anyhow::Result<String> {
     let mut files = Vec::new();
     collect_relative_files(docs_root, docs_root, &mut files)?;
@@ -327,8 +268,6 @@ pub fn docs_digest(docs_root: &Path) -> anyhow::Result<String> {
     Ok(digest::hex(hasher.finalize()))
 }
 
-/// Collects every regular file under `dir` as a `/`-separated path relative
-/// to `root`.
 fn collect_relative_files(root: &Path, dir: &Path, out: &mut Vec<String>) -> anyhow::Result<()> {
     for entry in std::fs::read_dir(dir)? {
         let path = entry?.path();
@@ -348,7 +287,6 @@ fn collect_relative_files(root: &Path, dir: &Path, out: &mut Vec<String>) -> any
     Ok(())
 }
 
-/// The git commit of the checkout `docs_dir` lives in, or `"unknown"`.
 pub fn docs_commit(docs_dir: &Path) -> String {
     Command::new("git")
         .arg("-C")
@@ -362,7 +300,6 @@ pub fn docs_commit(docs_dir: &Path) -> String {
         .unwrap_or_else(|| "unknown".to_string())
 }
 
-/// The agent-facing brief provisioned as `INSTRUCTIONS.md`.
 fn instructions() -> String {
     "# Instructions
 
@@ -397,13 +334,8 @@ Rules:
     .to_string()
 }
 
-/// The blind scaffold's `Cargo.toml`: crates.io exact pins, no path deps.
-///
-/// The empty `[workspace]` table is load-bearing isolation: without it,
-/// cargo walks up from the run directory and adopts whatever workspace the
-/// runs live under (when runs sit inside the framework checkout, that is
-/// the framework's own workspace — a build failure and a blindness leak in
-/// one; found by the first live smoke run).
+// The empty `[workspace]` table stops cargo walking up and adopting the
+// framework checkout's own workspace when runs sit inside it.
 fn scaffold_manifest(binary: &str, framework_version: &str) -> String {
     format!(
         r#"[workspace]
@@ -423,12 +355,6 @@ anyhow = "1"
     )
 }
 
-/// Copies a file or directory tree from `src` to `dest` with an explicit
-/// symlink policy: a link is dereferenced (copied as regular content, never
-/// as a link back into the checkout) only when its canonical target stays
-/// inside one exact published root: the five mdbook source entries or a
-/// crate's `docs/` tree (mounted under `docs/crates/<name>`). Any other link
-/// is a provisioning error, not a silent follow.
 fn copy_recursive(src: &Path, dest: &Path, repo_root: &Path) -> anyhow::Result<()> {
     let meta =
         std::fs::symlink_metadata(src).with_context(|| format!("inspecting {}", src.display()))?;
@@ -459,7 +385,6 @@ fn copy_recursive(src: &Path, dest: &Path, repo_root: &Path) -> anyhow::Result<(
     Ok(())
 }
 
-/// True when a canonical symlink target lies inside one exact published root.
 fn is_published_docs_target(target: &Path, repo_root: &Path) -> bool {
     let Ok(rel) = target.strip_prefix(repo_root) else {
         return false;
@@ -473,7 +398,7 @@ fn is_published_docs_target(target: &Path, repo_root: &Path) -> bool {
             Some("index.md" | "intro.md" | "guides" | "topics" | "crates")
         ),
         Some("crates") => {
-            components.next(); // the crate directory name
+            components.next();
             components.next().as_deref() == Some("docs")
         }
         _ => false,

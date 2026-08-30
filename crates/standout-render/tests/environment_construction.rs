@@ -10,8 +10,6 @@
 use std::fs;
 use std::path::{Path, PathBuf};
 
-/// The one file allowed to call the minijinja constructor, relative to the
-/// workspace root.
 const SPELLING_SEAM: &str = "crates/standout-render/src/template/spelling.rs";
 
 #[test]
@@ -56,8 +54,6 @@ fn prose_naming_the_constructor_is_not_read_as_a_call() {
     assert!(strip_line_comments(call).contains("Environment::new()"));
 }
 
-/// `source` with `//` line comments stripped, so prose naming the constructor
-/// is not mistaken for a call to it.
 fn strip_line_comments(source: &str) -> String {
     source
         .lines()
@@ -77,8 +73,6 @@ fn workspace_root() -> PathBuf {
         .to_path_buf()
 }
 
-/// Every `.rs` file under a crate's `src/`. Test crates (`tests/`, `benches/`)
-/// and generated output are not walked.
 fn collect_rust_sources(crates_dir: &Path, out: &mut Vec<PathBuf>) {
     for entry in fs::read_dir(crates_dir).expect("crates/ is readable") {
         let crate_dir = entry.expect("directory entry").path();

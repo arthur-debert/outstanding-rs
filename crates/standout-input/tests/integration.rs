@@ -1,8 +1,3 @@
-//! Integration tests for standout-input.
-//!
-//! These tests verify the behavior of input chains across different scenarios,
-//! using mocks to ensure consistent behavior in both interactive and CI environments.
-
 use clap::{Arg, Command};
 use standout_input::{
     ArgSource, ClipboardSource, EnvSource, FlagSource, InputChain, InputError, InputSourceKind,
@@ -26,11 +21,6 @@ fn create_test_command() -> Command {
         )
 }
 
-// ============================================================================
-// Test: The "gh pr create" pattern
-// ============================================================================
-// This is the most common pattern: arg → stdin → editor/default
-
 #[test]
 fn gh_pattern_arg_provided() {
     let matches = create_test_command()
@@ -50,7 +40,7 @@ fn gh_pattern_arg_provided() {
 #[test]
 fn gh_pattern_stdin_piped() {
     let matches = create_test_command()
-        .try_get_matches_from(["test"]) // No --body
+        .try_get_matches_from(["test"])
         .unwrap();
 
     let chain = InputChain::<String>::new()
@@ -66,22 +56,18 @@ fn gh_pattern_stdin_piped() {
 #[test]
 fn gh_pattern_falls_through_to_default() {
     let matches = create_test_command()
-        .try_get_matches_from(["test"]) // No --body
+        .try_get_matches_from(["test"])
         .unwrap();
 
     let chain = InputChain::<String>::new()
         .try_source(ArgSource::new("body"))
-        .try_source(StdinSource::with_reader(MockStdin::terminal())) // Not piped
+        .try_source(StdinSource::with_reader(MockStdin::terminal()))
         .default("from default".to_string());
 
     let result = chain.resolve_with_source(&matches).unwrap();
     assert_eq!(result.value, "from default");
     assert_eq!(result.source, InputSourceKind::Default);
 }
-
-// ============================================================================
-// Test: Confirmation patterns (like `rm -i` or `gh pr merge`)
-// ============================================================================
 
 #[test]
 fn confirmation_with_yes_flag() {
@@ -94,13 +80,13 @@ fn confirmation_with_yes_flag() {
         .default(false);
 
     let result = chain.resolve(&matches).unwrap();
-    assert!(result); // --yes provided
+    assert!(result);
 }
 
 #[test]
 fn confirmation_without_flag_uses_default() {
     let matches = create_test_command()
-        .try_get_matches_from(["test"]) // No --yes
+        .try_get_matches_from(["test"])
         .unwrap();
 
     let chain = InputChain::<bool>::new()
@@ -108,7 +94,7 @@ fn confirmation_without_flag_uses_default() {
         .default(false);
 
     let result = chain.resolve(&matches).unwrap();
-    assert!(!result); // Uses default
+    assert!(!result);
 }
 
 #[test]
@@ -117,18 +103,13 @@ fn inverted_flag_for_no_editor() {
         .try_get_matches_from(["test", "--no-editor"])
         .unwrap();
 
-    // "use_editor" should be false when --no-editor is provided
     let chain = InputChain::<bool>::new()
         .try_source(FlagSource::new("no-editor").inverted())
-        .default(true); // Default to using editor
+        .default(true);
 
     let result = chain.resolve(&matches).unwrap();
-    assert!(!result); // --no-editor inverted = false
+    assert!(!result);
 }
-
-// ============================================================================
-// Test: Environment variable patterns (like API tokens)
-// ============================================================================
 
 #[test]
 fn env_var_priority_over_default() {
@@ -139,7 +120,7 @@ fn env_var_priority_over_default() {
     let env = MockEnv::new().with_var("MY_TOKEN", "secret-from-env");
 
     let chain = InputChain::<String>::new()
-        .try_source(ArgSource::new("message")) // Not provided
+        .try_source(ArgSource::new("message"))
         .try_source(EnvSource::with_reader("MY_TOKEN", env))
         .default("no-token".to_string());
 
@@ -165,10 +146,6 @@ fn arg_overrides_env_var() {
     assert_eq!(result.value, "from-arg");
     assert_eq!(result.source, InputSourceKind::Arg);
 }
-
-// ============================================================================
-// Test: Clipboard patterns (like padz prefill)
-// ============================================================================
 
 #[test]
 fn clipboard_as_fallback() {
@@ -203,10 +180,6 @@ fn empty_clipboard_falls_through() {
     assert_eq!(result.value, "fallback");
     assert_eq!(result.source, InputSourceKind::Default);
 }
-
-// ============================================================================
-// Test: Validation
-// ============================================================================
 
 #[test]
 fn validation_passes() {
@@ -259,7 +232,6 @@ fn multiple_validations_first_fails() {
         .try_get_matches_from(["test", "--message", ""])
         .unwrap();
 
-    // Note: empty string from arg won't be collected, so we use default
     let chain = InputChain::<String>::new()
         .try_source(ArgSource::new("message"))
         .try_source(StdinSource::with_reader(MockStdin::piped("")))
@@ -269,10 +241,6 @@ fn multiple_validations_first_fails() {
     let result = chain.resolve(&matches);
     assert!(matches!(result, Err(InputError::ValidationFailed(_))));
 }
-
-// ============================================================================
-// Test: No input available
-// ============================================================================
 
 #[test]
 fn no_input_returns_error() {
@@ -284,21 +252,13 @@ fn no_input_returns_error() {
         .try_source(ArgSource::new("message"))
         .try_source(StdinSource::with_reader(MockStdin::terminal()))
         .try_source(EnvSource::with_reader("MISSING", MockEnv::new()));
-    // No default!
 
     let result = chain.resolve(&matches);
     assert!(matches!(result, Err(InputError::NoInput)));
 }
 
-// ============================================================================
-// Test: Complex multi-source chain
-// ============================================================================
-
 #[test]
 fn complex_chain_priority() {
-    // Tests the full priority: arg → stdin → env → clipboard → default
-
-    // Case 1: Arg wins
     let matches = create_test_command()
         .try_get_matches_from(["test", "--message", "from-arg"])
         .unwrap();
@@ -306,7 +266,6 @@ fn complex_chain_priority() {
     let chain = build_complex_chain("env-value", "clipboard-value");
     assert_eq!(chain.resolve(&matches).unwrap(), "from-arg");
 
-    // Case 2: Stdin wins (no arg)
     let matches = create_test_command()
         .try_get_matches_from(["test"])
         .unwrap();
@@ -325,7 +284,6 @@ fn complex_chain_priority() {
 
     assert_eq!(chain.resolve(&matches).unwrap(), "from-stdin");
 
-    // Case 3: Env wins (no arg, terminal stdin)
     let chain = InputChain::<String>::new()
         .try_source(ArgSource::new("message"))
         .try_source(StdinSource::with_reader(MockStdin::terminal()))
@@ -340,7 +298,6 @@ fn complex_chain_priority() {
 
     assert_eq!(chain.resolve(&matches).unwrap(), "env-value");
 
-    // Case 4: Clipboard wins (no arg, terminal stdin, no env)
     let chain = InputChain::<String>::new()
         .try_source(ArgSource::new("message"))
         .try_source(StdinSource::with_reader(MockStdin::terminal()))
@@ -352,7 +309,6 @@ fn complex_chain_priority() {
 
     assert_eq!(chain.resolve(&matches).unwrap(), "clipboard-value");
 
-    // Case 5: Default wins (nothing else available)
     let chain = InputChain::<String>::new()
         .try_source(ArgSource::new("message"))
         .try_source(StdinSource::with_reader(MockStdin::terminal()))
@@ -377,22 +333,12 @@ fn build_complex_chain(env_value: &str, clipboard_value: &str) -> InputChain<Str
         .default("default-value".to_string())
 }
 
-// ============================================================================
-// Test: CI/non-TTY environment behavior
-// ============================================================================
-// These tests verify that the mocks allow testing behavior that would normally
-// depend on terminal state, making tests reliable in CI environments.
-
 #[test]
 fn mock_ensures_consistent_behavior_in_ci() {
-    // This test would behave differently in a real terminal vs CI without mocks.
-    // With MockStdin, we get consistent behavior everywhere.
-
     let matches = create_test_command()
         .try_get_matches_from(["test"])
         .unwrap();
 
-    // Simulate CI environment: stdin is terminal (not piped)
     let ci_stdin = MockStdin::terminal();
     let chain = InputChain::<String>::new()
         .try_source(StdinSource::with_reader(ci_stdin))
@@ -400,7 +346,6 @@ fn mock_ensures_consistent_behavior_in_ci() {
 
     assert_eq!(chain.resolve(&matches).unwrap(), "ci-default");
 
-    // Simulate piped input
     let piped_stdin = MockStdin::piped("piped-content");
     let chain = InputChain::<String>::new()
         .try_source(StdinSource::with_reader(piped_stdin))
@@ -415,12 +360,10 @@ fn mock_stdin_preserves_whitespace_when_configured() {
         .try_get_matches_from(["test"])
         .unwrap();
 
-    // With trim (default)
     let chain = InputChain::<String>::new()
         .try_source(StdinSource::with_reader(MockStdin::piped("  hello  \n")));
     assert_eq!(chain.resolve(&matches).unwrap(), "hello");
 
-    // Without trim
     let chain = InputChain::<String>::new()
         .try_source(StdinSource::with_reader(MockStdin::piped("  hello  \n")).trim(false));
     assert_eq!(chain.resolve(&matches).unwrap(), "  hello  \n");

@@ -1,38 +1,11 @@
-//! Structural validation of the downstream-corpus archetype roster.
-//!
-//! The roster under `corpus/archetypes/` (see `corpus/README.md` for the
-//! formats) is declarative data consumed by the corpus runner, so nothing
-//! compiles it and a typo would otherwise surface only mid-pilot-run. This
-//! suite is the compile step: every roster archetype must carry its three
-//! files, every acceptance suite must load through the runner's own parser
-//! ([`CaseSuite::parse`] — the schema's single definition, so a suite cannot
-//! pass this lint and fail the runner or vice versa), the manifests must
-//! deserialize into the documented schema exactly (typed structs, unknown
-//! keys rejected — the manifest types live here because the runner never
-//! parses manifests), cross-references must resolve — manifest `cases` to
-//! acceptance case names, expected-fail `gap`s to the manifest's `[gaps]`
-//! table — and, the corpus's founding rule, no implementation may live
-//! beside the specs (acceptance is written spec-first; blind agents
-//! implement elsewhere). One directory is exempt from roster membership:
-//! `smoke`, the harness's own manifest-less walking-skeleton archetype
-//! (see `corpus/README.md`, Layout); the no-implementation rule still
-//! covers it.
-//!
-//! It deliberately does NOT run any acceptance case: that is the runner's
-//! job, against a produced binary.
+// Structural validation of the archetype roster (`corpus/archetypes/`,
+// schema in `corpus/README.md`).
 
 use std::collections::{BTreeMap, HashSet};
 use std::path::{Path, PathBuf};
 
 use corpus_runner::archetype::CaseSuite;
 use serde::Deserialize;
-
-// --- the manifest schema, as types -------------------------------------------
-//
-// One struct per table in `corpus/README.md`. `deny_unknown_fields` makes the
-// vocabulary closed: a misspelled key fails here, not mid-pilot-run. The
-// acceptance case schema is NOT redefined here — it is the runner's
-// `CaseSuite`, parsed and validated by the runner's own rules.
 
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -77,21 +50,10 @@ struct Interaction {
     cases: Vec<String>,
 }
 
-// --- loading ----------------------------------------------------------------
-
 fn archetypes_dir() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("../../corpus/archetypes")
 }
 
-/// Every roster archetype directory, sorted for stable failure output.
-///
-/// `smoke` is exempt by name: it is the harness's own walking-skeleton
-/// archetype (spec: "the harness itself gets a smoke archetype"), owned by
-/// the corpus runner and carrying no `manifest.toml` — not a roster member
-/// (`corpus/README.md`, Layout), though its acceptance suite speaks the
-/// same case schema. Only roster membership is waived:
-/// `no_implementation_lives_in_the_roster` walks the whole directory,
-/// `smoke` included.
 fn archetype_dirs() -> Vec<PathBuf> {
     let root = archetypes_dir();
     let mut dirs: Vec<PathBuf> = std::fs::read_dir(&root)
@@ -108,8 +70,6 @@ fn dir_name(dir: &Path) -> &str {
     dir.file_name().unwrap().to_str().unwrap()
 }
 
-/// Typed parse: the file must match the documented schema exactly. Serde's
-/// error carries the offending key/type and its TOML position.
 fn parse<T: serde::de::DeserializeOwned>(path: &Path) -> T {
     let text = std::fs::read_to_string(path)
         .unwrap_or_else(|e| panic!("{} must be readable: {e}", path.display()));
@@ -121,9 +81,6 @@ fn parse<T: serde::de::DeserializeOwned>(path: &Path) -> T {
     })
 }
 
-/// One archetype's acceptance suite through the runner's parser — shape and
-/// semantic rules alike come from `CaseSuite::parse`, never a second,
-/// test-local reimplementation. Returns the suite for cross-file checks.
 fn load_acceptance(dir: &Path) -> CaseSuite {
     let path = dir.join("acceptance.toml");
     let text = std::fs::read_to_string(&path)
@@ -135,8 +92,6 @@ fn load_acceptance(dir: &Path) -> CaseSuite {
 fn case_names(suite: &CaseSuite) -> HashSet<&str> {
     suite.cases.iter().map(|c| c.name.as_str()).collect()
 }
-
-// --- the tests --------------------------------------------------------------
 
 #[test]
 fn every_archetype_carries_spec_manifest_and_acceptance() {
@@ -196,9 +151,6 @@ fn manifests_are_wellformed_and_cross_references_resolve() {
             }
         }
 
-        // The gaps table exists exactly when the archetype is specced past
-        // capability, and every expected-fail case's `gap` resolves into it —
-        // a typo here would attribute runner results to a nonexistent epic.
         let gaps = manifest.gaps.unwrap_or_default();
         match manifest.archetype.status {
             Status::PartiallyPastCapability => {
@@ -226,8 +178,6 @@ fn manifests_are_wellformed_and_cross_references_resolve() {
     }
 }
 
-/// Spec-first is only credible if it is checkable: the roster holds specs and
-/// suites, never the archetype implementations blind agents will produce.
 #[test]
 fn no_implementation_lives_in_the_roster() {
     fn walk(dir: &Path, offenders: &mut Vec<PathBuf>) {
@@ -268,14 +218,6 @@ fn pilot_roster_is_complete() {
     }
 }
 
-/// Issue #365: the method-coverage archetype must keep the three known-edge
-/// families (including the two the ROB03 pilot did not independently
-/// rediscover). An agent cannot pass this suite without requesting a missing
-/// template name, rendering through both registration orders, and combining
-/// an incomplete app theme with framework help at root and at a deep leaf.
-/// Color-off help cells and `show-registered-name-term-color-on` stay pinned
-/// so the suite cannot drop the complementary no-ANSI path or the proof that
-/// the app theme actually styles the `ok` tag.
 #[test]
 fn validity_pins_the_known_edge_families() {
     let present: HashSet<String> = archetype_dirs()
@@ -316,8 +258,6 @@ fn validity_pins_the_known_edge_families() {
     }
 }
 
-/// The issue-#324 criterion called out by name: formlike must pin the
-/// bounded-time non-interactive failure path.
 #[test]
 fn formlike_pins_the_bounded_noninteractive_failure() {
     let suite = load_acceptance(&archetypes_dir().join("formlike"));

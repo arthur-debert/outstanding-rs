@@ -1,10 +1,3 @@
-//! Dynamic-default tests: construction rules (static XOR dynamic, non-empty
-//! revision), the revision-in-fingerprint contract, blank rendering,
-//! identical blank resolution across interactive / file / stdin collection,
-//! the computed value running the shared validation pipeline, per-occurrence
-//! resolution inside repeatable groups, the earlier-fields-only dependency
-//! contract, and the computed default showing in interactive prompts.
-
 use std::sync::{Arc, Mutex};
 
 use standout_input::env::MockStdin;
@@ -16,9 +9,6 @@ use standout_input::{
     InputSources, PromptContext, PromptResponder, PromptResponse, ScriptedResponder,
 };
 
-/// The wizard-motivating shape: a value-type question, then a cardinality
-/// question whose default is `boolean` when the type is `bool` and `single`
-/// otherwise.
 fn questionnaire() -> Questionnaire {
     Questionnaire::new(
         "demo.dynamic",
@@ -38,8 +28,6 @@ fn questionnaire() -> Questionnaire {
     .unwrap()
 }
 
-/// Set `answer` as the answer text directly below the question line tagged
-/// `id`, replacing a rendered pre-filled default line when one is present.
 fn answer(sheet: &str, id: &str, answer: &str) -> String {
     let tag = format!("<id:{id}>");
     let lines: Vec<&str> = sheet.lines().collect();
@@ -81,10 +69,6 @@ impl ResponderGuard {
     }
 }
 
-// ============================================================================
-// Construction rules
-// ============================================================================
-
 #[test]
 fn declaring_both_a_static_and_a_dynamic_default_is_an_error() {
     let err = Questionnaire::new(
@@ -113,10 +97,6 @@ fn an_empty_dynamic_default_revision_is_an_error() {
         .to_string()
         .contains("attaches a dynamic default with an empty revision"));
 }
-
-// ============================================================================
-// Fingerprint: the declared revision is the semantic identity
-// ============================================================================
 
 fn with_revision_and_closure(
     revision: &str,
@@ -167,16 +147,10 @@ fn a_revision_bump_invalidates_previously_rendered_sheets() {
     ));
 }
 
-// ============================================================================
-// Rendering: the answer region stays empty
-// ============================================================================
-
 #[test]
 fn dynamic_default_fields_render_with_an_empty_answer_region() {
     let q = questionnaire();
     let sheet = q.render_answer_sheet();
-    // The line after the cardinality question is blank (end of document
-    // here): a sheet cannot pre-fill a value that depends on other answers.
     let lines: Vec<&str> = sheet.lines().collect();
     let question = lines
         .iter()
@@ -187,14 +161,9 @@ fn dynamic_default_fields_render_with_an_empty_answer_region() {
         .is_none_or(|next| next.trim().is_empty()));
 }
 
-// ============================================================================
-// Blank resolution: identical across interactive, file, and stdin
-// ============================================================================
-
 #[test]
 fn a_blank_answer_resolves_through_the_computed_default_from_a_sheet() {
     let q = questionnaire();
-    // Type answered `bool`, cardinality left blank -> computed `boolean`.
     let sheet = answer(&q.render_answer_sheet(), "input.value_type", "bool");
     let raw = q
         .read_answer_sheet_stdin_with(&MockStdin::piped(sheet.clone()))
@@ -202,7 +171,6 @@ fn a_blank_answer_resolves_through_the_computed_default_from_a_sheet() {
     let answers = q.decode_answers(&raw).unwrap();
     assert_eq!(answers.get_text("input.cardinality"), Some("boolean"));
 
-    // The same document through the file adapter decodes identically.
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("answers.txt");
     std::fs::write(&path, sheet).unwrap();
@@ -211,7 +179,6 @@ fn a_blank_answer_resolves_through_the_computed_default_from_a_sheet() {
         .unwrap();
     assert_eq!(from_file, answers);
 
-    // A non-bool type computes the other default.
     let sheet = answer(&q.render_answer_sheet(), "input.value_type", "string");
     let raw = q
         .read_answer_sheet_stdin_with(&MockStdin::piped(sheet))
@@ -223,16 +190,12 @@ fn a_blank_answer_resolves_through_the_computed_default_from_a_sheet() {
 #[test]
 fn a_blank_interactive_entry_resolves_through_the_computed_default() {
     let q = questionnaire();
-    let _guard = ResponderGuard::install([
-        PromptResponse::text("bool"),
-        PromptResponse::Skip, // cardinality: blank -> computed "boolean"
-    ]);
+    let _guard = ResponderGuard::install([PromptResponse::text("bool"), PromptResponse::Skip]);
     let interactive = q
         .decode_answers(&q.collect_interactive_from(_guard.sources()).unwrap())
         .unwrap();
     assert_eq!(interactive.get_text("input.cardinality"), Some("boolean"));
 
-    // Equivalence: the same submission as a sheet decodes identically.
     let sheet = answer(&q.render_answer_sheet(), "input.value_type", "bool");
     let batch = q
         .decode_answers(
@@ -254,10 +217,6 @@ fn an_entered_answer_overrides_the_computed_default() {
     assert_eq!(answers.get_text("input.cardinality"), Some("list"));
 }
 
-// ============================================================================
-// The computed value runs the shared validation pipeline
-// ============================================================================
-
 #[test]
 fn a_computed_default_that_violates_a_constraint_is_a_diagnostic() {
     let q = Questionnaire::new(
@@ -278,10 +237,6 @@ fn a_computed_default_that_violates_a_constraint_is_a_diagnostic() {
             if id == "a" && message.contains("must be one of")
     ));
 }
-
-// ============================================================================
-// Scope: per-occurrence resolution inside repeatable groups
-// ============================================================================
 
 #[test]
 fn dynamic_defaults_resolve_per_occurrence_in_repeatable_groups() {
@@ -307,8 +262,6 @@ fn dynamic_defaults_resolve_per_occurrence_in_repeatable_groups() {
     )
     .unwrap();
 
-    // Occurrence 0 answers `bool`, occurrence 1 answers `string`; both
-    // leave cardinality blank. Each occurrence resolves its own default.
     let sheet = q.render_answer_sheet();
     let block_start = sheet.find("Describe an input.").unwrap();
     let block = sheet[block_start..].to_string();
@@ -326,15 +279,8 @@ fn dynamic_defaults_resolve_per_occurrence_in_repeatable_groups() {
     assert_eq!(answers.get_text("inputs[1].cardinality"), Some("single"));
 }
 
-// ============================================================================
-// Dependency contract: earlier fields only, defined failure behavior
-// ============================================================================
-
 #[test]
 fn a_dependency_on_a_later_or_unknown_field_reads_as_none() {
-    // The closure (illegally) looks at a later-declared field and an
-    // unknown one: both read as None, so the fallback default applies —
-    // the documented contract-violation behavior, not a panic.
     let q = Questionnaire::new(
         "demo",
         vec![
@@ -357,11 +303,6 @@ fn a_dependency_on_a_later_or_unknown_field_reads_as_none() {
     assert_eq!(answers.get_text("a"), Some("fallback"));
 }
 
-// ============================================================================
-// Interactive prompts show the computed default
-// ============================================================================
-
-/// Records every prompt message and answers from a fixed queue.
 struct RecordingResponder {
     messages: Mutex<Vec<String>>,
     responses: Mutex<std::collections::VecDeque<PromptResponse>>,

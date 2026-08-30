@@ -1,13 +1,5 @@
-//! The exit questionnaire, built on standout's own questionnaire
-//! infrastructure (the framework eats its dogfood on the feature with the
-//! least outside precedent).
-//!
-//! The runner renders the sheet into the blind workspace at provision time;
-//! the agent answers it in place; collection parses and decodes the filled
-//! sheet through `standout-input`'s shared validation pipeline. Two fields
-//! (`sources.docs`, `sources.external`) are the blindness record: the
-//! spec's "partial blindness is acceptable if it is known" turns on their
-//! answers landing verbatim in the report.
+// The exit questionnaire: rendered into the blind workspace at provision
+// time, answered by the agent in place, decoded via `standout-input`.
 
 use std::path::Path;
 
@@ -15,12 +7,10 @@ use standout_input::questionnaire::{Questionnaire, ScalarField, ScalarKind};
 
 use crate::report::QuestionnaireReport;
 
-/// The filename the rendered sheet takes inside the workspace.
 pub const SHEET_FILENAME: &str = "QUESTIONNAIRE.md";
 
-/// Stable field ids, in presentation order. Kept next to [`definition`] so
-/// answer extraction and the definition cannot drift silently — a test pins
-/// them to each other.
+// Kept next to `definition` so answer extraction and the definition cannot
+// drift silently — a test pins them to each other.
 pub const FIELD_IDS: &[&str] = &[
     "summary",
     "sources.docs",
@@ -31,11 +21,6 @@ pub const FIELD_IDS: &[&str] = &[
     "confidence",
 ];
 
-/// The `corpus.exit` questionnaire definition.
-///
-/// # Panics
-///
-/// Never in practice: the definition is static and a test constructs it.
 pub fn definition() -> Questionnaire {
     Questionnaire::new(
         "corpus.exit",
@@ -89,11 +74,6 @@ pub fn definition() -> Questionnaire {
     .expect("static corpus.exit questionnaire definition is valid")
 }
 
-/// Reads the filled sheet from the workspace and decodes it.
-///
-/// Never fails the run: a missing, unparseable, or invalid sheet becomes a
-/// `collected: false` report carrying the diagnostics — an uncollected
-/// questionnaire is a finding about the run, not a runner error.
 pub fn collect(workspace: &Path) -> QuestionnaireReport {
     let sheet_path = workspace.join(SHEET_FILENAME);
     let text = match std::fs::read_to_string(&sheet_path) {

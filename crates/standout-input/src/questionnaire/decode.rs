@@ -1,36 +1,3 @@
-//! Shared decoding and validation of raw answers.
-//!
-//! Every collection path — interactive prompts, named files, and explicit
-//! stdin — normalizes to [`RawAnswers`] and runs through the functions here,
-//! so equivalent raw text always decodes to the same value with the same
-//! diagnostics. There are no adapter-specific conversions or messages.
-//!
-//! Decoding one field applies, in order: blank resolution (a blank answer
-//! resolves to the declared default first — the static value, or a
-//! [`DynamicDefault`](super::DynamicDefault) computed from earlier decoded
-//! answers via [`EarlierAnswers`]; an optional blank without a default is
-//! an omission; a required blank without a default is a missing-value
-//! error), kind conversion, constraint checking, and the application's
-//! [`FieldValidator`](super::FieldValidator). Whole-document
-//! decoding ([`Questionnaire::decode_answers`]) additionally evaluates
-//! conditional applicability and accumulates every independent diagnostic
-//! instead of stopping at the first; the application's whole-form rules
-//! join the same accumulated list via
-//! [`Questionnaire::decode_answers_with`].
-//!
-//! Nested and repeated values run through the exact same pipeline as
-//! scalars: decoding walks the definition tree, visits every submitted
-//! occurrence of each repeatable group, and addresses each value by its
-//! *occurrence path* (`command.inputs[1].name`) — the stable definition ID
-//! with a zero-based index per enclosing repeatable-group occurrence.
-//! Occurrence counts outside a group's declared [`Repeat`](super::Repeat)
-//! bounds are reported here as structural diagnostics, alongside the value
-//! diagnostics of the occurrences that do exist.
-//!
-//! Diagnostics identify fields by stable occurrence path and never echo
-//! submitted values; see the [module documentation](crate::questionnaire)
-//! for why.
-
 use std::collections::BTreeMap;
 
 use super::definition::{
@@ -38,17 +5,13 @@ use super::definition::{
 };
 use super::parse::RawAnswers;
 
-/// A decoded, field-validated answer value.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum AnswerValue {
-    /// The value of a `String`, `Text`, or `Path` field.
     Text(String),
-    /// The value of a `Bool` field.
     Bool(bool),
 }
 
 impl AnswerValue {
-    /// The text content, for `String` / `Text` / `Path` fields.
     pub fn as_text(&self) -> Option<&str> {
         match self {
             AnswerValue::Text(s) => Some(s),
@@ -56,7 +19,6 @@ impl AnswerValue {
         }
     }
 
-    /// The boolean content, for `Bool` fields.
     pub fn as_bool(&self) -> Option<bool> {
         match self {
             AnswerValue::Bool(b) => Some(*b),
@@ -64,8 +26,6 @@ impl AnswerValue {
         }
     }
 
-    /// Canonical string form, used to evaluate conditions: text verbatim,
-    /// bools as `true` / `false`.
     pub(crate) fn canonical(&self) -> String {
         match self {
             AnswerValue::Text(s) => s.clone(),
@@ -74,15 +34,6 @@ impl AnswerValue {
     }
 }
 
-/// The decoded, validated answers for one questionnaire submission.
-///
-/// Contains one entry per *answered* occurrence path — the stable field ID,
-/// with a zero-based index per enclosing repeatable-group occurrence
-/// (`command.inputs[1].name`). Omitted optional fields and inactive
-/// conditional fields are absent. Repeatable-group occurrence counts are
-/// carried alongside ([`occurrence_count`](Self::occurrence_count)), so an
-/// application can iterate submitted items without guessing from key shapes.
-/// Conversion into application domain types starts from here.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct Answers {
     values: BTreeMap<String, AnswerValue>,
@@ -90,45 +41,30 @@ pub struct Answers {
 }
 
 impl Answers {
-    /// The decoded value at an occurrence path (for fields outside
-    /// repeatable groups: the stable field ID), if it was answered.
     pub fn get(&self, path: &str) -> Option<&AnswerValue> {
         self.values.get(path)
     }
 
-    /// The text value for a `String` / `Text` / `Path` field, if answered.
     pub fn get_text(&self, path: &str) -> Option<&str> {
         self.get(path).and_then(AnswerValue::as_text)
     }
 
-    /// The boolean value for a `Bool` field, if answered.
     pub fn get_bool(&self, path: &str) -> Option<bool> {
         self.get(path).and_then(AnswerValue::as_bool)
     }
 
-    /// How many occurrences of a repeatable group were submitted, addressed
-    /// by the group's occurrence path base — `command.inputs` at the root,
-    /// `command.inputs[0].flags` for a group nested in another occurrence.
     pub fn occurrence_count(&self, group_path: &str) -> usize {
         self.occurrences.get(group_path).copied().unwrap_or(0)
     }
 }
 
-/// One whole-form error returned by an application form validator.
-///
-/// Mapped into [`ValidationDiagnostic::Form`] so form-level findings
-/// accumulate in the same list as field-level ones. The message should
-/// describe the rule without echoing submitted values.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct FormError {
-    /// Stable IDs of the fields involved (may be empty for a global rule).
     pub fields: Vec<String>,
-    /// User-facing description of the violated rule.
     pub message: String,
 }
 
 impl FormError {
-    /// Create a form error over the given fields.
     pub fn new(
         fields: impl IntoIterator<Item = impl Into<String>>,
         message: impl Into<String>,
@@ -140,42 +76,19 @@ impl FormError {
     }
 }
 
-/// One problem found while decoding and validating raw answers.
-///
-/// Diagnostics identify fields by stable occurrence path (for fields outside
-/// repeatable groups: the stable field ID) and describe the violated rule;
-/// they never echo the submitted value, since answers may be sensitive.
-/// Independent diagnostics accumulate: a batch submission reports everything
-/// actionable in one pass.
 #[derive(Debug, Clone, thiserror::Error, PartialEq, Eq)]
 pub enum ValidationDiagnostic {
-    /// One field occurrence — or one repeatable group's occurrence count —
-    /// violates the definition: a missing required answer, a populated
-    /// inactive field, a failed kind conversion, a constraint violation, a
-    /// rejected validator, or an occurrence count outside the declared
-    /// bounds. `message` describes the violated rule without echoing the
-    /// submitted value.
     #[error("[{id}]: {message}")]
-    Field {
-        /// The occurrence path of the violating field (the group's
-        /// occurrence path base for occurrence-bound violations).
-        id: String,
-        /// The violated rule, user-facing.
-        message: String,
-    },
+    Field { id: String, message: String },
 
-    /// An application whole-form rule was violated.
     #[error("{}", form_display(.fields, .message))]
     Form {
-        /// Stable IDs of the fields involved (may be empty).
         fields: Vec<String>,
-        /// The rule's user-facing message.
         message: String,
     },
 }
 
 impl ValidationDiagnostic {
-    /// A field-level diagnostic at an occurrence path.
     pub(crate) fn field(id: impl Into<String>, message: impl Into<String>) -> Self {
         Self::Field {
             id: id.into(),
@@ -184,8 +97,6 @@ impl ValidationDiagnostic {
     }
 }
 
-/// Render a whole-form diagnostic: the rule's message, plus the involved
-/// stable field IDs when the rule names any.
 fn form_display(fields: &[String], message: &str) -> String {
     if fields.is_empty() {
         message.to_string()
@@ -194,9 +105,6 @@ fn form_display(fields: &[String], message: &str) -> String {
     }
 }
 
-/// Parse the shared boolean vocabulary: `true`/`false`/`yes`/`no`/`y`/`n`,
-/// case-insensitive. This is the single bool decoder for every collection
-/// path and for canonicalizing condition expected values.
 pub(crate) fn parse_bool(text: &str) -> Option<bool> {
     match text.trim().to_ascii_lowercase().as_str() {
         "true" | "yes" | "y" => Some(true),
@@ -205,12 +113,6 @@ pub(crate) fn parse_bool(text: &str) -> Option<bool> {
     }
 }
 
-/// Convert non-blank answer text through kind conversion, constraint
-/// checking, and the application validator. `path` is the occurrence path
-/// used in diagnostics (the field's own ID outside repeated groups).
-///
-/// Shared by every collection path and by definition-time default
-/// validation. Diagnostic reasons never include `text`.
 pub(crate) fn check_field_text(
     field: &ScalarField,
     path: &str,
@@ -256,19 +158,6 @@ pub(crate) fn check_field_text(
     Ok(value)
 }
 
-/// Decode one active field's raw answer, identified in diagnostics by its
-/// occurrence `path`.
-///
-/// `raw` is the trimmed answer text, or `None` when the field is absent from
-/// the submission. `computed` is the field's computed dynamic default, when
-/// it declares one (the caller evaluates the closure against its
-/// earlier-outcomes view; static and dynamic defaults are mutually
-/// exclusive by construction). Blank resolves through the declared —
-/// static or computed — default first; a blank without a default is an
-/// omission (`Ok(None)`) when optional and a
-/// missing-answer [`ValidationDiagnostic`] when required. A computed
-/// default runs through the same kind / constraint / validator pipeline as
-/// any answer.
 pub(crate) fn decode_field(
     field: &ScalarField,
     path: &str,
@@ -287,36 +176,21 @@ pub(crate) fn decode_field(
     }
 }
 
-/// What happened to one field occurrence during a whole-document decode
-/// pass. Keyed by occurrence path.
 pub(crate) enum FieldOutcome {
-    /// Decoded and validated to a value.
     Answered(AnswerValue),
-    /// Active and optional, left blank without a default.
     Omitted,
-    /// Condition unsatisfied; the field was (correctly) not answered.
     Inactive,
-    /// This field (or its controller chain) produced a diagnostic, so
-    /// dependents cannot be judged and are skipped without diagnostics.
     Errored,
 }
 
-/// One open definition scope during a decode or collection walk: the root,
-/// or a group occurrence.
 #[derive(Debug, Clone)]
 pub(crate) struct ScopeCtx {
-    /// The scope's group ID (`None` at the questionnaire root).
     pub(crate) group_id: Option<String>,
-    /// The definition-ID prefix children of this scope extend (`""` at the
-    /// root, `<group_id>.` inside a group).
     pub(crate) def_prefix: String,
-    /// The occurrence path prefix of this scope (`""`, `command`, or
-    /// `command.inputs[1]`).
     pub(crate) path_prefix: String,
 }
 
 impl ScopeCtx {
-    /// The root scope every walk starts from.
     pub(crate) fn root() -> Self {
         Self {
             group_id: None,
@@ -325,24 +199,11 @@ impl ScopeCtx {
         }
     }
 
-    /// The occurrence path of a direct child of this scope.
     pub(crate) fn child_path(&self, id: &str) -> String {
         path_join(&self.path_prefix, child_segment(&self.def_prefix, id))
     }
 }
 
-/// A read-only view of the answers decoded *before* the current field in
-/// the same scope chain, handed to a
-/// [`DynamicDefault`](super::DynamicDefault) closure.
-///
-/// Lookups take a stable *definition ID* (`command.inputs.value_type`) and
-/// resolve it against the walk's open scope chain, exactly like a condition
-/// controller: a field inside a repeatable group resolves to the occurrence
-/// currently being collected. The view is deliberately forgiving where
-/// construction cannot check the closure's dependencies: an unknown,
-/// out-of-scope, later-declared (not yet walked), omitted, inactive, or
-/// errored field reads as `None` — depending on such a field is a contract
-/// violation, and the closure must still return a usable default.
 pub struct EarlierAnswers<'a> {
     questionnaire: &'a Questionnaire,
     chain: &'a [ScopeCtx],
@@ -350,7 +211,6 @@ pub struct EarlierAnswers<'a> {
 }
 
 impl<'a> EarlierAnswers<'a> {
-    /// Build the view over the walk state at one field occurrence.
     pub(crate) fn new(
         questionnaire: &'a Questionnaire,
         chain: &'a [ScopeCtx],
@@ -363,9 +223,6 @@ impl<'a> EarlierAnswers<'a> {
         }
     }
 
-    /// The decoded value of the earlier field with the given stable
-    /// definition ID, resolved in the current scope chain, or `None` when
-    /// the field has no decoded value (see the type-level contract).
     pub fn get(&self, field_id: &str) -> Option<&AnswerValue> {
         let meta = self.questionnaire.node_meta(field_id)?;
         if meta.group {
@@ -382,21 +239,15 @@ impl<'a> EarlierAnswers<'a> {
         }
     }
 
-    /// The text value of an earlier `String` / `Text` / `Path` field, if
-    /// answered.
     pub fn get_text(&self, field_id: &str) -> Option<&str> {
         self.get(field_id).and_then(AnswerValue::as_text)
     }
 
-    /// The boolean value of an earlier `Bool` field, if answered.
     pub fn get_bool(&self, field_id: &str) -> Option<bool> {
         self.get(field_id).and_then(AnswerValue::as_bool)
     }
 }
 
-/// Resolve a condition controller's occurrence path against the current
-/// scope chain: the controller lives in whichever open scope declares it as
-/// a direct child (construction guarantees that scope is on the chain).
 pub(crate) fn controller_path(
     questionnaire: &Questionnaire,
     chain: &[ScopeCtx],
@@ -415,12 +266,6 @@ pub(crate) fn controller_path(
     scope.child_path(controller)
 }
 
-/// Evaluate a field's applicability from earlier outcomes, resolving its
-/// controller within the current scope chain (a controller inside a
-/// repeatable group controls per occurrence).
-///
-/// `Some(true)` / `Some(false)` when applicability is known; `None` when the
-/// controller (or its chain) errored, so the field cannot be judged.
 pub(crate) fn is_active(
     questionnaire: &Questionnaire,
     field: &ScalarField,
@@ -439,30 +284,6 @@ pub(crate) fn is_active(
 }
 
 impl Questionnaire {
-    /// Decode and validate a complete raw submission.
-    ///
-    /// The definition tree is walked in declaration order (controllers
-    /// precede their dependents by construction), visiting every submitted
-    /// occurrence of each repeatable group. For each field occurrence:
-    /// applicability is evaluated from earlier decoded values in the same
-    /// scope chain; an active field decodes via the shared field pipeline —
-    /// default resolution, kind conversion, constraints, application
-    /// validator; an inactive field must be blank or hold its untouched
-    /// pre-filled default, otherwise it is reported as
-    /// populated-but-inapplicable. Repeatable-group occurrence counts
-    /// outside the declared bounds are reported as structural diagnostics
-    /// while the occurrences that do exist still decode.
-    ///
-    /// All independent diagnostics accumulate: one pass reports every
-    /// missing value, conversion failure, constraint violation, field-
-    /// validation failure, populated inactive field, and occurrence-bound
-    /// violation together. A field whose controller errored is skipped
-    /// without piling on speculative diagnostics.
-    ///
-    /// # Errors
-    ///
-    /// The accumulated [`ValidationDiagnostic`] list, identifying fields by
-    /// stable occurrence path without echoing submitted values.
     pub fn decode_answers(&self, raw: &RawAnswers) -> Result<Answers, Vec<ValidationDiagnostic>> {
         let mut outcomes: BTreeMap<String, FieldOutcome> = BTreeMap::new();
         let mut occurrences: BTreeMap<String, usize> = BTreeMap::new();
@@ -493,8 +314,6 @@ impl Questionnaire {
         })
     }
 
-    /// Decode one scope's items; `chain` is the open scope chain, innermost
-    /// last (used to build occurrence paths and resolve controllers).
     fn decode_items(
         &self,
         items: &[Item],
@@ -619,23 +438,6 @@ impl Questionnaire {
         }
     }
 
-    /// Decode and validate a complete raw submission, then run the
-    /// application's whole-form rules over the successful result.
-    ///
-    /// Field-level diagnostics behave exactly as in
-    /// [`decode_answers`](Self::decode_answers). When the field stage
-    /// succeeds, `form` runs once over the decoded [`Answers`] and every
-    /// returned [`FormError`] accumulates as a
-    /// [`ValidationDiagnostic::Form`] — so a batch submission reports all of
-    /// its independent form-level findings together, in the same list and
-    /// format as field-level ones. Whole-form rules do not run over a
-    /// submission with field-level failures: they would be judging values
-    /// that do not exist.
-    ///
-    /// # Errors
-    ///
-    /// The accumulated [`ValidationDiagnostic`] list from whichever stages
-    /// could run.
     pub fn decode_answers_with<F>(
         &self,
         raw: &RawAnswers,

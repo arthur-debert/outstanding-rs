@@ -1,9 +1,3 @@
-//! Integration tests for the declarative input API on `CommandConfig::input`.
-//!
-//! These tests exercise the full path from `App::builder().command_with(...)
-//! .input(name, chain)` through pre-dispatch resolution into the handler's
-//! `ctx.input::<T>(name)` lookup.
-
 use clap::{Arg, Command};
 use serde_json::json;
 use standout::cli::{App, CommandContextInput, DispatchResult, Output};
@@ -234,7 +228,6 @@ fn stdin_fallback_when_arg_absent() {
     );
 
     if let DispatchResult::Handled(out) = result {
-        // StdinSource trims trailing newlines.
         assert_eq!(out, "stdin: from stdin");
     } else {
         panic!("expected Handled, got {:?}", result);
@@ -243,10 +236,6 @@ fn stdin_fallback_when_arg_absent() {
 
 #[test]
 fn arg_wins_over_stdin_when_both_available() {
-    // With arg present, stdin source must not be reached. The MockStdin
-    // terminal mode avoids accidentally reading real stdin if precedence is
-    // wrong.
-
     let app = App::builder()
         .command_with(
             "create",
@@ -482,7 +471,6 @@ fn handler_asking_for_unregistered_input_gets_missing_input_error() {
         .command_with(
             "create",
             |_m, ctx| {
-                // Ask for a name we never registered.
                 let err = ctx.input::<String>("nonexistent").unwrap_err();
                 Ok(Output::Render(json!({ "error": err.to_string() })))
             },
@@ -514,7 +502,6 @@ fn type_mismatch_lookup_returns_descriptive_error() {
         .command_with(
             "create",
             |_m, ctx| {
-                // Stored as String, asked as u32.
                 let err = ctx.input::<u32>("body").unwrap_err();
                 Ok(Output::Render(json!({ "error": err.to_string() })))
             },

@@ -11,18 +11,12 @@ struct StoreData {
     next_id: u32,
 }
 
-/// A JSON-backed todo store.
-///
-/// The path is an explicit dependency: deciding where user data belongs is a
-/// concern for the caller (the CLI in this example), not for this library.
 pub struct TodoStore {
     path: PathBuf,
     data: Mutex<StoreData>,
 }
 
 impl TodoStore {
-    /// Loads a store from `path`, or creates an empty in-memory store when the
-    /// file does not exist yet.
     pub fn load(path: impl Into<PathBuf>) -> Result<Self> {
         let path = path.into();
         let data = if path.exists() {
@@ -39,7 +33,6 @@ impl TodoStore {
         })
     }
 
-    /// Returns todos selected by `filter`.
     pub fn list(&self, filter: TodoFilter) -> Vec<Todo> {
         self.lock()
             .todos
@@ -49,7 +42,6 @@ impl TodoStore {
             .collect()
     }
 
-    /// Validates and persists a new pending todo.
     pub fn add(&self, title: impl Into<String>) -> Result<Todo> {
         let title = title.into();
         if title.trim().is_empty() {
@@ -68,11 +60,6 @@ impl TodoStore {
         })
     }
 
-    /// Exports the todos selected by `filter` as CSV.
-    ///
-    /// Returns the bytes and the domain facts about producing them — how many
-    /// rows, and what the CSV could not represent. Nothing is written: the
-    /// caller owns the destination, so the caller owns the write.
     pub fn export_csv(&self, filter: TodoFilter) -> CsvExport {
         let current = self.lock();
         let selected = current
@@ -89,7 +76,6 @@ impl TodoStore {
         export_csv(&selected, filter, omitted_completed)
     }
 
-    /// Marks todo `id` done and persists the transition.
     pub fn mark_done(&self, id: u32) -> Result<Todo> {
         self.update(|next| {
             let todo = next
@@ -237,7 +223,6 @@ mod tests {
 
         let export = store.export_csv(TodoFilter::All);
 
-        // The suggestion is a name, not a location, and no file appeared.
         assert_eq!(export.suggested_filename, "todos.csv");
         assert!(!dir.path().join("todos.csv").exists());
     }

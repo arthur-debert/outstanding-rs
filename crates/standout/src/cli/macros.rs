@@ -1,102 +1,15 @@
-//! Declarative dispatch macro for command definition.
-//!
-//! This module provides the [`dispatch!`] macro for defining command hierarchies
-//! with a clean, declarative syntax that expands to builder method calls.
-//!
-//! # Basic Usage
+//! The `dispatch!` macro declares a command hierarchy that expands to
+//! [`GroupBuilder`](crate::cli::GroupBuilder) method calls.
 //!
 //! ```rust,ignore
-//! use standout::cli::{dispatch, App};
-//!
-//! let builder = App::builder()
-//!     .templates_dir("templates")?
-//!     .commands(dispatch! {
-//!         db: {
-//!             migrate => db::migrate,
-//!             backup => db::backup,
-//!         },
-//!         app: {
-//!             start => app::start,
-//!             stop => app::stop,
-//!         },
-//!         version => version,
-//!     });
-//! ```
-//!
-//! # With Options
-//!
-//! ```rust,ignore
-//! dispatch! {
-//!     db: {
-//!         migrate => {
-//!             handler: db::migrate,
-//!             template: "Migrated {{ count }} rows",
-//!             pre_dispatch: validate_db,
-//!         },
-//!     },
-//! }
+//! App::builder().commands(dispatch! {
+//!     db: { migrate => db::migrate, backup => db::backup },
+//!     version => version,
+//! });
 //! ```
 
-/// Declarative macro for defining command dispatch tables.
-///
-/// The macro expands to a closure that configures a [`GroupBuilder`] with
-/// the specified commands and groups.
-///
-/// # Syntax
-///
-/// ```text
-/// dispatch! {
-///     // Simple command (template from convention)
-///     command_name => handler_fn,
-///
-///     // Command with options
-///     command_name => {
-///         handler: handler_fn,
-///         template: "inline {{ value }}",    // optional
-///         structured_only: true,              // optional; or silent/binary
-///         pre_dispatch: hook_fn,             // optional
-///         post_dispatch: hook_fn,            // optional
-///         post_output: hook_fn,              // optional
-///         structured_output_projection: projection, // optional
-///     },
-///
-///     // Nested group
-///     group_name: {
-///         // commands and nested groups...
-///     },
-/// }
-/// ```
-///
-/// # Example
-///
-/// ```rust,ignore
-/// use standout::cli::{dispatch, App, HandlerResult, Output};
-/// use serde_json::json;
-///
-/// fn migrate_handler(_m: &clap::ArgMatches, _ctx: &CommandContext) -> HandlerResult<serde_json::Value> {
-///     Ok(Output::Render(json!({"migrated": true})))
-/// }
-///
-/// fn backup_handler(_m: &clap::ArgMatches, _ctx: &CommandContext) -> HandlerResult<serde_json::Value> {
-///     Ok(Output::Render(json!({"backed_up": true})))
-/// }
-///
-/// let builder = App::builder()
-///     .templates_dir("templates")?
-///     .commands(dispatch! {
-///         db: {
-///             migrate => migrate_handler,
-///             backup => {
-///                 handler: backup_handler,
-///                 template: "Backed up {{ count }} files",
-///             },
-///         },
-///         version => |_m, _ctx| Ok(Output::Render(json!({"version": "1.0.0"}))),
-///     });
-/// ```
 #[macro_export]
 macro_rules! dispatch {
-    // Entry point - creates a closure that builds a GroupBuilder
     { $($tokens:tt)* } => {
         |__builder: $crate::cli::GroupBuilder| -> $crate::cli::GroupBuilder {
             $crate::dispatch_internal!(__builder; $($tokens)*)
@@ -104,17 +17,13 @@ macro_rules! dispatch {
     };
 }
 
-/// Internal macro for processing dispatch entries.
-/// Uses a different name to avoid ambiguity in recursion.
 #[macro_export]
 #[doc(hidden)]
 macro_rules! dispatch_internal {
-    // Base case: no more tokens
     ($builder:expr;) => {
         $builder
     };
 
-    // Nested group with trailing comma: `name: { ... },`
     ($builder:expr; $name:ident : { $($inner:tt)* } , $($rest:tt)*) => {
         $crate::dispatch_internal!(
             $builder.group(stringify!($name), |__g| {
@@ -124,14 +33,12 @@ macro_rules! dispatch_internal {
         )
     };
 
-    // Nested group without trailing comma: `name: { ... }`
     ($builder:expr; $name:ident : { $($inner:tt)* }) => {
         $builder.group(stringify!($name), |__g| {
             $crate::dispatch_internal!(__g; $($inner)*)
         })
     };
 
-    // Command with config block and trailing comma: `name => { ... },`
     ($builder:expr; $name:ident => { $($config:tt)* } , $($rest:tt)*) => {
         $crate::dispatch_internal!(
             $builder.command_with(
@@ -143,7 +50,6 @@ macro_rules! dispatch_internal {
         )
     };
 
-    // Command with config block without trailing comma: `name => { ... }`
     ($builder:expr; $name:ident => { $($config:tt)* }) => {
         $builder.command_with(
             stringify!($name),
@@ -152,7 +58,6 @@ macro_rules! dispatch_internal {
         )
     };
 
-    // Simple command with trailing comma: `name => handler,`
     ($builder:expr; $name:ident => $handler:expr , $($rest:tt)*) => {
         $crate::dispatch_internal!(
             $builder.command(stringify!($name), $handler);
@@ -160,13 +65,11 @@ macro_rules! dispatch_internal {
         )
     };
 
-    // Simple command without trailing comma: `name => handler`
     ($builder:expr; $name:ident => $handler:expr) => {
         $builder.command(stringify!($name), $handler)
     };
 }
 
-/// Extract handler from config block
 #[macro_export]
 #[doc(hidden)]
 macro_rules! dispatch_extract_handler {
@@ -178,20 +81,16 @@ macro_rules! dispatch_extract_handler {
     };
 }
 
-/// Apply config options to CommandConfig
 #[macro_export]
 #[doc(hidden)]
 macro_rules! dispatch_apply_config {
-    // Base case
     ($cfg:expr;) => { $cfg };
 
-    // Skip handler (already extracted)
     ($cfg:expr; handler : $handler:expr , $($rest:tt)*) => {
         $crate::dispatch_apply_config!($cfg; $($rest)*)
     };
     ($cfg:expr; handler : $handler:expr) => { $cfg };
 
-    // Template option
     ($cfg:expr; template : $template:expr , $($rest:tt)*) => {
         $crate::dispatch_apply_config!($cfg.template($template); $($rest)*)
     };
@@ -199,7 +98,6 @@ macro_rules! dispatch_apply_config {
         $cfg.template($template)
     };
 
-    // Template absence options
     ($cfg:expr; structured_only : true , $($rest:tt)*) => {
         $crate::dispatch_apply_config!($cfg.structured_only(); $($rest)*)
     };
@@ -219,7 +117,6 @@ macro_rules! dispatch_apply_config {
         $cfg.binary()
     };
 
-    // Pre-dispatch hook
     ($cfg:expr; pre_dispatch : $hook:expr , $($rest:tt)*) => {
         $crate::dispatch_apply_config!($cfg.pre_dispatch($hook); $($rest)*)
     };
@@ -227,7 +124,6 @@ macro_rules! dispatch_apply_config {
         $cfg.pre_dispatch($hook)
     };
 
-    // Post-dispatch hook
     ($cfg:expr; post_dispatch : $hook:expr , $($rest:tt)*) => {
         $crate::dispatch_apply_config!($cfg.post_dispatch($hook); $($rest)*)
     };
@@ -235,7 +131,6 @@ macro_rules! dispatch_apply_config {
         $cfg.post_dispatch($hook)
     };
 
-    // Post-output hook
     ($cfg:expr; post_output : $hook:expr , $($rest:tt)*) => {
         $crate::dispatch_apply_config!($cfg.post_output($hook); $($rest)*)
     };
@@ -243,7 +138,6 @@ macro_rules! dispatch_apply_config {
         $cfg.post_output($hook)
     };
 
-    // Structured-output projection
     ($cfg:expr; structured_output_projection : $projection:expr , $($rest:tt)*) => {
         $crate::dispatch_apply_config!(
             $cfg.structured_output_projection($projection);

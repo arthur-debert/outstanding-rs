@@ -1,90 +1,15 @@
-//! CSS stylesheet parsing.
+//! Parses a subset of CSS level 3 (via `cssparser`, the tokenizer used by
+//! Firefox) into the same [`ThemeVariants`] that the YAML parser produces, so
+//! themes can be authored in whichever syntax is more convenient.
 //!
-//! # Motivation
-//!
-//! While YAML is excellent for structured data, it can be verbose for defining style rules.
-//! CSS is the industry standard for styling, offering a syntax that is both familiar
-//! to developers and concise for defining visual attributes.
-//!
-//! By supporting CSS, `standout` allows developers to leverage their existing knowledge
-//! and potentially use standard tooling (like syntax highlighters) to define their terminal
-//! themes.
-//!
-//! # Design
-//!
-//! This module implements a subset of CSS level 3, tailored for terminal styling.
-//! It maps CSS selectors to `standout` style types and CSS properties to
-//! terminal attributes (ANSI codes).
-//!
-//! The parser is built on top of `cssparser` (the same tokenizer used by Firefox),
-//! ensuring robust handling of syntax, comments, and escapes.
-//!
-//! ## Mapping
-//!
-//! - Selectors: CSS class selectors (`.my-style`) map directly to style names in the theme.
-//!   Currently, simple class selectors are supported.
-//!   - `.error` -> defines style "error"
-//!   - `.title, .header` -> defines styles "title" and "header"
-//!
-//! - Properties: Standard CSS properties are mapped to terminal equivalents.
-//!   - `color` -> Foreground color
-//!   - `background-color` -> Background color
-//!   - `font-weight: bold` -> Bold text
-//!   - `text-decoration: underline` -> Underlined text
-//!   - `visibility: hidden` -> Hidden text
-//!
-//! - Adaptive Styles: Media queries are used to define light/dark mode overrides.
-//!   - `@media (prefers-color-scheme: dark) { ... }`
-//!
-//! # Supported Attributes
-//!
-//! The following properties are supported:
-//!
-//! | CSS Property | Value | Effect |
-//! |--------------|-------|--------|
-//! | `color`, `fg` | Color (Hex, Named, Integer) | Sets the text color |
-//! | `background-color`, `bg` | Color (Hex, Named, Integer) | Sets the background color |
-//! | `font-weight` | `bold` | Makes text bold |
-//! | `font-style` | `italic` | Makes text *italic* |
-//! | `text-decoration` | `underline`, `line-through` | Underlines or strikes through text |
-//! | `visibility` | `hidden` | Hides the text |
-//! | `bold`, `italic`, `dim`, `blink`, `reverse`, `hidden` | `true`, `false` | Direct control over ANSI flags |
-//!
-//! # Example
-//!
-//! ```css
-//! /* Base styles applied to all themes */
-//! .title {
-//!     font-weight: bold;
-//!     color: #ff00ff; /* Magenta */
-//! }
-//!
-//! .error {
-//!     color: red;
-//!     font-weight: bold;
-//! }
-//!
-//! /* Semantic alias */
-//! .critical {
-//!     color: red;
-//!     text-decoration: underline;
-//!     animation: blink; /* parsing 'blink' property directly is also supported */
-//! }
-//!
-//! /* Adaptive Overrides */
-//! @media (prefers-color-scheme: dark) {
-//!     .title {
-//!         color: #ffcccc; /* Lighter magenta for dark backgrounds */
-//!     }
-//! }
-//!
-//! @media (prefers-color-scheme: light) {
-//!     .title {
-//!         color: #880088; /* Darker magenta for light backgrounds */
-//!     }
-//! }
-//! ```
-//!
+//! Class selectors (`.error`) map to style names. `@media
+//! (prefers-color-scheme: dark|light) { ... }` blocks define light/dark
+//! overrides the same way YAML's `light:`/`dark:` sections do. Supported
+//! properties: `color`/`fg`, `background-color`/`bg`, `font-weight: bold`,
+//! `font-style: italic`, `text-decoration: underline|line-through`,
+//! `visibility: hidden`, and direct `bold`/`italic`/`dim`/`blink`/`reverse`/
+//! `hidden`/`strikethrough` flags.
+
 use std::collections::HashMap;
 
 use cssparser::{
@@ -98,7 +23,6 @@ use super::definition::StyleDefinition;
 use super::error::StylesheetError;
 use super::parser::{build_variants, ThemeVariants};
 
-/// Parses a CSS stylesheet and builds theme variants.
 pub fn parse_css(
     css: &str,
     palette: Option<&crate::colorspace::ThemePalette>,
@@ -115,7 +39,6 @@ pub fn parse_css(
 
     for result in rule_list_parser {
         if let Err(e) = result {
-            // For now, simpler error conversion.
             return Err(StylesheetError::Parse {
                 path: None,
                 message: format!("CSS Parse Error: {:?}", e),
@@ -155,9 +78,7 @@ impl<'i> QualifiedRuleParser<'i> for StyleSheetParser {
                     names.push(name.as_ref().to_string());
                 }
                 Token::Comma | Token::WhiteSpace(_) => continue,
-                _ => {
-                    // Ignore other tokens
-                }
+                _ => {}
             }
         }
 
@@ -255,13 +176,11 @@ impl<'i> AtRuleParser<'i> for StyleSheetParser {
         input: &mut Parser<'i, 't>,
     ) -> Result<Self::Prelude, ParseError<'i, Self::Error>> {
         if name.as_ref() == "media" {
-            // Peek and parse blocks
             let mut found_mode: Option<Mode> = None;
 
             loop {
                 match input.next() {
                     Ok(Token::ParenthesisBlock) => {
-                        // We consumed ParenthesisBlock. Now we can call parse_nested_block.
                         let nested_res = input.parse_nested_block(|input| {
                             input.expect_ident_matching("prefers-color-scheme")?;
                             input.expect_colon()?;
@@ -277,10 +196,8 @@ impl<'i> AtRuleParser<'i> for StyleSheetParser {
                         }
                     }
                     Ok(Token::WhiteSpace(_)) | Ok(Token::Comment(_)) => continue,
-                    Err(_) => break, // End of input
-                    Ok(_) => {
-                        // Ignore other tokens
-                    }
+                    Err(_) => break,
+                    Ok(_) => {}
                 }
             }
 
@@ -432,25 +349,22 @@ fn parse_color<'i, 't>(input: &mut Parser<'i, 't>) -> Result<ColorDef, ParseErro
     };
 
     match token {
-        Token::Function(ref name) if name.as_ref() == "cube" => {
-            input
-                .parse_nested_block(|input| {
-                    let r = input.expect_percentage()?;
-                    input.expect_comma()?;
-                    let g = input.expect_percentage()?;
-                    input.expect_comma()?;
-                    let b = input.expect_percentage()?;
-                    // cssparser percentages are 0.0–1.0, convert to 0–100 for from_percentages
-                    crate::colorspace::CubeCoord::from_percentages(
-                        r as f64 * 100.0,
-                        g as f64 * 100.0,
-                        b as f64 * 100.0,
-                    )
-                    .map(ColorDef::Cube)
-                    .map_err(|_| input.new_custom_error::<(), ()>(()))
-                })
-                .map_err(|_: ParseError<'i, ()>| input.new_custom_error::<(), ()>(()))
-        }
+        Token::Function(ref name) if name.as_ref() == "cube" => input
+            .parse_nested_block(|input| {
+                let r = input.expect_percentage()?;
+                input.expect_comma()?;
+                let g = input.expect_percentage()?;
+                input.expect_comma()?;
+                let b = input.expect_percentage()?;
+                crate::colorspace::CubeCoord::from_percentages(
+                    r as f64 * 100.0,
+                    g as f64 * 100.0,
+                    b as f64 * 100.0,
+                )
+                .map(ColorDef::Cube)
+                .map_err(|_| input.new_custom_error::<(), ()>(()))
+            })
+            .map_err(|_: ParseError<'i, ()>| input.new_custom_error::<(), ()>(())),
         Token::Ident(name) => {
             ColorDef::parse_string(name.as_ref()).map_err(|_| input.new_custom_error::<(), ()>(()))
         }
@@ -478,12 +392,10 @@ mod tests {
         let variants = parse_css(css, None).unwrap();
         let base = variants.base();
 
-        // Ensure "error" style exists
         assert!(base.contains_key("error"));
 
         let style = base.get("error").unwrap().clone().force_styling(true);
         let styled = style.apply_to("text").to_string();
-        // Check for red (31) and bold (1).
         assert!(styled.contains("\x1b[31m"));
         assert!(styled.contains("\x1b[1m"));
     }
@@ -497,18 +409,16 @@ mod tests {
         let light = variants.resolve(Some(ColorMode::Light));
         let dark = variants.resolve(Some(ColorMode::Dark));
 
-        // Light (base) -> Red
         if let StyleValue::Concrete(s) = light.get("text").unwrap() {
             let out = s.clone().force_styling(true).apply_to("x").to_string();
-            assert!(out.contains("\x1b[31m")); // Red
+            assert!(out.contains("\x1b[31m"));
         } else {
             panic!("Expected Concrete style for light mode");
         }
 
-        // Dark -> White
         if let StyleValue::Concrete(s) = dark.get("text").unwrap() {
             let out = s.clone().force_styling(true).apply_to("x").to_string();
-            assert!(out.contains("\x1b[37m")); // White
+            assert!(out.contains("\x1b[37m"));
         } else {
             panic!("Expected Concrete style for dark mode");
         }
@@ -543,23 +453,19 @@ mod tests {
         let base = variants.base();
         assert!(base.contains_key("all-props"));
 
-        // We can't easily inspect the attributes directly without making fields public
-        // or adding accessors to StyleValue/StyleAttributes.
-        // But successful parsing covers the code paths.
-        // We can verify effect by applying to string.
         let style = base.get("all-props").unwrap().clone().force_styling(true);
         let out = style.apply_to("text").to_string();
 
-        assert!(out.contains("\x1b[31m")); // fg red
-        assert!(out.contains("\x1b[44m")); // bg blue
-        assert!(out.contains("\x1b[1m")); // bold
-        assert!(out.contains("\x1b[2m")); // dim
-        assert!(out.contains("\x1b[3m")); // italic
-        assert!(out.contains("\x1b[4m")); // underline
-        assert!(out.contains("\x1b[5m")); // blink
-        assert!(out.contains("\x1b[7m")); // reverse
-        assert!(out.contains("\x1b[8m")); // hidden
-        assert!(out.contains("\x1b[9m")); // strikethrough
+        assert!(out.contains("\x1b[31m"));
+        assert!(out.contains("\x1b[44m"));
+        assert!(out.contains("\x1b[1m"));
+        assert!(out.contains("\x1b[2m"));
+        assert!(out.contains("\x1b[3m"));
+        assert!(out.contains("\x1b[4m"));
+        assert!(out.contains("\x1b[5m"));
+        assert!(out.contains("\x1b[7m"));
+        assert!(out.contains("\x1b[8m"));
+        assert!(out.contains("\x1b[9m"));
     }
 
     #[test]
@@ -578,11 +484,11 @@ mod tests {
         let style = base.get("aliases").unwrap().clone().force_styling(true);
         let out = style.apply_to("text").to_string();
 
-        assert!(out.contains("\x1b[42m")); // bg green
-        assert!(out.contains("\x1b[1m")); // bold
-        assert!(out.contains("\x1b[3m")); // italic
-        assert!(out.contains("\x1b[4m")); // underline
-        assert!(out.contains("\x1b[8m")); // hidden
+        assert!(out.contains("\x1b[42m"));
+        assert!(out.contains("\x1b[1m"));
+        assert!(out.contains("\x1b[3m"));
+        assert!(out.contains("\x1b[4m"));
+        assert!(out.contains("\x1b[8m"));
     }
 
     #[test]
@@ -601,7 +507,6 @@ mod tests {
 
     #[test]
     fn test_invalid_syntax_recovery() {
-        // missing colon, invalid values, unknown properties should not panic
         let css = r#"
         .broken {
             color: ;
@@ -611,14 +516,12 @@ mod tests {
         .valid { color: cyan; }
         "#;
 
-        // cssparser is robust and may skip invalid declarations
         let variants = parse_css(css, None).unwrap();
         assert!(variants.base().contains_key("valid"));
     }
 
     #[test]
     fn test_empty_selector_error() {
-        // Just dots without name
         let css = ". { color: red; }";
         let res = parse_css(css, None);
         assert!(res.is_err());
@@ -626,11 +529,7 @@ mod tests {
 
     #[test]
     fn test_no_dot_selector() {
-        // Tag selector not supported, should skip or error
         let css = "body { color: red; }";
-        // Our parser expects '.' delimiters in parse_prelude.
-        // If it doesn't find '.', it consumes tokens.
-        // If names is empty, it returns error.
         let res = parse_css(css, None);
         assert!(res.is_err());
     }
@@ -638,7 +537,6 @@ mod tests {
     #[test]
     fn test_invalid_color() {
         let css = ".bad-color { color: not-a-color; }";
-        // Should ignore the invalid property but parse the rule
         let variants = parse_css(css, None).unwrap();
         assert!(variants.base().contains_key("bad-color"));
     }
@@ -649,7 +547,6 @@ mod tests {
         let variants = parse_css(css, None).unwrap();
         let style = variants.base().get("hex").unwrap();
         let out = style.apply_to("x").to_string();
-        // Just verify it parsed something, specific hex to ansi conversion depends on color support
         assert!(!out.is_empty());
     }
 
@@ -664,10 +561,6 @@ mod tests {
         let variants = parse_css(css, None).unwrap();
         assert!(variants.base().contains_key("commented"));
     }
-
-    // =========================================================================
-    // Cube color CSS tests
-    // =========================================================================
 
     #[test]
     fn test_css_cube_color() {
@@ -694,7 +587,6 @@ mod tests {
             .clone()
             .force_styling(true);
         let out = style.apply_to("text").to_string();
-        // Should have bold
         assert!(out.contains("\x1b[1m"));
     }
 
@@ -716,7 +608,6 @@ mod tests {
     proptest! {
         #[test]
         fn test_random_css_input_no_panic(s in "\\PC*") {
-            // Should never panic, even with garbage input
             let _ = parse_css(&s, None);
         }
 

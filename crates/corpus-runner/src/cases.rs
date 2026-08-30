@@ -1,16 +1,5 @@
-//! Roster-case execution: the run semantics `corpus/README.md` documents,
-//! made real against a produced binary.
-//!
-//! Each case runs black-box in its own sandbox directory with the scrubbed
-//! baseline environment (`PATH`, `HOME` pointing into the sandbox,
-//! `LANG`/`LC_ALL` = `C.UTF-8` — everything else unset unless the case sets
-//! it), sandbox files materialized first, streams attached to a pty exactly
-//! where the case's `tty` list says (the ROB01 harness's pty seam,
-//! `standout_test::pty`), scripted stdin delivered as piped content or pty
-//! keystrokes, and the case's own `timeout_seconds` as a hard deadline that
-//! is itself an assertion. Assertion evaluation covers the documented
-//! vocabulary; `expected = "fail"` cases report as *expected-fail* (and an
-//! unexpected pass as news), never as suite errors.
+// Roster-case execution: the run semantics `corpus/README.md` documents,
+// made real against a produced binary.
 
 use std::io::Write;
 use std::path::{Path, PathBuf};
@@ -22,9 +11,6 @@ use crate::exec;
 use crate::report::{AcceptanceReport, CaseOutcome, CaseResult};
 use crate::workspace;
 
-/// Runs every case against the binary, each in a fresh sandbox under
-/// `cases_dir` (kept, not temp: a run's sandboxes are part of its
-/// inspectable residue). Returns the roster-shaped acceptance report.
 pub fn run_cases(
     binary: &Path,
     cases: &[Case],
@@ -73,7 +59,6 @@ pub fn run_cases(
     }
 }
 
-/// What one case's process run produced, LF-normalized.
 struct Execution {
     exit_code: Option<i32>,
     timed_out: bool,
@@ -81,9 +66,6 @@ struct Execution {
     stderr: String,
 }
 
-/// Provisions the sandbox and runs the binary once under the case's own
-/// deadline. Errors here are sandbox/spawn failures — suite errors, not
-/// case verdicts.
 fn execute(
     binary: &Path,
     case: &Case,
@@ -148,9 +130,8 @@ fn execute(
                 Stdio::piped()
             });
             master = Some(m);
-            // `slave` drops here: the child holds the only remaining slave fds
-            // (inside `command`'s Stdio handles, released by `drop(command)`
-            // below), so the master read ends when the child exits.
+            // `slave` drops here: the child holds the only remaining slave
+            // fds, so the master read ends when the child exits.
         }
     } else {
         command
@@ -162,18 +143,17 @@ fn execute(
     let mut child = command
         .spawn()
         .map_err(|err| format!("spawning {}: {err}", binary.display()))?;
-    // A `Command` is re-spawnable, so it retains the slave `Stdio` handles it
+    // A `Command` is re-spawnable and retains the slave `Stdio` handles it
     // was given even after `spawn`; a retained slave fd would keep the
     // master read from ever seeing EOF.
     drop(command);
 
-    // Pipe captures.
     let stdout_capture = child.stdout.take().map(exec::capped_reader);
     let stderr_capture = child.stderr.take().map(exec::capped_reader);
 
     // The master capture serves every pty-attached output stream; with both
-    // on the pty they interleave exactly as they would on a user's terminal,
-    // and the capture is attributed to stdout.
+    // on the pty they interleave exactly as on a user's terminal, and the
+    // capture is attributed to stdout.
     let master_capture = match (&master, tty_stdout || tty_stderr) {
         (Some(m), true) => Some(exec::capped_reader(std::fs::File::from(
             m.try_clone()
@@ -182,9 +162,6 @@ fn execute(
         _ => None,
     };
 
-    // Scripted stdin. On a pipe: the content followed by EOF. On the pty:
-    // keystrokes followed by the terminal's EOF character. Closing only the
-    // writer handle is insufficient when a capture retains another master.
     let stdin_bytes = case.run.stdin.clone();
     if tty_stdin {
         if let Some(text) = stdin_bytes {
@@ -192,15 +169,9 @@ fn execute(
             std::thread::spawn(move || {
                 let mut writer = std::fs::File::from(handle);
                 let _ = writer.write_all(text.as_bytes());
-                // In canonical mode one Ctrl-D flushes an unterminated final
-                // line and the next delivers EOF; when the input already
-                // ends in a newline, the first one delivers EOF and the
-                // second write is harmless (and may see EIO).
                 let _ = writer.write_all(&[0x04, 0x04]);
             });
         }
-        // With no stdin string the master stays held below: an attended
-        // terminal that never sends anything (and never hangs up early).
     } else {
         let mut stdin_pipe = child.stdin.take().expect("stdin was piped");
         if let Some(text) = stdin_bytes {
@@ -208,8 +179,6 @@ fn execute(
                 let _ = stdin_pipe.write_all(text.as_bytes());
             });
         }
-        // With no scripted content, dropping the pipe writer delivers the
-        // documented adversarial default: a pipe already at EOF.
     }
 
     let captures: Vec<&exec::Capture> = [
@@ -249,10 +218,6 @@ fn execute(
     })
 }
 
-/// True when some single array element anywhere in `value` (a "row") carries
-/// every value in `row` among its scalars — the association check that keeps
-/// e.g. a star bound to its own constellation and magnitude, which flat
-/// substring matching cannot express.
 fn json_has_row(value: &serde_json::Value, row: &[String]) -> bool {
     let mut candidates = Vec::new();
     collect_array_elements(value, &mut candidates);
@@ -263,7 +228,6 @@ fn json_has_row(value: &serde_json::Value, row: &[String]) -> bool {
     })
 }
 
-/// Collects every element of every array in `value`, at any depth.
 fn collect_array_elements<'a>(value: &'a serde_json::Value, out: &mut Vec<&'a serde_json::Value>) {
     match value {
         serde_json::Value::Array(items) => {
@@ -281,9 +245,6 @@ fn collect_array_elements<'a>(value: &'a serde_json::Value, out: &mut Vec<&'a se
     }
 }
 
-/// Collects every scalar under `value` as its canonical string form
-/// (numbers via their shortest decimal representation, so `0.86` matches
-/// the literal "0.86" whether the producer emitted a number or a string).
 fn collect_scalars(value: &serde_json::Value, out: &mut Vec<String>) {
     match value {
         serde_json::Value::String(s) => out.push(s.clone()),
@@ -303,8 +264,6 @@ fn collect_scalars(value: &serde_json::Value, out: &mut Vec<String>) {
     }
 }
 
-/// Resolves a case-relative path inside the sandbox, refusing absolute
-/// paths and parent traversal — a case must not reach outside its sandbox.
 fn sandbox_path(sandbox: &Path, rel: &str) -> Result<PathBuf, String> {
     let rel_path = Path::new(rel);
     if rel_path.is_absolute()
@@ -317,15 +276,10 @@ fn sandbox_path(sandbox: &Path, rel: &str) -> Result<PathBuf, String> {
     Ok(sandbox.join(rel_path))
 }
 
-/// Pty captures are normalized to LF before comparison; pipes pass through
-/// unchanged in practice (no CR to strip).
 fn normalize_lf(text: &str) -> String {
     text.replace("\r\n", "\n")
 }
 
-/// Applies the case's assertion vocabulary to what the run produced,
-/// returning the raw verdict (before expected-fail mapping) and failure
-/// detail carrying the observed streams.
 fn evaluate(case: &Case, execution: &Execution) -> (bool, Option<String>) {
     let mut failures = Vec::new();
     if execution.timed_out {

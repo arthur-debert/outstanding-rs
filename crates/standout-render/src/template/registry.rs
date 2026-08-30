@@ -1,68 +1,24 @@
 //! Template registry for file-based and inline templates.
 //!
-//! This module provides [`TemplateRegistry`], which manages template resolution
-//! from multiple sources: inline strings, filesystem directories, or embedded content.
+//! [`TemplateRegistry`] is a thin wrapper around
+//! [`FileRegistry<String>`](crate::file_loader::FileRegistry) that adds
+//! template-specific resolution on top of the generic file-loading
+//! infrastructure. It resolves names against four tiers, in priority order:
+//! inline templates, `add_from_files` file templates, directory-registered
+//! templates, then framework (`standout/`-namespaced) defaults — so user
+//! templates always override framework ones.
 //!
-//! # Design
+//! Recognized extensions, highest priority first: [`TEMPLATE_EXTENSIONS`]
+//! (`.jinja`, `.jinja2`, `.j2`, `.stpl`, `.txt`). A name may be looked up
+//! with or without an extension, and even with the "wrong" recognized
+//! extension (e.g. `"list.j2"` resolves to a file registered as
+//! `list.jinja`) — the extension is stripped and the base name is retried.
 //!
-//! The registry is a thin wrapper around [`FileRegistry<String>`](crate::file_loader::FileRegistry),
-//! providing template-specific functionality while reusing the generic file loading infrastructure.
-//!
-//! The registry uses a two-phase approach:
-//!
-//! 1. Collection: Templates are collected from various sources (inline, directories, embedded)
-//! 2. Resolution: A unified map resolves template names to their content or file paths
-//!
-//! This separation enables:
-//! - Testability: Resolution logic can be tested without filesystem access
-//! - Flexibility: Same resolution rules apply regardless of template source
-//! - Hot reloading: File paths can be re-read on each render in development mode
-//!
-//! # Template Resolution
-//!
-//! Templates are resolved by name using these rules:
-//!
-//! 1. Inline templates (added via [`TemplateRegistry::add_inline`]) have highest priority
-//! 2. File templates are searched in directory registration order (first directory wins)
-//! 3. Names can be specified with or without extension: both `"config"` and `"config.jinja"` resolve
-//!
-//! # Supported Extensions
-//!
-//! Template files are recognized by extension, in priority order:
-//!
-//! | Priority | Extension | Description |
-//! |----------|-----------|-------------|
-//! | 1 (highest) | `.jinja` | Standard Jinja extension (MiniJinja engine) |
-//! | 2 | `.jinja2` | Full Jinja2 extension (MiniJinja engine) |
-//! | 3 | `.j2` | Short Jinja2 extension (MiniJinja engine) |
-//! | 4 | `.stpl` | Simple template (SimpleEngine - format strings) |
-//! | 5 (lowest) | `.txt` | Plain text templates |
-//!
-//! If multiple files exist with the same base name but different extensions
-//! (e.g., `config.jinja` and `config.j2`), the higher-priority extension wins.
-//!
-//! # Collision Handling
-//!
-//! The registry enforces strict collision rules:
-//!
-//! - Same-directory, different extensions: Higher priority extension wins (no error)
-//! - Cross-directory collisions: Panic with detailed message listing conflicting files
-//!
-//! This strict behavior catches configuration mistakes early rather than silently
-//! using an arbitrary winner.
-//!
-//! # Example
-//!
-//! ```rust,ignore
-//! use standout_render::TemplateRegistry;
-//!
-//! let mut registry = TemplateRegistry::new();
-//! registry.add_template_dir("./templates")?;
-//! registry.add_inline("override", "Custom content");
-//!
-//! // Resolve templates
-//! let content = registry.get_content("config")?;
-//! ```
+//! Collisions are strict by design, to catch configuration mistakes early
+//! rather than pick an arbitrary winner: two directories producing the same
+//! resolved name is an error, but the same directory offering multiple
+//! extensions for one base name is not (the higher-priority extension wins
+//! silently).
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
@@ -73,61 +29,20 @@ use crate::file_loader::{
     LoadedEntry, LoadedFile,
 };
 
-/// Recognized template file extensions in priority order.
-///
-/// When multiple files exist with the same base name but different extensions,
-/// the extension appearing earlier in this list takes precedence.
-///
-/// # Priority Order
-///
-/// 1. `.jinja` - Standard Jinja extension (MiniJinja engine)
-/// 2. `.jinja2` - Full Jinja2 extension (MiniJinja engine)
-/// 3. `.j2` - Short Jinja2 extension (MiniJinja engine)
-/// 4. `.stpl` - Simple template (SimpleEngine - `{var}` format strings)
-/// 5. `.txt` - Plain text templates
 pub const TEMPLATE_EXTENSIONS: &[&str] = &[".jinja", ".jinja2", ".j2", ".stpl", ".txt"];
 
 static NEXT_REGISTRY_ID: AtomicU64 = AtomicU64::new(1);
 static NEXT_GENERATION: AtomicU64 = AtomicU64::new(1);
 
-/// A template file discovered during directory walking.
-///
-/// This struct captures the essential information about a template file
-/// without reading its content, enabling lazy loading and hot reloading.
-///
-/// # Fields
-///
-/// - `name`: The resolution name without extension (e.g., `"todos/list"`)
-/// - `name_with_ext`: The resolution name with extension (e.g., `"todos/list.jinja"`)
-/// - `absolute_path`: Full filesystem path for reading content
-/// - `source_dir`: The template directory this file came from (for collision reporting)
-///
-/// # Example
-///
-/// For a file at `/app/templates/todos/list.jinja` with root `/app/templates`:
-///
-/// ```rust,ignore
-/// TemplateFile {
-///     name: "todos/list".to_string(),
-///     name_with_ext: "todos/list.jinja".to_string(),
-///     absolute_path: PathBuf::from("/app/templates/todos/list.jinja"),
-///     source_dir: PathBuf::from("/app/templates"),
-/// }
-/// ```
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct TemplateFile {
-    /// Resolution name without extension (e.g., "config" or "todos/list")
     pub name: String,
-    /// Resolution name with extension (e.g., "config.jinja" or "todos/list.jinja")
     pub name_with_ext: String,
-    /// Absolute path to the template file
     pub absolute_path: PathBuf,
-    /// The template directory root this file belongs to
     pub source_dir: PathBuf,
 }
 
 impl TemplateFile {
-    /// Creates a new template file descriptor.
     pub fn new(
         name: impl Into<String>,
         name_with_ext: impl Into<String>,
@@ -142,9 +57,6 @@ impl TemplateFile {
         }
     }
 
-    /// Returns the extension priority (lower is higher priority).
-    ///
-    /// Returns `usize::MAX` if the extension is not recognized.
     pub fn extension_priority(&self) -> usize {
         for (i, ext) in TEMPLATE_EXTENSIONS.iter().enumerate() {
             if self.name_with_ext.ends_with(ext) {
@@ -177,24 +89,9 @@ impl From<TemplateFile> for LoadedFile {
     }
 }
 
-/// How a template's content is stored or accessed.
-///
-/// This enum enables different storage strategies:
-/// - `Inline`: Content is stored directly (for inline templates or embedded builds)
-/// - `File`: Content is read from disk on demand (for hot reloading in development)
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ResolvedTemplate {
-    /// Template content stored directly in memory.
-    ///
-    /// Used for:
-    /// - Inline templates added via `add_inline()`
-    /// - Embedded templates in release builds
     Inline(String),
-
-    /// Template loaded from filesystem on demand.
-    ///
-    /// The path is read on each render in development mode,
-    /// enabling hot reloading without recompilation.
     File(PathBuf),
 }
 
@@ -207,37 +104,22 @@ impl From<&LoadedEntry<String>> for ResolvedTemplate {
     }
 }
 
-/// Error type for template registry operations.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum RegistryError {
-    /// Two template directories contain files that resolve to the same name.
-    ///
-    /// This is an unrecoverable configuration error that must be fixed
-    /// by the application developer.
     Collision {
-        /// The template name that has conflicting sources
         name: String,
-        /// Path to the existing template
         existing_path: PathBuf,
-        /// Directory containing the existing template
         existing_dir: PathBuf,
-        /// Path to the conflicting template
         conflicting_path: PathBuf,
-        /// Directory containing the conflicting template
         conflicting_dir: PathBuf,
     },
 
-    /// Template not found in registry.
     NotFound {
-        /// The name that was requested
         name: String,
     },
 
-    /// Failed to read template file from disk.
     ReadError {
-        /// Path that failed to read
         path: PathBuf,
-        /// Error message
         message: String,
     },
 }
@@ -311,7 +193,6 @@ impl From<LoadError> for RegistryError {
     }
 }
 
-/// Creates the file registry configuration for templates.
 fn template_config() -> FileRegistryConfig<String> {
     FileRegistryConfig {
         extensions: TEMPLATE_EXTENSIONS,
@@ -319,69 +200,18 @@ fn template_config() -> FileRegistryConfig<String> {
     }
 }
 
-/// Registry for template resolution from multiple sources.
-///
-/// The registry maintains a unified view of templates from:
-/// - Inline strings (highest priority)
-/// - Multiple filesystem directories
-/// - Embedded content (for release builds)
-///
-/// # Resolution Order
-///
-/// When looking up a template name:
-///
-/// 1. Check inline templates first
-/// 2. Check file-based templates in registration order
-/// 3. Return error if not found
-///
-/// # Thread Safety
-///
-/// The registry is not thread-safe. For concurrent access, wrap in appropriate
-/// synchronization primitives.
-///
-/// # Example
-///
-/// ```rust,ignore
-/// let mut registry = TemplateRegistry::new();
-///
-/// // Add inline template (highest priority)
-/// registry.add_inline("header", "{{ title }}");
-///
-/// // Add from directory
-/// registry.add_template_dir("./templates")?;
-///
-/// // Resolve and get content
-/// let content = registry.get_content("header")?;
-/// ```
 #[derive(Clone)]
 pub struct TemplateRegistry {
-    /// The underlying file registry for directory-based file loading.
     inner: FileRegistry<String>,
-
-    /// Inline templates (stored separately for highest priority).
     inline: HashMap<String, String>,
-
-    /// File-based templates from add_from_files (maps name → path).
-    /// These are separate from directory-based loading.
     files: HashMap<String, PathBuf>,
-
-    /// Tracks source info for collision detection: name → (path, source_dir).
     sources: HashMap<String, (PathBuf, PathBuf)>,
-
-    /// Framework templates (lowest priority fallback).
-    /// These are provided by the standout framework and can be overridden
-    /// by user templates with the same name.
     framework: HashMap<String, String>,
-
-    /// Unique identity assigned at construction. Clones keep the same id so
-    /// a mutated copy is distinguished by [`Self::generation`], not by
-    /// allocation address.
+    // Clones keep the same id; a mutated copy is distinguished by `generation`,
+    // not by allocation address.
     id: u64,
-
-    /// Globally unique revision assigned by every mutation that can change
-    /// resolution or content, including [`Self::refresh`]. Identity plus this
-    /// value is the load-into-engine cache key. Sibling clones must not share
-    /// a revision after they diverge.
+    // Identity plus this value is the load-into-engine cache key. Sibling
+    // clones must not share a revision after they diverge.
     generation: u64,
 }
 
@@ -392,7 +222,6 @@ impl Default for TemplateRegistry {
 }
 
 impl TemplateRegistry {
-    /// Creates an empty template registry.
     pub fn new() -> Self {
         Self {
             inner: FileRegistry::new(template_config()),
@@ -409,75 +238,18 @@ impl TemplateRegistry {
         self.generation = NEXT_GENERATION.fetch_add(1, Ordering::Relaxed);
     }
 
-    /// Adds an inline template with the given name.
-    ///
-    /// Inline templates have the highest priority and will shadow any
-    /// file-based templates with the same name.
-    ///
-    /// # Arguments
-    ///
-    /// * `name` - The template name for resolution
-    /// * `content` - The template content
-    ///
-    /// # Example
-    ///
-    /// ```rust,ignore
-    /// registry.add_inline("header", "{{ title | style(\"title\") }}");
-    /// ```
     pub fn add_inline(&mut self, name: impl Into<String>, content: impl Into<String>) {
         self.inline.insert(name.into(), content.into());
         self.bump_generation();
     }
 
-    /// Adds a template directory to search for files.
-    ///
-    /// Templates in the directory are resolved by their relative path without
-    /// extension. For example, with directory `./templates`:
-    ///
-    /// - `"config"` → `./templates/config.jinja`
-    /// - `"todos/list"` → `./templates/todos/list.jinja`
-    ///
-    /// # Errors
-    ///
-    /// Returns an error if the directory doesn't exist.
     pub fn add_template_dir<P: AsRef<Path>>(&mut self, path: P) -> Result<(), RegistryError> {
         self.inner.add_dir(path).map_err(RegistryError::from)?;
         self.bump_generation();
         Ok(())
     }
 
-    /// Adds templates discovered from a directory scan.
-    ///
-    /// This method processes a list of [`TemplateFile`] entries, typically
-    /// produced by [`walk_template_dir`], and registers them for resolution.
-    ///
-    /// # Resolution Names
-    ///
-    /// Each file is registered under two names:
-    /// - Without extension: `"config"` for `config.jinja`
-    /// - With extension: `"config.jinja"` for `config.jinja`
-    ///
-    /// # Extension Priority
-    ///
-    /// If multiple files share the same base name with different extensions
-    /// (e.g., `config.jinja` and `config.j2`), the higher-priority extension wins
-    /// for the extensionless name. Both can still be accessed by full name.
-    ///
-    /// # Collision Detection
-    ///
-    /// If a template name conflicts with one from a different source directory,
-    /// an error is returned with details about both files.
-    ///
-    /// # Arguments
-    ///
-    /// * `files` - Template files discovered during directory walking
-    ///
-    /// # Errors
-    ///
-    /// Returns [`RegistryError::Collision`] if templates from different
-    /// directories resolve to the same name.
     pub fn add_from_files(&mut self, files: Vec<TemplateFile>) -> Result<(), RegistryError> {
-        // Sort by extension priority so higher-priority extensions are processed first
         let mut sorted_files = files;
         sorted_files.sort_by_key(|f| f.extension_priority());
         // Bump first: a collision can return after partial inserts, and those
@@ -485,9 +257,7 @@ impl TemplateRegistry {
         self.bump_generation();
 
         for file in sorted_files {
-            // Check for cross-directory collision on the base name
             if let Some((existing_path, existing_dir)) = self.sources.get(&file.name) {
-                // Only error if from different source directories
                 if existing_dir != &file.source_dir {
                     return Err(RegistryError::Collision {
                         name: file.name.clone(),
@@ -497,21 +267,17 @@ impl TemplateRegistry {
                         conflicting_dir: file.source_dir.clone(),
                     });
                 }
-                // Same directory, different extension - skip (higher priority already registered)
                 continue;
             }
 
-            // Track source for collision detection
             self.sources.insert(
                 file.name.clone(),
                 (file.absolute_path.clone(), file.source_dir.clone()),
             );
 
-            // Register the template under extensionless name
             self.files
                 .insert(file.name.clone(), file.absolute_path.clone());
 
-            // Register under name with extension (allows explicit access)
             self.files
                 .insert(file.name_with_ext.clone(), file.absolute_path);
         }
@@ -519,14 +285,6 @@ impl TemplateRegistry {
         Ok(())
     }
 
-    /// Adds pre-embedded templates (for release builds).
-    ///
-    /// Embedded templates are treated as inline templates, stored directly
-    /// in memory without filesystem access.
-    ///
-    /// # Arguments
-    ///
-    /// * `templates` - Map of template name to content
     pub fn add_embedded(&mut self, templates: HashMap<String, String>) {
         for (name, content) in templates {
             self.inline.insert(name, content);
@@ -534,44 +292,17 @@ impl TemplateRegistry {
         self.bump_generation();
     }
 
-    /// Adds framework templates (lowest priority fallback).
-    ///
-    /// Framework templates are provided by the standout framework and serve as
-    /// defaults that can be overridden by user templates with the same name.
-    /// They are checked last during resolution.
-    ///
-    /// Framework templates typically use the `standout/` namespace to avoid
-    /// accidental collision with user templates (e.g., `standout/list-view`).
-    ///
-    /// # Arguments
-    ///
-    /// * `name` - The template name (e.g., `"standout/list-view"`)
-    /// * `content` - The template content
-    ///
-    /// # Example
-    ///
-    /// ```rust,ignore
-    /// registry.add_framework("standout/list-view", include_str!("templates/list-view.jinja"));
-    /// ```
     pub fn add_framework(&mut self, name: impl Into<String>, content: impl Into<String>) {
         self.framework.insert(name.into(), content.into());
         self.bump_generation();
     }
 
-    /// Adds multiple framework templates from embedded entries.
-    ///
-    /// This is similar to [`from_embedded_entries`] but adds templates to the
-    /// framework (lowest priority) tier instead of inline (highest priority).
-    ///
-    /// # Arguments
-    ///
-    /// * `entries` - Slice of `(name_with_ext, content)` pairs
     pub fn add_framework_entries(&mut self, entries: &[(&str, &str)]) {
         let framework: HashMap<String, String> =
             build_embedded_registry(entries, TEMPLATE_EXTENSIONS, |content| {
                 Ok::<_, std::convert::Infallible>(content.to_string())
             })
-            .unwrap(); // Safe: Infallible error type
+            .unwrap();
 
         for (name, content) in framework {
             self.framework.insert(name, content);
@@ -579,104 +310,37 @@ impl TemplateRegistry {
         self.bump_generation();
     }
 
-    /// Clears all framework templates.
-    ///
-    /// This is useful when you want to disable all framework-provided defaults
-    /// and require explicit template configuration.
     pub fn clear_framework(&mut self) {
         self.framework.clear();
         self.bump_generation();
     }
 
-    /// Creates a registry from embedded template entries.
-    ///
-    /// This is the primary entry point for compile-time embedded templates,
-    /// typically called by the `embed_templates!` macro.
-    ///
-    /// # Arguments
-    ///
-    /// * `entries` - Slice of `(name_with_ext, content)` pairs where `name_with_ext`
-    ///   is the relative path including extension (e.g., `"report/summary.jinja"`)
-    ///
-    /// # Processing
-    ///
-    /// This method applies the same logic as runtime file loading:
-    ///
-    /// 1. Extension stripping: `"report/summary.jinja"` → `"report/summary"`
-    /// 2. Extension priority: When multiple files share a base name, the
-    ///    higher-priority extension wins (see [`TEMPLATE_EXTENSIONS`])
-    /// 3. Dual registration: Each template is accessible by both its base
-    ///    name and its full name with extension
-    ///
-    /// # Example
-    ///
-    /// ```rust
-    /// use standout_render::TemplateRegistry;
-    ///
-    /// // Typically generated by embed_templates! macro
-    /// let entries: &[(&str, &str)] = &[
-    ///     ("list.jinja", "Hello {{ name }}"),
-    ///     ("report/summary.jinja", "Report: {{ title }}"),
-    /// ];
-    ///
-    /// let registry = TemplateRegistry::from_embedded_entries(entries);
-    ///
-    /// // Access by base name or full name
-    /// assert!(registry.get("list").is_ok());
-    /// assert!(registry.get("list.jinja").is_ok());
-    /// assert!(registry.get("report/summary").is_ok());
-    /// ```
     pub fn from_embedded_entries(entries: &[(&str, &str)]) -> Self {
         let mut registry = Self::new();
 
-        // Use shared helper - infallible transform for templates
         let inline: HashMap<String, String> =
             build_embedded_registry(entries, TEMPLATE_EXTENSIONS, |content| {
                 Ok::<_, std::convert::Infallible>(content.to_string())
             })
-            .unwrap(); // Safe: Infallible error type
+            .unwrap();
 
         registry.inline = inline;
         registry
     }
 
-    /// Looks up a template by name.
-    ///
-    /// Names are resolved with extension-agnostic fallback: if the exact name
-    /// isn't found and it has a recognized extension, the extension is stripped
-    /// and the base name is tried. This allows lookups like `"list.j2"` to
-    /// find a template registered as `"list"` (from `list.jinja`).
-    ///
-    /// # Resolution Priority
-    ///
-    /// Templates are resolved in this order:
-    /// 1. Inline templates (highest priority)
-    /// 2. File-based templates from `add_from_files`
-    /// 3. Directory-based templates from `add_template_dir`
-    /// 4. Framework templates (lowest priority)
-    ///
-    /// This allows user templates to override framework defaults.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`RegistryError::NotFound`] if the template doesn't exist.
     pub fn get(&self, name: &str) -> Result<ResolvedTemplate, RegistryError> {
-        // Check inline first (highest priority)
         if let Some(content) = resolve_in_map(&self.inline, name, TEMPLATE_EXTENSIONS) {
             return Ok(ResolvedTemplate::Inline(content.clone()));
         }
 
-        // Check file-based templates from add_from_files
         if let Some(path) = resolve_in_map(&self.files, name, TEMPLATE_EXTENSIONS) {
             return Ok(ResolvedTemplate::File(path.clone()));
         }
 
-        // Check directory-based file registry (has its own extension fallback)
         if let Some(entry) = self.inner.get_entry(name) {
             return Ok(ResolvedTemplate::from(entry));
         }
 
-        // Check framework templates (lowest priority)
         if let Some(content) = resolve_in_map(&self.framework, name, TEMPLATE_EXTENSIONS) {
             return Ok(ResolvedTemplate::Inline(content.clone()));
         }
@@ -686,14 +350,6 @@ impl TemplateRegistry {
         })
     }
 
-    /// Gets the content of a template, reading from disk if necessary.
-    ///
-    /// For inline templates, returns the stored content directly.
-    /// For file templates, reads the file from disk (enabling hot reload).
-    ///
-    /// # Errors
-    ///
-    /// Returns an error if the template is not found or cannot be read from disk.
     pub fn get_content(&self, name: &str) -> Result<String, RegistryError> {
         let resolved = self.get(name)?;
         match resolved {
@@ -707,50 +363,29 @@ impl TemplateRegistry {
         }
     }
 
-    /// Refreshes the registry from registered directories.
-    ///
-    /// This re-walks all registered template directories and rebuilds the
-    /// resolution map. Call this if:
-    ///
-    /// - You've added template directories after the first render
-    /// - Template files have been added/removed from disk
-    ///
-    /// Each successful refresh assigns a new [`Self::generation`], as do
-    /// in-memory mutations such as [`Self::add_inline`].
-    ///
-    /// # Panics
-    ///
-    /// Panics if a collision is detected (same name from different directories).
     pub fn refresh(&mut self) -> Result<(), RegistryError> {
         self.inner.refresh().map_err(RegistryError::from)?;
         self.bump_generation();
         Ok(())
     }
 
-    /// Unique identity assigned at construction. Clones keep the same id.
     pub(crate) fn id(&self) -> u64 {
         self.id
     }
 
-    /// Globally unique revision: identity plus this value is the load-into-engine cache key.
     pub fn generation(&self) -> u64 {
         self.generation
     }
 
-    /// True when templates can appear or change on disk (ADR-0019 hot reload).
+    // ADR-0019 hot reload
     pub(crate) fn has_file_sources(&self) -> bool {
         !self.files.is_empty() || !self.inner.dirs().is_empty()
     }
 
-    /// Returns the number of registered templates.
-    ///
-    /// Note: This counts both extensionless and with-extension entries,
-    /// so it may be higher than the number of unique template files.
     pub fn len(&self) -> usize {
         self.inline.len() + self.files.len() + self.inner.len() + self.framework.len()
     }
 
-    /// Returns true if no templates are registered.
     pub fn is_empty(&self) -> bool {
         self.inline.is_empty()
             && self.files.is_empty()
@@ -758,7 +393,6 @@ impl TemplateRegistry {
             && self.framework.is_empty()
     }
 
-    /// Returns an iterator over all registered template names.
     pub fn names(&self) -> impl Iterator<Item = &str> {
         self.inline
             .keys()
@@ -768,7 +402,6 @@ impl TemplateRegistry {
             .chain(self.framework.keys().map(|s| s.as_str()))
     }
 
-    /// Clears all templates from the registry.
     pub fn clear(&mut self) {
         self.inline.clear();
         self.files.clear();
@@ -778,52 +411,19 @@ impl TemplateRegistry {
         self.bump_generation();
     }
 
-    /// Returns true if the registry has framework templates.
     pub fn has_framework_templates(&self) -> bool {
         !self.framework.is_empty()
     }
 
-    /// Returns true when the application registered non-framework templates.
-    ///
-    /// Framework templates are defaults in the `standout/` namespace. They
-    /// should not make convention-derived application templates mandatory for
-    /// structured-only CLIs that never configured their own template registry.
     pub fn has_application_templates(&self) -> bool {
         !self.inline.is_empty() || !self.files.is_empty() || !self.inner.is_empty()
     }
 
-    /// Returns an iterator over framework template names.
     pub fn framework_names(&self) -> impl Iterator<Item = &str> {
         self.framework.keys().map(|s| s.as_str())
     }
 }
 
-/// Walks a template directory and collects template files.
-///
-/// This function traverses the directory recursively, finding all files
-/// with recognized template extensions ([`TEMPLATE_EXTENSIONS`]).
-///
-/// # Arguments
-///
-/// * `root` - The template directory root to walk
-///
-/// # Returns
-///
-/// A vector of [`TemplateFile`] entries, one for each discovered template.
-/// The vector is not sorted; use [`TemplateFile::extension_priority`] for ordering.
-///
-/// # Errors
-///
-/// Returns an error if the directory cannot be read or traversed.
-///
-/// # Example
-///
-/// ```rust,ignore
-/// let files = walk_template_dir("./templates")?;
-/// for file in &files {
-///     println!("{} -> {}", file.name, file.absolute_path.display());
-/// }
-/// ```
 pub fn walk_template_dir(root: impl AsRef<Path>) -> Result<Vec<TemplateFile>, std::io::Error> {
     let files = file_loader::walk_dir(root.as_ref(), TEMPLATE_EXTENSIONS)
         .map_err(|e| std::io::Error::other(e.to_string()))?;
@@ -834,10 +434,6 @@ pub fn walk_template_dir(root: impl AsRef<Path>) -> Result<Vec<TemplateFile>, st
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    // =========================================================================
-    // TemplateFile tests
-    // =========================================================================
 
     #[test]
     fn test_template_file_extension_priority() {
@@ -855,10 +451,6 @@ mod tests {
         assert_eq!(txt.extension_priority(), 4);
         assert_eq!(unknown.extension_priority(), usize::MAX);
     }
-
-    // =========================================================================
-    // TemplateRegistry inline tests
-    // =========================================================================
 
     #[test]
     fn test_registry_add_inline() {
@@ -890,10 +482,6 @@ mod tests {
         assert!(matches!(result, Err(RegistryError::NotFound { .. })));
     }
 
-    // =========================================================================
-    // File-based template tests (using synthetic data)
-    // =========================================================================
-
     #[test]
     fn test_registry_add_from_files() {
         let mut registry = TemplateRegistry::new();
@@ -915,14 +503,11 @@ mod tests {
 
         registry.add_from_files(files).unwrap();
 
-        // Should have 4 entries: 2 names + 2 names with extension
         assert_eq!(registry.len(), 4);
 
-        // Can access by name without extension
         assert!(registry.get("config").is_ok());
         assert!(registry.get("todos/list").is_ok());
 
-        // Can access by name with extension
         assert!(registry.get("config.jinja").is_ok());
         assert!(registry.get("todos/list.jinja").is_ok());
     }
@@ -931,8 +516,6 @@ mod tests {
     fn test_registry_extension_priority() {
         let mut registry = TemplateRegistry::new();
 
-        // Add files with different extensions for same base name
-        // (j2 should be ignored because jinja has higher priority)
         let files = vec![
             TemplateFile::new("config", "config.j2", "/templates/config.j2", "/templates"),
             TemplateFile::new(
@@ -945,7 +528,6 @@ mod tests {
 
         registry.add_from_files(files).unwrap();
 
-        // Extensionless name should resolve to .jinja
         let resolved = registry.get("config").unwrap();
         match resolved {
             ResolvedTemplate::File(path) => {
@@ -987,7 +569,6 @@ mod tests {
     fn test_registry_inline_shadows_file() {
         let mut registry = TemplateRegistry::new();
 
-        // Add file-based template first
         let files = vec![TemplateFile::new(
             "config",
             "config.jinja",
@@ -996,7 +577,6 @@ mod tests {
         )];
         registry.add_from_files(files).unwrap();
 
-        // Add inline with same name (should shadow)
         registry.add_inline("config", "inline content");
 
         let content = registry.get_content("config").unwrap();
@@ -1082,10 +662,6 @@ mod tests {
         assert_eq!(second.get_content("x").unwrap(), "two");
     }
 
-    // =========================================================================
-    // Error display tests
-    // =========================================================================
-
     #[test]
     fn test_error_display_collision() {
         let err = RegistryError::Collision {
@@ -1112,16 +688,11 @@ mod tests {
         assert!(display.contains("missing"));
     }
 
-    // =========================================================================
-    // from_embedded_entries tests
-    // =========================================================================
-
     #[test]
     fn test_from_embedded_entries_single() {
         let entries: &[(&str, &str)] = &[("hello.jinja", "Hello {{ name }}")];
         let registry = TemplateRegistry::from_embedded_entries(entries);
 
-        // Should be accessible by both names
         assert!(registry.get("hello").is_ok());
         assert!(registry.get("hello.jinja").is_ok());
 
@@ -1157,18 +728,15 @@ mod tests {
 
     #[test]
     fn test_from_embedded_entries_extension_priority() {
-        // .jinja has higher priority than .txt (index 0 vs index 3)
         let entries: &[(&str, &str)] = &[
             ("config.txt", "txt content"),
             ("config.jinja", "jinja content"),
         ];
         let registry = TemplateRegistry::from_embedded_entries(entries);
 
-        // Base name should resolve to higher priority (.jinja)
         let content = registry.get_content("config").unwrap();
         assert_eq!(content, "jinja content");
 
-        // Both can still be accessed by full name
         assert_eq!(registry.get_content("config.txt").unwrap(), "txt content");
         assert_eq!(
             registry.get_content("config.jinja").unwrap(),
@@ -1178,14 +746,12 @@ mod tests {
 
     #[test]
     fn test_from_embedded_entries_extension_priority_reverse_order() {
-        // Same test but with entries in reverse order to ensure sorting works
         let entries: &[(&str, &str)] = &[
             ("config.jinja", "jinja content"),
             ("config.txt", "txt content"),
         ];
         let registry = TemplateRegistry::from_embedded_entries(entries);
 
-        // Base name should still resolve to higher priority (.jinja)
         let content = registry.get_content("config").unwrap();
         assert_eq!(content, "jinja content");
     }
@@ -1213,15 +779,12 @@ mod tests {
 
     #[test]
     fn test_extensionless_includes_work() {
-        // Simulates the user's report: {% include "_partial" %} should work
-        // when the file is actually "_partial.jinja"
         let entries: &[(&str, &str)] = &[
             ("main.jinja", "Start {% include '_partial' %} End"),
             ("_partial.jinja", "PARTIAL_CONTENT"),
         ];
         let registry = TemplateRegistry::from_embedded_entries(entries);
 
-        // Build MiniJinja environment the same way App.render() does
         let mut env = crate::template::new_environment();
         for name in registry.names() {
             if let Ok(content) = registry.get_content(name) {
@@ -1229,7 +792,6 @@ mod tests {
             }
         }
 
-        // Verify extensionless include works
         let tmpl = env.get_template("main").unwrap();
         let output = tmpl.render(()).unwrap();
         assert_eq!(output, "Start PARTIAL_CONTENT End");
@@ -1237,7 +799,6 @@ mod tests {
 
     #[test]
     fn test_extensionless_includes_with_extension_syntax() {
-        // Also verify that {% include "_partial.jinja" %} works
         let entries: &[(&str, &str)] = &[
             ("main.jinja", "Start {% include '_partial.jinja' %} End"),
             ("_partial.jinja", "PARTIAL_CONTENT"),
@@ -1256,10 +817,6 @@ mod tests {
         assert_eq!(output, "Start PARTIAL_CONTENT End");
     }
 
-    // =========================================================================
-    // Framework templates tests
-    // =========================================================================
-
     #[test]
     fn test_framework_add_and_get() {
         let mut registry = TemplateRegistry::new();
@@ -1274,13 +831,10 @@ mod tests {
     fn test_framework_lowest_priority() {
         let mut registry = TemplateRegistry::new();
 
-        // Add framework template
         registry.add_framework("config", "framework content");
 
-        // Add inline template with same name (should shadow)
         registry.add_inline("config", "inline content");
 
-        // Inline should win
         let content = registry.get_content("config").unwrap();
         assert_eq!(content, "inline content");
     }
@@ -1289,13 +843,10 @@ mod tests {
     fn test_framework_user_can_override() {
         let mut registry = TemplateRegistry::new();
 
-        // Add framework template in standout/ namespace
         registry.add_framework("standout/list-view", "framework default");
 
-        // User creates their own version
         registry.add_inline("standout/list-view", "user override");
 
-        // User version should win
         let content = registry.get_content("standout/list-view").unwrap();
         assert_eq!(content, "user override");
     }
@@ -1311,7 +862,6 @@ mod tests {
 
         registry.add_framework_entries(entries);
 
-        // Should be accessible by both names
         assert!(registry.get("standout/list-view").is_ok());
         assert!(registry.get("standout/list-view.jinja").is_ok());
         assert!(registry.get("standout/detail-view").is_ok());
@@ -1348,7 +898,6 @@ mod tests {
         registry.add_inline("user-template", "user content");
         registry.add_framework("standout/framework", "framework content");
 
-        // Both should be counted
         assert_eq!(registry.len(), 2);
 
         let names: Vec<&str> = registry.names().collect();
@@ -1367,17 +916,11 @@ mod tests {
         assert!(!registry.has_framework_templates());
     }
 
-    // =========================================================================
-    // Extension-agnostic resolution tests
-    // =========================================================================
-
     #[test]
     fn test_inline_cross_extension_lookup() {
-        // Inline registered as "list.jinja", looked up as "list.j2"
         let entries: &[(&str, &str)] = &[("list.jinja", "List content")];
         let registry = TemplateRegistry::from_embedded_entries(entries);
 
-        // "list.j2" should fall back to "list" (base name)
         let content = registry.get_content("list.j2").unwrap();
         assert_eq!(content, "List content");
     }
@@ -1398,7 +941,6 @@ mod tests {
         let entries: &[(&str, &str)] = &[("standout/list-view.jinja", "Framework view")];
         registry.add_framework_entries(entries);
 
-        // Look up with different extension
         let content = registry.get_content("standout/list-view.j2").unwrap();
         assert_eq!(content, "Framework view");
     }
@@ -1414,7 +956,6 @@ mod tests {
         )];
         registry.add_from_files(files).unwrap();
 
-        // Look up with different extension should find via base name
         assert!(registry.get("config.j2").is_ok());
         assert!(registry.get("config.stpl").is_ok());
         assert!(registry.get("config.txt").is_ok());

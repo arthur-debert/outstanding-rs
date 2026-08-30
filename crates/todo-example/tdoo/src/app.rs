@@ -7,15 +7,6 @@ use standout::input::{ArgSource, InputChain, StdinSource};
 use standout::{embed_styles, embed_templates};
 use todo_core::TodoStore;
 
-/// Builds the complete shell application around the CLI-free core store.
-///
-/// Invocation policy is a shell concern, so it lives here rather than in
-/// `todo-core`: a naked `tdoo` means "add" when something is piped in and
-/// "list" at a terminal. The resolver only reads the terminal fact — the `add`
-/// command's `InputChain` still owns actually reading stdin.
-///
-/// Version metadata is shell configuration too: the builder carries the binary
-/// package's version so `tdoo --version` is answered by clap.
 pub(crate) fn build(store: TodoStore) -> Result<App> {
     Ok(App::builder()
         .app_state(store)
@@ -50,8 +41,6 @@ pub(crate) fn build(store: TodoStore) -> Result<App> {
         .build()?)
 }
 
-/// Observes mutation results after dispatch without coupling the core library
-/// or handlers to shell-level audit configuration.
 fn audit_hook(
     _matches: &ArgMatches,
     ctx: &CommandContext,
@@ -169,7 +158,6 @@ mod tests {
         result.assert_success();
         result.assert_stdout_contains("ship the docs");
 
-        // The todo really landed in the core store, not just in the message.
         let listed = TestHarness::new().no_color().run(
             &app,
             cli::command(),
@@ -184,7 +172,6 @@ mod tests {
     fn an_explicit_command_beats_the_invocation_policy() {
         let (app, _dir) = fresh_app();
 
-        // Piped stdin would have meant `add`, but `list` was asked for.
         let result = TestHarness::new()
             .no_color()
             .piped_stdin("not a todo\n")
@@ -219,9 +206,6 @@ mod tests {
             .run(&app, cli::command(), ["tdoo", "add", "--title", "buy milk"])
             .assert_success();
 
-        // `--output-file-path` overrides the core's filename suggestion. The
-        // handler never learns the winner; the report still names it, because
-        // Standout renders it only after its own write.
         let result = TestHarness::new().no_color().run(
             &app,
             cli::command(),
@@ -263,7 +247,6 @@ mod tests {
             .run(&app, cli::command(), ["tdoo", "done", "2"])
             .assert_success();
 
-        // Human mode: the CLI's wording of the core's fact.
         let human =
             TestHarness::new()
                 .no_color()
@@ -271,7 +254,6 @@ mod tests {
         human.assert_artifact_to_stdout();
         human.assert_artifact_report_contains("warning: 1 completed todo(s) omitted");
 
-        // Structured mode: the same fact, still typed, plus the receipt.
         let json = TestHarness::new()
             .no_color()
             .output_mode(OutputMode::Json)

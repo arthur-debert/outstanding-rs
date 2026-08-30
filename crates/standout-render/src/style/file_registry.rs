@@ -1,64 +1,11 @@
-//! Stylesheet registry for file-based theme loading.
-//!
-//! This module provides [`StylesheetRegistry`], which manages theme resolution
-//! from multiple sources: inline content, filesystem directories, or embedded
-//! content. Stylesheets may be written in CSS (preferred) or YAML (legacy);
-//! the format is auto-detected from the content itself.
-//!
-//! # Design
-//!
-//! The registry is a thin wrapper around [`FileRegistry<Theme>`](crate::file_loader::FileRegistry),
-//! providing stylesheet-specific functionality while reusing the generic file loading infrastructure.
-//!
-//! The registry uses a two-phase approach:
-//!
-//! 1. Collection: Stylesheets are collected from various sources (inline, directories, embedded)
-//! 2. Resolution: A unified map resolves theme names to their parsed `Theme` instances
-//!
-//! This separation enables:
-//! - Testability: Resolution logic can be tested without filesystem access
-//! - Flexibility: Same resolution rules apply regardless of stylesheet source
-//! - Hot reloading: Files are re-read and re-parsed on each access in development mode
-//!
-//! # Stylesheet Resolution
-//!
-//! Stylesheets are resolved by name using these rules:
-//!
-//! 1. Inline stylesheets (added via [`StylesheetRegistry::add_inline`]) have highest priority
-//! 2. File stylesheets are searched in directory registration order (first directory wins)
-//! 3. Names can be specified with or without extension: both `"darcula"` and `"darcula.css"` resolve
-//!
-//! # Supported Extensions
-//!
-//! Stylesheet files are recognized by extension, in priority order:
-//!
-//! | Priority | Extension | Description |
-//! |----------|-----------|-------------|
-//! | 1 (highest) | `.css`  | CSS stylesheet (preferred) |
-//! | 2           | `.yaml` | YAML stylesheet (legacy) |
-//! | 3 (lowest)  | `.yml`  | YAML stylesheet, short extension (legacy) |
-//!
-//! If multiple files exist with the same base name but different extensions
-//! (e.g., `darcula.css` and `darcula.yaml`), the higher-priority extension wins.
-//!
-//! # Collision Handling
-//!
-//! The registry enforces strict collision rules:
-//!
-//! - Same-directory, different extensions: Higher priority extension wins (no error)
-//! - Cross-directory collisions: Panic with detailed message listing conflicting files
-//!
-//! # Example
-//!
-//! ```rust,ignore
-//! use standout_render::style::StylesheetRegistry;
-//!
-//! let mut registry = StylesheetRegistry::new();
-//! registry.add_dir("./themes")?;
-//!
-//! // Get a theme by name
-//! let theme = registry.get("darcula")?;
-//! ```
+//! [`StylesheetRegistry`] resolves themes by name from inline content,
+//! filesystem directories, and embedded content, in that priority order;
+//! within file-based lookup, directories are searched in registration order.
+//! Stylesheets may be CSS (preferred) or YAML (legacy), auto-detected from
+//! content; a name may be given with or without its extension, and among
+//! `.css`/`.yaml`/`.yml` files sharing a base name, that priority order picks
+//! the winner. In debug builds, file-based themes are re-read on each access
+//! so edits show up without a restart.
 
 use std::collections::HashMap;
 use std::path::Path;
@@ -70,32 +17,22 @@ use crate::file_loader::{
 
 use super::error::StylesheetError;
 
-/// Recognized stylesheet file extensions in priority order.
-///
-/// When multiple files exist with the same base name but different extensions,
-/// the extension appearing earlier in this list takes precedence.
 pub const STYLESHEET_EXTENSIONS: &[&str] = &[".css", ".yaml", ".yml"];
 
-/// Creates the file registry configuration for stylesheets.
 fn stylesheet_config() -> FileRegistryConfig<Theme> {
     FileRegistryConfig {
         extensions: STYLESHEET_EXTENSIONS,
         transform: |content| {
             parse_theme_content(content).map_err(|e| LoadError::Transform {
-                name: String::new(), // FileRegistry fills in the actual name
+                name: String::new(),
                 message: e.to_string(),
             })
         },
     }
 }
 
-/// Parses theme content, auto-detecting CSS vs YAML format.
-///
-/// CSS is detected by the presence of a CSS class selector (`.name {`),
-/// which distinguishes it from YAML inline maps that also use `{`.
 pub(crate) fn parse_theme_content(content: &str) -> Result<Theme, StylesheetError> {
     let trimmed = content.trim_start();
-    // CSS files start with class selectors (.name), comments (/*), or @media queries
     if trimmed.starts_with('.') || trimmed.starts_with("/*") || trimmed.starts_with("@media") {
         Theme::from_css(content)
     } else {
@@ -103,47 +40,8 @@ pub(crate) fn parse_theme_content(content: &str) -> Result<Theme, StylesheetErro
     }
 }
 
-/// Registry for stylesheet/theme resolution from multiple sources.
-///
-/// The registry maintains a unified view of themes from:
-/// - Inline YAML strings (highest priority)
-/// - Multiple filesystem directories
-/// - Embedded content (for release builds)
-///
-/// # Resolution Order
-///
-/// When looking up a theme name:
-///
-/// 1. Check inline themes first
-/// 2. Check file-based themes in registration order
-/// 3. Return error if not found
-///
-/// # Hot Reloading
-///
-/// In development mode (debug builds), file-based themes are re-read and
-/// re-parsed on each access, enabling rapid iteration without restarts.
-///
-/// # Example
-///
-/// ```rust,ignore
-/// let mut registry = StylesheetRegistry::new();
-///
-/// // Add inline theme (highest priority) — CSS or YAML, auto-detected
-/// registry.add_inline("custom", r#"
-/// .header { color: cyan; font-weight: bold; }
-/// "#)?;
-///
-/// // Add from directory
-/// registry.add_dir("./themes")?;
-///
-/// // Get a theme
-/// let theme = registry.get("darcula")?;
-/// ```
 pub struct StylesheetRegistry {
-    /// The underlying file registry for directory-based file loading.
     inner: FileRegistry<Theme>,
-
-    /// Inline themes (stored separately for highest priority).
     inline: HashMap<String, Theme>,
 }
 
@@ -154,7 +52,6 @@ impl Default for StylesheetRegistry {
 }
 
 impl StylesheetRegistry {
-    /// Creates an empty stylesheet registry.
     pub fn new() -> Self {
         Self {
             inner: FileRegistry::new(stylesheet_config()),
@@ -162,40 +59,6 @@ impl StylesheetRegistry {
         }
     }
 
-    /// Adds an inline theme from stylesheet content (CSS or YAML).
-    ///
-    /// The format is auto-detected: content starting with a class selector
-    /// (`.name`), a comment (`/*`), or `@media` is parsed as CSS; everything
-    /// else is parsed as YAML.
-    ///
-    /// Inline themes have the highest priority and will shadow any
-    /// file-based themes with the same name.
-    ///
-    /// # Arguments
-    ///
-    /// * `name` - The theme name for resolution
-    /// * `content` - The stylesheet content (CSS or YAML) defining the theme
-    ///
-    /// # Errors
-    ///
-    /// Returns an error if the content cannot be parsed.
-    ///
-    /// # Example
-    ///
-    /// ```rust,ignore
-    /// // CSS
-    /// registry.add_inline("custom", r#"
-    /// .header { color: cyan; font-weight: bold; }
-    /// .muted { opacity: 0.6; }
-    /// "#)?;
-    ///
-    /// // YAML
-    /// registry.add_inline("legacy", r#"
-    /// header:
-    ///   fg: cyan
-    ///   bold: true
-    /// "#)?;
-    /// ```
     pub fn add_inline(
         &mut self,
         name: impl Into<String>,
@@ -206,119 +69,32 @@ impl StylesheetRegistry {
         Ok(())
     }
 
-    /// Adds a pre-parsed theme directly.
-    ///
-    /// This is useful when you have a `Theme` instance already constructed
-    /// programmatically and want to register it in the registry.
-    ///
-    /// # Arguments
-    ///
-    /// * `name` - The theme name for resolution
-    /// * `theme` - The pre-built theme instance
     pub fn add_theme(&mut self, name: impl Into<String>, theme: Theme) {
         self.inline.insert(name.into(), theme);
     }
 
-    /// Adds a stylesheet directory to search for files.
-    ///
-    /// Themes in the directory are resolved by their filename without
-    /// extension. Both `.css` (preferred) and `.yaml`/`.yml` (legacy) files
-    /// are recognized. For example, with directory `./themes`:
-    ///
-    /// - `"darcula"` → `./themes/darcula.css`
-    /// - `"monokai"` → `./themes/monokai.yaml`
-    ///
-    /// # Errors
-    ///
-    /// Returns an error if the directory doesn't exist.
-    ///
-    /// # Example
-    ///
-    /// ```rust,ignore
-    /// registry.add_dir("./themes")?;
-    /// let theme = registry.get("darcula")?;
-    /// ```
     pub fn add_dir<P: AsRef<Path>>(&mut self, path: P) -> Result<(), StylesheetError> {
         self.inner.add_dir(path).map_err(|e| StylesheetError::Load {
             message: e.to_string(),
         })
     }
 
-    /// Adds pre-embedded themes (for release builds).
-    ///
-    /// Embedded themes are stored directly in memory without filesystem access.
-    /// This is typically used with `include_str!` to bundle themes at compile time.
-    ///
-    /// # Arguments
-    ///
-    /// * `themes` - Map of theme name to parsed Theme
     pub fn add_embedded(&mut self, themes: HashMap<String, Theme>) {
         for (name, theme) in themes {
             self.inline.insert(name, theme);
         }
     }
 
-    /// Adds a pre-embedded theme by name.
-    ///
-    /// This is a convenience method for adding a single embedded theme.
-    ///
-    /// # Arguments
-    ///
-    /// * `name` - The theme name for resolution
-    /// * `theme` - The pre-built theme instance
     pub fn add_embedded_theme(&mut self, name: impl Into<String>, theme: Theme) {
         self.inner.add_embedded(&name.into(), theme);
     }
 
-    /// Creates a registry from embedded stylesheet entries.
-    ///
-    /// This is the primary entry point for compile-time embedded stylesheets,
-    /// typically called by the `embed_styles!` macro.
-    ///
-    /// # Arguments
-    ///
-    /// * `entries` - Slice of `(name_with_ext, stylesheet_content)` pairs where
-    ///   `name_with_ext` is the relative path including extension
-    ///   (e.g., `"themes/dark.css"` or `"themes/dark.yaml"`)
-    ///
-    /// # Processing
-    ///
-    /// This method applies the same logic as runtime file loading:
-    ///
-    /// 1. Stylesheet parsing: Each entry's content is parsed as a theme
-    ///    definition, auto-detecting CSS vs YAML
-    /// 2. Extension stripping: `"themes/dark.css"` → `"themes/dark"`
-    /// 3. Extension priority: When multiple files share a base name, the
-    ///    higher-priority extension wins (see [`STYLESHEET_EXTENSIONS`])
-    /// 4. Dual registration: Each theme is accessible by both its base
-    ///    name and its full name with extension
-    ///
-    /// # Errors
-    ///
-    /// Returns an error if any stylesheet content fails to parse.
-    ///
-    /// # Example
-    ///
-    /// ```rust
-    /// use standout_render::style::StylesheetRegistry;
-    ///
-    /// // Typically generated by embed_styles! macro
-    /// let entries: &[(&str, &str)] = &[
-    ///     ("default.css", ".header { color: cyan; font-weight: bold; }"),
-    ///     ("themes/dark.yaml", "panel:\n  fg: white"),
-    /// ];
-    ///
-    /// let mut registry = StylesheetRegistry::from_embedded_entries(entries).unwrap();
-    ///
-    /// // Access by base name or full name
-    /// assert!(registry.get("default").is_ok());
-    /// assert!(registry.get("default.css").is_ok());
-    /// assert!(registry.get("themes/dark").is_ok());
-    /// ```
+    /// `entries` are `(name_with_ext, content)` pairs, typically generated by
+    /// the `embed_styles!` macro; each theme becomes accessible by both its
+    /// base name and its full name with extension.
     pub fn from_embedded_entries(entries: &[(&str, &str)]) -> Result<Self, StylesheetError> {
         let mut registry = Self::new();
 
-        // Use shared helper with auto-detecting CSS/YAML parsing
         registry.inline = build_embedded_registry(entries, STYLESHEET_EXTENSIONS, |content| {
             parse_theme_content(content)
         })?;
@@ -326,56 +102,24 @@ impl StylesheetRegistry {
         Ok(registry)
     }
 
-    /// Gets a theme by name.
-    ///
-    /// Names are resolved with extension-agnostic fallback: if the exact name
-    /// isn't found and it has a recognized extension, the extension is stripped
-    /// and the base name is tried. This allows lookups like `"config.yml"` to
-    /// find a theme registered as `"config"` (from `config.yaml`).
-    ///
-    /// Looks up the theme in order: inline first, then file-based.
-    /// In development mode, file-based themes are re-read on each access.
-    ///
-    /// # Arguments
-    ///
-    /// * `name` - The theme name (with or without extension)
-    ///
-    /// # Errors
-    ///
-    /// Returns an error if the theme is not found or cannot be parsed.
-    ///
-    /// # Example
-    ///
-    /// ```rust,ignore
-    /// let theme = registry.get("darcula")?;
-    /// ```
     pub fn get(&mut self, name: &str) -> Result<Theme, StylesheetError> {
-        // Check inline first (with extension-agnostic fallback)
         if let Some(theme) = resolve_in_map(&self.inline, name, STYLESHEET_EXTENSIONS) {
             return Ok(theme.clone());
         }
 
-        // Try file-based (FileRegistry has its own extension fallback)
         let theme = self.inner.get(name).map_err(|e| StylesheetError::Load {
             message: e.to_string(),
         })?;
 
-        // Set the theme name from the lookup key (strip extension if present)
         let base_name = crate::file_loader::strip_extension(name, STYLESHEET_EXTENSIONS);
         Ok(theme.with_name(base_name))
     }
 
-    /// Checks if a theme exists in the registry.
-    ///
-    /// # Arguments
-    ///
-    /// * `name` - The theme name to check
     pub fn contains(&self, name: &str) -> bool {
         resolve_in_map(&self.inline, name, STYLESHEET_EXTENSIONS).is_some()
             || self.inner.get_entry(name).is_some()
     }
 
-    /// Returns an iterator over all registered theme names.
     pub fn names(&self) -> impl Iterator<Item = &str> {
         self.inline
             .keys()
@@ -383,31 +127,19 @@ impl StylesheetRegistry {
             .chain(self.inner.names())
     }
 
-    /// Returns the number of registered themes.
     pub fn len(&self) -> usize {
         self.inline.len() + self.inner.len()
     }
 
-    /// Returns true if no themes are registered.
     pub fn is_empty(&self) -> bool {
         self.inline.is_empty() && self.inner.is_empty()
     }
 
-    /// Clears all registered themes.
     pub fn clear(&mut self) {
         self.inline.clear();
         self.inner.clear();
     }
 
-    /// Refreshes file-based themes from disk.
-    ///
-    /// This re-walks all registered directories and updates the internal
-    /// cache. Useful in long-running applications that need to pick up
-    /// theme changes without restarting.
-    ///
-    /// # Errors
-    ///
-    /// Returns an error if any directory cannot be read.
     pub fn refresh(&mut self) -> Result<(), StylesheetError> {
         self.inner.refresh().map_err(|e| StylesheetError::Load {
             message: e.to_string(),
@@ -533,7 +265,6 @@ mod tests {
             )
             .unwrap();
 
-        // Inline should win
         let theme = registry.get("test").unwrap();
         let styles = theme.resolve_styles(None);
         assert!(styles.has("from_inline"));
@@ -544,7 +275,6 @@ mod tests {
     fn test_registry_extension_priority() {
         let temp_dir = TempDir::new().unwrap();
 
-        // Create both .yaml and .yml with different content
         fs::write(
             temp_dir.path().join("theme.yaml"),
             r#"
@@ -570,7 +300,6 @@ mod tests {
         let mut registry = StylesheetRegistry::new();
         registry.add_dir(temp_dir.path()).unwrap();
 
-        // .yaml should win over .yml
         let theme = registry.get("theme").unwrap();
         let styles = theme.resolve_styles(None);
         assert!(styles.has("from_yaml"));
@@ -630,12 +359,10 @@ mod tests {
         let mut registry = StylesheetRegistry::new();
         registry.add_dir(temp_dir.path()).unwrap();
 
-        // First read
         let theme1 = registry.get("dynamic").unwrap();
         let styles1 = theme1.resolve_styles(None);
         assert!(styles1.has("version_v1"));
 
-        // Update the file
         fs::write(
             &theme_path,
             r#"
@@ -649,7 +376,6 @@ mod tests {
         )
         .unwrap();
 
-        // Refresh and read again
         registry.refresh().unwrap();
         let theme2 = registry.get("dynamic").unwrap();
         let styles2 = theme2.resolve_styles(None);
@@ -675,25 +401,18 @@ mod tests {
 
         let theme = registry.get("adaptive").unwrap();
 
-        // Check light mode
         let light_styles = theme.resolve_styles(Some(crate::ColorMode::Light));
         assert!(light_styles.has("panel"));
 
-        // Check dark mode
         let dark_styles = theme.resolve_styles(Some(crate::ColorMode::Dark));
         assert!(dark_styles.has("panel"));
     }
-
-    // =========================================================================
-    // from_embedded_entries tests
-    // =========================================================================
 
     #[test]
     fn test_from_embedded_entries_single() {
         let entries: &[(&str, &str)] = &[("test.yaml", "header:\n    fg: cyan\n    bold: true")];
         let registry = StylesheetRegistry::from_embedded_entries(entries).unwrap();
 
-        // Should be accessible by both names
         assert!(registry.contains("test"));
         assert!(registry.contains("test.yaml"));
     }
@@ -706,7 +425,7 @@ mod tests {
         ];
         let registry = StylesheetRegistry::from_embedded_entries(entries).unwrap();
 
-        assert_eq!(registry.len(), 4); // 2 base + 2 with ext
+        assert_eq!(registry.len(), 4);
         assert!(registry.contains("light"));
         assert!(registry.contains("dark"));
     }
@@ -726,34 +445,29 @@ mod tests {
 
     #[test]
     fn test_from_embedded_entries_extension_priority() {
-        // .yaml has higher priority than .yml (index 0 vs index 1)
         let entries: &[(&str, &str)] = &[
             ("config.yml", "from_yml:\n    fg: red"),
             ("config.yaml", "from_yaml:\n    fg: cyan"),
         ];
         let mut registry = StylesheetRegistry::from_embedded_entries(entries).unwrap();
 
-        // Base name should resolve to higher priority (.yaml)
         let theme = registry.get("config").unwrap();
         let styles = theme.resolve_styles(None);
         assert!(styles.has("from_yaml"));
         assert!(!styles.has("from_yml"));
 
-        // Both can still be accessed by full name
         let yml_theme = registry.get("config.yml").unwrap();
         assert!(yml_theme.resolve_styles(None).has("from_yml"));
     }
 
     #[test]
     fn test_from_embedded_entries_extension_priority_reverse_order() {
-        // Same test but with entries in reverse order to ensure sorting works
         let entries: &[(&str, &str)] = &[
             ("config.yaml", "from_yaml:\n    fg: cyan"),
             ("config.yml", "from_yml:\n    fg: red"),
         ];
         let mut registry = StylesheetRegistry::from_embedded_entries(entries).unwrap();
 
-        // Base name should still resolve to higher priority (.yaml)
         let theme = registry.get("config").unwrap();
         let styles = theme.resolve_styles(None);
         assert!(styles.has("from_yaml"));

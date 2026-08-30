@@ -1,16 +1,11 @@
-//! Load a template registry into an engine, once per registry generation.
+//! Copies every template in a [`TemplateRegistry`] into a [`TemplateEngine`],
+//! since direct [`crate::render_request`] callers must not have to
+//! pre-populate the engine themselves.
 //!
-//! [`RenderRequest::registry`](crate::RenderRequest::registry) is the explicit
-//! dependency for named templates and includes. Direct [`crate::render_request`]
-//! callers must not have to pre-populate the engine: this module copies every
-//! registered template into the engine, and refreshes the registry when a
-//! named template is missing so a file that appeared on disk is picked up.
-//!
-//! The copy is cached on (engine identity, registry id, generation) when
-//! the registry has no file sources. File-backed registries reread on every
-//! render (ADR-0019). This is not MiniJinja's `Environment::set_loader`:
-//! that callback is `Send + Sync + 'static`, and the engine is deliberately
-//! `!Send`/`!Sync`.
+//! The copy is cached per (engine identity, registry id, generation) when
+//! the registry has no file sources; file-backed registries reread on every
+//! render so on-disk changes are picked up. A named lookup that misses
+//! refreshes the registry once and retries before giving up.
 
 use std::cell::Cell;
 
@@ -18,16 +13,9 @@ use super::engine::TemplateEngine;
 use super::registry::{RegistryError, ResolvedTemplate, TemplateRegistry, TEMPLATE_EXTENSIONS};
 use crate::error::RenderError;
 
-/// Identity of the last registry generation loaded into an engine on this thread.
-///
-/// Engine addresses are compared, never dereferenced. Registry identity is
-/// [`TemplateRegistry::id`], so a new registry is never a hit just because
-/// it reused a heap address. [`TemplateRegistry::generation`] is a globally
-/// unique revision, so sibling clones that diverge cannot share a key. A
-/// generation change or a different engine is a miss. One slot is
-/// deliberate: a shared engine overwrites same-named templates, so returning
-/// to a previous registry must reload. Pointer reuse of a dropped engine is
-/// rejected by checking that a registered name is already on the engine.
+// The engine's raw address is compared, never dereferenced, so pointer
+// reuse of a dropped engine can't false-positive: `already_loaded` also
+// checks that a registered name is actually present on the engine.
 #[derive(Clone, Copy, PartialEq, Eq)]
 struct LoadCacheKey {
     engine: usize,
@@ -52,8 +40,6 @@ fn cache_key(engine: &dyn TemplateEngine, registry: &TemplateRegistry) -> LoadCa
 }
 
 fn already_loaded(engine: &dyn TemplateEngine, registry: &TemplateRegistry) -> bool {
-    // File-backed entries reread on every render (ADR-0019). The cache is
-    // for inline/embedded registries, where a second add is wasted work.
     if registry.has_file_sources() {
         return false;
     }
@@ -71,13 +57,6 @@ fn remember_loaded(engine: &dyn TemplateEngine, registry: &TemplateRegistry) {
     LAST_LOADED.with(|cell| cell.set(Some(cache_key(engine, registry))));
 }
 
-/// Loads every template in `registry` into `engine`.
-///
-/// Cached for inline/embedded registries: a second call with the same engine,
-/// [`TemplateRegistry::id`], and [`TemplateRegistry::generation`] does not
-/// call [`TemplateEngine::add_template`]. File-backed registries always
-/// re-walk and reread so includes pick up disk changes (ADR-0019). A missing
-/// named lookup still refreshes once (see [`load_named_template`]).
 pub(crate) fn load_registry_templates(
     engine: &mut dyn TemplateEngine,
     registry: &TemplateRegistry,
@@ -99,17 +78,6 @@ pub(crate) fn load_registry_templates(
     Ok(())
 }
 
-/// Loads `name` and every other registered template into `engine`.
-///
-/// [`load_registry_templates`] copies the current registry into the engine
-/// (and errors if a registered file disappeared or became unreadable). This
-/// function then requires the *current* registry to resolve `name`; engine
-/// membership alone is not enough, because a shared engine can still hold a
-/// template from a previous registry. A name that resolves only via extension
-/// fallback is added under the requested name so `render_named` hits. If
-/// `name` is missing, the registry is refreshed once and the load is retried,
-/// so a file-backed template that appeared on disk is picked up. A second
-/// miss produces the [`refresh_error`] diagnostic.
 pub(crate) fn load_named_template(
     engine: &mut dyn TemplateEngine,
     registry: &TemplateRegistry,
@@ -134,11 +102,6 @@ pub(crate) fn load_named_template(
     ))
 }
 
-/// Loads every registered template so inline source can `{% include %}`.
-///
-/// Same cache as [`load_registry_templates`]: the first render against a
-/// registry walks and copies; later renders against the same generation do
-/// not.
 pub(crate) fn load_inline_dependencies(
     engine: &mut dyn TemplateEngine,
     registry: &TemplateRegistry,
@@ -150,13 +113,6 @@ fn is_extension_alias(name: &str) -> bool {
     TEMPLATE_EXTENSIONS.iter().any(|ext| name.ends_with(ext))
 }
 
-/// If `registry` resolves `name`, ensure the engine has that exact name.
-///
-/// Exact registered names were copied by [`load_all`]. Extension fallback
-/// (`show.j2` → `show`) copies the resolved content under the requested name
-/// so `render_named` hits, and overwrites a leftover from a previous registry.
-/// Engine membership alone is never treated as proof that this registry
-/// supplied `name`.
 fn ensure_requested_name(
     engine: &mut dyn TemplateEngine,
     registry: &TemplateRegistry,
@@ -188,8 +144,6 @@ fn add_named(
         .map_err(|error| refresh_error(name, registry, error))
 }
 
-/// A file-backed name that refresh dropped must error (ADR-0019), even when a
-/// framework or inline entry of the same name would still resolve.
 fn disappeared_file_error(
     name: &str,
     original: &TemplateRegistry,
@@ -211,8 +165,6 @@ fn load_all(
     engine: &mut dyn TemplateEngine,
     registry: &TemplateRegistry,
 ) -> Result<(), RenderError> {
-    // Extensionless names first so a compile error names the include key
-    // (`_partial`) rather than the file alias (`_partial.jinja`).
     let mut names: Vec<String> = registry.names().map(str::to_string).collect();
     names.sort_by_key(|name| is_extension_alias(name));
     for name in &names {

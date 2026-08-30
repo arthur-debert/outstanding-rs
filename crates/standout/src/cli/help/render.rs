@@ -1,10 +1,3 @@
-//! Help rendering functions.
-//!
-//! Standalone [`render_help`] / [`render_help_with_topics`] build a
-//! [`crate::RenderRequest`] with [`crate::TemplateRef::Inline`] (tag-checked
-//! at construction) and call [`crate::render_request`]. Framework help on
-//! `App` uses the named registry template registered at `build()`.
-
 use std::collections::HashMap;
 use std::rc::Rc;
 
@@ -22,14 +15,8 @@ use crate::{
 use super::config::{default_help_theme, HelpConfig};
 use super::data::{extract_help_data, extract_help_data_with_topics};
 
-/// Default help template source, used as [`TemplateRef::Inline`] when no
-/// [`HelpConfig::template`] is set and no named registry entry is available.
 pub(crate) const DEFAULT_HELP_TEMPLATE: &str = include_str!("template.txt");
 
-/// ADR-0029: structured `--output` still prints human help/topics.
-///
-/// Glue maps json/yaml/csv/xml to [`OutputMode::Auto`] on the request so the
-/// leaf has no help flag and a TTY still looks like help (Auto, not Text).
 pub(crate) fn human_help_format(mode: OutputMode) -> OutputMode {
     if mode.is_structured() {
         OutputMode::Auto
@@ -38,12 +25,6 @@ pub(crate) fn human_help_format(mode: OutputMode) -> OutputMode {
     }
 }
 
-/// Resolves the theme a standalone help render styles with.
-///
-/// [`default_help_theme`] is the base and the configured theme overlays it —
-/// per style name, a configured entry wins. `App` does not use this: `build()`
-/// already merged the help vocabulary into the one application theme
-/// (ADR-0020).
 fn resolve_help_theme(configured: Option<Theme>) -> Theme {
     match configured {
         Some(theme) => default_help_theme().merge(theme),
@@ -51,8 +32,6 @@ fn resolve_help_theme(configured: Option<Theme>) -> Theme {
     }
 }
 
-/// Turns a help/topic template string into [`TemplateRef::Inline`] after the
-/// ADR-0020 tag check that `build()` runs on named registry templates.
 pub(crate) fn inline_template_ref(
     source: &str,
     theme: &Theme,
@@ -62,14 +41,6 @@ pub(crate) fn inline_template_ref(
     Ok(TemplateRef::Inline(source.to_string()))
 }
 
-/// Named registry template when registered; otherwise the default source as
-/// [`TemplateRef::Inline`] with tag validation.
-///
-/// Registration is checked with [`crate::TemplateRegistry::get`] (resolution
-/// only, no disk read). [`crate::RegistryError::NotFound`] and a missing
-/// registry fall back to the inline default. Any other registry error is
-/// propagated so a broken file override is not silently replaced by the
-/// framework default — the request path still reads through the registry.
 pub(crate) fn named_or_inline_template(
     registry: Option<&crate::TemplateRegistry>,
     named: &str,
@@ -88,10 +59,6 @@ pub(crate) fn named_or_inline_template(
     }
 }
 
-/// Validates literal style tags in template source against `theme`.
-///
-/// Runtime-constructed tag names are out of reach here, as they are at
-/// `build()`; the render-time check still degrades those to unstyled text.
 pub(crate) fn validate_inline_template_tags(
     name: &str,
     source: &str,
@@ -141,10 +108,6 @@ fn unique_tag_names<'a>(
     names
 }
 
-/// Builds a [`RenderRequest`] and calls [`render_request`].
-///
-/// `engine` is the app engine from `build()` on the framework path, or
-/// [`default_template_engine`] for standalone `render_help` / `render_topic`.
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn render_via_request<T: Serialize>(
     data: &T,
@@ -174,13 +137,6 @@ pub(crate) fn render_via_request<T: Serialize>(
     render_request(&request)
 }
 
-/// Renders the help for a clap command using standout.
-///
-/// Standalone: no `App` is required. The template string (configured or the
-/// framework default) becomes [`TemplateRef::Inline`] with tag validation at
-/// request construction, and the request uses [`default_template_engine`].
-/// Destination facts are detected once and reused for extraction and the
-/// request, so name-column widths match the target the renderer sees.
 pub fn render_help(cmd: &Command, config: Option<HelpConfig>) -> Result<String, RenderError> {
     let config = config.unwrap_or_default();
     let theme = resolve_help_theme(config.theme);
@@ -208,11 +164,6 @@ pub fn render_help(cmd: &Command, config: Option<HelpConfig>) -> Result<String, 
     )
 }
 
-/// Renders the help for a clap command with topics in a "Learn More" section.
-///
-/// Same standalone contract as [`render_help`]: `TemplateRef::Inline`, tag
-/// validation at construction, [`default_template_engine`]. Destination facts
-/// are detected once and reused for extraction and the request.
 pub fn render_help_with_topics(
     cmd: &Command,
     registry: &TopicRegistry,

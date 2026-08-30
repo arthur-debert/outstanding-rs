@@ -1,41 +1,14 @@
-//! Table row formatter.
+//! `TabularFormatter` formats data rows to a resolved [`TabularSpec`]/
+//! [`FlatDataSpec`], one row at a time so callers can interleave other output
+//! between rows. It also implements `minijinja::value::Object`, so a
+//! formatter injected into template context exposes `row(values)` and
+//! `num_columns` to templates directly (`{{ table.row([a, b, c]) }}`).
 //!
-//! This module provides the `TabularFormatter` type that formats data rows
-//! according to a table specification, producing aligned output.
-//!
-//! # Template Integration
-//!
-//! `TabularFormatter` implements `minijinja::value::Object`, allowing it to be
-//! used in templates when injected via context:
-//!
-//! ```jinja
-//! {% for item in items %}
-//! {{ table.row([item.name, item.value, item.status]) }}
-//! {% endfor %}
-//! ```
-//!
-//! Available methods in templates:
-//! - `row(values)`: Format a row with the given values (array)
-//! - `num_columns`: Get the number of columns
-//!
-//! # Example with Context Injection
-//!
-//! ```rust,ignore
-//! use standout_render::tabular::{TabularSpec, Column, Width, TabularFormatter};
-//! use standout_render::context::ContextRegistry;
-//!
-//! let spec = TabularSpec::builder()
-//!     .column(Column::new(Width::Fixed(10)))
-//!     .column(Column::new(Width::Fill))
-//!     .separator("  ")
-//!     .build();
-//!
-//! let mut registry = ContextRegistry::new();
-//! registry.add_provider("table", |ctx| {
-//!     let formatter = TabularFormatter::new(&spec, ctx.terminal_width.unwrap_or(80));
-//!     minijinja::Value::from_object(formatter)
-//! });
-//! ```
+//! Columns may carry sub-columns (stacked sub-cells within one column) or
+//! wrap onto multiple lines; anchored columns (left/right) get a computed gap
+//! between them rather than the fixed separator. Cell values may include
+//! BBCode-style style tags, which are kept balanced through truncation,
+//! padding, and wrapping rather than counted toward visible width.
 
 use minijinja::value::{Enumerator, Object, Value};
 use serde::Serialize;
@@ -54,61 +27,22 @@ use super::util::{
 use crate::template::stringify;
 use crate::AmbiguousWidth;
 
-/// Formats table rows according to a specification.
-///
-/// The formatter holds resolved column widths and produces formatted rows.
-/// It supports row-by-row formatting for interleaved output patterns.
-///
-/// # Example
-///
-/// ```rust
-/// use standout_render::tabular::{FlatDataSpec, Column, Width, TabularFormatter};
-///
-/// let spec = FlatDataSpec::builder()
-///     .column(Column::new(Width::Fixed(8)))
-///     .column(Column::new(Width::Fill))
-///     .column(Column::new(Width::Fixed(10)))
-///     .separator("  ")
-///     .build();
-///
-/// let formatter = TabularFormatter::new(&spec, 80);
-///
-/// // Format rows one at a time (enables interleaved output)
-/// let row1 = formatter.format_row(&["abc123", "path/to/file.rs", "pending"]);
-/// println!("{}", row1);
-/// println!("  └─ Note: needs review");  // Interleaved content
-/// let row2 = formatter.format_row(&["def456", "src/lib.rs", "done"]);
-/// println!("{}", row2);
-/// ```
 #[derive(Clone, Debug)]
 pub struct TabularFormatter {
-    /// Column specifications.
     columns: Vec<Column>,
-    /// Resolved widths for each column.
     widths: Vec<usize>,
-    /// Column separator string.
     separator: String,
-    /// Row prefix string.
     prefix: String,
-    /// Row suffix string.
     suffix: String,
-    /// Total target width for anchor calculations.
     total_width: usize,
     ambiguous_width: AmbiguousWidth,
 }
 
 impl TabularFormatter {
-    /// Create a new formatter by resolving widths from the spec.
-    ///
-    /// # Arguments
-    ///
-    /// * `spec` - Table specification
-    /// * `total_width` - Total available width including decorations
     pub fn new(spec: &FlatDataSpec, total_width: usize) -> Self {
         Self::with_ambiguous_width(spec, total_width, AmbiguousWidth::Narrow)
     }
 
-    /// Creates a formatter with an explicit ambiguous-width policy.
     pub fn with_ambiguous_width(
         spec: &FlatDataSpec,
         total_width: usize,
@@ -118,18 +52,13 @@ impl TabularFormatter {
         Self::from_resolved_with_width_and_policy(spec, resolved, total_width, policy)
     }
 
-    /// Create a formatter with pre-resolved widths.
-    ///
-    /// Use this when you've already calculated widths (e.g., from data).
     pub fn from_resolved(spec: &FlatDataSpec, resolved: ResolvedWidths) -> Self {
-        // Calculate total width from resolved widths + overhead
         let content_width: usize = resolved.widths.iter().sum();
         let overhead = spec.decorations.overhead(resolved.widths.len());
         let total_width = content_width + overhead;
         Self::from_resolved_with_width(spec, resolved, total_width)
     }
 
-    /// Create a formatter with pre-resolved widths and explicit total width.
     pub fn from_resolved_with_width(
         spec: &FlatDataSpec,
         resolved: ResolvedWidths,
@@ -143,7 +72,6 @@ impl TabularFormatter {
         )
     }
 
-    /// Creates a formatter from resolved widths with an explicit policy.
     pub fn from_resolved_with_width_and_policy(
         spec: &FlatDataSpec,
         resolved: ResolvedWidths,
@@ -161,14 +89,10 @@ impl TabularFormatter {
         }
     }
 
-    /// Create a formatter from explicit widths and columns.
-    ///
-    /// This is useful for direct construction without a full FlatDataSpec.
     pub fn with_widths(columns: Vec<Column>, widths: Vec<usize>) -> Self {
         Self::with_widths_and_ambiguous_width(columns, widths, AmbiguousWidth::Narrow)
     }
 
-    /// Creates a formatter from explicit widths with an explicit policy.
     pub fn with_widths_and_ambiguous_width(
         columns: Vec<Column>,
         widths: Vec<usize>,
@@ -186,32 +110,10 @@ impl TabularFormatter {
         }
     }
 
-    /// Create a formatter from a type that implements `Tabular`.
-    ///
-    /// This constructor uses the `TabularSpec` generated by the `#[derive(Tabular)]`
-    /// macro to configure the formatter.
-    ///
-    /// # Example
-    ///
-    /// ```rust,ignore
-    /// use standout_render::tabular::{Tabular, TabularFormatter};
-    /// use serde::Serialize;
-    ///
-    /// #[derive(Serialize, Tabular)]
-    /// struct Task {
-    ///     #[col(width = 8)]
-    ///     id: String,
-    ///     #[col(width = "fill")]
-    ///     title: String,
-    /// }
-    ///
-    /// let formatter = TabularFormatter::from_type::<Task>(80);
-    /// ```
     pub fn from_type<T: super::traits::Tabular>(total_width: usize) -> Self {
         Self::from_type_with_ambiguous_width::<T>(total_width, AmbiguousWidth::Narrow)
     }
 
-    /// Creates a formatter from a `Tabular` type with an explicit policy.
     pub fn from_type_with_ambiguous_width<T: super::traits::Tabular>(
         total_width: usize,
         policy: AmbiguousWidth,
@@ -220,57 +122,27 @@ impl TabularFormatter {
         Self::with_ambiguous_width(&spec, total_width, policy)
     }
 
-    /// Set the total target width (for anchor gap calculations).
     pub fn total_width(mut self, width: usize) -> Self {
         self.total_width = width;
         self
     }
 
-    /// Set the column separator.
     pub fn separator(mut self, sep: impl Into<String>) -> Self {
         self.separator = sep.into();
         self
     }
 
-    /// Set the row prefix.
     pub fn prefix(mut self, prefix: impl Into<String>) -> Self {
         self.prefix = prefix.into();
         self
     }
 
-    /// Set the row suffix.
     pub fn suffix(mut self, suffix: impl Into<String>) -> Self {
         self.suffix = suffix.into();
         self
     }
 
-    /// Format a single row of values.
-    ///
-    /// Values are truncated/padded according to the column specifications.
-    /// Missing values use the column's null representation.
-    ///
-    /// # Arguments
-    ///
-    /// * `values` - Slice of cell values (strings)
-    ///
-    /// # Example
-    ///
-    /// ```rust
-    /// use standout_render::tabular::{FlatDataSpec, Column, Width, TabularFormatter};
-    ///
-    /// let spec = FlatDataSpec::builder()
-    ///     .column(Column::new(Width::Fixed(10)))
-    ///     .column(Column::new(Width::Fixed(8)))
-    ///     .separator(" | ")
-    ///     .build();
-    ///
-    /// let formatter = TabularFormatter::new(&spec, 80);
-    /// let output = formatter.format_row(&["Hello", "World"]);
-    /// assert_eq!(output, "Hello      | World   ");
-    /// ```
     pub fn format_row<S: AsRef<str>>(&self, values: &[S]) -> String {
-        // If any column has sub-columns, delegate to format_row_cells
-        // wrapping plain strings as CellValue::Single
         if self.columns.iter().any(|c| c.sub_columns.is_some()) {
             let cell_values: Vec<CellValue<'_>> = values
                 .iter()
@@ -282,14 +154,11 @@ impl TabularFormatter {
         let mut result = String::new();
         result.push_str(&self.prefix);
 
-        // Find anchor transition point and calculate gap
         let (anchor_gap, anchor_transition) = self.calculate_anchor_gap();
 
         for (i, col) in self.columns.iter().enumerate() {
-            // Insert separator (or anchor gap at transition point)
             if i > 0 {
                 if anchor_gap > 0 && i == anchor_transition {
-                    // Insert anchor gap instead of separator
                     result.push_str(&" ".repeat(anchor_gap));
                 } else {
                     result.push_str(&self.separator);
@@ -307,38 +176,6 @@ impl TabularFormatter {
         result
     }
 
-    /// Format a row with cell values that may include sub-column arrays.
-    ///
-    /// For columns with sub-columns, pass `CellValue::Sub(vec![...])`.
-    /// For regular columns, pass `CellValue::Single("...")`.
-    ///
-    /// # Example
-    ///
-    /// ```rust
-    /// use standout_render::tabular::{
-    ///     FlatDataSpec, Column, Width, TabularFormatter, CellValue,
-    ///     SubColumns, SubCol,
-    /// };
-    ///
-    /// let sub_cols = SubColumns::new(
-    ///     vec![SubCol::fill(), SubCol::bounded(0, 20).right()],
-    ///     " ",
-    /// ).unwrap();
-    ///
-    /// let spec = FlatDataSpec::builder()
-    ///     .column(Column::new(Width::Fixed(4)))
-    ///     .column(Column::new(Width::Fill).sub_columns(sub_cols))
-    ///     .column(Column::new(Width::Fixed(6)).right())
-    ///     .separator("  ")
-    ///     .build();
-    ///
-    /// let formatter = TabularFormatter::new(&spec, 60);
-    /// let row = formatter.format_row_cells(&[
-    ///     CellValue::Single("1."),
-    ///     CellValue::Sub(vec!["Gallery Navigation", "[feature]"]),
-    ///     CellValue::Single("4d"),
-    /// ]);
-    /// ```
     pub fn format_row_cells(&self, values: &[CellValue<'_>]) -> String {
         let mut result = String::new();
         result.push_str(&self.prefix);
@@ -357,7 +194,6 @@ impl TabularFormatter {
             let width = self.widths.get(i).copied().unwrap_or(0);
 
             if let Some(sub_cols) = &col.sub_columns {
-                // Sub-column formatting
                 let sub_values: Vec<&str> = match values.get(i) {
                     Some(CellValue::Sub(v)) => v.clone(),
                     Some(CellValue::Single(s)) => vec![s],
@@ -371,7 +207,6 @@ impl TabularFormatter {
                 );
                 result.push_str(&formatted);
             } else {
-                // Normal cell formatting
                 let value = match values.get(i) {
                     Some(CellValue::Single(s)) => *s,
                     Some(CellValue::Sub(v)) => v.first().copied().unwrap_or(&col.null_repr),
@@ -386,25 +221,17 @@ impl TabularFormatter {
         result
     }
 
-    /// Calculate the anchor gap size and transition point.
-    ///
-    /// Returns (gap_size, transition_index) where:
-    /// - gap_size is the number of spaces to insert between left and right groups
-    /// - transition_index is the column index where right-anchored columns start
     fn calculate_anchor_gap(&self) -> (usize, usize) {
-        // Find first right-anchored column
         let transition = self
             .columns
             .iter()
             .position(|c| c.anchor == Anchor::Right)
             .unwrap_or(self.columns.len());
 
-        // If no right-anchored columns or all columns are right-anchored, no gap
         if transition == 0 || transition == self.columns.len() {
             return (0, transition);
         }
 
-        // Calculate current content width
         let prefix_width = visible_width_with_policy(&self.prefix, self.ambiguous_width);
         let suffix_width = visible_width_with_policy(&self.suffix, self.ambiguous_width);
         let sep_width = visible_width_with_policy(&self.separator, self.ambiguous_width);
@@ -412,47 +239,19 @@ impl TabularFormatter {
         let num_seps = self.columns.len().saturating_sub(1);
         let current_total = prefix_width + content_width + (num_seps * sep_width) + suffix_width;
 
-        // Calculate gap - the extra space available to push right columns to the right
         if current_total >= self.total_width {
-            // No room for a gap
             (0, transition)
         } else {
-            // Gap = extra space, minus one separator (which we replace with the gap)
             let extra = self.total_width - current_total;
-            // The gap replaces one separator, so add sep_width back to the gap
             (extra + sep_width, transition)
         }
     }
 
-    /// Format multiple rows.
-    ///
-    /// Returns a vector of formatted row strings.
     pub fn format_rows<S: AsRef<str>>(&self, rows: &[Vec<S>]) -> Vec<String> {
         rows.iter().map(|row| self.format_row(row)).collect()
     }
 
-    /// Format a row that may produce multiple output lines (due to wrapping).
-    ///
-    /// If any cell wraps to multiple lines, the output contains multiple lines
-    /// with proper vertical alignment. Cells are top-aligned.
-    ///
-    /// # Example
-    ///
-    /// ```rust
-    /// use standout_render::tabular::{FlatDataSpec, Column, Width, Overflow, TabularFormatter};
-    ///
-    /// let spec = FlatDataSpec::builder()
-    ///     .column(Column::new(Width::Fixed(10)).wrap())
-    ///     .column(Column::new(Width::Fixed(8)))
-    ///     .separator("  ")
-    ///     .build();
-    ///
-    /// let formatter = TabularFormatter::new(&spec, 80);
-    /// let lines = formatter.format_row_lines(&["This is a long text", "Short"]);
-    /// // Returns multiple lines if the first column wraps
-    /// ```
     pub fn format_row_lines<S: AsRef<str>>(&self, values: &[S]) -> Vec<String> {
-        // Format each cell
         let cell_outputs: Vec<CellOutput> = self
             .columns
             .iter()
@@ -464,19 +263,16 @@ impl TabularFormatter {
             })
             .collect();
 
-        // Find max lines needed
         let max_lines = cell_outputs
             .iter()
             .map(|c| c.line_count())
             .max()
             .unwrap_or(1);
 
-        // If only single line, use simple path
         if max_lines == 1 {
             return vec![self.format_row(values)];
         }
 
-        // Build output lines with anchor support
         let (anchor_gap, anchor_transition) = self.calculate_anchor_gap();
         let mut output = Vec::with_capacity(max_lines);
 
@@ -505,32 +301,26 @@ impl TabularFormatter {
         output
     }
 
-    /// Get the resolved width for a column by index.
     pub fn column_width(&self, index: usize) -> Option<usize> {
         self.widths.get(index).copied()
     }
 
-    /// Get all resolved column widths.
     pub fn widths(&self) -> &[usize] {
         &self.widths
     }
 
-    /// Get the number of columns.
     pub fn num_columns(&self) -> usize {
         self.columns.len()
     }
 
-    /// Returns `true` if any column has sub-columns defined.
     pub fn has_sub_columns(&self) -> bool {
         self.columns.iter().any(|c| c.sub_columns.is_some())
     }
 
-    /// Get the column specifications.
     pub fn columns(&self) -> &[Column] {
         &self.columns
     }
 
-    /// Returns the formatter's ambiguous-width policy.
     pub fn ambiguous_width(&self) -> AmbiguousWidth {
         self.ambiguous_width
     }
@@ -565,15 +355,6 @@ impl TabularFormatter {
         self.total_width = self.total_width.min(maximum);
     }
 
-    /// Extract headers from column specifications.
-    ///
-    /// For each column, uses (in order of preference):
-    /// 1. The `header` field if set
-    /// 2. The `key` field if set
-    /// 3. The `name` field if set
-    /// 4. Empty string
-    ///
-    /// This is useful for `Table::header_from_columns()`.
     pub fn extract_headers(&self) -> Vec<String> {
         self.columns
             .iter()
@@ -588,105 +369,29 @@ impl TabularFormatter {
             .collect()
     }
 
-    /// Format a row by extracting values from a serializable struct.
-    ///
-    /// This method extracts field values from the struct based on each column's
-    /// `key` or `name` field. Supports dot notation for nested field access
-    /// (e.g., "user.email").
-    ///
-    /// # Arguments
-    ///
-    /// * `value` - Any serializable value to extract fields from
-    ///
-    /// # Example
-    ///
-    /// ```rust
-    /// use standout_render::tabular::{FlatDataSpec, Column, Width, TabularFormatter};
-    /// use serde::Serialize;
-    ///
-    /// #[derive(Serialize)]
-    /// struct Record {
-    ///     name: String,
-    ///     status: String,
-    ///     count: u32,
-    /// }
-    ///
-    /// let spec = FlatDataSpec::builder()
-    ///     .column(Column::new(Width::Fixed(20)).key("name"))
-    ///     .column(Column::new(Width::Fixed(10)).key("status"))
-    ///     .column(Column::new(Width::Fixed(5)).key("count"))
-    ///     .separator("  ")
-    ///     .build();
-    ///
-    /// let formatter = TabularFormatter::new(&spec, 80);
-    /// let record = Record {
-    ///     name: "example".to_string(),
-    ///     status: "active".to_string(),
-    ///     count: 42,
-    /// };
-    ///
-    /// let row = formatter.row_from(&record);
-    /// assert!(row.contains("example"));
-    /// assert!(row.contains("active"));
-    /// assert!(row.contains("42"));
-    /// ```
     pub fn row_from<T: Serialize>(&self, value: &T) -> String {
         let values = self.extract_values(value);
         let string_refs: Vec<&str> = values.iter().map(|s| s.as_str()).collect();
         self.format_row(&string_refs)
     }
 
-    /// Format a row with potential multi-line output from a serializable struct.
-    ///
-    /// Same as `row_from` but handles word-wrap columns that may produce
-    /// multiple output lines.
     pub fn row_lines_from<T: Serialize>(&self, value: &T) -> Vec<String> {
         let values = self.extract_values(value);
         let string_refs: Vec<&str> = values.iter().map(|s| s.as_str()).collect();
         self.format_row_lines(&string_refs)
     }
 
-    /// Format a row using the `TabularRow` trait.
-    ///
-    /// This method uses the optimized `to_row()` implementation generated by
-    /// `#[derive(TabularRow)]`, avoiding JSON serialization overhead.
-    ///
-    /// # Example
-    ///
-    /// ```rust,ignore
-    /// use standout_render::tabular::{TabularRow, TabularFormatter};
-    ///
-    /// #[derive(TabularRow)]
-    /// struct Task {
-    ///     id: String,
-    ///     title: String,
-    /// }
-    ///
-    /// let task = Task {
-    ///     id: "TSK-001".to_string(),
-    ///     title: "Implement feature".to_string(),
-    /// };
-    ///
-    /// let formatter = TabularFormatter::from_type::<Task>(80);
-    /// let row = formatter.row_from_trait(&task);
-    /// ```
     pub fn row_from_trait<T: TabularRow>(&self, value: &T) -> String {
         let values = value.to_row();
         self.format_row(&values)
     }
 
-    /// Format a row with potential multi-line output using the `TabularRow` trait.
-    ///
-    /// Same as `row_from_trait` but handles word-wrap columns that may produce
-    /// multiple output lines.
     pub fn row_lines_from_trait<T: TabularRow>(&self, value: &T) -> Vec<String> {
         let values = value.to_row();
         self.format_row_lines(&values)
     }
 
-    /// Extract values from a serializable struct based on column keys.
     fn extract_values<T: Serialize>(&self, value: &T) -> Vec<String> {
-        // Convert to JSON for field access
         let json = match serde_json::to_value(value) {
             Ok(v) => v,
             Err(_) => return vec![String::new(); self.columns.len()],
@@ -695,7 +400,6 @@ impl TabularFormatter {
         self.columns
             .iter()
             .map(|col| {
-                // Use key first, fall back to name
                 let key = col.key.as_ref().or(col.name.as_ref());
 
                 match key {
@@ -707,9 +411,6 @@ impl TabularFormatter {
     }
 }
 
-/// Extract a field value from JSON using dot notation.
-///
-/// Supports paths like "user.email" or "items.0.name".
 fn extract_field(value: &JsonValue, path: &str) -> String {
     let mut current = value;
 
@@ -722,7 +423,6 @@ fn extract_field(value: &JsonValue, path: &str) -> String {
                 };
             }
             JsonValue::Array(arr) => {
-                // Try to parse as index
                 if let Ok(idx) = part.parse::<usize>() {
                     current = match arr.get(idx) {
                         Some(v) => v,
@@ -736,20 +436,14 @@ fn extract_field(value: &JsonValue, path: &str) -> String {
         }
     }
 
-    // Convert final value to string
     match current {
         JsonValue::String(s) => s.clone(),
         JsonValue::Number(n) => n.to_string(),
         JsonValue::Bool(b) => b.to_string(),
         JsonValue::Null => String::new(),
-        // For arrays/objects, use JSON representation
         _ => current.to_string(),
     }
 }
-
-// ============================================================================
-// MiniJinja Object Implementation
-// ============================================================================
 
 impl Object for TabularFormatter {
     fn get_value(self: &Arc<Self>, key: &Value) -> Option<Value> {
@@ -776,7 +470,6 @@ impl Object for TabularFormatter {
     ) -> Result<Value, minijinja::Error> {
         match name {
             "row" => {
-                // row([value1, value2, ...]) - format a row
                 if args.is_empty() {
                     return Err(minijinja::Error::new(
                         minijinja::ErrorKind::MissingArgument,
@@ -788,7 +481,6 @@ impl Object for TabularFormatter {
                 let has_sub_columns = self.columns.iter().any(|c| c.sub_columns.is_some());
 
                 if has_sub_columns {
-                    // Sub-column aware path: detect nested arrays
                     let outer_iter = match values_arg.try_iter() {
                         Ok(iter) => iter,
                         Err(_) => {
@@ -798,7 +490,6 @@ impl Object for TabularFormatter {
                         }
                     };
 
-                    // Collect all values, detecting nested arrays for sub-column cells
                     let mut owned_values: Vec<OwnedCellValue> = Vec::new();
                     for (i, v) in outer_iter.enumerate() {
                         let is_sub_col = self
@@ -821,7 +512,6 @@ impl Object for TabularFormatter {
                         }
                     }
 
-                    // Build CellValue references from owned data
                     let cell_values: Vec<CellValue<'_>> = owned_values
                         .iter()
                         .map(|ov| match ov {
@@ -835,7 +525,6 @@ impl Object for TabularFormatter {
                     let formatted = self.format_row_cells(&cell_values);
                     Ok(Value::from(formatted))
                 } else {
-                    // Fast path: no sub-columns, flatten all values to strings
                     let values: Vec<String> = match values_arg.try_iter() {
                         Ok(iter) => iter.map(|v| stringify(&v).into_owned()).collect(),
                         Err(_) => vec![stringify(values_arg).into_owned()],
@@ -856,7 +545,6 @@ impl Object for TabularFormatter {
                 Ok(Value::from(self.row_from(&args[0])))
             }
             "column_width" => {
-                // column_width(index) - get width of a specific column
                 if args.is_empty() {
                     return Err(minijinja::Error::new(
                         minijinja::ErrorKind::MissingArgument,
@@ -884,7 +572,6 @@ impl Object for TabularFormatter {
     }
 }
 
-/// Format a single cell value according to column spec.
 #[cfg(test)]
 fn format_cell(value: &str, width: usize, col: &Column) -> String {
     format_cell_with_policy(value, width, col, AmbiguousWidth::Narrow)
@@ -896,7 +583,6 @@ fn format_cell_with_policy(
     col: &Column,
     policy: AmbiguousWidth,
 ) -> String {
-    // If style_from_value is set, use the value as the style
     let style_override = if col.style_from_value {
         Some(value)
     } else {
@@ -906,11 +592,6 @@ fn format_cell_with_policy(
     format_value_with_policy(value, width, col.align, &col.overflow, style, policy)
 }
 
-/// Format a value with the given width, alignment, overflow, and optional style.
-///
-/// This is the core formatting function used by both regular cells and sub-cells.
-/// It correctly handles semantic style tags in `value`: tag bytes have zero
-/// width, and truncation closes and reopens tags around retained content.
 #[cfg(test)]
 fn format_value(
     value: &str,
@@ -937,7 +618,6 @@ fn format_value_with_policy(
     let current_width = visible_width_with_policy(value, policy);
 
     if current_width > width {
-        // Content overflows — truncate visible content while preserving tags.
         let truncated = match overflow {
             Overflow::Truncate { at, marker } => match at {
                 TruncateAt::End => truncate_visible_end_with_policy(value, width, marker, policy),
@@ -950,13 +630,9 @@ fn format_value_with_policy(
             },
             Overflow::Clip => truncate_visible_end_with_policy(value, width, "", policy),
             Overflow::Expand => {
-                // Don't truncate — pad is also skipped below
                 return apply_style(value, style);
             }
-            Overflow::Wrap { .. } => {
-                // Single-line fallback; multi-line wrapping handled by format_cell_lines
-                truncate_visible_end_with_policy(value, width, "…", policy)
-            }
+            Overflow::Wrap { .. } => truncate_visible_end_with_policy(value, width, "…", policy),
         };
 
         let padded = pad_visible_value(&truncated, width, align, policy);
@@ -984,19 +660,9 @@ fn pad_visible_value(value: &str, width: usize, align: Align, policy: AmbiguousW
     }
 }
 
-// ============================================================================
-// Sub-Column Support
-// ============================================================================
-
-/// A cell value that may be a single string or a list of sub-values.
-///
-/// Used with [`TabularFormatter::format_row_cells`] for columns that have
-/// sub-columns. Regular columns use `Single`, columns with sub-columns use `Sub`.
 #[derive(Clone, Debug)]
 pub enum CellValue<'a> {
-    /// Single string value for a regular column.
     Single(&'a str),
-    /// Multiple sub-values for a column with sub-columns.
     Sub(Vec<&'a str>),
 }
 
@@ -1006,21 +672,11 @@ impl<'a> From<&'a str> for CellValue<'a> {
     }
 }
 
-/// Owned version of CellValue for use in MiniJinja Object methods
-/// where we need to own the string data before borrowing into CellValue.
 pub(crate) enum OwnedCellValue {
     Single(String),
     Sub(Vec<String>),
 }
 
-/// Resolve sub-column widths for a single row.
-///
-/// Non-grower sub-columns get their content width clamped to bounds.
-/// The grower gets all remaining space. Separators between zero-width
-/// sub-columns are skipped.
-///
-/// Returns a Vec of resolved widths such that:
-/// `sum(widths) + separator_overhead == parent_width`
 #[cfg(test)]
 fn resolve_sub_widths(sub_cols: &SubColumns, values: &[&str], parent_width: usize) -> Vec<usize> {
     resolve_sub_widths_with_policy(sub_cols, values, parent_width, AmbiguousWidth::Narrow)
@@ -1037,7 +693,6 @@ fn resolve_sub_widths_with_policy(
     let mut widths = vec![0usize; n];
     let mut grower_index = 0;
 
-    // Pass 1: resolve non-grower widths from content
     for (i, sub_col) in sub_cols.columns.iter().enumerate() {
         match &sub_col.width {
             Width::Fill => {
@@ -1059,10 +714,8 @@ fn resolve_sub_widths_with_policy(
         }
     }
 
-    // Pass 2: compute separator overhead
-    // The grower is always "visible" for separator purposes—even at zero width it
-    // participates in the join so separators flanking it are emitted.  Only truly
-    // zero-width *non-grower* columns are elided.
+    // The grower always counts toward the separator overhead, even at zero
+    // width; only a zero-width non-grower column is elided from the join.
     let visible_non_growers = widths
         .iter()
         .enumerate()
@@ -1072,7 +725,6 @@ fn resolve_sub_widths_with_policy(
     let sep_overhead = visible_count.saturating_sub(1) * sep_width;
     let available = parent_width.saturating_sub(sep_overhead);
 
-    // Pass 3: clamp non-grower total if it exceeds available content budget
     let non_grower_total: usize = widths
         .iter()
         .enumerate()
@@ -1082,7 +734,6 @@ fn resolve_sub_widths_with_policy(
 
     if non_grower_total > available {
         let mut excess = non_grower_total - available;
-        // Shrink from the last non-grower backwards
         for i in (0..n).rev() {
             if i == grower_index || widths[i] == 0 || excess == 0 {
                 continue;
@@ -1093,7 +744,6 @@ fn resolve_sub_widths_with_policy(
         }
     }
 
-    // Pass 4: grower absorbs remaining space
     let clamped_total: usize = widths
         .iter()
         .enumerate()
@@ -1105,13 +755,6 @@ fn resolve_sub_widths_with_policy(
     widths
 }
 
-/// Format a cell that has sub-columns, producing a string of exactly
-/// `parent_width` display columns.
-///
-/// Sub-column widths are resolved per-row from actual content. The grower
-/// sub-column absorbs remaining space. Zero-width *non-grower* columns are
-/// skipped entirely (no separator emitted). The grower is always present in
-/// the output—even at zero width—so separator counts stay correct.
 #[cfg(test)]
 fn format_sub_cells(sub_cols: &SubColumns, values: &[&str], parent_width: usize) -> String {
     format_sub_cells_with_policy(sub_cols, values, parent_width, AmbiguousWidth::Narrow)
@@ -1137,12 +780,10 @@ fn format_sub_cells_with_policy(
     let mut parts: Vec<String> = Vec::new();
 
     for (i, (sub_col, &width)) in sub_cols.columns.iter().zip(widths.iter()).enumerate() {
-        // Skip zero-width non-grower columns (they produce no output and no separator)
         if width == 0 && i != grower_index {
             continue;
         }
         if width == 0 {
-            // Grower at zero width: emit empty string so separators flanking it are correct
             parts.push(String::new());
         } else {
             let value = values.get(i).copied().unwrap_or(&sub_col.null_repr);
@@ -1160,22 +801,17 @@ fn format_sub_cells_with_policy(
     parts.join(sep)
 }
 
-/// Result of formatting a cell, which may be single or multi-line.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum CellOutput {
-    /// Single line of formatted text.
     Single(String),
-    /// Multiple lines (from word-wrap).
     Multi(Vec<String>),
 }
 
 impl CellOutput {
-    /// Returns true if this is a single-line output.
     pub fn is_single(&self) -> bool {
         matches!(self, CellOutput::Single(_))
     }
 
-    /// Returns the number of lines.
     pub fn line_count(&self) -> usize {
         match self {
             CellOutput::Single(_) => 1,
@@ -1183,15 +819,10 @@ impl CellOutput {
         }
     }
 
-    /// Get a specific line, padding to width if needed.
-    ///
-    /// Content may contain BBCode from `apply_style`, so we use `visible_width`
-    /// for measurement and manual padding to avoid miscounting tags.
     pub fn line(&self, index: usize, width: usize, align: Align) -> String {
         self.line_with_policy(index, width, align, AmbiguousWidth::Narrow)
     }
 
-    /// Gets a line using an explicit ambiguous-width policy.
     pub fn line_with_policy(
         &self,
         index: usize,
@@ -1226,7 +857,6 @@ impl CellOutput {
         }
     }
 
-    /// Convert to a single string (first line for Multi).
     pub fn to_single(&self) -> String {
         match self {
             CellOutput::Single(s) => s.clone(),
@@ -1235,7 +865,6 @@ impl CellOutput {
     }
 }
 
-/// Wrap content with style tags if a style is specified.
 fn apply_style(content: &str, style: Option<&str>) -> String {
     match style {
         Some(s) if !s.is_empty() => format!("[{}]{}[/{}]", s, content, s),
@@ -1243,7 +872,6 @@ fn apply_style(content: &str, style: Option<&str>) -> String {
     }
 }
 
-/// Format a cell with potential multi-line output (for Wrap mode).
 #[cfg(test)]
 fn format_cell_lines(value: &str, width: usize, col: &Column) -> CellOutput {
     format_cell_lines_with_policy(value, width, col, AmbiguousWidth::Narrow)
@@ -1261,7 +889,6 @@ fn format_cell_lines_with_policy(
 
     let current_width = visible_width_with_policy(value, policy);
 
-    // Determine style: style_from_value takes precedence
     let style = if col.style_from_value {
         Some(value)
     } else {
@@ -1271,7 +898,6 @@ fn format_cell_lines_with_policy(
     match &col.overflow {
         Overflow::Wrap { indent } => {
             if current_width <= width {
-                // Fits on one line — pad original value (preserving tags) manually
                 let padding = width - current_width;
                 let padded = match col.align {
                     Align::Left => format!("{}{}", value, " ".repeat(padding)),
@@ -1284,7 +910,6 @@ fn format_cell_lines_with_policy(
                 };
                 CellOutput::Single(apply_style(&padded, style))
             } else {
-                // Wrap to balanced tagged fragments without flattening styles.
                 let wrapped = wrap_visible_indent_with_policy(value, width, *indent, policy);
                 let padded: Vec<String> = wrapped
                     .into_iter()
@@ -1300,7 +925,6 @@ fn format_cell_lines_with_policy(
                 }
             }
         }
-        // All other modes are single-line
         _ => CellOutput::Single(format_cell_with_policy(value, width, col, policy)),
     }
 }
@@ -1392,7 +1016,6 @@ mod tests {
             .build();
         let formatter = TabularFormatter::new(&spec, 80);
 
-        // Only provide first value - second uses null_repr
         let output = formatter.format_row(&["value"]);
         assert!(output.contains("N/A"));
     }
@@ -1432,11 +1055,9 @@ mod tests {
             .separator("  ")
             .build();
 
-        // Total: 30, overhead: 4 (2 separators), fixed: 10, fill: 16
         let formatter = TabularFormatter::new(&spec, 30);
         let _output = formatter.format_row(&["abc", "middle", "xyz"]);
 
-        // Check that widths are as expected
         assert_eq!(formatter.widths(), &[5, 16, 5]);
     }
 
@@ -1473,7 +1094,6 @@ mod tests {
         let styled = "\x1b[31mred\x1b[0m";
         let output = formatter.format_row(&[styled]);
 
-        // ANSI codes should be preserved, display width should be 10
         assert!(output.contains("\x1b[31m"));
         assert_eq!(display_width(&output), 10);
     }
@@ -1499,10 +1119,6 @@ mod tests {
         assert_eq!(formatter.format_row(&["≈"]), "≈  ");
     }
 
-    // ============================================================================
-    // Object Trait Tests
-    // ============================================================================
-
     #[test]
     fn object_get_num_columns() {
         let formatter = Arc::new(TabularFormatter::new(&simple_spec(), 80));
@@ -1521,7 +1137,6 @@ mod tests {
         let value = formatter.get_value(&Value::from("widths"));
         assert!(value.is_some());
         let widths = value.unwrap();
-        // Check we can iterate over the widths
         assert!(widths.try_iter().is_ok());
     }
 
@@ -1643,10 +1258,6 @@ mod tests {
         assert_eq!(output, "cols=2, sep=' | '");
     }
 
-    // ============================================================================
-    // Overflow Mode Tests (Phase 4)
-    // ============================================================================
-
     #[test]
     fn format_cell_clip_no_marker() {
         let spec = FlatDataSpec::builder()
@@ -1655,7 +1266,6 @@ mod tests {
         let formatter = TabularFormatter::new(&spec, 80);
 
         let output = formatter.format_row(&["Hello World"]);
-        // Clip truncates without marker
         assert_eq!(display_width(&output), 5);
         assert!(!output.contains("…"));
         assert!(output.starts_with("Hello"));
@@ -1663,11 +1273,9 @@ mod tests {
 
     #[test]
     fn format_cell_expand_overflows() {
-        // Expand mode lets content overflow
         let col = Column::new(Width::Fixed(5)).overflow(Overflow::Expand);
         let output = format_cell("Hello World", 5, &col);
 
-        // Should NOT be truncated
         assert_eq!(output, "Hello World");
         assert_eq!(display_width(&output), 11); // Full width
     }
@@ -1677,14 +1285,12 @@ mod tests {
         let col = Column::new(Width::Fixed(10)).overflow(Overflow::Expand);
         let output = format_cell("Hi", 10, &col);
 
-        // Should be padded to width
         assert_eq!(output, "Hi        ");
         assert_eq!(display_width(&output), 10);
     }
 
     #[test]
     fn format_cell_wrap_single_line() {
-        // Content fits, no wrapping needed
         let col = Column::new(Width::Fixed(20)).wrap();
         let output = format_cell_lines("Short text", 20, &col);
 
@@ -1701,7 +1307,6 @@ mod tests {
         assert!(!output.is_single());
         assert!(output.line_count() > 1);
 
-        // Each line should be padded to width
         if let CellOutput::Multi(lines) = &output {
             for line in lines {
                 assert_eq!(display_width(line), 10);
@@ -1715,11 +1320,8 @@ mod tests {
         let output = format_cell_lines("First line then continuation", 15, &col);
 
         if let CellOutput::Multi(lines) = output {
-            // First line should start normally
             assert!(lines[0].starts_with("First"));
-            // Subsequent lines should be indented
             if lines.len() > 1 {
-                // The line content should start with spaces due to indent
                 let second_trimmed = lines[1].trim_start();
                 assert!(lines[1].len() > second_trimmed.len()); // Has leading spaces
             }
@@ -1751,10 +1353,8 @@ mod tests {
 
         let lines = formatter.format_row_lines(&["This is long", "Short"]);
 
-        // Should have multiple lines due to wrapping
         assert!(!lines.is_empty());
 
-        // Each line should have consistent width
         let expected_width = display_width(&lines[0]);
         for line in &lines {
             assert_eq!(display_width(line), expected_width);
@@ -1763,7 +1363,6 @@ mod tests {
 
     #[test]
     fn format_row_lines_mixed_columns() {
-        // One column wraps, others don't
         let spec = FlatDataSpec::builder()
             .column(Column::new(Width::Fixed(6))) // truncates
             .column(Column::new(Width::Fixed(10)).wrap()) // wraps
@@ -1774,13 +1373,8 @@ mod tests {
 
         let lines = formatter.format_row_lines(&["aaaaa", "this text wraps here", "bbbb"]);
 
-        // Multiple lines due to middle column wrapping
         assert!(!lines.is_empty());
     }
-
-    // ============================================================================
-    // CellOutput Tests
-    // ============================================================================
 
     #[test]
     fn cell_output_single_accessors() {
@@ -1804,27 +1398,19 @@ mod tests {
     fn cell_output_line_accessor() {
         let cell = CellOutput::Multi(vec!["First".to_string(), "Second".to_string()]);
 
-        // Get first line, padded to 10
         let line0 = cell.line(0, 10, Align::Left);
         assert_eq!(line0, "First     ");
         assert_eq!(display_width(&line0), 10);
 
-        // Get second line
         let line1 = cell.line(1, 10, Align::Right);
         assert_eq!(line1, "    Second");
 
-        // Out of bounds returns empty padded
         let line2 = cell.line(2, 10, Align::Left);
         assert_eq!(line2, "          ");
     }
 
-    // ============================================================================
-    // Anchor Tests (Phase 5)
-    // ============================================================================
-
     #[test]
     fn format_row_all_left_anchor_no_gap() {
-        // All columns left-anchored - no gap inserted
         let spec = FlatDataSpec::builder()
             .column(Column::new(Width::Fixed(5)))
             .column(Column::new(Width::Fixed(5)))
@@ -1833,52 +1419,43 @@ mod tests {
         let formatter = TabularFormatter::new(&spec, 50);
 
         let output = formatter.format_row(&["A", "B"]);
-        // Total content: 5 + 1 + 5 = 11, no gap
         assert_eq!(output, "A     B    ");
         assert_eq!(display_width(&output), 11);
     }
 
     #[test]
     fn format_row_with_right_anchor() {
-        // Left column + right column with gap
         let spec = FlatDataSpec::builder()
             .column(Column::new(Width::Fixed(5))) // left-anchored
             .column(Column::new(Width::Fixed(5)).anchor_right()) // right-anchored
             .separator(" ")
             .build();
 
-        // Total: 30, content: 5 + 5 = 10, sep: 1, overhead: 11
-        // Gap: 30 - 11 + 1 = 20 (replaces separator)
         let formatter = TabularFormatter::new(&spec, 30);
 
         let output = formatter.format_row(&["L", "R"]);
         assert_eq!(display_width(&output), 30);
-        // Left content at start, right content at end
         assert!(output.starts_with("L    "));
         assert!(output.ends_with("R    "));
     }
 
     #[test]
     fn format_row_with_right_anchor_exact_fit() {
-        // When total_width equals content width, no gap
         let spec = FlatDataSpec::builder()
             .column(Column::new(Width::Fixed(10)))
             .column(Column::new(Width::Fixed(10)).anchor_right())
             .separator("  ")
             .build();
 
-        // Total: 22 (10 + 2 + 10), no extra space
         let formatter = TabularFormatter::new(&spec, 22);
 
         let output = formatter.format_row(&["Left", "Right"]);
         assert_eq!(display_width(&output), 22);
-        // Normal separator, no gap
         assert!(output.contains("  ")); // Original separator preserved
     }
 
     #[test]
     fn format_row_all_right_anchor_no_gap() {
-        // All columns right-anchored - no gap needed
         let spec = FlatDataSpec::builder()
             .column(Column::new(Width::Fixed(5)).anchor_right())
             .column(Column::new(Width::Fixed(5)).anchor_right())
@@ -1887,13 +1464,11 @@ mod tests {
         let formatter = TabularFormatter::new(&spec, 50);
 
         let output = formatter.format_row(&["A", "B"]);
-        // No transition from left to right, so no gap
         assert_eq!(output, "A     B    ");
     }
 
     #[test]
     fn format_row_multiple_anchors() {
-        // Two left, two right
         let spec = FlatDataSpec::builder()
             .column(Column::new(Width::Fixed(4))) // L1
             .column(Column::new(Width::Fixed(4))) // L2
@@ -1902,13 +1477,10 @@ mod tests {
             .separator(" ")
             .build();
 
-        // Content: 4*4 = 16, seps: 3, overhead: 19
-        // Total: 40, gap: 40 - 19 + 1 = 22
         let formatter = TabularFormatter::new(&spec, 40);
 
         let output = formatter.format_row(&["A", "B", "C", "D"]);
         assert_eq!(display_width(&output), 40);
-        // Left group at start, right group at end
         assert!(output.starts_with("A    B   "));
     }
 
@@ -1941,7 +1513,6 @@ mod tests {
 
     #[test]
     fn format_row_lines_with_anchor() {
-        // Multi-line output should also respect anchors
         let spec = FlatDataSpec::builder()
             .column(Column::new(Width::Fixed(8)).wrap())
             .column(Column::new(Width::Fixed(6)).anchor_right())
@@ -1951,15 +1522,10 @@ mod tests {
 
         let lines = formatter.format_row_lines(&["This is text", "Right"]);
 
-        // All lines should have consistent width due to anchor
         for line in &lines {
             assert_eq!(display_width(line), 40);
         }
     }
-
-    // ============================================================================
-    // Struct Extraction Tests (Phase 6)
-    // ============================================================================
 
     #[test]
     fn row_from_simple_struct() {
@@ -2079,7 +1645,6 @@ mod tests {
 
         let row = formatter.row_from(&record);
         assert!(row.contains("value"));
-        // Missing field should show empty (extract_field returns empty string)
     }
 
     #[test]
@@ -2195,13 +1760,8 @@ mod tests {
         };
 
         let lines = formatter.row_lines_from(&record);
-        // Should have multiple lines due to wrapping
         assert!(!lines.is_empty());
     }
-
-    // ============================================================================
-    // Style Tests (Phase 7)
-    // ============================================================================
 
     #[test]
     fn format_cell_with_style() {
@@ -2211,7 +1771,6 @@ mod tests {
         let formatter = TabularFormatter::new(&spec, 80);
 
         let output = formatter.format_row(&["Hello"]);
-        // Should wrap in style tags
         assert!(output.starts_with("[header]"));
         assert!(output.ends_with("[/header]"));
         assert!(output.contains("Hello"));
@@ -2225,7 +1784,6 @@ mod tests {
         let formatter = TabularFormatter::new(&spec, 80);
 
         let output = formatter.format_row(&["error"]);
-        // Value "error" becomes the style
         assert!(output.contains("[error]"));
         assert!(output.contains("[/error]"));
     }
@@ -2238,7 +1796,6 @@ mod tests {
         let formatter = TabularFormatter::new(&spec, 80);
 
         let output = formatter.format_row(&["Hello"]);
-        // No style tags
         assert!(!output.contains("["));
         assert!(!output.contains("]"));
         assert!(output.contains("Hello"));
@@ -2246,7 +1803,6 @@ mod tests {
 
     #[test]
     fn format_cell_style_overrides_style_from_value() {
-        // When both style and style_from_value are set, style_from_value wins
         let mut col = Column::new(Width::Fixed(10));
         col.style = Some("default".to_string());
         col.style_from_value = true;
@@ -2255,7 +1811,6 @@ mod tests {
         let formatter = TabularFormatter::new(&spec, 80);
 
         let output = formatter.format_row(&["custom"]);
-        // style_from_value takes precedence
         assert!(output.contains("[custom]"));
         assert!(output.contains("[/custom]"));
     }
@@ -2283,16 +1838,11 @@ mod tests {
 
         let lines = formatter.format_row_lines(&["This is a long text that wraps"]);
 
-        // Each line should have style tags
         for line in &lines {
             assert!(line.contains("[text]"));
             assert!(line.contains("[/text]"));
         }
     }
-
-    // ============================================================================
-    // Extract Headers Tests
-    // ============================================================================
 
     #[test]
     fn extract_headers_from_header_field() {
@@ -2332,7 +1882,6 @@ mod tests {
 
     #[test]
     fn extract_headers_priority_order() {
-        // header > key > name > ""
         let spec = FlatDataSpec::builder()
             .column(
                 Column::new(Width::Fixed(10))
@@ -2362,10 +1911,6 @@ mod tests {
         let headers = formatter.extract_headers();
         assert!(headers.is_empty());
     }
-
-    // ============================================================================
-    // Sub-Column Tests
-    // ============================================================================
 
     use crate::tabular::{SubCol, SubColumns};
 
@@ -2413,7 +1958,6 @@ mod tests {
         ]);
 
         assert!(row.contains("Fixing Layout of Image Nav"));
-        // With empty tag, title should get all the space
         assert_eq!(display_width(&row), 60);
     }
 
@@ -2422,7 +1966,6 @@ mod tests {
         let sub_cols = SubColumns::new(vec![SubCol::fill(), SubCol::fixed(10)], "  ").unwrap();
 
         let widths = resolve_sub_widths(&sub_cols, &["title", "fixed"], 50);
-        // fixed=10, sep=2, grower=50-10-2=38
         assert_eq!(widths[0], 38);
         assert_eq!(widths[1], 10);
     }
@@ -2440,17 +1983,14 @@ mod tests {
     fn sub_column_non_grower_respects_bounded() {
         let sub_cols = SubColumns::new(vec![SubCol::fill(), SubCol::bounded(5, 20)], " ").unwrap();
 
-        // Content "short" is 5 chars, clamped to [5, 20] = 5
         let widths = resolve_sub_widths(&sub_cols, &["title", "short"], 40);
         assert_eq!(widths[1], 5);
         assert_eq!(widths[0], 34); // 40 - 5 - 1
 
-        // Content "a very long tag value" is 21 chars, clamped to 20
         let widths2 = resolve_sub_widths(&sub_cols, &["title", "a very long tag value!"], 40);
         assert_eq!(widths2[1], 20);
         assert_eq!(widths2[0], 19); // 40 - 20 - 1
 
-        // Content "" is 0 chars, clamped to min=5
         let widths3 = resolve_sub_widths(&sub_cols, &["title", ""], 40);
         assert_eq!(widths3[1], 5);
     }
@@ -2459,11 +1999,8 @@ mod tests {
     fn sub_column_bounded_min_zero() {
         let sub_cols = SubColumns::new(vec![SubCol::fill(), SubCol::bounded(0, 20)], " ").unwrap();
 
-        // Empty content, min=0 means the sub-column gets 0 width
         let widths = resolve_sub_widths(&sub_cols, &["title", ""], 40);
         assert_eq!(widths[1], 0);
-        // With zero-width non-grower, grower gets all space
-        // visible count = 0 non-zero non-grower + 1 grower = 1, seps = 0
         assert_eq!(widths[0], 40);
     }
 
@@ -2471,15 +2008,12 @@ mod tests {
     fn sub_column_separator_skipped_for_zero_width() {
         let sub_cols = SubColumns::new(vec![SubCol::fill(), SubCol::bounded(0, 20)], "  ").unwrap();
 
-        // With non-zero tag
         let result1 = format_sub_cells(&sub_cols, &["Title", "tag"], 30);
         assert!(result1.contains("  ")); // Separator present
         assert_eq!(display_width(&result1), 30);
 
-        // With zero-width tag
         let result2 = format_sub_cells(&sub_cols, &["Title", ""], 30);
         assert_eq!(display_width(&result2), 30);
-        // No wasted separator space
     }
 
     #[test]
@@ -2494,9 +2028,7 @@ mod tests {
         .unwrap();
 
         let result = format_sub_cells(&sub_cols, &["Left", "Right"], 30);
-        // "Left" should be left-aligned (padded right)
         assert!(result.starts_with("Left"));
-        // "Right" should be right-aligned (padded left)
         assert!(result.ends_with("     Right"));
         assert_eq!(display_width(&result), 30);
     }
@@ -2505,8 +2037,6 @@ mod tests {
     fn sub_column_grower_truncation() {
         let sub_cols = SubColumns::new(vec![SubCol::fill(), SubCol::fixed(15)], " ").unwrap();
 
-        // Parent=25, fixed=15, sep=1, grower=9
-        // Title "A very long title that exceeds" is 30 chars, gets truncated to 9
         let result = format_sub_cells(
             &sub_cols,
             &["A very long title that exceeds", "fixed-col"],
@@ -2532,15 +2062,12 @@ mod tests {
 
     #[test]
     fn sub_column_grower_zero_width() {
-        // When non-grower widths eat everything, the fixed col is clamped
-        // so total still fits: grower(0) + sep(1) + fixed(19) = 20
         let sub_cols = SubColumns::new(vec![SubCol::fill(), SubCol::fixed(20)], " ").unwrap();
 
         let widths = resolve_sub_widths(&sub_cols, &["title", "fixed"], 20);
         assert_eq!(widths[0], 0); // Grower gets nothing
         assert_eq!(widths[1], 19); // Clamped: 20 - 1 sep = 19 available
 
-        // Output still has correct width
         let result = format_sub_cells(&sub_cols, &["title", "fixed"], 20);
         assert_eq!(display_width(&result), 20);
     }
@@ -2555,13 +2082,10 @@ mod tests {
 
     #[test]
     fn sub_column_plain_string_fallback() {
-        // When format_row gets a plain string for a sub-column column,
-        // it should wrap it as Single and use the grower
         let (spec, _) = padz_spec();
         let formatter = TabularFormatter::new(&spec, 60);
 
         let row = formatter.format_row(&["1.", "Just a title", "4d"]);
-        // Should still produce valid output
         assert_eq!(display_width(&row), 60);
         assert!(row.contains("Just a title"));
     }
@@ -2579,7 +2103,6 @@ mod tests {
 
         let formatter = TabularFormatter::new(&spec, 50);
 
-        // Row with tag
         let row1 = formatter.format_row_cells(&[
             CellValue::Single("1."),
             CellValue::Sub(vec!["Title", "[bug]"]),
@@ -2588,7 +2111,6 @@ mod tests {
         assert!(row1.contains("Title"));
         assert!(row1.contains("[bug]"));
 
-        // Row without tag
         let row2 = formatter.format_row_cells(&[
             CellValue::Single("2."),
             CellValue::Sub(vec!["Longer Title Here", ""]),
@@ -2666,9 +2188,6 @@ mod tests {
             );
         }
     }
-    // ============================================================================
-    // BBCode-aware width tests (issue #104)
-    // ============================================================================
 
     #[test]
     fn format_value_bbcode_preserves_tags_when_fitting() {
@@ -2676,7 +2195,6 @@ mod tests {
             at: TruncateAt::End,
             marker: "…".to_string(),
         };
-        // "hello" is 5 visible chars, column is 10 — tags should be preserved
         let result = format_value("[bold]hello[/bold]", 10, Align::Left, &overflow, None);
         assert_eq!(
             visible_width_with_policy(&result, AmbiguousWidth::Narrow),
@@ -2695,7 +2213,6 @@ mod tests {
             at: TruncateAt::End,
             marker: "…".to_string(),
         };
-        // "[red]hello world[/red]" has 11 visible chars, column is 8
         let result = format_value("[red]hello world[/red]", 8, Align::Left, &overflow, None);
         assert_eq!(
             visible_width_with_policy(&result, AmbiguousWidth::Narrow),
@@ -2732,7 +2249,6 @@ mod tests {
             visible_width_with_policy(&result, AmbiguousWidth::Narrow),
             6
         );
-        // Should have leading spaces then the tagged content
         assert!(result.contains("[dim]hi[/dim]"));
         assert!(result.starts_with("    "));
     }
@@ -2743,13 +2259,11 @@ mod tests {
             at: TruncateAt::End,
             marker: "…".to_string(),
         };
-        // BBCode input + column style applied
         let result = format_value("[dim]ok[/dim]", 8, Align::Left, &overflow, Some("green"));
         assert_eq!(
             visible_width_with_policy(&result, AmbiguousWidth::Narrow),
             8
         );
-        // Should have outer [green]...[/green] wrapper
         assert!(result.starts_with("[green]"));
         assert!(result.ends_with("[/green]"));
     }
@@ -2757,7 +2271,6 @@ mod tests {
     #[test]
     fn format_cell_lines_bbcode_wrap() {
         let col = Column::new(Width::Fixed(10)).overflow(Overflow::Wrap { indent: 0 });
-        // "[bold]hello world foo[/bold]" → 15 visible chars, width 10
         let result = format_cell_lines("[bold]hello world foo[/bold]", 10, &col);
         match result {
             CellOutput::Multi(lines) => {
@@ -2789,7 +2302,6 @@ mod tests {
     #[test]
     fn format_cell_lines_bbcode_fits_preserves_tags() {
         let col = Column::new(Width::Fixed(10)).overflow(Overflow::Wrap { indent: 0 });
-        // "hi" is 2 visible chars, fits in 10
         let result = format_cell_lines("[bold]hi[/bold]", 10, &col);
         match result {
             CellOutput::Single(s) => {
@@ -2805,7 +2317,6 @@ mod tests {
 
     #[test]
     fn cell_output_line_bbcode_padding() {
-        // Simulate a styled CellOutput with BBCode
         let output = CellOutput::Single("[green]ok[/green]".to_string());
         let line = output.line(0, 8, Align::Left);
         assert_eq!(
@@ -2820,9 +2331,7 @@ mod tests {
         use crate::tabular::{SubCol, SubColumns};
         let sub_cols =
             SubColumns::new(vec![SubCol::fill(), SubCol::bounded(0, 30).right()], " ").unwrap();
-        // Second value has BBCode — "[tag]" is 5 visible chars
         let widths = resolve_sub_widths(&sub_cols, &["Title", "[dim][tag][/dim]"], 30);
-        // [dim][tag][/dim] visible width is 5, so bounded should resolve to 5
         assert_eq!(
             widths[1], 5,
             "bounded sub-col should use visible width, not raw string length"
@@ -2911,9 +2420,6 @@ mod proptests {
             let widths = resolve_sub_widths(&sub_cols, &values, parent_width);
 
             let sep_width = display_width(&sub_cols.separator);
-            // Grower is always visible; only zero-width non-growers are skipped.
-            // For 2 sub-cols with grower at [0], the visible count includes the
-            // grower plus any non-zero non-grower columns.
             let visible_non_growers: usize = if widths[1] > 0 { 1 } else { 0 };
             let visible_count: usize = visible_non_growers + 1; // +1 for grower
             let sep_overhead = visible_count.saturating_sub(1) * sep_width;

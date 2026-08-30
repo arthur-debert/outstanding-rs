@@ -6,53 +6,29 @@
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
-/// Text alignment within a column.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum Align {
-    /// Left-align text (pad on the right).
     #[default]
     Left,
-    /// Right-align text (pad on the left).
     Right,
-    /// Center text (pad on both sides).
     Center,
 }
 
-/// Position where truncation occurs when content exceeds max width.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum TruncateAt {
-    /// Truncate at the end, keeping the start visible.
-    /// Example: "Hello World" → "Hello W…"
     #[default]
     End,
-    /// Truncate at the start, keeping the end visible.
-    /// Example: "Hello World" → "…o World"
     Start,
-    /// Truncate in the middle, keeping both start and end visible.
-    /// Example: "Hello World" → "Hel…orld"
     Middle,
 }
 
-/// How a column handles content that exceeds its width.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum Overflow {
-    /// Truncate content with an ellipsis marker.
-    Truncate {
-        /// Where to truncate (start, middle, or end).
-        at: TruncateAt,
-        /// The marker to show when truncation occurs (default: "…").
-        marker: String,
-    },
-    /// Wrap content to multiple lines at word boundaries.
-    Wrap {
-        /// Number of spaces to indent continuation lines (default: 0).
-        indent: usize,
-    },
-    /// Hard cut without any marker.
+    Truncate { at: TruncateAt, marker: String },
+    Wrap { indent: usize },
     Clip,
-    /// Allow content to overflow (ignore width limit).
     Expand,
 }
 
@@ -66,7 +42,6 @@ impl Default for Overflow {
 }
 
 impl Overflow {
-    /// Create a truncate overflow with default marker.
     pub fn truncate(at: TruncateAt) -> Self {
         Overflow::Truncate {
             at,
@@ -74,7 +49,6 @@ impl Overflow {
         }
     }
 
-    /// Create a truncate overflow with custom marker.
     pub fn truncate_with_marker(at: TruncateAt, marker: impl Into<String>) -> Self {
         Overflow::Truncate {
             at,
@@ -82,46 +56,32 @@ impl Overflow {
         }
     }
 
-    /// Create a wrap overflow with no indent.
     pub fn wrap() -> Self {
         Overflow::Wrap { indent: 0 }
     }
 
-    /// Create a wrap overflow with continuation indent.
     pub fn wrap_with_indent(indent: usize) -> Self {
         Overflow::Wrap { indent }
     }
 }
 
-/// Column position anchor on the row.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum Anchor {
-    /// Column flows left-to-right from the start (default).
     #[default]
     Left,
-    /// Column is positioned at the right edge.
     Right,
 }
 
-/// Specifies how a column determines its width.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(try_from = "WidthRaw", into = "WidthRaw")]
 pub enum Width {
-    /// Fixed width in display columns.
     Fixed(usize),
-    /// Width calculated from content, constrained by optional min/max bounds.
     Bounded {
-        /// Minimum width (defaults to 0 if not specified).
         min: Option<usize>,
-        /// Maximum width (unlimited if not specified).
         max: Option<usize>,
     },
-    /// Expand to fill all remaining space.
-    /// Multiple Fill columns share remaining space equally.
     Fill,
-    /// Proportional: takes n parts of the remaining space.
-    /// `Fraction(2)` gets twice the space of `Fraction(1)` or `Fill`.
     Fraction(usize),
 }
 
@@ -182,12 +142,10 @@ impl Default for Width {
 }
 
 impl Width {
-    /// Create a fixed-width column.
     pub fn fixed(width: usize) -> Self {
         Width::Fixed(width)
     }
 
-    /// Create a bounded-width column with both min and max.
     pub fn bounded(min: usize, max: usize) -> Self {
         Width::Bounded {
             min: Some(min),
@@ -195,7 +153,6 @@ impl Width {
         }
     }
 
-    /// Create a column with only a minimum width.
     pub fn min(min: usize) -> Self {
         Width::Bounded {
             min: Some(min),
@@ -203,7 +160,6 @@ impl Width {
         }
     }
 
-    /// Create a column with only a maximum width.
     pub fn max(max: usize) -> Self {
         Width::Bounded {
             min: None,
@@ -211,46 +167,27 @@ impl Width {
         }
     }
 
-    /// Create a fill column that expands to remaining space.
     pub fn fill() -> Self {
         Width::Fill
     }
 
-    /// Create a fractional width column.
-    /// `Fraction(2)` gets twice the space of `Fraction(1)` or `Fill`.
     pub fn fraction(n: usize) -> Self {
         Width::Fraction(n)
     }
 }
 
-/// Configuration for a single column in a table.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Column {
-    /// Optional column name/identifier.
     pub name: Option<String>,
-    /// How the column determines its width.
     pub width: Width,
-    /// Text alignment within the column.
     pub align: Align,
-    /// Column position anchor (left or right edge).
     pub anchor: Anchor,
-    /// How to handle content that exceeds width.
     pub overflow: Overflow,
-    /// Representation for null/empty values.
     pub null_repr: String,
-    /// Optional style name (resolved via theme).
     pub style: Option<String>,
-    /// When true, use the cell value as the style name.
     pub style_from_value: bool,
-    /// Optional key for data extraction (supports dot notation for nested fields).
     pub key: Option<String>,
-    /// Optional header title (for table headers and CSV export).
     pub header: Option<String>,
-    /// Optional sub-column layout within this column.
-    ///
-    /// When set, cell values for this column should be arrays of sub-values.
-    /// Sub-column widths are resolved per-row within the parent column's
-    /// resolved width.
     pub sub_columns: Option<SubColumns>,
 }
 
@@ -273,7 +210,6 @@ impl Default for Column {
 }
 
 impl Column {
-    /// Create a new column with the specified width.
     pub fn new(width: Width) -> Self {
         Column {
             width,
@@ -281,66 +217,54 @@ impl Column {
         }
     }
 
-    /// Create a column builder for fluent construction.
     pub fn builder() -> ColumnBuilder {
         ColumnBuilder::default()
     }
 
-    /// Set the column name/identifier.
     pub fn named(mut self, name: impl Into<String>) -> Self {
         self.name = Some(name.into());
         self
     }
 
-    /// Set the text alignment.
     pub fn align(mut self, align: Align) -> Self {
         self.align = align;
         self
     }
 
-    /// Set alignment to right (shorthand for `.align(Align::Right)`).
     pub fn right(self) -> Self {
         self.align(Align::Right)
     }
 
-    /// Set alignment to center (shorthand for `.align(Align::Center)`).
     pub fn center(self) -> Self {
         self.align(Align::Center)
     }
 
-    /// Set the column anchor position.
     pub fn anchor(mut self, anchor: Anchor) -> Self {
         self.anchor = anchor;
         self
     }
 
-    /// Anchor column to the right edge (shorthand for `.anchor(Anchor::Right)`).
     pub fn anchor_right(self) -> Self {
         self.anchor(Anchor::Right)
     }
 
-    /// Set the overflow behavior.
     pub fn overflow(mut self, overflow: Overflow) -> Self {
         self.overflow = overflow;
         self
     }
 
-    /// Set overflow to wrap (shorthand for `.overflow(Overflow::wrap())`).
     pub fn wrap(self) -> Self {
         self.overflow(Overflow::wrap())
     }
 
-    /// Set overflow to wrap with indent.
     pub fn wrap_indent(self, indent: usize) -> Self {
         self.overflow(Overflow::wrap_with_indent(indent))
     }
 
-    /// Set overflow to clip (shorthand for `.overflow(Overflow::Clip)`).
     pub fn clip(self) -> Self {
         self.overflow(Overflow::Clip)
     }
 
-    /// Set truncation position (configures Overflow::Truncate).
     pub fn truncate(mut self, at: TruncateAt) -> Self {
         self.overflow = match self.overflow {
             Overflow::Truncate { marker, .. } => Overflow::Truncate { at, marker },
@@ -349,17 +273,14 @@ impl Column {
         self
     }
 
-    /// Set truncation to middle (shorthand for `.truncate(TruncateAt::Middle)`).
     pub fn truncate_middle(self) -> Self {
         self.truncate(TruncateAt::Middle)
     }
 
-    /// Set truncation to start (shorthand for `.truncate(TruncateAt::Start)`).
     pub fn truncate_start(self) -> Self {
         self.truncate(TruncateAt::Start)
     }
 
-    /// Set the ellipsis/marker for truncation.
     pub fn ellipsis(mut self, ellipsis: impl Into<String>) -> Self {
         self.overflow = match self.overflow {
             Overflow::Truncate { at, .. } => Overflow::Truncate {
@@ -371,47 +292,37 @@ impl Column {
         self
     }
 
-    /// Set the null/empty value representation.
     pub fn null_repr(mut self, null_repr: impl Into<String>) -> Self {
         self.null_repr = null_repr.into();
         self
     }
 
-    /// Set the style name for this column.
     pub fn style(mut self, style: impl Into<String>) -> Self {
         self.style = Some(style.into());
         self
     }
 
-    /// Use the cell value as the style name.
-    ///
-    /// When enabled, the cell content becomes the style tag.
-    /// For example, cell value "error" renders as `[error]error[/error]`.
     pub fn style_from_value(mut self) -> Self {
         self.style_from_value = true;
         self
     }
 
-    /// Set the data key for this column (e.g. "author.name").
     pub fn key(mut self, key: impl Into<String>) -> Self {
         self.key = Some(key.into());
         self
     }
 
-    /// Set the header title for this column.
     pub fn header(mut self, header: impl Into<String>) -> Self {
         self.header = Some(header.into());
         self
     }
 
-    /// Set sub-columns for per-row width distribution within this column.
     pub fn sub_columns(mut self, sub_cols: SubColumns) -> Self {
         self.sub_columns = Some(sub_cols);
         self
     }
 }
 
-/// Builder for constructing `Column` instances.
 #[derive(Clone, Debug, Default)]
 pub struct ColumnBuilder {
     name: Option<String>,
@@ -428,86 +339,71 @@ pub struct ColumnBuilder {
 }
 
 impl ColumnBuilder {
-    /// Set the column name/identifier.
     pub fn named(mut self, name: impl Into<String>) -> Self {
         self.name = Some(name.into());
         self
     }
 
-    /// Set the width strategy.
     pub fn width(mut self, width: Width) -> Self {
         self.width = Some(width);
         self
     }
 
-    /// Set a fixed width.
     pub fn fixed(mut self, width: usize) -> Self {
         self.width = Some(Width::Fixed(width));
         self
     }
 
-    /// Set the column to fill remaining space.
     pub fn fill(mut self) -> Self {
         self.width = Some(Width::Fill);
         self
     }
 
-    /// Set bounded width with min and max.
     pub fn bounded(mut self, min: usize, max: usize) -> Self {
         self.width = Some(Width::bounded(min, max));
         self
     }
 
-    /// Set fractional width.
     pub fn fraction(mut self, n: usize) -> Self {
         self.width = Some(Width::Fraction(n));
         self
     }
 
-    /// Set the text alignment.
     pub fn align(mut self, align: Align) -> Self {
         self.align = Some(align);
         self
     }
 
-    /// Set alignment to right.
     pub fn right(self) -> Self {
         self.align(Align::Right)
     }
 
-    /// Set alignment to center.
     pub fn center(self) -> Self {
         self.align(Align::Center)
     }
 
-    /// Set the column anchor position.
     pub fn anchor(mut self, anchor: Anchor) -> Self {
         self.anchor = Some(anchor);
         self
     }
 
-    /// Anchor column to the right edge.
     pub fn anchor_right(self) -> Self {
         self.anchor(Anchor::Right)
     }
 
-    /// Set the overflow behavior.
     pub fn overflow(mut self, overflow: Overflow) -> Self {
         self.overflow = Some(overflow);
         self
     }
 
-    /// Set overflow to wrap.
     pub fn wrap(self) -> Self {
         self.overflow(Overflow::wrap())
     }
 
-    /// Set overflow to clip.
     pub fn clip(self) -> Self {
         self.overflow(Overflow::Clip)
     }
 
-    /// Set the truncation position (configures Overflow::Truncate).
     pub fn truncate(mut self, at: TruncateAt) -> Self {
         self.overflow = Some(match self.overflow {
             Some(Overflow::Truncate { marker, .. }) => Overflow::Truncate { at, marker },
@@ -516,7 +412,6 @@ impl ColumnBuilder {
         self
     }
 
-    /// Set the ellipsis string for truncation.
     pub fn ellipsis(mut self, ellipsis: impl Into<String>) -> Self {
         self.overflow = Some(match self.overflow {
             Some(Overflow::Truncate { at, .. }) => Overflow::Truncate {
@@ -528,43 +423,36 @@ impl ColumnBuilder {
         self
     }
 
-    /// Set the null/empty value representation.
     pub fn null_repr(mut self, null_repr: impl Into<String>) -> Self {
         self.null_repr = Some(null_repr.into());
         self
     }
 
-    /// Set the style name.
     pub fn style(mut self, style: impl Into<String>) -> Self {
         self.style = Some(style.into());
         self
     }
 
-    /// Use cell value as the style name.
     pub fn style_from_value(mut self) -> Self {
         self.style_from_value = true;
         self
     }
 
-    /// Set the data key.
     pub fn key(mut self, key: impl Into<String>) -> Self {
         self.key = Some(key.into());
         self
     }
 
-    /// Set the header title.
     pub fn header(mut self, header: impl Into<String>) -> Self {
         self.header = Some(header.into());
         self
     }
 
-    /// Set sub-columns for per-row width distribution within this column.
     pub fn sub_columns(mut self, sub_cols: SubColumns) -> Self {
         self.sub_columns = Some(sub_cols);
         self
     }
 
-    /// Build the `Column` instance.
     pub fn build(self) -> Column {
         let default = Column::default();
         Column {
@@ -583,88 +471,41 @@ impl ColumnBuilder {
     }
 }
 
-/// Shorthand constructors for creating columns.
-///
-/// Provides a concise API for common column configurations:
-///
-/// ```rust
-/// use standout_render::tabular::Col;
-///
-/// let col = Col::fixed(10);           // Fixed width 10
-/// let col = Col::min(5);              // At least 5, grows to fit
-/// let col = Col::bounded(5, 20);      // Between 5 and 20
-/// let col = Col::fill();              // Fill remaining space
-/// let col = Col::fraction(2);         // 2 parts of remaining space
-///
-/// // Chain with fluent methods
-/// let col = Col::fixed(10).right().style("header");
-/// ```
 pub struct Col;
 
 impl Col {
-    /// Create a fixed-width column.
     pub fn fixed(width: usize) -> Column {
         Column::new(Width::Fixed(width))
     }
 
-    /// Create a column with minimum width that grows to fit content.
     pub fn min(min: usize) -> Column {
         Column::new(Width::min(min))
     }
 
-    /// Create a column with maximum width that shrinks to fit content.
     pub fn max(max: usize) -> Column {
         Column::new(Width::max(max))
     }
 
-    /// Create a bounded-width column (between min and max).
     pub fn bounded(min: usize, max: usize) -> Column {
         Column::new(Width::bounded(min, max))
     }
 
-    /// Create a fill column that expands to remaining space.
     pub fn fill() -> Column {
         Column::new(Width::Fill)
     }
 
-    /// Create a fractional width column.
-    /// `Col::fraction(2)` gets twice the space of `Col::fraction(1)` or `Col::fill()`.
     pub fn fraction(n: usize) -> Column {
         Column::new(Width::Fraction(n))
     }
 }
 
-/// A sub-column within a parent column for per-row width distribution.
-///
-/// Sub-columns partition a parent column's resolved width on a per-row basis.
-/// Within a set of sub-columns, exactly one must use [`Width::Fill`] (the "grower")
-/// which absorbs remaining space after fixed/bounded sub-columns are satisfied.
-///
-/// This enables layouts where a single column contains multiple logical fields
-/// that share space dynamically — for example, a title that grows to fill
-/// available space alongside an optional tag of variable width:
-///
-/// ```text
-/// Gallery Navigation                            [feature]
-/// Bug : Static                                      [bug]
-/// Fixing Layout of Image Nav
-/// ```
-///
-/// Sub-column widths are resolved per-row from actual content, not across all rows.
-/// [`Width::Fraction`] is not supported for sub-columns.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct SubColumn {
-    /// Optional name/identifier.
     pub name: Option<String>,
-    /// Width strategy (Fixed, Bounded, or Fill only — no Fraction).
     pub width: Width,
-    /// Text alignment within this sub-column.
     pub align: Align,
-    /// How to handle overflow.
     pub overflow: Overflow,
-    /// Representation for null/empty values.
     pub null_repr: String,
-    /// Optional style name.
     pub style: Option<String>,
 }
 
@@ -682,7 +523,6 @@ impl Default for SubColumn {
 }
 
 impl SubColumn {
-    /// Create a sub-column with the specified width.
     pub fn new(width: Width) -> Self {
         SubColumn {
             width,
@@ -690,80 +530,47 @@ impl SubColumn {
         }
     }
 
-    /// Set the sub-column name/identifier.
     pub fn named(mut self, name: impl Into<String>) -> Self {
         self.name = Some(name.into());
         self
     }
 
-    /// Set the text alignment.
     pub fn align(mut self, align: Align) -> Self {
         self.align = align;
         self
     }
 
-    /// Set alignment to right.
     pub fn right(self) -> Self {
         self.align(Align::Right)
     }
 
-    /// Set alignment to center.
     pub fn center(self) -> Self {
         self.align(Align::Center)
     }
 
-    /// Set the overflow behavior.
     pub fn overflow(mut self, overflow: Overflow) -> Self {
         self.overflow = overflow;
         self
     }
 
-    /// Set the null/empty value representation.
     pub fn null_repr(mut self, null_repr: impl Into<String>) -> Self {
         self.null_repr = null_repr.into();
         self
     }
 
-    /// Set the style name.
     pub fn style(mut self, style: impl Into<String>) -> Self {
         self.style = Some(style.into());
         self
     }
 }
 
-/// Configuration for sub-columns within a parent column.
-///
-/// Wraps a list of [`SubColumn`] definitions with a separator and validates
-/// the configuration: exactly one sub-column must use [`Width::Fill`], and
-/// [`Width::Fraction`] is not allowed.
-///
-/// # Example
-///
-/// ```rust
-/// use standout_render::tabular::{SubColumns, SubCol};
-///
-/// let sub_cols = SubColumns::new(
-///     vec![SubCol::fill(), SubCol::bounded(0, 30).right()],
-///     " ",
-/// ).unwrap();
-/// ```
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct SubColumns {
-    /// The sub-column definitions.
     pub columns: Vec<SubColumn>,
-    /// Separator string between sub-columns.
     pub separator: String,
 }
 
 impl SubColumns {
-    /// Create and validate a sub-columns configuration.
-    ///
-    /// # Errors
-    ///
-    /// Returns an error if:
-    /// - No sub-columns are provided
-    /// - There is not exactly one Fill sub-column
-    /// - Any sub-column uses Fraction width
     pub fn new(columns: Vec<SubColumn>, separator: impl Into<String>) -> Result<Self, String> {
         if columns.is_empty() {
             return Err("sub_columns must contain at least one sub-column".into());
@@ -796,61 +603,38 @@ impl SubColumns {
     }
 }
 
-/// Shorthand constructors for creating sub-columns.
-///
-/// ```rust
-/// use standout_render::tabular::SubCol;
-///
-/// let fill = SubCol::fill();                   // Fill remaining space
-/// let fixed = SubCol::fixed(10);               // Fixed width 10
-/// let bounded = SubCol::bounded(0, 30);        // Between 0 and 30
-/// let max = SubCol::max(20);                   // Up to 20
-///
-/// // Chain with fluent methods
-/// let tag = SubCol::bounded(0, 30).right().style("tag");
-/// ```
 pub struct SubCol;
 
 impl SubCol {
-    /// Create a fill sub-column that absorbs remaining space.
     pub fn fill() -> SubColumn {
         SubColumn::new(Width::Fill)
     }
 
-    /// Create a fixed-width sub-column.
     pub fn fixed(width: usize) -> SubColumn {
         SubColumn::new(Width::Fixed(width))
     }
 
-    /// Create a bounded-width sub-column (between min and max).
     pub fn bounded(min: usize, max: usize) -> SubColumn {
         SubColumn::new(Width::bounded(min, max))
     }
 
-    /// Create a sub-column with maximum width.
     pub fn max(max: usize) -> SubColumn {
         SubColumn::new(Width::max(max))
     }
 
-    /// Create a sub-column with minimum width.
     pub fn min(min: usize) -> SubColumn {
         SubColumn::new(Width::min(min))
     }
 }
 
-/// Decorations for table rows (separators, prefixes, suffixes).
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 pub struct Decorations {
-    /// Separator between columns (e.g., "  " or " │ ").
     pub column_sep: String,
-    /// Prefix at the start of each row.
     pub row_prefix: String,
-    /// Suffix at the end of each row.
     pub row_suffix: String,
 }
 
 impl Decorations {
-    /// Create decorations with just a column separator.
     pub fn with_separator(sep: impl Into<String>) -> Self {
         Decorations {
             column_sep: sep.into(),
@@ -859,30 +643,25 @@ impl Decorations {
         }
     }
 
-    /// Set the column separator.
     pub fn separator(mut self, sep: impl Into<String>) -> Self {
         self.column_sep = sep.into();
         self
     }
 
-    /// Set the row prefix.
     pub fn prefix(mut self, prefix: impl Into<String>) -> Self {
         self.row_prefix = prefix.into();
         self
     }
 
-    /// Set the row suffix.
     pub fn suffix(mut self, suffix: impl Into<String>) -> Self {
         self.row_suffix = suffix.into();
         self
     }
 
-    /// Calculate the total overhead (prefix + suffix + separators between n columns).
     pub fn overhead(&self, num_columns: usize) -> usize {
         self.overhead_with_policy(num_columns, crate::AmbiguousWidth::Narrow)
     }
 
-    /// Calculates decoration overhead with an explicit ambiguous-width policy.
     pub fn overhead_with_policy(&self, num_columns: usize, policy: crate::AmbiguousWidth) -> usize {
         use crate::tabular::visible_width_with_policy;
         let prefix_width = visible_width_with_policy(&self.row_prefix, policy);
@@ -893,17 +672,13 @@ impl Decorations {
     }
 }
 
-/// Complete specification for a flat data layout (Table or CSV).
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct FlatDataSpec {
-    /// Column specifications.
     pub columns: Vec<Column>,
-    /// Row decorations (separators, prefix, suffix).
     pub decorations: Decorations,
 }
 
 impl FlatDataSpec {
-    /// Create a new spec with the given columns and default decorations.
     pub fn new(columns: Vec<Column>) -> Self {
         FlatDataSpec {
             columns,
@@ -911,24 +686,18 @@ impl FlatDataSpec {
         }
     }
 
-    /// Create a spec builder.
     pub fn builder() -> FlatDataSpecBuilder {
         FlatDataSpecBuilder::default()
     }
 
-    /// Get the number of columns.
     pub fn num_columns(&self) -> usize {
         self.columns.len()
     }
 
-    /// Check if any column uses Fill width.
     pub fn has_fill_column(&self) -> bool {
         self.columns.iter().any(|c| matches!(c.width, Width::Fill))
     }
 
-    /// Extract a header row from the spec.
-    ///
-    /// Uses column `header` if present, otherwise `key`, otherwise empty string.
     pub fn extract_header(&self) -> Vec<String> {
         self.columns
             .iter()
@@ -942,12 +711,6 @@ impl FlatDataSpec {
             .collect()
     }
 
-    /// Extract a data row from a JSON value using the spec.
-    ///
-    /// For each column:
-    /// - If `key` is set, traverses the JSON to find the value.
-    /// - If `key` is unset/missing, uses `null_repr`.
-    /// - Handles nested objects via dot notation (e.g. "author.name").
     pub fn extract_row(&self, data: &Value) -> Vec<String> {
         self.columns
             .iter()
@@ -962,7 +725,6 @@ impl FlatDataSpec {
     }
 }
 
-/// Helper to extract a value from nested JSON using dot notation.
 fn extract_value(data: &Value, path: &str) -> Option<String> {
     let mut current = data;
     for part in path.split('.') {
@@ -977,12 +739,10 @@ fn extract_value(data: &Value, path: &str) -> Option<String> {
     match current {
         Value::String(s) => Some(s.clone()),
         Value::Null => None,
-        // For structured types, just jsonify them effectively
         v => Some(v.to_string()),
     }
 }
 
-/// Builder for constructing `FlatDataSpec` instances.
 #[derive(Clone, Debug, Default)]
 pub struct FlatDataSpecBuilder {
     columns: Vec<Column>,
@@ -990,43 +750,36 @@ pub struct FlatDataSpecBuilder {
 }
 
 impl FlatDataSpecBuilder {
-    /// Add a column to the table.
     pub fn column(mut self, column: Column) -> Self {
         self.columns.push(column);
         self
     }
 
-    /// Add multiple columns from an iterator.
     pub fn columns(mut self, columns: impl IntoIterator<Item = Column>) -> Self {
         self.columns.extend(columns);
         self
     }
 
-    /// Set the column separator.
     pub fn separator(mut self, sep: impl Into<String>) -> Self {
         self.decorations.column_sep = sep.into();
         self
     }
 
-    /// Set the row prefix.
     pub fn prefix(mut self, prefix: impl Into<String>) -> Self {
         self.decorations.row_prefix = prefix.into();
         self
     }
 
-    /// Set the row suffix.
     pub fn suffix(mut self, suffix: impl Into<String>) -> Self {
         self.decorations.row_suffix = suffix.into();
         self
     }
 
-    /// Set all decorations at once.
     pub fn decorations(mut self, decorations: Decorations) -> Self {
         self.decorations = decorations;
         self
     }
 
-    /// Build the `FlatDataSpec` instance.
     pub fn build(self) -> FlatDataSpec {
         FlatDataSpec {
             columns: self.columns,
@@ -1035,16 +788,12 @@ impl FlatDataSpecBuilder {
     }
 }
 
-/// Type alias: TabularSpec is the preferred name for FlatDataSpec.
 pub type TabularSpec = FlatDataSpec;
-/// Type alias for the builder.
 pub type TabularSpecBuilder = FlatDataSpecBuilder;
 
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    // --- Align tests ---
 
     #[test]
     fn align_default_is_left() {
@@ -1061,8 +810,6 @@ mod tests {
         }
     }
 
-    // --- TruncateAt tests ---
-
     #[test]
     fn truncate_at_default_is_end() {
         assert_eq!(TruncateAt::default(), TruncateAt::End);
@@ -1077,8 +824,6 @@ mod tests {
             assert_eq!(parsed, truncate);
         }
     }
-
-    // --- Width tests ---
 
     #[test]
     fn width_constructors() {
@@ -1131,7 +876,6 @@ mod tests {
     fn width_serde_fill() {
         let width = Width::Fill;
         let json = serde_json::to_string(&width).unwrap();
-        // Now serializes to "fill"
         assert_eq!(json, "\"fill\"");
 
         let parsed: Width = serde_json::from_str("\"fill\"").unwrap();
@@ -1147,7 +891,6 @@ mod tests {
         let parsed: Width = serde_json::from_str("\"2fr\"").unwrap();
         assert_eq!(parsed, width);
 
-        // Also test 1fr
         let parsed_1: Width = serde_json::from_str("\"1fr\"").unwrap();
         assert_eq!(parsed_1, Width::Fraction(1));
     }
@@ -1156,8 +899,6 @@ mod tests {
     fn width_fraction_constructor() {
         assert_eq!(Width::fraction(3), Width::Fraction(3));
     }
-
-    // --- Overflow tests ---
 
     #[test]
     fn overflow_default() {
@@ -1198,8 +939,6 @@ mod tests {
         assert!(matches!(wrap_indent, Overflow::Wrap { indent: 4 }));
     }
 
-    // --- Anchor tests ---
-
     #[test]
     fn anchor_default() {
         assert_eq!(Anchor::default(), Anchor::Left);
@@ -1214,8 +953,6 @@ mod tests {
             assert_eq!(parsed, anchor);
         }
     }
-
-    // --- Col shorthand tests ---
 
     #[test]
     fn col_shorthand_constructors() {
@@ -1276,8 +1013,6 @@ mod tests {
         let col = Col::fixed(10).named("author");
         assert_eq!(col.name, Some("author".to_string()));
     }
-
-    // --- Column tests ---
 
     #[test]
     fn column_defaults() {
@@ -1349,8 +1084,6 @@ mod tests {
         assert_eq!(col.width, Width::Fill);
     }
 
-    // --- Decorations tests ---
-
     #[test]
     fn decorations_default() {
         let dec = Decorations::default();
@@ -1372,15 +1105,10 @@ mod tests {
             .prefix("│ ")
             .suffix(" │");
 
-        // 3 columns: prefix(2) + suffix(2) + 2 separators(4) = 8
         assert_eq!(dec.overhead(3), 8);
-        // 1 column: prefix(2) + suffix(2) + 0 separators = 4
         assert_eq!(dec.overhead(1), 4);
-        // 0 columns: just prefix + suffix
         assert_eq!(dec.overhead(0), 4);
     }
-
-    // --- FlatDataSpec tests ---
 
     #[test]
     fn flat_data_spec_builder() {
@@ -1420,22 +1148,22 @@ mod tests {
             .column(Column::new(Width::Fixed(10)).key("name"))
             .column(Column::new(Width::Fixed(5)).key("meta.age"))
             .column(Column::new(Width::Fixed(10)).key("meta.role"))
-            .column(Column::new(Width::Fixed(10)).key("missing.field")) // Should use null_repr
+            .column(Column::new(Width::Fixed(10)).key("missing.field"))
             .build();
 
         let row = spec.extract_row(&json);
         assert_eq!(row[0], "Alice");
-        assert_eq!(row[1], "30"); // Numbers coerced to string
+        assert_eq!(row[1], "30");
         assert_eq!(row[2], "admin");
-        assert_eq!(row[3], "-"); // Default null_repr
+        assert_eq!(row[3], "-");
     }
 
     #[test]
     fn extract_header_row() {
         let spec = FlatDataSpec::builder()
             .column(Column::new(Width::Fixed(10)).header("Name").key("name"))
-            .column(Column::new(Width::Fixed(5)).key("age")) // Fallback to key
-            .column(Column::new(Width::Fixed(10))) // Empty
+            .column(Column::new(Width::Fixed(5)).key("age"))
+            .column(Column::new(Width::Fixed(10)))
             .build();
 
         let header = spec.extract_header();
@@ -1443,8 +1171,6 @@ mod tests {
         assert_eq!(header[1], "age");
         assert_eq!(header[2], "");
     }
-
-    // --- SubColumn tests ---
 
     #[test]
     fn sub_column_defaults() {
@@ -1513,8 +1239,6 @@ mod tests {
         assert_eq!(sc.align, Align::Right);
         assert_eq!(sc.style, Some("tag".to_string()));
     }
-
-    // --- SubColumns validation tests ---
 
     #[test]
     fn sub_columns_valid_construction() {

@@ -1,11 +1,5 @@
-//! Per-phase tests of the corpus runner: each seam of the loop proven fast
-//! and hermetically (no network, no real agent, no crates.io build). The
-//! whole loop end to end lives in `hermetic_loop.rs` (fake build, always
-//! on) and `walking_skeleton.rs` (real crates.io build, ignored).
-
-// Unix-only: scripted agents rely on `sh` + `PermissionsExt`, and the
-// symlink-refusal test builds its fixture with `std::os::unix::fs::symlink`;
-// gating keeps the workspace buildable elsewhere.
+// Per-phase tests of the corpus runner, hermetically. The whole loop end to
+// end lives in `hermetic_loop.rs` and `walking_skeleton.rs`.
 #![cfg(unix)]
 
 mod common;
@@ -19,15 +13,12 @@ use corpus_runner::archetype::{Archetype, InvariantCommand, InvariantContract, I
 use corpus_runner::report::{InvariantStatus, QuestionnaireReport, RunReport};
 use corpus_runner::{acceptance, questionnaire, session, workspace};
 
-/// A generous per-process deadline for tests that must not time out.
 const NO_TIMEOUT: Duration = Duration::from_secs(60);
 
-/// The repo's real corpus directory, relative to this crate.
 fn corpus_dir() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("../../corpus")
 }
 
-/// Inserts `answer` directly below the question line tagged `id`.
 fn answer(sheet: &str, id: &str, answer: &str) -> String {
     let tag = format!("<id:{id}>");
     let mut out = Vec::new();
@@ -43,7 +34,6 @@ fn answer(sheet: &str, id: &str, answer: &str) -> String {
     out.join("\n") + "\n"
 }
 
-/// A filled sheet answering every required field.
 fn filled_sheet() -> String {
     let mut sheet = questionnaire::definition().render_answer_sheet();
     sheet = answer(&sheet, "summary", "Built the smoke CLI.");
@@ -74,10 +64,6 @@ fn opaque(argv: &[&str]) -> InvariantCommand {
         contract: InvariantContract::OpaqueBytes,
     }
 }
-
-// ---------------------------------------------------------------------------
-// Questionnaire
-// ---------------------------------------------------------------------------
 
 #[test]
 fn field_ids_match_the_definition() {
@@ -125,7 +111,6 @@ fn filled_sheet_collects_with_answers_and_blindness_record() {
 #[test]
 fn unanswered_required_field_is_an_uncollected_report_not_a_panic() {
     let dir = tempfile::tempdir().unwrap();
-    // Blank sheet: required fields unanswered.
     fs::write(
         dir.path().join(questionnaire::SHEET_FILENAME),
         questionnaire::definition().render_answer_sheet(),
@@ -145,10 +130,6 @@ fn missing_sheet_is_an_uncollected_report() {
     assert!(!report.collected);
     assert!(!report.diagnostics.is_empty());
 }
-
-// ---------------------------------------------------------------------------
-// Archetype + provisioning
-// ---------------------------------------------------------------------------
 
 #[test]
 fn smoke_archetype_loads_from_the_repo_corpus() {
@@ -171,14 +152,11 @@ fn provisioned_workspace_is_blind() {
 
     let ws = workspace::provision(run_dir.path(), &archetype, &docs_dir, "8.1.1").unwrap();
 
-    // What the agent must see.
     for file in ["SPEC.md", "INSTRUCTIONS.md", "QUESTIONNAIRE.md"] {
         assert!(ws.root.join(file).is_file(), "missing {file}");
     }
     assert!(ws.root.join("docs/index.md").is_file());
     assert!(ws.root.join("docs/guides").is_dir());
-    // The crate-docs mounts (symlinks in the source tree) arrive as real
-    // dereferenced content — never as links back into the checkout.
     let crate_docs = ws.root.join("docs/crates/dispatch");
     assert!(crate_docs.is_dir());
     assert!(!fs::symlink_metadata(&crate_docs)
@@ -188,7 +166,6 @@ fn provisioned_workspace_is_blind() {
     assert!(ws.app_dir.join("Cargo.toml").is_file());
     assert!(ws.app_dir.join("src/main.rs").is_file());
 
-    // What it must not: framework source and internal docs.
     assert!(!ws.root.join("docs/adr").exists());
     assert!(!ws.root.join("docs/spec").exists());
     assert!(!ws.root.join("docs/specs").exists());
@@ -196,13 +173,10 @@ fn provisioned_workspace_is_blind() {
     assert!(!ws.root.join("docs/dev").exists());
     assert!(!ws.root.join("crates").exists());
 
-    // The scaffold pins crates.io exactly and carries no path/git deps.
     let manifest = fs::read_to_string(ws.app_dir.join("Cargo.toml")).unwrap();
     assert!(manifest.contains("standout = \"=8.1.1\""));
     assert!(!manifest.contains("path"));
     assert!(!manifest.contains("git"));
-    // The scaffold is its own cargo workspace, so cargo never walks up into
-    // whatever checkout the run directory happens to live under.
     assert!(manifest.contains("[workspace]"));
 }
 
@@ -215,8 +189,6 @@ fn provisioning_records_the_docs_snapshot_digest() {
     let ws = workspace::provision(run_dir.path(), &archetype, &docs_dir, "8.1.1").unwrap();
 
     assert_eq!(ws.docs_sha256.len(), 64);
-    // The digest is over the copied bytes: recomputing from the snapshot
-    // reproduces it.
     assert_eq!(
         ws.docs_sha256,
         workspace::docs_digest(&ws.root.join("docs")).unwrap()
@@ -229,7 +201,6 @@ fn provisioning_refuses_symlinks_in_the_docs_source() {
     let run_dir = tempfile::tempdir().unwrap();
     let scratch = tempfile::tempdir().unwrap();
 
-    // A docs tree whose published set hides a symlink pointing outside it.
     let outside = scratch.path().join("outside.md");
     fs::write(&outside, "framework internals").unwrap();
     let docs_dir = scratch.path().join("docs");
@@ -270,15 +241,6 @@ fn kernel_boundary_blocks_an_actual_checkout_file_open() {
     isolation.verify_boundary(&source_root).unwrap();
 }
 
-// ---------------------------------------------------------------------------
-// Session
-// ---------------------------------------------------------------------------
-
-/// `>/dev/null` (and `Stdio::null()`, which `posix_spawn`s an open of the
-/// device for writing) must work under every phase policy: without the
-/// `/dev/null` write admission, any sandboxed child that nulls a stream —
-/// cargo build scripts probing the compiler, e.g. rustix's — dies at spawn
-/// with EPERM, and the real-crates.io build can never succeed.
 #[test]
 fn sandboxed_children_can_write_dev_null() {
     let dir = tempfile::tempdir().unwrap();
@@ -314,7 +276,6 @@ fn session_scrubs_the_environment_and_writes_the_transcript() {
     assert!(report.wall_seconds >= 0.0);
     assert_eq!(report.transcript, session::TRANSCRIPT_FILENAME);
     assert!(!report.timed_out);
-    // A non-stream-json transcript yields no turn/token instrumentation.
     assert_eq!(report.turns, None);
 }
 
@@ -361,12 +322,8 @@ fn failing_agent_is_recorded_not_fatal() {
     assert_eq!(report.exit_code, Some(3));
 }
 
-// ---------------------------------------------------------------------------
-// Acceptance + invariants
-// ---------------------------------------------------------------------------
-
-/// A fake produced binary honoring `--output text|term|json`, with identical
-/// term/text content (term adds only ANSI bold).
+// A fake produced binary honoring `--output text|term|json`, with identical
+// term/text content (term adds only ANSI bold).
 const WELL_BEHAVED: &str = r#"
 mode=text
 prev=""
@@ -381,7 +338,7 @@ case "$mode" in
 esac
 "#;
 
-/// A corrupt binary: term leaks an unresolved tag marker and drifts from text.
+// A corrupt binary: term leaks an unresolved tag marker and drifts from text.
 const CORRUPT: &str = r#"
 mode=text
 prev=""
@@ -556,10 +513,6 @@ fn hanging_binary_times_out_as_a_finding() {
         .all(|c| c.detail.as_deref().unwrap().contains("timed out")));
 }
 
-// ---------------------------------------------------------------------------
-// Report
-// ---------------------------------------------------------------------------
-
 fn test_isolation_record() -> corpus_runner::report::IsolationRecord {
     corpus_runner::report::IsolationRecord {
         backend: "test".into(),
@@ -646,12 +599,6 @@ fn report_round_trips_through_json() {
     );
 }
 
-/// Every committed historical report — the pilot runs (schema 2, case
-/// results) and the demo smoke run (schema 2, whose `checks` vector belongs
-/// to the retired check schema) — must keep loading through the typed
-/// historical path re-evaluation uses ([`HistoricalRun`]), with retired
-/// keys (`checks`, `session.attempts`, string `isolation_backend`s) ignored
-/// and every version inside the supported historical range.
 #[test]
 fn committed_historical_reports_still_deserialize() {
     use corpus_runner::report::{HistoricalRun, HISTORICAL_SCHEMA_MIN, SCHEMA_VERSION};

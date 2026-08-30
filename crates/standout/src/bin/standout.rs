@@ -47,11 +47,6 @@ fn build_app() -> Result<App> {
         .build()?)
 }
 
-/// Generate a project from the typed questionnaire value collected by the
-/// framework-injected `new-project` surface. The framework owns collection,
-/// `--answers`/`questions`, dynamic defaults, the binary's pre-confirmation
-/// review callback, and the attended confirmation gate before this handler
-/// runs; the handler owns final publication.
 fn run_new_project(
     _matches: &clap::ArgMatches,
     ctx: &CommandContext,
@@ -1358,7 +1353,6 @@ fn spec_reads_stdin(spec: &ProjectSpec) -> bool {
         .any(|input| input.sources.contains(&InputSource::Stdin))
 }
 
-/// Generates panic-safe setup for file sources in the handler test.
 fn handler_sample_files(spec: &ProjectSpec) -> String {
     let mut lines = Vec::new();
     for (index, input) in spec.inputs.iter().enumerate() {
@@ -1378,7 +1372,6 @@ fn handler_sample_files(spec: &ProjectSpec) -> String {
     lines.join("\n")
 }
 
-/// Generates InputSources injection for stdin-backed handler tests.
 fn handler_sample_stdin(spec: &ProjectSpec) -> String {
     let mut lines = Vec::new();
     for (index, input) in spec.inputs.iter().enumerate() {
@@ -1393,7 +1386,6 @@ fn handler_sample_stdin(spec: &ProjectSpec) -> String {
     lines.join("\n")
 }
 
-/// Generates explicit cleanup for temporary files used by the handler test.
 fn handler_sample_cleanup(spec: &ProjectSpec) -> String {
     let mut lines = Vec::new();
     for input in &spec.inputs {
@@ -1514,19 +1506,8 @@ fn quote(value: &str) -> String {
     format!("{value:?}")
 }
 
-/// Width budget rustfmt's default `attr_fn_like_width` heuristic grants a
-/// function-like attribute's argument list before splitting it across lines.
 const ATTR_FN_LIKE_WIDTH: usize = 70;
 
-/// Renders the generated CLI's `#[command(...)]` attribute exactly as the
-/// pinned rustfmt would format it: inline while the argument list fits
-/// [`ATTR_FN_LIKE_WIDTH`], one argument per line without a trailing comma
-/// once it does not. The budget is measured in Unicode display width
-/// (via `unicode-width`, the same crate rustfmt's heuristics use), not
-/// char count, so wide characters in a description (CJK, emoji) trip the
-/// split at the same point rustfmt would. Emitting the formatted shape
-/// keeps generated projects `cargo fmt --check`-clean without invoking a
-/// formatter at generation time, even for long command descriptions.
 fn cli_command_attribute(spec: &ProjectSpec) -> String {
     use unicode_width::UnicodeWidthStr;
 
@@ -1540,7 +1521,6 @@ fn cli_command_attribute(spec: &ProjectSpec) -> String {
     }
 }
 
-/// Escapes a path for interpolation inside a TOML basic string.
 fn toml_basic_string_content(path: &Path) -> String {
     let mut escaped = String::new();
     for character in path.to_string_lossy().chars() {
@@ -2271,8 +2251,6 @@ mod tests {
     fn generated_manifests_only_depend_on_publishable_workspace_crates() {
         let dir = TempDir::new().unwrap();
         let mut spec = sample_spec(dir.path());
-        // [patch.crates-io] would redirect the family deps to local paths and
-        // hide what a user's clean registry resolution actually sees.
         spec.local_patch_root = None;
         let generated = GeneratedFiles::render(&spec).unwrap();
         write_generated_files(&spec.destination, &generated).unwrap();
@@ -2637,8 +2615,6 @@ mod tests {
 
     #[test]
     fn command_attribute_splits_exactly_at_the_rustfmt_width_boundary() {
-        // The rendered argument list is `name = "demo", about = "..."`:
-        // 25 characters of scaffolding around the description text.
         let at_limit = spec_with_description(&"a".repeat(ATTR_FN_LIKE_WIDTH - 25));
         assert_eq!(
             cli_command_attribute(&at_limit),
@@ -2660,10 +2636,6 @@ mod tests {
 
     #[test]
     fn command_attribute_measures_display_width_not_char_count() {
-        // rustfmt's width heuristic counts Unicode display width, so CJK
-        // characters (width 2) hit the budget at half the char count. The
-        // scaffolding `name = "demo", about = ""` contributes 25 columns.
-        // 22 CJK chars: width 25 + 44 = 69 <= 70 -> inline (47 chars total).
         let inline = spec_with_description(&"検".repeat(22));
         assert_eq!(
             cli_command_attribute(&inline),
@@ -2673,8 +2645,6 @@ mod tests {
             )
         );
 
-        // 23 CJK chars: width 25 + 46 = 71 > 70 -> split, even though the
-        // argument list is only 48 chars (well under the budget by count).
         let split = spec_with_description(&"検".repeat(23));
         assert_eq!(
             cli_command_attribute(&split),
@@ -3091,12 +3061,8 @@ mod tests {
         serde_json::from_slice(&output.stdout).unwrap()
     }
 
-    /// How `cargo metadata` spells the source of a dependency that resolves
-    /// from the default registry.
     const CRATES_IO_SOURCE: &str = "registry+https://github.com/rust-lang/crates.io-index";
 
-    /// Names of the crates.io `standout*` dependencies declared anywhere in the
-    /// workspace rooted at `manifest`, across every dependency kind.
     fn generated_family_crates_io_deps(manifest: &Path) -> std::collections::BTreeSet<String> {
         let metadata = cargo_metadata(manifest);
         let mut names = std::collections::BTreeSet::new();
@@ -3112,8 +3078,6 @@ mod tests {
         names
     }
 
-    /// Every member of this repository's workspace, mapped to whether `cargo
-    /// publish` would send it to crates.io.
     fn workspace_crates_io_publishable() -> std::collections::BTreeMap<String, bool> {
         let metadata = cargo_metadata(&workspace_root().join("Cargo.toml"));
         metadata["packages"]
@@ -3198,10 +3162,6 @@ mod tests {
         serde_json::from_slice(&output.stdout).unwrap()
     }
 
-    /// Set `value` as the answer text below the `nth` (zero-based) question
-    /// line ending with `<id:...>`, replacing a pre-filled default line when
-    /// one is rendered. Panics when the sheet has no such question line, so
-    /// a test cannot silently leave a question unanswered.
     fn fill_nth(sheet: &str, id: &str, value: &str, nth: usize) -> String {
         let tag = format!("<id:{id}>");
         let lines: Vec<&str> = sheet.lines().collect();
@@ -3215,8 +3175,6 @@ mod tests {
             i += 1;
             if line.trim_end().ends_with(&tag) {
                 if seen == nth {
-                    // A non-blank line right below the question is a
-                    // pre-filled default: the answer replaces it.
                     if lines.get(i).is_some_and(|next| !next.trim().is_empty()) {
                         i += 1;
                     }
@@ -3234,10 +3192,6 @@ mod tests {
         fill_nth(sheet, id, value, 0)
     }
 
-    /// Simulate copy-the-block editing: duplicate the complete last
-    /// `command.inputs` block (its group tag line through its last
-    /// question's answer line) below itself, exactly as a user adding an
-    /// item would.
     fn duplicate_inputs_block(sheet: &str) -> String {
         let lines: Vec<&str> = sheet.lines().collect();
         let start = lines
@@ -3248,7 +3202,7 @@ mod tests {
             .iter()
             .rposition(|line| line.trim_end().ends_with("<id:command.inputs.sources>"))
             .expect("sheet renders the sources question");
-        let end = sources + 1; // the sources answer line (default or filled)
+        let end = sources + 1;
         let mut copied: Vec<&str> = lines[..=end].to_vec();
         copied.push("");
         copied.extend(&lines[start..=end]);

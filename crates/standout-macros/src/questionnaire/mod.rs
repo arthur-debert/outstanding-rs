@@ -20,7 +20,6 @@ use syn::{
     Lit, Meta, Path, PathArguments, Result, Token, Type, Variant,
 };
 
-/// Parsed `#[question(...)]` attributes.
 #[derive(Default)]
 struct QuestionAttr {
     id: Option<(String, Span)>,
@@ -100,8 +99,6 @@ impl Parse for ActiveWhenAttr {
     }
 }
 
-/// Record `value` in `slot`, rejecting a second declaration of the same
-/// `#[question(...)]` attribute with a span-pointed duplicate error.
 fn set_once<T>(slot: &mut Option<T>, value: T, span: Span, name: &str) -> Result<()> {
     if slot.replace(value).is_some() {
         return Err(Error::new(
@@ -112,10 +109,6 @@ fn set_once<T>(slot: &mut Option<T>, value: T, span: Span, name: &str) -> Result
     Ok(())
 }
 
-/// Collect the comma-separated `Meta` items of every `#[question(...)]`
-/// attribute on one syntax node into a single list, so repeated attributes
-/// and repeated keys within one attribute run through the same single parse
-/// pass.
 fn question_metas(attrs: &[Attribute]) -> Result<Vec<Meta>> {
     let mut metas = Vec::new();
     for attr in attrs {
@@ -127,8 +120,6 @@ fn question_metas(attrs: &[Attribute]) -> Result<Vec<Meta>> {
 }
 
 impl QuestionAttr {
-    /// Parse every `#[question(...)]` attribute on a node in one pass; each
-    /// key may appear at most once across all of the node's attributes.
     fn from_attrs(attrs: &[Attribute]) -> Result<Self> {
         let mut attr = QuestionAttr::default();
 
@@ -198,7 +189,6 @@ impl QuestionAttr {
     }
 }
 
-/// Main implementation of the Questionnaire derive macro.
 pub fn questionnaire_derive_impl(input: DeriveInput) -> Result<TokenStream> {
     let struct_name = &input.ident;
     let (impl_generics, ty_generics, where_clause) = input.generics.split_for_impl();
@@ -243,8 +233,6 @@ pub fn questionnaire_derive_impl(input: DeriveInput) -> Result<TokenStream> {
         }
     };
 
-    // Rust field name -> question ID, for same-struct `active_when`
-    // controller resolution.
     let field_ids = fields
         .iter()
         .map(|field| {
@@ -533,11 +521,6 @@ impl FieldInfo {
         })
     }
 
-    /// Lower this field to its runtime builder item.
-    ///
-    /// `field_ids` maps the enclosing struct's Rust field names to question
-    /// IDs: an `active_when` controller must name a field of the same
-    /// derived struct, and resolves here at expansion time.
     fn builder_tokens(&self, field_ids: &[(String, String)]) -> Result<TokenStream> {
         let id = prefixed_id_tokens(&self.id);
         let prompt = &self.prompt;
@@ -1090,7 +1073,6 @@ fn parse_bool(text: &str) -> Option<bool> {
     }
 }
 
-/// Main implementation of the QuestionnaireChoices derive macro.
 pub fn questionnaire_choices_derive_impl(input: DeriveInput) -> Result<TokenStream> {
     let enum_name = &input.ident;
     if !input.generics.params.is_empty() {
@@ -1192,8 +1174,6 @@ impl ChoiceVariant {
     }
 }
 
-/// Parse a choice variant's `#[question(rename = "...")]` attributes in one
-/// pass; `rename` may appear at most once across all of them.
 fn parse_choice_rename(attrs: &[Attribute]) -> Result<Option<(String, Span)>> {
     let mut rename = None;
     for meta in question_metas(attrs)? {
