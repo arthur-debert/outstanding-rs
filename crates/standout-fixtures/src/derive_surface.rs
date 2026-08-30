@@ -93,20 +93,28 @@ pub mod handlers {
 #[derive(Dispatch)]
 #[dispatch(handlers = handlers)]
 pub enum Commands {
-    #[dispatch(pure, default, template = "{{ names | join(', ') }}")]
+    #[dispatch(pure, default)]
     ListUnits,
-    #[dispatch(pure, name = "about-this", template = "{{ names | join(', ') }}")]
+    #[dispatch(pure, name = "about-this")]
     About,
-    #[dispatch(pure, questionnaire = ProvisionAnswers, template = "{{ host }}:{{ tier }}")]
+    #[dispatch(pure, questionnaire = ProvisionAnswers)]
     Provision,
     #[dispatch(pure, silent)]
     Reload,
-    #[dispatch(pure, template = "{{ names | join(', ') }}")]
+    #[dispatch(pure)]
     r#Move,
 }
 
+const TEMPLATES: &[(&str, &str)] = &[
+    ("list-units", "{{ names | join(', ') }}"),
+    ("about-this", "{{ names | join(', ') }}"),
+    ("provision", "{{ host }}:{{ tier }}"),
+    ("move", "{{ names | join(', ') }}"),
+];
+
 pub fn app() -> App {
     App::builder()
+        .templates(standout::EmbeddedTemplates::new(TEMPLATES, ""))
         .commands(Commands::dispatch_config())
         .expect("derive-registered commands")
         .build()

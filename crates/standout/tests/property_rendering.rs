@@ -21,21 +21,26 @@ fn output_mode_strategy() -> impl Strategy<Value = OutputMode> {
     ]
 }
 
+const TEMPLATES: &[(&str, &str)] = &[
+    ("plain", "{{ data }}"),
+    ("titled", "[title]{{ data }}[/title]"),
+    (
+        "highlighted",
+        "[highlight]Output: [title]{{ data }}[/title][/highlight]",
+    ),
+];
+
 #[derive(Debug, Clone)]
 struct TemplateCase {
-    source: &'static str,
+    name: &'static str,
 }
 
 fn template_strategy() -> impl Strategy<Value = TemplateCase> {
     prop_oneof![
+        Just(TemplateCase { name: "plain" }),
+        Just(TemplateCase { name: "titled" }),
         Just(TemplateCase {
-            source: "{{ data }}",
-        }),
-        Just(TemplateCase {
-            source: "[title]{{ data }}[/title]",
-        }),
-        Just(TemplateCase {
-            source: "[highlight]Output: [title]{{ data }}[/title][/highlight]",
+            name: "highlighted",
         }),
     ]
 }
@@ -96,10 +101,11 @@ fn dispatch(
         json!({ "data": data })
     };
     let builder = App::builder()
-        .command(
+        .templates(standout::EmbeddedTemplates::new(TEMPLATES, ""))
+        .command_with(
             "test",
-            move |_m, _ctx| Ok(Output::Render(payload.clone())),
-            template.source,
+            standout::cli::FnHandler::new(move |_m, _ctx| Ok(Output::Render(payload.clone()))),
+            |cfg| cfg.template_name(template.name),
         )
         .unwrap();
 

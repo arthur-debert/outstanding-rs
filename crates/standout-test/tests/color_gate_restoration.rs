@@ -1,6 +1,10 @@
 use serde_json::json;
+use standout::cli::FnHandler;
 use standout::cli::{App, Output};
+use standout::EmbeddedTemplates;
 use standout_test::TestHarness;
+
+const TEMPLATES: &[(&str, &str)] = &[("say", "hello")];
 #[test]
 fn console_color_state_restores_to_the_pre_run_environment() {
     if std::env::var_os("CLICOLOR_FORCE").is_some() || std::env::var_os("CLICOLOR").is_some() {
@@ -9,7 +13,12 @@ fn console_color_state_restores_to_the_pre_run_environment() {
     let before = console::Term::stdout().features().colors_supported();
     {
         let app = App::builder()
-            .command("say", |_m, _ctx| Ok(Output::Render(json!({}))), "hello")
+            .templates(EmbeddedTemplates::new(TEMPLATES, ""))
+            .command_with(
+                "say",
+                FnHandler::new(|_m, _ctx| Ok(Output::Render(json!({})))),
+                |cfg| cfg,
+            )
             .unwrap()
             .build()
             .unwrap();

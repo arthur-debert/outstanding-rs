@@ -4,7 +4,11 @@ use clap::builder::{PossibleValue, PossibleValuesParser};
 use clap::{Arg, ArgAction, Command};
 use proptest::prelude::*;
 use serde_json::json;
+use standout::cli::FnHandler;
 use standout::cli::{App, Output};
+use standout::EmbeddedTemplates;
+
+const TEMPLATES: &[(&str, &str)] = &[("stat", "stat")];
 const ADVERSARIAL: [&str; 7] = [
     "key:value",
     "key: value",
@@ -148,8 +152,13 @@ fn claps_pages_decode_back_to_claps_own_values() {
 }
 fn stat_app() -> App {
     App::builder()
+        .templates(EmbeddedTemplates::new(TEMPLATES, ""))
         .help_handling(true)
-        .command("stat", |_m, _ctx| Ok(Output::Render(json!({}))), "stat")
+        .command_with(
+            "stat",
+            FnHandler::new(|_m, _ctx| Ok(Output::Render(json!({})))),
+            |cfg| cfg,
+        )
         .unwrap()
         .build()
         .unwrap()

@@ -7,9 +7,7 @@ use standout_render::warnings::WarningBuffer;
 use std::io::Write;
 use std::path::PathBuf;
 
-use super::{
-    inline_template_ref, App, AppBuilder, HookRegistrationSource, PendingCommand, TemplateRef,
-};
+use super::{App, AppBuilder, HookRegistrationSource, PendingCommand, TemplateRef};
 use crate::cli::default_command::ParseFailure;
 use crate::cli::dispatch::{dispatch, extract_command_path, get_deepest_matches, DispatchOutput};
 use crate::cli::group::{ErasedConfigRecipe, GroupBuilder, GroupEntry};
@@ -26,6 +24,7 @@ use crate::topics::display_with_pager;
 use crate::SetupError;
 
 impl AppBuilder {
+    /// Secondary form (ADR-0032): a hand-written closure registers a command set computed at run time.
     pub fn commands<F>(mut self, configure: F) -> Result<Self, SetupError>
     where
         F: FnOnce(GroupBuilder) -> GroupBuilder,
@@ -43,8 +42,6 @@ impl AppBuilder {
                         TemplateRef::Absent(absence)
                     } else if let Some(name) = handler.template_name() {
                         TemplateRef::Named(name.to_string())
-                    } else if let Some(template) = handler.template() {
-                        inline_template_ref(template, "CommandConfig::template")?
                     } else {
                         TemplateRef::convention(&name)
                     };
@@ -86,6 +83,7 @@ impl AppBuilder {
 }
 
 impl App {
+    /// Secondary path (ADR-0032): the application owns clap parsing and already holds `ArgMatches`.
     pub fn dispatch(
         &self,
         matches: ArgMatches,
@@ -230,22 +228,6 @@ impl App {
         } else {
             DispatchResult::NoMatch(matches)
         }
-    }
-
-    pub fn dispatch_from<I, T>(&self, cmd: Command, args: I) -> crate::cli::CompletedRun
-    where
-        I: IntoIterator<Item = T>,
-        T: Into<std::ffi::OsString> + Clone,
-    {
-        self.collect_run_warnings(|warnings| {
-            self.dispatch_from_with_target(
-                cmd,
-                args,
-                self.process_edge_target(),
-                InputSources::from_process(),
-                warnings,
-            )
-        })
     }
 
     fn dispatch_from_with_target<I, T>(
@@ -439,6 +421,7 @@ impl App {
         crate::cli::CompletedRun::from_dispatch(outcome, warnings.take(), output_mode)
     }
 
+    /// Blessed capture form (ADR-0032): destination properties and input sources passed in, nothing detected.
     pub fn run_with<I, T>(
         &self,
         cmd: Command,
@@ -453,25 +436,6 @@ impl App {
         self.collect_run_warnings(|warnings| {
             self.dispatch_from_with_target(cmd, args, target, sources, warnings)
         })
-    }
-
-    pub fn run_to_string<I, T>(&self, cmd: Command, args: I) -> crate::cli::CompletedRun
-    where
-        I: IntoIterator<Item = T>,
-        T: Into<std::ffi::OsString> + Clone,
-    {
-        let capture_window = standout_render::diagnostics::begin_capture();
-        let result = self.collect_run_warnings(|warnings| {
-            self.dispatch_from_with_target(
-                cmd,
-                args,
-                self.process_edge_target(),
-                InputSources::from_process(),
-                warnings,
-            )
-        });
-        drop(capture_window);
-        result
     }
 
     pub(crate) fn augment_framework_surface(&self, mut cmd: Command) -> Command {
@@ -852,6 +816,39 @@ fn final_write_error_unless_broken_pipe(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::EmbeddedTemplates;
+
+    const TEMPLATES: &[(&str, &str)] = &[
+        ("list", "Count: {{ count }}"),
+        ("list-2", "{{ name }}: {{ value }}"),
+        ("config/get", "{{ key }}"),
+        ("list-3", "Items: {{ items }}"),
+        ("list-4", "{{ count }}"),
+        ("list-5", "{{ msg }}"),
+        ("config/get-2", "{{ value }}"),
+        ("other", "{{ msg }}"),
+        ("list-6", "Count: {{ count }}, Modified: {{ modified }}"),
+        ("list-7", "{{ items }}"),
+        ("list-8", "{{ value }}"),
+        ("add", "Added: {{ added }}"),
+        ("list-9", "{{ cmd }}"),
+        ("add-2", "{{ cmd }}"),
+        ("show", "unused"),
+        ("show-2", "Hello {{ name }}"),
+        ("show-3", "Count: {{ count }}"),
+        ("list-10", "[late]{{ name }}[/late]"),
+        ("list-11", "[test_style]{{ name }}[/test_style]"),
+        ("list-12", "[header]{{ title }}[/header]"),
+        ("test", "[mystyle]{{ x }}[/mystyle]"),
+        ("list-13", "{{ db_url }}"),
+        ("list-14", "debug={{ debug }}"),
+        ("info", "db={{ db }}, version={{ version }}"),
+        ("list-15", "db={{ db }}, user={{ user }}"),
+        ("fetch", "{{ url }}"),
+        ("test-3", "[perm]{{ val }}[/perm]"),
+    ];
+
+    use crate::cli::handler::FnHandler;
     use crate::cli::handler::HandlerResult;
     use crate::cli::handler::Output as HandlerOutput;
     use crate::cli::hooks::{HookError, Hooks, RenderedOutput};
@@ -862,6 +859,7 @@ mod tests {
         use serde_json::json;
 
         let builder = AppBuilder::new()
+            .templates(EmbeddedTemplates::new(TEMPLATES, ""))
             .commands(dispatch! {
                 list => {
                     handler: |_m, _ctx| Ok(HandlerOutput::Render(json!({"items": ["a", "b"]}))),
@@ -887,6 +885,7 @@ mod tests {
         use serde_json::json;
 
         let builder = AppBuilder::new()
+            .templates(EmbeddedTemplates::new(TEMPLATES, ""))
             .commands(dispatch! {
                 db: {
                     migrate => {
@@ -932,10 +931,14 @@ mod tests {
         use serde_json::json;
 
         let builder = AppBuilder::new()
+            .templates(crate::EmbeddedTemplates::new(
+                &[("list", "Count: {{ count }}")],
+                "",
+            ))
             .commands(dispatch! {
                 list => {
                     handler: |_m, _ctx| Ok(HandlerOutput::Render(json!({"count": 42}))),
-                    template: "Count: {{ count }}",
+                    template_name: "list",
                 }
             })
             .unwrap();
@@ -959,10 +962,11 @@ mod tests {
         let hook_called_clone = hook_called.clone();
 
         let builder = AppBuilder::new()
+            .templates(crate::EmbeddedTemplates::new(&[("list", "{{ ok }}")], ""))
             .commands(dispatch! {
                 list => {
                     handler: |_m, _ctx| Ok(HandlerOutput::Render(json!({"ok": true}))),
-                    template: "{{ ok }}",
+                    template_name: "list",
                     pre_dispatch: move |_, _| {
                         hook_called_clone.store(true, Ordering::SeqCst);
                         Ok(())
@@ -985,6 +989,7 @@ mod tests {
         use serde_json::json;
 
         let builder = AppBuilder::new()
+            .templates(EmbeddedTemplates::new(TEMPLATES, ""))
             .commands(dispatch! {
                 app: {
                     config: {
@@ -1006,10 +1011,11 @@ mod tests {
         use serde_json::json;
 
         let builder = AppBuilder::new()
-            .command(
+            .templates(EmbeddedTemplates::new(TEMPLATES, ""))
+            .command_with(
                 "list",
-                |_m, _ctx| Ok(HandlerOutput::Render(json!({"count": 42}))),
-                "Count: {{ count }}",
+                FnHandler::new(|_m, _ctx| Ok(HandlerOutput::Render(json!({"count": 42})))),
+                |cfg| cfg,
             )
             .unwrap();
 
@@ -1027,9 +1033,10 @@ mod tests {
         use serde_json::json;
 
         let builder = AppBuilder::new()
+            .templates(EmbeddedTemplates::new(TEMPLATES, ""))
             .command_with(
                 "list",
-                |_m, _ctx| Ok(HandlerOutput::Render(json!({}))),
+                FnHandler::new(|_m, _ctx| Ok(HandlerOutput::Render(json!({})))),
                 |config| config.structured_only(),
             )
             .unwrap();
@@ -1050,10 +1057,13 @@ mod tests {
         use serde_json::json;
 
         let builder = AppBuilder::new()
-            .command(
+            .templates(EmbeddedTemplates::new(TEMPLATES, ""))
+            .command_with(
                 "list",
-                |_m, _ctx| Ok(HandlerOutput::Render(json!({"name": "test", "value": 123}))),
-                "{{ name }}: {{ value }}",
+                FnHandler::new(|_m, _ctx| {
+                    Ok(HandlerOutput::Render(json!({"name": "test", "value": 123})))
+                }),
+                |cfg| cfg.template_name("list-2"),
             )
             .unwrap();
 
@@ -1073,10 +1083,11 @@ mod tests {
         use serde_json::json;
 
         let builder = AppBuilder::new()
-            .command(
+            .templates(EmbeddedTemplates::new(TEMPLATES, ""))
+            .command_with(
                 "config.get",
-                |_m, _ctx| Ok(HandlerOutput::Render(json!({"key": "value"}))),
-                "{{ key }}",
+                FnHandler::new(|_m, _ctx| Ok(HandlerOutput::Render(json!({"key": "value"})))),
+                |cfg| cfg,
             )
             .unwrap();
 
@@ -1093,9 +1104,10 @@ mod tests {
     #[test]
     fn test_dispatch_silent_result() {
         let builder = AppBuilder::new()
+            .templates(EmbeddedTemplates::new(TEMPLATES, ""))
             .command_with(
                 "quiet",
-                |_m, _ctx| Ok(HandlerOutput::<()>::Silent),
+                FnHandler::new(|_m, _ctx| Ok(HandlerOutput::<()>::Silent)),
                 |config| config.silent(),
             )
             .unwrap();
@@ -1112,9 +1124,12 @@ mod tests {
     #[test]
     fn test_dispatch_error_result() {
         let builder = AppBuilder::new()
+            .templates(EmbeddedTemplates::new(TEMPLATES, ""))
             .command_with(
                 "fail",
-                |_m, _ctx| Err::<HandlerOutput<()>, _>(anyhow::anyhow!("something went wrong")),
+                FnHandler::new(|_m, _ctx| {
+                    Err::<HandlerOutput<()>, _>(anyhow::anyhow!("something went wrong"))
+                }),
                 |config| config.silent(),
             )
             .unwrap();
@@ -1135,16 +1150,22 @@ mod tests {
         use serde_json::json;
 
         let builder = AppBuilder::new()
-            .command(
+            .templates(EmbeddedTemplates::new(TEMPLATES, ""))
+            .command_with(
                 "list",
-                |_m, _ctx| Ok(HandlerOutput::Render(json!({"items": ["a", "b"]}))),
-                "Items: {{ items }}",
+                FnHandler::new(|_m, _ctx| Ok(HandlerOutput::Render(json!({"items": ["a", "b"]})))),
+                |cfg| cfg.template_name("list-3"),
             )
             .unwrap();
 
         let cmd = Command::new("app").subcommand(Command::new("list"));
 
-        let result = builder.build().unwrap().dispatch_from(cmd, ["app", "list"]);
+        let result = builder.build().unwrap().run_with(
+            cmd,
+            ["app", "list"],
+            crate::TargetProperties::detect(),
+            crate::InputSources::from_process(),
+        );
 
         assert!(result.is_handled());
         assert_eq!(result.output(), Some("Items: [\"a\", \"b\"]"));
@@ -1155,19 +1176,22 @@ mod tests {
         use serde_json::json;
 
         let builder = AppBuilder::new()
-            .command(
+            .templates(EmbeddedTemplates::new(TEMPLATES, ""))
+            .command_with(
                 "list",
-                |_m, _ctx| Ok(HandlerOutput::Render(json!({"count": 5}))),
-                "Count: {{ count }}",
+                FnHandler::new(|_m, _ctx| Ok(HandlerOutput::Render(json!({"count": 5})))),
+                |cfg| cfg,
             )
             .unwrap();
 
         let cmd = Command::new("app").subcommand(Command::new("list"));
 
-        let result = builder
-            .build()
-            .unwrap()
-            .dispatch_from(cmd, ["app", "--output=json", "list"]);
+        let result = builder.build().unwrap().run_with(
+            cmd,
+            ["app", "--output=json", "list"],
+            crate::TargetProperties::detect(),
+            crate::InputSources::from_process(),
+        );
 
         assert!(result.is_handled());
         let output = result.output().unwrap();
@@ -1179,9 +1203,10 @@ mod tests {
         use serde_json::json;
 
         let builder = AppBuilder::new()
+            .templates(EmbeddedTemplates::new(TEMPLATES, ""))
             .command_with(
                 "list",
-                |_m, _ctx| Ok(HandlerOutput::Render(json!({}))),
+                FnHandler::new(|_m, _ctx| Ok(HandlerOutput::Render(json!({})))),
                 |config| config.structured_only(),
             )
             .unwrap();
@@ -1190,10 +1215,12 @@ mod tests {
             .subcommand(Command::new("list"))
             .subcommand(Command::new("other"));
 
-        let result = builder
-            .build()
-            .unwrap()
-            .dispatch_from(cmd, ["app", "other"]);
+        let result = builder.build().unwrap().run_with(
+            cmd,
+            ["app", "other"],
+            crate::TargetProperties::detect(),
+            crate::InputSources::from_process(),
+        );
 
         assert!(!result.is_handled());
     }
@@ -1208,10 +1235,11 @@ mod tests {
         let hook_called_clone = hook_called.clone();
 
         let builder = AppBuilder::new()
-            .command(
+            .templates(EmbeddedTemplates::new(TEMPLATES, ""))
+            .command_with(
                 "list",
-                |_m, _ctx| Ok(HandlerOutput::Render(json!({"count": 1}))),
-                "{{ count }}",
+                FnHandler::new(|_m, _ctx| Ok(HandlerOutput::Render(json!({"count": 1})))),
+                |cfg| cfg.template_name("list-4"),
             )
             .unwrap()
             .hooks(
@@ -1237,9 +1265,9 @@ mod tests {
         let builder = AppBuilder::new()
             .command_with(
                 "list",
-                |_m, _ctx| -> HandlerResult<()> {
+                FnHandler::new(|_m, _ctx| -> HandlerResult<()> {
                     panic!("Handler should not be called");
-                },
+                }),
                 |config| config.silent(),
             )
             .unwrap()
@@ -1265,10 +1293,11 @@ mod tests {
         use serde_json::json;
 
         let builder = AppBuilder::new()
-            .command(
+            .templates(EmbeddedTemplates::new(TEMPLATES, ""))
+            .command_with(
                 "list",
-                |_m, _ctx| Ok(HandlerOutput::Render(json!({"msg": "hello"}))),
-                "{{ msg }}",
+                FnHandler::new(|_m, _ctx| Ok(HandlerOutput::Render(json!({"msg": "hello"})))),
+                |cfg| cfg.template_name("list-5"),
             )
             .unwrap()
             .hooks(
@@ -1299,10 +1328,11 @@ mod tests {
         use serde_json::json;
 
         let builder = AppBuilder::new()
-            .command(
+            .templates(EmbeddedTemplates::new(TEMPLATES, ""))
+            .command_with(
                 "list",
-                |_m, _ctx| Ok(HandlerOutput::Render(json!({"msg": "test"}))),
-                "{{ msg }}",
+                FnHandler::new(|_m, _ctx| Ok(HandlerOutput::Render(json!({"msg": "test"})))),
+                |cfg| cfg.template_name("list-5"),
             )
             .unwrap()
             .hooks(
@@ -1344,10 +1374,11 @@ mod tests {
         use serde_json::json;
 
         let builder = AppBuilder::new()
-            .command(
+            .templates(EmbeddedTemplates::new(TEMPLATES, ""))
+            .command_with(
                 "list",
-                |_m, _ctx| Ok(HandlerOutput::Render(json!({"msg": "hello"}))),
-                "{{ msg }}",
+                FnHandler::new(|_m, _ctx| Ok(HandlerOutput::Render(json!({"msg": "hello"})))),
+                |cfg| cfg.template_name("list-5"),
             )
             .unwrap()
             .hooks(
@@ -1373,10 +1404,11 @@ mod tests {
         use serde_json::json;
 
         let builder = AppBuilder::new()
-            .command(
+            .templates(EmbeddedTemplates::new(TEMPLATES, ""))
+            .command_with(
                 "config.get",
-                |_m, _ctx| Ok(HandlerOutput::Render(json!({"value": "secret"}))),
-                "{{ value }}",
+                FnHandler::new(|_m, _ctx| Ok(HandlerOutput::Render(json!({"value": "secret"})))),
+                |cfg| cfg.template_name("config/get-2"),
             )
             .unwrap()
             .hooks(
@@ -1405,16 +1437,17 @@ mod tests {
         use serde_json::json;
 
         let builder = AppBuilder::new()
-            .command(
+            .templates(EmbeddedTemplates::new(TEMPLATES, ""))
+            .command_with(
                 "list",
-                |_m, _ctx| Ok(HandlerOutput::Render(json!({"msg": "list"}))),
-                "{{ msg }}",
+                FnHandler::new(|_m, _ctx| Ok(HandlerOutput::Render(json!({"msg": "list"})))),
+                |cfg| cfg.template_name("list-5"),
             )
             .unwrap()
-            .command(
+            .command_with(
                 "other",
-                |_m, _ctx| Ok(HandlerOutput::Render(json!({"msg": "other"}))),
-                "{{ msg }}",
+                FnHandler::new(|_m, _ctx| Ok(HandlerOutput::Render(json!({"msg": "other"})))),
+                |cfg| cfg,
             )
             .unwrap()
             .hooks(
@@ -1440,12 +1473,12 @@ mod tests {
         let builder = AppBuilder::new()
             .command_with(
                 "export",
-                |_m, _ctx| -> HandlerResult<()> {
+                FnHandler::new(|_m, _ctx| -> HandlerResult<()> {
                     Ok(HandlerOutput::Binary {
                         data: vec![1, 2, 3],
                         filename: "out.bin".into(),
                     })
-                },
+                }),
                 |config| config.binary(),
             )
             .unwrap()
@@ -1475,12 +1508,13 @@ mod tests {
     #[test]
     fn test_hooks_passed_to_built_standout() {
         let standout = AppBuilder::new()
+            .templates(EmbeddedTemplates::new(TEMPLATES, ""))
             .hooks("list", Hooks::new().pre_dispatch(|_, _| Ok(())))
             .build()
             .unwrap();
 
-        assert!(standout.get_hooks("list").is_some());
-        assert!(standout.get_hooks("other").is_none());
+        assert!(standout.command_hooks.contains_key("list"));
+        assert!(!standout.command_hooks.contains_key("other"));
     }
 
     #[test]
@@ -1493,6 +1527,7 @@ mod tests {
         }
 
         let standout = AppBuilder::new()
+            .templates(EmbeddedTemplates::new(TEMPLATES, ""))
             .hooks(
                 "test",
                 Hooks::new().post_output(|_, _ctx, output| {
@@ -1517,7 +1552,7 @@ mod tests {
             "test",
             sub_matches,
             |_m, _ctx| Ok(HandlerOutput::Render(Data { value: 42 })),
-            "{{ value }}",
+            crate::TemplateRef::Inline(("{{ value }}").to_string()),
         );
 
         assert!(result.is_ok());
@@ -1528,6 +1563,7 @@ mod tests {
     #[test]
     fn test_run_command_pre_dispatch_abort() {
         let standout = AppBuilder::new()
+            .templates(EmbeddedTemplates::new(TEMPLATES, ""))
             .hooks(
                 "test",
                 Hooks::new().pre_dispatch(|_, _ctx| Err(HookError::pre_dispatch("access denied"))),
@@ -1545,7 +1581,7 @@ mod tests {
             |_m, _ctx| {
                 panic!("Handler should not be called");
             },
-            "",
+            crate::TemplateRef::Absent,
         );
 
         assert!(result.is_err());
@@ -1561,7 +1597,10 @@ mod tests {
             msg: String,
         }
 
-        let standout = AppBuilder::new().build().unwrap();
+        let standout = AppBuilder::new()
+            .templates(EmbeddedTemplates::new(TEMPLATES, ""))
+            .build()
+            .unwrap();
 
         let cmd = Command::new("app").subcommand(Command::new("test"));
         let matches = cmd.try_get_matches_from(["app", "test"]).unwrap();
@@ -1575,7 +1614,7 @@ mod tests {
                     msg: "hello".into(),
                 }))
             },
-            "{{ msg }}",
+            crate::TemplateRef::Inline(("{{ msg }}").to_string()),
         );
 
         assert!(result.is_ok());
@@ -1584,7 +1623,10 @@ mod tests {
 
     #[test]
     fn test_run_command_silent() {
-        let standout = AppBuilder::new().build().unwrap();
+        let standout = AppBuilder::new()
+            .templates(EmbeddedTemplates::new(TEMPLATES, ""))
+            .build()
+            .unwrap();
 
         let cmd = Command::new("app").subcommand(Command::new("test"));
         let matches = cmd.try_get_matches_from(["app", "test"]).unwrap();
@@ -1594,7 +1636,7 @@ mod tests {
             "test",
             sub_matches,
             |_m, _ctx| Ok(HandlerOutput::Silent),
-            "",
+            crate::TemplateRef::Absent,
         );
 
         assert!(result.is_ok());
@@ -1604,6 +1646,7 @@ mod tests {
     #[test]
     fn test_run_command_binary() {
         let standout = AppBuilder::new()
+            .templates(EmbeddedTemplates::new(TEMPLATES, ""))
             .hooks(
                 "export",
                 Hooks::new().post_output(|_, _ctx, output| {
@@ -1627,7 +1670,7 @@ mod tests {
                     filename: "data.bin".into(),
                 })
             },
-            "",
+            crate::TemplateRef::Absent,
         );
 
         assert!(result.is_ok());
@@ -1643,10 +1686,11 @@ mod tests {
         use serde_json::json;
 
         let builder = AppBuilder::new()
-            .command(
+            .templates(EmbeddedTemplates::new(TEMPLATES, ""))
+            .command_with(
                 "list",
-                |_m, _ctx| Ok(HandlerOutput::Render(json!({"count": 5}))),
-                "Count: {{ count }}, Modified: {{ modified }}",
+                FnHandler::new(|_m, _ctx| Ok(HandlerOutput::Render(json!({"count": 5})))),
+                |cfg| cfg.template_name("list-6"),
             )
             .unwrap()
             .hooks(
@@ -1675,10 +1719,11 @@ mod tests {
         use serde_json::json;
 
         let builder = AppBuilder::new()
-            .command(
+            .templates(EmbeddedTemplates::new(TEMPLATES, ""))
+            .command_with(
                 "list",
-                |_m, _ctx| Ok(HandlerOutput::Render(json!({"items": []}))),
-                "{{ items }}",
+                FnHandler::new(|_m, _ctx| Ok(HandlerOutput::Render(json!({"items": []})))),
+                |cfg| cfg.template_name("list-7"),
             )
             .unwrap()
             .hooks(
@@ -1712,10 +1757,11 @@ mod tests {
         use serde_json::json;
 
         let builder = AppBuilder::new()
-            .command(
+            .templates(EmbeddedTemplates::new(TEMPLATES, ""))
+            .command_with(
                 "list",
-                |_m, _ctx| Ok(HandlerOutput::Render(json!({"value": 1}))),
-                "{{ value }}",
+                FnHandler::new(|_m, _ctx| Ok(HandlerOutput::Render(json!({"value": 1})))),
+                |cfg| cfg.template_name("list-8"),
             )
             .unwrap()
             .hooks(
@@ -1756,10 +1802,11 @@ mod tests {
         let post_output_order = call_order.clone();
 
         let builder = AppBuilder::new()
-            .command(
+            .templates(EmbeddedTemplates::new(TEMPLATES, ""))
+            .command_with(
                 "list",
-                |_m, _ctx| Ok(HandlerOutput::Render(json!({"msg": "hello"}))),
-                "{{ msg }}",
+                FnHandler::new(|_m, _ctx| Ok(HandlerOutput::Render(json!({"msg": "hello"})))),
+                |cfg| cfg.template_name("list-5"),
             )
             .unwrap()
             .hooks(
@@ -1799,6 +1846,7 @@ mod tests {
         }
 
         let standout = AppBuilder::new()
+            .templates(EmbeddedTemplates::new(TEMPLATES, ""))
             .hooks(
                 "test",
                 Hooks::new().post_dispatch(|_, _ctx, mut data| {
@@ -1819,7 +1867,9 @@ mod tests {
             "test",
             sub_matches,
             |_m, _ctx| Ok(HandlerOutput::Render(Data { value: 42 })),
-            "value={{ value }}, added={{ added_by_hook }}",
+            crate::TemplateRef::Inline(
+                ("value={{ value }}, added={{ added_by_hook }}").to_string(),
+            ),
         );
 
         assert!(result.is_ok());
@@ -1838,6 +1888,7 @@ mod tests {
         }
 
         let standout = AppBuilder::new()
+            .templates(EmbeddedTemplates::new(TEMPLATES, ""))
             .hooks(
                 "test",
                 Hooks::new().post_dispatch(|_, _ctx, data| {
@@ -1858,7 +1909,7 @@ mod tests {
             "test",
             sub_matches,
             |_m, _ctx| Ok(HandlerOutput::Render(Data { valid: false })),
-            "{{ valid }}",
+            crate::TemplateRef::Inline(("{{ valid }}").to_string()),
         );
 
         assert!(result.is_err());
@@ -1879,17 +1930,18 @@ mod tests {
         use serde_json::json;
 
         let builder = AppBuilder::new()
+            .templates(EmbeddedTemplates::new(TEMPLATES, ""))
             .default_command("list")
-            .command(
+            .command_with(
                 "list",
-                |_m, _ctx| Ok(HandlerOutput::Render(json!({"items": ["a", "b"]}))),
-                "Items: {{ items }}",
+                FnHandler::new(|_m, _ctx| Ok(HandlerOutput::Render(json!({"items": ["a", "b"]})))),
+                |cfg| cfg.template_name("list-3"),
             )
             .unwrap()
-            .command(
+            .command_with(
                 "add",
-                |_m, _ctx| Ok(HandlerOutput::Render(json!({"added": true}))),
-                "Added: {{ added }}",
+                FnHandler::new(|_m, _ctx| Ok(HandlerOutput::Render(json!({"added": true})))),
+                |cfg| cfg,
             )
             .unwrap();
 
@@ -1897,7 +1949,12 @@ mod tests {
             .subcommand(Command::new("list"))
             .subcommand(Command::new("add"));
 
-        let result = builder.build().unwrap().dispatch_from(cmd, ["app"]);
+        let result = builder.build().unwrap().run_with(
+            cmd,
+            ["app"],
+            crate::TargetProperties::detect(),
+            crate::InputSources::from_process(),
+        );
         assert!(result.is_handled());
         assert_eq!(result.output(), Some("Items: [\"a\", \"b\"]"));
     }
@@ -1907,20 +1964,23 @@ mod tests {
         use serde_json::json;
 
         let builder = AppBuilder::new()
+            .templates(EmbeddedTemplates::new(TEMPLATES, ""))
             .default_command("list")
-            .command(
+            .command_with(
                 "list",
-                |_m, _ctx| Ok(HandlerOutput::Render(json!({"count": 42}))),
-                "Count: {{ count }}",
+                FnHandler::new(|_m, _ctx| Ok(HandlerOutput::Render(json!({"count": 42})))),
+                |cfg| cfg,
             )
             .unwrap();
 
         let cmd = Command::new("app").subcommand(Command::new("list"));
 
-        let result = builder
-            .build()
-            .unwrap()
-            .dispatch_from(cmd, ["app", "--output=json"]);
+        let result = builder.build().unwrap().run_with(
+            cmd,
+            ["app", "--output=json"],
+            crate::TargetProperties::detect(),
+            crate::InputSources::from_process(),
+        );
         assert!(result.is_handled());
         let output = result.output().unwrap();
         assert!(output.contains("\"count\": 42"));
@@ -1931,17 +1991,18 @@ mod tests {
         use serde_json::json;
 
         let builder = AppBuilder::new()
+            .templates(EmbeddedTemplates::new(TEMPLATES, ""))
             .default_command("list")
-            .command(
+            .command_with(
                 "list",
-                |_m, _ctx| Ok(HandlerOutput::Render(json!({"cmd": "list"}))),
-                "{{ cmd }}",
+                FnHandler::new(|_m, _ctx| Ok(HandlerOutput::Render(json!({"cmd": "list"})))),
+                |cfg| cfg.template_name("list-9"),
             )
             .unwrap()
-            .command(
+            .command_with(
                 "add",
-                |_m, _ctx| Ok(HandlerOutput::Render(json!({"cmd": "add"}))),
-                "{{ cmd }}",
+                FnHandler::new(|_m, _ctx| Ok(HandlerOutput::Render(json!({"cmd": "add"})))),
+                |cfg| cfg.template_name("add-2"),
             )
             .unwrap();
 
@@ -1949,7 +2010,12 @@ mod tests {
             .subcommand(Command::new("list"))
             .subcommand(Command::new("add"));
 
-        let result = builder.build().unwrap().dispatch_from(cmd, ["app", "add"]);
+        let result = builder.build().unwrap().run_with(
+            cmd,
+            ["app", "add"],
+            crate::TargetProperties::detect(),
+            crate::InputSources::from_process(),
+        );
         assert!(result.is_handled());
         assert_eq!(result.output(), Some("add"));
     }
@@ -1959,16 +2025,22 @@ mod tests {
         use serde_json::json;
 
         let builder = AppBuilder::new()
-            .command(
+            .templates(EmbeddedTemplates::new(TEMPLATES, ""))
+            .command_with(
                 "list",
-                |_m, _ctx| Ok(HandlerOutput::Render(json!({"items": []}))),
-                "Items: {{ items }}",
+                FnHandler::new(|_m, _ctx| Ok(HandlerOutput::Render(json!({"items": []})))),
+                |cfg| cfg.template_name("list-3"),
             )
             .unwrap();
 
         let cmd = Command::new("app").subcommand(Command::new("list"));
 
-        let result = builder.build().unwrap().dispatch_from(cmd, ["app"]);
+        let result = builder.build().unwrap().run_with(
+            cmd,
+            ["app"],
+            crate::TargetProperties::detect(),
+            crate::InputSources::from_process(),
+        );
         assert!(!result.is_handled());
     }
 
@@ -1980,19 +2052,22 @@ mod tests {
         let path_str = file_path.to_str().unwrap();
 
         let builder = AppBuilder::new()
-            .command(
+            .templates(EmbeddedTemplates::new(TEMPLATES, ""))
+            .command_with(
                 "list",
-                |_m, _ctx| Ok(HandlerOutput::Render(json!({"count": 42}))),
-                "Count: {{ count }}",
+                FnHandler::new(|_m, _ctx| Ok(HandlerOutput::Render(json!({"count": 42})))),
+                |cfg| cfg,
             )
             .unwrap();
 
         let cmd = Command::new("app").subcommand(Command::new("list"));
 
-        let result = builder
-            .build()
-            .unwrap()
-            .dispatch_from(cmd, ["app", "--output-file-path", path_str, "list"]);
+        let result = builder.build().unwrap().run_with(
+            cmd,
+            ["app", "--output-file-path", path_str, "list"],
+            crate::TargetProperties::detect(),
+            crate::InputSources::from_process(),
+        );
 
         assert!(result.is_handled());
         assert_eq!(result.output(), Some(""));
@@ -2009,20 +2084,23 @@ mod tests {
         let path_str = file_path.to_str().unwrap();
 
         let builder = AppBuilder::new()
+            .templates(EmbeddedTemplates::new(TEMPLATES, ""))
             .output_file_flag(Some("save-to"))
-            .command(
+            .command_with(
                 "list",
-                |_m, _ctx| Ok(HandlerOutput::Render(json!({"count": 99}))),
-                "{{ count }}",
+                FnHandler::new(|_m, _ctx| Ok(HandlerOutput::Render(json!({"count": 99})))),
+                |cfg| cfg.template_name("list-4"),
             )
             .unwrap();
 
         let cmd = Command::new("app").subcommand(Command::new("list"));
 
-        let result = builder
-            .build()
-            .unwrap()
-            .dispatch_from(cmd, ["app", "--save-to", path_str, "list"]);
+        let result = builder.build().unwrap().run_with(
+            cmd,
+            ["app", "--save-to", path_str, "list"],
+            crate::TargetProperties::detect(),
+            crate::InputSources::from_process(),
+        );
 
         assert!(result.is_handled());
         assert_eq!(result.output(), Some(""));
@@ -2039,16 +2117,19 @@ mod tests {
         let path_str = file_path.to_str().unwrap();
 
         let builder = AppBuilder::new()
-            .command(
+            .templates(EmbeddedTemplates::new(TEMPLATES, ""))
+            .command_with(
                 "show",
-                |_m, _ctx| Ok(HandlerOutput::Render(json!({"name": "test", "count": 42}))),
-                "unused",
+                FnHandler::new(|_m, _ctx| {
+                    Ok(HandlerOutput::Render(json!({"name": "test", "count": 42})))
+                }),
+                |cfg| cfg,
             )
             .unwrap();
 
         let cmd = Command::new("app").subcommand(Command::new("show"));
 
-        let result = builder.build().unwrap().dispatch_from(
+        let result = builder.build().unwrap().run_with(
             cmd,
             [
                 "app",
@@ -2058,6 +2139,8 @@ mod tests {
                 path_str,
                 "show",
             ],
+            crate::TargetProperties::detect(),
+            crate::InputSources::from_process(),
         );
 
         assert!(result.is_handled());
@@ -2077,16 +2160,17 @@ mod tests {
         let path_str = file_path.to_str().unwrap();
 
         let builder = AppBuilder::new()
-            .command(
+            .templates(EmbeddedTemplates::new(TEMPLATES, ""))
+            .command_with(
                 "show",
-                |_m, _ctx| Ok(HandlerOutput::Render(json!({"name": "Alice"}))),
-                "Hello {{ name }}",
+                FnHandler::new(|_m, _ctx| Ok(HandlerOutput::Render(json!({"name": "Alice"})))),
+                |cfg| cfg.template_name("show-2"),
             )
             .unwrap();
 
         let cmd = Command::new("app").subcommand(Command::new("show"));
 
-        let result = builder.build().unwrap().dispatch_from(
+        let result = builder.build().unwrap().run_with(
             cmd,
             [
                 "app",
@@ -2096,6 +2180,8 @@ mod tests {
                 path_str,
                 "show",
             ],
+            crate::TargetProperties::detect(),
+            crate::InputSources::from_process(),
         );
 
         assert!(result.is_handled());
@@ -2110,17 +2196,23 @@ mod tests {
         use serde_json::json;
 
         let builder = AppBuilder::new()
+            .templates(EmbeddedTemplates::new(TEMPLATES, ""))
             .no_output_file_flag()
-            .command(
+            .command_with(
                 "show",
-                |_m, _ctx| Ok(HandlerOutput::Render(json!({"count": 42}))),
-                "Count: {{ count }}",
+                FnHandler::new(|_m, _ctx| Ok(HandlerOutput::Render(json!({"count": 42})))),
+                |cfg| cfg.template_name("show-3"),
             )
             .unwrap();
 
         let cmd = Command::new("app").subcommand(Command::new("show"));
 
-        let result = builder.build().unwrap().dispatch_from(cmd, ["app", "show"]);
+        let result = builder.build().unwrap().run_with(
+            cmd,
+            ["app", "show"],
+            crate::TargetProperties::detect(),
+            crate::InputSources::from_process(),
+        );
 
         assert!(result.is_handled());
         assert!(result.output().unwrap().contains("Count: 42"));
@@ -2135,19 +2227,22 @@ mod tests {
         let theme = Theme::new().add("late", Style::new().bold());
 
         let builder = AppBuilder::new()
-            .command(
+            .templates(EmbeddedTemplates::new(TEMPLATES, ""))
+            .command_with(
                 "list",
-                |_m, _ctx| Ok(HandlerOutput::Render(json!({"name": "test"}))),
-                "[late]{{ name }}[/late]",
+                FnHandler::new(|_m, _ctx| Ok(HandlerOutput::Render(json!({"name": "test"})))),
+                |cfg| cfg.template_name("list-10"),
             )
             .unwrap()
             .theme(theme); // Theme set AFTER command registration
 
         let cmd = Command::new("app").subcommand(Command::new("list"));
-        let result = builder
-            .build()
-            .unwrap()
-            .dispatch_from(cmd, ["app", "--output=term", "list"]);
+        let result = builder.build().unwrap().run_with(
+            cmd,
+            ["app", "--output=term", "list"],
+            crate::TargetProperties::detect(),
+            crate::InputSources::from_process(),
+        );
 
         assert!(result.is_handled());
         let output = result.output().unwrap();
@@ -2168,19 +2263,22 @@ mod tests {
         let theme = Theme::new().add("test_style", Style::new().bold());
 
         let builder = AppBuilder::new()
+            .templates(EmbeddedTemplates::new(TEMPLATES, ""))
             .theme(theme)
-            .command(
+            .command_with(
                 "list",
-                |_m, _ctx| Ok(HandlerOutput::Render(json!({"name": "test"}))),
-                "[test_style]{{ name }}[/test_style]",
+                FnHandler::new(|_m, _ctx| Ok(HandlerOutput::Render(json!({"name": "test"})))),
+                |cfg| cfg.template_name("list-11"),
             )
             .unwrap();
 
         let cmd = Command::new("app").subcommand(Command::new("list"));
-        let result = builder
-            .build()
-            .unwrap()
-            .dispatch_from(cmd, ["app", "--output=term", "list"]);
+        let result = builder.build().unwrap().run_with(
+            cmd,
+            ["app", "--output=term", "list"],
+            crate::TargetProperties::detect(),
+            crate::InputSources::from_process(),
+        );
 
         assert!(result.is_handled());
         let output = result.output().unwrap();
@@ -2211,20 +2309,26 @@ header:
         .unwrap();
 
         let app = AppBuilder::new()
+            .templates(EmbeddedTemplates::new(TEMPLATES, ""))
             .styles_dir(temp_dir.path())
             .unwrap()
             .default_theme("dark")
-            .command(
+            .command_with(
                 "list",
-                |_m, _ctx| Ok(HandlerOutput::Render(json!({"title": "Results"}))),
-                "[header]{{ title }}[/header]",
+                FnHandler::new(|_m, _ctx| Ok(HandlerOutput::Render(json!({"title": "Results"})))),
+                |cfg| cfg.template_name("list-12"),
             )
             .unwrap()
             .build()
             .unwrap();
 
         let cmd = Command::new("app").subcommand(Command::new("list"));
-        let result = app.dispatch_from(cmd, ["app", "--output=term", "list"]);
+        let result = app.run_with(
+            cmd,
+            ["app", "--output=term", "list"],
+            crate::TargetProperties::detect(),
+            crate::InputSources::from_process(),
+        );
 
         assert!(result.is_handled());
         let output = result.output().unwrap();
@@ -2245,18 +2349,24 @@ header:
         let theme = Theme::new().add("mystyle", Style::new().bold());
 
         let app = AppBuilder::new()
+            .templates(EmbeddedTemplates::new(TEMPLATES, ""))
             .theme(theme)
-            .command(
+            .command_with(
                 "test",
-                |_m, _ctx| Ok(HandlerOutput::Render(json!({"x": "value"}))),
-                "[mystyle]{{ x }}[/mystyle]",
+                FnHandler::new(|_m, _ctx| Ok(HandlerOutput::Render(json!({"x": "value"})))),
+                |cfg| cfg,
             )
             .unwrap()
             .build()
             .unwrap();
 
         let cmd = Command::new("app").subcommand(Command::new("test"));
-        let result = app.dispatch_from(cmd, ["app", "--output=term", "test"]);
+        let result = app.run_with(
+            cmd,
+            ["app", "--output=term", "test"],
+            crate::TargetProperties::detect(),
+            crate::InputSources::from_process(),
+        );
 
         assert!(
             !result.output().unwrap().contains("[mystyle?]"),
@@ -2273,10 +2383,11 @@ header:
         let theme = Theme::new().add("mystyle", Style::new().bold());
 
         let app = AppBuilder::new()
-            .command(
+            .templates(EmbeddedTemplates::new(TEMPLATES, ""))
+            .command_with(
                 "test",
-                |_m, _ctx| Ok(HandlerOutput::Render(json!({"x": "value"}))),
-                "[mystyle]{{ x }}[/mystyle]",
+                FnHandler::new(|_m, _ctx| Ok(HandlerOutput::Render(json!({"x": "value"})))),
+                |cfg| cfg,
             )
             .unwrap()
             .theme(theme)
@@ -2284,7 +2395,12 @@ header:
             .unwrap();
 
         let cmd = Command::new("app").subcommand(Command::new("test"));
-        let result = app.dispatch_from(cmd, ["app", "--output=term", "test"]);
+        let result = app.run_with(
+            cmd,
+            ["app", "--output=term", "test"],
+            crate::TargetProperties::detect(),
+            crate::InputSources::from_process(),
+        );
 
         assert!(
             !result.output().unwrap().contains("[mystyle?]"),
@@ -2306,20 +2422,26 @@ header:
         .unwrap();
 
         let app = AppBuilder::new()
+            .templates(EmbeddedTemplates::new(TEMPLATES, ""))
             .styles_dir(temp_dir.path())
             .unwrap()
             .default_theme("mytheme")
-            .command(
+            .command_with(
                 "test",
-                |_m, _ctx| Ok(HandlerOutput::Render(json!({"x": "value"}))),
-                "[mystyle]{{ x }}[/mystyle]",
+                FnHandler::new(|_m, _ctx| Ok(HandlerOutput::Render(json!({"x": "value"})))),
+                |cfg| cfg,
             )
             .unwrap()
             .build()
             .unwrap();
 
         let cmd = Command::new("app").subcommand(Command::new("test"));
-        let result = app.dispatch_from(cmd, ["app", "--output=term", "test"]);
+        let result = app.run_with(
+            cmd,
+            ["app", "--output=term", "test"],
+            crate::TargetProperties::detect(),
+            crate::InputSources::from_process(),
+        );
 
         assert!(
             !result.output().unwrap().contains("[mystyle?]"),
@@ -2341,10 +2463,11 @@ header:
         .unwrap();
 
         let app = AppBuilder::new()
-            .command(
+            .templates(EmbeddedTemplates::new(TEMPLATES, ""))
+            .command_with(
                 "test",
-                |_m, _ctx| Ok(HandlerOutput::Render(json!({"x": "value"}))),
-                "[mystyle]{{ x }}[/mystyle]",
+                FnHandler::new(|_m, _ctx| Ok(HandlerOutput::Render(json!({"x": "value"})))),
+                |cfg| cfg,
             )
             .unwrap()
             .styles_dir(temp_dir.path())
@@ -2354,7 +2477,12 @@ header:
             .unwrap();
 
         let cmd = Command::new("app").subcommand(Command::new("test"));
-        let result = app.dispatch_from(cmd, ["app", "--output=term", "test"]);
+        let result = app.run_with(
+            cmd,
+            ["app", "--output=term", "test"],
+            crate::TargetProperties::detect(),
+            crate::InputSources::from_process(),
+        );
 
         assert!(
             !result.output().unwrap().contains("[mystyle?]"),
@@ -2376,20 +2504,26 @@ header:
         .unwrap();
 
         let app = AppBuilder::new()
+            .templates(EmbeddedTemplates::new(TEMPLATES, ""))
             .default_theme("mytheme")
             .styles_dir(temp_dir.path())
             .unwrap()
-            .command(
+            .command_with(
                 "test",
-                |_m, _ctx| Ok(HandlerOutput::Render(json!({"x": "value"}))),
-                "[mystyle]{{ x }}[/mystyle]",
+                FnHandler::new(|_m, _ctx| Ok(HandlerOutput::Render(json!({"x": "value"})))),
+                |cfg| cfg,
             )
             .unwrap()
             .build()
             .unwrap();
 
         let cmd = Command::new("app").subcommand(Command::new("test"));
-        let result = app.dispatch_from(cmd, ["app", "--output=term", "test"]);
+        let result = app.run_with(
+            cmd,
+            ["app", "--output=term", "test"],
+            crate::TargetProperties::detect(),
+            crate::InputSources::from_process(),
+        );
 
         assert!(
             !result.output().unwrap().contains("[mystyle?]"),
@@ -2414,18 +2548,22 @@ header:
             |_m, _ctx| Ok(HandlerOutput::Render(json!({"val": "test"})))
         }
 
-        let template = "[perm]{{ val }}[/perm]";
-
         let app1 = AppBuilder::new()
+            .templates(EmbeddedTemplates::new(TEMPLATES, ""))
             .theme(make_theme())
-            .command("test", make_handler(), template)
+            .command_with("test", FnHandler::new(make_handler()), |cfg| {
+                cfg.template_name("test-3")
+            })
             .unwrap()
             .context("extra", minijinja::Value::from("x"))
             .build()
             .unwrap();
 
         let app2 = AppBuilder::new()
-            .command("test", make_handler(), template)
+            .templates(EmbeddedTemplates::new(TEMPLATES, ""))
+            .command_with("test", FnHandler::new(make_handler()), |cfg| {
+                cfg.template_name("test-3")
+            })
             .unwrap()
             .theme(make_theme())
             .context("extra", minijinja::Value::from("x"))
@@ -2433,23 +2571,32 @@ header:
             .unwrap();
 
         let app3 = AppBuilder::new()
+            .templates(EmbeddedTemplates::new(TEMPLATES, ""))
             .context("extra", minijinja::Value::from("x"))
-            .command("test", make_handler(), template)
+            .command_with("test", FnHandler::new(make_handler()), |cfg| {
+                cfg.template_name("test-3")
+            })
             .unwrap()
             .theme(make_theme())
             .build()
             .unwrap();
 
         let app4 = AppBuilder::new()
+            .templates(EmbeddedTemplates::new(TEMPLATES, ""))
             .context("extra", minijinja::Value::from("x"))
             .theme(make_theme())
-            .command("test", make_handler(), template)
+            .command_with("test", FnHandler::new(make_handler()), |cfg| {
+                cfg.template_name("test-3")
+            })
             .unwrap()
             .build()
             .unwrap();
 
         let app5 = AppBuilder::new()
-            .command("test", make_handler(), template)
+            .templates(EmbeddedTemplates::new(TEMPLATES, ""))
+            .command_with("test", FnHandler::new(make_handler()), |cfg| {
+                cfg.template_name("test-3")
+            })
             .unwrap()
             .context("extra", minijinja::Value::from("x"))
             .theme(make_theme())
@@ -2457,16 +2604,24 @@ header:
             .unwrap();
 
         let app6 = AppBuilder::new()
+            .templates(EmbeddedTemplates::new(TEMPLATES, ""))
             .theme(make_theme())
             .context("extra", minijinja::Value::from("x"))
-            .command("test", make_handler(), template)
+            .command_with("test", FnHandler::new(make_handler()), |cfg| {
+                cfg.template_name("test-3")
+            })
             .unwrap()
             .build()
             .unwrap();
 
         for (i, app) in [app1, app2, app3, app4, app5, app6].into_iter().enumerate() {
             let cmd = Command::new("app").subcommand(Command::new("test"));
-            let result = app.dispatch_from(cmd, ["app", "--output=term", "test"]);
+            let result = app.run_with(
+                cmd,
+                ["app", "--output=term", "test"],
+                crate::TargetProperties::detect(),
+                crate::InputSources::from_process(),
+            );
 
             assert!(
                 !result.output().unwrap().contains("[perm?]"),
@@ -2485,21 +2640,27 @@ header:
         }
 
         let builder = AppBuilder::new()
+            .templates(EmbeddedTemplates::new(TEMPLATES, ""))
             .app_state(Database {
                 url: "postgres://localhost".into(),
             })
-            .command(
+            .command_with(
                 "list",
-                |_m, ctx| {
+                FnHandler::new(|_m, ctx| {
                     let db = ctx.app_state.get::<Database>().unwrap();
                     Ok(HandlerOutput::Render(json!({"db_url": db.url.clone()})))
-                },
-                "{{ db_url }}",
+                }),
+                |cfg| cfg.template_name("list-13"),
             )
             .unwrap();
 
         let cmd = Command::new("app").subcommand(Command::new("list"));
-        let result = builder.build().unwrap().dispatch_from(cmd, ["app", "list"]);
+        let result = builder.build().unwrap().run_with(
+            cmd,
+            ["app", "list"],
+            crate::TargetProperties::detect(),
+            crate::InputSources::from_process(),
+        );
 
         assert!(result.is_handled());
         assert_eq!(result.output(), Some("postgres://localhost"));
@@ -2514,19 +2675,25 @@ header:
         }
 
         let builder = AppBuilder::new()
+            .templates(EmbeddedTemplates::new(TEMPLATES, ""))
             .app_state(Config { debug: true })
-            .command(
+            .command_with(
                 "list",
-                |_m, ctx| {
+                FnHandler::new(|_m, ctx| {
                     let config = ctx.app_state.get_required::<Config>()?;
                     Ok(HandlerOutput::Render(json!({"debug": config.debug})))
-                },
-                "debug={{ debug }}",
+                }),
+                |cfg| cfg.template_name("list-14"),
             )
             .unwrap();
 
         let cmd = Command::new("app").subcommand(Command::new("list"));
-        let result = builder.build().unwrap().dispatch_from(cmd, ["app", "list"]);
+        let result = builder.build().unwrap().run_with(
+            cmd,
+            ["app", "list"],
+            crate::TargetProperties::detect(),
+            crate::InputSources::from_process(),
+        );
 
         assert!(result.is_handled());
         assert_eq!(result.output(), Some("debug=true"));
@@ -2539,18 +2706,24 @@ header:
         struct NotProvided;
 
         let builder = AppBuilder::new()
+            .templates(EmbeddedTemplates::new(TEMPLATES, ""))
             .command_with(
                 "list",
-                |_m, ctx| {
+                FnHandler::new(|_m, ctx| {
                     let _missing = ctx.app_state.get_required::<NotProvided>()?;
                     Ok(HandlerOutput::Render(json!({})))
-                },
+                }),
                 |config| config.structured_only(),
             )
             .unwrap();
 
         let cmd = Command::new("app").subcommand(Command::new("list"));
-        let result = builder.build().unwrap().dispatch_from(cmd, ["app", "list"]);
+        let result = builder.build().unwrap().run_with(
+            cmd,
+            ["app", "list"],
+            crate::TargetProperties::detect(),
+            crate::InputSources::from_process(),
+        );
 
         assert!(result.is_error(), "expected Error, got {:?}", result);
         let msg = result.error().unwrap();
@@ -2573,26 +2746,32 @@ header:
         }
 
         let builder = AppBuilder::new()
+            .templates(EmbeddedTemplates::new(TEMPLATES, ""))
             .app_state(Database {
                 name: "mydb".into(),
             })
             .app_state(Config { version: 42 })
-            .command(
+            .command_with(
                 "info",
-                |_m, ctx| {
+                FnHandler::new(|_m, ctx| {
                     let db = ctx.app_state.get_required::<Database>()?;
                     let config = ctx.app_state.get_required::<Config>()?;
                     Ok(HandlerOutput::Render(json!({
                         "db": db.name,
                         "version": config.version
                     })))
-                },
-                "db={{ db }}, version={{ version }}",
+                }),
+                |cfg| cfg,
             )
             .unwrap();
 
         let cmd = Command::new("app").subcommand(Command::new("info"));
-        let result = builder.build().unwrap().dispatch_from(cmd, ["app", "info"]);
+        let result = builder.build().unwrap().run_with(
+            cmd,
+            ["app", "info"],
+            crate::TargetProperties::detect(),
+            crate::InputSources::from_process(),
+        );
 
         assert!(result.is_handled());
         assert_eq!(result.output(), Some("db=mydb, version=42"));
@@ -2610,12 +2789,13 @@ header:
         }
 
         let builder = AppBuilder::new()
+            .templates(EmbeddedTemplates::new(TEMPLATES, ""))
             .app_state(Database {
                 name: "maindb".into(),
             })
-            .command(
+            .command_with(
                 "list",
-                |_m, ctx| {
+                FnHandler::new(|_m, ctx| {
                     let db = ctx.app_state.get_required::<Database>()?;
 
                     let scope = ctx.extensions.get_required::<UserScope>()?;
@@ -2624,8 +2804,8 @@ header:
                         "db": db.name,
                         "user": scope.user_id
                     })))
-                },
-                "db={{ db }}, user={{ user }}",
+                }),
+                |cfg| cfg.template_name("list-15"),
             )
             .unwrap()
             .hooks(
@@ -2639,7 +2819,12 @@ header:
             );
 
         let cmd = Command::new("app").subcommand(Command::new("list"));
-        let result = builder.build().unwrap().dispatch_from(cmd, ["app", "list"]);
+        let result = builder.build().unwrap().run_with(
+            cmd,
+            ["app", "list"],
+            crate::TargetProperties::detect(),
+            crate::InputSources::from_process(),
+        );
 
         assert!(result.is_handled());
         assert_eq!(result.output(), Some("db=maindb, user=user123"));
@@ -2654,23 +2839,29 @@ header:
         }
 
         let app = AppBuilder::new()
+            .templates(EmbeddedTemplates::new(TEMPLATES, ""))
             .app_state(ApiConfig {
                 base_url: "https://api.example.com".into(),
             })
-            .command(
+            .command_with(
                 "fetch",
-                |_m, ctx| {
+                FnHandler::new(|_m, ctx| {
                     let config = ctx.app_state.get_required::<ApiConfig>()?;
                     Ok(HandlerOutput::Render(json!({"url": config.base_url})))
-                },
-                "{{ url }}",
+                }),
+                |cfg| cfg,
             )
             .unwrap()
             .build()
             .unwrap();
 
         let cmd = Command::new("app").subcommand(Command::new("fetch"));
-        let result = app.dispatch_from(cmd, ["app", "fetch"]);
+        let result = app.run_with(
+            cmd,
+            ["app", "fetch"],
+            crate::TargetProperties::detect(),
+            crate::InputSources::from_process(),
+        );
 
         assert!(result.is_handled());
         assert_eq!(result.output(), Some("https://api.example.com"));

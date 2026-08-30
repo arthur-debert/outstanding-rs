@@ -2,7 +2,7 @@ use crate::handlers;
 use anyhow::Result;
 use clap::ArgMatches;
 use serde_json::Value as JsonValue;
-use standout::cli::{App, CommandContext, HookError};
+use standout::cli::{App, CommandContext, FnHandler, HookError};
 use standout::input::{ArgSource, InputChain, StdinSource};
 use standout::{embed_styles, embed_templates};
 use todo_core::TodoStore;
@@ -17,7 +17,7 @@ pub(crate) fn build(store: TodoStore) -> Result<App> {
         .templates(embed_templates!("src/templates"))
         .styles(embed_styles!("src/styles"))
         .default_theme("todo")
-        .command_with("add", handlers::add__handler, |config| {
+        .command_with("add", FnHandler::new(handlers::add__handler), |config| {
             config
                 .template_name("add")
                 .input(
@@ -29,15 +29,17 @@ pub(crate) fn build(store: TodoStore) -> Result<App> {
                 )
                 .post_dispatch(audit_hook)
         })?
-        .command_with("list", handlers::list__handler, |config| {
+        .command_with("list", FnHandler::new(handlers::list__handler), |config| {
             config.template_name("list")
         })?
-        .command_with("done", handlers::done__handler, |config| {
+        .command_with("done", FnHandler::new(handlers::done__handler), |config| {
             config.template_name("done").post_dispatch(audit_hook)
         })?
-        .command_with("export", handlers::export__handler, |config| {
-            config.template_name("export")
-        })?
+        .command_with(
+            "export",
+            FnHandler::new(handlers::export__handler),
+            |config| config.template_name("export"),
+        )?
         .build()?)
 }
 

@@ -25,7 +25,6 @@ pub mod views;
 
 pub use standout_render::context;
 pub use standout_render::diagnostics;
-pub use standout_render::file_loader;
 pub use standout_render::style;
 pub use standout_render::tabular;
 pub use standout_render::warnings;
@@ -54,10 +53,9 @@ pub use standout_render::{
 };
 
 pub use standout_render::{
-    render, render_auto, render_auto_with_context, render_auto_with_spec, render_with_context,
-    render_with_mode, render_with_output, render_with_vars, validate_template, walk_template_dir,
-    MiniJinjaEngine, RegistryError, Renderer, ResolvedTemplate, TemplateEngine, TemplateFile,
-    TemplateRegistry, TEMPLATE_EXTENSIONS,
+    render, render_auto, render_auto_with_context, render_with_context, render_with_mode,
+    render_with_output, render_with_vars, MiniJinjaEngine, RegistryError, Renderer,
+    ResolvedTemplate, TemplateEngine, TemplateFile, TemplateRegistry, TEMPLATE_EXTENSIONS,
 };
 
 pub use standout_bbparser::{
@@ -66,14 +64,7 @@ pub use standout_bbparser::{
 
 pub use standout_render::TagResolution;
 
-pub use standout_render::{
-    flatten_json_for_csv, rgb_to_ansi256, rgb_to_truecolor, serialize_to_xml, truncate_to_width,
-};
-
-pub use standout_render::{
-    build_embedded_registry, extension_priority, strip_extension, walk_dir, FileRegistry,
-    FileRegistryConfig, LoadError, LoadedEntry, LoadedFile,
-};
+pub use standout_render::truncate_to_width;
 
 pub use standout_render::{
     EmbeddedSource, EmbeddedStyles, EmbeddedTemplates, StylesheetResource, TemplateResource,
@@ -81,7 +72,7 @@ pub use standout_render::{
 
 pub use setup::SetupError;
 
-pub use standout_macros::{command, embed_styles, embed_templates, handler};
+pub use standout_macros::{embed_styles, embed_templates, handler};
 
 pub use standout_macros::{Tabular, TabularRow};
 

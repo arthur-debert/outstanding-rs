@@ -2,19 +2,24 @@ use clap::Command;
 use console::Style;
 use serde_json::json;
 use serial_test::serial;
+use standout::cli::FnHandler;
 use standout::cli::{App, Output};
 use standout::views::list_view;
+use standout::EmbeddedTemplates;
 use standout::{OutputMode, Theme};
 use standout_test::TestHarness;
+
+const TEMPLATES: &[(&str, &str)] = &[("say", "[missing_style]hello[/missing_style]")];
 
 #[test]
 #[serial]
 fn app_template_unknown_tag_degrades_to_text_and_warns() {
     let app = App::builder()
-        .command(
+        .templates(EmbeddedTemplates::new(TEMPLATES, ""))
+        .command_with(
             "say",
-            |_m, _ctx| Ok(Output::Render(json!({}))),
-            "[missing_style]hello[/missing_style]",
+            FnHandler::new(|_m, _ctx| Ok(Output::Render(json!({})))),
+            |cfg| cfg,
         )
         .unwrap()
         .build()
@@ -37,7 +42,10 @@ fn app_template_unknown_tag_degrades_to_text_and_warns() {
 
 #[test]
 fn framework_templates_fail_build_when_the_resolved_theme_lacks_their_tags() {
-    let result = App::builder().include_framework_styles(false).build();
+    let result = App::builder()
+        .templates(EmbeddedTemplates::new(TEMPLATES, ""))
+        .include_framework_styles(false)
+        .build();
 
     let err = match result {
         Ok(_) => panic!("build should reject framework templates without framework styles"),
@@ -53,7 +61,11 @@ fn framework_templates_fail_build_when_the_resolved_theme_lacks_their_tags() {
 
 #[test]
 fn missing_default_theme_names_builder_calls_that_supply_it() {
-    let err = match App::builder().default_theme("missing").build() {
+    let err = match App::builder()
+        .templates(EmbeddedTemplates::new(TEMPLATES, ""))
+        .default_theme("missing")
+        .build()
+    {
         Ok(_) => panic!("default_theme without configured styles must fail"),
         Err(error) => error.to_string(),
     };
@@ -69,17 +81,18 @@ fn missing_default_theme_names_builder_calls_that_supply_it() {
 #[serial]
 fn app_theme_overlays_framework_styles_per_tag() {
     let app = App::builder()
+        .templates(EmbeddedTemplates::new(TEMPLATES, ""))
         .theme(Theme::new().add("standout-muted", Style::new().red().force_styling(true)))
         .command_with(
             "list",
-            |_m, _ctx| {
+            FnHandler::new(|_m, _ctx| {
                 Ok(Output::Render(
                     list_view(vec!["one"])
                         .total_count(3)
                         .filter_summary("status=pending")
                         .build(),
                 ))
-            },
+            }),
             |config| config.template_name("standout/list-view"),
         )
         .unwrap()

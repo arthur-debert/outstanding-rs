@@ -2,7 +2,11 @@ use clap::ArgMatches;
 use serde::Serialize;
 use standout::cli::handler::{CommandContext, Output};
 use standout::cli::App;
+use standout::cli::FnHandler;
+use standout::EmbeddedTemplates;
 use standout::OutputMode;
+
+const TEMPLATES: &[(&str, &str)] = &[("run", "Name: {{ name }}, Count: {{ count }}")];
 
 #[derive(Serialize)]
 struct TestData {
@@ -28,17 +32,25 @@ fn simple_template() -> &'static str {
 #[test]
 fn test_app_output_mode_auto() {
     let app = App::builder()
-        .command(
+        .templates(EmbeddedTemplates::new(TEMPLATES, ""))
+        .command_with(
             "run",
-            |_m: &ArgMatches, _ctx: &CommandContext| Ok(Output::Render(TestData::sample())),
-            simple_template(),
+            FnHandler::new(|_m: &ArgMatches, _ctx: &CommandContext| {
+                Ok(Output::Render(TestData::sample()))
+            }),
+            |cfg| cfg.template_name("run"),
         )
         .unwrap()
         .build()
         .expect("Failed to build app");
 
     let output = app
-        .render_inline(simple_template(), &TestData::sample(), OutputMode::Auto)
+        .render_with(
+            standout::TemplateRef::Inline((simple_template()).to_string()),
+            &TestData::sample(),
+            OutputMode::Auto,
+            standout::TargetProperties::detect(),
+        )
         .expect("Render failed");
 
     assert!(output.contains("Name: test"));
@@ -48,17 +60,25 @@ fn test_app_output_mode_auto() {
 #[test]
 fn test_app_output_mode_term() {
     let app = App::builder()
-        .command(
+        .templates(EmbeddedTemplates::new(TEMPLATES, ""))
+        .command_with(
             "run",
-            |_m: &ArgMatches, _ctx: &CommandContext| Ok(Output::Render(TestData::sample())),
-            simple_template(),
+            FnHandler::new(|_m: &ArgMatches, _ctx: &CommandContext| {
+                Ok(Output::Render(TestData::sample()))
+            }),
+            |cfg| cfg.template_name("run"),
         )
         .unwrap()
         .build()
         .expect("Failed to build app");
 
     let output = app
-        .render_inline(simple_template(), &TestData::sample(), OutputMode::Term)
+        .render_with(
+            standout::TemplateRef::Inline((simple_template()).to_string()),
+            &TestData::sample(),
+            OutputMode::Term,
+            standout::TargetProperties::detect(),
+        )
         .expect("Render failed");
 
     assert!(output.contains("Name: test"));
@@ -68,17 +88,25 @@ fn test_app_output_mode_term() {
 #[test]
 fn test_app_output_mode_text() {
     let app = App::builder()
-        .command(
+        .templates(EmbeddedTemplates::new(TEMPLATES, ""))
+        .command_with(
             "run",
-            |_m: &ArgMatches, _ctx: &CommandContext| Ok(Output::Render(TestData::sample())),
-            simple_template(),
+            FnHandler::new(|_m: &ArgMatches, _ctx: &CommandContext| {
+                Ok(Output::Render(TestData::sample()))
+            }),
+            |cfg| cfg.template_name("run"),
         )
         .unwrap()
         .build()
         .expect("Failed to build app");
 
     let output = app
-        .render_inline(simple_template(), &TestData::sample(), OutputMode::Text)
+        .render_with(
+            standout::TemplateRef::Inline((simple_template()).to_string()),
+            &TestData::sample(),
+            OutputMode::Text,
+            standout::TargetProperties::detect(),
+        )
         .expect("Render failed");
 
     assert!(output.contains("Name: test"));
@@ -88,17 +116,25 @@ fn test_app_output_mode_text() {
 #[test]
 fn test_app_output_mode_json() {
     let app = App::builder()
-        .command(
+        .templates(EmbeddedTemplates::new(TEMPLATES, ""))
+        .command_with(
             "run",
-            |_m: &ArgMatches, _ctx: &CommandContext| Ok(Output::Render(TestData::sample())),
-            simple_template(),
+            FnHandler::new(|_m: &ArgMatches, _ctx: &CommandContext| {
+                Ok(Output::Render(TestData::sample()))
+            }),
+            |cfg| cfg.template_name("run"),
         )
         .unwrap()
         .build()
         .expect("Failed to build app");
 
     let output = app
-        .render_inline(simple_template(), &TestData::sample(), OutputMode::Json)
+        .render_with(
+            standout::TemplateRef::Inline((simple_template()).to_string()),
+            &TestData::sample(),
+            OutputMode::Json,
+            standout::TargetProperties::detect(),
+        )
         .expect("Render failed");
 
     let parsed: serde_json::Value = serde_json::from_str(&output).expect("Invalid JSON output");
@@ -109,17 +145,25 @@ fn test_app_output_mode_json() {
 #[test]
 fn test_app_output_mode_yaml() {
     let app = App::builder()
-        .command(
+        .templates(EmbeddedTemplates::new(TEMPLATES, ""))
+        .command_with(
             "run",
-            |_m: &ArgMatches, _ctx: &CommandContext| Ok(Output::Render(TestData::sample())),
-            simple_template(),
+            FnHandler::new(|_m: &ArgMatches, _ctx: &CommandContext| {
+                Ok(Output::Render(TestData::sample()))
+            }),
+            |cfg| cfg.template_name("run"),
         )
         .unwrap()
         .build()
         .expect("Failed to build app");
 
     let output = app
-        .render_inline(simple_template(), &TestData::sample(), OutputMode::Yaml)
+        .render_with(
+            standout::TemplateRef::Inline((simple_template()).to_string()),
+            &TestData::sample(),
+            OutputMode::Yaml,
+            standout::TargetProperties::detect(),
+        )
         .expect("Render failed");
 
     assert!(output.contains("name: test"));
@@ -129,17 +173,25 @@ fn test_app_output_mode_yaml() {
 #[test]
 fn test_app_output_mode_csv() {
     let app = App::builder()
-        .command(
+        .templates(EmbeddedTemplates::new(TEMPLATES, ""))
+        .command_with(
             "run",
-            |_m: &ArgMatches, _ctx: &CommandContext| Ok(Output::Render(TestData::sample())),
-            simple_template(),
+            FnHandler::new(|_m: &ArgMatches, _ctx: &CommandContext| {
+                Ok(Output::Render(TestData::sample()))
+            }),
+            |cfg| cfg.template_name("run"),
         )
         .unwrap()
         .build()
         .expect("Failed to build app");
 
     let output = app
-        .render_inline(simple_template(), &TestData::sample(), OutputMode::Csv)
+        .render_with(
+            standout::TemplateRef::Inline((simple_template()).to_string()),
+            &TestData::sample(),
+            OutputMode::Csv,
+            standout::TargetProperties::detect(),
+        )
         .expect("Render failed");
 
     assert!(output.contains("name"));
@@ -151,17 +203,25 @@ fn test_app_output_mode_csv() {
 #[test]
 fn test_local_app_output_mode_auto() {
     let app = App::builder()
-        .command(
+        .templates(EmbeddedTemplates::new(TEMPLATES, ""))
+        .command_with(
             "run",
-            |_m: &ArgMatches, _ctx: &CommandContext| Ok(Output::Render(TestData::sample())),
-            simple_template(),
+            FnHandler::new(|_m: &ArgMatches, _ctx: &CommandContext| {
+                Ok(Output::Render(TestData::sample()))
+            }),
+            |cfg| cfg.template_name("run"),
         )
         .unwrap()
         .build()
         .expect("Failed to build app");
 
     let output = app
-        .render_inline(simple_template(), &TestData::sample(), OutputMode::Auto)
+        .render_with(
+            standout::TemplateRef::Inline((simple_template()).to_string()),
+            &TestData::sample(),
+            OutputMode::Auto,
+            standout::TargetProperties::detect(),
+        )
         .expect("Render failed");
 
     assert!(output.contains("Name: test"));
@@ -171,17 +231,25 @@ fn test_local_app_output_mode_auto() {
 #[test]
 fn test_local_app_output_mode_term() {
     let app = App::builder()
-        .command(
+        .templates(EmbeddedTemplates::new(TEMPLATES, ""))
+        .command_with(
             "run",
-            |_m: &ArgMatches, _ctx: &CommandContext| Ok(Output::Render(TestData::sample())),
-            simple_template(),
+            FnHandler::new(|_m: &ArgMatches, _ctx: &CommandContext| {
+                Ok(Output::Render(TestData::sample()))
+            }),
+            |cfg| cfg.template_name("run"),
         )
         .unwrap()
         .build()
         .expect("Failed to build app");
 
     let output = app
-        .render_inline(simple_template(), &TestData::sample(), OutputMode::Term)
+        .render_with(
+            standout::TemplateRef::Inline((simple_template()).to_string()),
+            &TestData::sample(),
+            OutputMode::Term,
+            standout::TargetProperties::detect(),
+        )
         .expect("Render failed");
 
     assert!(output.contains("Name: test"));
@@ -191,17 +259,25 @@ fn test_local_app_output_mode_term() {
 #[test]
 fn test_local_app_output_mode_text() {
     let app = App::builder()
-        .command(
+        .templates(EmbeddedTemplates::new(TEMPLATES, ""))
+        .command_with(
             "run",
-            |_m: &ArgMatches, _ctx: &CommandContext| Ok(Output::Render(TestData::sample())),
-            simple_template(),
+            FnHandler::new(|_m: &ArgMatches, _ctx: &CommandContext| {
+                Ok(Output::Render(TestData::sample()))
+            }),
+            |cfg| cfg.template_name("run"),
         )
         .unwrap()
         .build()
         .expect("Failed to build app");
 
     let output = app
-        .render_inline(simple_template(), &TestData::sample(), OutputMode::Text)
+        .render_with(
+            standout::TemplateRef::Inline((simple_template()).to_string()),
+            &TestData::sample(),
+            OutputMode::Text,
+            standout::TargetProperties::detect(),
+        )
         .expect("Render failed");
 
     assert!(output.contains("Name: test"));
@@ -211,17 +287,25 @@ fn test_local_app_output_mode_text() {
 #[test]
 fn test_local_app_output_mode_json() {
     let app = App::builder()
-        .command(
+        .templates(EmbeddedTemplates::new(TEMPLATES, ""))
+        .command_with(
             "run",
-            |_m: &ArgMatches, _ctx: &CommandContext| Ok(Output::Render(TestData::sample())),
-            simple_template(),
+            FnHandler::new(|_m: &ArgMatches, _ctx: &CommandContext| {
+                Ok(Output::Render(TestData::sample()))
+            }),
+            |cfg| cfg.template_name("run"),
         )
         .unwrap()
         .build()
         .expect("Failed to build app");
 
     let output = app
-        .render_inline(simple_template(), &TestData::sample(), OutputMode::Json)
+        .render_with(
+            standout::TemplateRef::Inline((simple_template()).to_string()),
+            &TestData::sample(),
+            OutputMode::Json,
+            standout::TargetProperties::detect(),
+        )
         .expect("Render failed");
 
     let parsed: serde_json::Value = serde_json::from_str(&output).expect("Invalid JSON output");
@@ -232,17 +316,25 @@ fn test_local_app_output_mode_json() {
 #[test]
 fn test_local_app_output_mode_yaml() {
     let app = App::builder()
-        .command(
+        .templates(EmbeddedTemplates::new(TEMPLATES, ""))
+        .command_with(
             "run",
-            |_m: &ArgMatches, _ctx: &CommandContext| Ok(Output::Render(TestData::sample())),
-            simple_template(),
+            FnHandler::new(|_m: &ArgMatches, _ctx: &CommandContext| {
+                Ok(Output::Render(TestData::sample()))
+            }),
+            |cfg| cfg.template_name("run"),
         )
         .unwrap()
         .build()
         .expect("Failed to build app");
 
     let output = app
-        .render_inline(simple_template(), &TestData::sample(), OutputMode::Yaml)
+        .render_with(
+            standout::TemplateRef::Inline((simple_template()).to_string()),
+            &TestData::sample(),
+            OutputMode::Yaml,
+            standout::TargetProperties::detect(),
+        )
         .expect("Render failed");
 
     assert!(output.contains("name: test"));
@@ -252,17 +344,25 @@ fn test_local_app_output_mode_yaml() {
 #[test]
 fn test_local_app_output_mode_csv() {
     let app = App::builder()
-        .command(
+        .templates(EmbeddedTemplates::new(TEMPLATES, ""))
+        .command_with(
             "run",
-            |_m: &ArgMatches, _ctx: &CommandContext| Ok(Output::Render(TestData::sample())),
-            simple_template(),
+            FnHandler::new(|_m: &ArgMatches, _ctx: &CommandContext| {
+                Ok(Output::Render(TestData::sample()))
+            }),
+            |cfg| cfg.template_name("run"),
         )
         .unwrap()
         .build()
         .expect("Failed to build app");
 
     let output = app
-        .render_inline(simple_template(), &TestData::sample(), OutputMode::Csv)
+        .render_with(
+            standout::TemplateRef::Inline((simple_template()).to_string()),
+            &TestData::sample(),
+            OutputMode::Csv,
+            standout::TargetProperties::detect(),
+        )
         .expect("Render failed");
 
     assert!(output.contains("name"));
@@ -276,20 +376,33 @@ fn test_render_inline_json_consistency() {
     let data = TestData::sample();
 
     let app = App::builder()
-        .command(
+        .templates(EmbeddedTemplates::new(TEMPLATES, ""))
+        .command_with(
             "run",
-            |_m: &ArgMatches, _ctx: &CommandContext| Ok(Output::Render(TestData::sample())),
-            simple_template(),
+            FnHandler::new(|_m: &ArgMatches, _ctx: &CommandContext| {
+                Ok(Output::Render(TestData::sample()))
+            }),
+            |cfg| cfg.template_name("run"),
         )
         .unwrap()
         .build()
         .expect("Failed to build app");
 
     let output1 = app
-        .render_inline(simple_template(), &data, OutputMode::Json)
+        .render_with(
+            standout::TemplateRef::Inline((simple_template()).to_string()),
+            &data,
+            OutputMode::Json,
+            standout::TargetProperties::detect(),
+        )
         .expect("First render failed");
     let output2 = app
-        .render_inline(simple_template(), &data, OutputMode::Json)
+        .render_with(
+            standout::TemplateRef::Inline((simple_template()).to_string()),
+            &data,
+            OutputMode::Json,
+            standout::TargetProperties::detect(),
+        )
         .expect("Second render failed");
 
     let json1: serde_json::Value = serde_json::from_str(&output1).expect("Invalid JSON");
@@ -303,20 +416,33 @@ fn test_render_inline_text_consistency() {
     let data = TestData::sample();
 
     let app = App::builder()
-        .command(
+        .templates(EmbeddedTemplates::new(TEMPLATES, ""))
+        .command_with(
             "run",
-            |_m: &ArgMatches, _ctx: &CommandContext| Ok(Output::Render(TestData::sample())),
-            simple_template(),
+            FnHandler::new(|_m: &ArgMatches, _ctx: &CommandContext| {
+                Ok(Output::Render(TestData::sample()))
+            }),
+            |cfg| cfg.template_name("run"),
         )
         .unwrap()
         .build()
         .expect("Failed to build app");
 
     let output1 = app
-        .render_inline(simple_template(), &data, OutputMode::Text)
+        .render_with(
+            standout::TemplateRef::Inline((simple_template()).to_string()),
+            &data,
+            OutputMode::Text,
+            standout::TargetProperties::detect(),
+        )
         .expect("First render failed");
     let output2 = app
-        .render_inline(simple_template(), &data, OutputMode::Text)
+        .render_with(
+            standout::TemplateRef::Inline((simple_template()).to_string()),
+            &data,
+            OutputMode::Text,
+            standout::TargetProperties::detect(),
+        )
         .expect("Second render failed");
 
     assert_eq!(output1, output2);
@@ -333,18 +459,26 @@ fn test_style_tags_in_term_mode() {
     let theme = Theme::new().add("title", style);
 
     let app = App::builder()
+        .templates(EmbeddedTemplates::new(TEMPLATES, ""))
         .theme(theme)
-        .command(
+        .command_with(
             "run",
-            |_m: &ArgMatches, _ctx: &CommandContext| Ok(Output::Render(TestData::sample())),
-            template,
+            FnHandler::new(|_m: &ArgMatches, _ctx: &CommandContext| {
+                Ok(Output::Render(TestData::sample()))
+            }),
+            |cfg| cfg.template_name("run"),
         )
         .unwrap()
         .build()
         .expect("Failed to build app");
 
     let output = app
-        .render_inline(template, &TestData::sample(), OutputMode::Term)
+        .render_with(
+            standout::TemplateRef::Inline((template).to_string()),
+            &TestData::sample(),
+            OutputMode::Term,
+            standout::TargetProperties::detect(),
+        )
         .expect("Render failed");
 
     assert!(output.contains("test") || output.contains("\x1b"));
@@ -361,18 +495,26 @@ fn test_style_tags_stripped_in_text_mode() {
     let theme = Theme::new().add("title", style);
 
     let app = App::builder()
+        .templates(EmbeddedTemplates::new(TEMPLATES, ""))
         .theme(theme)
-        .command(
+        .command_with(
             "run",
-            |_m: &ArgMatches, _ctx: &CommandContext| Ok(Output::Render(TestData::sample())),
-            template,
+            FnHandler::new(|_m: &ArgMatches, _ctx: &CommandContext| {
+                Ok(Output::Render(TestData::sample()))
+            }),
+            |cfg| cfg.template_name("run"),
         )
         .unwrap()
         .build()
         .expect("Failed to build app");
 
     let output = app
-        .render_inline(template, &TestData::sample(), OutputMode::Text)
+        .render_with(
+            standout::TemplateRef::Inline((template).to_string()),
+            &TestData::sample(),
+            OutputMode::Text,
+            standout::TargetProperties::detect(),
+        )
         .expect("Render failed");
 
     assert!(output.contains("test"));
@@ -391,18 +533,26 @@ fn test_style_tags_kept_in_term_debug_mode() {
     let theme = Theme::new().add("title", style);
 
     let app = App::builder()
+        .templates(EmbeddedTemplates::new(TEMPLATES, ""))
         .theme(theme)
-        .command(
+        .command_with(
             "run",
-            |_m: &ArgMatches, _ctx: &CommandContext| Ok(Output::Render(TestData::sample())),
-            template,
+            FnHandler::new(|_m: &ArgMatches, _ctx: &CommandContext| {
+                Ok(Output::Render(TestData::sample()))
+            }),
+            |cfg| cfg.template_name("run"),
         )
         .unwrap()
         .build()
         .expect("Failed to build app");
 
     let output = app
-        .render_inline(template, &TestData::sample(), OutputMode::TermDebug)
+        .render_with(
+            standout::TemplateRef::Inline((template).to_string()),
+            &TestData::sample(),
+            OutputMode::TermDebug,
+            standout::TargetProperties::detect(),
+        )
         .expect("Render failed");
 
     assert!(output.contains("[title]"));

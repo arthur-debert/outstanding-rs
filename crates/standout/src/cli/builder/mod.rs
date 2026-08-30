@@ -16,8 +16,8 @@ mod rendering;
 use crate::context::ContextRegistry;
 use crate::setup::SetupError;
 use crate::topics::{
-    default_topic_theme, display_with_pager, topic_data, topics_list_data, TopicRegistry,
-    DEFAULT_TOPICS_LIST_TEMPLATE, DEFAULT_TOPIC_TEMPLATE,
+    default_topic_theme, topic_data, topics_list_data, TopicRegistry, DEFAULT_TOPICS_LIST_TEMPLATE,
+    DEFAULT_TOPIC_TEMPLATE,
 };
 use crate::TemplateRegistry;
 use crate::{
@@ -51,8 +51,6 @@ pub(crate) type SharedTemplateEngine =
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum TemplateRef {
     Named(String),
-    Convention(String),
-    Inline(String),
     Absent(TemplateAbsence),
 }
 
@@ -64,31 +62,9 @@ pub(crate) enum TemplateAbsence {
 }
 
 impl TemplateRef {
-    pub(crate) fn inline(template: impl Into<String>) -> Self {
-        Self::Inline(template.into())
-    }
-
     pub(crate) fn convention(command_path: &str) -> Self {
-        Self::Convention(command_path.to_string())
+        Self::Named(command_path.replace('.', "/"))
     }
-
-    pub(crate) fn convention_name(command_path: &str, template_ext: &str) -> String {
-        let file_path = command_path.replace('.', "/");
-        format!("{}{}", file_path, template_ext)
-    }
-}
-
-pub(crate) fn inline_template_ref(
-    template: impl Into<String>,
-    api: &str,
-) -> Result<TemplateRef, SetupError> {
-    let template = template.into();
-    if template.is_empty() {
-        return Err(SetupError::Config(format!(
-            "{api} received an empty template; use .silent(), .structured_only(), or .binary() to declare template absence"
-        )));
-    }
-    Ok(TemplateRef::inline(template))
 }
 
 #[derive(Debug, Clone)]
@@ -389,7 +365,6 @@ pub struct AppBuilder {
     pub(crate) setup_errors: Vec<SetupError>,
     pub(crate) questionnaire_commands: HashMap<String, QuestionnaireCommand>,
     pub(crate) context_registry: ContextRegistry,
-    pub(crate) template_ext: String,
     pub(crate) default_command: Option<String>,
     pub(crate) default_command_resolver: Option<crate::cli::DefaultCommandResolver>,
     pub(crate) include_framework_templates: bool,
@@ -411,12 +386,6 @@ pub struct AppBuilder {
     pub(crate) startup_warnings: Vec<String>,
 }
 
-impl Default for AppBuilder {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
 impl AppBuilder {
     pub(crate) fn new() -> Self {
         Self {
@@ -434,7 +403,6 @@ impl AppBuilder {
             setup_errors: Vec::new(),
             questionnaire_commands: HashMap::new(),
             context_registry: ContextRegistry::new(),
-            template_ext: ".j2".to_string(),
             default_command: None,
             default_command_resolver: None,
             include_framework_templates: true,
@@ -455,6 +423,7 @@ impl AppBuilder {
         self
     }
 
+    /// Secondary path (ADR-0032): the custom-engine capability, which nothing else on this axis provides.
     pub fn template_engine(
         mut self,
         engine: Box<dyn standout_render::template::TemplateEngine>,
@@ -539,7 +508,6 @@ impl AppBuilder {
 
         self.validate_command_templates()?;
         self.validate_framework_template_styles()?;
-        self.materialize_convention_templates();
 
         if let Some(registry) = &self.template_registry {
             refresh_engine_templates(&mut **template_engine.borrow_mut(), registry)
@@ -582,10 +550,7 @@ impl AppBuilder {
         for (path, pending) in self.pending_commands.borrow().iter() {
             let name = match &pending.template {
                 TemplateRef::Named(name) => name.clone(),
-                TemplateRef::Convention(command_path) => {
-                    TemplateRef::convention_name(command_path, &self.template_ext)
-                }
-                TemplateRef::Inline(_) | TemplateRef::Absent(_) => continue,
+                TemplateRef::Absent(_) => continue,
             };
             let Some(registry) = self.template_registry.as_ref() else {
                 return Err(SetupError::Template(missing_template_message(
@@ -605,20 +570,14 @@ impl AppBuilder {
         Ok(())
     }
 
-    fn materialize_convention_templates(&self) {
-        let mut pending_commands = self.pending_commands.borrow_mut();
-        for pending in pending_commands.values_mut() {
-            if let TemplateRef::Convention(command_path) = &pending.template {
-                pending.template = TemplateRef::Convention(TemplateRef::convention_name(
-                    command_path,
-                    &self.template_ext,
-                ));
-            }
-        }
-    }
-
     fn resolve_configured_theme(&mut self) -> Result<Option<Theme>, SetupError> {
         if self.theme.is_some() {
+            if self.stylesheet_registry.is_some() {
+                return Err(SetupError::Config(
+                    "the app configures both .theme(...) and .styles(...)/.styles_dir(...);                      .theme(...) replaces the whole stylesheet registry, so keep one of them                      — merge the stylesheets into the Theme, or drop the .theme(...) call and                      select a registered theme with .default_theme(name)"
+                        .to_string(),
+                ));
+            }
             return Ok(self.theme.take());
         }
 
@@ -629,20 +588,12 @@ impl AppBuilder {
             return Ok(None);
         };
 
-        let resolved = if let Some(name) = &self.default_theme_name {
-            Some(
-                registry
-                    .get(name)
-                    .map_err(|_| SetupError::ThemeNotFound(name.to_string()))?,
-            )
-        } else {
-            registry
-                .get("default")
-                .or_else(|_| registry.get("theme"))
-                .or_else(|_| registry.get("base"))
-                .ok()
+        let Some(name) = &self.default_theme_name else {
+            return Ok(None);
         };
-        Ok(resolved)
+        Ok(Some(registry.get(name).map_err(|_| {
+            SetupError::ThemeNotFound(name.to_string())
+        })?))
     }
 
     fn framework_base_theme(&self) -> Result<Theme, SetupError> {
@@ -719,14 +670,6 @@ impl App {
         &self.registry
     }
 
-    pub fn registry_mut(&mut self) -> &mut TopicRegistry {
-        &mut self.registry
-    }
-
-    pub fn get_hooks(&self, path: &str) -> Option<&Hooks> {
-        self.command_hooks.get(path)
-    }
-
     fn csv_projection_for(&self, path: &str) -> Option<crate::CsvProjection> {
         self.pending_commands
             .borrow()
@@ -747,14 +690,6 @@ impl App {
         OutputMode::Auto
     }
 
-    pub fn get_theme(&mut self, name: &str) -> Result<Theme, SetupError> {
-        self.stylesheet_registry
-            .as_mut()
-            .ok_or_else(|| SetupError::Config("No stylesheet registry configured".into()))?
-            .get(name)
-            .map_err(|_| SetupError::ThemeNotFound(name.to_string()))
-    }
-
     pub fn template_names(&self) -> impl Iterator<Item = &str> {
         self.template_registry
             .as_ref()
@@ -770,48 +705,8 @@ impl App {
             .unwrap_or_default()
     }
 
-    pub fn parse(&self, cmd: Command) -> clap::ArgMatches {
-        self.parse_with(cmd)
-    }
-
-    pub fn parse_with(&self, cmd: Command) -> clap::ArgMatches {
-        self.parse_from(cmd, std::env::args())
-    }
-
-    pub fn parse_from<I, T>(&self, cmd: Command, itr: I) -> clap::ArgMatches
-    where
-        I: IntoIterator<Item = T>,
-        T: Into<std::ffi::OsString> + Clone,
-    {
-        match self.get_matches_from(cmd, itr) {
-            HelpResult::Matches(m) => m,
-            HelpResult::Help(h) => {
-                println!("{}", h);
-                std::process::exit(0);
-            }
-            HelpResult::PagedHelp(h) => {
-                if display_with_pager(&h).is_err() {
-                    println!("{}", h);
-                }
-                std::process::exit(0);
-            }
-            HelpResult::Error(e) => e.exit(),
-        }
-    }
-
-    pub fn get_matches(&self, cmd: Command) -> HelpResult {
-        self.get_matches_from(cmd, std::env::args())
-    }
-
-    pub fn get_matches_from<I, T>(&self, cmd: Command, itr: I) -> HelpResult
-    where
-        I: IntoIterator<Item = T>,
-        T: Into<std::ffi::OsString> + Clone,
-    {
-        self.get_matches_from_with_sources(cmd, itr, &crate::InputSources::from_process())
-    }
-
-    pub fn get_matches_from_with_sources<I, T>(
+    /// Secondary path (ADR-0032): the augmented `Command` and help interception for an application that parses for itself.
+    pub fn get_matches_from<I, T>(
         &self,
         cmd: Command,
         itr: I,
@@ -1224,12 +1119,13 @@ impl App {
         parse_output_mode_flag(last_unparsed_flag_value(flag, args))
     }
 
+    /// Secondary path (ADR-0032): the manual-dispatch seam — one handler with its hooks and its render, without a dispatch table.
     pub fn run_command<F, T>(
         &self,
         path: &str,
         matches: &ArgMatches,
         handler: F,
-        template: &str,
+        template: crate::TemplateRef,
     ) -> Result<RenderedOutput, HookError>
     where
         F: FnOnce(&ArgMatches, &CommandContext) -> HandlerResult<T>,
@@ -1265,7 +1161,7 @@ impl App {
                 target.ambiguous_width = self.ambiguous_width;
                 let request = RenderRequest {
                     data: json_data,
-                    template: crate::TemplateRef::Inline(template.to_string()),
+                    template: template.clone(),
                     theme: self.theme.clone(),
                     format: self.extract_output_mode(matches),
                     color_policy: ColorPolicy::Auto,
@@ -1587,12 +1483,11 @@ mod tests {
     }
 
     #[test]
-    fn test_theme_fallback_precedence() {
+    fn a_stylesheet_registry_without_default_theme_leaves_the_framework_base() {
         use std::fs;
         use tempfile::TempDir;
 
         let temp_dir = TempDir::new().unwrap();
-
         fs::write(temp_dir.path().join("base.yaml"), "style: { fg: blue }").unwrap();
 
         let app = AppBuilder::new()
@@ -1601,27 +1496,48 @@ mod tests {
             .build()
             .unwrap();
 
-        assert_eq!(app.theme.name(), Some("base"));
+        assert_eq!(app.theme.name(), None);
+    }
 
+    #[test]
+    fn default_theme_selects_the_named_registry_entry() {
+        use std::fs;
+        use tempfile::TempDir;
+
+        let temp_dir = TempDir::new().unwrap();
+        fs::write(temp_dir.path().join("base.yaml"), "style: { fg: blue }").unwrap();
         fs::write(temp_dir.path().join("theme.yaml"), "style: { fg: red }").unwrap();
 
         let app = AppBuilder::new()
             .styles_dir(temp_dir.path())
             .unwrap()
+            .default_theme("theme")
             .build()
             .unwrap();
 
         assert_eq!(app.theme.name(), Some("theme"));
+    }
 
-        fs::write(temp_dir.path().join("default.yaml"), "style: { fg: green }").unwrap();
+    #[test]
+    fn styles_combined_with_theme_names_both_calls() {
+        use std::fs;
+        use tempfile::TempDir;
 
-        let app = AppBuilder::new()
+        let temp_dir = TempDir::new().unwrap();
+        fs::write(temp_dir.path().join("base.yaml"), "style: { fg: blue }").unwrap();
+
+        let error = match AppBuilder::new()
             .styles_dir(temp_dir.path())
             .unwrap()
+            .theme(Theme::new().with_name("computed"))
             .build()
-            .unwrap();
+        {
+            Ok(_) => panic!("expected .styles(...) with .theme(...) to fail the build"),
+            Err(error) => error.to_string(),
+        };
 
-        assert_eq!(app.theme.name(), Some("default"));
+        assert!(error.contains(".theme(...)"), "{error}");
+        assert!(error.contains(".styles(...)"), "{error}");
     }
 
     #[test]

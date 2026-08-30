@@ -1,9 +1,19 @@
 use clap::Command;
 use console::Style;
 use serde_json::json;
+use standout::cli::FnHandler;
 use standout::cli::{App, Output};
 use standout::dispatch;
+use standout::EmbeddedTemplates;
 use standout::Theme;
+
+const TEMPLATES: &[(&str, &str)] = &[
+    ("late_bind", "[issue_89_style]late_content[/issue_89_style]"),
+    ("test", "[unknown_style]content[/unknown_style]"),
+    ("test-2", "[defined_style]content[/defined_style]"),
+    ("macro_cmd", "[macro_style]{{ val }}[/macro_style]"),
+    ("app/config/get", "[nested_style]{{ key }}[/nested_style]"),
+];
 
 #[test]
 fn test_late_binding_theme_sequencing() {
@@ -11,10 +21,11 @@ fn test_late_binding_theme_sequencing() {
     let theme = Theme::new().add("issue_89_style", style);
 
     let app = App::builder()
-        .command(
+        .templates(EmbeddedTemplates::new(TEMPLATES, ""))
+        .command_with(
             "late_bind",
-            |_m, _ctx| Ok(Output::Render("late_content".to_string())),
-            "[issue_89_style]late_content[/issue_89_style]",
+            FnHandler::new(|_m, _ctx| Ok(Output::Render("late_content".to_string()))),
+            |cfg| cfg,
         )
         .unwrap()
         .theme(theme) // Theme set AFTER command registration
@@ -23,7 +34,12 @@ fn test_late_binding_theme_sequencing() {
 
     let cmd = Command::new("app").subcommand(Command::new("late_bind"));
 
-    let result = app.run_to_string(cmd, ["app", "--output=term", "late_bind"]);
+    let result = app.run_with(
+        cmd,
+        ["app", "--output=term", "late_bind"],
+        standout::TargetProperties::detect(),
+        standout::InputSources::from_process(),
+    );
 
     match result.outcome() {
         standout::cli::DispatchResult::Handled(output) => {
@@ -43,10 +59,11 @@ fn test_late_binding_with_dispatch_macro() {
     let theme = Theme::new().add("macro_style", style);
 
     let app = App::builder()
+        .templates(EmbeddedTemplates::new(TEMPLATES, ""))
         .commands(dispatch! {
             macro_cmd => {
                 handler: |_m, _ctx| Ok(Output::Render(json!({"val": "macro_test"}))),
-                template: "[macro_style]{{ val }}[/macro_style]",
+                template_name: "macro_cmd",
             }
         })
         .unwrap()
@@ -55,7 +72,12 @@ fn test_late_binding_with_dispatch_macro() {
         .expect("Failed to build app");
 
     let cmd = Command::new("app").subcommand(Command::new("macro_cmd"));
-    let result = app.run_to_string(cmd, ["app", "--output=term", "macro_cmd"]);
+    let result = app.run_with(
+        cmd,
+        ["app", "--output=term", "macro_cmd"],
+        standout::TargetProperties::detect(),
+        standout::InputSources::from_process(),
+    );
 
     match result.outcome() {
         standout::cli::DispatchResult::Handled(output) => {
@@ -80,21 +102,26 @@ fn test_late_binding_with_nested_groups() {
     let theme = Theme::new().add("nested_style", style);
 
     let app = App::builder()
-        .group("db", |g| {
-            g.command_with(
-                "migrate",
-                |_m, _ctx| Ok(Output::Render(json!({"status": "migrated"}))),
-                |c| c.structured_only(),
-            )
+        .templates(EmbeddedTemplates::new(TEMPLATES, ""))
+        .commands(|__g| {
+            __g.group("db", |g| {
+                g.command_with(
+                    "migrate",
+                    |_m, _ctx| Ok(Output::Render(json!({"status": "migrated"}))),
+                    |c| c.structured_only(),
+                )
+            })
         })
         .unwrap()
-        .group("app", |g| {
-            g.group("config", |g| {
-                g.command_with(
-                    "get",
-                    |_m, _ctx| Ok(Output::Render(json!({"key": "value"}))),
-                    |c| c.template("[nested_style]{{ key }}[/nested_style]"),
-                )
+        .commands(|__g| {
+            __g.group("app", |g| {
+                g.group("config", |g| {
+                    g.command_with(
+                        "get",
+                        |_m, _ctx| Ok(Output::Render(json!({"key": "value"}))),
+                        |c| c,
+                    )
+                })
             })
         })
         .unwrap()
@@ -108,7 +135,12 @@ fn test_late_binding_with_nested_groups() {
             Command::new("app").subcommand(Command::new("config").subcommand(Command::new("get"))),
         );
 
-    let result = app.run_to_string(cmd, ["test", "--output=term", "app", "config", "get"]);
+    let result = app.run_with(
+        cmd,
+        ["test", "--output=term", "app", "config", "get"],
+        standout::TargetProperties::detect(),
+        standout::InputSources::from_process(),
+    );
 
     match result.outcome() {
         standout::cli::DispatchResult::Handled(output) => {
@@ -130,17 +162,23 @@ fn test_late_binding_with_nested_groups() {
 #[test]
 fn test_unknown_style_degrades_to_unstyled_text() {
     let app = App::builder()
-        .command(
+        .templates(EmbeddedTemplates::new(TEMPLATES, ""))
+        .command_with(
             "test",
-            |_m, _ctx| Ok(Output::Render("content".to_string())),
-            "[unknown_style]content[/unknown_style]",
+            FnHandler::new(|_m, _ctx| Ok(Output::Render("content".to_string()))),
+            |cfg| cfg,
         )
         .unwrap()
         .build()
         .expect("Failed to build app");
 
     let cmd = Command::new("app").subcommand(Command::new("test"));
-    let result = app.run_to_string(cmd, ["app", "--output=term", "test"]);
+    let result = app.run_with(
+        cmd,
+        ["app", "--output=term", "test"],
+        standout::TargetProperties::detect(),
+        standout::InputSources::from_process(),
+    );
 
     match result.outcome() {
         standout::cli::DispatchResult::Handled(output) => {
@@ -157,10 +195,11 @@ fn test_defined_style_does_not_render_as_tag_question_mark() {
     let theme = Theme::new().add("defined_style", style);
 
     let app = App::builder()
-        .command(
+        .templates(EmbeddedTemplates::new(TEMPLATES, ""))
+        .command_with(
             "test",
-            |_m, _ctx| Ok(Output::Render("content".to_string())),
-            "[defined_style]content[/defined_style]",
+            FnHandler::new(|_m, _ctx| Ok(Output::Render("content".to_string()))),
+            |cfg| cfg.template_name("test-2"),
         )
         .unwrap()
         .theme(theme)
@@ -168,7 +207,12 @@ fn test_defined_style_does_not_render_as_tag_question_mark() {
         .expect("Failed to build app");
 
     let cmd = Command::new("app").subcommand(Command::new("test"));
-    let result = app.run_to_string(cmd, ["app", "--output=term", "test"]);
+    let result = app.run_with(
+        cmd,
+        ["app", "--output=term", "test"],
+        standout::TargetProperties::detect(),
+        standout::InputSources::from_process(),
+    );
 
     match result.outcome() {
         standout::cli::DispatchResult::Handled(output) => {

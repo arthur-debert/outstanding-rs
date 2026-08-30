@@ -43,6 +43,7 @@ impl AppBuilder {
         Ok(self)
     }
 
+    /// Secondary path (ADR-0032): a theme computed in Rust rather than parsed from a stylesheet.
     pub fn theme(mut self, theme: Theme) -> Self {
         self.theme = Some(theme);
         self
@@ -62,6 +63,7 @@ impl AppBuilder {
         self
     }
 
+    /// Secondary path (ADR-0032): stylesheets outside the crate, read at run time.
     pub fn styles_dir<P: AsRef<std::path::Path>>(mut self, path: P) -> Result<Self, SetupError> {
         let registry = self
             .stylesheet_registry
@@ -77,6 +79,7 @@ impl AppBuilder {
         self
     }
 
+    /// Secondary path (ADR-0032): templates outside the crate source tree, which the macro cannot embed.
     pub fn templates_dir<P: AsRef<std::path::Path>>(mut self, path: P) -> Result<Self, SetupError> {
         let registry = self
             .template_registry
@@ -84,11 +87,6 @@ impl AppBuilder {
         registry.add_template_dir(path)?;
         registry.refresh()?;
         Ok(self)
-    }
-
-    pub fn template_ext(mut self, ext: impl Into<String>) -> Self {
-        self.template_ext = ext.into();
-        self
     }
 
     pub fn output_flag(mut self, name: Option<&str>) -> Self {
@@ -124,11 +122,13 @@ impl AppBuilder {
         self
     }
 
+    /// Secondary path (ADR-0032): the only way to decline the framework's own help and topic templates.
     pub fn include_framework_templates(mut self, include: bool) -> Self {
         self.include_framework_templates = include;
         self
     }
 
+    /// Secondary path (ADR-0032): declines the framework's style vocabulary from the base half of the merge.
     pub fn include_framework_styles(mut self, include: bool) -> Self {
         self.include_framework_styles = include;
         self
@@ -153,6 +153,25 @@ impl AppBuilder {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::EmbeddedTemplates;
+
+    const TEMPLATES: &[(&str, &str)] = &[
+        ("info", "{{ name }} v{{ version }}"),
+        ("info-2", "{{ title }} by {{ author }} ({{ year }})"),
+        ("info-3", "Width: {{ terminal_width }}"),
+        ("info-4", "Mode: {{ mode }}"),
+        ("test", "{{ value }}"),
+        ("list", "{{ app_name }}: list"),
+        ("info-5", "{{ app_name }}: info"),
+        ("test-2", "Count: {{ count }}, Doubled: {{ doubled_count }}"),
+        ("test-3", "Debug: {{ config.debug }}, Max: {{ config.max_items }}"),
+        ("list-2", "{% for item in items %}{{ item }}{% if not loop.last %}{{ separator }}{% endif %}{% endfor %}"),
+        ("test-4", "{{ data }} + {{ extra }}"),
+        ("list-3", "n={{ n }}"),
+        ("sibling", "n={{ n }}"),
+    ];
+
+    use crate::cli::handler::FnHandler;
     use crate::cli::handler::Output as HandlerOutput;
     use crate::context::RenderContext;
     use crate::OutputMode;
@@ -163,11 +182,12 @@ mod tests {
         use serde_json::json;
 
         let builder = AppBuilder::new()
+            .templates(EmbeddedTemplates::new(TEMPLATES, ""))
             .context("version", Value::from("1.0.0"))
-            .command(
+            .command_with(
                 "info",
-                |_m, _ctx| Ok(HandlerOutput::Render(json!({"name": "app"}))),
-                "{{ name }} v{{ version }}",
+                FnHandler::new(|_m, _ctx| Ok(HandlerOutput::Render(json!({"name": "app"})))),
+                |cfg| cfg,
             )
             .unwrap();
 
@@ -184,12 +204,13 @@ mod tests {
         use serde_json::json;
 
         let builder = AppBuilder::new()
+            .templates(EmbeddedTemplates::new(TEMPLATES, ""))
             .context("author", Value::from("Alice"))
             .context("year", Value::from(2024))
-            .command(
+            .command_with(
                 "info",
-                |_m, _ctx| Ok(HandlerOutput::Render(json!({"title": "Report"}))),
-                "{{ title }} by {{ author }} ({{ year }})",
+                FnHandler::new(|_m, _ctx| Ok(HandlerOutput::Render(json!({"title": "Report"})))),
+                |cfg| cfg.template_name("info-2"),
             )
             .unwrap();
 
@@ -206,13 +227,14 @@ mod tests {
         use serde_json::json;
 
         let builder = AppBuilder::new()
+            .templates(EmbeddedTemplates::new(TEMPLATES, ""))
             .context_fn("terminal_width", |ctx: &RenderContext| {
                 Value::from(ctx.terminal_width.unwrap_or(80))
             })
-            .command(
+            .command_with(
                 "info",
-                |_m, _ctx| Ok(HandlerOutput::Render(json!({}))),
-                "Width: {{ terminal_width }}",
+                FnHandler::new(|_m, _ctx| Ok(HandlerOutput::Render(json!({})))),
+                |cfg| cfg.template_name("info-3"),
             )
             .unwrap();
 
@@ -230,13 +252,14 @@ mod tests {
         use serde_json::json;
 
         let builder = AppBuilder::new()
+            .templates(EmbeddedTemplates::new(TEMPLATES, ""))
             .context_fn("mode", |ctx: &RenderContext| {
                 Value::from(format!("{:?}", ctx.output_mode))
             })
-            .command(
+            .command_with(
                 "info",
-                |_m, _ctx| Ok(HandlerOutput::Render(json!({}))),
-                "Mode: {{ mode }}",
+                FnHandler::new(|_m, _ctx| Ok(HandlerOutput::Render(json!({})))),
+                |cfg| cfg.template_name("info-4"),
             )
             .unwrap();
 
@@ -253,11 +276,12 @@ mod tests {
         use serde_json::json;
 
         let builder = AppBuilder::new()
+            .templates(EmbeddedTemplates::new(TEMPLATES, ""))
             .context("value", Value::from("from_context"))
-            .command(
+            .command_with(
                 "test",
-                |_m, _ctx| Ok(HandlerOutput::Render(json!({"value": "from_data"}))),
-                "{{ value }}",
+                FnHandler::new(|_m, _ctx| Ok(HandlerOutput::Render(json!({"value": "from_data"})))),
+                |cfg| cfg,
             )
             .unwrap();
 
@@ -274,17 +298,18 @@ mod tests {
         use serde_json::json;
 
         let builder = AppBuilder::new()
+            .templates(EmbeddedTemplates::new(TEMPLATES, ""))
             .context("app_name", Value::from("MyApp"))
-            .command(
+            .command_with(
                 "list",
-                |_m, _ctx| Ok(HandlerOutput::Render(json!({}))),
-                "{{ app_name }}: list",
+                FnHandler::new(|_m, _ctx| Ok(HandlerOutput::Render(json!({})))),
+                |cfg| cfg,
             )
             .unwrap()
-            .command(
+            .command_with(
                 "info",
-                |_m, _ctx| Ok(HandlerOutput::Render(json!({}))),
-                "{{ app_name }}: info",
+                FnHandler::new(|_m, _ctx| Ok(HandlerOutput::Render(json!({})))),
+                |cfg| cfg.template_name("info-5"),
             )
             .unwrap();
 
@@ -307,14 +332,15 @@ mod tests {
         use serde_json::json;
 
         let builder = AppBuilder::new()
+            .templates(EmbeddedTemplates::new(TEMPLATES, ""))
             .context_fn("doubled_count", |ctx: &RenderContext| {
                 let count = ctx.data.get("count").and_then(|v| v.as_i64()).unwrap_or(0);
                 Value::from(count * 2)
             })
-            .command(
+            .command_with(
                 "test",
-                |_m, _ctx| Ok(HandlerOutput::Render(json!({"count": 21}))),
-                "Count: {{ count }}, Doubled: {{ doubled_count }}",
+                FnHandler::new(|_m, _ctx| Ok(HandlerOutput::Render(json!({"count": 21})))),
+                |cfg| cfg.template_name("test-2"),
             )
             .unwrap();
 
@@ -331,6 +357,7 @@ mod tests {
         use serde_json::json;
 
         let builder = AppBuilder::new()
+            .templates(EmbeddedTemplates::new(TEMPLATES, ""))
             .context(
                 "config",
                 Value::from_iter([
@@ -338,10 +365,10 @@ mod tests {
                     ("max_items", Value::from(100)),
                 ]),
             )
-            .command(
+            .command_with(
                 "test",
-                |_m, _ctx| Ok(HandlerOutput::Render(json!({}))),
-                "Debug: {{ config.debug }}, Max: {{ config.max_items }}",
+                FnHandler::new(|_m, _ctx| Ok(HandlerOutput::Render(json!({})))),
+                |cfg| cfg.template_name("test-3"),
             )
             .unwrap();
 
@@ -358,16 +385,18 @@ mod tests {
         use serde_json::json;
 
         let builder = AppBuilder::new()
+            .templates(EmbeddedTemplates::new(TEMPLATES, ""))
             .context("separator", Value::from(" | "))
-            .command(
+            .command_with(
                 "list",
-                |_m, _ctx| {
+                FnHandler::new(|_m, _ctx| {
                     Ok(HandlerOutput::Render(json!({
                         "items": ["a", "b", "c"]
                     })))
-                },
-                "{% for item in items %}{{ item }}{% if not loop.last %}{{ separator }}{% endif %}{% endfor %}",
-            ).unwrap();
+                }),
+                |cfg| cfg.template_name("list-2"),
+            )
+            .unwrap();
 
         let cmd = Command::new("app").subcommand(Command::new("list"));
         let matches = cmd.try_get_matches_from(["app", "list"]).unwrap();
@@ -382,11 +411,12 @@ mod tests {
         use serde_json::json;
 
         let builder = AppBuilder::new()
+            .templates(EmbeddedTemplates::new(TEMPLATES, ""))
             .context("extra", Value::from("should_not_appear"))
-            .command(
+            .command_with(
                 "test",
-                |_m, _ctx| Ok(HandlerOutput::Render(json!({"data": "value"}))),
-                "{{ data }} + {{ extra }}",
+                FnHandler::new(|_m, _ctx| Ok(HandlerOutput::Render(json!({"data": "value"})))),
+                |cfg| cfg.template_name("test-4"),
             )
             .unwrap();
 
@@ -411,10 +441,11 @@ mod tests {
         let builder = AppBuilder::new()
             .templates_dir(temp_dir.path())
             .unwrap()
-            .template_ext(".jinja2")
-            .group("db", |g| {
-                g.command("migrate", |_m, _ctx| {
-                    Ok(HandlerOutput::Render(json!({"ok": true})))
+            .commands(|g| {
+                g.group("db", |g| {
+                    g.command("migrate", |_m, _ctx| {
+                        Ok(HandlerOutput::Render(json!({"ok": true})))
+                    })
                 })
             });
 
@@ -453,10 +484,10 @@ mod tests {
         };
         let app = AppBuilder::new()
             .templates(source)
-            .command(
+            .command_with(
                 "list",
-                |_m, _ctx| Ok(HandlerOutput::Render(json!({"n": 1}))),
-                "n={{ n }}",
+                FnHandler::new(|_m, _ctx| Ok(HandlerOutput::Render(json!({"n": 1})))),
+                |cfg| cfg.template_name("ok"),
             )
             .unwrap()
             .build()
@@ -477,16 +508,21 @@ mod tests {
         };
         let app = AppBuilder::new()
             .templates(source)
-            .command(
+            .command_with(
                 "list",
-                |_m, _ctx| Ok(HandlerOutput::Render(json!({"n": 1}))),
-                "n={{ n }}",
+                FnHandler::new(|_m, _ctx| Ok(HandlerOutput::Render(json!({"n": 1})))),
+                |cfg| cfg.template_name("ok"),
             )
             .unwrap()
             .build()
             .unwrap();
         let cmd = Command::new("app").subcommand(Command::new("list"));
-        let result = app.dispatch_from(cmd, ["app", "list"]);
+        let result = app.run_with(
+            cmd,
+            ["app", "list"],
+            crate::TargetProperties::detect(),
+            crate::InputSources::from_process(),
+        );
         assert!(result.is_handled());
         assert_hot_reload_walk_warning(result.warnings());
     }
@@ -499,13 +535,14 @@ mod tests {
         use standout_render::warnings::render_block_for_target;
 
         let app = AppBuilder::new()
-            .command(
+            .templates(EmbeddedTemplates::new(TEMPLATES, ""))
+            .command_with(
                 "list",
-                |_m, ctx| {
+                FnHandler::new(|_m, ctx| {
                     ctx.warn("stylesheet fell back");
                     Ok(HandlerOutput::Render(json!({"n": 1})))
-                },
-                "n={{ n }}",
+                }),
+                |cfg| cfg.template_name("list-3"),
             )
             .unwrap()
             .build()
@@ -570,7 +607,10 @@ mod tests {
 
     #[test]
     fn unparsed_output_mode_reads_equals_and_space_forms() {
-        let app = AppBuilder::new().build().unwrap();
+        let app = AppBuilder::new()
+            .templates(EmbeddedTemplates::new(TEMPLATES, ""))
+            .build()
+            .unwrap();
         assert_eq!(
             app.extract_output_mode_from_unparsed(&os_args(&["app", "--output=json"])),
             OutputMode::Json
@@ -583,7 +623,10 @@ mod tests {
 
     #[test]
     fn unparsed_output_mode_stops_at_terminator_and_falls_back_on_bad_values() {
-        let app = AppBuilder::new().build().unwrap();
+        let app = AppBuilder::new()
+            .templates(EmbeddedTemplates::new(TEMPLATES, ""))
+            .build()
+            .unwrap();
         assert_eq!(
             app.extract_output_mode_from_unparsed(&os_args(&["app", "--", "--output=text"])),
             OutputMode::Auto,
@@ -625,7 +668,10 @@ mod tests {
 
     #[test]
     fn unparsed_output_mode_skips_argv0() {
-        let app = AppBuilder::new().build().unwrap();
+        let app = AppBuilder::new()
+            .templates(EmbeddedTemplates::new(TEMPLATES, ""))
+            .build()
+            .unwrap();
         assert_eq!(
             app.extract_output_mode_from_unparsed(&os_args(&["--output=text"])),
             OutputMode::Auto,
@@ -645,7 +691,11 @@ mod tests {
 
     #[test]
     fn unparsed_output_mode_is_auto_when_the_app_has_no_output_flag() {
-        let app = AppBuilder::new().no_output_flag().build().unwrap();
+        let app = AppBuilder::new()
+            .templates(EmbeddedTemplates::new(TEMPLATES, ""))
+            .no_output_flag()
+            .build()
+            .unwrap();
         assert_eq!(
             app.extract_output_mode_from_unparsed(&os_args(&["app", "--output=text"])),
             OutputMode::Auto
@@ -660,10 +710,11 @@ mod tests {
         use standout_render::warnings::render_block_for_target;
 
         let mut app = AppBuilder::new()
-            .command(
+            .templates(EmbeddedTemplates::new(TEMPLATES, ""))
+            .command_with(
                 "list",
-                |_m, _ctx| Ok(HandlerOutput::Render(json!({"n": 1}))),
-                "n={{ n }}",
+                FnHandler::new(|_m, _ctx| Ok(HandlerOutput::Render(json!({"n": 1})))),
+                |cfg| cfg.template_name("list-3"),
             )
             .unwrap()
             .build()
@@ -712,11 +763,12 @@ mod tests {
         use crate::InputSources;
 
         let app = AppBuilder::new()
+            .templates(EmbeddedTemplates::new(TEMPLATES, ""))
             .version("1.0.0")
-            .command(
+            .command_with(
                 "list",
-                |_m, _ctx| Ok(HandlerOutput::Render(serde_json::json!({"n": 1}))),
-                "n={{ n }}",
+                FnHandler::new(|_m, _ctx| Ok(HandlerOutput::Render(serde_json::json!({"n": 1})))),
+                |cfg| cfg.template_name("list-3"),
             )
             .unwrap()
             .build()
@@ -754,10 +806,11 @@ mod tests {
         use serde_json::json;
 
         let app = AppBuilder::new()
-            .command(
+            .templates(EmbeddedTemplates::new(TEMPLATES, ""))
+            .command_with(
                 "list",
-                |_m, _ctx| Ok(HandlerOutput::Render(json!({"n": 1}))),
-                "n={{ n }}",
+                FnHandler::new(|_m, _ctx| Ok(HandlerOutput::Render(json!({"n": 1})))),
+                |cfg| cfg.template_name("list-3"),
             )
             .unwrap()
             .build()
@@ -850,16 +903,17 @@ mod tests {
         use serde_json::json;
 
         let app = AppBuilder::new()
-            .command(
+            .templates(EmbeddedTemplates::new(TEMPLATES, ""))
+            .command_with(
                 "list",
-                |_m, _ctx| Ok(HandlerOutput::Render(json!({"n": 1}))),
-                "n={{ n }}",
+                FnHandler::new(|_m, _ctx| Ok(HandlerOutput::Render(json!({"n": 1})))),
+                |cfg| cfg.template_name("list-3"),
             )
             .unwrap()
-            .command(
+            .command_with(
                 "sibling",
-                |_m, _ctx| Ok(HandlerOutput::Render(json!({"n": 1}))),
-                "n={{ n }}",
+                FnHandler::new(|_m, _ctx| Ok(HandlerOutput::Render(json!({"n": 1})))),
+                |cfg| cfg,
             )
             .unwrap()
             .build()

@@ -1,12 +1,16 @@
 use clap::Command;
 use serde_json::json;
 use serial_test::serial;
+use standout::cli::FnHandler;
 use standout::cli::{App, ExitStatus, HelpResult, Output, RunErrorKind, SuccessKind};
+use standout::EmbeddedTemplates;
 use standout::Theme;
 use standout_fixtures::downstream;
 use standout_test::TestHarness;
+
+const TEMPLATES: &[(&str, &str)] = &[("review", "listed")];
 fn configured_help(app: &App, cmd: Command, args: &[&str]) -> String {
-    match app.get_matches_from(cmd, args) {
+    match app.get_matches_from(cmd, args, &standout::InputSources::from_process()) {
         HelpResult::Help(h) | HelpResult::PagedHelp(h) => h,
         other => panic!("expected rendered help, got {other:?}"),
     }
@@ -271,10 +275,15 @@ fn broken_theme() -> Theme {
 }
 fn app_with_a_broken_theme() -> App {
     App::builder()
+        .templates(EmbeddedTemplates::new(TEMPLATES, ""))
         .help_handling(true)
         .include_framework_templates(false)
         .theme(broken_theme())
-        .command("review", |_m, _ctx| Ok(Output::Render(json!({}))), "listed")
+        .command_with(
+            "review",
+            FnHandler::new(|_m, _ctx| Ok(Output::Render(json!({})))),
+            |cfg| cfg,
+        )
         .unwrap()
         .build()
         .unwrap()

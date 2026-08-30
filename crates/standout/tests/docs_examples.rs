@@ -1,5 +1,6 @@
 use clap::{ArgMatches, CommandFactory, Parser, Subcommand};
 use serde::Serialize;
+use standout::cli::FnHandler;
 use standout::cli::{App, CommandContext, Dispatch, HandlerResult, Output};
 use standout::{embed_styles, embed_templates};
 use standout_test::{serial, TestHarness};
@@ -69,7 +70,9 @@ fn app_configuration_complete_example_builds() -> Result<(), Box<dyn std::error:
         .default_theme("default")
         .version(env!("CARGO_PKG_VERSION"))
         .context("version", env!("CARGO_PKG_VERSION").into())
-        .command_with("list", list_handler, |config| config.template_name("list"))?
+        .command_with("list", FnHandler::new(list_handler), |config| {
+            config.template_name("list")
+        })?
         .topics_dir("../../docs/topics")?
         .help_handling(true)
         .build()?;

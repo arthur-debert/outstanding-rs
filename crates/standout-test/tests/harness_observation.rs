@@ -2,23 +2,36 @@ use clap::{Arg, ArgAction, Command};
 use console::Style;
 use serde_json::json;
 use serial_test::serial;
+use standout::cli::FnHandler;
 use standout::cli::{App, Artifact, ExternalFailure, HandlerResult, Output};
+use standout::EmbeddedTemplates;
 use standout::Theme;
 use standout_render::OutputMode;
 use standout_test::{assert_page_snapshot, SnapshotCase, TestHarness};
+
+const TEMPLATES: &[(&str, &str)] = &[
+    (
+        "export",
+        "Wrote {{ report.entries }} entries to {{ receipt.destination }}",
+    ),
+    ("say", "hello"),
+    ("say-2", "[shout]hello[/shout]"),
+    ("list", "listed"),
+];
 const ARTIFACT_BYTES: &[u8] = b"id,title\n1,buy milk\n";
 fn stdout_artifact_app() -> App {
     App::builder()
-        .command(
+        .templates(EmbeddedTemplates::new(TEMPLATES, ""))
+        .command_with(
             "export",
-            |_m, _ctx| {
+            FnHandler::new(|_m, _ctx| {
                 Ok(Output::Artifact(
                     Artifact::new(ARTIFACT_BYTES.to_vec())
                         .with_report(json!({ "entries": 1 }))
                         .allow_stdout(),
                 ))
-            },
-            "Wrote {{ report.entries }} entries to {{ receipt.destination }}",
+            }),
+            |cfg| cfg,
         )
         .unwrap()
         .build()
@@ -26,16 +39,17 @@ fn stdout_artifact_app() -> App {
 }
 fn file_artifact_app(destination: std::path::PathBuf) -> App {
     App::builder()
-        .command(
+        .templates(EmbeddedTemplates::new(TEMPLATES, ""))
+        .command_with(
             "export",
-            move |_m, _ctx| {
+            FnHandler::new(move |_m, _ctx| {
                 Ok(Output::Artifact(
                     Artifact::new(ARTIFACT_BYTES.to_vec())
                         .with_report(json!({ "entries": 1 }))
                         .suggest_destination(&destination),
                 ))
-            },
-            "Wrote {{ report.entries }} entries to {{ receipt.destination }}",
+            }),
+            |cfg| cfg,
         )
         .unwrap()
         .build()
@@ -84,11 +98,12 @@ fn a_file_artifact_reports_on_stdout_and_leaves_stderr_silent() {
 }
 fn failing_app() -> App {
     App::builder()
+        .templates(EmbeddedTemplates::new(TEMPLATES, ""))
         .command_with(
             "run",
-            |_m, _ctx| -> HandlerResult<serde_json::Value> {
+            FnHandler::new(|_m, _ctx| -> HandlerResult<serde_json::Value> {
                 Err(std::io::Error::other("the handler refused").into())
-            },
+            }),
             |config| config.structured_only(),
         )
         .unwrap()
@@ -97,13 +112,14 @@ fn failing_app() -> App {
 }
 fn external_failure_app() -> App {
     App::builder()
+        .templates(EmbeddedTemplates::new(TEMPLATES, ""))
         .command_with(
             "run",
-            |_m, _ctx| -> HandlerResult<serde_json::Value> {
+            FnHandler::new(|_m, _ctx| -> HandlerResult<serde_json::Value> {
                 Err(ExternalFailure::new(3, "fatal: not a git repository")
                     .unwrap()
                     .into())
-            },
+            }),
             |config| config.structured_only(),
         )
         .unwrap()
@@ -137,14 +153,15 @@ fn an_external_failure_reaches_stderr_verbatim() {
 }
 fn warning_app() -> App {
     App::builder()
-        .command(
+        .templates(EmbeddedTemplates::new(TEMPLATES, ""))
+        .command_with(
             "say",
-            |_m, ctx| {
+            FnHandler::new(|_m, ctx| {
                 use standout::cli::CommandContextInput;
                 ctx.warn("stylesheet fell back to the compiled copy");
                 Ok(Output::Render(json!({})))
-            },
-            "hello",
+            }),
+            |cfg| cfg,
         )
         .unwrap()
         .build()
@@ -189,15 +206,16 @@ fn warning_block_uses_the_app_theme_not_theme_default() {
         .add(WARNING_BANNER_STYLE, Style::new().magenta().bold())
         .add(WARNING_ITEM_STYLE, Style::new().magenta());
     let app = App::builder()
+        .templates(EmbeddedTemplates::new(TEMPLATES, ""))
         .theme(theme.clone())
-        .command(
+        .command_with(
             "say",
-            |_m, ctx| {
+            FnHandler::new(|_m, ctx| {
                 use standout::cli::CommandContextInput;
                 ctx.warn("stylesheet fell back");
                 Ok(Output::Render(json!({})))
-            },
-            "hello",
+            }),
+            |cfg| cfg,
         )
         .unwrap()
         .build()
@@ -239,7 +257,12 @@ fn warning_block_uses_the_app_theme_not_theme_default() {
 #[serial]
 fn a_handled_run_leaves_stderr_silent() {
     let app = App::builder()
-        .command("say", |_m, _ctx| Ok(Output::Render(json!({}))), "hello")
+        .templates(EmbeddedTemplates::new(TEMPLATES, ""))
+        .command_with(
+            "say",
+            FnHandler::new(|_m, _ctx| Ok(Output::Render(json!({})))),
+            |cfg| cfg,
+        )
         .unwrap()
         .build()
         .unwrap();
@@ -250,11 +273,12 @@ fn a_handled_run_leaves_stderr_silent() {
 }
 fn styled_app() -> App {
     App::builder()
+        .templates(EmbeddedTemplates::new(TEMPLATES, ""))
         .theme(Theme::new().add("shout", Style::new().red().force_styling(true)))
-        .command(
+        .command_with(
             "say",
-            |_m, _ctx| Ok(Output::Render(json!({}))),
-            "[shout]hello[/shout]",
+            FnHandler::new(|_m, _ctx| Ok(Output::Render(json!({})))),
+            |cfg| cfg.template_name("say-2"),
         )
         .unwrap()
         .build()
@@ -299,8 +323,13 @@ fn stdout_plain_is_a_no_op_on_unstyled_output() {
 }
 fn help_app() -> App {
     App::builder()
+        .templates(EmbeddedTemplates::new(TEMPLATES, ""))
         .help_handling(true)
-        .command("list", |_m, _ctx| Ok(Output::Render(json!({}))), "listed")
+        .command_with(
+            "list",
+            FnHandler::new(|_m, _ctx| Ok(Output::Render(json!({})))),
+            |cfg| cfg,
+        )
         .unwrap()
         .build()
         .unwrap()

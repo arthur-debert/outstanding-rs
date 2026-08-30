@@ -4,6 +4,7 @@
 //! and denies warnings); these run the app it wires.
 
 use clap::Command;
+use standout::cli::FnHandler;
 use standout::cli::{App, CommandContext, GroupBuilder, HandlerResult, Output};
 use standout::input::questionnaire::QuestionnaireInput;
 use standout_fixtures::derive_surface::{app, command, Commands, ProvisionAnswers};
@@ -89,7 +90,7 @@ fn show_all(_matches: &clap::ArgMatches, _ctx: &CommandContext) -> HandlerResult
 #[test]
 fn a_command_registered_under_another_spelling_is_an_error() {
     let app = App::builder()
-        .command_with("show_all", show_all, |cfg| cfg.silent())
+        .command_with("show_all", FnHandler::new(show_all), |cfg| cfg.silent())
         .unwrap()
         .build()
         .unwrap();
@@ -106,7 +107,7 @@ fn a_command_registered_under_another_spelling_is_an_error() {
 #[test]
 fn a_registration_the_cli_never_declares_is_an_error() {
     let app = App::builder()
-        .command_with("provision", show_all, |cfg| cfg.silent())
+        .command_with("provision", FnHandler::new(show_all), |cfg| cfg.silent())
         .unwrap()
         .build()
         .unwrap();
@@ -116,7 +117,7 @@ fn a_registration_the_cli_never_declares_is_an_error() {
     assert!(error.contains("provision"), "{error}");
     assert!(
         App::builder()
-            .command_with("provision", show_all, |cfg| cfg.silent())
+            .command_with("provision", FnHandler::new(show_all), |cfg| cfg.silent())
             .unwrap()
             .build()
             .unwrap()
@@ -129,7 +130,7 @@ fn a_registration_the_cli_never_declares_is_an_error() {
 #[test]
 fn a_flat_app_registers_the_root_command_reachably() {
     let app = App::builder()
-        .command_with("", show_all, |cfg| cfg.silent())
+        .command_with("", FnHandler::new(show_all), |cfg| cfg.silent())
         .unwrap()
         .build()
         .unwrap();
@@ -141,7 +142,7 @@ fn a_flat_app_registers_the_root_command_reachably() {
 #[test]
 fn a_cli_command_with_no_registration_still_hands_off() {
     let app = App::builder()
-        .command_with("list-units", show_all, |cfg| cfg.silent())
+        .command_with("list-units", FnHandler::new(show_all), |cfg| cfg.silent())
         .unwrap()
         .build()
         .unwrap();
@@ -150,7 +151,13 @@ fn a_cli_command_with_no_registration_still_hands_off() {
         .subcommand(Command::new("legacy"));
     assert!(app.verify_command(&cmd).is_ok());
     assert!(matches!(
-        app.dispatch_from(cmd, ["app", "legacy"]).into_outcome(),
+        app.run_with(
+            cmd,
+            ["app", "legacy"],
+            standout::TargetProperties::detect(),
+            standout::InputSources::from_process()
+        )
+        .into_outcome(),
         standout::cli::DispatchResult::NoMatch(_)
     ));
 }
@@ -159,7 +166,7 @@ fn a_cli_command_with_no_registration_still_hands_off() {
 fn a_command_registered_under_a_clap_alias_is_an_error() {
     let cmd = Command::new("app").subcommand(Command::new("list").alias("ls"));
     let app = App::builder()
-        .command_with("ls", show_all, |cfg| cfg.silent())
+        .command_with("ls", FnHandler::new(show_all), |cfg| cfg.silent())
         .unwrap()
         .build()
         .unwrap();
@@ -182,7 +189,7 @@ fn a_command_registered_under_a_clap_alias_is_an_error() {
 fn an_alias_invokes_the_handler_registered_under_the_declared_name() {
     let cmd = Command::new("app").subcommand(Command::new("list").alias("ls"));
     let app = App::builder()
-        .command_with("list", show_all, |cfg| cfg.silent())
+        .command_with("list", FnHandler::new(show_all), |cfg| cfg.silent())
         .unwrap()
         .build()
         .unwrap();

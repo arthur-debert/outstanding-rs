@@ -1,6 +1,18 @@
 use clap::Command;
 use serde_json::json;
+use standout::cli::FnHandler;
 use standout::cli::{App, Artifact, ExternalFailure, HandlerResult, HookError, Hooks, Output};
+use standout::EmbeddedTemplates;
+
+const TEMPLATES: &[(&str, &str)] = &[
+    ("external-pre", "{{ message }}"),
+    ("ok", "{{ message }}"),
+    ("warn-ok", "{{ message }}"),
+    ("huge", "{{ message }}"),
+    ("artifact", ARTIFACT_TEMPLATE),
+    ("artifact-stdout", ARTIFACT_TEMPLATE),
+    ("artifact-no-destination", ARTIFACT_TEMPLATE),
+];
 
 const ARTIFACT_PATH_ENV: &str = "STANDOUT_FIXTURE_ARTIFACT_PATH";
 
@@ -26,126 +38,127 @@ fn command() -> Command {
 
 fn app() -> App {
     App::builder()
-        .command(
+        .templates(EmbeddedTemplates::new(TEMPLATES, ""))
+        .command_with(
             "ok",
-            |_, _| Ok(Output::Render(json!({ "message": "ok" }))),
-            "{{ message }}",
+            FnHandler::new(|_, _| Ok(Output::Render(json!({ "message": "ok" })))),
+            |cfg| cfg,
         )
         .unwrap()
         .command_with(
             "fail",
-            |_, _| -> HandlerResult<serde_json::Value> {
+            FnHandler::new(|_, _| -> HandlerResult<serde_json::Value> {
                 Err(anyhow::anyhow!("fixture handler failed"))
-            },
+            }),
             |config| config.structured_only(),
         )
         .unwrap()
         .command_with(
             "silent",
-            |_, _| -> HandlerResult<()> { Ok(Output::Silent) },
+            FnHandler::new(|_, _| -> HandlerResult<()> { Ok(Output::Silent) }),
             |config| config.silent(),
         )
         .unwrap()
         .command_with(
             "binary",
-            |_, _| -> HandlerResult<()> {
+            FnHandler::new(|_, _| -> HandlerResult<()> {
                 Ok(Output::Binary {
                     data: vec![0, 1, 2],
                     filename: "fixture.bin".into(),
                 })
-            },
+            }),
             |config| config.binary(),
         )
         .unwrap()
-        .command(
+        .command_with(
             "huge",
-            |_, _| {
+            FnHandler::new(|_, _| {
                 Ok(Output::Render(
                     json!({ "message": "x".repeat(1024 * 1024) }),
                 ))
-            },
-            "{{ message }}",
+            }),
+            |cfg| cfg,
         )
         .unwrap()
         .command_with(
             "binary-huge",
-            |_, _| -> HandlerResult<()> {
+            FnHandler::new(|_, _| -> HandlerResult<()> {
                 Ok(Output::Binary {
                     data: vec![7; 1024 * 1024],
                     filename: "fixture.bin".into(),
                 })
-            },
+            }),
             |config| config.binary(),
         )
         .unwrap()
-        .command(
+        .command_with(
             "warn-ok",
-            |_, ctx| {
+            FnHandler::new(|_, ctx| {
                 use standout::cli::CommandContextInput;
                 ctx.warn("fixture warning");
                 Ok(Output::Render(json!({ "message": "ok" })))
-            },
-            "{{ message }}",
+            }),
+            |cfg| cfg,
         )
         .unwrap()
         .command_with(
             "warn-fail",
-            |_, ctx| -> HandlerResult<serde_json::Value> {
+            FnHandler::new(|_, ctx| -> HandlerResult<serde_json::Value> {
                 use standout::cli::CommandContextInput;
                 ctx.warn("fixture warning");
                 Err(anyhow::anyhow!("fixture handler failed"))
-            },
+            }),
             |config| config.structured_only(),
         )
         .unwrap()
         .command_with(
             "external",
-            |_, _| -> HandlerResult<serde_json::Value> {
+            FnHandler::new(|_, _| -> HandlerResult<serde_json::Value> {
                 Err(ExternalFailure::new(128, "fatal: external fixture failed")
                     .unwrap()
                     .into())
-            },
+            }),
             |config| config.structured_only(),
         )
         .unwrap()
-        .command(
+        .command_with(
             "external-pre",
-            |_, _| Ok(Output::Render(json!({ "message": "unreachable" }))),
-            "{{ message }}",
+            FnHandler::new(|_, _| Ok(Output::Render(json!({ "message": "unreachable" })))),
+            |cfg| cfg,
         )
         .unwrap()
-        .command(
+        .command_with(
             "artifact",
-            |_, _| {
+            FnHandler::new(|_, _| {
                 Ok(Output::Artifact(
                     Artifact::new(vec![0, 1, 2])
                         .suggest_destination(std::env::var(ARTIFACT_PATH_ENV).unwrap())
                         .with_report(json!({ "entries": 3 })),
                 ))
-            },
-            ARTIFACT_TEMPLATE,
+            }),
+            |cfg| cfg,
         )
         .unwrap()
-        .command(
+        .command_with(
             "artifact-stdout",
-            |_, _| {
+            FnHandler::new(|_, _| {
                 Ok(Output::Artifact(
                     Artifact::new(vec![0, 1, 2])
                         .allow_stdout()
                         .with_report(json!({ "entries": 3 })),
                 ))
-            },
-            ARTIFACT_TEMPLATE,
+            }),
+            |cfg| cfg,
         )
         .unwrap()
-        .command(
+        .command_with(
             "artifact-no-destination",
-            |_, _| {
+            FnHandler::new(|_, _| {
                 Ok(Output::Artifact(
                     Artifact::new(vec![0, 1, 2]).with_report(json!({ "entries": 3 })),
                 ))
-            },
-            ARTIFACT_TEMPLATE,
+            }),
+            |cfg| cfg,
         )
         .unwrap()
         .hooks(

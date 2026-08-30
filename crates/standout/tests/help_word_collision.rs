@@ -1,5 +1,13 @@
 use clap::{Arg, ArgAction, Command};
+use standout::cli::FnHandler;
 use standout::cli::{App, DispatchResult, HelpResult, Output};
+use standout::EmbeddedTemplates;
+
+const TEMPLATES: &[(&str, &str)] = &[
+    ("help", "mine"),
+    ("help/topic", "mine"),
+    ("db/help", "mine"),
+];
 
 fn app_with_its_own_help() -> Command {
     Command::new("app")
@@ -18,9 +26,17 @@ fn error_text(result: HelpResult) -> String {
 
 #[test]
 fn a_declared_help_subcommand_is_a_setup_error_not_a_panic() {
-    let app = App::builder().help_handling(true).build().unwrap();
+    let app = App::builder()
+        .templates(EmbeddedTemplates::new(TEMPLATES, ""))
+        .help_handling(true)
+        .build()
+        .unwrap();
 
-    let message = error_text(app.get_matches_from(app_with_its_own_help(), ["app", "build"]));
+    let message = error_text(app.get_matches_from(
+        app_with_its_own_help(),
+        ["app", "build"],
+        &standout::InputSources::from_process(),
+    ));
     assert!(
         message.contains("duplicate command: help"),
         "error: {message}"
@@ -41,10 +57,19 @@ fn a_declared_help_subcommand_is_a_setup_error_not_a_panic() {
 
 #[test]
 fn the_dispatch_path_reports_the_same_collision() {
-    let app = App::builder().help_handling(true).build().unwrap();
+    let app = App::builder()
+        .templates(EmbeddedTemplates::new(TEMPLATES, ""))
+        .help_handling(true)
+        .build()
+        .unwrap();
 
     match app
-        .run_to_string(app_with_its_own_help(), ["app", "build"])
+        .run_with(
+            app_with_its_own_help(),
+            ["app", "build"],
+            standout::TargetProperties::detect(),
+            standout::InputSources::from_process(),
+        )
         .into_outcome()
     {
         DispatchResult::Error(e) => assert!(
@@ -57,13 +82,21 @@ fn the_dispatch_path_reports_the_same_collision() {
 
 #[test]
 fn an_aliased_help_subcommand_collides_too() {
-    let app = App::builder().help_handling(true).build().unwrap();
+    let app = App::builder()
+        .templates(EmbeddedTemplates::new(TEMPLATES, ""))
+        .help_handling(true)
+        .build()
+        .unwrap();
     let cmd = Command::new("app")
         .disable_help_subcommand(true)
         .subcommand(Command::new("build"))
         .subcommand(Command::new("manual").alias("help"));
 
-    let message = error_text(app.get_matches_from(cmd, ["app", "build"]));
+    let message = error_text(app.get_matches_from(
+        cmd,
+        ["app", "build"],
+        &standout::InputSources::from_process(),
+    ));
     assert!(
         message.contains("duplicate command: help"),
         "error: {message}"
@@ -72,7 +105,11 @@ fn an_aliased_help_subcommand_collides_too() {
 
 #[test]
 fn augmentation_hands_back_the_colliding_root_for_the_caller_to_refuse() {
-    let app = App::builder().help_handling(true).build().unwrap();
+    let app = App::builder()
+        .templates(EmbeddedTemplates::new(TEMPLATES, ""))
+        .help_handling(true)
+        .build()
+        .unwrap();
     let augmented = app.augment_command_with_help(app_with_its_own_help());
 
     let claims = augmented
@@ -85,8 +122,13 @@ fn augmentation_hands_back_the_colliding_root_for_the_caller_to_refuse() {
 #[test]
 fn a_registered_help_command_fails_at_build() {
     let result = App::builder()
+        .templates(EmbeddedTemplates::new(TEMPLATES, ""))
         .help_handling(true)
-        .command("help", |_m, _ctx| Ok(Output::Render("mine")), "mine")
+        .command_with(
+            "help",
+            FnHandler::new(|_m, _ctx| Ok(Output::Render("mine"))),
+            |cfg| cfg,
+        )
         .unwrap()
         .build();
 
@@ -102,8 +144,13 @@ fn a_registered_help_command_fails_at_build() {
 #[test]
 fn a_command_registered_under_help_fails_at_build_too() {
     let result = App::builder()
+        .templates(EmbeddedTemplates::new(TEMPLATES, ""))
         .help_handling(true)
-        .command("help.topic", |_m, _ctx| Ok(Output::Render("mine")), "mine")
+        .command_with(
+            "help.topic",
+            FnHandler::new(|_m, _ctx| Ok(Output::Render("mine"))),
+            |cfg| cfg,
+        )
         .unwrap()
         .build();
 
@@ -126,9 +173,12 @@ fn a_command_registered_under_help_fails_at_build_too() {
 #[test]
 fn a_help_group_fails_at_build_too() {
     let result = App::builder()
+        .templates(EmbeddedTemplates::new(TEMPLATES, ""))
         .help_handling(true)
-        .group("help", |g| {
-            g.command("topic", |_m, _ctx| Ok(Output::Render("mine")))
+        .commands(|__g| {
+            __g.group("help", |g| {
+                g.command("topic", |_m, _ctx| Ok(Output::Render("mine")))
+            })
         })
         .unwrap()
         .build();
@@ -145,8 +195,13 @@ fn a_help_group_fails_at_build_too() {
 #[test]
 fn a_nested_help_command_is_not_the_root_word() {
     App::builder()
+        .templates(EmbeddedTemplates::new(TEMPLATES, ""))
         .help_handling(true)
-        .command("db.help", |_m, _ctx| Ok(Output::Render("mine")), "mine")
+        .command_with(
+            "db.help",
+            FnHandler::new(|_m, _ctx| Ok(Output::Render("mine"))),
+            |cfg| cfg,
+        )
         .unwrap()
         .build()
         .unwrap();
@@ -155,14 +210,24 @@ fn a_nested_help_command_is_not_the_root_word() {
 #[test]
 fn without_help_handling_the_application_keeps_the_name() {
     let app = App::builder()
+        .templates(EmbeddedTemplates::new(TEMPLATES, ""))
         .help_handling(false)
-        .command("help", |_m, _ctx| Ok(Output::Render("mine")), "mine")
+        .command_with(
+            "help",
+            FnHandler::new(|_m, _ctx| Ok(Output::Render("mine"))),
+            |cfg| cfg,
+        )
         .unwrap()
         .build()
         .unwrap();
 
     match app
-        .run_to_string(app_with_its_own_help(), ["app", "help"])
+        .run_with(
+            app_with_its_own_help(),
+            ["app", "help"],
+            standout::TargetProperties::detect(),
+            standout::InputSources::from_process(),
+        )
         .into_outcome()
     {
         DispatchResult::Handled(output) => assert_eq!(output.as_str(), "mine"),
@@ -172,13 +237,21 @@ fn without_help_handling_the_application_keeps_the_name() {
 
 #[test]
 fn a_flat_root_that_never_gets_the_word_is_unaffected() {
-    let app = App::builder().help_handling(true).build().unwrap();
+    let app = App::builder()
+        .templates(EmbeddedTemplates::new(TEMPLATES, ""))
+        .help_handling(true)
+        .build()
+        .unwrap();
     let cmd = Command::new("app")
         .about("Flat app")
         .arg(Arg::new("range").help("A revision range"))
         .arg(Arg::new("staged").long("staged").action(ArgAction::SetTrue));
 
-    match app.get_matches_from(cmd, ["app", "help"]) {
+    match app.get_matches_from(
+        cmd,
+        ["app", "help"],
+        &standout::InputSources::from_process(),
+    ) {
         HelpResult::Matches(m) => assert_eq!(
             m.get_one::<String>("range").map(String::as_str),
             Some("help")

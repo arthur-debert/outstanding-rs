@@ -4,7 +4,11 @@ use standout::OutputMode;
 use standout_fixtures::{downstream, Fixture};
 
 fn page(fixture: &Fixture, args: &[&str]) -> String {
-    match fixture.app().get_matches_from(fixture.command(), args) {
+    match fixture.app().get_matches_from(
+        fixture.command(),
+        args,
+        &standout::InputSources::from_process(),
+    ) {
         HelpResult::Help(text) | HelpResult::PagedHelp(text) => text,
         other => panic!("expected rendered help, got: {other:?}"),
     }

@@ -91,11 +91,11 @@ macro_rules! dispatch_apply_config {
     };
     ($cfg:expr; handler : $handler:expr) => { $cfg };
 
-    ($cfg:expr; template : $template:expr , $($rest:tt)*) => {
-        $crate::dispatch_apply_config!($cfg.template($template); $($rest)*)
+    ($cfg:expr; template_name : $template:expr , $($rest:tt)*) => {
+        $crate::dispatch_apply_config!($cfg.template_name($template); $($rest)*)
     };
-    ($cfg:expr; template : $template:expr) => {
-        $cfg.template($template)
+    ($cfg:expr; template_name : $template:expr) => {
+        $cfg.template_name($template)
     };
 
     ($cfg:expr; structured_only : true , $($rest:tt)*) => {
@@ -197,7 +197,7 @@ mod tests {
         let configure = dispatch! {
             list => {
                 handler: |_m: &ArgMatches, _ctx: &CommandContext| Ok(Output::Render(json!({}))),
-                template: "items: {{ items | length }}",
+                template_name: "items",
             },
         };
 
@@ -233,7 +233,7 @@ mod tests {
                 migrate => |_m: &ArgMatches, _ctx: &CommandContext| Ok(Output::Render(json!({}))),
                 backup => {
                     handler: |_m: &ArgMatches, _ctx: &CommandContext| Ok(Output::Render(json!({}))),
-                    template: "backup complete",
+                    template_name: "backup",
                 },
             },
             cache: {

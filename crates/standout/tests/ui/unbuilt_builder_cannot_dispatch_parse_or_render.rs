@@ -1,6 +1,6 @@
 use clap::{ArgMatches, Command};
 use standout::cli::App;
-use standout::OutputMode;
+use standout::{InputSources, OutputMode, TargetProperties, TemplateRef};
 
 fn matches() -> ArgMatches {
     Command::new("app")
@@ -10,9 +10,18 @@ fn matches() -> ArgMatches {
 
 fn main() {
     let _result = App::builder().dispatch(matches(), OutputMode::Auto);
-    let _result = App::builder().dispatch_from(Command::new("app"), ["app"]);
-    let _matches = App::builder().parse(Command::new("app"));
-    let _matches = App::builder().parse_from(Command::new("app"), ["app"]);
-    let _matches = App::builder().get_matches(Command::new("app"));
-    let _rendered = App::builder().render_inline("ok", &(), OutputMode::Text);
+    let _result = App::builder().run_with(
+        Command::new("app"),
+        ["app"],
+        TargetProperties::detect(),
+        InputSources::from_process(),
+    );
+    let _matches =
+        App::builder().get_matches_from(Command::new("app"), ["app"], &InputSources::from_process());
+    let _rendered = App::builder().render_with(
+        TemplateRef::Inline("ok".to_string()),
+        &(),
+        OutputMode::Text,
+        TargetProperties::detect(),
+    );
 }
