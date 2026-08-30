@@ -247,8 +247,14 @@ porting, the adopter-seams findings.
 
 ## Further Notes
 
-Expected ADRs: the blessed-idiom set with the capability map; the stability statement;
-help-on-by-default. Inputs: the census in Context (supersedes the 8.1.0 DX audit
+The ADR round settled three decisions:
+[bless one item per axis behind a capability map](../adr/0032-bless-one-item-per-axis-behind-a-capability-map.md)
+(the blessed-idiom set, each axis's keep-with-reason or delete verdict, the
+capability → surviving-item map, and the adopter-seams additions blessed on arrival);
+[state which surfaces are contract](../adr/0033-state-which-surfaces-are-contract.md)
+(the stability statement and where it lives); and
+[handle help by default](../adr/0034-handle-help-by-default.md).
+Inputs: the census in Context (supersedes the 8.1.0 DX audit
 numbers), the [pilot scorecard](../../corpus/pilot/scorecard.md), issues #349–#361. The
 audit's redundancy catalogue lived only in the 2026-08-15/16 session record; the census
 here is its in-repo replacement and the ADR round should not need the original.
