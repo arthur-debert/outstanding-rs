@@ -564,10 +564,11 @@ impl App {
                 declared.replace('.', " "),
             ),
             Some(DeclaredAs::Alias(declared)) => format!(
-                " The CLI declares `{}` and takes this name as an alias for it — clap \
+                " The CLI declares `{}` and accepts `{}` as an alias for it — clap \
                  reports the declared name to dispatch, so register the handler under \
                  `{}`.",
                 declared.replace('.', " "),
+                path.replace('.', " "),
                 declared.replace('.', " "),
             ),
             None => " Register the handler under a name the CLI declares, or drop the \

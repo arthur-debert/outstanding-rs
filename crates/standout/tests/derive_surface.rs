@@ -164,8 +164,15 @@ fn a_command_registered_under_a_clap_alias_is_an_error() {
         .build()
         .unwrap();
     let error = app.verify_command(&cmd).unwrap_err().to_string();
-    assert!(error.contains("ls"), "{error}");
-    assert!(error.contains("list"), "{error}");
+    assert!(error.contains("No invocation reaches `ls`"), "{error}");
+    assert!(
+        error.contains("The CLI declares `list` and accepts `ls` as an alias for it"),
+        "{error}"
+    );
+    assert!(
+        error.contains("register the handler under `list`"),
+        "{error}"
+    );
 
     let result = TestHarness::new().run(&app, cmd, ["app", "ls"]);
     assert!(result.stderr().contains("ls"), "{}", result.stderr());
