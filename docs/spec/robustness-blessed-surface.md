@@ -25,7 +25,7 @@ replaces the audit's numbers as this epic's baseline.
   builder `command` / `command_with` / `command_handler` / `command_handler_with` /
   `command_passthrough` / `group(…)`, and `.commands(Commands::dispatch_config())` from
   `#[derive(Dispatch)]`. Handler adaptation (turning a fn into the dispatch signature):
-  `#[handler]`. Both plus declaration (the clap `Command` itself): `#[command]`, which
+  `#[handler]`. Adaptation plus declaration (the clap `Command` itself): `#[command]`, which
   generates the handler wrapper and the `Command` from one source but still needs
   registration. A working idiom takes one item from each axis (a `#[derive(Dispatch)]`
   enum registers, a `#[handler]` fn adapts, clap-derive declares), so the census counts
