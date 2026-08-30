@@ -1,6 +1,6 @@
 # Robustness: Adopter Seams
 
-Sixth epic of the **Robustness program**, minted 2026-08-30 from the corpus pilot's
+Sixth epic of the **Robustness program** (ROB06), minted 2026-08-30 from the corpus pilot's
 fallout. Depends on composition contracts (ROB04) — every item below sits on a seam that
 epic defined. Runs in parallel with the blessed surface (ROB05), which reads this Spec
 before pruning so the two do not fight over `AppBuilder` and `Output`. Precedes corpus

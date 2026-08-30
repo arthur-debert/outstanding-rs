@@ -3,8 +3,8 @@
 Fifth epic of the **Robustness program** (ROB05). Depends on composition contracts
 (ROB04, merged as #394) for the final shapes and on the corpus pilot (ROB03) for the
 observed-friction input: the [pilot scorecard](../../corpus/pilot/scorecard.md) and its
-findings #349–#361. Runs in parallel with the adopter-seams epic
-(`robustness-adopter-seams.md`); both precede corpus completion, which re-runs the
+findings #349–#361. Runs in parallel with the adopter-seams epic (ROB06,
+`robustness-adopter-seams.md`); both precede corpus completion (ROB07), which re-runs the
 archetypes against the surface this epic ships.
 
 ## Context
@@ -207,7 +207,7 @@ completion epic's first act is a re-run against this published version.
 - CI gains doc-example compile checks and an mdbook link check so doc truth is enforced,
   not audited.
 - The two friendly downstreams and the corpus archetypes are the acceptance environment:
-  the corpus re-run (ROB06) and the lookma port measure the migration cost.
+  the corpus re-run (ROB07) and the lookma port measure the migration cost.
 
 ## Testing / Verification
 

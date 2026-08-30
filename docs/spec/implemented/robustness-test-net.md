@@ -17,9 +17,9 @@ test net
     │   └── corpus COMPLETION          │         (after BOTH blessed surface — as a
     ├── adopter seams                  │          published release — and adopter seams:
     └── parity: config layering        │          re-run, full roster, CI gate, lookma)
-                                       │         (adopter seams: minted 2026-08-30 from the
-                                       │          pilot's escape-hatch findings; parallel
-                                       │          to the blessed surface)
+                                       │         (adopter seams = ROB06, corpus completion = ROB07;
+                                       │          seams minted 2026-08-30 from the pilot's
+                                       │          escape-hatch findings, parallel to ROB05)
         ├── parity: machine contract ◄─┤         (gated by tflike's diagnostic milestone)
         │   └── parity: terminal citizenship
         └──────────────────────────────┘         (gated by tflike's full suite; also

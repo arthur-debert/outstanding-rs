@@ -1,6 +1,6 @@
 # Robustness: Corpus Completion
 
-Last epic of the **Robustness program** (ROB06). The completion phase of the corpus
+Last epic of the **Robustness program** (ROB07). The completion phase of the corpus
 Spec whose pilot phase ROB03 (#322) and the corpus cleanup ROC02 (#367) delivered — the
 pilot record is now `implemented/robustness-corpus.md`. Depends on the blessed surface
 (ROB05) **as a published release**: the runner pins crates.io versions by design
