@@ -139,8 +139,8 @@ the doc sweep and will pick up these paragraphs in its truth pass).
 
 ## Further Notes
 
-Source: the [pilot scorecard](../../corpus/pilot/scorecard.md) theme 2, issues #351,
-#352, #353, #354, #356, #357, #359, #334; verification of each against `main` on
+Source: the [pilot scorecard](../../corpus/pilot/scorecard.md) theme 2, issues
+#351, #352, #353, #354, #356, #357, #359, #334; verification of each against `main` on
 2026-08-30. No grill round is planned: each item is a review outcome with a filed
 mechanism. One ADR is expected — the app-owned status/diagnostic seam (#357), because it
 draws the line between this epic and the machine contract.
