@@ -179,6 +179,85 @@ fn input_source_reports_arg_kind() {
     }
 }
 
+/// The wizard generates a file collector named `file` for a value that arrives
+/// through a path argument. That name is what the chain turns into provenance,
+/// so a value read out of a file must not report itself as a typed argument.
+#[test]
+fn input_source_reports_file_kind() {
+    struct FileSource {
+        arg: &'static str,
+    }
+
+    impl standout::input::InputCollector<String> for FileSource {
+        fn name(&self) -> &'static str {
+            "file"
+        }
+
+        fn is_available(&self, matches: &clap::ArgMatches) -> bool {
+            matches.get_one::<std::path::PathBuf>(self.arg).is_some()
+        }
+
+        fn collect(
+            &self,
+            matches: &clap::ArgMatches,
+        ) -> Result<Option<String>, standout::input::InputError> {
+            let Some(path) = matches.get_one::<std::path::PathBuf>(self.arg) else {
+                return Ok(None);
+            };
+            std::fs::read_to_string(path).map(Some).map_err(|error| {
+                standout::input::InputError::file(path.display().to_string(), error)
+            })
+        }
+    }
+
+    let dir = tempfile::tempdir().unwrap();
+    let document = dir.path().join("document.txt");
+    std::fs::write(&document, "from a file").unwrap();
+
+    let command = Command::new("test").subcommand(
+        Command::new("create").arg(
+            Arg::new("body_file")
+                .long("body-file")
+                .value_parser(clap::value_parser!(std::path::PathBuf)),
+        ),
+    );
+    let app = App::builder()
+        .templates(EmbeddedTemplates::new(TEMPLATES, ""))
+        .command_with(
+            "create",
+            FnHandler::new(|_m, ctx| {
+                let kind = ctx.input_source("body").unwrap();
+                let body: &String = ctx.input("body").expect("body should be resolved");
+                Ok(Output::Render(
+                    json!({ "kind": kind.to_string(), "echo": body }),
+                ))
+            }),
+            |cfg| {
+                cfg.template_name("create-3").input(
+                    "body",
+                    InputChain::<String>::new().try_source(FileSource { arg: "body_file" }),
+                )
+            },
+        )
+        .unwrap()
+        .build()
+        .unwrap();
+
+    let result = app
+        .run_with(
+            command,
+            vec!["test", "create", "--body-file", document.to_str().unwrap()],
+            capable_target(),
+            InputSources::from_process(),
+        )
+        .into_outcome();
+    if let DispatchResult::Handled(out) = result {
+        assert_eq!(out, format!("{}: from a file", InputSourceKind::File));
+    } else {
+        panic!("expected Handled, got {:?}", result);
+    }
+}
+
 #[test]
 fn input_source_reports_default_kind_when_falling_back() {
     let app = App::builder()

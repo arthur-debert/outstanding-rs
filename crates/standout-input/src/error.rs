@@ -14,6 +14,13 @@ pub enum InputError {
     #[error("Failed to read stdin: {0}")]
     StdinFailed(#[source] io::Error),
 
+    #[error("Failed to read {path}: {source}")]
+    FileFailed {
+        path: String,
+        #[source]
+        source: io::Error,
+    },
+
     #[error("Failed to read clipboard: {0}")]
     ClipboardFailed(String),
 
@@ -39,6 +46,13 @@ pub enum InputError {
 impl InputError {
     pub fn validation(msg: impl Into<String>) -> Self {
         Self::ValidationFailed(msg.into())
+    }
+
+    pub fn file(path: impl Into<String>, source: io::Error) -> Self {
+        Self::FileFailed {
+            path: path.into(),
+            source,
+        }
     }
 
     pub fn parse(name: impl Into<String>, reason: impl Into<String>) -> Self {

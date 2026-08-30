@@ -1520,7 +1520,9 @@ fn command_inputs_fn(spec: &ProjectSpec) -> String {
 
 /// The chain source that reads a value out of the file a path argument names.
 /// `standout-input` ships the argument and stdin sources; a file source is the
-/// application's own `InputCollector`.
+/// application's own `InputCollector`. It reports the `file` source kind, so
+/// `ctx.input_source` tells a file-read value apart from a typed argument, and
+/// a failed read names the path it tried.
 fn file_source_item(spec: &ProjectSpec) -> String {
     if !has_file_source(spec) {
         return String::new();
@@ -1537,7 +1539,7 @@ impl FileSource {
 
 impl standout::input::InputCollector<String> for FileSource {
     fn name(&self) -> &'static str {
-        "argument"
+        "file"
     }
 
     fn is_available(&self, matches: &ArgMatches) -> bool {
@@ -1550,7 +1552,7 @@ impl standout::input::InputCollector<String> for FileSource {
         };
         std::fs::read_to_string(path)
             .map(Some)
-            .map_err(|error| standout::input::InputError::parse(self.arg, error.to_string()))
+            .map_err(|error| standout::input::InputError::file(path.display().to_string(), error))
     }
 }"#
     .to_string()
@@ -1599,8 +1601,19 @@ fn handler_call(spec: &ProjectSpec) -> String {
     )
 }
 
+/// The `InputSourceKind` variant a declared source resolves to at run time.
+fn source_kind_variant(source: InputSource) -> &'static str {
+    match source {
+        InputSource::Argument => "Arg",
+        InputSource::File => "File",
+        InputSource::Stdin => "Stdin",
+    }
+}
+
 /// The chain-resolved values the generated handler test seeds the context with,
-/// standing in for the pre-dispatch resolution the app does.
+/// standing in for the pre-dispatch resolution the app does. Each value carries
+/// the source kind its first source resolves to, which is the provenance the
+/// running app would record.
 fn handler_test_inputs(spec: &ProjectSpec) -> String {
     if !has_chain_inputs(spec) {
         return String::new();
@@ -1614,9 +1627,10 @@ fn handler_test_inputs(spec: &ProjectSpec) -> String {
             continue;
         }
         lines.push(format!(
-            "        inputs.insert(\n            {},\n            standout_input::ResolvedInput {{\n                value: {}.to_string(),\n                source: standout_input::InputSourceKind::Arg,\n            }},\n        );",
+            "        inputs.insert(\n            {},\n            standout_input::ResolvedInput {{\n                value: {}.to_string(),\n                source: standout_input::InputSourceKind::{},\n            }},\n        );",
             quote(&input.name),
-            quote(handler_sample_value(index))
+            quote(handler_sample_value(index)),
+            source_kind_variant(input.sources[0])
         ));
     }
     lines.push("        ctx.extensions.insert(inputs);".to_string());
@@ -3079,6 +3093,23 @@ mod tests {
         assert!(!cli.contains("#[derive(Subcommand)]"));
     }
 
+    /// A value read out of a file is not a value typed on the command line:
+    /// the generated collector reports the `file` source kind, so
+    /// `ctx.input_source` tells the two apart, and a failed read names the path
+    /// it tried rather than blaming the argument.
+    #[test]
+    fn file_source_reports_file_provenance_and_names_an_unreadable_path() {
+        let dir = TempDir::new().unwrap();
+        let generated = GeneratedFiles::render(&file_only_spec(dir.path())).unwrap();
+        let handlers = generated_source(&generated, "crates/file-tool/src/handlers.rs");
+
+        assert!(handlers.contains("    fn name(&self) -> &'static str {\n        \"file\"\n    }"));
+        assert!(handlers
+            .contains("standout::input::InputError::file(path.display().to_string(), error)"));
+        assert!(!handlers.contains("InputError::parse(self.arg"));
+        assert!(handlers.contains("source: standout_input::InputSourceKind::File,"));
+    }
+
     /// A command whose every value comes from its own argument reaches the
     /// handler as typed parameters, with no chain and no context.
     #[test]
@@ -3254,6 +3285,27 @@ mod tests {
         assert!(String::from_utf8(file_only_run.stdout)
             .unwrap()
             .contains("Processed File only"));
+
+        let missing_file_run = Command::new("cargo")
+            .current_dir(&file_only.destination)
+            .args([
+                "run",
+                "-q",
+                "-p",
+                "file-tool",
+                "--",
+                "inspect",
+                "--document-file",
+                "absent-document.txt",
+            ])
+            .output()
+            .unwrap();
+        assert!(!missing_file_run.status.success());
+        let missing_file_stderr = String::from_utf8(missing_file_run.stderr).unwrap();
+        assert!(
+            missing_file_stderr.contains("absent-document.txt"),
+            "the unreadable path belongs in the diagnostic\nstderr:\n{missing_file_stderr}"
+        );
 
         let message_human = run_binary(
             &message.destination,
