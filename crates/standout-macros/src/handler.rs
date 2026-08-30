@@ -161,27 +161,27 @@ fn extract_result_ok_type(fn_item: &ItemFn) -> Option<Type> {
     None
 }
 
-fn generate_expected_arg(param: &ParamInfo) -> Option<TokenStream> {
+fn generate_expected_arg(param: &ParamInfo, dispatch: &TokenStream) -> Option<TokenStream> {
     let cli_name = &param.cli_name;
     let rust_name = &param.rust_name;
 
     match &param.kind {
         ParamKind::Flag { .. } => Some(quote! {
-            ::standout_dispatch::verify::ExpectedArg::flag(#cli_name, #rust_name)
+            #dispatch::verify::ExpectedArg::flag(#cli_name, #rust_name)
         }),
         ParamKind::Arg { .. } => {
             let ty = &param.ty;
             if is_option_type(ty) {
                 Some(quote! {
-                    ::standout_dispatch::verify::ExpectedArg::optional_arg(#cli_name, #rust_name)
+                    #dispatch::verify::ExpectedArg::optional_arg(#cli_name, #rust_name)
                 })
             } else if is_vec_type(ty) {
                 Some(quote! {
-                    ::standout_dispatch::verify::ExpectedArg::vec_arg(#cli_name, #rust_name)
+                    #dispatch::verify::ExpectedArg::vec_arg(#cli_name, #rust_name)
                 })
             } else {
                 Some(quote! {
-                    ::standout_dispatch::verify::ExpectedArg::required_arg(#cli_name, #rust_name)
+                    #dispatch::verify::ExpectedArg::required_arg(#cli_name, #rust_name)
                 })
             }
         }
@@ -267,6 +267,8 @@ pub fn handler_impl(attr: TokenStream, item: TokenStream) -> Result<TokenStream>
 
     let _attr_args: TokenStream = attr;
 
+    let dispatch = crate::crate_path::dispatch();
+
     let fn_name = &fn_item.sig.ident;
     let wrapper_name = format_ident!("{}__handler", fn_name);
     let fn_vis = &fn_item.vis;
@@ -322,11 +324,14 @@ pub fn handler_impl(attr: TokenStream, item: TokenStream) -> Result<TokenStream>
 
     let call_args: Vec<TokenStream> = params.iter().map(generate_call_arg).collect();
 
-    let expected_args: Vec<TokenStream> = params.iter().filter_map(generate_expected_arg).collect();
+    let expected_args: Vec<TokenStream> = params
+        .iter()
+        .filter_map(|param| generate_expected_arg(param, &dispatch))
+        .collect();
     let expected_args_name = format_ident!("{}__expected_args", fn_name);
 
     let _wrapper_params = if has_ctx {
-        quote! { __matches: &::clap::ArgMatches, __ctx: &::standout_dispatch::CommandContext }
+        quote! { __matches: &::clap::ArgMatches, __ctx: &#dispatch::CommandContext }
     } else {
         quote! { __matches: &::clap::ArgMatches }
     };
@@ -336,7 +341,7 @@ pub fn handler_impl(attr: TokenStream, item: TokenStream) -> Result<TokenStream>
     let call_and_return = if is_unit_result(&fn_item) {
         quote! {
             #fn_name(#(#call_args),*)?;
-            Ok(::standout_dispatch::Output::Silent)
+            Ok(#dispatch::Output::Silent)
         }
     } else {
         quote! {
@@ -345,7 +350,7 @@ pub fn handler_impl(attr: TokenStream, item: TokenStream) -> Result<TokenStream>
     };
 
     let wrapper_return_type = if is_unit_result(&fn_item) {
-        quote! { -> ::standout_dispatch::HandlerResult<()> }
+        quote! { -> #dispatch::HandlerResult<()> }
     } else {
         quote! { #return_type }
     };
@@ -381,12 +386,14 @@ pub fn handler_impl(attr: TokenStream, item: TokenStream) -> Result<TokenStream>
     Ok(quote! {
         #clean_fn
 
-        #fn_vis fn #wrapper_name(__matches: &::clap::ArgMatches, __ctx: &::standout_dispatch::CommandContext) #wrapper_return_type {
+        #[allow(non_snake_case)]
+        #fn_vis fn #wrapper_name(__matches: &::clap::ArgMatches, __ctx: &#dispatch::CommandContext) #wrapper_return_type {
             #(#extractions)*
             #call_and_return
         }
 
-        #fn_vis fn #expected_args_name() -> ::std::vec::Vec<::standout_dispatch::verify::ExpectedArg> {
+        #[allow(non_snake_case)]
+        #fn_vis fn #expected_args_name() -> ::std::vec::Vec<#dispatch::verify::ExpectedArg> {
             vec![#(#expected_args),*]
         }
 
@@ -394,16 +401,16 @@ pub fn handler_impl(attr: TokenStream, item: TokenStream) -> Result<TokenStream>
         #[derive(Clone, Copy)]
         #fn_vis struct #handler_struct_name;
 
-        impl ::standout_dispatch::Handler for #handler_struct_name {
+        impl #dispatch::Handler for #handler_struct_name {
             type Output = #output_type;
 
-            fn handle(&mut self, matches: &::clap::ArgMatches, ctx: &::standout_dispatch::CommandContext)
-                -> ::standout_dispatch::HandlerResult<Self::Output>
+            fn handle(&mut self, matches: &::clap::ArgMatches, ctx: &#dispatch::CommandContext)
+                -> #dispatch::HandlerResult<Self::Output>
             {
-                ::standout_dispatch::IntoHandlerResult::into_handler_result(#wrapper_name(matches, ctx))
+                #dispatch::IntoHandlerResult::into_handler_result(#wrapper_name(matches, ctx))
             }
 
-            fn expected_args(&self) -> ::std::vec::Vec<::standout_dispatch::verify::ExpectedArg> {
+            fn expected_args(&self) -> ::std::vec::Vec<#dispatch::verify::ExpectedArg> {
                 #expected_args_name()
             }
         }

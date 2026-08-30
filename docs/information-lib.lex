@@ -370,13 +370,16 @@ THEME: Handlers
 	:: rust ::
 
 	This generates a dispatch_config() method that registers handlers. Variant
-	names are converted to snake_case command names:
+	names are converted to kebab-case command names, the same spelling clap's
+	own derive gives the subcommand:
 	  - List → "list"
-	  - ListAll → "list_all"
-	  - HTTPServer → "h_t_t_p_server" (each capital becomes _lowercase)
+	  - ListAll → "list-all"
+	  - HTTPServer → "http-server"
+
+	#[dispatch(name = "...")] registers a different name for one variant.
 
 	The macro expects handler functions named after the variant in snake_case
-	(e.g., fn list(...) for List variant).
+	(e.g., fn list(...) for List variant, fn list_all(...) for ListAll).
 
 	Variant attributes for customization:
 		#[derive(Dispatch)]

@@ -14,6 +14,7 @@ struct ContainerAttrs {
 
 #[derive(Default)]
 struct VariantAttrs {
+    name: Option<String>,
     handler: Option<Path>,
     template: Option<String>,
     template_name: Option<String>,
@@ -38,6 +39,7 @@ struct VariantAttrs {
 
 struct VariantInfo {
     snake_name: String,
+    command_name: String,
     attrs: VariantAttrs,
     is_nested: bool,
     nested_type: Option<Path>,
@@ -79,6 +81,21 @@ impl Parse for VariantAttrs {
 
         for meta in content {
             match &meta {
+                Meta::NameValue(nv) if nv.path.is_ident("name") => {
+                    if let Expr::Lit(expr_lit) = &nv.value {
+                        if let syn::Lit::Str(lit_str) = &expr_lit.lit {
+                            let value = lit_str.value();
+                            if value.is_empty() {
+                                return Err(Error::new(nv.value.span(), "`name` cannot be empty"));
+                            }
+                            attrs.name = Some(value);
+                        } else {
+                            return Err(Error::new(nv.value.span(), "expected string literal"));
+                        }
+                    } else {
+                        return Err(Error::new(nv.value.span(), "expected string literal"));
+                    }
+                }
                 Meta::NameValue(nv) if nv.path.is_ident("handler") => {
                     if let Expr::Path(expr_path) = &nv.value {
                         attrs.handler = Some(expr_path.path.clone());
@@ -202,12 +219,24 @@ impl Parse for VariantAttrs {
                 _ => {
                     return Err(Error::new(
                         meta.span(),
-                        "unknown attribute, expected one of: handler, template, template_name, silent, binary, structured_only, pre_dispatch, post_dispatch, post_output, questionnaire, nested, skip, default, list_view, item_type, pipe_to, pipe_through, pipe_to_clipboard, simple, pure",
+                        "unknown attribute, expected one of: name, handler, template, template_name, silent, binary, structured_only, pre_dispatch, post_dispatch, post_output, questionnaire, nested, skip, default, list_view, item_type, pipe_to, pipe_through, pipe_to_clipboard, simple, pure",
                     ));
                 }
             }
         }
 
+        if attrs.pure && attrs.handler.is_some() {
+            return Err(Error::new(
+                input.span(),
+                "`pure` and `handler` cannot be used together: `pure` registers the wrapper `#[handler]` generates for the variant's own function, while `handler = path` names a function to register. Drop `pure` and point `handler` at the wrapper (`handler = handlers::name__handler`) to register another `#[handler]` function",
+            ));
+        }
+        if attrs.pure && attrs.simple {
+            return Err(Error::new(
+                input.span(),
+                "`pure` and `simple` cannot be used together: `simple` registers a function taking only `&ArgMatches`, while the wrapper `#[handler]` generates always takes `(&ArgMatches, &CommandContext)`. Drop `simple`; a `#[handler]` function declares what it needs through its parameter attributes",
+            ));
+        }
         if attrs.template.is_some() && attrs.template_name.is_some() {
             return Err(Error::new(
                 input.span(),
@@ -234,19 +263,43 @@ impl Parse for VariantAttrs {
     }
 }
 
-fn to_snake_case(s: &str) -> String {
-    let mut result = String::new();
-    for (i, c) in s.chars().enumerate() {
-        if c.is_uppercase() {
-            if i > 0 {
-                result.push('_');
+fn split_words(s: &str) -> Vec<String> {
+    let chars: Vec<char> = s.chars().collect();
+    let mut words: Vec<String> = Vec::new();
+    let mut current = String::new();
+
+    for (i, c) in chars.iter().copied().enumerate() {
+        if c == '_' || c == '-' {
+            if !current.is_empty() {
+                words.push(std::mem::take(&mut current));
             }
-            result.push(c.to_lowercase().next().unwrap());
-        } else {
-            result.push(c);
+            continue;
         }
+
+        let starts_word = !current.is_empty() && {
+            let prev = chars[i - 1];
+            let next_is_lower = chars.get(i + 1).is_some_and(|n| n.is_lowercase());
+            (!prev.is_uppercase() && c.is_uppercase())
+                || (prev.is_uppercase() && c.is_uppercase() && next_is_lower)
+        };
+        if starts_word {
+            words.push(std::mem::take(&mut current));
+        }
+        current.extend(c.to_lowercase());
     }
-    result
+
+    if !current.is_empty() {
+        words.push(current);
+    }
+    words
+}
+
+fn to_snake_case(s: &str) -> String {
+    split_words(s).join("_")
+}
+
+fn to_kebab_case(s: &str) -> String {
+    split_words(s).join("-")
 }
 
 fn parse_container_attrs(input: &DeriveInput) -> Result<ContainerAttrs> {
@@ -313,7 +366,12 @@ pub fn dispatch_derive_impl(input: DeriveInput) -> Result<TokenStream> {
             continue;
         }
 
-        let snake_name = to_snake_case(&variant.ident.to_string());
+        let variant_ident = variant.ident.to_string();
+        let snake_name = to_snake_case(&variant_ident);
+        let command_name = attrs
+            .name
+            .clone()
+            .unwrap_or_else(|| to_kebab_case(&variant_ident));
         let nested_type_candidate = is_nested_subcommand(&variant.fields);
 
         let is_nested = attrs.nested;
@@ -327,6 +385,7 @@ pub fn dispatch_derive_impl(input: DeriveInput) -> Result<TokenStream> {
 
         variants.push(VariantInfo {
             snake_name,
+            command_name,
             attrs,
             is_nested,
             nested_type: nested_type_candidate,
@@ -337,7 +396,7 @@ pub fn dispatch_derive_impl(input: DeriveInput) -> Result<TokenStream> {
         let defaults: Vec<_> = variants.iter().filter(|v| v.attrs.default).collect();
 
         if defaults.len() > 1 {
-            let names: Vec<_> = defaults.iter().map(|v| v.snake_name.as_str()).collect();
+            let names: Vec<_> = defaults.iter().map(|v| v.command_name.as_str()).collect();
             return Err(Error::new(
                 input.span(),
                 format!(
@@ -347,13 +406,13 @@ pub fn dispatch_derive_impl(input: DeriveInput) -> Result<TokenStream> {
             ));
         }
 
-        defaults.first().map(|v| v.snake_name.as_str())
+        defaults.first().map(|v| v.command_name.as_str())
     };
 
     let command_registrations: Vec<TokenStream> = variants
         .iter()
         .map(|v| {
-            let cmd_name = &v.snake_name;
+            let cmd_name = &v.command_name;
 
             if v.is_nested {
                 let nested_type = v.nested_type.as_ref().unwrap();
@@ -536,13 +595,21 @@ mod tests {
     fn test_to_snake_case() {
         assert_eq!(to_snake_case("Add"), "add");
         assert_eq!(to_snake_case("ListAll"), "list_all");
-        assert_eq!(to_snake_case("HTTPServer"), "h_t_t_p_server");
-        assert_eq!(to_snake_case("getHTTPResponse"), "get_h_t_t_p_response");
+        assert_eq!(to_snake_case("HTTPServer"), "http_server");
+        assert_eq!(to_snake_case("getHTTPResponse"), "get_http_response");
     }
 
     #[test]
     fn test_to_snake_case_simple() {
         assert_eq!(to_snake_case("Complete"), "complete");
         assert_eq!(to_snake_case("Delete"), "delete");
+    }
+
+    #[test]
+    fn test_to_kebab_case_matches_clap_derive() {
+        assert_eq!(to_kebab_case("Add"), "add");
+        assert_eq!(to_kebab_case("ListUnits"), "list-units");
+        assert_eq!(to_kebab_case("HTTPServer"), "http-server");
+        assert_eq!(to_kebab_case("getHTTPResponse"), "get-http-response");
     }
 }

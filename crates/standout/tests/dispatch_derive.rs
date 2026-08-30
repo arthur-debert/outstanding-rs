@@ -51,13 +51,34 @@ fn test_basic_dispatch_compiles() {
 
 #[derive(Subcommand, Dispatch)]
 #[dispatch(handlers = handlers)]
-enum SnakeCaseCommands {
+enum MultiWordCommands {
     ShowAll,
 }
 
 #[test]
-fn test_snake_case_dispatch_compiles() {
-    let _ = SnakeCaseCommands::dispatch_config();
+fn multi_word_variant_registers_the_kebab_case_name() {
+    let builder = MultiWordCommands::dispatch_config()(GroupBuilder::new());
+    assert!(builder.contains("show-all"));
+    assert!(!builder.contains("show_all"));
+}
+
+#[derive(Subcommand, Dispatch)]
+#[dispatch(handlers = handlers)]
+enum RenamedCommands {
+    #[dispatch(name = "ls", handler = handlers::list)]
+    List,
+    #[dispatch(name = "show", default)]
+    ShowAll,
+}
+
+#[test]
+fn variant_rename_replaces_the_derived_name() {
+    let builder = RenamedCommands::dispatch_config()(GroupBuilder::new());
+    assert!(builder.contains("ls"));
+    assert!(builder.contains("show"));
+    assert!(!builder.contains("list"));
+    assert!(!builder.contains("show-all"));
+    assert_eq!(builder.get_default_command(), Some("show"));
 }
 
 #[derive(Subcommand, Dispatch)]
@@ -113,7 +134,7 @@ fn test_template_absence_attributes_build_mixed_apps() {
             .subcommand(clap::Command::new("export"))
             .subcommand(clap::Command::new("add"))
             .subcommand(clap::Command::new("download"))
-            .subcommand(clap::Command::new("show_all"))
+            .subcommand(clap::Command::new("show-all"))
     };
 
     let rendered = TestHarness::new()
@@ -133,7 +154,7 @@ fn test_template_absence_attributes_build_mixed_apps() {
     let structured =
         TestHarness::new()
             .output_mode(OutputMode::Json)
-            .run(&app, command(), ["app", "show_all"]);
+            .run(&app, command(), ["app", "show-all"]);
     structured.assert_success();
     assert_eq!(structured.stdout(), "{\n  \"name\": \"Ada\"\n}");
 }

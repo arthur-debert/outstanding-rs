@@ -107,6 +107,12 @@ no framework exit status: `exit_status()` returns `None`, `run()` returns
 `false`, and Standout emits nothing. The fallback dispatcher still owns that
 command and its eventual status.
 
+One invocation does not hand off: one whose command path matches a registered
+command up to `-` versus `_` — `list-units` invoked against a handler
+registered as `list_units`. No fallback owns that command, since the app did
+register a handler for it, so dispatch returns `DispatchResult::Error` naming
+both spellings rather than a `NoMatch` the caller would read as "not mine".
+
 ## Framework-owned final writes
 
 `run()` writes successful text and binary bytes to stdout, diagnostics to

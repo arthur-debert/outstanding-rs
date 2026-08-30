@@ -227,6 +227,17 @@ impl App {
                     DispatchResult::Handled(RunOutput::command(String::new()))
                 }
             }
+        } else if let Some(registered) = separator_variant(&path_str, &commands) {
+            DispatchResult::Error(RunError::new(
+                format!(
+                    "No handler runs for `{}`: the command is registered as `{}`. \
+                     Registered names must match the CLI definition exactly \
+                     (clap's derive names subcommands in kebab-case).",
+                    path_str.replace('.', " "),
+                    registered.replace('.', " "),
+                ),
+                RunErrorKind::ClapUsage,
+            ))
         } else {
             DispatchResult::NoMatch(matches)
         }
@@ -553,6 +564,18 @@ impl App {
             .get_key_value(&parent_path)
             .map(|(path, command)| (path.as_str(), command))
     }
+}
+
+fn separator_variant<V>(
+    path: &str,
+    commands: &std::collections::HashMap<String, V>,
+) -> Option<String> {
+    let normalize = |name: &str| name.replace('-', "_");
+    let wanted = normalize(path);
+    commands
+        .keys()
+        .find(|registered| normalize(registered) == wanted)
+        .cloned()
 }
 
 fn command_matches_for_path<'a>(matches: &'a ArgMatches, path: &[&str]) -> Option<&'a ArgMatches> {

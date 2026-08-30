@@ -41,6 +41,14 @@ The macro:
 | `#[ctx]`              | `&CommandContext` | Access to context             |
 | `#[matches]`          | `&ArgMatches`     | Raw matches (escape hatch)    |
 
+Without `name = "x"`, the argument id is the parameter name with underscores
+turned into hyphens: `no_legend` reads the argument id `no-legend`. Clap's own
+derive ids an argument by the field name it comes from, so a clap-derive
+`no_legend` field declares `#[arg(id = "no-legend")]` to meet the handler, or
+the handler parameter takes the field's id with `#[flag(name = "no_legend")]`.
+`App::verify_command(&cmd)` reports the mismatch instead of leaving it to a
+runtime `get_flag` panic.
+
 **Return Type Handling:**
 
 | Return Type     | Generated Wrapper                |

@@ -8,6 +8,8 @@ publish = false
 
 [dependencies]
 standout = { path = "../standout", version = "8.1.1" }
+anyhow = "1"
 clap = { version = "4", features = ["help"] }
 console = "0.16"
+serde = { version = "1", features = ["derive"] }
 serde_json = "1"
