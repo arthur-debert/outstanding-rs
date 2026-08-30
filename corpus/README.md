@@ -1,6 +1,6 @@
 # The downstream corpus
 
-The corpus pilot (`docs/spec/robustness-corpus.md`) in repository form: the
+The corpus pilot (`docs/spec/implemented/robustness-corpus.md`) in repository form: the
 **archetype roster** — synthetic CLI archetypes with spec-first acceptance
 suites — and the **runner** (`crates/corpus-runner`) that has blind agents
 implement them from the archetype spec and the published standout

@@ -1,7 +1,7 @@
 //! The downstream-corpus runner: one command runs the full blind-agent loop
 //! for one archetype and files a structured run report.
 //!
-//! The five phases (spec `docs/spec/robustness-corpus.md`, Proposed Shape
+//! The five phases (spec `docs/spec/implemented/robustness-corpus.md`, Proposed Shape
 //! piece 2): provision a blind workspace, execute the instrumented
 //! implementation session, collect the exit questionnaire, run the
 //! acceptance suite plus the ROB01 invariant matrix against the produced

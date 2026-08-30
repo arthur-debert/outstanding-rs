@@ -14,8 +14,12 @@ test net
 │   └── gap-spec suites ───────────────┐     │    also authors the red gap-spec suites)
 └── composition contracts              │     │
     ├── one blessed surface ◄──────────│─────┘   (consumes the pilot's scorecard)
-    │   └── corpus COMPLETION          │         (full roster on blessed idioms, CI gate,
-    └── parity: config layering        │          real downstreams joined)
+    │   └── corpus COMPLETION          │         (after BOTH blessed surface — as a
+    ├── adopter seams                  │          published release — and adopter seams:
+    └── parity: config layering        │          re-run, full roster, CI gate, lookma)
+                                       │         (adopter seams: minted 2026-08-30 from the
+                                       │          pilot's escape-hatch findings; parallel
+                                       │          to the blessed surface)
         ├── parity: machine contract ◄─┤         (gated by tflike's diagnostic milestone)
         │   └── parity: terminal citizenship
         └──────────────────────────────┘         (gated by tflike's full suite; also
@@ -210,7 +214,7 @@ postconditions + env-convention pins. (2) and (3) parallelize after (1).
 ## Out Of Scope
 
 Behavioral fixes (loud-failures Spec), pipeline consolidation (composition-contracts
-Spec), corpus construction (`docs/spec/robustness-corpus.md`), test de-serialization.
+Spec), corpus construction (`docs/spec/implemented/robustness-corpus.md`), test de-serialization.
 
 ## Further Notes
 
