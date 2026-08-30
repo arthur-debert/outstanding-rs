@@ -3,6 +3,8 @@ use std::os::fd::{AsRawFd, FromRawFd, OwnedFd};
 pub fn open_pair() -> io::Result<(OwnedFd, OwnedFd)> {
     let mut master: libc::c_int = -1;
     let mut slave: libc::c_int = -1;
+    // Fixed 80x24 keeps width-sensitive test output deterministic; a 0x0
+    // window would otherwise be inherited.
     let mut winsize = libc::winsize {
         ws_row: 24,
         ws_col: 80,
@@ -34,6 +36,8 @@ pub fn open_pair() -> io::Result<(OwnedFd, OwnedFd)> {
         if rc != 0 {
             return Err(io::Error::last_os_error());
         }
+        // Disabling ONLCR stops the driver rewriting \n to \r\n, so
+        // captures record the child's bytes verbatim.
         termios.c_oflag &= !(libc::ONLCR as libc::tcflag_t);
         let rc = libc::tcsetattr(slave.as_raw_fd(), libc::TCSANOW, &termios);
         if rc != 0 {
