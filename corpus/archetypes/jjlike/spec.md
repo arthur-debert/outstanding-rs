@@ -6,7 +6,7 @@ functions, and — the point of this archetype — templates treated as **untrus
 a bad template must produce a diagnostic, never a panic or a hang.
 
 **This is a gap specification.** It describes capability standout does not have (survey
-Part C, archetype C9; `docs/spec/robustness-corpus.md`): user-supplied *runtime*
+Part C, archetype C9; `docs/spec/implemented/robustness-corpus.md`): user-supplied *runtime*
 templates. Standout's templates are app-author artifacts resolved at build time; nothing
 lets an end user hand the renderer a template string at invocation time, and the
 untrusted-input direction (unknown names, hostile budgets) is the least-tested direction
