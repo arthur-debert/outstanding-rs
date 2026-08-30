@@ -574,7 +574,10 @@ impl AppBuilder {
         if self.theme.is_some() {
             if self.stylesheet_registry.is_some() {
                 return Err(SetupError::Config(
-                    "the app configures both .theme(...) and .styles(...)/.styles_dir(...);                      .theme(...) replaces the whole stylesheet registry, so keep one of them                      — merge the stylesheets into the Theme, or drop the .theme(...) call and                      select a registered theme with .default_theme(name)"
+                    "the app configures both .theme(...) and .styles(...)/.styles_dir(...); \
+                     .theme(...) replaces the whole stylesheet registry, so keep one of \
+                     them — merge the stylesheets into the Theme, or drop the .theme(...) \
+                     call and select a registered theme with .default_theme(name)"
                         .to_string(),
                 ));
             }
