@@ -1,6 +1,6 @@
 # Robustness: The Test Net
 
-First of five Specs in the **Robustness program**, produced by the August 2026 robustness
+The first Spec of the **Robustness program**, produced by the August 2026 robustness
 assessment. This Spec is the program's entry point: it changes no runtime behavior and
 everything after it depends on it.
 
@@ -14,12 +14,12 @@ test net
 │   └── gap-spec suites ───────────────┐     │    also authors the red gap-spec suites)
 └── composition contracts              │     │
     ├── one blessed surface ◄──────────│─────┘   (consumes the pilot's scorecard)
-    │   └── corpus COMPLETION          │         (after BOTH blessed surface — as a
-    ├── adopter seams                  │          published release — and adopter seams:
-    └── parity: config layering        │          re-run, full roster, CI gate, lookma)
-                                       │         (adopter seams = ROB06, corpus completion = ROB07;
-                                       │          seams minted 2026-08-30 from the pilot's
-                                       │          escape-hatch findings, parallel to ROB05)
+    │   └── corpus COMPLETION          │         (ROB07; after BOTH blessed surface — as a
+    │                                  │          published release — and adopter seams:
+    │                                  │          re-run, full roster, CI gate, lookma)
+    ├── adopter seams                  │         (ROB06; minted 2026-08-30 from the pilot's
+    │                                  │          escape-hatch findings, parallel to ROB05)
+    └── parity: config layering        │
         ├── parity: machine contract ◄─┤         (gated by tflike's diagnostic milestone)
         │   └── parity: terminal citizenship
         └──────────────────────────────┘         (gated by tflike's full suite; also

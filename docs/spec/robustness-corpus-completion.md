@@ -62,19 +62,36 @@ the archetypes are sharp enough to find *known* defects has never run.
 
 ## Goals
 
-- **The validity run completes** (#407), under a decided credential policy: the runner
-  gains one recorded credential exception — a dedicated, scoped agent credential
-  supplied through an allowlisted environment variable, written into the report's
-  existing `blindness.credential_exceptions` field — rather than either weakening
-  isolation or leaving the run permanently blocked. The scorecard's validity section is
-  replaced with the sanitized outcome.
+- **The validity run completes** (#407), under a decided credential policy that keeps
+  ADR-0023's boundary intact: the agent authenticates, and no process it spawns —
+  Cargo build scripts, tests, the produced binary — can read or inherit the secret. An
+  allowlisted environment variable does not satisfy that (descendants inherit the
+  environment, and the agent/build phases have network), which is exactly why ADR-0023
+  rejects it; the mechanism is one where the secret never enters the agent's process
+  tree — a brokered backend or local proxy holding the credential outside the sandbox
+  is the expected shape, decided in the grill and recorded as an ADR-0023 amendment.
+  Whatever is admitted is written into the report's existing
+  `blindness.credential_exceptions` field, and a regression test proves the agent can
+  authenticate while a spawned build script cannot observe the credential. The
+  scorecard's validity section is replaced with the sanitized outcome. This run is
+  against the latest published 8.x at the time — it checks the method (do the
+  archetypes rediscover known defects), not the framework — and is excluded from the
+  v1/v2 comparison; the post-9.0 re-run runs `validity` again.
 - **The pilot archetypes re-run** against the ROB05 release, same specs, same
   questionnaire, producing the second scorecard: per-archetype acceptance and invariant
   ratios, workaround counts, and friction themes side by side with the pilot's. This is
   the program's measured claim; the re-run happens before any framework work responds to
-  it.
+  it. The agent side is controlled, or the claim is downgraded: the report gains an
+  agent-provenance block — backend, executable version, model id, the session prompt,
+  and the runtime settings the runner passes — as a schema bump under ADR-0024, and the
+  re-run uses the pilot's setup where it is still obtainable. Where it is not (the
+  pilot's model is retired, the backend changed), scorecard v2 states the delta beside
+  every comparison and the result is reported as observational, not as evidence that
+  the framework improved.
 - **The six remaining in-capability archetypes exist in repository form** — `spec.md`,
-  `manifest.toml`, spec-first `acceptance.toml` — and run blind. Priority order: C6
+  `manifest.toml`, spec-first `acceptance.toml` — authored before the release, and each
+  runs blind once against 9.0 (a first blind run against 8.1.1 would measure a surface
+  the release deletes). Priority order: C6
   cargolike and C7 gcloudlike first (config layering's triangulation, alongside the
   existing C1), then C3 kubelike, C8 dockerlike, C10 brewlike, C11 pnpmlike.
 - **Accepted implementations become a standing regression net.** Produced apps that
@@ -100,15 +117,18 @@ the archetypes are sharp enough to find *known* defects has never run.
 
 ## Proposed Shape
 
-**1. Validity and credential policy.** Decide and implement the one credential
-exception; complete the `validity` run; update the scorecard. Smallest workstream,
-first, because it unblocks every later blind run.
+**1. Validity and credential policy.** Decide and implement the credential mechanism
+and its ADR-0023 amendment; complete the `validity` run against the latest published
+8.x; update the scorecard. Smallest workstream, first, because it unblocks every later
+blind run and does not depend on the release.
 
 **2. The re-run.** Once 9.0 is published: the four pilot archetypes plus `validity`,
-each run once, scorecard v2 written by the same script and ranking as v1.
+each run once with the recorded agent provenance, scorecard v2 written by the same
+script and ranking as v1 and carrying the agent delta.
 
 **3. Roster expansion.** The six archetypes, spec-first, in the priority order above;
-each authored as one PR (spec + manifest + suite, no implementation), then run blind.
+each authored as one PR (spec + manifest + suite, no implementation) before the release,
+then run blind against 9.0 after it.
 
 **4. The corpus repository and the gate.** A new repository holding accepted
 implementations, a workflow that builds them against standout `main` (scheduled) and a
@@ -119,9 +139,10 @@ member. The grill settles the cargo patch/workspace mechanics and the trigger.
 
 - **Running before the release.** A re-run against 8.1.1 measures nothing new. The
   dependency on a published 9.0 is hard; do not substitute a git pin.
-- **The credential exception widening.** One variable, one scoped credential, recorded
-  in every report; if the agent backend needs more (host HOME, Keychain), the answer is
-  a different backend invocation, not a wider policy.
+- **The credential exception widening.** One scoped credential, held outside the
+  agent's process tree, recorded in every report; if the agent backend needs more (host
+  HOME, Keychain, an inherited variable), the answer is a different backend invocation,
+  not a wider policy.
 - **Archetype authoring drifting from the survey.** The six sketches are in a session
   record, not the repo; the author reconstructs them from the survey's capability matrix
   (the parity Specs' Context sections carry most of it) and states in the spec which
@@ -153,10 +174,11 @@ branch, recorded in the PR).
 
 ## Workstream Hints
 
-(1) validity + credential policy; (2) re-run + scorecard v2 — after the 9.0 publish;
-(3) six archetypes — (3a) cargolike + gcloudlike, (3b) the other four; (4) corpus repo +
-gate + lookma port. (1) and (3) start immediately; (2) waits on the release; (4) waits
-on (2) so the first accepted implementations are post-ROB05 ones.
+(1) validity + credential policy, run against the latest published 8.x; (2) re-run +
+scorecard v2 — after the 9.0 publish; (3) six archetypes — (3a) cargolike + gcloudlike,
+(3b) the other four; (4) corpus repo + gate + lookma port. (1) and the authoring half of
+(3) start immediately; (2) and every blind run of (3) wait on the release; (4) waits on
+(2) so the first accepted implementations are post-ROB05 ones.
 
 ## Out Of Scope
 
@@ -167,7 +189,8 @@ gold-plating, interactive user studies.
 
 The pilot-phase Spec, its decisions (ADR-0023 blindness protocol, ADR-0024 report
 schema) and the cleanup (`implemented/robustness-corpus-cleanup.md`) are the record this
-Spec builds on. Expected ADRs from the grill: the credential-exception policy; corpus
-repository and CI mechanics. The survey's archetype list: C1 gitlike, C2 ghlike, C3
+Spec builds on. Expected ADRs from the grill: the credential mechanism (an ADR-0023 amendment); the
+agent-provenance report fields (an ADR-0024 amendment); corpus repository and CI
+mechanics. The survey's archetype list: C1 gitlike, C2 ghlike, C3
 kubelike, C4 tflike (gap), C5 systemdlike, C6 cargolike, C7 gcloudlike, C8 dockerlike, C9
 jjlike (gap), C10 brewlike, C11 pnpmlike, C12 formlike.

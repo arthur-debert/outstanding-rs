@@ -20,10 +20,16 @@ replaces the audit's numbers as this epic's baseline.
   **Run-family entry points: 6** (`run`, `run_with`, `run_to_string`, `dispatch`,
   `dispatch_from`, `run_command`) plus 4 render entries, 6 `parse`/`get_matches*`
   methods on `App`, and 2 free `cli::parse*` functions.
-- **Handler registration: 9 paths** — builder `command` / `command_with` /
-  `command_handler` / `command_handler_with` / `command_passthrough` / `group(…)`,
-  `.commands(Commands::dispatch_config())` via `#[derive(Dispatch)]`, `#[handler]`,
-  `#[command]`.
+- **Wiring a command: 9 items across three axes**, which compose rather than
+  substitute for each other. Registration (binding a name to a handler on the app): 7 —
+  builder `command` / `command_with` / `command_handler` / `command_handler_with` /
+  `command_passthrough` / `group(…)`, and `.commands(Commands::dispatch_config())` from
+  `#[derive(Dispatch)]`. Handler adaptation (turning a fn into the dispatch signature):
+  `#[handler]`. Both plus declaration (the clap `Command` itself): `#[command]`, which
+  generates the handler wrapper and the `Command` from one source but still needs
+  registration. A working idiom takes one item from each axis (a `#[derive(Dispatch)]`
+  enum registers, a `#[handler]` fn adapts, clap-derive declares), so the census counts
+  items, not interchangeable alternatives.
 - **Template provision: 9 paths** (inline third argument, `CommandConfig::template`,
   `template_name`, convention, `embed_templates!`, `templates_dir`, `template_ext`,
   `include_framework_templates`, `template_engine`). `.template_dir()` is gone from code
@@ -49,8 +55,9 @@ replaces the audit's numbers as this epic's baseline.
   `test` on generated projects under `pixi run test`. The generator-rot risk (#244) is
   covered; what is not covered is that the generated project uses the *blessed* idiom.
 - **`docs/SUMMARY.md` orphans**: `topics/standout-help.md`, `topics/topics-system.md`,
-  both `index.md`s, two upgrade guides, `crates/input/design.md`. No topic exists for
-  piping, ListView, seeker, passthrough, or `#[command]`.
+  both `index.md`s, two upgrade guides, `crates/input/design.md`, and
+  `crates/standout-pipe/docs/topics/piping.md` — a piping topic exists but is mounted
+  nowhere. No topic exists at all for ListView, seeker, passthrough, or `#[command]`.
 - **No stability statement** exists anywhere in the repo.
 
 The corpus pilot (four blind runs, scorecard themes 1, 3 and 5, all 4/4 or 2/4 in
@@ -108,8 +115,11 @@ documentation.
 - **The three reference clients converge on the blessed idioms**, and the wizard's
   generated project *is* the canonical example. The existing generated-project test gains
   an assertion that the emitted source uses the blessed registration, template, theme and
-  input idioms (a diff against a checked-in golden, or a grep for the unblessed forms), so
-  the wizard cannot drift back.
+  input idioms: a diff against a checked-in golden, or one positive structural assertion
+  per required idiom (the blessed derive, the blessed template call, the blessed theme
+  constructor, the blessed input entry are each present) with negative assertions for
+  the unblessed forms on top. A negative-only grep passes on output that omits the
+  concern, so it is not the check.
 - **Docs tell the truth and are reachable.** The #361 items still wrong on `main` are
   fixed: `docs/crates/dispatch/topics/handler-contract.md:22,48` (generated return type,
   `Result` auto-wrapping), `docs/guides/intro-to-standout.md:687` (registers the
@@ -118,14 +128,15 @@ documentation.
   `docs/crates/input/topics/framework-integration.md:204` (single-dependency claim,
   closes with #360), `docs/crates/render/guides/intro-to-tabular.md:132` ("grows to fit
   content" — wording follows whatever the adopter-seams epic does with #359), the
-  `standout = "7"` pins, the two stale `template_dir` mentions. The missing-but-load-bearing
+  `standout = "7"` pins, the two stale `template_dir` mentions. The orphaned piping
+  topic is reviewed for accuracy and mounted, not rewritten. The missing-but-load-bearing
   items get written: the `#[dispatch(…)]` attribute reference (`pure` is used in three
   guides and defined nowhere), the trailing-newline contract, the `#[handler]` id
   mapping, nested template-path resolution for derive commands, and the handler
   diagnostic framing (`docs/topics/error-handling.md:10-11` names it without showing
-  it). Orphaned topics enter `SUMMARY.md`; each surviving undocumented feature (piping,
-  ListView, seeker, passthrough, `#[command]` if it survives) gets one accurate topic or
-  is deleted with its code.
+  it). Orphaned topics enter `SUMMARY.md`; each surviving undocumented feature (ListView,
+  seeker, passthrough, `#[command]` if it survives) gets one accurate topic or is deleted
+  with its code.
 - **A stability statement exists**: which surfaces are contract (the blessed idioms; the
   structural shape of each `--output` mode's bytes), which are internal. The
   machine-readable schema contract is parity-program scope; the policy that a contract
@@ -151,8 +162,11 @@ documentation.
 
 **1. The choosing.** A short ADR round settles the blessed set, from three inputs: the
 census above, the scorecard's ranked friction themes, and a capability → path map
-(which capability does each of the 9 registration / 9 template / 5+7 theme paths uniquely
-expose? — stateful struct handlers, passthrough, dynamic registration, custom engine).
+(which capability does each of the 7 registration, 2 adaptation/declaration, 9 template
+and 5+7 theme items uniquely expose? — stateful struct handlers, passthrough, dynamic
+registration, custom engine). The map is drawn per axis: a complete idiom is one item
+from each of registration, adaptation and declaration, and a layer is only deletable
+when another item on the *same* axis covers its capability.
 Each surviving secondary path gets its one-line reason; the map is what prevents a
 deletion from stranding a capability.
 

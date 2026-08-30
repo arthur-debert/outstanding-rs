@@ -47,12 +47,19 @@ Each seam is one bounded change with its own acceptance test; none introduces a 
 concept beyond the seam itself.
 
 - **Output mode is app-selectable** (#356): `AppBuilder` gains the configured fallback
-  ROB04 stubbed — the mode used when the flag is absent — and an app-side override that
-  wins over the flag only when the app says so (env-driven color policy is the use
-  case). Appending the app's own `--output` to the user's argv is no longer the way.
+  ROB04 stubbed — the mode used when the flag is absent. Precedence stays the ROB04
+  composition contract, `flag > later config > App fallback`: an explicit `--output`
+  always wins, which is what systemdlike's suite asserts (`--output text`/`term`
+  outranks `SYSTEMDLIKE_COLORS`, `NO_COLOR` and detection). The env-driven case the
+  pilot hit is a fallback computed by the app at build time, not an override; forcing
+  color regardless of mode is the color-policy axis (terminal citizenship), with its
+  own precedence contract. Appending the app's own `--output` to the user's argv is
+  no longer the way.
 - **An app-owned status and diagnostic** (#357): a handler can return a domain error
-  carrying an exit status (any `u8`, not 0/1/2) and a verbatim stderr payload, and the
-  framework emits exactly that — no framing, no doubled prefix. `ExternalFailure` keeps
+  carrying an exit status (any nonzero `u8`, not only 1/2) and a verbatim stderr
+  payload, and the framework emits exactly that — no framing, no doubled prefix. Zero is
+  rejected at construction, as `ExternalFailure::new` already does, and a test proves
+  it: a domain error can never report shell success. `ExternalFailure` keeps
   its documented meaning (another process owns the contract). The human-mode form is
   this epic's; the machine-mode form (structured error envelope) stays with the parity
   machine contract, which versions the envelope this seam will feed.
@@ -90,8 +97,8 @@ concept beyond the seam itself.
 
 Three thin workstreams, grouped by crate so each touches one seam family:
 
-1. **Dispatch seams** — #356, #357, #353, #352: `AppBuilder` output-mode fallback and
-   override; the exit-status + payload error form and its single emission point; hook
+1. **Dispatch seams** — #356, #357, #353, #352: `AppBuilder` output-mode fallback; the
+   exit-status + payload error form and its single emission point; hook
    matches and ordering rule.
 2. **Questionnaire seams** — #354, #351: confirmation configuration; the sheet-format
    seam in `standout-input`.
@@ -107,8 +114,8 @@ failing invocation and asserts the specified bytes/status.
   error *model*, stop and hand the item to PAR02.
 - **#351 growing into a second questionnaire system.** The seam is "parse these bytes
   into answers"; the review flow, fingerprinting and derived structs stay as they are.
-- **#356 reopening ADR-0018.** The app-side override sets the fallback and, at most,
-  a builder-declared precedence; it does not re-parse argv.
+- **#356 reopening ADR-0018.** The seam sets the fallback and nothing else: no
+  builder-declared precedence, no argv re-parse, no path for the app to beat the flag.
 
 ## Cross-Cutting Concerns
 
