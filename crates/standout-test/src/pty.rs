@@ -9,6 +9,8 @@ pub fn open_pair() -> io::Result<(OwnedFd, OwnedFd)> {
         ws_xpixel: 0,
         ws_ypixel: 0,
     };
+    // SAFETY: out-params are valid pointers to locals we own; name/termios
+    // args are documented to accept null.
     let rc = unsafe {
         libc::openpty(
             &mut master,
@@ -21,7 +23,11 @@ pub fn open_pair() -> io::Result<(OwnedFd, OwnedFd)> {
     if rc != 0 {
         return Err(io::Error::last_os_error());
     }
+    // SAFETY: on success both fds are freshly opened and unowned; these
+    // OwnedFds become their sole owners.
     let (master, slave) = unsafe { (OwnedFd::from_raw_fd(master), OwnedFd::from_raw_fd(slave)) };
+    // SAFETY: `slave` is a valid, owned fd for the lifetime of this block;
+    // `termios` is a valid out/in-param for tcgetattr/tcsetattr.
     unsafe {
         let mut termios: libc::termios = std::mem::zeroed();
         let rc = libc::tcgetattr(slave.as_raw_fd(), &mut termios);

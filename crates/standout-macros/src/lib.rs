@@ -1,6 +1,6 @@
 //! Proc macros for Standout: compile-time resource embedding, dispatch
 //! configuration, tabular/seeker/questionnaire derives, and handler/command
-//! attribute macros. See each macro's rustdoc for usage.
+//! attribute macros.
 
 mod command;
 mod dispatch;

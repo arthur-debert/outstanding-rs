@@ -73,6 +73,8 @@ impl fmt::Debug for Extensions {
     }
 }
 impl Clone for Extensions {
+    // Cloning always yields an empty container: `Box<dyn Any>` isn't `Clone`,
+    // so injected values are dropped rather than copied.
     fn clone(&self) -> Self {
         Self::new()
     }
@@ -317,6 +319,8 @@ pub struct RunError {
     source: Option<Arc<dyn std::error::Error + Send + Sync + 'static>>,
 }
 impl RunError {
+    // Panics if `kind` is `RunErrorKind::External`; construct those via
+    // `ExternalFailure` instead so status and diagnostic stay consistent.
     pub fn new(message: impl Into<String>, kind: RunErrorKind) -> Self {
         assert!(
             kind != RunErrorKind::External,

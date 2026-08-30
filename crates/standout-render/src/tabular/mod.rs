@@ -9,9 +9,9 @@
 //! for dynamic widths, CSV export, or specs that extract data from structs.
 //!
 //! Column widths: [`Width::Fixed`] (exact), [`Width::Bounded`] (auto-sized
-//! within bounds from content), [`Width::Fill`] (one per table, takes the
-//! remaining space). Truncation: [`TruncateAt::End`], [`TruncateAt::Start`],
-//! [`TruncateAt::Middle`] (keeps both ends, useful for paths).
+//! within bounds from content), [`Width::Fill`] (one or more per table,
+//! sharing the remaining space by weight). Truncation: [`TruncateAt::End`],
+//! [`TruncateAt::Start`], [`TruncateAt::Middle`] (keeps both ends, useful for paths).
 //!
 //! Semantic style tags do not consume display width — truncation and
 //! wrapping preserve styles on retained text and emit balanced tags, so a

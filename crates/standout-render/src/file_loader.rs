@@ -6,7 +6,7 @@
 //! resolves as `"report/summary"`). Extensions are matched against a
 //! priority-ordered list; when several files share a base name, the
 //! extension earlier in the list wins for extensionless lookups. Lookups
-//! are also extension-agnostic in the other direction: an unrecognized
+//! are also extension-agnostic in the other direction: a recognized
 //! suffix on a lookup name is stripped and retried against the base name,
 //! so `get("config.j2")` can resolve to a file registered as `"config"`.
 //!
