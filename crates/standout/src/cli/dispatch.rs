@@ -248,8 +248,6 @@ fn run_post_dispatch_hooks(
     }
 }
 
-// The handler diagnostic framing: one `Error: ` in front of the error's own
-// `Display`, shared by handler and hook failures.
 fn frame_diagnostic(error: &dyn std::fmt::Display) -> String {
     format!("Error: {}", error)
 }

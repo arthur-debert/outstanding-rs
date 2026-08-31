@@ -13,8 +13,6 @@ use standout_test::{serial, TestHarness};
 
 const TEMPLATES: &[(&str, &str)] = &[("status", "unit {{ unit }} is {{ state }}")];
 
-// The app decides the mode used when `--output` is absent.
-
 fn systemdlike(fallback: OutputMode) -> App {
     App::builder()
         .templates(EmbeddedTemplates::new(TEMPLATES, ""))
@@ -103,8 +101,6 @@ fn both_help_spellings_render_in_the_app_fallback_mode() {
         default_app.stdout()
     );
 }
-
-// A domain error owning both its exit status and its exact stderr line.
 
 fn app_owned_failure_app(status: u8, diagnostic: &'static str) -> App {
     App::builder()
@@ -200,8 +196,6 @@ fn a_pre_dispatch_guard_reaches_the_same_app_owned_seam() {
     result.assert_stderr_eq("ghlike: not authenticated\n");
 }
 
-// A hook diagnostic is framed once, not twice.
-
 #[test]
 #[serial]
 fn a_hook_diagnostic_is_framed_once() {
@@ -237,8 +231,6 @@ fn a_hook_diagnostic_is_framed_once() {
          Validation failed: answers required\n",
     );
 }
-
-// A hook reads the subcommand's own flags.
 
 #[test]
 #[serial]

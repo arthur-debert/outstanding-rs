@@ -366,8 +366,6 @@ pub struct RunError {
     source: Option<Arc<dyn std::error::Error + Send + Sync + 'static>>,
 }
 impl RunError {
-    // Panics on the two verbatim kinds; construct those from `ExternalFailure`
-    // or `AppFailure` instead so status and diagnostic stay consistent.
     pub fn new(message: impl Into<String>, kind: RunErrorKind) -> Self {
         assert!(
             kind != RunErrorKind::External,
@@ -407,8 +405,8 @@ impl RunError {
     pub fn into_string(self) -> String {
         self.message
     }
-    // The two owner-declared kinds: their message is a stderr payload the owner
-    // wrote, so the shell adapter writes it as-is with no framing and no newline.
+    // The message is a stderr payload its owner wrote: the shell adapter emits
+    // it as-is, with no `Error: ` framing and no trailing newline.
     pub const fn writes_diagnostic_verbatim(&self) -> bool {
         matches!(self.kind, RunErrorKind::External | RunErrorKind::App)
     }
