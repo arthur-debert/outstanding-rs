@@ -1,0 +1,489 @@
+# Acceptance suite for the `kubelike` archetype. Format: corpus/README.md.
+# Written spec-first, before any implementation exists (ROB07-WS03b).
+schema = 1
+archetype = "kubelike"
+
+# --- kind registry as dispatch data ------------------------------------------
+
+[[case]]
+name = "get-pods-default-namespace"
+group = "kind-registry"
+stresses = "the verb resolves a kind named as an argument and renders its column set"
+expected = "pass"
+[case.run]
+argv = ["get", "pods"]
+timeout_seconds = 10
+[case.expect]
+exit_code = 0
+stdout = "NAME  READY STATUS  RESTARTS\nweb-1 1/1   Running 0\nweb-2 1/1   Running 2\ndb-0  1/1   Running 0\n"
+stderr = ""
+
+[[case]]
+name = "short-alias-is-the-same-command"
+group = "kind-registry"
+stresses = "a kind's short alias resolves to the same handler and the same bytes as its plural name"
+expected = "pass"
+[case.run]
+argv = ["get", "po"]
+timeout_seconds = 10
+[case.expect]
+exit_code = 0
+stdout = "NAME  READY STATUS  RESTARTS\nweb-1 1/1   Running 0\nweb-2 1/1   Running 2\ndb-0  1/1   Running 0\n"
+stderr = ""
+
+[[case]]
+name = "get-named-resource"
+group = "kind-registry"
+stresses = "a name positional after the kind argument narrows the listing to one row"
+expected = "pass"
+[case.run]
+argv = ["get", "pod", "web-1"]
+timeout_seconds = 10
+[case.expect]
+exit_code = 0
+stdout = "NAME  READY STATUS  RESTARTS\nweb-1 1/1   Running 0\n"
+stderr = ""
+
+[[case]]
+name = "named-resource-absent-is-a-domain-error"
+group = "kind-registry"
+stresses = "an absent name exits 1 with stdout untouched and the namespace in the message"
+expected = "pass"
+[case.run]
+argv = ["get", "pods", "nope"]
+timeout_seconds = 10
+[case.expect]
+exit_code = 1
+stdout = ""
+stderr = "kubelike: pods \"nope\" not found in namespace \"default\"\n"
+
+[[case]]
+name = "unknown-kind-is-a-domain-error"
+group = "kind-registry"
+stresses = "a kind outside the registry is a runtime lookup failure (exit 1), not a usage error"
+expected = "pass"
+[case.run]
+argv = ["get", "widgets"]
+timeout_seconds = 10
+[case.expect]
+exit_code = 1
+stdout = ""
+stderr = "kubelike: the server doesn't have a resource type \"widgets\"\n"
+
+[[case]]
+name = "api-resources-prints-the-registry"
+group = "kind-registry"
+stresses = "the registry that drives dispatch is itself printable data"
+expected = "pass"
+[case.run]
+argv = ["api-resources"]
+timeout_seconds = 10
+[case.expect]
+exit_code = 0
+stdout = "NAME     SHORTNAMES NAMESPACED KIND\npods     po         true       Pod\nservices svc        true       Service\nnodes    no         false      Node\n"
+stderr = ""
+
+[[case]]
+name = "describe-pod-detail-block"
+group = "kind-registry"
+stresses = "a second verb over the same registry renders a key-padded detail block"
+expected = "pass"
+[case.run]
+argv = ["describe", "pod", "web-1"]
+timeout_seconds = 10
+[case.expect]
+exit_code = 0
+stdout = "Name:      web-1\nNamespace: default\nNode:      node-a\nStatus:    Running\nRestarts:  0\nLabels:    app=web\n"
+stderr = ""
+
+[[case]]
+name = "describe-node-has-its-own-key-set"
+group = "kind-registry"
+stresses = "the same verb over a different kind emits a different key set and repads to it"
+expected = "pass"
+[case.run]
+argv = ["describe", "node", "node-a"]
+timeout_seconds = 10
+[case.expect]
+exit_code = 0
+stdout = "Name:    node-a\nStatus:  Ready\nRole:    control-plane\nVersion: v1.0.0\n"
+stderr = ""
+
+# --- registry metadata decides which flags are legal --------------------------
+
+[[case]]
+name = "get-nodes-is-cluster-scoped"
+group = "scope-metadata"
+stresses = "a cluster-scoped kind lists without any namespace being resolved"
+expected = "pass"
+[case.run]
+argv = ["get", "nodes"]
+timeout_seconds = 10
+[case.expect]
+exit_code = 0
+stdout = "NAME   STATUS ROLE          VERSION\nnode-a Ready  control-plane v1.0.0\nnode-b Ready  worker        v1.0.0\n"
+stderr = ""
+
+[[case]]
+name = "namespace-flag-refused-on-cluster-scoped-kind"
+group = "scope-metadata"
+stresses = "-n is a usage error when the kind argument resolves to a cluster-scoped kind"
+expected = "pass"
+[case.run]
+argv = ["get", "nodes", "-n", "default"]
+timeout_seconds = 10
+[case.expect]
+exit_code = 2
+stdout = ""
+stderr_contains = ["nodes", "not a namespaced resource"]
+
+[[case]]
+name = "all-namespaces-refused-on-cluster-scoped-kind"
+group = "scope-metadata"
+stresses = "the same refusal for -A: flag validity comes from data, not from the command tree"
+expected = "pass"
+[case.run]
+argv = ["get", "nodes", "-A"]
+timeout_seconds = 10
+[case.expect]
+exit_code = 2
+stdout = ""
+stderr_contains = ["nodes", "not a namespaced resource"]
+
+[[case]]
+name = "all-namespaces-adds-a-leading-column"
+group = "scope-metadata"
+stresses = "-A widens the scope and the column set, and widths are computed over the wider rows"
+expected = "pass"
+[case.run]
+argv = ["get", "pods", "-A"]
+timeout_seconds = 10
+[case.expect]
+exit_code = 0
+stdout = "NAMESPACE   NAME  READY STATUS  RESTARTS\ndefault     web-1 1/1   Running 0\ndefault     web-2 1/1   Running 2\ndefault     db-0  1/1   Running 0\nkube-system dns-1 1/1   Running 0\n"
+stderr = ""
+
+# --- the ambient namespace and its overrides ---------------------------------
+
+[[case]]
+name = "namespace-flag-selects"
+group = "namespace-resolution"
+stresses = "-n selects the scope with nothing else in play"
+expected = "pass"
+[case.run]
+argv = ["get", "pods", "-n", "kube-system"]
+timeout_seconds = 10
+[case.expect]
+exit_code = 0
+stdout = "NAME  READY STATUS  RESTARTS\ndns-1 1/1   Running 0\n"
+stderr = ""
+
+[[case]]
+name = "flag-beats-env-namespace"
+group = "namespace-resolution"
+stresses = "the per-invocation flag outranks the ambient environment variable"
+expected = "pass"
+[case.run]
+argv = ["get", "pods", "-n", "default"]
+env = { KUBELIKE_NAMESPACE = "kube-system" }
+timeout_seconds = 10
+[case.expect]
+exit_code = 0
+stdout = "NAME  READY STATUS  RESTARTS\nweb-1 1/1   Running 0\nweb-2 1/1   Running 2\ndb-0  1/1   Running 0\n"
+stderr = ""
+
+[[case]]
+name = "kubeconfig-namespace-is-the-ambient-default"
+group = "namespace-resolution"
+stresses = "with no flag and no variable, the kubeconfig's recorded namespace is the scope"
+expected = "pass"
+[case.run]
+argv = ["get", "pods"]
+timeout_seconds = 10
+[case.run.files]
+".kubelike/config" = "current-context: staging\nnamespace: kube-system\n"
+[case.expect]
+exit_code = 0
+stdout = "NAME  READY STATUS  RESTARTS\ndns-1 1/1   Running 0\n"
+stderr = ""
+
+[[case]]
+name = "env-namespace-beats-kubeconfig"
+group = "namespace-resolution"
+stresses = "the variable outranks the file: the whole chain is flag > env > file > built-in"
+expected = "pass"
+[case.run]
+argv = ["get", "pods"]
+env = { KUBELIKE_NAMESPACE = "default" }
+timeout_seconds = 10
+[case.run.files]
+".kubelike/config" = "current-context: staging\nnamespace: kube-system\n"
+[case.expect]
+exit_code = 0
+stdout = "NAME  READY STATUS  RESTARTS\nweb-1 1/1   Running 0\nweb-2 1/1   Running 2\ndb-0  1/1   Running 0\n"
+stderr = ""
+
+[[case]]
+name = "kubeconfig-env-path-redirects-the-file"
+group = "namespace-resolution"
+stresses = "KUBECONFIG names which file the ambient default is read from"
+expected = "pass"
+[case.run]
+argv = ["get", "pods"]
+env = { KUBECONFIG = "alt.conf" }
+timeout_seconds = 10
+[case.run.files]
+"alt.conf" = "current-context: alt\nnamespace: kube-system\n"
+".kubelike/config" = "current-context: staging\nnamespace: default\n"
+[case.expect]
+exit_code = 0
+stdout = "NAME  READY STATUS  RESTARTS\ndns-1 1/1   Running 0\n"
+stderr = ""
+
+[[case]]
+name = "current-context-reads-the-kubeconfig"
+group = "namespace-resolution"
+stresses = "the config subcommand reports the recorded context"
+expected = "pass"
+[case.run]
+argv = ["config", "current-context"]
+timeout_seconds = 10
+[case.run.files]
+".kubelike/config" = "current-context: staging\nnamespace: kube-system\n"
+[case.expect]
+exit_code = 0
+stdout = "staging\n"
+stderr = ""
+
+[[case]]
+name = "current-context-without-a-kubeconfig"
+group = "namespace-resolution"
+stresses = "a missing file is a fall-through for the namespace but a domain error for the context"
+expected = "pass"
+[case.run]
+argv = ["config", "current-context"]
+timeout_seconds = 10
+[case.expect]
+exit_code = 1
+stdout = ""
+stderr = "kubelike: no current context set\n"
+
+# --- the -o format vocabulary ------------------------------------------------
+
+[[case]]
+name = "wide-adds-a-column-to-the-same-rows"
+group = "output-formats"
+stresses = "a human-side format variant: same rows, wider column set, widths repadded"
+expected = "pass"
+[case.run]
+argv = ["get", "pods", "-o", "wide"]
+timeout_seconds = 10
+[case.expect]
+exit_code = 0
+stdout = "NAME  READY STATUS  RESTARTS NODE\nweb-1 1/1   Running 0        node-a\nweb-2 1/1   Running 2        node-b\ndb-0  1/1   Running 0        node-a\n"
+stderr = ""
+
+[[case]]
+name = "name-format-is-pipe-shaped"
+group = "output-formats"
+stresses = "the identifier-only format: singular kind, no header, nothing framing it"
+expected = "pass"
+[case.run]
+argv = ["get", "pods", "-o", "name"]
+timeout_seconds = 10
+[case.expect]
+exit_code = 0
+stdout = "pod/web-1\npod/web-2\npod/db-0\n"
+stderr = ""
+
+[[case]]
+name = "app-format-flag-composes-with-the-global-output-flag"
+group = "output-formats"
+stresses = "-o and --output are different flags on one command line; the render mode does not disturb -o name bytes"
+expected = "pass"
+[case.run]
+argv = ["get", "pods", "-o", "name", "--output", "text"]
+timeout_seconds = 10
+[case.expect]
+exit_code = 0
+stdout = "pod/web-1\npod/web-2\npod/db-0\n"
+stderr = ""
+
+[[case]]
+name = "json-list-is-typed-and-complete"
+group = "output-formats"
+stresses = "every field ships regardless of the table format, with restarts a number and labels an object"
+expected = "pass"
+[case.run]
+argv = ["get", "pods", "-o", "json"]
+timeout_seconds = 10
+[case.expect]
+exit_code = 0
+stdout_json = '{"items":[{"kind":"Pod","namespace":"default","name":"web-1","ready":"1/1","status":"Running","restarts":0,"node":"node-a","labels":{"app":"web"}},{"kind":"Pod","namespace":"default","name":"web-2","ready":"1/1","status":"Running","restarts":2,"node":"node-b","labels":{"app":"web"}},{"kind":"Pod","namespace":"default","name":"db-0","ready":"1/1","status":"Running","restarts":0,"node":"node-a","labels":{"app":"db"}}]}'
+stderr = ""
+
+[[case]]
+name = "json-named-get-is-a-bare-object"
+group = "output-formats"
+stresses = "naming one resource changes the JSON envelope, not the object"
+expected = "pass"
+[case.run]
+argv = ["get", "service", "web", "-o", "json"]
+timeout_seconds = 10
+[case.expect]
+exit_code = 0
+stdout_json = '{"kind":"Service","namespace":"default","name":"web","type":"ClusterIP","clusterIP":"10.0.0.10","port":"80/TCP","selector":{"app":"web"}}'
+stderr = ""
+
+[[case]]
+name = "json-is-pure-on-an-attended-terminal"
+group = "output-formats"
+stresses = "an attended color-capable terminal must not tempt styling or prose into the machine stream"
+expected = "pass"
+[case.run]
+argv = ["get", "nodes", "-o", "json"]
+tty = ["stdout"]
+timeout_seconds = 10
+[case.expect]
+exit_code = 0
+stdout_json = '{"items":[{"kind":"Node","name":"node-a","status":"Ready","role":"control-plane","version":"v1.0.0"},{"kind":"Node","name":"node-b","status":"Ready","role":"worker","version":"v1.0.0"}]}'
+stdout_not_contains = ["\u001b["]
+
+[[case]]
+name = "custom-columns-chooses-columns-and-headers"
+group = "output-formats"
+stresses = "the caller picks the column set and its headers at run time; the layout rule is unchanged"
+expected = "pass"
+[case.run]
+argv = ["get", "pods", "-o", "custom-columns=NAME:name,NODE:node"]
+timeout_seconds = 10
+[case.expect]
+exit_code = 0
+stdout = "NAME  NODE\nweb-1 node-a\nweb-2 node-b\ndb-0  node-a\n"
+stderr = ""
+
+[[case]]
+name = "custom-columns-unknown-field-lists-valid-ones"
+group = "output-formats"
+stresses = "a caller-chosen column set is validated against the kind's field vocabulary, stdout stays empty"
+expected = "pass"
+[case.run]
+argv = ["get", "pods", "-o", "custom-columns=NAME:name,BOGUS:bogus"]
+timeout_seconds = 10
+[case.expect]
+exit_code = 1
+stdout = ""
+stderr_contains = ["bogus", "pods", "restarts"]
+
+# --- selection and the empty set ---------------------------------------------
+
+[[case]]
+name = "selector-filters-and-recomputes-widths"
+group = "selection-and-empty"
+stresses = "label selection changes both which rows render and the geometry computed over them"
+expected = "pass"
+[case.run]
+argv = ["get", "pods", "-l", "app=db"]
+timeout_seconds = 10
+[case.expect]
+exit_code = 0
+stdout = "NAME READY STATUS  RESTARTS\ndb-0 1/1   Running 0\n"
+stderr = ""
+
+[[case]]
+name = "empty-result-is-not-an-error"
+group = "selection-and-empty"
+stresses = "a listing that matched nothing exits 0 with the explanation on stderr, not stdout"
+expected = "pass"
+[case.run]
+argv = ["get", "pods", "-n", "staging"]
+timeout_seconds = 10
+[case.expect]
+exit_code = 0
+stdout = ""
+stderr = "No resources found in staging namespace.\n"
+
+[[case]]
+name = "empty-result-in-json-is-an-empty-list"
+group = "selection-and-empty"
+stresses = "the same empty set under a machine format is a container on stdout and silence on stderr"
+expected = "pass"
+[case.run]
+argv = ["get", "pods", "-n", "staging", "-o", "json"]
+timeout_seconds = 10
+[case.expect]
+exit_code = 0
+stdout_json = '{"items":[]}'
+stderr = ""
+
+[[case]]
+name = "empty-result-across-all-namespaces"
+group = "selection-and-empty"
+stresses = "the empty-set message names the scope it searched, and -A has no namespace to name"
+expected = "pass"
+[case.run]
+argv = ["get", "pods", "-A", "-l", "app=none"]
+timeout_seconds = 10
+[case.expect]
+exit_code = 0
+stdout = ""
+stderr = "No resources found.\n"
+
+# --- heterogeneous collections ------------------------------------------------
+
+[[case]]
+name = "multi-kind-get-renders-one-block-per-kind"
+group = "heterogeneous"
+stresses = "two column sets in one invocation, in the order asked, separated by a blank line"
+expected = "pass"
+[case.run]
+argv = ["get", "pods,services"]
+timeout_seconds = 10
+[case.expect]
+exit_code = 0
+stdout = "NAME  READY STATUS  RESTARTS\nweb-1 1/1   Running 0\nweb-2 1/1   Running 2\ndb-0  1/1   Running 0\n\nNAME TYPE      CLUSTER-IP PORT\nweb  ClusterIP 10.0.0.10  80/TCP\n"
+stderr = ""
+
+[[case]]
+name = "multi-kind-json-is-one-list-of-mixed-shapes"
+group = "heterogeneous"
+stresses = "the machine form of a heterogeneous collection is one list whose elements differ in shape"
+expected = "pass"
+[case.run]
+argv = ["get", "pods,services", "-n", "kube-system", "-o", "json"]
+timeout_seconds = 10
+[case.expect]
+exit_code = 0
+stdout_json = '{"items":[{"kind":"Pod","namespace":"kube-system","name":"dns-1","ready":"1/1","status":"Running","restarts":0,"node":"node-a","labels":{"app":"dns"}},{"kind":"Service","namespace":"kube-system","name":"dns","type":"ClusterIP","clusterIP":"10.0.0.53","port":"53/UDP","selector":{"app":"dns"}}]}'
+stderr = ""
+
+# --- ROB01 invariant matrix --------------------------------------------------
+# Read-only commands the runner sweeps across output modes (text/term/json),
+# piped. Failures here are framework findings by default.
+
+[invariants]
+modes = ["text", "term", "json"]
+colors = ["off", "on"]
+
+[[invariants.theme]]
+name = "application"
+
+[[invariants.command]]
+argv = ["get", "pods"]
+contract = "rendered"
+
+[[invariants.command]]
+argv = ["get", "nodes"]
+contract = "rendered"
+
+[[invariants.command]]
+argv = ["describe", "pod", "web-1"]
+contract = "rendered"
+
+[[invariants.command]]
+argv = ["api-resources"]
+contract = "rendered"
+
+[[invariants.command]]
+argv = ["get", "pods", "-o", "name"]
+contract = "opaque-bytes"

@@ -1,0 +1,109 @@
+# Feature/interaction manifest for `kubelike`. Format: corpus/README.md.
+#
+# Authored spec-first (ROB07-WS03b). The C3 sketch from the 2026-08-16 survey
+# was never committed, so the interactions below are chosen rather than
+# recovered; `spec.md` says so in its own words and names what it stresses.
+# They are chosen to avoid the axes the parity Specs already assign elsewhere:
+# config *merge* rules to C1/C6/C7, a schema-versioned machine surface to C11
+# brewlike, the reporter/quiet matrix to C10 pnpmlike, expression templating to
+# C9 jjlike.
+
+[archetype]
+name = "kubelike"
+survey = "C3"
+summary = "verb-over-resource-kind dispatch: kinds as data with aliases and scope metadata, an -o format vocabulary wider than a render mode, heterogeneous listings"
+status = "in-capability"
+
+[features]
+used = [
+    "dispatch.subcommands",
+    "dispatch.handler-macro",
+    "app-configuration",
+    "tabular.column-formatting",
+    "output-modes.structured-json",
+    "output-modes.auto-degradation",
+    "templates",
+    "error-handling.exit-codes",
+]
+
+[[interactions]]
+id = "kind-argument-vs-dispatch"
+stresses = ["runtime kind resolution", "plural/singular/short aliases", "positionals behind a data-resolved argument", "domain-error routing"]
+description = "ghlike's transpose: two verbs over a registry of kinds reached as an argument, where the alias forms must land on one handler and a name positional means something different per kind. An unknown kind is a lookup failure at exit 1, not a parser failure at exit 2 — the split every registry-shaped CLI has to draw by hand."
+cases = [
+    "get-pods-default-namespace",
+    "short-alias-is-the-same-command",
+    "get-named-resource",
+    "named-resource-absent-is-a-domain-error",
+    "unknown-kind-is-a-domain-error",
+    "api-resources-prints-the-registry",
+    "describe-pod-detail-block",
+    "describe-node-has-its-own-key-set",
+]
+
+[[interactions]]
+id = "scope-metadata-vs-flag-validity"
+stresses = ["registry metadata read at run time", "flag acceptance per invocation", "usage-error policy", "scope-driven column set"]
+description = "Whether -n and -A are legal depends on a property of the kind the argument resolved to, so the same flag on the same verb is accepted or refused by data. Frameworks validate arguments against a static command tree; this is the shape where that is not enough."
+cases = [
+    "get-nodes-is-cluster-scoped",
+    "namespace-flag-refused-on-cluster-scoped-kind",
+    "all-namespaces-refused-on-cluster-scoped-kind",
+    "all-namespaces-adds-a-leading-column",
+]
+
+[[interactions]]
+id = "ambient-default-vs-invocation"
+stresses = ["config-file default", "environment variable", "per-invocation flag", "missing-file fall-through"]
+description = "One ambient selector (the namespace) resolved from four sources in a fixed order, where the same missing file is a silent fall-through for one command and a domain error for another. Deliberately one file and one chain: layer *merge* semantics are C1/C6/C7's triangulation, and duplicating them here would buy no signal."
+cases = [
+    "namespace-flag-selects",
+    "flag-beats-env-namespace",
+    "kubeconfig-namespace-is-the-ambient-default",
+    "env-namespace-beats-kubeconfig",
+    "kubeconfig-env-path-redirects-the-file",
+    "current-context-reads-the-kubeconfig",
+    "current-context-without-a-kubeconfig",
+]
+
+[[interactions]]
+id = "format-vocabulary-vs-render-mode"
+stresses = ["an app-owned format flag", "the framework-owned --output flag", "tabular column sets", "structured-output purity on a TTY"]
+description = "The app's -o vocabulary (wide, name, json, custom-columns) is wider than any render-mode enum and must coexist with --output on the same command line rather than being folded into it. -o name is the pipe surface: byte-identical whatever the mode or terminal says."
+cases = [
+    "wide-adds-a-column-to-the-same-rows",
+    "name-format-is-pipe-shaped",
+    "app-format-flag-composes-with-the-global-output-flag",
+    "json-list-is-typed-and-complete",
+    "json-named-get-is-a-bare-object",
+    "json-is-pure-on-an-attended-terminal",
+]
+
+[[interactions]]
+id = "caller-chosen-columns-vs-layout"
+stresses = ["runtime column selection", "tabular layout over an unplanned column set", "field-vocabulary validation", "stream separation"]
+description = "custom-columns hands the column set and its headers to the caller, so the layout engine pads a set nobody declared at build time and rejection has to name a field vocabulary the code never enumerated in a signature. Expression templating stays out on purpose — that is jjlike's gap, not this archetype's."
+cases = [
+    "custom-columns-chooses-columns-and-headers",
+    "custom-columns-unknown-field-lists-valid-ones",
+]
+
+[[interactions]]
+id = "empty-set-vs-format"
+stresses = ["empty-collection rendering", "exit-code mapping", "stream separation", "label selection"]
+description = "Matching nothing is success, and what success looks like differs per format: prose on stderr for the human forms, an empty container on stdout for the machine one, stdout untouched either way. A framework that renders a collection through one path has one place to get all of that wrong."
+cases = [
+    "selector-filters-and-recomputes-widths",
+    "empty-result-is-not-an-error",
+    "empty-result-in-json-is-an-empty-list",
+    "empty-result-across-all-namespaces",
+]
+
+[[interactions]]
+id = "heterogeneous-collection-vs-render"
+stresses = ["multi-kind listing in one invocation", "per-kind column sets", "one structured envelope over mixed shapes"]
+description = "Every other roster archetype renders a homogeneous collection. Here one invocation renders two column sets in sequence and one JSON list whose elements do not share a shape — the case where a typed render pipeline has to carry a sum, not a vector of one type."
+cases = [
+    "multi-kind-get-renders-one-block-per-kind",
+    "multi-kind-json-is-one-list-of-mixed-shapes",
+]
