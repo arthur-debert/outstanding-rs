@@ -789,9 +789,12 @@ with database connections, file caches, or in-memory indices. Wrap the
 closure in `FnHandler::new` so it implements `Handler`:
 
 ```rust
+use std::collections::HashMap;
+
 use clap::ArgMatches;
 use standout::cli::{App, CommandContext, FnHandler, Output};
 use standout::embed_templates;
+use uuid::Uuid;
 
 struct PadStore {
     index: HashMap<Uuid, Metadata>,

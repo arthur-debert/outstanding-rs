@@ -82,8 +82,16 @@ Use the `Dispatch` derive macro to connect commands to typed handler adapters.
 ```rust
 use standout::cli::{CommandContext, Dispatch, Output};
 use standout::handler;
-use clap::Subcommand;
+use clap::{Parser, Subcommand};
 use serde::Serialize;
+use todo_core::{Todo, TodoFilter, TodoStore};
+
+#[derive(Parser)]
+#[command(name = "myapp")]
+pub struct Cli {
+    #[command(subcommand)]
+    pub command: Commands,
+}
 
 #[derive(Subcommand, Dispatch)]
 #[dispatch(handlers = handlers)]  // handlers are in the `handlers` module
@@ -105,7 +113,7 @@ mod handlers {
     #[handler]
     pub fn list(#[ctx] ctx: &CommandContext) -> Result<Output<TodoResult>, anyhow::Error> {
         let core = ctx.app_state.get_required::<TodoStore>()?;
-        Ok(Output::Render(TodoResult::from(core.list(TodoFilter::Pending))))
+        Ok(Output::Render(TodoResult { todos: core.list(TodoFilter::Pending) }))
     }
 
     #[handler]
@@ -114,7 +122,7 @@ mod handlers {
         #[ctx] ctx: &CommandContext,
     ) -> Result<Output<TodoResult>, anyhow::Error> {
         let core = ctx.app_state.get_required::<TodoStore>()?;
-        Ok(Output::Render(TodoResult::from(vec![core.add(title)?])))
+        Ok(Output::Render(TodoResult { todos: vec![core.add(title)?] }))
     }
 }
 ```
@@ -140,8 +148,10 @@ Templates use MiniJinja with semantic style tags. Styles are defined separately 
 ### 3. Wire It Up
 
 ```rust
+use clap::CommandFactory;
 use standout::cli::App;
 use standout::{embed_templates, embed_styles};
+use todo_core::TodoStore;
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let store = TodoStore::load("todos.json")?;
