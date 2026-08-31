@@ -7,20 +7,20 @@
 ## 9.0.0 - 2026-08-31
 
 The robustness program's one deliberate compatibility break, shipped as a single major
-version. Standout now offers one blessed way to do each thing — register a command,
-provide a template, provide a theme, enter the framework, observe a run in a test — and
-the near-equivalent paths beside each of them are deleted rather than deprecated. There
-is no shim and no fallback: every removal below names the surviving item that replaces
-it, and porting is a source edit.
+version. Standout now offers one blessed way to do each thing — register a command, provide
+a template, provide a theme, enter the framework, observe a run in a test — and the
+near-equivalent paths beside each of them are deleted rather than deprecated. There is no
+shim and no fallback: every removal below names the surviving item that replaces it, and
+porting is a source edit.
 
-Three of the changes are visible to people who never recompile: `#[derive(Dispatch)]`
-now registers multi-word commands under their kebab-case names, themed help is on by
-default, and `--output=term` through a pipe emits ANSI. Those are the ones to read first.
+Three of the changes are visible to people who never recompile: `#[derive(Dispatch)]` now
+registers multi-word commands under their kebab-case names, themed help is on by default,
+and `--output=term` through a pipe emits ANSI. Those are the ones to read first.
 
 `docs/topics/stability.md` states which surfaces are contract from this release on: the
-blessed idioms, the structural shape of each `--output` mode's bytes, exit statuses, the
-two command-line name mappings, availability of an item through the `standout` crate
-root, and `standout-test`'s assertion API. Everything else is internal.
+blessed idioms, the structural shape of each `--output` mode's bytes, exit statuses, the two
+command-line name mappings, availability of an item through the `standout` crate root, and
+`standout-test`'s assertion API. Everything else is internal.
 
 Surface census, 8.1.1 → 9.0.0: `AppBuilder` 35 → 30 public methods, `App` 27 → 14,
 `CommandConfig` 21 → 20, `GroupBuilder` 12 → 8; root re-exports 101 → 83 items, `cli`
@@ -28,314 +28,167 @@ re-exports 46 → 42.
 
 ### Registering commands
 
-The blessed registration is one `#[derive(Subcommand, Dispatch)]` enum, `#[handler]` on
-each handler function, clap-derive for the declaration, and one
-`.commands(Commands::dispatch_config())` call. Three secondary paths survive for
-capabilities nothing else covers: a hand-written `.commands(|g| …)` closure for a command
-set computed at run time, `AppBuilder::command_with` for one command bolted onto a
-derive-registered app, and `AppBuilder::command_passthrough` for a handler that owns its
-own bytes.
-
-- **Command names are kebab-case.** `#[derive(Dispatch)]` registers a variant under the
-  spelling clap's own derive gives the subcommand: `ListUnits` becomes `list-units`.
-  `#[dispatch(name = "…")]` renames one variant, so an app whose clap definition declares
-  `list_units` either renames the subcommand or writes
-  `#[dispatch(name = "list_units")]`. The handler is still looked up under the variant's
-  snake-case name, so `ListUnits` still calls `handlers::list_units`. **This renames
-  every multi-word command a `#[derive(Dispatch)]` app registers** — a shell script or a
-  test that types the old spelling breaks.
-- **A registration no clap subcommand can reach is now an error.** `run`, `dispatch_from`
-  and `App::verify_command` check every registered path against the clap `Command` up
-  front and fail with a message naming the unreachable path, plus the clap spelling when
-  the two differ only in `-` versus `_`. This used to end the run with no output and a
-  `false` return from `App::run`. The check reads canonical names: clap resolves an alias
-  before dispatch sees the command, so a handler registered under an alias (`ls` against
-  `Command::new("list").alias("ls")`) is reachable by neither spelling and is reported —
-  register `list` and both spellings run it. A clap subcommand with no registration is
-  untouched; that is partial adoption and it still hands off as `NoMatch`.
-- **`#[handler]` maps parameter names to clap ids by replacing underscores with hyphens.**
-  A parameter named `no_legend` reads the argument whose id is `no-legend`; clap's derive
-  ids an argument by the field name, which is where the two disagree. A parameter that is
-  a Rust keyword goes through the same rule: `#[handler] fn r#move(#[flag] r#type: bool)`
-  generates `move__handler` and reads the argument id `type`.
-- **The `#[command]` attribute macro is gone**, with its four generated items
-  (`name__handler`, `name__expected_args`, `name__command`, `name__template`). `#[handler]`
-  adapts a function to the dispatch signature; clap-derive declares the `Command`.
-- `AppBuilder::group(name, configure)` → `commands(|g| g.group(name, configure))`.
-- `AppBuilder::command(path, handler, template)` and
-  `AppBuilder::command_handler(path, handler, template)` → `command_with`, plus a registry
-  entry for the template.
-- `AppBuilder::command_handler_with` → `command_with`, which now takes `impl Handler`: a
-  closure or a `#[handler]` fn reaches it through `FnHandler::new(f)`.
-- `GroupBuilder::handler`, `GroupBuilder::handler_with`, `GroupBuilder::len` and
-  `GroupBuilder::is_empty` are gone. A struct handler inside a group registers through
-  `AppBuilder::command_with` with a dotted path.
-- **Handler return shapes differ between the two registration paths, and the docs used to
-  say otherwise.** `#[handler]`'s generated `name__handler` returns the annotated return
-  type verbatim; the `Result<T, E>` → `Output::Render` wrap lives in `Handler::handle`. So
-  `AppBuilder::command_with`, taking an `impl Handler`, accepts `name_Handler` for any
-  return shape, while `GroupBuilder::command_with` — the path `#[derive(Dispatch)]`
-  reaches — takes a closure returning `HandlerResult<T>` and therefore requires the
-  handler to be annotated `-> Result<Output<T>, E>` or `-> Result<(), E>`. A
-  `#[dispatch(pure)]` variant whose handler returns a plain `Result<T, E>` does not
-  compile.
-- `#[dispatch(pure, simple)]` and `#[dispatch(pure, handler = …)]` are rejected at
-  expansion with a message naming both attributes and what each one does, rather than an
-  arity error from inside the expansion — and they are rejected whether written in one
-  `#[dispatch(…)]` or spread over several, since a variant's attributes now merge before
-  anything reads them. A `#[dispatch(name = "…")]` carrying a `.` is rejected too:
-  dispatch splits registration paths on `.`, so such a name registered a nested path no
-  clap subcommand declares.
-- **`#[dispatch(inputs = path)]` is new**: it names a `fn(CommandConfig) -> CommandConfig`
-  that declares the command's `CommandConfig::input` entries. Without it, a command whose
-  value can arrive from an argument, a file or piped stdin had to be registered through
-  the `command_with` escape hatch.
-- **One `standout` dependency now carries the macros.** `#[handler]`, `Questionnaire` and
-  `QuestionnaireChoices` named `standout_dispatch` and `standout_input` in their
-  expansions, so a crate depending on `standout` alone failed to resolve them. Each
-  expansion now names whichever crate the consuming crate declared, read from its
-  manifest, and `standout` re-exports `standout-dispatch` as `standout::dispatch`
-  alongside the existing `standout::input`. The generated `name__handler` and
-  `name__expected_args` items carry their own `#[allow(non_snake_case)]`, so a consumer
-  under `deny(warnings)` compiles clean without an allow of its own.
-- `AppBuilder::default()` is gone. `App::builder()` is the constructor.
+- **Command names are kebab-case.** `ListUnits` now registers as `list-units`; scripts and
+  tests typing the old spelling break. Keep an old name with
+  `#[dispatch(name = "list_units")]`. Mapping rules: `docs/topics/dispatch-attributes.md`.
+- **`#[handler]` reads clap ids with hyphens**: a parameter `no_legend` reads the id
+  `no-legend`. Rename the parameter to the clap field it should read.
+- **A registration no clap subcommand can reach now fails up front**, where `App::run`
+  returned `false` silently. Register the canonical clap name, not an alias:
+  `crates/standout-dispatch/docs/topics/partial-adoption.md`.
+- **`#[dispatch(pure)]` requires `-> Result<Output<T>, E>` or `-> Result<(), E>`**; a plain
+  `Result<T, E>` no longer compiles. Shapes per registration path:
+  `crates/standout-dispatch/docs/topics/handler-contract.md`.
+- **The `#[command]` attribute macro is gone.** Put `#[handler]` on the function and declare
+  the `Command` with clap-derive. `#[dispatch(pure, simple)]`,
+  `#[dispatch(pure, handler = …)]` and a `name` containing `.` are now rejected at
+  expansion: keep one attribute, and spell a nested command with its registration path.
+- **One `standout` dependency now carries the macros.** Delete a direct `standout-dispatch`
+  or `standout-input` dependency added only to resolve `#[handler]` or `Questionnaire`.
+- **New `#[dispatch(inputs = path)]`** names a `fn(CommandConfig) -> CommandConfig`, so a
+  multi-source value no longer needs `command_with`.
+- **Builder renames:** `AppBuilder::default()` → `App::builder()`; `group(name, f)` →
+  `.commands(|g| g.group(name, f))`; `command`, `command_handler` and `command_handler_with`
+  → `command_with` (now taking `impl Handler`) plus a registry entry for the template;
+  `GroupBuilder::handler` and `handler_with` → `AppBuilder::command_with` with a dotted
+  path. `GroupBuilder::len` and `is_empty` are removed with no replacement.
 
 ### Templates
 
-A command's template is a registry entry, named by `CommandConfig::template_name` or by
-the convention — which is now the default `template_name`, resolved by the same registry
-rule: the command path with `.` replaced by `/`, no extension appended (`pr checks list`
-renders `pr/checks/list`).
-
-- `CommandConfig::template(source)`, the `template = "…"` key of `#[dispatch(…)]`, and
-  the inline template source on the recipe types are gone; register the template and name
-  it instead.
-- The `template:` key of `dispatch!` is now `template_name:`.
-- `AppBuilder::template_ext(ext)` is gone. `embed_templates!` and the render registry now
-  agree on one extension list: `.jinja`, `.jinja2`, `.j2`, `.stpl`, `.txt`.
-- `App::run_command`'s fourth parameter is a `TemplateRef` rather than a `&str`.
-- The trailing-newline contract is now stated in `crates/standout-render/docs/topics/templating.md`:
-  the engine consumes exactly one of a template's trailing newlines and the process edge
-  appends exactly one, so a template ending in one newline and a template ending in none
-  produce identical bytes.
+- **Inline template source is gone** — `CommandConfig::template(source)`, the
+  `template = "…"` key, and the recipe types' inline source. Register the template and name
+  it with `template_name`: `crates/standout-render/docs/topics/templating.md`.
+- **Also renamed or removed:** `dispatch!`'s `template:` key is now `template_name:`;
+  `App::run_command`'s fourth parameter is a `TemplateRef`, not a `&str`; and
+  `AppBuilder::template_ext(ext)` is gone — rename the file to `.jinja`, `.jinja2`, `.j2`,
+  `.stpl` or `.txt`.
 
 ### Themes
 
-- `Theme::named(name)` → `Theme::new().with_name(name)`.
-- `Theme::from_file(path)` and `Theme::from_css_file(path)` → `.styles(embed_styles!(…))`
-  or `.styles_dir(path)`, which read both dialects and register the result under a name.
-  `Theme::source_path` and `Theme::refresh` go with them, having had no other producer.
-- `Theme::from_variants(ThemeVariants)` is gone.
-- **`.styles(…)` combined with `.theme(…)` is now a `SetupError` naming both calls.** It
-  used to discard the whole stylesheet registry without a word.
-- **A stylesheet registry with no `.default_theme(name)` now resolves to no application
-  theme**, leaving the framework base. It used to try the names `default`, `theme`, then
-  `base` in turn.
-- `App::get_default_theme` returns `&Theme` rather than `Option<&Theme>`: `build()` always
-  fills the field.
+- **`Theme::from_file`, `from_css_file`, `from_variants`, `source_path` and `refresh` are
+  gone**, and `Theme::named(name)` becomes `Theme::new().with_name(name)`. Use
+  `.styles(embed_styles!(…))` or `.styles_dir(path)`:
+  `crates/standout-render/docs/topics/styling-system.md`.
+- **`.styles(…)` together with `.theme(…)` is now a `SetupError`** naming both calls, where
+  it used to discard the stylesheet registry silently. Drop one of the two.
+- **A stylesheet registry with no `.default_theme(name)` resolves to no application theme.**
+  Add `.default_theme("…")`; the `default`/`theme`/`base` name search is gone.
+- **`App::get_default_theme` returns `&Theme`**, not `Option<&Theme>`. Delete the unwrap.
 
 ### Help
 
-- **Themed help is on by default.** `App::builder()` now starts with help handling on: an
-  application that calls nothing gets standout's templated, themed `--help`, `-h`, and —
-  where the install policy allows it — the `help` word, at the root and at every
-  subcommand. A CLI that never called `.help_handling(true)` used to show clap's page and
-  now shows standout's, so **a downstream test that pins help output goes red with the new
-  page**.
-- `.help_handling(false)` is the opt-out and hands help back to clap, unchanged. Every
-  existing `.help_handling(true)` call can be deleted.
-- **An application that registers its own `help` command stops building until it
-  chooses.** `build()` fails with a `DuplicateCommand` error naming which two claims
-  collided and both remedies — rename the command, or call `.help_handling(false)` and keep
-  the name — and an augmented `clap::Command` with more than one subcommand claiming `help`
-  by name or by alias fails the same way at parse time. This is the flip's only
-  build-breaking case; the rest of the upgrade is changed help bytes.
-- An application that took `-h` for one of its own arguments sees no change and no
-  conflict. `-h` and `--help` reach Standout's page by interception rather than by
-  declaration: clap parses, and a `DisplayHelp` error is caught and rendered. Standout
-  never declares a competing argument.
-- The build-time checks keep their behavior and invert their wording: `command_groups`,
-  topics, and `.help_word(true)` are configurations that cannot be combined with
-  `.help_handling(false)`, and the `help`-collision error — an application command claiming
-  the word standout installs — now names `.help_handling(false)` as the way to keep the
-  name, with `command_groups` and topics becoming unavailable when it does.
-- Help and topics render through the app's engine, merged theme and filters. The framework
-  templates are named registry entries (`standout/help`, `standout/topic`,
-  `standout/topics-list`) registered at `build()`, so the tag check applies to them.
-  Standalone `render_help` / `render_topic` / `render_topics_list` stay callable without an
-  `App`; `HelpConfig::template` and topic template strings are `TemplateRef::Inline` with
-  tag validation at request construction.
-- A structured `--output` on the help or topics command builds a request whose format is
-  `Auto`: `help --output=json` on a TTY still looks like help.
-- A named help or topic template override that cannot be read now surfaces as a render
-  error instead of silently falling back to the framework default.
+- **Themed help is on by default**, so an application that never called
+  `.help_handling(true)` now serves standout's page and **a test pinning help output goes
+  red**. Re-record it, or call `.help_handling(false)` to hand help back to clap unchanged.
+  Configuration: `docs/topics/standout-help.md`.
+- **Every existing `.help_handling(true)` call can be deleted.**
+- **An application registering its own `help` command stops building** with a
+  `DuplicateCommand` error — the flip's only build-breaking case. Rename the command, or
+  call `.help_handling(false)` and keep the name; `command_groups`, topics and
+  `.help_word(true)` are then unavailable.
+- **A named help or topic template override that cannot be read is now a render error**
+  rather than a silent fallback. Fix the name or drop the override.
 
 ### Entry points and parsing
 
-- `App::run_to_string` and `App::dispatch_from` → `run_with(cmd, args, target, sources)`,
-  or `TestHarness::run`, which opens the render-diagnostics capture window
-  `run_to_string` opened.
-- `App::render`, `App::render_inline` and `App::render_inline_with` → `render_with`, whose
-  first parameter is a `TemplateRef` rather than a `&str`.
-- `App::parse`, `App::parse_with` and `App::parse_from` → `get_matches_from` plus the
-  caller's own handling. `App::get_matches` and the process-filled form of
-  `App::get_matches_from` are gone; the name `get_matches_from` now carries what was
-  `get_matches_from_with_sources`, taking `&InputSources`.
-- The free functions `cli::parse` and `cli::parse_from` are gone.
-- **Renamed:** `standout_dispatch::RunResult` → `standout_dispatch::DispatchResult`, and
-  `standout::cli::DispatchResult` is now a plain re-export of that enum rather than an `as`
-  alias.
-- **Renamed:** `standout::cli::RunResult` → `standout::cli::CompletedRun` (the dispatch
-  outcome plus warnings and the resolved output mode). The name `RunResult` is no longer in
-  the public API.
+Mechanical renames; the outcome model is `docs/topics/execution-outcomes.md`.
+
+- **On `App`:** `run_to_string` and `dispatch_from` → `run_with(cmd, args, target, sources)`
+  or `TestHarness::run`; `render`, `render_inline` and `render_inline_with` → `render_with`,
+  whose first parameter is a `TemplateRef`; `parse`, `parse_with`, `parse_from` and
+  `get_matches` → `get_matches_from`, which now takes `&InputSources` and carries what was
+  `get_matches_from_with_sources`. The free `cli::parse` and `cli::parse_from` are removed
+  with no replacement.
+- **Result types:** `standout_dispatch::RunResult` → `DispatchResult`;
+  `standout::cli::RunResult` → `standout::cli::CompletedRun`.
 
 ### Input
 
-Stdin, the clipboard and the prompt responder are arguments of input collection
-(`InputSources`) rather than process-global overrides. Production `App::run` builds
-sources from the real process; a test constructs mocks and passes them into
-`App::run_with`.
-
-- `set_default_stdin_reader` and the clipboard and responder override APIs are removed.
-- Interactive prompt and editor collectors bind the invocation responder at chain resolve
-  time, so `InputChain::resolve_from` and `CommandConfig::input` consume
-  `TestHarness::prompts(…)` without a TTY.
-- Framework warnings return on the run result and the harness API; the warning
-  thread-local is gone. Embedded hot-reload fallbacks are recorded on the same buffer, and
-  construction-time messages copy onto each run.
-- `InputSourceKind` gains a `File` variant and `InputChain` maps a collector named `file`
-  onto it, so `ctx.input_source("name")` distinguishes a value read from a file from one
-  typed as an argument. A failed read is now `InputError::FileFailed`, whose message names
-  the path and carries the I/O cause (``input `document`: Failed to read
-  absent-document.txt: No such file or directory``), where the collector previously
-  reported a parse failure against the argument id and dropped the path.
-- `CommandConfig::input` resolves a value or fails, so an optional value with a second
-  source has no spelling in the blessed input entry; the wizard's answer sheet rejects that
-  combination. A value that comes only from its own argument stays a typed `#[handler]`
-  parameter, optional or not.
+- **`set_default_stdin_reader` and the clipboard and responder override APIs are gone.**
+  Build an `InputSources` and pass it to `App::run_with`, or use `TestHarness::prompts(…)`:
+  `crates/standout-input/docs/topics/input-sources.md`. The warning thread-local goes with
+  them — read warnings off the run result or the harness.
+- **A failed file read is now `InputError::FileFailed`**, naming the path; a test matching
+  the old parse-failure text against the argument id needs re-recording.
+- **`CommandConfig::input` resolves a value or fails**, so an optional value with a second
+  source has no blessed spelling. Keep a single-source optional value as a typed
+  `#[handler]` parameter.
+- **New `InputSourceKind::File`** lets `ctx.input_source("name")` tell a file apart from an
+  argument.
 
 ### Output, color and rendering
 
-- **`--output=term` through a pipe now emits ANSI.** This is the documented contract; the
-  previous behavior contradicted it.
-- **An explicit `--output` flag overrides the environment color conventions.**
-  `--output=term` emits ANSI even under `NO_COLOR=1` or `TERM=dumb`, and `--output=text`
-  stays plain even under `CLICOLOR_FORCE=1`. `auto` still follows the environment.
-- **The detector override APIs are removed** for `standout-render` dependents:
-  `set_terminal_width_detector`, `set_color_capability_detector`,
-  `set_ambiguous_width_detector`, `set_theme_detector`, `set_icon_detector`,
-  `set_tty_detector`, `detect_is_tty`, `DetectorGuard`, and the public `detect_*` cluster
-  they served. Detection is `TargetProperties::detect()` at the crate edge; tests construct
-  a `TargetProperties` or inject it through `TestHarness`. `detect_color_capability()`
-  stays.
-- `Presentation` is deleted and every dispatch render goes through `render_request`. The
-  convenience entries `render`, `render_with_output` and their siblings detect at their
-  edge, build a request and delegate; they keep their own names.
-- `standout` no longer depends on `serde_yaml`, `csv` or `quick-xml`; structured
-  serialization lives in `standout-render` only.
-- Standalone `render_auto` of a named struct emits XML under the JSON object root
-  (`<data>`), because `RenderRequest.data` is a `serde_json::Value`. CLI XML bytes are
-  unchanged — dispatch already serialized handler data to JSON.
-- `MiniJinjaEngine` is `!Send`/`!Sync`: concurrent renders on a shared engine are
-  unsupported at the type level, and the width lock in `standout-render` is deleted.
-- `AppBuilder::output_mode()` is removed; it always returned `Auto`.
-- Warning styling uses stderr color capability, so piped stdout with a TTY stderr keeps
-  warning color; `--output=text` opts the warning block out of ANSI, including on clap
-  usage, `--help` and `--version` exits.
+- **`--output=term` through a pipe now emits ANSI**, matching the documented contract. Strip
+  escapes downstream, or ask for `--output=text`: `docs/topics/output-modes.md`.
+- **An explicit `--output` overrides the environment conventions:** `term` emits ANSI under
+  `NO_COLOR=1` or `TERM=dumb`, `text` stays plain under `CLICOLOR_FORCE=1`. `auto` still
+  follows the environment.
+- **The detector override APIs are gone** — `set_terminal_width_detector`,
+  `set_color_capability_detector`, `set_ambiguous_width_detector`, `set_theme_detector`,
+  `set_icon_detector`, `set_tty_detector`, `detect_is_tty`, `DetectorGuard` and the public
+  `detect_*` cluster (`detect_color_capability()` stays). Construct a `TargetProperties`, or
+  inject one through `TestHarness`.
+- **`Presentation` is deleted** (call `render_request`; `render` and `render_with_output`
+  are unchanged), **`AppBuilder::output_mode()` is removed** (it always returned `Auto`),
+  and **`MiniJinjaEngine` is `!Send`/`!Sync`** — build one engine per thread.
+- **`standout` no longer depends on `serde_yaml`, `csv` or `quick-xml`.** Depend on
+  `standout-render` for structured serialization.
+- **Warning styling follows stderr's color capability**, `--output=text` opts the warning
+  block out of ANSI, and standalone `render_auto` of a named struct emits XML under
+  `<data>`. Re-record tests pinning any of these; CLI XML bytes are unchanged.
 
 ### Testing with `standout-test`
 
-The assertion API is contract from this release on. It grew the observation and universal
-assertions its existential `contains` checks could not state:
+The assertion API is contract from this release on: `docs/topics/testing.md`.
 
-- `TestResult::stdout()` / `stderr()` reconstruct the two text channels `App::run` would
-  have written, so which bytes went to which stream is assertable in-process.
-  `stdout_plain()` / `stderr_plain()` return the same text with escapes stripped.
-- `assert_page_snapshot!` pins a whole rendered page through `insta` under a name derived
-  from a `SnapshotCase` — subject plus the axes that distinguish the cell — rather than a
-  hand-written label.
-- `standout_test::matrix` yields the (output mode × color × theme) cross product as
-  `MatrixCell`s, each configuring its own harness and naming its own `SnapshotCase`.
-- `standout_test::invariants` asserts that every tag a page emits is defined in the
-  resolved theme, that no `[tag?]` marker reached the page, that no valueless argument
-  lists possible values, that every value-taking argument's row shows its metavar, that
-  stripping a styled page's escapes reproduces the plain one, and that a section's
-  descriptions all start at one column.
-- `standout_test::clap_parity` walks a `clap::Command` and asserts every fact clap's own
-  page would state appears in the row of the rendered page that owns it. It asserts
-  presence of facts and never layout; deliberate omissions live in one allowlist.
-- `TestResult::tag_resolutions()` exposes the unresolved-tag diagnostics `standout-render`
-  now records per render pass, which hold in `Text` as strongly as in `Term`.
-- `TestHarness::run_process()` runs the compiled binary and returns a `ProcessResult`
-  carrying the two real pipes, the process exit status, ANSI-stripped views and the fixture
-  tempdir. `TestHarness::run_pty()` (Unix) does the same over a real pseudo-terminal.
-- **`TestHarness` injects destination facts rather than detecting them.** Unset fields take
-  fixed defaults — `width: None`, `ColorMode::Dark`, `IconMode::Classic`,
-  `AmbiguousWidth::Narrow` — so `$COLUMNS`, `$NERD_FONT` and the OS appearance setting
-  cannot change an in-process run. Width is injected with `terminal_width`.
-- `TestHarness::with_color()` opens both gates between a styled template and escape bytes:
-  Standout's color decision and `console`'s process-global switch. A `Term` render in a
-  test now emits the escapes a terminal user sees, with no `force_styling` needed in the
-  theme.
-- **Removed:** `TestHarness::is_tty()` and `no_tty()`, with the in-process TTY seam behind
-  them. The in-process injection seams are refused by `run_process` with a message naming
-  each, rather than letting a child answer from the machine's own terminal.
+- **`TestHarness::is_tty()` and `no_tty()` are removed**, with the in-process TTY seam
+  behind them. Use `run_process()` or `run_pty()` when a real terminal must answer.
+- **`TestHarness` injects destination facts rather than detecting them**, defaulting to
+  `width: None`, `ColorMode::Dark`, `IconMode::Classic` and `AmbiguousWidth::Narrow`. A test
+  relying on `$COLUMNS`, `$NERD_FONT` or the OS appearance must set the field instead.
+- **`TestHarness::with_color()` now emits the escapes a terminal user sees.** Drop
+  `force_styling` from the theme.
+- Additions needing no edit: `TestResult::stdout()`/`stderr()` and their `_plain` forms,
+  `tag_resolutions()`, `assert_page_snapshot!`, the `matrix`, `invariants` and `clap_parity`
+  modules, and `run_process()`/`run_pty()`.
 
 ### Items that are no longer public
 
-Two kinds, with different escape hatches.
+**Re-exports `standout` dropped** — still public in the defining crate, so add that crate as
+a direct dependency to keep calling them.
 
-**Re-exports `standout` dropped.** Each item is still public in the crate that defines it;
-depend on that crate directly to keep calling it.
+- From `cli`, the `standout-dispatch` navigation helpers `extract_command_path`,
+  `get_deepest_matches`, `has_subcommand` and `insert_default_command`.
+- From the crate root, the `standout-render` items `build_embedded_registry`,
+  `extension_priority`, `strip_extension`, `walk_dir`, `walk_template_dir`,
+  `validate_template`, `render_auto_with_spec`, `rgb_to_ansi256`, `rgb_to_truecolor`,
+  `flatten_json_for_csv`, `serialize_to_xml`, the `file_loader` module, and `FileRegistry`,
+  `FileRegistryConfig`, `LoadError`, `LoadedEntry` and `LoadedFile`.
 
-- The `cli` module no longer re-exports the `standout-dispatch` navigation helpers
-  `extract_command_path`, `get_deepest_matches`, `has_subcommand` and
-  `insert_default_command`.
-- The crate root no longer re-exports the `standout-render` items
-  `build_embedded_registry`, `extension_priority`, `strip_extension`, `walk_dir`,
-  `walk_template_dir`, `validate_template`, `render_auto_with_spec`, `rgb_to_ansi256`,
-  `rgb_to_truecolor`, `flatten_json_for_csv`, `serialize_to_xml`, the `file_loader` module,
-  or `FileRegistry`, `FileRegistryConfig`, `LoadError`, `LoadedEntry` and `LoadedFile`.
-
-**Deleted outright.** No crate provides these any more, so a direct dependency does not
-bring them back.
+**Deleted outright** — no crate provides these, so a direct dependency does not bring them
+back.
 
 - `App::registry_mut`, `App::get_hooks` and `App::get_theme`.
 - `standout-dispatch`'s unused render-callback API: `RenderFn`, `from_fn`, and the
-  `RenderError` that belonged to it. (`standout_render::RenderError` is a different type
-  and `standout` still re-exports it.)
+  `RenderError` that belonged to it. (`standout_render::RenderError` is a different type and
+  `standout` still re-exports it.)
 
 ### Failures that used to be silent
 
-- Registering the same hook phase for one command path through both `CommandConfig` and
-  `AppBuilder::hooks` is a configuration error naming the path and the phase, instead of
-  one hook set silently replacing the other. Different phases from the two APIs still
-  combine.
-- Missing named templates distinguish "no templates configured" from "name not registered",
-  list near matches or available names, and point to `.templates(embed_templates!(…))` /
-  `.templates_dir(…)`. Missing default themes point to `.styles(…)`, `.styles_dir(…)`,
-  `.default_theme(…)` or `.theme(…)`. Framework-template tag validation names the framework
-  style and template toggles and the theme APIs involved.
+- **One hook phase registered for a path through both `CommandConfig` and
+  `AppBuilder::hooks` is now a configuration error** instead of one set silently replacing
+  the other. Register it in one place; different phases still combine.
+- **Missing templates and themes fail with a message naming the remedy.** No edit needed
+  unless a test pins the old text.
 
 ### Documentation
 
-- The guides pin `standout = "9"`.
-- `docs/topics/stability.md` publishes the stability statement, and the README links it.
-- `docs/topics/dispatch-attributes.md` lists every `#[dispatch(…)]` key including `pure`
-  and `name`, the `#[handler]` parameter-name to clap-id rule, and the nested-command
-  template path.
-- `docs/SUMMARY.md` mounts every page. The orphaned piping topic is mounted; ListView, the
-  seeker and passthrough commands each get one topic; `docs/intro.md` is deleted as a
-  duplicate of `docs/index.md`.
-- Two checks keep the book true: `standout-docs` compiles the book's Rust examples in a
-  required `docs` CI lane, and walks the book as a graph in the test lane — every page
-  reachable from `SUMMARY.md`, every relative link resolving, every `#fragment` naming a
-  heading that exists, and every README link into the deployed book backed by a page.
-- The three reference clients — `tdoo`, the minimal single-crate guide, and the wizard's
-  generated project — register, adapt, name their version, answer a bare invocation, and
-  resolve multi-source values the same way. The wizard's output is asserted against the
-  blessed idioms structurally, one positive assertion per axis, with negative assertions
-  for the unblessed forms on top.
+- New owners for what this file no longer restates: `docs/topics/stability.md`,
+  `docs/topics/dispatch-attributes.md` (every `#[dispatch(…)]` key and both name mappings),
+  and `crates/standout-render/docs/topics/templating.md` (the trailing-newline contract).
+- `docs/SUMMARY.md` mounts every page, the guides pin `standout = "9"`, and two checks keep
+  the book true: `standout-docs` compiles its Rust examples in a required `docs` CI lane and
+  walks it as a graph in the test lane.
 
 ## 8.1.1 - 2026-08-16
 
