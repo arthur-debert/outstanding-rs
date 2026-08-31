@@ -209,7 +209,7 @@ For lower-level tests that don't need the harness, pass sources into [`InputChai
 
 ```toml
 [dependencies]
-standout = "8"
+standout = "9"
 ```
 
 ```rust
@@ -225,7 +225,7 @@ A default `standout` dependency only enables `standout-input`'s `simple-prompts`
 
 ```toml
 [dependencies]
-standout = { version = "8", features = ["input-editor"] }
+standout = { version = "9", features = ["input-editor"] }
 ```
 
 You can still depend on `standout-input` directly if you want to bypass the `standout` re-export and pick features there.

@@ -86,7 +86,7 @@ Add `standout-input` to your `Cargo.toml`:
 
 ```toml
 [dependencies]
-standout-input = "8"
+standout-input = "9"
 ```
 
 ### Basic Chain
