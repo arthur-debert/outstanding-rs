@@ -34,6 +34,42 @@ impl RawAnswers {
     pub fn warnings(&self) -> &[AnswerSheetDiagnostic] {
         &self.warnings
     }
+
+    pub fn set(&mut self, path: impl Into<String>, answer: impl Into<String>) {
+        self.values.insert(path.into(), answer.into());
+    }
+
+    pub fn set_occurrence_count(&mut self, group_path: impl Into<String>, count: usize) {
+        self.occurrences.insert(group_path.into(), count);
+    }
+
+    pub fn push_warning(&mut self, warning: AnswerSheetDiagnostic) {
+        self.warnings.push(warning);
+    }
+}
+
+/// How the bytes behind `--answers` become [`RawAnswers`]. An application whose
+/// own spec pins the sheet's shape implements this in place of the default
+/// [`StandoutAnswerSheet`].
+pub trait AnswerSheetFormat {
+    fn parse(
+        &self,
+        questionnaire: &Questionnaire,
+        text: &str,
+    ) -> Result<RawAnswers, Vec<AnswerSheetDiagnostic>>;
+}
+
+/// The preamble/fingerprint sheet `questions` renders.
+pub struct StandoutAnswerSheet;
+
+impl AnswerSheetFormat for StandoutAnswerSheet {
+    fn parse(
+        &self,
+        questionnaire: &Questionnaire,
+        text: &str,
+    ) -> Result<RawAnswers, Vec<AnswerSheetDiagnostic>> {
+        questionnaire.parse_answer_sheet(text)
+    }
 }
 
 #[derive(Debug, Clone, thiserror::Error, PartialEq, Eq)]
@@ -126,7 +162,22 @@ impl Questionnaire {
     pub fn parse_answer_sheet(&self, text: &str) -> Result<RawAnswers, Vec<AnswerSheetDiagnostic>> {
         let lines: Vec<&str> = text.lines().collect();
         let body_start = self.check_preamble(&lines)?;
+        self.parse_body(&lines, body_start)
+    }
 
+    pub fn parse_answer_sheet_body(
+        &self,
+        text: &str,
+    ) -> Result<RawAnswers, Vec<AnswerSheetDiagnostic>> {
+        let lines: Vec<&str> = text.lines().collect();
+        self.parse_body(&lines, 0)
+    }
+
+    fn parse_body(
+        &self,
+        lines: &[&str],
+        body_start: usize,
+    ) -> Result<RawAnswers, Vec<AnswerSheetDiagnostic>> {
         let mut diagnostics: Vec<AnswerSheetDiagnostic> = Vec::new();
         let mut warnings: Vec<AnswerSheetDiagnostic> = Vec::new();
         let mut values: BTreeMap<String, String> = BTreeMap::new();

@@ -17,20 +17,20 @@ make it, so the app rewrote argv, set `CLICOLOR_FORCE`, wrote its own bytes outs
 dispatch, or used `ExternalFailure` against its documented purpose. The
 [ROB03 Spec](implemented/robustness-corpus.md) said findings would flow through normal
 triage; two epics later, none has. This Spec is the home. Everything in it is a filed,
-transcript-anchored finding verified still present on `main` at 7cb4152 (2026-08-30);
-there is no design ambiguity in *what* is wrong, only small choices in *how* to expose
-each seam.
+transcript-anchored finding re-verified on `main` at 1642d4e (2026-08-31, the 9.0.0
+release commit — the anchors below survived the ROB05 prune); there is no design
+ambiguity in *what* is wrong, only small choices in *how* to expose each seam.
 
 | Finding | Runs | Still on `main` at |
 | --- | --- | --- |
-| #356 no programmatic output-mode selection; a second `--output` is refused; ROB04 left `output_mode_fallback()` hard-coded to `Auto` "for a later workstream" | systemdlike | `cli/builder/mod.rs:1023-1031`, `config.rs:307-315` |
-| #357 no seam for an app-owned exit status plus a verbatim stderr line; `ExitStatus` fixed to 0/1/2; the "handler diagnostic framing" is never shown | gitlike, ghlike | `standout-dispatch/src/handler.rs:359-373, 459-471, 491` |
-| #354 confirmation gate accepts only a literal `yes`; prompts write to `io::stdout()`; the injected `--answers`/`--yes` ids are `pub(crate)` | formlike | `cli/questionnaire.rs:29,34,122-126,318,354` |
-| #351 the answer-sheet parser requires the framework preamble; an app cannot supply its own sheet format | formlike | `standout-input/src/questionnaire/parse.rs:175,283` |
-| #359 `tabular()` sizes one row at a time; a whole-table resolver exists (`resolve_widths_from_data`) and help uses it, templates cannot | ghlike | `standout-render/src/tabular/filters.rs:268-296`, `resolve.rs:90-99` |
-| #334 themed help renders no `-h/--help` / `-V/--version` rows: the extractor reads an unbuilt `clap::Command`; the clap-parity differential carries it as its first `DELIBERATE_OMISSIONS` entry | test net | `cli/help/data.rs:316-321,381`, `standout-test/src/clap_parity.rs:271-283` |
-| #353 hook failures print `Hook error: hook error (pre-dispatch): …` | formlike | `cli/dispatch.rs:327` + `standout-dispatch/src/hooks.rs:206` |
-| #352 (remainder) the displacement is now a loud `SetupError`, but pre-dispatch hooks still receive root matches, and hook order relative to `.questionnaire::<T>()` inside `CommandConfig` is positional and undocumented | formlike | `cli/builder/execution.rs:212-221`, `docs/guides/derived-questionnaires.md` |
+| #356 no programmatic output-mode selection; a second `--output` is refused (`Set` action, no `overrides_with`); ROB04 left `output_mode_fallback()` hard-coded to `Auto` "for a later workstream" | systemdlike | `cli/builder/mod.rs:691-693,1103-1110`, `cli/builder/execution.rs:446-466`, `cli/builder/config.rs:89-96` |
+| #357 the emission mechanics exist (#208: `ExternalFailure::new` takes any nonzero `u8`, the diagnostic reaches stderr verbatim, the status rides to `process::exit`), but the only spelling is `ExternalFailure`, documented "only when another operation owns the status" — the app-owned form the adopters needed has no name | gitlike, ghlike | `standout-dispatch/src/handler.rs:156-188`, `docs/topics/error-handling.md:33` |
+| #354 confirmation gate accepts only a literal `yes`; the review dump writes to `io::stdout()` (the prompt itself now goes to the controlling terminal); the injected `--answers`/`--yes` ids are `pub(crate)` | formlike | `cli/questionnaire.rs:18-23,109-118,336-352` |
+| #351 the answer-sheet parser requires the framework preamble; an app cannot supply its own sheet format | formlike | `standout-input/src/questionnaire/parse.rs:126-128,303-340` |
+| #359 `tabular()` resolves widths from the column spec alone; a whole-table resolver exists (`resolve_widths_from_data`) and help uses it, templates cannot | ghlike | `standout-render/src/tabular/filters.rs:198-227`, `resolve.rs:48-74` |
+| #334 themed help renders no `-h/--help` / `-V/--version` rows: the extractor emits only declared args; the clap-parity differential carries it as its first `DELIBERATE_OMISSIONS` entry (ADR-0034 reworded the entry, the gap is unchanged) | test net | `cli/help/data.rs:284`, `standout-test/src/clap_parity.rs:137-151` |
+| #353 hook failures print `Hook error: hook error (pre-dispatch): …` | formlike | `cli/dispatch.rs:272` + `standout-dispatch/src/hooks.rs:102-103` |
+| #352 (remainder) the displacement is now a loud `SetupError`, but pre-dispatch hooks still receive root matches (the handler gets `get_deepest_matches` two lines later), and hook order relative to `.questionnaire::<T>()` is push order, positional and undocumented | formlike | `cli/builder/execution.rs:131-140`, `cli/group.rs:379-396`, `docs/guides/derived-questionnaires.md` |
 
 ## Problem
 
@@ -56,19 +56,21 @@ concept beyond the seam itself.
   own precedence contract. Appending the app's own `--output` to the user's argv is
   no longer the way.
 - **An app-owned status and diagnostic** (#357): a handler can return a domain error
-  carrying an exit status (any nonzero `u8`, not only 1/2) and a verbatim stderr
-  payload, and the framework emits exactly that — no framing, no doubled prefix. Zero is
-  rejected at construction, as `ExternalFailure::new` already does, and a test proves
-  it: a domain error can never report shell success. `ExternalFailure` keeps
-  its documented meaning (another process owns the contract). The human-mode form is
+  carrying an exit status (any nonzero `u8`) and a verbatim stderr payload under a name
+  that *means* app-owned. The emission path already exists — `ExternalFailure` carries
+  exactly these bytes and this status, rejects zero at construction, and skips all
+  framing — so the seam is the spelling and its contract: an app-owned form sharing
+  that emission path, a test proving a domain error can never report shell success,
+  and `ExternalFailure` keeping its documented meaning (another process owns the
+  contract) instead of being the name adopters misuse. The human-mode form is
   this epic's; the machine-mode form (structured error envelope) stays with the parity
   machine contract, which versions the envelope this seam will feed.
 - **Hook diagnostics are framed once** (#353), and the framing is documented as the
   "handler diagnostic framing" `error-handling.md` names.
 - **The confirmation gate is configurable** (#354): acceptance rule (exact word, `y/yes`
-  case-insensitive, or disabled), prompt wording, and the stream it writes to (stderr by
-  default, since stdout is the data channel); the injected argument ids are public
-  constants.
+  case-insensitive, or disabled), prompt wording, and the stream the review dump writes
+  to (stderr by default, since stdout is the data channel; the prompt itself already
+  goes to the controlling terminal); the injected argument ids are public constants.
 - **An app-defined answer-sheet format** (#351): the parser is a seam the app can
   replace or extend — the framework's preamble/fingerprint sheet is the default, not the
   only format `--answers` accepts.

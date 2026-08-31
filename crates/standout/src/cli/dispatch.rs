@@ -5,7 +5,7 @@ use std::rc::Rc;
 
 use crate::cli::builder::{SharedTemplateEngine, TemplateAbsence, TemplateRef};
 use crate::cli::handler::Output as HandlerOutput;
-use crate::cli::handler::{CommandContext, ExternalFailure, RunError, RunErrorKind};
+use crate::cli::handler::{AppFailure, CommandContext, ExternalFailure, RunError, RunErrorKind};
 use crate::cli::hooks::{ArtifactOutput, HookError, Hooks};
 use crate::context::ContextRegistry;
 use crate::Theme;
@@ -248,28 +248,40 @@ fn run_post_dispatch_hooks(
     }
 }
 
+fn frame_diagnostic(error: &dyn std::fmt::Display) -> String {
+    format!("Error: {}", error)
+}
+
 pub(crate) fn handler_run_error(error: anyhow::Error) -> RunError {
     let error = match error.downcast::<ExternalFailure>() {
         Ok(external) => return RunError::from(external),
         Err(error) => error,
     };
+    let error = match error.downcast::<AppFailure>() {
+        Ok(app) => return RunError::from(app),
+        Err(error) => error,
+    };
 
-    RunError::new(format!("Error: {}", error), RunErrorKind::Handler)
+    RunError::new(frame_diagnostic(&error), RunErrorKind::Handler)
         .with_source(HandlerErrorSource(error.into_boxed_dyn_error()))
 }
 
 pub(crate) fn hook_run_error(mut error: HookError, phase: crate::cli::HookPhase) -> RunError {
     if phase == crate::cli::HookPhase::PreDispatch {
         if let Some(source) = error.source.take() {
-            match source.downcast::<ExternalFailure>() {
+            let source = match source.downcast::<ExternalFailure>() {
                 Ok(external) => return RunError::from(*external),
+                Err(source) => source,
+            };
+            match source.downcast::<AppFailure>() {
+                Ok(app) => return RunError::from(*app),
                 Err(source) => error.source = Some(source),
             }
         }
     }
 
     error.phase = phase;
-    RunError::new(format!("Hook error: {}", error), RunErrorKind::Hook(phase)).with_source(error)
+    RunError::new(frame_diagnostic(&error), RunErrorKind::Hook(phase)).with_source(error)
 }
 
 pub type DispatchFn = Rc<

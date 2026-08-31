@@ -140,6 +140,7 @@ pub struct Table {
     row_separator: bool,
     row_styles: Option<(String, String)>,
     row_counter: AtomicUsize,
+    data_widths: Option<Vec<usize>>,
 }
 
 impl Clone for Table {
@@ -154,6 +155,7 @@ impl Clone for Table {
             row_separator: self.row_separator,
             row_styles: self.row_styles.clone(),
             row_counter: AtomicUsize::new(self.row_counter.load(Ordering::Relaxed)),
+            data_widths: self.data_widths.clone(),
         }
     }
 }
@@ -194,6 +196,7 @@ impl Table {
             row_separator: false,
             row_styles: None,
             row_counter: AtomicUsize::new(0),
+            data_widths: None,
         }
     }
 
@@ -223,11 +226,20 @@ impl Table {
 
     pub fn border(mut self, border: BorderStyle) -> Self {
         self.border = border;
-        self.rebuild_formatter_for_border();
+        self.rebuild_formatter();
         self
     }
 
-    fn rebuild_formatter_for_border(&mut self) {
+    /// Resizes every `Bounded` column to the widest cell `data` holds for it,
+    /// the whole-table measurement `resolve_widths_from_data` performs.
+    pub(crate) fn sized_to_data<S: AsRef<str>>(mut self, data: &[Vec<S>]) -> Self {
+        let policy = self.formatter.ambiguous_width();
+        self.data_widths = Some(self.spec.measure_columns(data, policy));
+        self.rebuild_formatter();
+        self
+    }
+
+    fn rebuild_formatter(&mut self) {
         let policy = self.formatter.ambiguous_width();
         let mut formatter_width = self.requested_width;
 
@@ -249,8 +261,22 @@ impl Table {
                 formatter_width.saturating_sub(calculator.char_width(vertical).saturating_mul(2));
         }
 
-        self.formatter =
-            TabularFormatter::with_ambiguous_width(&self.spec, formatter_width, policy);
+        self.formatter = match &self.data_widths {
+            Some(measured) => {
+                let resolved = self.spec.resolve_widths_measured_with_policy(
+                    formatter_width,
+                    measured,
+                    policy,
+                );
+                TabularFormatter::from_resolved_with_width_and_policy(
+                    &self.spec,
+                    resolved,
+                    formatter_width,
+                    policy,
+                )
+            }
+            None => TabularFormatter::with_ambiguous_width(&self.spec, formatter_width, policy),
+        };
         if policy == AmbiguousWidth::Wide && self.border != BorderStyle::None {
             self.formatter.limit_to_width(formatter_width);
         }

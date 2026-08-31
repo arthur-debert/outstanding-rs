@@ -1,7 +1,8 @@
 pub use standout_dispatch::{
-    Artifact, ArtifactDestination, ArtifactReceipt, ArtifactRun, CommandContext, DispatchResult,
-    ExitStatus, Extensions, ExternalFailure, FnHandler, Handler, HandlerResult,
-    InvalidExternalStatus, Output, OutputKind, RunError, RunErrorKind, RunOutput, SuccessKind,
+    AppFailure, Artifact, ArtifactDestination, ArtifactReceipt, ArtifactRun, CommandContext,
+    DispatchResult, ExitStatus, Extensions, ExternalFailure, FnHandler, Handler, HandlerResult,
+    InvalidAppStatus, InvalidExternalStatus, Output, OutputKind, RunError, RunErrorKind, RunOutput,
+    SuccessKind,
 };
 
 use standout_input::{InputSourceKind, Inputs, MissingInput};

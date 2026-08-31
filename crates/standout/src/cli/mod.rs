@@ -53,6 +53,11 @@ pub use builder::{App, AppBuilder};
 
 pub use group::{CommandConfig, GroupBuilder};
 
+pub use questionnaire::{
+    Confirmation, ConfirmationAcceptance, ReviewStream, QUESTIONNAIRE_ANSWERS_ARG,
+    QUESTIONNAIRE_YES_ARG,
+};
+
 pub use result::{CompletedRun, HelpResult};
 
 pub use help::{
@@ -61,10 +66,10 @@ pub use help::{
 };
 
 pub use handler::{
-    Artifact, ArtifactDestination, ArtifactReceipt, ArtifactRun, CommandContext,
+    AppFailure, Artifact, ArtifactDestination, ArtifactReceipt, ArtifactRun, CommandContext,
     CommandContextInput, DispatchResult, ExitStatus, ExternalFailure, FnHandler, Handler,
-    HandlerResult, InvalidExternalStatus, Output, OutputKind, RunError, RunErrorKind, RunOutput,
-    SuccessKind,
+    HandlerResult, InvalidAppStatus, InvalidExternalStatus, Output, OutputKind, RunError,
+    RunErrorKind, RunOutput, SuccessKind,
 };
 
 pub use hooks::{ArtifactOutput, HookError, HookPhase, Hooks, RenderedOutput};

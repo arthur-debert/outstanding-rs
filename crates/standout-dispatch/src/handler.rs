@@ -199,6 +199,52 @@ impl std::error::Error for ExternalFailure {
             .map(|source| source as &(dyn std::error::Error + 'static))
     }
 }
+#[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
+#[error("an app failure status must be nonzero")]
+pub struct InvalidAppStatus;
+#[derive(Debug, Clone)]
+pub struct AppFailure {
+    status: ExitStatus,
+    diagnostic: String,
+    source: Option<Arc<dyn std::error::Error + Send + Sync + 'static>>,
+}
+impl AppFailure {
+    pub fn new(status: u8, diagnostic: impl Into<String>) -> Result<Self, InvalidAppStatus> {
+        if status == 0 {
+            return Err(InvalidAppStatus);
+        }
+        Ok(Self {
+            status: ExitStatus(status),
+            diagnostic: diagnostic.into(),
+            source: None,
+        })
+    }
+    pub const fn exit_status(&self) -> ExitStatus {
+        self.status
+    }
+    pub fn diagnostic(&self) -> &str {
+        &self.diagnostic
+    }
+    pub fn with_source<E>(mut self, source: E) -> Self
+    where
+        E: std::error::Error + Send + Sync + 'static,
+    {
+        self.source = Some(Arc::new(source));
+        self
+    }
+}
+impl fmt::Display for AppFailure {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(self.diagnostic())
+    }
+}
+impl std::error::Error for AppFailure {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        self.source
+            .as_deref()
+            .map(|source| source as &(dyn std::error::Error + 'static))
+    }
+}
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 #[non_exhaustive]
 pub enum SuccessKind {
@@ -224,6 +270,7 @@ pub enum RunErrorKind {
     Render,
     FinalWrite(OutputKind),
     External,
+    App,
 }
 #[derive(Debug, Clone)]
 pub struct RunOutput {
@@ -319,12 +366,14 @@ pub struct RunError {
     source: Option<Arc<dyn std::error::Error + Send + Sync + 'static>>,
 }
 impl RunError {
-    // Panics if `kind` is `RunErrorKind::External`; construct those via
-    // `ExternalFailure` instead so status and diagnostic stay consistent.
     pub fn new(message: impl Into<String>, kind: RunErrorKind) -> Self {
         assert!(
             kind != RunErrorKind::External,
             "external run errors must be constructed from ExternalFailure"
+        );
+        assert!(
+            kind != RunErrorKind::App,
+            "app run errors must be constructed from AppFailure"
         );
         let status = match kind {
             RunErrorKind::ClapUsage => ExitStatus::USAGE_ERROR,
@@ -356,6 +405,11 @@ impl RunError {
     pub fn into_string(self) -> String {
         self.message
     }
+    // The message is a stderr payload its owner wrote: the shell adapter emits
+    // it as-is, with no `Error: ` framing and no trailing newline.
+    pub const fn writes_diagnostic_verbatim(&self) -> bool {
+        matches!(self.kind, RunErrorKind::External | RunErrorKind::App)
+    }
 }
 impl std::ops::Deref for RunError {
     type Target = str;
@@ -385,6 +439,16 @@ impl From<ExternalFailure> for RunError {
         Self {
             message: failure.diagnostic,
             kind: RunErrorKind::External,
+            status: failure.status,
+            source: failure.source,
+        }
+    }
+}
+impl From<AppFailure> for RunError {
+    fn from(failure: AppFailure) -> Self {
+        Self {
+            message: failure.diagnostic,
+            kind: RunErrorKind::App,
             status: failure.status,
             source: failure.source,
         }
@@ -598,6 +662,51 @@ mod tests {
     #[should_panic(expected = "external run errors must be constructed from ExternalFailure")]
     fn run_error_new_rejects_external_kind() {
         let _ = RunError::new("inconsistent", RunErrorKind::External);
+    }
+    #[test]
+    fn app_failure_rejects_success_and_preserves_metadata() {
+        assert_eq!(
+            AppFailure::new(0, "not a failure").unwrap_err(),
+            InvalidAppStatus
+        );
+        let failure = AppFailure::new(1, "ghlike: repository not found: demo/gamma\n")
+            .unwrap()
+            .with_source(std::io::Error::other("lookup failed"));
+        assert_eq!(failure.exit_status().code(), 1);
+        assert_eq!(
+            failure.diagnostic(),
+            "ghlike: repository not found: demo/gamma\n"
+        );
+        assert_eq!(
+            std::error::Error::source(&failure).unwrap().to_string(),
+            "lookup failed"
+        );
+        let captured = RunError::from(failure);
+        assert_eq!(captured.kind(), RunErrorKind::App);
+        assert_eq!(captured.exit_status().code(), 1);
+        assert_eq!(
+            captured.as_str(),
+            "ghlike: repository not found: demo/gamma\n"
+        );
+        assert!(captured.writes_diagnostic_verbatim());
+        assert_eq!(
+            std::error::Error::source(&captured).unwrap().to_string(),
+            "lookup failed"
+        );
+    }
+    #[test]
+    fn an_app_failure_can_never_report_shell_success() {
+        assert!(AppFailure::new(0, "").is_err());
+        for status in 1..=u8::MAX {
+            let failure = AppFailure::new(status, "domain error").expect("nonzero is accepted");
+            assert_ne!(failure.exit_status(), ExitStatus::SUCCESS);
+            assert_ne!(RunError::from(failure).exit_status(), ExitStatus::SUCCESS);
+        }
+    }
+    #[test]
+    #[should_panic(expected = "app run errors must be constructed from AppFailure")]
+    fn run_error_new_rejects_app_kind() {
+        let _ = RunError::new("inconsistent", RunErrorKind::App);
     }
     #[test]
     fn test_command_context_default() {

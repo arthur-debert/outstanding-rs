@@ -2,8 +2,9 @@ use clap::{Arg, ArgAction, Command};
 use serde_json::json;
 use serial_test::serial;
 use standout::cli::FnHandler;
-use standout::cli::{App, HelpLength, Output};
+use standout::cli::{render_help, App, HelpConfig, HelpLength, Output};
 use standout::EmbeddedTemplates;
+use standout::OutputMode;
 use standout_fixtures::downstream;
 use standout_test::clap_parity::{
     assert_page_states_clap_facts, assert_page_states_clap_facts_with, assert_states_clap_facts,
@@ -155,11 +156,14 @@ fn the_derivation_covers_the_metadata_the_cluster_lost() {
             .any(|fact| fact.kind() == FactKind::Classification),
         "the fixture has both a positional and options, so classification is a fact about it"
     );
+    stated(FactKind::ArgSpelling, arg("help"), "--help");
+    stated(FactKind::ArgSpelling, arg("help"), "-h");
     assert!(
         facts
             .iter()
             .any(|fact| fact.is_clap_generated() && fact.expected() == "--help"),
-        "clap's generated help argument should be marked generated"
+        "clap's generated help argument is still marked generated, even though \
+         the page states it"
     );
     assert!(
         facts
@@ -258,18 +262,74 @@ fn stating_a_fact_clap_suppresses_fails() {
 }
 #[test]
 #[serial]
-fn the_clap_generated_subjects_exemption_is_load_bearing() {
+fn the_page_lists_the_help_flag_clap_generates() {
     let fixture = downstream().build();
     let page = rendered("--help");
     assert_page_states_clap_facts(&page, &fixture.command(), HelpLength::Long);
-    fails_naming(&["--help"], || {
+    assert!(
+        page.contains("-h, --help"),
+        "clap accepts `-h`/`--help`, so the page states them:\n{page}"
+    );
+}
+#[test]
+#[serial]
+fn the_page_lists_the_version_flag_clap_generates() {
+    let (app, cmd) = versioned();
+    let result = TestHarness::new()
+        .text_output()
+        .run(&app, cmd.clone(), ["notes", "--help"]);
+    result.assert_success();
+    let page = result.stdout_plain();
+    assert_page_states_clap_facts(&page, &cmd, HelpLength::Long);
+    assert!(
+        page.contains("-V, --version"),
+        "clap accepts `-V`/`--version`, so the page states them:\n{page}"
+    );
+    assert!(
+        clap_facts(&cmd, HelpLength::Long)
+            .iter()
+            .any(|fact| fact.is_clap_generated() && fact.expected() == "--version"),
+        "clap's generated version argument is still marked generated"
+    );
+}
+#[test]
+#[serial]
+fn the_clap_generated_subcommand_exemption_is_load_bearing() {
+    let cmd = Command::new("notes")
+        .about("Keep short notes")
+        .subcommand(Command::new("stat").about("Summarize the notes"));
+    let page = themed_page(&cmd);
+    assert_page_states_clap_facts(&page, &cmd, HelpLength::Long);
+    assert!(
+        !page.contains("Print this message"),
+        "clap's own help word is standout's machinery, not an application \
+         destination:\n{page}"
+    );
+    fails_naming(&["subcommand `help`"], || {
         assert_page_states_clap_facts_with(
             &page,
-            &fixture.command(),
+            &cmd,
             HelpLength::Long,
-            &without(Omission::ClapGeneratedSubjects),
+            &without(Omission::ClapGeneratedSubcommands),
         )
     });
+}
+#[test]
+#[serial]
+fn an_already_built_command_states_the_same_facts() {
+    let mut cmd = Command::new("notes")
+        .about("Keep short notes")
+        .subcommand(Command::new("stat").about("Summarize the notes"));
+    cmd.build();
+    let page = themed_page(&cmd);
+    assert_page_states_clap_facts(&page, &cmd, HelpLength::Long);
+    assert!(
+        clap_facts(&cmd, HelpLength::Long)
+            .iter()
+            .any(|fact| fact.is_clap_generated()
+                && *fact.subject() == Subject::Subcommand("help".into())),
+        "clap's help word is generated however built the caller's command is"
+    );
 }
 #[test]
 #[serial]
@@ -703,6 +763,17 @@ fn rendered(entry: &str) -> String {
     result.assert_success();
     result.stdout_plain()
 }
+fn themed_page(cmd: &Command) -> String {
+    render_help(
+        cmd,
+        Some(HelpConfig {
+            output_mode: Some(OutputMode::Text),
+            length: HelpLength::Long,
+            ..Default::default()
+        }),
+    )
+    .expect("the themed page renders")
+}
 fn clap_page(cmd: Command, length: HelpLength) -> String {
     let mut cmd = cmd;
     cmd.build();
@@ -755,6 +826,13 @@ fn notes_app() -> App {
         .unwrap()
         .build()
         .unwrap()
+}
+fn versioned() -> (App, Command) {
+    let cmd = Command::new("notes")
+        .about("Keep short notes")
+        .version("1.2.3")
+        .subcommand(Command::new("stat").about("Summarize the notes"));
+    (notes_app(), cmd)
 }
 fn decorated() -> (App, Command) {
     let cmd = Command::new("notes")

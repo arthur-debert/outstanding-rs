@@ -2,8 +2,8 @@ use clap::Command;
 use serde_json::json;
 use standout::cli::FnHandler;
 use standout::cli::{
-    App, DispatchResult, ExitStatus, ExternalFailure, HandlerResult, HookError, HookPhase, Hooks,
-    Output, OutputKind, RunErrorKind, SuccessKind,
+    App, AppFailure, DispatchResult, ExitStatus, ExternalFailure, HandlerResult, HookError,
+    HookPhase, Hooks, Output, OutputKind, RunErrorKind, SuccessKind,
 };
 use standout::EmbeddedTemplates;
 
@@ -254,7 +254,7 @@ fn external_failure_metadata_crosses_handler_and_pre_dispatch_seams() {
 }
 
 #[test]
-fn post_hooks_cannot_self_label_as_pre_dispatch_external() {
+fn post_hooks_cannot_self_label_as_owner_declared_failures() {
     for (hooks, phase) in [
         (
             Hooks::new().post_dispatch(|_, _, _| {
@@ -268,6 +268,22 @@ fn post_hooks_cannot_self_label_as_pre_dispatch_external() {
             Hooks::new().post_output(|_, _, _| {
                 Err(HookError::pre_dispatch_external(
                     ExternalFailure::new(128, "must stay ordinary").unwrap(),
+                ))
+            }),
+            HookPhase::PostOutput,
+        ),
+        (
+            Hooks::new().post_dispatch(|_, _, _| {
+                Err(HookError::pre_dispatch_app(
+                    AppFailure::new(3, "must stay ordinary").unwrap(),
+                ))
+            }),
+            HookPhase::PostDispatch,
+        ),
+        (
+            Hooks::new().post_output(|_, _, _| {
+                Err(HookError::pre_dispatch_app(
+                    AppFailure::new(3, "must stay ordinary").unwrap(),
                 ))
             }),
             HookPhase::PostOutput,

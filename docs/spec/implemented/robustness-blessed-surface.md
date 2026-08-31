@@ -4,7 +4,7 @@ Fifth epic of the **Robustness program** (ROB05). Depends on composition contrac
 (ROB04, merged as #394) for the final shapes and on the corpus pilot (ROB03) for the
 observed-friction input: the [pilot scorecard](../../../corpus/pilot/scorecard.md) and its
 findings #349–#361. Runs in parallel with the adopter-seams epic (ROB06,
-`../robustness-adopter-seams.md`); both precede corpus completion (ROB07), which re-runs the
+`robustness-adopter-seams.md`); both precede corpus completion (ROB07), which re-runs the
 archetypes against the surface this epic ships.
 
 ## Context
@@ -150,7 +150,7 @@ documentation.
 
 - New capabilities or new idioms — this epic chooses among what exists post-ROB04.
 - The adopter escape-hatch findings (#351, #354, #356, #357, #359, #334, #353, #352) —
-  `../robustness-adopter-seams.md`. Where a docs fix here depends on one of those (#359's
+  `robustness-adopter-seams.md`. Where a docs fix here depends on one of those (#359's
   tabular wording, #357's diagnostic framing), the docs state the behavior that epic
   ships, and the two epics coordinate the wording in review.
 - Machine-output schema versioning (parity: machine contract).

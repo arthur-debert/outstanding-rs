@@ -3,7 +3,7 @@ use std::path::Path;
 use crate::env::StdinReader;
 
 use super::definition::Questionnaire;
-use super::parse::{AnswerSheetDiagnostic, RawAnswers};
+use super::parse::{AnswerSheetDiagnostic, AnswerSheetFormat, RawAnswers};
 
 #[cfg(feature = "simple-prompts")]
 use std::collections::BTreeMap;
@@ -25,6 +25,7 @@ impl Questionnaire {
     pub fn read_answer_sheet_file(
         &self,
         path: impl AsRef<Path>,
+        format: &dyn AnswerSheetFormat,
     ) -> Result<RawAnswers, Vec<AnswerSheetDiagnostic>> {
         let path = path.as_ref();
         let text = std::fs::read_to_string(path).map_err(|error| {
@@ -32,12 +33,13 @@ impl Questionnaire {
                 detail: format!("{}: {error}", path.display()),
             }]
         })?;
-        self.parse_answer_sheet(&text)
+        format.parse(self, &text)
     }
 
-    pub fn read_answer_sheet_stdin_with(
+    pub fn read_answer_sheet_stdin(
         &self,
         reader: &dyn StdinReader,
+        format: &dyn AnswerSheetFormat,
     ) -> Result<RawAnswers, Vec<AnswerSheetDiagnostic>> {
         if reader.is_terminal() {
             return Err(vec![AnswerSheetDiagnostic::UnreadableDocument {
@@ -50,7 +52,7 @@ impl Questionnaire {
                 detail: format!("stdin: {error}"),
             }]
         })?;
-        self.parse_answer_sheet(&text)
+        format.parse(self, &text)
     }
 
     #[cfg(feature = "simple-prompts")]
