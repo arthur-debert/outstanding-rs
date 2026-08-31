@@ -67,23 +67,29 @@ never enters the agent's process tree, so nothing a descendant inherits or
 reads contains it.
 
 The caller boundary is enforced, not conventional. Loopback TCP carries no
-kernel peer credential, so on each connection the broker resolves the
-connecting PID from the OS socket tables (procfs on Linux, libproc on
-macOS) and answers only the agent process itself — which the runner must
-therefore spawn directly, not through a shell wrapper, so the PID it hands
-the broker is the process making connections. The lookup is a point-in-time
-resolution, not a kernel handshake; the adversary it must defeat is the
-agent's own descendants inside the sandbox — cargo build scripts, tests,
-the produced binary — and those connect from other PIDs and are denied. Any
-connection the broker cannot attribute to the agent PID is denied too, the
-same fail-closed rule. (An allowlisted environment variable fails because
-descendants inherit the environment; an open proxy fails because the agent
-and build phases have network — this design is the narrow remainder.)
+kernel peer credential, so the broker resolves peers from the OS socket
+tables (procfs on Linux, libproc on macOS) and answers only the agent
+process itself — which the runner must therefore spawn directly, not
+through a shell wrapper, so the PID it hands the broker is the process
+making connections. Attribution is per request, not per connection: an
+accepted socket is an inheritable capability, so before answering each
+request the broker re-resolves the connection's owning processes and
+requires that set to be exactly the agent process. A descendant that
+connects itself arrives from another PID; one that inherits or is handed an
+open broker socket appears in the owner set; both are denied. The adversary
+this defeats is the agent's own descendants inside the sandbox — cargo
+build scripts, tests, the produced binary — and anything the broker cannot
+attribute is denied too, the same fail-closed rule. (An allowlisted
+environment variable fails because descendants inherit the environment; an
+open proxy fails because the agent and build phases have network — this
+design is the narrow remainder.)
 
 What is admitted is written into the report's existing
 `blindness.credential_exceptions` field on every run. The workstream ships
 a negative integration test: a build script spawned from the agent session
-attempts an authenticated request through the mechanism and is denied — the
-test is about using the credential, not printing it. An agent backend that needs
-more (a host HOME, the Keychain, an inherited variable) still fails closed;
-the answer is a different backend invocation, never a wider policy.
+attempts an authenticated request through the mechanism — on a connection
+of its own and on one opened before it was spawned — and both are denied;
+the test is about using the credential, not printing it. An agent backend
+that needs more (a host HOME, the Keychain, an inherited variable) still
+fails closed; the answer is a different backend invocation, never a wider
+policy.

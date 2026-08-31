@@ -19,8 +19,8 @@ which `main` outgrows), so the workflow builds a disposable copy of each
 member whose standout dependency requirements are rewritten onto the
 checked-out framework tree, and the corpus CI proves that rewrite against a
 framework version that differs from the pins. A red scheduled build is a
-framework finding by default: the
-member is frozen, so what changed is the framework.
+framework finding by default: the member is frozen, so what changed is the
+framework.
 
 ## The fast subset on framework PRs
 
