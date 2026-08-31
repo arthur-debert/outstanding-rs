@@ -186,9 +186,9 @@ fn answers_file_generates_after_review_and_attended_confirmation() {
     assert!(output.status.success(), "stderr: {}", stderr(&output));
     let transcript = stdout(&output);
     assert!(transcript.contains("Continue? Type 'yes' to continue:"));
-    assert!(transcript.contains("Review"));
     assert!(transcript.contains("Created hello-tool"));
-    assert_in_order(&transcript, "Review", "Continue? Type 'yes' to continue:");
+    assert!(!transcript.contains("Review"));
+    assert!(stderr(&output).contains("Review"));
     assert_in_order(
         &transcript,
         "Continue? Type 'yes' to continue:",
@@ -214,11 +214,12 @@ fn rejected_confirmation_leaves_the_destination_unwritten() {
 
     assert!(!output.status.success());
     let transcript = stdout(&output);
-    assert!(transcript.contains("Review"));
     assert!(transcript.contains("Continue? Type 'yes' to continue:"));
     assert!(!transcript.contains("Created hello-tool"));
-    assert_in_order(&transcript, "Review", "Continue? Type 'yes' to continue:");
-    assert!(stderr(&output).contains("confirmation declined; nothing was run"));
+    assert!(!transcript.contains("Review"));
+    let errors = stderr(&output);
+    assert!(errors.contains("Review"));
+    assert!(errors.contains("confirmation declined; nothing was run"));
     assert_eq!(dir_entries(dir.path()), ["answers.txt"]);
 }
 
@@ -237,9 +238,9 @@ fn stdin_sheet_generates_after_review_and_attended_confirmation() {
     assert!(output.status.success(), "stderr: {}", stderr(&output));
     let transcript = stdout(&output);
     assert!(transcript.contains("Continue? Type 'yes' to continue:"));
-    assert!(transcript.contains("Review"));
     assert!(transcript.contains("Created hello-tool"));
-    assert_in_order(&transcript, "Review", "Continue? Type 'yes' to continue:");
+    assert!(!transcript.contains("Review"));
+    assert!(stderr(&output).contains("Review"));
     assert_in_order(
         &transcript,
         "Continue? Type 'yes' to continue:",
@@ -263,11 +264,12 @@ fn stdin_sheet_rejected_on_the_terminal_writes_nothing() {
 
     assert!(!output.status.success());
     let transcript = stdout(&output);
-    assert!(transcript.contains("Review"));
     assert!(transcript.contains("Continue? Type 'yes' to continue:"));
     assert!(!transcript.contains("Created hello-tool"));
-    assert_in_order(&transcript, "Review", "Continue? Type 'yes' to continue:");
-    assert!(stderr(&output).contains("confirmation declined; nothing was run"));
+    assert!(!transcript.contains("Review"));
+    let errors = stderr(&output);
+    assert!(errors.contains("Review"));
+    assert!(errors.contains("confirmation declined; nothing was run"));
     assert!(dir_entries(dir.path()).is_empty());
 }
 
@@ -279,8 +281,9 @@ fn stdin_sheet_without_a_terminal_fails_before_publication_with_guidance() {
     let output = run_standout(dir.path(), &["new-project", "--answers", "-"], &sheet);
 
     assert!(!output.status.success());
-    assert!(stdout(&output).contains("Review"));
+    assert!(!stdout(&output).contains("Review"));
     let errors = stderr(&output);
+    assert!(errors.contains("Review"));
     assert!(errors.contains("attended terminal"));
     assert!(errors.contains("--yes"));
     assert!(errors.contains("nothing was run"));
@@ -300,7 +303,8 @@ fn stdin_sheet_with_yes_generates_without_any_terminal() {
 
     assert!(output.status.success(), "stderr: {}", stderr(&output));
     let transcript = stdout(&output);
-    assert!(transcript.contains("Review"));
+    assert!(!transcript.contains("Review"));
+    assert!(stderr(&output).contains("Review"));
     assert!(!transcript.contains("Continue?"));
     assert!(transcript.contains("Created hello-tool"));
     assert!(dir.path().join("hello-tool/Cargo.toml").is_file());
@@ -341,7 +345,8 @@ fn named_file_with_yes_generates_without_any_terminal() {
 
     assert!(output.status.success(), "stderr: {}", stderr(&output));
     let transcript = stdout(&output);
-    assert!(transcript.contains("Review"));
+    assert!(!transcript.contains("Review"));
+    assert!(stderr(&output).contains("Review"));
     assert!(!transcript.contains("Continue?"));
     assert!(transcript.contains("Created hello-tool"));
     assert_eq!(dir_entries(dir.path()), ["answers.txt", "hello-tool"]);

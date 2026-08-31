@@ -3966,9 +3966,14 @@ mod tests {
         fs::write(&path, &sheet).unwrap();
         let questionnaire = questionnaire();
 
-        let from_file_raw = questionnaire.read_answer_sheet_file(&path).unwrap();
+        let from_file_raw = questionnaire
+            .read_answer_sheet_file(&path, &standout_input::questionnaire::StandoutAnswerSheet)
+            .unwrap();
         let from_stdin_raw = questionnaire
-            .read_answer_sheet_stdin_with(&standout_input::MockStdin::piped(&sheet))
+            .read_answer_sheet_stdin(
+                &standout_input::MockStdin::piped(&sheet),
+                &standout_input::questionnaire::StandoutAnswerSheet,
+            )
             .unwrap();
         let from_file =
             NewProjectAnswers::from_raw_answers_with(&from_file_raw, new_project_form_rules)
@@ -4009,9 +4014,14 @@ mod tests {
         let interactive_raw = questionnaire
             .collect_interactive_from(_guard.sources())
             .unwrap();
-        let from_file_raw = questionnaire.read_answer_sheet_file(&path).unwrap();
+        let from_file_raw = questionnaire
+            .read_answer_sheet_file(&path, &standout_input::questionnaire::StandoutAnswerSheet)
+            .unwrap();
         let from_stdin_raw = questionnaire
-            .read_answer_sheet_stdin_with(&standout_input::MockStdin::piped(&sheet))
+            .read_answer_sheet_stdin(
+                &standout_input::MockStdin::piped(&sheet),
+                &standout_input::questionnaire::StandoutAnswerSheet,
+            )
             .unwrap();
 
         let from_interactive =

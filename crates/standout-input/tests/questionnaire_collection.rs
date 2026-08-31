@@ -2,7 +2,7 @@ use std::sync::Arc;
 
 use standout_input::env::MockStdin;
 use standout_input::questionnaire::{
-    AnswerSheetDiagnostic, Group, Item, Questionnaire, ScalarField, ScalarKind,
+    AnswerSheetDiagnostic, Group, Item, Questionnaire, ScalarField, ScalarKind, StandoutAnswerSheet,
 };
 use standout_input::{InputError, InputSources, MockTerminal, PromptResponse, ScriptedResponder};
 
@@ -72,7 +72,9 @@ fn file_adapter_reads_one_complete_sheet() {
     let path = dir.path().join("answers.txt");
     std::fs::write(&path, edited_sheet(&q)).unwrap();
 
-    let raw = q.read_answer_sheet_file(&path).unwrap();
+    let raw = q
+        .read_answer_sheet_file(&path, &StandoutAnswerSheet)
+        .unwrap();
     let answers = q.decode_answers(&raw).unwrap();
     assert_eq!(answers.get_text("project.name"), Some("demo"));
     assert_eq!(answers.get_bool("project.docker"), Some(false));
@@ -82,7 +84,7 @@ fn file_adapter_reads_one_complete_sheet() {
 fn unreadable_file_is_a_diagnostic_not_a_panic() {
     let q = questionnaire();
     let diagnostics = q
-        .read_answer_sheet_file("/nonexistent/answers.txt")
+        .read_answer_sheet_file("/nonexistent/answers.txt", &StandoutAnswerSheet)
         .unwrap_err();
     assert!(matches!(
         &diagnostics[..],
@@ -97,7 +99,9 @@ fn malformed_file_reports_parse_diagnostics() {
     let path = dir.path().join("answers.txt");
     std::fs::write(&path, "not an answer sheet").unwrap();
 
-    let diagnostics = q.read_answer_sheet_file(&path).unwrap_err();
+    let diagnostics = q
+        .read_answer_sheet_file(&path, &StandoutAnswerSheet)
+        .unwrap_err();
     assert!(matches!(
         &diagnostics[..],
         [AnswerSheetDiagnostic::Incompatible { message }, ..]
@@ -109,7 +113,7 @@ fn malformed_file_reports_parse_diagnostics() {
 fn stdin_adapter_reads_one_complete_sheet() {
     let q = questionnaire();
     let raw = q
-        .read_answer_sheet_stdin_with(&MockStdin::piped(edited_sheet(&q)))
+        .read_answer_sheet_stdin(&MockStdin::piped(edited_sheet(&q)), &StandoutAnswerSheet)
         .unwrap();
     let answers = q.decode_answers(&raw).unwrap();
     assert_eq!(answers.get_text("project.name"), Some("demo"));
@@ -119,7 +123,7 @@ fn stdin_adapter_reads_one_complete_sheet() {
 fn stdin_adapter_rejects_an_interactive_terminal() {
     let q = questionnaire();
     let diagnostics = q
-        .read_answer_sheet_stdin_with(&MockStdin::terminal())
+        .read_answer_sheet_stdin(&MockStdin::terminal(), &StandoutAnswerSheet)
         .unwrap_err();
     assert!(matches!(
         &diagnostics[..],
@@ -131,7 +135,9 @@ fn stdin_adapter_rejects_an_interactive_terminal() {
 fn stdin_adapter_honors_the_process_default_reader() {
     let q = questionnaire();
     let stdin = MockStdin::piped(edited_sheet(&q));
-    let raw = q.read_answer_sheet_stdin_with(&stdin).unwrap();
+    let raw = q
+        .read_answer_sheet_stdin(&stdin, &StandoutAnswerSheet)
+        .unwrap();
     assert_eq!(raw.get("project.name"), Some("demo"));
 }
 
@@ -140,7 +146,7 @@ fn stale_fingerprint_reaches_the_adapter_caller() {
     let q = questionnaire();
     let sheet = edited_sheet(&q).replace("sha256:", "sha256:0000");
     let diagnostics = q
-        .read_answer_sheet_stdin_with(&MockStdin::piped(sheet))
+        .read_answer_sheet_stdin(&MockStdin::piped(sheet), &StandoutAnswerSheet)
         .unwrap_err();
     assert!(matches!(
         &diagnostics[..],
@@ -446,7 +452,7 @@ fn nested_interactive_and_sheet_submissions_decode_identically() {
     let document = format!("{first}\n{second}");
     let batch = q
         .decode_answers(
-            &q.read_answer_sheet_stdin_with(&MockStdin::piped(document))
+            &q.read_answer_sheet_stdin(&MockStdin::piped(document), &StandoutAnswerSheet)
                 .unwrap(),
         )
         .unwrap();
@@ -475,7 +481,7 @@ fn interactive_and_sheet_submissions_decode_identically() {
     );
     let batch = q
         .decode_answers(
-            &q.read_answer_sheet_stdin_with(&MockStdin::piped(sheet))
+            &q.read_answer_sheet_stdin(&MockStdin::piped(sheet), &StandoutAnswerSheet)
                 .unwrap(),
         )
         .unwrap();

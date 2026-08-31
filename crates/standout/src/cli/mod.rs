@@ -53,6 +53,11 @@ pub use builder::{App, AppBuilder};
 
 pub use group::{CommandConfig, GroupBuilder};
 
+pub use questionnaire::{
+    Confirmation, ConfirmationAcceptance, ReviewStream, QUESTIONNAIRE_ANSWERS_ARG,
+    QUESTIONNAIRE_YES_ARG,
+};
+
 pub use result::{CompletedRun, HelpResult};
 
 pub use help::{
