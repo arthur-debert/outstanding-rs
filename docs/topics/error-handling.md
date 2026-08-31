@@ -7,8 +7,9 @@ use status `2`.
 
 ## Ordinary application errors
 
-Return ordinary errors through `HandlerResult` with `?`. Standout adds the
-normal handler diagnostic framing and reports status `1`:
+Return ordinary errors through `HandlerResult` with `?`. Standout formats the
+message as `Error: {error}` — the error's own `Display` text after that fixed
+prefix — reports it under `RunErrorKind::Handler`, and exits with status `1`:
 
 ```rust
 fn handler(_matches: &ArgMatches, _ctx: &CommandContext) -> HandlerResult<View> {
@@ -16,6 +17,13 @@ fn handler(_matches: &ArgMatches, _ctx: &CommandContext) -> HandlerResult<View> 
     Ok(Output::Render(view))
 }
 ```
+
+A hook error is framed differently today: `Hook error: {error}` under
+`RunErrorKind::Hook(phase)`. A handler failure and a hook failure therefore
+read as two distinct diagnostics rather than one shared shape. Settling on a
+single framing for both is tracked in issue #357, in the ROB06 adopter-seams
+epic; until then, treat today's wording as an implementation detail rather
+than something to match against in tests.
 
 Do not print or call `process::exit` from handlers. This keeps capture APIs,
 `TestHarness`, output ownership, and real process behavior on the same seam.

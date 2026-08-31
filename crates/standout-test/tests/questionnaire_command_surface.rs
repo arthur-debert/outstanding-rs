@@ -1,14 +1,18 @@
 use clap::{Arg, Command, Subcommand};
 use serde_json::json;
 use serial_test::serial;
+use standout::cli::FnHandler;
 use standout::cli::{
     App, CommandContext, CommandContextInput, Dispatch, DispatchResult, HandlerResult, Output,
 };
 use standout::input::questionnaire::QuestionnaireInput;
 use standout::input::{DefaultSource, InputChain, PromptResponse, ScriptedResponder};
+use standout::EmbeddedTemplates;
 use standout_test::{TestHarness, TestResult};
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
+
+const TEMPLATES: &[(&str, &str)] = &[("other", "{{ name }}"), ("collect", "{{ name }}")];
 #[derive(Debug, Clone, PartialEq, Eq, standout::Questionnaire)]
 #[question(id = "fixture.profile")]
 struct FixtureAnswers {
@@ -39,9 +43,8 @@ mod handlers {
 #[derive(Subcommand, Dispatch)]
 #[dispatch(handlers = handlers)]
 enum Commands {
-    #[dispatch(questionnaire = FixtureAnswers, template = "{{ name }}")]
+    #[dispatch(questionnaire = FixtureAnswers)]
     Collect,
-    #[dispatch(template = "{{ name }}")]
     Other,
 }
 fn command() -> Command {
@@ -52,6 +55,7 @@ fn command() -> Command {
 }
 fn derived_app(calls: Arc<AtomicUsize>) -> standout::cli::App {
     App::builder()
+        .templates(EmbeddedTemplates::new(TEMPLATES, ""))
         .app_state(Calls(calls))
         .commands(Commands::dispatch_config())
         .unwrap()
@@ -60,12 +64,13 @@ fn derived_app(calls: Arc<AtomicUsize>) -> standout::cli::App {
 }
 fn builder_app(calls: Arc<AtomicUsize>) -> standout::cli::App {
     App::builder()
+        .templates(EmbeddedTemplates::new(TEMPLATES, ""))
         .app_state(Calls(calls))
-        .command_with("collect", handlers::collect, |cfg| {
-            cfg.template("{{ name }}").questionnaire::<FixtureAnswers>()
+        .command_with("collect", FnHandler::new(handlers::collect), |cfg| {
+            cfg.questionnaire::<FixtureAnswers>()
         })
         .unwrap()
-        .command("other", handlers::other, "{{ name }}")
+        .command_with("other", FnHandler::new(handlers::other), |cfg| cfg)
         .unwrap()
         .build()
         .unwrap()
@@ -318,8 +323,9 @@ fn non_questionnaire_command_is_unaffected() {
 #[test]
 fn reserved_answers_collision_fails_verification() {
     let app = App::builder()
-        .command_with("collect", handlers::collect, |cfg| {
-            cfg.template("{{ name }}").questionnaire::<FixtureAnswers>()
+        .templates(EmbeddedTemplates::new(TEMPLATES, ""))
+        .command_with("collect", FnHandler::new(handlers::collect), |cfg| {
+            cfg.questionnaire::<FixtureAnswers>()
         })
         .unwrap()
         .build()
@@ -333,8 +339,9 @@ fn reserved_answers_collision_fails_verification() {
 #[test]
 fn reserved_answer_alias_collision_fails_verification() {
     let app = App::builder()
-        .command_with("collect", handlers::collect, |cfg| {
-            cfg.template("{{ name }}").questionnaire::<FixtureAnswers>()
+        .templates(EmbeddedTemplates::new(TEMPLATES, ""))
+        .command_with("collect", FnHandler::new(handlers::collect), |cfg| {
+            cfg.questionnaire::<FixtureAnswers>()
         })
         .unwrap()
         .build()
@@ -348,8 +355,9 @@ fn reserved_answer_alias_collision_fails_verification() {
 #[test]
 fn reserved_questions_alias_collision_fails_verification() {
     let app = App::builder()
-        .command_with("collect", handlers::collect, |cfg| {
-            cfg.template("{{ name }}").questionnaire::<FixtureAnswers>()
+        .templates(EmbeddedTemplates::new(TEMPLATES, ""))
+        .command_with("collect", FnHandler::new(handlers::collect), |cfg| {
+            cfg.questionnaire::<FixtureAnswers>()
         })
         .unwrap()
         .build()
@@ -365,14 +373,14 @@ fn reserved_questions_alias_collision_fails_verification() {
 fn questionnaire_rejects_existing_input_name() {
     let calls = Arc::new(AtomicUsize::new(0));
     let app = App::builder()
+        .templates(EmbeddedTemplates::new(TEMPLATES, ""))
         .app_state(Calls(calls.clone()))
-        .command_with("collect", handlers::collect, |cfg| {
-            cfg.template("{{ name }}")
-                .input(
-                    "questionnaire",
-                    InputChain::new().try_source(DefaultSource::new("already-taken".to_string())),
-                )
-                .questionnaire::<FixtureAnswers>()
+        .command_with("collect", FnHandler::new(handlers::collect), |cfg| {
+            cfg.input(
+                "questionnaire",
+                InputChain::new().try_source(DefaultSource::new("already-taken".to_string())),
+            )
+            .questionnaire::<FixtureAnswers>()
         })
         .unwrap()
         .build()
@@ -396,14 +404,13 @@ fn questionnaire_rejects_existing_input_name() {
 fn generic_input_rejects_questionnaire_name_after_questionnaire() {
     let calls = Arc::new(AtomicUsize::new(0));
     let app = App::builder()
+        .templates(EmbeddedTemplates::new(TEMPLATES, ""))
         .app_state(Calls(calls.clone()))
-        .command_with("collect", handlers::collect, |cfg| {
-            cfg.template("{{ name }}")
-                .questionnaire::<FixtureAnswers>()
-                .input(
-                    "questionnaire",
-                    InputChain::new().try_source(DefaultSource::new("already-taken".to_string())),
-                )
+        .command_with("collect", FnHandler::new(handlers::collect), |cfg| {
+            cfg.questionnaire::<FixtureAnswers>().input(
+                "questionnaire",
+                InputChain::new().try_source(DefaultSource::new("already-taken".to_string())),
+            )
         })
         .unwrap()
         .build()

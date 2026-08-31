@@ -27,12 +27,14 @@ if !app.run(command, args) {
 ```
 
 When the legacy path needs `ArgMatches`, capture the result instead.
-Framework `App::run_to_string` returns `standout::cli::CompletedRun`, a wrapper
+Framework `App::run_with` returns `standout::cli::CompletedRun`, a wrapper
 around this crate's outcome enum (re-exported as `DispatchResult`) plus
 framework warnings. Match `into_outcome()`:
 
 ```rust
-let result = app.run_to_string(command, args);
+let target = TargetProperties::detect();
+let sources = InputSources::from_process();
+let result = app.run_with(command, args, target, sources);
 let _ = result.warnings();
 match result.into_outcome() {
     DispatchResult::NoMatch(matches) => legacy_dispatch(matches),

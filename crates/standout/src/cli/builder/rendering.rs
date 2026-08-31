@@ -9,97 +9,52 @@ use crate::{
 use standout_render::RegistryError;
 
 impl App {
-    pub fn render<T: Serialize>(
-        &self,
-        template: &str,
-        data: &T,
-        mode: OutputMode,
-    ) -> Result<String, SetupError> {
-        self.render_named(template, data, mode, detected_target(self.ambiguous_width))
-    }
-
     pub fn render_with<T: Serialize>(
         &self,
-        template: &str,
+        template: TemplateRef,
         data: &T,
         mode: OutputMode,
         mut target: TargetProperties,
     ) -> Result<String, SetupError> {
         target.ambiguous_width = self.ambiguous_width;
-        self.render_named(template, data, mode, target)
-    }
 
-    fn render_named<T: Serialize>(
-        &self,
-        template: &str,
-        data: &T,
-        mode: OutputMode,
-        target: TargetProperties,
-    ) -> Result<String, SetupError> {
         if mode.is_structured() {
-            return self.render_named_or_inline(TemplateRef::Absent, data, mode, None, target);
+            return self.render_resolved(TemplateRef::Absent, data, mode, None, target);
         }
+
+        let TemplateRef::Named(name) = &template else {
+            return self.render_resolved(
+                template,
+                data,
+                mode,
+                self.template_registry.clone(),
+                target,
+            );
+        };
 
         let registry = self.template_registry.as_ref().ok_or_else(|| {
             SetupError::Config(format!(
-                "render({template:?}, ...) needs a template registry; add .templates(embed_templates!(\"src/templates\")) or .templates_dir(\"path/to/templates\") before .build(), or call render_inline(...) for inline template source"
+                "render_with(TemplateRef::Named({name:?}), ...) needs a template registry; add .templates(embed_templates!(\"src/templates\")) or .templates_dir(\"path/to/templates\") before .build(), or pass TemplateRef::Inline for inline template source"
             ))
         })?;
 
-        refresh_named_template(registry, template).map_err(|error| {
-            if matches!(registry.get(template), Err(RegistryError::NotFound { .. })) {
+        refresh_named_template(registry, name).map_err(|error| {
+            if matches!(registry.get(name), Err(RegistryError::NotFound { .. })) {
                 SetupError::Template(format!(
-                    "render({template:?}, ...) could not find the named template; add it with .templates(embed_templates!(\"src/templates\")) or .templates_dir(\"path/to/templates\"): {error}"
+                    "render_with(TemplateRef::Named({name:?}), ...) could not find the named template; add it with .templates(embed_templates!(\"src/templates\")) or .templates_dir(\"path/to/templates\"): {error}"
                 ))
             } else {
                 SetupError::Template(format!(
-                    "render({template:?}, ...) could not refresh the registered template: {error}"
+                    "render_with(TemplateRef::Named({name:?}), ...) could not refresh the registered template: {error}"
                 ))
             }
         })?;
 
-        self.render_named_or_inline(
-            TemplateRef::Named(template.to_string()),
-            data,
-            mode,
-            Some(registry.clone()),
-            target,
-        )
+        let registry = registry.clone();
+        self.render_resolved(template, data, mode, Some(registry), target)
     }
 
-    pub fn render_inline<T: Serialize>(
-        &self,
-        template: &str,
-        data: &T,
-        mode: OutputMode,
-    ) -> Result<String, SetupError> {
-        self.render_named_or_inline(
-            TemplateRef::Inline(template.to_string()),
-            data,
-            mode,
-            self.template_registry.clone(),
-            detected_target(self.ambiguous_width),
-        )
-    }
-
-    pub fn render_inline_with<T: Serialize>(
-        &self,
-        template: &str,
-        data: &T,
-        mode: OutputMode,
-        mut target: TargetProperties,
-    ) -> Result<String, SetupError> {
-        target.ambiguous_width = self.ambiguous_width;
-        self.render_named_or_inline(
-            TemplateRef::Inline(template.to_string()),
-            data,
-            mode,
-            self.template_registry.clone(),
-            target,
-        )
-    }
-
-    fn render_named_or_inline<T: Serialize>(
+    fn render_resolved<T: Serialize>(
         &self,
         template: TemplateRef,
         data: &T,
@@ -124,10 +79,4 @@ impl App {
         };
         render_request(&request).map_err(|e| SetupError::Template(e.to_string()))
     }
-}
-
-fn detected_target(ambiguous_width: crate::AmbiguousWidth) -> TargetProperties {
-    let mut target = TargetProperties::detect();
-    target.ambiguous_width = ambiguous_width;
-    target
 }

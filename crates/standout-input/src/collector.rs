@@ -62,6 +62,7 @@ pub struct ResolvedInput<T> {
 pub enum InputSourceKind {
     Arg,
     Flag,
+    File,
     Stdin,
     Env,
     Clipboard,
@@ -75,6 +76,7 @@ impl std::fmt::Display for InputSourceKind {
         match self {
             Self::Arg => write!(f, "argument"),
             Self::Flag => write!(f, "flag"),
+            Self::File => write!(f, "file"),
             Self::Stdin => write!(f, "stdin"),
             Self::Env => write!(f, "environment variable"),
             Self::Clipboard => write!(f, "clipboard"),
@@ -92,6 +94,7 @@ mod tests {
     #[test]
     fn source_kind_display() {
         assert_eq!(InputSourceKind::Arg.to_string(), "argument");
+        assert_eq!(InputSourceKind::File.to_string(), "file");
         assert_eq!(InputSourceKind::Stdin.to_string(), "stdin");
         assert_eq!(InputSourceKind::Editor.to_string(), "editor");
     }

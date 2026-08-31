@@ -21,9 +21,6 @@ use standout_pipe::PipeTarget;
 
 pub(crate) trait CommandRecipe {
     #[allow(dead_code)]
-    fn template(&self) -> Option<&str>;
-
-    #[allow(dead_code)]
     fn template_name(&self) -> Option<&str> {
         None
     }
@@ -114,109 +111,12 @@ where
     ))
 }
 
-pub(crate) struct ClosureRecipe<F, T>
-where
-    F: FnMut(&ArgMatches, &CommandContext) -> HandlerResult<T> + 'static,
-    T: Serialize + 'static,
-{
-    handler: Rc<RefCell<FnHandler<F, T>>>,
-    template: Option<String>,
-    hooks: Option<Hooks>,
-    questionnaire: Option<QuestionnaireCommand>,
-    structured_output_projection: Option<StructuredOutputProjection>,
-}
-
-impl<F, T> ClosureRecipe<F, T>
-where
-    F: FnMut(&ArgMatches, &CommandContext) -> HandlerResult<T> + 'static,
-    T: Serialize + 'static,
-{
-    pub fn new(handler: FnHandler<F, T>) -> Self {
-        Self {
-            handler: Rc::new(RefCell::new(handler)),
-            template: None,
-            hooks: None,
-            questionnaire: None,
-            structured_output_projection: None,
-        }
-    }
-
-    #[allow(dead_code)]
-    pub fn with_template(mut self, template: String) -> Self {
-        self.template = Some(template);
-        self
-    }
-
-    #[allow(dead_code)]
-    pub fn with_hooks(mut self, hooks: Hooks) -> Self {
-        self.hooks = Some(hooks);
-        self
-    }
-
-    pub fn with_structured_output_projection(
-        mut self,
-        projection: StructuredOutputProjection,
-    ) -> Self {
-        self.structured_output_projection = Some(projection);
-        self
-    }
-}
-
-impl<F, T> CommandRecipe for ClosureRecipe<F, T>
-where
-    F: FnMut(&ArgMatches, &CommandContext) -> HandlerResult<T> + 'static,
-    T: Serialize + 'static,
-{
-    fn template(&self) -> Option<&str> {
-        self.template.as_deref()
-    }
-
-    fn hooks(&self) -> Option<&Hooks> {
-        self.hooks.as_ref()
-    }
-
-    fn take_hooks(&mut self) -> Option<Hooks> {
-        self.hooks.take()
-    }
-
-    fn take_questionnaire(&mut self) -> Option<QuestionnaireCommand> {
-        self.questionnaire.take()
-    }
-
-    fn create_dispatch(
-        &self,
-        template: &TemplateRef,
-        context_registry: &ContextRegistry,
-        template_engine: SharedTemplateEngine,
-        template_registry: Option<Rc<crate::TemplateRegistry>>,
-    ) -> DispatchFn {
-        dispatch_from_handler(
-            self.handler.clone(),
-            template.clone(),
-            context_registry.clone(),
-            template_engine,
-            template_registry,
-            self.structured_output_projection.clone(),
-        )
-    }
-
-    fn expected_args(&self) -> Vec<ExpectedArg> {
-        self.handler.borrow().expected_args()
-    }
-
-    fn structured_output_projection(&self) -> Option<&StructuredOutputProjection> {
-        self.structured_output_projection.as_ref()
-    }
-}
-
 pub(crate) struct StructRecipe<H, T>
 where
     H: Handler<Output = T> + 'static,
     T: Serialize + 'static,
 {
     handler: Rc<RefCell<H>>,
-    #[allow(dead_code)]
-    template: Option<String>,
     hooks: Option<Hooks>,
     questionnaire: Option<QuestionnaireCommand>,
     structured_output_projection: Option<StructuredOutputProjection>,
@@ -231,18 +131,11 @@ where
     pub fn new(handler: H) -> Self {
         Self {
             handler: Rc::new(RefCell::new(handler)),
-            template: None,
             hooks: None,
             questionnaire: None,
             structured_output_projection: None,
             _phantom: std::marker::PhantomData,
         }
-    }
-
-    #[allow(dead_code)]
-    pub fn with_template(mut self, template: String) -> Self {
-        self.template = Some(template);
-        self
     }
 
     #[allow(dead_code)]
@@ -266,10 +159,6 @@ where
     H: Handler<Output = T> + 'static,
     T: Serialize + 'static,
 {
-    fn template(&self) -> Option<&str> {
-        self.template.as_deref()
-    }
-
     fn hooks(&self) -> Option<&Hooks> {
         self.hooks.as_ref()
     }
@@ -310,8 +199,6 @@ where
 
 pub(crate) struct ErasedConfigRecipe {
     config: RefCell<Option<Box<dyn ErasedCommandConfig>>>,
-    #[allow(dead_code)]
-    template: Option<String>,
     template_name: Option<String>,
     template_absence: Option<TemplateAbsence>,
     #[allow(dead_code)]
@@ -321,14 +208,12 @@ pub(crate) struct ErasedConfigRecipe {
 
 impl ErasedConfigRecipe {
     pub fn from_handler(mut handler: Box<dyn ErasedCommandConfig>) -> Self {
-        let template = handler.template().map(String::from);
         let template_name = handler.template_name().map(String::from);
         let template_absence = handler.template_absence();
         let hooks = handler.take_hooks();
         let structured_output_projection = handler.structured_output_projection().cloned();
         Self {
             config: RefCell::new(Some(handler)),
-            template,
             template_name,
             template_absence,
             hooks: RefCell::new(hooks),
@@ -338,10 +223,6 @@ impl ErasedConfigRecipe {
 }
 
 impl CommandRecipe for ErasedConfigRecipe {
-    fn template(&self) -> Option<&str> {
-        self.template.as_deref()
-    }
-
     fn template_name(&self) -> Option<&str> {
         self.template_name.as_deref()
     }
@@ -418,10 +299,6 @@ impl<F> CommandRecipe for PassthroughRecipe<F>
 where
     F: FnMut(&ArgMatches, &CommandContext) -> Result<(), anyhow::Error> + 'static,
 {
-    fn template(&self) -> Option<&str> {
-        None
-    }
-
     fn hooks(&self) -> Option<&Hooks> {
         None
     }
@@ -451,7 +328,6 @@ where
 
 pub struct CommandConfig<H> {
     pub(crate) handler: H,
-    pub(crate) template: Option<String>,
     pub(crate) template_name: Option<String>,
     pub(crate) template_absence: Option<TemplateAbsence>,
     pub(crate) hooks: Option<Hooks>,
@@ -463,7 +339,6 @@ impl<H> CommandConfig<H> {
     pub fn new(handler: H) -> Self {
         Self {
             handler,
-            template: None,
             template_name: None,
             template_absence: None,
             hooks: None,
@@ -472,36 +347,25 @@ impl<H> CommandConfig<H> {
         }
     }
 
-    pub fn template(mut self, template: impl Into<String>) -> Self {
-        self.template = Some(template.into());
-        self.template_name = None;
-        self.template_absence = None;
-        self
-    }
-
     pub fn template_name(mut self, name: impl Into<String>) -> Self {
-        self.template = None;
         self.template_name = Some(name.into());
         self.template_absence = None;
         self
     }
 
     pub fn structured_only(mut self) -> Self {
-        self.template = None;
         self.template_name = None;
         self.template_absence = Some(TemplateAbsence::StructuredOnly);
         self
     }
 
     pub fn silent(mut self) -> Self {
-        self.template = None;
         self.template_name = None;
         self.template_absence = Some(TemplateAbsence::Silent);
         self
     }
 
     pub fn binary(mut self) -> Self {
-        self.template = None;
         self.template_name = None;
         self.template_absence = Some(TemplateAbsence::Binary);
         self
@@ -723,7 +587,6 @@ pub(crate) enum GroupEntry {
 }
 
 pub(crate) trait ErasedCommandConfig {
-    fn template(&self) -> Option<&str>;
     fn template_name(&self) -> Option<&str>;
     fn template_absence(&self) -> Option<TemplateAbsence>;
     #[allow(dead_code)]
@@ -761,14 +624,6 @@ impl GroupBuilder {
         self.entries.contains_key(name)
     }
 
-    pub fn len(&self) -> usize {
-        self.entries.len()
-    }
-
-    pub fn is_empty(&self) -> bool {
-        self.entries.is_empty()
-    }
-
     pub fn get_default_command(&self) -> Option<&str> {
         self.default_command.as_deref()
     }
@@ -794,40 +649,6 @@ impl GroupBuilder {
             GroupEntry::Command {
                 handler: Box::new(ClosureCommandConfig {
                     handler: Rc::new(RefCell::new(config.handler)),
-                    template: config.template,
-                    template_name: config.template_name,
-                    template_absence: config.template_absence,
-                    hooks: config.hooks,
-                    questionnaire: config.questionnaire,
-                    structured_output_projection: config.structured_output_projection,
-                }),
-            },
-        );
-        self
-    }
-
-    pub fn handler<H, T>(self, name: &str, handler: H) -> Self
-    where
-        H: Handler<Output = T> + 'static,
-        T: Serialize + 'static,
-    {
-        self.handler_with(name, handler, |cfg| cfg)
-    }
-
-    pub fn handler_with<H, T, C>(mut self, name: &str, handler: H, configure: C) -> Self
-    where
-        H: Handler<Output = T> + 'static,
-        T: Serialize + 'static,
-        C: FnOnce(CommandConfig<H>) -> CommandConfig<H>,
-    {
-        let config = CommandConfig::new(handler);
-        let config = configure(config);
-        self.entries.insert(
-            name.to_string(),
-            GroupEntry::Command {
-                handler: Box::new(StructCommandConfig {
-                    handler: Rc::new(RefCell::new(config.handler)),
-                    template: config.template,
                     template_name: config.template_name,
                     template_absence: config.template_absence,
                     hooks: config.hooks,
@@ -882,7 +703,6 @@ where
     T: Serialize + 'static,
 {
     handler: Rc<RefCell<FnHandler<F, T>>>,
-    template: Option<String>,
     template_name: Option<String>,
     template_absence: Option<TemplateAbsence>,
     hooks: Option<Hooks>,
@@ -895,80 +715,6 @@ where
     F: FnMut(&ArgMatches, &CommandContext) -> HandlerResult<T> + 'static,
     T: Serialize + 'static,
 {
-    fn template(&self) -> Option<&str> {
-        self.template.as_deref()
-    }
-
-    fn template_name(&self) -> Option<&str> {
-        self.template_name.as_deref()
-    }
-
-    fn template_absence(&self) -> Option<TemplateAbsence> {
-        self.template_absence
-    }
-
-    fn hooks(&self) -> Option<&Hooks> {
-        self.hooks.as_ref()
-    }
-
-    fn take_hooks(&mut self) -> Option<Hooks> {
-        self.hooks.take()
-    }
-
-    fn take_questionnaire(&mut self) -> Option<QuestionnaireCommand> {
-        self.questionnaire.take()
-    }
-
-    fn register(
-        self: Box<Self>,
-        _path: &str,
-        template: TemplateRef,
-        context_registry: ContextRegistry,
-        template_engine: SharedTemplateEngine,
-        template_registry: Option<Rc<crate::TemplateRegistry>>,
-    ) -> DispatchFn {
-        dispatch_from_handler(
-            self.handler,
-            template,
-            context_registry,
-            template_engine,
-            template_registry,
-            self.structured_output_projection,
-        )
-    }
-
-    fn expected_args(&self) -> Vec<ExpectedArg> {
-        self.handler.borrow().expected_args()
-    }
-
-    fn structured_output_projection(&self) -> Option<&StructuredOutputProjection> {
-        self.structured_output_projection.as_ref()
-    }
-}
-
-struct StructCommandConfig<H, T>
-where
-    H: Handler<Output = T> + 'static,
-    T: Serialize + 'static,
-{
-    handler: Rc<RefCell<H>>,
-    template: Option<String>,
-    template_name: Option<String>,
-    template_absence: Option<TemplateAbsence>,
-    hooks: Option<Hooks>,
-    questionnaire: Option<QuestionnaireCommand>,
-    structured_output_projection: Option<StructuredOutputProjection>,
-}
-
-impl<H, T> ErasedCommandConfig for StructCommandConfig<H, T>
-where
-    H: Handler<Output = T> + 'static,
-    T: Serialize + 'static,
-{
-    fn template(&self) -> Option<&str> {
-        self.template.as_deref()
-    }
-
     fn template_name(&self) -> Option<&str> {
         self.template_name.as_deref()
     }
@@ -1027,10 +773,6 @@ impl<F> ErasedCommandConfig for PassthroughCommandConfig<F>
 where
     F: FnMut(&ArgMatches, &CommandContext) -> Result<(), anyhow::Error> + 'static,
 {
-    fn template(&self) -> Option<&str> {
-        None
-    }
-
     fn template_name(&self) -> Option<&str> {
         None
     }
@@ -1070,6 +812,7 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
+
     use crate::cli::handler::Output as HandlerOutput;
     use serde_json::json;
 
@@ -1101,14 +844,14 @@ mod tests {
     }
 
     #[test]
-    fn test_command_config_template() {
+    fn test_command_config_template_name() {
         let config =
             CommandConfig::new(FnHandler::new(|_m: &ArgMatches, _ctx: &CommandContext| {
                 Ok(HandlerOutput::Render(json!({})))
             }))
-            .template("custom {{ value }}");
+            .template_name("inner");
 
-        assert_eq!(config.template, Some("custom {{ value }}".to_string()));
+        assert_eq!(config.template_name, Some("inner".to_string()));
     }
 
     #[test]

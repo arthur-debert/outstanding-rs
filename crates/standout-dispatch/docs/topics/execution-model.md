@@ -30,7 +30,7 @@ return `Result<T, E>` directly (see [Handler Contract](handler-contract.md)).
 
 **Post-output Hook**: Runs after rendering. Can transform the final output string.
 
-**Piping**: Optionally sends output to external commands (jq, tee, clipboard). Implemented as specialized post-output hooks. See [Output Piping](../../standout-pipe/docs/topics/piping.md).
+**Piping**: Optionally sends output to external commands (jq, tee, clipboard). Implemented as specialized post-output hooks. See [Output Piping](../../pipe/topics/piping.md).
 
 **Output**: The result is returned or written to stdout.
 
@@ -147,7 +147,7 @@ fn list_handler(matches: &ArgMatches, ctx: &CommandContext) -> HandlerResult<Vec
 }
 ```
 
-See the [Handler Contract](handler-contract.md#extensions) for full `Extensions` API documentation, and [App State](app-state.md) for details on the two-state model.
+See [App State and Extensions](app-state.md#extensions-per-request-state) for the `Extensions` API and the two-state model.
 
 **Post-dispatch**: Runs after the handler, before rendering. Can transform data.
 
@@ -225,7 +225,7 @@ let app = App::builder()
 | Capture | `pipe_through()` | Return command's stdout as new output |
 | Consume | `pipe_to_clipboard()` | Send to clipboard, return empty |
 
-Pipes can be chained and combined with other post-output hooks. See [Output Piping](../../standout-pipe/docs/topics/piping.md) for full documentation.
+Pipes can be chained and combined with other post-output hooks. See [Output Piping](../../pipe/topics/piping.md) for full documentation.
 
 ### Error Handling
 

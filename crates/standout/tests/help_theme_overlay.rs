@@ -101,11 +101,14 @@ fn themed_app() -> App {
 #[test]
 fn app_with_own_theme_renders_clean_help() {
     set_colors_enabled(true);
-    let output =
-        match themed_app().get_matches_from(lookma(), ["lookma", "help", "--output", "term"]) {
-            HelpResult::Help(text) | HelpResult::PagedHelp(text) => text,
-            other => panic!("expected rendered help, got: {other:?}"),
-        };
+    let output = match themed_app().get_matches_from(
+        lookma(),
+        ["lookma", "help", "--output", "term"],
+        &standout::InputSources::from_process(),
+    ) {
+        HelpResult::Help(text) | HelpResult::PagedHelp(text) => text,
+        other => panic!("expected rendered help, got: {other:?}"),
+    };
 
     assert_no_literal_tags(&output);
     assert!(

@@ -4,17 +4,20 @@ Standout can replace clap's built-in help with themed, template-driven output. I
 
 This gives you bold headers, consistent alignment, and a "Learn More" section linking to help topics. For CLIs with many commands, you can organize subcommands into named groups with section headers, help text, and visual separators.
 
-## Enabling Help Handling
+## Help Handling
 
-Help interception is **opt-in**. Enable it with `.help_handling(true)`:
+Help interception is **on by default**. An app that configures nothing renders
+themed help; `.help_handling(false)` gives clap's own help back:
 
 ```rust
-App::builder()
-    .help_handling(true)
-    .build()?;
+// Themed help, no call needed.
+App::builder().build()?;
+
+// Clap's own help instead.
+App::builder().help_handling(false).build()?;
 ```
 
-When enabled, standout:
+With help handling on, standout:
 
 1. Disables clap's default `help` subcommand and registers its own (with `--page` for pager support), subject to the [install policy](#the-help-word) below
 2. **Keeps** clap's native `--help`/`-h` flag, on purpose: clap's flag short-circuits argument validation, so `myapp build --help` renders even when required arguments are missing
@@ -24,13 +27,13 @@ Every form that is available renders the same help, through the same template an
 
 Subcommand-level help (e.g. `myapp build --help`) also works, rendering that subcommand's help through standout.
 
-**Required for features:** `command_groups` and topics require `help_handling(true)`. If you configure either without it, `build()` returns a `SetupError`.
+**Incompatible with the opt-out:** `command_groups` and topics need help interception to render. Configuring either alongside `.help_handling(false)` returns a `SetupError` from `build()`.
 
 ### Whichever entry point you use
 
-Help is answered the same way through both parse paths — `run()` / `run_to_string()` / `dispatch_from()` and `get_matches_from()` / `parse_from()`. Same install policy for the word, same interception of `--help` / `-h`, same rendering: an application's entry point is not a fact about what `myapp help` means.
+Help is answered the same way through both parse paths — `run()` / `run_with()` and `get_matches_from()`. Same install policy for the word, same interception of `--help` / `-h`, same rendering: an application's entry point is not a fact about what `myapp help` means.
 
-The one thing the two paths cannot share is `--page`, because paging is a terminal side effect and only a *printing* entry point may perform it. `run()` and `parse_from()` hand the text to the pager; the capture APIs return it instead — `run_to_string()` marks it `SuccessKind::PagedHelp`, `get_matches_from()` returns `HelpResult::PagedHelp` — and leave the decision to you.
+The one thing the two paths cannot share is `--page`, because paging is a terminal side effect and only a *printing* entry point may perform it. `run()` hands the text to the pager; the capture APIs return it instead — `run_with()` marks it `SuccessKind::PagedHelp`, `get_matches_from()` returns `HelpResult::PagedHelp` — and leave the decision to you.
 
 ## The `help` Word
 
@@ -48,15 +51,12 @@ For the third shape, only your application knows whether its positional domain e
 
 ```rust
 // `mytool <RANGE>` — a revision range is never the word "help".
-App::builder()
-    .help_handling(true)
-    .help_word(true)
-    .build()?;
+App::builder().help_word(true).build()?;
 ```
 
 Opting in accepts the cost: the literal word `help` can no longer reach the positional, and `--` becomes the escape for it — `mytool -- help` passes the string through. Without the opt-in, `--help` / `-h` remain the only spelling, and they still render themed help.
 
-`help_word(true)` only ever *adds* the word; it is not a way to suppress `help` on a CLI that has subcommands. It requires `help_handling(true)` — the word is standout's own subcommand, so `build()` returns a `SetupError` without interception.
+`help_word(true)` only ever *adds* the word; it is not a way to suppress `help` on a CLI that has subcommands. It cannot be combined with `.help_handling(false)` — the word is standout's own subcommand, so `build()` returns a `SetupError` without interception.
 
 ### On a flat CLI, the word describes a flat CLI
 
@@ -85,13 +85,13 @@ own always keeps its section, `help` included.
 
 ### If your CLI already has a `help`
 
-Where standout installs the word, the name is standout's. An application that claims it too — a clap subcommand called `help` (or aliased to it), or a registration whose first path segment is `help` (`.command("help", …)`, `.command("help.topic", …)`, a `.group("help", …)`) — is a configuration standout refuses rather than serves:
+Where standout installs the word, the name is standout's. An application that claims it too — a clap subcommand called `help` (or aliased to it), or a registration whose first path segment is `help` (`.command_with("help", …)`, `.command_with("help.topic", …)`, a `.commands(|g| g.group("help", …))`) — is a configuration standout refuses rather than serves:
 
 ```text
 duplicate command: help — this application's clap `Command` declares `help` (as a
-subcommand name or alias), and standout installs a `help` word of its own under
-.help_handling(true). Rename the application's command, or drop
-.help_handling(true) to keep the name (help is then clap's own, and
+subcommand name or alias), and standout installs a `help` word of its own, since
+help handling is on by default. Rename the application's command, or call
+.help_handling(false) to keep the name (help is then clap's own, and
 command_groups and topics become unavailable)
 ```
 
@@ -99,7 +99,7 @@ Each spelling is caught the moment it becomes visible: a registration under the 
 
 Standing down — letting your `help` win and rendering nothing itself — is deliberately not offered. `myapp help` would then run your handler while `myapp --help` rendered standout's themed help: one CLI answering the same question two ways.
 
-Unaffected: a `help` deeper in the tree (`myapp db help` is yours, at a path the word is never installed on), and any root that never gets the word — a flat CLI with positionals and no `.help_word(true)`, or any CLI without `.help_handling(true)`.
+Unaffected: a `help` deeper in the tree (`myapp db help` is yours, at a path the word is never installed on), and any root that never gets the word — a flat CLI with positionals and no `.help_word(true)`, or any CLI built with `.help_handling(false)`.
 
 ### Why the word is reachable at all
 
@@ -234,7 +234,6 @@ CLIs with many commands (20+) benefit from organized help. The `CommandGroup` st
 use standout::cli::{App, CommandGroup};
 
 App::builder()
-    .help_handling(true)
     .command_groups(vec![
         CommandGroup {
             title: "Commands".into(),
@@ -441,7 +440,7 @@ The template receives a `HelpData` struct with these fields:
 
 There are no `padding` fields. A row aligns itself by padding its name to its
 section's width with `pad_right`, one of [standout-render's tabular
-filters](../../crates/standout-render/docs/topics/tabular.md):
+filters](../crates/render/guides/intro-to-tabular.md):
 
 ```jinja
 {%- set opt_label = "[item]" ~ opt.name ~ "[/item]" -%}
@@ -518,6 +517,6 @@ The `help` word respects the `--output` flag, but only as far as *styling*. Help
 myapp help --output text
 ```
 
-`--help` / `-h` do not take the flag with them (see [above](#enabling-help-handling)): they render in `Auto`, which styles for the terminal it finds. Spell the mode with the word when you need it.
+`--help` / `-h` do not take the flag with them (see [above](#help-handling)): they render in `Auto`, which styles for the terminal it finds. Spell the mode with the word when you need it.
 
 The structured modes (`json`, `yaml`, `xml`, `csv`) strip the tags exactly as `Text` does. None of them serializes `HelpData`, so help is themed prose in every mode, not a machine-readable document. If you need help as data, render it yourself: `HelpData` is what a [custom template](#custom-templates) receives, and a template that emits JSON is the seam for it.

@@ -2,18 +2,23 @@ use clap::{Arg, ArgAction, Command};
 use console::Style;
 use serde_json::json;
 use serial_test::serial;
+use standout::cli::FnHandler;
 use standout::cli::{App, Output};
+use standout::EmbeddedTemplates;
 use standout::Theme;
 use standout_render::OutputMode;
 use standout_test::TestHarness;
+
+const TEMPLATES: &[(&str, &str)] = &[("say", "[shout]hello[/shout]"), ("list", "listed")];
 const RED: &str = "\u{1b}[31m";
 fn styled_app() -> App {
     App::builder()
+        .templates(EmbeddedTemplates::new(TEMPLATES, ""))
         .theme(Theme::new().add("shout", Style::new().red()))
-        .command(
+        .command_with(
             "say",
-            |_m, _ctx| Ok(Output::Render(json!({}))),
-            "[shout]hello[/shout]",
+            FnHandler::new(|_m, _ctx| Ok(Output::Render(json!({})))),
+            |cfg| cfg,
         )
         .unwrap()
         .build()
@@ -24,8 +29,13 @@ fn styled_command() -> Command {
 }
 fn help_app() -> App {
     App::builder()
+        .templates(EmbeddedTemplates::new(TEMPLATES, ""))
         .help_handling(true)
-        .command("list", |_m, _ctx| Ok(Output::Render(json!({}))), "listed")
+        .command_with(
+            "list",
+            FnHandler::new(|_m, _ctx| Ok(Output::Render(json!({})))),
+            |cfg| cfg,
+        )
         .unwrap()
         .build()
         .unwrap()

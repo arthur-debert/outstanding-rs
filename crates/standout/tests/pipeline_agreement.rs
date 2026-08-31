@@ -1,3 +1,4 @@
+use standout::cli::FnHandler;
 use std::cell::RefCell;
 use std::rc::Rc;
 
@@ -68,7 +69,7 @@ fn run_command_greet(app: &App, matches: &clap::ArgMatches) -> RenderedOutput {
         "greet",
         sub,
         |_m, _ctx| Ok(Output::Render(json!({"name": "Ada", "label": "hi"}))),
-        COMPOSITION_TEMPLATE,
+        standout::TemplateRef::Inline((COMPOSITION_TEMPLATE).to_string()),
     )
     .expect("run_command should render")
 }
@@ -98,10 +99,10 @@ fn composition_app(templates: &std::path::Path) -> App {
         .context_fn("where", |ctx: &RenderContext| {
             Value::from(format!("w{}", ctx.terminal_width.unwrap_or(0)))
         })
-        .command(
+        .command_with(
             "greet",
-            |_m, _ctx| Ok(Output::Render(json!({"name": "Ada", "label": "hi"}))),
-            COMPOSITION_TEMPLATE,
+            FnHandler::new(|_m, _ctx| Ok(Output::Render(json!({"name": "Ada", "label": "hi"})))),
+            |cfg| cfg,
         )
         .unwrap()
         .build()
@@ -163,11 +164,21 @@ fn dispatch_render_inline_and_render_request_agree_byte_for_byte() {
         .to_string();
 
     let inline = app
-        .render_inline_with(COMPOSITION_TEMPLATE, &data, OutputMode::Term, target)
+        .render_with(
+            standout::TemplateRef::Inline((COMPOSITION_TEMPLATE).to_string()),
+            &data,
+            OutputMode::Term,
+            target,
+        )
         .unwrap();
 
     let named = app
-        .render_with("greet", &data, OutputMode::Term, target)
+        .render_with(
+            standout::TemplateRef::Named(("greet").to_string()),
+            &data,
+            OutputMode::Term,
+            target,
+        )
         .unwrap();
 
     let via_request = render_request(&composition_request(&app, templates.path(), target)).unwrap();

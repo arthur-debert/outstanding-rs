@@ -36,7 +36,11 @@ fn app_override_of_named_help_template_is_used() {
         .build()
         .unwrap();
 
-    match app.get_matches_from(help_command(), ["app", "--help"]) {
+    match app.get_matches_from(
+        help_command(),
+        ["app", "--help"],
+        &standout::InputSources::from_process(),
+    ) {
         HelpResult::Help(text) | HelpResult::PagedHelp(text) => {
             assert!(
                 text.contains("CUSTOM HELP PAGE"),
@@ -96,7 +100,11 @@ fn unreadable_named_help_override_surfaces_as_render_error() {
 
     std::fs::remove_file(&path).unwrap();
 
-    match app.get_matches_from(help_command(), ["app", "--help"]) {
+    match app.get_matches_from(
+        help_command(),
+        ["app", "--help"],
+        &standout::InputSources::from_process(),
+    ) {
         HelpResult::Error(err) => {
             let msg = err.to_string();
             assert!(

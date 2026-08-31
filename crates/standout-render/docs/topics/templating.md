@@ -109,6 +109,39 @@ your own environment, which installs the same spelling.
 
 ---
 
+## The Trailing-Newline Contract
+
+Two things happen to the newline at the end of a template, and together they
+are observable in the bytes a script reads, so they are stated here rather than
+discovered by probing.
+
+**The engine consumes exactly one final newline.** This is Jinja's rule and
+MiniJinja keeps it. A template file ending in a single `\n` renders with no
+trailing newline at all; a file ending in two renders with one.
+
+| Template source | Rendered string |
+| --- | --- |
+| `{{ name }}` | `x` |
+| `{{ name }}\n` | `x` |
+| `{{ name }}\n\n` | `x\n` |
+| `{{ name }}\n\n\n` | `x\n\n` |
+
+**The process edge appends exactly one newline.** `App::run` writes a handled
+command's text with `writeln!`, so what reaches stdout is the rendered string
+plus one `\n` — whatever the template ended with.
+
+The practical consequence: a template that ends with one newline and a template
+that ends with none produce identical bytes. To end a page with a blank line,
+the template needs *two* trailing newlines. Every editor that adds a final
+newline on save is therefore invisible here, which is the reason the rule is
+worth stating.
+
+`standout-render/tests/trailing_newline.rs` pins the engine half;
+`final_emission_routes_success_and_diagnostics_to_distinct_streams` in
+`standout/src/cli/builder/execution.rs` pins the process half.
+
+---
+
 ## Style Tags
 
 Style tags use BBCode-like bracket notation to apply named styles from your theme:

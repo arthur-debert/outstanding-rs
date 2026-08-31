@@ -21,7 +21,7 @@ fn test_verification_success() {
         Command::new("app").subcommand(Command::new("test").arg(Arg::new("foo").required(true)));
 
     let app = App::builder()
-        .command_handler_with("test", my_verified_handler_Handler, |config| {
+        .command_with("test", my_verified_handler_Handler, |config| {
             config.structured_only()
         })
         .unwrap()
@@ -36,7 +36,7 @@ fn test_verification_failure_missing_arg() {
     let cmd_def = Command::new("app").subcommand(Command::new("test"));
 
     let app = App::builder()
-        .command_handler_with("test", my_verified_handler_Handler, |config| {
+        .command_with("test", my_verified_handler_Handler, |config| {
             config.structured_only()
         })
         .unwrap()
@@ -58,7 +58,7 @@ fn test_verification_failure_wrong_type() {
         .subcommand(Command::new("test").arg(Arg::new("foo").action(clap::ArgAction::SetTrue)));
 
     let app = App::builder()
-        .command_handler_with("test", my_verified_handler_Handler, |config| {
+        .command_with("test", my_verified_handler_Handler, |config| {
             config.structured_only()
         })
         .unwrap()
@@ -91,7 +91,7 @@ fn test_verification_nested_command_success() {
     );
 
     let app = App::builder()
-        .command_handler_with("db.migrate", nested_handler_Handler, |config| {
+        .command_with("db.migrate", nested_handler_Handler, |config| {
             config.structured_only()
         })
         .unwrap()
@@ -107,7 +107,7 @@ fn test_verification_nested_command_failure() {
         Command::new("app").subcommand(Command::new("db").subcommand(Command::new("migrate")));
 
     let app = App::builder()
-        .command_handler_with("db.migrate", nested_handler_Handler, |config| {
+        .command_with("db.migrate", nested_handler_Handler, |config| {
             config.structured_only()
         })
         .unwrap()
@@ -127,7 +127,7 @@ fn test_verification_preserves_structured_error() {
     let cmd_def = Command::new("app").subcommand(Command::new("test"));
 
     let app = App::builder()
-        .command_handler_with("test", my_verified_handler_Handler, |config| {
+        .command_with("test", my_verified_handler_Handler, |config| {
             config.structured_only()
         })
         .unwrap()

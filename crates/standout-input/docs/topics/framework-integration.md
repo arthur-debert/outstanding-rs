@@ -35,12 +35,14 @@ use standout::cli::{App, CommandContextInput, Output};
 use standout::input::{ArgSource, EditorSource, InputChain, StdinSource};
 
 App::builder()
-    .command_with("create", create, |cfg| {
-        cfg.template_name("create")
-            .input("body", InputChain::<String>::new()
-                .try_source(ArgSource::new("body"))
-                .try_source(StdinSource::new())
-                .try_source(EditorSource::new()))
+    .commands(|g| {
+        g.command_with("create", create, |cfg| {
+            cfg.template_name("create")
+                .input("body", InputChain::<String>::new()
+                    .try_source(ArgSource::new("body"))
+                    .try_source(StdinSource::new())
+                    .try_source(EditorSource::new()))
+        })
     })?
     .build()?;
 
@@ -121,19 +123,21 @@ if let Some(bag) = ctx.inputs() {
 `.input(...)` accumulates. A command can declare any number of named inputs of any types — including multiple inputs of the same type, which the `TypeId`-keyed `ctx.app_state` / raw `ctx.extensions` cannot disambiguate:
 
 ```rust
-.command_with("create", create, |cfg| {
-    cfg.template_name("create")
-        .input("title", InputChain::<String>::new()
-            .try_source(ArgSource::new("title"))
-            .default("untitled".to_string()))
-        .input("body", InputChain::<String>::new()
-            .try_source(ArgSource::new("body"))
-            .try_source(StdinSource::new())
-            .try_source(EditorSource::new()))
-        .input("force", InputChain::<bool>::new()
-            .try_source(FlagSource::new("force"))
-            .default(false))
-})
+.commands(|g| {
+    g.command_with("create", create, |cfg| {
+        cfg.template_name("create")
+            .input("title", InputChain::<String>::new()
+                .try_source(ArgSource::new("title"))
+                .default("untitled".to_string()))
+            .input("body", InputChain::<String>::new()
+                .try_source(ArgSource::new("body"))
+                .try_source(StdinSource::new())
+                .try_source(EditorSource::new()))
+            .input("force", InputChain::<bool>::new()
+                .try_source(FlagSource::new("force"))
+                .default(false))
+    })
+})?
 ```
 
 Each chain runs in registration order during pre-dispatch. They share the same `Inputs` bag on `ctx.extensions`, so two `String` inputs (`title`, `body`) coexist without colliding.
@@ -205,7 +209,7 @@ For lower-level tests that don't need the harness, pass sources into [`InputChai
 
 ```toml
 [dependencies]
-standout = "7"
+standout = "9"
 ```
 
 ```rust
@@ -221,7 +225,7 @@ A default `standout` dependency only enables `standout-input`'s `simple-prompts`
 
 ```toml
 [dependencies]
-standout = { version = "7", features = ["input-editor"] }
+standout = { version = "9", features = ["input-editor"] }
 ```
 
 You can still depend on `standout-input` directly if you want to bypass the `standout` re-export and pick features there.

@@ -78,12 +78,15 @@ pub enum Commands {
 }
 ```
 
-Or use the builder API for more control:
+Or use the builder API for more control. `GroupBuilder::command_with` takes a
+function shaped `FnMut(&ArgMatches, &CommandContext) -> HandlerResult<T>`,
+which is the wrapper `#[handler]` generates (`list__handler`), not the
+annotated function (`list`) itself:
 
 ```rust
 let app = App::builder()
     .commands(|g| {
-        g.command_with("list", handlers::list, |cfg| {
+        g.command_with("list", handlers::list__handler, |cfg| {
             cfg.template_name("list")
                .pipe_through("jq '.items'")
         })
@@ -219,8 +222,9 @@ When you pipe output:
 - Clipboard operations receive clean, pasteable text
 
 ```rust
-// Your template has styled output
-cfg.template("[bold]{{ title }}[/bold]: [green]{{ count }}[/green]")
+// The "report" template (registered separately) renders styled output:
+// "[bold]{{ title }}[/bold]: [green]{{ count }}[/green]"
+cfg.template_name("report")
    .pipe_through("jq .")
 
 // Terminal sees: "\x1b[1mReport\x1b[0m: \x1b[32m42\x1b[0m" (formatted)
@@ -281,7 +285,7 @@ You can combine piping with other post-output hooks:
 .pipe_through("jq .")     // Receives footer-added output
 ```
 
-> **Tip:** For details on the full pipeline, see [Execution Model](../../standout-dispatch/docs/topics/execution-model.md).
+> **Tip:** For details on the full pipeline, see [Execution Model](../../dispatch/topics/execution-model.md).
 
 ---
 

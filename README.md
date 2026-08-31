@@ -112,24 +112,87 @@ for the supported input types, cardinalities, and sources.
 ## Quick Example
 
 ```rust
-use standout::cli::{App, Dispatch, CommandContext, HandlerResult, Output};
-use standout::{embed_templates, embed_styles};
+use clap::{CommandFactory, Parser, Subcommand};
+use serde::Serialize;
+use standout::cli::{App, CommandContext, Dispatch, Output};
+use standout::{embed_styles, embed_templates, handler};
+use todo_core::{Todo, TodoFilter, TodoStore};
+
+// `Todo`, `TodoFilter` and `TodoStore` come from the CLI-free library. The view
+// models below belong to the CLI, so the persisted shape cannot silently decide
+// what `--output json` prints or what `src/templates/list.jinja` renders.
+#[derive(Serialize)]
+struct TodoView {
+    id: u32,
+    title: String,
+    done: bool,
+}
+
+impl From<Todo> for TodoView {
+    fn from(todo: Todo) -> Self {
+        Self { id: todo.id, title: todo.title, done: todo.done }
+    }
+}
+
+#[derive(Serialize)]
+struct TodoListView {
+    todos: Vec<TodoView>,
+    total: usize,
+}
+
+#[derive(Parser)]
+struct Cli {
+    #[command(subcommand)]
+    command: Option<Commands>,
+}
 
 #[derive(Subcommand, Dispatch)]
 #[dispatch(handlers = handlers)]
-pub enum Commands {
-    List,
+enum Commands {
+    #[dispatch(pure)]
+    List {
+        #[arg(long)]
+        all: bool,
+    },
 }
 
-let app = App::builder()
-    .templates(embed_templates!("src/templates"))
-    .styles(embed_styles!("src/styles"))
-    .default_theme("default")
-    .commands(Commands::dispatch_config())?
-    .build()?;
+mod handlers {
+    use super::*;
 
-app.run(Cli::command(), std::env::args());
+    #[handler]
+    pub fn list(#[flag] all: bool, #[ctx] ctx: &CommandContext) -> Result<Output<TodoListView>, anyhow::Error> {
+        let store = ctx.app_state.get_required::<TodoStore>()?;
+        let filter = if all { TodoFilter::All } else { TodoFilter::Pending };
+        let todos: Vec<TodoView> = store.list(filter).into_iter().map(TodoView::from).collect();
+        let total = todos.len();
+        Ok(Output::Render(TodoListView { todos, total }))
+    }
+}
+
+fn main() -> anyhow::Result<()> {
+    let store = TodoStore::load("todos.json")?;
+    let app = App::builder()
+        .app_state(store)
+        .templates(embed_templates!("src/templates"))
+        .styles(embed_styles!("src/styles"))
+        .default_theme("default")
+        .commands(Commands::dispatch_config())?
+        .build()?;
+
+    app.run(Cli::command(), std::env::args());
+    Ok(())
+}
 ```
+
+The `List` variant registers the command under its kebab-case name, `list`;
+`#[dispatch(pure)]` points it at the wrapper `#[handler]` generated,
+`handlers::list__handler`; and with no template named, the convention renders
+`src/templates/list.jinja`. Themed help is on by default. Each `#[flag]` or
+`#[arg]` parameter reads a clap argument by id, so the variant declares `all`
+for the handler to find it — `app.verify_command(&cmd)` reports a pair that
+does not line up. `.app_state(store)` is what `get_required::<TodoStore>()`
+reads back; a handler asking for state the builder never registered fails at
+dispatch.
 
 ```bash
 myapp list                  # Rich terminal output
@@ -144,8 +207,10 @@ You can find comprehensive documentation in our book: **[standout.magik.works](h
 - [Bootstrap a Standout project](https://standout.magik.works/guides/bootstrap-a-project.html) — Generate a production-shaped two-crate starter with one runnable command and layered tests
 - [Derived Questionnaires](https://standout.magik.works/guides/derived-questionnaires.html) — Declare typed answer sheets and inject `questions`, `--answers`, and `--yes` into commands
 - [Introduction to Standout](https://standout.magik.works/guides/intro-to-standout.html) — Adopting the framework in an existing CLI
-- [Rendering System](https://standout.magik.works/topics/rendering-system.html) — Templates and styles
-- [Tabular Layouts](https://standout.magik.works/topics/tabular.html) — Tables and alignment
+- [Styling System](https://standout.magik.works/crates/render/topics/styling-system.html) — Templates and styles
+- [Tabular Layouts](https://standout.magik.works/crates/render/guides/intro-to-tabular.html) — Tables and alignment
+- [Dispatch and Handler Attributes](https://standout.magik.works/topics/dispatch-attributes.html) — Every `#[dispatch(…)]` and `#[handler]` key, and the two name mappings
+- [What Is Contract](https://standout.magik.works/topics/stability.html) — Which surfaces are contract and which are internal, so "is this change breaking?" has a written answer
 - [All Topics](https://standout.magik.works/topics/index.html) — Complete reference
 
 ## Contributing

@@ -1,12 +1,23 @@
 use clap::{Arg, Command};
 use serde_json::json;
+use standout::cli::FnHandler;
 use standout::cli::{App, CommandContextInput, DispatchResult, Output};
 use standout::input::{
     env::MockStdin, ArgSource, FlagSource, InputChain, InputSourceKind, InputSources,
     PromptResponse, ScriptedResponder, StdinSource, TextPromptSource,
 };
+use standout::EmbeddedTemplates;
 use standout::{AmbiguousWidth, ColorMode, IconMode, TargetProperties};
 use std::sync::Arc;
+
+const TEMPLATES: &[(&str, &str)] = &[
+    ("create", "{{ echo }}"),
+    ("create-2", "{{ kind }}"),
+    ("create-3", "{{ kind }}: {{ echo }}"),
+    ("create-4", "{{ title }} | {{ body }}"),
+    ("create-5", "body={{ body }} force={{ force }}"),
+    ("create-6", "{{ error }}"),
+];
 
 fn body_command() -> Command {
     Command::new("test")
@@ -38,14 +49,15 @@ fn run_create(app: &App, args: Vec<&str>, stdin: Option<MockStdin>) -> DispatchR
 #[test]
 fn arg_value_reaches_handler_via_ctx_input() {
     let app = App::builder()
+        .templates(EmbeddedTemplates::new(TEMPLATES, ""))
         .command_with(
             "create",
-            |_m, ctx| {
+            FnHandler::new(|_m, ctx| {
                 let body: &String = ctx.input("body").expect("body should be resolved");
                 Ok(Output::Render(json!({ "echo": body })))
-            },
+            }),
             |cfg| {
-                cfg.template("{{ echo }}").input(
+                cfg.input(
                     "body",
                     InputChain::<String>::new()
                         .try_source(ArgSource::new("body"))
@@ -67,14 +79,15 @@ fn arg_value_reaches_handler_via_ctx_input() {
 #[test]
 fn run_command_resolves_declared_input() {
     let app = App::builder()
+        .templates(EmbeddedTemplates::new(TEMPLATES, ""))
         .command_with(
             "create",
-            |_m, ctx| {
+            FnHandler::new(|_m, ctx| {
                 let body: &String = ctx.input("body").expect("body should be resolved");
                 Ok(Output::Render(json!({ "echo": body })))
-            },
+            }),
             |cfg| {
-                cfg.template("{{ echo }}").input(
+                cfg.input(
                     "body",
                     InputChain::<String>::new()
                         .try_source(ArgSource::new("body"))
@@ -99,7 +112,7 @@ fn run_command_resolves_declared_input() {
                 let body: &String = ctx.input("body").expect("body should be resolved");
                 Ok(Output::Render(json!({ "echo": body })))
             },
-            "{{ echo }}",
+            standout::TemplateRef::Inline(("{{ echo }}").to_string()),
         )
         .expect("run_command should resolve the declared input");
     assert_eq!(output.as_text(), Some("hello"));
@@ -108,14 +121,15 @@ fn run_command_resolves_declared_input() {
 #[test]
 fn default_kicks_in_when_no_source_provides_value() {
     let app = App::builder()
+        .templates(EmbeddedTemplates::new(TEMPLATES, ""))
         .command_with(
             "create",
-            |_m, ctx| {
+            FnHandler::new(|_m, ctx| {
                 let body: &String = ctx.input("body").unwrap();
                 Ok(Output::Render(json!({ "echo": body })))
-            },
+            }),
             |cfg| {
-                cfg.template("{{ echo }}").input(
+                cfg.input(
                     "body",
                     InputChain::<String>::new()
                         .try_source(ArgSource::new("body"))
@@ -137,14 +151,15 @@ fn default_kicks_in_when_no_source_provides_value() {
 #[test]
 fn input_source_reports_arg_kind() {
     let app = App::builder()
+        .templates(EmbeddedTemplates::new(TEMPLATES, ""))
         .command_with(
             "create",
-            |_m, ctx| {
+            FnHandler::new(|_m, ctx| {
                 let kind = ctx.input_source("body").unwrap();
                 Ok(Output::Render(json!({ "kind": kind.to_string() })))
-            },
+            }),
             |cfg| {
-                cfg.template("{{ kind }}").input(
+                cfg.template_name("create-2").input(
                     "body",
                     InputChain::<String>::new()
                         .try_source(ArgSource::new("body"))
@@ -164,17 +179,97 @@ fn input_source_reports_arg_kind() {
     }
 }
 
+/// The wizard generates a file collector named `file` for a value that arrives
+/// through a path argument. That name is what the chain turns into provenance,
+/// so a value read out of a file must not report itself as a typed argument.
+#[test]
+fn input_source_reports_file_kind() {
+    struct FileSource {
+        arg: &'static str,
+    }
+
+    impl standout::input::InputCollector<String> for FileSource {
+        fn name(&self) -> &'static str {
+            "file"
+        }
+
+        fn is_available(&self, matches: &clap::ArgMatches) -> bool {
+            matches.get_one::<std::path::PathBuf>(self.arg).is_some()
+        }
+
+        fn collect(
+            &self,
+            matches: &clap::ArgMatches,
+        ) -> Result<Option<String>, standout::input::InputError> {
+            let Some(path) = matches.get_one::<std::path::PathBuf>(self.arg) else {
+                return Ok(None);
+            };
+            std::fs::read_to_string(path).map(Some).map_err(|error| {
+                standout::input::InputError::file(path.display().to_string(), error)
+            })
+        }
+    }
+
+    let dir = tempfile::tempdir().unwrap();
+    let document = dir.path().join("document.txt");
+    std::fs::write(&document, "from a file").unwrap();
+
+    let command = Command::new("test").subcommand(
+        Command::new("create").arg(
+            Arg::new("body_file")
+                .long("body-file")
+                .value_parser(clap::value_parser!(std::path::PathBuf)),
+        ),
+    );
+    let app = App::builder()
+        .templates(EmbeddedTemplates::new(TEMPLATES, ""))
+        .command_with(
+            "create",
+            FnHandler::new(|_m, ctx| {
+                let kind = ctx.input_source("body").unwrap();
+                let body: &String = ctx.input("body").expect("body should be resolved");
+                Ok(Output::Render(
+                    json!({ "kind": kind.to_string(), "echo": body }),
+                ))
+            }),
+            |cfg| {
+                cfg.template_name("create-3").input(
+                    "body",
+                    InputChain::<String>::new().try_source(FileSource { arg: "body_file" }),
+                )
+            },
+        )
+        .unwrap()
+        .build()
+        .unwrap();
+
+    let result = app
+        .run_with(
+            command,
+            vec!["test", "create", "--body-file", document.to_str().unwrap()],
+            capable_target(),
+            InputSources::from_process(),
+        )
+        .into_outcome();
+    if let DispatchResult::Handled(out) = result {
+        assert_eq!(out, format!("{}: from a file", InputSourceKind::File));
+    } else {
+        panic!("expected Handled, got {:?}", result);
+    }
+}
+
 #[test]
 fn input_source_reports_default_kind_when_falling_back() {
     let app = App::builder()
+        .templates(EmbeddedTemplates::new(TEMPLATES, ""))
         .command_with(
             "create",
-            |_m, ctx| {
+            FnHandler::new(|_m, ctx| {
                 let kind = ctx.input_source("body").unwrap();
                 Ok(Output::Render(json!({ "kind": kind.to_string() })))
-            },
+            }),
             |cfg| {
-                cfg.template("{{ kind }}").input(
+                cfg.template_name("create-2").input(
                     "body",
                     InputChain::<String>::new()
                         .try_source(ArgSource::new("body"))
@@ -197,18 +292,19 @@ fn input_source_reports_default_kind_when_falling_back() {
 #[test]
 fn stdin_fallback_when_arg_absent() {
     let app = App::builder()
+        .templates(EmbeddedTemplates::new(TEMPLATES, ""))
         .command_with(
             "create",
-            |_m, ctx| {
+            FnHandler::new(|_m, ctx| {
                 let body: &String = ctx.input("body").unwrap();
                 let kind = ctx.input_source("body").unwrap();
                 Ok(Output::Render(json!({
                     "echo": body,
                     "kind": kind.to_string(),
                 })))
-            },
+            }),
             |cfg| {
-                cfg.template("{{ kind }}: {{ echo }}").input(
+                cfg.template_name("create-3").input(
                     "body",
                     InputChain::<String>::new()
                         .try_source(ArgSource::new("body"))
@@ -237,18 +333,19 @@ fn stdin_fallback_when_arg_absent() {
 #[test]
 fn arg_wins_over_stdin_when_both_available() {
     let app = App::builder()
+        .templates(EmbeddedTemplates::new(TEMPLATES, ""))
         .command_with(
             "create",
-            |_m, ctx| {
+            FnHandler::new(|_m, ctx| {
                 let body: &String = ctx.input("body").unwrap();
                 let kind = ctx.input_source("body").unwrap();
                 Ok(Output::Render(json!({
                     "echo": body,
                     "kind": kind.to_string(),
                 })))
-            },
+            }),
             |cfg| {
-                cfg.template("{{ kind }}: {{ echo }}").input(
+                cfg.template_name("create-3").input(
                     "body",
                     InputChain::<String>::new()
                         .try_source(ArgSource::new("body"))
@@ -277,18 +374,19 @@ fn arg_wins_over_stdin_when_both_available() {
 #[test]
 fn command_config_input_consumes_scripted_responder() {
     let app = App::builder()
+        .templates(EmbeddedTemplates::new(TEMPLATES, ""))
         .command_with(
             "create",
-            |_m, ctx| {
+            FnHandler::new(|_m, ctx| {
                 let body: &String = ctx.input("body").expect("body should be resolved");
                 let kind = ctx.input_source("body").unwrap();
                 Ok(Output::Render(json!({
                     "echo": body,
                     "kind": kind.to_string(),
                 })))
-            },
+            }),
             |cfg| {
-                cfg.template("{{ kind }}: {{ echo }}").input(
+                cfg.template_name("create-3").input(
                     "body",
                     InputChain::<String>::new()
                         .try_source(ArgSource::new("body"))
@@ -328,18 +426,19 @@ fn multiple_named_inputs_of_same_type_do_not_collide() {
     );
 
     let app = App::builder()
+        .templates(EmbeddedTemplates::new(TEMPLATES, ""))
         .command_with(
             "create",
-            |_m, ctx| {
+            FnHandler::new(|_m, ctx| {
                 let body: &String = ctx.input("body").unwrap();
                 let title: &String = ctx.input("title").unwrap();
                 Ok(Output::Render(json!({
                     "body": body,
                     "title": title,
                 })))
-            },
+            }),
             |cfg| {
-                cfg.template("{{ title }} | {{ body }}")
+                cfg.template_name("create-4")
                     .input(
                         "body",
                         InputChain::<String>::new()
@@ -359,7 +458,7 @@ fn multiple_named_inputs_of_same_type_do_not_collide() {
         .unwrap();
 
     let result = app
-        .run_to_string(
+        .run_with(
             cmd,
             vec![
                 "test",
@@ -369,6 +468,8 @@ fn multiple_named_inputs_of_same_type_do_not_collide() {
                 "--title",
                 "the title",
             ],
+            standout::TargetProperties::detect(),
+            standout::InputSources::from_process(),
         )
         .into_outcome();
     if let DispatchResult::Handled(out) = result {
@@ -391,18 +492,19 @@ fn mixed_types_string_and_bool_coexist() {
     );
 
     let app = App::builder()
+        .templates(EmbeddedTemplates::new(TEMPLATES, ""))
         .command_with(
             "create",
-            |_m, ctx| {
+            FnHandler::new(|_m, ctx| {
                 let body: &String = ctx.input("body").unwrap();
                 let force: &bool = ctx.input("force").unwrap();
                 Ok(Output::Render(json!({
                     "body": body,
                     "force": force,
                 })))
-            },
+            }),
             |cfg| {
-                cfg.template("body={{ body }} force={{ force }}")
+                cfg.template_name("create-5")
                     .input(
                         "body",
                         InputChain::<String>::new()
@@ -422,7 +524,12 @@ fn mixed_types_string_and_bool_coexist() {
         .unwrap();
 
     let result = app
-        .run_to_string(cmd, vec!["test", "create", "--body", "x", "--force"])
+        .run_with(
+            cmd,
+            vec!["test", "create", "--body", "x", "--force"],
+            standout::TargetProperties::detect(),
+            standout::InputSources::from_process(),
+        )
         .into_outcome();
     if let DispatchResult::Handled(out) = result {
         assert_eq!(out, "body=x force=true");
@@ -434,13 +541,16 @@ fn mixed_types_string_and_bool_coexist() {
 #[test]
 fn validation_failure_aborts_before_handler() {
     let app = App::builder()
+        .templates(EmbeddedTemplates::new(TEMPLATES, ""))
         .command_with(
             "create",
-            |_m, _ctx| -> standout::cli::HandlerResult<serde_json::Value> {
-                panic!("handler must not run when pre-dispatch validation fails");
-            },
+            FnHandler::new(
+                |_m, _ctx| -> standout::cli::HandlerResult<serde_json::Value> {
+                    panic!("handler must not run when pre-dispatch validation fails");
+                },
+            ),
             |cfg| {
-                cfg.template("{{ echo }}").input(
+                cfg.input(
                     "body",
                     InputChain::<String>::new()
                         .try_source(ArgSource::new("body"))
@@ -468,14 +578,15 @@ fn validation_failure_aborts_before_handler() {
 #[test]
 fn handler_asking_for_unregistered_input_gets_missing_input_error() {
     let app = App::builder()
+        .templates(EmbeddedTemplates::new(TEMPLATES, ""))
         .command_with(
             "create",
-            |_m, ctx| {
+            FnHandler::new(|_m, ctx| {
                 let err = ctx.input::<String>("nonexistent").unwrap_err();
                 Ok(Output::Render(json!({ "error": err.to_string() })))
-            },
+            }),
             |cfg| {
-                cfg.template("{{ error }}").input(
+                cfg.template_name("create-6").input(
                     "body",
                     InputChain::<String>::new()
                         .try_source(ArgSource::new("body"))
@@ -499,14 +610,15 @@ fn handler_asking_for_unregistered_input_gets_missing_input_error() {
 #[test]
 fn type_mismatch_lookup_returns_descriptive_error() {
     let app = App::builder()
+        .templates(EmbeddedTemplates::new(TEMPLATES, ""))
         .command_with(
             "create",
-            |_m, ctx| {
+            FnHandler::new(|_m, ctx| {
                 let err = ctx.input::<u32>("body").unwrap_err();
                 Ok(Output::Render(json!({ "error": err.to_string() })))
-            },
+            }),
             |cfg| {
-                cfg.template("{{ error }}").input(
+                cfg.template_name("create-6").input(
                     "body",
                     InputChain::<String>::new()
                         .try_source(ArgSource::new("body"))

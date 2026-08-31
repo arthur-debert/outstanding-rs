@@ -1,12 +1,22 @@
 use clap::{Arg, ArgAction, Command};
 use serde_json::json;
 use serial_test::serial;
+use standout::cli::FnHandler;
 use standout::cli::{App, AppBuilder, ExitStatus, HelpResult, Output, RunErrorKind, SuccessKind};
+use standout::EmbeddedTemplates;
 use standout_input::env::MockStdin;
 use standout_input::InputSources;
 use standout_test::TestHarness;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
+
+const TEMPLATES: &[(&str, &str)] = &[
+    ("db/migrate", "{{ cmd }}"),
+    ("add", "{{ cmd }} stdin={{ stdin }} loud={{ loud }}"),
+    ("list", "{{ cmd }} loud={{ loud }}"),
+    ("list-2", "verbatim={{ verbatim }}"),
+];
+
 fn app_command() -> Command {
     Command::new("app")
         .version("1.2.3")
@@ -23,20 +33,20 @@ fn app_command() -> Command {
 }
 fn register(builder: AppBuilder) -> AppBuilder {
     builder
-        .command(
+        .command_with(
             "list",
-            |m, _ctx| {
+            FnHandler::new(|m, _ctx| {
                 Ok(Output::Render(json!({
                     "cmd": "list",
                     "loud": m.get_flag("loud"),
                 })))
-            },
-            "{{ cmd }} loud={{ loud }}",
+            }),
+            |cfg| cfg,
         )
         .unwrap()
-        .command(
+        .command_with(
             "add",
-            |m, ctx| {
+            FnHandler::new(|m, ctx| {
                 use standout::cli::CommandContextInput;
                 let piped = ctx
                     .input_sources()
@@ -48,29 +58,37 @@ fn register(builder: AppBuilder) -> AppBuilder {
                     "stdin": piped.trim(),
                     "loud": m.get_flag("loud"),
                 })))
-            },
-            "{{ cmd }} stdin={{ stdin }} loud={{ loud }}",
+            }),
+            |cfg| cfg,
         )
         .unwrap()
-        .command(
+        .command_with(
             "db.migrate",
-            |_m, _ctx| Ok(Output::Render(json!({ "cmd": "db.migrate" }))),
-            "{{ cmd }}",
+            FnHandler::new(|_m, _ctx| Ok(Output::Render(json!({ "cmd": "db.migrate" })))),
+            |cfg| cfg,
         )
         .unwrap()
 }
 fn piped_aware_app() -> App {
-    register(App::builder().default_command_with(|ctx| {
-        Some(if ctx.stdin_is_piped() { "add" } else { "list" }.to_string())
-    }))
+    register(
+        App::builder()
+            .templates(EmbeddedTemplates::new(TEMPLATES, ""))
+            .default_command_with(|ctx| {
+                Some(if ctx.stdin_is_piped() { "add" } else { "list" }.to_string())
+            }),
+    )
     .build()
     .unwrap()
 }
 fn counting_app(calls: Arc<AtomicUsize>) -> App {
-    register(App::builder().default_command_with(move |ctx| {
-        calls.fetch_add(1, Ordering::SeqCst);
-        Some(if ctx.stdin_is_piped() { "add" } else { "list" }.to_string())
-    }))
+    register(
+        App::builder()
+            .templates(EmbeddedTemplates::new(TEMPLATES, ""))
+            .default_command_with(move |ctx| {
+                calls.fetch_add(1, Ordering::SeqCst);
+                Some(if ctx.stdin_is_piped() { "add" } else { "list" }.to_string())
+            }),
+    )
     .build()
     .unwrap()
 }
@@ -121,6 +139,7 @@ fn resolver_reads_app_state() {
     struct Fallback(&'static str);
     let app = register(
         App::builder()
+            .templates(EmbeddedTemplates::new(TEMPLATES, ""))
             .app_state(Fallback("add"))
             .default_command_with(|ctx| ctx.app_state::<Fallback>().map(|f| f.0.to_string())),
     )
@@ -179,7 +198,7 @@ fn help_is_unchanged() {
         ["app", "--help"],
     );
     assert_eq!(result.success_kind(), Some(SuccessKind::ClapHelp));
-    result.assert_stdout_contains("Usage:");
+    result.assert_stdout_contains("USAGE");
     assert_eq!(calls.load(Ordering::SeqCst), 0, "resolver must not run");
 }
 #[test]
@@ -211,9 +230,13 @@ fn invalid_syntax_stays_a_clap_usage_error() {
 #[test]
 #[serial]
 fn a_static_default_still_applies_on_its_own() {
-    let app = register(App::builder().default_command("list"))
-        .build()
-        .unwrap();
+    let app = register(
+        App::builder()
+            .templates(EmbeddedTemplates::new(TEMPLATES, ""))
+            .default_command("list"),
+    )
+    .build()
+    .unwrap();
     let result = TestHarness::new()
         .piped_stdin("ignored — no resolver configured")
         .run(&app, app_command(), ["app"]);
@@ -225,6 +248,7 @@ fn a_static_default_still_applies_on_its_own() {
 fn a_declining_resolver_falls_back_to_the_static_default() {
     let app = register(
         App::builder()
+            .templates(EmbeddedTemplates::new(TEMPLATES, ""))
             .default_command("list")
             .default_command_with(|ctx| ctx.stdin_is_piped().then(|| "add".to_string())),
     )
@@ -243,7 +267,9 @@ fn a_declining_resolver_falls_back_to_the_static_default() {
 #[test]
 #[serial]
 fn no_default_configured_leaves_a_naked_invocation_alone() {
-    let app = register(App::builder()).build().unwrap();
+    let app = register(App::builder().templates(EmbeddedTemplates::new(TEMPLATES, "")))
+        .build()
+        .unwrap();
     let result = TestHarness::new()
         .interactive_stdin()
         .run(&app, app_command(), ["app"]);
@@ -252,9 +278,13 @@ fn no_default_configured_leaves_a_naked_invocation_alone() {
 #[test]
 #[serial]
 fn resolving_to_a_command_standout_does_not_handle_reports_no_match() {
-    let app = register(App::builder().default_command_with(|_ctx| Some("unhandled".to_string())))
-        .build()
-        .unwrap();
+    let app = register(
+        App::builder()
+            .templates(EmbeddedTemplates::new(TEMPLATES, ""))
+            .default_command_with(|_ctx| Some("unhandled".to_string())),
+    )
+    .build()
+    .unwrap();
     let result = TestHarness::new()
         .interactive_stdin()
         .run(&app, app_command(), ["app"]);
@@ -263,9 +293,13 @@ fn resolving_to_a_command_standout_does_not_handle_reports_no_match() {
 #[test]
 #[serial]
 fn resolving_to_an_unknown_command_is_a_typed_error_not_a_panic() {
-    let app = register(App::builder().default_command_with(|_ctx| Some("nope".to_string())))
-        .build()
-        .unwrap();
+    let app = register(
+        App::builder()
+            .templates(EmbeddedTemplates::new(TEMPLATES, ""))
+            .default_command_with(|_ctx| Some("nope".to_string())),
+    )
+    .build()
+    .unwrap();
     let result = TestHarness::new()
         .interactive_stdin()
         .run(&app, app_command(), ["app"]);
@@ -277,14 +311,14 @@ fn resolving_to_an_unknown_command_is_a_typed_error_not_a_panic() {
 #[test]
 #[serial]
 fn get_matches_from_reports_an_unknown_command_as_a_clap_error() {
-    let app = register(App::builder().default_command_with(|_ctx| Some("nope".to_string())))
-        .build()
-        .unwrap();
-    match app.get_matches_from_with_sources(
-        app_command(),
-        ["app"],
-        &sources_with(MockStdin::terminal()),
-    ) {
+    let app = register(
+        App::builder()
+            .templates(EmbeddedTemplates::new(TEMPLATES, ""))
+            .default_command_with(|_ctx| Some("nope".to_string())),
+    )
+    .build()
+    .unwrap();
+    match app.get_matches_from(app_command(), ["app"], &sources_with(MockStdin::terminal())) {
         HelpResult::Error(e) => assert!(
             e.to_string()
                 .contains("default command resolver returned `nope`"),
@@ -300,15 +334,11 @@ fn sources_with(reader: MockStdin) -> InputSources {
 #[serial]
 fn get_matches_from_resolves_the_same_default_as_dispatch() {
     let app = piped_aware_app();
-    match app.get_matches_from_with_sources(
-        app_command(),
-        ["app"],
-        &sources_with(MockStdin::terminal()),
-    ) {
+    match app.get_matches_from(app_command(), ["app"], &sources_with(MockStdin::terminal())) {
         HelpResult::Matches(m) => assert_eq!(m.subcommand_name(), Some("list")),
         other => panic!("expected matches, got {other:?}"),
     }
-    match app.get_matches_from_with_sources(
+    match app.get_matches_from(
         app_command(),
         ["app"],
         &sources_with(MockStdin::piped("payload")),
@@ -316,7 +346,7 @@ fn get_matches_from_resolves_the_same_default_as_dispatch() {
         HelpResult::Matches(m) => assert_eq!(m.subcommand_name(), Some("add")),
         other => panic!("expected matches, got {other:?}"),
     }
-    match app.get_matches_from_with_sources(
+    match app.get_matches_from(
         app_command(),
         ["app"],
         &sources_with(MockStdin::piped_empty()),
@@ -329,7 +359,7 @@ fn get_matches_from_resolves_the_same_default_as_dispatch() {
 #[serial]
 fn get_matches_from_leaves_invalid_syntax_a_clap_error() {
     let app = piped_aware_app();
-    match app.get_matches_from_with_sources(
+    match app.get_matches_from(
         app_command(),
         ["app", "--nonexistent"],
         &sources_with(MockStdin::piped("data")),
@@ -341,10 +371,18 @@ fn get_matches_from_leaves_invalid_syntax_a_clap_error() {
 #[test]
 #[serial]
 fn get_matches_from_applies_a_static_default() {
-    let app = register(App::builder().default_command("list"))
-        .build()
-        .unwrap();
-    match app.get_matches_from(app_command(), ["app", "--loud"]) {
+    let app = register(
+        App::builder()
+            .templates(EmbeddedTemplates::new(TEMPLATES, ""))
+            .default_command("list"),
+    )
+    .build()
+    .unwrap();
+    match app.get_matches_from(
+        app_command(),
+        ["app", "--loud"],
+        &standout::InputSources::from_process(),
+    ) {
         HelpResult::Matches(m) => {
             assert_eq!(m.subcommand_name(), Some("list"));
             assert!(m.get_flag("loud"));
@@ -356,7 +394,11 @@ fn get_matches_from_applies_a_static_default() {
 #[serial]
 fn get_matches_from_leaves_explicit_and_nested_commands_alone() {
     let app = piped_aware_app();
-    match app.get_matches_from(app_command(), ["app", "db", "migrate"]) {
+    match app.get_matches_from(
+        app_command(),
+        ["app", "db", "migrate"],
+        &standout::InputSources::from_process(),
+    ) {
         HelpResult::Matches(m) => {
             let (name, sub) = m.subcommand().expect("db");
             assert_eq!(name, "db");
@@ -381,9 +423,13 @@ fn a_global_flag_before_the_command_does_not_make_the_line_naked() {
 #[test]
 #[serial]
 fn a_required_subcommand_no_longer_blocks_the_default() {
-    let app = register(App::builder().default_command("list"))
-        .build()
-        .unwrap();
+    let app = register(
+        App::builder()
+            .templates(EmbeddedTemplates::new(TEMPLATES, ""))
+            .default_command("list"),
+    )
+    .build()
+    .unwrap();
     let result = TestHarness::new().interactive_stdin().run(
         &app,
         app_command().subcommand_required(true),
@@ -402,7 +448,7 @@ fn both_paths_select_the_same_command_for_a_flagged_line() {
             .run(&app, app_command(), ["app", "--loud", "list"]);
     dispatched.assert_stdout_eq("list loud=true");
     drop(dispatched);
-    match app.get_matches_from_with_sources(
+    match app.get_matches_from(
         app_command(),
         ["app", "--loud", "list"],
         &sources_with(MockStdin::piped("data")),
@@ -426,11 +472,16 @@ fn flat_required_command() -> Command {
 #[serial]
 fn the_help_word_is_reachable_on_a_root_that_requires_arguments() {
     let app = App::builder()
+        .templates(EmbeddedTemplates::new(TEMPLATES, ""))
         .help_handling(true)
         .help_word(true)
         .build()
         .unwrap();
-    match app.get_matches_from(flat_required_command(), ["app", "help"]) {
+    match app.get_matches_from(
+        flat_required_command(),
+        ["app", "help"],
+        &standout::InputSources::from_process(),
+    ) {
         HelpResult::Help(h) => assert!(h.contains("Flat app"), "output:\n{h}"),
         other => panic!("expected rendered help, got {other:?}"),
     }
@@ -438,8 +489,16 @@ fn the_help_word_is_reachable_on_a_root_that_requires_arguments() {
 #[test]
 #[serial]
 fn a_flat_command_keeps_the_word_as_data_without_the_opt_in() {
-    let app = App::builder().help_handling(true).build().unwrap();
-    match app.get_matches_from(flat_required_command(), ["app", "help"]) {
+    let app = App::builder()
+        .templates(EmbeddedTemplates::new(TEMPLATES, ""))
+        .help_handling(true)
+        .build()
+        .unwrap();
+    match app.get_matches_from(
+        flat_required_command(),
+        ["app", "help"],
+        &standout::InputSources::from_process(),
+    ) {
         HelpResult::Matches(m) => assert_eq!(
             m.get_one::<String>("range").map(String::as_str),
             Some("help")
@@ -462,23 +521,24 @@ mod non_utf8 {
         )
     }
     fn path_app(default: bool) -> App {
+        let builder = App::builder().templates(EmbeddedTemplates::new(TEMPLATES, ""));
         let builder = if default {
-            App::builder().default_command("list")
+            builder.default_command("list")
         } else {
-            App::builder()
+            builder
         };
         builder
-            .command(
+            .command_with(
                 "list",
-                |m, _ctx| {
+                FnHandler::new(|m, _ctx| {
                     let seen = m
                         .get_one::<PathBuf>("path")
                         .map(|p| p.as_os_str().to_owned());
                     Ok(Output::Render(json!({
                         "verbatim": seen.as_deref() == Some(wild_path().as_os_str()),
                     })))
-                },
-                "verbatim={{ verbatim }}",
+                }),
+                |cfg| cfg.template_name("list-2"),
             )
             .unwrap()
             .build()
@@ -513,6 +573,7 @@ mod non_utf8 {
         match app.get_matches_from(
             path_command(),
             [OsString::from("app"), OsString::from("list"), wild_path()],
+            &standout::InputSources::from_process(),
         ) {
             HelpResult::Matches(m) => {
                 let sub = m.subcommand_matches("list").expect("list");

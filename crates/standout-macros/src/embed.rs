@@ -3,7 +3,7 @@ use quote::quote;
 use std::path::{Path, PathBuf};
 use syn::LitStr;
 
-pub const TEMPLATE_EXTENSIONS: &[&str] = &[".jinja", ".jinja2", ".j2", ".txt"];
+pub const TEMPLATE_EXTENSIONS: &[&str] = &[".jinja", ".jinja2", ".j2", ".stpl", ".txt"];
 
 pub const STYLESHEET_EXTENSIONS: &[&str] = &[".css", ".yaml", ".yml"];
 

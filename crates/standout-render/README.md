@@ -136,7 +136,7 @@ In release builds, templates embed into the binary—no runtime file access.
 
 ```toml
 [dependencies]
-standout-render = "2.1"
+standout-render = "9"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 ```

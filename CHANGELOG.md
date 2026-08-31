@@ -4,27 +4,197 @@
 
 ## Unreleased
 
-- Make loud-failure diagnostics name the builder call that fixes them (issue #321). Missing named templates now distinguish "no templates configured" from "name not registered", list near matches or available names, and point to `.templates(embed_templates!(...))` / `.templates_dir(...)`; missing default themes point to `.styles(...)`, `.styles_dir(...)`, `.default_theme(...)`, or `.theme(...)`; framework-template tag validation names the framework style/template toggles and theme APIs involved. The README, docs index, and app-configuration examples now show buildable template/theme/help setup, with regression tests covering those builder chains.
-- Check themed help against clap's own metadata instead of against standout's data model (issue #314). `standout_test::clap_parity` walks a `clap::Command` — its `about`/`long_about`, its subcommands, and each argument's spellings, value names, help text, defaults and possible values with clap's own suppression rules applied and hidden metadata respected — and asserts every one of those facts appears in the row of the rendered page that owns it, naming the argument and the value that went missing when one does not. That is the contract the themed-help cluster had no way to state: an extractor copies the clap fields someone thought of, and a field nobody copied has no row, no wrong line, and nothing for an existential `contains` assertion to trip over. It asserts presence of facts and never layout — `default: brief` and clap's `[default: brief]` satisfy it equally, because themed help exists to look different. Deliberate omissions live in one allowlist, `DELIBERATE_OMISSIONS`, each carrying its reason, and each proved to be doing work: clap's own page states the exempted fact and removing the entry turns the page red. The suite runs the differential over the shared downstream fixture across flat and subcommand shapes, both help lengths, all three entry points (`-h`, `--help`, the `help` word) and plain and styled output, alongside the invariant assertions; it grounds the derivation by running the same expectations, with no exemptions, against `Command::render_long_help`'s output; and it proves the oracle binds by removing each fact from a copy of the rendered page and requiring a failure that names it.
-- Give `standout-test` the observation capabilities its assertions were missing (issue #310). `TestResult::stdout()` and `TestResult::stderr()` reconstruct the two text channels `App::run` would have written — handled text and a file-bound artifact's report on one side; a newline-terminated diagnostic, an external failure verbatim, the report of an artifact whose bytes claimed stdout, and the framework warning block on the other — so which bytes went to which stream is assertable in-process instead of collapsing into one `error()` string. `stdout_plain()` / `stderr_plain()` return the same text with the ANSI escapes stripped by `console`, the crate that emitted them, leaving the raw accessors untouched. And `assert_page_snapshot!` pins a whole rendered page through `insta` under a name derived from a `SnapshotCase` — subject plus the axes that distinguish the cell (output mode, TTY, theme, entry point), with a digest carried by any value that had to be reshaped to be readable, so two cells do not silently share one snapshot as their oracle — rather than a hand-written label, so a page that grows an extra wrong line fails a test that a list of `contains` assertions would have passed.
-- Give `standout-test` the universal and negative assertions its existential `contains` checks could not state, and carry the render diagnostics the framework already computed out to them (issue #313). `standout_test::invariants` asserts that every tag a page emits is defined in the resolved theme, that no `[tag?]` marker reached the page, that no argument taking no value lists possible values, that every value-taking argument's row shows its metavar, that stripping a styled page's escapes reproduces the plain one, and that a section's descriptions all start at one column — each naming the offending tag, argument, or row when it fails, and each with a self-test proving it fails on a page that violates it. Behind the first of those, `standout-render` gains a `diagnostics` module: the style-tag pass already recorded every tag the theme could not resolve and the render path discarded it, so a corrupt page was computed on every render and never said out loud. It is now recorded per pass with the tag transform and unknown-tag policy in effect, collected only inside the window a run boundary opens and closes — so a standalone `render` outside a run keeps nothing and can never be read as the next run's evidence, while a run nested inside another (a handler driving a second app) nests a window rather than ending the outer one, and its passes count for both runs, marked with the `TagResolution::nesting_depth` they were folded outward across — and exposed as `TestResult::tag_resolutions()` — structured data that holds in `Text` as strongly as in `Term`, where the `[tag?]` marker exists only in the modes that apply styles. No rendered byte changes and the framework still does not react to an unresolved tag; what it should do about one is the loud-failures work's decision.
-- Route every dispatch render through `render_request` and delete `Presentation` (issue #384). The artifact path stores a `RenderRequest` until after the write. Convenience `render`, `render_with_output`, and siblings detect at their edge, build a request, and delegate; they keep their own names. **Breaking for `standout-render` dependents:** the detector override APIs (`set_terminal_width_detector`, `set_color_capability_detector`, `set_ambiguous_width_detector`, `set_theme_detector`, `set_icon_detector`, `DetectorGuard`, and the public `detect_*` cluster they served) are removed. Detection is `TargetProperties::detect()` at the crate edge; tests construct `TargetProperties` (or inject it through `TestHarness`). ANSI follows the request: `OutputMode::Term`, and `Auto` when stdout is color-capable, apply `force_styling` rather than reading `console::colors_enabled()`. `TestHarness::with_color()` fills per-stream color capability and does not call `set_colors_enabled`. Every harness run still latches `console`'s lazy color globals from the real environment before applying `.env()`, so a temporary `CLICOLOR_FORCE` cannot initialize the process-global. The width lock in `standout-render` is deleted; `MiniJinjaEngine` is `!Send`/`!Sync` so concurrent renders on a shared engine are unsupported at the type level (the framework is single-threaded, #84). `RenderRequest` carries extras for context providers. Standalone `render_auto` XML of a named struct now uses the JSON object root (`<data>`), because `RenderRequest.data` is `serde_json::Value`; dispatch already serialized handler data to JSON, so CLI XML bytes are unchanged. `standout` no longer depends on `serde_yaml`, `csv`, or `quick-xml`; structured serialization lives in `standout-render` only. `--output=term` through a pipe now emits ANSI (the documented contract; the previous contradiction is closed). Help and topics still use their own engine (WS04); input-reader globals stay (WS05).
-- Reject cross-registered command hooks and delete dead public APIs for loud-failures work (issue #320). A command path may combine different hook phases from `CommandConfig` and `AppBuilder::hooks`, but registering the same phase through both APIs now fails with a configuration error naming the path and phase instead of silently replacing one hook set. `AppBuilder::output_mode()` is removed because it always returned `Auto`, and `standout-dispatch` no longer exports the unused `RenderFn` / `from_fn` / `RenderError` render callback API or documents it as a supported contract. `include_framework_styles` and `FRAMEWORK_STYLES` are deliberately left to WS02 / ADR-0020, where framework styles become part of the resolved theme base.
-- Add the coverage-matrix combinator to `standout-test` and pin the help surface per cell (issue #315). `standout_test::matrix` yields the full (output mode × color × theme) cross product as `MatrixCell`s — color being the axis the deleted TTY seam resolved into (ADR-0022) — where each cell configures its own harness with both color gates explicitly forced and names its own `SnapshotCase` (`SnapshotCase::color` is new), so a suite that walks the cells cannot quietly skip one and the snapshot a cell produces is discoverable from the cell alone; the combinator is plain data, so walking every cell inside one `#[serial]` test is the intended shape. The help suite applies it: the shared downstream fixture, themed and bare, across `Auto`/`Term`/`Text`/`TermDebug`, both color states, and all three entry points (`-h`, `--help`, the `help` word) — 48 `insta` snapshots named after their cells, which is the baseline later redesign epics diff against, and which already pins #295's asymmetry (an output mode reaches the `help` word but not `--help`/`-h`) as visible per-cell truth.
-- Make the rendering property test assert rendering (issue #315). Its templates all spelled `{{ . }}`, which MiniJinja rejects, so every generated case exercised the error path and passed the only postcondition it had (`is_handled() || is_error()`); the exact #303 shape — incomplete theme, styled tag, `Term` mode — sailed through. The templates are now valid and declare the tags they emit, the theme strategy includes *incomplete* themes that define only part of that vocabulary, and the postconditions are real: template modes must render (not error); structured modes meet the *raw* generated value — top-level scalars and arrays included, no `{"data": …}` wrapper hiding them — where JSON/YAML must serialize every value, XML/CSV may refuse a shape only as a `Render`-kind error, and whatever is emitted must parse (JSON/YAML/XML/CSV each read back by a real parser); and wherever the theme covers the template the WS04 invariants hold — no `[tag?]` marker on the page, and the `Term` page stripped of ANSI is exactly the `Text` page. The unconditional form of those two — no marker and no mode split whatever the theme defines — is red on today's framework and checked in `#[ignore]`d form referencing #318, the loud-failures slice that owns the fix.
-- Pin the environment color conventions at the process boundary (issue #315). `NO_COLOR` and `TERM=dumb` suppression arrive transitively through `console`'s `colors_supported()` — an accident of dependency choice that nothing previously tested or documented — so `tdoo`'s process suite now pins, through real piped runs of the compiled binary: `Auto` piped is plain, with or without `NO_COLOR`/`TERM=dumb`; explicit `--output=term` through a pipe was pinned as emitting **no** ANSI (#329's documented-contract contradiction, so the eventual fix would be a visible diff) — that contradiction closed in ROB04 (`CHANGELOG/unreleased-leaf-purity.md`, issue #384): `--output=term` through a pipe now emits ANSI; `CLICOLOR_FORCE=1` does reach explicit `Term` through `console`'s process-global gate but never reaches `Auto`; and `NO_COLOR` does not reach the force path. The suppression conventions themselves are pinned on a real terminal via the new `TestHarness::run_pty` (Unix): the child's stdout is a real pty (`openpty(3)`, 80×24, `ONLCR` off so the recording is the child's bytes), where a color-capable `TERM` makes the `Auto` baseline emit ANSI — so `NO_COLOR` and `TERM=dumb` are each the only thing standing between their run and color, and a `console` upgrade that dropped either goes red instead of silently green. The known force-path gap — and making the conventions deliberate behavior rather than an inherited accident — stays owned by the parity program (`docs/spec/parity-terminal-citizenship.md`).
-- Route help and topics through `render_request` using the app engine, merged theme, and filters (issue #385). Framework help/topic templates are named registry entries (`standout/help`, `standout/topic`, `standout/topics-list`) registered at `build()`, so the ADR-0020 tag check applies. Standalone `render_help` / `render_topic` / `render_topics_list` stay callable without an `App`: `HelpConfig::template` and topic template strings become `TemplateRef::Inline` with tag validation at request construction. When the command is help or topics and `--output` is structured (`json` / `yaml` / `csv` / `xml`), glue builds a request whose format is `Auto` (ADR-0029); the leaf has no help flag, and `help --output=json` on a TTY still looks like help. Help/topics paths do not construct a fresh `MiniJinjaEngine`. Help and topics list name-column widths are resolved against the invocation's `TargetProperties` (width and ambiguous-width policy), captured once and reused for extraction and the request. Named help/topic template selection checks registry registration without reading file content, so an unreadable override surfaces as a render error instead of silently falling back to the framework default.
-- Make stdin, clipboard, and the prompt responder arguments of input collection (`InputSources`) rather than process-global overrides (issue #386). Production `App::run` builds sources from the real process; `TestHarness` constructs mocks and passes them into `App::run_with`. `set_default_stdin_reader`, clipboard, and responder override APIs are removed. Interactive prompt and editor collectors bind the invocation responder at chain resolve time, so `InputChain::resolve_from` and `CommandConfig::input` consume `TestHarness::prompts(...)` without a TTY. Framework warnings collected during a run return on the run result / harness API; the warning thread-local is gone. Embedded hot-reload fallbacks are recorded on the same buffer (construction-time messages copy onto each run, including `dispatch` / `dispatch_from`). Warning styling uses stderr color capability on `TargetProperties` (piped stdout, TTY stderr keeps warning color); `--output=text` opts the warning block out of ANSI, including on clap usage/`--help`/`--version` exits. The parse-error probe disables generated help/version on every command and re-declares `--help`/`-h`/`--version` only in scopes that do not already use those spellings. `TestHarness` reconstructs the warning block with the app's resolved theme, matching `App::run`.
-- Lock glue composition contracts with tests and collapse recipe/config dispatch (issue #387). ADR-0031 checks live in `standout`: a structural Cargo.toml parse fails `serde_yaml` / `csv` / `quick-xml` as production deps (keys, `package` aliases, dotted keys, and target-specific tables); a source scan of `crates/standout/src` fails `MiniJinjaEngine::new()` outside `build()` and any glue `OutputMode::<variant> =>` match arm, independent of today's serializer variants. Recipe and config dispatch closures share one helper; the public `GroupBuilder` API is unchanged. `App::render_inline_with` takes caller-supplied destination facts so dispatch, inline rendering, and `render_request` of the same request agree byte-for-byte; help stays human under structured `--output`. Standalone `standout-render` docs teach `render_request` as the contract and the remaining wrappers as detect-then-call. Detector override APIs (`set_terminal_width_detector`, `set_color_capability_detector`, `set_theme_detector`, `set_icon_detector`, and siblings) are documented as removed.
-- Close the last point-of-use rendering defaults on the manual-dispatch seam (issue #397). `App::run_command` inserts `InputSources::from_process()` and a `WarningBuffer` into the context it builds, then renders through `render_request_split` with the app engine, template registry, context registry, and the theme `build()` merged. `--output` on a parse that installed Standout's argument is the invocation's mode; otherwise the Auto fallback. **Breaking:** `App::get_default_theme` now returns `&Theme` rather than `Option<&Theme>` — `build()` always fills the field, so the six point-of-use theme fallbacks are gone.
-- Make `TestHarness` inject destination facts rather than calling `TargetProperties::detect()` (issue #398). Unset fields take fixed defaults — `width: None`, `ColorMode::Dark`, `IconMode::Classic`, `AmbiguousWidth::Narrow` — so `$COLUMNS`, `$NERD_FONT`, and the OS appearance setting cannot change an in-process run. Width on the request is injected with `terminal_width`; the `COLUMNS` convention is not an in-process harness fact.
-- An explicit `--output` flag overrides environment color conventions (issue #399). `--output=term` emits ANSI even when `NO_COLOR=1` or `TERM=dumb`; `--output=text` stays plain even when `CLICOLOR_FORCE=1`. `Auto` still follows the environment. This is the Spec's `flag > env > config > detection` ordering for terminal settings; `--color` (parity program) will take the color half so `--output` can mean format alone.
-- **Breaking:** rename the dispatch outcome enum `standout_dispatch::RunResult` → `standout_dispatch::DispatchResult`. `standout::cli::DispatchResult` is now a plain re-export of that enum, not an `as` alias.
-- **Breaking:** rename the framework run wrapper `standout::cli::RunResult` → `standout::cli::CompletedRun` (dispatch outcome plus warnings and resolved output mode). The name `RunResult` is no longer in the public API.
-- Add `App::render_with`, the named-template counterpart of `render_inline_with`: caller-supplied `TargetProperties`, ambiguous-width overwritten with App policy.
-- Delete the in-process TTY seam and add the process escape hatch (issue #311). **Breaking for `standout-render` dependents:** `detect_is_tty` and `set_tty_detector` are removed, with `TestHarness::is_tty()` / `no_tty()`. Nothing in production ever read that detector, and its shape was wrong for the one consumer that wanted it — it answered for stdout alone, while a pager gates on stdout and a progress display writes to stderr, and the in-repo caller that needed a stream-specific terminal fact had already gone around it. Neither the top-level `standout` crate nor its color seam is affected: `with_color()` / `no_color()` and `detect_color_capability()` stay. Reasoning in `docs/adr/0022-delete-the-in-process-tty-seam.md`.
-- Make ANSI-positive assertions work in-process: `TestHarness::with_color()` now opens both gates between a styled template and escape bytes — Standout's color decision *and* `console`'s process-global color switch, which `Style::apply_to` consults and which is off in a non-TTY process, so a test binary previously rendered plain text however hard the harness forced color. The switch is restored on drop with every other override. Because `console` initializes those globals lazily on the first read, *every* in-process run reads them before installing its `.env()` overrides — so a test's temporary `CLICOLOR_FORCE` can never latch itself into the rest of the test binary, and environment conventions like `NO_COLOR` / `TERM=dumb` are pinned through `run_process()` instead. A `Term` render in a test now emits the escapes a terminal user sees, with no `force_styling` needed in the theme — including on the default help theme, which sets it on none of its styles.
-- Add `TestHarness::run_process()` (issue #311): runs the compiled binary and returns a `ProcessResult` carrying the two real pipes, the process exit status, ANSI-stripped views, and the fixture tempdir (the child's working directory too, unless an explicit `cwd()` overrode it). It is for the evidence an in-process run cannot produce — stream separation as the OS performed it, a real exit code, behavior that keys off stdout not being a terminal. The builder settings that describe a process (environment, working directory, fixtures, forced output mode) carry over; the in-process injection seams (terminal detectors, stdin, clipboard, prompts) are refused with a message naming each, rather than silently letting a child answer from the machine's own terminal.
+## 9.0.0 - 2026-08-31
+
+The robustness program's one deliberate compatibility break, shipped as a single major
+version. Standout now offers one blessed way to do each thing — register a command, provide
+a template, provide a theme, enter the framework, observe a run in a test — and the
+near-equivalent paths beside each of them are deleted rather than deprecated. There is no
+shim and no fallback: every removal below names the surviving item that replaces it, and
+porting is a source edit.
+
+Three of the changes are visible to people who never recompile: `#[derive(Dispatch)]` now
+registers multi-word commands under their kebab-case names, themed help is on by default,
+and `--output=term` through a pipe emits ANSI. Those are the ones to read first.
+
+`docs/topics/stability.md` states which surfaces are contract from this release on: the
+blessed idioms, the structural shape of each `--output` mode's bytes, exit statuses, the two
+command-line name mappings, availability of an item through the `standout` crate root, and
+`standout-test`'s assertion API. Everything else is internal.
+
+Surface census, 8.1.1 → 9.0.0: `AppBuilder` 35 → 30 public methods, `App` 27 → 14,
+`CommandConfig` 21 → 20, `GroupBuilder` 12 → 8; root re-exports 101 → 83 items, `cli`
+re-exports 46 → 42.
+
+### Registering commands
+
+- **Command names are kebab-case.** `ListUnits` now registers as `list-units`; scripts and
+  tests typing the old spelling break. Keep an old name with
+  `#[dispatch(name = "list_units")]`. Mapping rules: `docs/topics/dispatch-attributes.md`.
+- **`#[handler]` reads clap ids with hyphens**: a parameter `no_legend` reads the id
+  `no-legend`, where clap-derive ids an argument by the field name, `no_legend`. Match one
+  side to the other — `#[arg(id = "no-legend")]` on the clap field, or
+  `#[flag(name = "no_legend")]` on the parameter; renaming the parameter alone cannot reach
+  an id with an underscore. `app.verify_command(&cmd)` reports the mismatch at build time:
+  `docs/topics/dispatch-attributes.md`.
+- **A registration no clap subcommand can reach now fails up front**, where `App::run`
+  returned `false` silently. Register the canonical clap name, not an alias:
+  `crates/standout-dispatch/docs/topics/partial-adoption.md`.
+- **`#[dispatch(pure)]` requires `-> Result<Output<T>, E>` or `-> Result<(), E>`**; a plain
+  `Result<T, E>` no longer compiles. Shapes per registration path:
+  `crates/standout-dispatch/docs/topics/handler-contract.md`.
+- **The `#[command]` attribute macro is gone.** Put `#[handler]` on the function and declare
+  the `Command` with clap-derive. `#[dispatch(pure, simple)]`,
+  `#[dispatch(pure, handler = …)]` and a `name` containing `.` are now rejected at
+  expansion: keep one attribute, and spell a nested command with its registration path.
+- **One `standout` dependency now carries the macros.** Delete a direct `standout-dispatch`
+  or `standout-input` dependency added only to resolve `#[handler]` or `Questionnaire`.
+- **New `#[dispatch(inputs = path)]`** names a `fn(CommandConfig) -> CommandConfig`, so a
+  multi-source value no longer needs `command_with`.
+- **Builder renames:** `AppBuilder::default()` → `App::builder()`; `group(name, f)` →
+  `.commands(|g| g.group(name, f))`; `command`, `command_handler` and `command_handler_with`
+  → `command_with` (now taking `impl Handler`) plus a registry entry for the template;
+  `GroupBuilder::handler` and `handler_with` → `AppBuilder::command_with` with a dotted
+  path. `GroupBuilder::len` and `is_empty` are removed with no replacement.
+
+### Templates
+
+- **Inline template source is gone** — `CommandConfig::template(source)`, the
+  `template = "…"` key, and the recipe types' inline source. Register the template and name
+  it with `template_name`: `crates/standout-render/docs/topics/templating.md`.
+- **Also renamed or removed:** `dispatch!`'s `template:` key is now `template_name:`;
+  `App::run_command`'s fourth parameter is a `TemplateRef`, not a `&str`; and
+  `AppBuilder::template_ext(ext)` is gone — rename the file to `.jinja`, `.jinja2`, `.j2`,
+  `.stpl` or `.txt`.
+
+### Themes
+
+- **`Theme::from_file`, `from_css_file`, `from_variants`, `source_path` and `refresh` are
+  gone**, and `Theme::named(name)` becomes `Theme::new().with_name(name)`. Use
+  `.styles(embed_styles!(…))` or `.styles_dir(path)`:
+  `crates/standout-render/docs/topics/styling-system.md`.
+- **`.styles(…)` together with `.theme(…)` is now a `SetupError`** naming both calls, where
+  it used to discard the stylesheet registry silently. Drop one of the two.
+- **A stylesheet registry with no `.default_theme(name)` resolves to no application theme.**
+  Add `.default_theme("…")`; the `default`/`theme`/`base` name search is gone.
+- **`App::get_default_theme` returns `&Theme`**, not `Option<&Theme>`. Delete the unwrap.
+
+### Help
+
+- **Themed help is on by default**, so an application that never called
+  `.help_handling(true)` now serves standout's page and **a test pinning help output goes
+  red**. Re-record it, or call `.help_handling(false)` to hand help back to clap unchanged.
+  Configuration: `docs/topics/standout-help.md`.
+- **Every existing `.help_handling(true)` call can be deleted.**
+- **An application registering its own `help` command stops building** with a
+  `DuplicateCommand` error — the flip's only build-breaking case. Rename the command, or
+  call `.help_handling(false)` and keep the name; `command_groups`, topics and
+  `.help_word(true)` are then unavailable.
+- **A named help or topic template override that cannot be read is now a render error**
+  rather than a silent fallback. Fix the name or drop the override.
+
+### Entry points and parsing
+
+Mechanical renames; the outcome model is `docs/topics/execution-outcomes.md`.
+
+- **On `App`:** `run_to_string` and `dispatch_from` → `run_with(cmd, args, target, sources)`
+  or `TestHarness::run`; `render`, `render_inline` and `render_inline_with` → `render_with`,
+  whose first parameter is a `TemplateRef`; `parse`, `parse_with`, `parse_from` and
+  `get_matches` → `get_matches_from`, which now takes `&InputSources` and carries what was
+  `get_matches_from_with_sources`. The free `cli::parse` and `cli::parse_from` are removed
+  with no replacement.
+- **Result types:** `standout_dispatch::RunResult` → `DispatchResult`;
+  `standout::cli::RunResult` → `standout::cli::CompletedRun`.
+
+### Input
+
+- **`set_default_stdin_reader` and the clipboard and responder override APIs are gone.**
+  Build an `InputSources` and pass it to `App::run_with`, or use `TestHarness::prompts(…)`:
+  `crates/standout-input/docs/topics/input-sources.md`. The warning thread-local goes with
+  them — read warnings off the run result or the harness.
+- **A failed file read is now `InputError::FileFailed`**, naming the path; a test matching
+  the old parse-failure text against the argument id needs re-recording.
+- **`CommandConfig::input` resolves a value or fails**, so an optional value with a second
+  source has no blessed spelling. Keep a single-source optional value as a typed
+  `#[handler]` parameter.
+- **New `InputSourceKind::File`** lets `ctx.input_source("name")` tell a file apart from an
+  argument.
+
+### Output, color and rendering
+
+- **`--output=term` through a pipe now emits ANSI**, matching the documented contract. Strip
+  escapes downstream, or ask for `--output=text`: `docs/topics/output-modes.md`.
+- **An explicit `--output` overrides the environment conventions:** `term` emits ANSI under
+  `NO_COLOR=1` or `TERM=dumb`, `text` stays plain under `CLICOLOR_FORCE=1`. `auto` still
+  follows the destination's color capability, which `NO_COLOR` and `TERM=dumb` suppress and
+  `CLICOLOR_FORCE` does not create.
+- **The detector override APIs are gone** — `set_terminal_width_detector`,
+  `set_color_capability_detector`, `set_ambiguous_width_detector`, `set_theme_detector`,
+  `set_icon_detector`, `set_tty_detector`, `detect_is_tty`, `DetectorGuard` and the whole
+  public `detect_*` cluster. `TargetProperties::detect()` runs the same probes in one call:
+  construct a `TargetProperties` and pass it to `App::run_with`, or inject one through
+  `TestHarness`.
+- **`Presentation` is deleted** (call `render_request`; `render` and `render_with_output`
+  are unchanged), **`AppBuilder::output_mode()` is removed** (it always returned `Auto`),
+  and **`MiniJinjaEngine` is `!Send`/`!Sync`** — build one engine per thread.
+- **`standout` no longer depends on `serde_yaml`, `csv` or `quick-xml`.** Depend on
+  `standout-render` for structured serialization.
+- **Warning styling follows stderr's color capability**, `--output=text` opts the warning
+  block out of ANSI, and standalone `render_auto` of a named struct emits XML under
+  `<data>`. Re-record tests pinning any of these; CLI XML bytes are unchanged.
+
+### Testing with `standout-test`
+
+The assertion API is contract from this release on: `docs/topics/testing.md`.
+
+- **`TestHarness::is_tty()` and `no_tty()` are removed**, with the in-process TTY seam
+  behind them. Use `run_process()` or `run_pty()` when a real terminal must answer.
+- **`TestHarness` injects destination facts rather than detecting them**, defaulting to
+  `width: None`, `ColorMode::Dark`, `IconMode::Classic` and `AmbiguousWidth::Narrow`. A test
+  relying on `$COLUMNS`, `$NERD_FONT` or the OS appearance must set the field instead.
+- **`TestHarness::with_color()` now emits the escapes a terminal user sees.** Drop
+  `force_styling` from the theme.
+- Additions needing no edit: `TestResult::stdout()`/`stderr()` and their `_plain` forms,
+  `tag_resolutions()`, `assert_page_snapshot!`, the `matrix`, `invariants` and `clap_parity`
+  modules, and `run_process()`/`run_pty()`.
+
+### Items that are no longer public
+
+**Re-exports `standout` dropped** — still public in the defining crate, so add that crate as
+a direct dependency to keep calling them.
+
+- From `cli`, the `standout-dispatch` navigation helpers `extract_command_path`,
+  `get_deepest_matches`, `has_subcommand` and `insert_default_command`.
+- From the crate root, the `standout-render` items `build_embedded_registry`,
+  `extension_priority`, `strip_extension`, `walk_dir`, `walk_template_dir`,
+  `validate_template`, `render_auto_with_spec`, `rgb_to_ansi256`, `rgb_to_truecolor`,
+  `flatten_json_for_csv`, `serialize_to_xml`, the `file_loader` module, and `FileRegistry`,
+  `FileRegistryConfig`, `LoadError`, `LoadedEntry` and `LoadedFile`.
+
+**Deleted outright** — no crate provides these, so a direct dependency does not bring them
+back.
+
+- `App::registry_mut`, `App::get_hooks` and `App::get_theme`.
+- `standout-dispatch`'s unused render-callback API: `RenderFn`, `from_fn`, and the
+  `RenderError` that belonged to it. (`standout_render::RenderError` is a different type and
+  `standout` still re-exports it.)
+
+### Failures that used to be silent
+
+- **One hook phase registered for a path through both `CommandConfig` and
+  `AppBuilder::hooks` is now a configuration error** instead of one set silently replacing
+  the other. Register it in one place; different phases still combine.
+- **Missing templates and themes fail with a message naming the remedy.** No edit needed
+  unless a test pins the old text.
+
+### Documentation
+
+- New owners for what this file no longer restates: `docs/topics/stability.md`,
+  `docs/topics/dispatch-attributes.md` (every `#[dispatch(…)]` key and both name mappings),
+  and `crates/standout-render/docs/topics/templating.md` (the trailing-newline contract).
+- `docs/SUMMARY.md` mounts every page, the guides pin `standout = "9"`, and two checks keep
+  the book true: `standout-docs` compiles its Rust examples in a required `docs` CI lane and
+  walks it as a graph in the test lane.
 
 ## 8.1.1 - 2026-08-16
 

@@ -1,7 +1,11 @@
 use clap::Command;
 use console::Style;
+use standout::cli::FnHandler;
 use standout::cli::{App, Output};
+use standout::EmbeddedTemplates;
 use standout::Theme;
+
+const TEMPLATES: &[(&str, &str)] = &[("test", "[custom_error]my_content[/custom_error]")];
 
 #[test]
 fn test_theme_preservation_bug() {
@@ -9,11 +13,12 @@ fn test_theme_preservation_bug() {
     let theme = Theme::new().add("custom_error", style);
 
     let app = App::builder()
+        .templates(EmbeddedTemplates::new(TEMPLATES, ""))
         .theme(theme)
-        .command(
+        .command_with(
             "test",
-            |_m, _ctx| Ok(Output::Render("my_content".to_string())),
-            "[custom_error]my_content[/custom_error]",
+            FnHandler::new(|_m, _ctx| Ok(Output::Render("my_content".to_string()))),
+            |cfg| cfg,
         )
         .unwrap()
         .build()
@@ -21,7 +26,12 @@ fn test_theme_preservation_bug() {
 
     let cmd = Command::new("app").subcommand(Command::new("test"));
 
-    let result = app.run_to_string(cmd, ["app", "--output=term", "test"]);
+    let result = app.run_with(
+        cmd,
+        ["app", "--output=term", "test"],
+        standout::TargetProperties::detect(),
+        standout::InputSources::from_process(),
+    );
 
     match result.into_outcome() {
         standout::cli::DispatchResult::Handled(output) => {

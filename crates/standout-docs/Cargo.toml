@@ -1,0 +1,13 @@
+[package]
+name = "standout-docs"
+version = "9.0.0"
+edition = "2021"
+publish = false
+description = "Compiles the book's Rust examples and checks the book's internal links."
+license = "MIT"
+
+[dependencies]
+anyhow = "1"
+clap = { version = "4", features = ["derive"] }
+serde = { version = "1", features = ["derive"] }
+standout = { path = "../standout" }

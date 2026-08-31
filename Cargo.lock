@@ -405,7 +405,7 @@ dependencies = [
 
 [[package]]
 name = "corpus-runner"
-version = "8.1.1"
+version = "9.0.0"
 dependencies = [
  "anyhow",
  "clap",
@@ -1335,6 +1335,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "proc-macro-crate"
+version = "3.5.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "e67ba7e9b2b56446f1d419b1d807906278ffa1a658a8a5d8a39dcb1f5a78614f"
+dependencies = [
+ "toml_edit 0.25.13+spec-1.1.0",
+]
+
+[[package]]
 name = "proc-macro2"
 version = "1.0.107"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1801,7 +1810,7 @@ dependencies = [
 
 [[package]]
 name = "standout"
-version = "8.1.1"
+version = "9.0.0"
 dependencies = [
  "anyhow",
  "clap",
@@ -1834,7 +1843,7 @@ dependencies = [
 
 [[package]]
 name = "standout-bbparser"
-version = "8.1.1"
+version = "9.0.0"
 dependencies = [
  "console",
  "proptest",
@@ -1842,7 +1851,7 @@ dependencies = [
 
 [[package]]
 name = "standout-dispatch"
-version = "8.1.1"
+version = "9.0.0"
 dependencies = [
  "anyhow",
  "clap",
@@ -1853,18 +1862,30 @@ dependencies = [
 ]
 
 [[package]]
-name = "standout-fixtures"
-version = "8.1.1"
+name = "standout-docs"
+version = "9.0.0"
 dependencies = [
+ "anyhow",
+ "clap",
+ "serde",
+ "standout",
+]
+
+[[package]]
+name = "standout-fixtures"
+version = "9.0.0"
+dependencies = [
+ "anyhow",
  "clap",
  "console",
+ "serde",
  "serde_json",
  "standout",
 ]
 
 [[package]]
 name = "standout-input"
-version = "8.1.1"
+version = "9.0.0"
 dependencies = [
  "clap",
  "inquire",
@@ -1877,8 +1898,10 @@ dependencies = [
 
 [[package]]
 name = "standout-macros"
-version = "8.1.1"
+version = "9.0.0"
 dependencies = [
+ "heck",
+ "proc-macro-crate 3.5.0",
  "proc-macro2",
  "quote",
  "serial_test",
@@ -1890,7 +1913,7 @@ dependencies = [
 
 [[package]]
 name = "standout-pipe"
-version = "8.1.1"
+version = "9.0.0"
 dependencies = [
  "tempfile",
  "thiserror 2.0.20",
@@ -1899,7 +1922,7 @@ dependencies = [
 
 [[package]]
 name = "standout-render"
-version = "8.1.1"
+version = "9.0.0"
 dependencies = [
  "console",
  "cssparser",
@@ -1924,7 +1947,7 @@ dependencies = [
 
 [[package]]
 name = "standout-seeker"
-version = "8.1.1"
+version = "9.0.0"
 dependencies = [
  "proptest",
  "regex",
@@ -1933,7 +1956,7 @@ dependencies = [
 
 [[package]]
 name = "standout-test"
-version = "8.1.1"
+version = "9.0.0"
 dependencies = [
  "clap",
  "console",
@@ -2003,7 +2026,7 @@ checksum = "c3a6bfce3d99adfa72d24750a61f782f3036a81e7f86d8841ee1326deaebd171"
 
 [[package]]
 name = "tdoo"
-version = "8.1.1"
+version = "9.0.0"
 dependencies = [
  "anyhow",
  "clap",
@@ -2101,7 +2124,7 @@ dependencies = [
 
 [[package]]
 name = "todo-core"
-version = "8.1.1"
+version = "9.0.0"
 dependencies = [
  "anyhow",
  "serde",
@@ -2177,6 +2200,18 @@ dependencies = [
  "toml_datetime 0.6.11",
  "toml_write",
  "winnow 0.7.15",
+]
+
+[[package]]
+name = "toml_edit"
+version = "0.25.13+spec-1.1.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "6975367e4d2ef766d86af01ffad14b622fecc8d4357a998fbc4deb6e9bacaf9b"
+dependencies = [
+ "indexmap",
+ "toml_datetime 1.1.1+spec-1.1.0",
+ "toml_parser",
+ "winnow 1.0.4",
 ]
 
 [[package]]
@@ -2616,6 +2651,9 @@ name = "winnow"
 version = "1.0.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "23b97319f7b8343df12cc98938e5c3eb436064524c8d2b4e30a1d3a36eecdf81"
+dependencies = [
+ "memchr",
+]
 
 [[package]]
 name = "winreg"
@@ -2695,7 +2733,7 @@ version = "3.15.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7131497b0f887e8061b430c530240063d33bf9455fa34438f388a245da69e0a5"
 dependencies = [
- "proc-macro-crate",
+ "proc-macro-crate 1.3.1",
  "proc-macro2",
  "quote",
  "regex",
@@ -2760,7 +2798,7 @@ version = "3.15.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "37c24dc0bed72f5f90d1f8bb5b07228cbf63b3c6e9f82d82559d4bae666e7ed9"
 dependencies = [
- "proc-macro-crate",
+ "proc-macro-crate 1.3.1",
  "proc-macro2",
  "quote",
  "syn 1.0.109",

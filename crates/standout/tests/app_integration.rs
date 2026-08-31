@@ -1,24 +1,39 @@
 use clap::Command;
 use serde_json::json;
+use standout::cli::FnHandler;
 use standout::cli::{App, HandlerResult, Output};
 use standout::AmbiguousWidth;
+use standout::EmbeddedTemplates;
 use std::cell::RefCell;
 use std::rc::Rc;
+
+const TEMPLATES: &[(&str, &str)] = &[
+    ("test", "{{ msg }}"),
+    ("width", "{{ indicator | display_width }}"),
+    ("inc", "{{ count }}"),
+    ("add", "{{ val }}"),
+];
 
 #[test]
 fn test_app_integration() {
     let app = App::builder()
-        .command(
+        .templates(EmbeddedTemplates::new(TEMPLATES, ""))
+        .command_with(
             "test",
-            |_m, _ctx| Ok(Output::Render(json!({"msg": "success"}))),
-            "{{ msg }}",
+            FnHandler::new(|_m, _ctx| Ok(Output::Render(json!({"msg": "success"})))),
+            |cfg| cfg,
         )
         .unwrap()
         .build()
         .unwrap();
 
     let cmd = Command::new("test").subcommand(Command::new("test"));
-    let result = app.run_to_string(cmd, vec!["test", "test"]);
+    let result = app.run_with(
+        cmd,
+        vec!["test", "test"],
+        standout::TargetProperties::detect(),
+        standout::InputSources::from_process(),
+    );
     if let standout::cli::DispatchResult::Handled(output) = result.outcome() {
         assert_eq!(output, "success");
     } else {
@@ -29,18 +44,20 @@ fn test_app_integration() {
 #[test]
 fn app_builder_wide_policy_reaches_dispatch_rendering() {
     let app = App::builder()
+        .templates(EmbeddedTemplates::new(TEMPLATES, ""))
         .ambiguous_width(AmbiguousWidth::Wide)
-        .command(
+        .command_with(
             "width",
-            |_m, _ctx| Ok(Output::Render(json!({"indicator": "↦≈Δ"}))),
-            "{{ indicator | display_width }}",
+            FnHandler::new(|_m, _ctx| Ok(Output::Render(json!({"indicator": "↦≈Δ"})))),
+            |cfg| cfg,
         )
         .unwrap()
         .build()
         .unwrap();
 
     let cmd = Command::new("test").subcommand(Command::new("width"));
-    let result = app.run_to_string(cmd, ["test", "width"]);
+    let matches = cmd.try_get_matches_from(["test", "width"]).unwrap();
+    let result = app.dispatch(matches, standout::OutputMode::Text);
     assert_eq!(result.output(), Some("5"));
 }
 
@@ -50,20 +67,26 @@ fn test_app_with_mutable_state() {
     let counter_clone = counter.clone();
 
     let app = App::builder()
-        .command(
+        .templates(EmbeddedTemplates::new(TEMPLATES, ""))
+        .command_with(
             "inc",
-            move |_m, _ctx| {
+            FnHandler::new(move |_m, _ctx| {
                 *counter_clone.borrow_mut() += 1;
                 Ok(Output::Render(json!({"count": *counter_clone.borrow()})))
-            },
-            "{{ count }}",
+            }),
+            |cfg| cfg,
         )
         .unwrap()
         .build()
         .unwrap();
 
     let cmd = Command::new("test").subcommand(Command::new("inc"));
-    let result = app.run_to_string(cmd, vec!["test", "inc"]);
+    let result = app.run_with(
+        cmd,
+        vec!["test", "inc"],
+        standout::TargetProperties::detect(),
+        standout::InputSources::from_process(),
+    );
 
     if let standout::cli::DispatchResult::Handled(output) = result.outcome() {
         assert_eq!(output, "1");
@@ -93,20 +116,31 @@ fn test_struct_handler_with_state() {
     }
 
     let app = App::builder()
-        .command_handler("add", StatefulHandler { count: 0 }, "{{ val }}")
+        .templates(EmbeddedTemplates::new(TEMPLATES, ""))
+        .command_with("add", StatefulHandler { count: 0 }, |cfg| cfg)
         .unwrap()
         .build()
         .unwrap();
 
     let cmd = Command::new("test").subcommand(Command::new("add"));
-    let result1 = app.run_to_string(cmd.clone(), vec!["test", "add"]);
+    let result1 = app.run_with(
+        cmd.clone(),
+        vec!["test", "add"],
+        standout::TargetProperties::detect(),
+        standout::InputSources::from_process(),
+    );
     if let standout::cli::DispatchResult::Handled(output) = result1.outcome() {
         assert_eq!(output, "10");
     } else {
         panic!("Expected DispatchResult::Handled, got {:?}", result1);
     }
 
-    let result2 = app.run_to_string(cmd, vec!["test", "add"]);
+    let result2 = app.run_with(
+        cmd,
+        vec!["test", "add"],
+        standout::TargetProperties::detect(),
+        standout::InputSources::from_process(),
+    );
     if let standout::cli::DispatchResult::Handled(output) = result2.outcome() {
         assert_eq!(output, "20");
     } else {

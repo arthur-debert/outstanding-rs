@@ -1,10 +1,12 @@
+use heck::{ToKebabCase, ToSnakeCase};
 use proc_macro2::TokenStream;
-use quote::{format_ident, quote};
+use quote::quote;
 use syn::{
+    ext::IdentExt,
     parse::{Parse, ParseStream},
     punctuated::Punctuated,
     spanned::Spanned,
-    Data, DeriveInput, Error, Expr, Fields, Meta, Path, Result, Token,
+    Data, DeriveInput, Error, Expr, Fields, Ident, Meta, Path, Result, Token,
 };
 
 #[derive(Default)]
@@ -14,9 +16,10 @@ struct ContainerAttrs {
 
 #[derive(Default)]
 struct VariantAttrs {
+    name: Option<String>,
     handler: Option<Path>,
-    template: Option<String>,
     template_name: Option<String>,
+    inputs: Option<Path>,
     silent: bool,
     binary: bool,
     structured_only: bool,
@@ -38,6 +41,7 @@ struct VariantAttrs {
 
 struct VariantInfo {
     snake_name: String,
+    command_name: String,
     attrs: VariantAttrs,
     is_nested: bool,
     nested_type: Option<Path>,
@@ -79,22 +83,35 @@ impl Parse for VariantAttrs {
 
         for meta in content {
             match &meta {
-                Meta::NameValue(nv) if nv.path.is_ident("handler") => {
-                    if let Expr::Path(expr_path) = &nv.value {
-                        attrs.handler = Some(expr_path.path.clone());
-                    } else {
-                        return Err(Error::new(nv.value.span(), "expected path"));
-                    }
-                }
-                Meta::NameValue(nv) if nv.path.is_ident("template") => {
+                Meta::NameValue(nv) if nv.path.is_ident("name") => {
                     if let Expr::Lit(expr_lit) = &nv.value {
                         if let syn::Lit::Str(lit_str) = &expr_lit.lit {
-                            attrs.template = Some(lit_str.value());
+                            let value = lit_str.value();
+                            if value.is_empty() {
+                                return Err(Error::new(nv.value.span(), "`name` cannot be empty"));
+                            }
+                            if value.contains('.') {
+                                return Err(Error::new(
+                                    nv.value.span(),
+                                    "`name` cannot contain `.`: dispatch splits a registration \
+                                     path on `.`, so `parent.child` registers a nested path no \
+                                     clap subcommand declares. Name the single command the \
+                                     variant is, and nest with `#[dispatch(nested)]`",
+                                ));
+                            }
+                            attrs.name = Some(value);
                         } else {
                             return Err(Error::new(nv.value.span(), "expected string literal"));
                         }
                     } else {
                         return Err(Error::new(nv.value.span(), "expected string literal"));
+                    }
+                }
+                Meta::NameValue(nv) if nv.path.is_ident("handler") => {
+                    if let Expr::Path(expr_path) = &nv.value {
+                        attrs.handler = Some(expr_path.path.clone());
+                    } else {
+                        return Err(Error::new(nv.value.span(), "expected path"));
                     }
                 }
                 Meta::NameValue(nv) if nv.path.is_ident("template_name") => {
@@ -106,6 +123,13 @@ impl Parse for VariantAttrs {
                         }
                     } else {
                         return Err(Error::new(nv.value.span(), "expected string literal"));
+                    }
+                }
+                Meta::NameValue(nv) if nv.path.is_ident("inputs") => {
+                    if let Expr::Path(expr_path) = &nv.value {
+                        attrs.inputs = Some(expr_path.path.clone());
+                    } else {
+                        return Err(Error::new(nv.value.span(), "expected path"));
                     }
                 }
                 Meta::Path(p) if p.is_ident("silent") => {
@@ -202,58 +226,130 @@ impl Parse for VariantAttrs {
                 _ => {
                     return Err(Error::new(
                         meta.span(),
-                        "unknown attribute, expected one of: handler, template, template_name, silent, binary, structured_only, pre_dispatch, post_dispatch, post_output, questionnaire, nested, skip, default, list_view, item_type, pipe_to, pipe_through, pipe_to_clipboard, simple, pure",
+                        "unknown attribute, expected one of: name, handler, template_name, inputs, silent, binary, structured_only, pre_dispatch, post_dispatch, post_output, questionnaire, nested, skip, default, list_view, item_type, pipe_to, pipe_through, pipe_to_clipboard, simple, pure",
                     ));
                 }
             }
-        }
-
-        if attrs.template.is_some() && attrs.template_name.is_some() {
-            return Err(Error::new(
-                input.span(),
-                "`template` and `template_name` cannot be used together",
-            ));
-        }
-        let absence_count = usize::from(attrs.silent)
-            + usize::from(attrs.binary)
-            + usize::from(attrs.structured_only);
-        if absence_count > 1 {
-            return Err(Error::new(
-                input.span(),
-                "`silent`, `binary`, and `structured_only` cannot be used together",
-            ));
-        }
-        if absence_count == 1 && (attrs.template.is_some() || attrs.template_name.is_some()) {
-            return Err(Error::new(
-                input.span(),
-                "`silent`, `binary`, and `structured_only` cannot be combined with `template` or `template_name`",
-            ));
         }
 
         Ok(attrs)
     }
 }
 
-fn to_snake_case(s: &str) -> String {
-    let mut result = String::new();
-    for (i, c) in s.chars().enumerate() {
-        if c.is_uppercase() {
-            if i > 0 {
-                result.push('_');
-            }
-            result.push(c.to_lowercase().next().unwrap());
-        } else {
-            result.push(c);
-        }
+impl VariantAttrs {
+    /// A variant may carry more than one `#[dispatch(...)]`; every one of them
+    /// speaks for the same variant, so their values fold into one set before
+    /// anything reads or validates them.
+    fn merge(&mut self, other: VariantAttrs) {
+        let VariantAttrs {
+            name,
+            handler,
+            template_name,
+            inputs,
+            silent,
+            binary,
+            structured_only,
+            pre_dispatch,
+            post_dispatch,
+            post_output,
+            questionnaire,
+            nested,
+            skip,
+            default,
+            list_view,
+            item_type,
+            pipe_to,
+            pipe_through,
+            pipe_to_clipboard,
+            simple,
+            pure,
+        } = other;
+
+        self.name = name.or(self.name.take());
+        self.handler = handler.or(self.handler.take());
+        self.template_name = template_name.or(self.template_name.take());
+        self.inputs = inputs.or(self.inputs.take());
+        self.pre_dispatch = pre_dispatch.or(self.pre_dispatch.take());
+        self.post_dispatch = post_dispatch.or(self.post_dispatch.take());
+        self.post_output = post_output.or(self.post_output.take());
+        self.questionnaire = questionnaire.or(self.questionnaire.take());
+        self.item_type = item_type.or(self.item_type.take());
+        self.pipe_to = pipe_to.or(self.pipe_to.take());
+        self.pipe_through = pipe_through.or(self.pipe_through.take());
+        self.silent |= silent;
+        self.binary |= binary;
+        self.structured_only |= structured_only;
+        self.nested |= nested;
+        self.skip |= skip;
+        self.default |= default;
+        self.list_view |= list_view;
+        self.pipe_to_clipboard |= pipe_to_clipboard;
+        self.simple |= simple;
+        self.pure |= pure;
     }
-    result
+
+    /// The pairs that cannot both hold, checked once the variant's attributes
+    /// are merged: spreading them over two `#[dispatch(...)]` attributes is the
+    /// same request as writing them in one.
+    fn validate(&self, span: proc_macro2::Span) -> Result<()> {
+        if self.pure && self.handler.is_some() {
+            return Err(Error::new(
+                span,
+                "`pure` and `handler` cannot be used together: `pure` registers the wrapper `#[handler]` generates for the variant's own function, while `handler = path` names a function to register. Drop `pure` and point `handler` at the wrapper (`handler = handlers::name__handler`) to register another `#[handler]` function",
+            ));
+        }
+        if self.pure && self.simple {
+            return Err(Error::new(
+                span,
+                "`pure` and `simple` cannot be used together: `simple` registers a function taking only `&ArgMatches`, while the wrapper `#[handler]` generates always takes `(&ArgMatches, &CommandContext)`. Drop `simple`; a `#[handler]` function declares what it needs through its parameter attributes",
+            ));
+        }
+        let absence_count =
+            usize::from(self.silent) + usize::from(self.binary) + usize::from(self.structured_only);
+        if absence_count > 1 {
+            return Err(Error::new(
+                span,
+                "`silent`, `binary`, and `structured_only` cannot be used together",
+            ));
+        }
+        if absence_count == 1 && self.template_name.is_some() {
+            return Err(Error::new(
+                span,
+                "`silent`, `binary`, and `structured_only` cannot be combined with `template_name`",
+            ));
+        }
+
+        Ok(())
+    }
+}
+
+/// Clap's own conversions, so a variant registers under the name clap's derive
+/// gives its subcommand: `heck` on the unraw'd identifier, exactly as
+/// `clap_derive` does. Approximating the split diverges on digit/acronym runs
+/// (`X2FA` is `x2fa` to clap, `x2-fa` to a hand-rolled splitter) and on raw
+/// identifiers.
+fn to_snake_case(ident: &Ident) -> String {
+    ident.unraw().to_string().to_snake_case()
+}
+
+fn to_kebab_case(ident: &Ident) -> String {
+    ident.unraw().to_string().to_kebab_case()
 }
 
 fn parse_container_attrs(input: &DeriveInput) -> Result<ContainerAttrs> {
+    let mut merged = ContainerAttrs::default();
+    let mut found = false;
+
     for attr in &input.attrs {
         if attr.path().is_ident("dispatch") {
-            return attr.parse_args::<ContainerAttrs>();
+            let attrs = attr.parse_args::<ContainerAttrs>()?;
+            merged.handlers = attrs.handlers.or(merged.handlers);
+            found = true;
         }
+    }
+
+    if found {
+        return Ok(merged);
     }
 
     Err(Error::new(
@@ -263,12 +359,21 @@ fn parse_container_attrs(input: &DeriveInput) -> Result<ContainerAttrs> {
 }
 
 fn parse_variant_attrs(attrs: &[syn::Attribute]) -> Result<VariantAttrs> {
+    let mut merged = VariantAttrs::default();
+    let mut span = None;
+
     for attr in attrs {
         if attr.path().is_ident("dispatch") {
-            return attr.parse_args::<VariantAttrs>();
+            merged.merge(attr.parse_args::<VariantAttrs>()?);
+            span.get_or_insert_with(|| attr.span());
         }
     }
-    Ok(VariantAttrs::default())
+
+    if let Some(span) = span {
+        merged.validate(span)?;
+    }
+
+    Ok(merged)
 }
 
 fn is_nested_subcommand(fields: &Fields) -> Option<Path> {
@@ -305,6 +410,7 @@ pub fn dispatch_derive_impl(input: DeriveInput) -> Result<TokenStream> {
     };
 
     let mut variants: Vec<VariantInfo> = Vec::new();
+    let mut claimed_names: Vec<(String, String)> = Vec::new();
 
     for variant in &data.variants {
         let attrs = parse_variant_attrs(&variant.attrs)?;
@@ -313,7 +419,28 @@ pub fn dispatch_derive_impl(input: DeriveInput) -> Result<TokenStream> {
             continue;
         }
 
-        let snake_name = to_snake_case(&variant.ident.to_string());
+        let snake_name = to_snake_case(&variant.ident);
+        let command_name = attrs
+            .name
+            .clone()
+            .unwrap_or_else(|| to_kebab_case(&variant.ident));
+
+        if let Some((_, first_variant)) = claimed_names
+            .iter()
+            .find(|(claimed, _)| *claimed == command_name)
+        {
+            return Err(Error::new(
+                variant.span(),
+                format!(
+                    "`{}` and `{}` both register the command `{command_name}`, so only \
+                     the last one would run. Rename one variant, or give it a \
+                     `#[dispatch(name = \"...\")]` of its own.",
+                    first_variant, variant.ident,
+                ),
+            ));
+        }
+        claimed_names.push((command_name.clone(), variant.ident.to_string()));
+
         let nested_type_candidate = is_nested_subcommand(&variant.fields);
 
         let is_nested = attrs.nested;
@@ -327,6 +454,7 @@ pub fn dispatch_derive_impl(input: DeriveInput) -> Result<TokenStream> {
 
         variants.push(VariantInfo {
             snake_name,
+            command_name,
             attrs,
             is_nested,
             nested_type: nested_type_candidate,
@@ -337,7 +465,7 @@ pub fn dispatch_derive_impl(input: DeriveInput) -> Result<TokenStream> {
         let defaults: Vec<_> = variants.iter().filter(|v| v.attrs.default).collect();
 
         if defaults.len() > 1 {
-            let names: Vec<_> = defaults.iter().map(|v| v.snake_name.as_str()).collect();
+            let names: Vec<_> = defaults.iter().map(|v| v.command_name.as_str()).collect();
             return Err(Error::new(
                 input.span(),
                 format!(
@@ -347,13 +475,13 @@ pub fn dispatch_derive_impl(input: DeriveInput) -> Result<TokenStream> {
             ));
         }
 
-        defaults.first().map(|v| v.snake_name.as_str())
+        defaults.first().map(|v| v.command_name.as_str())
     };
 
     let command_registrations: Vec<TokenStream> = variants
         .iter()
         .map(|v| {
-            let cmd_name = &v.snake_name;
+            let cmd_name = &v.command_name;
 
             if v.is_nested {
                 let nested_type = v.nested_type.as_ref().unwrap();
@@ -366,7 +494,7 @@ pub fn dispatch_derive_impl(input: DeriveInput) -> Result<TokenStream> {
                     if v.attrs.pure {
                         handler_name = format!("{}__handler", handler_name);
                     }
-                    let handler_ident = format_ident!("{}", handler_name);
+                    let handler_ident = crate::ident::safe_ident(&handler_name, proc_macro2::Span::call_site());
                     let mut path = handlers_path.clone();
                     path.segments.push(syn::PathSegment {
                         ident: handler_ident,
@@ -375,16 +503,14 @@ pub fn dispatch_derive_impl(input: DeriveInput) -> Result<TokenStream> {
                     path
                 });
 
-                let v_template = v.attrs.template.clone();
                 let mut v_template_name = v.attrs.template_name.clone();
-                let uses_framework_list_view =
-                    v.attrs.list_view && v_template.is_none() && v_template_name.is_none();
+                let uses_framework_list_view = v.attrs.list_view && v_template_name.is_none();
                 if uses_framework_list_view {
                     v_template_name = Some("standout/list-view".to_string());
                 }
 
-                let has_config = v_template.is_some()
-                    || v_template_name.is_some()
+                let has_config = v_template_name.is_some()
+                    || v.attrs.inputs.is_some()
                     || v.attrs.silent
                     || v.attrs.binary
                     || v.attrs.structured_only
@@ -444,9 +570,6 @@ pub fn dispatch_derive_impl(input: DeriveInput) -> Result<TokenStream> {
                 };
 
                 if has_config {
-                    let template_call = v_template
-                        .as_ref()
-                        .map(|template| quote! { __cfg = __cfg.template(#template); });
                     let template_name_call = v_template_name.as_ref().map(
                         |template_name| quote! { __cfg = __cfg.template_name(#template_name); },
                     );
@@ -459,6 +582,9 @@ pub fn dispatch_derive_impl(input: DeriveInput) -> Result<TokenStream> {
                     } else {
                         None
                     };
+                    let inputs_call = v.attrs.inputs.as_ref().map(|p| {
+                        quote! { __cfg = #p(__cfg); }
+                    });
                     let pre_dispatch_call = v.attrs.pre_dispatch.as_ref().map(|p| {
                         quote! { __cfg = __cfg.pre_dispatch(#p); }
                     });
@@ -485,10 +611,10 @@ pub fn dispatch_derive_impl(input: DeriveInput) -> Result<TokenStream> {
 
                     quote! {
                         let __builder = __builder.command_with(#cmd_name, #handler_expr, |mut __cfg| {
-                            #template_call
                             #template_name_call
                             #absence_call
                             #questionnaire_call
+                            #inputs_call
                             #pre_dispatch_call
                             #post_dispatch_call
                             #post_output_call
@@ -532,17 +658,66 @@ pub fn dispatch_derive_impl(input: DeriveInput) -> Result<TokenStream> {
 mod tests {
     use super::*;
 
+    fn ident(s: &str) -> Ident {
+        syn::parse_str::<Ident>(s).unwrap()
+    }
+
     #[test]
     fn test_to_snake_case() {
-        assert_eq!(to_snake_case("Add"), "add");
-        assert_eq!(to_snake_case("ListAll"), "list_all");
-        assert_eq!(to_snake_case("HTTPServer"), "h_t_t_p_server");
-        assert_eq!(to_snake_case("getHTTPResponse"), "get_h_t_t_p_response");
+        assert_eq!(to_snake_case(&ident("Add")), "add");
+        assert_eq!(to_snake_case(&ident("ListAll")), "list_all");
+        assert_eq!(to_snake_case(&ident("HTTPServer")), "http_server");
+        assert_eq!(
+            to_snake_case(&ident("getHTTPResponse")),
+            "get_http_response"
+        );
     }
 
     #[test]
     fn test_to_snake_case_simple() {
-        assert_eq!(to_snake_case("Complete"), "complete");
-        assert_eq!(to_snake_case("Delete"), "delete");
+        assert_eq!(to_snake_case(&ident("Complete")), "complete");
+        assert_eq!(to_snake_case(&ident("Delete")), "delete");
+    }
+
+    /// The right-hand sides are what clap's own derive registers; the
+    /// `crates/standout/tests/dispatch_derive.rs` parity test reads them back
+    /// off a `Command` built by `#[derive(Subcommand)]`.
+    #[test]
+    fn test_to_kebab_case_matches_clap_derive() {
+        assert_eq!(to_kebab_case(&ident("Add")), "add");
+        assert_eq!(to_kebab_case(&ident("ListUnits")), "list-units");
+        assert_eq!(to_kebab_case(&ident("HTTPServer")), "http-server");
+        assert_eq!(
+            to_kebab_case(&ident("getHTTPResponse")),
+            "get-http-response"
+        );
+    }
+
+    #[test]
+    fn digit_runs_keep_clap_word_boundaries() {
+        assert_eq!(to_kebab_case(&ident("X2FA")), "x2fa");
+        assert_eq!(to_kebab_case(&ident("A1B2")), "a1b2");
+        assert_eq!(to_kebab_case(&ident("Sha256Sum")), "sha256-sum");
+        assert_eq!(to_kebab_case(&ident("Utf8Check")), "utf8-check");
+        assert_eq!(to_snake_case(&ident("X2FA")), "x2fa");
+        assert_eq!(to_snake_case(&ident("Sha256Sum")), "sha256_sum");
+    }
+
+    #[test]
+    fn raw_identifiers_drop_the_prefix_as_clap_does() {
+        let span = proc_macro2::Span::call_site();
+        assert_eq!(to_kebab_case(&Ident::new_raw("Move", span)), "move");
+        assert_eq!(to_snake_case(&Ident::new_raw("Move", span)), "move");
+        assert_eq!(to_kebab_case(&Ident::new_raw("TypeOf", span)), "type-of");
+    }
+
+    #[test]
+    fn a_keyword_handler_name_stays_a_usable_path_segment() {
+        let span = proc_macro2::Span::call_site();
+        assert_eq!(crate::ident::safe_ident("move", span).to_string(), "r#move");
+        assert_eq!(
+            crate::ident::safe_ident("list_units", span).to_string(),
+            "list_units"
+        );
     }
 }

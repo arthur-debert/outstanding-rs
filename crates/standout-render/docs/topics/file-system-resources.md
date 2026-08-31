@@ -24,79 +24,28 @@ During release, you want:
 
 ## Hot Reload
 
-In debug builds (`debug_assertions` enabled), file-based resources are re-read from disk on each render. This means:
+In debug builds (`debug_assertions` enabled), file-based templates are re-read from disk on each render. This means:
 
 - Edit `templates/report.jinja` → re-run → see changes
-- Edit `styles/theme.css` → re-run → see new styles
 - No recompilation needed
 
 ```rust
-use standout_render::Renderer;
+use standout_render::{Renderer, Theme};
 
-let mut renderer = Renderer::new(theme)?;
+let mut renderer = Renderer::new(Theme::new())?;
 renderer.add_template_dir("./templates")?;
 
 // In debug: reads from disk each time
-// In release: uses cached content
+// In release: content was scanned once at registration
 let output = renderer.render("report", &data)?;
 ```
 
 ### How It Works
 
-The `Renderer` tracks the source of each template:
+`Renderer` tracks the source of each template name:
 
-- **Inline**: Content provided as a string (always cached)
-- **File-based**: Path recorded, content read on demand
-
-In debug builds, file-based templates are re-read before each render. In release builds, content is cached after first load.
-
----
-
-## File Registries
-
-Both templates and stylesheets use a registry pattern: a map from names to content.
-
-### Template Registry
-
-```rust
-use standout_render::TemplateRegistry;
-
-let mut registry = TemplateRegistry::new();
-
-// Add from directory
-registry.add_dir("./templates")?;
-
-// Add inline
-registry.add("greeting", "Hello, {{ name }}!")?;
-
-// Resolve by name
-let content = registry.get("report")?;
-```
-
-**Name resolution from paths:**
-
-```text
-./templates/
-├── greeting.jinja       → "greeting"
-├── reports/
-│   ├── summary.jinja    → "reports/summary"
-│   └── detail.jinja     → "reports/detail"
-└── partials/
-    └── header.jinja     → "partials/header"
-```
-
-Names are relative paths without extensions.
-
-### Stylesheet Registry
-
-```rust
-use standout_render::StylesheetRegistry;
-
-let mut registry = StylesheetRegistry::new();
-registry.add_dir("./styles")?;
-
-let theme = registry.get("default")?;  // loads default.css or default.yaml
-```
+- **Inline** (`add_template`) and **embedded** (`with_embedded`, `with_embedded_source`) content: always cached, never re-read.
+- **File-based** (`add_template_dir`): path recorded; in debug builds the file is re-read before each render, so edits are visible without recompiling.
 
 ---
 
@@ -109,9 +58,10 @@ let theme = registry.get("default")?;  // loads default.css or default.yaml
 | `.jinja` | 1 (highest) |
 | `.jinja2` | 2 |
 | `.j2` | 3 |
-| `.txt` | 4 (lowest) |
+| `.stpl` | 4 |
+| `.txt` | 5 (lowest) |
 
-If both `report.jinja` and `report.txt` exist, `report.jinja` is used.
+If both `report.jinja` and `report.txt` exist in the same directory, `report.jinja` is used. A lookup tries the given name exactly first; if that carries one of the extensions above, it also tries the name with that extension stripped.
 
 ### Stylesheets
 
@@ -125,75 +75,60 @@ If both `report.jinja` and `report.txt` exist, `report.jinja` is used.
 
 ## Embedding Resources
 
-For release builds, embed resources directly into the binary using the provided macros:
-
-### Embedding Templates
+For release builds, embed resources into the binary at compile time with `embed_templates!` / `embed_styles!`. Each macro reads matching files under the given directory and returns an `EmbeddedTemplates` / `EmbeddedStyles` value (both are `EmbeddedSource<R>`, differing only in the resource kind).
 
 ```rust
-use standout_render::{embed_templates, EmbeddedTemplates};
+use standout_render::{embed_templates, embed_styles, Renderer, Theme};
 
-// Embed all .jinja files from a directory
-let templates: EmbeddedTemplates = embed_templates!("src/templates");
+let templates = embed_templates!("src/templates");
+let styles = embed_styles!("src/styles");
 
-// Use with Renderer
-let mut renderer = Renderer::new(theme)?;
-renderer.add_embedded_templates(templates)?;
+let mut renderer = Renderer::new(Theme::new())?;
+renderer.with_embedded_source(templates);
 ```
 
-### Embedding Stylesheets
+`EmbeddedSource::should_hot_reload()` is `true` in debug builds when the original source directory (recorded at compile time) still exists on disk. What that buys depends on which consumer takes the value, and the two differ:
 
-```rust
-use standout_render::{embed_styles, EmbeddedStyles};
-
-// Embed all .css/.yaml files from a directory
-let styles: EmbeddedStyles = embed_styles!("src/styles");
-
-// Load a specific theme
-let theme = styles.get("default")?;
-```
+- **`App::builder().templates(embedded)` / `.styles(embedded)`** call `EmbeddedSource::into_registry`, which under `should_hot_reload()` walks the source directory and registers the entries as **file-backed**. A debug build therefore re-reads them per render, exactly like `add_template_dir`. See the standout framework docs for that wiring.
+- **`Renderer::with_embedded_source`** builds that registry and then copies every resolved entry in with `add_inline`. The content is **snapshotted at registration**, so a `Renderer` does not re-read the source directory afterwards — `should_hot_reload()` changes nothing a caller can observe on this path.
 
 ### Hybrid Approach
 
-Combine embedded defaults with optional file overrides:
+Combine embedded defaults with an optional file directory. The directory **adds** names; it cannot replace one, because tier 1 is consulted first (see [Resolution Priority](#resolution-priority)) and `with_embedded_source` has already put every embedded name there:
 
 ```rust
-use standout_render::{Renderer, embed_templates};
+use standout_render::{embed_templates, Renderer, Theme};
+use std::path::Path;
 
 let embedded = embed_templates!("src/templates");
 
-let mut renderer = Renderer::new(theme)?;
+let mut renderer = Renderer::new(Theme::new())?;
+renderer.with_embedded_source(embedded);
 
-// Add embedded first (lower priority)
-renderer.add_embedded_templates(embedded)?;
-
-// Add file directory (higher priority, overrides embedded)
+// Only reached for names not already resolved above
 if Path::new("./templates").exists() {
     renderer.add_template_dir("./templates")?;
 }
 ```
 
-This pattern lets users customize templates without modifying the binary.
+So `./templates` supplies templates the binary does not embed. A same-named file there is **not** an override: `render("report")` still resolves the embedded `report`. To let a directory win over the binary's copy, do not register the embedded source at all when the directory exists.
 
 ---
 
 ## Resolution Priority
 
-When resolving a template or stylesheet name, sources are checked in priority order:
+`Renderer` resolves a name in two tiers:
 
-1. **Inline** (added via `add()` or `add_template()`)
-2. **File-based directories** (in order added, later = higher priority)
-3. **Embedded** (lowest priority)
+1. **Inline and embedded** — `add_template` and `with_embedded`/`with_embedded_source` write into the same namespace. Whichever call registered a name last wins; there's no separate priority between "inline" and "embedded" content.
+2. **File-based directories** (`add_template_dir`) — checked only for a name not already resolved in tier 1.
 
-Example:
+Registering the **same name from two different directories is a collision error**, not a silent override — file-based names must be unique across every directory you register.
 
 ```rust
-renderer.add_embedded_templates(embedded)?;  // Priority 1 (lowest)
-renderer.add_template_dir("./vendor")?;      // Priority 2
-renderer.add_template_dir("./templates")?;   // Priority 3 (highest)
-renderer.add_template("report", "inline")?;  // Priority 4 (always wins)
+renderer.with_embedded_source(embedded);   // Tier 1
+renderer.add_template("report", "inline"); // Tier 1 — overwrites "report" if embedded also defined it
+renderer.add_template_dir("./templates")?; // Tier 2 — only used for names tier 1 doesn't have
 ```
-
-If "report" exists in all sources, the inline version is used.
 
 ---
 
@@ -213,20 +148,22 @@ my-cli/
 │   └── styles/              # Stylesheets for embedding
 │       ├── default.css
 │       └── colorblind.css
-├── templates/               # Development overrides (gitignored)
-└── styles/                  # Development overrides (gitignored)
+├── templates/               # Extra development templates (gitignored)
+└── styles/                  # Extra development stylesheets (gitignored)
 ```
 
 In `main.rs`:
 
 ```rust
+use std::path::Path;
+
 let embedded_templates = embed_templates!("src/templates");
-let embedded_styles = embed_styles!("src/styles");
 
 let mut renderer = Renderer::new(theme)?;
-renderer.add_embedded_templates(embedded_templates)?;
+renderer.with_embedded_source(embedded_templates);
 
-// In debug, also check local directories for overrides
+// In debug, also pick up local templates the binary does not embed.
+// Names the binary already embeds keep resolving to the embedded copy.
 #[cfg(debug_assertions)]
 {
     if Path::new("./templates").exists() {
@@ -253,39 +190,53 @@ match renderer.render("nonexistent", &data) {
 
 ### Name Collisions
 
-Same-directory collisions use extension priority (`.jinja` > `.txt`).
+Same-directory collisions use extension priority (`.jinja` beats `.txt`, etc. — see the table above).
 
-Cross-directory collisions are resolved by priority order (later directories win).
+Collisions across two different directories registered with `add_template_dir` are reported as `RegistryError::Collision`, not silently resolved by registration order.
 
 ### Invalid Content
 
-Template syntax errors are reported with line numbers:
-
-```text
-Template 'report' error at line 15:
-  unexpected end of template, expected 'endif'
-```
+Template syntax errors are reported with the template name and the underlying engine's message.
 
 ---
 
 ## API Reference
 
+### Renderer
+
+The primary entry point for most applications:
+
+```rust
+use standout_render::{Renderer, Theme};
+
+let mut renderer = Renderer::new(Theme::new())?;
+
+// Templates
+renderer.add_template("name", "content")?;
+renderer.add_template_dir("./templates")?;
+renderer.with_embedded_source(embed_templates!("src/templates"));
+
+// Render
+let output = renderer.render("name", &data)?;
+let count = renderer.template_count();
+```
+
 ### TemplateRegistry
+
+The lower-level registry `Renderer` builds on internally. Use it directly only when bypassing `Renderer`:
 
 ```rust
 use standout_render::TemplateRegistry;
 
 let mut registry = TemplateRegistry::new();
 
-// Add sources
-registry.add("name", "content")?;
-registry.add_dir("./templates")?;
-registry.add_embedded(embedded_templates)?;
+registry.add_inline("greeting", "Hello, {{ name }}!");
+registry.add_embedded(embedded_map); // HashMap<String, String>
 
-// Query
-let content: Option<&str> = registry.get("name");
-let names: Vec<&str> = registry.names();
-let exists: bool = registry.contains("name");
+// Query — `get` returns the resolved source, not the raw content
+let resolved = registry.get("greeting")?;   // Result<ResolvedTemplate, RegistryError>
+let content = registry.get_content("greeting")?; // Result<String, RegistryError>
+let names: Vec<&str> = registry.names().collect();
 ```
 
 ### StylesheetRegistry
@@ -294,14 +245,12 @@ let exists: bool = registry.contains("name");
 use standout_render::StylesheetRegistry;
 
 let mut registry = StylesheetRegistry::new();
-
-// Add sources
 registry.add_dir("./styles")?;
-registry.add_embedded(embedded_styles)?;
+registry.add_embedded(embedded_themes); // HashMap<String, Theme>
 
-// Get parsed theme
-let theme: Theme = registry.get("default")?;
-let names: Vec<&str> = registry.names();
+let theme = registry.get("default")?;      // Result<Theme, StylesheetError>
+let exists: bool = registry.contains("default");
+let names: Vec<&str> = registry.names().collect();
 ```
 
 ### Embed Macros
@@ -309,23 +258,7 @@ let names: Vec<&str> = registry.names();
 ```rust
 use standout_render::{embed_templates, embed_styles};
 
-// At compile time, reads all matching files and embeds content
+// At compile time, reads all matching files and embeds their content
 let templates = embed_templates!("path/to/templates");
 let styles = embed_styles!("path/to/styles");
-```
-
-### Renderer Integration
-
-```rust
-use standout_render::Renderer;
-
-let mut renderer = Renderer::new(theme)?;
-
-// Templates
-renderer.add_template("name", "content")?;
-renderer.add_template_dir("./templates")?;
-renderer.add_embedded_templates(embedded)?;
-
-// Render
-let output = renderer.render("name", &data)?;
 ```

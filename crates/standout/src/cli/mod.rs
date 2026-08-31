@@ -73,26 +73,4 @@ pub use standout_macros::Dispatch;
 
 pub use crate::setup::SetupError;
 
-pub use dispatch::{
-    extract_command_path, get_deepest_matches, has_subcommand, insert_default_command,
-};
-
 pub use default_command::{DefaultCommandContext, DefaultCommandResolver, UnknownDefaultCommand};
-
-pub fn parse(cmd: clap::Command) -> clap::ArgMatches {
-    App::builder()
-        .build()
-        .unwrap_or_else(|error| unreachable!("default standout app build failed: {error}"))
-        .parse_with(cmd)
-}
-
-pub fn parse_from<I, T>(cmd: clap::Command, itr: I) -> clap::ArgMatches
-where
-    I: IntoIterator<Item = T>,
-    T: Into<std::ffi::OsString> + Clone,
-{
-    App::builder()
-        .build()
-        .unwrap_or_else(|error| unreachable!("default standout app build failed: {error}"))
-        .parse_from(cmd, itr)
-}

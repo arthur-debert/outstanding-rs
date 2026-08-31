@@ -1,0 +1,14 @@
+error: `List` and `Show` both register the command `show`, so only the last one would run. Rename one variant, or give it a `#[dispatch(name = "...")]` of its own.
+  --> tests/ui/dispatch/duplicate_command_name.rs:21:5
+   |
+21 |     Show,
+   |     ^^^^
+
+error[E0599]: no variant, associated function, or constant named `dispatch_config` found for enum `Commands` in the current scope
+  --> tests/ui/dispatch/duplicate_command_name.rs:25:23
+   |
+18 | enum Commands {
+   | ------------- variant, associated function, or constant `dispatch_config` not found for this enum
+...
+25 |     let _ = Commands::dispatch_config();
+   |                       ^^^^^^^^^^^^^^^ variant, associated function, or constant not found in `Commands`

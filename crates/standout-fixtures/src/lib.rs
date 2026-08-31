@@ -9,7 +9,7 @@
 //! presence flag next to a valued positional, a `Count` flag (valueless but
 //! not boolean), a valued option with and without a metavar, an enumerated
 //! option with a default, a long option name, an app theme that overlays
-//! rather than replaces the help theme, and `help_handling` with topics
+//! rather than replaces the help theme, and default help handling with topics
 //! registered. [`Downstream::flat`] swaps the subcommands for a required
 //! `ArgGroup` on the same arguments, so nested and flat shapes never disagree
 //! about what an option is called.
@@ -21,14 +21,23 @@
 //! assert_eq!(fixture.command().get_name(), "lookma");
 //! ```
 
+pub mod derive_surface;
+
 use clap::{Arg, ArgAction, ArgGroup, Command};
 use console::Style;
 use serde_json::json;
 use standout::cli::{App, Output};
 use standout::topics::{Topic, TopicType};
-use standout::Theme;
+use standout::{EmbeddedTemplates, Theme};
 
 pub const NAME: &str = "lookma";
+
+const TEMPLATES: &[(&str, &str)] = &[
+    ("review", "reviewed {{ hunk }}"),
+    ("stat", "stat"),
+    ("export", "exported"),
+    ("root", "range={{ range }}"),
+];
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Shape {
@@ -87,7 +96,7 @@ impl Downstream {
     }
 
     fn app(&self) -> App {
-        let mut builder = App::builder().help_handling(true).help_word(self.help_word);
+        let mut builder = App::builder().help_word(self.help_word);
 
         if self.topics {
             builder = builder
@@ -109,36 +118,32 @@ impl Downstream {
             builder = builder.theme(incomplete_theme());
         }
 
+        let builder = builder.templates(EmbeddedTemplates::new(TEMPLATES, ""));
+
         let builder = match self.shape {
             Shape::Nested => builder
-                .command(
-                    "review",
-                    |m, _ctx| {
+                .commands(|g| {
+                    g.command("review", |m, _ctx| {
                         Ok(Output::Render(json!({
                             "hunk": m.get_one::<String>("hunk").cloned().unwrap_or_default(),
                         })))
-                    },
-                    "reviewed {{ hunk }}",
-                )
-                .unwrap()
-                .command("stat", |_m, _ctx| Ok(Output::Render(json!({}))), "stat")
-                .unwrap()
-                .command(
-                    "export",
-                    |_m, _ctx| Ok(Output::Render(json!({}))),
-                    "exported",
-                )
+                    })
+                    .command("stat", |_m, _ctx| Ok(Output::Render(json!({}))))
+                    .command("export", |_m, _ctx| Ok(Output::Render(json!({}))))
+                })
                 .unwrap(),
             Shape::Flat => builder
-                .command(
-                    "",
-                    |m, _ctx| {
-                        Ok(Output::Render(json!({
-                            "range": m.get_one::<String>("range").cloned().unwrap_or_default(),
-                        })))
-                    },
-                    "range={{ range }}",
-                )
+                .commands(|g| {
+                    g.command_with(
+                        "",
+                        |m, _ctx| {
+                            Ok(Output::Render(json!({
+                                "range": m.get_one::<String>("range").cloned().unwrap_or_default(),
+                            })))
+                        },
+                        |cfg| cfg.template_name("root"),
+                    )
+                })
                 .unwrap(),
         };
 
@@ -255,7 +260,11 @@ mod tests {
     use standout::cli::{default_help_theme, HelpResult};
 
     fn help_page(fixture: &Fixture, args: &[&str]) -> String {
-        match fixture.app().get_matches_from(fixture.command(), args) {
+        match fixture.app().get_matches_from(
+            fixture.command(),
+            args,
+            &standout::InputSources::from_process(),
+        ) {
             HelpResult::Help(text) | HelpResult::PagedHelp(text) => text,
             other => panic!("expected rendered help, got: {other:?}"),
         }

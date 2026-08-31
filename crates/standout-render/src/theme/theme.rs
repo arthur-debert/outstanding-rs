@@ -6,14 +6,13 @@
 //! framework base layered with user overrides) without breaking references.
 
 use std::collections::HashMap;
-use std::path::{Path, PathBuf};
 
 use console::Style;
 
 use crate::colorspace::ThemePalette;
 
 use super::super::style::{
-    parse_stylesheet, StyleValidationError, StyleValue, Styles, StylesheetError, ThemeVariants,
+    parse_stylesheet, StyleValidationError, StyleValue, Styles, StylesheetError,
 };
 
 use super::adaptive::ColorMode;
@@ -23,7 +22,6 @@ use super::icon_mode::IconMode;
 #[derive(Debug, Clone)]
 pub struct Theme {
     name: Option<String>,
-    source_path: Option<PathBuf>,
     base: HashMap<String, Style>,
     light: HashMap<String, Style>,
     dark: HashMap<String, Style>,
@@ -36,20 +34,6 @@ impl Theme {
     pub fn new() -> Self {
         Self {
             name: None,
-            source_path: None,
-            base: HashMap::new(),
-            light: HashMap::new(),
-            dark: HashMap::new(),
-            aliases: HashMap::new(),
-            icons: IconSet::new(),
-            palette: None,
-        }
-    }
-
-    pub fn named(name: impl Into<String>) -> Self {
-        Self {
-            name: Some(name.into()),
-            source_path: None,
             base: HashMap::new(),
             light: HashMap::new(),
             dark: HashMap::new(),
@@ -73,37 +57,11 @@ impl Theme {
         self.palette.as_ref()
     }
 
-    pub fn from_file<P: AsRef<Path>>(path: P) -> Result<Self, StylesheetError> {
-        let path = path.as_ref();
-        let content = std::fs::read_to_string(path).map_err(|e| StylesheetError::Load {
-            message: format!("Failed to read {}: {}", path.display(), e),
-        })?;
-
-        let name = path
-            .file_stem()
-            .and_then(|s| s.to_str())
-            .map(|s| s.to_string());
-
-        let icons = parse_icons_from_yaml_str(&content)?;
-        let variants = parse_stylesheet(&content, None)?;
-        Ok(Self {
-            name,
-            source_path: Some(path.to_path_buf()),
-            base: variants.base().clone(),
-            light: variants.light().clone(),
-            dark: variants.dark().clone(),
-            aliases: variants.aliases().clone(),
-            icons,
-            palette: None,
-        })
-    }
-
     pub fn from_yaml(yaml: &str) -> Result<Self, StylesheetError> {
         let icons = parse_icons_from_yaml_str(yaml)?;
         let variants = parse_stylesheet(yaml, None)?;
         Ok(Self {
             name: None,
-            source_path: None,
             base: variants.base().clone(),
             light: variants.light().clone(),
             dark: variants.dark().clone(),
@@ -117,7 +75,6 @@ impl Theme {
         let variants = crate::parse_css(css, None)?;
         Ok(Self {
             name: None,
-            source_path: None,
             base: variants.base().clone(),
             light: variants.light().clone(),
             dark: variants.dark().clone(),
@@ -125,74 +82,10 @@ impl Theme {
             icons: IconSet::new(),
             palette: None,
         })
-    }
-
-    pub fn from_css_file<P: AsRef<Path>>(path: P) -> Result<Self, StylesheetError> {
-        let path = path.as_ref();
-        let content = std::fs::read_to_string(path).map_err(|e| StylesheetError::Load {
-            message: format!("Failed to read {}: {}", path.display(), e),
-        })?;
-
-        let name = path
-            .file_stem()
-            .and_then(|s| s.to_str())
-            .map(|s| s.to_string());
-
-        let variants = crate::parse_css(&content, None)?;
-        Ok(Self {
-            name,
-            source_path: Some(path.to_path_buf()),
-            base: variants.base().clone(),
-            light: variants.light().clone(),
-            dark: variants.dark().clone(),
-            aliases: variants.aliases().clone(),
-            icons: IconSet::new(),
-            palette: None,
-        })
-    }
-
-    pub fn from_variants(variants: ThemeVariants) -> Self {
-        Self {
-            name: None,
-            source_path: None,
-            base: variants.base().clone(),
-            light: variants.light().clone(),
-            dark: variants.dark().clone(),
-            aliases: variants.aliases().clone(),
-            icons: IconSet::new(),
-            palette: None,
-        }
     }
 
     pub fn name(&self) -> Option<&str> {
         self.name.as_deref()
-    }
-
-    pub fn source_path(&self) -> Option<&Path> {
-        self.source_path.as_deref()
-    }
-
-    pub fn refresh(&mut self) -> Result<(), StylesheetError> {
-        let path = self
-            .source_path
-            .as_ref()
-            .ok_or_else(|| StylesheetError::Load {
-                message: "Cannot refresh: theme has no source file".to_string(),
-            })?;
-
-        let content = std::fs::read_to_string(path).map_err(|e| StylesheetError::Load {
-            message: format!("Failed to read {}: {}", path.display(), e),
-        })?;
-
-        let icons = parse_icons_from_yaml_str(&content)?;
-        let variants = parse_stylesheet(&content, self.palette.as_ref())?;
-        self.base = variants.base().clone();
-        self.light = variants.light().clone();
-        self.dark = variants.dark().clone();
-        self.aliases = variants.aliases().clone();
-        self.icons = icons;
-
-        Ok(())
     }
 
     pub fn add<V: Into<StyleValue>>(mut self, name: &str, value: V) -> Self {
@@ -689,89 +582,9 @@ mod tests {
     }
 
     #[test]
-    fn test_theme_named() {
-        let theme = Theme::named("darcula");
-        assert_eq!(theme.name(), Some("darcula"));
-        assert!(theme.is_empty());
-    }
-
-    #[test]
     fn test_theme_new_has_no_name() {
         let theme = Theme::new();
         assert_eq!(theme.name(), None);
-        assert_eq!(theme.source_path(), None);
-    }
-
-    #[test]
-    fn test_theme_from_file() {
-        use std::fs;
-        use tempfile::TempDir;
-
-        let temp_dir = TempDir::new().unwrap();
-        let theme_path = temp_dir.path().join("darcula.yaml");
-        fs::write(
-            &theme_path,
-            r#"
-            header:
-                fg: cyan
-                bold: true
-            muted:
-                dim: true
-            "#,
-        )
-        .unwrap();
-
-        let theme = Theme::from_file(&theme_path).unwrap();
-        assert_eq!(theme.name(), Some("darcula"));
-        assert_eq!(theme.source_path(), Some(theme_path.as_path()));
-        assert_eq!(theme.len(), 2);
-    }
-
-    #[test]
-    fn test_theme_from_file_not_found() {
-        let result = Theme::from_file("/nonexistent/path/theme.yaml");
-        assert!(result.is_err());
-    }
-
-    #[test]
-    fn test_theme_refresh() {
-        use std::fs;
-        use tempfile::TempDir;
-
-        let temp_dir = TempDir::new().unwrap();
-        let theme_path = temp_dir.path().join("dynamic.yaml");
-        fs::write(
-            &theme_path,
-            r#"
-            header:
-                fg: red
-            "#,
-        )
-        .unwrap();
-
-        let mut theme = Theme::from_file(&theme_path).unwrap();
-        assert_eq!(theme.len(), 1);
-
-        fs::write(
-            &theme_path,
-            r#"
-            header:
-                fg: blue
-            footer:
-                dim: true
-            "#,
-        )
-        .unwrap();
-
-        theme.refresh().unwrap();
-        assert_eq!(theme.len(), 2);
-    }
-
-    #[test]
-    fn test_theme_refresh_without_source() {
-        let mut theme = Theme::new();
-        let result = theme.refresh();
-        assert!(result.is_err());
     }
 
     #[test]
@@ -1008,65 +821,6 @@ mod tests {
             "#,
         );
         assert!(result.is_err());
-    }
-
-    #[test]
-    fn test_theme_from_file_with_icons() {
-        use std::fs;
-        use tempfile::TempDir;
-
-        let temp_dir = TempDir::new().unwrap();
-        let theme_path = temp_dir.path().join("iconic.yaml");
-        fs::write(
-            &theme_path,
-            r#"
-            header:
-                fg: cyan
-            icons:
-                check:
-                    classic: "[ok]"
-                    nerdfont: "nf_check"
-            "#,
-        )
-        .unwrap();
-
-        let theme = Theme::from_file(&theme_path).unwrap();
-        assert_eq!(theme.icons().len(), 1);
-        let resolved = theme.resolve_icons(IconMode::NerdFont);
-        assert_eq!(resolved.get("check").unwrap(), "nf_check");
-    }
-
-    #[test]
-    fn test_theme_refresh_with_icons() {
-        use std::fs;
-        use tempfile::TempDir;
-
-        let temp_dir = TempDir::new().unwrap();
-        let theme_path = temp_dir.path().join("refresh.yaml");
-        fs::write(
-            &theme_path,
-            r#"
-            icons:
-                v1: "one"
-            "#,
-        )
-        .unwrap();
-
-        let mut theme = Theme::from_file(&theme_path).unwrap();
-        assert_eq!(theme.icons().len(), 1);
-
-        fs::write(
-            &theme_path,
-            r#"
-            icons:
-                v1: "one"
-                v2: "two"
-            "#,
-        )
-        .unwrap();
-
-        theme.refresh().unwrap();
-        assert_eq!(theme.icons().len(), 2);
     }
 
     #[test]

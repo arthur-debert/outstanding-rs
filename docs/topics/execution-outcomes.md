@@ -29,7 +29,7 @@ final rendered command text to stdout is successful early consumer termination.
 
 ## Capturing typed metadata
 
-`run_to_string` keeps output in-process and returns `CompletedRun`: the dispatch
+`run_with` keeps output in-process and returns `CompletedRun`: the dispatch
 outcome plus any framework warnings collected during the run. `Deref` keeps
 string-oriented accessors and typed methods (`exit_status()`, `success_kind()`,
 `error_kind()`) working on the wrapper. Pattern matching needs `outcome()` or
@@ -39,8 +39,14 @@ string-oriented accessors and typed methods (`exit_status()`, `success_kind()`,
 use standout::cli::{
     CompletedRun, DispatchResult, ExitStatus, OutputKind, RunError, RunErrorKind, SuccessKind,
 };
+use standout::{InputSources, TargetProperties};
 
-let result = app.run_to_string(command, args);
+let result = app.run_with(
+    command,
+    args,
+    TargetProperties::detect(),
+    InputSources::from_process(),
+);
 let _ = result.warnings();
 
 match result.outcome() {
@@ -106,6 +112,21 @@ nonzero status and its text is the verbatim diagnostic payload.
 no framework exit status: `exit_status()` returns `None`, `run()` returns
 `false`, and Standout emits nothing. The fallback dispatcher still owns that
 command and its eventual status.
+
+The reverse direction never hands off. Before parsing, `run` and
+`run_with` check every registered path against the clap `Command`: a
+handler registered under a path the CLI declares no subcommand for is
+unreachable — no invocation can name it and no fallback owns it, since the app
+did register a handler. That returns `DispatchResult::Error` naming the
+registered path, and the clap spelling too when the two differ only by `-`
+versus `_` (`list_units` registered against a CLI declaring `list-units`).
+`App::verify_command` reports the same mismatch at setup time.
+
+That check reads canonical command names only. Clap resolves an alias to the
+command it names before `ArgMatches` reports it, so dispatch never sees the
+alias: a handler registered as `ls` against `Command::new("list").alias("ls")`
+is reached by neither spelling and is reported as unreachable. Registering
+`list` is what makes both `list` and `ls` run the handler.
 
 ## Framework-owned final writes
 

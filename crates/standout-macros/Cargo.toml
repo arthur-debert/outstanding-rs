@@ -1,6 +1,6 @@
 [package]
 name = "standout-macros"
-version = "8.1.1"
+version = "9.0.0"
 edition = "2021"
 description = "Proc macros for compile-time resource embedding in Standout"
 license = "MIT"
@@ -12,12 +12,14 @@ categories = ["development-tools::procedural-macro-helpers"]
 proc-macro = true
 
 [dependencies]
+heck = "0.5"
+proc-macro-crate = "3"
 proc-macro2 = "1"
 quote = "1"
 syn = { version = "2", features = ["full", "parsing"] }
 
 [dev-dependencies]
 serial_test = "3"
-standout-input = { version = "8.1.1", path = "../standout-input" }
+standout-input = { version = "9.0.0", path = "../standout-input" }
 tempfile = "3"
 trybuild = "1"

@@ -4,32 +4,20 @@ error[E0599]: no method named `dispatch` found for struct `AppBuilder` in the cu
 12 |     let _result = App::builder().dispatch(matches(), OutputMode::Auto);
    |                                  ^^^^^^^^ method not found in `AppBuilder`
 
-error[E0599]: no method named `dispatch_from` found for struct `AppBuilder` in the current scope
+error[E0599]: no method named `run_with` found for struct `AppBuilder` in the current scope
   --> tests/ui/unbuilt_builder_cannot_dispatch_parse_or_render.rs:13:34
    |
-13 |     let _result = App::builder().dispatch_from(Command::new("app"), ["app"]);
-   |                                  ^^^^^^^^^^^^^ method not found in `AppBuilder`
+13 |     let _result = App::builder().run_with(
+   |                   ---------------^^^^^^^^ method not found in `AppBuilder`
 
-error[E0599]: no method named `parse` found for struct `AppBuilder` in the current scope
-  --> tests/ui/unbuilt_builder_cannot_dispatch_parse_or_render.rs:14:35
+error[E0599]: no method named `get_matches_from` found for struct `AppBuilder` in the current scope
+  --> tests/ui/unbuilt_builder_cannot_dispatch_parse_or_render.rs:20:24
    |
-14 |     let _matches = App::builder().parse(Command::new("app"));
-   |                                   ^^^^^ method not found in `AppBuilder`
+20 |         App::builder().get_matches_from(Command::new("app"), ["app"], &InputSources::from_process());
+   |                        ^^^^^^^^^^^^^^^^ method not found in `AppBuilder`
 
-error[E0599]: no method named `parse_from` found for struct `AppBuilder` in the current scope
-  --> tests/ui/unbuilt_builder_cannot_dispatch_parse_or_render.rs:15:35
+error[E0599]: no method named `render_with` found for struct `AppBuilder` in the current scope
+  --> tests/ui/unbuilt_builder_cannot_dispatch_parse_or_render.rs:21:36
    |
-15 |     let _matches = App::builder().parse_from(Command::new("app"), ["app"]);
-   |                                   ^^^^^^^^^^ method not found in `AppBuilder`
-
-error[E0599]: no method named `get_matches` found for struct `AppBuilder` in the current scope
-  --> tests/ui/unbuilt_builder_cannot_dispatch_parse_or_render.rs:16:35
-   |
-16 |     let _matches = App::builder().get_matches(Command::new("app"));
-   |                                   ^^^^^^^^^^^ method not found in `AppBuilder`
-
-error[E0599]: no method named `render_inline` found for struct `AppBuilder` in the current scope
-  --> tests/ui/unbuilt_builder_cannot_dispatch_parse_or_render.rs:17:36
-   |
-17 |     let _rendered = App::builder().render_inline("ok", &(), OutputMode::Text);
-   |                                    ^^^^^^^^^^^^^ method not found in `AppBuilder`
+21 |     let _rendered = App::builder().render_with(
+   |                     ---------------^^^^^^^^^^^ method not found in `AppBuilder`

@@ -128,7 +128,7 @@ pub enum Output<T: Serialize> {
 
 ```toml
 [dependencies]
-standout-dispatch = "2.1"
+standout-dispatch = "9"
 clap = { version = "4", features = ["derive"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"

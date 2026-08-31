@@ -1,5 +1,6 @@
 use clap::Command;
 use serde::Serialize;
+use standout::cli::FnHandler;
 use standout::cli::{App, DispatchResult, Output};
 use standout::views::{list_view, ListViewResult, MessageLevel};
 
@@ -82,11 +83,11 @@ fn test_list_view_renders_with_framework_template() {
     let app = App::builder()
         .command_with(
             "list",
-            |_m, _ctx| {
+            FnHandler::new(|_m, _ctx| {
                 let tasks = test_tasks();
                 let result = list_view(tasks).intro("Tasks:").build();
                 Ok(Output::Render(result))
-            },
+            }),
             |config| config.template_name("standout/list-view"),
         )
         .unwrap()
@@ -95,7 +96,12 @@ fn test_list_view_renders_with_framework_template() {
 
     let cmd = Command::new("test").subcommand(Command::new("list"));
 
-    let result = app.run_to_string(cmd, vec!["test", "list"]);
+    let result = app.run_with(
+        cmd,
+        vec!["test", "list"],
+        standout::TargetProperties::detect(),
+        standout::InputSources::from_process(),
+    );
     if let DispatchResult::Handled(output) = result.outcome() {
         assert!(output.contains("Tasks:"), "Output should contain intro");
         assert!(
@@ -116,10 +122,10 @@ fn test_list_view_empty_list() {
     let app = App::builder()
         .command_with(
             "list",
-            |_m, _ctx| {
+            FnHandler::new(|_m, _ctx| {
                 let result: ListViewResult<Task> = list_view(vec![]).build();
                 Ok(Output::Render(result))
-            },
+            }),
             |config| config.template_name("standout/list-view"),
         )
         .unwrap()
@@ -127,7 +133,12 @@ fn test_list_view_empty_list() {
         .unwrap();
 
     let cmd = Command::new("test").subcommand(Command::new("list"));
-    let result = app.run_to_string(cmd, vec!["test", "list"]);
+    let result = app.run_with(
+        cmd,
+        vec!["test", "list"],
+        standout::TargetProperties::detect(),
+        standout::InputSources::from_process(),
+    );
 
     if let DispatchResult::Handled(output) = result.outcome() {
         assert!(
@@ -144,14 +155,14 @@ fn test_list_view_with_filter_summary_renders() {
     let app = App::builder()
         .command_with(
             "list",
-            |_m, _ctx| {
+            FnHandler::new(|_m, _ctx| {
                 let tasks = vec![test_tasks()[0].clone()];
                 let result = list_view(tasks)
                     .total_count(3)
                     .filter_summary("status=pending")
                     .build();
                 Ok(Output::Render(result))
-            },
+            }),
             |config| config.template_name("standout/list-view"),
         )
         .unwrap()
@@ -159,7 +170,12 @@ fn test_list_view_with_filter_summary_renders() {
         .unwrap();
 
     let cmd = Command::new("test").subcommand(Command::new("list"));
-    let result = app.run_to_string(cmd, vec!["test", "list"]);
+    let result = app.run_with(
+        cmd,
+        vec!["test", "list"],
+        standout::TargetProperties::detect(),
+        standout::InputSources::from_process(),
+    );
 
     if let DispatchResult::Handled(output) = result.outcome() {
         assert!(
@@ -183,10 +199,10 @@ fn test_framework_template_can_be_disabled() {
         .include_framework_templates(false)
         .command_with(
             "list",
-            |_m, _ctx| {
+            FnHandler::new(|_m, _ctx| {
                 let tasks = test_tasks();
                 Ok(Output::Render(list_view(tasks).build()))
-            },
+            }),
             |config| config.template_name("standout/list-view"),
         )
         .unwrap()

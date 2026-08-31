@@ -90,7 +90,7 @@ Presentation is handled separately by the caller or by the `standout` framework.
 
 ```toml
 [dependencies]
-standout-dispatch = "2.1"
+standout-dispatch = "9"
 clap = { version = "4", features = ["derive"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
@@ -216,7 +216,7 @@ struct Config { api_url: String }
 App::builder()
     .app_state(Database::connect()?)  // Shared across all dispatches
     .app_state(Config::load()?)
-    .command("list", list_handler, "{{ items }}")
+    .commands(|g| g.command_with("list", list_handler, |c| c.template_name("list")))?
     .build()?
 ```
 
@@ -286,7 +286,7 @@ let hooks = Hooks::new()
 | `post_dispatch` | After handler, before render | ArgMatches, Context, Data | Transform data |
 | `post_output` | After render | ArgMatches, Context, Output | Transform output |
 
-> **State Injection:** Pre-dispatch hooks can inject dependencies via `ctx.extensions` that handlers retrieve. This enables dependency injection without changing handler signatures. See [Handler Contract: Extensions](../topics/handler-contract.md#extensions) for details.
+> **State Injection:** Pre-dispatch hooks can inject dependencies via `ctx.extensions` that handlers retrieve. This enables dependency injection without changing handler signatures. See [App State and Extensions](../topics/app-state.md#extensions-per-request-state) for details.
 
 ### Hook Chaining
 
