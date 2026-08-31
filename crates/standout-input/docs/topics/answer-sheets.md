@@ -59,8 +59,10 @@ A `ScalarField` declares everything semantic about one question:
 Three adapters, one representation — every path normalizes to `RawAnswers` and uses the same decoders and validators, so equivalent answers behave identically everywhere. Sources never merge: one submission comes from exactly one source.
 
 - **Interactive** — `collect_interactive()` walks applicable fields through the existing prompt abstractions (and the `PromptResponder` test seam, so tests need no TTY). A decode or validation failure is local and retryable: the one question re-prompts with the diagnostic, and previously accepted answers are kept. Inactive conditional fields are skipped without prompting. EOF / Ctrl+D cancels the collection.
-- **Named file** — `read_answer_sheet_file(path)` reads one complete document.
-- **Explicit stdin** — `read_answer_sheet_stdin()` reads one complete document from piped stdin (for an `--answers -` style flag). An interactive terminal on stdin is an error, not a hang.
+- **Named file** — `read_answer_sheet_file(path, format)` reads one complete document.
+- **Explicit stdin** — `read_answer_sheet_stdin(reader, format)` reads one complete document from piped stdin (for an `--answers -` style flag). An interactive terminal on stdin is an error, not a hang.
+
+Both reading adapters take the `AnswerSheetFormat` that turns the bytes into `RawAnswers`; pass `&StandoutAnswerSheet` for the sheet `render_answer_sheet` produces.
 
 ## Decoding and batch diagnostics
 
@@ -87,6 +89,8 @@ Every sheet's preamble pins three things:
 - a semantic **fingerprint** of the definition.
 
 Parsing accepts only exact matches of all three. A stale or foreign sheet gets an actionable diagnostic asking for a freshly rendered sheet — never a guessed mapping from old fields to new ones.
+
+This is `StandoutAnswerSheet`'s contract, and it binds a submission only while that format reads it. An application whose own spec pins the shape of the file implements `AnswerSheetFormat` instead — over the tagged body alone (`parse_answer_sheet_body`, the same parse without the preamble) or over bytes that share nothing with a rendered sheet, filling a `RawAnswers` through `set` and `set_occurrence_count` and returning its own diagnostics. A format decides how bytes become raw answers and nothing else; decoding, defaults, validators and whole-form rules run identically afterwards.
 
 The fingerprint covers every semantic property that changes which answers are accepted: field IDs, kinds, optionality, defaults, constraint choices, conditions, and declared validator revisions. It ignores wording, help text, display numbers, presentation order, and choice order, so cosmetic edits keep old sheets valid while semantic changes reliably invalidate them. Because a validator closure's behavior cannot be observed, its revision string stands in for it — bump the revision whenever the validator's accepted values change.
 

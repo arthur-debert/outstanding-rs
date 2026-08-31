@@ -12,11 +12,12 @@ use crate::cli::handler::{CommandContext, FnHandler, Handler, HandlerResult};
 use crate::cli::hooks::{Hooks, RenderedOutput, TextOutput};
 use crate::cli::questionnaire::{
     questionnaire_pre_dispatch, questionnaire_pre_dispatch_with,
-    questionnaire_pre_dispatch_with_review, QuestionnaireCommand,
+    questionnaire_pre_dispatch_with_review, Confirmation, QuestionnaireCommand,
+    QuestionnaireSettings,
 };
 use crate::StructuredOutputProjection;
 use standout_dispatch::verify::ExpectedArg;
-use standout_input::questionnaire::{FormError, QuestionnaireInput};
+use standout_input::questionnaire::{AnswerSheetFormat, FormError, QuestionnaireInput};
 use standout_pipe::PipeTarget;
 
 pub(crate) trait CommandRecipe {
@@ -332,6 +333,7 @@ pub struct CommandConfig<H> {
     pub(crate) template_absence: Option<TemplateAbsence>,
     pub(crate) hooks: Option<Hooks>,
     pub(crate) questionnaire: Option<QuestionnaireCommand>,
+    pub(crate) questionnaire_settings: Rc<RefCell<QuestionnaireSettings>>,
     pub(crate) structured_output_projection: Option<StructuredOutputProjection>,
 }
 
@@ -343,6 +345,7 @@ impl<H> CommandConfig<H> {
             template_absence: None,
             hooks: None,
             questionnaire: None,
+            questionnaire_settings: Rc::new(RefCell::new(QuestionnaireSettings::default())),
             structured_output_projection: None,
         }
     }
@@ -381,7 +384,10 @@ impl<H> CommandConfig<H> {
         T: QuestionnaireInput + Clone + Send + Sync + 'static,
     {
         self.questionnaire = Some(QuestionnaireCommand::new::<T>());
-        self.pre_dispatch(questionnaire_pre_dispatch::<T>)
+        let settings = Rc::clone(&self.questionnaire_settings);
+        self.pre_dispatch(move |matches, ctx| {
+            questionnaire_pre_dispatch::<T>(matches, ctx, &settings.borrow())
+        })
     }
 
     pub fn questionnaire_with_form<T, F>(mut self, form: F) -> Self
@@ -390,8 +396,9 @@ impl<H> CommandConfig<H> {
         F: Fn(&T) -> Vec<FormError> + Clone + 'static,
     {
         self.questionnaire = Some(QuestionnaireCommand::new::<T>());
+        let settings = Rc::clone(&self.questionnaire_settings);
         self.pre_dispatch(move |matches, ctx| {
-            questionnaire_pre_dispatch_with::<T, _>(matches, ctx, form.clone())
+            questionnaire_pre_dispatch_with::<T, _>(matches, ctx, &settings.borrow(), form.clone())
         })
     }
 
@@ -402,14 +409,31 @@ impl<H> CommandConfig<H> {
         R: Fn(&T, &mut dyn std::io::Write) -> anyhow::Result<()> + Clone + 'static,
     {
         self.questionnaire = Some(QuestionnaireCommand::new::<T>());
+        let settings = Rc::clone(&self.questionnaire_settings);
         self.pre_dispatch(move |matches, ctx| {
             questionnaire_pre_dispatch_with_review::<T, _, _>(
                 matches,
                 ctx,
+                &settings.borrow(),
                 form.clone(),
                 review.clone(),
             )
         })
+    }
+
+    /// Reword, relax, or disable the confirmation gate, and choose the stream
+    /// the review dump is written to. Order against the `questionnaire*` calls
+    /// does not matter.
+    pub fn confirmation(self, confirmation: Confirmation) -> Self {
+        self.questionnaire_settings.borrow_mut().confirmation = confirmation;
+        self
+    }
+
+    /// Read `--answers` in the application's own sheet format instead of the
+    /// framework's preamble/fingerprint sheet.
+    pub fn answer_sheet_format(self, format: impl AnswerSheetFormat + 'static) -> Self {
+        self.questionnaire_settings.borrow_mut().format = Rc::new(format);
+        self
     }
 
     pub fn structured_output_projection(mut self, projection: StructuredOutputProjection) -> Self {

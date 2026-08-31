@@ -3,7 +3,7 @@ use std::sync::{Arc, Mutex};
 use standout_input::env::MockStdin;
 use standout_input::questionnaire::{
     AnswerSheetDiagnostic, DynamicDefault, Group, Item, Questionnaire, QuestionnaireError,
-    ScalarField, ScalarKind, ValidationDiagnostic,
+    ScalarField, ScalarKind, StandoutAnswerSheet, ValidationDiagnostic,
 };
 use standout_input::{
     InputSources, PromptContext, PromptResponder, PromptResponse, ScriptedResponder,
@@ -166,7 +166,7 @@ fn a_blank_answer_resolves_through_the_computed_default_from_a_sheet() {
     let q = questionnaire();
     let sheet = answer(&q.render_answer_sheet(), "input.value_type", "bool");
     let raw = q
-        .read_answer_sheet_stdin_with(&MockStdin::piped(sheet.clone()))
+        .read_answer_sheet_stdin(&MockStdin::piped(sheet.clone()), &StandoutAnswerSheet)
         .unwrap();
     let answers = q.decode_answers(&raw).unwrap();
     assert_eq!(answers.get_text("input.cardinality"), Some("boolean"));
@@ -175,13 +175,16 @@ fn a_blank_answer_resolves_through_the_computed_default_from_a_sheet() {
     let path = dir.path().join("answers.txt");
     std::fs::write(&path, sheet).unwrap();
     let from_file = q
-        .decode_answers(&q.read_answer_sheet_file(&path).unwrap())
+        .decode_answers(
+            &q.read_answer_sheet_file(&path, &StandoutAnswerSheet)
+                .unwrap(),
+        )
         .unwrap();
     assert_eq!(from_file, answers);
 
     let sheet = answer(&q.render_answer_sheet(), "input.value_type", "string");
     let raw = q
-        .read_answer_sheet_stdin_with(&MockStdin::piped(sheet))
+        .read_answer_sheet_stdin(&MockStdin::piped(sheet), &StandoutAnswerSheet)
         .unwrap();
     let answers = q.decode_answers(&raw).unwrap();
     assert_eq!(answers.get_text("input.cardinality"), Some("single"));
@@ -199,7 +202,7 @@ fn a_blank_interactive_entry_resolves_through_the_computed_default() {
     let sheet = answer(&q.render_answer_sheet(), "input.value_type", "bool");
     let batch = q
         .decode_answers(
-            &q.read_answer_sheet_stdin_with(&MockStdin::piped(sheet))
+            &q.read_answer_sheet_stdin(&MockStdin::piped(sheet), &StandoutAnswerSheet)
                 .unwrap(),
         )
         .unwrap();
@@ -228,7 +231,7 @@ fn a_computed_default_that_violates_a_constraint_is_a_diagnostic() {
     .unwrap();
     let sheet = q.render_answer_sheet();
     let raw = q
-        .read_answer_sheet_stdin_with(&MockStdin::piped(sheet))
+        .read_answer_sheet_stdin(&MockStdin::piped(sheet), &StandoutAnswerSheet)
         .unwrap();
     let diagnostics = q.decode_answers(&raw).unwrap_err();
     assert!(matches!(
@@ -272,7 +275,7 @@ fn dynamic_defaults_resolve_per_occurrence_in_repeatable_groups() {
     );
     let document = format!("{first}\n{second}");
     let raw = q
-        .read_answer_sheet_stdin_with(&MockStdin::piped(document))
+        .read_answer_sheet_stdin(&MockStdin::piped(document), &StandoutAnswerSheet)
         .unwrap();
     let answers = q.decode_answers(&raw).unwrap();
     assert_eq!(answers.get_text("inputs[0].cardinality"), Some("boolean"));
@@ -297,7 +300,7 @@ fn a_dependency_on_a_later_or_unknown_field_reads_as_none() {
     .unwrap();
     let sheet = q.render_answer_sheet();
     let raw = q
-        .read_answer_sheet_stdin_with(&MockStdin::piped(sheet))
+        .read_answer_sheet_stdin(&MockStdin::piped(sheet), &StandoutAnswerSheet)
         .unwrap();
     let answers = q.decode_answers(&raw).unwrap();
     assert_eq!(answers.get_text("a"), Some("fallback"));

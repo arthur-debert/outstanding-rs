@@ -65,7 +65,10 @@
 //! IDs, kinds, optionality, defaults, constraints, conditions, and
 //! validator/dynamic-default revisions — and ignores wording, numbering,
 //! and ordering. It is a compatibility checksum only, not an
-//! authentication or tamper-detection mechanism.
+//! authentication or tamper-detection mechanism. That is the contract of
+//! [`StandoutAnswerSheet`], the default [`AnswerSheetFormat`]; an application
+//! whose own spec pins the sheet's shape supplies another format, and shares
+//! at most the tagged body ([`Questionnaire::parse_answer_sheet_body`]).
 //!
 //! # Sensitive content
 //!
@@ -92,4 +95,4 @@ pub use derive::{
     QuestionnaireChoiceParseError, QuestionnaireChoices, QuestionnaireInput,
     QuestionnaireInputError,
 };
-pub use parse::{AnswerSheetDiagnostic, RawAnswers};
+pub use parse::{AnswerSheetDiagnostic, AnswerSheetFormat, RawAnswers, StandoutAnswerSheet};
