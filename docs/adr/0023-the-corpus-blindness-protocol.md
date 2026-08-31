@@ -76,11 +76,18 @@ wrapper, so the PID it hands the broker is the process making connections.
 An already-open broker socket is a different channel: it is an inheritable
 capability, and no table lookup performed after request bytes arrive can
 prove which process wrote them. The design therefore keeps that capability
-from existing instead of trying to attribute it — every broker descriptor
-in the agent process must be close-on-exec, so no descendant ever holds
-one, and an agent backend that cannot guarantee this does not get the
-broker at all: fail closed. Anything the broker cannot attribute is denied,
-the same rule. (An allowlisted environment variable fails because
+out of untrusted hands instead of trying to attribute it. Corpus-authored
+code only ever runs as an exec'd program — a build script, a test binary,
+the produced app — so every broker descriptor in the agent process must be
+close-on-exec, which severs each of those paths; an agent backend that
+cannot guarantee this does not get the broker at all: fail closed. What
+that leaves is the agent's own code forking without exec or deliberately
+shipping a descriptor to another process — the authorized principal
+cooperating in its own bypass. No transport can police that, and this
+boundary does not claim to: the agent can already issue any authenticated
+request by design, and what is denied is untrusted code acquiring
+independent use of the channel. Anything the broker cannot attribute is
+denied, the same rule. (An allowlisted environment variable fails because
 descendants inherit the environment; an open proxy fails because the agent
 and build phases have network — this design is the narrow remainder.)
 
