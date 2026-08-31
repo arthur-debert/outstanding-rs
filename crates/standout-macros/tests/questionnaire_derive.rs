@@ -6,7 +6,7 @@ use standout_input::questionnaire::QuestionnaireChoices as _;
 use standout_input::questionnaire::{
     AnswerSheetDiagnostic, AnswerValue, DynamicDefault, EarlierAnswers, FieldValidator,
     Questionnaire as RuntimeQuestionnaire, QuestionnaireError, QuestionnaireInput,
-    QuestionnaireInputError, ScalarField, ScalarKind, ValidationDiagnostic,
+    QuestionnaireInputError, ScalarField, ScalarKind, StandoutAnswerSheet, ValidationDiagnostic,
 };
 use standout_input::{InputSources, PromptResponse, ScriptedResponder};
 use standout_macros::{Questionnaire, QuestionnaireChoices};
@@ -391,9 +391,11 @@ fn typed_decode_accepts_file_and_stdin_raw_answers() {
     let path = dir.path().join("answers.txt");
     std::fs::write(&path, &sheet).unwrap();
 
-    let from_file = questionnaire.read_answer_sheet_file(&path).unwrap();
+    let from_file = questionnaire
+        .read_answer_sheet_file(&path, &StandoutAnswerSheet)
+        .unwrap();
     let from_stdin = questionnaire
-        .read_answer_sheet_stdin_with(&MockStdin::piped(sheet))
+        .read_answer_sheet_stdin(&MockStdin::piped(sheet), &StandoutAnswerSheet)
         .unwrap();
 
     assert_eq!(

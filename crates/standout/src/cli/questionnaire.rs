@@ -5,7 +5,8 @@ use std::rc::Rc;
 use crate::cli::CommandContextInput;
 use clap::{Arg, ArgAction, ArgMatches, Command};
 use standout_input::questionnaire::{
-    AnswerSheetDiagnostic, FormError, QuestionnaireInput, QuestionnaireInputError, RawAnswers,
+    AnswerSheetDiagnostic, AnswerSheetFormat, FormError, QuestionnaireInput,
+    QuestionnaireInputError, RawAnswers, StandoutAnswerSheet,
 };
 use standout_input::{InputError, InputSourceKind, Inputs, ResolvedInput};
 
@@ -15,12 +16,97 @@ use crate::cli::hooks::HookError;
 use crate::SetupError;
 
 pub(crate) const QUESTIONNAIRE_INPUT_NAME: &str = "questionnaire";
-pub(crate) const ANSWERS_ARG_ID: &str = "_standout_questionnaire_answers";
-pub(crate) const YES_ARG_ID: &str = "_standout_questionnaire_yes";
+
+/// The clap id of the injected `--answers` argument.
+pub const QUESTIONNAIRE_ANSWERS_ARG: &str = "_standout_questionnaire_answers";
+
+/// The clap id of the injected `--yes` flag.
+pub const QUESTIONNAIRE_YES_ARG: &str = "_standout_questionnaire_yes";
+
 pub(crate) const QUESTIONS_FILE_ARG_ID: &str = "_standout_questionnaire_questions_file";
 pub(crate) const QUESTIONS_SUBCOMMAND: &str = "questions";
 
 const CONFIRM_QUESTION: &str = "Continue? Type 'yes' to continue: ";
+
+/// Which reply the gate takes as consent. A reply is trimmed before it is
+/// matched; `Disabled` runs without asking, as `--yes` does.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ConfirmationAcceptance {
+    Word(String),
+    YesOrY,
+    Disabled,
+}
+
+/// Where a command's review is written. `Stderr` is the default, so stdout
+/// stays the data channel.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ReviewStream {
+    Stderr,
+    Stdout,
+}
+
+/// What a questionnaire command asks for after its review, set with
+/// [`CommandConfig::confirmation`](crate::cli::CommandConfig::confirmation).
+/// The prompt goes to the controlling terminal, not to either standard
+/// stream.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Confirmation {
+    prompt: String,
+    acceptance: ConfirmationAcceptance,
+    review_stream: ReviewStream,
+}
+
+impl Default for Confirmation {
+    fn default() -> Self {
+        Self {
+            prompt: CONFIRM_QUESTION.to_string(),
+            acceptance: ConfirmationAcceptance::Word("yes".to_string()),
+            review_stream: ReviewStream::Stderr,
+        }
+    }
+}
+
+impl Confirmation {
+    pub fn prompt(mut self, prompt: impl Into<String>) -> Self {
+        self.prompt = prompt.into();
+        self
+    }
+
+    pub fn acceptance(mut self, acceptance: ConfirmationAcceptance) -> Self {
+        self.acceptance = acceptance;
+        self
+    }
+
+    pub fn review_stream(mut self, stream: ReviewStream) -> Self {
+        self.review_stream = stream;
+        self
+    }
+
+    fn accepts(&self, reply: &str) -> bool {
+        let reply = reply.trim();
+        match &self.acceptance {
+            ConfirmationAcceptance::Word(word) => reply == word,
+            ConfirmationAcceptance::YesOrY => {
+                reply.eq_ignore_ascii_case("y") || reply.eq_ignore_ascii_case("yes")
+            }
+            ConfirmationAcceptance::Disabled => true,
+        }
+    }
+}
+
+pub(crate) struct QuestionnaireSettings {
+    pub(crate) confirmation: Confirmation,
+    pub(crate) format: Rc<dyn AnswerSheetFormat>,
+}
+
+impl Default for QuestionnaireSettings {
+    fn default() -> Self {
+        Self {
+            confirmation: Confirmation::default(),
+            format: Rc::new(StandoutAnswerSheet),
+        }
+    }
+}
 
 const NO_ATTENDED_TERMINAL: &str =
     "confirmation requires an attended terminal, but none is available; \
@@ -62,28 +148,31 @@ impl QuestionnaireCommand {
 pub(crate) fn questionnaire_pre_dispatch<T>(
     matches: &ArgMatches,
     ctx: &mut CommandContext,
+    settings: &QuestionnaireSettings,
 ) -> Result<(), HookError>
 where
     T: QuestionnaireInput + Clone + Send + Sync + 'static,
 {
-    questionnaire_pre_dispatch_with::<T, _>(matches, ctx, |_| Vec::new())
+    questionnaire_pre_dispatch_with::<T, _>(matches, ctx, settings, |_| Vec::new())
 }
 
 pub(crate) fn questionnaire_pre_dispatch_with<T, F>(
     matches: &ArgMatches,
     ctx: &mut CommandContext,
+    settings: &QuestionnaireSettings,
     form: F,
 ) -> Result<(), HookError>
 where
     T: QuestionnaireInput + Clone + Send + Sync + 'static,
     F: FnOnce(&T) -> Vec<FormError>,
 {
-    questionnaire_pre_dispatch_with_review::<T, F, _>(matches, ctx, form, |_, _| Ok(()))
+    questionnaire_pre_dispatch_with_review::<T, F, _>(matches, ctx, settings, form, |_, _| Ok(()))
 }
 
 pub(crate) fn questionnaire_pre_dispatch_with_review<T, F, R>(
     matches: &ArgMatches,
     ctx: &mut CommandContext,
+    settings: &QuestionnaireSettings,
     form: F,
     review: R,
 ) -> Result<(), HookError>
@@ -98,26 +187,33 @@ where
         .get::<standout_render::warnings::WarningBuffer>()
         .cloned()
         .unwrap_or_default();
-    let resolved =
-        collect_questionnaire_with::<T, F>(sub_matches, form, ctx.input_sources(), &warnings)
-            .map_err(|error| {
-                HookError::pre_dispatch(format!(
-                    "questionnaire input `{QUESTIONNAIRE_INPUT_NAME}`: {error}"
-                ))
-            })?;
+    let resolved = collect_questionnaire_with::<T, F>(
+        sub_matches,
+        form,
+        settings.format.as_ref(),
+        ctx.input_sources(),
+        &warnings,
+    )
+    .map_err(|error| {
+        HookError::pre_dispatch(format!(
+            "questionnaire input `{QUESTIONNAIRE_INPUT_NAME}`: {error}"
+        ))
+    })?;
 
-    let assume_yes = sub_matches.get_flag(YES_ARG_ID);
+    let assume_yes = sub_matches.get_flag(QUESTIONNAIRE_YES_ARG);
     {
-        let stdout = io::stdout();
-        let mut stdout = stdout.lock();
-        review(&resolved.value, &mut stdout)
+        let mut stream: Box<dyn Write> = match settings.confirmation.review_stream {
+            ReviewStream::Stderr => Box::new(io::stderr().lock()),
+            ReviewStream::Stdout => Box::new(io::stdout().lock()),
+        };
+        review(&resolved.value, &mut stream)
             .map_err(|error| HookError::pre_dispatch(error.to_string()))?;
-        stdout
+        stream
             .flush()
             .map_err(|error| HookError::pre_dispatch(error.to_string()))?;
     }
     if !assume_yes
-        && !confirm_attended_from_env()
+        && !confirm_attended_from_env(&settings.confirmation)
             .map_err(|error| HookError::pre_dispatch(error.to_string()))?
     {
         return Err(HookError::pre_dispatch(
@@ -144,6 +240,7 @@ where
 fn collect_questionnaire_with<T, F>(
     matches: &ArgMatches,
     form: F,
+    format: &dyn AnswerSheetFormat,
     sources: &standout_input::InputSources,
     warnings: &standout_render::warnings::WarningBuffer,
 ) -> Result<ResolvedInput<T>, InputError>
@@ -165,12 +262,12 @@ where
     };
 
     let (raw, source) = match matches
-        .get_one::<String>(ANSWERS_ARG_ID)
+        .get_one::<String>(QUESTIONNAIRE_ANSWERS_ARG)
         .map(String::as_str)
     {
         Some("-") => (
             read_document("from stdin".to_string(), &|| {
-                questionnaire.read_answer_sheet_stdin_with(sources.stdin())
+                questionnaire.read_answer_sheet_stdin(sources.stdin(), format)
             })?,
             InputSourceKind::Stdin,
         ),
@@ -178,7 +275,9 @@ where
             let path = PathBuf::from(path);
             let label = path.display().to_string();
             (
-                read_document(label, &|| questionnaire.read_answer_sheet_file(&path))?,
+                read_document(label, &|| {
+                    questionnaire.read_answer_sheet_file(&path, format)
+                })?,
                 InputSourceKind::Flag,
             )
         }
@@ -302,9 +401,12 @@ impl AttendedTerminal for ScriptedTerminal {
     }
 }
 
-fn confirm_attended_from_env() -> anyhow::Result<bool> {
+fn confirm_attended_from_env(confirmation: &Confirmation) -> anyhow::Result<bool> {
+    if confirmation.acceptance == ConfirmationAcceptance::Disabled {
+        return Ok(true);
+    }
     let mut terminal = attended_terminal_from_env()?;
-    confirm_attended(terminal.as_mut())
+    confirm_attended(terminal.as_mut(), confirmation)
 }
 
 fn attended_terminal_from_env() -> anyhow::Result<Box<dyn AttendedTerminal>> {
@@ -328,24 +430,27 @@ fn attended_terminal_from_env() -> anyhow::Result<Box<dyn AttendedTerminal>> {
     Ok(Box::new(ControllingTerminal))
 }
 
-fn confirm_attended(terminal: &mut dyn AttendedTerminal) -> anyhow::Result<bool> {
+fn confirm_attended(
+    terminal: &mut dyn AttendedTerminal,
+    confirmation: &Confirmation,
+) -> anyhow::Result<bool> {
     if !terminal.is_attended() {
         anyhow::bail!(NO_ATTENDED_TERMINAL);
     }
-    let reply = terminal.ask(CONFIRM_QUESTION)?;
-    Ok(reply.is_some_and(|line| line.trim() == "yes"))
+    let reply = terminal.ask(&confirmation.prompt)?;
+    Ok(reply.is_some_and(|line| confirmation.accepts(&line)))
 }
 
 pub(crate) fn augment_questionnaire_command(mut cmd: Command) -> Command {
     cmd = cmd.arg(
-        Arg::new(ANSWERS_ARG_ID)
+        Arg::new(QUESTIONNAIRE_ANSWERS_ARG)
             .long("answers")
             .value_name("FILE")
             .action(ArgAction::Set)
             .help("Read questionnaire answers from a file, or '-' for piped stdin"),
     );
     cmd = cmd.arg(
-        Arg::new(YES_ARG_ID)
+        Arg::new(QUESTIONNAIRE_YES_ARG)
             .long("yes")
             .action(ArgAction::SetTrue)
             .help("Bypass the attended confirmation prompt"),
@@ -421,5 +526,87 @@ pub(crate) fn render_questions_result(
         ))
     } else {
         crate::cli::handler::DispatchResult::Handled(crate::cli::handler::RunOutput::command(sheet))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    struct RecordingTerminal {
+        asked: Vec<String>,
+        reply: Option<String>,
+    }
+
+    impl RecordingTerminal {
+        fn replying(reply: &str) -> Self {
+            Self {
+                asked: Vec::new(),
+                reply: Some(reply.to_string()),
+            }
+        }
+    }
+
+    impl AttendedTerminal for RecordingTerminal {
+        fn is_attended(&self) -> bool {
+            true
+        }
+
+        fn ask(&mut self, question: &str) -> anyhow::Result<Option<String>> {
+            self.asked.push(question.to_string());
+            Ok(self.reply.clone())
+        }
+    }
+
+    fn confirmed(reply: &str, confirmation: &Confirmation) -> bool {
+        let mut terminal = RecordingTerminal::replying(reply);
+        confirm_attended(&mut terminal, confirmation).unwrap()
+    }
+
+    #[test]
+    fn the_default_gate_takes_only_the_word_yes() {
+        let confirmation = Confirmation::default();
+        assert!(confirmed("yes\n", &confirmation));
+        assert!(!confirmed("y\n", &confirmation));
+        assert!(!confirmed("YES\n", &confirmation));
+    }
+
+    #[test]
+    fn the_y_or_yes_rule_ignores_case_and_takes_the_initial() {
+        let confirmation = Confirmation::default().acceptance(ConfirmationAcceptance::YesOrY);
+        assert!(confirmed("y\n", &confirmation));
+        assert!(confirmed(" Yes \n", &confirmation));
+        assert!(confirmed("YES\n", &confirmation));
+        assert!(!confirmed("no\n", &confirmation));
+        assert!(!confirmed("\n", &confirmation));
+    }
+
+    #[test]
+    fn an_app_word_replaces_yes() {
+        let confirmation =
+            Confirmation::default().acceptance(ConfirmationAcceptance::Word("proceed".to_string()));
+        assert!(confirmed("proceed\n", &confirmation));
+        assert!(!confirmed("yes\n", &confirmation));
+    }
+
+    #[test]
+    fn the_prompt_is_the_apps_wording() {
+        let confirmation = Confirmation::default().prompt("Ship it? [y/N] ");
+        let mut terminal = RecordingTerminal::replying("yes\n");
+
+        confirm_attended(&mut terminal, &confirmation).unwrap();
+
+        assert_eq!(terminal.asked, ["Ship it? [y/N] "]);
+    }
+
+    #[test]
+    fn the_review_dump_defaults_to_stderr() {
+        assert_eq!(Confirmation::default().review_stream, ReviewStream::Stderr);
+        assert_eq!(
+            Confirmation::default()
+                .review_stream(ReviewStream::Stdout)
+                .review_stream,
+            ReviewStream::Stdout
+        );
     }
 }

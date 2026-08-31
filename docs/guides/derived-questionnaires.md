@@ -170,6 +170,44 @@ Use `questionnaire_with_form::<T, _>(form)` for cross-field rules that return
 review)` when the user must see an application review before the confirmation
 gate.
 
+## Read an Application's Own Sheet Format
+
+`--answers` reads the preamble/fingerprint sheet `questions` renders. An
+application whose own spec pins the shape of that file supplies an
+`AnswerSheetFormat` instead:
+
+```rust
+use standout::input::questionnaire::{
+    AnswerSheetDiagnostic, AnswerSheetFormat, Questionnaire, RawAnswers,
+};
+
+struct SpecSheet;
+
+impl AnswerSheetFormat for SpecSheet {
+    fn parse(
+        &self,
+        questionnaire: &Questionnaire,
+        text: &str,
+    ) -> Result<RawAnswers, Vec<AnswerSheetDiagnostic>> {
+        questionnaire.parse_answer_sheet_body(text)
+    }
+}
+```
+
+Wire it with `CommandConfig::answer_sheet_format`:
+
+```rust
+cfg.questionnaire::<ImportAnswers>()
+    .answer_sheet_format(SpecSheet)
+```
+
+`parse_answer_sheet_body` reads the tagged body of a sheet without requiring
+the preamble, which is the shortest way to accept a sheet the application
+renders itself. A format that shares nothing with the rendered sheet fills a
+`RawAnswers` directly (`set`, `set_occurrence_count`) and returns its own
+diagnostics. Parsing is all the format owns: decoding, defaults, validators,
+whole-form rules, review and confirmation run the same way afterwards.
+
 ## Read Answers in the Handler
 
 Bring `CommandContextInput` into scope and read the typed questionnaire value:
@@ -195,6 +233,30 @@ Questionnaire commands get `--yes` from the framework. Without it, Standout asks
 for an exact `yes` on an attended controlling terminal after any configured
 review. Piped stdin never confirms a run, EOF never confirms a run, and a missing
 attended terminal is an error.
+
+`CommandConfig::confirmation` makes the gate's three decisions the
+application's:
+
+```rust
+use standout::cli::{Confirmation, ConfirmationAcceptance, ReviewStream};
+
+cfg.questionnaire::<ImportAnswers>().confirmation(
+    Confirmation::default()
+        .prompt("Ship it? [y/N] ")
+        .acceptance(ConfirmationAcceptance::YesOrY)
+        .review_stream(ReviewStream::Stdout),
+)
+```
+
+`ConfirmationAcceptance::Word(word)` takes that word alone and is the default
+with `yes`; `YesOrY` takes `y` or `yes` in any case; `Disabled` runs without
+asking, as `--yes` does. The prompt goes to the controlling terminal, and the
+review a command writes goes to stderr unless `review_stream` says otherwise —
+stdout is the data channel.
+
+A hook or handler that reads `ArgMatches` for itself names the injected
+arguments by their ids, `standout::cli::QUESTIONNAIRE_ANSWERS_ARG` and
+`QUESTIONNAIRE_YES_ARG`.
 
 Accepted answer sheets can still produce warnings, for example when answer text
 contains a suspected `<id:` fragment. Standout queues these as framework

@@ -18,7 +18,7 @@ use crate::cli::handler::{
 use crate::cli::hooks::{ArtifactOutput, RenderedOutput, TextOutput};
 use crate::cli::questionnaire::{
     augment_questionnaire_command, render_questions_result, validate_questionnaire_surface,
-    ANSWERS_ARG_ID, QUESTIONS_SUBCOMMAND, YES_ARG_ID,
+    QUESTIONNAIRE_ANSWERS_ARG, QUESTIONNAIRE_YES_ARG, QUESTIONS_SUBCOMMAND,
 };
 use crate::topics::display_with_pager;
 use crate::SetupError;
@@ -320,11 +320,11 @@ impl App {
                 command_matches_for_path(&matches, &path.split('.').collect::<Vec<_>>())
             {
                 let has_answers = parent_matches
-                    .try_get_one::<String>(ANSWERS_ARG_ID)
+                    .try_get_one::<String>(QUESTIONNAIRE_ANSWERS_ARG)
                     .unwrap_or(None)
                     .is_some();
                 let has_yes = parent_matches
-                    .try_get_one::<bool>(YES_ARG_ID)
+                    .try_get_one::<bool>(QUESTIONNAIRE_YES_ARG)
                     .unwrap_or(None)
                     == Some(&true);
                 if has_answers || has_yes {
