@@ -2,9 +2,9 @@
 
 Fifth epic of the **Robustness program** (ROB05). Depends on composition contracts
 (ROB04, merged as #394) for the final shapes and on the corpus pilot (ROB03) for the
-observed-friction input: the [pilot scorecard](../../corpus/pilot/scorecard.md) and its
+observed-friction input: the [pilot scorecard](../../../corpus/pilot/scorecard.md) and its
 findings #349–#361. Runs in parallel with the adopter-seams epic (ROB06,
-`robustness-adopter-seams.md`); both precede corpus completion (ROB07), which re-runs the
+`../robustness-adopter-seams.md`); both precede corpus completion (ROB07), which re-runs the
 archetypes against the surface this epic ships.
 
 ## Context
@@ -150,12 +150,12 @@ documentation.
 
 - New capabilities or new idioms — this epic chooses among what exists post-ROB04.
 - The adopter escape-hatch findings (#351, #354, #356, #357, #359, #334, #353, #352) —
-  `robustness-adopter-seams.md`. Where a docs fix here depends on one of those (#359's
+  `../robustness-adopter-seams.md`. Where a docs fix here depends on one of those (#359's
   tabular wording, #357's diagnostic framing), the docs state the behavior that epic
   ships, and the two epics coordinate the wording in review.
 - Machine-output schema versioning (parity: machine contract).
 - Corpus completion, and porting the real downstreams (they are on 7.x; see
-  `robustness-corpus-completion.md`).
+  `../robustness-corpus-completion.md`).
 - Preserving source compatibility for deleted paths.
 
 ## Proposed Shape
@@ -248,13 +248,13 @@ porting, the adopter-seams findings.
 ## Further Notes
 
 The ADR round settled three decisions:
-[bless one item per axis behind a capability map](../adr/0032-bless-one-item-per-axis-behind-a-capability-map.md)
+[bless one item per axis behind a capability map](../../adr/0032-bless-one-item-per-axis-behind-a-capability-map.md)
 (the blessed-idiom set, each axis's keep-with-reason or delete verdict, the
 capability → surviving-item map, and the adopter-seams additions blessed on arrival);
-[state which surfaces are contract](../adr/0033-state-which-surfaces-are-contract.md)
+[state which surfaces are contract](../../adr/0033-state-which-surfaces-are-contract.md)
 (the stability statement and where it lives); and
-[handle help by default](../adr/0034-handle-help-by-default.md).
+[handle help by default](../../adr/0034-handle-help-by-default.md).
 Inputs: the census in Context (supersedes the 8.1.0 DX audit
-numbers), the [pilot scorecard](../../corpus/pilot/scorecard.md), issues #349–#361. The
+numbers), the [pilot scorecard](../../../corpus/pilot/scorecard.md), issues #349–#361. The
 audit's redundancy catalogue lived only in the 2026-08-15/16 session record; the census
 here is its in-repo replacement and the ADR round should not need the original.

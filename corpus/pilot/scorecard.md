@@ -175,6 +175,6 @@ then `corpus/pilot/sanitize-run.py <run-dir> corpus/pilot/runs/<run-id>/` and
 replace this subsection with the sanitized report's outcomes, anchored to
 transcript moments.
 
-This scorecard is linked from the [ROB05 planning spec](../../docs/spec/robustness-blessed-surface.md), the ROB05 planning
+This scorecard is linked from the [ROB05 planning spec](../../docs/spec/implemented/robustness-blessed-surface.md), the ROB05 planning
 artifact. No ROB05 tracker issue existed when ROB03-WS04 completed, so the repository link
 is the durable handoff for its ADR round.
