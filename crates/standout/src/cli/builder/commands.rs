@@ -62,8 +62,6 @@ impl AppBuilder {
         Ok(())
     }
 
-    /// Secondary path (ADR-0032): the per-command escape hatch, for one command bolted onto a
-    /// derive-registered app or a handler the derive cannot spell.
     pub fn command_with<H, T, C>(
         self,
         path: &str,
@@ -123,7 +121,6 @@ impl AppBuilder {
         Ok(self)
     }
 
-    /// Secondary path (ADR-0032): a handler that owns its own bytes, with no serializable output and no render.
     pub fn command_passthrough<F>(self, path: &str, handler: F) -> Result<Self, SetupError>
     where
         F: FnMut(&ArgMatches, &CommandContext) -> Result<(), anyhow::Error> + 'static,

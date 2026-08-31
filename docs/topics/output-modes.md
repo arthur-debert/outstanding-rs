@@ -73,11 +73,12 @@ myapp list --output=term > colored.txt
 
 Useful when you want to preserve colors for later display (e.g., `less -R`).
 
-That said, a `term` request does not unconditionally reach ANSI: under a
-never-color policy (for example `NO_COLOR` set in the environment), a `term`
-request resolves to `text` instead. `auto` is the mode that inspects the
-destination — it resolves to `term` when the destination reports color
-capability and to `text` when it does not.
+A `term` request is unconditional, and the environment's color conventions do
+not override it: `NO_COLOR=1 myapp list --output=term` still emits ANSI, the
+same way `CLICOLOR_FORCE=1 myapp list --output=text` still emits none. `auto`
+is the mode those conventions reach — it resolves to `term` when the
+destination reports color capability, and to `text` when it does not or when
+`NO_COLOR` or `TERM=dumb` is set.
 
 **Text**: removes Standout's own style tags and adds no ANSI of its own:
 

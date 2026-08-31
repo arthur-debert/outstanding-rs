@@ -423,7 +423,6 @@ impl AppBuilder {
         self
     }
 
-    /// Secondary path (ADR-0032): the custom-engine capability, which nothing else on this axis provides.
     pub fn template_engine(
         mut self,
         engine: Box<dyn standout_render::template::TemplateEngine>,
@@ -708,7 +707,6 @@ impl App {
             .unwrap_or_default()
     }
 
-    /// Secondary path (ADR-0032): the augmented `Command` and help interception for an application that parses for itself.
     pub fn get_matches_from<I, T>(
         &self,
         cmd: Command,
@@ -1122,7 +1120,6 @@ impl App {
         parse_output_mode_flag(last_unparsed_flag_value(flag, args))
     }
 
-    /// Secondary path (ADR-0032): the manual-dispatch seam — one handler with its hooks and its render, without a dispatch table.
     pub fn run_command<F, T>(
         &self,
         path: &str,
@@ -1224,6 +1221,7 @@ impl App {
     }
 
     pub fn verify_command(&self, cmd: &Command) -> Result<(), SetupError> {
+        self.malformed_registrations()?;
         self.validate_questionnaire_surfaces(cmd)?;
         self.unreachable_registrations(cmd)?;
         let expected_args: HashMap<String, Vec<ExpectedArg>> = self

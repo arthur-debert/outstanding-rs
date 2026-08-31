@@ -43,7 +43,6 @@ impl AppBuilder {
         Ok(self)
     }
 
-    /// Secondary path (ADR-0032): a theme computed in Rust rather than parsed from a stylesheet.
     pub fn theme(mut self, theme: Theme) -> Self {
         self.theme = Some(theme);
         self
@@ -63,7 +62,6 @@ impl AppBuilder {
         self
     }
 
-    /// Secondary path (ADR-0032): stylesheets outside the crate, read at run time.
     pub fn styles_dir<P: AsRef<std::path::Path>>(mut self, path: P) -> Result<Self, SetupError> {
         let registry = self
             .stylesheet_registry
@@ -79,7 +77,6 @@ impl AppBuilder {
         self
     }
 
-    /// Secondary path (ADR-0032): templates outside the crate source tree, which the macro cannot embed.
     pub fn templates_dir<P: AsRef<std::path::Path>>(mut self, path: P) -> Result<Self, SetupError> {
         let registry = self
             .template_registry
@@ -122,13 +119,11 @@ impl AppBuilder {
         self
     }
 
-    /// Secondary path (ADR-0032): the only way to decline the framework's own help and topic templates.
     pub fn include_framework_templates(mut self, include: bool) -> Self {
         self.include_framework_templates = include;
         self
     }
 
-    /// Secondary path (ADR-0032): declines the framework's style vocabulary from the base half of the merge.
     pub fn include_framework_styles(mut self, include: bool) -> Self {
         self.include_framework_styles = include;
         self

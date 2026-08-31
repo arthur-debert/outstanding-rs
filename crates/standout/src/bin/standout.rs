@@ -3026,15 +3026,8 @@ mod tests {
             .clone()
     }
 
-    /// The generated project is the canonical example, so its source is checked
-    /// against [ADR-0032]'s blessed item on each axis one at a time — the derive
-    /// that registers, the `#[handler]` that adapts, clap-derive that declares,
-    /// the macros that provide templates and styles, the chain that resolves an
-    /// input that has more than one source — and only then against the
-    /// unblessed forms it must not carry. The negative half alone would pass on
-    /// output that dropped the concern entirely.
-    ///
-    /// [ADR-0032]: ../../../../docs/adr/0032-bless-one-item-per-axis-behind-a-capability-map.md
+    // The positive assertions carry the test: the negative half alone would
+    // pass on output that dropped the concern entirely.
     #[test]
     fn generated_project_uses_the_blessed_idioms() {
         let dir = TempDir::new().unwrap();

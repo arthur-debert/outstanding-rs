@@ -24,7 +24,6 @@ use crate::topics::display_with_pager;
 use crate::SetupError;
 
 impl AppBuilder {
-    /// Secondary form (ADR-0032): a hand-written closure registers a command set computed at run time.
     pub fn commands<F>(mut self, configure: F) -> Result<Self, SetupError>
     where
         F: FnOnce(GroupBuilder) -> GroupBuilder,
@@ -83,7 +82,6 @@ impl AppBuilder {
 }
 
 impl App {
-    /// Secondary path (ADR-0032): the application owns clap parsing and already holds `ArgMatches`.
     pub fn dispatch(
         &self,
         matches: ArgMatches,
@@ -245,7 +243,8 @@ impl App {
         let args: Vec<std::ffi::OsString> = args.into_iter().map(Into::into).collect();
 
         if let Err(error) = self
-            .validate_questionnaire_surfaces(&cmd)
+            .malformed_registrations()
+            .and_then(|()| self.validate_questionnaire_surfaces(&cmd))
             .and_then(|()| self.unreachable_registrations(&cmd))
         {
             return (
@@ -421,7 +420,6 @@ impl App {
         crate::cli::CompletedRun::from_dispatch(outcome, warnings.take(), output_mode)
     }
 
-    /// Blessed capture form (ADR-0032): destination properties and input sources passed in, nothing detected.
     pub fn run_with<I, T>(
         &self,
         cmd: Command,
@@ -493,6 +491,34 @@ impl App {
             child_path.push(subcommand.get_name().to_string());
             self.augment_questionnaire_commands(subcommand, &child_path);
         }
+    }
+
+    /// A registration path is `.`-separated command names, and the one path
+    /// with no names is the empty string: the root command of a flat app. A
+    /// leading, trailing or doubled `.` leaves a blank name, which dispatch
+    /// can never produce — it joins the names clap reports back — so the
+    /// registration would sit unreachable behind a path that reads as valid.
+    pub(crate) fn malformed_registrations(&self) -> Result<(), SetupError> {
+        let pending = self.pending_commands.borrow();
+        let mut malformed: Vec<&str> = pending
+            .keys()
+            .chain(self.questionnaire_commands.keys())
+            .map(String::as_str)
+            .filter(|path| !path.is_empty() && path.split('.').any(str::is_empty))
+            .collect();
+        malformed.sort_unstable();
+        malformed.dedup();
+
+        let Some(path) = malformed.first() else {
+            return Ok(());
+        };
+
+        Err(SetupError::Config(format!(
+            "Registration path `{path}` has a blank command name: a path is \
+             `.`-separated command names, and only the empty path names \
+             something (the root command of a flat app). Drop the leading, \
+             trailing or doubled `.`."
+        )))
     }
 
     /// A registration no invocation can reach: the app registered a handler
@@ -577,10 +603,13 @@ impl App {
 
 /// The empty registration path is the root command of a flat app, which every
 /// clap `Command` has, so it walks to no segments rather than to one blank one.
+/// Every other path splits literally: `malformed_registrations` has already
+/// rejected the ones with a blank segment.
 fn path_segments(path: &str) -> Vec<&str> {
-    path.split('.')
-        .filter(|segment| !segment.is_empty())
-        .collect()
+    if path.is_empty() {
+        return Vec::new();
+    }
+    path.split('.').collect()
 }
 
 /// What an unreachable registration names, when the CLI does declare the

@@ -9,7 +9,6 @@ use crate::{
 use standout_render::RegistryError;
 
 impl App {
-    /// Secondary path (ADR-0032): rendering outside dispatch, for an embedding caller.
     pub fn render_with<T: Serialize>(
         &self,
         template: TemplateRef,

@@ -22,7 +22,8 @@ pub(crate) fn add_inputs<H>(config: CommandConfig<H>) -> CommandConfig<H> {
     )
 }
 
-/// Appends the mutated todo's id to the file named by `TODO_AUDIT_LOG`.
+/// Appends the mutated todo's id to the file named by `TODO_AUDIT_LOG`, and
+/// fails the command when the append fails.
 pub(crate) fn audit_hook(
     _matches: &ArgMatches,
     ctx: &CommandContext,
@@ -37,11 +38,15 @@ pub(crate) fn audit_hook(
                 .and_then(|todo| todo.get("id"))
                 .unwrap_or(&JsonValue::Null)
         );
-        let _ = std::fs::OpenOptions::new()
+        std::fs::OpenOptions::new()
             .create(true)
             .append(true)
-            .open(path)
-            .and_then(|mut file| std::io::Write::write_all(&mut file, line.as_bytes()));
+            .open(&path)
+            .and_then(|mut file| std::io::Write::write_all(&mut file, line.as_bytes()))
+            .map_err(|error| {
+                HookError::post_dispatch(format!("cannot append to the audit log {path}"))
+                    .with_source(error)
+            })?;
     }
     Ok(value)
 }

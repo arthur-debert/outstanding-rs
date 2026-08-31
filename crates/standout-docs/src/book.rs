@@ -524,19 +524,57 @@ fn prose_lines(markdown: &str) -> Vec<(usize, String)> {
     lines
 }
 
+/// A code span opens on a run of backticks and closes on the next run of the
+/// same length, so the runs are counted rather than toggled: ``[a](b.md)`` is
+/// one span, not two empty ones with a link between them. A run that never
+/// closes is literal text, and a backslash escapes the character after it.
 fn blank_code_spans(line: &str) -> String {
+    let chars: Vec<char> = line.chars().collect();
     let mut out = String::with_capacity(line.len());
-    let mut in_code = false;
-    for ch in line.chars() {
-        if ch == '`' {
-            in_code = !in_code;
+    let mut at = 0;
+
+    let run_from = |start: usize| chars[start..].iter().take_while(|ch| **ch == '`').count();
+
+    while at < chars.len() {
+        if chars[at] == '\\' {
             out.push(' ');
-        } else if in_code {
-            out.push(' ');
-        } else {
-            out.push(ch);
+            if at + 1 < chars.len() {
+                out.push(' ');
+            }
+            at += 2;
+            continue;
         }
+        if chars[at] != '`' {
+            out.push(chars[at]);
+            at += 1;
+            continue;
+        }
+
+        let opener = run_from(at);
+        let mut scan = at + opener;
+        let closer = loop {
+            if scan >= chars.len() {
+                break None;
+            }
+            if chars[scan] != '`' {
+                scan += 1;
+                continue;
+            }
+            let run = run_from(scan);
+            if run == opener {
+                break Some(scan);
+            }
+            scan += run;
+        };
+
+        let blanked = match closer {
+            Some(close) => close + opener - at,
+            None => opener,
+        };
+        out.extend(std::iter::repeat_n(' ', blanked));
+        at += blanked;
     }
+
     out
 }
 
@@ -648,6 +686,21 @@ let s = \"[fenced](never.md)\";
         assert_eq!(targets, ["a.md", "b.md#frag", "c.md"]);
         assert_eq!(found[0].line, 1);
         assert_eq!(found[2].line, 8);
+    }
+
+    #[test]
+    fn multi_backtick_code_spans_hide_the_links_inside_them() {
+        let markdown = "\
+A ``[double](never.md)`` span and a ```[triple](never.md)``` one.
+A span holding a backtick, `` ` [inner](never.md) ``, stays out too.
+An unmatched ` backtick leaves [real](a.md) readable.
+An escaped \\`[escaped](b.md)` pair leaves the link readable.
+";
+        let targets: Vec<String> = links(markdown)
+            .into_iter()
+            .map(|link| link.target)
+            .collect();
+        assert_eq!(targets, ["a.md", "b.md"], "{markdown}");
     }
 
     #[test]

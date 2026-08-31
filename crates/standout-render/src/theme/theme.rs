@@ -57,7 +57,6 @@ impl Theme {
         self.palette.as_ref()
     }
 
-    /// Secondary path (ADR-0032): stylesheet text the application already holds; the YAML parse is the one that reads icons.
     pub fn from_yaml(yaml: &str) -> Result<Self, StylesheetError> {
         let icons = parse_icons_from_yaml_str(yaml)?;
         let variants = parse_stylesheet(yaml, None)?;
@@ -72,7 +71,6 @@ impl Theme {
         })
     }
 
-    /// Secondary path (ADR-0032): stylesheet text the application already holds, in the CSS dialect.
     pub fn from_css(css: &str) -> Result<Self, StylesheetError> {
         let variants = crate::parse_css(css, None)?;
         Ok(Self {
@@ -102,7 +100,6 @@ impl Theme {
         self
     }
 
-    /// Secondary path (ADR-0032): where an adaptive (light/dark) theme is expressed in Rust.
     pub fn add_adaptive(
         mut self,
         name: &str,

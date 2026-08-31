@@ -140,6 +140,36 @@ fn a_flat_app_registers_the_root_command_reachably() {
 }
 
 #[test]
+fn a_registration_path_with_a_blank_command_name_is_an_error() {
+    for path in ["list.", ".list", "parent..child"] {
+        let app = App::builder()
+            .command_with(path, FnHandler::new(show_all), |cfg| cfg.silent())
+            .unwrap()
+            .build()
+            .unwrap();
+        let cmd = Command::new("app").subcommand(
+            Command::new("parent")
+                .subcommand(Command::new("child"))
+                .subcommand(Command::new("list")),
+        );
+        let error = app.verify_command(&cmd).unwrap_err().to_string();
+        assert!(
+            error.contains(&format!(
+                "Registration path `{path}` has a blank command name"
+            )),
+            "{path}: {error}"
+        );
+
+        let result = TestHarness::new().run(&app, cmd, ["app", "parent", "child"]);
+        assert!(
+            result.stderr().contains(path),
+            "{path}: {}",
+            result.stderr()
+        );
+    }
+}
+
+#[test]
 fn a_cli_command_with_no_registration_still_hands_off() {
     let app = App::builder()
         .command_with("list-units", FnHandler::new(show_all), |cfg| cfg.silent())

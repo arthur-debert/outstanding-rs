@@ -347,7 +347,6 @@ impl<H> CommandConfig<H> {
         }
     }
 
-    /// Secondary path (ADR-0032): a template shared with another command, or a registry name that is not the command path.
     pub fn template_name(mut self, name: impl Into<String>) -> Self {
         self.template_name = Some(name.into());
         self.template_absence = None;

@@ -495,8 +495,6 @@ pub trait Handler {
         Vec::new()
     }
 }
-/// Secondary path (ADR-0032): the non-macro adapter, and the only way a plain closure or a
-/// `#[handler]` fn reaches the registration axis.
 pub struct FnHandler<F, T, R = HandlerResult<T>>
 where
     T: Serialize,
