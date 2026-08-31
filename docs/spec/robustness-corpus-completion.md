@@ -8,7 +8,7 @@ pilot record is now `implemented/robustness-corpus.md`. Depends on the blessed s
 application wait until the 9.0 line is on crates.io. Two items do not: the `validity`
 run (a method check against the latest published 8.x, excluded from the comparison) and
 the spec-only authoring of the six remaining archetypes; the authoritative graph in
-`implemented/robustness-test-net.md` records the same split. Also depends on the adopter seams (`robustness-adopter-seams.md`), because
+`implemented/robustness-test-net.md` records the same split. Also depends on the adopter seams (`implemented/robustness-adopter-seams.md`), because
 the re-run is the measurement of whether those seams removed the pilot's workarounds.
 Long-lived: the corpus outlives the program.
 

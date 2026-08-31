@@ -153,7 +153,7 @@ Every capability the census's items expose, and the surviving item on the *same*
 
 ## The adopter-seams additions are blessed as they land
 
-The adopter-seams epic (`docs/spec/robustness-adopter-seams.md`) runs in parallel and adds public entries to the same files this ADR prunes. Every entry it names is **blessed on arrival**, and the pruning workstream must not remove one it finds:
+The adopter-seams epic (`docs/spec/implemented/robustness-adopter-seams.md`) runs in parallel and adds public entries to the same files this ADR prunes. Every entry it names is **blessed on arrival**, and the pruning workstream must not remove one it finds:
 
 - the `AppBuilder` output-mode fallback — the mode used when `--output` is absent, which ROB04 left hard-coded to `Auto` (#356); landed as `output_mode_fallback(mode)`;
 - the handler-returnable domain error carrying an exit status (any nonzero `u8`) and a verbatim stderr payload, with zero rejected at construction (#357); landed as `AppFailure`, with `HookError::pre_dispatch_app` for a pre-dispatch guard and `RunErrorKind::App` for capture callers (ADR-0035);
