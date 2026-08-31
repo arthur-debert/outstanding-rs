@@ -113,8 +113,17 @@ for the supported input types, cardinalities, and sources.
 
 ```rust
 use clap::{CommandFactory, Parser, Subcommand};
+use serde::Serialize;
 use standout::cli::{App, CommandContext, Dispatch, Output};
 use standout::{embed_styles, embed_templates, handler};
+
+// `TodoStore`, `TodoFilter` and `TodoView` come from the CLI-free library
+// above; the view model is what `src/templates/list.jinja` renders.
+#[derive(Serialize)]
+struct TodoListView {
+    todos: Vec<TodoView>,
+    total: usize,
+}
 
 #[derive(Parser)]
 struct Cli {
@@ -137,7 +146,11 @@ mod handlers {
 
     #[handler]
     pub fn list(#[flag] all: bool, #[ctx] ctx: &CommandContext) -> Result<Output<TodoListView>, anyhow::Error> {
-        // …
+        let store = ctx.app_state.get_required::<TodoStore>()?;
+        let filter = if all { TodoFilter::All } else { TodoFilter::Pending };
+        let todos: Vec<TodoView> = store.list(filter).into_iter().map(TodoView::from).collect();
+        let total = todos.len();
+        Ok(Output::Render(TodoListView { todos, total }))
     }
 }
 

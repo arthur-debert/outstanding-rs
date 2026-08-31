@@ -233,7 +233,9 @@ pub fn broken_site_links(root: &Path, page: &Path) -> io::Result<Vec<Broken>> {
 ///
 /// The scan runs over the page's prose as one string rather than line by line,
 /// because a link's text may be wrapped across lines while its destination
-/// stays on the last of them.
+/// stays on the last of them. A link's text is scanned in turn, so an image
+/// wrapped in a link — `[![alt](diagram.png)](page.md)` — reports both
+/// destinations, innermost first.
 pub fn links(markdown: &str) -> Vec<Link> {
     let lines: Vec<(usize, String)> = prose_lines(markdown)
         .into_iter()
@@ -254,37 +256,55 @@ pub fn links(markdown: &str) -> Vec<Link> {
         prose.push('\n');
     }
 
+    let mut found = Vec::new();
+    scan_links(&prose, 0, prose.len(), &definitions, &starts, &mut found);
+    found
+}
+
+/// Collect the links in one span of a page's prose, innermost destination first.
+///
+/// A link's own text is scanned as its own span, because a link may wrap an
+/// image — `[![alt](diagram.png)](page.md)` — and both destinations can go
+/// stale independently. The text is scanned before the enclosing link is
+/// recorded, which keeps the two in source order.
+fn scan_links(
+    prose: &str,
+    start: usize,
+    end: usize,
+    definitions: &HashMap<String, String>,
+    starts: &[(usize, usize)],
+    found: &mut Vec<Link>,
+) {
     let line_of = |offset: usize| {
         starts
-            .partition_point(|(start, _)| *start <= offset)
+            .partition_point(|(line_start, _)| *line_start <= offset)
             .checked_sub(1)
             .map_or(1, |position| starts[position].1)
     };
 
-    let mut found = Vec::new();
-    let mut cursor = 0usize;
-    while let Some(offset) = prose[cursor..].find('[') {
+    let mut cursor = start;
+    while let Some(offset) = prose[cursor..end].find('[') {
         let open = cursor + offset;
-        let Some(close) = matching_bracket(&prose[open + 1..]).map(|end| open + 1 + end) else {
+        let Some(close) = matching_bracket(&prose[open + 1..end]).map(|at| open + 1 + at) else {
             // An unpaired `[` is prose, not the start of a link.
             cursor = open + 1;
             continue;
         };
         let text = &prose[open + 1..close];
-        let after = &prose[close + 1..];
+        let after = &prose[close + 1..end];
         let (target, consumed) = if let Some(inline) = after.strip_prefix('(') {
             match matching_paren(inline) {
-                Some(end) => (Some(inline[..end].trim().to_string()), close + 2 + end + 1),
+                Some(at) => (Some(inline[..at].trim().to_string()), close + 2 + at + 1),
                 None => (None, close + 1),
             }
         } else if let Some(reference) = after.strip_prefix('[') {
             match matching_bracket(reference) {
-                Some(end) => {
-                    let label = &reference[..end];
+                Some(at) => {
+                    let label = &reference[..at];
                     let label = if label.trim().is_empty() { text } else { label };
                     (
                         definitions.get(&normalize_label(label)).cloned(),
-                        close + 2 + end + 1,
+                        close + 2 + at + 1,
                     )
                 }
                 None => (None, close + 1),
@@ -292,6 +312,9 @@ pub fn links(markdown: &str) -> Vec<Link> {
         } else {
             (definitions.get(&normalize_label(text)).cloned(), close + 1)
         };
+        if text.contains('[') {
+            scan_links(prose, open + 1, close, definitions, starts, found);
+        }
         if let Some(target) = target {
             if !target.is_empty() {
                 found.push(Link {
@@ -302,7 +325,6 @@ pub fn links(markdown: &str) -> Vec<Link> {
         }
         cursor = consumed.max(open + 1);
     }
-    found
 }
 
 /// Every `[label]: destination` definition on the page, by normalized label.
@@ -658,6 +680,30 @@ An [undefined][nowhere] label is not a link, and neither is [tag].
             found.iter().all(|link| link.line == 1),
             "a usage is reported where it is written, not where it is defined: {found:?}"
         );
+    }
+
+    #[test]
+    fn an_image_wrapped_in_a_link_yields_both_destinations() {
+        let markdown = "See [![diagram](missing.png)](page.md) above.\n";
+        let found = links(markdown);
+        let targets: Vec<&str> = found.iter().map(|link| link.target.as_str()).collect();
+        assert_eq!(targets, ["missing.png", "page.md"], "{found:?}");
+    }
+
+    #[test]
+    fn a_linked_image_with_a_missing_target_is_reported() {
+        let fixture = Fixture::new("linked-image");
+        fixture
+            .write("docs/SUMMARY.md", "# Summary\n\n- [One](./topics/one.md)\n")
+            .write(
+                "docs/topics/one.md",
+                "# One\n\n[![diagram](gone.png)](./two.md)\n",
+            )
+            .write("docs/topics/two.md", "# Two\n");
+
+        let found = broken_links(fixture.root()).unwrap();
+        let targets: Vec<&str> = found.iter().map(|b| b.link.target.as_str()).collect();
+        assert_eq!(targets, ["gone.png"], "{found:?}");
     }
 
     #[test]
