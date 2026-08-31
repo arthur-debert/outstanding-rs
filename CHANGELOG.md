@@ -283,19 +283,27 @@ assertions its existential `contains` checks could not state:
 
 ### Items that are no longer public
 
-Each remains public in the crate that defines it, for a caller that depends on that crate
-directly.
+Two kinds, with different escape hatches.
 
-- On `App`: `registry_mut`, `get_hooks`, `get_theme`.
-- The `cli` module no longer re-exports the dispatch internals `extract_command_path`,
-  `get_deepest_matches`, `has_subcommand` and `insert_default_command`.
-- The crate root no longer re-exports `build_embedded_registry`, `extension_priority`,
-  `strip_extension`, `walk_dir`, `walk_template_dir`, `validate_template`,
-  `render_auto_with_spec`, `rgb_to_ansi256`, `rgb_to_truecolor`, `flatten_json_for_csv`,
-  `serialize_to_xml`, the `file_loader` module, or `FileRegistry`, `FileRegistryConfig`,
-  `LoadError`, `LoadedEntry` and `LoadedFile`.
-- `standout-dispatch` no longer exports the unused `RenderFn` / `from_fn` / `RenderError`
-  render callback API.
+**Re-exports `standout` dropped.** Each item is still public in the crate that defines it;
+depend on that crate directly to keep calling it.
+
+- The `cli` module no longer re-exports the `standout-dispatch` navigation helpers
+  `extract_command_path`, `get_deepest_matches`, `has_subcommand` and
+  `insert_default_command`.
+- The crate root no longer re-exports the `standout-render` items
+  `build_embedded_registry`, `extension_priority`, `strip_extension`, `walk_dir`,
+  `walk_template_dir`, `validate_template`, `render_auto_with_spec`, `rgb_to_ansi256`,
+  `rgb_to_truecolor`, `flatten_json_for_csv`, `serialize_to_xml`, the `file_loader` module,
+  or `FileRegistry`, `FileRegistryConfig`, `LoadError`, `LoadedEntry` and `LoadedFile`.
+
+**Deleted outright.** No crate provides these any more, so a direct dependency does not
+bring them back.
+
+- `App::registry_mut`, `App::get_hooks` and `App::get_theme`.
+- `standout-dispatch`'s unused render-callback API: `RenderFn`, `from_fn`, and the
+  `RenderError` that belonged to it. (`standout_render::RenderError` is a different type
+  and `standout` still re-exports it.)
 
 ### Failures that used to be silent
 

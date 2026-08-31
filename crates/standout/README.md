@@ -56,49 +56,69 @@ CLI code that mixes logic with `println!` is impossible to unit test. With Stand
 
 ```toml
 [dependencies]
-standout = "7"
-standout-dispatch = "7" # required by #[handler] and #[derive(Dispatch)]
+standout = "9"
 clap = { version = "4", features = ["derive"] }
 serde = { version = "1", features = ["derive"] }
 anyhow = "1"
 ```
 
+The one `standout` dependency carries the macros; `standout-dispatch` and
+`standout-render` are only needed by a project that uses them without the
+framework.
+
 ```rust
-use standout::cli::{App, Dispatch, CommandContext, HandlerResult, Output};
-use standout::{embed_templates, embed_styles};
-use clap::{ArgMatches, CommandFactory, Parser, Subcommand};
+use clap::{CommandFactory, Parser, Subcommand};
+use serde::Serialize;
+use standout::cli::{App, CommandContext, Dispatch, Output};
+use standout::{embed_styles, embed_templates, handler};
 
 #[derive(Parser)]
 struct Cli {
     #[command(subcommand)]
-    command: Commands,
+    command: Option<Commands>,
 }
 
 #[derive(Subcommand, Dispatch)]
 #[dispatch(handlers = handlers)]
-pub enum Commands {
+enum Commands {
+    #[dispatch(pure)]
     List,
+}
+
+#[derive(Serialize)]
+struct ListView {
+    items: Vec<String>,
 }
 
 mod handlers {
     use super::*;
 
-    pub fn list(_m: &ArgMatches, _ctx: &CommandContext) -> HandlerResult<Vec<String>> {
-        Ok(Output::Render(vec!["item-1".into(), "item-2".into()]))
+    #[handler]
+    pub fn list(#[ctx] _ctx: &CommandContext) -> Result<Output<ListView>, anyhow::Error> {
+        Ok(Output::Render(ListView {
+            items: vec!["item-1".into(), "item-2".into()],
+        }))
     }
 }
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let app = App::builder()
-        .commands(Commands::dispatch_config())?
+        .version(env!("CARGO_PKG_VERSION"))
         .templates(embed_templates!("src/templates"))
         .styles(embed_styles!("src/styles"))
+        .default_theme("default")
+        .commands(Commands::dispatch_config())?
         .build()?;
 
     app.run(Cli::command(), std::env::args());
     Ok(())
 }
 ```
+
+The `List` variant registers the command under its kebab-case name, `list`;
+`#[dispatch(pure)]` points it at the wrapper `#[handler]` generates,
+`handlers::list__handler`; and with no template named, the convention renders
+`src/templates/list.jinja`. Themed help is on by default.
 
 ```bash
 myapp list                  # Rich terminal output

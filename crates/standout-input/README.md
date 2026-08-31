@@ -37,14 +37,14 @@ let message = InputChain::<String>::new()
 
 ```toml
 [dependencies]
-standout-input = { version = "0.1", default-features = false }
+standout-input = { version = "9", default-features = false }
 ```
 
 ### Full Feature Set
 
 ```toml
 [dependencies]
-standout-input = { version = "0.1", features = ["inquire"] }
+standout-input = { version = "9", features = ["inquire"] }
 ```
 
 ## Usage
