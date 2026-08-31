@@ -76,9 +76,12 @@ Useful when you want to preserve colors for later display (e.g., `less -R`).
 A `term` request is unconditional, and the environment's color conventions do
 not override it: `NO_COLOR=1 myapp list --output=term` still emits ANSI, the
 same way `CLICOLOR_FORCE=1 myapp list --output=text` still emits none. `auto`
-is the mode those conventions reach — it resolves to `term` when the
-destination reports color capability, and to `text` when it does not or when
-`NO_COLOR` or `TERM=dumb` is set.
+is the only mode the environment reaches, and it reaches it through one value:
+the destination's reported color capability. `auto` resolves to `term` when
+that capability is reported and to `text` when it is not. `NO_COLOR` and
+`TERM=dumb` suppress the capability, so they turn `auto` plain;
+`CLICOLOR_FORCE` is not part of that capability probe, so it never turns `auto`
+into `term`.
 
 **Text**: removes Standout's own style tags and adds no ANSI of its own:
 
