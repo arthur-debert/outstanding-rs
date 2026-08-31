@@ -48,3 +48,56 @@ anything) beyond them: web search, prior knowledge of standout internals,
 other repositories. The answers land verbatim in the report's `blindness`
 section next to the transcript link, so a partially-blind run is a known
 partially-blind run, and runs remain comparable.
+
+**Amendment (ROB07-WS01): the run-credential broker.** The second clause's
+"no credential exception" gains exactly one exception, and only for the
+agent phase: a broker the runner spawns on the host side, outside every
+sandbox, alive only while the agent session runs. It is a loopback forward
+proxy for the Anthropic API endpoint.
+
+The broker holds the agent CLI's own credential — the OAuth access token of
+the host's Claude subscription, read from the host credential store (the
+macOS Keychain or the CLI's credentials file) — and injects the
+authorization server-side on each forwarded request. On an auth failure it
+re-reads the store once (the host CLI owns refresh); it never writes the
+store. Billing therefore follows the subscription, not a metered key. The
+agent session's environment carries only `ANTHROPIC_BASE_URL` pointing at
+the broker plus a placeholder key so the CLI starts; the real credential
+never enters the agent's process tree, so nothing a descendant inherits or
+reads contains it.
+
+The caller boundary is enforced, not conventional, and it is layered
+because loopback TCP carries no kernel peer credential. A descendant's own
+access paths are denied outright: the credential is absent from the process
+tree, and the broker resolves each new connection's peer from the OS socket
+tables (procfs on Linux, libproc on macOS), accepting only the agent
+process itself — which the runner must spawn directly, not through a shell
+wrapper, so the PID it hands the broker is the process making connections.
+An already-open broker socket is a different channel: it is an inheritable
+capability, and no table lookup performed after request bytes arrive can
+prove which process wrote them. The design therefore keeps that capability
+out of untrusted hands instead of trying to attribute it. Corpus-authored
+code only ever runs as an exec'd program — a build script, a test binary,
+the produced app — so every broker descriptor in the agent process must be
+close-on-exec, which severs each of those paths; an agent backend that
+cannot guarantee this does not get the broker at all: fail closed. What
+that leaves is the agent's own code forking without exec or deliberately
+shipping a descriptor to another process — the authorized principal
+cooperating in its own bypass. No transport can police that, and this
+boundary does not claim to: the agent can already issue any authenticated
+request by design, and what is denied is untrusted code acquiring
+independent use of the channel. Anything the broker cannot attribute is
+denied, the same rule. (An allowlisted environment variable fails because
+descendants inherit the environment; an open proxy fails because the agent
+and build phases have network — this design is the narrow remainder.)
+
+What is admitted is written into the report's existing
+`blindness.credential_exceptions` field on every run. The workstream ships
+a negative integration test: a build script spawned from the agent session
+attempts an authenticated request on a connection of its own and is
+denied, and it enumerates its inherited descriptors to prove no broker
+socket survived into it for reuse — the test is about using the
+credential, not printing it. An agent backend
+that needs more (a host HOME, the Keychain, an inherited variable) still
+fails closed; the answer is a different backend invocation, never a wider
+policy.
