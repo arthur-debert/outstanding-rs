@@ -144,7 +144,7 @@ Subprocess tests have a place — and section 6 below names it — but they shou
 ```toml
 # Cargo.toml
 [dev-dependencies]
-standout-test = "8"
+standout-test = "9"
 ```
 
 The smallest possible test:

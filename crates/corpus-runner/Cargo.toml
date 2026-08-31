@@ -1,6 +1,6 @@
 [package]
 name = "corpus-runner"
-version = "8.1.1"
+version = "9.0.0"
 edition = "2021"
 description = "Runner for the downstream-corpus pilot: blind agent runs, instrumented and reported"
 license = "MIT"

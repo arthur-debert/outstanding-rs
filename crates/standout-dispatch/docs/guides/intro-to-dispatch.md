@@ -90,7 +90,7 @@ Presentation is handled separately by the caller or by the `standout` framework.
 
 ```toml
 [dependencies]
-standout-dispatch = "8"
+standout-dispatch = "9"
 clap = { version = "4", features = ["derive"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"

@@ -86,7 +86,7 @@ Add `standout-input` to your `Cargo.toml`:
 
 ```toml
 [dependencies]
-standout-input = "8"
+standout-input = "9"
 ```
 
 ### Basic Chain
@@ -405,7 +405,7 @@ For the smallest footprint:
 
 ```toml
 [dependencies]
-standout-input = { version = "0.1", default-features = false }
+standout-input = { version = "9", default-features = false }
 ```
 
 This gives you only non-interactive sources (~2 dependencies).
@@ -414,7 +414,7 @@ This gives you only non-interactive sources (~2 dependencies).
 
 ```toml
 [dependencies]
-standout-input = { version = "0.1", features = ["inquire"] }
+standout-input = { version = "9", features = ["inquire"] }
 ```
 
 ---

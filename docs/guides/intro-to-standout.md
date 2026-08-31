@@ -249,7 +249,7 @@ minijinja = "2"
 > the Jinja2 way — `True`, `False`, `None` — from minijinja 2.22 onward.
 > Standout renders `true`, `false`, and `none`, and normalizes for you from step
 > 7 on, once rendering goes through `App`. Until then the spelling is
-> minijinja's. If you want standout's spelling now, add `standout-render = "8"`
+> minijinja's. If you want standout's spelling now, add `standout-render = "9"`
 > next to minijinja and build the environment with
 > `standout_render::template::new_environment()` instead of
 > `minijinja::Environment::new()` in the snippets below — the snippets keep the
@@ -335,7 +335,7 @@ And now the Standout-specific bits finally show up.
 
 ```toml
 [dependencies]
-standout = "8"
+standout = "9"
 anyhow = "1"
 ```
 
