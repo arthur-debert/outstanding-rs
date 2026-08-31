@@ -296,3 +296,48 @@ fn nested_cli_keeps_its_commands_section() {
         "{output}"
     );
 }
+
+#[test]
+fn the_help_flag_clap_generates_gets_a_row() {
+    let output = help_for(&["lookma", "--help"]);
+    let line = row(&output, "-h, --help");
+
+    assert!(
+        line.contains("Print help"),
+        "the row must carry clap's own help text: {line:?}"
+    );
+}
+
+#[test]
+fn the_version_flag_clap_generates_gets_a_row() {
+    let cmd = Command::new("notes")
+        .about("Keep short notes")
+        .version("1.2.3")
+        .disable_help_subcommand(true);
+
+    let output = render_help(
+        &cmd,
+        Some(HelpConfig {
+            output_mode: Some(OutputMode::Text),
+            ..Default::default()
+        }),
+    )
+    .expect("the themed page renders");
+
+    assert!(
+        row(&output, "-V, --version").contains("Print version"),
+        "clap accepts `-V`/`--version`, so the page states them:\n{output}"
+    );
+}
+
+#[test]
+fn a_valueless_flag_states_no_default() {
+    let output = help_for(&["lookma", "--help"]);
+    let line = row(&output, "--staged");
+
+    assert!(
+        !output.contains("default: false"),
+        "clap builds a `false` default onto a SetTrue flag and hides it from its \
+         own page; the themed page hides it too: {line:?}\n{output}"
+    );
+}

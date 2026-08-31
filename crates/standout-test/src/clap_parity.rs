@@ -126,7 +126,7 @@ impl fmt::Display for Fact {
 }
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Omission {
-    ClapGeneratedSubjects,
+    ClapGeneratedSubcommands,
     Kind(FactKind),
 }
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -136,18 +136,15 @@ pub struct Exemption {
 }
 pub const DELIBERATE_OMISSIONS: &[Exemption] = &[
     Exemption {
-        omission: Omission::ClapGeneratedSubjects,
-        reason: "Standout renders no row for clap's own `-h/--help` and \
-                 `-V/--version`: its help affordances are the `help` word in \
-                 COMMANDS and the flags clap short-circuits on before standout \
-                 renders anything. The page therefore never tells a reader the \
-                 flags exist — a real gap, exempted here rather than silently \
-                 unasserted, and left to the work that is allowed to change \
-                 rendered bytes. Clap's generated `help` *subcommand* is exempt \
-                 for a second, deliberate reason: standout drops a COMMANDS \
-                 section whose only entry is the word that printed it, because \
-                 that is a section about standout rather than about the \
-                 application (see `only_the_help_word` in the extractor).",
+        omission: Omission::ClapGeneratedSubcommands,
+        reason: "Standout installs its own `help` word and calls \
+                 `disable_help_subcommand`, so a subcommand that appears only \
+                 once clap builds the command is standout's own machinery \
+                 rather than a destination the application declared. The \
+                 extractor drops those by provenance and lists every declared \
+                 subcommand, including an application's own `help`. Clap's \
+                 generated *arguments* are not exempt: `-h/--help` and \
+                 `-V/--version` are rows on the page.",
     },
     Exemption {
         omission: Omission::Kind(FactKind::ArgLongHelp),
@@ -174,7 +171,9 @@ pub const DELIBERATE_OMISSIONS: &[Exemption] = &[
 impl Exemption {
     fn covers(&self, fact: &Fact) -> bool {
         match self.omission {
-            Omission::ClapGeneratedSubjects => fact.generated,
+            Omission::ClapGeneratedSubcommands => {
+                fact.generated && matches!(fact.subject, Subject::Subcommand(_))
+            }
             Omission::Kind(kind) => fact.kind == kind,
         }
     }
@@ -212,12 +211,7 @@ pub fn clap_facts(cmd: &Command, length: HelpLength) -> Vec<Fact> {
         );
     }
     for arg in built.get_arguments() {
-        let generated = !declared.contains(arg.get_id().as_str());
-        facts.extend(
-            argument_facts(arg, length)
-                .into_iter()
-                .map(|fact| fact.generated(generated)),
-        );
+        facts.extend(argument_facts(arg, length));
     }
     if classifiable(&built, &declared, length) {
         facts.push(Fact::new(

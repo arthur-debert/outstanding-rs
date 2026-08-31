@@ -164,6 +164,12 @@ recolor them independently. Standout writes them as words rather than clap's
 style-tag parser, and the emphasis belongs to the theme. Hidden possible values
 (`PossibleValue::hide`) are left out.
 
+Clap's own flags are rows like any other. The extractor reads the command
+*after* clap builds it, which is when `-h`/`--help` and — for an application
+that sets a version — `-V`/`--version` come into existence, so the page names
+the flags it accepts instead of listing only what the application declared.
+They sort last, after the application's own options.
+
 Options that take values render their metavar alongside the spelling, using an
 explicit `value_name` when present and clap's fallback display otherwise. Pure
 presence flags such as `ArgAction::SetTrue` and `SetFalse` do not render a
@@ -224,6 +230,7 @@ OPTIONS
   --output      Output format
                 default: auto
                 possible values: auto, term, text, term-debug, json, yaml, xml, csv
+  -h, --help    Print help
 ```
 
 ## Command Groups
