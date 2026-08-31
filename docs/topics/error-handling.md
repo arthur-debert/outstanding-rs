@@ -5,11 +5,27 @@ Standout owns the shell adapter: handlers and hooks return errors as data, and
 hook, render, pipe, and final-write failures use status `1`; Clap usage failures
 use status `2`.
 
+## The handler diagnostic framing
+
+One framing covers every diagnostic Standout writes on an application's behalf:
+a fixed `Error:` prefix, then the error's own `Display` text, then a newline.
+Handler failures and hook failures both use it, so a reader sees one shape:
+
+```text
+Error: could not read /etc/myapp.toml
+Error: hook error (pre-dispatch): input `body`: Validation failed: body must not be empty
+```
+
+A hook's own `Display` names its phase, which is why a hook line carries
+`hook error ({phase}):` inside the framing. The wording of these diagnostics is
+internal and may change in any release (ADR-0033); an application that must pin
+its stderr bytes writes them itself through `AppFailure`, below.
+
 ## Ordinary application errors
 
-Return ordinary errors through `HandlerResult` with `?`. Standout formats the
-message as `Error: {error}` — the error's own `Display` text after that fixed
-prefix — reports it under `RunErrorKind::Handler`, and exits with status `1`:
+Return ordinary errors through `HandlerResult` with `?`. Standout applies the
+handler diagnostic framing, reports the failure under `RunErrorKind::Handler`,
+and exits with status `1`:
 
 ```rust
 fn handler(_matches: &ArgMatches, _ctx: &CommandContext) -> HandlerResult<View> {
@@ -18,22 +34,43 @@ fn handler(_matches: &ArgMatches, _ctx: &CommandContext) -> HandlerResult<View> 
 }
 ```
 
-A hook error is framed differently today: `Hook error: {error}` under
-`RunErrorKind::Hook(phase)`. A handler failure and a hook failure therefore
-read as two distinct diagnostics rather than one shared shape. Settling on a
-single framing for both is tracked in issue #357, in the ROB06 adopter-seams
-epic; until then, treat today's wording as an implementation detail rather
-than something to match against in tests.
-
 Do not print or call `process::exit` from handlers. This keeps capture APIs,
 `TestHarness`, output ownership, and real process behavior on the same seam.
 
+## An application-owned status and diagnostic
+
+`AppFailure` is the seam for a domain error whose exit status and stderr bytes
+the application's own specification pins. It carries any nonzero `u8` and a
+verbatim stderr payload: Standout adds no `Error:` prefix and no trailing
+newline, and the status rides to the process exit. Construction rejects status
+`0`, so a domain error can never report shell success.
+
+```rust
+use standout::cli::{AppFailure, HandlerResult};
+
+fn handler(_matches: &ArgMatches, _ctx: &CommandContext) -> HandlerResult<View> {
+    let Some(repo) = find_repo()? else {
+        return Err(AppFailure::new(1, "ghlike: repository not found: demo/gamma\n")?.into());
+    };
+    Ok(Output::Render(to_view(repo)))
+}
+```
+
+A pre-dispatch guard reaches the same seam through
+`HookError::pre_dispatch_app`. Capture callers see `RunErrorKind::App`.
+
+`AppFailure` carries a status and bytes, and nothing else. It is not a
+structured error type: the machine-readable error envelope belongs to the
+parity program's machine contract, which will version the envelope this seam
+feeds (ADR-0035).
+
 ## Preserving an authoritative external failure
 
-Use `ExternalFailure` only when another operation owns the status and diagnostic
-contract, such as a delegated Git invocation. Construction rejects status `0`.
-The diagnostic is a verbatim stderr payload: Standout adds no `Error:` prefix
-and no trailing newline.
+Use `ExternalFailure` when *another* operation owns the status and diagnostic
+contract, such as a delegated Git invocation — the application is relaying a
+verdict rather than reaching one, which is the whole difference from
+`AppFailure`. Construction rejects status `0`, and the diagnostic is a verbatim
+stderr payload: Standout adds no `Error:` prefix and no trailing newline.
 
 ```rust
 use standout::cli::{ExternalFailure, HandlerResult};
@@ -59,12 +96,12 @@ Hooks::new().pre_dispatch(|_matches, _ctx| {
 })
 ```
 
-The escape hatch is not an error-mapping registry. Wrapping an ordinary error
-does not change its status, and external declarations are not recognized from
+Neither escape hatch is an error-mapping registry. Wrapping an ordinary error
+does not change its status, and neither declaration is recognized from
 post-dispatch or post-output hooks. Attach an underlying cause with
-`ExternalFailure::with_source` when one exists.
+`with_source` when one exists.
 
 Capture callers match `result.outcome()` / `into_outcome()` as
-`DispatchResult::Error`, then inspect `RunErrorKind::External`,
-`error.exit_status()`, and `error.as_str()`. See
+`DispatchResult::Error`, then inspect the kind (`RunErrorKind::App` or
+`RunErrorKind::External`), `error.exit_status()`, and `error.as_str()`. See
 [Execution Outcomes](./execution-outcomes.md) and [Testing](./testing.md).

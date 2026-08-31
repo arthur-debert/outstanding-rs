@@ -286,21 +286,25 @@ fn list_handler(matches: &ArgMatches, ctx: &CommandContext) -> HandlerResult<Ite
 }
 ```
 
-### Authoritative external failures
+### Owner-declared failures
 
-When a handler delegates to another executable and the application's contract
-requires that executable's exact nonzero status and stderr, return the public
-`ExternalFailure` type through the same `HandlerResult` seam:
+Two concrete types carry a nonzero status and a stderr payload the framework
+writes verbatim, through the same `HandlerResult` seam. Which one to return
+depends on who reached the verdict:
 
 ```rust,ignore
-let failure = ExternalFailure::new(128, git_stderr)?;
-Err(failure.into())
+// The application's own specification pins the status and the line.
+Err(AppFailure::new(1, "ghlike: repository not found: demo/gamma\n")?.into())
+
+// A delegated executable decided both, and the handler is relaying them.
+Err(ExternalFailure::new(128, git_stderr)?.into())
 ```
 
-Construction rejects status `0`. Standout recognizes only this concrete type,
-preserves its diagnostic verbatim, and exposes it as `RunErrorKind::External`.
-Ordinary handler errors still use status `1`; this is not a general exit-code
-mapping mechanism. Handlers must not print or call `process::exit` themselves.
+Both reject status `0` at construction. Standout recognizes only these two
+concrete types, preserves each diagnostic verbatim, and exposes them as
+`RunErrorKind::App` and `RunErrorKind::External`. Ordinary handler errors still
+use status `1`; this is not a general exit-code mapping mechanism. Handlers must
+not print or call `process::exit` themselves.
 
 ---
 

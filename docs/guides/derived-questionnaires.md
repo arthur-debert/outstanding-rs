@@ -170,6 +170,30 @@ Use `questionnaire_with_form::<T, _>(form)` for cross-field rules that return
 review)` when the user must see an application review before the confirmation
 gate.
 
+## Hook Order Around Questionnaire Resolution
+
+`questionnaire::<T>()` and its two siblings register an ordinary pre-dispatch
+hook. Pre-dispatch hooks run in the order they were registered on the
+`CommandConfig`, so where you write the `questionnaire` call decides whether
+your own hook sees the resolved answers:
+
+```rust
+cfg.pre_dispatch(require_answer_source)      // runs first: no answers yet
+   .questionnaire::<ImportAnswers>()         // resolves, validates, confirms
+   .pre_dispatch(record_submission)          // runs last: ctx.questionnaire() works
+```
+
+A hook registered *before* the questionnaire call runs before resolution and
+cannot read `ctx.questionnaire()`; one registered *after* runs only if
+resolution, whole-form rules and the confirmation gate all succeeded. Every
+pre-dispatch hook receives the command's own `ArgMatches` — the deepest
+subcommand's, the same the handler gets — so a hook can read the injected
+`--answers` and `--yes` arguments directly.
+
+Registering the same phase through both `CommandConfig` and
+`AppBuilder::hooks(path, …)` is a configuration error naming the path and
+phase, so one command's pre-dispatch order is always readable in one place.
+
 ## Read an Application's Own Sheet Format
 
 `--answers` reads the preamble/fingerprint sheet `questions` renders. An

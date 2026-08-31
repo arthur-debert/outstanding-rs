@@ -2,7 +2,7 @@ use crate::context::ContextProvider;
 use crate::setup::SetupError;
 use crate::topics::Topic;
 use crate::TemplateRegistry;
-use crate::{EmbeddedStyles, EmbeddedTemplates, Theme};
+use crate::{EmbeddedStyles, EmbeddedTemplates, OutputMode, Theme};
 use minijinja::Value;
 
 use super::AppBuilder;
@@ -93,6 +93,11 @@ impl AppBuilder {
 
     pub fn no_output_flag(mut self) -> Self {
         self.output_flag = None;
+        self
+    }
+
+    pub fn output_mode_fallback(mut self, mode: OutputMode) -> Self {
+        self.output_mode_fallback = mode;
         self
     }
 
@@ -695,6 +700,69 @@ mod tests {
             app.extract_output_mode_from_unparsed(&os_args(&["app", "--output=text"])),
             OutputMode::Auto
         );
+    }
+
+    #[test]
+    fn the_output_flag_default_spells_the_app_fallback() {
+        let app = AppBuilder::new()
+            .templates(EmbeddedTemplates::new(TEMPLATES, ""))
+            .output_mode_fallback(OutputMode::Term)
+            .build()
+            .unwrap();
+        let augmented = app.augment_framework_surface(Command::new("app"));
+        let arg = augmented
+            .get_arguments()
+            .find(|arg| arg.get_id() == "_output_mode")
+            .expect("the output flag is declared");
+        assert_eq!(
+            arg.get_default_values(),
+            ["term"],
+            "the help page must advertise the mode the app actually falls back to"
+        );
+    }
+
+    #[test]
+    fn an_unusable_output_value_falls_back_to_the_app_fallback() {
+        let app = AppBuilder::new()
+            .templates(EmbeddedTemplates::new(TEMPLATES, ""))
+            .output_mode_fallback(OutputMode::Text)
+            .build()
+            .unwrap();
+        assert_eq!(
+            app.extract_output_mode_from_unparsed(&os_args(&["app", "--output=nope"])),
+            OutputMode::Text
+        );
+        assert_eq!(
+            app.extract_output_mode_from_unparsed(&os_args(&["app", "--output"])),
+            OutputMode::Text
+        );
+    }
+
+    #[test]
+    fn a_setup_validation_error_honours_the_app_fallback() {
+        use crate::cli::handler::RunErrorKind;
+        use crate::InputSources;
+        use serde_json::json;
+
+        let app = AppBuilder::new()
+            .templates(EmbeddedTemplates::new(TEMPLATES, ""))
+            .output_mode_fallback(OutputMode::Text)
+            .command_with(
+                "list",
+                FnHandler::new(|_m, _ctx| Ok(HandlerOutput::Render(json!({"n": 1})))),
+                |cfg| cfg.template_name("list-3"),
+            )
+            .unwrap()
+            .build()
+            .unwrap();
+        let result = app.run_with(
+            Command::new("app"),
+            ["app", "list"],
+            color_capable_stderr_target(),
+            InputSources::from_process(),
+        );
+        assert_eq!(result.error_kind(), Some(RunErrorKind::ClapUsage));
+        assert_eq!(result.output_mode(), OutputMode::Text);
     }
 
     #[test]

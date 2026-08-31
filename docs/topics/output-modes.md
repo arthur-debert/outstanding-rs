@@ -29,7 +29,11 @@ Three categories:
 
 ## Auto Mode
 
-`Auto` is the default. It queries the terminal for color support:
+`Auto` is the default when `--output` is absent, and an application can change
+that default with
+[`output_mode_fallback(mode)`](./app-configuration.md#output-mode-fallback) — an
+explicit `--output` still outranks it. `Auto` queries the terminal for color
+support:
 
 ```rust
 Term::stdout().features().colors_supported()

@@ -24,6 +24,7 @@ use crate::{
     render_request_split, ColorPolicy, InputSources, OutputMode, RenderError, RenderRequest,
     TargetProperties, Theme, TEMPLATE_EXTENSIONS,
 };
+use clap::parser::ValueSource;
 use clap::{Arg, ArgAction, ArgMatches, Command};
 use serde::Serialize;
 use std::cell::RefCell;
@@ -323,6 +324,7 @@ pub(crate) enum HookRegistrationSource {
 pub struct App {
     pub(crate) registry: TopicRegistry,
     pub(crate) output_flag: Option<String>,
+    pub(crate) output_mode_fallback: OutputMode,
     pub(crate) output_file_flag: Option<String>,
     pub(crate) theme: Theme,
     pub(crate) stylesheet_registry: Option<crate::StylesheetRegistry>,
@@ -353,6 +355,7 @@ impl App {
 pub struct AppBuilder {
     pub(crate) registry: TopicRegistry,
     pub(crate) output_flag: Option<String>,
+    pub(crate) output_mode_fallback: OutputMode,
     pub(crate) output_file_flag: Option<String>,
     pub(crate) theme: Option<Theme>,
     pub(crate) stylesheet_registry: Option<crate::StylesheetRegistry>,
@@ -391,6 +394,7 @@ impl AppBuilder {
         Self {
             registry: TopicRegistry::new(),
             output_flag: Some("output".to_string()),
+            output_mode_fallback: OutputMode::Auto,
             output_file_flag: Some("output-file-path".to_string()),
             theme: None,
             stylesheet_registry: None,
@@ -516,6 +520,7 @@ impl AppBuilder {
         let app = App {
             registry: self.registry,
             output_flag: self.output_flag,
+            output_mode_fallback: self.output_mode_fallback,
             output_file_flag: self.output_file_flag,
             theme: self
                 .theme
@@ -686,10 +691,6 @@ impl App {
 
     pub fn get_default_theme(&self) -> &Theme {
         &self.theme
-    }
-
-    fn output_mode_fallback() -> OutputMode {
-        OutputMode::Auto
     }
 
     pub fn template_names(&self) -> impl Iterator<Item = &str> {
@@ -920,7 +921,9 @@ impl App {
         warnings: Option<standout_render::warnings::WarningBuffer>,
     ) -> HelpDisplay {
         let request = Self::help_request(cmd, args);
-        let format = human_help_format(OutputMode::Auto);
+        // A typed `--output` does not reach the help flags; the app's own
+        // fallback does.
+        let format = human_help_format(self.output_mode_fallback);
         let target = self.help_target_properties(target);
         let config = HelpConfig {
             command_groups: self.help_command_groups.clone(),
@@ -1102,11 +1105,17 @@ impl App {
 
     pub fn extract_output_mode(&self, matches: &ArgMatches) -> OutputMode {
         if self.output_flag.is_none() {
-            return Self::output_mode_fallback();
+            return self.output_mode_fallback;
         }
         match matches.try_get_one::<String>("_output_mode") {
-            Ok(Some(value)) => parse_output_mode_flag(Some(value.as_str())),
-            Ok(None) | Err(_) => Self::output_mode_fallback(),
+            // The flag carries the fallback as clap's default, so a
+            // `DefaultValue` source means the user never typed `--output`.
+            Ok(Some(value))
+                if matches.value_source("_output_mode") != Some(ValueSource::DefaultValue) =>
+            {
+                parse_output_mode_flag(value.as_str()).unwrap_or(self.output_mode_fallback)
+            }
+            _ => self.output_mode_fallback,
         }
     }
 
@@ -1115,9 +1124,11 @@ impl App {
         args: &[std::ffi::OsString],
     ) -> OutputMode {
         let Some(flag) = self.output_flag.as_deref() else {
-            return OutputMode::Auto;
+            return self.output_mode_fallback;
         };
-        parse_output_mode_flag(last_unparsed_flag_value(flag, args))
+        last_unparsed_flag_value(flag, args)
+            .and_then(parse_output_mode_flag)
+            .unwrap_or(self.output_mode_fallback)
     }
 
     pub fn run_command<F, T>(
@@ -1265,17 +1276,36 @@ fn duplicate_help_word(claim: &str) -> SetupError {
 const HELP_PROBE_SHORT: &str = "__standout_help_short";
 const HELP_PROBE_LONG: &str = "__standout_help_long";
 
-fn parse_output_mode_flag(value: Option<&str>) -> OutputMode {
+pub(crate) const OUTPUT_MODE_FLAG_VALUES: [&str; 8] = [
+    "auto",
+    "term",
+    "text",
+    "term-debug",
+    "json",
+    "yaml",
+    "xml",
+    "csv",
+];
+
+fn parse_output_mode_flag(value: &str) -> Option<OutputMode> {
     match value {
-        Some("term") => OutputMode::Term,
-        Some("text") => OutputMode::Text,
-        Some("term-debug") => OutputMode::TermDebug,
-        Some("json") => OutputMode::Json,
-        Some("yaml") => OutputMode::Yaml,
-        Some("xml") => OutputMode::Xml,
-        Some("csv") => OutputMode::Csv,
-        _ => OutputMode::Auto,
+        "auto" => Some(OutputMode::Auto),
+        "term" => Some(OutputMode::Term),
+        "text" => Some(OutputMode::Text),
+        "term-debug" => Some(OutputMode::TermDebug),
+        "json" => Some(OutputMode::Json),
+        "yaml" => Some(OutputMode::Yaml),
+        "xml" => Some(OutputMode::Xml),
+        "csv" => Some(OutputMode::Csv),
+        _ => None,
     }
+}
+
+pub(crate) fn output_mode_flag_spelling(mode: OutputMode) -> &'static str {
+    OUTPUT_MODE_FLAG_VALUES
+        .into_iter()
+        .find(|value| parse_output_mode_flag(value) == Some(mode))
+        .unwrap_or("auto")
 }
 
 fn last_unparsed_flag_value<'a>(flag: &str, args: &'a [std::ffi::OsString]) -> Option<&'a str> {

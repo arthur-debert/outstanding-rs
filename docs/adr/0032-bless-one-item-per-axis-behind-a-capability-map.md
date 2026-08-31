@@ -141,6 +141,9 @@ Every capability the census's items expose, and the surviving item on the *same*
 | The application owns clap parsing | entry | `get_matches_from` then `dispatch`, with `extract_output_mode` |
 | One handler dispatched by hand (partial adoption) | entry | `run_command` |
 | Rendering data outside dispatch | entry | `render_with`, taking a `TemplateRef` |
+| The mode used when `--output` is absent | entry | `AppBuilder::output_mode_fallback(mode)`; an explicit flag still outranks it (#356) |
+| A domain error owning its exit status and stderr bytes | entry | `AppFailure`, returned from a handler or `HookError::pre_dispatch_app` (#357, ADR-0035) |
+| Relaying another operation's status and diagnostic | entry | `ExternalFailure`, unchanged in name and meaning |
 | Reading `--answers` in the application's own sheet format | questionnaire | `CommandConfig::answer_sheet_format` over the `AnswerSheetFormat` trait, whose default is `StandoutAnswerSheet` |
 | Extending the rendered sheet rather than replacing it | questionnaire | `Questionnaire::parse_answer_sheet_body`, the tagged body without the preamble |
 | Building answers from a format that shares nothing with the rendered sheet | questionnaire | `RawAnswers::set`, `set_occurrence_count`, `push_warning` |
@@ -152,8 +155,8 @@ Every capability the census's items expose, and the surviving item on the *same*
 
 The adopter-seams epic (`docs/spec/robustness-adopter-seams.md`) runs in parallel and adds public entries to the same files this ADR prunes. Every entry it names is **blessed on arrival**, and the pruning workstream must not remove one it finds:
 
-- the `AppBuilder` output-mode fallback — the mode used when `--output` is absent, which ROB04 left hard-coded to `Auto` (#356);
-- the handler-returnable domain error carrying an exit status (any nonzero `u8`) and a verbatim stderr payload, with zero rejected at construction (#357);
+- the `AppBuilder` output-mode fallback — the mode used when `--output` is absent, which ROB04 left hard-coded to `Auto` (#356); landed as `output_mode_fallback(mode)`;
+- the handler-returnable domain error carrying an exit status (any nonzero `u8`) and a verbatim stderr payload, with zero rejected at construction (#357); landed as `AppFailure`, with `HookError::pre_dispatch_app` for a pre-dispatch guard and `RunErrorKind::App` for capture callers (ADR-0035);
 - confirmation-prompt configuration — acceptance rule, prompt wording, and the stream it writes to (#354);
 - public constants for the injected `--answers` and `--yes` argument ids (#354);
 - the application-replaceable answer-sheet parser seam in `standout-input` (#351).

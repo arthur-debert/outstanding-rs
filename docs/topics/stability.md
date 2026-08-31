@@ -90,7 +90,10 @@ contract](../crates/render/topics/templating.md#the-trailing-newline-contract).
 
 Zero means success, and each documented nonzero status keeps its documented
 meaning. An application-owned status is the application's to choose, and the
-framework emitting it verbatim is the contract.
+framework emitting it verbatim is the contract — that is `AppFailure`, and
+`ExternalFailure` for a status another operation declared. The wording of the
+diagnostics the framework writes for itself is not contract; see
+[Error Handling](./error-handling.md).
 
 ### 4. The two name mappings a user types on the command line
 

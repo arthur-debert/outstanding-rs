@@ -1,4 +1,4 @@
-use crate::handler::{CommandContext, ExternalFailure};
+use crate::handler::{AppFailure, CommandContext, ExternalFailure};
 use clap::ArgMatches;
 use std::fmt;
 use std::path::PathBuf;
@@ -116,6 +116,13 @@ impl HookError {
         }
     }
     pub fn pre_dispatch_external(failure: ExternalFailure) -> Self {
+        Self {
+            message: failure.diagnostic().to_owned(),
+            phase: HookPhase::PreDispatch,
+            source: Some(Box::new(failure)),
+        }
+    }
+    pub fn pre_dispatch_app(failure: AppFailure) -> Self {
         Self {
             message: failure.diagnostic().to_owned(),
             phase: HookPhase::PreDispatch,
