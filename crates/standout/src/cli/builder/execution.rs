@@ -7,7 +7,10 @@ use standout_render::warnings::WarningBuffer;
 use std::io::Write;
 use std::path::PathBuf;
 
-use super::{App, AppBuilder, HookRegistrationSource, PendingCommand, TemplateRef};
+use super::{
+    output_mode_flag_spelling, App, AppBuilder, HookRegistrationSource, PendingCommand,
+    TemplateRef, OUTPUT_MODE_FLAG_VALUES,
+};
 use crate::cli::default_command::ParseFailure;
 use crate::cli::dispatch::{dispatch, extract_command_path, get_deepest_matches, DispatchOutput};
 use crate::cli::group::{ErasedConfigRecipe, GroupBuilder, GroupEntry};
@@ -248,7 +251,7 @@ impl App {
         {
             return (
                 DispatchResult::Error(RunError::new(error.to_string(), RunErrorKind::ClapUsage)),
-                OutputMode::Auto,
+                self.extract_output_mode_from_unparsed(&args),
             );
         }
 
@@ -257,7 +260,7 @@ impl App {
         if let Some(error) = self.help_word_collision(&augmented_cmd) {
             return (
                 DispatchResult::Error(RunError::new(error.to_string(), RunErrorKind::ClapUsage)),
-                OutputMode::Auto,
+                self.extract_output_mode_from_unparsed(&args),
             );
         }
 
@@ -449,17 +452,8 @@ impl App {
                     .long(flag)
                     .value_name("MODE")
                     .global(true)
-                    .value_parser([
-                        "auto",
-                        "term",
-                        "text",
-                        "term-debug",
-                        "json",
-                        "yaml",
-                        "xml",
-                        "csv",
-                    ])
-                    .default_value("auto")
+                    .value_parser(OUTPUT_MODE_FLAG_VALUES)
+                    .default_value(output_mode_flag_spelling(self.output_mode_fallback))
                     .help("Output format"),
             );
         }

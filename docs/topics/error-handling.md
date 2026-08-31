@@ -13,7 +13,7 @@ Handler failures and hook failures both use it, so a reader sees one shape:
 
 ```text
 Error: could not read /etc/myapp.toml
-Error: hook error (pre-dispatch): input `body`: validation failed: body must not be empty
+Error: hook error (pre-dispatch): input `body`: Validation failed: body must not be empty
 ```
 
 A hook's own `Display` names its phase, which is why a hook line carries

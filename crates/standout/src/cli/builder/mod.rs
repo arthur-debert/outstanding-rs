@@ -921,7 +921,9 @@ impl App {
         warnings: Option<standout_render::warnings::WarningBuffer>,
     ) -> HelpDisplay {
         let request = Self::help_request(cmd, args);
-        let format = human_help_format(OutputMode::Auto);
+        // A typed `--output` does not reach the help flags; the app's own
+        // fallback does.
+        let format = human_help_format(self.output_mode_fallback);
         let target = self.help_target_properties(target);
         let config = HelpConfig {
             command_groups: self.help_command_groups.clone(),
@@ -1106,12 +1108,12 @@ impl App {
             return self.output_mode_fallback;
         }
         match matches.try_get_one::<String>("_output_mode") {
-            // The flag carries clap's own `auto` default, so a `DefaultValue`
-            // source means the user never typed `--output`.
+            // The flag carries the fallback as clap's default, so a
+            // `DefaultValue` source means the user never typed `--output`.
             Ok(Some(value))
                 if matches.value_source("_output_mode") != Some(ValueSource::DefaultValue) =>
             {
-                parse_output_mode_flag(Some(value.as_str()))
+                parse_output_mode_flag(value.as_str()).unwrap_or(self.output_mode_fallback)
             }
             _ => self.output_mode_fallback,
         }
@@ -1124,10 +1126,9 @@ impl App {
         let Some(flag) = self.output_flag.as_deref() else {
             return self.output_mode_fallback;
         };
-        match last_unparsed_flag_value(flag, args) {
-            Some(value) => parse_output_mode_flag(Some(value)),
-            None => self.output_mode_fallback,
-        }
+        last_unparsed_flag_value(flag, args)
+            .and_then(parse_output_mode_flag)
+            .unwrap_or(self.output_mode_fallback)
     }
 
     pub fn run_command<F, T>(
@@ -1275,17 +1276,36 @@ fn duplicate_help_word(claim: &str) -> SetupError {
 const HELP_PROBE_SHORT: &str = "__standout_help_short";
 const HELP_PROBE_LONG: &str = "__standout_help_long";
 
-fn parse_output_mode_flag(value: Option<&str>) -> OutputMode {
+pub(crate) const OUTPUT_MODE_FLAG_VALUES: [&str; 8] = [
+    "auto",
+    "term",
+    "text",
+    "term-debug",
+    "json",
+    "yaml",
+    "xml",
+    "csv",
+];
+
+fn parse_output_mode_flag(value: &str) -> Option<OutputMode> {
     match value {
-        Some("term") => OutputMode::Term,
-        Some("text") => OutputMode::Text,
-        Some("term-debug") => OutputMode::TermDebug,
-        Some("json") => OutputMode::Json,
-        Some("yaml") => OutputMode::Yaml,
-        Some("xml") => OutputMode::Xml,
-        Some("csv") => OutputMode::Csv,
-        _ => OutputMode::Auto,
+        "auto" => Some(OutputMode::Auto),
+        "term" => Some(OutputMode::Term),
+        "text" => Some(OutputMode::Text),
+        "term-debug" => Some(OutputMode::TermDebug),
+        "json" => Some(OutputMode::Json),
+        "yaml" => Some(OutputMode::Yaml),
+        "xml" => Some(OutputMode::Xml),
+        "csv" => Some(OutputMode::Csv),
+        _ => None,
     }
+}
+
+pub(crate) fn output_mode_flag_spelling(mode: OutputMode) -> &'static str {
+    OUTPUT_MODE_FLAG_VALUES
+        .into_iter()
+        .find(|value| parse_output_mode_flag(value) == Some(mode))
+        .unwrap_or("auto")
 }
 
 fn last_unparsed_flag_value<'a>(flag: &str, args: &'a [std::ffi::OsString]) -> Option<&'a str> {

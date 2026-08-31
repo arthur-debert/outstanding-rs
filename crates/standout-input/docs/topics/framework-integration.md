@@ -158,7 +158,7 @@ Chain-level validation runs as part of `resolve_with_source`. If validation fail
 If the user runs `mycli create --body "   "`, the framework reports:
 
 ```text
-Error: hook error (pre-dispatch): input `body`: validation failed: body must not be empty
+Error: hook error (pre-dispatch): input `body`: Validation failed: body must not be empty
 ```
 
 For interactive sources (prompts, editor), validation failure re-prompts instead of aborting — the chain decides the loop. See [Backends](backends.md) for the full validation/retry semantics.

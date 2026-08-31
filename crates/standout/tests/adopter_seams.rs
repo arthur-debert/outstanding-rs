@@ -1,5 +1,6 @@
-//! The ROB06 dispatch seams (#356, #357, #353, #352), each replaying the corpus
-//! pilot invocation that had no framework answer.
+//! Dispatch seams an application reaches for: the output-mode fallback, an
+//! app-owned exit status and diagnostic, hook diagnostic framing, and the
+//! matches a hook receives.
 
 use clap::{Arg, ArgAction, Command};
 use serde_json::json;
@@ -12,9 +13,7 @@ use standout_test::{serial, TestHarness};
 
 const TEMPLATES: &[(&str, &str)] = &[("status", "unit {{ unit }} is {{ state }}")];
 
-// #356 — systemdlike-1787048043: the app decides styling from its own env
-// policy, and the workaround was stripping `--output` from argv, appending the
-// decided one, and setting CLICOLOR_FORCE.
+// The app decides the mode used when `--output` is absent.
 
 fn systemdlike(fallback: OutputMode) -> App {
     App::builder()
@@ -75,9 +74,37 @@ fn the_default_fallback_is_unchanged_for_an_app_that_sets_none() {
     result.assert_stdout_eq("unit web is active");
 }
 
-// #357 — ghlike-1787048044 and gitlike-1787048041: a domain error owning both
-// its exit status and its exact stderr line, which only `ExternalFailure` could
-// spell.
+#[test]
+#[serial]
+fn both_help_spellings_render_in_the_app_fallback_mode() {
+    let app = systemdlike(OutputMode::Term);
+
+    let word = TestHarness::new().run(&app, systemdlike_command(), ["systemdlike", "help"]);
+    let flag = TestHarness::new().run(&app, systemdlike_command(), ["systemdlike", "--help"]);
+    let default_app = TestHarness::new().run(
+        &systemdlike(OutputMode::Auto),
+        systemdlike_command(),
+        ["systemdlike", "--help"],
+    );
+
+    assert!(
+        word.stdout().contains("\x1b["),
+        "`help` should render in the Term fallback, got {:?}",
+        word.stdout()
+    );
+    assert!(
+        flag.stdout().contains("\x1b["),
+        "`--help` should render in the Term fallback, got {:?}",
+        flag.stdout()
+    );
+    assert!(
+        !default_app.stdout().contains("\x1b["),
+        "an app that sets no fallback keeps the Auto help, got {:?}",
+        default_app.stdout()
+    );
+}
+
+// A domain error owning both its exit status and its exact stderr line.
 
 fn app_owned_failure_app(status: u8, diagnostic: &'static str) -> App {
     App::builder()
@@ -173,7 +200,7 @@ fn a_pre_dispatch_guard_reaches_the_same_app_owned_seam() {
     result.assert_stderr_eq("ghlike: not authenticated\n");
 }
 
-// #353 — formlike-1787048043: `Hook error: hook error (pre-dispatch): …`.
+// A hook diagnostic is framed once, not twice.
 
 #[test]
 #[serial]
@@ -211,8 +238,7 @@ fn a_hook_diagnostic_is_framed_once() {
     );
 }
 
-// #352 — formlike-1787048043: `.hooks("provision", …)` could not read the
-// subcommand's own flags, because the hook was handed the root matches.
+// A hook reads the subcommand's own flags.
 
 #[test]
 #[serial]
