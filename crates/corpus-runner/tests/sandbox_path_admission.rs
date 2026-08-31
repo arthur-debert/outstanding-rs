@@ -38,6 +38,7 @@ fn sandboxed_agent_can_read_a_file_staged_in_a_path_admitted_directory() {
         dir.path(),
         &isolation,
         &format!("cat \"{}\"", staged.display()),
+        None,
         &dir.path().join("t.jsonl"),
         Duration::from_secs(60),
     )

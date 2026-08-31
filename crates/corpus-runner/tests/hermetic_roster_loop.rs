@@ -113,6 +113,7 @@ fn roster_archetype_completes_the_loop_with_case_results() {
         runs_dir: scratch.path().join("runs"),
         docs_dir: repo.join("docs"),
         agent_cmd: "agent.sh".to_string(),
+        broker: None,
         framework_version: "8.1.1".to_string(),
         timeouts: Timeouts::default(),
     };
