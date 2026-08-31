@@ -1,0 +1,444 @@
+# Acceptance suite for the `pnpmlike` archetype. Format: corpus/README.md.
+# Written spec-first, before any implementation exists (ROB07-WS03b).
+schema = 1
+archetype = "pnpmlike"
+
+# --- data output and the manifest --------------------------------------------
+
+[[case]]
+name = "list-exact"
+group = "data-output"
+stresses = "declared packages render in manifest order with nothing on the log or progress channel"
+expected = "pass"
+[case.run]
+argv = ["list"]
+timeout_seconds = 10
+[case.run.files]
+"pnpmlike.pkg" = "dep alpha 1.0.0\ndep beta 2.3.1\nscript build echo built alpha\nscript boom exit 7\nscript args echo args:$*\n"
+[case.expect]
+exit_code = 0
+stdout = "alpha 1.0.0\nbeta 2.3.1\n"
+stderr = ""
+
+[[case]]
+name = "list-json"
+group = "data-output"
+stresses = "the same rows as one structured document, with the reporter still silent"
+expected = "pass"
+[case.run]
+argv = ["list", "--output", "json"]
+timeout_seconds = 10
+[case.run.files]
+"pnpmlike.pkg" = "dep alpha 1.0.0\ndep beta 2.3.1\n"
+[case.expect]
+exit_code = 0
+stdout_json = '{"packages":[{"name":"alpha","version":"1.0.0"},{"name":"beta","version":"2.3.1"}]}'
+stderr = ""
+
+[[case]]
+name = "absent-manifest-is-an-empty-workspace"
+group = "data-output"
+stresses = "a missing manifest is emptiness, not a failure: exit 0, no rows, no diagnostics"
+expected = "pass"
+[case.run]
+argv = ["list"]
+timeout_seconds = 10
+[case.expect]
+exit_code = 0
+stdout = ""
+stderr = ""
+
+[[case]]
+name = "malformed-manifest-names-file-and-line"
+group = "data-output"
+stresses = "a directive-less line fails the run and locates itself; stdout stays empty for scripts"
+expected = "pass"
+[case.run]
+argv = ["list"]
+timeout_seconds = 10
+[case.run.files]
+"pnpmlike.pkg" = "dep alpha 1.0.0\ndepp beta 2.3.1\n"
+[case.expect]
+exit_code = 1
+stdout = ""
+stderr_contains = ["pnpmlike.pkg", "line 2"]
+
+# --- reporter selection vs stream attendance ---------------------------------
+
+[[case]]
+name = "auto-reporter-appends-when-stderr-is-piped"
+group = "reporter-selection"
+stresses = "unattended stderr resolves auto to append-only: plain LF-terminated steps, summary on stdout"
+expected = "pass"
+[case.run]
+argv = ["install"]
+timeout_seconds = 10
+[case.run.files]
+"pnpmlike.pkg" = "dep alpha 1.0.0\ndep beta 2.3.1\n"
+[case.expect]
+exit_code = 0
+stdout = "2 packages installed.\n"
+stderr = "1/2 alpha 1.0.0\n2/2 beta 2.3.1\n"
+
+[[case]]
+name = "auto-reporter-redraws-on-attended-stderr"
+group = "reporter-selection"
+stresses = "attended stderr resolves auto to the dynamic reporter (CR plus erase-to-end-of-line per step)"
+expected = "pass"
+[case.run]
+argv = ["install"]
+env = { TERM = "xterm-256color" }
+tty = ["stderr"]
+timeout_seconds = 10
+[case.run.files]
+"pnpmlike.pkg" = "dep alpha 1.0.0\ndep beta 2.3.1\n"
+[case.expect]
+exit_code = 0
+stdout = "2 packages installed.\n"
+stderr = "\r1/2 alpha 1.0.0\u001b[K\r2/2 beta 2.3.1\u001b[K\n"
+
+[[case]]
+name = "auto-reporter-follows-stderr-not-stdout"
+group = "reporter-selection"
+stresses = "the reporter degrades on its own stream: attended stdout with piped stderr still appends"
+expected = "pass"
+[case.run]
+argv = ["install"]
+env = { TERM = "xterm-256color" }
+tty = ["stdout"]
+timeout_seconds = 10
+[case.run.files]
+"pnpmlike.pkg" = "dep alpha 1.0.0\ndep beta 2.3.1\n"
+[case.expect]
+exit_code = 0
+stdout_contains = ["2 packages installed."]
+stderr = "1/2 alpha 1.0.0\n2/2 beta 2.3.1\n"
+
+[[case]]
+name = "explicit-append-only-beats-attendance"
+group = "reporter-selection"
+stresses = "an explicit reporter outranks detection: no ANSI and no redraw on an attended stderr"
+expected = "pass"
+[case.run]
+argv = ["install", "--reporter", "append-only"]
+env = { TERM = "xterm-256color" }
+tty = ["stderr"]
+timeout_seconds = 10
+[case.run.files]
+"pnpmlike.pkg" = "dep alpha 1.0.0\ndep beta 2.3.1\n"
+[case.expect]
+exit_code = 0
+stdout = "2 packages installed.\n"
+stderr = "1/2 alpha 1.0.0\n2/2 beta 2.3.1\n"
+
+[[case]]
+name = "explicit-default-reporter-redraws-into-a-pipe"
+group = "reporter-selection"
+stresses = "the same override in the other direction: the dynamic reporter runs unattended when asked"
+expected = "pass"
+[case.run]
+argv = ["install", "--reporter", "default"]
+timeout_seconds = 10
+[case.run.files]
+"pnpmlike.pkg" = "dep alpha 1.0.0\ndep beta 2.3.1\n"
+[case.expect]
+exit_code = 0
+stdout = "2 packages installed.\n"
+stderr = "\r1/2 alpha 1.0.0\u001b[K\r2/2 beta 2.3.1\u001b[K\n"
+
+[[case]]
+name = "silent-reporter-emits-no-progress"
+group = "reporter-selection"
+stresses = "silencing progress leaves the data output untouched"
+expected = "pass"
+[case.run]
+argv = ["install", "--reporter", "silent"]
+timeout_seconds = 10
+[case.run.files]
+"pnpmlike.pkg" = "dep alpha 1.0.0\ndep beta 2.3.1\n"
+[case.expect]
+exit_code = 0
+stdout = "2 packages installed.\n"
+stderr = ""
+
+[[case]]
+name = "bad-reporter-value-is-a-usage-error"
+group = "reporter-selection"
+stresses = "an out-of-range reporter is a usage error: exit 2, stderr only"
+expected = "pass"
+[case.run]
+argv = ["install", "--reporter", "bogus"]
+timeout_seconds = 10
+[case.run.files]
+"pnpmlike.pkg" = "dep alpha 1.0.0\ndep beta 2.3.1\n"
+[case.expect]
+exit_code = 2
+stdout = ""
+stderr_contains = ["invalid value", "bogus", "possible values"]
+
+# --- progress vs machine output ----------------------------------------------
+
+[[case]]
+name = "machine-mode-selects-the-ndjson-reporter"
+group = "machine-output"
+stresses = "a machine output mode moves progress to machine events without touching the stdout document"
+expected = "pass"
+[case.run]
+argv = ["install", "--output", "json"]
+timeout_seconds = 10
+[case.run.files]
+"pnpmlike.pkg" = "dep alpha 1.0.0\ndep beta 2.3.1\n"
+[case.expect]
+exit_code = 0
+stdout_json = '{"installed":[{"name":"alpha","version":"1.0.0"},{"name":"beta","version":"2.3.1"}],"count":2}'
+stderr_contains = ["progress", "alpha", "1.0.0", "beta", "2.3.1", "done"]
+stderr_not_contains = ["\u001b["]
+
+[[case]]
+name = "explicit-reporter-beats-the-machine-default"
+group = "machine-output"
+stresses = "silencing the reporter under a machine mode leaves stderr empty and stdout complete"
+expected = "pass"
+[case.run]
+argv = ["install", "--output", "json", "--reporter", "silent"]
+timeout_seconds = 10
+[case.run.files]
+"pnpmlike.pkg" = "dep alpha 1.0.0\ndep beta 2.3.1\n"
+[case.expect]
+exit_code = 0
+stdout_json = '{"installed":[{"name":"alpha","version":"1.0.0"},{"name":"beta","version":"2.3.1"}],"count":2}'
+stderr = ""
+
+[[case]]
+name = "dynamic-reporter-never-reaches-machine-stdout"
+group = "machine-output"
+stresses = "redraws and ANSI on an attended stderr while stdout remains exactly one JSON document"
+expected = "pass"
+[case.run]
+argv = ["install", "--output", "json", "--reporter", "default"]
+env = { TERM = "xterm-256color" }
+tty = ["stderr"]
+timeout_seconds = 10
+[case.run.files]
+"pnpmlike.pkg" = "dep alpha 1.0.0\ndep beta 2.3.1\n"
+[case.expect]
+exit_code = 0
+stdout_json = '{"installed":[{"name":"alpha","version":"1.0.0"},{"name":"beta","version":"2.3.1"}],"count":2}'
+stdout_not_contains = ["\u001b[", "\r"]
+stderr_contains = ["\u001b[K"]
+
+# --- two silencers, two channels ---------------------------------------------
+
+[[case]]
+name = "warning-precedes-progress"
+group = "quiet-matrix"
+stresses = "the log channel is flushed before the first step, so the two stderr channels never interleave"
+expected = "pass"
+[case.run]
+argv = ["install", "--reporter", "append-only"]
+timeout_seconds = 10
+[case.run.files]
+"pnpmlike.pkg" = "dep alpha *\ndep beta 2.3.1\n"
+[case.expect]
+exit_code = 0
+stdout = "2 packages installed.\n"
+stderr = "warning: alpha is unpinned (*)\n1/2 alpha *\n2/2 beta 2.3.1\n"
+
+[[case]]
+name = "quiet-silences-the-log-channel-only"
+group = "quiet-matrix"
+stresses = "-q drops the warning and keeps every progress step"
+expected = "pass"
+[case.run]
+argv = ["install", "-q"]
+timeout_seconds = 10
+[case.run.files]
+"pnpmlike.pkg" = "dep alpha *\ndep beta 2.3.1\n"
+[case.expect]
+exit_code = 0
+stdout = "2 packages installed.\n"
+stderr = "1/2 alpha *\n2/2 beta 2.3.1\n"
+
+[[case]]
+name = "silent-reporter-keeps-the-warning"
+group = "quiet-matrix"
+stresses = "the mirror image: progress gone, warning kept"
+expected = "pass"
+[case.run]
+argv = ["install", "--reporter", "silent"]
+timeout_seconds = 10
+[case.run.files]
+"pnpmlike.pkg" = "dep alpha *\ndep beta 2.3.1\n"
+[case.expect]
+exit_code = 0
+stdout = "2 packages installed.\n"
+stderr = "warning: alpha is unpinned (*)\n"
+
+[[case]]
+name = "silent-flag-silences-both-channels"
+group = "quiet-matrix"
+stresses = "--silent is the both-channels switch and still prints the data output"
+expected = "pass"
+[case.run]
+argv = ["install", "--silent"]
+timeout_seconds = 10
+[case.run.files]
+"pnpmlike.pkg" = "dep alpha *\ndep beta 2.3.1\n"
+[case.expect]
+exit_code = 0
+stdout = "2 packages installed.\n"
+stderr = ""
+
+[[case]]
+name = "verbose-adds-the-info-note"
+group = "quiet-matrix"
+stresses = "the info level opens a channel above warnings without disturbing stdout"
+expected = "pass"
+[case.run]
+argv = ["install", "-v", "--reporter", "silent"]
+timeout_seconds = 10
+[case.run.files]
+"pnpmlike.pkg" = "dep alpha 1.0.0\ndep beta 2.3.1\n"
+[case.expect]
+exit_code = 0
+stdout = "2 packages installed.\n"
+stderr = "info: using manifest pnpmlike.pkg\n"
+
+[[case]]
+name = "loglevel-flag-outranks-quiet"
+group = "quiet-matrix"
+stresses = "an explicit level beats the -q shorthand"
+expected = "pass"
+[case.run]
+argv = ["install", "-q", "--loglevel", "warn", "--reporter", "silent"]
+timeout_seconds = 10
+[case.run.files]
+"pnpmlike.pkg" = "dep alpha *\ndep beta 2.3.1\n"
+[case.expect]
+exit_code = 0
+stdout = "2 packages installed.\n"
+stderr = "warning: alpha is unpinned (*)\n"
+
+# --- a child process vs the output pipeline ----------------------------------
+
+[[case]]
+name = "run-passes-child-bytes-through"
+group = "script-passthrough"
+stresses = "the script owns stdout: its bytes arrive unframed and unstyled"
+expected = "pass"
+[case.run]
+argv = ["run", "build", "--reporter", "silent"]
+timeout_seconds = 10
+[case.run.files]
+"pnpmlike.pkg" = "dep alpha 1.0.0\nscript build echo built alpha\nscript boom exit 7\nscript args echo args:$*\n"
+[case.expect]
+exit_code = 0
+stdout = "built alpha\n"
+stderr = ""
+
+[[case]]
+name = "run-passthrough-is-unwrapped-under-json"
+group = "script-passthrough"
+stresses = "a machine output mode has nothing to serialize for a passthrough command and must not wrap the child"
+expected = "pass"
+[case.run]
+argv = ["run", "build", "--reporter", "silent", "--output", "json"]
+timeout_seconds = 10
+[case.run.files]
+"pnpmlike.pkg" = "script build echo built alpha\n"
+[case.expect]
+exit_code = 0
+stdout = "built alpha\n"
+
+[[case]]
+name = "run-propagates-the-child-exit-status"
+group = "script-passthrough"
+stresses = "a failing script's status survives the framework's own exit-code mapping"
+expected = "pass"
+[case.run]
+argv = ["run", "boom", "--reporter", "silent"]
+timeout_seconds = 10
+[case.run.files]
+"pnpmlike.pkg" = "script build echo built alpha\nscript boom exit 7\n"
+[case.expect]
+exit_code = 7
+stdout = ""
+
+[[case]]
+name = "run-forwards-arguments-after-the-double-dash"
+group = "script-passthrough"
+stresses = "argv splits at -- : flags before it are pnpmlike's, words after it are the script's positionals"
+expected = "pass"
+[case.run]
+argv = ["run", "args", "--reporter", "silent", "--", "x", "y"]
+timeout_seconds = 10
+[case.run.files]
+"pnpmlike.pkg" = "script args echo args:$*\n"
+[case.expect]
+exit_code = 0
+stdout = "args:x y\n"
+
+[[case]]
+name = "run-step-precedes-the-child"
+group = "script-passthrough"
+stresses = "the single run step is flushed before the child starts, so progress cannot interleave with its output"
+expected = "pass"
+[case.run]
+argv = ["run", "build", "--reporter", "append-only"]
+timeout_seconds = 10
+[case.run.files]
+"pnpmlike.pkg" = "script build echo built alpha\n"
+[case.expect]
+exit_code = 0
+stdout = "built alpha\n"
+stderr = "1/1 build\n"
+
+[[case]]
+name = "unknown-script-exits-3"
+group = "script-passthrough"
+stresses = "an undeclared script is its own exit code, distinct from a failing script and from usage"
+expected = "pass"
+[case.run]
+argv = ["run", "nope", "--reporter", "silent"]
+timeout_seconds = 10
+[case.run.files]
+"pnpmlike.pkg" = "script build echo built alpha\n"
+[case.expect]
+exit_code = 3
+stdout = ""
+stderr_contains = ["nope"]
+
+[[case]]
+name = "run-without-a-manifest-is-an-unknown-script"
+group = "script-passthrough"
+stresses = "the empty workspace has no scripts, and asking for one is exit 3 rather than a manifest error"
+expected = "pass"
+[case.run]
+argv = ["run", "build", "--reporter", "silent"]
+timeout_seconds = 10
+[case.expect]
+exit_code = 3
+stdout = ""
+stderr_contains = ["build"]
+
+# --- ROB01 invariant matrix --------------------------------------------------
+# The sweep runs each command in a fresh directory with no fixture files, so it
+# names the two commands an empty workspace answers: `list` (no rows) and
+# `install` (nothing installed). `run` needs a declared script, so the
+# passthrough command's opaque-byte contract is pinned by the
+# `script-passthrough` cases above instead.
+
+[invariants]
+modes = ["text", "term", "json"]
+colors = ["off", "on"]
+
+[[invariants.theme]]
+name = "application"
+
+[[invariants.command]]
+argv = ["list"]
+contract = "rendered"
+
+[[invariants.command]]
+argv = ["install"]
+contract = "rendered"

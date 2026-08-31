@@ -1,0 +1,80 @@
+# Feature/interaction manifest for `pnpmlike`. Format: corpus/README.md.
+
+[archetype]
+name = "pnpmlike"
+survey = "C11"
+summary = "reporter/quiet matrix: progress on stderr by stream attendance, two silencers for two channels, child-process passthrough"
+status = "in-capability"
+
+[features]
+used = [
+    "dispatch.subcommands",
+    "dispatch.handler-macro",
+    "dispatch.passthrough",
+    "templates",
+    "output-modes.auto-degradation",
+    "output-modes.structured-json",
+    "error-handling.exit-codes",
+    "error-handling.external-failure-status",
+]
+
+[[interactions]]
+id = "reporter-selection-vs-stream-attendance"
+stresses = ["progress reporting on stderr", "TTY detection per stream", "explicit reporter flag", "ANSI redraw vs plain lines"]
+description = "The reporter writes to stderr, so it must degrade on stderr's attendance rather than stdout's — the split every framework that reads one 'is this a terminal' answer gets wrong. Redirecting only stdout keeps the redraws; redirecting only stderr removes them; an explicit --reporter overrides both directions."
+cases = [
+    "auto-reporter-appends-when-stderr-is-piped",
+    "auto-reporter-redraws-on-attended-stderr",
+    "auto-reporter-follows-stderr-not-stdout",
+    "explicit-append-only-beats-attendance",
+    "explicit-default-reporter-redraws-into-a-pipe",
+    "silent-reporter-emits-no-progress",
+]
+
+[[interactions]]
+id = "progress-vs-machine-output"
+stresses = ["global --output mode", "structured JSON document", "progress channel", "ANSI containment"]
+description = "Machine output and progress compete for the same run: stdout must stay exactly one document while the reporter keeps reporting, and choosing a machine mode must move progress to a machine form rather than merely hiding it. This is the interaction adopter-bolted progress libraries break, because they know nothing about the resolved output mode."
+cases = [
+    "list-json",
+    "machine-mode-selects-the-ndjson-reporter",
+    "explicit-reporter-beats-the-machine-default",
+    "dynamic-reporter-never-reaches-machine-stdout",
+]
+
+[[interactions]]
+id = "two-silencers-two-channels"
+stresses = ["progress channel", "warning channel", "verbosity levels", "channel ordering on one stream"]
+description = "Progress and warnings share stderr but answer to different switches: --reporter silent keeps the warning, -q keeps the progress, --silent removes both. A framework whose only stderr channel is the warning flush cannot express the middle two, and the ordering rule (logs flushed before the first step) is what keeps a single stream readable."
+cases = [
+    "warning-precedes-progress",
+    "quiet-silences-the-log-channel-only",
+    "silent-reporter-keeps-the-warning",
+    "silent-flag-silences-both-channels",
+    "verbose-adds-the-info-note",
+    "loglevel-flag-outranks-quiet",
+]
+
+[[interactions]]
+id = "child-passthrough-vs-output-pipeline"
+stresses = ["passthrough command registration", "external failure status", "global --output mode", "argv splitting at --"]
+description = "A command whose job is to hand the terminal to a child process meets the machinery built for handlers that return data: the child's bytes must reach stdout unframed even under --output json, its exit status must survive the framework's own exit-code mapping, and the one progress step must be flushed before the child ever writes."
+cases = [
+    "run-passes-child-bytes-through",
+    "run-passthrough-is-unwrapped-under-json",
+    "run-propagates-the-child-exit-status",
+    "run-forwards-arguments-after-the-double-dash",
+    "run-step-precedes-the-child",
+    "unknown-script-exits-3",
+]
+
+[[interactions]]
+id = "workspace-absence-vs-failure-surface"
+stresses = ["absent input as empty state", "domain-error exit codes", "usage-error exit code", "stream separation"]
+description = "Four ways of having no answer must stay distinguishable: an absent manifest is an empty workspace (exit 0), a malformed one is a located domain error (exit 1), an undeclared script is exit 3, and a bad flag value is the framework's usage error (exit 2). Collapsing any pair is what makes a CLI unscriptable."
+cases = [
+    "absent-manifest-is-an-empty-workspace",
+    "malformed-manifest-names-file-and-line",
+    "run-without-a-manifest-is-an-unknown-script",
+    "bad-reporter-value-is-a-usage-error",
+]
