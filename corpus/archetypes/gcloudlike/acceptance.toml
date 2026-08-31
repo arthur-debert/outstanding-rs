@@ -1,0 +1,572 @@
+# Acceptance suite for the `gcloudlike` archetype. Format: corpus/README.md.
+# Written spec-first, before any implementation exists (ROB07-WS03a).
+#
+# Scoring boundary for this suite: a case is `expected = "pass"` when a
+# spec-correct implementation can produce the expected output without touching
+# the persisted configuration-set store, and `expected = "fail"` (gap PAR01)
+# when it cannot. Cases that fixture a store but are answered by a
+# higher-precedence flag or environment variable therefore stay `"pass"` —
+# reading the store is never on the correct path.
+schema = 1
+archetype = "gcloudlike"
+
+# --- the inventory view, fed from argv alone ---------------------------------
+
+[[case]]
+name = "instances-list-project-flag"
+group = "inventory"
+stresses = "a nested leaf renders from a property supplied by its per-invocation flag"
+expected = "pass"
+[case.run]
+argv = ["compute", "instances", "list", "--project", "alpha-proj"]
+timeout_seconds = 10
+[case.expect]
+exit_code = 0
+stdout = "NAME ZONE MACHINE_TYPE STATUS\nweb-1 us-a1 small RUNNING\nweb-2 us-b2 small TERMINATED\n"
+stderr = ""
+
+[[case]]
+name = "instances-list-project-and-zone-flags"
+group = "inventory"
+stresses = "two properties narrow the same view"
+expected = "pass"
+[case.run]
+argv = ["compute", "instances", "list", "--project", "alpha-proj", "--zone", "us-a1"]
+timeout_seconds = 10
+[case.expect]
+exit_code = 0
+stdout = "NAME ZONE MACHINE_TYPE STATUS\nweb-1 us-a1 small RUNNING\n"
+stderr = ""
+
+[[case]]
+name = "instances-list-unset-project-is-domain-error"
+group = "inventory"
+stresses = "a view whose required property resolves to nothing fails as a domain error, stdout untouched"
+expected = "pass"
+[case.run]
+argv = ["compute", "instances", "list"]
+timeout_seconds = 10
+[case.expect]
+exit_code = 1
+stdout = ""
+stderr = "gcloudlike: unset property: core/project\n"
+
+[[case]]
+name = "instances-describe-project-flag"
+group = "inventory"
+stresses = "detail view of one record under the same effective property"
+expected = "pass"
+[case.run]
+argv = ["compute", "instances", "describe", "web-1", "--project", "alpha-proj"]
+timeout_seconds = 10
+[case.expect]
+exit_code = 0
+stdout = "name: web-1\nproject: alpha-proj\nzone: us-a1\nmachine_type: small\nstatus: RUNNING\n"
+stderr = ""
+
+[[case]]
+name = "instances-describe-unknown-name"
+group = "inventory"
+stresses = "unknown record is a domain error at exit 1, not a usage error"
+expected = "pass"
+[case.run]
+argv = ["compute", "instances", "describe", "nope", "--project", "alpha-proj"]
+timeout_seconds = 10
+[case.expect]
+exit_code = 1
+stdout = ""
+stderr = "gcloudlike: no such instance: nope\n"
+
+[[case]]
+name = "instances-describe-outside-effective-project"
+group = "inventory"
+stresses = "the effective project scopes lookup: an existing name outside it is not found"
+expected = "pass"
+[case.run]
+argv = ["compute", "instances", "describe", "db-1", "--project", "alpha-proj"]
+timeout_seconds = 10
+[case.expect]
+exit_code = 1
+stdout = ""
+stderr = "gcloudlike: no such instance: db-1\n"
+
+# --- the app's own --format flag over the framework's output pipeline --------
+
+[[case]]
+name = "instances-list-json-format"
+group = "machine-format"
+stresses = "the app's --format json projection replaces the human form entirely"
+expected = "pass"
+[case.run]
+argv = ["compute", "instances", "list", "--project", "alpha-proj", "--format", "json"]
+timeout_seconds = 10
+[case.expect]
+exit_code = 0
+stdout_json = '{"instances":[{"name":"web-1","zone":"us-a1","machine_type":"small","status":"RUNNING"},{"name":"web-2","zone":"us-b2","machine_type":"small","status":"TERMINATED"}]}'
+
+[[case]]
+name = "instances-describe-json-format"
+group = "machine-format"
+stresses = "the same projection at the detail leaf"
+expected = "pass"
+[case.run]
+argv = ["compute", "instances", "describe", "web-1", "--project", "alpha-proj", "--format", "json"]
+timeout_seconds = 10
+[case.expect]
+exit_code = 0
+stdout_json = '{"name":"web-1","project":"alpha-proj","zone":"us-a1","machine_type":"small","status":"RUNNING"}'
+
+[[case]]
+name = "instances-list-json-pure-on-attended-terminal"
+group = "machine-format"
+stresses = "an attended terminal must not tempt styling into the app's machine projection"
+expected = "pass"
+[case.run]
+argv = ["compute", "instances", "list", "--project", "alpha-proj", "--format", "json"]
+tty = ["stdout"]
+timeout_seconds = 10
+[case.expect]
+exit_code = 0
+stdout_json = '{"instances":[{"name":"web-1","zone":"us-a1","machine_type":"small","status":"RUNNING"},{"name":"web-2","zone":"us-b2","machine_type":"small","status":"TERMINATED"}]}'
+stdout_not_contains = ["\u001b["]
+
+# --- property resolution above the store ------------------------------------
+
+[[case]]
+name = "get-value-from-flag"
+group = "property-resolution"
+stresses = "the flag layer supplies a property with no store present"
+expected = "pass"
+[case.run]
+argv = ["config", "get-value", "core/project", "--project", "alpha-proj"]
+timeout_seconds = 10
+[case.expect]
+exit_code = 0
+stdout = "alpha-proj\n"
+stderr = ""
+
+[[case]]
+name = "get-value-from-env"
+group = "property-resolution"
+stresses = "the mechanical GCLOUDLIKE_<SECTION>_<NAME> mapping supplies a property"
+expected = "pass"
+[case.run]
+argv = ["config", "get-value", "compute/zone"]
+env = { GCLOUDLIKE_COMPUTE_ZONE = "us-b2" }
+timeout_seconds = 10
+[case.expect]
+exit_code = 0
+stdout = "us-b2\n"
+stderr = ""
+
+[[case]]
+name = "flag-property-beats-env-property"
+group = "property-resolution"
+stresses = "flag layer over env layer for the same property"
+expected = "pass"
+[case.run]
+argv = ["config", "get-value", "core/project", "--project", "beta-proj"]
+env = { GCLOUDLIKE_CORE_PROJECT = "alpha-proj" }
+timeout_seconds = 10
+[case.expect]
+exit_code = 0
+stdout = "beta-proj\n"
+
+[[case]]
+name = "empty-env-property-is-unset"
+group = "property-resolution"
+stresses = "an empty environment value does not count as a supplied value"
+expected = "pass"
+[case.run]
+argv = ["config", "get-value", "core/project"]
+env = { GCLOUDLIKE_CORE_PROJECT = "" }
+timeout_seconds = 10
+[case.expect]
+exit_code = 1
+stdout = ""
+stderr = "gcloudlike: unset property: core/project\n"
+
+[[case]]
+name = "get-value-unset-property"
+group = "property-resolution"
+stresses = "an unset property is a domain error, both other streams silent"
+expected = "pass"
+[case.run]
+argv = ["config", "get-value", "core/account"]
+timeout_seconds = 10
+[case.expect]
+exit_code = 1
+stdout = ""
+stderr = "gcloudlike: unset property: core/account\n"
+
+[[case]]
+name = "get-value-unknown-property-is-domain-error"
+group = "property-resolution"
+stresses = "a well-formed key outside the property table is a domain error at exit 1"
+expected = "pass"
+[case.run]
+argv = ["config", "get-value", "core/nope"]
+timeout_seconds = 10
+[case.expect]
+exit_code = 1
+stdout = ""
+stderr = "gcloudlike: unknown property: core/nope\n"
+
+[[case]]
+name = "get-value-malformed-key-is-usage-error"
+group = "property-resolution"
+stresses = "a key with no section is a usage error at exit 2, distinct from the unknown-property domain error"
+expected = "pass"
+[case.run]
+argv = ["config", "get-value", "project"]
+timeout_seconds = 10
+[case.expect]
+exit_code = 2
+stdout = ""
+
+[[case]]
+name = "set-unknown-property-is-domain-error"
+group = "property-resolution"
+stresses = "the write path validates the key before it touches the store"
+expected = "pass"
+[case.run]
+argv = ["config", "set", "core/nope", "x"]
+env = { GCLOUDLIKE_CONFIG_DIR = "conf" }
+timeout_seconds = 10
+[case.expect]
+exit_code = 1
+stdout = ""
+stderr = "gcloudlike: unknown property: core/nope\n"
+
+[[case]]
+name = "unknown-subcommand-is-usage-error"
+group = "property-resolution"
+stresses = "an unknown leaf under a valid group names the offender at exit 2"
+expected = "pass"
+[case.run]
+argv = ["compute", "widgets", "list"]
+timeout_seconds = 10
+[case.expect]
+exit_code = 2
+stdout = ""
+stderr_contains = ["widgets"]
+
+# --- precedence above a fixtured store: the store is never on the answer path
+
+[[case]]
+name = "flag-property-beats-active-set"
+group = "config-layering"
+stresses = "flag layer over the active set's stored value"
+expected = "pass"
+[case.run]
+argv = ["compute", "instances", "list", "--project", "alpha-proj"]
+env = { GCLOUDLIKE_CONFIG_DIR = "conf" }
+timeout_seconds = 10
+[case.run.files]
+"conf/active_config" = "default\n"
+"conf/configurations/config_default" = "[core]\nproject = beta-proj\n"
+[case.expect]
+exit_code = 0
+stdout = "NAME ZONE MACHINE_TYPE STATUS\nweb-1 us-a1 small RUNNING\nweb-2 us-b2 small TERMINATED\n"
+
+[[case]]
+name = "env-property-beats-active-set"
+group = "config-layering"
+stresses = "env layer over the active set's stored value"
+expected = "pass"
+[case.run]
+argv = ["config", "get-value", "core/project"]
+env = { GCLOUDLIKE_CONFIG_DIR = "conf", GCLOUDLIKE_CORE_PROJECT = "beta-proj" }
+timeout_seconds = 10
+[case.run.files]
+"conf/active_config" = "default\n"
+"conf/configurations/config_default" = "[core]\nproject = alpha-proj\n"
+[case.expect]
+exit_code = 0
+stdout = "beta-proj\n"
+
+# --- named configuration sets (specced past current capability; PAR01) -------
+# Standout has no config-file layering feature today; the spec asks for the
+# gcloud shape anyway. A blind implementer may hand-roll it (the workaround is
+# itself instrumentation signal); a failure here reads as a framework gap for
+# the parity-config-layering epic, not a spec defect.
+
+[[case]]
+name = "active-set-feeds-the-view"
+group = "config-layering"
+stresses = "a stored property of the active set reaches a nested domain view"
+expected = "fail"
+gap = "PAR01"
+reason = "named configuration sets are specced past current framework capability (docs/spec/parity-config-layering.md)"
+[case.run]
+argv = ["compute", "instances", "list"]
+env = { GCLOUDLIKE_CONFIG_DIR = "conf" }
+timeout_seconds = 10
+[case.run.files]
+"conf/active_config" = "default\n"
+"conf/configurations/config_default" = "[core]\nproject = alpha-proj\n"
+[case.expect]
+exit_code = 0
+stdout = "NAME ZONE MACHINE_TYPE STATUS\nweb-1 us-a1 small RUNNING\nweb-2 us-b2 small TERMINATED\n"
+
+[[case]]
+name = "active-config-file-selects-the-set"
+group = "config-layering"
+stresses = "the persisted active name picks which whole set applies"
+expected = "fail"
+gap = "PAR01"
+reason = "named configuration sets are specced past current framework capability (docs/spec/parity-config-layering.md)"
+[case.run]
+argv = ["compute", "instances", "list"]
+env = { GCLOUDLIKE_CONFIG_DIR = "conf" }
+timeout_seconds = 10
+[case.run.files]
+"conf/active_config" = "prod\n"
+"conf/configurations/config_default" = "[core]\nproject = alpha-proj\n"
+"conf/configurations/config_prod" = "[core]\nproject = beta-proj\n"
+[case.expect]
+exit_code = 0
+stdout = "NAME ZONE MACHINE_TYPE STATUS\ndb-1 us-a1 large RUNNING\n"
+
+[[case]]
+name = "active-config-env-selects-the-set"
+group = "config-layering"
+stresses = "GCLOUDLIKE_ACTIVE_CONFIG outranks the persisted active name"
+expected = "fail"
+gap = "PAR01"
+reason = "named configuration sets are specced past current framework capability (docs/spec/parity-config-layering.md)"
+[case.run]
+argv = ["compute", "instances", "list"]
+env = { GCLOUDLIKE_CONFIG_DIR = "conf", GCLOUDLIKE_ACTIVE_CONFIG = "prod" }
+timeout_seconds = 10
+[case.run.files]
+"conf/active_config" = "default\n"
+"conf/configurations/config_default" = "[core]\nproject = alpha-proj\n"
+"conf/configurations/config_prod" = "[core]\nproject = beta-proj\n"
+[case.expect]
+exit_code = 0
+stdout = "NAME ZONE MACHINE_TYPE STATUS\ndb-1 us-a1 large RUNNING\n"
+
+[[case]]
+name = "configuration-flag-selects-the-set"
+group = "config-layering"
+stresses = "--configuration outranks the persisted active name"
+expected = "fail"
+gap = "PAR01"
+reason = "named configuration sets are specced past current framework capability (docs/spec/parity-config-layering.md)"
+[case.run]
+argv = ["compute", "instances", "list", "--configuration", "prod"]
+env = { GCLOUDLIKE_CONFIG_DIR = "conf" }
+timeout_seconds = 10
+[case.run.files]
+"conf/active_config" = "default\n"
+"conf/configurations/config_default" = "[core]\nproject = alpha-proj\n"
+"conf/configurations/config_prod" = "[core]\nproject = beta-proj\n"
+[case.expect]
+exit_code = 0
+stdout = "NAME ZONE MACHINE_TYPE STATUS\ndb-1 us-a1 large RUNNING\n"
+
+[[case]]
+name = "configuration-flag-beats-active-config-env"
+group = "config-layering"
+stresses = "the set selector has its own precedence chain: flag over env over file"
+expected = "fail"
+gap = "PAR01"
+reason = "named configuration sets are specced past current framework capability (docs/spec/parity-config-layering.md)"
+[case.run]
+argv = ["compute", "instances", "list", "--configuration", "default"]
+env = { GCLOUDLIKE_CONFIG_DIR = "conf", GCLOUDLIKE_ACTIVE_CONFIG = "prod" }
+timeout_seconds = 10
+[case.run.files]
+"conf/active_config" = "prod\n"
+"conf/configurations/config_default" = "[core]\nproject = alpha-proj\n"
+"conf/configurations/config_prod" = "[core]\nproject = beta-proj\n"
+[case.expect]
+exit_code = 0
+stdout = "NAME ZONE MACHINE_TYPE STATUS\nweb-1 us-a1 small RUNNING\nweb-2 us-b2 small TERMINATED\n"
+
+[[case]]
+name = "named-sets-never-merge"
+group = "config-layering"
+stresses = "a set applies whole: a property the active set omits stays unset, and `default` does not back-fill it"
+expected = "fail"
+gap = "PAR01"
+reason = "named configuration sets are specced past current framework capability (docs/spec/parity-config-layering.md)"
+[case.run]
+argv = ["config", "get-value", "core/project"]
+env = { GCLOUDLIKE_CONFIG_DIR = "conf" }
+timeout_seconds = 10
+[case.run.files]
+"conf/active_config" = "prod\n"
+"conf/configurations/config_default" = "[core]\nproject = alpha-proj\n"
+"conf/configurations/config_prod" = "[compute]\nzone = us-a1\n"
+[case.expect]
+exit_code = 1
+stdout = ""
+stderr = "gcloudlike: unset property: core/project\n"
+
+[[case]]
+name = "config-list-renders-effective-properties"
+group = "config-layering"
+stresses = "the effective view spans layers: a stored property and an env-supplied one, sections and names sorted"
+expected = "fail"
+gap = "PAR01"
+reason = "named configuration sets are specced past current framework capability (docs/spec/parity-config-layering.md)"
+[case.run]
+argv = ["config", "list"]
+env = { GCLOUDLIKE_CONFIG_DIR = "conf", GCLOUDLIKE_COMPUTE_ZONE = "us-a1" }
+timeout_seconds = 10
+[case.run.files]
+"conf/active_config" = "default\n"
+"conf/configurations/config_default" = "[core]\nproject = alpha-proj\n"
+[case.expect]
+exit_code = 0
+stdout = "[compute]\nzone = us-a1\n[core]\nproject = alpha-proj\n"
+stderr = ""
+
+[[case]]
+name = "configurations-list-marks-the-active-set"
+group = "config-layering"
+stresses = "the set inventory names every set and which one this invocation resolved to"
+expected = "fail"
+gap = "PAR01"
+reason = "named configuration sets are specced past current framework capability (docs/spec/parity-config-layering.md)"
+[case.run]
+argv = ["config", "configurations", "list"]
+env = { GCLOUDLIKE_CONFIG_DIR = "conf" }
+timeout_seconds = 10
+[case.run.files]
+"conf/active_config" = "prod\n"
+"conf/configurations/config_default" = "[core]\nproject = alpha-proj\n"
+"conf/configurations/config_prod" = "[core]\nproject = beta-proj\n"
+[case.expect]
+exit_code = 0
+stdout = "NAME IS_ACTIVE\ndefault False\nprod True\n"
+stderr = ""
+
+[[case]]
+name = "unknown-configuration-is-domain-error"
+group = "config-layering"
+stresses = "selecting a set that does not exist fails as a domain error before any view renders"
+expected = "fail"
+gap = "PAR01"
+reason = "named configuration sets are specced past current framework capability (docs/spec/parity-config-layering.md)"
+[case.run]
+argv = ["compute", "instances", "list", "--configuration", "nope"]
+env = { GCLOUDLIKE_CONFIG_DIR = "conf" }
+timeout_seconds = 10
+[case.run.files]
+"conf/configurations/config_default" = "[core]\nproject = alpha-proj\n"
+[case.expect]
+exit_code = 1
+stdout = ""
+stderr = "gcloudlike: unknown configuration: nope\n"
+
+# --- store mutation: notices are stderr, stdout stays a script's to read -----
+
+[[case]]
+name = "set-property-writes-the-active-set"
+group = "store-mutation"
+stresses = "the write path reports on stderr and leaves stdout empty"
+expected = "fail"
+gap = "PAR01"
+reason = "named configuration sets are specced past current framework capability (docs/spec/parity-config-layering.md)"
+[case.run]
+argv = ["config", "set", "core/project", "alpha-proj"]
+env = { GCLOUDLIKE_CONFIG_DIR = "conf" }
+timeout_seconds = 10
+[case.expect]
+exit_code = 0
+stdout = ""
+stderr = "Updated property [core/project].\n"
+
+[[case]]
+name = "create-configuration-reports-on-stderr"
+group = "store-mutation"
+stresses = "creating a set is a stderr notice, not stdout output"
+expected = "fail"
+gap = "PAR01"
+reason = "named configuration sets are specced past current framework capability (docs/spec/parity-config-layering.md)"
+[case.run]
+argv = ["config", "configurations", "create", "staging"]
+env = { GCLOUDLIKE_CONFIG_DIR = "conf" }
+timeout_seconds = 10
+[case.expect]
+exit_code = 0
+stdout = ""
+stderr = "Created [staging].\n"
+
+[[case]]
+name = "activate-known-configuration-reports-on-stderr"
+group = "store-mutation"
+stresses = "activation is a stderr notice over a store the command must first consult"
+expected = "fail"
+gap = "PAR01"
+reason = "named configuration sets are specced past current framework capability (docs/spec/parity-config-layering.md)"
+[case.run]
+argv = ["config", "configurations", "activate", "prod"]
+env = { GCLOUDLIKE_CONFIG_DIR = "conf" }
+timeout_seconds = 10
+[case.run.files]
+"conf/configurations/config_prod" = "[core]\nproject = beta-proj\n"
+[case.expect]
+exit_code = 0
+stdout = ""
+stderr = "Activated [prod].\n"
+
+[[case]]
+name = "activate-unknown-configuration-is-domain-error"
+group = "store-mutation"
+stresses = "activation refuses a set the store does not hold"
+expected = "fail"
+gap = "PAR01"
+reason = "named configuration sets are specced past current framework capability (docs/spec/parity-config-layering.md)"
+[case.run]
+argv = ["config", "configurations", "activate", "nope"]
+env = { GCLOUDLIKE_CONFIG_DIR = "conf" }
+timeout_seconds = 10
+[case.run.files]
+"conf/configurations/config_prod" = "[core]\nproject = beta-proj\n"
+[case.expect]
+exit_code = 1
+stdout = ""
+stderr = "gcloudlike: unknown configuration: nope\n"
+
+[[case]]
+name = "quiet-suppresses-the-activation-notice"
+group = "store-mutation"
+stresses = "--quiet silences the notice channel without touching the exit status"
+expected = "fail"
+gap = "PAR01"
+reason = "named configuration sets are specced past current framework capability (docs/spec/parity-config-layering.md)"
+[case.run]
+argv = ["config", "configurations", "activate", "prod", "--quiet"]
+env = { GCLOUDLIKE_CONFIG_DIR = "conf" }
+timeout_seconds = 10
+[case.run.files]
+"conf/configurations/config_prod" = "[core]\nproject = beta-proj\n"
+[case.expect]
+exit_code = 0
+stdout = ""
+stderr = ""
+
+# --- ROB01 invariant matrix --------------------------------------------------
+# Read-only commands the runner sweeps across output modes (text/term/json),
+# piped, on top of the case suite (format: corpus/README.md, Manifest/Run
+# semantics). Both are argv-only, so the matrix never depends on a store the
+# sandbox does not fixture. Failures here are framework findings by default.
+
+[invariants]
+modes = ["text", "term", "json"]
+colors = ["off", "on"]
+
+[[invariants.theme]]
+name = "application"
+
+[[invariants.command]]
+argv = ["compute", "instances", "list", "--project", "alpha-proj"]
+contract = "rendered"
+
+[[invariants.command]]
+argv = ["compute", "instances", "describe", "web-1", "--project", "alpha-proj"]
+contract = "rendered"

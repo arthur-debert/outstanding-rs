@@ -347,6 +347,18 @@ its README for the expected-fail semantics under plain `pixi run test`).
 The pilot's execution artifacts — committed run reports and the scorecard —
 live under `pilot/` (see Layout above).
 
+### Roster expansion
+
+The survey's remaining in-capability shapes are authored spec-first as the
+corpus-completion epic reaches them
+(`docs/spec/robustness-corpus-completion.md`). Their behavioral sketches were
+not kept, so each spec reconstructs the shape from the survey's capability
+matrix and states in prose which interactions it stresses.
+
+| Archetype | Survey | Shape |
+| --- | --- | --- |
+| `gcloudlike` | C7 | named configuration sets selected per invocation, layered under property env vars and flags |
+
 One method-coverage archetype sits beside the product roster. It is not a
 survey Part C CLI; it exists so the known-edge validity check (#365) can
 pin all three known-edge families (including the two the ROB03 pilot did

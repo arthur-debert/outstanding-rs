@@ -1,0 +1,109 @@
+# Feature/interaction manifest for `gcloudlike`. Format: corpus/README.md.
+
+[archetype]
+name = "gcloudlike"
+survey = "C7"
+summary = "named configuration sets selected per invocation, layered under property env vars and flags"
+status = "partially-past-capability"
+
+[features]
+used = [
+    "dispatch.nested-subcommands",
+    "dispatch.group-builder",
+    "dispatch.global-flags",
+    "output-modes.auto-degradation",
+    "output-modes.structured-json",
+    "templates",
+    "error-handling.exit-codes",
+    "help.rendering",
+]
+
+[[interactions]]
+id = "named-sets-vs-layer-precedence"
+stresses = [
+    "whole-set selection instead of file merge",
+    "layer precedence (flag > env > active set)",
+    "mechanical key-to-env-variable mapping",
+    "effective-value resolution feeding a view",
+]
+description = "The other config archetypes merge sources; gcloud's rule is that one named set applies whole and the rest contribute nothing — a property the active set omits stays unset even when `default` stores it. A merge-shaped implementation passes the precedence cases and fails this one, which is why the pair is authored together."
+cases = [
+    "named-sets-never-merge",
+    "active-set-feeds-the-view",
+    "env-property-beats-active-set",
+    "flag-property-beats-active-set",
+    "flag-property-beats-env-property",
+    "get-value-from-env",
+    "get-value-from-flag",
+    "empty-env-property-is-unset",
+    "config-list-renders-effective-properties",
+]
+
+[[interactions]]
+id = "active-set-selection-vs-flag-and-env"
+stresses = [
+    "a second precedence chain over the selector itself",
+    "persisted active-set file",
+    "per-invocation --configuration flag",
+    "selector environment variable",
+]
+description = "Two precedence chains run per invocation and must not be conflated: one picks which set is active (flag > env > file > `default`), the other resolves each property within it. Collapsing them into a single ladder is the shape that reads correctly on the happy path and mis-resolves the moment a flag names a set while an environment variable names a property."
+cases = [
+    "active-config-file-selects-the-set",
+    "active-config-env-selects-the-set",
+    "configuration-flag-selects-the-set",
+    "configuration-flag-beats-active-config-env",
+    "configurations-list-marks-the-active-set",
+    "unknown-configuration-is-domain-error",
+]
+
+[[interactions]]
+id = "app-format-flag-vs-framework-output"
+stresses = [
+    "an app-owned --format flag",
+    "framework output modes and TTY autodetection",
+    "typed serialization",
+]
+description = "The app carries its own machine-format flag on top of the framework's global output handling, so two things claim the same stdout. The projection must survive an attended terminal unchanged: no styling, framing, or prose may enter it."
+cases = [
+    "instances-list-json-format",
+    "instances-describe-json-format",
+    "instances-list-json-pure-on-attended-terminal",
+]
+
+[[interactions]]
+id = "notices-vs-stdout-purity"
+stresses = [
+    "store-mutating commands",
+    "stderr notice channel",
+    "--quiet suppression",
+]
+description = "Every mutating command reports on stderr and leaves stdout empty, so a script can read the store's effect without filtering prose; --quiet silences that channel without touching the exit status. The suite asserts the streams and the status because one invocation cannot observe its own write — the round-trip is beyond the black-box case schema, and the persistence itself is scored through the read cases."
+cases = [
+    "set-property-writes-the-active-set",
+    "create-configuration-reports-on-stderr",
+    "activate-known-configuration-reports-on-stderr",
+    "quiet-suppresses-the-activation-notice",
+]
+
+[[interactions]]
+id = "error-taxonomy-across-config-and-domain"
+stresses = [
+    "usage errors vs domain errors",
+    "exit-code mapping",
+    "stream separation at depth",
+]
+description = "Three failure kinds share one surface and must stay distinguishable: a malformed key is a usage error at exit 2, an unrecognized-but-well-formed key and an unresolvable property are domain errors at exit 1, and every one of them leaves stdout empty."
+cases = [
+    "get-value-malformed-key-is-usage-error",
+    "get-value-unknown-property-is-domain-error",
+    "get-value-unset-property",
+    "set-unknown-property-is-domain-error",
+    "instances-list-unset-project-is-domain-error",
+    "instances-describe-unknown-name",
+    "instances-describe-outside-effective-project",
+    "unknown-subcommand-is-usage-error",
+]
+
+[gaps]
+PAR01 = "The persisted named-set store — discovery of the configuration directory, the INI set files, active-set resolution, and the layer they sit under — is specced past current framework capability on purpose; it is the third leg of the config-layering triangulation the PAR01 parity epic expects (docs/spec/parity-config-layering.md), beside gitlike's walk-up merge and cargolike's per-type merge. Cases are marked expected-fail exactly when a spec-correct implementation cannot answer them without touching that store; a hand-rolled pass is friction signal, not a framework pass."
