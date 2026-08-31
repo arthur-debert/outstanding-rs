@@ -22,9 +22,9 @@ pub use dispatch::{
     path_to_string, string_to_path,
 };
 pub use handler::{
-    CommandContext, DispatchResult, ExitStatus, Extensions, ExternalFailure, FnHandler, Handler,
-    HandlerResult, IntoHandlerResult, InvalidExternalStatus, Output, OutputKind, RunError,
-    RunErrorKind, RunOutput, SimpleFnHandler, SuccessKind,
+    AppFailure, CommandContext, DispatchResult, ExitStatus, Extensions, ExternalFailure, FnHandler,
+    Handler, HandlerResult, IntoHandlerResult, InvalidAppStatus, InvalidExternalStatus, Output,
+    OutputKind, RunError, RunErrorKind, RunOutput, SimpleFnHandler, SuccessKind,
 };
 pub use hooks::{
     ArtifactOutput, HookError, HookPhase, Hooks, PostDispatchFn, PostOutputFn, PreDispatchFn,

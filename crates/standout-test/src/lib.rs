@@ -358,7 +358,7 @@ fn render_stderr(
     theme: &standout::Theme,
 ) -> String {
     let primary = match outcome {
-        DispatchResult::Error(error) if error.kind() == RunErrorKind::External => error.to_string(),
+        DispatchResult::Error(error) if error.writes_diagnostic_verbatim() => error.to_string(),
         DispatchResult::Error(error) => format!("{}\n", error),
         DispatchResult::Artifact(run) if run.destination().is_stdout() => report_line(run),
         _ => String::new(),

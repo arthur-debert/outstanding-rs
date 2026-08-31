@@ -127,17 +127,16 @@ impl App {
             ctx.extensions.insert(warnings);
 
             let hooks = self.command_hooks.get(&path_str);
+            let sub_matches = get_deepest_matches(&matches);
 
             if let Some(hooks) = hooks {
-                if let Err(e) = hooks.run_pre_dispatch(&matches, &mut ctx) {
+                if let Err(e) = hooks.run_pre_dispatch(sub_matches, &mut ctx) {
                     return DispatchResult::Error(super::super::dispatch::hook_run_error(
                         e,
                         crate::cli::HookPhase::PreDispatch,
                     ));
                 }
             }
-
-            let sub_matches = get_deepest_matches(&matches);
 
             let dispatch_output = match dispatch(
                 dispatch_fn,
@@ -164,7 +163,7 @@ impl App {
             };
 
             let mut final_output = if let Some(hooks) = hooks {
-                match hooks.run_post_output(&matches, &ctx, output) {
+                match hooks.run_post_output(sub_matches, &ctx, output) {
                     Ok(o) => o,
                     Err(e) => {
                         return DispatchResult::Error(super::super::dispatch::hook_run_error(
@@ -805,7 +804,7 @@ fn emit_run_result<W: Write, E: Write>(
             }),
         DispatchResult::Artifact(run) => emit_artifact(run, stdout, stderr),
         DispatchResult::Silent => None,
-        DispatchResult::Error(error) => (if error.kind() == RunErrorKind::External {
+        DispatchResult::Error(error) => (if error.writes_diagnostic_verbatim() {
             stderr.write_all(error.as_str().as_bytes())
         } else {
             writeln!(stderr, "{}", error)
@@ -1313,8 +1312,7 @@ mod tests {
 
         assert!(result.is_error(), "expected Error, got {:?}", result);
         let msg = result.error().unwrap();
-        assert!(msg.contains("Hook error"));
-        assert!(msg.contains("blocked by hook"));
+        assert_eq!(msg, "Error: hook error (pre-dispatch): blocked by hook");
     }
 
     #[test]
@@ -1424,8 +1422,10 @@ mod tests {
 
         assert!(result.is_error(), "expected Error, got {:?}", result);
         let msg = result.error().unwrap();
-        assert!(msg.contains("Hook error"));
-        assert!(msg.contains("post-processing failed"));
+        assert_eq!(
+            msg,
+            "Error: hook error (post-output): post-processing failed"
+        );
     }
 
     #[test]
@@ -1777,8 +1777,10 @@ mod tests {
 
         assert!(result.is_error(), "expected Error, got {:?}", result);
         let msg = result.error().unwrap();
-        assert!(msg.contains("Hook error"));
-        assert!(msg.contains("no items to display"));
+        assert_eq!(
+            msg,
+            "Error: hook error (post-dispatch): no items to display"
+        );
     }
 
     #[test]

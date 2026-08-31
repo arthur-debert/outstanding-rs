@@ -441,6 +441,22 @@ App::builder()
     .no_output_flag()  // Disable entirely
 ```
 
+### Output Mode Fallback
+
+The mode used when the flag is absent from the command line. It defaults to
+`OutputMode::Auto`; an application that decides its own default — from its own
+environment variable, a config file, or anything else it reads at build time —
+sets it here:
+
+```rust
+App::builder()
+    .output_mode_fallback(OutputMode::Term)
+```
+
+Precedence is `--output` first, then the fallback. An explicit `--output` always
+wins, so this sets the default rather than overriding the user. Forcing color
+regardless of mode is a separate axis and is not what this call does.
+
 ### File Output Flag
 
 ```rust
@@ -462,6 +478,7 @@ App::builder()
 pub struct App {
     registry: TopicRegistry,
     output_flag: Option<String>,
+    output_mode_fallback: OutputMode,
     output_file_flag: Option<String>,
     theme: Theme,
     command_hooks: HashMap<String, Hooks>,
@@ -484,9 +501,10 @@ if !app.run(Cli::command(), std::env::args()) {
 Parses args, dispatches to a handler, and performs the final write. It returns
 `true` when Standout handled the command and `false` for an unmatched fallback.
 Help/version and successes use stdout/status 0, usage errors use stderr/status
-2, and runtime/write failures use stderr/status 1. An explicit
-`ExternalFailure` is the sole exception: it preserves an authoritative external
-operation's declared nonzero status and verbatim stderr payload.
+2, and runtime/write failures use stderr/status 1. The two owner-declared
+failures are the exceptions: `AppFailure` carries the application's own nonzero
+status and verbatim stderr payload, and `ExternalFailure` preserves an
+authoritative external operation's. See [Error Handling](./error-handling.md).
 
 ### Capture Output
 

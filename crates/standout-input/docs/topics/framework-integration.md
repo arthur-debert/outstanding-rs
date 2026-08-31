@@ -64,13 +64,14 @@ The chain runs in the **pre-dispatch** phase — before the handler is called �
 parsed CLI args → PRE-DISPATCH → handler → POST-DISPATCH → render → POST-OUTPUT
 ```
 
+Every hook receives the deepest subcommand's `ArgMatches` — the same args the handler is about to see — so a hook on `mycli create` reads `create`'s own flags.
+
 `.input(name, chain)` is sugar over `.pre_dispatch(...)` — the same hook used for auth checks, request-scoped state, etc. Each `.input(...)` call adds one pre-dispatch hook that:
 
-1. Walks to the deepest subcommand's `ArgMatches` (so chains see the same args the handler does).
-2. Calls `chain.resolve_from_with_source(matches, ctx.input_sources())`.
-3. Stashes the result in an [`Inputs`](https://docs.rs/standout-input/latest/standout_input/struct.Inputs.html) bag on `ctx.extensions` under `name`.
+1. Calls `chain.resolve_from_with_source(matches, ctx.input_sources())`.
+2. Stashes the result in an [`Inputs`](https://docs.rs/standout-input/latest/standout_input/struct.Inputs.html) bag on `ctx.extensions` under `name`.
 
-If resolution returns an error, dispatch stops and the framework reports `` Hook error: input `body`: <error message> ``. The handler does not run.
+If resolution returns an error, dispatch stops and the framework reports `` Error: hook error (pre-dispatch): input `body`: <error message> ``. The handler does not run.
 
 ---
 
@@ -157,7 +158,7 @@ Chain-level validation runs as part of `resolve_with_source`. If validation fail
 If the user runs `mycli create --body "   "`, the framework reports:
 
 ```text
-Hook error: input `body`: validation failed: body must not be empty
+Error: hook error (pre-dispatch): input `body`: validation failed: body must not be empty
 ```
 
 For interactive sources (prompts, editor), validation failure re-prompts instead of aborting — the chain decides the loop. See [Backends](backends.md) for the full validation/retry semantics.

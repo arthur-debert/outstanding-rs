@@ -2,7 +2,7 @@ use crate::context::ContextProvider;
 use crate::setup::SetupError;
 use crate::topics::Topic;
 use crate::TemplateRegistry;
-use crate::{EmbeddedStyles, EmbeddedTemplates, Theme};
+use crate::{EmbeddedStyles, EmbeddedTemplates, OutputMode, Theme};
 use minijinja::Value;
 
 use super::AppBuilder;
@@ -93,6 +93,11 @@ impl AppBuilder {
 
     pub fn no_output_flag(mut self) -> Self {
         self.output_flag = None;
+        self
+    }
+
+    pub fn output_mode_fallback(mut self, mode: OutputMode) -> Self {
+        self.output_mode_fallback = mode;
         self
     }
 

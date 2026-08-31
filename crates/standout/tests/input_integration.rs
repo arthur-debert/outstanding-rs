@@ -567,11 +567,9 @@ fn validation_failure_aborts_before_handler() {
         DispatchResult::Error(s) => s,
         other => panic!("expected Error, got {:?}", other),
     };
-    assert!(out.starts_with("Hook error:"), "unexpected output: {out}");
-    assert!(out.contains("body"), "error should name the input: {out}");
-    assert!(
-        out.contains("must not be empty"),
-        "error should surface validator message: {out}"
+    assert_eq!(
+        out.as_str(),
+        "Error: hook error (pre-dispatch): input `body`: Validation failed: body must not be empty"
     );
 }
 
