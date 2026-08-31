@@ -129,21 +129,44 @@ Hardcoded widths are fragile. What if the terminal is wider or narrower? Tabular
 | Width | Meaning |
 | ----- | ------- |
 | `8` | Exactly 8 columns (fixed) |
-| `{"min": 10}` | At least 10 columns; see the note below for how this is set today |
+| `{"min": 10}` | At least 10 columns, and as wide as the widest cell when you pass `rows=` |
 | `{"min": 10, "max": 30}` | Between 10 and 30, alongside a `"fill"` column |
 | `"fill"` | Takes all remaining space |
 | `"2fr"` | 2 parts of remaining (proportional) |
 
 A `{"min": ..., "max": ...}` column is resolved once, when `tabular()` or
-`table()` builds the formatter, before any row is seen — it does not measure
-row content. With no `"fill"` (or fractional) column in the table, any
-leftover terminal width is added to the rightmost such column instead,
-regardless of its `max`. Content-based growth does happen for *sub-columns*
-(see Step 7): there, a bounded sub-column measures its own row's content and
-resizes independently on every call to `.row(...)`. Resolving a top-level
-column's width from every row's content — the whole table, not just one row
-— is issue #359 in the ROB06 adopter-seams epic, which changes `tabular()` to
-reach the whole-table width resolver that already exists internally.
+`table()` builds the formatter. The formatter then formats one row at a time,
+so it can only measure content it was handed up front: pass the rows you are
+about to render as `rows=`, and every bounded column is sized to its widest
+cell (still clamped by `max`) before the first row is formatted.
+
+`rows=` takes an array of row arrays — the same cells `.row(...)` takes — so
+hand it the list you are about to loop over:
+
+```jinja
+{% set t = tabular([
+    {"width": {"min": 0}},
+    {"width": {"min": 0}},
+    {"width": "fill"}
+], separator="  ", rows=rows) %}
+
+{% for row in rows %}
+{{ t.row(row) }}
+{% endfor %}
+```
+
+with `rows` a list of `[index, status, title]` arrays from the handler's data.
+`table()` takes the same `rows=`, and measures its `header=` row alongside the
+data so a header wider than its column is not truncated. A row — or a `header=`
+— shorter than the column list measures the columns it leaves out at their
+`null_repr`, the text the formatter renders there. A column carrying
+`sub_columns` is not measured from `rows=`, because its sub-columns are
+resolved per row against the parent's width (see Step 7).
+
+Without `rows=` a bounded column has nothing to grow it: it lands on its `min`,
+and with no `"fill"` (or fractional) column in the table any leftover terminal
+width is added to the rightmost bounded column instead, regardless of its
+`max`.
 
 Let's make the title column expand to fill available space:
 

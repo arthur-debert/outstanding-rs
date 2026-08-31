@@ -2,6 +2,11 @@
 //! `truncate_at`, `display_width`, `style_as`) and global functions
 //! (`tabular(columns, ...)`, `table(columns, ...)`) for columnar output.
 //!
+//! Both functions take `rows` — the row arrays about to be rendered — and
+//! size every `{min, max}` column to the widest cell they hold, the
+//! whole-table measurement a formatter that sees one row at a time cannot do
+//! on its own; `table()` measures its `header` alongside them.
+//!
 //! Columns are defined as dicts with `width` (a number, `"fill"`, `"Nfr"`,
 //! or `{min, max}`/`{fraction}`), `align`, `truncate`, `key`, `header`,
 //! `style`, `null_repr`, `anchor`, `overflow`, and `sub_columns`. BBCode-style
@@ -9,6 +14,7 @@
 //! measurement excludes tag bytes, and tags stay balanced after padding or
 //! truncation.
 
+use minijinja::value::ValueKind;
 use minijinja::{Environment, Value};
 
 use super::decorator::{BorderStyle, Table};
@@ -204,6 +210,7 @@ fn register_table_functions(env: &mut Environment<'static>, widths: RenderWidthS
             let separator = kwargs
                 .get::<Option<String>>("separator")?
                 .unwrap_or_default();
+            let rows = kwargs.get::<Option<Value>>("rows")?;
             let width =
                 resolve_tabular_width(kwargs.get::<Option<usize>>("width")?, &tabular_widths);
             kwargs.assert_all_used()?;
@@ -217,11 +224,17 @@ fn register_table_functions(env: &mut Environment<'static>, widths: RenderWidthS
             }
 
             let spec = builder.build();
-            let formatter = TabularFormatter::with_ambiguous_width(
-                &spec,
-                width,
-                tabular_widths.ambiguous_width(),
-            );
+            let policy = tabular_widths.ambiguous_width();
+            let formatter = match rows {
+                Some(rows) => {
+                    let data = measurable_rows(&spec.columns, &rows, "tabular")?;
+                    let resolved = spec.resolve_widths_from_data_with_policy(width, &data, policy);
+                    TabularFormatter::from_resolved_with_width_and_policy(
+                        &spec, resolved, width, policy,
+                    )
+                }
+                None => TabularFormatter::with_ambiguous_width(&spec, width, policy),
+            };
             Ok(Value::from_object(formatter))
         },
     );
@@ -241,6 +254,7 @@ fn register_table_functions(env: &mut Environment<'static>, widths: RenderWidthS
                 .get::<Option<bool>>("row_separator")?
                 .unwrap_or(false);
             let row_styles = kwargs.get::<Option<Value>>("row_styles")?;
+            let rows = kwargs.get::<Option<Value>>("rows")?;
             let width =
                 resolve_tabular_width(kwargs.get::<Option<usize>>("width")?, &table_widths);
             kwargs.assert_all_used()?;
@@ -254,6 +268,7 @@ fn register_table_functions(env: &mut Environment<'static>, widths: RenderWidthS
             }
 
             let spec = builder.build();
+            let columns = spec.columns.clone();
             let mut table = Table::with_ambiguous_width(
                 spec,
                 width,
@@ -261,18 +276,28 @@ fn register_table_functions(env: &mut Environment<'static>, widths: RenderWidthS
             )
             .border(parse_border_style(&border));
 
+            let mut headers: Option<Vec<String>> = None;
             if let Some(h) = header {
-                let headers: Vec<String> = h
-                    .try_iter()
-                    .map_err(|_| {
+                let parsed: Vec<String> = array_items(&h)
+                    .ok_or_else(|| {
                         minijinja::Error::new(
                             minijinja::ErrorKind::InvalidOperation,
-                            "header must be an array of strings",
+                            format!("header must be an array of strings, got {}", h.kind()),
                         )
                     })?
-                    .map(|v| stringify(&v).into_owned())
+                    .iter()
+                    .map(|v| stringify(v).into_owned())
                     .collect();
-                table = table.header(headers);
+                headers = Some(parsed.clone());
+                table = table.header(parsed);
+            }
+
+            if let Some(rows) = rows {
+                let mut data = measurable_rows(&columns, &rows, "table")?;
+                if let Some(headers) = headers {
+                    data.push(measurable_row(&columns, headers));
+                }
+                table = table.sized_to_data(&data);
             }
 
             if let Some(style) = header_style {
@@ -315,6 +340,76 @@ fn register_table_functions(env: &mut Environment<'static>, widths: RenderWidthS
             Ok(Value::from_object(table))
         },
     );
+}
+
+/// Flattens the `rows=` argument into the cell strings the width resolver
+/// measures. Anything that is not an array of arrays is an error rather than a
+/// one-cell row: a template that passes a mapping or a scalar would otherwise
+/// measure a debug rendering of it and size the table to that.
+fn measurable_rows(
+    columns: &[Column],
+    rows: &Value,
+    function: &str,
+) -> Result<Vec<Vec<String>>, minijinja::Error> {
+    let rows = array_items(rows).ok_or_else(|| {
+        minijinja::Error::new(
+            minijinja::ErrorKind::InvalidOperation,
+            format!(
+                "{function}() rows must be an array of row arrays, got {}",
+                rows.kind()
+            ),
+        )
+    })?;
+
+    rows.into_iter()
+        .enumerate()
+        .map(|(index, row)| {
+            let cells = array_items(&row).ok_or_else(|| {
+                minijinja::Error::new(
+                    minijinja::ErrorKind::InvalidOperation,
+                    format!(
+                        "{function}() rows must be an array of row arrays, but row {index} is {}",
+                        row.kind()
+                    ),
+                )
+            })?;
+            Ok(measurable_row(
+                columns,
+                cells.iter().map(|cell| stringify(cell).into_owned()),
+            ))
+        })
+        .collect()
+}
+
+/// The cells of a value the template passed as an array, or `None` for
+/// anything else — a string included, whose per-character iteration would read
+/// as a row of one-character cells.
+fn array_items(value: &Value) -> Option<Vec<Value>> {
+    match value.kind() {
+        ValueKind::Seq | ValueKind::Iterable => value.try_iter().map(Iterator::collect).ok(),
+        _ => None,
+    }
+}
+
+/// Squares one row against the column list, the shape the width resolver
+/// measures. A cell the row omits measures as that column's `null_repr`,
+/// because that is what the formatter renders in its place; a column carrying
+/// `sub_columns` measures as empty, because its sub-columns are resolved per
+/// row against the parent's width, so the whole table has no single content
+/// width to grow it to.
+fn measurable_row(columns: &[Column], cells: impl IntoIterator<Item = String>) -> Vec<String> {
+    let mut cells = cells.into_iter();
+    columns
+        .iter()
+        .map(|column| {
+            let cell = cells.next();
+            if column.sub_columns.is_some() {
+                String::new()
+            } else {
+                cell.unwrap_or_else(|| column.null_repr.clone())
+            }
+        })
+        .collect()
 }
 
 fn parse_columns(columns: &Value) -> Result<Vec<Column>, minijinja::Error> {
@@ -1205,6 +1300,177 @@ mod tests {
             .render(context!())
             .unwrap();
         assert_eq!(result, "Hello       World   ");
+    }
+
+    const PR_ROWS: &[[&str; 3]] = &[
+        ["#12", "open", "Add pagination"],
+        ["#7", "merged", "Fix retry"],
+    ];
+
+    fn render_with_rows(template: &str) -> String {
+        let mut env = setup_env();
+        env.add_template("test", template).unwrap();
+        env.get_template("test")
+            .unwrap()
+            .render(context!(rows => PR_ROWS))
+            .unwrap()
+    }
+
+    #[test]
+    fn function_tabular_without_rows_leaves_bounded_columns_unmeasured() {
+        let widths = render_with_rows(
+            r#"{% set fmt = tabular([{"width": {"min": 0}}, {"width": {"min": 0}}, {"width": {"min": 0}}], separator="  ", width=60) %}{{ fmt.widths }}"#,
+        );
+        assert_eq!(widths, "[0, 0, 56]");
+    }
+
+    #[test]
+    fn function_tabular_rows_sizes_bounded_columns_to_the_widest_cell() {
+        let widths = render_with_rows(
+            r#"{% set fmt = tabular([{"width": {"min": 0}}, {"width": {"min": 0}}, {"width": {"min": 0}}], separator="  ", width=60, rows=rows) %}{{ fmt.widths }}"#,
+        );
+        assert_eq!(widths, "[3, 6, 47]");
+    }
+
+    #[test]
+    fn function_tabular_rows_aligns_every_row_to_the_measured_columns() {
+        let rendered = render_with_rows(
+            r#"{% set fmt = tabular([{"width": {"min": 0}}, {"width": {"min": 0}}, {"width": {"min": 0}}], separator="  ", width=60, rows=rows) %}{% for row in rows %}{{ fmt.row(row) }}
+{% endfor %}"#,
+        );
+        let lines: Vec<&str> = rendered.lines().map(|line| line.trim_end()).collect();
+        assert_eq!(
+            lines,
+            vec!["#12  open    Add pagination", "#7   merged  Fix retry"]
+        );
+    }
+
+    #[test]
+    fn function_tabular_rows_respects_a_max_bound() {
+        let widths = render_with_rows(
+            r#"{% set fmt = tabular([{"width": {"min": 0, "max": 2}}, {"width": {"min": 0}}, {"width": "fill"}], separator="  ", width=60, rows=rows) %}{{ fmt.widths }}"#,
+        );
+        assert_eq!(widths, "[2, 6, 48]");
+    }
+
+    #[test]
+    fn function_tabular_rows_leaves_a_sub_column_parent_unmeasured() {
+        let widths = render_with_rows(
+            r#"{% set fmt = tabular([{"width": {"min": 4}}, {"width": {"min": 0}, "sub_columns": {"columns": [{"width": "fill"}, {"width": 6}]}}], separator="  ", width=40, rows=rows) %}{{ fmt.widths }}"#,
+        );
+        assert_eq!(widths, "[4, 34]");
+    }
+
+    #[test]
+    fn function_table_rows_measures_the_header_too() {
+        let rendered = render_with_rows(
+            r#"{% set t = table([{"width": {"min": 0}}, {"width": {"min": 0}}, {"width": "fill"}], separator="  ", width=60, header=["NUMBER", "STATE", "TITLE"], rows=rows) %}{{ t.header_row() }}
+{% for row in rows %}{{ t.row(row) }}
+{% endfor %}"#,
+        );
+        let lines: Vec<&str> = rendered.lines().map(|line| line.trim_end()).collect();
+        assert_eq!(
+            lines,
+            vec![
+                "NUMBER  STATE   TITLE",
+                "#12     open    Add pagination",
+                "#7      merged  Fix retry",
+            ]
+        );
+    }
+
+    #[test]
+    fn function_tabular_rows_measures_null_repr_where_a_row_stops_short() {
+        let mut env = setup_env();
+        env.add_template(
+            "test",
+            r#"{% set fmt = tabular([{"width": {"min": 0}}, {"width": {"min": 0}, "null_repr": "unknown"}, {"width": "fill"}], separator="  ", width=60, rows=rows) %}{{ fmt.widths }}|{{ fmt.row(rows[0]) }}"#,
+        )
+        .unwrap();
+        let rendered = env
+            .get_template("test")
+            .unwrap()
+            .render(context!(rows => vec![vec!["#12"], vec!["#7"]]))
+            .unwrap();
+        let (widths, row) = rendered.split_once('|').unwrap();
+        assert_eq!(widths, "[3, 7, 46]");
+        assert!(
+            row.contains("unknown"),
+            "the omitted cell renders `null_repr` in full: {row:?}"
+        );
+    }
+
+    #[test]
+    fn function_table_measures_null_repr_where_the_header_stops_short() {
+        let mut env = setup_env();
+        env.add_template(
+            "test",
+            r#"{% set t = table([{"width": {"min": 0}}, {"width": {"min": 0}, "null_repr": "unknown"}, {"width": "fill"}], separator="  ", width=60, header=["NUMBER"], rows=rows) %}{{ t.header_row() }}"#,
+        )
+        .unwrap();
+        let header = env
+            .get_template("test")
+            .unwrap()
+            .render(context!(rows => vec![vec!["#12"], vec!["#7"]]))
+            .unwrap();
+        assert!(
+            header.contains("unknown"),
+            "the header column the caller left out renders `null_repr` in full: {header:?}"
+        );
+    }
+
+    #[test]
+    fn function_tabular_rows_rejects_a_row_that_is_not_an_array() {
+        let mut env = setup_env();
+        env.add_template(
+            "test",
+            r#"{% set fmt = tabular([{"width": {"min": 0}}], rows=[{"number": "n12"}]) %}{{ fmt.widths }}"#,
+        )
+        .unwrap();
+        let error = env
+            .get_template("test")
+            .unwrap()
+            .render(context!())
+            .unwrap_err();
+        assert!(error.to_string().contains("row 0 is map"), "{error}");
+    }
+
+    #[test]
+    fn function_table_header_rejects_a_string() {
+        let mut env = setup_env();
+        env.add_template(
+            "test",
+            r#"{% set t = table([{"width": 6}], header="NUMBER") %}{{ t.header_row() }}"#,
+        )
+        .unwrap();
+        let error = env
+            .get_template("test")
+            .unwrap()
+            .render(context!())
+            .unwrap_err();
+        assert!(
+            error.to_string().contains("header must be an array"),
+            "{error}"
+        );
+    }
+
+    #[test]
+    fn function_tabular_rows_rejects_a_scalar() {
+        let mut env = setup_env();
+        env.add_template(
+            "test",
+            r#"{% set fmt = tabular([{"width": {"min": 0}}], rows=12) %}{{ fmt.widths }}"#,
+        )
+        .unwrap();
+        let error = env
+            .get_template("test")
+            .unwrap()
+            .render(context!())
+            .unwrap_err();
+        assert!(
+            error.to_string().contains("rows must be an array"),
+            "{error}"
+        );
     }
 
     #[test]

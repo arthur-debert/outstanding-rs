@@ -126,7 +126,7 @@ impl fmt::Display for Fact {
 }
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Omission {
-    ClapGeneratedSubjects,
+    ClapGeneratedSubcommands,
     Kind(FactKind),
 }
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -136,18 +136,15 @@ pub struct Exemption {
 }
 pub const DELIBERATE_OMISSIONS: &[Exemption] = &[
     Exemption {
-        omission: Omission::ClapGeneratedSubjects,
-        reason: "Standout renders no row for clap's own `-h/--help` and \
-                 `-V/--version`: its help affordances are the `help` word in \
-                 COMMANDS and the flags clap short-circuits on before standout \
-                 renders anything. The page therefore never tells a reader the \
-                 flags exist — a real gap, exempted here rather than silently \
-                 unasserted, and left to the work that is allowed to change \
-                 rendered bytes. Clap's generated `help` *subcommand* is exempt \
-                 for a second, deliberate reason: standout drops a COMMANDS \
-                 section whose only entry is the word that printed it, because \
-                 that is a section about standout rather than about the \
-                 application (see `only_the_help_word` in the extractor).",
+        omission: Omission::ClapGeneratedSubcommands,
+        reason: "Standout installs its own `help` word and calls \
+                 `disable_help_subcommand`, so a subcommand that appears only \
+                 once clap builds the command is standout's own machinery \
+                 rather than a destination the application declared. The \
+                 extractor drops those by provenance and lists every declared \
+                 subcommand, including an application's own `help`. Clap's \
+                 generated *arguments* are not exempt: `-h/--help` and \
+                 `-V/--version` are rows on the page.",
     },
     Exemption {
         omission: Omission::Kind(FactKind::ArgLongHelp),
@@ -174,7 +171,9 @@ pub const DELIBERATE_OMISSIONS: &[Exemption] = &[
 impl Exemption {
     fn covers(&self, fact: &Fact) -> bool {
         match self.omission {
-            Omission::ClapGeneratedSubjects => fact.generated,
+            Omission::ClapGeneratedSubcommands => {
+                fact.generated && matches!(fact.subject, Subject::Subcommand(_))
+            }
             Omission::Kind(kind) => fact.kind == kind,
         }
     }
@@ -183,10 +182,6 @@ pub fn clap_facts(cmd: &Command, length: HelpLength) -> Vec<Fact> {
     let declared: HashSet<String> = cmd
         .get_arguments()
         .map(|arg| arg.get_id().to_string())
-        .collect();
-    let declared_subcommands: HashSet<String> = cmd
-        .get_subcommands()
-        .map(|sub| sub.get_name().to_string())
         .collect();
     let mut built = cmd.clone();
     built.build();
@@ -204,7 +199,7 @@ pub fn clap_facts(cmd: &Command, length: HelpLength) -> Vec<Fact> {
         ));
     }
     for sub in built.get_subcommands() {
-        let generated = !declared_subcommands.contains(sub.get_name());
+        let generated = clap_generates_subcommand(&built, sub);
         facts.extend(
             subcommand_facts(sub)
                 .into_iter()
@@ -212,7 +207,7 @@ pub fn clap_facts(cmd: &Command, length: HelpLength) -> Vec<Fact> {
         );
     }
     for arg in built.get_arguments() {
-        let generated = !declared.contains(arg.get_id().as_str());
+        let generated = clap_generates_argument(&built, arg);
         facts.extend(
             argument_facts(arg, length)
                 .into_iter()
@@ -227,6 +222,26 @@ pub fn clap_facts(cmd: &Command, length: HelpLength) -> Vec<Fact> {
         ));
     }
     facts
+}
+/// Whether clap adds `sub` during `build()` rather than the application
+/// declaring it. Clap appends a `help` word to any command that has not called
+/// `disable_help_subcommand`, and rejects an application declaring its own
+/// `help` alongside it as a duplicate name — so the parent's setting decides
+/// the provenance, whatever build state the caller handed us.
+fn clap_generates_subcommand(parent: &Command, sub: &Command) -> bool {
+    sub.get_name() == "help" && !parent.is_disable_help_subcommand_set()
+}
+/// The same question for an argument: clap adds `-h/--help` unless the command
+/// calls `disable_help_flag`, and `-V/--version` unless it calls
+/// `disable_version_flag` (which `build()` does for itself when the command
+/// carries no version), rejecting an application's same-named argument as a
+/// duplicate id.
+fn clap_generates_argument(parent: &Command, arg: &Arg) -> bool {
+    match arg.get_id().as_str() {
+        "help" => !parent.is_disable_help_flag_set(),
+        "version" => !parent.is_disable_version_flag_set(),
+        _ => false,
+    }
 }
 fn subcommand_facts(sub: &Command) -> Vec<Fact> {
     let name = sub.get_name().to_string();

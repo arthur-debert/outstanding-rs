@@ -31,6 +31,7 @@ OPTIONS
                              default: auto
                              possible values: auto, term, text, term-debug, json, yaml, xml, csv
   --output-file-path <PATH>  Write output to file instead of stdout
+  -h, --help                 Print help (see more with '--help')
 
 LEARN MORE
   naming        Naming

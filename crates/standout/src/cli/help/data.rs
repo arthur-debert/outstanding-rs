@@ -130,6 +130,10 @@ fn flag_value_name(arg: &clap::Arg) -> Option<String> {
 }
 
 fn default_value(arg: &clap::Arg) -> Option<String> {
+    if !takes_values(arg) {
+        return None;
+    }
+
     let defaults = arg.get_default_values();
     if defaults.is_empty() {
         return None;
@@ -205,6 +209,15 @@ fn only_the_help_word(subs: &[&Command]) -> bool {
     matches!(subs, [single] if single.get_name() == "help")
 }
 
+/// Whether `sub` is the `help` word clap adds in `build()` rather than a
+/// destination the application declared. Clap appends it to any command that
+/// has not called `disable_help_subcommand`, and rejects an application
+/// declaring its own `help` alongside it as a duplicate name — so the parent's
+/// setting decides the provenance, whatever build state the caller handed us.
+fn is_clap_generated_help_subcommand(parent: &Command, sub: &Command) -> bool {
+    sub.get_name() == "help" && !parent.is_disable_help_subcommand_set()
+}
+
 pub(crate) fn extract_help_data(
     cmd: &Command,
     command_groups: Option<&[CommandGroup]>,
@@ -231,6 +244,12 @@ fn extract(
     registry: Option<&TopicRegistry>,
     target: &TargetProperties,
 ) -> HelpData {
+    // Clap materialises `-h/--help` and `-V/--version` in `build()`, so the
+    // declared command is not the command clap parses and prints.
+    let mut built = cmd.clone();
+    built.build();
+    let cmd = &built;
+
     let name = cmd.get_name().to_string();
 
     let about = match length {
@@ -252,7 +271,11 @@ fn extract(
         .map(|registry| registry.list_topics())
         .unwrap_or_default();
 
-    let mut subs: Vec<_> = cmd.get_subcommands().filter(|s| !s.is_hide_set()).collect();
+    let mut subs: Vec<_> = cmd
+        .get_subcommands()
+        .filter(|s| !s.is_hide_set())
+        .filter(|s| !is_clap_generated_help_subcommand(cmd, s))
+        .collect();
     subs.sort_by_key(|s| s.get_display_order());
 
     if only_the_help_word(&subs) && topics.is_empty() {
@@ -451,12 +474,101 @@ mod tests {
     #[test]
     fn test_extract_subcommands() {
         let cmd = Command::new("root")
+            .disable_help_subcommand(true)
             .subcommand(Command::new("sub1").about("Sub 1"))
             .subcommand(Command::new("sub2").about("Sub 2"));
 
         let data = extract_short(&cmd);
         assert_eq!(data.subcommands.len(), 1);
         assert_eq!(data.subcommands[0].items.len(), 2);
+    }
+
+    #[test]
+    fn test_clap_generated_help_flag_is_listed() {
+        let cmd = Command::new("root").disable_help_subcommand(true);
+
+        let data = extract_short(&cmd);
+        let names: Vec<&str> = data.options[0]
+            .items
+            .iter()
+            .map(|item| item.name.as_str())
+            .collect();
+        assert_eq!(names, vec!["-h, --help"]);
+    }
+
+    #[test]
+    fn test_clap_generated_version_flag_is_listed() {
+        let cmd = Command::new("root")
+            .version("1.0")
+            .disable_help_subcommand(true);
+
+        let data = extract_short(&cmd);
+        let names: Vec<&str> = data.options[0]
+            .items
+            .iter()
+            .map(|item| item.name.as_str())
+            .collect();
+        assert_eq!(names, vec!["-h, --help", "-V, --version"]);
+    }
+
+    #[test]
+    fn test_clap_generated_help_subcommand_is_not_listed() {
+        let cmd = Command::new("root")
+            .subcommand(Command::new("build").about("Build it"))
+            .subcommand(Command::new("test").about("Test it"));
+
+        let names: Vec<String> = extract_short(&cmd).subcommands[0]
+            .items
+            .iter()
+            .map(|item| item.name.clone())
+            .collect();
+        assert_eq!(names, vec!["build", "test"]);
+    }
+
+    #[test]
+    fn test_an_already_built_command_still_drops_the_generated_help_word() {
+        let mut cmd = Command::new("root")
+            .subcommand(Command::new("build").about("Build it"))
+            .subcommand(Command::new("test").about("Test it"));
+        cmd.build();
+
+        let names: Vec<String> = extract_short(&cmd).subcommands[0]
+            .items
+            .iter()
+            .map(|item| item.name.clone())
+            .collect();
+        assert_eq!(names, vec!["build", "test"]);
+    }
+
+    #[test]
+    fn test_an_already_built_commands_own_help_subcommand_is_listed() {
+        let mut cmd = Command::new("root")
+            .disable_help_subcommand(true)
+            .subcommand(Command::new("help").about("Browse the manual"))
+            .subcommand(Command::new("build").about("Build it"));
+        cmd.build();
+
+        let names: Vec<String> = extract_short(&cmd).subcommands[0]
+            .items
+            .iter()
+            .map(|item| item.name.clone())
+            .collect();
+        assert_eq!(names, vec!["help", "build"]);
+    }
+
+    #[test]
+    fn test_an_applications_own_help_subcommand_is_listed() {
+        let cmd = Command::new("root")
+            .disable_help_subcommand(true)
+            .subcommand(Command::new("help").about("Browse the manual"))
+            .subcommand(Command::new("build").about("Build it"));
+
+        let names: Vec<String> = extract_short(&cmd).subcommands[0]
+            .items
+            .iter()
+            .map(|item| item.name.clone())
+            .collect();
+        assert_eq!(names, vec!["help", "build"]);
     }
 
     #[test]

@@ -33,6 +33,7 @@ Names a change the way a human would.[/about]
                              [default]default: auto[/default]
                              [values]possible values: auto, term, text, term-debug, json, yaml, xml, csv[/values]
   [item]--output-file-path[/item] [metavar]<PATH>[/metavar]  [desc]Write output to file instead of stdout[/desc]
+  [item]-h, --help[/item]                 [desc]Print help (see more with '--help')[/desc]
 
 [header]LEARN MORE[/header]
   [item]naming[/item]        [desc]Naming[/desc]
