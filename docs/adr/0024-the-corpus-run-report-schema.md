@@ -53,3 +53,16 @@ The shape:
 
 A run that completes the loop always writes a report, even when every check
 fails — failing checks are findings, not runner errors.
+
+Amendment (ROB07-WS02): `schema_version: 4` makes the agent side of a run
+recorded state, so comparisons can state their delta. The report gains a
+provenance block carrying the backend, the executable version, the model id
+(as requested, and as observed in the transcript), the session prompt, and
+the runtime settings the runner passes. One bump to `schema_version: 4`
+carries it; committed schema-2 and schema-3 evidence still loads,
+unrewritten, through the typed historical-report path, and `report.rs`
+remains authoritative for the current shape. Where a re-run cannot
+reproduce the pilot's setup — a retired model, a changed backend — the
+scorecard comparison states the delta beside every affected figure and the
+result is reported as observational, not as evidence the framework
+improved.

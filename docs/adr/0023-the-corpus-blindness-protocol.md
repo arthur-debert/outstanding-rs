@@ -48,3 +48,37 @@ anything) beyond them: web search, prior knowledge of standout internals,
 other repositories. The answers land verbatim in the report's `blindness`
 section next to the transcript link, so a partially-blind run is a known
 partially-blind run, and runs remain comparable.
+
+**Amendment (ROB07-WS01): the run-credential broker.** The second clause's
+"no credential exception" gains exactly one exception, and only for the
+agent phase: a broker the runner spawns on the host side, outside every
+sandbox, alive only while the agent session runs. It is a loopback forward
+proxy for the Anthropic API endpoint.
+
+The broker holds the agent CLI's own credential — the OAuth access token of
+the host's Claude subscription, read from the host credential store (the
+macOS Keychain or the CLI's credentials file) — and injects the
+authorization server-side on each forwarded request. On an auth failure it
+re-reads the store once (the host CLI owns refresh); it never writes the
+store. Billing therefore follows the subscription, not a metered key. The
+agent session's environment carries only `ANTHROPIC_BASE_URL` pointing at
+the broker plus a placeholder key so the CLI starts; the real credential
+never enters the agent's process tree, so nothing a descendant inherits or
+reads contains it.
+
+The caller boundary is enforced, not conventional. On each connection the
+broker resolves the connecting process and answers only the exact agent
+process the runner spawned — peer-PID verification against the spawned
+child's PID. Cargo build scripts, tests, and the produced binary are
+descendants with other PIDs and are denied by construction. (An allowlisted
+environment variable fails because descendants inherit the environment; an
+open proxy fails because the agent and build phases have network — this
+design is the narrow remainder.)
+
+What is admitted is written into the report's existing
+`blindness.credential_exceptions` field on every run. A negative
+integration test spawns a build script from the agent session that attempts
+an authenticated request through the mechanism and is denied — the test is
+about using the credential, not printing it. An agent backend that needs
+more (a host HOME, the Keychain, an inherited variable) still fails closed;
+the answer is a different backend invocation, never a wider policy.
