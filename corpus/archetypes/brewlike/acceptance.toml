@@ -1,0 +1,359 @@
+# Acceptance suite for the `brewlike` archetype. Format: corpus/README.md.
+# Written spec-first, before any implementation exists (ROB07-WS03b).
+schema = 1
+archetype = "brewlike"
+
+# --- the catalog in its human shapes ------------------------------------------
+
+[[case]]
+name = "list-human-table"
+group = "catalog"
+stresses = "the installed set as a table, widths padded to the widest rendered cell"
+expected = "pass"
+[case.run]
+argv = ["list"]
+timeout_seconds = 10
+[case.expect]
+exit_code = 0
+stdout = "FORMULA VERSION\nbasalt  2.1.0\ngranite 1.4.2\npebble  0.9.0\nquartz  3.0.1\n"
+stderr = ""
+
+[[case]]
+name = "info-current-formula"
+group = "catalog"
+stresses = "a detail record from the same catalog the table lists"
+expected = "pass"
+[case.run]
+argv = ["info", "basalt"]
+timeout_seconds = 10
+[case.expect]
+exit_code = 0
+stdout = "basalt: stable 2.1.0\ninstalled: 2.1.0\ndepends on: pebble, quartz\n"
+stderr = ""
+
+[[case]]
+name = "info-outdated-formula-marks-the-installed-line"
+group = "catalog"
+stresses = "a per-record conditional in the rendered detail view"
+expected = "pass"
+[case.run]
+argv = ["info", "granite"]
+timeout_seconds = 10
+[case.expect]
+exit_code = 0
+stdout = "granite: stable 1.5.0\ninstalled: 1.4.2 (outdated)\ndepends on: pebble\n"
+
+[[case]]
+name = "info-leaf-formula-names-no-dependencies"
+group = "catalog"
+stresses = "an empty collection inside a detail record reads as a word, not an empty line"
+expected = "pass"
+[case.run]
+argv = ["info", "pebble"]
+timeout_seconds = 10
+[case.expect]
+exit_code = 0
+stdout = "pebble: stable 0.9.0\ninstalled: 0.9.0\ndepends on: none\n"
+
+[[case]]
+name = "outdated-human-table"
+group = "catalog"
+stresses = "a second table from the same catalog, three columns wide"
+expected = "pass"
+[case.run]
+argv = ["outdated"]
+timeout_seconds = 10
+[case.expect]
+exit_code = 0
+stdout = "FORMULA INSTALLED LATEST\ngranite 1.4.2     1.5.0\nquartz  3.0.1     3.2.0\n"
+stderr = ""
+
+# --- nested data through one pipeline -----------------------------------------
+
+[[case]]
+name = "deps-flat-closure-is-deduplicated"
+group = "dependency-nesting"
+stresses = "the transitive closure flattened to a set: reached twice, printed once"
+expected = "pass"
+[case.run]
+argv = ["deps", "basalt"]
+timeout_seconds = 10
+[case.expect]
+exit_code = 0
+stdout = "pebble\nquartz\n"
+stderr = ""
+
+[[case]]
+name = "deps-tree-repeats-a-shared-subtree"
+group = "dependency-nesting"
+stresses = "the same closure as a tree: indentation carries the dependent, so a shared node repeats"
+expected = "pass"
+[case.run]
+argv = ["deps", "--tree", "basalt"]
+timeout_seconds = 10
+[case.expect]
+exit_code = 0
+stdout = "basalt\n  pebble\n  quartz\n    pebble\n"
+stderr = ""
+
+[[case]]
+name = "deps-leaf-formula-prints-nothing"
+group = "dependency-nesting"
+stresses = "an empty result on a success path: no rows, no framing, exit 0"
+expected = "pass"
+[case.run]
+argv = ["deps", "pebble"]
+timeout_seconds = 10
+[case.expect]
+exit_code = 0
+stdout = ""
+stderr = ""
+
+[[case]]
+name = "deps-json-is-a-flat-name-list"
+group = "dependency-nesting"
+stresses = "the flat closure serialized: names as elements, no node structure"
+expected = "pass"
+[case.run]
+argv = ["deps", "basalt", "--output", "json"]
+timeout_seconds = 10
+[case.expect]
+exit_code = 0
+stdout_json_rows = [["pebble"], ["quartz"]]
+
+[[case]]
+name = "deps-tree-json-nests-under-its-dependent"
+group = "dependency-nesting"
+stresses = "nesting survives serialization: quartz's dependency is inside quartz, not beside it"
+expected = "pass"
+[case.run]
+argv = ["deps", "--tree", "basalt", "--output", "json"]
+timeout_seconds = 10
+[case.expect]
+exit_code = 0
+stdout_contains = ["basalt"]
+stdout_json_rows = [["quartz", "pebble"]]
+
+# --- the empty collection ------------------------------------------------------
+
+[[case]]
+name = "outdated-filter-with-nothing-to-report"
+group = "empty-results"
+stresses = "an empty query result is a sentence, not a headerless table, and still exit 0"
+expected = "pass"
+[case.run]
+argv = ["outdated", "pebble"]
+timeout_seconds = 10
+[case.expect]
+exit_code = 0
+stdout = "No outdated formulae.\n"
+stderr = ""
+
+[[case]]
+name = "outdated-filter-keeps-the-named-formula"
+group = "empty-results"
+stresses = "the same filter with a hit: widths recomputed over the rendered rows"
+expected = "pass"
+[case.run]
+argv = ["outdated", "granite"]
+timeout_seconds = 10
+[case.expect]
+exit_code = 0
+stdout = "FORMULA INSTALLED LATEST\ngranite 1.4.2     1.5.0\n"
+
+[[case]]
+name = "outdated-empty-json-is-an-empty-list"
+group = "empty-results"
+stresses = "the empty result as data: an empty list, and the human sentence stays out of the payload"
+expected = "pass"
+[case.run]
+argv = ["outdated", "pebble", "--output", "json"]
+timeout_seconds = 10
+[case.expect]
+exit_code = 0
+stdout_contains = ["[]"]
+stdout_not_contains = ["No outdated formulae", "granite"]
+
+# --- machine records ------------------------------------------------------------
+
+[[case]]
+name = "list-json-binds-versions-to-their-formula"
+group = "machine-records"
+stresses = "record association and JSON types: each formula's versions and its own outdated boolean"
+expected = "pass"
+[case.run]
+argv = ["list", "--output", "json"]
+timeout_seconds = 10
+[case.expect]
+exit_code = 0
+stdout_json_rows = [
+    ["granite", "1.4.2", "1.5.0", "true"],
+    ["pebble", "0.9.0", "false"],
+]
+
+[[case]]
+name = "outdated-json-records-both-versions"
+group = "machine-records"
+stresses = "the machine form of the table: installed and latest bound to one record"
+expected = "pass"
+[case.run]
+argv = ["outdated", "--output", "json"]
+timeout_seconds = 10
+[case.expect]
+exit_code = 0
+stdout_json_rows = [["granite", "1.4.2", "1.5.0"], ["quartz", "3.0.1", "3.2.0"]]
+
+[[case]]
+name = "info-json-carries-direct-dependencies"
+group = "machine-records"
+stresses = "a single-record payload whose collection field survives serialization"
+expected = "pass"
+[case.run]
+argv = ["info", "basalt", "--output", "json"]
+timeout_seconds = 10
+[case.expect]
+exit_code = 0
+stdout_contains = ["basalt", "2.1.0"]
+stdout_json_rows = [["pebble"], ["quartz"]]
+
+# --- errors ---------------------------------------------------------------------
+
+[[case]]
+name = "info-unknown-formula-is-a-domain-error"
+group = "errors"
+stresses = "domain failure: exit 1, stdout untouched, prose on stderr"
+expected = "pass"
+[case.run]
+argv = ["info", "obsidian"]
+timeout_seconds = 10
+[case.expect]
+exit_code = 1
+stdout = ""
+stderr = "brewlike: no formula found: obsidian\n"
+
+[[case]]
+name = "deps-unknown-formula-is-the-same-domain-error"
+group = "errors"
+stresses = "one domain-error shape across commands, including the tree query"
+expected = "pass"
+[case.run]
+argv = ["deps", "--tree", "obsidian"]
+timeout_seconds = 10
+[case.expect]
+exit_code = 1
+stdout = ""
+stderr_contains = ["no formula found", "obsidian"]
+
+[[case]]
+name = "outdated-unknown-formula-is-a-domain-error"
+group = "errors"
+stresses = "an unknown name in a filter fails rather than silently narrowing to nothing"
+expected = "pass"
+[case.run]
+argv = ["outdated", "obsidian"]
+timeout_seconds = 10
+[case.expect]
+exit_code = 1
+stdout = ""
+stderr_contains = ["obsidian"]
+
+[[case]]
+name = "no-subcommand-is-a-usage-error"
+group = "errors"
+stresses = "the root requires a subcommand: exit 2, stderr only"
+expected = "pass"
+[case.run]
+argv = []
+timeout_seconds = 10
+[case.expect]
+exit_code = 2
+stdout = ""
+
+[[case]]
+name = "unknown-subcommand-is-a-usage-error"
+group = "errors"
+stresses = "usage errors (exit 2) stay distinct from domain errors (exit 1)"
+expected = "pass"
+[case.run]
+argv = ["upgrade"]
+timeout_seconds = 10
+[case.expect]
+exit_code = 2
+stdout = ""
+stderr_contains = ["upgrade"]
+
+[[case]]
+name = "unknown-flag-is-a-usage-error"
+group = "errors"
+stresses = "an unknown flag on a known subcommand is a usage error naming the flag"
+expected = "pass"
+[case.run]
+argv = ["list", "--cask"]
+timeout_seconds = 10
+[case.expect]
+exit_code = 2
+stdout = ""
+stderr_contains = ["--cask"]
+
+# --- the versioned machine contract ---------------------------------------------
+# Gap group. A machine payload stamped with a schema version, and help as that
+# same stamped data, are specced past current framework capability on purpose:
+# they are the executable shape of PAR02's brewlike gate
+# (docs/spec/parity-machine-contract.md). An implementation that hand-rolls the
+# stamp reports an unexpected pass — friction signal, not a framework pass.
+
+[[case]]
+name = "list-json-payload-carries-the-schema-version"
+group = "schema-version"
+stresses = "structured output as a versioned contract surface, not just a serialization"
+expected = "fail"
+gap = "PAR02"
+reason = "no framework-owned versioned envelope exists (docs/topics/stability.md: a versioned envelope a consumer can validate against is outside the stability statement)"
+[case.run]
+argv = ["list", "--output", "json"]
+timeout_seconds = 10
+[case.expect]
+exit_code = 0
+stdout_contains = ["schema_version"]
+
+[[case]]
+name = "machine-help-is-a-versioned-document"
+group = "schema-version"
+stresses = "help as machine data carrying the same schema version, instead of prose in every mode"
+expected = "fail"
+gap = "PAR02"
+reason = "no structured mode serializes help data (docs/topics/standout-help.md: help is themed prose in every mode)"
+[case.run]
+argv = ["deps", "--help", "--output", "json"]
+timeout_seconds = 10
+[case.expect]
+exit_code = 0
+stdout_contains = ["schema_version", "--tree"]
+stdout_not_contains = ["Usage:"]
+
+# --- ROB01 invariant matrix ------------------------------------------------------
+# Read-only commands the runner sweeps across output modes (text/term/json),
+# piped. Failures here are framework findings by default.
+
+[invariants]
+modes = ["text", "term", "json"]
+colors = ["off", "on"]
+
+[[invariants.theme]]
+name = "application"
+
+[[invariants.command]]
+argv = ["list"]
+contract = "rendered"
+
+[[invariants.command]]
+argv = ["info", "granite"]
+contract = "rendered"
+
+[[invariants.command]]
+argv = ["deps", "--tree", "basalt"]
+contract = "rendered"
+
+[[invariants.command]]
+argv = ["outdated"]
+contract = "rendered"
