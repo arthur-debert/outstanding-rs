@@ -116,9 +116,24 @@ use clap::{CommandFactory, Parser, Subcommand};
 use serde::Serialize;
 use standout::cli::{App, CommandContext, Dispatch, Output};
 use standout::{embed_styles, embed_templates, handler};
+use todo_core::{Todo, TodoFilter, TodoStore};
 
-// `TodoStore`, `TodoFilter` and `TodoView` come from the CLI-free library
-// above; the view model is what `src/templates/list.jinja` renders.
+// `Todo`, `TodoFilter` and `TodoStore` come from the CLI-free library. The view
+// models below belong to the CLI, so the persisted shape cannot silently decide
+// what `--output json` prints or what `src/templates/list.jinja` renders.
+#[derive(Serialize)]
+struct TodoView {
+    id: u32,
+    title: String,
+    done: bool,
+}
+
+impl From<Todo> for TodoView {
+    fn from(todo: Todo) -> Self {
+        Self { id: todo.id, title: todo.title, done: todo.done }
+    }
+}
+
 #[derive(Serialize)]
 struct TodoListView {
     todos: Vec<TodoView>,
@@ -155,7 +170,9 @@ mod handlers {
 }
 
 fn main() -> anyhow::Result<()> {
+    let store = TodoStore::load("todos.json")?;
     let app = App::builder()
+        .app_state(store)
         .templates(embed_templates!("src/templates"))
         .styles(embed_styles!("src/styles"))
         .default_theme("default")
@@ -173,7 +190,9 @@ The `List` variant registers the command under its kebab-case name, `list`;
 `src/templates/list.jinja`. Themed help is on by default. Each `#[flag]` or
 `#[arg]` parameter reads a clap argument by id, so the variant declares `all`
 for the handler to find it — `app.verify_command(&cmd)` reports a pair that
-does not line up.
+does not line up. `.app_state(store)` is what `get_required::<TodoStore>()`
+reads back; a handler asking for state the builder never registered fails at
+dispatch.
 
 ```bash
 myapp list                  # Rich terminal output

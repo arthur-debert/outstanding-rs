@@ -144,7 +144,9 @@ use standout::cli::App;
 use standout::{embed_templates, embed_styles};
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
+    let store = TodoStore::load("todos.json")?;
     let app = App::builder()
+        .app_state(store) // the handlers above read it back with `get_required`
         .templates(embed_templates!("src/templates"))
         .styles(embed_styles!("src/styles"))
         .default_theme("default")
