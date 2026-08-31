@@ -412,7 +412,8 @@ The selection flows through measurement, ANSI and style-tag-aware visible
 width, padding, truncation, wrapping, tabular formatting, and MiniJinja width
 filters. Standout makes no locale-based guess and promises no automatic
 detection. The policy-aware helper variants, such as
-`display_width_with_policy`, are available when formatting directly.
+`standout_render::tabular::display_width_with_policy`, are available when
+formatting directly.
 
 ---
 

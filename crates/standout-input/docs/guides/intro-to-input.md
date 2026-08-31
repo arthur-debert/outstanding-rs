@@ -86,7 +86,7 @@ Add `standout-input` to your `Cargo.toml`:
 
 ```toml
 [dependencies]
-standout-input = "0.1"
+standout-input = "8"
 ```
 
 ### Basic Chain
@@ -436,18 +436,18 @@ let message = InputChain::<String>::new()
 When using the full Standout framework, input chains integrate with the dispatch system:
 
 ```rust
-// With Standout framework (future integration)
+// With Standout framework
 use standout::cli::App;
 use standout_input::{InputChain, ArgSource, EditorSource};
 
 App::builder()
-    .command_with("create", handlers::create, |cfg| {
-        cfg.input("body", |chain| {
-            chain
+    .commands(|g| {
+        g.command_with("create", handlers::create, |cfg| {
+            cfg.input("body", InputChain::<String>::new()
                 .try_source(ArgSource::new("body"))
-                .try_source(EditorSource::new())
+                .try_source(EditorSource::new()))
         })
-    })
+    })?
     .build()?;
 ```
 

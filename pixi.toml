@@ -14,6 +14,16 @@ changelog = "./bin/shipit changelog"
 logs = "./bin/shipit logs"
 # <<< shipit-managed tasks <<<
 
+# The wf-checks DOCS LANE's run (.shipit.toml [lanes.docs]). `cargo nextest run`
+# — the managed `test` task's rust leg — does not run doctests, and the book's
+# Rust examples are doctests: `crates/standout-docs/src/lib.rs` includes each
+# page whose examples must compile, so rustdoc compiles them. Lives in the
+# DEFAULT env, where the managed rust toolchain already sits, so a laptop run
+# and the matrix job's `pixi run --locked doc-examples` are identical. The
+# book's OTHER check — every page reachable from SUMMARY.md, every internal link
+# resolving — is an ordinary test in the same crate and rides the test lane.
+doc-examples = "cargo test --doc -p standout-docs"
+
 [feature.lint.dependencies]
 # >>> shipit-managed rust lint toolchain (do not edit; regenerate via `shipit install`) >>>
 # The fleet-pinned rust lint toolchain (#547 Layer 1) — delivered because this

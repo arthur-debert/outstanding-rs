@@ -54,7 +54,7 @@ Argument parsing is clap's responsibility, and clap has an extensive test suite 
 
 ## What the harness adds
 
-`TestHarness` (in the `standout-test` crate) is the unified in-process runner. It wraps `App::run_to_string` with fluent setup for every injectable piece of state:
+`TestHarness` (in the `standout-test` crate) is the unified in-process runner. It wraps `App::run_with` with fluent setup for every injectable piece of state:
 
 Its `TestResult` also exposes `exit_status()`, `success_kind()`, and
 `error_kind()`, with assertions for typed status and failure origin. `NoMatch`
@@ -143,13 +143,13 @@ TestHarness::new()
 
 `interactive_stdin()` is required for the terminal branch — without it the harness inherits the real stdin, which is *not* a terminal under a test runner, so a naked invocation would take the piped branch and the test would pass or fail depending on how it was launched.
 
-For the parse-only path (`get_matches_from` / `parse_from`) pass sources explicitly:
+For the parse-only path, `get_matches_from` takes sources explicitly:
 
 ```rust
 use standout_input::{InputSources, MockStdin};
 
 let sources = InputSources::from_process().with_stdin(MockStdin::terminal());
-match app.get_matches_from_with_sources(cli::command(), ["tdoo"], &sources) {
+match app.get_matches_from(cli::command(), ["tdoo"], &sources) {
     HelpResult::Matches(m) => assert_eq!(m.subcommand_name(), Some("list")),
     other => panic!("expected matches, got {other:?}"),
 }

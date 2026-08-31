@@ -28,8 +28,7 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
-standout = "7"
-standout-dispatch = "7" # required by code generated from #[handler]
+standout = "8"
 clap = { version = "4", features = ["derive"] }
 serde = { version = "1", features = ["derive"] }
 anyhow = "1"

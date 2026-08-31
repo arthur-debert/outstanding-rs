@@ -49,8 +49,18 @@ Load CSS themes:
 use standout_render::Theme;
 
 let theme = Theme::from_css(css_content)?;
-let theme = Theme::from_css_file("styles/theme.css")?;
 ```
+
+`Theme` parses a CSS string; reading the file is the caller's job:
+
+```rust
+let css = std::fs::read_to_string("styles/theme.css")?;
+let theme = Theme::from_css(&css)?;
+```
+
+For a whole directory of themes with hot reload in debug builds, use
+`AppBuilder::styles_dir` (see [App Configuration](../../../topics/app-configuration.md))
+rather than reading a single file.
 
 CSS gives you syntax highlighting in editors, linting tools, and familiarity for web developers.
 
@@ -69,7 +79,7 @@ let theme = Theme::new()
     .add("success", Style::new().green());
 ```
 
-> **Legacy format:** YAML themes are still supported via `Theme::from_yaml()` and `Theme::from_yaml_file()`. CSS is the recommended format for all new projects.
+> **Legacy format:** YAML themes are still supported via `Theme::from_yaml()`. CSS is the recommended format for all new projects.
 
 ---
 
@@ -238,11 +248,8 @@ For strict checking at startup:
 ```rust
 use standout_render::validate_template;
 
-let errors = validate_template(template, &sample_data, &theme);
-if !errors.is_empty() {
-    for error in errors {
-        eprintln!("Unknown style: {}", error.tag_name);
-    }
+if let Err(error) = validate_template(template, &sample_data, &theme) {
+    eprintln!("Unknown style tag: {}", error);
     std::process::exit(1);
 }
 ```
@@ -346,15 +353,11 @@ styles/
 // From CSS string
 let theme = Theme::from_css(css_str)?;
 
-// From CSS file (hot reload in debug)
-let theme = Theme::from_css_file(path)?;
-
 // Empty theme (for programmatic building)
 let theme = Theme::new();
 
 // Legacy: YAML is still supported
 let theme = Theme::from_yaml(yaml_str)?;
-let theme = Theme::from_yaml_file(path)?;
 ```
 
 ### Adding Styles
@@ -373,11 +376,11 @@ theme.add("alias", "target_style");
 ### Resolving Styles
 
 ```rust
-// Get resolved style for current color mode
-let style: Option<Style> = theme.get("title");
+// Get the mode-agnostic style
+let style: Option<Style> = theme.get_style("title", None);
 
-// Get style for specific mode
-let style = theme.get_for_mode("panel", ColorMode::Dark);
+// Get style resolved for a specific mode
+let style = theme.get_style("panel", Some(ColorMode::Dark));
 ```
 
 ### Color Mode

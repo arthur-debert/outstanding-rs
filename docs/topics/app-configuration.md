@@ -8,20 +8,20 @@ This guide covers the full setup: embedding resources, registering commands, con
 
 See also:
 
-- [Rendering System](rendering-system.md) for details on templates and styles.
+- [Templating](../crates/render/topics/templating.md) and [Styling System](../crates/render/topics/styling-system.md) for templates and styles.
 - [Topics System](topics-system.md) for help topics.
 
 ## Basic Setup
 
 ```rust
-use standout::cli::App;
+use standout::cli::{App, FnHandler};
 use standout_macros::{embed_templates, embed_styles};
 
 let app = App::builder()
     .templates(embed_templates!("src/templates"))
     .styles(embed_styles!("src/styles"))
     .default_theme("default")
-    .command_with("list", list_handler, |config| config.template_name("list"))?
+    .command_with("list", FnHandler::new(list_handler), |config| config.template_name("list"))?
     .build()?;
 
 app.run(Cli::command(), std::env::args());
@@ -39,7 +39,7 @@ app.run(Cli::command(), std::env::args());
 
 Collects files matching: `.jinja`, `.jinja2`, `.j2`, `.stpl`, `.txt` (in priority order).
 
-> **Custom template engines:** For advanced use cases, `standout-render` supports pluggable template engines. See the [Template Engines](../crates/standout-render/docs/topics/template-engines.md) topic for details on using `SimpleEngine` or implementing custom engines.
+> **Custom template engines:** For advanced use cases, `standout-render` supports pluggable template engines. See the [Template Engines](../crates/render/topics/template-engines.md) topic for details on using `SimpleEngine` or implementing custom engines.
 
 Directory structure:
 
@@ -79,19 +79,25 @@ In debug builds, embedded resources are re-read from disk on each render—edit 
 
 This is automatic when the source path exists on disk.
 
-## Runtime Overrides
+## Resources Read at Run Time
 
-Users can override embedded resources with local files:
+`templates_dir` and `styles_dir` add a directory read at run time, for
+resources that live outside the crate source tree and so cannot be embedded:
 
 ```rust
 App::builder()
     .templates(embed_templates!("src/templates"))
-    .templates_dir("~/.myapp/templates")  // Overrides embedded
+    .templates_dir("~/.myapp/templates")  // Adds names the binary does not embed
     .styles(embed_styles!("src/styles"))
-    .styles_dir("~/.myapp/themes")        // Overrides embedded
+    .styles_dir("~/.myapp/themes")        // Likewise for themes
 ```
 
-Local directories take precedence. This enables user customization without recompiling.
+These directories **add** names; they do not replace them. A registry resolves
+an embedded name before it looks at any directory registered this way, so a
+`~/.myapp/templates/list.jinja` sitting beside an embedded `list` never
+renders — see [Resolution Priority](../crates/render/topics/file-system-resources.md#resolution-priority).
+To let a user directory win, register only the directory, without the
+`embed_templates!` call, when that directory exists.
 
 ## Theme Selection
 
@@ -99,18 +105,14 @@ Local directories take precedence. This enables user customization without recom
 
 ```rust
     .styles(embed_styles!("src/styles"))
-    // Optional: set explicit default name
-    // If omitted, tries "default", "theme", then "base"
     .default_theme("dark")
 ```
 
-If `.default_theme()` is not called, `AppBuilder` attempts to load a theme from the registry in this order:
-
-1. `default`
-2. `theme`
-3. `base`
-
-This allows you to provide a standard `base.css` or `theme.css` without requiring explicit configuration code. If the explicit theme isn't found, `build()` returns `SetupError::ThemeNotFound`.
+`.default_theme(name)` names the theme `build()` loads from the stylesheet
+registry; if that name isn't found, `build()` returns
+`SetupError::ThemeNotFound`. With no `.default_theme(...)` call, `build()`
+does not fall back to any conventional name — the application resolves to no
+application theme, leaving the framework's own base styling.
 
 ### Explicit Theme
 
@@ -120,10 +122,13 @@ let theme = Theme::new()
     .add("muted", Style::new().dim());
 
 App::builder()
-    .theme(theme)  // Overrides stylesheet registry
+    .theme(theme)
 ```
 
-Explicit `.theme()` takes precedence over `.default_theme()`.
+`.theme(...)` sets the theme directly, bypassing the stylesheet registry.
+Calling both `.styles(...)` and `.theme(...)` on the same builder is a
+`SetupError` that names both calls — configure one path or the other, not
+both.
 
 ## Command Registration
 
@@ -131,20 +136,31 @@ Explicit `.theme()` takes precedence over `.default_theme()`.
 
 ```rust
 App::builder()
-    .command("list", list_handler, "[title]Items[/title]")
-    .command("add", add_handler, "Added {{ name }}")
+    .command_with("list", FnHandler::new(list_handler), |cfg| cfg)?
+    .command_with("add", FnHandler::new(add_handler), |cfg| cfg)?
 ```
 
-Arguments: command name, handler function, inline MiniJinja template source.
+`AppBuilder::command_with` takes an `impl Handler`, not a bare function, so a
+plain `fn(&ArgMatches, &CommandContext) -> HandlerResult<T>` is wrapped in
+`FnHandler::new(...)` first; a `#[handler]`-annotated function registers as the
+`name_Handler` struct the macro generates instead. (`GroupBuilder::command_with`
+— the entry `.commands(...)` and `#[derive(Dispatch)]` reach — takes the bare
+closure and wraps it for you, which is why the nested-group example below does
+not name `FnHandler`.)
+
+With no `.template_name(...)` set on the `CommandConfig`, the template
+resolves by convention: the command path with `.` replaced by `/` (`list`,
+`add`), matched against the registered templates using the extension list
+`.jinja`, `.jinja2`, `.j2`, `.stpl`, `.txt`.
 
 ### With Configuration
 
 ```rust
 App::builder()
-    .command_with("delete", delete_handler, |cfg| cfg
+    .command_with("delete", FnHandler::new(delete_handler), |cfg| cfg
         .template_name("delete")
         .pre_dispatch(require_confirmation)
-        .post_dispatch(log_deletion))
+        .post_dispatch(log_deletion))?
 ```
 
 Inline command configuration can also attach a
@@ -156,20 +172,27 @@ independent of the selected output mode. See [Output Modes](output-modes.md#csv-
 
 ```rust
 App::builder()
-    .group("db", |g| g
-        .command("migrate", migrate_handler, "Migrated")
-        .command("status", status_handler, "Status: {{ status }}")
-        .group("backup", |b| b
-            .command("create", backup_create, "Backup created")
-            .command("restore", backup_restore, "Backup restored")))
+    .commands(|g| g
+        .group("db", |g| g
+            .command("migrate", migrate_handler)
+            .command("status", status_handler)
+            .group("backup", |b| b
+                .command("create", backup_create)
+                .command("restore", backup_restore))))?
 ```
 
-Creates command paths: `db.migrate`, `db.status`, `db.backup.create`, `db.backup.restore`.
+Creates command paths: `db.migrate`, `db.status`, `db.backup.create`,
+`db.backup.restore`. Each resolves, by convention, to a template named after
+its path (`db/migrate`, `db/status`, `db/backup/create`,
+`db/backup/restore`); attach a `CommandConfig` to a group entry with
+`command_with` instead of `command` when one needs `.template_name(...)` or
+another `CommandConfig` setting.
 
 ### From Dispatch Macro
 
 ```rust
 #[derive(Dispatch)]
+#[dispatch(handlers = handlers)]
 enum Commands {
     List,
     Add,
@@ -181,7 +204,12 @@ App::builder()
     .commands(Commands::dispatch_config())?
 ```
 
-The macro generates registration for all variants.
+`#[dispatch(handlers = <module path>)]` on the enum is required: it names the
+module `Dispatch` looks up each variant's handler function in (`handlers::list`
+for `List`, `handlers::add` for `Add`). A nested variant's own type
+(`DbCommands` here) needs its own `#[derive(Dispatch)]` with its own
+`#[dispatch(handlers = ...)]` — the macro generates registration for all
+variants, but a container attribute is scoped to the enum it's on.
 
 ## Default Command
 
@@ -200,7 +228,7 @@ With this configuration:
 - `myapp --output=json` becomes `myapp list --output=json`
 - `myapp add foo` stays as `myapp add foo` (explicit command takes precedence)
 
-Default resolution applies to both the integrated dispatch path (`run`, `dispatch_from`, `run_to_string`) and configured parsing (`parse_from`, `get_matches_from`). If you parse first and build dispatch state afterwards, the matches you get back already name the resolved command.
+Default resolution applies to both the integrated dispatch path (`run`, `run_with`) and configured parsing (`get_matches_from`). If you parse first and build dispatch state afterwards, the matches you get back already name the resolved command.
 
 ### Invocation-Aware Defaults
 
@@ -282,7 +310,7 @@ Attach hooks to specific command paths:
 
 ```rust
 App::builder()
-    .command("migrate", migrate_handler, "Migrated")
+    .command_with("db.migrate", FnHandler::new(migrate_handler), |cfg| cfg)?
     .hooks("db.migrate", Hooks::new()
         .pre_dispatch(require_admin)
         .post_dispatch(add_timestamp)
@@ -290,6 +318,40 @@ App::builder()
 ```
 
 The path uses dot notation matching the command hierarchy.
+
+### Hook order, and where a questionnaire sits in it
+
+Pre-dispatch hooks run in the order they were registered — `Hooks` keeps them
+in a list and `run_pre_dispatch` walks it front to back. The same holds for
+post-dispatch and post-output.
+
+`CommandConfig::questionnaire::<T>()` is a pre-dispatch hook, so it takes its
+place in that same order: a `.pre_dispatch(f)` written *before* it runs before
+the answers are resolved and cannot read them, and one written *after* it runs
+with `ctx.questionnaire::<T>()` already populated.
+
+```rust,ignore
+// `check_permissions` runs first, then the questionnaire resolves,
+// then `audit` runs and can read the answers.
+CommandConfig::new(handler)
+    .pre_dispatch(check_permissions)
+    .questionnaire::<ProvisionAnswers>()
+    .pre_dispatch(audit)
+```
+
+One trap goes with that: `CommandConfig::hooks(hooks)` *replaces* the config's
+hook set rather than appending to it, so calling `.hooks(…)` after
+`.questionnaire::<T>()` discards the questionnaire's own hook and the answers
+never resolve. Register per-phase with `.pre_dispatch(…)` when a questionnaire
+is involved.
+
+Registering the same phase for one path through both `CommandConfig` and
+`AppBuilder::hooks` is a configuration error naming the path and the phase,
+rather than one hook set silently replacing the other.
+
+> Stating a single ordering rule for pre-dispatch hooks — including which
+> matches they receive — is issue #352 in the adopter-seams epic. What is
+> written above is today's behavior.
 
 ## Context Injection
 
@@ -351,8 +413,8 @@ App::builder()
 ```
 
 Standout applies the value to the root command wherever it augments and parses
-it, so every entry point — `run`, `run_to_string`, `dispatch_from`,
-`get_matches_from`, and `TestHarness` — answers `myapp --version` the same way:
+it, so every entry point — `run`, `run_with`, `get_matches_from`, and
+`TestHarness` — answers `myapp --version` the same way:
 Clap's own display, on stdout, exit status 0, typed as
 `SuccessKind::ClapVersion` (see [Execution
 Outcomes](./execution-outcomes.md)).
@@ -428,10 +490,14 @@ operation's declared nonzero status and verbatim stderr payload.
 
 ### Capture Output
 
-For testing, post-processing, or when you need the output string:
+For tests, reach for `standout_test::TestHarness` (see [Testing](./testing.md)).
+For post-processing, or any other embedding caller that needs the output
+string, pass destination properties and input sources in explicitly:
 
 ```rust
-let result = app.run_to_string(cmd, args);
+let target = TargetProperties::detect();
+let sources = InputSources::from_process();
+let result = app.run_with(cmd, args, target, sources);
 let _ = result.warnings();
 match result.into_outcome() {
     DispatchResult::Handled(output) => { /* use output string */ }
@@ -450,11 +516,15 @@ Outcomes](./execution-outcomes.md).
 ### Parse Only
 
 ```rust
-let matches = app.parse_with(cmd);
-// Use matches for manual dispatch
+match app.get_matches_from(cmd, std::env::args(), &InputSources::from_process()) {
+    HelpResult::Matches(matches) => { /* use matches for manual dispatch */ }
+    HelpResult::Help(text) | HelpResult::PagedHelp(text) => { /* the invocation asked for help */ }
+    HelpResult::Error(e) => { /* a clap::Error: usage failure, or --version display */ }
+}
 ```
 
-Parses with Standout's augmented command but doesn't dispatch.
+Parses with Standout's augmented command, intercepting help display; returns
+matches only when the invocation didn't trigger a help/usage/version display.
 
 ## Build Validation
 
@@ -477,7 +547,7 @@ What's NOT validated at build time:
 ## Complete Example
 
 ```rust
-use standout::cli::{App, CommandContext, HandlerResult, Output};
+use standout::cli::{App, CommandContext, FnHandler, HandlerResult, Output};
 use standout_macros::{embed_templates, embed_styles};
 use clap::{Command, ArgMatches};
 use serde::Serialize;
@@ -502,7 +572,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         .default_theme("default")
         .version(env!("CARGO_PKG_VERSION"))
         .context("version", env!("CARGO_PKG_VERSION").into())
-        .command_with("list", list_handler, |config| {
+        .command_with("list", FnHandler::new(list_handler), |config| {
             config.template_name("list")
         })?
         .topics_dir("docs/topics")?

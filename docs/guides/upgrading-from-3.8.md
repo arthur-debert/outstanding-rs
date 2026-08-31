@@ -1,6 +1,6 @@
 # Upgrading from Standout 3.8.0 to 6.0.0
 
-Standout went through three major version bumps since 3.8.0 (4.0, 5.0, 6.0). This guide covers everything you need to change to get your code compiling and working on the latest version.
+Standout went through three major version bumps since 3.8.0 (4.0, 5.0, 6.0). This guide covers everything you need to change to get your code compiling and working on 6.0.0. Standout has since moved past 6.0.0; check the current API against the crate you depend on rather than treating this guide as a description of today's surface.
 
 ## Quick Summary
 
