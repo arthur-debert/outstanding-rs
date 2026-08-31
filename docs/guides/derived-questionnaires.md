@@ -249,7 +249,9 @@ cfg.questionnaire::<ImportAnswers>().confirmation(
 ```
 
 `ConfirmationAcceptance::Word(word)` takes that word alone and is the default
-with `yes`; `YesOrY` takes `y` or `yes` in any case; `Disabled` runs without
+with `yes`; the reply and the word are both trimmed before they are compared, so
+an empty or all-whitespace word accepts nothing and pressing Enter cannot
+confirm. `YesOrY` takes `y` or `yes` in any case; `Disabled` runs without
 asking, as `--yes` does. The prompt goes to the controlling terminal, and the
 review a command writes goes to stderr unless `review_stream` says otherwise —
 stdout is the data channel.

@@ -28,8 +28,10 @@ pub(crate) const QUESTIONS_SUBCOMMAND: &str = "questions";
 
 const CONFIRM_QUESTION: &str = "Continue? Type 'yes' to continue: ";
 
-/// Which reply the gate takes as consent. A reply is trimmed before it is
-/// matched; `Disabled` runs without asking, as `--yes` does.
+/// Which reply the gate takes as consent. Both the reply and a configured
+/// `Word` are trimmed before they are matched, and a `Word` that is empty or
+/// all whitespace accepts nothing — pressing Enter cannot confirm, and the
+/// gate can only be declined. `Disabled` runs without asking, as `--yes` does.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ConfirmationAcceptance {
     Word(String),
@@ -85,7 +87,10 @@ impl Confirmation {
     fn accepts(&self, reply: &str) -> bool {
         let reply = reply.trim();
         match &self.acceptance {
-            ConfirmationAcceptance::Word(word) => reply == word,
+            ConfirmationAcceptance::Word(word) => {
+                let word = word.trim();
+                !word.is_empty() && reply == word
+            }
             ConfirmationAcceptance::YesOrY => {
                 reply.eq_ignore_ascii_case("y") || reply.eq_ignore_ascii_case("yes")
             }
@@ -587,6 +592,25 @@ mod tests {
             Confirmation::default().acceptance(ConfirmationAcceptance::Word("proceed".to_string()));
         assert!(confirmed("proceed\n", &confirmation));
         assert!(!confirmed("yes\n", &confirmation));
+    }
+
+    #[test]
+    fn a_padded_app_word_matches_the_word_it_names() {
+        let confirmation = Confirmation::default()
+            .acceptance(ConfirmationAcceptance::Word(" proceed ".to_string()));
+        assert!(confirmed("proceed\n", &confirmation));
+        assert!(!confirmed("\n", &confirmation));
+    }
+
+    #[test]
+    fn an_empty_app_word_accepts_nothing() {
+        for word in ["", "   "] {
+            let confirmation =
+                Confirmation::default().acceptance(ConfirmationAcceptance::Word(word.to_string()));
+            assert!(!confirmed("\n", &confirmation));
+            assert!(!confirmed("   \n", &confirmation));
+            assert!(!confirmed("yes\n", &confirmation));
+        }
     }
 
     #[test]

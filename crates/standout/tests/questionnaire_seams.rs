@@ -1,6 +1,6 @@
-//! The `formlike` pilot's failing invocations, replayed against the seams
-//! ROB06/WS02 opened: an app-defined answer-sheet format (#351) and a
-//! configurable confirmation gate (#354).
+//! The `formlike` pilot's failing invocations, replayed against the two seams
+//! that answer them: an app-defined answer-sheet format and a configurable
+//! confirmation gate.
 
 use clap::Command;
 use serde_json::json;
@@ -198,6 +198,29 @@ fn the_default_gate_still_declines_a_bare_y() {
         .env("STANDOUT_QUESTIONNAIRE_TERMINAL", terminal_arg)
         .run(
             &spec_sheet_app(),
+            command(),
+            ["formlike", "entry", "--answers", "answers.txt"],
+        );
+
+    let error = error_text(&result);
+    assert!(error.contains("confirmation declined"), "{error}");
+}
+
+#[test]
+#[serial(questionnaire)]
+fn an_empty_acceptance_word_is_not_confirmed_by_a_bare_enter() {
+    let harness = TestHarness::new()
+        .fixture("answers.txt", SPEC_SHEET)
+        .fixture("terminal.txt", "\n");
+    let terminal = harness.tempdir().unwrap().join("terminal.txt");
+    let terminal_arg = terminal.to_str().unwrap().to_string();
+
+    let result = harness
+        .env("STANDOUT_QUESTIONNAIRE_TERMINAL", terminal_arg)
+        .run(
+            &spec_sheet_app_gated_by(
+                Confirmation::default().acceptance(ConfirmationAcceptance::Word(String::new())),
+            ),
             command(),
             ["formlike", "entry", "--answers", "answers.txt"],
         );
