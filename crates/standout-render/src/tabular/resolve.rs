@@ -59,6 +59,15 @@ impl FlatDataSpec {
         data: &[Vec<S>],
         policy: AmbiguousWidth,
     ) -> ResolvedWidths {
+        let measured = self.measure_columns(data, policy);
+        self.resolve_widths_measured_with_policy(total_width, &measured, policy)
+    }
+
+    pub(crate) fn measure_columns<S: AsRef<str>>(
+        &self,
+        data: &[Vec<S>],
+        policy: AmbiguousWidth,
+    ) -> Vec<usize> {
         let mut max_data_widths: Vec<usize> = vec![0; self.columns.len()];
 
         for row in data {
@@ -70,7 +79,16 @@ impl FlatDataSpec {
             }
         }
 
-        self.resolve_widths_impl(total_width, Some(&max_data_widths), policy)
+        max_data_widths
+    }
+
+    pub(crate) fn resolve_widths_measured_with_policy(
+        &self,
+        total_width: usize,
+        measured: &[usize],
+        policy: AmbiguousWidth,
+    ) -> ResolvedWidths {
+        self.resolve_widths_impl(total_width, Some(measured), policy)
     }
 
     fn resolve_widths_impl(
