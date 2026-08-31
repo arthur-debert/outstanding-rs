@@ -1,0 +1,129 @@
+# Feature/interaction manifest for `dockerlike`. Format: corpus/README.md.
+#
+# Roster-expansion archetype (ROB07-WS03b), authored spec-first before any
+# implementation exists. The survey's behavioral sketch is not in the
+# repository; the spec's "Provenance and stressed interactions" section
+# records that this shape is reconstructed rather than restored.
+
+[archetype]
+name = "dockerlike"
+survey = "C8"
+summary = "legacy verbs beside management commands, --quiet as a data-shape contract, display truncation vs machine output"
+status = "in-capability"
+
+[features]
+used = [
+    "dispatch.subcommands",
+    "dispatch.nested-subcommands",
+    "dispatch.derive-macro",
+    "dispatch.handler-macro",
+    "dispatch.binary-command",
+    "tabular.column-formatting",
+    "output-modes.structured-json",
+    "output-modes.auto-degradation",
+    "output-modes.term-text-flag",
+    "help.rendering",
+    "error-handling.exit-codes",
+]
+
+[[interactions]]
+id = "alias-vs-canonical-dispatch"
+stresses = [
+    "nested subcommand dispatch",
+    "one behavior under two registered paths",
+    "flag parsing at both depths",
+    "help rendering per path",
+    "usage-error policy for group nodes",
+]
+description = "The same command is reachable as a top-level verb and as a leaf of a management group. Registration is the only thing that differs, so any divergence in output, flag handling, help, or exit code is the framework leaking its dispatch path into behavior."
+cases = [
+    "ps-lists-containers",
+    "container-ls-is-identical-to-ps",
+    "images-lists-images",
+    "image-ls-is-identical-to-images",
+    "ps-quiet-filtered",
+    "container-ls-quiet-filtered-identical",
+    "container-inspect-is-identical-to-inspect",
+    "container-group-without-subcommand",
+    "image-group-without-subcommand",
+    "root-without-command-is-usage-error",
+    "unknown-command-is-usage-error",
+    "root-help-lists-both-surfaces",
+    "legacy-verb-help-exits-zero",
+    "management-path-help-exits-zero",
+]
+
+[[interactions]]
+id = "quiet-as-data-shape-vs-render-pipeline"
+stresses = [
+    "quiet flag",
+    "structured output mode",
+    "TTY color autodetection",
+    "unconditional term mode",
+    "tabular framing suppression",
+]
+description = "`--quiet` decides what the value is before rendering, not how it looks, so it has to hold at every point the pipeline could reassert itself: header and padding suppressed, no ANSI on an attended terminal or under a forced term mode, and a different serialized shape in the structured modes."
+cases = [
+    "quiet-lists-bare-ids",
+    "quiet-long-flag-is-identical",
+    "quiet-on-attended-terminal-is-unstyled",
+    "quiet-under-forced-term-is-unstyled",
+    "quiet-json-is-an-array-of-ids",
+    "quiet-images-lists-bare-ids",
+    "quiet-no-trunc-prints-whole-ids",
+    "quiet-no-match-prints-nothing",
+]
+
+[[interactions]]
+id = "display-truncation-vs-machine-output"
+stresses = [
+    "display truncation flag",
+    "column width computation",
+    "structured serialization",
+]
+description = "Shortened identifiers are a table rule and nothing more: `--no-trunc` widens the column and every row with it, while structured output carries whole identifiers with or without the flag. The failure this catches is a rendering concern reaching the serialized value."
+cases = [
+    "ps-lists-containers",
+    "no-trunc-widens-the-id-column",
+    "quiet-no-trunc-prints-whole-ids",
+    "json-carries-whole-ids-without-no-trunc",
+    "no-trunc-is-inert-in-structured-output",
+]
+
+[[interactions]]
+id = "repeatable-filter-vs-table-geometry"
+stresses = [
+    "repeatable flag",
+    "tabular width strategies",
+    "empty-result framing",
+    "value-level rejection vs parse error",
+]
+description = "A selection flag that repeats and composes by AND changes which rows exist, so column widths must be computed over the rendered rows — down to the header-only case, which is a success. A filter whose value the domain rejects is exit 1 with the vocabulary on stderr, not clap's exit 2."
+cases = [
+    "filter-narrows-and-recomputes-widths",
+    "repeated-filters-are-anded",
+    "no-match-prints-the-header-and-exits-zero",
+    "quiet-no-match-prints-nothing",
+    "unknown-filter-key-is-a-domain-error",
+    "malformed-filter-is-a-domain-error",
+]
+
+[[interactions]]
+id = "machine-only-command-inside-a-human-app"
+stresses = [
+    "per-command output opacity",
+    "global output mode",
+    "TTY detection",
+    "domain-error stream routing",
+]
+description = "`inspect` writes the same JSON bytes in every output mode and on an attended terminal, inside an application whose other commands are template-rendered and styled. The global mode machinery is per-app, so carrying one command that opts out of it entirely is the adopter shape that breaks."
+cases = [
+    "inspect-by-name-emits-a-json-array",
+    "inspect-by-unique-id-prefix",
+    "inspect-multiple-refs-keeps-argument-order",
+    "inspect-stays-json-under-text-mode",
+    "inspect-stays-json-on-an-attended-terminal",
+    "container-inspect-is-identical-to-inspect",
+    "ambiguous-prefix-names-the-candidates",
+    "unknown-ref-is-a-domain-error",
+]
