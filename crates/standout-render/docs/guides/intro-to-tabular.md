@@ -157,7 +157,9 @@ hand it the list you are about to loop over:
 
 with `rows` a list of `[index, status, title]` arrays from the handler's data.
 `table()` takes the same `rows=`, and measures its `header=` row alongside the
-data so a header wider than its column is not truncated. A column carrying
+data so a header wider than its column is not truncated. A row — or a `header=`
+— shorter than the column list measures the columns it leaves out at their
+`null_repr`, the text the formatter renders there. A column carrying
 `sub_columns` is not measured from `rows=`, because its sub-columns are
 resolved per row against the parent's width (see Step 7).
 

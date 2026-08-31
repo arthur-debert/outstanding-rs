@@ -183,10 +183,6 @@ pub fn clap_facts(cmd: &Command, length: HelpLength) -> Vec<Fact> {
         .get_arguments()
         .map(|arg| arg.get_id().to_string())
         .collect();
-    let declared_subcommands: HashSet<String> = cmd
-        .get_subcommands()
-        .map(|sub| sub.get_name().to_string())
-        .collect();
     let mut built = cmd.clone();
     built.build();
     let mut facts = Vec::new();
@@ -203,7 +199,7 @@ pub fn clap_facts(cmd: &Command, length: HelpLength) -> Vec<Fact> {
         ));
     }
     for sub in built.get_subcommands() {
-        let generated = !declared_subcommands.contains(sub.get_name());
+        let generated = clap_generates_subcommand(&built, sub);
         facts.extend(
             subcommand_facts(sub)
                 .into_iter()
@@ -211,7 +207,12 @@ pub fn clap_facts(cmd: &Command, length: HelpLength) -> Vec<Fact> {
         );
     }
     for arg in built.get_arguments() {
-        facts.extend(argument_facts(arg, length));
+        let generated = clap_generates_argument(&built, arg);
+        facts.extend(
+            argument_facts(arg, length)
+                .into_iter()
+                .map(|fact| fact.generated(generated)),
+        );
     }
     if classifiable(&built, &declared, length) {
         facts.push(Fact::new(
@@ -221,6 +222,26 @@ pub fn clap_facts(cmd: &Command, length: HelpLength) -> Vec<Fact> {
         ));
     }
     facts
+}
+/// Whether clap adds `sub` during `build()` rather than the application
+/// declaring it. Clap appends a `help` word to any command that has not called
+/// `disable_help_subcommand`, and rejects an application declaring its own
+/// `help` alongside it as a duplicate name — so the parent's setting decides
+/// the provenance, whatever build state the caller handed us.
+fn clap_generates_subcommand(parent: &Command, sub: &Command) -> bool {
+    sub.get_name() == "help" && !parent.is_disable_help_subcommand_set()
+}
+/// The same question for an argument: clap adds `-h/--help` unless the command
+/// calls `disable_help_flag`, and `-V/--version` unless it calls
+/// `disable_version_flag` (which `build()` does for itself when the command
+/// carries no version), rejecting an application's same-named argument as a
+/// duplicate id.
+fn clap_generates_argument(parent: &Command, arg: &Arg) -> bool {
+    match arg.get_id().as_str() {
+        "help" => !parent.is_disable_help_flag_set(),
+        "version" => !parent.is_disable_version_flag_set(),
+        _ => false,
+    }
 }
 fn subcommand_facts(sub: &Command) -> Vec<Fact> {
     let name = sub.get_name().to_string();

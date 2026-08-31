@@ -161,6 +161,13 @@ fn the_derivation_covers_the_metadata_the_cluster_lost() {
     assert!(
         facts
             .iter()
+            .any(|fact| fact.is_clap_generated() && fact.expected() == "--help"),
+        "clap's generated help argument is still marked generated, even though \
+         the page states it"
+    );
+    assert!(
+        facts
+            .iter()
             .filter(|fact| *fact.subject() == arg("summary"))
             .all(|fact| !fact.is_clap_generated()),
         "an argument the application declared is not clap's"
@@ -278,6 +285,12 @@ fn the_page_lists_the_version_flag_clap_generates() {
         page.contains("-V, --version"),
         "clap accepts `-V`/`--version`, so the page states them:\n{page}"
     );
+    assert!(
+        clap_facts(&cmd, HelpLength::Long)
+            .iter()
+            .any(|fact| fact.is_clap_generated() && fact.expected() == "--version"),
+        "clap's generated version argument is still marked generated"
+    );
 }
 #[test]
 #[serial]
@@ -300,6 +313,23 @@ fn the_clap_generated_subcommand_exemption_is_load_bearing() {
             &without(Omission::ClapGeneratedSubcommands),
         )
     });
+}
+#[test]
+#[serial]
+fn an_already_built_command_states_the_same_facts() {
+    let mut cmd = Command::new("notes")
+        .about("Keep short notes")
+        .subcommand(Command::new("stat").about("Summarize the notes"));
+    cmd.build();
+    let page = themed_page(&cmd);
+    assert_page_states_clap_facts(&page, &cmd, HelpLength::Long);
+    assert!(
+        clap_facts(&cmd, HelpLength::Long)
+            .iter()
+            .any(|fact| fact.is_clap_generated()
+                && *fact.subject() == Subject::Subcommand("help".into())),
+        "clap's help word is generated however built the caller's command is"
+    );
 }
 #[test]
 #[serial]

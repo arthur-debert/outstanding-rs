@@ -14,6 +14,7 @@
 //! measurement excludes tag bytes, and tags stay balanced after padding or
 //! truncation.
 
+use minijinja::value::ValueKind;
 use minijinja::{Environment, Value};
 
 use super::decorator::{BorderStyle, Table};
@@ -277,15 +278,15 @@ fn register_table_functions(env: &mut Environment<'static>, widths: RenderWidthS
 
             let mut headers: Option<Vec<String>> = None;
             if let Some(h) = header {
-                let parsed: Vec<String> = h
-                    .try_iter()
-                    .map_err(|_| {
+                let parsed: Vec<String> = array_items(&h)
+                    .ok_or_else(|| {
                         minijinja::Error::new(
                             minijinja::ErrorKind::InvalidOperation,
-                            "header must be an array of strings",
+                            format!("header must be an array of strings, got {}", h.kind()),
                         )
                     })?
-                    .map(|v| stringify(&v).into_owned())
+                    .iter()
+                    .map(|v| stringify(v).into_owned())
                     .collect();
                 headers = Some(parsed.clone());
                 table = table.header(parsed);
@@ -342,45 +343,70 @@ fn register_table_functions(env: &mut Environment<'static>, widths: RenderWidthS
 }
 
 /// Flattens the `rows=` argument into the cell strings the width resolver
-/// measures. A column carrying `sub_columns` measures as empty: its
-/// sub-columns are resolved per row against the parent's width, so the whole
-/// table has no single content width to grow it to.
+/// measures. Anything that is not an array of arrays is an error rather than a
+/// one-cell row: a template that passes a mapping or a scalar would otherwise
+/// measure a debug rendering of it and size the table to that.
 fn measurable_rows(
     columns: &[Column],
     rows: &Value,
     function: &str,
 ) -> Result<Vec<Vec<String>>, minijinja::Error> {
-    let iter = rows.try_iter().map_err(|_| {
+    let rows = array_items(rows).ok_or_else(|| {
         minijinja::Error::new(
             minijinja::ErrorKind::InvalidOperation,
-            format!("{}() rows must be an array of row arrays", function),
+            format!(
+                "{function}() rows must be an array of row arrays, got {}",
+                rows.kind()
+            ),
         )
     })?;
 
-    Ok(iter
-        .map(|row| {
-            let cells: Vec<String> = match row.try_iter() {
-                Ok(cells) => cells.map(|cell| stringify(&cell).into_owned()).collect(),
-                Err(_) => vec![stringify(&row).into_owned()],
-            };
-            measurable_row(columns, cells)
+    rows.into_iter()
+        .enumerate()
+        .map(|(index, row)| {
+            let cells = array_items(&row).ok_or_else(|| {
+                minijinja::Error::new(
+                    minijinja::ErrorKind::InvalidOperation,
+                    format!(
+                        "{function}() rows must be an array of row arrays, but row {index} is {}",
+                        row.kind()
+                    ),
+                )
+            })?;
+            Ok(measurable_row(
+                columns,
+                cells.iter().map(|cell| stringify(cell).into_owned()),
+            ))
         })
-        .collect())
+        .collect()
 }
 
-fn measurable_row(columns: &[Column], cells: Vec<String>) -> Vec<String> {
-    cells
-        .into_iter()
-        .enumerate()
-        .map(|(index, cell)| {
-            if columns
-                .get(index)
-                .and_then(|column| column.sub_columns.as_ref())
-                .is_some()
-            {
+/// The cells of a value the template passed as an array, or `None` for
+/// anything else — a string included, whose per-character iteration would read
+/// as a row of one-character cells.
+fn array_items(value: &Value) -> Option<Vec<Value>> {
+    match value.kind() {
+        ValueKind::Seq | ValueKind::Iterable => value.try_iter().map(Iterator::collect).ok(),
+        _ => None,
+    }
+}
+
+/// Squares one row against the column list, the shape the width resolver
+/// measures. A cell the row omits measures as that column's `null_repr`,
+/// because that is what the formatter renders in its place; a column carrying
+/// `sub_columns` measures as empty, because its sub-columns are resolved per
+/// row against the parent's width, so the whole table has no single content
+/// width to grow it to.
+fn measurable_row(columns: &[Column], cells: impl IntoIterator<Item = String>) -> Vec<String> {
+    let mut cells = cells.into_iter();
+    columns
+        .iter()
+        .map(|column| {
+            let cell = cells.next();
+            if column.sub_columns.is_some() {
                 String::new()
             } else {
-                cell
+                cell.unwrap_or_else(|| column.null_repr.clone())
             }
         })
         .collect()
@@ -1350,6 +1376,81 @@ mod tests {
                 "#12     open    Add pagination",
                 "#7      merged  Fix retry",
             ]
+        );
+    }
+
+    #[test]
+    fn function_tabular_rows_measures_null_repr_where_a_row_stops_short() {
+        let mut env = setup_env();
+        env.add_template(
+            "test",
+            r#"{% set fmt = tabular([{"width": {"min": 0}}, {"width": {"min": 0}, "null_repr": "unknown"}, {"width": "fill"}], separator="  ", width=60, rows=rows) %}{{ fmt.widths }}|{{ fmt.row(rows[0]) }}"#,
+        )
+        .unwrap();
+        let rendered = env
+            .get_template("test")
+            .unwrap()
+            .render(context!(rows => vec![vec!["#12"], vec!["#7"]]))
+            .unwrap();
+        let (widths, row) = rendered.split_once('|').unwrap();
+        assert_eq!(widths, "[3, 7, 46]");
+        assert!(
+            row.contains("unknown"),
+            "the omitted cell renders `null_repr` in full: {row:?}"
+        );
+    }
+
+    #[test]
+    fn function_table_measures_null_repr_where_the_header_stops_short() {
+        let mut env = setup_env();
+        env.add_template(
+            "test",
+            r#"{% set t = table([{"width": {"min": 0}}, {"width": {"min": 0}, "null_repr": "unknown"}, {"width": "fill"}], separator="  ", width=60, header=["NUMBER"], rows=rows) %}{{ t.header_row() }}"#,
+        )
+        .unwrap();
+        let header = env
+            .get_template("test")
+            .unwrap()
+            .render(context!(rows => vec![vec!["#12"], vec!["#7"]]))
+            .unwrap();
+        assert!(
+            header.contains("unknown"),
+            "the header column the caller left out renders `null_repr` in full: {header:?}"
+        );
+    }
+
+    #[test]
+    fn function_tabular_rows_rejects_a_row_that_is_not_an_array() {
+        let mut env = setup_env();
+        env.add_template(
+            "test",
+            r#"{% set fmt = tabular([{"width": {"min": 0}}], rows=[{"number": "n12"}]) %}{{ fmt.widths }}"#,
+        )
+        .unwrap();
+        let error = env
+            .get_template("test")
+            .unwrap()
+            .render(context!())
+            .unwrap_err();
+        assert!(error.to_string().contains("row 0 is map"), "{error}");
+    }
+
+    #[test]
+    fn function_table_header_rejects_a_string() {
+        let mut env = setup_env();
+        env.add_template(
+            "test",
+            r#"{% set t = table([{"width": 6}], header="NUMBER") %}{{ t.header_row() }}"#,
+        )
+        .unwrap();
+        let error = env
+            .get_template("test")
+            .unwrap()
+            .render(context!())
+            .unwrap_err();
+        assert!(
+            error.to_string().contains("header must be an array"),
+            "{error}"
         );
     }
 
