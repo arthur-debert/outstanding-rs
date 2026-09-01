@@ -54,10 +54,10 @@ The document is `Diagnostic`, serialized flat; `range` is present only when set:
 }
 ```
 
-`kind` is the `RunErrorKind` in kebab-case, a tuple payload appended:
-`clap-usage`, `default-command`, `handler`, `hook-pre-dispatch`,
-`hook-post-dispatch`, `hook-post-output`, `render`, `final-write-text`,
-`final-write-binary`, `final-write-artifact`, `external`, `app`. In `csv` the
+`kind` is a `DiagnosticKind`, the `RunErrorKind` projected onto the fixed wire
+vocabulary: `clap-usage`, `default-command`, `handler`, `hook-pre-dispatch`,
+`hook-post-dispatch`, `hook-post-output`, `render`, `final-write` (for every
+`FinalWrite` payload), `external`, `app`. In `csv` the
 document is one row whose header ends in `range_filename`, `range_line` and
 `range_column`, empty when there is no range. `RunError::diagnostic()` is the
 value, `emit_run_result` writes it, and `standout::cli::parse_diagnostic` reads

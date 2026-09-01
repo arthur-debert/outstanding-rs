@@ -204,7 +204,7 @@ fn real_process_status_and_stream_matrix() {
 
 #[test]
 fn real_process_structured_failures_are_stdout_documents() {
-    use standout::cli::{parse_diagnostic, HookPhase, RunErrorKind};
+    use standout::cli::{parse_diagnostic, DiagnosticKind, HookPhase, RunErrorKind};
     use standout::OutputMode;
 
     let binary = fixture_binary();
@@ -253,7 +253,7 @@ fn real_process_structured_failures_are_stdout_documents() {
         let stdout = String::from_utf8(output.stdout).unwrap();
         let diagnostic = parse_diagnostic(OutputMode::Json, &stdout)
             .unwrap_or_else(|e| panic!("{args:?}: {e}:\n{stdout}"));
-        assert_eq!(diagnostic.kind, kind, "{args:?}");
+        assert_eq!(diagnostic.kind, DiagnosticKind::from(kind), "{args:?}");
         assert!(diagnostic.summary.contains(summary), "{args:?}: {stdout}");
     }
 
@@ -291,7 +291,7 @@ fn real_process_structured_failures_are_stdout_documents() {
         &String::from_utf8(external.stdout).unwrap(),
     )
     .unwrap();
-    assert_eq!(external.kind, RunErrorKind::External);
+    assert_eq!(external.kind, DiagnosticKind::External);
     assert_eq!(external.detail, "fatal: external fixture failed");
 
     let malformed = run(&binary, &["--unknown", "--output", "jsn"]);

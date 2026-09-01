@@ -3,15 +3,18 @@
 //!
 //! A handler returns a [`Diagnostic`] as its error when it has a `detail` or a
 //! source `range` to report; any other error type reaches the document with
-//! its `Display` text as `summary` and an empty `detail`. `kind` names the
-//! [`RunErrorKind`] the framework assigned when the error crossed the dispatch
-//! boundary, so a value a handler constructs carries a placeholder that the
-//! framework overwrites.
+//! its `Display` text as `summary` and an empty `detail`. `kind` is the
+//! [`DiagnosticKind`] projected from the [`RunErrorKind`] the framework
+//! assigned when the error crossed the dispatch boundary, so a value a handler
+//! constructs carries a placeholder that the framework overwrites. The wire
+//! vocabulary is D1's, fixed by the tflike gap suite: every `FinalWrite`
+//! payload is the one `final-write`, while hook phases stay distinct.
 
 use serde::{Deserialize, Serialize};
 use std::fmt;
 
 use crate::handler::RunErrorKind;
+use crate::hooks::HookPhase;
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Diagnostic {
@@ -19,7 +22,7 @@ pub struct Diagnostic {
     document_type: (),
     schema_version: u32,
     pub severity: Severity,
-    pub kind: RunErrorKind,
+    pub kind: DiagnosticKind,
     pub summary: String,
     pub detail: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -42,7 +45,7 @@ impl Diagnostic {
             document_type: (),
             schema_version: Self::SCHEMA_VERSION,
             severity,
-            kind: RunErrorKind::Handler,
+            kind: DiagnosticKind::Handler,
             summary: summary.into(),
             detail: String::new(),
             range: None,
@@ -93,6 +96,38 @@ pub enum Severity {
     Warning,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum DiagnosticKind {
+    ClapUsage,
+    DefaultCommand,
+    Handler,
+    HookPreDispatch,
+    HookPostDispatch,
+    HookPostOutput,
+    Render,
+    FinalWrite,
+    External,
+    App,
+}
+
+impl From<RunErrorKind> for DiagnosticKind {
+    fn from(kind: RunErrorKind) -> Self {
+        match kind {
+            RunErrorKind::ClapUsage => Self::ClapUsage,
+            RunErrorKind::DefaultCommand => Self::DefaultCommand,
+            RunErrorKind::Handler => Self::Handler,
+            RunErrorKind::Hook(HookPhase::PreDispatch) => Self::HookPreDispatch,
+            RunErrorKind::Hook(HookPhase::PostDispatch) => Self::HookPostDispatch,
+            RunErrorKind::Hook(HookPhase::PostOutput) => Self::HookPostOutput,
+            RunErrorKind::Render => Self::Render,
+            RunErrorKind::FinalWrite(_) => Self::FinalWrite,
+            RunErrorKind::External => Self::External,
+            RunErrorKind::App => Self::App,
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct DiagnosticRange {
     pub filename: String,
@@ -130,7 +165,7 @@ mod document_type {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::hooks::HookPhase;
+    use crate::handler::OutputKind;
 
     #[test]
     fn a_ranged_diagnostic_serializes_flat_with_the_fixed_type_tag() {
@@ -157,7 +192,7 @@ mod tests {
     #[test]
     fn an_unranged_diagnostic_omits_the_range_key() {
         let mut diagnostic = Diagnostic::warning("soft");
-        diagnostic.kind = RunErrorKind::Hook(HookPhase::PostOutput);
+        diagnostic.kind = DiagnosticKind::HookPostOutput;
         let json = serde_json::to_string(&diagnostic).unwrap();
         assert_eq!(
             json,
@@ -167,6 +202,45 @@ mod tests {
             serde_json::from_str::<Diagnostic>(&json).unwrap(),
             diagnostic
         );
+    }
+
+    #[test]
+    fn every_run_error_kind_projects_onto_the_fixed_wire_vocabulary() {
+        let expected = [
+            (RunErrorKind::ClapUsage, "clap-usage"),
+            (RunErrorKind::DefaultCommand, "default-command"),
+            (RunErrorKind::Handler, "handler"),
+            (
+                RunErrorKind::Hook(HookPhase::PreDispatch),
+                "hook-pre-dispatch",
+            ),
+            (
+                RunErrorKind::Hook(HookPhase::PostDispatch),
+                "hook-post-dispatch",
+            ),
+            (
+                RunErrorKind::Hook(HookPhase::PostOutput),
+                "hook-post-output",
+            ),
+            (RunErrorKind::Render, "render"),
+            (RunErrorKind::FinalWrite(OutputKind::Text), "final-write"),
+            (RunErrorKind::FinalWrite(OutputKind::Binary), "final-write"),
+            (
+                RunErrorKind::FinalWrite(OutputKind::Artifact),
+                "final-write",
+            ),
+            (RunErrorKind::External, "external"),
+            (RunErrorKind::App, "app"),
+        ];
+        for (kind, name) in expected {
+            let wire = DiagnosticKind::from(kind);
+            assert_eq!(serde_json::to_value(wire).unwrap(), name, "{kind:?}");
+            assert_eq!(
+                serde_json::from_value::<DiagnosticKind>(name.into()).unwrap(),
+                wire
+            );
+        }
+        assert!(serde_json::from_value::<DiagnosticKind>("final-write-text".into()).is_err());
     }
 
     #[test]

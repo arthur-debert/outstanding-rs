@@ -18,7 +18,8 @@ use std::io::Write;
 use serde::{Deserialize, Serialize};
 
 use crate::cli::handler::{
-    ArtifactRun, Diagnostic, DispatchResult, OutputKind, RunError, RunErrorKind, Severity,
+    ArtifactRun, Diagnostic, DiagnosticKind, DispatchResult, OutputKind, RunError, RunErrorKind,
+    Severity,
 };
 use crate::OutputMode;
 
@@ -92,12 +93,7 @@ fn emit_failure<W: Write, E: Write>(
         .write_all(document.as_bytes())
         .and_then(|()| stdout.flush())
         .err()
-        .map(|write_error| {
-            RunError::new(
-                format!("Error writing stdout: {}", write_error),
-                RunErrorKind::FinalWrite(OutputKind::Text),
-            )
-        })
+        .and_then(|write_error| final_write_error_unless_broken_pipe(write_error, OutputKind::Text))
 }
 
 /// The modes whose failure is a stdout document rather than stderr prose.
@@ -147,7 +143,7 @@ struct DiagnosticRow {
     document_type: String,
     schema_version: u32,
     severity: Severity,
-    kind: RunErrorKind,
+    kind: DiagnosticKind,
     summary: String,
     detail: String,
     range_filename: Option<String>,
@@ -266,6 +262,18 @@ mod tests {
         }
     }
 
+    struct ClosedWriter;
+
+    impl Write for ClosedWriter {
+        fn write(&mut self, _: &[u8]) -> std::io::Result<usize> {
+            Err(std::io::Error::other("disk full"))
+        }
+
+        fn flush(&mut self) -> std::io::Result<()> {
+            Ok(())
+        }
+    }
+
     #[derive(Default)]
     struct FlushFailingWriter {
         bytes: Vec<u8>,
@@ -358,7 +366,7 @@ mod tests {
         assert!(handled.unwrap());
         assert_eq!(stderr, "app: refused\n");
         let document = parse_diagnostic(OutputMode::Yaml, &stdout).unwrap();
-        assert_eq!(document.kind, RunErrorKind::App);
+        assert_eq!(document.kind, DiagnosticKind::App);
         assert_eq!(document.summary, "app: refused");
         assert_eq!(document.detail, "app: refused\n");
     }
@@ -423,7 +431,7 @@ mod tests {
         let failure = emit_run_result(
             &DispatchResult::Error(RunError::new("Error: boom", RunErrorKind::Handler)),
             OutputMode::Json,
-            &mut FailingWriter,
+            &mut ClosedWriter,
             &mut stderr,
         )
         .unwrap_err();
@@ -431,6 +439,19 @@ mod tests {
         assert!(String::from_utf8(stderr)
             .unwrap()
             .contains("Error writing stdout"));
+    }
+
+    #[test]
+    fn a_document_broken_pipe_keeps_the_failure_it_was_reporting() {
+        let mut stderr = Vec::new();
+        let handled = emit_run_result(
+            &DispatchResult::Error(RunError::new("bad argv", RunErrorKind::ClapUsage)),
+            OutputMode::Json,
+            &mut FailingWriter,
+            &mut stderr,
+        );
+        assert!(handled.unwrap());
+        assert!(stderr.is_empty());
     }
 
     #[test]

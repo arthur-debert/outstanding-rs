@@ -273,6 +273,7 @@ impl TestHarness {
         ));
         TestResult {
             stdout: String::from_utf8_lossy(&stdout).into_owned(),
+            stdout_bytes: stdout,
             stderr,
             outcome,
             warnings,
@@ -393,6 +394,7 @@ impl Drop for RestoreState {
 pub struct TestResult {
     outcome: DispatchResult,
     stdout: String,
+    stdout_bytes: Vec<u8>,
     stderr: String,
     warnings: Vec<String>,
     output_mode: OutputMode,
@@ -455,6 +457,11 @@ impl TestResult {
     }
     pub fn stdout(&self) -> &str {
         &self.stdout
+    }
+    /// What the run wrote to stdout, byte for byte; `stdout()` is its lossy
+    /// text, minus the newline that terminates rendered text.
+    pub fn stdout_bytes(&self) -> &[u8] {
+        &self.stdout_bytes
     }
     pub fn stderr(&self) -> &str {
         &self.stderr

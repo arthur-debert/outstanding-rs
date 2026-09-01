@@ -16,7 +16,13 @@ pub fn serialize_document<T: Serialize>(
             json.push('\n');
             Ok(json)
         }
-        OutputMode::Yaml => Ok(serde_yaml::to_string(data)?),
+        OutputMode::Yaml => {
+            let mut yaml = serde_yaml::to_string(data)?;
+            if !yaml.ends_with('\n') {
+                yaml.push('\n');
+            }
+            Ok(yaml)
+        }
         OutputMode::Csv => {
             let mut writer = csv::Writer::from_writer(Vec::new());
             writer.serialize(data)?;
@@ -36,11 +42,19 @@ pub fn deserialize_document<T: DeserializeOwned>(
     match output_mode {
         OutputMode::Json => Ok(serde_json::from_str(text)?),
         OutputMode::Yaml => Ok(serde_yaml::from_str(text)?),
-        OutputMode::Csv => csv::Reader::from_reader(text.as_bytes())
-            .deserialize()
-            .next()
-            .ok_or_else(|| RenderError::OperationError("the CSV document has no row".into()))?
-            .map_err(RenderError::from),
+        OutputMode::Csv => {
+            let mut reader = csv::Reader::from_reader(text.as_bytes());
+            let mut rows = reader.deserialize::<T>();
+            let row = rows.next().ok_or_else(|| {
+                RenderError::OperationError("the CSV document has no row".into())
+            })??;
+            if rows.next().is_some() {
+                return Err(RenderError::OperationError(
+                    "the CSV document has more than one row".into(),
+                ));
+            }
+            Ok(row)
+        }
         mode => Err(RenderError::OperationError(format!(
             "{mode:?} is not a document mode"
         ))),
@@ -88,5 +102,22 @@ mod tests {
         assert!(serialize_document(&record, OutputMode::Text).is_err());
         assert!(deserialize_document::<Record>(OutputMode::Term, "").is_err());
         assert!(deserialize_document::<Record>(OutputMode::Csv, "name,count,note\n").is_err());
+    }
+
+    #[test]
+    fn a_document_is_exactly_one_value() {
+        let error =
+            deserialize_document::<Record>(OutputMode::Csv, "name,count,note\na,1,\nb,2,\n")
+                .unwrap_err();
+        assert!(error.to_string().contains("more than one row"), "{error}");
+        let json = "{\"name\":\"a\",\"count\":1,\"note\":null}\n";
+        assert!(
+            deserialize_document::<Record>(OutputMode::Json, &format!("{json}{json}")).is_err()
+        );
+        let yaml = "name: a\ncount: 1\nnote: null\n";
+        assert!(
+            deserialize_document::<Record>(OutputMode::Yaml, &format!("{yaml}---\n{yaml}"))
+                .is_err()
+        );
     }
 }

@@ -85,6 +85,47 @@ fn stdout_and_stderr_carry_different_content() {
 }
 #[test]
 #[serial]
+fn opaque_stdout_is_observable_byte_for_byte() {
+    const RAW: &[u8] = &[0xff, 0x00, b'x', 0xfe];
+    let app = App::builder()
+        .templates(EmbeddedTemplates::new(TEMPLATES, ""))
+        .command_with(
+            "export",
+            FnHandler::new(|_m, _ctx| {
+                Ok(Output::Artifact(
+                    Artifact::<serde_json::Value>::new(RAW.to_vec()).allow_stdout(),
+                ))
+            }),
+            |cfg| cfg,
+        )
+        .unwrap()
+        .build()
+        .unwrap();
+    let result = TestHarness::new().run(&app, export_command(), ["app", "export"]);
+    result.assert_success();
+    assert_eq!(result.stdout_bytes(), RAW);
+    assert_ne!(result.stdout().as_bytes(), RAW);
+    let app = App::builder()
+        .templates(EmbeddedTemplates::new(TEMPLATES, ""))
+        .command_with(
+            "export",
+            FnHandler::new(|_m, _ctx| -> HandlerResult<serde_json::Value> {
+                Ok(Output::Binary {
+                    data: RAW.to_vec(),
+                    filename: "raw.bin".into(),
+                })
+            }),
+            |cfg| cfg,
+        )
+        .unwrap()
+        .build()
+        .unwrap();
+    let result = TestHarness::new().run(&app, export_command(), ["app", "export"]);
+    result.assert_success();
+    assert_eq!(result.stdout_bytes(), RAW);
+}
+#[test]
+#[serial]
 fn a_file_artifact_reports_on_stdout_and_leaves_stderr_silent() {
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("export.csv");

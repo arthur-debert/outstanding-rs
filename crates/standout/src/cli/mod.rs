@@ -68,10 +68,10 @@ pub use help::{
 
 pub use handler::{
     AppFailure, Artifact, ArtifactDestination, ArtifactReceipt, ArtifactRun, CommandContext,
-    CommandContextInput, Diagnostic, DiagnosticPosition, DiagnosticRange, DispatchResult,
-    ExitStatus, ExternalFailure, FnHandler, Handler, HandlerResult, InvalidAppStatus,
-    InvalidExternalStatus, Output, OutputKind, RunError, RunErrorKind, RunOutput, Severity,
-    SuccessKind, UnknownRunErrorKind,
+    CommandContextInput, Diagnostic, DiagnosticKind, DiagnosticPosition, DiagnosticRange,
+    DispatchResult, ExitStatus, ExternalFailure, FnHandler, Handler, HandlerResult,
+    InvalidAppStatus, InvalidExternalStatus, Output, OutputKind, RunError, RunErrorKind, RunOutput,
+    Severity, SuccessKind,
 };
 
 pub use emit::{

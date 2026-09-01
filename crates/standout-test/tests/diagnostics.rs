@@ -3,8 +3,8 @@ use serde::Serialize;
 use serde_json::json;
 use serial_test::serial;
 use standout::cli::{
-    App, AppFailure, CommandContextInput, Diagnostic, ExitStatus, ExternalFailure, FnHandler,
-    HandlerResult, HookError, HookPhase, Hooks, Output, RunErrorKind, Severity,
+    App, AppFailure, CommandContextInput, Diagnostic, DiagnosticKind, ExitStatus, ExternalFailure,
+    FnHandler, HandlerResult, HookError, HookPhase, Hooks, Output, RunErrorKind, Severity,
 };
 use standout::{EmbeddedTemplates, OutputMode};
 use standout_test::TestHarness;
@@ -167,13 +167,17 @@ fn each_failure_class_is_a_json_document_on_stdout_with_stderr_empty() {
         assert_eq!(document["type"], "diagnostic", "{args:?}");
         assert_eq!(document["schema_version"], 1, "{args:?}");
         assert_eq!(document["severity"], "error", "{args:?}");
-        assert_eq!(document["kind"], kind.name(), "{args:?}");
+        assert_eq!(
+            document["kind"],
+            serde_json::to_value(DiagnosticKind::from(kind)).unwrap(),
+            "{args:?}"
+        );
         assert!(
             document["summary"].as_str().unwrap().contains(summary),
             "{args:?}: {document}"
         );
         let diagnostic = result.expect_diagnostic();
-        assert_eq!(diagnostic.kind, kind);
+        assert_eq!(diagnostic.kind, DiagnosticKind::from(kind));
         assert_eq!(diagnostic.severity, Severity::Error);
     }
 }
@@ -246,7 +250,7 @@ fn yaml_and_csv_carry_the_handler_error_as_their_own_document() {
         "type,schema_version,severity,kind,summary,detail,range_filename,range_line,range_column\n\
          diagnostic,1,error,handler,the handler refused,,,,\n"
     );
-    assert_eq!(csv.expect_diagnostic().kind, RunErrorKind::Handler);
+    assert_eq!(csv.expect_diagnostic().kind, DiagnosticKind::Handler);
 
     let ranged =
         TestHarness::new()
@@ -275,7 +279,7 @@ fn the_argv_scan_finds_the_mode_on_either_side_of_a_usage_error() {
         assert!(result.stderr().is_empty(), "{args:?}: {}", result.stderr());
         assert_eq!(
             result.expect_diagnostic().kind,
-            RunErrorKind::ClapUsage,
+            DiagnosticKind::ClapUsage,
             "{args:?}"
         );
     }
@@ -361,14 +365,14 @@ fn owner_declared_failures_keep_their_bytes_and_add_the_document() {
         "app: repository not found: demo/gamma\n"
     );
     let diagnostic = app_failure.expect_diagnostic();
-    assert_eq!(diagnostic.kind, RunErrorKind::App);
+    assert_eq!(diagnostic.kind, DiagnosticKind::App);
     assert_eq!(diagnostic.summary, "app: repository not found: demo/gamma");
     assert_eq!(diagnostic.detail, "app: repository not found: demo/gamma\n");
 
     let external = run(&["app", "external", "--output", "yaml"]);
     assert_eq!(external.stderr(), "fatal: not a git repository\n");
     let diagnostic = external.expect_diagnostic();
-    assert_eq!(diagnostic.kind, RunErrorKind::External);
+    assert_eq!(diagnostic.kind, DiagnosticKind::External);
     assert_eq!(diagnostic.detail, "fatal: not a git repository\n");
 
     let human = run(&["app", "app-fail"]);
