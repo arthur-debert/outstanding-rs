@@ -248,8 +248,9 @@ are balanced:
 inspection.
 
 There is no `?` marker: an unknown tag is never rewritten to `[unknown?]` in
-rendered output. Instead, each unresolved tag raises a stderr warning (see
-[Unresolved-tag warning](#unresolved-tag-warning) below), whether it was
+rendered output. Instead, when the render runs through an application, the
+unresolved tags are reported together on stderr (see
+[Unresolved-tag warning](#unresolved-tag-warning) below), whether each was
 stripped or emitted verbatim.
 
 A tag counts as unknown when it is absent from the *active theme's* resolved
@@ -264,14 +265,17 @@ templating topic.
 
 ### Unresolved-tag warning
 
-Every unresolved style tag raises one stderr warning naming the offending
-tag(s):
+Rendering through an application — `App::run` and the other `App` entry points —
+reports unresolved style tags on stderr. Each render pass emits at most one
+warning line, naming every tag it left unresolved (sorted and de-duplicated):
 
 ```text
 Unresolved style tag(s) degraded to unstyled text: compute, status
 ```
 
-An application whose specification pins its stderr bytes must account for this
+The standalone render APIs degrade the tags the same way but write nothing to
+stderr; only the `App` pipeline collects the warning and flushes it. An
+application whose specification pins its stderr bytes must account for this
 line. An escaped bracket (`\[`) is not a tag and raises no warning.
 
 ### Validation

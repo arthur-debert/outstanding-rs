@@ -431,8 +431,11 @@ destination hints:
 
 The report is emitted with exactly one trailing newline appended by the
 framework (via `writeln!`). An absent or empty report emits nothing — no blank
-line — so a zero-byte artifact with no report produces no output on either
-stream.
+line. A destination must still be selected first: an `Artifact` that suggests
+none, does not `.allow_stdout()`, and gets no `--output-file-path` fails with a
+stderr diagnostic rather than writing silently. Once a destination is selected
+and the write succeeds, a zero-byte artifact with no report adds nothing to
+either stream.
 
 Who owns what:
 

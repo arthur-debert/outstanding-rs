@@ -69,8 +69,8 @@ occurrence: passing it twice on one command line is a clap usage error
 (`ArgumentConflict`), so an application cannot inject its own default by
 appending a second `--output` to the arguments. To change the default output
 mode, set it on the builder with
-[`output_mode_fallback(mode)`](./app-configuration.md#output-mode-fallback) (or
-its alias `default_output_mode(mode)`) rather than rewriting the command line.
+[`output_mode_fallback(mode)`](./app-configuration.md#output-mode-fallback)
+rather than rewriting the command line.
 
 The global property is not special to `--output`. Any flag an application
 declares with clap's `.global(true)` is readable from the deepest `ArgMatches`,

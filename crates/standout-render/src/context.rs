@@ -20,6 +20,11 @@ pub struct RenderContext<'a> {
 
     pub theme: &'a Theme,
 
+    /// The serialized data for the request being rendered. A [`ContextProvider`]
+    /// reads it to derive a template value from data the template does not name
+    /// directly. For an ordinary command this is the handler's serialized render
+    /// output; help rendering, an artifact's report, and direct render calls each
+    /// supply their own request-specific shape instead.
     pub data: &'a serde_json::Value,
 
     pub extras: HashMap<String, String>,
@@ -71,14 +76,6 @@ impl<'a> RenderContext<'a> {
             Some("wide") => AmbiguousWidth::Wide,
             _ => AmbiguousWidth::Narrow,
         }
-    }
-
-    /// The handler's serialized `Output::Render` payload for the command being
-    /// rendered. A [`ContextProvider`] reads it to derive a template value from
-    /// handler data the template does not name directly. Returns the same
-    /// reference as the public `data` field.
-    pub fn data(&self) -> &serde_json::Value {
-        self.data
     }
 
     pub fn with_extra(mut self, key: impl Into<String>, value: impl Into<String>) -> Self {
@@ -301,16 +298,6 @@ mod tests {
 
         let ctx_text = RenderContext::new(OutputMode::Text, None, &theme, &data);
         assert_eq!(provider.provide(&ctx_text), Value::from("Text"));
-    }
-
-    #[test]
-    fn data_getter_returns_the_payload() {
-        let theme = Theme::new();
-        let data = serde_json::json!({"count": 42});
-        let ctx = RenderContext::new(OutputMode::Text, None, &theme, &data);
-
-        assert_eq!(ctx.data(), &data);
-        assert_eq!(ctx.data().get("count").and_then(|v| v.as_i64()), Some(42));
     }
 
     #[test]
