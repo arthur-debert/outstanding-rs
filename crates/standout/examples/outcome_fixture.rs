@@ -15,6 +15,8 @@ const TEMPLATES: &[(&str, &str)] = &[
 ];
 
 const ARTIFACT_PATH_ENV: &str = "STANDOUT_FIXTURE_ARTIFACT_PATH";
+const EDGE_ENV: &str = "STANDOUT_FIXTURE_EDGE";
+const OUTCOME_PATH_ENV: &str = "STANDOUT_FIXTURE_OUTCOME_PATH";
 
 const ARTIFACT_TEMPLATE: &str = "wrote {{ report.entries }} entries to {{ receipt.destination }}";
 
@@ -174,5 +176,18 @@ fn app() -> App {
 }
 
 fn main() {
+    if std::env::var_os(EDGE_ENV).is_some_and(|edge| edge == "emitted") {
+        let outcome = app().run_emitted(command(), std::env::args());
+        std::fs::write(
+            std::env::var_os(OUTCOME_PATH_ENV).unwrap(),
+            format!(
+                "handled={} status={}",
+                outcome.handled,
+                outcome.status.code()
+            ),
+        )
+        .unwrap();
+        std::process::exit(outcome.status.code().into());
+    }
     app().run(command(), std::env::args());
 }

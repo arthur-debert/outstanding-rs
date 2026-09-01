@@ -28,7 +28,7 @@
 //! Key types: [`AppBuilder`] (configuration), [`App`] (built application),
 //! [`Handler`] / [`FnHandler`] (command handlers), [`Output`] (what a
 //! handler produces), [`HandlerResult`], [`CompletedRun`] /
-//! [`DispatchResult`], [`Hooks`], [`CommandContext`].
+//! [`DispatchResult`], [`ProcessOutcome`], [`Hooks`], [`CommandContext`].
 //!
 //! See also: [`crate::render`] for rendering without CLI integration,
 //! [`handler`], [`hooks`], [`help`].
@@ -58,7 +58,7 @@ pub use questionnaire::{
     QUESTIONNAIRE_YES_ARG,
 };
 
-pub use result::{CompletedRun, HelpResult};
+pub use result::{CompletedRun, HelpResult, ProcessOutcome};
 
 pub use help::{
     default_help_theme, render_help, render_help_with_topics, validate_command_groups,
