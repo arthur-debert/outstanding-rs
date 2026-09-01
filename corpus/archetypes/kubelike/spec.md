@@ -121,9 +121,10 @@ A missing file is not an error — resolution falls through it. `-A` /
 `--all-namespaces` lists across every namespace instead and adds a leading
 `NAMESPACE` column.
 
-For a cluster-scoped kind, `-n` and `-A` are usage errors (exit 2, stdout
-empty, stderr naming the kind and that it is not namespaced). Plain
-`get nodes` needs neither.
+For a cluster-scoped kind, `-n` and `-A` are usage errors whichever verb asked
+— exit 2, stdout empty, stderr naming the kind by its plural registry name (as
+the not-found error does, whatever form the argument took) and saying it is not
+namespaced. Plain `get nodes` needs neither.
 
 A comma-separated list is judged as one invocation, not kind by kind: if any
 kind in the list is cluster-scoped, `-n` and `-A` are that same usage error —

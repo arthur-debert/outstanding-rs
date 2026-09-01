@@ -54,13 +54,14 @@ cases = [
     "namespace-flag-refused-on-cluster-scoped-kind",
     "all-namespaces-refused-on-cluster-scoped-kind",
     "all-namespaces-adds-a-leading-column",
+    "namespace-flag-refused-on-describe-of-a-cluster-scoped-kind",
     "namespace-flag-refused-on-a-mixed-scope-list",
     "all-namespaces-refused-on-a-mixed-scope-list",
 ]
 
 [[interactions]]
 id = "ambient-default-vs-invocation"
-stresses = ["config-file default", "environment variable", "per-invocation flag", "missing-file fall-through"]
+stresses = ["config-file default", "environment variable", "per-invocation flag", "missing-file fall-through", "one chain shared by every verb"]
 description = "One ambient selector (the namespace) resolved from four sources in a fixed order, where the same missing file is a silent fall-through for one command and a domain error for another. Deliberately one file and one chain: layer *merge* semantics are C1/C6/C7's triangulation, and duplicating them here would buy no signal."
 cases = [
     "namespace-flag-selects",
@@ -70,6 +71,8 @@ cases = [
     "kubeconfig-env-path-redirects-the-file",
     "current-context-reads-the-kubeconfig",
     "current-context-without-a-kubeconfig",
+    "describe-namespace-flag-selects",
+    "describe-env-namespace-beats-kubeconfig",
 ]
 
 [[interactions]]
@@ -92,6 +95,7 @@ description = "custom-columns hands the column set and its headers to the caller
 cases = [
     "custom-columns-chooses-columns-and-headers",
     "custom-columns-unknown-field-lists-valid-ones",
+    "custom-columns-rejects-the-kind-field",
 ]
 
 [[interactions]]
