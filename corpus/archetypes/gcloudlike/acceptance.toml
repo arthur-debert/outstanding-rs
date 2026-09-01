@@ -5,7 +5,7 @@
 # spec-correct implementation can answer it without the persisted
 # configuration-set store: the store's contents cannot change what the case
 # observes, the correct path writes nothing to it, and no explicitly named set
-# has to be proven to exist. It is `expected = "fail"` (gap PAR01) when any of
+# has to be proven to exist. It is `expected = "fail"` (gap PAR05) when any of
 # those three is untrue — the store deciding an output, a write, or the
 # existence check the spec demands of every name but `default`.
 #
@@ -395,8 +395,8 @@ name = "configuration-flag-does-not-supply-a-property"
 group = "config-layering"
 stresses = "the selector flag names a set and nothing more: it does not outrank a variable supplying a property"
 expected = "fail"
-gap = "PAR01"
-reason = "naming a set other than `default` obliges the implementation to prove it exists, which is the persisted store (docs/spec/parity-config-layering.md)"
+gap = "PAR05"
+reason = "naming a set other than `default` obliges the implementation to prove it exists, which is the persisted store (docs/spec/parity-named-config-sets.md, PAR05)"
 [case.run]
 argv = ["config", "get-value", "core/project", "--configuration", "prod"]
 env = { GCLOUDLIKE_CONFIG_DIR = "conf", GCLOUDLIKE_CORE_PROJECT = "alpha-proj" }
@@ -415,8 +415,8 @@ name = "active-config-env-does-not-supply-a-property"
 group = "config-layering"
 stresses = "the other cross-chain direction: the selector variable does not outrank a flag supplying a property"
 expected = "fail"
-gap = "PAR01"
-reason = "naming a set other than `default` obliges the implementation to prove it exists, which is the persisted store (docs/spec/parity-config-layering.md)"
+gap = "PAR05"
+reason = "naming a set other than `default` obliges the implementation to prove it exists, which is the persisted store (docs/spec/parity-named-config-sets.md, PAR05)"
 [case.run]
 argv = ["config", "get-value", "core/project", "--project", "alpha-proj"]
 env = { GCLOUDLIKE_CONFIG_DIR = "conf", GCLOUDLIKE_ACTIVE_CONFIG = "prod" }
@@ -430,19 +430,19 @@ exit_code = 0
 stdout = "alpha-proj\n"
 stderr = ""
 
-# --- named configuration sets (specced past current capability; PAR01) -------
+# --- named configuration sets (specced past current capability; PAR05) -------
 # Standout has no config-file layering feature today; the spec asks for the
 # gcloud shape anyway. A blind implementer may hand-roll it (the workaround is
 # itself instrumentation signal); a failure here reads as a framework gap for
-# the parity-config-layering epic, not a spec defect.
+# the PAR05 named-config-sets epic (docs/spec/parity-named-config-sets.md), not a spec defect.
 
 [[case]]
 name = "active-set-feeds-the-view"
 group = "config-layering"
 stresses = "a stored property of the active set reaches a nested domain view"
 expected = "fail"
-gap = "PAR01"
-reason = "named configuration sets are specced past current framework capability (docs/spec/parity-config-layering.md)"
+gap = "PAR05"
+reason = "named configuration sets are specced past current framework capability (docs/spec/parity-named-config-sets.md, PAR05)"
 [case.run]
 argv = ["compute", "instances", "list"]
 env = { GCLOUDLIKE_CONFIG_DIR = "conf" }
@@ -460,8 +460,8 @@ name = "active-config-file-selects-the-set"
 group = "config-layering"
 stresses = "the persisted active name picks which whole set applies"
 expected = "fail"
-gap = "PAR01"
-reason = "named configuration sets are specced past current framework capability (docs/spec/parity-config-layering.md)"
+gap = "PAR05"
+reason = "named configuration sets are specced past current framework capability (docs/spec/parity-named-config-sets.md, PAR05)"
 [case.run]
 argv = ["compute", "instances", "list"]
 env = { GCLOUDLIKE_CONFIG_DIR = "conf" }
@@ -480,8 +480,8 @@ name = "active-config-env-selects-the-set"
 group = "config-layering"
 stresses = "GCLOUDLIKE_ACTIVE_CONFIG outranks the persisted active name"
 expected = "fail"
-gap = "PAR01"
-reason = "named configuration sets are specced past current framework capability (docs/spec/parity-config-layering.md)"
+gap = "PAR05"
+reason = "named configuration sets are specced past current framework capability (docs/spec/parity-named-config-sets.md, PAR05)"
 [case.run]
 argv = ["compute", "instances", "list"]
 env = { GCLOUDLIKE_CONFIG_DIR = "conf", GCLOUDLIKE_ACTIVE_CONFIG = "prod" }
@@ -500,8 +500,8 @@ name = "configuration-flag-selects-the-set"
 group = "config-layering"
 stresses = "--configuration outranks the persisted active name"
 expected = "fail"
-gap = "PAR01"
-reason = "named configuration sets are specced past current framework capability (docs/spec/parity-config-layering.md)"
+gap = "PAR05"
+reason = "named configuration sets are specced past current framework capability (docs/spec/parity-named-config-sets.md, PAR05)"
 [case.run]
 argv = ["compute", "instances", "list", "--configuration", "prod"]
 env = { GCLOUDLIKE_CONFIG_DIR = "conf" }
@@ -520,8 +520,8 @@ name = "configuration-flag-beats-active-config-env"
 group = "config-layering"
 stresses = "the set selector has its own precedence chain: flag over env over file"
 expected = "fail"
-gap = "PAR01"
-reason = "named configuration sets are specced past current framework capability (docs/spec/parity-config-layering.md)"
+gap = "PAR05"
+reason = "named configuration sets are specced past current framework capability (docs/spec/parity-named-config-sets.md, PAR05)"
 [case.run]
 argv = ["compute", "instances", "list", "--configuration", "default"]
 env = { GCLOUDLIKE_CONFIG_DIR = "conf", GCLOUDLIKE_ACTIVE_CONFIG = "prod" }
@@ -540,8 +540,8 @@ name = "empty-active-config-env-is-unset"
 group = "config-layering"
 stresses = "an empty selector variable is unset like every other variable here, so selection falls through to the persisted name"
 expected = "fail"
-gap = "PAR01"
-reason = "named configuration sets are specced past current framework capability (docs/spec/parity-config-layering.md)"
+gap = "PAR05"
+reason = "named configuration sets are specced past current framework capability (docs/spec/parity-named-config-sets.md, PAR05)"
 [case.run]
 argv = ["config", "get-value", "core/project"]
 env = { GCLOUDLIKE_CONFIG_DIR = "conf", GCLOUDLIKE_ACTIVE_CONFIG = "" }
@@ -560,8 +560,8 @@ name = "both-chains-resolve-in-one-invocation"
 group = "config-layering"
 stresses = "the selector flag picks the set while a property variable supplies a value inside it, and both survive the same invocation"
 expected = "fail"
-gap = "PAR01"
-reason = "named configuration sets are specced past current framework capability (docs/spec/parity-config-layering.md)"
+gap = "PAR05"
+reason = "named configuration sets are specced past current framework capability (docs/spec/parity-named-config-sets.md, PAR05)"
 [case.run]
 argv = ["config", "list", "--configuration", "prod"]
 env = { GCLOUDLIKE_CONFIG_DIR = "conf", GCLOUDLIKE_COMPUTE_ZONE = "us-b2" }
@@ -580,8 +580,8 @@ name = "named-sets-never-merge"
 group = "config-layering"
 stresses = "a set applies whole: a property the active set omits stays unset, and `default` does not back-fill it"
 expected = "fail"
-gap = "PAR01"
-reason = "named configuration sets are specced past current framework capability (docs/spec/parity-config-layering.md)"
+gap = "PAR05"
+reason = "named configuration sets are specced past current framework capability (docs/spec/parity-named-config-sets.md, PAR05)"
 [case.run]
 argv = ["config", "get-value", "core/project"]
 env = { GCLOUDLIKE_CONFIG_DIR = "conf" }
@@ -600,8 +600,8 @@ name = "config-list-renders-effective-properties"
 group = "config-layering"
 stresses = "the effective view spans layers: a stored property and an env-supplied one, sections and names sorted"
 expected = "fail"
-gap = "PAR01"
-reason = "named configuration sets are specced past current framework capability (docs/spec/parity-config-layering.md)"
+gap = "PAR05"
+reason = "named configuration sets are specced past current framework capability (docs/spec/parity-named-config-sets.md, PAR05)"
 [case.run]
 argv = ["config", "list"]
 env = { GCLOUDLIKE_CONFIG_DIR = "conf", GCLOUDLIKE_COMPUTE_ZONE = "us-a1" }
@@ -619,8 +619,8 @@ name = "configurations-list-marks-the-active-set"
 group = "config-layering"
 stresses = "the set inventory names every set and which one this invocation resolved to"
 expected = "fail"
-gap = "PAR01"
-reason = "named configuration sets are specced past current framework capability (docs/spec/parity-config-layering.md)"
+gap = "PAR05"
+reason = "named configuration sets are specced past current framework capability (docs/spec/parity-named-config-sets.md, PAR05)"
 [case.run]
 argv = ["config", "configurations", "list"]
 env = { GCLOUDLIKE_CONFIG_DIR = "conf" }
@@ -639,8 +639,8 @@ name = "unknown-configuration-is-domain-error"
 group = "config-layering"
 stresses = "selecting a set that does not exist fails as a domain error before any view renders"
 expected = "fail"
-gap = "PAR01"
-reason = "named configuration sets are specced past current framework capability (docs/spec/parity-config-layering.md)"
+gap = "PAR05"
+reason = "named configuration sets are specced past current framework capability (docs/spec/parity-named-config-sets.md, PAR05)"
 [case.run]
 argv = ["compute", "instances", "list", "--configuration", "nope"]
 env = { GCLOUDLIKE_CONFIG_DIR = "conf" }
@@ -657,8 +657,8 @@ name = "home-config-dir-is-the-fallback"
 group = "config-layering"
 stresses = "with no override variable, the store is discovered under $HOME/.config/gcloudlike"
 expected = "fail"
-gap = "PAR01"
-reason = "named configuration sets are specced past current framework capability (docs/spec/parity-config-layering.md)"
+gap = "PAR05"
+reason = "named configuration sets are specced past current framework capability (docs/spec/parity-named-config-sets.md, PAR05)"
 [case.run]
 argv = ["compute", "instances", "list"]
 timeout_seconds = 10
@@ -676,8 +676,8 @@ name = "empty-config-dir-override-falls-back-to-home"
 group = "config-layering"
 stresses = "an empty override is not a configuration directory: discovery falls back rather than reading nothing"
 expected = "fail"
-gap = "PAR01"
-reason = "named configuration sets are specced past current framework capability (docs/spec/parity-config-layering.md)"
+gap = "PAR05"
+reason = "named configuration sets are specced past current framework capability (docs/spec/parity-named-config-sets.md, PAR05)"
 [case.run]
 argv = ["config", "get-value", "core/project"]
 env = { GCLOUDLIKE_CONFIG_DIR = "" }
@@ -697,8 +697,8 @@ name = "set-property-writes-the-active-set"
 group = "store-mutation"
 stresses = "the write path reports on stderr and leaves stdout empty"
 expected = "fail"
-gap = "PAR01"
-reason = "named configuration sets are specced past current framework capability (docs/spec/parity-config-layering.md)"
+gap = "PAR05"
+reason = "named configuration sets are specced past current framework capability (docs/spec/parity-named-config-sets.md, PAR05)"
 [case.run]
 argv = ["config", "set", "core/project", "alpha-proj"]
 env = { GCLOUDLIKE_CONFIG_DIR = "conf" }
@@ -713,8 +713,8 @@ name = "create-configuration-reports-on-stderr"
 group = "store-mutation"
 stresses = "creating a set is a stderr notice, not stdout output"
 expected = "fail"
-gap = "PAR01"
-reason = "named configuration sets are specced past current framework capability (docs/spec/parity-config-layering.md)"
+gap = "PAR05"
+reason = "named configuration sets are specced past current framework capability (docs/spec/parity-named-config-sets.md, PAR05)"
 [case.run]
 argv = ["config", "configurations", "create", "staging"]
 env = { GCLOUDLIKE_CONFIG_DIR = "conf" }
@@ -729,8 +729,8 @@ name = "activate-known-configuration-reports-on-stderr"
 group = "store-mutation"
 stresses = "activation is a stderr notice over a store the command must first consult"
 expected = "fail"
-gap = "PAR01"
-reason = "named configuration sets are specced past current framework capability (docs/spec/parity-config-layering.md)"
+gap = "PAR05"
+reason = "named configuration sets are specced past current framework capability (docs/spec/parity-named-config-sets.md, PAR05)"
 [case.run]
 argv = ["config", "configurations", "activate", "prod"]
 env = { GCLOUDLIKE_CONFIG_DIR = "conf" }
@@ -747,8 +747,8 @@ name = "activate-unknown-configuration-is-domain-error"
 group = "store-mutation"
 stresses = "activation refuses a set the store does not hold"
 expected = "fail"
-gap = "PAR01"
-reason = "named configuration sets are specced past current framework capability (docs/spec/parity-config-layering.md)"
+gap = "PAR05"
+reason = "named configuration sets are specced past current framework capability (docs/spec/parity-named-config-sets.md, PAR05)"
 [case.run]
 argv = ["config", "configurations", "activate", "nope"]
 env = { GCLOUDLIKE_CONFIG_DIR = "conf" }
@@ -765,8 +765,8 @@ name = "set-under-unknown-configuration-is-domain-error"
 group = "store-mutation"
 stresses = "the write path resolves the active set against the store before it writes, so a selector naming nothing fails"
 expected = "fail"
-gap = "PAR01"
-reason = "named configuration sets are specced past current framework capability (docs/spec/parity-config-layering.md)"
+gap = "PAR05"
+reason = "named configuration sets are specced past current framework capability (docs/spec/parity-named-config-sets.md, PAR05)"
 [case.run]
 argv = ["config", "set", "core/project", "alpha-proj", "--configuration", "nope"]
 env = { GCLOUDLIKE_CONFIG_DIR = "conf" }
@@ -783,8 +783,8 @@ name = "create-existing-configuration-is-domain-error"
 group = "store-mutation"
 stresses = "creation refuses a name the store already holds, so a populated set is never truncated by a create"
 expected = "fail"
-gap = "PAR01"
-reason = "named configuration sets are specced past current framework capability (docs/spec/parity-config-layering.md)"
+gap = "PAR05"
+reason = "named configuration sets are specced past current framework capability (docs/spec/parity-named-config-sets.md, PAR05)"
 [case.run]
 argv = ["config", "configurations", "create", "prod"]
 env = { GCLOUDLIKE_CONFIG_DIR = "conf" }
@@ -801,8 +801,8 @@ name = "quiet-suppresses-the-activation-notice"
 group = "store-mutation"
 stresses = "--quiet silences the notice channel without touching the exit status"
 expected = "fail"
-gap = "PAR01"
-reason = "named configuration sets are specced past current framework capability (docs/spec/parity-config-layering.md)"
+gap = "PAR05"
+reason = "named configuration sets are specced past current framework capability (docs/spec/parity-named-config-sets.md, PAR05)"
 [case.run]
 argv = ["config", "configurations", "activate", "prod", "--quiet"]
 env = { GCLOUDLIKE_CONFIG_DIR = "conf" }
@@ -819,8 +819,8 @@ name = "quiet-suppresses-the-set-notice"
 group = "store-mutation"
 stresses = "quiet covers the property write, not activation alone"
 expected = "fail"
-gap = "PAR01"
-reason = "named configuration sets are specced past current framework capability (docs/spec/parity-config-layering.md)"
+gap = "PAR05"
+reason = "named configuration sets are specced past current framework capability (docs/spec/parity-named-config-sets.md, PAR05)"
 [case.run]
 argv = ["config", "set", "core/project", "alpha-proj", "--quiet"]
 env = { GCLOUDLIKE_CONFIG_DIR = "conf" }
@@ -835,8 +835,8 @@ name = "quiet-suppresses-the-create-notice"
 group = "store-mutation"
 stresses = "quiet covers creation too, so the channel is silenced by rule rather than per command"
 expected = "fail"
-gap = "PAR01"
-reason = "named configuration sets are specced past current framework capability (docs/spec/parity-config-layering.md)"
+gap = "PAR05"
+reason = "named configuration sets are specced past current framework capability (docs/spec/parity-named-config-sets.md, PAR05)"
 [case.run]
 argv = ["config", "configurations", "create", "staging", "--quiet"]
 env = { GCLOUDLIKE_CONFIG_DIR = "conf" }

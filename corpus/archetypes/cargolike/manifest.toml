@@ -133,4 +133,4 @@ cases = [
 ]
 
 [gaps]
-PAR01 = "Layered configuration (docs/spec/parity-config-layering.md): discovery by walk-up, per-type merge across every discovered file, the mechanical key-to-environment mapping, layer attribution, and framework settings resolved through the same ladder. This archetype is the per-type-merge and key-to-env corner of the triangulation `gitlike` (first file wins) and `gcloudlike` (named sets) complete; its config cases are that corner's executable shape, and a hand-rolled pass is friction signal, not a framework pass."
+PAR01 = "Layered configuration (docs/spec/parity-config-layering.md): discovery by walk-up, per-type merge across every discovered file, the mechanical key-to-environment mapping, layer attribution, and framework settings resolved through the same ladder. This archetype is the per-type-merge and key-to-env corner of the PAR01 pair `gitlike` (walk-up, first file wins) completes; `gcloudlike`'s named sets belong to PAR05 (docs/spec/parity-named-config-sets.md); its config cases are that corner's executable shape, and a hand-rolled pass is friction signal, not a framework pass."
