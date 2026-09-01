@@ -218,6 +218,24 @@ fn execute(
     })
 }
 
+// Only objects are lenient: they may carry keys the expectation omits. Arrays
+// and scalars must match, so an open envelope cannot hide a wrong payload.
+fn json_is_subset(got: &serde_json::Value, want: &serde_json::Value) -> bool {
+    match (got, want) {
+        (serde_json::Value::Object(got), serde_json::Value::Object(want)) => want
+            .iter()
+            .all(|(key, want)| got.get(key).is_some_and(|got| json_is_subset(got, want))),
+        (serde_json::Value::Array(got), serde_json::Value::Array(want)) => {
+            got.len() == want.len()
+                && got
+                    .iter()
+                    .zip(want)
+                    .all(|(got, want)| json_is_subset(got, want))
+        }
+        _ => got == want,
+    }
+}
+
 fn json_has_row(value: &serde_json::Value, row: &[String]) -> bool {
     let mut candidates = Vec::new();
     collect_array_elements(value, &mut candidates);
@@ -334,6 +352,22 @@ fn apply_expectations(expect: &CaseExpect, execution: &Execution, failures: &mut
                     failures.push(format!(
                         "stdout JSON is not semantically equal to expected {want}"
                     ));
+                }
+            }
+        }
+    }
+    if let Some(want) = &expect.stdout_json_subset {
+        match (
+            serde_json::from_str::<serde_json::Value>(&execution.stdout),
+            serde_json::from_str::<serde_json::Value>(want),
+        ) {
+            (_, Err(err)) => failures.push(format!(
+                "suite defect: expected stdout_json_subset is not valid JSON: {err}"
+            )),
+            (Err(err), _) => failures.push(format!("stdout is not valid JSON: {err}")),
+            (Ok(got), Ok(want)) => {
+                if !json_is_subset(&got, &want) {
+                    failures.push(format!("stdout JSON does not carry expected {want}"));
                 }
             }
         }

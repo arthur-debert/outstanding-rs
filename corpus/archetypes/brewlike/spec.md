@@ -3,8 +3,10 @@
 `brewlike` is a package-manager query client in the homebrew mold: it reads
 one frozen, built-in cellar and answers questions about it — what is
 installed, what one formula is, what it depends on, and what is out of date.
-There are no mutating commands. Its machine surface is `--output json`, and
-every machine payload is stamped with a schema version.
+There are no mutating commands. Its machine surface is `--output json`. That
+surface is also where this spec asks for one thing the framework cannot do
+today — a schema version stamped on the payload — which is the archetype's
+gap group rather than a criterion an implementation can meet now.
 
 **On this spec's provenance.** The 2026-08-16 survey's C10 sketch is lost
 (`docs/spec/robustness-corpus-completion.md`, "Risks And Rabbit Holes"), so
@@ -174,6 +176,10 @@ on them, not a flattened list beside it:
 `No outdated formulae.` smuggled into the data.
 
 ### The stamped form
+
+Everything above is what an implementation must produce today. This section
+is not: it is the archetype's gap group, written as if the capability
+existed.
 
 A consumer has to be able to tell a shape change from a data change, so the
 payload is stamped with the version of the contract it satisfies: the

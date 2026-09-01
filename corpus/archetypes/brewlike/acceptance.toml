@@ -411,15 +411,16 @@ group = "schema-version"
 stresses = "help as machine data carrying the same schema version, instead of prose in every mode"
 expected = "fail"
 gap = "PAR02"
-reason = "no structured mode serializes help data (docs/topics/standout-help.md: help is themed prose in every mode). The document's full schema is PAR02's to define, so this case asserts that help arrives as stamped JSON naming the command's own flag, not its every field."
+reason = "no structured mode serializes help data (docs/topics/standout-help.md: help is themed prose in every mode). PAR02 defines the help document's own schema, so this case pins the stamp it must carry and the flag it must name, and leaves the rest of the document to that Spec."
 [case.run]
 argv = ["deps", "--help", "--output", "json"]
 timeout_seconds = 10
 [case.expect]
 exit_code = 0
+stdout_json_subset = '{"schema_version":1}'
 stdout_json_rows = [["--tree"]]
-stdout_contains = ["schema_version"]
 stdout_not_contains = ["Usage:"]
+stderr = ""
 
 # --- ROB01 invariant matrix ------------------------------------------------------
 # Read-only commands the runner sweeps across output modes (text/term/json),
