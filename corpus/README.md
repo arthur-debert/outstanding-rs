@@ -330,17 +330,49 @@ cases = ["case-name", "..."]   # acceptance cases that exercise it
 PAR01 = "what is specced past current capability, and why on purpose"
 ```
 
-### The pilot roster
+### The roster
+
+Every directory under `archetypes/` except `smoke` (see Layout) is a roster
+member. *Survey* is the archetype's entry in the 2026-08-16 survey (Part C);
+*Shape* is one line — each archetype's own `spec.md` and `manifest.toml` carry
+the rest.
+
+**The pilot four** (ROB03) — the only members with run evidence today:
 
 | Archetype | Survey | Shape |
 | --- | --- | --- |
 | `gitlike` | C1 | porcelain/plumbing split, config layering by cwd walk-up, pager |
+| `ghlike` | C2 | deep command nesting with machine JSON and field selection |
 | `systemdlike` | C5 | naked default command, `--plain`/`--no-legend`, color/pager env discipline |
 | `formlike` | C12 | questionnaire-driven provisioning under full non-interactivity |
-| `ghlike` | C2 | deep command nesting with machine JSON and field selection |
 
-Two gap-only archetypes (WS03) sit beside the pilot four, every acceptance
-case `expected = "fail"`:
+Their execution artifacts — committed run reports and the scorecard — live
+under `pilot/` (see Layout above).
+
+**The completion six** (ROB07) — the survey's remaining in-capability shapes,
+authored spec-first after the pilot
+(`docs/spec/robustness-corpus-completion.md`). Their behavioral sketches were
+lost with the 2026-08-16 session record, so each spec reconstructs the shape
+from the survey's capability matrix and states in prose which interactions it
+stresses. They carry no run evidence until the 9.0 line is published: a first
+blind run against the surface that release deletes would measure nothing.
+
+| Archetype | Survey | Shape |
+| --- | --- | --- |
+| `kubelike` | C3 | verb-over-resource-kind dispatch, kinds as data with aliases and scope, an `-o` vocabulary wider than a render mode |
+| `cargolike` | C6 | layered config: per-type merge across every discovered file, key↔env mapping, framework settings on the same ladder |
+| `gcloudlike` | C7 | named configuration sets selected per invocation, layered under property env vars and flags |
+| `dockerlike` | C8 | legacy verbs beside management commands, `--quiet` as a data-shape contract, display truncation vs machine output |
+| `brewlike` | C10 | package-manager query client: nested dependency data, empty results, a versioned machine contract |
+| `pnpmlike` | C11 | progress on stderr by stream attendance, two silencers for two channels, child-process passthrough |
+
+`crates/corpus-runner/tests/hermetic_authored_roster_loop.rs` drives all six
+through the full loop against a produced binary that builds and then fails
+every invocation, so a suite that cannot execute is a red test rather than a
+wasted blind run.
+
+**Two gap-only archetypes** (ROB03-WS03), every acceptance case
+`expected = "fail"`:
 
 | Archetype | Survey | Shape |
 | --- | --- | --- |
@@ -350,47 +382,13 @@ case `expected = "fail"`:
 Their byte-precise, runnable-today suites live in `corpus/gap-suites/` (see
 its README for the expected-fail semantics under plain `pixi run test`).
 
-The pilot's execution artifacts — committed run reports and the scorecard —
-live under `pilot/` (see Layout above).
-
-### Roster expansion
-
-The survey's remaining in-capability shapes are authored spec-first as the
-corpus-completion epic reaches them
-(`docs/spec/robustness-corpus-completion.md`). Their behavioral sketches were
-not kept, so each spec reconstructs the shape from the survey's capability
-matrix and states in prose which interactions it stresses.
-
-| Archetype | Survey | Shape |
-| --- | --- | --- |
-| `gcloudlike` | C7 | named configuration sets selected per invocation, layered under property env vars and flags |
-
-One method-coverage archetype sits beside the product roster. It is not a
-survey Part C CLI; it exists so the known-edge validity check (#365) can
-pin all three known-edge families (including the two the ROB03 pilot did
-not independently rediscover). Its spec includes an implementer
-construction contract (registration order, the single registered
-template name, an incomplete app theme) because those edges are
-invisible on a happy-path product spec.
+**One method-coverage archetype.** `validity` is not a survey Part C CLI; it
+exists so the known-edge validity check (#365) can pin all three known-edge
+families, including the two the ROB03 pilot did not independently rediscover.
+Its spec carries an implementer construction contract (registration order, the
+single registered template name, an incomplete app theme) because those edges
+are invisible on a happy-path product spec.
 
 | Archetype | Survey | Shape |
 | --- | --- | --- |
 | `validity` | validity | missing/mistyped template name, registration order, incomplete theme × framework help |
-
-### The completion roster
-
-The survey's remaining in-capability archetypes, authored spec-first after the
-pilot (`docs/spec/robustness-corpus-completion.md`). Their behavioral sketches
-were lost with the 2026-08-16 session record, so each is reconstructed from the
-survey's capability matrix and states in its spec which interactions it is
-built to stress. They carry no run evidence until the 9.0 line is published: a
-first blind run against the surface that release deletes would measure nothing.
-
-| Archetype | Survey | Shape |
-| --- | --- | --- |
-| `cargolike` | C6 | layered config: per-type merge across every discovered file, key↔env mapping, framework settings on the same ladder |
-
-`crates/corpus-runner/tests/hermetic_authored_roster_loop.rs` drives each of
-them through the full loop against a produced binary that builds and then fails
-every invocation, so a suite that cannot execute is a red test rather than a
-wasted blind run.
