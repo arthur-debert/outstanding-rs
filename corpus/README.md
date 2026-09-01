@@ -29,7 +29,24 @@ makes runs reproducible and comparable.
   `runs/<run-id>/` per pilot run (report + sanitized transcript, demo
   rules), and `scorecard.md` — the per-archetype signals, ranked friction
   themes, and validity verdict the blessed-surface (ROB05) ADR round
-  consumes.
+  consumes. `sanitize-run.py` is the sanitizer every committed run goes
+  through, pilot or not.
+- `rerun/` — the same archetypes run again against the 9.0 release
+  (ROB07-WS02), in the same shape: one `runs/<run-id>/` per run and
+  `scorecard.md`, which is scorecard v2 — the re-run beside the pilot, with
+  the agent delta between them stated.
+- `scorecard.py` — computes a scorecard's objective table from committed
+  reports (`scorecard.py pilot=corpus/pilot/runs rerun=corpus/rerun/runs`).
+  Both scorecards' figures come from this one script under one set of
+  counting rules; its own test checks that the pilot's reports still
+  reproduce the pilot scorecard's published numbers. Every row also carries
+  the pins and the agent provenance the comparison rests on: a row whose
+  spec, acceptance suite, questionnaire or agent differs from the first row
+  its archetype has is marked not comparable, and a note under the table
+  states the difference, so a figure a changed question produced cannot read
+  as a framework result. Reports written before schema 4 state no
+  provenance, so the script recovers it from the run's own two sources — the
+  recorded command and the transcript — and marks the cell `(recovered)`.
 
 ## The runner
 
@@ -148,15 +165,16 @@ Recorded here as a decision and minted as
 
 ## Decision: the run-report schema
 
-`report.json`, `schema_version: 3` (recorded here and minted as
-[ADR-0024](../docs/adr/0024-the-corpus-run-report-schema.md)). Version 3 is
+`report.json`, `schema_version: 4` (recorded here and minted as
+[ADR-0024](../docs/adr/0024-the-corpus-run-report-schema.md)). Version 3 was
 one bump carrying every shape change over version 2: it replaced the single
 `isolation_backend` word with a per-capability isolation record, dropped the
 producerless `session.attempts` counter, and removed the retired check
-schema's parallel `checks` vector. Committed schema-2 evidence still loads,
-unrewritten, through the typed historical-report path re-evaluation uses.
-Objective results and agent self-assessment are deliberately separate
-sections. The shape:
+schema's parallel `checks` vector. Version 4 adds the `provenance` block
+below. Committed schema-2 and schema-3 evidence still loads, unrewritten,
+through the typed historical-report path re-evaluation uses. Objective
+results and agent self-assessment are deliberately separate sections. The
+shape:
 
 - `schema_version`, `run_id` — identity.
 - `archetype` — name plus the sha256 of the exact spec text given to the
@@ -181,6 +199,24 @@ sections. The shape:
   whether the session hit its deadline (`timed_out`), and turns/token counts
   when the transcript is Claude Code stream-json; plus the transcript path
   (always linked, relative to the run directory).
+- `provenance` — who implemented the run: the backend the runner spawned
+  (`backend`, the program's name), the version that backend announced in the
+  transcript, the model the command asked for (`model_requested` — absent
+  means the run took the backend's default) and the model the transcript
+  shows answering (`model_observed`), the session prompt, and the remaining
+  settings the runner passed. It is written from the spawned command and the
+  transcript alone — the runner never runs the agent executable to ask it
+  about itself, which would execute an unknown program on the host outside
+  every boundary the run is built on. So the environment those phases carry
+  is `blindness.env_allowlist`, the command's own text is
+  `session.agent_cmd`, and a field neither source states is absent rather
+  than guessed: a session spawned through a shell command that names no
+  single program records nothing it cannot parse, a scripted agent announces
+  no version or model, and a re-evaluation keeps a schema-4 source's block
+  or, for an older one, states only what the recorded command says. Two runs
+  compare as evidence when these match; where they cannot, the comparison
+  states the delta and reads as observational (ADR-0024's ROB07-WS02
+  amendment).
 - `acceptance` — objective: whether the produced app built, and one entry
   per suite case, each carrying the case's `expected` marker and its
   `outcome` (`pass`, `fail`, `expected-fail`, or `unexpected-pass`, the

@@ -11,7 +11,7 @@
 
 mod common;
 
-use std::io::{Read, Write};
+use std::io::{ErrorKind, Read, Write};
 use std::net::{TcpListener, TcpStream};
 use std::os::fd::FromRawFd;
 use std::path::Path;
@@ -220,6 +220,71 @@ fn shutdown_ends_a_request_still_waiting_on_the_upstream() {
     let response = asking.join().unwrap();
     assert!(!response.contains("200 OK"), "{response}");
     assert_eq!(broker.admitted(), 1);
+}
+
+/// A real session sends bodies far larger than one segment, and the caller's
+/// second segment can arrive after the broker has already read the first. The
+/// broker waits for it: the alternative is a request refused for arriving in
+/// pieces, which is how a long agent session dies mid-run.
+#[test]
+fn a_body_that_arrives_in_two_segments_is_forwarded_whole() {
+    let upstream = Upstream::start();
+    let broker = Broker::start(brokered(&upstream, Duration::from_secs(30))).unwrap();
+    broker.authorize(std::process::id());
+    let authority = broker.base_url().trim_start_matches("http://").to_string();
+
+    let head = r#"{"from":"a test with a body in"#;
+    let tail = r#" two segments"}"#;
+    let mut caller = TcpStream::connect(&authority).unwrap();
+    caller
+        .write_all(
+            format!(
+                "POST /v1/messages HTTP/1.1\r\nHost: broker\r\n\
+                 content-type: application/json\r\nContent-Length: {}\r\n\
+                 Connection: close\r\n\r\n{head}",
+                head.len() + tail.len()
+            )
+            .as_bytes(),
+        )
+        .unwrap();
+    caller.flush().unwrap();
+    // The tail waits on two observations rather than on a sleep, because a
+    // sleep only makes the ordering likely: miss it under load and both
+    // segments are readable at once, which is the one case a non-blocking
+    // accepted socket also survives.
+    //
+    // First the connection is admitted, which the broker does after
+    // authorizing the caller and before reading a request byte.
+    let admitted = Instant::now();
+    while broker.admitted() == 0 {
+        assert!(
+            admitted.elapsed() < Duration::from_secs(10),
+            "the broker never admitted the connection"
+        );
+        std::thread::sleep(Duration::from_millis(5));
+    }
+    // Then the broker says nothing while the body is short. A broker that
+    // cannot wait for the rest fails its read at once and answers 400, so an
+    // answer arriving here is the regression itself; silence is the broker
+    // sitting in the read this test is about.
+    caller
+        .set_read_timeout(Some(Duration::from_secs(2)))
+        .unwrap();
+    let mut answered = [0u8; 1];
+    match caller.read(&mut answered) {
+        Err(err) if matches!(err.kind(), ErrorKind::WouldBlock | ErrorKind::TimedOut) => {}
+        answer => panic!("the broker answered a body it had not finished reading: {answer:?}"),
+    }
+    caller.set_read_timeout(None).unwrap();
+    caller.write_all(tail.as_bytes()).unwrap();
+
+    let mut response = String::new();
+    let _ = caller.read_to_string(&mut response);
+    assert!(response.starts_with("HTTP/1.1 200 OK"), "{response}");
+
+    let forwarded = upstream.seen();
+    assert_eq!(forwarded.len(), 1, "{forwarded:#?}");
+    assert_eq!(forwarded[0].body, format!("{head}{tail}"));
 }
 
 fn ask(mut stream: TcpStream) -> String {

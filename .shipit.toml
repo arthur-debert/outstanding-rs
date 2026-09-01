@@ -34,6 +34,12 @@ ignore = [
   "CHANGELOG/**",
   "package-lock.json",
   "pnpm-lock.yaml",
+  # Committed corpus run evidence: a report is what the runner wrote and the
+  # sanitizer rewrote, and nothing else may edit it — a formatter reflowing a
+  # report would make the committed artifact stop being the run's own output.
+  "corpus/pilot/runs/**",
+  "corpus/rerun/runs/**",
+  "corpus/demo/**",
 ]
 
 # [lanes] — the declared PR-time check units (ADP02-WS05, #184). The lane

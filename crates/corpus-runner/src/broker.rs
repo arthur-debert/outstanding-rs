@@ -588,6 +588,30 @@ fn accept_loop(listener: TcpListener, state: Arc<State>) {
     while !state.shutdown.load(Ordering::SeqCst) {
         match listener.accept() {
             Ok((stream, _)) => {
+                // The listener polls, so it is non-blocking — and on macOS an
+                // accepted connection inherits that. Left inherited, every
+                // read that has to wait for the caller's next segment fails
+                // with EWOULDBLOCK instead of waiting, which turns a request
+                // body that arrives in two pieces into a rejected request. A
+                // connection that cannot be put back into blocking mode would
+                // serve those requests wrongly, so it is refused with the
+                // reason on the record instead.
+                let mut stream = stream;
+                if let Err(err) = stream.set_nonblocking(false) {
+                    record_denial(
+                        &state,
+                        &format!("accepted connection could not be read in blocking mode: {err}"),
+                    );
+                    respond(
+                        &mut stream,
+                        502,
+                        "corpus_broker_unusable",
+                        "the run-credential broker could not read this connection in blocking \
+                         mode, and a request body arriving in pieces would be truncated",
+                    );
+                    close(&mut stream);
+                    continue;
+                }
                 let state = Arc::clone(&state);
                 serving.push(std::thread::spawn(move || serve(stream, state)));
                 serving.retain(|handle| !handle.is_finished());
