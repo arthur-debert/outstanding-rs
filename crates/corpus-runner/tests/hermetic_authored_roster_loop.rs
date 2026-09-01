@@ -1,9 +1,6 @@
 // The archetypes authored after the pilot, driven through the full `run()`
-// orchestration against a produced binary that builds and then fails every
-// invocation: a suite that cannot execute (an unreachable sandbox path, an
-// unsupported stream shape) shows up here as a case execution error instead of
-// waiting for a blind run to discover it. Runs in its own test binary because
-// it prepends to the process-wide PATH.
+// orchestration against a produced binary that fails every invocation. Runs in
+// its own test binary because it prepends to the process-wide PATH.
 
 #![cfg(unix)]
 
@@ -12,13 +9,10 @@ mod common;
 use std::path::Path;
 
 use corpus_runner::archetype::Archetype;
-use corpus_runner::report::CaseOutcome;
+use corpus_runner::report::{CaseOutcome, InvariantStatus};
 use corpus_runner::{run, RunConfig, Timeouts};
 
 const AUTHORED: &[&str] = &["cargolike"];
-
-const TRIVIALLY_FAILING: &str = r#"echo "cargolike: not implemented" >&2
-exit 1"#;
 
 #[test]
 fn authored_archetypes_complete_the_loop_against_a_failing_binary() {
@@ -28,7 +22,8 @@ fn authored_archetypes_complete_the_loop_against_a_failing_binary() {
 
     for name in AUTHORED {
         let bin_dir = scratch.path().join(format!("bin-{name}"));
-        common::install_fake_cargo(&bin_dir, name, TRIVIALLY_FAILING);
+        let trivially_failing = format!("echo \"{name}: not implemented\" >&2\nexit 1");
+        common::install_fake_cargo(&bin_dir, name, &trivially_failing);
         common::questionnaire_agent(
             &bin_dir,
             "agent.sh",
@@ -85,5 +80,16 @@ fn authored_archetypes_complete_the_loop_against_a_failing_binary() {
             );
         }
         assert!(!report.invariants.is_empty(), "{name}");
+        for cell in &report.invariants {
+            assert_ne!(
+                cell.status,
+                InvariantStatus::NotRun,
+                "{name}/{} {}/{}: {}",
+                cell.command,
+                cell.mode,
+                cell.check,
+                cell.detail.as_deref().unwrap_or_default()
+            );
+        }
     }
 }

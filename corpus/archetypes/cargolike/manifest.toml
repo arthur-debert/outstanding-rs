@@ -40,11 +40,25 @@ cases = [
 [[interactions]]
 id = "key-to-env-mapping-vs-file-merge"
 stresses = ["mechanical key-to-environment spelling", "layer precedence", "per-type semantics"]
-description = "Each key has one environment spelling derived from its name, sitting above every file layer — and a list set there replaces the merged file list instead of extending it, so a caller can clear an inherited list without editing files. The asymmetry is the point: the same layer ladder answers differently per type."
+description = "Each key has one environment spelling derived from its name, sitting above every file layer — and a list set there replaces the merged file list instead of extending it, so an empty value clears an inherited list without editing files. The asymmetry is the point: the same layer ladder answers differently per type."
 cases = [
     "env-mapping-beats-merged-files",
     "env-list-replaces-merged-list",
+    "env-empty-list-clears-merged-list",
+    "env-mapping-supplies-build-target",
     "config-get-json-carries-typed-value-and-origin",
+]
+
+[[interactions]]
+id = "argv-override-layer-value-grammar"
+stresses = ["repeatable flag parsing", "per-type value text", "usage errors", "layer precedence"]
+description = "`--config` reaches every known key from argv, so one text grammar has to cover integers, booleans, strings and lists, and a key assigned twice has to resolve. It is the same text the environment layer carries, which is why the two layers can disagree about precedence without disagreeing about spelling."
+cases = [
+    "config-override-beats-default",
+    "config-override-list-replaces",
+    "config-override-repeated-key-last-wins",
+    "config-override-sets-boolean-and-string",
+    "malformed-config-override-is-usage-error",
 ]
 
 [[interactions]]
@@ -63,10 +77,17 @@ cases = [
 [[interactions]]
 id = "provenance-of-the-effective-value"
 stresses = ["layer attribution", "structured output mode", "typed serialization (integer/bool/list)"]
-description = "Reporting where a value came from forces the layer identity to survive the merge rather than being collapsed into a final value, and the machine form has to keep the config type the text form flattens into words."
+description = "Reporting where a value came from forces the layer identity to survive the merge rather than being collapsed into a final value — including the case where a list drew from several layers and belongs to none of them — and the machine form has to keep the config type the text form flattens into words."
 cases = [
     "config-get-show-origin-names-the-layer",
+    "config-get-default-value",
+    "config-get-show-origin-default",
+    "config-get-show-origin-override",
+    "config-get-show-origin-flag",
+    "config-get-show-origin-user-file",
+    "config-get-show-origin-merged-list",
     "config-get-json-carries-typed-value-and-origin",
+    "config-list-json-carries-each-config-type",
     "config-list-includes-a-key-only-a-file-sets",
     "config-list-defaults",
 ]
@@ -106,6 +127,7 @@ cases = [
     "malformed-config-override-is-usage-error",
     "config-get-unset-key-is-quiet-exit-1",
     "invalid-config-value-exits-101",
+    "invalid-flag-value-exits-101",
 ]
 
 [gaps]

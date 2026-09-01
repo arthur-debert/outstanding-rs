@@ -180,6 +180,67 @@ exit_code = 0
 stdout = "4\n"
 
 [[case]]
+name = "config-override-list-replaces"
+group = "flag-layer"
+stresses = "a list assigned through --config is comma-separated text and replaces the list under it"
+expected = "pass"
+[case.run]
+argv = ["config", "get", "build.features", "--config", "build.features=x,y"]
+timeout_seconds = 10
+[case.expect]
+exit_code = 0
+stdout = "[x,y]\n"
+
+[[case]]
+name = "config-override-repeated-key-last-wins"
+group = "flag-layer"
+stresses = "the repeatable override flag resolves a key assigned twice on one command line"
+expected = "pass"
+[case.run]
+argv = ["config", "get", "build.jobs", "--config", "build.jobs=2", "--config", "build.jobs=4"]
+timeout_seconds = 10
+[case.expect]
+exit_code = 0
+stdout = "4\n"
+
+[[case]]
+name = "config-override-sets-boolean-and-string"
+group = "flag-layer"
+stresses = "override text is read against each key's type, including a key with no default"
+expected = "pass"
+[case.run]
+argv = ["config", "list", "--config", "net.offline=true", "--config", "build.target=wasm32"]
+timeout_seconds = 10
+[case.expect]
+exit_code = 0
+stdout = "build.features = []\nbuild.jobs = 1\nbuild.target = wasm32\nnet.offline = true\nterm.color = auto\nterm.output = auto\n"
+stderr = ""
+
+[[case]]
+name = "config-list-json-carries-each-config-type"
+group = "flag-layer"
+stresses = "the machine listing keeps every value in its config type, not in the text form's words"
+expected = "pass"
+[case.run]
+argv = [
+    "config",
+    "list",
+    "--output",
+    "json",
+    "--config",
+    "build.features=tls,fast",
+    "--config",
+    "build.jobs=3",
+    "--config",
+    "net.offline=true",
+]
+timeout_seconds = 10
+[case.expect]
+exit_code = 0
+stdout_json = '{"build.features":["tls","fast"],"build.jobs":3,"net.offline":true,"term.color":"auto","term.output":"json"}'
+stderr = ""
+
+[[case]]
 name = "config-override-selects-json-output"
 group = "flag-layer"
 stresses = "a config key resolved from argv steers the framework's output mode"
@@ -241,6 +302,19 @@ argv = ["metadata", "--config", "build.jobs"]
 timeout_seconds = 10
 [case.expect]
 exit_code = 2
+stdout = ""
+stderr_contains = ["build.jobs"]
+
+[[case]]
+name = "invalid-flag-value-exits-101"
+group = "errors"
+stresses = "value text that does not fit the key's type is a configuration error from every layer, not a usage error"
+expected = "pass"
+[case.run]
+argv = ["build", "--jobs", "many"]
+timeout_seconds = 10
+[case.expect]
+exit_code = 101
 stdout = ""
 stderr_contains = ["build.jobs"]
 
@@ -422,6 +496,38 @@ timeout_seconds = 10
 exit_code = 0
 stdout = "[x,y]\n"
 
+[[case]]
+name = "env-empty-list-clears-merged-list"
+group = "key-env-mapping"
+stresses = "an empty environment value is the empty list, which is how a caller clears an inherited list"
+expected = "fail"
+gap = "PAR01"
+reason = "a mechanical key-to-environment mapping with per-type semantics is specced past current framework capability (docs/spec/parity-config-layering.md)"
+[case.run]
+argv = ["config", "get", "build.features"]
+env = { CARGOLIKE_BUILD_FEATURES = "" }
+timeout_seconds = 10
+[case.run.files]
+".cargolike/config.toml" = "[build]\nfeatures = [\"a\"]\n"
+[case.expect]
+exit_code = 0
+stdout = "[]\n"
+
+[[case]]
+name = "env-mapping-supplies-build-target"
+group = "key-env-mapping"
+stresses = "the derived spelling exists for every known key, including one with no default and no flag"
+expected = "fail"
+gap = "PAR01"
+reason = "a mechanical key-to-environment mapping is specced past current framework capability (docs/spec/parity-config-layering.md)"
+[case.run]
+argv = ["config", "get", "build.target"]
+env = { CARGOLIKE_BUILD_TARGET = "wasm32" }
+timeout_seconds = 10
+[case.expect]
+exit_code = 0
+stdout = "wasm32\n"
+
 # --- framework settings through the config layer -----------------------------
 
 [[case]]
@@ -492,6 +598,79 @@ timeout_seconds = 10
 [case.expect]
 exit_code = 0
 stdout = "2 (from project)\n"
+
+[[case]]
+name = "config-get-show-origin-default"
+group = "provenance"
+stresses = "the defaults layer names itself when nothing above it supplies the key"
+expected = "pass"
+[case.run]
+argv = ["config", "get", "build.jobs", "--show-origin"]
+timeout_seconds = 10
+[case.expect]
+exit_code = 0
+stdout = "1 (from default)\n"
+stderr = ""
+
+[[case]]
+name = "config-get-show-origin-override"
+group = "provenance"
+stresses = "the override layer is attributed to itself rather than to the flag or the defaults"
+expected = "pass"
+[case.run]
+argv = ["config", "get", "build.jobs", "--config", "build.jobs=4", "--show-origin"]
+timeout_seconds = 10
+[case.expect]
+exit_code = 0
+stdout = "4 (from override)\n"
+
+[[case]]
+name = "config-get-show-origin-flag"
+group = "provenance"
+stresses = "a framework flag that names a config key is attributed to the flag layer in the machine form"
+expected = "pass"
+[case.run]
+argv = ["config", "get", "term.output", "--output", "json"]
+timeout_seconds = 10
+[case.expect]
+exit_code = 0
+stdout_json = '{"key":"term.output","value":"json","origin":"flag"}'
+stderr = ""
+
+[[case]]
+name = "config-get-show-origin-user-file"
+group = "provenance"
+stresses = "the user file is a layer of its own, distinguishable from a project file"
+expected = "fail"
+gap = "PAR01"
+reason = "no config layer exists to attribute a value to (docs/spec/parity-config-layering.md)"
+[case.run]
+argv = ["config", "get", "build.jobs", "--show-origin"]
+env = { CARGOLIKE_CONFIG_HOME = "confhome" }
+timeout_seconds = 10
+[case.run.files]
+"confhome/config.toml" = "[build]\njobs = 7\n"
+[case.expect]
+exit_code = 0
+stdout = "7 (from user)\n"
+
+[[case]]
+name = "config-get-show-origin-merged-list"
+group = "provenance"
+stresses = "a list drawn from more than one layer is attributed to none of them"
+expected = "fail"
+gap = "PAR01"
+reason = "no config layer exists to attribute a value to (docs/spec/parity-config-layering.md)"
+[case.run]
+argv = ["config", "get", "build.features", "--show-origin"]
+cwd = "project/sub"
+timeout_seconds = 10
+[case.run.files]
+".cargolike/config.toml" = "[build]\nfeatures = [\"a\"]\n"
+"project/sub/.cargolike/config.toml" = "[build]\nfeatures = [\"b\"]\n"
+[case.expect]
+exit_code = 0
+stdout = "[a,b] (from merged)\n"
 
 [[case]]
 name = "config-get-json-carries-typed-value-and-origin"

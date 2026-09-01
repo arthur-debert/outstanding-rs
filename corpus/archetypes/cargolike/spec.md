@@ -142,12 +142,15 @@ Highest precedence first:
 
 1. **Command flags** that name a key: `--jobs` (`build.jobs`), `--features`
    (`build.features`), and the framework's own `--output` (`term.output`).
-2. **`--config <key>=<value>`**, repeatable, applying to any known key. A
+2. **`--config <key>=<value>`**, repeatable, applying to any known key. The
+   text after the first `=` is the value, read as *Value text* below;
+   repeating a key takes the last assignment on the command line. A
    `--config` argument without a `=` is a usage error.
 3. **Environment variables**, one per key, spelled mechanically:
    `CARGOLIKE_` + the section + `_` + the key, uppercased —
    `CARGOLIKE_BUILD_JOBS`, `CARGOLIKE_BUILD_FEATURES`,
-   `CARGOLIKE_NET_OFFLINE`, `CARGOLIKE_TERM_COLOR`, `CARGOLIKE_TERM_OUTPUT`.
+   `CARGOLIKE_BUILD_TARGET`, `CARGOLIKE_NET_OFFLINE`, `CARGOLIKE_TERM_COLOR`,
+   `CARGOLIKE_TERM_OUTPUT` — carrying a value as *Value text* below.
 4. **Project config files**: every `.cargolike/config.toml` found by walking up
    from the current working directory to the filesystem root.
 5. **The user config file**: `$CARGOLIKE_CONFIG_HOME/config.toml`, or
@@ -164,13 +167,29 @@ first one — and how two contributions combine depends on the value's type:
   layer; every project file outranks the user file.
 - **Lists**: file layers **concatenate**, farthest ancestor first and the
   nearest last, with the user file's items ahead of every project file's.
-  Repeated items collapse to their first occurrence, preserving order. The
-  `--features` flag appends to that result.
-- **A list set from the environment replaces the merged file list** instead of
-  appending to it. The variable's value is a comma-separated list.
+  Repeated items collapse to their first occurrence, preserving order.
+- **A list set from the environment or through `--config` replaces the merged
+  file list** instead of appending to it, so an empty value there clears an
+  inherited list. The `--features` flag appends to whatever that resolution
+  produced.
 
 An unknown key in a config file, a value of the wrong type, or a `build.jobs`
 below 1 is a configuration error (exit **101**) naming the offending key.
+
+### Value text
+
+Every layer that carries a value as text — the `--jobs` and `--features` flags,
+`--config`, and the environment variables — reads it against the key's type:
+
+| type | text |
+| --- | --- |
+| integer | decimal digits |
+| boolean | `true` or `false` |
+| string, enum | the text as written, unquoted |
+| list | the text split on `,`, items untrimmed; the empty string is the empty list |
+
+Text that does not fit the key's type is a configuration error (exit **101**),
+as a wrong-typed file value is.
 
 ### Color and output mode
 
