@@ -16,6 +16,7 @@ use serde::Serialize;
 
 use super::engine::{MiniJinjaEngine, TemplateEngine};
 use super::registry::{walk_template_dir, ResolvedTemplate, TemplateRegistry};
+use super::registry_error;
 use crate::error::RenderError;
 use crate::output::OutputMode;
 use crate::request::{render_request, SharedTemplateEngine, TargetProperties, TemplateRef};
@@ -212,10 +213,7 @@ impl Renderer {
     }
 
     fn get_template_content(&self, name: &str) -> Result<String, RenderError> {
-        let resolved = self
-            .registry
-            .get(name)
-            .map_err(|e| RenderError::TemplateNotFound(e.to_string()))?;
+        let resolved = self.registry.get(name).map_err(registry_error)?;
 
         match resolved {
             ResolvedTemplate::Inline(content) => Ok(content),
@@ -456,6 +454,13 @@ mod tests {
 
         let output = renderer.render("config", &Empty {}).unwrap();
         assert_eq!(output, "From jinja");
+    }
+
+    #[test]
+    fn test_renderer_unknown_name_reads_kind_once() {
+        let mut renderer = Renderer::new(Theme::new()).unwrap();
+        let err = renderer.render("nosuch", &()).unwrap_err();
+        assert_eq!(err.to_string(), "template not found: nosuch");
     }
 
     #[test]

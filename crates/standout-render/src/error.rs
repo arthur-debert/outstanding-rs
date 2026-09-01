@@ -80,19 +80,45 @@ impl From<minijinja::Error> for RenderError {
     fn from(err: minijinja::Error) -> Self {
         use minijinja::ErrorKind;
 
+        let msg = describe_minijinja(&err);
         match err.kind() {
-            ErrorKind::TemplateNotFound => RenderError::TemplateNotFound(err.to_string()),
+            ErrorKind::TemplateNotFound => RenderError::TemplateNotFound(msg),
             ErrorKind::SyntaxError
             | ErrorKind::BadEscape
             | ErrorKind::UndefinedError
             | ErrorKind::UnknownTest
             | ErrorKind::UnknownFunction
             | ErrorKind::UnknownFilter
-            | ErrorKind::UnknownMethod => RenderError::TemplateError(err.to_string()),
-            ErrorKind::BadSerialization => RenderError::SerializationError(err.to_string()),
-            _ => RenderError::OperationError(err.to_string()),
+            | ErrorKind::UnknownMethod => RenderError::TemplateError(msg),
+            ErrorKind::BadSerialization => RenderError::SerializationError(msg),
+            kind => RenderError::OperationError(match err.detail() {
+                Some(_) => format!("{}: {}", kind, msg),
+                None => msg,
+            }),
         }
     }
+}
+
+// minijinja's Display without its kind word: the RenderError variant prefix owns that.
+fn describe_minijinja(err: &minijinja::Error) -> String {
+    use std::error::Error as _;
+    use std::fmt::Write as _;
+
+    let mut msg = match err.detail() {
+        Some(detail) => detail.to_string(),
+        None => err.kind().to_string(),
+    };
+    if let Some(name) = err.name() {
+        let _ = write!(msg, " (in {}:{})", name, err.line().unwrap_or(0));
+    }
+    let mut root = err.source();
+    while let Some(next) = root.and_then(|e| e.source()) {
+        root = Some(next);
+    }
+    if let Some(root) = root {
+        let _ = write!(msg, ": {}", root);
+    }
+    msg
 }
 
 #[cfg(test)]
@@ -271,6 +297,65 @@ mod tests {
             classify(minijinja::ErrorKind::InvalidOperation),
             RenderError::OperationError(_)
         ));
+    }
+
+    fn render_err(name: &str, templates: &[(&str, &str)]) -> RenderError {
+        let mut env = crate::template::new_environment();
+        for (name, source) in templates {
+            env.add_template_owned(name.to_string(), source.to_string())
+                .unwrap();
+        }
+        let tmpl = env.get_template(name).unwrap();
+        tmpl.render(minijinja::context! {}).unwrap_err().into()
+    }
+
+    #[test]
+    fn test_missing_include_reads_kind_once_with_locus() {
+        let err = render_err("show", &[("show", "{% include \"nosuch\" %}")]);
+        assert_eq!(
+            err.to_string(),
+            "template not found: tried to include non-existing template \"nosuch\" (in show:1)"
+        );
+    }
+
+    #[test]
+    fn test_syntax_error_reads_kind_once_with_locus() {
+        let mut env = crate::template::new_environment();
+        let err: RenderError = env.add_template("show", "{% if %}").unwrap_err().into();
+        let s = err.to_string();
+        assert!(s.starts_with("template error: "), "got: {}", s);
+        assert!(!s.starts_with("template error: syntax error"), "got: {}", s);
+        assert!(s.ends_with(" (in show:1)"), "got: {}", s);
+    }
+
+    #[test]
+    fn test_recursive_include_names_the_root_cause() {
+        let err = render_err("show", &[("show", "{% include \"show\" %}")]);
+        assert_eq!(
+            err.to_string(),
+            "could not render include: error in \"show\" (in show:1): \
+             invalid operation: recursion limit exceeded (in show:1)"
+        );
+    }
+
+    #[test]
+    fn test_detail_free_operation_error_reads_kind_once() {
+        let err = render_err("show", &[("show", "{{ range() }}")]);
+        assert_eq!(err.to_string(), "missing argument (in show:1)");
+    }
+
+    #[test]
+    fn test_detail_free_error_without_locus_is_the_bare_kind() {
+        let err: RenderError =
+            minijinja::Error::from(minijinja::ErrorKind::InvalidOperation).into();
+        assert_eq!(err.to_string(), "invalid operation");
+    }
+
+    #[test]
+    fn test_minijinja_error_without_locus_has_no_locus_suffix() {
+        let err: RenderError =
+            minijinja::Error::new(minijinja::ErrorKind::TemplateNotFound, "no such thing").into();
+        assert_eq!(err.to_string(), "template not found: no such thing");
     }
 
     #[test]
