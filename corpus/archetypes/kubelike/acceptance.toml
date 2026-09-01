@@ -161,7 +161,7 @@ timeout_seconds = 10
 [case.expect]
 exit_code = 2
 stdout = ""
-stderr_contains = ["nodes", "not a namespaced resource"]
+stderr_contains = ["nodes is not a namespaced resource"]
 
 [[case]]
 name = "all-namespaces-refused-on-cluster-scoped-kind"
@@ -174,7 +174,7 @@ timeout_seconds = 10
 [case.expect]
 exit_code = 2
 stdout = ""
-stderr_contains = ["nodes", "not a namespaced resource"]
+stderr_contains = ["nodes is not a namespaced resource"]
 
 [[case]]
 name = "all-namespaces-adds-a-leading-column"
@@ -200,7 +200,7 @@ timeout_seconds = 10
 [case.expect]
 exit_code = 2
 stdout = ""
-stderr_contains = ["nodes", "not a namespaced resource"]
+stderr_contains = ["nodes is not a namespaced resource"]
 
 [[case]]
 name = "namespace-flag-refused-on-a-mixed-scope-list"
@@ -213,7 +213,7 @@ timeout_seconds = 10
 [case.expect]
 exit_code = 2
 stdout = ""
-stderr_contains = ["nodes", "not a namespaced resource"]
+stderr_contains = ["nodes is not a namespaced resource"]
 
 [[case]]
 name = "all-namespaces-refused-on-a-mixed-scope-list"
@@ -226,7 +226,7 @@ timeout_seconds = 10
 [case.expect]
 exit_code = 2
 stdout = ""
-stderr_contains = ["nodes", "not a namespaced resource"]
+stderr_contains = ["nodes is not a namespaced resource"]
 
 # --- the ambient namespace and its overrides ---------------------------------
 
