@@ -565,6 +565,9 @@ fn report_round_trips_through_json() {
             output_tokens: None,
             transcript: "transcript.jsonl".into(),
         },
+        provenance: corpus_runner::provenance::recorded(
+            "claude --model claude-opus-5 -p 'do the thing'",
+        ),
         acceptance: corpus_runner::report::AcceptanceReport {
             built: true,
             build_detail: None,
@@ -598,6 +601,11 @@ fn report_round_trips_through_json() {
     assert_eq!(restored.run_id, report.run_id);
     assert_eq!(restored.session.turns, Some(3));
     assert_eq!(
+        restored.provenance.model_requested.as_deref(),
+        Some("claude-opus-5")
+    );
+    assert_eq!(restored.provenance.prompt.as_deref(), Some("do the thing"));
+    assert_eq!(
         restored.questionnaire.answers.get("summary").unwrap(),
         "did it"
     );
@@ -617,6 +625,7 @@ fn committed_historical_reports_still_deserialize() {
         }
     }
     assert!(!reports.is_empty(), "no committed reports found");
+    let mut versions = std::collections::BTreeSet::new();
     for path in reports {
         let report: HistoricalRun = serde_json::from_str(&fs::read_to_string(&path).unwrap())
             .unwrap_or_else(|err| panic!("{} must deserialize: {err}", path.display()));
@@ -626,5 +635,51 @@ fn committed_historical_reports_still_deserialize() {
             path.display(),
             report.schema_version
         );
+        versions.insert(report.schema_version);
+    }
+    // Every schema the corpus has evidence in is evidence the historical
+    // path still reads. The pilot runs are version 2 and the validity run is
+    // version 3, so a bump that quietly dropped either would pass a test
+    // that only checked whatever happens to be committed.
+    for older in [2, 3] {
+        assert!(
+            versions.contains(&older),
+            "committed evidence in schema {older} is gone; the historical path's \
+             claim to read it is no longer tested (found {versions:?})"
+        );
+    }
+}
+
+/// A schema-4 report states the agent side; the same typed historical path
+/// reads it back, and an older report simply has none to read.
+#[test]
+fn the_historical_path_reads_a_recorded_agent_provenance() {
+    use corpus_runner::report::HistoricalRun;
+
+    let mut reports: Vec<_> = Vec::new();
+    for dir in ["pilot/runs", "demo"] {
+        for entry in fs::read_dir(corpus_dir().join(dir)).unwrap() {
+            let path = entry.unwrap().path().join("report.json");
+            if path.is_file() {
+                let text = fs::read_to_string(&path).unwrap();
+                reports.push((path, serde_json::from_str::<HistoricalRun>(&text).unwrap()));
+            }
+        }
+    }
+    for (path, report) in &reports {
+        if report.schema_version < 4 {
+            assert!(
+                report.provenance.is_none(),
+                "{} predates the provenance block",
+                path.display()
+            );
+        } else {
+            assert!(
+                report.provenance.is_some(),
+                "{} is schema {} and must state its agent provenance",
+                path.display(),
+                report.schema_version
+            );
+        }
     }
 }

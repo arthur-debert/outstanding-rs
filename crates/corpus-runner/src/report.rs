@@ -4,7 +4,7 @@ use std::path::Path;
 use anyhow::Context;
 use serde::{Deserialize, Serialize};
 
-pub const SCHEMA_VERSION: u32 = 3;
+pub const SCHEMA_VERSION: u32 = 4;
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct RunReport {
@@ -15,6 +15,7 @@ pub struct RunReport {
     pub evaluation: EvaluationStamp,
     pub blindness: Blindness,
     pub session: SessionReport,
+    pub provenance: AgentProvenance,
     pub acceptance: AcceptanceReport,
     pub invariants: Vec<InvariantCell>,
     pub questionnaire: QuestionnaireReport,
@@ -79,6 +80,16 @@ pub struct SessionReport {
     pub input_tokens: Option<u64>,
     pub output_tokens: Option<u64>,
     pub transcript: String,
+}
+
+#[derive(Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct AgentProvenance {
+    pub backend: Option<String>,
+    pub executable_version: Option<String>,
+    pub model_requested: Option<String>,
+    pub model_observed: Option<String>,
+    pub prompt: Option<String>,
+    pub settings: Vec<String>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -181,6 +192,8 @@ pub struct HistoricalRun {
     pub pins: Pins,
     pub blindness: HistoricalBlindness,
     pub session: SessionReport,
+    #[serde(default)]
+    pub provenance: Option<AgentProvenance>,
     pub questionnaire: QuestionnaireReport,
 }
 

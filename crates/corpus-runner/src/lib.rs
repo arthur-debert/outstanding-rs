@@ -8,6 +8,7 @@ pub mod cases;
 mod digest;
 pub mod exec;
 pub mod peer;
+pub mod provenance;
 pub mod questionnaire;
 pub mod report;
 pub mod sandbox;
@@ -210,6 +211,7 @@ pub fn run(config: &RunConfig) -> anyhow::Result<(RunReport, PathBuf)> {
                 .cloned(),
         },
         session: session_report,
+        provenance: provenance::describe(&config.agent_cmd, &transcript_path),
         acceptance: evaluation.acceptance,
         invariants: evaluation.invariants,
         questionnaire: questionnaire_report,
@@ -298,6 +300,13 @@ pub fn reevaluate(config: &ReevaluationConfig) -> anyhow::Result<RunReport> {
         &isolation,
     );
 
+    // A schema-4 source states its own agent side; an older one leaves the
+    // recorded command as the only thing that can still be said about it.
+    let provenance = match source.provenance {
+        Some(stated) => stated,
+        None => provenance::recorded(&source.session.agent_cmd),
+    };
+
     let report = RunReport {
         schema_version: SCHEMA_VERSION,
         run_id: source.run_id,
@@ -334,6 +343,7 @@ pub fn reevaluate(config: &ReevaluationConfig) -> anyhow::Result<RunReport> {
             agent_reported_external_sources: source.blindness.agent_reported_external_sources,
         },
         session: source.session,
+        provenance,
         acceptance: evaluation.acceptance,
         invariants: evaluation.invariants,
         questionnaire: source.questionnaire,
