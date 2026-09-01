@@ -1,11 +1,14 @@
 # Scorecard v2 — the pilot archetypes against 9.0.0
 
-**Status: incomplete.** Three of the five runs are in
-(`gitlike`, `ghlike`, `systemdlike`); `formlike` and `validity` have not run
-yet. Every figure below is generated from the committed reports, and the
-verdicts this scorecard owes — whether adoption got easier, and the ranked
-friction themes beside the pilot's — wait for the last two runs. Nothing here
-should be read as the program's measured claim until then.
+The four pilot archetypes and `validity`, re-run against standout **9.0.0**
+with the pilot's specs and the pilot's exit questionnaire. The objective
+figures are generated from the committed reports; the readings, the themes and
+the verdict are authored beside them, and each says which of the two it is.
+
+Read the verdict with the release in mind: **9.0.0 is the ROB05 blessed-surface
+release and contains none of the ROB06 adopter seams**, which landed on `main`
+after it was cut. Two of the pilot's loudest findings are closed on `main` by
+those seams and still open in this release, so this scorecard measures ROB05.
 
 ## What was run, and against what
 
@@ -13,21 +16,18 @@ Each run pins standout **9.0.0** from crates.io and provisions the published
 documentation snapshot taken at the **v9.0.0 tag** (`docs_commit` 1642d4e), so
 the agent's documentation and its dependency describe the same release. The
 archetype specs and the exit questionnaire are the pilot's, unchanged; so are
-`gitlike`'s and `ghlike`'s acceptance suites. **`systemdlike`'s suite is
-not**: one case was relaxed off a clap-specific assertion in the months
-between the two runs (`acceptance_sha256` f3db0930 against the pilot's
+`gitlike`'s, `ghlike`'s and `formlike`'s acceptance suites. **`systemdlike`'s
+suite is not**: one case was relaxed off a clap-specific assertion in the
+months between the two runs (`acceptance_sha256` f3db0930 against the pilot's
 e87a2b05 — [#378](https://github.com/arthur-debert/standout/pull/378)), which
 is why the table marks that row not comparable on acceptance and why the
 paragraph below reads it as a suite change rather than a framework result.
 
-**9.0.0 is the ROB05 blessed-surface release and does not contain the ROB06
-adopter seams.** Those landed on `main` after the release was cut — the first
-two runs of this workstream proved it the hard way, reading
-`docs/topics/error-handling.md` from the epic branch, writing
-`AppFailure::new(...)`, and getting `error[E0432]: unresolved import
-standout::cli::AppFailure`. Those runs are not committed. What this scorecard
-can measure is therefore ROB05, not the seams; the seams' effect on adopter
-workarounds needs the release that carries them.
+The first two runs of this workstream took their documentation from the epic
+branch instead, which is a whole epic ahead of the release: both agents read
+`docs/topics/error-handling.md`, wrote `AppFailure::new(...)`, and got
+`error[E0432]: unresolved import standout::cli::AppFailure`. Those runs
+measured that gap rather than the release and are not committed.
 
 ## The agent delta
 
@@ -44,7 +44,9 @@ compared against the re-run's recorded block rather than assumed. The backend
 is 18 patch versions newer, which is the delta this comparison cannot remove:
 the pilot's 2.1.234 is not obtainable. It is the difference every row carries
 in the table's `Comparable` column, and no single figure here should be read
-as measuring the framework alone.
+as measuring the framework alone. It bears hardest on the two figures that are
+about the agent rather than about the app — session wall time and generated
+tokens — which is why nothing below rests on those.
 
 ## Objective table
 
@@ -58,26 +60,46 @@ python3 corpus/scorecard.py pilot=corpus/pilot/runs rerun=corpus/rerun/runs
 
 | Archetype | Run | Standout | Acceptance | ROB01 invariants | Workarounds listed | Frictions listed | Session | Agent | Comparable |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| formlike | pilot | 8.1.1 | 4/11 (36.4%); 7 fail | 12/14 (85.7%) applicable; 30 planned: 12 pass, 2 fail, 16 N/A | 3 | 6 | 12m14s, 53,294 generated tokens | claude 2.1.234, claude-opus-5[1m] (recovered) | single run |
+| formlike | pilot | 8.1.1 | 4/11 (36.4%); 7 fail | 12/14 (85.7%) applicable; 30 planned: 12 pass, 2 fail, 16 N/A | 3 | 6 | 12m14s, 53,294 generated tokens | claude 2.1.234, claude-opus-5[1m] (recovered) | baseline |
+| formlike | rerun | 9.0.0 | 4/11 (36.4%); 7 fail | 12/14 (85.7%) applicable; 30 planned: 12 pass, 2 fail, 16 N/A | 3 | 6 | 17m40s, 72,214 generated tokens | claude 2.1.252, claude-opus-5[1m] | no: agent |
 | ghlike | pilot | 8.1.1 | 18/18 (100.0%) | 70/70 (100.0%) applicable; 150 planned: 70 pass, 80 N/A | 6 | 6 | 11m49s, 54,492 generated tokens | claude 2.1.234, claude-opus-5[1m] (recovered) | baseline |
 | ghlike | rerun | 9.0.0 | 17/18 (94.4%); 1 fail | 30/70 (42.9%) applicable; 150 planned: 30 pass, 40 fail, 80 N/A | 4 | 4 | 14m47s, 65,568 generated tokens | claude 2.1.252, claude-opus-5[1m] | no: agent |
 | gitlike | pilot | 8.1.1 | 15/19 (78.9%); 4 unexpected-pass | 48/48 (100.0%) applicable; 120 planned: 48 pass, 72 N/A | 5 | 5 | 12m27s, 56,330 generated tokens | claude 2.1.234, claude-opus-5[1m] (recovered) | baseline |
 | gitlike | rerun | 9.0.0 | 15/19 (78.9%); 4 unexpected-pass | 48/48 (100.0%) applicable; 120 planned: 48 pass, 72 N/A | 5 | 4 | 15m00s, 69,399 generated tokens | claude 2.1.252, claude-opus-5[1m] | no: agent |
 | systemdlike | pilot | 8.1.1 | 17/18 (94.4%); 1 fail | 56/56 (100.0%) applicable; 120 planned: 56 pass, 64 N/A | 6 | 7 | 12m00s, 54,480 generated tokens | claude 2.1.234, claude-opus-5[1m] (recovered) | baseline |
 | systemdlike | rerun | 9.0.0 | 18/18 (100.0%) | 56/56 (100.0%) applicable; 120 planned: 56 pass, 64 N/A | 3 | 0 | 10m50s, 46,376 generated tokens | claude 2.1.252, claude-opus-5[1m] | no: agent, suite |
-| validity | pilot | 8.1.1 | 6/22 (27.3%); 16 fail | 40/40 (100.0%) applicable; 80 planned: 40 pass, 40 N/A | 0 | 0 | 16m53s, 54,684 generated tokens | claude 2.1.252, claude-opus-5[1m] (recovered) | single run |
+| validity | pilot | 8.1.1 | 6/22 (27.3%); 16 fail | 40/40 (100.0%) applicable; 80 planned: 40 pass, 40 N/A | 0 | 0 | 16m53s, 54,684 generated tokens | claude 2.1.252, claude-opus-5[1m] (recovered) | baseline |
+| validity | rerun | 9.0.0 | 6/22 (27.3%); 16 fail | 40/40 (100.0%) applicable; 80 planned: 40 pass, 40 N/A | 4 | 4 | 8m41s, 34,417 generated tokens | claude 2.1.252, claude-opus-5[1m] | yes |
 
 Rows marked not comparable, and what differs:
 
+- **formlike / rerun** against `pilot` — executable version: 2.1.234 → 2.1.252
 - **ghlike / rerun** against `pilot` — executable version: 2.1.234 → 2.1.252
 - **gitlike / rerun** against `pilot` — executable version: 2.1.234 → 2.1.252
-- **systemdlike / rerun** against `pilot` — the acceptance suite: e87a2b05… → f3db0930…; executable version: 2.1.234 → 2.1.252
+- **systemdlike / rerun** against `pilot` — the acceptance suite: e87a2b05… →
+  f3db0930…; executable version: 2.1.234 → 2.1.252
 
-The `validity` row is the ROB07-WS01 run against 8.1.1. It is a method check,
-not a framework measurement, and the epic excludes it from the v1/v2
-comparison; the re-run's own `validity` run will sit beside it.
+Two of those counts need a caveat the script cannot give them. `systemdlike`'s
+re-run **0 frictions** is a formatting artifact: the count is of listed items,
+and that session answered in unlisted prose. It named the paging gap and
+`tabular()`'s sizing limit in that prose, and the paragraph below reads what it
+said rather than the zero. `validity`'s pilot **0** for both counts is real —
+that run left both answers empty.
 
-## What the three completed rows mean
+### Why `validity` is in the table but not in the comparison
+
+The script marks the `validity` pair comparable, and that is a statement about
+pins and agent: both runs used the same backend, model, prompt and settings.
+It is not a statement about what the pair may be used for. The epic's rule
+stands as written — WS01's `validity` run "checks the method, not the
+framework" and is excluded from the v1/v2 comparison — and it applies to the
+re-run's `validity` just as squarely, for the same reason: the archetype exists
+to check that the corpus can force three known-edge families, not to score a
+release. So the two `validity` runs compare **with each other, about the
+method**, and neither enters the framework verdict below. What that comparison
+says is in its own section.
+
+## What each row means
 
 **`gitlike` is unchanged.** Same acceptance, same invariants, the same four
 PAR01 config-walkup cases passing inside the application. The workaround count
@@ -95,8 +117,10 @@ relaxed to the diagnostic clap actually emits after the pilot ran
 ([#362](https://github.com/arthur-debert/standout/issues/362),
 [#378](https://github.com/arthur-debert/standout/pull/378)). The re-run passes
 the relaxed case; nothing here says 9.0 changed that output. What does compare
-is everything the suite did not touch: three workarounds against six, no
-frictions listed against seven, and 10m50s against 12m00s.
+is everything the suite did not touch: three workarounds against six, and all
+three are the process edge — argv scanning for `--plain`/`--no-pager`,
+re-implementing the final write to page command output, and `--plain` against
+a requested `--output term`.
 
 **`ghlike`'s two moved figures are both about assertions, not the app.**
 
@@ -104,35 +128,133 @@ frictions listed against seven, and 10m50s against 12m00s.
   printed says `USAGE`: 9.0 renders help itself (ADR-0034) where 8.1.1 left it
   to clap, and the case pinned clap's casing. Same class as
   [#450](https://github.com/arthur-debert/standout/issues/450), which records
-  it for `validity`'s themed-help group.
+  it for `validity`'s themed-help group; filed for this case as
+  [#460](https://github.com/arthur-debert/standout/issues/460).
 - The invariant matrix reads 30 of 70 applicable, and all 40 failures are one
   application decision: this app calls `no_output_flag()` and
   `no_output_file_flag()` — a capability 9.0 offers — because the archetype's
   machine surface is its own `--json`. Every matrix cell invokes the binary
   with `--output <mode>`, clap rejects the unknown flag, and the cell scores as
   a failure. An axis an app is entitled to decline is not an axis it fails, and
-  the matrix cannot currently say so.
+  the matrix cannot currently say so
+  ([#461](https://github.com/arthur-debert/standout/issues/461)).
 
 Read `ghlike`'s invariant ratio as observational for that reason, and read
 every row against the backend delta stated above.
 
-## Still to come
+**`formlike` is unchanged, on the pilot's own root cause — which is fixed, but
+not in this release.** 4 of 11, and all seven failures carry one stderr line:
 
-- The `formlike` and `validity` runs.
-- Friction themes ranked across the four re-run archetypes, side by side with
-  the pilot's five, from the committed questionnaires and transcripts.
-- The verdict the epic asks for: whether adoption got easier, stated against
-  what 9.0.0 actually contains.
-- Findings filed as tracker issues (this workstream does not fix what it
-  finds).
+```text
+Hook error: hook error (pre-dispatch): questionnaire input `questionnaire`:
+Validation failed: answer sheet answers.txt has 3 problem(s): Line 1:
+malformed answer-sheet preamble: expected '#! standout-answers 1'…
+```
 
-## Notes for whoever finishes this
+The archetype specifies its own answer-sheet format and the framework's
+questionnaire input requires its preamble and fingerprint, so every sheet the
+suite feeds is rejected before the app runs. That is the pilot's
+[#351](https://github.com/arthur-debert/standout/issues/351) exactly, and #351
+is **closed** — by ROB06's questionnaire seams
+([#431](https://github.com/arthur-debert/standout/issues/431)), which are on
+`main` and not in 9.0.0. So this row is not evidence that the defect survived;
+it is evidence that the release predates its fix, and it is the sharpest
+measurement in this scorecard of what running against ROB05 can and cannot
+show.
 
-- Every objective figure above comes from `corpus/scorecard.py`; regenerate
-  rather than hand-edit, and keep the prose beside the table doing the reading.
-- One harness observation from all three runs: the exit questionnaire is
-  recorded as **not collected** in each, always on the same single diagnostic —
-  `confidence` is a scalar field and every session answered it with a
-  paragraph. Six of seven answers decode and the scorecard's counts are
-  unaffected, but one long scalar answer invalidating a whole sheet is a
-  harness finding to file.
+## The `validity` method check
+
+Both `validity` runs score 6 of 22, and both fail the same 16 themed-help cases
+on the same assertion — `stdout does not contain "Usage"` against a page that
+reads `USAGE` ([#450](https://github.com/arthur-debert/standout/issues/450),
+still open). The other two known-edge families pass in both. The method
+therefore reproduces: the archetype forces the families it was built to force,
+and the one family it cannot score is blocked by its own assertion rather than
+by anything the framework does.
+
+The 9.0.0 run adds detail the 8.1.1 run did not. Its session named four
+frictions where the earlier run listed none, and the first is the family's own
+subject: nothing in the published documentation selects a template at run time,
+so `show <name>` had to be built as a one-line `{% include name %}` template
+inferred from a partials example. It also recorded that the missing-template
+diagnostic doubles its own prefix (`template not found: template not found:
+tried to include non-existing template "okk"`) and that a recursive include
+reports `could not render include: error in "show"` without naming recursion.
+
+## Friction themes, ranked by runs affected
+
+Authored, not computed: grouping a run's frictions into themes is a reading of
+the questionnaires and transcripts. Frequency counts an archetype once per
+theme. The four pilot archetypes are the population on both sides, so `pilot`
+frequencies are the ones scorecard v1 published and the re-run frequencies are
+over the same four (`validity` is excluded, per the rule above).
+
+| Rank | Theme | Pilot | Re-run | What changed |
+| ---: | --- | ---: | ---: | --- |
+| 1 | Exact streams and exit statuses require application-owned escape paths | 4/4 | 4/4 | Unchanged, and now with one name: every run that needed an app-owned nonzero status used `ExternalFailure`, which `error-handling.md` scopes to relaying another executable's verdict. `ghlike` isolated it in one module and said why; `gitlike` used it for an empty diagnostic; `formlike` took over the confirmation prompt; `systemdlike` re-implemented the final write. ROB06 named this seam (`AppFailure`) after 9.0.0 shipped. |
+| 2 | Published examples and current APIs contradict one another | 4/4 | 4/4 | Unchanged in frequency, different examples. `ghlike`: the `#[dispatch(nested)]` example does not compile beside clap's derive without `#[command(subcommand)]` on the variant. `formlike`: `use standout_test::serial;` fails to compile as documented (the re-exported macro expands to a `serial_test::` path, so the crate must also be a direct dev-dependency), and the documented attribute-merge order did not hold. `gitlike`: `execution-outcomes.md`'s `Some(...)` example made `RunError::kind()` read as optional. `systemdlike`: the docs do not say `run()` treats a command page and clap's `--version` differently on trailing newlines. |
+| 3 | Presentation behavior requires probing or manual layout code | 3/4 | 3/4 | Unchanged. `ghlike` and `systemdlike` both found `tabular()`/`table()` cannot size a column from the whole table and computed widths in the view; `gitlike` shaped its template around the one-final-newline rule and gave its unstyled theme empty rule bodies so `--output term` would not mark the tags with `?`. |
+| 4 | Command registration and macro composition disagree across documented paths | 4/4 | 2/4 | Halved. `ghlike` (nested variants versus clap's derive) and `formlike` (hook order through derive attributes, which cost it the `Dispatch` derive and moved it to `command_with`) still hit it; `gitlike` and `systemdlike` did not. |
+| 5 | Generated handler names require a crate-level lint exception | 2/4 | **0/4** | Closed. Not one re-run mentions `non_snake_case`, in any transcript or any answer ([#358](https://github.com/arthur-debert/standout/issues/358)). |
+| — | *New:* no seam pages a command's own output | — | 2/4 | Not a pilot theme. `gitlike` and `systemdlike` both had specs requiring a pager, found paging documented only for help topics and `--page`, and both left `app.run(...)` for `run_with(...)` plus a hand-written process edge — re-implementing `writeln!`, BrokenPipe-as-success and usage-error exit 2. `systemdlike` calls it "the one real gap between the spec and the framework". |
+
+Across the four compared archetypes the workaround counts fall from 20 to 15
+(`systemdlike` 6→3, `ghlike` 6→4, `gitlike` 5→5, `formlike` 3→3). That is the
+direction the epic hoped for, and it is a small enough movement over four runs
+with a changed backend that it is worth exactly as much as the themes beside it.
+
+## Verdict
+
+**Adoption did not measurably get easier at 9.0.0, and this release could not
+have shown it.** Three of the pilot's five friction themes recur at the same
+frequency, one halved, one closed. The two archetypes whose acceptance figures
+moved did not move for a framework reason — one is a suite relaxation, one is
+an assertion that pinned clap's help casing — and the one invariant ratio that
+fell did so because an application declined an axis 9.0 lets it decline. No
+framework behaviour regressed between 8.1.1 and 9.0.0 in anything these five
+runs exercised.
+
+The reason the answer is not stronger in either direction is the release. The
+epic's premise was that the re-run measures whether the adopter seams removed
+the pilot's workarounds; the seams are not in 9.0.0. Both of the top two themes
+are exactly what ROB06 addressed — `AppFailure` for theme 1, the questionnaire
+seams for the `formlike` root cause — and both are closed on `main` while still
+open in this release. `formlike` scoring 4 of 11 on a closed issue is the
+clearest statement of that: what this scorecard measures is ROB05.
+
+So the program's longitudinal claim has its second data point, and the data
+point says: **ROB05 held the line — nothing the corpus exercises got worse, one
+theme went away, and the adopter-visible frictions the pilot found are still
+there in this release.** Whether the seams removed them is the next
+measurement, and it needs the release that carries ROB06. Everything needed to
+run it is committed: the same specs, the same questionnaire, the same script,
+and now a report that records which agent produced each run.
+
+## Findings filed
+
+This workstream does not fix what it finds. Three issues were filed from these
+runs, each checked against `main` first:
+
+- [#460](https://github.com/arthur-debert/standout/issues/460) — `ghlike`'s
+  `deep-leaf-help` asserts clap's `Usage` casing against standout's own
+  `USAGE` header; the same class as #450, still present on `main`.
+- [#461](https://github.com/arthur-debert/standout/issues/461) — the ROB01
+  invariant matrix scores an application that declines `--output` as 40
+  failures rather than as a not-applicable axis.
+- [#462](https://github.com/arthur-debert/standout/issues/462) — the exit
+  questionnaire's scalar `confidence` field cost every one of the five runs its
+  `collected: true`, because every session answered a one-of field with a
+  paragraph.
+
+Not filed, deliberately: the `formlike` root cause (#351, already closed on
+`main`), the `AppFailure` gap (ROB06, already on `main`), and the missing
+paging seam — which is a design question for a Spec rather than a defect, and
+is named here for whoever writes it.
+
+## Notes for regenerating this
+
+- Every objective figure comes from `corpus/scorecard.py`; regenerate rather
+  than hand-edit, and keep the prose beside the table doing the reading.
+- The `Comparable` column and the notes under the table come from the same run,
+  so a later re-run that changes a pin says so in the table instead of leaving
+  a reader to notice.
