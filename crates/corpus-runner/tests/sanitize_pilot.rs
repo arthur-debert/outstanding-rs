@@ -136,6 +136,7 @@ const ALLOWED_MATCHES: &[&str] = &["valid@email.com"];
 const SCANNED_ROOTS: &[&str] = &[
     "corpus/pilot/runs",
     "corpus/pilot/scorecard.md",
+    "corpus/rerun",
     "corpus/demo",
 ];
 

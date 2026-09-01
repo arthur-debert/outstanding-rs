@@ -1,0 +1,1319 @@
+{
+  "schema_version": 4,
+  "run_id": "gitlike-1788231699",
+  "archetype": {
+    "name": "gitlike",
+    "spec_sha256": "786196eae9e3f2947e20e47b4906ca44e77e51ec6eb0ae0691e10c6f63e7d4ea"
+  },
+  "pins": {
+    "framework_version": "9.0.0",
+    "docs_commit": "ccf25805a90258027b4f9b6aab73b872f227297a",
+    "docs_sha256": "b6337e6b1b899f78fcc076a6700f806e87fc09df2d081a43e7a2f468a8630af8",
+    "acceptance_sha256": "927048f76ffb864a1ccc590d265e1f26f431e085c850ff0054d2e3b5550916cd",
+    "questionnaire_fingerprint": "sha256:64291870245510dad73ca960fd4024db9b9c161113a3dcc9c7e57a30973663fc"
+  },
+  "evaluation": {
+    "origin": "full-run",
+    "isolation": {
+      "backend": "macos-seatbelt",
+      "filesystem": "allow-default; reads denied under listed user/source roots, writes denied outside the phase workspace",
+      "network": "denied"
+    },
+    "binary_sha256": "d051a84d2f7542f85e0e4e11072fd5c52c49cb686aaef26a4ad296f28640396e"
+  },
+  "blindness": {
+    "policy": "workspace contains spec + published docs + crates.io pins only; agent, build, and produced-binary descendants use disposable homes and a kernel filesystem sandbox that excludes the source checkout and host user-data roots; consulted sources are self-reported in the exit questionnaire",
+    "env_allowlist": [
+      "PATH",
+      "HOME",
+      "SHELL",
+      "TERM",
+      "LANG",
+      "LC_ALL",
+      "TMPDIR",
+      "CARGO_HOME",
+      "RUSTUP_HOME",
+      "CLAUDE_CODE_TMPDIR",
+      "ANTHROPIC_BASE_URL",
+      "ANTHROPIC_AUTH_TOKEN"
+    ],
+    "framework_source_excluded": true,
+    "isolation": {
+      "backend": "macos-seatbelt",
+      "filesystem": "allow-default; reads denied under listed user/source roots, writes denied outside the phase workspace",
+      "network": "allowed-by-policy"
+    },
+    "credential_exceptions": [
+      "agent phase only: a host-side loopback broker on 127.0.0.1:54211 forwarded the session's API requests to https://api.anthropic.com with the host Claude subscription credential (read from macOS Keychain item \"Claude Code-credentials\") injected on the host side; the agent's environment carried ANTHROPIC_BASE_URL and a placeholder token only, so the credential never entered the agent's process tree",
+      "broker admitted 73 connection(s), each resolved from the OS socket tables to the agent process itself holding a close-on-exec descriptor, and denied 0 connection(s) it could not attribute that way"
+    ],
+    "agent_reported_docs": "- docs/index.md\n- docs/guides/intro-to-standout.md\n- docs/topics/index.md\n- docs/topics/stability.md\n- docs/topics/app-configuration.md\n- docs/topics/output-modes.md\n- docs/topics/execution-outcomes.md\n- docs/topics/error-handling.md\n- docs/topics/passthrough.md\n- docs/topics/seeker.md\n- docs/topics/topics-system.md\n- docs/topics/dispatch-attributes.md\n- docs/crates/dispatch/topics/handler-contract.md\n- docs/crates/render/topics/templating.md\n- docs/crates/render/topics/styling-system.md\n\nI also grepped the whole `docs/` tree for `pager`/`paging`, `NO_COLOR`,\n`plumbing`/`porcelain` and `page` to find out whether the framework owned any\nof those; that is how I established that paging exists only for help and\ntopics, not for command output.",
+    "agent_reported_external_sources": "No web search, no standout source, no other repositories. Two things came from\noutside the prose in `docs/`:\n\n- Rust and crate general knowledge: clap 4 derive, serde, the `toml` crate\n  (which I added to `app/Cargo.toml`), `std::io::IsTerminal`, and\n  `std::process::Command` for the pager.\n- The compiler, used as an API oracle where `docs/` was wrong or silent. When\n  `use standout::cli::AppFailure` failed to resolve I probed nearby paths\n  (`standout::AppFailure`, `standout::dispatch::AppFailure`,\n  `standout_dispatch::AppFailure`) and a deliberate typo\n  (`standout::cli::ExternalFailur`) to make rustc's \"a similar name exists\"\n  suggestion tell me what the module actually exports. That is compiler\n  feedback on my own crate, not reading standout's source, but it is knowledge\n  the docs did not give me. `ExitStatus::code()` and the `&self` receivers on\n  `App::get_matches_from` / `App::run_with` were likewise confirmed by\n  compiling rather than by reading a doc."
+  },
+  "session": {
+    "agent_cmd": "claude --dangerously-skip-permissions --setting-sources '' --strict-mcp-config -p \"Read INSTRUCTIONS.md in the current directory and carry it out completely.\" --output-format stream-json --verbose",
+    "wall_seconds": 884.782891042,
+    "exit_code": 0,
+    "timed_out": false,
+    "turns": 86,
+    "input_tokens": 140,
+    "output_tokens": 62710,
+    "transcript": "transcript.jsonl"
+  },
+  "provenance": {
+    "backend": "claude",
+    "executable_version": "2.1.252",
+    "model_requested": null,
+    "model_observed": "claude-opus-5[1m]",
+    "prompt": "Read INSTRUCTIONS.md in the current directory and carry it out completely.",
+    "settings": [
+      "--dangerously-skip-permissions",
+      "--setting-sources",
+      "",
+      "--strict-mcp-config",
+      "--output-format",
+      "stream-json",
+      "--verbose"
+    ]
+  },
+  "acceptance": {
+    "built": true,
+    "build_detail": null,
+    "cases": [
+      {
+        "name": "log-plain-when-piped",
+        "stresses": "Auto output mode degrades to plain text on a piped stdout",
+        "expected": "pass",
+        "outcome": "pass"
+      },
+      {
+        "name": "log-honors-flag-limit",
+        "stresses": "per-invocation flag caps the list",
+        "expected": "pass",
+        "outcome": "pass"
+      },
+      {
+        "name": "status-exact",
+        "stresses": "templated two-line summary, plain under pipe",
+        "expected": "pass",
+        "outcome": "pass"
+      },
+      {
+        "name": "ref-list-stable-bytes",
+        "group": "plumbing-stability",
+        "stresses": "plumbing surface is byte-stable under pipe",
+        "expected": "pass",
+        "outcome": "pass"
+      },
+      {
+        "name": "ref-list-identical-under-forced-term",
+        "group": "plumbing-stability",
+        "stresses": "plumbing bytes vs a forced-ANSI global output flag",
+        "expected": "pass",
+        "outcome": "pass"
+      },
+      {
+        "name": "ref-list-identical-under-theme-and-tty",
+        "group": "plumbing-stability",
+        "stresses": "plumbing bytes vs theme selection on an attended terminal",
+        "expected": "pass",
+        "outcome": "pass"
+      },
+      {
+        "name": "cat-object-known",
+        "group": "plumbing-stability",
+        "stresses": "plumbing object body is exact",
+        "expected": "pass",
+        "outcome": "pass"
+      },
+      {
+        "name": "cat-object-unknown-exit-3",
+        "group": "plumbing-stability",
+        "stresses": "domain error routes to stderr with a distinct exit code, stdout stays empty",
+        "expected": "pass",
+        "outcome": "pass"
+      },
+      {
+        "name": "log-pages-on-tty",
+        "group": "paging",
+        "stresses": "pager spawn on an attended stdout, observed through the pager's own filtering",
+        "expected": "pass",
+        "outcome": "pass"
+      },
+      {
+        "name": "log-tool-pager-var-beats-generic",
+        "group": "paging",
+        "stresses": "GITLIKE_PAGER wins over PAGER",
+        "expected": "pass",
+        "outcome": "pass"
+      },
+      {
+        "name": "log-no-pager-flag",
+        "group": "paging",
+        "stresses": "--no-pager suppresses a configured pager on a TTY",
+        "expected": "pass",
+        "outcome": "pass"
+      },
+      {
+        "name": "log-piped-never-pages",
+        "group": "paging",
+        "stresses": "captured (piped) stdout must not spawn the pager",
+        "expected": "pass",
+        "outcome": "pass"
+      },
+      {
+        "name": "plumbing-never-pages",
+        "group": "paging",
+        "stresses": "pager discipline vs the porcelain/plumbing split on a TTY",
+        "expected": "pass",
+        "outcome": "pass"
+      },
+      {
+        "name": "config-walkup-nearest-wins",
+        "group": "config-layering",
+        "stresses": "config discovery by cwd walk-up vs the harness's cwd control",
+        "expected": "fail",
+        "outcome": "unexpected-pass",
+        "gap": "PAR01",
+        "reason": "config layering with cwd walk-up is specced past current framework capability (docs/spec/parity-config-layering.md)"
+      },
+      {
+        "name": "config-walkup-stops-at-first-file",
+        "group": "config-layering",
+        "stresses": "nearest file wins whole; ancestor files are not merged",
+        "expected": "fail",
+        "outcome": "unexpected-pass",
+        "gap": "PAR01",
+        "reason": "config layering with cwd walk-up is specced past current framework capability (docs/spec/parity-config-layering.md)"
+      },
+      {
+        "name": "config-repo-overrides-user",
+        "group": "config-layering",
+        "stresses": "walk-up file layer over the user config layer",
+        "expected": "fail",
+        "outcome": "unexpected-pass",
+        "gap": "PAR01",
+        "reason": "config layering with cwd walk-up is specced past current framework capability (docs/spec/parity-config-layering.md)"
+      },
+      {
+        "name": "config-user-level-fallback",
+        "group": "config-layering",
+        "stresses": "user config applies when no walk-up file exists",
+        "expected": "fail",
+        "outcome": "unexpected-pass",
+        "gap": "PAR01",
+        "reason": "config layering is specced past current framework capability (docs/spec/parity-config-layering.md)"
+      },
+      {
+        "name": "config-get-unset-key",
+        "group": "config-layering",
+        "stresses": "unset key is a quiet exit-1, both streams empty",
+        "expected": "pass",
+        "outcome": "pass"
+      },
+      {
+        "name": "log-flag-beats-user-config",
+        "group": "config-layering",
+        "stresses": "flag layer over user config layer feeding a view",
+        "expected": "pass",
+        "outcome": "pass"
+      }
+    ]
+  },
+  "invariants": [
+    {
+      "command": "log",
+      "mode": "text",
+      "color": "off",
+      "theme": "application",
+      "check": "exits 0",
+      "status": "pass",
+      "detail": null
+    },
+    {
+      "command": "log",
+      "mode": "text",
+      "color": "off",
+      "theme": "application",
+      "check": "no unresolved tag markers",
+      "status": "pass",
+      "detail": null
+    },
+    {
+      "command": "log",
+      "mode": "text",
+      "color": "off",
+      "theme": "application",
+      "check": "stdout parses as JSON",
+      "status": "not-applicable",
+      "detail": "check does not apply to text mode"
+    },
+    {
+      "command": "log",
+      "mode": "text",
+      "color": "off",
+      "theme": "application",
+      "check": "styling preserves text layout",
+      "status": "not-applicable",
+      "detail": "check does not apply to text mode"
+    },
+    {
+      "command": "log",
+      "mode": "text",
+      "color": "off",
+      "theme": "application",
+      "check": "opaque output preserves text bytes",
+      "status": "not-applicable",
+      "detail": "rendered command uses render invariants"
+    },
+    {
+      "command": "log",
+      "mode": "term",
+      "color": "off",
+      "theme": "application",
+      "check": "exits 0",
+      "status": "pass",
+      "detail": null
+    },
+    {
+      "command": "log",
+      "mode": "term",
+      "color": "off",
+      "theme": "application",
+      "check": "no unresolved tag markers",
+      "status": "pass",
+      "detail": null
+    },
+    {
+      "command": "log",
+      "mode": "term",
+      "color": "off",
+      "theme": "application",
+      "check": "stdout parses as JSON",
+      "status": "not-applicable",
+      "detail": "check does not apply to term mode"
+    },
+    {
+      "command": "log",
+      "mode": "term",
+      "color": "off",
+      "theme": "application",
+      "check": "styling preserves text layout",
+      "status": "pass",
+      "detail": null
+    },
+    {
+      "command": "log",
+      "mode": "term",
+      "color": "off",
+      "theme": "application",
+      "check": "opaque output preserves text bytes",
+      "status": "not-applicable",
+      "detail": "rendered command uses render invariants"
+    },
+    {
+      "command": "log",
+      "mode": "json",
+      "color": "off",
+      "theme": "application",
+      "check": "exits 0",
+      "status": "pass",
+      "detail": null
+    },
+    {
+      "command": "log",
+      "mode": "json",
+      "color": "off",
+      "theme": "application",
+      "check": "no unresolved tag markers",
+      "status": "not-applicable",
+      "detail": "check does not apply to json mode"
+    },
+    {
+      "command": "log",
+      "mode": "json",
+      "color": "off",
+      "theme": "application",
+      "check": "stdout parses as JSON",
+      "status": "pass",
+      "detail": null
+    },
+    {
+      "command": "log",
+      "mode": "json",
+      "color": "off",
+      "theme": "application",
+      "check": "styling preserves text layout",
+      "status": "not-applicable",
+      "detail": "check does not apply to json mode"
+    },
+    {
+      "command": "log",
+      "mode": "json",
+      "color": "off",
+      "theme": "application",
+      "check": "opaque output preserves text bytes",
+      "status": "not-applicable",
+      "detail": "rendered command uses render invariants"
+    },
+    {
+      "command": "log",
+      "mode": "text",
+      "color": "on",
+      "theme": "application",
+      "check": "exits 0",
+      "status": "pass",
+      "detail": null
+    },
+    {
+      "command": "log",
+      "mode": "text",
+      "color": "on",
+      "theme": "application",
+      "check": "no unresolved tag markers",
+      "status": "pass",
+      "detail": null
+    },
+    {
+      "command": "log",
+      "mode": "text",
+      "color": "on",
+      "theme": "application",
+      "check": "stdout parses as JSON",
+      "status": "not-applicable",
+      "detail": "check does not apply to text mode"
+    },
+    {
+      "command": "log",
+      "mode": "text",
+      "color": "on",
+      "theme": "application",
+      "check": "styling preserves text layout",
+      "status": "not-applicable",
+      "detail": "check does not apply to text mode"
+    },
+    {
+      "command": "log",
+      "mode": "text",
+      "color": "on",
+      "theme": "application",
+      "check": "opaque output preserves text bytes",
+      "status": "not-applicable",
+      "detail": "rendered command uses render invariants"
+    },
+    {
+      "command": "log",
+      "mode": "term",
+      "color": "on",
+      "theme": "application",
+      "check": "exits 0",
+      "status": "pass",
+      "detail": null
+    },
+    {
+      "command": "log",
+      "mode": "term",
+      "color": "on",
+      "theme": "application",
+      "check": "no unresolved tag markers",
+      "status": "pass",
+      "detail": null
+    },
+    {
+      "command": "log",
+      "mode": "term",
+      "color": "on",
+      "theme": "application",
+      "check": "stdout parses as JSON",
+      "status": "not-applicable",
+      "detail": "check does not apply to term mode"
+    },
+    {
+      "command": "log",
+      "mode": "term",
+      "color": "on",
+      "theme": "application",
+      "check": "styling preserves text layout",
+      "status": "pass",
+      "detail": null
+    },
+    {
+      "command": "log",
+      "mode": "term",
+      "color": "on",
+      "theme": "application",
+      "check": "opaque output preserves text bytes",
+      "status": "not-applicable",
+      "detail": "rendered command uses render invariants"
+    },
+    {
+      "command": "log",
+      "mode": "json",
+      "color": "on",
+      "theme": "application",
+      "check": "exits 0",
+      "status": "pass",
+      "detail": null
+    },
+    {
+      "command": "log",
+      "mode": "json",
+      "color": "on",
+      "theme": "application",
+      "check": "no unresolved tag markers",
+      "status": "not-applicable",
+      "detail": "check does not apply to json mode"
+    },
+    {
+      "command": "log",
+      "mode": "json",
+      "color": "on",
+      "theme": "application",
+      "check": "stdout parses as JSON",
+      "status": "pass",
+      "detail": null
+    },
+    {
+      "command": "log",
+      "mode": "json",
+      "color": "on",
+      "theme": "application",
+      "check": "styling preserves text layout",
+      "status": "not-applicable",
+      "detail": "check does not apply to json mode"
+    },
+    {
+      "command": "log",
+      "mode": "json",
+      "color": "on",
+      "theme": "application",
+      "check": "opaque output preserves text bytes",
+      "status": "not-applicable",
+      "detail": "rendered command uses render invariants"
+    },
+    {
+      "command": "status",
+      "mode": "text",
+      "color": "off",
+      "theme": "application",
+      "check": "exits 0",
+      "status": "pass",
+      "detail": null
+    },
+    {
+      "command": "status",
+      "mode": "text",
+      "color": "off",
+      "theme": "application",
+      "check": "no unresolved tag markers",
+      "status": "pass",
+      "detail": null
+    },
+    {
+      "command": "status",
+      "mode": "text",
+      "color": "off",
+      "theme": "application",
+      "check": "stdout parses as JSON",
+      "status": "not-applicable",
+      "detail": "check does not apply to text mode"
+    },
+    {
+      "command": "status",
+      "mode": "text",
+      "color": "off",
+      "theme": "application",
+      "check": "styling preserves text layout",
+      "status": "not-applicable",
+      "detail": "check does not apply to text mode"
+    },
+    {
+      "command": "status",
+      "mode": "text",
+      "color": "off",
+      "theme": "application",
+      "check": "opaque output preserves text bytes",
+      "status": "not-applicable",
+      "detail": "rendered command uses render invariants"
+    },
+    {
+      "command": "status",
+      "mode": "term",
+      "color": "off",
+      "theme": "application",
+      "check": "exits 0",
+      "status": "pass",
+      "detail": null
+    },
+    {
+      "command": "status",
+      "mode": "term",
+      "color": "off",
+      "theme": "application",
+      "check": "no unresolved tag markers",
+      "status": "pass",
+      "detail": null
+    },
+    {
+      "command": "status",
+      "mode": "term",
+      "color": "off",
+      "theme": "application",
+      "check": "stdout parses as JSON",
+      "status": "not-applicable",
+      "detail": "check does not apply to term mode"
+    },
+    {
+      "command": "status",
+      "mode": "term",
+      "color": "off",
+      "theme": "application",
+      "check": "styling preserves text layout",
+      "status": "pass",
+      "detail": null
+    },
+    {
+      "command": "status",
+      "mode": "term",
+      "color": "off",
+      "theme": "application",
+      "check": "opaque output preserves text bytes",
+      "status": "not-applicable",
+      "detail": "rendered command uses render invariants"
+    },
+    {
+      "command": "status",
+      "mode": "json",
+      "color": "off",
+      "theme": "application",
+      "check": "exits 0",
+      "status": "pass",
+      "detail": null
+    },
+    {
+      "command": "status",
+      "mode": "json",
+      "color": "off",
+      "theme": "application",
+      "check": "no unresolved tag markers",
+      "status": "not-applicable",
+      "detail": "check does not apply to json mode"
+    },
+    {
+      "command": "status",
+      "mode": "json",
+      "color": "off",
+      "theme": "application",
+      "check": "stdout parses as JSON",
+      "status": "pass",
+      "detail": null
+    },
+    {
+      "command": "status",
+      "mode": "json",
+      "color": "off",
+      "theme": "application",
+      "check": "styling preserves text layout",
+      "status": "not-applicable",
+      "detail": "check does not apply to json mode"
+    },
+    {
+      "command": "status",
+      "mode": "json",
+      "color": "off",
+      "theme": "application",
+      "check": "opaque output preserves text bytes",
+      "status": "not-applicable",
+      "detail": "rendered command uses render invariants"
+    },
+    {
+      "command": "status",
+      "mode": "text",
+      "color": "on",
+      "theme": "application",
+      "check": "exits 0",
+      "status": "pass",
+      "detail": null
+    },
+    {
+      "command": "status",
+      "mode": "text",
+      "color": "on",
+      "theme": "application",
+      "check": "no unresolved tag markers",
+      "status": "pass",
+      "detail": null
+    },
+    {
+      "command": "status",
+      "mode": "text",
+      "color": "on",
+      "theme": "application",
+      "check": "stdout parses as JSON",
+      "status": "not-applicable",
+      "detail": "check does not apply to text mode"
+    },
+    {
+      "command": "status",
+      "mode": "text",
+      "color": "on",
+      "theme": "application",
+      "check": "styling preserves text layout",
+      "status": "not-applicable",
+      "detail": "check does not apply to text mode"
+    },
+    {
+      "command": "status",
+      "mode": "text",
+      "color": "on",
+      "theme": "application",
+      "check": "opaque output preserves text bytes",
+      "status": "not-applicable",
+      "detail": "rendered command uses render invariants"
+    },
+    {
+      "command": "status",
+      "mode": "term",
+      "color": "on",
+      "theme": "application",
+      "check": "exits 0",
+      "status": "pass",
+      "detail": null
+    },
+    {
+      "command": "status",
+      "mode": "term",
+      "color": "on",
+      "theme": "application",
+      "check": "no unresolved tag markers",
+      "status": "pass",
+      "detail": null
+    },
+    {
+      "command": "status",
+      "mode": "term",
+      "color": "on",
+      "theme": "application",
+      "check": "stdout parses as JSON",
+      "status": "not-applicable",
+      "detail": "check does not apply to term mode"
+    },
+    {
+      "command": "status",
+      "mode": "term",
+      "color": "on",
+      "theme": "application",
+      "check": "styling preserves text layout",
+      "status": "pass",
+      "detail": null
+    },
+    {
+      "command": "status",
+      "mode": "term",
+      "color": "on",
+      "theme": "application",
+      "check": "opaque output preserves text bytes",
+      "status": "not-applicable",
+      "detail": "rendered command uses render invariants"
+    },
+    {
+      "command": "status",
+      "mode": "json",
+      "color": "on",
+      "theme": "application",
+      "check": "exits 0",
+      "status": "pass",
+      "detail": null
+    },
+    {
+      "command": "status",
+      "mode": "json",
+      "color": "on",
+      "theme": "application",
+      "check": "no unresolved tag markers",
+      "status": "not-applicable",
+      "detail": "check does not apply to json mode"
+    },
+    {
+      "command": "status",
+      "mode": "json",
+      "color": "on",
+      "theme": "application",
+      "check": "stdout parses as JSON",
+      "status": "pass",
+      "detail": null
+    },
+    {
+      "command": "status",
+      "mode": "json",
+      "color": "on",
+      "theme": "application",
+      "check": "styling preserves text layout",
+      "status": "not-applicable",
+      "detail": "check does not apply to json mode"
+    },
+    {
+      "command": "status",
+      "mode": "json",
+      "color": "on",
+      "theme": "application",
+      "check": "opaque output preserves text bytes",
+      "status": "not-applicable",
+      "detail": "rendered command uses render invariants"
+    },
+    {
+      "command": "ref-list",
+      "mode": "text",
+      "color": "off",
+      "theme": "application",
+      "check": "exits 0",
+      "status": "pass",
+      "detail": null
+    },
+    {
+      "command": "ref-list",
+      "mode": "text",
+      "color": "off",
+      "theme": "application",
+      "check": "no unresolved tag markers",
+      "status": "not-applicable",
+      "detail": "opaque-byte command uses byte-identity checks"
+    },
+    {
+      "command": "ref-list",
+      "mode": "text",
+      "color": "off",
+      "theme": "application",
+      "check": "stdout parses as JSON",
+      "status": "not-applicable",
+      "detail": "opaque-byte command is not structured JSON"
+    },
+    {
+      "command": "ref-list",
+      "mode": "text",
+      "color": "off",
+      "theme": "application",
+      "check": "styling preserves text layout",
+      "status": "not-applicable",
+      "detail": "opaque-byte command uses byte-identity checks"
+    },
+    {
+      "command": "ref-list",
+      "mode": "text",
+      "color": "off",
+      "theme": "application",
+      "check": "opaque output preserves text bytes",
+      "status": "not-applicable",
+      "detail": "opaque-byte command uses byte-identity checks"
+    },
+    {
+      "command": "ref-list",
+      "mode": "term",
+      "color": "off",
+      "theme": "application",
+      "check": "exits 0",
+      "status": "pass",
+      "detail": null
+    },
+    {
+      "command": "ref-list",
+      "mode": "term",
+      "color": "off",
+      "theme": "application",
+      "check": "no unresolved tag markers",
+      "status": "not-applicable",
+      "detail": "opaque-byte command uses byte-identity checks"
+    },
+    {
+      "command": "ref-list",
+      "mode": "term",
+      "color": "off",
+      "theme": "application",
+      "check": "stdout parses as JSON",
+      "status": "not-applicable",
+      "detail": "opaque-byte command is not structured JSON"
+    },
+    {
+      "command": "ref-list",
+      "mode": "term",
+      "color": "off",
+      "theme": "application",
+      "check": "styling preserves text layout",
+      "status": "not-applicable",
+      "detail": "opaque-byte command uses byte-identity checks"
+    },
+    {
+      "command": "ref-list",
+      "mode": "term",
+      "color": "off",
+      "theme": "application",
+      "check": "opaque output preserves text bytes",
+      "status": "pass",
+      "detail": null
+    },
+    {
+      "command": "ref-list",
+      "mode": "json",
+      "color": "off",
+      "theme": "application",
+      "check": "exits 0",
+      "status": "pass",
+      "detail": null
+    },
+    {
+      "command": "ref-list",
+      "mode": "json",
+      "color": "off",
+      "theme": "application",
+      "check": "no unresolved tag markers",
+      "status": "not-applicable",
+      "detail": "opaque-byte command uses byte-identity checks"
+    },
+    {
+      "command": "ref-list",
+      "mode": "json",
+      "color": "off",
+      "theme": "application",
+      "check": "stdout parses as JSON",
+      "status": "not-applicable",
+      "detail": "opaque-byte command is not structured JSON"
+    },
+    {
+      "command": "ref-list",
+      "mode": "json",
+      "color": "off",
+      "theme": "application",
+      "check": "styling preserves text layout",
+      "status": "not-applicable",
+      "detail": "opaque-byte command uses byte-identity checks"
+    },
+    {
+      "command": "ref-list",
+      "mode": "json",
+      "color": "off",
+      "theme": "application",
+      "check": "opaque output preserves text bytes",
+      "status": "pass",
+      "detail": null
+    },
+    {
+      "command": "ref-list",
+      "mode": "text",
+      "color": "on",
+      "theme": "application",
+      "check": "exits 0",
+      "status": "pass",
+      "detail": null
+    },
+    {
+      "command": "ref-list",
+      "mode": "text",
+      "color": "on",
+      "theme": "application",
+      "check": "no unresolved tag markers",
+      "status": "not-applicable",
+      "detail": "opaque-byte command uses byte-identity checks"
+    },
+    {
+      "command": "ref-list",
+      "mode": "text",
+      "color": "on",
+      "theme": "application",
+      "check": "stdout parses as JSON",
+      "status": "not-applicable",
+      "detail": "opaque-byte command is not structured JSON"
+    },
+    {
+      "command": "ref-list",
+      "mode": "text",
+      "color": "on",
+      "theme": "application",
+      "check": "styling preserves text layout",
+      "status": "not-applicable",
+      "detail": "opaque-byte command uses byte-identity checks"
+    },
+    {
+      "command": "ref-list",
+      "mode": "text",
+      "color": "on",
+      "theme": "application",
+      "check": "opaque output preserves text bytes",
+      "status": "not-applicable",
+      "detail": "opaque-byte command uses byte-identity checks"
+    },
+    {
+      "command": "ref-list",
+      "mode": "term",
+      "color": "on",
+      "theme": "application",
+      "check": "exits 0",
+      "status": "pass",
+      "detail": null
+    },
+    {
+      "command": "ref-list",
+      "mode": "term",
+      "color": "on",
+      "theme": "application",
+      "check": "no unresolved tag markers",
+      "status": "not-applicable",
+      "detail": "opaque-byte command uses byte-identity checks"
+    },
+    {
+      "command": "ref-list",
+      "mode": "term",
+      "color": "on",
+      "theme": "application",
+      "check": "stdout parses as JSON",
+      "status": "not-applicable",
+      "detail": "opaque-byte command is not structured JSON"
+    },
+    {
+      "command": "ref-list",
+      "mode": "term",
+      "color": "on",
+      "theme": "application",
+      "check": "styling preserves text layout",
+      "status": "not-applicable",
+      "detail": "opaque-byte command uses byte-identity checks"
+    },
+    {
+      "command": "ref-list",
+      "mode": "term",
+      "color": "on",
+      "theme": "application",
+      "check": "opaque output preserves text bytes",
+      "status": "pass",
+      "detail": null
+    },
+    {
+      "command": "ref-list",
+      "mode": "json",
+      "color": "on",
+      "theme": "application",
+      "check": "exits 0",
+      "status": "pass",
+      "detail": null
+    },
+    {
+      "command": "ref-list",
+      "mode": "json",
+      "color": "on",
+      "theme": "application",
+      "check": "no unresolved tag markers",
+      "status": "not-applicable",
+      "detail": "opaque-byte command uses byte-identity checks"
+    },
+    {
+      "command": "ref-list",
+      "mode": "json",
+      "color": "on",
+      "theme": "application",
+      "check": "stdout parses as JSON",
+      "status": "not-applicable",
+      "detail": "opaque-byte command is not structured JSON"
+    },
+    {
+      "command": "ref-list",
+      "mode": "json",
+      "color": "on",
+      "theme": "application",
+      "check": "styling preserves text layout",
+      "status": "not-applicable",
+      "detail": "opaque-byte command uses byte-identity checks"
+    },
+    {
+      "command": "ref-list",
+      "mode": "json",
+      "color": "on",
+      "theme": "application",
+      "check": "opaque output preserves text bytes",
+      "status": "pass",
+      "detail": null
+    },
+    {
+      "command": "cat-object c1a9",
+      "mode": "text",
+      "color": "off",
+      "theme": "application",
+      "check": "exits 0",
+      "status": "pass",
+      "detail": null
+    },
+    {
+      "command": "cat-object c1a9",
+      "mode": "text",
+      "color": "off",
+      "theme": "application",
+      "check": "no unresolved tag markers",
+      "status": "not-applicable",
+      "detail": "opaque-byte command uses byte-identity checks"
+    },
+    {
+      "command": "cat-object c1a9",
+      "mode": "text",
+      "color": "off",
+      "theme": "application",
+      "check": "stdout parses as JSON",
+      "status": "not-applicable",
+      "detail": "opaque-byte command is not structured JSON"
+    },
+    {
+      "command": "cat-object c1a9",
+      "mode": "text",
+      "color": "off",
+      "theme": "application",
+      "check": "styling preserves text layout",
+      "status": "not-applicable",
+      "detail": "opaque-byte command uses byte-identity checks"
+    },
+    {
+      "command": "cat-object c1a9",
+      "mode": "text",
+      "color": "off",
+      "theme": "application",
+      "check": "opaque output preserves text bytes",
+      "status": "not-applicable",
+      "detail": "opaque-byte command uses byte-identity checks"
+    },
+    {
+      "command": "cat-object c1a9",
+      "mode": "term",
+      "color": "off",
+      "theme": "application",
+      "check": "exits 0",
+      "status": "pass",
+      "detail": null
+    },
+    {
+      "command": "cat-object c1a9",
+      "mode": "term",
+      "color": "off",
+      "theme": "application",
+      "check": "no unresolved tag markers",
+      "status": "not-applicable",
+      "detail": "opaque-byte command uses byte-identity checks"
+    },
+    {
+      "command": "cat-object c1a9",
+      "mode": "term",
+      "color": "off",
+      "theme": "application",
+      "check": "stdout parses as JSON",
+      "status": "not-applicable",
+      "detail": "opaque-byte command is not structured JSON"
+    },
+    {
+      "command": "cat-object c1a9",
+      "mode": "term",
+      "color": "off",
+      "theme": "application",
+      "check": "styling preserves text layout",
+      "status": "not-applicable",
+      "detail": "opaque-byte command uses byte-identity checks"
+    },
+    {
+      "command": "cat-object c1a9",
+      "mode": "term",
+      "color": "off",
+      "theme": "application",
+      "check": "opaque output preserves text bytes",
+      "status": "pass",
+      "detail": null
+    },
+    {
+      "command": "cat-object c1a9",
+      "mode": "json",
+      "color": "off",
+      "theme": "application",
+      "check": "exits 0",
+      "status": "pass",
+      "detail": null
+    },
+    {
+      "command": "cat-object c1a9",
+      "mode": "json",
+      "color": "off",
+      "theme": "application",
+      "check": "no unresolved tag markers",
+      "status": "not-applicable",
+      "detail": "opaque-byte command uses byte-identity checks"
+    },
+    {
+      "command": "cat-object c1a9",
+      "mode": "json",
+      "color": "off",
+      "theme": "application",
+      "check": "stdout parses as JSON",
+      "status": "not-applicable",
+      "detail": "opaque-byte command is not structured JSON"
+    },
+    {
+      "command": "cat-object c1a9",
+      "mode": "json",
+      "color": "off",
+      "theme": "application",
+      "check": "styling preserves text layout",
+      "status": "not-applicable",
+      "detail": "opaque-byte command uses byte-identity checks"
+    },
+    {
+      "command": "cat-object c1a9",
+      "mode": "json",
+      "color": "off",
+      "theme": "application",
+      "check": "opaque output preserves text bytes",
+      "status": "pass",
+      "detail": null
+    },
+    {
+      "command": "cat-object c1a9",
+      "mode": "text",
+      "color": "on",
+      "theme": "application",
+      "check": "exits 0",
+      "status": "pass",
+      "detail": null
+    },
+    {
+      "command": "cat-object c1a9",
+      "mode": "text",
+      "color": "on",
+      "theme": "application",
+      "check": "no unresolved tag markers",
+      "status": "not-applicable",
+      "detail": "opaque-byte command uses byte-identity checks"
+    },
+    {
+      "command": "cat-object c1a9",
+      "mode": "text",
+      "color": "on",
+      "theme": "application",
+      "check": "stdout parses as JSON",
+      "status": "not-applicable",
+      "detail": "opaque-byte command is not structured JSON"
+    },
+    {
+      "command": "cat-object c1a9",
+      "mode": "text",
+      "color": "on",
+      "theme": "application",
+      "check": "styling preserves text layout",
+      "status": "not-applicable",
+      "detail": "opaque-byte command uses byte-identity checks"
+    },
+    {
+      "command": "cat-object c1a9",
+      "mode": "text",
+      "color": "on",
+      "theme": "application",
+      "check": "opaque output preserves text bytes",
+      "status": "not-applicable",
+      "detail": "opaque-byte command uses byte-identity checks"
+    },
+    {
+      "command": "cat-object c1a9",
+      "mode": "term",
+      "color": "on",
+      "theme": "application",
+      "check": "exits 0",
+      "status": "pass",
+      "detail": null
+    },
+    {
+      "command": "cat-object c1a9",
+      "mode": "term",
+      "color": "on",
+      "theme": "application",
+      "check": "no unresolved tag markers",
+      "status": "not-applicable",
+      "detail": "opaque-byte command uses byte-identity checks"
+    },
+    {
+      "command": "cat-object c1a9",
+      "mode": "term",
+      "color": "on",
+      "theme": "application",
+      "check": "stdout parses as JSON",
+      "status": "not-applicable",
+      "detail": "opaque-byte command is not structured JSON"
+    },
+    {
+      "command": "cat-object c1a9",
+      "mode": "term",
+      "color": "on",
+      "theme": "application",
+      "check": "styling preserves text layout",
+      "status": "not-applicable",
+      "detail": "opaque-byte command uses byte-identity checks"
+    },
+    {
+      "command": "cat-object c1a9",
+      "mode": "term",
+      "color": "on",
+      "theme": "application",
+      "check": "opaque output preserves text bytes",
+      "status": "pass",
+      "detail": null
+    },
+    {
+      "command": "cat-object c1a9",
+      "mode": "json",
+      "color": "on",
+      "theme": "application",
+      "check": "exits 0",
+      "status": "pass",
+      "detail": null
+    },
+    {
+      "command": "cat-object c1a9",
+      "mode": "json",
+      "color": "on",
+      "theme": "application",
+      "check": "no unresolved tag markers",
+      "status": "not-applicable",
+      "detail": "opaque-byte command uses byte-identity checks"
+    },
+    {
+      "command": "cat-object c1a9",
+      "mode": "json",
+      "color": "on",
+      "theme": "application",
+      "check": "stdout parses as JSON",
+      "status": "not-applicable",
+      "detail": "opaque-byte command is not structured JSON"
+    },
+    {
+      "command": "cat-object c1a9",
+      "mode": "json",
+      "color": "on",
+      "theme": "application",
+      "check": "styling preserves text layout",
+      "status": "not-applicable",
+      "detail": "opaque-byte command uses byte-identity checks"
+    },
+    {
+      "command": "cat-object c1a9",
+      "mode": "json",
+      "color": "on",
+      "theme": "application",
+      "check": "opaque output preserves text bytes",
+      "status": "pass",
+      "detail": null
+    }
+  ],
+  "questionnaire": {
+    "collected": false,
+    "diagnostics": [
+      "[confidence]: a string answer must be a single line"
+    ],
+    "answers": {
+      "docs.gaps": "- Wrong: `AppFailure`. Quoted in the friction answer — the docs give it an\n  import path, a constructor signature and two worked examples, and the symbol\n  is not in standout 9.0.0 under any path I could reach.\n  `docs/topics/stability.md` even lists it as contract (\"that is `AppFailure`,\n  and `ExternalFailure` for a status another operation declared\").\n\n- Missing: whether owner-declared failures work from a *passthrough* handler.\n  `docs/topics/passthrough.md` says only \"the `anyhow::Error` becomes the\n  command's failure\", and `docs/topics/error-handling.md` frames both failure\n  types as reached \"through the same `HandlerResult` seam\" — which passthrough\n  does not use. It does work (`gitlike cat-object nosuch` exits 3 with the\n  exact stderr line, `gitlike config get log.limit` exits 1 silently), but I\n  found that out by running it, not by reading it.\n\n- Missing: `ExitStatus`'s accessor. `docs/topics/execution-outcomes.md` shows\n  `assert_eq!(result.exit_status(), Some(ExitStatus::SUCCESS))` but never says\n  how a printing caller turns that into a process status. `.code()` returning\n  `u8` was a guess that compiled.\n\n- Missing: whether `App::get_matches_from` / `App::run_with` take `&self`.\n  Both do, so one `App` can be parsed against and then run; the docs' examples\n  never show both on the same value, and I had `let mut app` until the\n  unused-`mut` warning told me otherwise.\n\n- Missing: paging for command output, covered in the friction answer.\n  `docs/topics/output-modes.md` mentions `myapp list | less` only as an example\n  of color detection, never as something the framework can drive.",
+      "friction": "a) `AppFailure` does not exist. `docs/topics/error-handling.md` says:\n\n    use standout::cli::{AppFailure, HandlerResult};\n    ...\n    return Err(AppFailure::new(1, \"ghlike: repository not found: demo/gamma\\n\")?.into());\n\nand `docs/crates/dispatch/topics/handler-contract.md` repeats it. The build says:\n\n    error[E0432]: unresolved import `standout::cli::AppFailure`\n      --> src/plumbing.rs:11:21\n       |\n    11 | use standout::cli::{AppFailure, CommandContext};\n       |                     ^^^^^^^^^^ no `AppFailure` in `cli`\n\n`standout::AppFailure` and `standout_dispatch::AppFailure` fail the same way,\nand rustc offers no similar-name suggestion, so nothing close to that spelling\nis exported. `ExternalFailure` *is* there — rustc suggested it when I misspelled\nit — so I used that instead. See the workarounds answer.\n\nb) No paging seam for command output. The only paging in `docs/` is\n`docs/topics/topics-system.md` (\"For long topics, the `--page` flag displays\ncontent through a pager\") and `docs/topics/standout-help.md` (\"paging is a\nterminal side effect and only a *printing* entry point may perform it\"). Since\nSPEC.md requires porcelain commands to page, and `run()` owns the final write,\nI had to move to `run_with` and re-implement the process edge. That is a\ndocumented capture path, but it means re-deriving behavior `run()` gets for\nfree (the trailing newline, the stderr split, the exit status).\n\nc) Getting the trailing newline right needed care.\n`docs/crates/render/topics/templating.md#the-trailing-newline-contract` says\nthe engine eats one final newline and \"`App::run` writes a handled command's\ntext with `writeln!`\". A naive `{% for %}` loop whose body ends in a newline\ntherefore renders with a trailing newline *and* gets one appended, producing a\nblank last line. I wrote the loop's separator as\n`{% if not loop.last %}<newline>{% endif %}` so the rendered string ends\nwithout a newline, matching what `writeln!` expects.\n\nd) Writing an \"unstyled\" theme is not obvious. `docs/crates/render/topics/styling-system.md`\nsays an undefined tag in `Term` mode gets a marker: \"Unknown tags get a `?`\nmarker: `[unknown?]text[/unknown?]`\". So `mono` could not simply omit the\nstyles — it has to define every tag with a declaration that resolves to no\nattributes. I used `opacity: 1` (the doc only documents `opacity: 0.5` as\ndim) and verified with `GITLIKE_THEME=mono gitlike log --output term` that the\nbytes are plain, with no ANSI and no `?` markers.",
+      "sources.docs": "- docs/index.md\n- docs/guides/intro-to-standout.md\n- docs/topics/index.md\n- docs/topics/stability.md\n- docs/topics/app-configuration.md\n- docs/topics/output-modes.md\n- docs/topics/execution-outcomes.md\n- docs/topics/error-handling.md\n- docs/topics/passthrough.md\n- docs/topics/seeker.md\n- docs/topics/topics-system.md\n- docs/topics/dispatch-attributes.md\n- docs/crates/dispatch/topics/handler-contract.md\n- docs/crates/render/topics/templating.md\n- docs/crates/render/topics/styling-system.md\n\nI also grepped the whole `docs/` tree for `pager`/`paging`, `NO_COLOR`,\n`plumbing`/`porcelain` and `page` to find out whether the framework owned any\nof those; that is how I established that paging exists only for help and\ntopics, not for command output.",
+      "sources.external": "No web search, no standout source, no other repositories. Two things came from\noutside the prose in `docs/`:\n\n- Rust and crate general knowledge: clap 4 derive, serde, the `toml` crate\n  (which I added to `app/Cargo.toml`), `std::io::IsTerminal`, and\n  `std::process::Command` for the pager.\n- The compiler, used as an API oracle where `docs/` was wrong or silent. When\n  `use standout::cli::AppFailure` failed to resolve I probed nearby paths\n  (`standout::AppFailure`, `standout::dispatch::AppFailure`,\n  `standout_dispatch::AppFailure`) and a deliberate typo\n  (`standout::cli::ExternalFailur`) to make rustc's \"a similar name exists\"\n  suggestion tell me what the module actually exports. That is compiler\n  feedback on my own crate, not reading standout's source, but it is knowledge\n  the docs did not give me. `ExitStatus::code()` and the `&self` receivers on\n  `App::get_matches_from` / `App::run_with` were likewise confirmed by\n  compiling rather than by reading a doc.",
+      "summary": "`gitlike`, complete and building clean (`cargo build`, no warnings from my\ncode), with every command in SPEC.md verified by running the binary.\n\nStructure in `app/src/`:\n\n- `repo.rs` — the frozen three-commit / two-branch state, as consts.\n- `config.rs` — the two config keys, resolved from the nearest `.gitlike.toml`\n  walking up from the cwd, then `$GITLIKE_CONFIG_HOME/config.toml` (else\n  `$HOME/.config/gitlike/config.toml`). Precedence is per key: the repo file\n  wins for the keys it sets, the user file fills the rest. Both TOML spellings\n  (`log.limit = 2` and `[log] limit = 2`) work, because the toml crate\n  normalizes dotted keys.\n- `cli.rs` — clap derive plus `#[derive(Dispatch)]`. `log` and `status` are\n  `#[dispatch(pure)]`; the plumbing variants are `#[dispatch(skip)]`.\n- `handlers.rs` — the two porcelain `#[handler]` adapters returning view data.\n- `templates/log.jinja`, `templates/status.jinja`, `styles/default.css`,\n  `styles/mono.css`.\n- `plumbing.rs` — `ref-list`, `cat-object` and `config get`, registered with\n  `command_passthrough`. That was the deliberate design choice for the\n  stability contract: a passthrough handler writes its own bytes and, per\n  `docs/topics/passthrough.md`, `--output` has no way to reach it, so the\n  plumbing bytes are identical under every theme, every `--output` mode and\n  terminal or pipe. I verified that as a matrix (8 output modes × 5\n  environments for `ref-list`, 8 modes for `cat-object`) — all byte-identical.\n- `pager.rs` — paging, which the framework does not provide for command output\n  (only for help/topics). Porcelain pages when stdout is a terminal, the\n  invocation did not pass `--no-pager`, and `GITLIKE_PAGER` (else `PAGER`)\n  names a non-blank command, which is run through `sh -c`.\n- `main.rs` — `App::builder()` wiring plus `run_with`, because the process edge\n  had to be mine to page: `run()` performs the final write itself. `main` does\n  what `run()` documents — one trailing newline via `writeln!`, diagnostics to\n  stderr, the framework's own exit status — and routes porcelain text through\n  the pager plan instead of straight to stdout.\n\nTheme selection reads `GITLIKE_THEME` at build time and feeds\n`.default_theme(\"mono\"|\"default\")`. `NO_COLOR` and pipe-vs-terminal are the\nframework's `auto` mode doing its documented job; I add nothing there.\n\nExit codes verified: 0 success, 1 `config get` on an unset key (silent on both\nstreams), 2 unknown command / unknown flag / `--limit 0` / missing argument,\n3 unknown object hash (with `gitlike: no such object: <hash>` on stderr).",
+      "workarounds": "- `src/plumbing.rs` uses `ExternalFailure` where the docs' blessed seam is\n  `AppFailure`. Semantically `ExternalFailure` is documented for \"relaying a\n  verdict\" another executable reached, which `gitlike` is not doing; I use it\n  purely because it is the surviving type with the required shape (nonzero\n  status + verbatim stderr payload, no framing). A comment above the import\n  says so. If `AppFailure` reappears, swapping the two names is the whole fix.\n\n- `src/main.rs` uses `run_with` rather than the blessed `run`, and\n  reimplements the final write, so that porcelain can be paged. The cost is\n  that framework warnings are dropped: `run()` flushes them to stderr, and\n  capture runs drain them instead. `gitlike` produces none, but I do not\n  forward `result.warnings()`, so a future one would be silent.\n\n- `src/pager.rs` parses the command line twice — once via\n  `app.get_matches_from(...)` to learn whether the invocation is porcelain and\n  whether `--no-pager` was passed, then again inside `run_with`. Paging has to\n  be decided before dispatch and there is no hook that reports the resolved\n  command to the caller ahead of the run.\n\n- The pager is run through `sh -c`, so `PAGER=\"less -R\"` works. A pager\n  command that does not exist is a successfully-spawned shell that then fails,\n  which means that invocation's output is lost (as it is with git). Only a\n  shell that will not start at all falls back to stdout.\n\n- Malformed config is treated as absent rather than as an error: an\n  unparseable `.gitlike.toml`, a non-integer `log.limit`, or a non-positive\n  one all resolve to \"unset\". SPEC.md's exit-code table enumerates 0/1/2/3 and\n  has no status for a bad config file, so I kept the tool inside that set\n  rather than inventing one."
+    }
+  }
+}

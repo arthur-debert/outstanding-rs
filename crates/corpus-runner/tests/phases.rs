@@ -616,7 +616,7 @@ fn committed_historical_reports_still_deserialize() {
     use corpus_runner::report::{HistoricalRun, HISTORICAL_SCHEMA_MIN, SCHEMA_VERSION};
 
     let mut reports = Vec::new();
-    for dir in ["pilot/runs", "demo"] {
+    for dir in ["pilot/runs", "rerun/runs", "demo"] {
         for entry in fs::read_dir(corpus_dir().join(dir)).unwrap() {
             let path = entry.unwrap().path().join("report.json");
             if path.is_file() {
@@ -657,7 +657,7 @@ fn the_historical_path_reads_a_recorded_agent_provenance() {
     use corpus_runner::report::HistoricalRun;
 
     let mut reports: Vec<_> = Vec::new();
-    for dir in ["pilot/runs", "demo"] {
+    for dir in ["pilot/runs", "rerun/runs", "demo"] {
         for entry in fs::read_dir(corpus_dir().join(dir)).unwrap() {
             let path = entry.unwrap().path().join("report.json");
             if path.is_file() {
