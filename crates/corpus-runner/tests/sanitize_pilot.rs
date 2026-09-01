@@ -131,12 +131,16 @@ fn committed_pilot_transcripts_use_the_specific_workspace_placeholder() {
 
 // Known fixture strings that match a secret shape but are not leaks; each
 // entry is the exact matched value, so vouching one never silences another.
-const ALLOWED_MATCHES: &[&str] = &["valid@email.com"];
+// The two `example.com` addresses are values the gcloudlike agent wrote into
+// its own tests for a CLI whose config carries an account property; that domain
+// is reserved (RFC 2606) and resolves to nobody.
+const ALLOWED_MATCHES: &[&str] = &["valid@email.com", "me@example.com", "who@example.com"];
 
 const SCANNED_ROOTS: &[&str] = &[
     "corpus/pilot/runs",
     "corpus/pilot/scorecard.md",
     "corpus/rerun",
+    "corpus/completion",
     "corpus/demo",
 ];
 

@@ -39,6 +39,7 @@ ignore = [
   # report would make the committed artifact stop being the run's own output.
   "corpus/pilot/runs/**",
   "corpus/rerun/runs/**",
+  "corpus/completion/runs/**",
   "corpus/demo/**",
 ]
 
