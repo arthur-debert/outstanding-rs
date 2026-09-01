@@ -673,7 +673,10 @@ THEME: Rendering
 
 	When a tag references a style not in the theme, behavior depends on mode:
 
-	Term mode: unknown tags degrade to unstyled text, markers removed; run through the app, `App::run` names them in a stderr warning:
+	Term mode: unknown tags degrade to unstyled text; a balanced pair has its
+	markers removed, while an unbalanced open tag with no closing partner is
+	emitted verbatim (Term and Text treat unknown tags identically). Run through
+	the app, `App::run` names them in a stderr warning:
 		Template: [unknown]hello[/unknown]
 		Output:   hello
 		Stderr:   Unresolved style tag(s) degraded to unstyled text: unknown

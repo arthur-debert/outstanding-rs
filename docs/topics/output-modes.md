@@ -135,7 +135,8 @@ Use cases:
 TermDebug keeps every tag as literal text and shows tag placement; it does not
 check whether a tag has a matching style definition. No mode rewrites an
 unknown tag to a `[unknown?]` marker — in `Term` and `Text` an unresolved tag
-degrades to unstyled text and raises a stderr warning (see [Unknown Style
+degrades to unstyled text and is recorded as a warning; run through `App::run`
+that warning is written to stderr (see [Unknown Style
 Tags](../crates/render/topics/styling-system.md#unknown-style-tags)).
 Use `validate_template` when validation is required.
 
