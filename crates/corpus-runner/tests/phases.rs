@@ -15,6 +15,10 @@ use corpus_runner::{acceptance, questionnaire, session, workspace};
 
 const NO_TIMEOUT: Duration = Duration::from_secs(60);
 
+// Every directory under `corpus/` holding committed run reports. One owner, so
+// a new evidence home is registered for both sweeps below at once.
+const COMMITTED_RUN_DIRS: &[&str] = &["pilot/runs", "rerun/runs", "completion/runs", "demo"];
+
 fn corpus_dir() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("../../corpus")
 }
@@ -248,6 +252,7 @@ fn sandboxed_children_can_write_dev_null() {
         dir.path(),
         &isolation(dir.path()),
         "echo probe > /dev/null",
+        None,
         &dir.path().join("t.jsonl"),
         NO_TIMEOUT,
     )
@@ -264,6 +269,7 @@ fn session_scrubs_the_environment_and_writes_the_transcript() {
         dir.path(),
         &isolation(dir.path()),
         "env",
+        None,
         &dir.path().join("t.jsonl"),
         NO_TIMEOUT,
     )
@@ -286,6 +292,7 @@ fn overrunning_agent_is_killed_and_recorded_as_timed_out() {
         dir.path(),
         &isolation(dir.path()),
         "sleep 30",
+        None,
         &dir.path().join("t.jsonl"),
         Duration::from_millis(200),
     )
@@ -315,6 +322,7 @@ fn failing_agent_is_recorded_not_fatal() {
         dir.path(),
         &isolation(dir.path()),
         "exit 3",
+        None,
         &dir.path().join("t.jsonl"),
         NO_TIMEOUT,
     )
@@ -561,6 +569,9 @@ fn report_round_trips_through_json() {
             output_tokens: None,
             transcript: "transcript.jsonl".into(),
         },
+        provenance: corpus_runner::provenance::recorded(
+            "claude --model claude-opus-5 -p 'do the thing'",
+        ),
         acceptance: corpus_runner::report::AcceptanceReport {
             built: true,
             build_detail: None,
@@ -594,6 +605,11 @@ fn report_round_trips_through_json() {
     assert_eq!(restored.run_id, report.run_id);
     assert_eq!(restored.session.turns, Some(3));
     assert_eq!(
+        restored.provenance.model_requested.as_deref(),
+        Some("claude-opus-5")
+    );
+    assert_eq!(restored.provenance.prompt.as_deref(), Some("do the thing"));
+    assert_eq!(
         restored.questionnaire.answers.get("summary").unwrap(),
         "did it"
     );
@@ -604,7 +620,7 @@ fn committed_historical_reports_still_deserialize() {
     use corpus_runner::report::{HistoricalRun, HISTORICAL_SCHEMA_MIN, SCHEMA_VERSION};
 
     let mut reports = Vec::new();
-    for dir in ["pilot/runs", "demo"] {
+    for dir in COMMITTED_RUN_DIRS {
         for entry in fs::read_dir(corpus_dir().join(dir)).unwrap() {
             let path = entry.unwrap().path().join("report.json");
             if path.is_file() {
@@ -613,6 +629,7 @@ fn committed_historical_reports_still_deserialize() {
         }
     }
     assert!(!reports.is_empty(), "no committed reports found");
+    let mut versions = std::collections::BTreeSet::new();
     for path in reports {
         let report: HistoricalRun = serde_json::from_str(&fs::read_to_string(&path).unwrap())
             .unwrap_or_else(|err| panic!("{} must deserialize: {err}", path.display()));
@@ -622,5 +639,68 @@ fn committed_historical_reports_still_deserialize() {
             path.display(),
             report.schema_version
         );
+        versions.insert(report.schema_version);
+    }
+    // Every schema the corpus has evidence in is evidence the historical
+    // path still reads. The pilot runs are version 2 and the validity run is
+    // version 3, so a bump that quietly dropped either would pass a test
+    // that only checked whatever happens to be committed.
+    for older in [2, 3] {
+        assert!(
+            versions.contains(&older),
+            "committed evidence in schema {older} is gone; the historical path's \
+             claim to read it is no longer tested (found {versions:?})"
+        );
+    }
+}
+
+/// A provenance block states what it knows. Every field a block omits reads
+/// as unstated rather than refusing the report it belongs to, so one field
+/// missing from otherwise readable evidence costs the run's other facts
+/// nothing.
+#[test]
+fn a_provenance_block_reads_back_without_the_fields_it_does_not_state() {
+    use corpus_runner::report::AgentProvenance;
+
+    let stated_nothing: AgentProvenance = serde_json::from_str("{}").unwrap();
+    assert_eq!(stated_nothing, AgentProvenance::default());
+
+    let backend_only: AgentProvenance = serde_json::from_str(r#"{"backend":"claude"}"#).unwrap();
+    assert_eq!(backend_only.backend.as_deref(), Some("claude"));
+    assert!(backend_only.settings.is_empty(), "{backend_only:?}");
+    assert_eq!(backend_only.prompt, None);
+}
+
+/// A schema-4 report states the agent side; the same typed historical path
+/// reads it back, and an older report simply has none to read.
+#[test]
+fn the_historical_path_reads_a_recorded_agent_provenance() {
+    use corpus_runner::report::HistoricalRun;
+
+    let mut reports: Vec<_> = Vec::new();
+    for dir in COMMITTED_RUN_DIRS {
+        for entry in fs::read_dir(corpus_dir().join(dir)).unwrap() {
+            let path = entry.unwrap().path().join("report.json");
+            if path.is_file() {
+                let text = fs::read_to_string(&path).unwrap();
+                reports.push((path, serde_json::from_str::<HistoricalRun>(&text).unwrap()));
+            }
+        }
+    }
+    for (path, report) in &reports {
+        if report.schema_version < 4 {
+            assert!(
+                report.provenance.is_none(),
+                "{} predates the provenance block",
+                path.display()
+            );
+        } else {
+            assert!(
+                report.provenance.is_some(),
+                "{} is schema {} and must state its agent provenance",
+                path.display(),
+                report.schema_version
+            );
+        }
     }
 }

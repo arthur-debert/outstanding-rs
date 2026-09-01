@@ -1,6 +1,7 @@
 // The committed-pilot sanitizer as an external command, plus a secret-shape
-// scan over every committed run artifact in `corpus/pilot/` and
-// `corpus/demo/`.
+// scan over every committed run artifact under the roots in `SCANNED_ROOTS`:
+// the pilot runs and scorecard, the rerun evidence, the completion runs, and
+// the demo.
 
 #![cfg(unix)]
 
@@ -68,6 +69,53 @@ fn sanitizer_prefers_specific_paths_without_rewriting_bare_usernames() {
     assert!(!transcript.contains("12345678-ABCD-1234-ABCD-123456789ABC"));
 }
 
+// A session with a shell prints file owners, so the account name has to be
+// scrubbable — but only when the operator names it, or the fixture words
+// above would go with it.
+#[test]
+fn a_named_account_is_replaced_everywhere_it_appears_as_a_word() {
+    let temp = tempfile::tempdir().unwrap();
+    let temp_root = fs::canonicalize(temp.path()).unwrap();
+    let run = temp_root.join("run");
+    let dest = temp_root.join("sanitized");
+    fs::create_dir_all(run.join("workspace")).unwrap();
+
+    fs::write(
+        run.join("report.json"),
+        "{\"owner\":\"drwxr-xr-x 4 hostperson wheel\",\"word\":\"hostpersonal\"}\n",
+    )
+    .unwrap();
+    fs::write(
+        run.join("transcript.jsonl"),
+        "{\"type\":\"user\",\"text\":\"total 8 hostperson wheel\"}\n",
+    )
+    .unwrap();
+
+    let script =
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../corpus/pilot/sanitize-run.py");
+    let output = Command::new("python3")
+        .arg(script)
+        .arg(&run)
+        .arg(&dest)
+        .args(["--account", "hostperson"])
+        .env("HOME", &temp_root)
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "sanitizer failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    let report = fs::read_to_string(dest.join("report.json")).unwrap();
+    assert!(report.contains("4 [user] wheel"), "{report}");
+    // A longer word that merely starts with the account name is not the
+    // account.
+    assert!(report.contains("\"hostpersonal\""), "{report}");
+    let transcript = fs::read_to_string(dest.join("transcript.jsonl")).unwrap();
+    assert!(transcript.contains("total 8 [user] wheel"), "{transcript}");
+}
+
 #[test]
 fn committed_pilot_transcripts_use_the_specific_workspace_placeholder() {
     let runs = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../corpus/pilot/runs");
@@ -84,11 +132,16 @@ fn committed_pilot_transcripts_use_the_specific_workspace_placeholder() {
 
 // Known fixture strings that match a secret shape but are not leaks; each
 // entry is the exact matched value, so vouching one never silences another.
-const ALLOWED_MATCHES: &[&str] = &["valid@email.com"];
+// The two `example.com` addresses are values the gcloudlike agent wrote into
+// its own tests for a CLI whose config carries an account property; that domain
+// is reserved (RFC 2606) and resolves to nobody.
+const ALLOWED_MATCHES: &[&str] = &["valid@email.com", "me@example.com", "who@example.com"];
 
 const SCANNED_ROOTS: &[&str] = &[
     "corpus/pilot/runs",
     "corpus/pilot/scorecard.md",
+    "corpus/rerun",
+    "corpus/completion",
     "corpus/demo",
 ];
 
@@ -100,6 +153,27 @@ fn is_email_domain(c: char) -> bool {
     c.is_ascii_alphanumeric() || matches!(c, '.' | '-')
 }
 
+// rustc names a closure's type after where it was written — `{closure@main.rs:39:29}` —
+// so that `@` joins a file to a line and column, never a mailbox to a host. Demanding
+// every part of the form fails toward a false positive, never toward a missed mailbox.
+fn is_rustc_closure_type(local: &str, before: &str, domain: &str, after: &str) -> bool {
+    if local != "closure" || !before.ends_with('{') || !domain.ends_with(".rs") {
+        return false;
+    }
+    let Some(after) = after.strip_prefix(':') else {
+        return false;
+    };
+    let line: String = after.chars().take_while(|c| c.is_ascii_digit()).collect();
+    if line.is_empty() {
+        return false;
+    }
+    let Some(after) = after[line.len()..].strip_prefix(':') else {
+        return false;
+    };
+    let column: String = after.chars().take_while(|c| c.is_ascii_digit()).collect();
+    !column.is_empty() && after[column.len()..].starts_with('}')
+}
+
 fn email_at(text: &str, at: usize) -> Option<String> {
     let local: String = text[..at]
         .chars()
@@ -109,11 +183,19 @@ fn email_at(text: &str, at: usize) -> Option<String> {
         .into_iter()
         .rev()
         .collect();
-    let domain: String = text[at + 1..]
+    let run: String = text[at + 1..]
         .chars()
         .take_while(|&c| is_email_domain(c))
         .collect();
-    let domain = domain.trim_end_matches(['.', '-']);
+    if is_rustc_closure_type(
+        &local,
+        &text[..at - local.len()],
+        &run,
+        &text[at + 1 + run.len()..],
+    ) {
+        return None;
+    }
+    let domain = run.trim_end_matches(['.', '-']);
     if local.is_empty() {
         return None;
     }
@@ -377,6 +459,10 @@ fn secret_shape_patterns_catch_each_class() {
         "host Build-Agent.LOCAL answering",
         "\"hostname\":\"redacted\"",
         "mail carol.smith+x@gmail.com now",
+        "mail carol@gmail.com:39:29 now",
+        "mail carol@gmail.com:39:29} now",
+        "expected `closure@main.rs:39:29}` unbraced",
+        "expected `{closure@main.py:39:29}` unrusty",
         "token ghp_abcdefghij",
         "key AKIAABCDEFGHIJKLMNOP end",
         "xoxb-1234-abc",
@@ -397,6 +483,8 @@ fn secret_shape_patterns_catch_each_class() {
         "an eyJ fragment without a second segment",
         "python threading.local() in the agent's code",
         "notes on astronomy and localhost resolution",
+        "expected `{closure@main.rs:39:29}` to return `Value`",
+        "expected `{closure@lib.rs:7:5}` to be `Fn`",
     ] {
         assert!(
             secret_shaped_hits(benign).is_empty(),

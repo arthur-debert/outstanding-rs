@@ -6,17 +6,22 @@ placeholders, session ids are zeroed, and the host's tool/plugin/connector
 inventory is removed from the transcript's init event. Only report.json and
 transcript.jsonl are kept — never the workspace or case sandboxes.
 
-Usage: sanitize-run.py <run-dir> <dest-dir>
+Usage: sanitize-run.py <run-dir> <dest-dir> [--account NAME]
 
 The workspace path, the repo checkout path, and $HOME are read from the run
 itself and the environment; every occurrence in either artifact becomes
 [workspace], [repo], or [home].
+
+The host account name is never guessed, because common account names such as
+`root` or `user` are ordinary evidence too. Name it with --account when the
+session had a shell: `ls -l` and friends print file owners, and a bare
+account name is a host identifier the committed-evidence scan rejects.
 """
 
+import argparse
 import json
 import pathlib
 import re
-import sys
 
 ZERO_SESSION = "00000000-0000-0000-0000-000000000000"
 # Init-event keys that inventory the host rather than describe the run.
@@ -54,9 +59,11 @@ def replacements(run_dir: pathlib.Path) -> list[tuple[str, str]]:
     return sorted(paths, key=lambda item: len(item[0]), reverse=True)
 
 
-def scrub_text(text: str, subs: list[tuple[str, str]]) -> str:
+def scrub_text(text: str, subs: list[tuple[str, str]], account: str | None) -> str:
     for needle, placeholder in subs:
         text = text.replace(needle, placeholder)
+    if account:
+        text = re.sub(rf"\b{re.escape(account)}\b", "[user]", text)
     return re.sub(
         r'"session_id"\s*:\s*"[0-9a-f-]{36}"',
         f'"session_id":"{ZERO_SESSION}"',
@@ -65,8 +72,10 @@ def scrub_text(text: str, subs: list[tuple[str, str]]) -> str:
     )
 
 
-def scrub_transcript_line(line: str, subs: list[tuple[str, str]]) -> str:
-    line = scrub_text(line, subs)
+def scrub_transcript_line(
+    line: str, subs: list[tuple[str, str]], account: str | None
+) -> str:
+    line = scrub_text(line, subs, account)
     try:
         event = json.loads(line)
     except json.JSONDecodeError:
@@ -79,16 +88,23 @@ def scrub_transcript_line(line: str, subs: list[tuple[str, str]]) -> str:
 
 
 def main() -> None:
-    run_dir = pathlib.Path(sys.argv[1])
-    dest = pathlib.Path(sys.argv[2])
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("run_dir", type=pathlib.Path)
+    parser.add_argument("dest", type=pathlib.Path)
+    parser.add_argument("--account", help="host account name to replace with [user]")
+    args = parser.parse_args()
+
+    run_dir, dest, account = args.run_dir, args.dest, args.account
     dest.mkdir(parents=True, exist_ok=True)
     subs = replacements(run_dir)
 
-    report = scrub_text((run_dir / "report.json").read_text(), subs)
+    report = scrub_text((run_dir / "report.json").read_text(), subs, account)
     (dest / "report.json").write_text(report)
 
     lines = (run_dir / "transcript.jsonl").read_text().splitlines()
-    scrubbed = "".join(scrub_transcript_line(line, subs) + "\n" for line in lines)
+    scrubbed = "".join(
+        scrub_transcript_line(line, subs, account) + "\n" for line in lines
+    )
     (dest / "transcript.jsonl").write_text(scrubbed)
     print(f"sanitized {run_dir.name} -> {dest}")
 

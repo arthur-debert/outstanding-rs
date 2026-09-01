@@ -29,7 +29,46 @@ makes runs reproducible and comparable.
   `runs/<run-id>/` per pilot run (report + sanitized transcript, demo
   rules), and `scorecard.md` — the per-archetype signals, ranked friction
   themes, and validity verdict the blessed-surface (ROB05) ADR round
-  consumes.
+  consumes. `sanitize-run.py` is the sanitizer every committed run goes
+  through, pilot or not.
+- `rerun/` — the same archetypes run again against the 9.0 release
+  (ROB07-WS02), in the same shape: one `runs/<run-id>/` per run and
+  `scorecard.md`, which is scorecard v2 — the re-run beside the pilot, with
+  the agent delta between them stated.
+- `completion/` — the completion six's **first** blind runs, against the
+  published 9.0 line (ROB07-WS03a/WS03b, split across the two completion
+  workstreams): one `runs/<run-id>/` per run, same demo rules, and
+  `scorecard.md`. These runs have no earlier row to compare against, so that
+  scorecard is a first data point rather than a comparison.
+- `scorecard.py` — computes a scorecard's objective table from committed
+  reports (`scorecard.py pilot=corpus/pilot/runs rerun=corpus/rerun/runs completion=corpus/completion/runs`).
+  Every scorecard's figures come from this one script under one set of
+  counting rules; its own test checks that the pilot's reports still
+  reproduce the pilot scorecard's published numbers. Every row also carries
+  the pins and the agent provenance the comparison rests on: a row whose
+  spec, acceptance suite, questionnaire or agent differs from the first row
+  its archetype has is marked not comparable, and a note under the table
+  states the difference, so a figure a changed question produced cannot read
+  as a framework result. Reports written before schema 4 state no
+  provenance, so the script recovers it from the run's own two sources — the
+  recorded command and the transcript — and marks the cell `(recovered)`.
+
+## Where accepted implementations go
+
+An implementation that passes its acceptance suite is committed to
+[arthur-debert/standout-corpus](https://github.com/arthur-debert/standout-corpus),
+never here (ADR-0036; the roster's structural test forbids implementation files
+under `archetypes/`). That repository holds them frozen, redirects their
+standout dependencies onto a checked-out framework tree, and runs their suites:
+the full roster on a schedule, and a fast subset on every PR here through
+`.github/workflows/corpus.yml`. A red build there is a finding about the
+framework by default — the members do not change.
+
+The suite a member is checked against is the archetype's `acceptance.toml` in
+*this* repository, replayed by `corpus-runner reevaluate` against the binary
+built from the frozen sources. Editing a suite here therefore changes what the
+corpus asserts, which is the intent: the implementation is frozen, the suite is
+not.
 
 ## The runner
 
@@ -44,6 +83,16 @@ invariant matrix → report. `--agent-cmd` swaps the real agent for anything
 else (the walking-skeleton test uses a scripted agent) and
 `--framework-version` overrides the crates.io pin; see `corpus-runner run
 --help` for the rest.
+
+A session that has to authenticate needs `--broker` (the run-credential
+broker below); it reads the host Claude subscription's credential, so the
+host CLI must be logged in, and the agent command must be spawnable without
+a shell:
+
+```bash
+cargo run -p corpus-runner -- run validity --broker \
+  --runs-dir /tmp/standout-corpus-runs-validity
+```
 
 Run workspaces default to the system temporary directory. `--runs-dir` may
 override it, but the runner refuses a directory beneath the framework
@@ -96,10 +145,39 @@ Recorded here as a decision and minted as
    unreadable or the run refuses to start. The default Claude session is
    additionally hardened: `--setting-sources ''` keeps host settings and
    plugins from loading and `--strict-mcp-config` keeps MCP
-   servers/connectors from attaching. The runner grants no credential
-   exception: an agent backend that requires a host HOME, environment token,
-   or Keychain item fails closed rather than exposing that credential to
-   agent-invoked build scripts.
+   servers/connectors from attaching. It also gets `CLAUDE_CODE_TMPDIR`
+   pointed at its disposable home, because that backend keeps its shell
+   snapshots and tool sockets under `/tmp` by default: without it the write
+   policy denies that directory and the session loses its shell, writing
+   code it can never build. An agent backend that requires a host
+   HOME, environment token, or Keychain item fails closed rather than
+   exposing that credential to agent-invoked build scripts.
+
+   The one exception, for the agent phase only, is the **run-credential
+   broker** (`--broker`, ADR-0023's ROB07-WS01 amendment): a loopback
+   forward proxy the runner holds on the host side, outside every sandbox,
+   for as long as the agent session runs. It reads the host Claude
+   subscription's OAuth token from the host credential store — the runner
+   is unsandboxed, so the Seatbelt Keychain denial above is untouched — and
+   injects the authorization into each forwarded request. Where that token
+   goes is fixed rather than configured: a credential read from the host
+   store forwards to the Anthropic API and nowhere else, so no flag and no
+   auth-failure retry can aim it at a destination somebody chose; a test
+   double's upstream comes with a credential the test supplied. The agent's
+   environment carries `ANTHROPIC_BASE_URL` and a placeholder token only,
+   so the credential never enters the agent's process tree. Before reading
+   a request byte the broker resolves the connection's owner from the OS
+   socket tables and serves only the agent process itself, holding the
+   connection on a close-on-exec descriptor; a build script's own
+   connection resolves to the build script, and the exec that started it
+   left it no descriptor to reuse. A brokered session is therefore spawned
+   directly rather than through a shell, since the pid the runner spawns
+   has to be the pid that connects. When the agent session ends, the broker
+   closes the connections it is still serving and kills the upstream
+   transports they started, so no request outlives the session holding the
+   credential and an agent that timed out does not leave the runner waiting
+   on an unresponsive API. What the run admitted is written into
+   `blindness.credential_exceptions`.
 3. **Blindness is recorded, not assumed.** The exit questionnaire asks two
    dedicated questions — which provided docs were consulted, and what (if
    anything) beyond them: web search, prior knowledge of standout internals,
@@ -109,15 +187,16 @@ Recorded here as a decision and minted as
 
 ## Decision: the run-report schema
 
-`report.json`, `schema_version: 3` (recorded here and minted as
-[ADR-0024](../docs/adr/0024-the-corpus-run-report-schema.md)). Version 3 is
+`report.json`, `schema_version: 4` (recorded here and minted as
+[ADR-0024](../docs/adr/0024-the-corpus-run-report-schema.md)). Version 3 was
 one bump carrying every shape change over version 2: it replaced the single
 `isolation_backend` word with a per-capability isolation record, dropped the
 producerless `session.attempts` counter, and removed the retired check
-schema's parallel `checks` vector. Committed schema-2 evidence still loads,
-unrewritten, through the typed historical-report path re-evaluation uses.
-Objective results and agent self-assessment are deliberately separate
-sections. The shape:
+schema's parallel `checks` vector. Version 4 adds the `provenance` block
+below. Committed schema-2 and schema-3 evidence still loads, unrewritten,
+through the typed historical-report path re-evaluation uses. Objective
+results and agent self-assessment are deliberately separate sections. The
+shape:
 
 - `schema_version`, `run_id` — identity.
 - `archetype` — name plus the sha256 of the exact spec text given to the
@@ -142,6 +221,24 @@ sections. The shape:
   whether the session hit its deadline (`timed_out`), and turns/token counts
   when the transcript is Claude Code stream-json; plus the transcript path
   (always linked, relative to the run directory).
+- `provenance` — who implemented the run: the backend the runner spawned
+  (`backend`, the program's name), the version that backend announced in the
+  transcript, the model the command asked for (`model_requested` — absent
+  means the run took the backend's default) and the model the transcript
+  shows answering (`model_observed`), the session prompt, and the remaining
+  settings the runner passed. It is written from the spawned command and the
+  transcript alone — the runner never runs the agent executable to ask it
+  about itself, which would execute an unknown program on the host outside
+  every boundary the run is built on. So the environment those phases carry
+  is `blindness.env_allowlist`, the command's own text is
+  `session.agent_cmd`, and a field neither source states is absent rather
+  than guessed: a session spawned through a shell command that names no
+  single program records nothing it cannot parse, a scripted agent announces
+  no version or model, and a re-evaluation keeps a schema-4 source's block
+  or, for an older one, states only what the recorded command says. Two runs
+  compare as evidence when these match; where they cannot, the comparison
+  states the delta and reads as observational (ADR-0024's ROB07-WS02
+  amendment).
 - `acceptance` — objective: whether the produced app built, and one entry
   per suite case, each carrying the case's `expected` marker and its
   `outcome` (`pass`, `fail`, `expected-fail`, or `unexpected-pass`, the
@@ -277,6 +374,7 @@ baseline does not run, the planned identities remain present as `not-run`.
 | `exit_code` | exact process exit status |
 | `stdout`, `stderr` | exact stream contents, LF-normalized |
 | `stdout_json` | stdout parses as JSON and is *semantically* equal to this JSON string (key order and whitespace irrelevant) |
+| `stdout_json_subset` | stdout parses as JSON and *carries* this JSON: objects may hold keys the expectation omits, while arrays and scalars must match |
 | `stdout_contains`, `stderr_contains` | every listed substring occurs in the stream |
 | `stdout_row_contains` | every value in each group co-occurs on one single stdout line (row association, e.g. a star with *its* constellation and magnitude) |
 | `stdout_json_rows` | stdout parses as JSON and every value in each group co-occurs among the scalars of one single JSON array element (numbers match their decimal literal) |
@@ -288,7 +386,12 @@ empty substring matches any output, so it would silently assert nothing —
 the parser rejects it at load time.
 
 Prefer `stdout` (exact). Use `stdout_json` for machine output, where byte
-layout is an implementation detail but content is not. Use the `contains`
+layout is an implementation detail but content is not. Reach for
+`stdout_json_subset` only when part of a document is deliberately left open —
+a framework-owned envelope whose payload another Spec defines — so the case can
+require the part the archetype specifies without inventing the rest; asserting
+the whole document would pin fields the archetype does not own, and a substring
+would not require them to be fields at all. Use the `contains`
 family only where exactness would pin something the spec deliberately leaves
 to the implementer — e.g. asserting *that* ANSI styling is present
 (the two-byte CSI introducer, `ESC` `[`, written `\u001b[` in TOML) without pinning a theme's exact colors.
@@ -324,17 +427,53 @@ cases = ["case-name", "..."]   # acceptance cases that exercise it
 PAR01 = "what is specced past current capability, and why on purpose"
 ```
 
-### The pilot roster
+### The roster
+
+Every directory under `archetypes/` except `smoke` (see Layout) is a roster
+member. *Survey* is the archetype's entry in the 2026-08-16 survey (Part C);
+*Shape* is one line — each archetype's own `spec.md` and `manifest.toml` carry
+the rest.
+
+**The pilot four** (ROB03) — the archetypes the pilot ran against 8.1.1 and
+ROB07 re-ran against 9.0.0:
 
 | Archetype | Survey | Shape |
 | --- | --- | --- |
 | `gitlike` | C1 | porcelain/plumbing split, config layering by cwd walk-up, pager |
+| `ghlike` | C2 | deep command nesting with machine JSON and field selection |
 | `systemdlike` | C5 | naked default command, `--plain`/`--no-legend`, color/pager env discipline |
 | `formlike` | C12 | questionnaire-driven provisioning under full non-interactivity |
-| `ghlike` | C2 | deep command nesting with machine JSON and field selection |
 
-Two gap-only archetypes (WS03) sit beside the pilot four, every acceptance
-case `expected = "fail"`:
+Their execution artifacts — committed run reports and a scorecard — live under
+`pilot/` for the first runs and `rerun/` for the 9.0.0 ones (see Layout above).
+
+**The completion six** (ROB07) — the survey's remaining in-capability shapes,
+authored spec-first after the pilot
+(`docs/spec/implemented/robustness-corpus-completion.md`). Their behavioral
+sketches were lost with the 2026-08-16 session record, so each spec
+reconstructs the shape from the survey's capability matrix and states in prose
+which interactions it stresses. A first blind run had to wait for the 9.0 line
+to be published, because a run against the surface that release deletes would
+measure nothing.
+All six have now run against 9.0.0; their reports, transcripts, and the
+first-run scorecard live under `completion/` (see Layout above).
+
+| Archetype | Survey | Shape |
+| --- | --- | --- |
+| `kubelike` | C3 | verb-over-resource-kind dispatch, kinds as data with aliases and scope, an `-o` vocabulary wider than a render mode |
+| `cargolike` | C6 | layered config: per-type merge across every discovered file, key↔env mapping, framework settings on the same ladder |
+| `gcloudlike` | C7 | named configuration sets selected per invocation, layered under property env vars and flags |
+| `dockerlike` | C8 | legacy verbs beside management commands, `--quiet` as a data-shape contract, display truncation vs machine output |
+| `brewlike` | C10 | package-manager query client: nested dependency data, empty results, a versioned machine contract |
+| `pnpmlike` | C11 | progress on stderr by stream attendance, two silencers for two channels, child-process passthrough |
+
+`crates/corpus-runner/tests/hermetic_authored_roster_loop.rs` drives all six
+through the full loop against a produced binary that builds and then fails
+every invocation, so a suite that cannot execute is a red test rather than a
+wasted blind run.
+
+**Two gap-only archetypes** (ROB03-WS03), every acceptance case
+`expected = "fail"`:
 
 | Archetype | Survey | Shape |
 | --- | --- | --- |
@@ -344,16 +483,12 @@ case `expected = "fail"`:
 Their byte-precise, runnable-today suites live in `corpus/gap-suites/` (see
 its README for the expected-fail semantics under plain `pixi run test`).
 
-The pilot's execution artifacts — committed run reports and the scorecard —
-live under `pilot/` (see Layout above).
-
-One method-coverage archetype sits beside the product roster. It is not a
-survey Part C CLI; it exists so the known-edge validity check (#365) can
-pin all three known-edge families (including the two the ROB03 pilot did
-not independently rediscover). Its spec includes an implementer
-construction contract (registration order, the single registered
-template name, an incomplete app theme) because those edges are
-invisible on a happy-path product spec.
+**One method-coverage archetype.** `validity` is not a survey Part C CLI; it
+exists so the known-edge validity check (#365) can pin all three known-edge
+families, including the two the ROB03 pilot did not independently rediscover.
+Its spec carries an implementer construction contract (registration order, the
+single registered template name, an incomplete app theme) because those edges
+are invisible on a happy-path product spec.
 
 | Archetype | Survey | Shape |
 | --- | --- | --- |

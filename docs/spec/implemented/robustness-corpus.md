@@ -1,7 +1,7 @@
 # Robustness: The Downstream Corpus
 
 > Pilot phase delivered by ROB03 (#322) and ROC02 (#367). The completion phase
-> described below is now its own Spec: `../robustness-corpus-completion.md`.
+> described below is now its own Spec: `robustness-corpus-completion.md`.
 
 Fifth Spec in the **Robustness program**, and the one that ships in two phases (see the
 authoritative dependency graph in `docs/spec/robustness-test-net.md`). The **pilot** phase

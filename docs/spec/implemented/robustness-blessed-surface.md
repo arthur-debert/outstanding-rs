@@ -155,7 +155,7 @@ documentation.
   ships, and the two epics coordinate the wording in review.
 - Machine-output schema versioning (parity: machine contract).
 - Corpus completion, and porting the real downstreams (they are on 7.x; see
-  `../robustness-corpus-completion.md`).
+  `robustness-corpus-completion.md`).
 - Preserving source compatibility for deleted paths.
 
 ## Proposed Shape

@@ -189,6 +189,48 @@ stdout_json = '{"b": 2, "a": 1}'
 }
 
 #[test]
+fn json_subset_admits_extra_keys_but_not_a_wrong_value() {
+    let expect = r#"
+[[case]]
+name = "json-subset"
+stresses = "an envelope whose payload another spec defines"
+expected = "pass"
+[case.run]
+argv = []
+timeout_seconds = 5
+[case.expect]
+stdout_json_subset = '{"schema_version": 1}'
+"#;
+    let carried = one(
+        expect,
+        r#"printf '{"schema_version": 1, "data": ["anything"]}\n'"#,
+    );
+    assert_eq!(carried.outcome, CaseOutcome::Pass, "{:?}", carried.detail);
+
+    let as_a_string = one(expect, r#"printf '{"schema_version": "1"}\n'"#);
+    assert_eq!(as_a_string.outcome, CaseOutcome::Fail);
+
+    let named_but_not_a_field = one(expect, r#"printf '{"flags": ["schema_version"]}\n'"#);
+    assert_eq!(named_but_not_a_field.outcome, CaseOutcome::Fail);
+
+    let array = expect.replace(r#"{"schema_version": 1}"#, r#"{"items": [1, 2]}"#);
+    assert_eq!(
+        one(&array, r#"printf '{"items": [1, 2], "extra": true}\n'"#).outcome,
+        CaseOutcome::Pass
+    );
+    assert_eq!(
+        one(&array, r#"printf '{"items": [1, 2, 3]}\n'"#).outcome,
+        CaseOutcome::Fail,
+        "a longer array is not a superset"
+    );
+    assert_eq!(
+        one(&array, r#"printf '{"items": [1, 9]}\n'"#).outcome,
+        CaseOutcome::Fail,
+        "elements must match positionally"
+    );
+}
+
+#[test]
 fn contains_and_not_contains_families_apply_per_stream() {
     let result = one(
         r#"

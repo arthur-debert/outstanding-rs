@@ -1,0 +1,136 @@
+# Feature/interaction manifest for `cargolike`. Format: corpus/README.md.
+#
+# Authored spec-first under ROB07-WS03a from the survey's capability matrix,
+# not from the lost 2026-08-16 behavioral sketch; the spec's closing section
+# states which interactions it is built to stress.
+
+[archetype]
+name = "cargolike"
+survey = "C6"
+summary = "layered config with per-type merge, mechanical key-to-env mapping, and framework settings resolved through the same ladder"
+status = "partially-past-capability"
+
+[features]
+used = [
+    "dispatch.subcommands",
+    "dispatch.nested-subcommands",
+    "dispatch.handler-macro",
+    "output-modes.auto-degradation",
+    "output-modes.term-text-flag",
+    "output-modes.structured-json",
+    "templates",
+    "styling.themes",
+    "styling.no-color",
+    "error-handling.exit-codes",
+]
+
+[[interactions]]
+id = "per-type-merge-across-discovered-files"
+stresses = ["config file discovery by walk-up", "every discovered file contributing", "scalar precedence vs list concatenation", "harness cwd control"]
+description = "Every file the walk finds contributes, and the combination rule depends on the value's type: scalars take the nearest file, lists concatenate from the far end with duplicates collapsed. Scalar precedence and list order run in opposite directions along the same walk, which is where a hand-rolled layer stops agreeing with itself."
+cases = [
+    "config-merge-nearest-scalar-wins",
+    "config-merge-arrays-concatenate-across-ancestors",
+    "config-merge-dedupes-repeated-list-items",
+    "config-project-scalar-beats-user-file",
+    "config-user-list-items-come-first",
+    "config-user-file-fallback-when-no-project-file",
+]
+
+[[interactions]]
+id = "key-to-env-mapping-vs-file-merge"
+stresses = ["mechanical key-to-environment spelling", "layer precedence", "per-type semantics"]
+description = "Each key has one environment spelling derived from its name, sitting above every file layer — and a list set there replaces the merged file list instead of extending it, so an empty value clears an inherited list without editing files. The asymmetry is the point: the same layer ladder answers differently per type."
+cases = [
+    "env-mapping-beats-merged-files",
+    "env-list-replaces-merged-list",
+    "env-empty-list-clears-merged-list",
+    "env-mapping-supplies-build-target",
+    "config-get-json-carries-typed-value-and-origin",
+]
+
+[[interactions]]
+id = "argv-override-layer-value-grammar"
+stresses = ["repeatable flag parsing", "per-type value text", "usage errors", "layer precedence"]
+description = "`--config` reaches every known key from argv, so one text grammar has to cover integers, booleans, strings and lists, and a key assigned twice has to resolve. It carries the text the environment layer carries and takes that layer's per-type rule with it — a list assignment replaces what the files merged rather than extending it — so the two layers disagree about precedence without disagreeing about spelling or about type."
+cases = [
+    "config-override-beats-default",
+    "config-override-list-replaces",
+    "config-override-list-replaces-merged-list",
+    "config-override-repeated-key-last-wins",
+    "config-override-sets-boolean-and-string",
+    "malformed-config-override-is-usage-error",
+]
+
+[[interactions]]
+id = "framework-settings-through-the-config-layer"
+stresses = ["output mode resolution", "color gating", "NO_COLOR", "config layer precedence", "TTY detection"]
+description = "Output mode and color are the framework's own knobs, and here they are config keys: resolved from files and the environment before any flag is seen, then overridden by --output. A framework whose detection reads only its own environment variables cannot express a file layer underneath them."
+cases = [
+    "term-output-from-config-selects-json",
+    "term-color-never-from-config-on-tty",
+    "env-color-beats-no-color",
+    "config-override-selects-json-output",
+    "output-flag-beats-config-override",
+    "output-term-forces-ansi-when-piped",
+]
+
+[[interactions]]
+id = "provenance-of-the-effective-value"
+stresses = ["layer attribution", "structured output mode", "typed serialization (integer/bool/list)"]
+description = "Reporting where a value came from forces the layer identity to survive the merge rather than being collapsed into a final value — including the case where a list drew from several layers and belongs to none of them — and the machine form has to keep the config type the text form flattens into words."
+cases = [
+    "config-get-show-origin-names-the-layer",
+    "config-get-default-value",
+    "config-get-show-origin-default",
+    "config-get-show-origin-override",
+    "config-get-show-origin-flag",
+    "config-get-show-origin-user-file",
+    "config-get-show-origin-merged-list",
+    "config-get-json-carries-typed-value-and-origin",
+    "config-list-json-carries-each-config-type",
+    "config-list-includes-a-key-only-a-file-sets",
+    "config-list-defaults",
+]
+
+[[interactions]]
+id = "config-values-reaching-a-rendered-view"
+stresses = ["resolved config reaching a handler", "template rendering", "flag layer over file layer", "flag layer over override layer"]
+description = "The effective config has to arrive at a command, not only at `config get`: the plan view is a projection of it, so a merge bug shows up in a command's bytes. The list-typed flag appends to what the underlying layers supplied, whichever they are, which is the one place the flag layer does not simply overwrite."
+cases = [
+    "config-values-reach-the-build-view",
+    "features-flag-appends-to-the-config-list",
+    "features-flag-appends-to-the-override-list",
+    "build-features-flag-appends",
+    "build-jobs-flag",
+    "build-defaults",
+]
+
+[[interactions]]
+id = "workspace-surface-vs-output-modes"
+stresses = ["nested tree layout", "structured JSON projection", "package selection", "machine purity on a TTY"]
+description = "The read-only surface carries the same data through a nested human tree, a flat human listing, and a typed machine object; the tree's own layout characters must not leak into the machine form, and an attended terminal must not tempt styling into it."
+cases = [
+    "metadata-plain-when-piped",
+    "metadata-json-is-typed",
+    "metadata-json-pure-on-tty",
+    "metadata-package-selection",
+    "tree-default-root",
+    "tree-selected-root",
+]
+
+[[interactions]]
+id = "error-vocabulary-across-surfaces"
+stresses = ["exit-code mapping", "usage vs domain errors", "stream separation", "configuration errors as domain errors"]
+description = "Four exit codes over three failure kinds: an unknown flag or key is a usage error, an unknown package or an unusable config value is a domain error at cargo's 101, and an unset key is a quiet exit-1 with both streams empty. Every one of them leaves stdout empty."
+cases = [
+    "unknown-package-exits-101",
+    "unknown-config-key-is-usage-error",
+    "malformed-config-override-is-usage-error",
+    "config-get-unset-key-is-quiet-exit-1",
+    "invalid-config-value-exits-101",
+    "invalid-flag-value-exits-101",
+]
+
+[gaps]
+PAR01 = "Layered configuration (docs/spec/parity-config-layering.md): discovery by walk-up, per-type merge across every discovered file, the mechanical key-to-environment mapping, layer attribution, and framework settings resolved through the same ladder. This archetype is the per-type-merge and key-to-env corner of the triangulation `gitlike` (first file wins) and `gcloudlike` (named sets) complete; its config cases are that corner's executable shape, and a hand-rolled pass is friction signal, not a framework pass."

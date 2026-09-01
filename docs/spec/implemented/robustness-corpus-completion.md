@@ -2,13 +2,13 @@
 
 Last epic of the **Robustness program** (ROB07). The completion phase of the corpus
 Spec whose pilot phase ROB03 (#322) and the corpus cleanup ROC02 (#367) delivered — the
-pilot record is now `implemented/robustness-corpus.md`. Depends on the blessed surface
+pilot record is now `robustness-corpus.md`. Depends on the blessed surface
 (ROB05) **as a published release**: the runner pins crates.io versions by design
 (ADR-0023, no path or git dependencies), so the comparative re-run and every produced
 application wait until the 9.0 line is on crates.io. Two items do not: the `validity`
 run (a method check against the latest published 8.x, excluded from the comparison) and
 the spec-only authoring of the six remaining archetypes; the authoritative graph in
-`implemented/robustness-test-net.md` records the same split. Also depends on the adopter seams (`implemented/robustness-adopter-seams.md`), because
+`robustness-test-net.md` records the same split. Also depends on the adopter seams (`robustness-adopter-seams.md`), because
 the re-run is the measurement of whether those seams removed the pilot's workarounds.
 Long-lived: the corpus outlives the program.
 
@@ -176,7 +176,17 @@ member. The grill settles the cargo patch/workspace mechanics and the trigger.
 ## Testing / Verification
 
 The validity run rediscovers all three known-edge families (that is the check). The
-re-run's scorecard v2 is produced by the committed script from committed reports.
+epic met that check for two of them — mistyped template names and registration order,
+in both validity runs. It did not meet it for the third, incomplete app theme ×
+framework help: all 16 `themed-help` cases assert the help header as `Usage` where
+standout renders `USAGE`, so those cases fail on the suite's own assertion before
+they can say anything about the framework
+([#450](https://github.com/arthur-debert/standout/issues/450)). Correcting the
+assertion changes the suite's `acceptance_sha256`, which makes a further blind
+validity run part of the fix rather than a follow-up to it; #450 carries both and
+neither happened here. The epic closes on that reduced contract, stated so a later
+reader is not left inferring it from the scorecard.
+The re-run's scorecard v2 is produced by the committed script from committed reports.
 Every new archetype's suite passes the roster structural test and the runner's own
 integration test (a scripted agent producing a trivially failing binary yields a
 complete report). The corpus repository's build is green on a framework `main` commit
@@ -199,7 +209,7 @@ gold-plating, interactive user studies.
 ## Further Notes
 
 The pilot-phase Spec, its decisions (ADR-0023 blindness protocol, ADR-0024 report
-schema) and the cleanup (`implemented/robustness-corpus-cleanup.md`) are the record this
+schema) and the cleanup (`robustness-corpus-cleanup.md`) are the record this
 Spec builds on. Expected ADRs from the grill: the credential mechanism (an ADR-0023 amendment); the
 agent-provenance report fields (an ADR-0024 amendment); corpus repository and CI
 mechanics. The survey's archetype list: C1 gitlike, C2 ghlike, C3

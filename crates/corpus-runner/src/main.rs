@@ -8,6 +8,7 @@ use std::time::Duration;
 
 use clap::{Parser, Subcommand};
 
+use corpus_runner::broker::{BrokerConfig, Credential};
 use corpus_runner::{
     absolute, print_summary, reevaluate, run, session, ReevaluationConfig, RunConfig, Timeouts,
 };
@@ -41,6 +42,15 @@ enum Commands {
         /// non-interactive Claude Code session over INSTRUCTIONS.md).
         #[arg(long)]
         agent_cmd: Option<String>,
+        /// Authenticate the agent session through the run-credential
+        /// broker: the host Claude subscription credential stays on the
+        /// host, and the session reaches the API only through a proxy that
+        /// answers the agent process alone (ADR-0023's amendment). The
+        /// agent command must then be spawnable without a shell. The
+        /// destination is not configurable — a host credential forwards to
+        /// the Anthropic API and nowhere else.
+        #[arg(long)]
+        broker: bool,
         /// Exact crates.io framework version the blind scaffold pins.
         #[arg(long, default_value = env!("CARGO_PKG_VERSION"))]
         framework_version: String,
@@ -96,12 +106,30 @@ fn main() -> ExitCode {
             runs_dir,
             docs_dir,
             agent_cmd,
+            broker,
             framework_version,
             agent_timeout,
             build_timeout,
             check_timeout,
         } => {
             let corpus_dir = absolute(&corpus_dir);
+            let broker = if broker {
+                match Credential::from_host_store() {
+                    Ok(credential) => {
+                        eprintln!(
+                            "[corpus] brokering the credential from {}",
+                            credential.source()
+                        );
+                        Some(BrokerConfig::for_host(credential))
+                    }
+                    Err(err) => {
+                        eprintln!("[corpus] runner error: {err:#}");
+                        return ExitCode::FAILURE;
+                    }
+                }
+            } else {
+                None
+            };
             let mut timeouts = Timeouts::default();
             if let Some(secs) = agent_timeout {
                 timeouts.agent = Duration::from_secs(secs);
@@ -120,6 +148,7 @@ fn main() -> ExitCode {
                     .unwrap_or_else(|| std::env::temp_dir().join("standout-corpus-runs")),
                 docs_dir: absolute(&docs_dir),
                 agent_cmd: agent_cmd.unwrap_or_else(session::default_agent_cmd),
+                broker,
                 framework_version,
                 timeouts,
             };
