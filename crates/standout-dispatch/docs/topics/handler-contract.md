@@ -429,9 +429,10 @@ destination hints:
 | `.allow_stdout()` | Permit the framework to fall back to stdout (step 3). |
 | `.with_report(report: T)` | Attach the report rendered after the write. |
 
-The report is emitted with exactly one trailing newline appended by the
-framework (via `writeln!`). An absent or empty report emits nothing — no blank
-line. A destination must still be selected first: an `Artifact` that suggests
+When the report is non-empty, the framework appends a newline after it via
+`writeln!`; it does not strip or collapse a newline the report already ends
+with, so a report that ends in `\n` produces a blank line. An absent or empty
+report emits nothing — no newline at all. A destination must still be selected first: an `Artifact` that suggests
 none, does not `.allow_stdout()`, and gets no `--output-file-path` fails with a
 stderr diagnostic rather than writing silently. Once a destination is selected
 and the write succeeds, a zero-byte artifact with no report adds nothing to

@@ -223,6 +223,8 @@ Extension missing: type myapp::Database not found in context
 App state makes handlers easily testable by allowing dependency injection:
 
 ```rust
+use std::rc::Rc;
+
 #[test]
 fn test_list_handler() {
     // Create test fixtures

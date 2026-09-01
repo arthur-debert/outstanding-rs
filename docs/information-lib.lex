@@ -673,7 +673,7 @@ THEME: Rendering
 
 	When a tag references a style not in the theme, behavior depends on mode:
 
-	Term mode: unknown tags degrade to unstyled text, markers removed, with a stderr warning:
+	Term mode: unknown tags degrade to unstyled text, markers removed; run through the app, `App::run` names them in a stderr warning:
 		Template: [unknown]hello[/unknown]
 		Output:   hello
 		Stderr:   Unresolved style tag(s) degraded to unstyled text: unknown
@@ -1615,8 +1615,9 @@ THEME: Partial Adoption
 	:: rust ::
 
 	No embedded files, no themes (uses empty theme), no hooks.
-	Style tags with no matching theme entry render as unstyled text and
-	raise a stderr warning; no ? marker is added.
+	Style tags with no matching theme entry render as unstyled text; run
+	through `App::run` they are named in a stderr warning, and no ? marker
+	is added.
 
 
 65. How do I use Standout dispatch inside existing clap dispatch?

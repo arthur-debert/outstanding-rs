@@ -248,9 +248,8 @@ are balanced:
 inspection.
 
 There is no `?` marker: an unknown tag is never rewritten to `[unknown?]` in
-rendered output. Instead, when the render runs through an application, the
-unresolved tags are reported together on stderr (see
-[Unresolved-tag warning](#unresolved-tag-warning) below), whether each was
+rendered output. Instead, each unresolved tag is recorded as a warning (see
+[Unresolved-tag warning](#unresolved-tag-warning) below), whether it was
 stripped or emitted verbatim.
 
 A tag counts as unknown when it is absent from the *active theme's* resolved
@@ -265,18 +264,25 @@ templating topic.
 
 ### Unresolved-tag warning
 
-Rendering through an application — `App::run` and the other `App` entry points —
-reports unresolved style tags on stderr. Each render pass emits at most one
-warning line, naming every tag it left unresolved (sorted and de-duplicated):
+Each render pass records the tags it left unresolved as one warning line, naming
+them all (sorted and de-duplicated):
 
 ```text
 Unresolved style tag(s) degraded to unstyled text: compute, status
 ```
 
-The standalone render APIs degrade the tags the same way but write nothing to
-stderr; only the `App` pipeline collects the warning and flushes it. An
-application whose specification pins its stderr bytes must account for this
-line. An escaped bracket (`\[`) is not a tag and raises no warning.
+Where that warning goes depends on the entry point that drove the render:
+
+- `App::run` writes it to stderr, after the command's own output.
+- `App::run_with` and `App::dispatch` collect it into the returned
+  `CompletedRun` and write nothing; the caller reads it with `.warnings()` and
+  decides. `TestHarness` reads it this way.
+- `App::render_with` and the standalone `standout-render` render APIs render
+  with warnings disabled, so an unresolved tag degrades to unstyled text without
+  recording or emitting anything.
+
+An application whose specification pins its stderr bytes must account for the
+`App::run` line. An escaped bracket (`\[`) is not a tag and raises no warning.
 
 ### Validation
 
