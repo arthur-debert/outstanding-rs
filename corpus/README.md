@@ -41,8 +41,7 @@ makes runs reproducible and comparable.
   `scorecard.md`. These runs have no earlier row to compare against, so that
   scorecard is a first data point rather than a comparison.
 - `scorecard.py` — computes a scorecard's objective table from committed
-  reports (`scorecard.py pilot=corpus/pilot/runs rerun=corpus/rerun/runs
-  completion=corpus/completion/runs`).
+  reports (`scorecard.py pilot=corpus/pilot/runs rerun=corpus/rerun/runs completion=corpus/completion/runs`).
   Every scorecard's figures come from this one script under one set of
   counting rules; its own test checks that the pilot's reports still
   reproduce the pilot scorecard's published numbers. Every row also carries

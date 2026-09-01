@@ -57,8 +57,8 @@ repairs these two. Same class as `ghlike`'s, recorded as a second archetype on
 [#460](https://github.com/arthur-debert/standout/issues/460).
 
 **Two invariant checks ask a question the archetype cannot answer spec-first.**
-`cargolike`'s 2 invariant failures are the cross-mode equality check on `config
-list`, a command whose content *is* the resolved output mode
+`cargolike`'s 2 invariant failures are the cross-mode equality check on
+`config list`, a command whose content *is* the resolved output mode
 ([#465](https://github.com/arthur-debert/standout/issues/465)). `kubelike`'s 8
 are `stdout parses as JSON` on four commands the archetype declared `rendered`
 before an implementation existed; the produced application answered its `-o`
