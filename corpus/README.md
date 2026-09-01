@@ -36,10 +36,11 @@ makes runs reproducible and comparable.
   `scorecard.md`, which is scorecard v2 — the re-run beside the pilot, with
   the agent delta between them stated.
 - `completion/` — the completion six's **first** blind runs, against the
-  published 9.0 line (ROB07-WS03): one `runs/<run-id>/` per run, same demo
-  rules. These runs have no earlier row to compare against, so the directory
-  carries evidence only; the completion scorecard is written once all six
-  archetypes have run.
+  published 9.0 line (ROB07-WS03a/WS03b, split across the two completion
+  workstreams): one `runs/<run-id>/` per run, same demo rules. These runs
+  have no earlier row to compare against, so the directory carries evidence
+  only; the completion scorecard is written once all six archetypes have
+  run.
 - `scorecard.py` — computes a scorecard's objective table from committed
   reports (`scorecard.py pilot=corpus/pilot/runs rerun=corpus/rerun/runs`).
   Both scorecards' figures come from this one script under one set of
