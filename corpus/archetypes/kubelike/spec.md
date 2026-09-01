@@ -121,10 +121,16 @@ A missing file is not an error — resolution falls through it. `-A` /
 `--all-namespaces` lists across every namespace instead and adds a leading
 `NAMESPACE` column.
 
-For a cluster-scoped kind, `-n` and `-A` are usage errors whichever verb asked
-— exit 2, stdout empty, stderr naming the kind by its plural registry name (as
-the not-found error does, whatever form the argument took) and saying it is not
-namespaced. Plain `get nodes` needs neither.
+For a cluster-scoped kind, a namespace selector **the verb accepts** is a usage
+error: `-n` for `get` and `describe`, `-A` for `get`, which is the only verb
+that takes it. (`-A` on `describe` is not this error at all but the ordinary
+one for a flag the command never declared, since the tree never gave
+`describe` that flag.) Exit 2, stdout empty, and stderr carrying
+`nodes is not a namespaced resource` — the kind by its plural registry name
+whatever form the argument took, as in the not-found error. A framework-owned
+usage line may frame that sentence, which is why the suite matches it as a
+substring rather than as the whole stream. Plain `get nodes` needs neither
+selector.
 
 A comma-separated list is judged as one invocation, not kind by kind: if any
 kind in the list is cluster-scoped, `-n` and `-A` are that same usage error —
