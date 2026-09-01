@@ -212,6 +212,22 @@ stdout_json_subset = '{"schema_version": 1}'
 
     let named_but_not_a_field = one(expect, r#"printf '{"flags": ["schema_version"]}\n'"#);
     assert_eq!(named_but_not_a_field.outcome, CaseOutcome::Fail);
+
+    let array = expect.replace(r#"{"schema_version": 1}"#, r#"{"items": [1, 2]}"#);
+    assert_eq!(
+        one(&array, r#"printf '{"items": [1, 2], "extra": true}\n'"#).outcome,
+        CaseOutcome::Pass
+    );
+    assert_eq!(
+        one(&array, r#"printf '{"items": [1, 2, 3]}\n'"#).outcome,
+        CaseOutcome::Fail,
+        "a longer array is not a superset"
+    );
+    assert_eq!(
+        one(&array, r#"printf '{"items": [1, 9]}\n'"#).outcome,
+        CaseOutcome::Fail,
+        "elements must match positionally"
+    );
 }
 
 #[test]

@@ -346,11 +346,11 @@ fn apply_expectations(expect: &CaseExpect, execution: &Execution, failures: &mut
             (_, Err(err)) => failures.push(format!(
                 "suite defect: expected stdout_json is not valid JSON: {err}"
             )),
-            (Err(err), _) => failures.push(format!("stdout is not valid JSON: {err}")),
+            (Err(err), _) => failures.push(format!("stdout_json: stdout is not valid JSON: {err}")),
             (Ok(got), Ok(want)) => {
                 if got != want {
                     failures.push(format!(
-                        "stdout JSON is not semantically equal to expected {want}"
+                        "stdout_json: stdout is not semantically equal to expected {want}"
                     ));
                 }
             }
@@ -364,10 +364,14 @@ fn apply_expectations(expect: &CaseExpect, execution: &Execution, failures: &mut
             (_, Err(err)) => failures.push(format!(
                 "suite defect: expected stdout_json_subset is not valid JSON: {err}"
             )),
-            (Err(err), _) => failures.push(format!("stdout is not valid JSON: {err}")),
+            (Err(err), _) => failures.push(format!(
+                "stdout_json_subset: stdout is not valid JSON: {err}"
+            )),
             (Ok(got), Ok(want)) => {
                 if !json_is_subset(&got, &want) {
-                    failures.push(format!("stdout JSON does not carry expected {want}"));
+                    failures.push(format!(
+                        "stdout_json_subset: stdout does not carry expected {want}"
+                    ));
                 }
             }
         }
@@ -396,11 +400,13 @@ fn apply_expectations(expect: &CaseExpect, execution: &Execution, failures: &mut
             Ok(value) => {
                 for row in &expect.stdout_json_rows {
                     if !json_has_row(&value, row) {
-                        failures.push(format!("no single JSON element carries all of {row:?}"));
+                        failures.push(format!(
+                            "stdout_json_rows: no single JSON element carries all of {row:?}"
+                        ));
                     }
                 }
             }
-            Err(err) => failures.push(format!("stdout is not valid JSON: {err}")),
+            Err(err) => failures.push(format!("stdout_json_rows: stdout is not valid JSON: {err}")),
         }
     }
     for needle in &expect.stdout_not_contains {

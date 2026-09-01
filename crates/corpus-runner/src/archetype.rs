@@ -346,12 +346,20 @@ fn validate_case_suite(suite: &CaseSuite, name: &str, path: &Path) -> anyhow::Re
                 );
             }
         }
-        if case.expect.stdout.is_some() && case.expect.stdout_json.is_some() {
-            bail!(
-                "{}: case {:?} — use `stdout` (exact) or `stdout_json` (semantic), not both",
-                path.display(),
-                case.name
-            );
+        for (key, semantic) in [
+            ("stdout_json", case.expect.stdout_json.is_some()),
+            (
+                "stdout_json_subset",
+                case.expect.stdout_json_subset.is_some(),
+            ),
+        ] {
+            if case.expect.stdout.is_some() && semantic {
+                bail!(
+                    "{}: case {:?} — use `stdout` (exact) or `{key}` (semantic), not both",
+                    path.display(),
+                    case.name
+                );
+            }
         }
         for (key, json) in [
             ("stdout_json", &case.expect.stdout_json),
@@ -554,11 +562,13 @@ exit_code = 0
 
     #[test]
     fn exact_stdout_and_semantic_json_together_are_rejected() {
-        let err = parse(&suite(
-            &VALID_CASE.replace("exit_code = 0", "stdout = \"x\"\nstdout_json = '{}'"),
-        ))
-        .unwrap_err();
-        assert!(err.to_string().contains("not both"), "{err:#}");
+        for key in ["stdout_json", "stdout_json_subset"] {
+            let err = parse(&suite(
+                &VALID_CASE.replace("exit_code = 0", &format!("stdout = \"x\"\n{key} = '{{}}'")),
+            ))
+            .unwrap_err();
+            assert!(err.to_string().contains("not both"), "{err:#}");
+        }
     }
 
     #[test]
