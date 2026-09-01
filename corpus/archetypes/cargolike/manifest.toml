@@ -99,6 +99,7 @@ description = "The effective config has to arrive at a command, not only at `con
 cases = [
     "config-values-reach-the-build-view",
     "features-flag-appends-to-the-config-list",
+    "features-flag-appends-to-the-override-list",
     "build-features-flag-appends",
     "build-jobs-flag",
     "build-defaults",

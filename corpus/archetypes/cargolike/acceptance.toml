@@ -142,6 +142,18 @@ exit_code = 0
 stdout = "compile cli v1.0.0 jobs=1 features=[fast,tls]\n"
 
 [[case]]
+name = "features-flag-appends-to-the-override-list"
+group = "flag-layer"
+stresses = "the list-typed flag adds to the layer below it rather than replacing it, with no config file involved"
+expected = "pass"
+[case.run]
+argv = ["build", "-p", "cli", "--config", "build.features=tls", "--features", "fast"]
+timeout_seconds = 10
+[case.expect]
+exit_code = 0
+stdout = "compile cli v1.0.0 jobs=1 features=[tls,fast]\n"
+
+[[case]]
 name = "config-get-default-value"
 group = "flag-layer"
 stresses = "the defaults layer answers config get when nothing overrides it"
@@ -182,10 +194,18 @@ stdout = "4\n"
 [[case]]
 name = "config-override-list-replaces"
 group = "flag-layer"
-stresses = "a list assigned through --config is comma-separated text and replaces the list under it"
+stresses = "a list assigned through --config replaces the list under it rather than extending it"
 expected = "pass"
 [case.run]
-argv = ["config", "get", "build.features", "--config", "build.features=x,y"]
+argv = [
+    "config",
+    "get",
+    "build.features",
+    "--config",
+    "build.features=a",
+    "--config",
+    "build.features=x,y",
+]
 timeout_seconds = 10
 [case.expect]
 exit_code = 0
@@ -499,19 +519,19 @@ stdout = "[x,y]\n"
 [[case]]
 name = "env-empty-list-clears-merged-list"
 group = "key-env-mapping"
-stresses = "an empty environment value is the empty list, which is how a caller clears an inherited list"
+stresses = "an empty environment value is the empty list, not a list holding one empty item, which is how a caller clears an inherited list"
 expected = "fail"
 gap = "PAR01"
 reason = "a mechanical key-to-environment mapping with per-type semantics is specced past current framework capability (docs/spec/parity-config-layering.md)"
 [case.run]
-argv = ["config", "get", "build.features"]
+argv = ["config", "get", "build.features", "--output", "json"]
 env = { CARGOLIKE_BUILD_FEATURES = "" }
 timeout_seconds = 10
 [case.run.files]
 ".cargolike/config.toml" = "[build]\nfeatures = [\"a\"]\n"
 [case.expect]
 exit_code = 0
-stdout = "[]\n"
+stdout_json = '{"key":"build.features","value":[],"origin":"environment"}'
 
 [[case]]
 name = "env-mapping-supplies-build-target"
