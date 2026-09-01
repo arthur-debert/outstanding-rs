@@ -220,6 +220,10 @@ projection.
 Suppresses the stderr notices of `config set`, `configurations create` and
 `configurations activate`. It never suppresses errors and never changes stdout.
 
+Those three notices are the only thing a successful command writes to stderr.
+Every other command that exits 0 leaves stderr empty, whatever it prints on
+stdout.
+
 ## Errors
 
 Domain errors print nothing on stdout, one line on stderr, and exit **1**:
@@ -231,6 +235,11 @@ gcloudlike: no such instance: nope
 gcloudlike: unknown configuration: nope
 gcloudlike: configuration already exists: prod
 ```
+
+Usage errors leave stdout empty too, and exit **2** with their message on
+stderr. That message names the offender — the unrecognized command word, flag
+or key — and its wording is otherwise the implementation's, so nothing here
+pins it.
 
 ## Exit codes
 
