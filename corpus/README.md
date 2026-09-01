@@ -37,13 +37,12 @@ makes runs reproducible and comparable.
   the agent delta between them stated.
 - `completion/` — the completion six's **first** blind runs, against the
   published 9.0 line (ROB07-WS03a/WS03b, split across the two completion
-  workstreams): one `runs/<run-id>/` per run, same demo rules. These runs
-  have no earlier row to compare against, so the directory carries evidence
-  only; the completion scorecard is written once all six archetypes have
-  run.
+  workstreams): one `runs/<run-id>/` per run, same demo rules, and
+  `scorecard.md`. These runs have no earlier row to compare against, so that
+  scorecard is a first data point rather than a comparison.
 - `scorecard.py` — computes a scorecard's objective table from committed
-  reports (`scorecard.py pilot=corpus/pilot/runs rerun=corpus/rerun/runs`).
-  Both scorecards' figures come from this one script under one set of
+  reports (`scorecard.py pilot=corpus/pilot/runs rerun=corpus/rerun/runs completion=corpus/completion/runs`).
+  Every scorecard's figures come from this one script under one set of
   counting rules; its own test checks that the pilot's reports still
   reproduce the pilot scorecard's published numbers. Every row also carries
   the pins and the agent provenance the comparison rests on: a row whose
@@ -435,7 +434,8 @@ member. *Survey* is the archetype's entry in the 2026-08-16 survey (Part C);
 *Shape* is one line — each archetype's own `spec.md` and `manifest.toml` carry
 the rest.
 
-**The pilot four** (ROB03) — the only members with run evidence today:
+**The pilot four** (ROB03) — the archetypes the pilot ran against 8.1.1 and
+ROB07 re-ran against 9.0.0:
 
 | Archetype | Survey | Shape |
 | --- | --- | --- |
@@ -444,19 +444,19 @@ the rest.
 | `systemdlike` | C5 | naked default command, `--plain`/`--no-legend`, color/pager env discipline |
 | `formlike` | C12 | questionnaire-driven provisioning under full non-interactivity |
 
-Their execution artifacts — committed run reports and the scorecard — live
-under `pilot/` (see Layout above).
+Their execution artifacts — committed run reports and a scorecard — live under
+`pilot/` for the first runs and `rerun/` for the 9.0.0 ones (see Layout above).
 
 **The completion six** (ROB07) — the survey's remaining in-capability shapes,
 authored spec-first after the pilot
-(`docs/spec/robustness-corpus-completion.md`). Their behavioral sketches were
-lost with the 2026-08-16 session record, so each spec reconstructs the shape
-from the survey's capability matrix and states in prose which interactions it
-stresses. A first blind run had to wait for the 9.0 line to be published,
-because a run against the surface that release deletes would measure nothing.
-All six have now run against 9.0.0; their reports and transcripts live under
-`completion/` (see Layout above). That is the condition the completion
-scorecard waits on, and it has not been written yet.
+(`docs/spec/implemented/robustness-corpus-completion.md`). Their behavioral
+sketches were lost with the 2026-08-16 session record, so each spec
+reconstructs the shape from the survey's capability matrix and states in prose
+which interactions it stresses. A first blind run had to wait for the 9.0 line
+to be published, because a run against the surface that release deletes would
+measure nothing.
+All six have now run against 9.0.0; their reports, transcripts, and the
+first-run scorecard live under `completion/` (see Layout above).
 
 | Archetype | Survey | Shape |
 | --- | --- | --- |
