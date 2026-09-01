@@ -1,0 +1,802 @@
+# Acceptance suite for the `cargolike` archetype. Format: corpus/README.md.
+# Written spec-first, before any implementation exists (ROB07-WS03a).
+#
+# Cases whose assertion depends on config *files* or on the mechanical key↔env
+# mapping are expected-fail against PAR01: standout has no configuration layer,
+# so a blind implementer either hand-rolls one (the workaround is itself
+# instrumentation signal) or the case reads as a framework gap. Cases that hold
+# for an implementation ignoring every file layer are expected-pass.
+schema = 1
+archetype = "cargolike"
+
+# --- the workspace surface ---------------------------------------------------
+
+[[case]]
+name = "metadata-plain-when-piped"
+group = "workspace-surface"
+stresses = "auto output mode degrades to plain text on a piped stdout"
+expected = "pass"
+[case.run]
+argv = ["metadata"]
+timeout_seconds = 10
+[case.expect]
+exit_code = 0
+stdout = "cli v1.0.0 deps: core util\ncore v0.3.1 deps: none\nutil v0.2.0 deps: core\n"
+stderr = ""
+
+[[case]]
+name = "metadata-json-is-typed"
+group = "workspace-surface"
+stresses = "the machine mode carries dependency lists as arrays, not as the text form's words"
+expected = "pass"
+[case.run]
+argv = ["metadata", "--output", "json"]
+timeout_seconds = 10
+[case.expect]
+exit_code = 0
+stdout_json = '{"packages":[{"name":"cli","version":"1.0.0","dependencies":["core","util"]},{"name":"core","version":"0.3.1","dependencies":[]},{"name":"util","version":"0.2.0","dependencies":["core"]}]}'
+stderr = ""
+
+[[case]]
+name = "metadata-json-pure-on-tty"
+group = "workspace-surface"
+stresses = "an attended terminal must not tempt styling into the machine stream"
+expected = "pass"
+[case.run]
+argv = ["metadata", "--output", "json"]
+env = { TERM = "xterm-256color" }
+tty = ["stdout"]
+timeout_seconds = 10
+[case.expect]
+exit_code = 0
+stdout_json = '{"packages":[{"name":"cli","version":"1.0.0","dependencies":["core","util"]},{"name":"core","version":"0.3.1","dependencies":[]},{"name":"util","version":"0.2.0","dependencies":["core"]}]}'
+stdout_not_contains = ["\u001b["]
+
+[[case]]
+name = "metadata-package-selection"
+group = "workspace-surface"
+stresses = "-p narrows the listing to one package"
+expected = "pass"
+[case.run]
+argv = ["metadata", "-p", "util"]
+timeout_seconds = 10
+[case.expect]
+exit_code = 0
+stdout = "util v0.2.0 deps: core\n"
+stderr = ""
+
+[[case]]
+name = "tree-default-root"
+group = "workspace-surface"
+stresses = "nested tree layout with last-child branch and continuation indent"
+expected = "pass"
+[case.run]
+argv = ["tree"]
+timeout_seconds = 10
+[case.expect]
+exit_code = 0
+stdout = "cli v1.0.0\n├── core v0.3.1\n└── util v0.2.0\n    └── core v0.3.1\n"
+stderr = ""
+
+[[case]]
+name = "tree-selected-root"
+group = "workspace-surface"
+stresses = "the same renderer rooted at a selected package"
+expected = "pass"
+[case.run]
+argv = ["tree", "-p", "util"]
+timeout_seconds = 10
+[case.expect]
+exit_code = 0
+stdout = "util v0.2.0\n└── core v0.3.1\n"
+
+[[case]]
+name = "output-term-forces-ansi-when-piped"
+group = "workspace-surface"
+stresses = "the framework's forced-term mode styles output that a pipe would leave plain"
+expected = "pass"
+[case.run]
+argv = ["metadata", "--output", "term"]
+timeout_seconds = 10
+[case.expect]
+exit_code = 0
+stdout_contains = ["\u001b[", "cli", "core", "util"]
+
+# --- the flag layer ----------------------------------------------------------
+
+[[case]]
+name = "build-defaults"
+group = "flag-layer"
+stresses = "the plan view projects the built-in defaults when no config exists"
+expected = "pass"
+[case.run]
+argv = ["build"]
+timeout_seconds = 10
+[case.expect]
+exit_code = 0
+stdout = "compile cli v1.0.0 jobs=1 features=[]\ncompile core v0.3.1 jobs=1 features=[]\ncompile util v0.2.0 jobs=1 features=[]\n"
+stderr = ""
+
+[[case]]
+name = "build-jobs-flag"
+group = "flag-layer"
+stresses = "a per-invocation flag sets a scalar config key"
+expected = "pass"
+[case.run]
+argv = ["build", "-p", "cli", "--jobs", "4"]
+timeout_seconds = 10
+[case.expect]
+exit_code = 0
+stdout = "compile cli v1.0.0 jobs=4 features=[]\n"
+
+[[case]]
+name = "build-features-flag-appends"
+group = "flag-layer"
+stresses = "the list-typed flag contributes items in argument order"
+expected = "pass"
+[case.run]
+argv = ["build", "-p", "cli", "--features", "fast,tls"]
+timeout_seconds = 10
+[case.expect]
+exit_code = 0
+stdout = "compile cli v1.0.0 jobs=1 features=[fast,tls]\n"
+
+[[case]]
+name = "features-flag-appends-to-the-override-list"
+group = "flag-layer"
+stresses = "the list-typed flag adds to the layer below it rather than replacing it, with no config file involved"
+expected = "pass"
+[case.run]
+argv = ["build", "-p", "cli", "--config", "build.features=tls", "--features", "fast"]
+timeout_seconds = 10
+[case.expect]
+exit_code = 0
+stdout = "compile cli v1.0.0 jobs=1 features=[tls,fast]\n"
+
+[[case]]
+name = "config-get-default-value"
+group = "flag-layer"
+stresses = "the defaults layer answers config get when nothing overrides it"
+expected = "pass"
+[case.run]
+argv = ["config", "get", "build.jobs"]
+timeout_seconds = 10
+[case.expect]
+exit_code = 0
+stdout = "1\n"
+stderr = ""
+
+[[case]]
+name = "config-list-defaults"
+group = "flag-layer"
+stresses = "config list renders every set key sorted, each type in its documented form"
+expected = "pass"
+[case.run]
+argv = ["config", "list"]
+timeout_seconds = 10
+[case.expect]
+exit_code = 0
+stdout = "build.features = []\nbuild.jobs = 1\nnet.offline = false\nterm.color = auto\nterm.output = auto\n"
+stderr = ""
+
+[[case]]
+name = "config-override-beats-default"
+group = "flag-layer"
+stresses = "--config sets any known key for one invocation"
+expected = "pass"
+[case.run]
+argv = ["config", "get", "build.jobs", "--config", "build.jobs=4"]
+timeout_seconds = 10
+[case.expect]
+exit_code = 0
+stdout = "4\n"
+
+[[case]]
+name = "config-override-list-replaces"
+group = "flag-layer"
+stresses = "a list assigned through --config replaces a previous assignment rather than extending it"
+expected = "pass"
+[case.run]
+argv = [
+    "config",
+    "get",
+    "build.features",
+    "--config",
+    "build.features=a",
+    "--config",
+    "build.features=x,y",
+]
+timeout_seconds = 10
+[case.expect]
+exit_code = 0
+stdout = "[x,y]\n"
+
+[[case]]
+name = "config-override-repeated-key-last-wins"
+group = "flag-layer"
+stresses = "the repeatable override flag resolves a key assigned twice on one command line"
+expected = "pass"
+[case.run]
+argv = ["config", "get", "build.jobs", "--config", "build.jobs=2", "--config", "build.jobs=4"]
+timeout_seconds = 10
+[case.expect]
+exit_code = 0
+stdout = "4\n"
+
+[[case]]
+name = "config-override-sets-boolean-and-string"
+group = "flag-layer"
+stresses = "override text is read against each key's type, including a key with no default"
+expected = "pass"
+[case.run]
+argv = ["config", "list", "--config", "net.offline=true", "--config", "build.target=wasm32"]
+timeout_seconds = 10
+[case.expect]
+exit_code = 0
+stdout = "build.features = []\nbuild.jobs = 1\nbuild.target = wasm32\nnet.offline = true\nterm.color = auto\nterm.output = auto\n"
+stderr = ""
+
+[[case]]
+name = "config-list-json-carries-each-config-type"
+group = "flag-layer"
+stresses = "the machine listing keeps every value in its config type, not in the text form's words"
+expected = "pass"
+[case.run]
+argv = [
+    "config",
+    "list",
+    "--output",
+    "json",
+    "--config",
+    "build.features=tls,fast",
+    "--config",
+    "build.jobs=3",
+    "--config",
+    "net.offline=true",
+]
+timeout_seconds = 10
+[case.expect]
+exit_code = 0
+stdout_json = '{"build.features":["tls","fast"],"build.jobs":3,"net.offline":true,"term.color":"auto","term.output":"json"}'
+stderr = ""
+
+[[case]]
+name = "config-override-selects-json-output"
+group = "flag-layer"
+stresses = "a config key resolved from argv steers the framework's output mode"
+expected = "pass"
+[case.run]
+argv = ["metadata", "--config", "term.output=json"]
+timeout_seconds = 10
+[case.expect]
+exit_code = 0
+stdout_json = '{"packages":[{"name":"cli","version":"1.0.0","dependencies":["core","util"]},{"name":"core","version":"0.3.1","dependencies":[]},{"name":"util","version":"0.2.0","dependencies":["core"]}]}'
+
+[[case]]
+name = "output-flag-beats-config-override"
+group = "flag-layer"
+stresses = "the framework's own flag outranks the same key set through --config"
+expected = "pass"
+[case.run]
+argv = ["metadata", "--output", "text", "--config", "term.output=json"]
+timeout_seconds = 10
+[case.expect]
+exit_code = 0
+stdout = "cli v1.0.0 deps: core util\ncore v0.3.1 deps: none\nutil v0.2.0 deps: core\n"
+
+# --- error vocabulary --------------------------------------------------------
+
+[[case]]
+name = "unknown-package-exits-101"
+group = "errors"
+stresses = "a workspace error takes the domain exit code, stdout stays empty"
+expected = "pass"
+[case.run]
+argv = ["build", "-p", "nope"]
+timeout_seconds = 10
+[case.expect]
+exit_code = 101
+stdout = ""
+stderr = "cargolike: no package named nope in the workspace\n"
+
+[[case]]
+name = "unknown-config-key-is-usage-error"
+group = "errors"
+stresses = "a key outside the known set is a usage error, not a domain error"
+expected = "pass"
+[case.run]
+argv = ["config", "get", "build.nope"]
+timeout_seconds = 10
+[case.expect]
+exit_code = 2
+stdout = ""
+stderr_contains = ["build.nope"]
+
+[[case]]
+name = "malformed-config-override-is-usage-error"
+group = "errors"
+stresses = "a --config argument without = is rejected before anything is resolved"
+expected = "pass"
+[case.run]
+argv = ["metadata", "--config", "build.jobs"]
+timeout_seconds = 10
+[case.expect]
+exit_code = 2
+stdout = ""
+stderr_contains = ["build.jobs"]
+
+[[case]]
+name = "invalid-flag-value-exits-101"
+group = "errors"
+stresses = "value text that does not fit the key's type is a configuration error from every layer, not a usage error"
+expected = "pass"
+[case.run]
+argv = ["build", "--jobs", "many"]
+timeout_seconds = 10
+[case.expect]
+exit_code = 101
+stdout = ""
+stderr_contains = ["build.jobs"]
+
+[[case]]
+name = "config-get-unset-key-is-quiet-exit-1"
+group = "errors"
+stresses = "a known key with no effective value is a quiet exit-1, both streams empty"
+expected = "pass"
+[case.run]
+argv = ["config", "get", "build.target"]
+timeout_seconds = 10
+[case.expect]
+exit_code = 1
+stdout = ""
+stderr = ""
+
+# --- per-type merge across discovered files ----------------------------------
+# Specced past current capability: standout has no config layer, and this
+# archetype's merge rule (every file contributes, per type) is the shape
+# PAR01 (docs/spec/parity-config-layering.md) has to express.
+
+[[case]]
+name = "config-merge-nearest-scalar-wins"
+group = "config-merge"
+stresses = "walk-up discovery with the nearest file winning a scalar"
+expected = "fail"
+gap = "PAR01"
+reason = "config-file discovery and layering are specced past current framework capability (docs/spec/parity-config-layering.md)"
+[case.run]
+argv = ["config", "get", "build.jobs"]
+cwd = "project/sub"
+timeout_seconds = 10
+[case.run.files]
+".cargolike/config.toml" = "[build]\njobs = 2\n"
+"project/sub/.cargolike/config.toml" = "[build]\njobs = 8\n"
+[case.expect]
+exit_code = 0
+stdout = "8\n"
+
+[[case]]
+name = "config-merge-arrays-concatenate-across-ancestors"
+group = "config-merge"
+stresses = "list keys combine across every discovered file instead of the nearest one winning whole"
+expected = "fail"
+gap = "PAR01"
+reason = "per-type merge semantics are specced past current framework capability (docs/spec/parity-config-layering.md)"
+[case.run]
+argv = ["config", "get", "build.features"]
+cwd = "project/sub"
+timeout_seconds = 10
+[case.run.files]
+".cargolike/config.toml" = "[build]\nfeatures = [\"a\"]\n"
+"project/sub/.cargolike/config.toml" = "[build]\nfeatures = [\"b\"]\n"
+[case.expect]
+exit_code = 0
+stdout = "[a,b]\n"
+
+[[case]]
+name = "config-merge-dedupes-repeated-list-items"
+group = "config-merge"
+stresses = "a repeated list item collapses to its first occurrence, keeping order"
+expected = "fail"
+gap = "PAR01"
+reason = "per-type merge semantics are specced past current framework capability (docs/spec/parity-config-layering.md)"
+[case.run]
+argv = ["config", "get", "build.features"]
+cwd = "project/sub"
+timeout_seconds = 10
+[case.run.files]
+".cargolike/config.toml" = "[build]\nfeatures = [\"a\", \"b\"]\n"
+"project/sub/.cargolike/config.toml" = "[build]\nfeatures = [\"b\", \"c\"]\n"
+[case.expect]
+exit_code = 0
+stdout = "[a,b,c]\n"
+
+[[case]]
+name = "config-project-scalar-beats-user-file"
+group = "config-merge"
+stresses = "any project file outranks the user file for a scalar"
+expected = "fail"
+gap = "PAR01"
+reason = "the project/user layer split is specced past current framework capability (docs/spec/parity-config-layering.md)"
+[case.run]
+argv = ["config", "get", "build.jobs"]
+env = { CARGOLIKE_CONFIG_HOME = "confhome" }
+timeout_seconds = 10
+[case.run.files]
+"confhome/config.toml" = "[build]\njobs = 9\n"
+".cargolike/config.toml" = "[build]\njobs = 3\n"
+[case.expect]
+exit_code = 0
+stdout = "3\n"
+
+[[case]]
+name = "config-user-list-items-come-first"
+group = "config-merge"
+stresses = "the same two layers concatenate rather than override for a list, user side first"
+expected = "fail"
+gap = "PAR01"
+reason = "per-type merge semantics are specced past current framework capability (docs/spec/parity-config-layering.md)"
+[case.run]
+argv = ["config", "get", "build.features"]
+env = { CARGOLIKE_CONFIG_HOME = "confhome" }
+timeout_seconds = 10
+[case.run.files]
+"confhome/config.toml" = "[build]\nfeatures = [\"u\"]\n"
+".cargolike/config.toml" = "[build]\nfeatures = [\"p\"]\n"
+[case.expect]
+exit_code = 0
+stdout = "[u,p]\n"
+
+[[case]]
+name = "config-user-file-fallback-when-no-project-file"
+group = "config-merge"
+stresses = "the user file applies when the walk finds nothing"
+expected = "fail"
+gap = "PAR01"
+reason = "config-file discovery is specced past current framework capability (docs/spec/parity-config-layering.md)"
+[case.run]
+argv = ["config", "get", "build.jobs"]
+env = { CARGOLIKE_CONFIG_HOME = "confhome" }
+timeout_seconds = 10
+[case.run.files]
+"confhome/config.toml" = "[build]\njobs = 7\n"
+[case.expect]
+exit_code = 0
+stdout = "7\n"
+
+[[case]]
+name = "config-override-list-replaces-merged-list"
+group = "config-merge"
+stresses = "an argv-assigned list replaces what the files merged, as an environment-assigned one does"
+expected = "fail"
+gap = "PAR01"
+reason = "config-file discovery is specced past current framework capability (docs/spec/parity-config-layering.md)"
+[case.run]
+argv = ["config", "get", "build.features", "--config", "build.features=x,y"]
+timeout_seconds = 10
+[case.run.files]
+".cargolike/config.toml" = "[build]\nfeatures = [\"a\"]\n"
+[case.expect]
+exit_code = 0
+stdout = "[x,y]\n"
+
+[[case]]
+name = "invalid-config-value-exits-101"
+group = "config-merge"
+stresses = "a config file is untrusted input: a wrong-typed value is a named configuration error"
+expected = "fail"
+gap = "PAR01"
+reason = "there is no config layer to validate values against, and no framework-rendered config error (docs/spec/parity-config-layering.md)"
+[case.run]
+argv = ["build", "-p", "cli"]
+timeout_seconds = 10
+[case.run.files]
+".cargolike/config.toml" = "[build]\njobs = \"many\"\n"
+[case.expect]
+exit_code = 101
+stdout = ""
+stderr_contains = ["build.jobs"]
+
+# --- the mechanical key↔env mapping ------------------------------------------
+
+[[case]]
+name = "env-mapping-beats-merged-files"
+group = "key-env-mapping"
+stresses = "CARGOLIKE_BUILD_JOBS resolves build.jobs above every file layer"
+expected = "fail"
+gap = "PAR01"
+reason = "a mechanical key-to-environment mapping is specced past current framework capability (docs/spec/parity-config-layering.md)"
+[case.run]
+argv = ["config", "get", "build.jobs"]
+env = { CARGOLIKE_BUILD_JOBS = "6" }
+timeout_seconds = 10
+[case.run.files]
+".cargolike/config.toml" = "[build]\njobs = 2\n"
+[case.expect]
+exit_code = 0
+stdout = "6\n"
+
+[[case]]
+name = "env-list-replaces-merged-list"
+group = "key-env-mapping"
+stresses = "a list from the environment replaces the merged file list instead of appending to it"
+expected = "fail"
+gap = "PAR01"
+reason = "a mechanical key-to-environment mapping with per-type semantics is specced past current framework capability (docs/spec/parity-config-layering.md)"
+[case.run]
+argv = ["config", "get", "build.features"]
+env = { CARGOLIKE_BUILD_FEATURES = "x,y" }
+timeout_seconds = 10
+[case.run.files]
+".cargolike/config.toml" = "[build]\nfeatures = [\"a\"]\n"
+[case.expect]
+exit_code = 0
+stdout = "[x,y]\n"
+
+[[case]]
+name = "env-empty-list-clears-merged-list"
+group = "key-env-mapping"
+stresses = "an empty environment value is the empty list, not a list holding one empty item, which is how a caller clears an inherited list"
+expected = "fail"
+gap = "PAR01"
+reason = "a mechanical key-to-environment mapping with per-type semantics is specced past current framework capability (docs/spec/parity-config-layering.md)"
+[case.run]
+argv = ["config", "get", "build.features", "--output", "json"]
+env = { CARGOLIKE_BUILD_FEATURES = "" }
+timeout_seconds = 10
+[case.run.files]
+".cargolike/config.toml" = "[build]\nfeatures = [\"a\"]\n"
+[case.expect]
+exit_code = 0
+stdout_json = '{"key":"build.features","value":[],"origin":"environment"}'
+
+[[case]]
+name = "env-mapping-supplies-build-target"
+group = "key-env-mapping"
+stresses = "the derived spelling exists for every known key, including one with no default and no flag"
+expected = "fail"
+gap = "PAR01"
+reason = "a mechanical key-to-environment mapping is specced past current framework capability (docs/spec/parity-config-layering.md)"
+[case.run]
+argv = ["config", "get", "build.target"]
+env = { CARGOLIKE_BUILD_TARGET = "wasm32" }
+timeout_seconds = 10
+[case.expect]
+exit_code = 0
+stdout = "wasm32\n"
+
+# --- framework settings through the config layer -----------------------------
+
+[[case]]
+name = "term-output-from-config-selects-json"
+group = "framework-settings"
+stresses = "a config file key sets the default output mode with no flag on the line"
+expected = "fail"
+gap = "PAR01"
+reason = "framework settings do not ride a config layer today (docs/spec/parity-config-layering.md)"
+[case.run]
+argv = ["metadata"]
+timeout_seconds = 10
+[case.run.files]
+".cargolike/config.toml" = "[term]\noutput = \"json\"\n"
+[case.expect]
+exit_code = 0
+stdout_json = '{"packages":[{"name":"cli","version":"1.0.0","dependencies":["core","util"]},{"name":"core","version":"0.3.1","dependencies":[]},{"name":"util","version":"0.2.0","dependencies":["core"]}]}'
+
+[[case]]
+name = "term-color-never-from-config-on-tty"
+group = "framework-settings"
+stresses = "a config file key suppresses styling on an attended capable terminal"
+expected = "fail"
+gap = "PAR01"
+reason = "framework settings do not ride a config layer today (docs/spec/parity-config-layering.md)"
+[case.run]
+argv = ["metadata"]
+env = { TERM = "xterm-256color" }
+tty = ["stdout"]
+timeout_seconds = 10
+[case.run.files]
+".cargolike/config.toml" = "[term]\ncolor = \"never\"\n"
+[case.expect]
+exit_code = 0
+stdout = "cli v1.0.0 deps: core util\ncore v0.3.1 deps: none\nutil v0.2.0 deps: core\n"
+
+[[case]]
+name = "env-color-beats-no-color"
+group = "framework-settings"
+stresses = "the key's environment spelling outranks NO_COLOR, which outranks the file layer"
+expected = "fail"
+gap = "PAR01"
+reason = "a mechanical key-to-environment mapping and its position against NO_COLOR are specced past current framework capability (docs/spec/parity-config-layering.md)"
+[case.run]
+argv = ["metadata"]
+env = { NO_COLOR = "1", CARGOLIKE_TERM_COLOR = "always" }
+timeout_seconds = 10
+[case.run.files]
+".cargolike/config.toml" = "[term]\ncolor = \"never\"\n"
+[case.expect]
+exit_code = 0
+stdout_contains = ["\u001b["]
+
+# --- provenance of the effective value ---------------------------------------
+
+[[case]]
+name = "config-get-show-origin-names-the-layer"
+group = "provenance"
+stresses = "the effective value carries the layer it came from"
+expected = "fail"
+gap = "PAR01"
+reason = "no config layer exists to attribute a value to (docs/spec/parity-config-layering.md)"
+[case.run]
+argv = ["config", "get", "build.jobs", "--show-origin"]
+timeout_seconds = 10
+[case.run.files]
+".cargolike/config.toml" = "[build]\njobs = 2\n"
+[case.expect]
+exit_code = 0
+stdout = "2 (from project)\n"
+
+[[case]]
+name = "config-get-show-origin-default"
+group = "provenance"
+stresses = "the defaults layer names itself when nothing above it supplies the key"
+expected = "pass"
+[case.run]
+argv = ["config", "get", "build.jobs", "--show-origin"]
+timeout_seconds = 10
+[case.expect]
+exit_code = 0
+stdout = "1 (from default)\n"
+stderr = ""
+
+[[case]]
+name = "config-get-show-origin-override"
+group = "provenance"
+stresses = "the override layer is attributed to itself rather than to the flag or the defaults"
+expected = "pass"
+[case.run]
+argv = ["config", "get", "build.jobs", "--config", "build.jobs=4", "--show-origin"]
+timeout_seconds = 10
+[case.expect]
+exit_code = 0
+stdout = "4 (from override)\n"
+
+[[case]]
+name = "config-get-show-origin-flag"
+group = "provenance"
+stresses = "a framework flag that names a config key is attributed to the flag layer in the machine form"
+expected = "pass"
+[case.run]
+argv = ["config", "get", "term.output", "--output", "json"]
+timeout_seconds = 10
+[case.expect]
+exit_code = 0
+stdout_json = '{"key":"term.output","value":"json","origin":"flag"}'
+stderr = ""
+
+[[case]]
+name = "config-get-show-origin-user-file"
+group = "provenance"
+stresses = "the user file is a layer of its own, distinguishable from a project file"
+expected = "fail"
+gap = "PAR01"
+reason = "no config layer exists to attribute a value to (docs/spec/parity-config-layering.md)"
+[case.run]
+argv = ["config", "get", "build.jobs", "--show-origin"]
+env = { CARGOLIKE_CONFIG_HOME = "confhome" }
+timeout_seconds = 10
+[case.run.files]
+"confhome/config.toml" = "[build]\njobs = 7\n"
+[case.expect]
+exit_code = 0
+stdout = "7 (from user)\n"
+
+[[case]]
+name = "config-get-show-origin-merged-list"
+group = "provenance"
+stresses = "a list drawn from more than one layer is attributed to none of them"
+expected = "fail"
+gap = "PAR01"
+reason = "no config layer exists to attribute a value to (docs/spec/parity-config-layering.md)"
+[case.run]
+argv = ["config", "get", "build.features", "--show-origin"]
+cwd = "project/sub"
+timeout_seconds = 10
+[case.run.files]
+".cargolike/config.toml" = "[build]\nfeatures = [\"a\"]\n"
+"project/sub/.cargolike/config.toml" = "[build]\nfeatures = [\"b\"]\n"
+[case.expect]
+exit_code = 0
+stdout = "[a,b] (from merged)\n"
+
+[[case]]
+name = "config-get-json-carries-typed-value-and-origin"
+group = "provenance"
+stresses = "the machine form of a resolved key keeps the config type and names the layer"
+expected = "fail"
+gap = "PAR01"
+reason = "no config layer exists to attribute a value to (docs/spec/parity-config-layering.md)"
+[case.run]
+argv = ["config", "get", "build.jobs", "--output", "json"]
+env = { CARGOLIKE_BUILD_JOBS = "5" }
+timeout_seconds = 10
+[case.expect]
+exit_code = 0
+stdout_json = '{"key":"build.jobs","value":5,"origin":"environment"}'
+
+[[case]]
+name = "config-list-includes-a-key-only-a-file-sets"
+group = "provenance"
+stresses = "the listing covers keys with no default once a layer supplies them"
+expected = "fail"
+gap = "PAR01"
+reason = "config-file discovery is specced past current framework capability (docs/spec/parity-config-layering.md)"
+[case.run]
+argv = ["config", "list"]
+timeout_seconds = 10
+[case.run.files]
+".cargolike/config.toml" = "[build]\ntarget = \"wasm32\"\n"
+[case.expect]
+exit_code = 0
+stdout = "build.features = []\nbuild.jobs = 1\nbuild.target = wasm32\nnet.offline = false\nterm.color = auto\nterm.output = auto\n"
+
+# --- config values reaching a rendered view ----------------------------------
+
+[[case]]
+name = "config-values-reach-the-build-view"
+group = "config-reaches-the-view"
+stresses = "a command's rendered bytes are a projection of the effective config"
+expected = "fail"
+gap = "PAR01"
+reason = "config-file discovery is specced past current framework capability (docs/spec/parity-config-layering.md)"
+[case.run]
+argv = ["build", "-p", "cli"]
+timeout_seconds = 10
+[case.run.files]
+".cargolike/config.toml" = "[build]\njobs = 3\nfeatures = [\"tls\"]\n"
+[case.expect]
+exit_code = 0
+stdout = "compile cli v1.0.0 jobs=3 features=[tls]\n"
+
+[[case]]
+name = "features-flag-appends-to-the-config-list"
+group = "config-reaches-the-view"
+stresses = "the flag layer appends to a file-supplied list rather than replacing it"
+expected = "fail"
+gap = "PAR01"
+reason = "config-file discovery is specced past current framework capability (docs/spec/parity-config-layering.md)"
+[case.run]
+argv = ["build", "-p", "cli", "--features", "fast"]
+timeout_seconds = 10
+[case.run.files]
+".cargolike/config.toml" = "[build]\nfeatures = [\"tls\"]\n"
+[case.expect]
+exit_code = 0
+stdout = "compile cli v1.0.0 jobs=1 features=[tls,fast]\n"
+
+# --- ROB01 invariant matrix --------------------------------------------------
+# Read-only commands the runner sweeps across output modes (text/term/json),
+# piped, on top of the case suite (format: corpus/README.md). Failures here are
+# framework findings by default.
+
+[invariants]
+modes = ["text", "term", "json"]
+colors = ["off", "on"]
+
+[[invariants.theme]]
+name = "application"
+
+[[invariants.command]]
+argv = ["metadata"]
+contract = "rendered"
+
+[[invariants.command]]
+argv = ["tree"]
+contract = "rendered"
+
+[[invariants.command]]
+argv = ["build"]
+contract = "rendered"
+
+[[invariants.command]]
+argv = ["config", "list"]
+contract = "rendered"
