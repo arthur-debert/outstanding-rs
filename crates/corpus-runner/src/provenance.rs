@@ -6,7 +6,7 @@
 //! Two runs are comparable evidence only when this block matches. Where a
 //! later run cannot reproduce an earlier one — a retired model, a newer
 //! backend — the block is what lets the comparison state the delta instead of
-//! reading as if there were none (ADR-0024's ROB07-WS02 amendment).
+//! reading as if there were none.
 //!
 //! Two sources, and only two: the command the runner spawned, split the way
 //! `session` splits it, and the session's own transcript. The runner never
@@ -25,6 +25,12 @@ use crate::session::direct_argv;
 // never needs more than the head — and a transcript is a whole agent
 // session's output.
 const TRANSCRIPT_HEAD_BYTES: usize = 256 * 1024;
+
+// Records are read whole: the init event carries the host's tool and plugin
+// inventory and can be larger than the head budget on its own, and half of it
+// is not JSON, so a record cut in the middle announces nothing. This caps the
+// single record the budget cannot, for a transcript written without newlines.
+const TRANSCRIPT_RECORD_BYTES: usize = 8 * 1024 * 1024;
 
 /// Describe the session the runner just ran: the parsed command, plus what
 /// the transcript says answered it.
@@ -89,20 +95,27 @@ fn take_value<'a>(
     }
 }
 
+/// The transcript's leading records, whole: reading stops once the head
+/// budget is spent, and the record that spends it is still read to its end.
 fn head(path: &Path) -> String {
-    use std::io::Read;
+    use std::io::{BufRead, BufReader, Read};
     let Ok(file) = std::fs::File::open(path) else {
         return String::new();
     };
-    let mut bytes = Vec::new();
-    if file
-        .take(TRANSCRIPT_HEAD_BYTES as u64)
-        .read_to_end(&mut bytes)
-        .is_err()
-    {
-        return String::new();
+    let mut reader = BufReader::new(file);
+    let mut head = String::new();
+    while head.len() < TRANSCRIPT_HEAD_BYTES {
+        let mut record = Vec::new();
+        match reader
+            .by_ref()
+            .take(TRANSCRIPT_RECORD_BYTES as u64)
+            .read_until(b'\n', &mut record)
+        {
+            Ok(0) | Err(_) => break,
+            Ok(_) => head.push_str(&String::from_utf8_lossy(&record)),
+        }
     }
-    String::from_utf8_lossy(&bytes).into_owned()
+    head
 }
 
 #[derive(Debug, Default, PartialEq, Eq)]
@@ -289,6 +302,36 @@ mod tests {
         assert_eq!(absent.model_observed, None);
         assert_eq!(absent.executable_version, None);
         assert_eq!(absent.backend.as_deref(), Some("claude"));
+    }
+
+    /// A Claude Code init event carries the host's whole tool and plugin
+    /// inventory, which can be larger than the scanned head by itself. Read
+    /// as a byte prefix it would arrive cut in half, parse as nothing, and
+    /// lose a version and model the transcript states plainly.
+    #[test]
+    fn an_init_record_larger_than_the_head_budget_still_announces() {
+        let dir = tempfile::tempdir().unwrap();
+        let transcript = dir.path().join("transcript.jsonl");
+        let inventory = "x".repeat(TRANSCRIPT_HEAD_BYTES + 1);
+        std::fs::write(
+            &transcript,
+            format!(
+                concat!(
+                    r#"{{"type":"system","subtype":"init","model":"claude-opus-5[1m]","#,
+                    r#""claude_code_version":"2.1.252","tools":"{}"}}"#,
+                    "\n",
+                ),
+                inventory
+            ),
+        )
+        .unwrap();
+
+        let provenance = describe("/opt/agents/claude -p hello", &transcript);
+        assert_eq!(provenance.executable_version.as_deref(), Some("2.1.252"));
+        assert_eq!(
+            provenance.model_observed.as_deref(),
+            Some("claude-opus-5[1m]")
+        );
     }
 
     /// The block is written from the command and the transcript alone: no

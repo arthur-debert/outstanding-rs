@@ -39,7 +39,14 @@ makes runs reproducible and comparable.
   reports (`scorecard.py pilot=corpus/pilot/runs rerun=corpus/rerun/runs`).
   Both scorecards' figures come from this one script under one set of
   counting rules; its own test checks that the pilot's reports still
-  reproduce the pilot scorecard's published numbers.
+  reproduce the pilot scorecard's published numbers. Every row also carries
+  the pins and the agent provenance the comparison rests on: a row whose
+  spec, acceptance suite, questionnaire or agent differs from the first row
+  its archetype has is marked not comparable, and a note under the table
+  states the difference, so a figure a changed question produced cannot read
+  as a framework result. Reports written before schema 4 state no
+  provenance, so the script recovers it from the run's own two sources — the
+  recorded command and the transcript — and marks the cell `(recovered)`.
 
 ## The runner
 

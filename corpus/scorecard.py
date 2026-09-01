@@ -5,8 +5,8 @@ Usage: scorecard.py <label>=<runs-dir> [<label>=<runs-dir> ...] [--json]
 
 Each run directory holds one report.json (plus the sanitized transcript).
 One row per run, grouped by archetype so a re-run sits beside the run it is
-compared with. The counting rules are the ones the ROB03 pilot scorecard
-published, so a set of pilot reports reproduces the pilot's figures:
+compared with. The counting rules are the ones the pilot scorecard published,
+so a set of pilot reports reproduces the pilot's figures:
 
 - acceptance: cases whose outcome is `pass`, over every case in the suite;
   the other outcomes are spelled out rather than folded in, because
@@ -23,10 +23,19 @@ published, so a set of pilot reports reproduces the pilot's figures:
   scorecard's prose beside the committed answer.
 - the agent: schema 4's `provenance` block. A report written before that
   block existed states none, so the same facts are recovered from the run's
-  committed transcript by the rule the runner itself uses — the init event
+  own two sources by the rule the runner uses — the command the report
+  records, split without expansion, and the transcript, whose init event
   announces the backend version and the session model. A recovered agent is
-  marked `(from transcript)`: it is evidence of what answered, not a
-  contemporaneous record of what was asked for.
+  marked `(recovered)`: it is evidence of what answered, not a
+  contemporaneous record of what was asked for. A field neither source
+  states is reported unstated rather than filled in.
+- comparable: whether a row is measuring the same question as the first row
+  its archetype has. Two runs are comparable evidence when the spec, the
+  acceptance suite, the exit questionnaire and the agent all match; where
+  they do not, the row says which of them differ and a note under the table
+  states the difference, so no figure reads as a framework result when a
+  changed question produced it. The pinned framework version and the docs
+  snapshot are the experiment's variable and are not compared.
 
 Friction themes are not computed here. Grouping a run's frictions into
 themes and ranking them is a reading of the transcripts; the script reports
@@ -34,11 +43,37 @@ how many items each run listed and the scorecard's prose does the rest.
 """
 
 import argparse
+import collections
 import json
 import pathlib
 import re
+import shlex
 
 LISTED_ITEM = re.compile(r"(?m)^(?:\d+[.)]\s|[a-z][.)]\s|[-*+]\s|\*\*\S)")
+
+# A hash-shaped value, which a note abbreviates rather than printing whole.
+HASH = re.compile(r"(?:sha256:)?[0-9a-f]{32,}")
+
+# The characters that would make a recorded command mean something only a
+# shell can carry out. The runner refuses to spawn such a command, so nothing
+# is recovered from one here either.
+SHELL_STRUCTURE = set("|&;<>()")
+
+# What each pin makes comparable, and where the report states it.
+COMPARED_PINS = (
+    ("spec", "the archetype spec"),
+    ("suite", "the acceptance suite"),
+    ("questionnaire", "the exit questionnaire"),
+)
+
+PROVENANCE_FIELDS = (
+    "backend",
+    "executable_version",
+    "model_requested",
+    "model_observed",
+    "prompt",
+    "settings",
+)
 
 
 def counts(values):
@@ -104,8 +139,57 @@ def session(report):
     return f"{wall // 60}m{wall % 60:02d}s, {generated}"
 
 
+def direct_argv(agent_cmd: str) -> list[str]:
+    """A recorded command's argv: quotes and escapes honored, nothing expanded.
+
+    A command that needs a shell to mean what it says parses to nothing, the
+    way the runner refuses to spawn one.
+    """
+    lexer = shlex.shlex(agent_cmd, posix=True, punctuation_chars=True)
+    lexer.whitespace_split = True
+    try:
+        argv = list(lexer)
+    except ValueError:
+        return []
+    if any(
+        (token and set(token) <= SHELL_STRUCTURE) or "$" in token or "`" in token
+        for token in argv
+    ):
+        return []
+    return argv
+
+
+def recorded(agent_cmd: str) -> dict:
+    """What the command the report recorded says was asked, and of what."""
+    argv = direct_argv(agent_cmd)
+    if not argv:
+        return {}
+    found = {"backend": pathlib.PurePath(argv[0]).name, "settings": []}
+    rest = argv[1:]
+    taken = 0
+    while taken < len(rest):
+        argument = rest[taken]
+        taken += 1
+        flag, separator, inline = argument.partition("=")
+        if not (separator and flag.startswith("-")):
+            flag, inline = argument, None
+        field = {"-p": "prompt", "--print": "prompt", "--model": "model_requested"}.get(
+            flag
+        )
+        if field is None:
+            found["settings"].append(argument)
+            continue
+        # Both flags take an optional value, and the flag that follows one
+        # standing alone is a setting rather than its value.
+        if inline is None and taken < len(rest) and not rest[taken].startswith("-"):
+            inline = rest[taken]
+            taken += 1
+        found[field] = inline
+    return found
+
+
 def announced(transcript: pathlib.Path) -> dict:
-    """What the session's transcript says ran it, by the runner's own rule."""
+    """What the session's transcript says answered it, by the runner's rule."""
     found = {}
     if not transcript.is_file():
         return found
@@ -127,17 +211,101 @@ def announced(transcript: pathlib.Path) -> dict:
     return found
 
 
-def agent(report, run_dir: pathlib.Path):
-    provenance = report.get("provenance")
-    recovered = ""
-    if not provenance:
-        transcript = run_dir / report["session"].get("transcript", "transcript.jsonl")
-        provenance = announced(transcript)
-        recovered = " (from transcript)"
-    backend = provenance.get("backend") or "claude"
-    version = provenance.get("executable_version") or "version unstated"
-    model = provenance.get("model_observed") or "model unstated"
-    return f"{backend} {version}, {model}{recovered}"
+def provenance(report, run_dir: pathlib.Path) -> tuple[dict, bool]:
+    """The agent block a report records, or one recovered from the run itself.
+
+    The second value says which: a recovered block is evidence of what
+    answered, not a contemporaneous record of what was asked for.
+    """
+    block = report.get("provenance")
+    if block:
+        return block, False
+    block = recorded(report["session"].get("agent_cmd", ""))
+    transcript = run_dir / report["session"].get("transcript", "transcript.jsonl")
+    block.update(
+        {field: value for field, value in announced(transcript).items() if value}
+    )
+    return block, True
+
+
+def stated(value) -> bool:
+    return value not in (None, "", [])
+
+
+def agent(block: dict, recovered: bool) -> str:
+    if not any(stated(block.get(field)) for field in PROVENANCE_FIELDS):
+        return "unrecorded"
+    backend = block.get("backend") or "backend unstated"
+    version = block.get("executable_version") or "version unstated"
+    model = block.get("model_observed") or "model unstated"
+    return f"{backend} {version}, {model}{' (recovered)' if recovered else ''}"
+
+
+def pins(report) -> dict:
+    """The pins that decide whether two runs measure the same question."""
+    recorded_pins = report.get("pins", {})
+    return {
+        "spec": report["archetype"].get("spec_sha256"),
+        "suite": recorded_pins.get("acceptance_sha256"),
+        "questionnaire": recorded_pins.get("questionnaire_fingerprint"),
+    }
+
+
+def brief(value) -> str:
+    """A value short enough for a note: a hash by its leading digits."""
+    if isinstance(value, list):
+        value = " ".join(value)
+    if not stated(value):
+        return "unstated"
+    value = str(value)
+    if HASH.fullmatch(value):
+        return value.split(":")[-1][:8] + "…"
+    return value if len(value) <= 60 else value[:59] + "…"
+
+
+def difference(area: str, label: str, against, here) -> tuple[str, str] | None:
+    if against == here:
+        return None
+    if not (stated(against) and stated(here)):
+        return (area, f"{label} is stated on one side only: {brief(against)} against {brief(here)}")
+    return (area, f"{label}: {brief(against)} → {brief(here)}")
+
+
+def differences(baseline: dict, row: dict) -> list[tuple[str, str]]:
+    """How a row's question differs from the one its baseline row asked."""
+    found = [
+        difference(area, label, baseline["pins"][area], row["pins"][area])
+        for area, label in COMPARED_PINS
+    ]
+    found += [
+        difference(
+            "agent",
+            field.replace("_", " "),
+            baseline["provenance"].get(field),
+            row["provenance"].get(field),
+        )
+        for field in PROVENANCE_FIELDS
+    ]
+    return [note for note in found if note]
+
+
+def compare(rows: list[dict]) -> None:
+    """Mark every row against the first row its archetype has."""
+    seen = collections.Counter(row["archetype"] for row in rows)
+    baselines: dict[str, dict] = {}
+    for row in rows:
+        baseline = baselines.setdefault(row["archetype"], row)
+        row["baseline"] = baseline["set"]
+        row["differences"] = []
+        if seen[row["archetype"]] == 1:
+            row["comparable"] = "single run"
+        elif baseline is row:
+            row["comparable"] = "baseline"
+        else:
+            found = differences(baseline, row)
+            row["differences"] = [note for _, note in found]
+            areas = sorted({area for area, _ in found})
+            row["comparable"] = "no: " + ", ".join(areas) if areas else "yes"
 
 
 def read_runs(label: str, runs_dir: pathlib.Path) -> list[dict]:
@@ -147,6 +315,7 @@ def read_runs(label: str, runs_dir: pathlib.Path) -> list[dict]:
         if not report_path.is_file():
             continue
         report = json.loads(report_path.read_text())
+        block, recovered = provenance(report, run_dir)
         rows.append(
             {
                 "set": label,
@@ -159,7 +328,12 @@ def read_runs(label: str, runs_dir: pathlib.Path) -> list[dict]:
                 "workarounds": workarounds(report),
                 "frictions": frictions(report),
                 "session": session(report),
-                "agent": agent(report, run_dir),
+                "agent": agent(block, recovered),
+                "pins": pins(report),
+                "provenance": {
+                    field: block.get(field) for field in PROVENANCE_FIELDS
+                },
+                "provenance_recovered": recovered,
             }
         )
     return rows
@@ -175,17 +349,35 @@ COLUMNS = (
     ("frictions", "Frictions listed"),
     ("session", "Session"),
     ("agent", "Agent"),
+    ("comparable", "Comparable"),
 )
 
 
 def markdown(rows: list[dict]) -> str:
+    ordered = sorted(rows, key=lambda row: (row["archetype"], row["set"]))
     header = "| " + " | ".join(title for _, title in COLUMNS) + " |"
     rule = "| " + " | ".join("---" for _ in COLUMNS) + " |"
     body = [
-        "| " + " | ".join(str(row[key]) for key, _ in COLUMNS) + " |"
-        for row in sorted(rows, key=lambda row: (row["archetype"], row["set"]))
+        "| " + " | ".join(str(row[key]) for key, _ in COLUMNS) + " |" for row in ordered
     ]
-    return "\n".join([header, rule, *body])
+    table = "\n".join([header, rule, *body])
+    notes = [
+        f"- **{row['archetype']} / {row['set']}** against `{row['baseline']}` — "
+        + "; ".join(row["differences"])
+        for row in ordered
+        if row["differences"]
+    ]
+    if not notes:
+        return table
+    return "\n".join(
+        [
+            table,
+            "",
+            "Rows marked not comparable, and what differs:",
+            "",
+            *notes,
+        ]
+    )
 
 
 def main() -> None:
@@ -200,6 +392,7 @@ def main() -> None:
         if not path:
             parser.error(f"expected LABEL=RUNS_DIR, got {spec!r}")
         rows.extend(read_runs(label, pathlib.Path(path)))
+    compare(rows)
 
     print(json.dumps(rows, indent=2) if args.json else markdown(rows))
 

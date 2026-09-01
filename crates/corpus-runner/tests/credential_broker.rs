@@ -248,8 +248,22 @@ fn a_body_that_arrives_in_two_segments_is_forwarded_whole() {
         )
         .unwrap();
     caller.flush().unwrap();
-    // Long enough that the broker has certainly tried to read the rest.
-    std::thread::sleep(Duration::from_millis(250));
+    // The tail waits for the broker to admit the connection, which it does
+    // after authorizing the caller and before reading a request byte. A
+    // fixed sleep would only make the ordering likely: miss it under load,
+    // and both segments are readable at once, which is the one case a
+    // non-blocking accepted socket also survives.
+    let admitted = Instant::now();
+    while broker.admitted() == 0 {
+        assert!(
+            admitted.elapsed() < Duration::from_secs(10),
+            "the broker never admitted the connection"
+        );
+        std::thread::sleep(Duration::from_millis(5));
+    }
+    // Admitted, so the next thing the broker does is read this request; the
+    // read is under way well inside this.
+    std::thread::sleep(Duration::from_millis(100));
     caller.write_all(tail.as_bytes()).unwrap();
 
     let mut response = String::new();

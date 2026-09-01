@@ -12,8 +12,13 @@ should be read as the program's measured claim until then.
 Each run pins standout **9.0.0** from crates.io and provisions the published
 documentation snapshot taken at the **v9.0.0 tag** (`docs_commit` 1642d4e), so
 the agent's documentation and its dependency describe the same release. The
-archetype specs, the acceptance suites and the exit questionnaire are the
-pilot's, unchanged.
+archetype specs and the exit questionnaire are the pilot's, unchanged; so are
+`gitlike`'s and `ghlike`'s acceptance suites. **`systemdlike`'s suite is
+not**: one case was relaxed off a clap-specific assertion in the months
+between the two runs (`acceptance_sha256` f3db0930 against the pilot's
+e87a2b05 — [#378](https://github.com/arthur-debert/standout/pull/378)), which
+is why the table marks that row not comparable on acceptance and why the
+paragraph below reads it as a suite change rather than a framework result.
 
 **9.0.0 is the ROB05 blessed-surface release and does not contain the ROB06
 adopter seams.** Those landed on `main` after the release was cut — the first
@@ -31,12 +36,15 @@ workarounds needs the release that carries them.
 | Backend | Claude Code 2.1.234 | Claude Code 2.1.252 |
 | Model | `claude-opus-5[1m]` | `claude-opus-5[1m]` |
 | Session prompt and settings | unchanged | unchanged |
-| Where the record comes from | recovered from the committed transcript | `provenance` block, schema 4 |
+| Where the record comes from | recovered from the recorded command and the committed transcript | `provenance` block, schema 4 |
 
-The model, the prompt and the settings are the pilot's. The backend is 18
-patch versions newer, which is the delta this comparison cannot remove: the
-pilot's 2.1.234 is not obtainable. Every comparison below inherits it, and no
-single figure here should be read as measuring the framework alone.
+The model, the prompt and the settings are the pilot's — recovered field by
+field from the pilot reports' own `session.agent_cmd` and transcripts, and
+compared against the re-run's recorded block rather than assumed. The backend
+is 18 patch versions newer, which is the delta this comparison cannot remove:
+the pilot's 2.1.234 is not obtainable. It is the difference every row carries
+in the table's `Comparable` column, and no single figure here should be read
+as measuring the framework alone.
 
 ## Objective table
 
@@ -48,16 +56,22 @@ python3 corpus/scorecard.py pilot=corpus/pilot/runs rerun=corpus/rerun/runs
 
 <!-- generated: regenerate with the command above -->
 
-| Archetype | Run | Standout | Acceptance | ROB01 invariants | Workarounds listed | Frictions listed | Session | Agent |
-| --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| formlike | pilot | 8.1.1 | 4/11 (36.4%); 7 fail | 12/14 (85.7%) applicable; 30 planned: 12 pass, 2 fail, 16 N/A | 3 | 6 | 12m14s, 53,294 generated tokens | claude 2.1.234, claude-opus-5[1m] (from transcript) |
-| ghlike | pilot | 8.1.1 | 18/18 (100.0%) | 70/70 (100.0%) applicable; 150 planned: 70 pass, 80 N/A | 6 | 6 | 11m49s, 54,492 generated tokens | claude 2.1.234, claude-opus-5[1m] (from transcript) |
-| ghlike | rerun | 9.0.0 | 17/18 (94.4%); 1 fail | 30/70 (42.9%) applicable; 150 planned: 30 pass, 40 fail, 80 N/A | 4 | 4 | 14m47s, 65,568 generated tokens | claude 2.1.252, claude-opus-5[1m] |
-| gitlike | pilot | 8.1.1 | 15/19 (78.9%); 4 unexpected-pass | 48/48 (100.0%) applicable; 120 planned: 48 pass, 72 N/A | 5 | 5 | 12m27s, 56,330 generated tokens | claude 2.1.234, claude-opus-5[1m] (from transcript) |
-| gitlike | rerun | 9.0.0 | 15/19 (78.9%); 4 unexpected-pass | 48/48 (100.0%) applicable; 120 planned: 48 pass, 72 N/A | 5 | 4 | 15m00s, 69,399 generated tokens | claude 2.1.252, claude-opus-5[1m] |
-| systemdlike | pilot | 8.1.1 | 17/18 (94.4%); 1 fail | 56/56 (100.0%) applicable; 120 planned: 56 pass, 64 N/A | 6 | 7 | 12m00s, 54,480 generated tokens | claude 2.1.234, claude-opus-5[1m] |
-| systemdlike | rerun | 9.0.0 | 18/18 (100.0%) | 56/56 (100.0%) applicable; 120 planned: 56 pass, 64 N/A | 3 | 0 | 10m50s, 46,376 generated tokens | claude 2.1.252, claude-opus-5[1m] |
-| validity | pilot | 8.1.1 | 6/22 (27.3%); 16 fail | 40/40 (100.0%) applicable; 80 planned: 40 pass, 40 N/A | 0 | 0 | 16m53s, 54,684 generated tokens | claude 2.1.252, claude-opus-5[1m] (from transcript) |
+| Archetype | Run | Standout | Acceptance | ROB01 invariants | Workarounds listed | Frictions listed | Session | Agent | Comparable |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| formlike | pilot | 8.1.1 | 4/11 (36.4%); 7 fail | 12/14 (85.7%) applicable; 30 planned: 12 pass, 2 fail, 16 N/A | 3 | 6 | 12m14s, 53,294 generated tokens | claude 2.1.234, claude-opus-5[1m] (recovered) | single run |
+| ghlike | pilot | 8.1.1 | 18/18 (100.0%) | 70/70 (100.0%) applicable; 150 planned: 70 pass, 80 N/A | 6 | 6 | 11m49s, 54,492 generated tokens | claude 2.1.234, claude-opus-5[1m] (recovered) | baseline |
+| ghlike | rerun | 9.0.0 | 17/18 (94.4%); 1 fail | 30/70 (42.9%) applicable; 150 planned: 30 pass, 40 fail, 80 N/A | 4 | 4 | 14m47s, 65,568 generated tokens | claude 2.1.252, claude-opus-5[1m] | no: agent |
+| gitlike | pilot | 8.1.1 | 15/19 (78.9%); 4 unexpected-pass | 48/48 (100.0%) applicable; 120 planned: 48 pass, 72 N/A | 5 | 5 | 12m27s, 56,330 generated tokens | claude 2.1.234, claude-opus-5[1m] (recovered) | baseline |
+| gitlike | rerun | 9.0.0 | 15/19 (78.9%); 4 unexpected-pass | 48/48 (100.0%) applicable; 120 planned: 48 pass, 72 N/A | 5 | 4 | 15m00s, 69,399 generated tokens | claude 2.1.252, claude-opus-5[1m] | no: agent |
+| systemdlike | pilot | 8.1.1 | 17/18 (94.4%); 1 fail | 56/56 (100.0%) applicable; 120 planned: 56 pass, 64 N/A | 6 | 7 | 12m00s, 54,480 generated tokens | claude 2.1.234, claude-opus-5[1m] (recovered) | baseline |
+| systemdlike | rerun | 9.0.0 | 18/18 (100.0%) | 56/56 (100.0%) applicable; 120 planned: 56 pass, 64 N/A | 3 | 0 | 10m50s, 46,376 generated tokens | claude 2.1.252, claude-opus-5[1m] | no: agent, suite |
+| validity | pilot | 8.1.1 | 6/22 (27.3%); 16 fail | 40/40 (100.0%) applicable; 80 planned: 40 pass, 40 N/A | 0 | 0 | 16m53s, 54,684 generated tokens | claude 2.1.252, claude-opus-5[1m] (recovered) | single run |
+
+Rows marked not comparable, and what differs:
+
+- **ghlike / rerun** against `pilot` — executable version: 2.1.234 → 2.1.252
+- **gitlike / rerun** against `pilot` — executable version: 2.1.234 → 2.1.252
+- **systemdlike / rerun** against `pilot` — the acceptance suite: e87a2b05… → f3db0930…; executable version: 2.1.234 → 2.1.252
 
 The `validity` row is the ROB07-WS01 run against 8.1.1. It is a method check,
 not a framework measurement, and the epic excludes it from the v1/v2
@@ -73,10 +87,16 @@ seam, an app-owned exit status (`ExternalFailure` again standing in for a
 status the framework does not name), and `NO_COLOR` against a requested
 `--output term`.
 
-**`systemdlike` improved on every signal.** 18 of 18 against 17: the case the
-pilot failed asserted the `Usage` line that 8.1.1's clap error omitted, and
-9.0 emits it. Three workarounds against six, no frictions listed against seven,
-and 10m50s against 12m00s.
+**`systemdlike`'s acceptance figures are not comparable, and the rest
+improved.** 18 of 18 against 17 is a suite change, not a framework result: the
+case the pilot failed, `bad-state-value-usage-error`, asserted a `Usage` line
+that clap's invalid-value diagnostic never prints, and the assertion was
+relaxed to the diagnostic clap actually emits after the pilot ran
+([#362](https://github.com/arthur-debert/standout/issues/362),
+[#378](https://github.com/arthur-debert/standout/pull/378)). The re-run passes
+the relaxed case; nothing here says 9.0 changed that output. What does compare
+is everything the suite did not touch: three workarounds against six, no
+frictions listed against seven, and 10m50s against 12m00s.
 
 **`ghlike`'s two moved figures are both about assertions, not the app.**
 
