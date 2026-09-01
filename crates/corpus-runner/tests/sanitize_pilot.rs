@@ -154,12 +154,8 @@ fn is_email_domain(c: char) -> bool {
 }
 
 // rustc names a closure's type after where it was written — `{closure@main.rs:39:29}` —
-// so that `@` joins a file to a line and column, never a mailbox to a host. Compiler
-// diagnostics land in every run's transcript, and the file name varies per diagnostic,
-// so the scan reads the whole braced form instead of vouching each value. Every part
-// has to be there: the `{closure` opener, a `.rs` file, and `:line:column}`. Anything
-// short of that stays a hit — a rustc form the scan has not learned costs a false
-// positive someone triages, where a loose rule costs a mailbox nobody sees.
+// so that `@` joins a file to a line and column, never a mailbox to a host. Demanding
+// every part of the form fails toward a false positive, never toward a missed mailbox.
 fn is_rustc_closure_type(local: &str, before: &str, domain: &str, after: &str) -> bool {
     if local != "closure" || !before.ends_with('{') || !domain.ends_with(".rs") {
         return false;
