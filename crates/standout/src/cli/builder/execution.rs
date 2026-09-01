@@ -4,7 +4,6 @@ use crate::{
 };
 use clap::{Arg, ArgAction, ArgMatches, Command};
 use standout_render::warnings::WarningBuffer;
-use std::io::Write;
 use std::path::PathBuf;
 
 use super::{
@@ -404,7 +403,15 @@ impl App {
         let (handled, final_write_failure) = if paged {
             (true, None)
         } else {
-            emit_run_result(result.outcome(), &mut stdout, &mut stderr)
+            match crate::cli::emit_run_result(
+                result.outcome(),
+                result.output_mode(),
+                &mut stdout,
+                &mut stderr,
+            ) {
+                Ok(handled) => (handled, None),
+                Err(failure) => (true, Some(failure)),
+            }
         };
         drop(stdout);
         drop(stderr);
@@ -840,98 +847,6 @@ impl App {
             artifact.suggested_destination,
             receipt,
             report,
-        ))
-    }
-}
-
-fn emit_artifact<W: Write, E: Write>(
-    run: &ArtifactRun,
-    stdout: &mut W,
-    stderr: &mut E,
-) -> Option<RunError> {
-    let to_stdout = run.destination().is_stdout();
-
-    if to_stdout {
-        if let Err(error) = stdout.write_all(run.bytes()).and_then(|()| stdout.flush()) {
-            return Some(RunError::new(
-                format!("Error writing artifact stdout: {}", error),
-                RunErrorKind::FinalWrite(OutputKind::Artifact),
-            ));
-        }
-    }
-
-    let report = run.report().filter(|report| !report.is_empty())?;
-
-    let written = if to_stdout {
-        writeln!(stderr, "{}", report).and_then(|()| stderr.flush())
-    } else {
-        writeln!(stdout, "{}", report).and_then(|()| stdout.flush())
-    };
-
-    written.err().map(|error| {
-        RunError::new(
-            format!("Error writing artifact report: {}", error),
-            RunErrorKind::FinalWrite(OutputKind::Artifact),
-        )
-    })
-}
-
-fn emit_run_result<W: Write, E: Write>(
-    result: &DispatchResult,
-    stdout: &mut W,
-    stderr: &mut E,
-) -> (bool, Option<RunError>) {
-    let failure = match result {
-        DispatchResult::Handled(output) if output.is_empty() => None,
-        DispatchResult::Handled(output) => writeln!(stdout, "{}", output)
-            .and_then(|()| stdout.flush())
-            .err()
-            .and_then(|error| final_write_error_unless_broken_pipe(error, OutputKind::Text)),
-        DispatchResult::Binary(bytes, _) => stdout
-            .write_all(bytes)
-            .and_then(|()| stdout.flush())
-            .err()
-            .map(|error| {
-                RunError::new(
-                    format!("Error writing binary stdout: {}", error),
-                    RunErrorKind::FinalWrite(OutputKind::Binary),
-                )
-            }),
-        DispatchResult::Artifact(run) => emit_artifact(run, stdout, stderr),
-        DispatchResult::Silent => None,
-        DispatchResult::Error(error) => (if error.writes_diagnostic_verbatim() {
-            stderr.write_all(error.as_str().as_bytes())
-        } else {
-            writeln!(stderr, "{}", error)
-        })
-        .and_then(|()| stderr.flush())
-        .err()
-        .map(|write_error| {
-            RunError::new(
-                format!("Error writing stderr: {}", write_error),
-                RunErrorKind::FinalWrite(OutputKind::Text),
-            )
-        }),
-        DispatchResult::NoMatch(_) => return (false, None),
-        _ => return (false, None),
-    };
-
-    if let Some(error) = &failure {
-        let _ = writeln!(stderr, "{}", error).and_then(|()| stderr.flush());
-    }
-    (true, failure)
-}
-
-fn final_write_error_unless_broken_pipe(
-    error: std::io::Error,
-    kind: OutputKind,
-) -> Option<RunError> {
-    if kind == OutputKind::Text && error.kind() == std::io::ErrorKind::BrokenPipe {
-        None
-    } else {
-        Some(RunError::new(
-            format!("Error writing stdout: {}", error),
-            RunErrorKind::FinalWrite(kind),
         ))
     }
 }
@@ -2991,163 +2906,5 @@ header:
 
         assert!(result.is_handled());
         assert_eq!(result.output(), Some("https://api.example.com"));
-    }
-
-    struct FailingWriter;
-
-    impl std::io::Write for FailingWriter {
-        fn write(&mut self, _buf: &[u8]) -> std::io::Result<usize> {
-            Err(std::io::Error::new(
-                std::io::ErrorKind::BrokenPipe,
-                "closed",
-            ))
-        }
-
-        fn flush(&mut self) -> std::io::Result<()> {
-            Err(std::io::Error::new(
-                std::io::ErrorKind::BrokenPipe,
-                "closed",
-            ))
-        }
-    }
-
-    #[derive(Default)]
-    struct FlushFailingWriter {
-        bytes: Vec<u8>,
-    }
-
-    impl std::io::Write for FlushFailingWriter {
-        fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
-            self.bytes.extend_from_slice(buf);
-            Ok(buf.len())
-        }
-
-        fn flush(&mut self) -> std::io::Result<()> {
-            Err(std::io::Error::new(
-                std::io::ErrorKind::BrokenPipe,
-                "flush closed",
-            ))
-        }
-    }
-
-    #[test]
-    fn final_emission_routes_success_and_diagnostics_to_distinct_streams() {
-        let mut stdout = Vec::new();
-        let mut stderr = Vec::new();
-        let (handled, failure) = emit_run_result(
-            &DispatchResult::Handled(RunOutput::command("hello")),
-            &mut stdout,
-            &mut stderr,
-        );
-        assert!(handled);
-        assert!(failure.is_none());
-        assert_eq!(stdout, b"hello\n");
-        assert!(stderr.is_empty());
-
-        stdout.clear();
-        let (handled, failure) = emit_run_result(
-            &DispatchResult::Error(RunError::new("bad argv", RunErrorKind::ClapUsage)),
-            &mut stdout,
-            &mut stderr,
-        );
-        assert!(handled);
-        assert!(failure.is_none());
-        assert!(stdout.is_empty());
-        assert_eq!(stderr, b"bad argv\n");
-    }
-
-    #[test]
-    fn final_text_broken_pipe_is_successful_early_termination() {
-        let mut stderr = Vec::new();
-        let (_, text_failure) = emit_run_result(
-            &DispatchResult::Handled(RunOutput::command("hello")),
-            &mut FailingWriter,
-            &mut stderr,
-        );
-        assert!(text_failure.is_none());
-        assert!(stderr.is_empty());
-    }
-
-    #[test]
-    fn final_binary_write_failures_keep_payload_kind() {
-        let mut stderr = Vec::new();
-        let (_, binary_failure) = emit_run_result(
-            &DispatchResult::Binary(vec![0, 1], "data.bin".into()),
-            &mut FailingWriter,
-            &mut stderr,
-        );
-        let binary_failure = binary_failure.unwrap();
-        assert_eq!(
-            binary_failure.kind(),
-            RunErrorKind::FinalWrite(OutputKind::Binary)
-        );
-        assert_eq!(
-            binary_failure.exit_status(),
-            crate::cli::ExitStatus::FAILURE
-        );
-    }
-
-    #[test]
-    fn final_text_broken_pipe_flush_is_successful_early_termination() {
-        let mut text_stdout = FlushFailingWriter::default();
-        let (_, text_failure) = emit_run_result(
-            &DispatchResult::Handled(RunOutput::command("hello")),
-            &mut text_stdout,
-            &mut Vec::new(),
-        );
-        assert_eq!(text_stdout.bytes, b"hello\n");
-        assert!(text_failure.is_none());
-    }
-
-    #[test]
-    fn final_binary_flush_failures_keep_payload_kind() {
-        let mut binary_stdout = FlushFailingWriter::default();
-        let (_, binary_failure) = emit_run_result(
-            &DispatchResult::Binary(vec![0, 1], "data.bin".into()),
-            &mut binary_stdout,
-            &mut Vec::new(),
-        );
-        assert_eq!(binary_stdout.bytes, [0, 1]);
-        assert_eq!(
-            binary_failure.unwrap().kind(),
-            RunErrorKind::FinalWrite(OutputKind::Binary)
-        );
-    }
-
-    #[test]
-    fn artifact_report_write_failures_keep_artifact_kind_on_both_channels() {
-        let file_run = ArtifactRun::new(
-            vec![0, 1],
-            None,
-            ArtifactReceipt::new(ArtifactDestination::File("out.bin".into()), 2),
-            Some("wrote out.bin".into()),
-        );
-        let (_, file_report_failure) = emit_run_result(
-            &DispatchResult::Artifact(file_run),
-            &mut FailingWriter,
-            &mut Vec::new(),
-        );
-        assert_eq!(
-            file_report_failure.unwrap().kind(),
-            RunErrorKind::FinalWrite(OutputKind::Artifact)
-        );
-
-        let stdout_run = ArtifactRun::new(
-            vec![0, 1],
-            None,
-            ArtifactReceipt::new(ArtifactDestination::Stdout, 2),
-            Some("wrote stdout".into()),
-        );
-        let mut stdout = Vec::new();
-        let (_, stdout_report_failure) = emit_run_result(
-            &DispatchResult::Artifact(stdout_run),
-            &mut stdout,
-            &mut FailingWriter,
-        );
-        assert_eq!(stdout, [0, 1]);
-        assert_eq!(
-            stdout_report_failure.unwrap().kind(),
-            RunErrorKind::FinalWrite(OutputKind::Artifact)
-        );
     }
 }

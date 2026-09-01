@@ -78,10 +78,51 @@ fn stdout_and_stderr_carry_different_content() {
         "the report must not ride the stdout byte stream"
     );
     assert_eq!(
-        result.stdout(),
-        "",
+        result.stdout().as_bytes(),
+        stdout_payload,
         "the artifact owns stdout, so nothing textual joins its bytes there"
     );
+}
+#[test]
+#[serial]
+fn opaque_stdout_is_observable_byte_for_byte() {
+    const RAW: &[u8] = &[0xff, 0x00, b'x', 0xfe];
+    let app = App::builder()
+        .templates(EmbeddedTemplates::new(TEMPLATES, ""))
+        .command_with(
+            "export",
+            FnHandler::new(|_m, _ctx| {
+                Ok(Output::Artifact(
+                    Artifact::<serde_json::Value>::new(RAW.to_vec()).allow_stdout(),
+                ))
+            }),
+            |cfg| cfg,
+        )
+        .unwrap()
+        .build()
+        .unwrap();
+    let result = TestHarness::new().run(&app, export_command(), ["app", "export"]);
+    result.assert_success();
+    assert_eq!(result.stdout_bytes(), RAW);
+    assert_ne!(result.stdout().as_bytes(), RAW);
+    let app = App::builder()
+        .templates(EmbeddedTemplates::new(TEMPLATES, ""))
+        .command_with(
+            "export",
+            FnHandler::new(|_m, _ctx| -> HandlerResult<serde_json::Value> {
+                Ok(Output::Binary {
+                    data: RAW.to_vec(),
+                    filename: "raw.bin".into(),
+                })
+            }),
+            |cfg| cfg,
+        )
+        .unwrap()
+        .build()
+        .unwrap();
+    let result = TestHarness::new().run(&app, export_command(), ["app", "export"]);
+    result.assert_success();
+    assert_eq!(result.stdout_bytes(), RAW);
 }
 #[test]
 #[serial]

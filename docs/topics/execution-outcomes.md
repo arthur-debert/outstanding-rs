@@ -20,12 +20,56 @@ runtime failure.
 | Handler, hook, render, pipe, or write failure | stderr | `1` |
 | Application-declared external failure | stderr | exact declared nonzero status |
 
+The failure rows describe the human modes (`auto`, `term`, `text`, `term-debug`
+and, until its deletion, `xml`); under a structured mode a failure is the stdout
+document instead, [below](#failures-under-a-structured-mode).
+
 Framework warning flushing happens after the primary output and does not replace
 its status. Warnings cover non-fatal framework-owned setup, resource-loading,
 and accepted-input diagnostics, including answer-sheet parse warnings that do
 not reject a questionnaire submission. A final text or binary write failure does
 replace a successful status with `1`, except that `BrokenPipe` while writing
 final rendered command text to stdout is successful early consumer termination.
+
+## Failures under a structured mode
+
+When the resolved output mode is `json`, `yaml` or `csv`, stdout is one document
+per run — the result or the diagnostic, never both — and stderr carries nothing
+the framework wrote for the failure. Statuses do not change. An `App` or
+`External` failure still writes its verbatim bytes to stderr (ADR-0035) and adds
+the stdout document, kind `app` or `external`, with the bytes as `detail`.
+Warnings stay prose on stderr in these modes, because the document has one root.
+
+The document is `Diagnostic`, serialized flat; `range` is present only when set:
+
+```json
+{
+  "type": "diagnostic",
+  "schema_version": 1,
+  "severity": "error",
+  "kind": "handler",
+  "summary": "config line 2 does not parse",
+  "detail": "expected `resource <name> <state>`",
+  "range": { "filename": "main.tfl", "start": { "line": 2, "column": 1 } }
+}
+```
+
+`kind` is a `DiagnosticKind`, the `RunErrorKind` projected onto the fixed wire
+vocabulary: `clap-usage`, `default-command`, `handler`, `hook-pre-dispatch`,
+`hook-post-dispatch`, `hook-post-output`, `render`, `final-write` (for every
+`FinalWrite` payload), `external`, `app`. In `csv` the
+document is one row whose header ends in `range_filename`, `range_line` and
+`range_column`, empty when there is no range. `RunError::diagnostic()` is the
+value, `emit_run_result` writes it, and `standout::cli::parse_diagnostic` reads
+it back, which is what `TestResult::diagnostic()` does. How an error fills
+`summary` and `detail` is in [Error Handling](./error-handling.md#the-diagnostic-document).
+
+A failure clap reports before a parse completes — an unknown flag, a
+default-command miss, `--help` — takes its mode from a scan of the raw argv for
+the output flag: the last occurrence wins, `--output json` and `--output=json`
+alike, and nothing after `--` counts. A value that is not a mode
+(`--output jsn`) is a clap usage error as prose on stderr, exit 2: the mode is
+the thing that is unknown, so there is nothing to serialize the diagnostic in.
 
 ## Emitting without exiting
 
@@ -40,6 +84,12 @@ let outcome = app.run_emitted(Cli::command(), std::env::args());
 telemetry.shutdown();
 std::process::exit(outcome.status.code().into());
 ```
+
+`run_emitted` writes through `standout::cli::emit_run_result(&outcome,
+output_mode, &mut stdout, &mut stderr)`, which is public: `standout-test`'s
+harness writes its two streams with it, and an adopter that keeps its own
+process edge can too. It returns `Ok(handled)` or the final-write failure whose
+status replaces the run's own.
 
 `ProcessOutcome` has two public fields. `handled` is the `bool` that `run`
 returns: `false` only for a `NoMatch` handoff. `status` is the final
@@ -155,7 +205,8 @@ is reached by neither spelling and is reported as unreachable. Registering
 ## Framework-owned final writes
 
 `run()` writes successful text and binary bytes to stdout, diagnostics to
-stderr, and exits with the typed non-zero status when execution fails. The one
+stderr in a human mode and to stdout as a document in a structured one, and
+exits with the typed non-zero status when execution fails. The one
 exception is a paged help display (`SuccessKind::PagedHelp`), which goes to the
 pager instead; if no pager is available it falls back to stdout, so help is
 never lost. A closed

@@ -1,7 +1,8 @@
 pub use standout_dispatch::{
     AppFailure, Artifact, ArtifactDestination, ArtifactReceipt, ArtifactRun, CommandContext,
-    DispatchResult, ExitStatus, Extensions, ExternalFailure, FnHandler, Handler, HandlerResult,
-    InvalidAppStatus, InvalidExternalStatus, Output, OutputKind, RunError, RunErrorKind, RunOutput,
+    Diagnostic, DiagnosticKind, DiagnosticPosition, DiagnosticRange, DispatchResult, ExitStatus,
+    Extensions, ExternalFailure, FnHandler, Handler, HandlerResult, InvalidAppStatus,
+    InvalidExternalStatus, Output, OutputKind, RunError, RunErrorKind, RunOutput, Severity,
     SuccessKind,
 };
 

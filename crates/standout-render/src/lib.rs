@@ -28,6 +28,7 @@
 pub mod colorspace;
 pub mod context;
 pub mod diagnostics;
+pub mod document;
 mod embedded;
 mod environment;
 mod error;
@@ -77,6 +78,7 @@ pub use standout_bbparser::{
 };
 
 pub use diagnostics::TagResolution;
+pub use document::{deserialize_document, serialize_document};
 
 pub use util::{
     flatten_json_for_csv, rgb_to_ansi256, rgb_to_truecolor, serialize_to_xml, truncate_to_width,

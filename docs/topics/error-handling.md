@@ -21,6 +21,34 @@ A hook's own `Display` names its phase, which is why a hook line carries
 internal and may change in any release (ADR-0033); an application that must pin
 its stderr bytes writes them itself through `AppFailure`, below.
 
+## The diagnostic document
+
+Under `--output json`, `yaml` or `csv` the framing above does not apply: the
+failure is the stdout document, and stderr carries nothing for it. The document
+is `Diagnostic` (`standout::cli::Diagnostic`): `type`, `schema_version`,
+`severity`, `kind`, `summary`, `detail`, and an optional `range`. An ordinary
+error becomes `summary` from its `Display` with an empty `detail`; a handler
+that has more to say returns a `Diagnostic` as its error:
+
+```rust
+use standout::cli::{Diagnostic, HandlerResult};
+
+fn handler(_matches: &ArgMatches, _ctx: &CommandContext) -> HandlerResult<View> {
+    Err(Diagnostic::error("config line 2 does not parse")
+        .detail("expected `resource <name> <state>`")
+        .range("main.tfl", 2, 1)
+        .into())
+}
+```
+
+In a human mode the same value is prose under the framing:
+`Error: main.tfl:2:1: config line 2 does not parse`, the detail on the next
+line. A hook failure reaches the document with the `HookError`'s `message` as
+`summary`; its phase is the `kind` (`hook-pre-dispatch`, `hook-post-dispatch`,
+`hook-post-output`). The shape per mode, the `kind` vocabulary and the argv
+scan that picks the mode for a pre-parse failure are in
+[Execution Outcomes](./execution-outcomes.md#failures-under-a-structured-mode).
+
 ## Ordinary application errors
 
 Return ordinary errors through `HandlerResult` with `?`. Standout applies the
@@ -59,10 +87,10 @@ fn handler(_matches: &ArgMatches, _ctx: &CommandContext) -> HandlerResult<View> 
 A pre-dispatch guard reaches the same seam through
 `HookError::pre_dispatch_app`. Capture callers see `RunErrorKind::App`.
 
-`AppFailure` carries a status and bytes, and nothing else. It is not a
-structured error type: the machine-readable error envelope belongs to the
-parity program's machine contract, which will version the envelope this seam
-feeds (ADR-0035).
+`AppFailure` carries a status and bytes, and nothing else. Under a structured
+mode the bytes still reach stderr verbatim, and stdout carries a diagnostic of
+kind `app` whose `detail` is the bytes and whose `summary` is their first line
+(ADR-0037).
 
 ## Preserving an authoritative external failure
 
@@ -97,6 +125,9 @@ Hooks::new().pre_dispatch(|_matches, _ctx| {
     Err(HookError::pre_dispatch_external(failure))
 })
 ```
+
+Under a structured mode an `ExternalFailure` behaves as `AppFailure` does: the
+bytes reach stderr verbatim and stdout carries a diagnostic of kind `external`.
 
 Neither escape hatch is an error-mapping registry. Wrapping an ordinary error
 does not change its status, and neither declaration is recognized from

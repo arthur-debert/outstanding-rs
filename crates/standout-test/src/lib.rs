@@ -26,7 +26,9 @@
 
 use clap::Command;
 use standout::cli::DispatchResult;
-use standout::cli::{App, ArtifactDestination, ArtifactRun, ExitStatus, RunErrorKind, SuccessKind};
+use standout::cli::{
+    App, ArtifactDestination, ArtifactRun, Diagnostic, ExitStatus, RunErrorKind, SuccessKind,
+};
 use standout::{ColorMode, IconMode, InputSources, TargetProperties};
 use standout_input::env::{MockClipboard, MockStdin};
 use standout_input::PromptResponder;
@@ -253,11 +255,29 @@ impl TestHarness {
         let outcome = run.into_outcome();
         let tag_resolutions = standout_render::diagnostics::take_captured();
         let theme = app.get_default_theme();
+        let mut stdout = Vec::new();
+        let mut stderr = Vec::new();
+        standout::cli::emit_run_result(&outcome, output_mode, &mut stdout, &mut stderr)
+            .expect("in-memory streams never fail a final write");
+        // `stdout()` is the rendered text; a process gets it plus the one
+        // newline `emit_run_result` terminates rendered text with.
+        if matches!(outcome, DispatchResult::Handled(_)) && stdout.last() == Some(&b'\n') {
+            stdout.pop();
+        }
+        let mut stderr = String::from_utf8_lossy(&stderr).into_owned();
+        stderr.push_str(&standout_render::warnings::render_block_for_target(
+            theme,
+            output_mode,
+            target,
+            &warnings,
+        ));
         TestResult {
-            stdout: render_stdout(&outcome),
-            stderr: render_stderr(&outcome, &warnings, output_mode, target, theme),
+            stdout: String::from_utf8_lossy(&stdout).into_owned(),
+            stdout_bytes: stdout,
+            stderr,
             outcome,
             warnings,
+            output_mode,
             tag_resolutions,
             _tempdir: self.tempdir.take(),
             _restore: restore,
@@ -341,35 +361,6 @@ fn validate_fixture_path(path: &Path) -> PathBuf {
     }
     path.to_path_buf()
 }
-fn render_stdout(outcome: &DispatchResult) -> String {
-    match outcome {
-        DispatchResult::Handled(text) => text.as_str().to_string(),
-        DispatchResult::Artifact(run) if !run.destination().is_stdout() => report_line(run),
-        _ => String::new(),
-    }
-}
-fn render_stderr(
-    outcome: &DispatchResult,
-    warnings: &[String],
-    output_mode: OutputMode,
-    target: TargetProperties,
-    theme: &standout::Theme,
-) -> String {
-    let primary = match outcome {
-        DispatchResult::Error(error) if error.writes_diagnostic_verbatim() => error.to_string(),
-        DispatchResult::Error(error) => format!("{}\n", error),
-        DispatchResult::Artifact(run) if run.destination().is_stdout() => report_line(run),
-        _ => String::new(),
-    };
-    primary
-        + &standout_render::warnings::render_block_for_target(theme, output_mode, target, warnings)
-}
-fn report_line(run: &ArtifactRun) -> String {
-    run.report()
-        .filter(|report| !report.is_empty())
-        .map(|report| format!("{}\n", report))
-        .unwrap_or_default()
-}
 fn output_mode_flag(mode: OutputMode) -> &'static str {
     match mode {
         OutputMode::Auto => "auto",
@@ -403,8 +394,10 @@ impl Drop for RestoreState {
 pub struct TestResult {
     outcome: DispatchResult,
     stdout: String,
+    stdout_bytes: Vec<u8>,
     stderr: String,
     warnings: Vec<String>,
+    output_mode: OutputMode,
     tag_resolutions: Vec<TagResolution>,
     _tempdir: Option<TempDir>,
     _restore: RestoreState,
@@ -444,8 +437,31 @@ impl TestResult {
     pub fn error_kind(&self) -> Option<RunErrorKind> {
         self.outcome.error_kind()
     }
+    pub fn output_mode(&self) -> OutputMode {
+        self.output_mode
+    }
+    /// The diagnostic document the run wrote to stdout: `None` when the
+    /// resolved mode carries no document or stdout is not one.
+    pub fn diagnostic(&self) -> Option<Diagnostic> {
+        standout::cli::parse_diagnostic(self.output_mode, &self.stdout).ok()
+    }
+    #[track_caller]
+    pub fn expect_diagnostic(&self) -> Diagnostic {
+        match standout::cli::parse_diagnostic(self.output_mode, &self.stdout) {
+            Ok(diagnostic) => diagnostic,
+            Err(error) => panic!(
+                "expected a diagnostic document on stdout in {:?} mode ({error}), got:\n--- stdout ---\n{}\n--------------",
+                self.output_mode, self.stdout
+            ),
+        }
+    }
     pub fn stdout(&self) -> &str {
         &self.stdout
+    }
+    /// What the run wrote to stdout, byte for byte; `stdout()` is its lossy
+    /// text, minus the newline that terminates rendered text.
+    pub fn stdout_bytes(&self) -> &[u8] {
+        &self.stdout_bytes
     }
     pub fn stderr(&self) -> &str {
         &self.stderr

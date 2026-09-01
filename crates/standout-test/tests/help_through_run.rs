@@ -195,26 +195,50 @@ fn structured_topics_still_print_human_text() {
 }
 #[test]
 #[serial]
-fn the_output_flag_reaches_the_word_but_not_the_flags() {
+fn the_output_flag_reaches_the_word_and_the_flags_alike() {
     let fixture = downstream().flat().build();
-    let word = TestHarness::new().no_color().run(
+    for args in [
+        &["lookma", "help", "--output", "term-debug"][..],
+        &["lookma", "--help", "--output", "term-debug"][..],
+        &["lookma", "--output", "term-debug", "--help"][..],
+        &["lookma", "-h", "--output=term-debug"][..],
+        &[
+            "lookma",
+            "--output",
+            "text",
+            "--help",
+            "--output",
+            "term-debug",
+        ][..],
+    ] {
+        let result = TestHarness::new()
+            .no_color()
+            .run(fixture.app(), fixture.command(), args);
+        result.assert_success();
+        assert!(
+            result.stdout().contains("[header]USAGE[/header]"),
+            "{args:?} must render in the typed mode:\n{}",
+            result.stdout()
+        );
+    }
+    let text = TestHarness::new().no_color().run(
         fixture.app(),
         fixture.command(),
-        ["lookma", "help", "--output", "term-debug"],
+        [
+            "lookma",
+            "--output",
+            "term-debug",
+            "--help",
+            "--output",
+            "text",
+        ],
     );
-    word.assert_stdout_contains("[header]USAGE[/header]");
-    drop(word);
-    let flag = TestHarness::new().no_color().run(
-        fixture.app(),
-        fixture.command(),
-        ["lookma", "--help", "--output", "term-debug"],
-    );
-    flag.assert_success();
-    flag.assert_stdout_contains("USAGE");
+    text.assert_success();
+    text.assert_stdout_contains("USAGE");
     assert!(
-        !flag.stdout().contains("[header]"),
-        "`--help` renders in Auto, so the requested mode is not applied:\n{}",
-        flag.stdout()
+        !text.stdout().contains("[header]"),
+        "the last `--output` wins:\n{}",
+        text.stdout()
     );
 }
 #[test]

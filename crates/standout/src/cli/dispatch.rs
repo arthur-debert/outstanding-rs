@@ -5,7 +5,9 @@ use std::rc::Rc;
 
 use crate::cli::builder::{SharedTemplateEngine, TemplateAbsence, TemplateRef};
 use crate::cli::handler::Output as HandlerOutput;
-use crate::cli::handler::{AppFailure, CommandContext, ExternalFailure, RunError, RunErrorKind};
+use crate::cli::handler::{
+    AppFailure, CommandContext, Diagnostic, ExternalFailure, RunError, RunErrorKind,
+};
 use crate::cli::hooks::{ArtifactOutput, HookError, Hooks};
 use crate::context::ContextRegistry;
 use crate::Theme;
@@ -262,7 +264,17 @@ pub(crate) fn handler_run_error(error: anyhow::Error) -> RunError {
         Err(error) => error,
     };
 
+    let error = match error.downcast::<Diagnostic>() {
+        Ok(diagnostic) => {
+            return RunError::new(frame_diagnostic(&diagnostic), RunErrorKind::Handler)
+                .with_diagnostic(diagnostic.clone())
+                .with_source(diagnostic)
+        }
+        Err(error) => error,
+    };
+
     RunError::new(frame_diagnostic(&error), RunErrorKind::Handler)
+        .with_diagnostic(Diagnostic::error(error.to_string()))
         .with_source(HandlerErrorSource(error.into_boxed_dyn_error()))
 }
 
@@ -281,7 +293,15 @@ pub(crate) fn hook_run_error(mut error: HookError, phase: crate::cli::HookPhase)
     }
 
     error.phase = phase;
-    RunError::new(frame_diagnostic(&error), RunErrorKind::Hook(phase)).with_source(error)
+    let diagnostic = error
+        .source
+        .as_ref()
+        .and_then(|source| source.downcast_ref::<Diagnostic>())
+        .cloned()
+        .unwrap_or_else(|| Diagnostic::error(error.message.clone()));
+    RunError::new(frame_diagnostic(&error), RunErrorKind::Hook(phase))
+        .with_diagnostic(diagnostic)
+        .with_source(error)
 }
 
 pub type DispatchFn = Rc<
