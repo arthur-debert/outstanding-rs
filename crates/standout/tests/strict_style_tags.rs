@@ -5,7 +5,7 @@
 
 use clap::Command;
 use serde_json::json;
-use standout::cli::handler::{ExitStatus, RunErrorKind};
+use standout::cli::handler::{DispatchResult, ExitStatus, RunErrorKind};
 use standout::cli::{App, FnHandler, Output};
 use standout::{embed_styles, EmbeddedTemplates};
 use standout_test::TestHarness;
@@ -61,6 +61,7 @@ fn strict_on_fails_and_names_a_balanced_unresolved_tag() {
     let result = run(true, "balanced-unknown");
     result.assert_exit_status(ExitStatus::FAILURE);
     result.assert_error_kind(RunErrorKind::Render);
+    result.assert_stdout_eq("");
     let error = result.error().expect("strict mode should produce an error");
     assert!(
         error.contains("bogus"),
@@ -79,6 +80,7 @@ fn strict_on_fails_and_names_an_unbalanced_unresolved_tag() {
     let result = run(true, "unbalanced-unknown");
     result.assert_exit_status(ExitStatus::FAILURE);
     result.assert_error_kind(RunErrorKind::Render);
+    result.assert_stdout_eq("");
     assert!(
         result.error().unwrap().contains("bogus"),
         "error should name the tag: {:?}",
@@ -125,6 +127,61 @@ fn strict_on_ignores_a_malformed_but_defined_tag() {
         "a malformed defined tag is not unresolved: {:?}",
         result.unresolved_tag_names()
     );
+}
+
+#[test]
+fn strict_failure_leaves_a_preexisting_output_file_untouched() {
+    // The "no output is emitted" contract covers `--output-file-path` too: the
+    // gate runs before the file write, so a strict failure must not create or
+    // overwrite the requested file.
+    let tempdir = tempfile::tempdir().unwrap();
+    let output_file = tempdir.path().join("out.txt");
+    std::fs::write(&output_file, "original contents").unwrap();
+
+    let result = TestHarness::new().text_output().run(
+        &app(true),
+        command(),
+        [
+            "app",
+            "--output-file-path",
+            output_file.to_str().unwrap(),
+            "balanced-unknown",
+        ],
+    );
+
+    result.assert_exit_status(ExitStatus::FAILURE);
+    result.assert_error_kind(RunErrorKind::Render);
+    assert_eq!(
+        std::fs::read_to_string(&output_file).unwrap(),
+        "original contents",
+        "a strict failure must not overwrite the requested output file"
+    );
+}
+
+#[test]
+fn strict_gate_fires_through_a_direct_run_with_call() {
+    // `run_with` is a public entry point that a caller may drive without opening
+    // a capture window of its own. The shared `collect_run_warnings` boundary now
+    // opens one, so strict mode enforces here just as it does through `run`,
+    // rather than silently passing for want of a window.
+    let result = app(true).run_with(
+        command(),
+        ["app", "balanced-unknown"],
+        standout::TargetProperties::detect(),
+        standout::InputSources::from_process(),
+    );
+
+    match result.outcome() {
+        DispatchResult::Error(error) => {
+            assert_eq!(error.kind(), RunErrorKind::Render);
+            assert!(
+                error.as_str().contains("bogus"),
+                "error should name the tag: {}",
+                error.as_str()
+            );
+        }
+        other => panic!("expected a strict Render error, got {other:?}"),
+    }
 }
 
 #[test]

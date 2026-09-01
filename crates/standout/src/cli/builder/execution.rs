@@ -15,8 +15,8 @@ use crate::cli::default_command::ParseFailure;
 use crate::cli::dispatch::{dispatch, extract_command_path, get_deepest_matches, DispatchOutput};
 use crate::cli::group::{ErasedConfigRecipe, GroupBuilder, GroupEntry};
 use crate::cli::handler::{
-    ArtifactDestination, ArtifactReceipt, ArtifactRun, CommandContext, DispatchResult, ExitStatus,
-    OutputKind, RunError, RunErrorKind, RunOutput, SuccessKind,
+    ArtifactDestination, ArtifactReceipt, ArtifactRun, CommandContext, DispatchResult, OutputKind,
+    RunError, RunErrorKind, RunOutput, SuccessKind,
 };
 use crate::cli::hooks::{ArtifactOutput, RenderedOutput, TextOutput};
 use crate::cli::questionnaire::{
@@ -127,7 +127,7 @@ impl App {
         if let Some(dispatch_fn) = commands.get(&path_str) {
             let mut ctx = CommandContext::new(path, self.app_state.clone());
             ctx.extensions.insert(sources);
-            ctx.extensions.insert(warnings);
+            ctx.extensions.insert(warnings.clone());
 
             let hooks = self.command_hooks.get(&path_str);
             let sub_matches = get_deepest_matches(&matches);
@@ -187,7 +187,17 @@ impl App {
             });
 
             if let RenderedOutput::Artifact(artifact) = final_output {
-                return complete_artifact(artifact, request, override_path);
+                // The artifact path renders its report inside `complete_artifact`,
+                // so the strict gate lives there, after that render and before any
+                // bytes are written.
+                return self.complete_artifact(artifact, request, override_path, &warnings);
+            }
+
+            // The render is complete and its diagnostics are in the capture
+            // window; enforce strict mode here, before committing to stdout or a
+            // file, so a strict failure leaves no output behind.
+            if let Some(error) = self.strict_style_tags_error(&warnings) {
+                return DispatchResult::Error(error);
             }
 
             if let Some(path) = override_path {
@@ -356,8 +366,6 @@ impl App {
         I: IntoIterator<Item = T>,
         T: Into<std::ffi::OsString> + Clone,
     {
-        let capture_window = standout_render::diagnostics::begin_capture();
-
         let mut target = TargetProperties::detect();
         target.ambiguous_width = self.ambiguous_width;
         let sources = InputSources::from_process();
@@ -393,8 +401,6 @@ impl App {
             &warnings,
         );
 
-        drop(capture_window);
-
         let status = final_write_failure
             .as_ref()
             .map(RunError::exit_status)
@@ -412,41 +418,46 @@ impl App {
         }
     }
 
+    /// Run `inner` inside a fresh render-diagnostics capture window and collect
+    /// its warnings into a [`CompletedRun`]. The window is the boundary every
+    /// command entry point shares — [`App::dispatch`], [`App::run_with`], and
+    /// therefore [`App::run`] all route through here — so the `strict_style_tags`
+    /// gate, which reads the window, enforces uniformly regardless of which
+    /// entry point rendered. A fresh window per run also isolates the gate from
+    /// any window a caller left open around us.
     fn collect_run_warnings(
         &self,
         inner: impl FnOnce(WarningBuffer) -> (DispatchResult, OutputMode),
     ) -> crate::cli::CompletedRun {
         let warnings = WarningBuffer::new();
         self.seed_startup_warnings(&warnings);
+        let _capture = standout_render::diagnostics::begin_capture();
         let (outcome, output_mode) = inner(warnings.clone());
-        let mut collected = warnings.take();
-        let outcome = self.enforce_strict_style_tags(outcome, &mut collected);
-        crate::cli::CompletedRun::from_dispatch(outcome, collected, output_mode)
+        crate::cli::CompletedRun::from_dispatch(outcome, warnings.take(), output_mode)
     }
 
-    /// Apply the `strict_style_tags` gate to a completed run. When strict mode
-    /// is on and the render left any style tag unresolved, a successful outcome
-    /// becomes a [`RunErrorKind::Render`] error naming those tags (a non-zero
-    /// exit); the now-superseded "degraded to unstyled text" warning is dropped
-    /// so the failure is reported once. Off by default and a no-op for a clean
-    /// render, an already-failed outcome, or a no-match handoff, so the graceful
-    /// path is untouched.
+    /// The `strict_style_tags` gate, evaluated after a command has rendered but
+    /// before its output is committed to any destination. When strict mode is on
+    /// and this run's own render left a style tag unresolved, returns the
+    /// [`RunErrorKind::Render`] error to raise in place of the output (a non-zero
+    /// exit naming the offending tags), and drops the now-superseded "degraded to
+    /// unstyled text" warning from `warnings` so the failure is reported once.
+    /// Returns `None` — leaving the render to commit normally — when strict mode
+    /// is off or the render left nothing unresolved, so the graceful path is
+    /// untouched.
     ///
-    /// Reads the render diagnostics captured for this run — available only
-    /// inside a capture window, which the process `run` and the test harness
-    /// both open around dispatch — so lower-level entry points that render
-    /// without a window simply skip the gate.
-    fn enforce_strict_style_tags(
-        &self,
-        outcome: DispatchResult,
-        warnings: &mut Vec<String>,
-    ) -> DispatchResult {
-        if !self.strict_style_tags || outcome.exit_status() != Some(ExitStatus::SUCCESS) {
-            return outcome;
+    /// Callers must invoke this before writing stdout, a file, or artifact bytes:
+    /// raising the error afterward would leave the promised-suppressed output on
+    /// disk. Reads the diagnostics captured for this run, so it is meaningful
+    /// only inside the capture window [`collect_run_warnings`] opens around every
+    /// entry point.
+    fn strict_style_tags_error(&self, warnings: &WarningBuffer) -> Option<RunError> {
+        if !self.strict_style_tags {
+            return None;
         }
         let unresolved = standout_render::diagnostics::unresolved_in_current_window();
         if unresolved.is_empty() {
-            return outcome;
+            return None;
         }
         warnings.retain(|warning| {
             !warning.starts_with(standout_render::diagnostics::UNRESOLVED_DEGRADATION_PREFIX)
@@ -456,7 +467,7 @@ impl App {
         } else {
             ("style tags", "They are", "them")
         };
-        DispatchResult::Error(RunError::new(
+        Some(RunError::new(
             format!(
                 "strict_style_tags is enabled and the render left {count} {noun} unresolved: \
                  {tags}. {pronoun} not defined in the active theme (a typo, or a tag the theme \
@@ -733,61 +744,76 @@ fn report_envelope(
     }))
 }
 
-fn complete_artifact(
-    artifact: ArtifactOutput,
-    request: Option<Box<RenderRequest>>,
-    override_path: Option<PathBuf>,
-) -> DispatchResult {
-    let destination = match resolve_artifact_destination(&artifact, override_path) {
-        Ok(destination) => destination,
-        Err(error) => return DispatchResult::Error(error),
-    };
+impl App {
+    /// Render an artifact's report, enforce the strict-style-tags gate, then
+    /// commit the artifact bytes to their destination. The report renders first
+    /// because its own tags feed the gate; the byte write comes last so that a
+    /// strict failure leaves no artifact file behind, matching the "no output is
+    /// emitted" guarantee the text and stdout paths already keep.
+    fn complete_artifact(
+        &self,
+        artifact: ArtifactOutput,
+        request: Option<Box<RenderRequest>>,
+        override_path: Option<PathBuf>,
+        warnings: &WarningBuffer,
+    ) -> DispatchResult {
+        let destination = match resolve_artifact_destination(&artifact, override_path) {
+            Ok(destination) => destination,
+            Err(error) => return DispatchResult::Error(error),
+        };
 
-    if let ArtifactDestination::File(path) = &destination {
-        let dest = OutputDestination::File(path.clone());
-        if let Err(e) = write_binary_output(&artifact.bytes, &dest) {
-            return DispatchResult::Error(RunError::new(
-                format!("Error writing artifact: {}", e),
-                RunErrorKind::FinalWrite(OutputKind::Artifact),
-            ));
-        }
-    }
+        let receipt = ArtifactReceipt::new(destination.clone(), artifact.bytes.len());
 
-    let receipt = ArtifactReceipt::new(destination, artifact.bytes.len());
-
-    let report = match artifact.report {
-        None => None,
-        Some(report) => {
-            let Some(mut request) = request else {
-                return DispatchResult::Error(RunError::new(
-                    "Cannot render artifact report: the artifact carries a report but was not \
-                     produced by a handler, so no template configuration is available",
-                    RunErrorKind::Render,
-                ));
-            };
-            let envelope = match report_envelope(Some(report), &receipt) {
-                Ok(envelope) => envelope,
-                Err(error) => return DispatchResult::Error(error),
-            };
-            request.data = envelope;
-            match standout_render::render_request_split(&request) {
-                Ok(rendered) => Some(rendered.formatted),
-                Err(error) => {
+        let report = match artifact.report {
+            None => None,
+            Some(report) => {
+                let Some(mut request) = request else {
                     return DispatchResult::Error(RunError::new(
-                        error.to_string(),
+                        "Cannot render artifact report: the artifact carries a report but was \
+                         not produced by a handler, so no template configuration is available",
                         RunErrorKind::Render,
-                    ))
+                    ));
+                };
+                let envelope = match report_envelope(Some(report), &receipt) {
+                    Ok(envelope) => envelope,
+                    Err(error) => return DispatchResult::Error(error),
+                };
+                request.data = envelope;
+                match standout_render::render_request_split(&request) {
+                    Ok(rendered) => Some(rendered.formatted),
+                    Err(error) => {
+                        return DispatchResult::Error(RunError::new(
+                            error.to_string(),
+                            RunErrorKind::Render,
+                        ))
+                    }
                 }
             }
-        }
-    };
+        };
 
-    DispatchResult::Artifact(ArtifactRun::new(
-        artifact.bytes,
-        artifact.suggested_destination,
-        receipt,
-        report,
-    ))
+        // The bytes and the report have both rendered; enforce strict mode
+        // before writing anything so a strict failure leaves no file behind.
+        if let Some(error) = self.strict_style_tags_error(warnings) {
+            return DispatchResult::Error(error);
+        }
+
+        if let ArtifactDestination::File(path) = &destination {
+            let dest = OutputDestination::File(path.clone());
+            if let Err(e) = write_binary_output(&artifact.bytes, &dest) {
+                return DispatchResult::Error(RunError::new(
+                    format!("Error writing artifact: {}", e),
+                    RunErrorKind::FinalWrite(OutputKind::Artifact),
+                ));
+            }
+        }
+
+        DispatchResult::Artifact(ArtifactRun::new(
+            artifact.bytes,
+            artifact.suggested_destination,
+            receipt,
+            report,
+        ))
+    }
 }
 
 fn emit_artifact<W: Write, E: Write>(
