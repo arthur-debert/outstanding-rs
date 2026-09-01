@@ -50,13 +50,15 @@ stresses = [
     "per-invocation --configuration flag",
     "selector environment variable",
 ]
-description = "Two precedence chains run per invocation and must not be conflated: one picks which set is active (flag > env > file > `default`), the other resolves each property within it. Collapsing them into a single ladder is the shape that reads correctly on the happy path and mis-resolves the moment a flag names a set while an environment variable names a property. The four selector-only cases cannot catch that collapse on their own — they never put a value source on the other chain — so each cross-chain direction gets a case of its own, and one case runs both chains at once."
+description = "Two precedence chains run per invocation and must not be conflated: one picks which set is active (flag > env > file > `default`), the other resolves each property within it. Collapsing them into a single ladder is the shape that reads correctly on the happy path and mis-resolves the moment a flag names a set while an environment variable names a property. The four selector-only cases cannot catch that collapse on their own — they never put a value source on the other chain — so each cross-chain direction gets a case of its own, and one case runs both chains at once. Those cross-chain cases come in two scorings, because naming a set other than `default` obliges an implementation to prove the set exists and that proof is the PAR01 store: the pair naming `default` is scored pass, so a collapsed ladder is caught by a case the framework is expected to win today, and the pair naming `prod` carries the same contract for the framework that can reach the store."
 cases = [
     "active-config-file-selects-the-set",
     "active-config-env-selects-the-set",
     "configuration-flag-selects-the-set",
     "configuration-flag-beats-active-config-env",
     "empty-active-config-env-is-unset",
+    "default-set-flag-does-not-supply-a-property",
+    "default-set-env-does-not-supply-a-property",
     "configuration-flag-does-not-supply-a-property",
     "active-config-env-does-not-supply-a-property",
     "both-chains-resolve-in-one-invocation",

@@ -1,12 +1,19 @@
 # Acceptance suite for the `gcloudlike` archetype. Format: corpus/README.md.
 # Written spec-first, before any implementation exists (ROB07-WS03a).
 #
-# Scoring boundary for this suite: a case is `expected = "pass"` when a
-# spec-correct implementation can produce the expected output without touching
-# the persisted configuration-set store, and `expected = "fail"` (gap PAR01)
-# when it cannot. Cases that fixture a store but are answered by a
-# higher-precedence flag or environment variable therefore stay `"pass"` —
-# reading the store is never on the correct path.
+# Scoring boundary for this suite. A case is `expected = "pass"` when a
+# spec-correct implementation can answer it without the persisted
+# configuration-set store: the store's contents cannot change what the case
+# observes, the correct path writes nothing to it, and no explicitly named set
+# has to be proven to exist. It is `expected = "fail"` (gap PAR01) when any of
+# those three is untrue — the store deciding an output, a write, or the
+# existence check the spec demands of every name but `default`.
+#
+# So a case that fixtures a store and is answered by a higher-precedence flag
+# or variable stays `"pass"` only while nothing else pulls the store onto the
+# correct path: `--configuration prod` does pull it in (an absent `prod` is a
+# domain error), while `--configuration default` does not, since `default`
+# exists by rule whether or not a file backs it.
 schema = 1
 archetype = "gcloudlike"
 
@@ -103,6 +110,7 @@ timeout_seconds = 10
 [case.expect]
 exit_code = 0
 stdout_json = '{"instances":[{"name":"web-1","zone":"us-a1","machine_type":"small","status":"RUNNING"},{"name":"web-2","zone":"us-b2","machine_type":"small","status":"TERMINATED"}]}'
+stderr = ""
 
 [[case]]
 name = "instances-describe-json-format"
@@ -115,6 +123,7 @@ timeout_seconds = 10
 [case.expect]
 exit_code = 0
 stdout_json = '{"name":"web-1","project":"alpha-proj","zone":"us-a1","machine_type":"small","status":"RUNNING"}'
+stderr = ""
 
 [[case]]
 name = "instances-list-json-pure-on-attended-terminal"
@@ -129,6 +138,7 @@ timeout_seconds = 10
 exit_code = 0
 stdout_json = '{"instances":[{"name":"web-1","zone":"us-a1","machine_type":"small","status":"RUNNING"},{"name":"web-2","zone":"us-b2","machine_type":"small","status":"TERMINATED"}]}'
 stdout_not_contains = ["\u001b["]
+stderr = ""
 
 [[case]]
 name = "output-mode-json-projects-the-machine-form"
@@ -141,6 +151,7 @@ timeout_seconds = 10
 [case.expect]
 exit_code = 0
 stdout_json = '{"instances":[{"name":"web-1","zone":"us-a1","machine_type":"small","status":"RUNNING"},{"name":"web-2","zone":"us-b2","machine_type":"small","status":"TERMINATED"}]}'
+stderr = ""
 
 [[case]]
 name = "app-format-decides-against-the-output-mode"
@@ -163,6 +174,7 @@ timeout_seconds = 10
 [case.expect]
 exit_code = 0
 stdout_json = '{"instances":[{"name":"web-1","zone":"us-a1","machine_type":"small","status":"RUNNING"},{"name":"web-2","zone":"us-b2","machine_type":"small","status":"TERMINATED"}]}'
+stderr = ""
 
 # --- property resolution above the store ------------------------------------
 
@@ -205,6 +217,7 @@ timeout_seconds = 10
 [case.expect]
 exit_code = 0
 stdout = "beta-proj\n"
+stderr = ""
 
 [[case]]
 name = "empty-env-property-is-unset"
@@ -326,6 +339,7 @@ timeout_seconds = 10
 [case.expect]
 exit_code = 0
 stdout = "NAME ZONE MACHINE_TYPE STATUS\nweb-1 us-a1 small RUNNING\nweb-2 us-b2 small TERMINATED\n"
+stderr = ""
 
 [[case]]
 name = "env-property-beats-active-set"
@@ -342,12 +356,47 @@ timeout_seconds = 10
 [case.expect]
 exit_code = 0
 stdout = "beta-proj\n"
+stderr = ""
+
+[[case]]
+name = "default-set-flag-does-not-supply-a-property"
+group = "config-layering"
+stresses = "chain separation with nothing to look up: `default` exists by rule, so a selector flag naming it cannot outrank a variable supplying a property"
+expected = "pass"
+[case.run]
+argv = ["config", "get-value", "core/project", "--configuration", "default"]
+env = { GCLOUDLIKE_CONFIG_DIR = "conf", GCLOUDLIKE_CORE_PROJECT = "alpha-proj" }
+timeout_seconds = 10
+[case.run.files]
+"conf/configurations/config_default" = "[core]\nproject = gamma-proj\n"
+[case.expect]
+exit_code = 0
+stdout = "alpha-proj\n"
+stderr = ""
+
+[[case]]
+name = "default-set-env-does-not-supply-a-property"
+group = "config-layering"
+stresses = "the same separation from the other side: a selector variable naming `default` does not outrank a flag supplying a property"
+expected = "pass"
+[case.run]
+argv = ["config", "get-value", "core/project", "--project", "alpha-proj"]
+env = { GCLOUDLIKE_CONFIG_DIR = "conf", GCLOUDLIKE_ACTIVE_CONFIG = "default" }
+timeout_seconds = 10
+[case.run.files]
+"conf/configurations/config_default" = "[core]\nproject = gamma-proj\n"
+[case.expect]
+exit_code = 0
+stdout = "alpha-proj\n"
+stderr = ""
 
 [[case]]
 name = "configuration-flag-does-not-supply-a-property"
 group = "config-layering"
 stresses = "the selector flag names a set and nothing more: it does not outrank a variable supplying a property"
-expected = "pass"
+expected = "fail"
+gap = "PAR01"
+reason = "naming a set other than `default` obliges the implementation to prove it exists, which is the persisted store (docs/spec/parity-config-layering.md)"
 [case.run]
 argv = ["config", "get-value", "core/project", "--configuration", "prod"]
 env = { GCLOUDLIKE_CONFIG_DIR = "conf", GCLOUDLIKE_CORE_PROJECT = "alpha-proj" }
@@ -365,7 +414,9 @@ stderr = ""
 name = "active-config-env-does-not-supply-a-property"
 group = "config-layering"
 stresses = "the other cross-chain direction: the selector variable does not outrank a flag supplying a property"
-expected = "pass"
+expected = "fail"
+gap = "PAR01"
+reason = "naming a set other than `default` obliges the implementation to prove it exists, which is the persisted store (docs/spec/parity-config-layering.md)"
 [case.run]
 argv = ["config", "get-value", "core/project", "--project", "alpha-proj"]
 env = { GCLOUDLIKE_CONFIG_DIR = "conf", GCLOUDLIKE_ACTIVE_CONFIG = "prod" }
@@ -402,6 +453,7 @@ timeout_seconds = 10
 [case.expect]
 exit_code = 0
 stdout = "NAME ZONE MACHINE_TYPE STATUS\nweb-1 us-a1 small RUNNING\nweb-2 us-b2 small TERMINATED\n"
+stderr = ""
 
 [[case]]
 name = "active-config-file-selects-the-set"
@@ -421,6 +473,7 @@ timeout_seconds = 10
 [case.expect]
 exit_code = 0
 stdout = "NAME ZONE MACHINE_TYPE STATUS\ndb-1 us-a1 large RUNNING\n"
+stderr = ""
 
 [[case]]
 name = "active-config-env-selects-the-set"
@@ -440,6 +493,7 @@ timeout_seconds = 10
 [case.expect]
 exit_code = 0
 stdout = "NAME ZONE MACHINE_TYPE STATUS\ndb-1 us-a1 large RUNNING\n"
+stderr = ""
 
 [[case]]
 name = "configuration-flag-selects-the-set"
@@ -459,6 +513,7 @@ timeout_seconds = 10
 [case.expect]
 exit_code = 0
 stdout = "NAME ZONE MACHINE_TYPE STATUS\ndb-1 us-a1 large RUNNING\n"
+stderr = ""
 
 [[case]]
 name = "configuration-flag-beats-active-config-env"
@@ -478,6 +533,7 @@ timeout_seconds = 10
 [case.expect]
 exit_code = 0
 stdout = "NAME ZONE MACHINE_TYPE STATUS\nweb-1 us-a1 small RUNNING\nweb-2 us-b2 small TERMINATED\n"
+stderr = ""
 
 [[case]]
 name = "empty-active-config-env-is-unset"
@@ -613,6 +669,7 @@ timeout_seconds = 10
 [case.expect]
 exit_code = 0
 stdout = "NAME ZONE MACHINE_TYPE STATUS\ndb-1 us-a1 large RUNNING\n"
+stderr = ""
 
 [[case]]
 name = "empty-config-dir-override-falls-back-to-home"
