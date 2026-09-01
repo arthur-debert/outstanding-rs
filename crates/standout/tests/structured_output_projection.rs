@@ -158,13 +158,20 @@ fn csv_projection_preserves_canonical_output_in_other_modes() {
     let json: Value = serde_json::from_str(&direct_dispatch(&app, OutputMode::Json)).unwrap();
     assert_eq!(json, response());
 
+    // response() declares report, totals, skipped in that order — alphabetical
+    // would be report, skipped, totals — so this also proves preserve_order
+    // survives the App-dispatch path, not just direct serde_json::Value use.
     let yaml = direct_dispatch(&app, OutputMode::Yaml);
     assert!(yaml.contains("report:"));
     assert!(yaml.contains("paths:"));
+    assert!(yaml.find("report:") < yaml.find("totals:"));
+    assert!(yaml.find("totals:") < yaml.find("skipped:"));
 
     let xml = direct_dispatch(&app, OutputMode::Xml);
     assert!(xml.contains("<report>"));
     assert!(xml.contains("<skipped>"));
+    assert!(xml.find("<report>") < xml.find("<totals>"));
+    assert!(xml.find("<totals>") < xml.find("<skipped>"));
 }
 
 #[test]

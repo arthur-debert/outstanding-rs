@@ -173,6 +173,23 @@ Same handler, same types—different output format. This enables:
 - Integration with other tools (`jq`, etc.)
 - API-like behavior from CLI apps
 
+### Key ordering
+
+JSON, YAML, and XML emit object keys in the order the handler declared them, not
+alphabetically. In the example above, a reader sees `items` before `total`
+because the struct lists `items` first. Field order in your `#[derive(Serialize)]`
+struct — or key order in a `json!({ ... })` literal — is the output order.
+
+This holds because Standout builds serde_json's `Value` with the `preserve_order`
+feature on, so the intermediate map keeps insertion order instead of sorting. The
+feature is process-wide: it governs every map serde_json builds in the process,
+including any `HashMap` a handler serializes. A `HashMap` has no stable iteration
+order, so a field of that type emits its keys in an order that varies from run to
+run — `preserve_order` preserves that non-determinism rather than hiding it behind
+a sort. For output whose key order must be stable, give the field a struct or an
+order-preserving map type (for example `indexmap::IndexMap`); reach for a raw
+`HashMap` only when the order genuinely does not matter.
+
 ### CSV Output
 
 Normal `App` dispatch flattens the serializable handler data automatically for
