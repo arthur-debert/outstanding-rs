@@ -11,7 +11,7 @@
 
 mod common;
 
-use std::io::{Read, Write};
+use std::io::{ErrorKind, Read, Write};
 use std::net::{TcpListener, TcpStream};
 use std::os::fd::FromRawFd;
 use std::path::Path;
@@ -248,11 +248,13 @@ fn a_body_that_arrives_in_two_segments_is_forwarded_whole() {
         )
         .unwrap();
     caller.flush().unwrap();
-    // The tail waits for the broker to admit the connection, which it does
-    // after authorizing the caller and before reading a request byte. A
-    // fixed sleep would only make the ordering likely: miss it under load,
-    // and both segments are readable at once, which is the one case a
-    // non-blocking accepted socket also survives.
+    // The tail waits on two observations rather than on a sleep, because a
+    // sleep only makes the ordering likely: miss it under load and both
+    // segments are readable at once, which is the one case a non-blocking
+    // accepted socket also survives.
+    //
+    // First the connection is admitted, which the broker does after
+    // authorizing the caller and before reading a request byte.
     let admitted = Instant::now();
     while broker.admitted() == 0 {
         assert!(
@@ -261,9 +263,19 @@ fn a_body_that_arrives_in_two_segments_is_forwarded_whole() {
         );
         std::thread::sleep(Duration::from_millis(5));
     }
-    // Admitted, so the next thing the broker does is read this request; the
-    // read is under way well inside this.
-    std::thread::sleep(Duration::from_millis(100));
+    // Then the broker says nothing while the body is short. A broker that
+    // cannot wait for the rest fails its read at once and answers 400, so an
+    // answer arriving here is the regression itself; silence is the broker
+    // sitting in the read this test is about.
+    caller
+        .set_read_timeout(Some(Duration::from_secs(2)))
+        .unwrap();
+    let mut answered = [0u8; 1];
+    match caller.read(&mut answered) {
+        Err(err) if matches!(err.kind(), ErrorKind::WouldBlock | ErrorKind::TimedOut) => {}
+        answer => panic!("the broker answered a body it had not finished reading: {answer:?}"),
+    }
+    caller.set_read_timeout(None).unwrap();
     caller.write_all(tail.as_bytes()).unwrap();
 
     let mut response = String::new();

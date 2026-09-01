@@ -72,6 +72,63 @@ fn archetype_row<'a>(table: &'a str, archetype: &str) -> &'a str {
         .unwrap_or_else(|| panic!("no row for {archetype} in:\n{table}"))
 }
 
+/// Commands whose splitting the two implementations have to agree on,
+/// including the ones both refuse. Quoting is the whole point of most of
+/// them: a `$`, a pipe or a glob inside quotes is an ordinary character to a
+/// shell and to the runner, and only an unquoted one refuses the command.
+const SPLIT_ALIKE: &[&str] = &[
+    "claude -p hello",
+    "claude --model claude-opus-5 -p 'the cost is $5'",
+    "claude -p 'a | pipe and a * glob' --setting-sources ''",
+    r#"claude -p "a \"quoted\" word, a \$ and a literal \\""#,
+    "/opt/agents/claude --dangerously-skip-permissions -p go",
+    "claude\t-p\tgo",
+    // Refused by both: a pipeline, a redirection, an expansion, an unquoted
+    // glob, a word-leading tilde, an unclosed quote, a dangling escape, and
+    // a command with no program at all.
+    "printf x | claude -p go",
+    "claude -p go > out.txt",
+    "claude -p $HOME",
+    "claude -p *.rs",
+    "~/bin/claude -p go",
+    "claude -p 'unclosed",
+    "claude -p go\\",
+    "   ",
+];
+
+/// The runner splits the command it spawns; the scorecard splits the command
+/// a report recorded, to recover the provenance a pre-schema-4 run states
+/// nowhere else. Two splitters, so one table goes through both: a command
+/// the runner would have refused never ran, and reading an agent out of it
+/// would invent one, while a command the runner accepts has to recover
+/// rather than read as a run that stated no agent.
+#[test]
+fn the_scorecard_splits_a_recorded_command_the_way_the_runner_does() {
+    const PROGRAM: &str = "import json, sys; sys.path.insert(0, 'corpus'); \
+                           import scorecard; \
+                           print(json.dumps([scorecard.direct_argv(c) for c in sys.argv[1:]]))";
+    let output = Command::new("python3")
+        .arg("-c")
+        .arg(PROGRAM)
+        .args(SPLIT_ALIKE)
+        .current_dir(repo())
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let scorecard_side: Vec<Vec<String>> = serde_json::from_slice(&output.stdout).unwrap();
+
+    for (command, scorecard_argv) in SPLIT_ALIKE.iter().zip(&scorecard_side) {
+        // The runner refuses with an error where the scorecard recovers
+        // nothing; both mean the same thing about the same command.
+        let runner_argv = corpus_runner::session::direct_argv(command).unwrap_or_default();
+        assert_eq!(&runner_argv, scorecard_argv, "disagreed on {command:?}");
+    }
+}
+
 /// Each row as `corpus/pilot/scorecard.md` published it: the acceptance
 /// ratio, the invariant ratio with its full planned breakdown, and the
 /// workaround count its prose reports (`gitlike`'s fifth listed item is the
@@ -164,7 +221,11 @@ fn recovery_reads_the_prompt_and_settings_from_the_recorded_command() {
     );
     // No `--model` in the command: the run took the backend's default, which
     // is not the same fact as a model asked for and unrecorded.
-    assert_eq!(provenance["model_requested"], serde_json::Value::Null, "{row}");
+    assert_eq!(
+        provenance["model_requested"],
+        serde_json::Value::Null,
+        "{row}"
+    );
 }
 
 /// A run that states no provenance, records no command the script can split,
@@ -199,9 +260,16 @@ fn a_row_judged_by_a_different_suite_is_marked_not_comparable() {
         "executable_version": "2.1.252",
         "model_observed": "claude-opus-5[1m]",
     });
-    for (set, suite) in [("v1", "e87a2b0580000000000000000000000000000000000000000000000000000000"),
-                         ("v2", "f3db09300000000000000000000000000000000000000000000000000000000000")]
-    {
+    for (set, suite) in [
+        (
+            "v1",
+            "e87a2b0580000000000000000000000000000000000000000000000000000000",
+        ),
+        (
+            "v2",
+            "f3db09300000000000000000000000000000000000000000000000000000000000",
+        ),
+    ] {
         write_report(
             &temp.path().join(set),
             "suitelike-1",
@@ -268,8 +336,14 @@ fn an_agent_that_differs_only_in_unprinted_fields_is_still_a_difference() {
         .collect();
     // The printed cell is identical on both rows, and the rows are still not
     // the same question.
-    assert!(rows[0].contains("claude 2.1.252, claude-opus-5[1m]"), "{table}");
-    assert!(rows[1].contains("claude 2.1.252, claude-opus-5[1m]"), "{table}");
+    assert!(
+        rows[0].contains("claude 2.1.252, claude-opus-5[1m]"),
+        "{table}"
+    );
+    assert!(
+        rows[1].contains("claude 2.1.252, claude-opus-5[1m]"),
+        "{table}"
+    );
     assert!(rows[1].contains("| no: agent |"), "{table}");
     for stated in [
         "model requested: claude-opus-5 → claude-opus-5[1m]",

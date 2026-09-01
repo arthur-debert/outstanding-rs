@@ -47,17 +47,19 @@ import collections
 import json
 import pathlib
 import re
-import shlex
 
 LISTED_ITEM = re.compile(r"(?m)^(?:\d+[.)]\s|[a-z][.)]\s|[-*+]\s|\*\*\S)")
 
 # A hash-shaped value, which a note abbreviates rather than printing whole.
 HASH = re.compile(r"(?:sha256:)?[0-9a-f]{32,}")
 
-# The characters that would make a recorded command mean something only a
-# shell can carry out. The runner refuses to spawn such a command, so nothing
-# is recovered from one here either.
-SHELL_STRUCTURE = set("|&;<>()")
+# What a shell would carry out and the runner will not: structure it cannot
+# spawn as one process, expansion it does not perform, and globs it would
+# pass through literally. Unquoted, each refuses the command outright — the
+# same three sets, in the same three roles, as `session::direct_argv`.
+SHELL_STRUCTURE = "|&;<>()\n"
+SHELL_EXPANSION = "$`"
+SHELL_GLOB = "*?[]"
 
 # What each pin makes comparable, and where the report states it.
 COMPARED_PINS = (
@@ -90,9 +92,11 @@ def ratio(part, whole):
 
 
 def acceptance(report):
-    cases = report["acceptance"]["cases"]
     if not report["acceptance"]["built"]:
         return "did not build"
+    # A report omits `cases` when the suite produced none rather than writing
+    # an empty list, so a run that built and ran nothing still reads.
+    cases = report["acceptance"].get("cases", [])
     tally = counts(case["outcome"] for case in cases)
     passed = tally.pop("pass", 0)
     cell = ratio(passed, len(cases))
@@ -133,29 +137,82 @@ def frictions(report):
 def session(report):
     wall = round(report["session"]["wall_seconds"])
     generated = report["session"].get("output_tokens")
+    # A session that generated nothing is a fact about the run; only a
+    # transcript the runner could not count leaves the field absent.
     generated = (
-        f"{generated:,} generated tokens" if generated else "tokens not recorded"
+        "tokens not recorded"
+        if generated is None
+        else f"{generated:,} generated tokens"
     )
     return f"{wall // 60}m{wall % 60:02d}s, {generated}"
 
 
 def direct_argv(agent_cmd: str) -> list[str]:
-    """A recorded command's argv: quotes and escapes honored, nothing expanded.
+    """A recorded command's argv, split the way the runner splits one.
 
-    A command that needs a shell to mean what it says parses to nothing, the
-    way the runner refuses to spawn one.
+    This is a port of `session::direct_argv` in the runner, rule for rule:
+    quotes and backslash escapes are honoured, nothing is expanded, and a
+    command that would need a shell to mean what it says parses to nothing.
+    The rules have to be the same rules — a command the runner would have
+    refused to spawn never ran, so reading provenance out of it would invent
+    a session, and a quoted `$` or `|` the runner accepts has to recover
+    rather than read as a run that stated no agent. `scorecard.rs` runs one
+    table of commands through both splitters.
     """
-    lexer = shlex.shlex(agent_cmd, posix=True, punctuation_chars=True)
-    lexer.whitespace_split = True
-    try:
-        argv = list(lexer)
-    except ValueError:
-        return []
-    if any(
-        (token and set(token) <= SHELL_STRUCTURE) or "$" in token or "`" in token
-        for token in argv
-    ):
-        return []
+    argv: list[str] = []
+    word: list[str] = []
+    started = False
+    chars = iter(agent_cmd)
+    for char in chars:
+        if char in SHELL_STRUCTURE or char in SHELL_EXPANSION or char in SHELL_GLOB:
+            return []
+        if char == "~" and not started:
+            return []
+        if char.isspace():
+            if started:
+                argv.append("".join(word))
+                word.clear()
+                started = False
+            continue
+        started = True
+        if char == "'":
+            for quoted in chars:
+                if quoted == "'":
+                    break
+                word.append(quoted)
+            else:
+                return []
+            continue
+        if char == '"':
+            for quoted in chars:
+                if quoted == '"':
+                    break
+                if quoted == "\\":
+                    escaped = next(chars, None)
+                    if escaped is None:
+                        return []
+                    if escaped in '"\\$`':
+                        word.append(escaped)
+                    elif escaped != "\n":
+                        # Not an escape a shell knows: both characters stand.
+                        word.append("\\")
+                        word.append(escaped)
+                    continue
+                if quoted in SHELL_EXPANSION:
+                    return []
+                word.append(quoted)
+            else:
+                return []
+            continue
+        if char == "\\":
+            escaped = next(chars, None)
+            if escaped is None:
+                return []
+            word.append(escaped)
+            continue
+        word.append(char)
+    if started:
+        argv.append("".join(word))
     return argv
 
 
@@ -267,7 +324,10 @@ def difference(area: str, label: str, against, here) -> tuple[str, str] | None:
     if against == here:
         return None
     if not (stated(against) and stated(here)):
-        return (area, f"{label} is stated on one side only: {brief(against)} against {brief(here)}")
+        return (
+            area,
+            f"{label} is stated on one side only: {brief(against)} against {brief(here)}",
+        )
     return (area, f"{label}: {brief(against)} → {brief(here)}")
 
 
@@ -330,9 +390,7 @@ def read_runs(label: str, runs_dir: pathlib.Path) -> list[dict]:
                 "session": session(report),
                 "agent": agent(block, recovered),
                 "pins": pins(report),
-                "provenance": {
-                    field: block.get(field) for field in PROVENANCE_FIELDS
-                },
+                "provenance": {field: block.get(field) for field in PROVENANCE_FIELDS},
                 "provenance_recovered": recovered,
             }
         )
