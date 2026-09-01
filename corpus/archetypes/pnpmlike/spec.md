@@ -12,7 +12,7 @@ through a level. The two stderr channels are silenced by two different switches.
 The survey's original sketch for C11 is lost with the 2026-08-16 session record. This
 spec is reconstructed from the survey's capability matrix, where C11 `pnpmlike` is the
 roster's **reporter/quiet matrix** (`docs/spec/parity-terminal-citizenship.md`, goals and
-"Further Notes"), and it is written to stress four interactions rather than to reproduce
+"Further Notes"), and it is written to stress five interactions rather than to reproduce
 pnpm:
 
 1. **Reporter selection against stream attendance.** The reporter writes to stderr, so
@@ -25,8 +25,12 @@ pnpm:
    warnings; `-q` silences warnings and keeps progress; `--silent` silences both. A
    framework that routes both through one warning channel cannot express this.
 4. **A child process against the output pipeline.** `run` hands the terminal to a script:
-   its bytes reach stdout unchanged in every output mode, and its exit status becomes
-   `pnpmlike`'s.
+   its bytes reach stdout and stderr unchanged in every output mode, and its exit status
+   becomes `pnpmlike`'s.
+5. **Four ways of having no answer.** An absent manifest is an empty workspace (exit 0), a
+   malformed one is a located domain error (exit 1), an undeclared script is exit 3, and a
+   bad flag value is a usage error (exit 2). Collapsing any pair makes the tool
+   unscriptable.
 
 Everything below is written from the CLI user's perspective and is asserted black-box
 against the produced binary: argv, environment and sandbox files in; stdout, stderr and
@@ -34,8 +38,10 @@ exit status out.
 
 ## The manifest
 
-`pnpmlike.pkg` in the current directory, or the file named by `--manifest <path>`. It is
-line-oriented. Blank lines and lines whose first non-space character is `#` are ignored.
+`pnpmlike.pkg` in the current directory, or the file named by `--manifest <path>`. Every
+command that reads the manifest takes `--manifest`, `run` included: it selects the input
+for the whole run, and when it is given the default `pnpmlike.pkg` is not read at all. It
+is line-oriented. Blank lines and lines whose first non-space character is `#` are ignored.
 Every other line is one directive:
 
 ```text
@@ -58,7 +64,7 @@ scripts.
 ```text
 pnpmlike list    [--manifest <path>]
 pnpmlike install [--manifest <path>]
-pnpmlike run <script> [-- <args>...]
+pnpmlike run <script> [--manifest <path>] [-- <args>...]
 ```
 
 ### `pnpmlike list`
@@ -156,6 +162,7 @@ Each reporter renders those steps differently:
   ```
 
   A `run` step is `{"event":"script","name":"build"}`. No ANSI ever appears in this form.
+  The objects are exactly as spelled here, key order included.
 
 - **`silent`** — nothing.
 
@@ -185,3 +192,7 @@ before the first reporter step**.
 | 2 | usage error (unknown flag or subcommand, bad `--reporter` or `--loglevel` value) |
 | 3 | unknown script |
 | *the script's own status* | `run` propagates a failing script's status verbatim |
+
+The first four codes are `pnpmlike`'s own and stay distinct from each other. A propagated
+child status is not: a script free to end in `exit 3` can land on any of them, and
+verbatim propagation is worth more than a reserved range.

@@ -61,7 +61,23 @@ timeout_seconds = 10
 [case.expect]
 exit_code = 1
 stdout = ""
-stderr_contains = ["pnpmlike.pkg", "line 2"]
+stderr_contains = ["pnpmlike.pkg line 2"]
+
+[[case]]
+name = "manifest-flag-selects-the-file"
+group = "data-output"
+stresses = "--manifest names the input: the file it points at is read and the default pnpmlike.pkg is not"
+expected = "pass"
+[case.run]
+argv = ["list", "--manifest", "tools/custom.pkg"]
+timeout_seconds = 10
+[case.run.files]
+"pnpmlike.pkg" = "dep gamma 9.9.9\n"
+"tools/custom.pkg" = "dep alpha 1.0.0\ndep beta 2.3.1\n"
+[case.expect]
+exit_code = 0
+stdout = "alpha 1.0.0\nbeta 2.3.1\n"
+stderr = ""
 
 # --- reporter selection vs stream attendance ---------------------------------
 
@@ -191,8 +207,11 @@ timeout_seconds = 10
 [case.expect]
 exit_code = 0
 stdout_json = '{"installed":[{"name":"alpha","version":"1.0.0"},{"name":"beta","version":"2.3.1"}],"count":2}'
-stderr_contains = ["progress", "alpha", "1.0.0", "beta", "2.3.1", "done"]
-stderr_not_contains = ["\u001b["]
+stderr = """
+{"event":"progress","step":1,"total":2,"name":"alpha","version":"1.0.0"}
+{"event":"progress","step":2,"total":2,"name":"beta","version":"2.3.1"}
+{"event":"done","installed":2}
+"""
 
 [[case]]
 name = "explicit-reporter-beats-the-machine-default"
@@ -319,6 +338,21 @@ exit_code = 0
 stdout = "2 packages installed.\n"
 stderr = "warning: alpha is unpinned (*)\n"
 
+[[case]]
+name = "loglevel-flag-outranks-a-later-quiet"
+group = "quiet-matrix"
+stresses = "the same precedence with the two flags swapped, which last-option-wins cannot satisfy"
+expected = "pass"
+[case.run]
+argv = ["install", "--loglevel", "warn", "-q", "--reporter", "silent"]
+timeout_seconds = 10
+[case.run.files]
+"pnpmlike.pkg" = "dep alpha *\ndep beta 2.3.1\n"
+[case.expect]
+exit_code = 0
+stdout = "2 packages installed.\n"
+stderr = "warning: alpha is unpinned (*)\n"
+
 # --- a child process vs the output pipeline ----------------------------------
 
 [[case]]
@@ -337,18 +371,34 @@ stdout = "built alpha\n"
 stderr = ""
 
 [[case]]
-name = "run-passthrough-is-unwrapped-under-json"
+name = "run-passes-child-stderr-through"
 group = "script-passthrough"
-stresses = "a machine output mode has nothing to serialize for a passthrough command and must not wrap the child"
+stresses = "the script owns both streams: what it writes to stderr arrives unframed, uncaptured and unmixed with its stdout"
 expected = "pass"
 [case.run]
-argv = ["run", "build", "--reporter", "silent", "--output", "json"]
+argv = ["run", "noisy", "--reporter", "silent"]
 timeout_seconds = 10
 [case.run.files]
-"pnpmlike.pkg" = "script build echo built alpha\n"
+"pnpmlike.pkg" = "script noisy echo child-out; echo child-err >&2\n"
 [case.expect]
 exit_code = 0
-stdout = "built alpha\n"
+stdout = "child-out\n"
+stderr = "child-err\n"
+
+[[case]]
+name = "run-passthrough-is-unwrapped-under-json"
+group = "script-passthrough"
+stresses = "a machine output mode has nothing to serialize for a passthrough command and must not wrap, capture or restyle either child stream"
+expected = "pass"
+[case.run]
+argv = ["run", "noisy", "--reporter", "silent", "--output", "json"]
+timeout_seconds = 10
+[case.run.files]
+"pnpmlike.pkg" = "script noisy echo child-out; echo child-err >&2\n"
+[case.expect]
+exit_code = 0
+stdout = "child-out\n"
+stderr = "child-err\n"
 
 [[case]]
 name = "run-propagates-the-child-exit-status"
@@ -381,7 +431,24 @@ stdout = "args:x y\n"
 [[case]]
 name = "run-step-precedes-the-child"
 group = "script-passthrough"
-stresses = "the single run step is flushed before the child starts, so progress cannot interleave with its output"
+stresses = "progress and the child's bytes share one terminal, and the step is flushed first: the interleaved capture puts the step ahead of the child"
+expected = "pass"
+[case.run]
+argv = ["run", "build", "--reporter", "append-only"]
+env = { TERM = "xterm-256color" }
+tty = ["stdout", "stderr"]
+timeout_seconds = 10
+[case.run.files]
+"pnpmlike.pkg" = "script build echo built alpha\n"
+[case.expect]
+exit_code = 0
+stdout = "1/1 build\nbuilt alpha\n"
+stderr = ""
+
+[[case]]
+name = "run-step-precedes-the-child-on-separate-streams"
+group = "script-passthrough"
+stresses = "the same step and the same child bytes with the streams apart, so neither stream carries the other's content"
 expected = "pass"
 [case.run]
 argv = ["run", "build", "--reporter", "append-only"]
@@ -394,9 +461,25 @@ stdout = "built alpha\n"
 stderr = "1/1 build\n"
 
 [[case]]
+name = "run-reads-the-selected-manifest"
+group = "script-passthrough"
+stresses = "--manifest reaches the passthrough command too, and the info note names the path as it was given"
+expected = "pass"
+[case.run]
+argv = ["run", "build", "--manifest", "tools/custom.pkg", "-v", "--reporter", "silent"]
+timeout_seconds = 10
+[case.run.files]
+"pnpmlike.pkg" = "script build echo from-the-default-manifest\n"
+"tools/custom.pkg" = "script build echo from-the-selected-manifest\n"
+[case.expect]
+exit_code = 0
+stdout = "from-the-selected-manifest\n"
+stderr = "info: using manifest tools/custom.pkg\n"
+
+[[case]]
 name = "unknown-script-exits-3"
 group = "script-passthrough"
-stresses = "an undeclared script is its own exit code, distinct from a failing script and from usage"
+stresses = "an undeclared script is its own exit code, separate from the usage and manifest errors; a propagated child status is free to coincide with it"
 expected = "pass"
 [case.run]
 argv = ["run", "nope", "--reporter", "silent"]

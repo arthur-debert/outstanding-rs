@@ -53,18 +53,22 @@ cases = [
     "silent-flag-silences-both-channels",
     "verbose-adds-the-info-note",
     "loglevel-flag-outranks-quiet",
+    "loglevel-flag-outranks-a-later-quiet",
 ]
 
 [[interactions]]
 id = "child-passthrough-vs-output-pipeline"
 stresses = ["passthrough command registration", "external failure status", "global --output mode", "argv splitting at --"]
-description = "A command whose job is to hand the terminal to a child process meets the machinery built for handlers that return data: the child's bytes must reach stdout unframed even under --output json, its exit status must survive the framework's own exit-code mapping, and the one progress step must be flushed before the child ever writes."
+description = "A command whose job is to hand the terminal to a child process meets the machinery built for handlers that return data: both of the child's streams must reach the terminal unframed even under --output json, its exit status must survive the framework's own exit-code mapping, and the one progress step must be flushed before the child ever writes."
 cases = [
     "run-passes-child-bytes-through",
+    "run-passes-child-stderr-through",
     "run-passthrough-is-unwrapped-under-json",
     "run-propagates-the-child-exit-status",
     "run-forwards-arguments-after-the-double-dash",
     "run-step-precedes-the-child",
+    "run-step-precedes-the-child-on-separate-streams",
+    "run-reads-the-selected-manifest",
     "unknown-script-exits-3",
 ]
 
