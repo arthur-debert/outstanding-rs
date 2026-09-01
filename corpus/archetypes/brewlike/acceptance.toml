@@ -42,6 +42,7 @@ timeout_seconds = 10
 [case.expect]
 exit_code = 0
 stdout = "granite: stable 1.5.0\ninstalled: 1.4.2 (outdated)\ndepends on: pebble\n"
+stderr = ""
 
 [[case]]
 name = "info-leaf-formula-names-no-dependencies"
@@ -54,6 +55,7 @@ timeout_seconds = 10
 [case.expect]
 exit_code = 0
 stdout = "pebble: stable 0.9.0\ninstalled: 0.9.0\ndepends on: none\n"
+stderr = ""
 
 [[case]]
 name = "outdated-human-table"
@@ -119,7 +121,8 @@ argv = ["deps", "basalt", "--output", "json"]
 timeout_seconds = 10
 [case.expect]
 exit_code = 0
-stdout_json_rows = [["pebble"], ["quartz"]]
+stdout_json = '["pebble","quartz"]'
+stderr = ""
 
 [[case]]
 name = "deps-tree-json-nests-under-its-dependent"
@@ -131,8 +134,8 @@ argv = ["deps", "--tree", "basalt", "--output", "json"]
 timeout_seconds = 10
 [case.expect]
 exit_code = 0
-stdout_contains = ["basalt"]
-stdout_json_rows = [["quartz", "pebble"]]
+stdout_json = '{"name":"basalt","dependencies":[{"name":"pebble","dependencies":[]},{"name":"quartz","dependencies":[{"name":"pebble","dependencies":[]}]}]}'
+stderr = ""
 
 # --- the empty collection ------------------------------------------------------
 
@@ -160,6 +163,20 @@ timeout_seconds = 10
 [case.expect]
 exit_code = 0
 stdout = "FORMULA INSTALLED LATEST\ngranite 1.4.2     1.5.0\n"
+stderr = ""
+
+[[case]]
+name = "outdated-filter-takes-several-names"
+group = "empty-results"
+stresses = "the filter is repeatable: each name restricts, and a current one among them drops out rather than erroring"
+expected = "pass"
+[case.run]
+argv = ["outdated", "granite", "pebble"]
+timeout_seconds = 10
+[case.expect]
+exit_code = 0
+stdout = "FORMULA INSTALLED LATEST\ngranite 1.4.2     1.5.0\n"
+stderr = ""
 
 [[case]]
 name = "outdated-empty-json-is-an-empty-list"
@@ -171,8 +188,8 @@ argv = ["outdated", "pebble", "--output", "json"]
 timeout_seconds = 10
 [case.expect]
 exit_code = 0
-stdout_contains = ["[]"]
-stdout_not_contains = ["No outdated formulae", "granite"]
+stdout_json = '[]'
+stderr = ""
 
 # --- machine records ------------------------------------------------------------
 
@@ -186,10 +203,13 @@ argv = ["list", "--output", "json"]
 timeout_seconds = 10
 [case.expect]
 exit_code = 0
-stdout_json_rows = [
-    ["granite", "1.4.2", "1.5.0", "true"],
-    ["pebble", "0.9.0", "false"],
-]
+stdout_json = '''
+[{"name":"basalt","installed":"2.1.0","latest":"2.1.0","outdated":false},
+ {"name":"granite","installed":"1.4.2","latest":"1.5.0","outdated":true},
+ {"name":"pebble","installed":"0.9.0","latest":"0.9.0","outdated":false},
+ {"name":"quartz","installed":"3.0.1","latest":"3.2.0","outdated":true}]
+'''
+stderr = ""
 
 [[case]]
 name = "outdated-json-records-both-versions"
@@ -201,7 +221,11 @@ argv = ["outdated", "--output", "json"]
 timeout_seconds = 10
 [case.expect]
 exit_code = 0
-stdout_json_rows = [["granite", "1.4.2", "1.5.0"], ["quartz", "3.0.1", "3.2.0"]]
+stdout_json = '''
+[{"name":"granite","installed":"1.4.2","latest":"1.5.0","outdated":true},
+ {"name":"quartz","installed":"3.0.1","latest":"3.2.0","outdated":true}]
+'''
+stderr = ""
 
 [[case]]
 name = "info-json-carries-direct-dependencies"
@@ -213,8 +237,8 @@ argv = ["info", "basalt", "--output", "json"]
 timeout_seconds = 10
 [case.expect]
 exit_code = 0
-stdout_contains = ["basalt", "2.1.0"]
-stdout_json_rows = [["pebble"], ["quartz"]]
+stdout_json = '{"name":"basalt","installed":"2.1.0","latest":"2.1.0","outdated":false,"dependencies":["pebble","quartz"]}'
+stderr = ""
 
 # --- errors ---------------------------------------------------------------------
 
@@ -258,9 +282,22 @@ stdout = ""
 stderr_contains = ["obsidian"]
 
 [[case]]
+name = "outdated-unknown-name-among-known-ones-still-fails"
+group = "errors"
+stresses = "one bad name in a multi-name filter fails the query rather than answering for the rest"
+expected = "pass"
+[case.run]
+argv = ["outdated", "granite", "obsidian"]
+timeout_seconds = 10
+[case.expect]
+exit_code = 1
+stdout = ""
+stderr_contains = ["obsidian"]
+
+[[case]]
 name = "no-subcommand-is-a-usage-error"
 group = "errors"
-stresses = "the root requires a subcommand: exit 2, stderr only"
+stresses = "the root requires a subcommand: exit 2, guidance on stderr, stdout untouched"
 expected = "pass"
 [case.run]
 argv = []
@@ -268,6 +305,7 @@ timeout_seconds = 10
 [case.expect]
 exit_code = 2
 stdout = ""
+stderr_contains = ["Usage"]
 
 [[case]]
 name = "unknown-subcommand-is-a-usage-error"
@@ -280,7 +318,7 @@ timeout_seconds = 10
 [case.expect]
 exit_code = 2
 stdout = ""
-stderr_contains = ["upgrade"]
+stderr_contains = ["upgrade", "Usage"]
 
 [[case]]
 name = "unknown-flag-is-a-usage-error"
@@ -293,14 +331,58 @@ timeout_seconds = 10
 [case.expect]
 exit_code = 2
 stdout = ""
-stderr_contains = ["--cask"]
+stderr_contains = ["--cask", "Usage"]
+
+# --- help as prose -----------------------------------------------------------
+# The passing baseline the gap group below is measured against: ordinary help
+# works at every level today. Exact pages are not asserted — the rendered text
+# is the framework's and the implementer's, not this spec's.
+
+[[case]]
+name = "root-help-lists-the-commands"
+group = "help"
+stresses = "help at the root exits 0 with the command surface on stdout"
+expected = "pass"
+[case.run]
+argv = ["--help"]
+timeout_seconds = 10
+[case.expect]
+exit_code = 0
+stderr = ""
+stdout_contains = ["list", "info", "deps", "outdated"]
+
+[[case]]
+name = "leaf-help-names-the-command-flag"
+group = "help"
+stresses = "help at a leaf carries that leaf's own options, not just the root's"
+expected = "pass"
+[case.run]
+argv = ["deps", "--help"]
+timeout_seconds = 10
+[case.expect]
+exit_code = 0
+stderr = ""
+stdout_contains = ["--tree"]
 
 # --- the versioned machine contract ---------------------------------------------
 # Gap group. A machine payload stamped with a schema version, and help as that
 # same stamped data, are specced past current framework capability on purpose:
 # they are the executable shape of PAR02's brewlike gate
-# (docs/spec/parity-machine-contract.md). An implementation that hand-rolls the
-# stamp reports an unexpected pass — friction signal, not a framework pass.
+# (docs/spec/parity-machine-contract.md).
+#
+# The stamped document replaces the unstamped one rather than extending it, so
+# the first case below and `list-json-binds-versions-to-their-formula` pin the
+# same invocation on either side of that break — deliberately: the pass case is
+# what an implementation must produce today, the fail case what PAR02 has to
+# deliver, and the parity Spec plans the same transition ("the last unversioned
+# one"). An implementation that hand-rolls the stamp therefore turns this case
+# green and the unstamped one red — friction signal, not a framework pass.
+#
+# Where the version is addressed is PAR02's to settle: its Spec leaves "flag or
+# key in the envelope" to the grill. This suite pins the envelope key, because
+# it is an application's payload that has to carry the stamp, not a flag beside
+# it. If the grill decides otherwise, the ADR amends these two cases — a
+# decision recorded here rather than silently assumed.
 
 [[case]]
 name = "list-json-payload-carries-the-schema-version"
@@ -314,7 +396,14 @@ argv = ["list", "--output", "json"]
 timeout_seconds = 10
 [case.expect]
 exit_code = 0
-stdout_contains = ["schema_version"]
+stdout_json = '''
+{"schema_version":1,
+ "data":[{"name":"basalt","installed":"2.1.0","latest":"2.1.0","outdated":false},
+         {"name":"granite","installed":"1.4.2","latest":"1.5.0","outdated":true},
+         {"name":"pebble","installed":"0.9.0","latest":"0.9.0","outdated":false},
+         {"name":"quartz","installed":"3.0.1","latest":"3.2.0","outdated":true}]}
+'''
+stderr = ""
 
 [[case]]
 name = "machine-help-is-a-versioned-document"
@@ -322,13 +411,14 @@ group = "schema-version"
 stresses = "help as machine data carrying the same schema version, instead of prose in every mode"
 expected = "fail"
 gap = "PAR02"
-reason = "no structured mode serializes help data (docs/topics/standout-help.md: help is themed prose in every mode)"
+reason = "no structured mode serializes help data (docs/topics/standout-help.md: help is themed prose in every mode). The document's full schema is PAR02's to define, so this case asserts that help arrives as stamped JSON naming the command's own flag, not its every field."
 [case.run]
 argv = ["deps", "--help", "--output", "json"]
 timeout_seconds = 10
 [case.expect]
 exit_code = 0
-stdout_contains = ["schema_version", "--tree"]
+stdout_json_rows = [["--tree"]]
+stdout_contains = ["schema_version"]
 stdout_not_contains = ["Usage:"]
 
 # --- ROB01 invariant matrix ------------------------------------------------------
@@ -356,4 +446,15 @@ contract = "rendered"
 
 [[invariants.command]]
 argv = ["outdated"]
+contract = "rendered"
+
+# The two empty results, swept across the modes as well: the branch where a
+# list template's default text ships by accident and where a serializer drops
+# the key instead of emitting an empty array.
+[[invariants.command]]
+argv = ["outdated", "pebble"]
+contract = "rendered"
+
+[[invariants.command]]
+argv = ["deps", "pebble"]
 contract = "rendered"

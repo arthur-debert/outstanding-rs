@@ -61,6 +61,7 @@ cases = [
     "list-human-table",
     "outdated-human-table",
     "outdated-filter-keeps-the-named-formula",
+    "outdated-filter-takes-several-names",
     "info-current-formula",
     "info-outdated-formula-marks-the-installed-line",
     "list-json-binds-versions-to-their-formula",
@@ -75,6 +76,7 @@ cases = [
     "info-unknown-formula-is-a-domain-error",
     "deps-unknown-formula-is-the-same-domain-error",
     "outdated-unknown-formula-is-a-domain-error",
+    "outdated-unknown-name-among-known-ones-still-fails",
     "no-subcommand-is-a-usage-error",
     "unknown-subcommand-is-a-usage-error",
     "unknown-flag-is-a-usage-error",
@@ -83,11 +85,13 @@ cases = [
 [[interactions]]
 id = "schema-version-vs-framework-envelopes"
 stresses = ["structured output as a contract surface", "framework-owned envelopes", "help as data"]
-description = "A consumer must be able to tell a shape change from a data change, and the stamp that says so has to reach the framework's own documents too — the help page as data, not prose. Standout serializes handler data and renders help as prose in every mode, so nothing owns the version: an adopter can only hand-roll a field into their own struct, which versions the app's data and not the framework's envelope."
+description = "A consumer must be able to tell a shape change from a data change, and the stamp that says so has to reach the framework's own documents too — the help page as data, not prose. Standout serializes handler data and renders help as prose in every mode, so nothing owns the version: an adopter can only hand-roll a field into their own struct, which versions the app's data and not the framework's envelope. The two prose-help cases are the passing baseline the machine form is measured against — help works, it just cannot be read."
 cases = [
+    "root-help-lists-the-commands",
+    "leaf-help-names-the-command-flag",
     "list-json-payload-carries-the-schema-version",
     "machine-help-is-a-versioned-document",
 ]
 
 [gaps]
-PAR02 = "The machine contract (docs/spec/parity-machine-contract.md): structured output marked as a contract surface with a schema version addressable from the CLI, and help --output=json as a versioned document. The schema-version cases are the executable shape of that Spec's brewlike gate; PAR02 is done when they turn green."
+PAR02 = "The machine contract (docs/spec/parity-machine-contract.md): structured output marked as a contract surface with a schema version addressable from the CLI, and help --output=json as a versioned document. The schema-version cases are the executable shape of that Spec's brewlike gate; PAR02 is done when they turn green. Those two cases pin the version at an envelope key, while the Spec still leaves 'flag or key in the envelope' to the grill: an ADR choosing the flag form amends them."

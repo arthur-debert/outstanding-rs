@@ -136,33 +136,66 @@ No outdated formulae.
 
 ## Machine output
 
-`--output json` answers the same questions as data. What each command's
-payload carries:
+`--output json` answers the same questions as data: one JSON document on
+stdout, nothing on stderr. The root of that document is part of the contract,
+not an implementation detail:
 
-| command | payload |
+| command | document |
 | --- | --- |
-| `list`, `outdated` | one record per formula, in the human order |
-| `info <formula>` | one record, plus `dependencies`: the direct dependency names |
-| `deps <formula>` | the dependency names, in the human order |
-| `deps --tree <formula>` | a node per formula: `name`, and `dependencies`, its child nodes |
+| `list`, `outdated` | an array of formula records, in the human order |
+| `info <formula>` | one formula record, with `dependencies` added: the direct dependency names |
+| `deps <formula>` | an array of the dependency names, in the human order |
+| `deps --tree <formula>` | one node — `name` and `dependencies`, its child nodes, recursively |
 
 A formula record carries `name`, `installed` and `latest` as strings and
 `outdated` as a boolean. Records bind their own values: a formula's
 installed and latest versions belong to that formula's record, never to a
-parallel array the caller has to zip.
+parallel array the caller has to zip. So `brewlike list --output json` is
 
-Two properties hold whatever the payload:
+```json
+[{"name":"basalt","installed":"2.1.0","latest":"2.1.0","outdated":false},
+ {"name":"granite","installed":"1.4.2","latest":"1.5.0","outdated":true},
+ {"name":"pebble","installed":"0.9.0","latest":"0.9.0","outdated":false},
+ {"name":"quartz","installed":"3.0.1","latest":"3.2.0","outdated":true}]
+```
 
-- **An empty result is an empty list**, present and empty — never `null`,
-  never an absent key, and never the human sentence `No outdated formulae.`
-  smuggled into the data.
-- **The payload is stamped**: `schema_version`, currently `1`, says which
-  version of this contract the document satisfies, so a consumer can tell a
-  shape change from a data change.
+and the nesting survives serialization — `brewlike deps --tree basalt
+--output json` is a node whose children hang under the formula that depends
+on them, not a flattened list beside it:
 
-Help is data in a machine mode too: `brewlike deps --help --output json` is
-the help of `deps` as a document — its flags among the fields, carrying the
-same `schema_version` — rather than the rendered prose page.
+```json
+{"name":"basalt","dependencies":[
+  {"name":"pebble","dependencies":[]},
+  {"name":"quartz","dependencies":[{"name":"pebble","dependencies":[]}]}]}
+```
+
+**An empty result is an empty list**: `[]`, present and empty — never
+`null`, never an absent key, and never the human sentence
+`No outdated formulae.` smuggled into the data.
+
+### The stamped form
+
+A consumer has to be able to tell a shape change from a data change, so the
+payload is stamped with the version of the contract it satisfies: the
+document above travels under `data`, beside `schema_version`, currently the
+number `1`.
+
+```json
+{"schema_version":1,"data":[{"name":"basalt","installed":"2.1.0","latest":"2.1.0","outdated":false}]}
+```
+
+Help is data in this mode too: `brewlike deps --help --output json` is the
+help of `deps` as a stamped document — its flags among the fields — rather
+than the rendered prose page.
+
+Stamping is the one part of this spec written past what standout can do
+today (`acceptance.toml`, the `schema-version` group, gap `PAR02`). It
+replaces the unstamped root rather than extending it, which is why the two
+shapes are specified apart: the acceptance suite pins the unstamped
+documents as what an implementation must produce now, and the stamped ones
+as what `PAR02` has to deliver. `docs/spec/parity-machine-contract.md` plans
+for exactly that break — versioning the envelope is "the last unversioned
+one".
 
 ## Exit codes
 
