@@ -1,0 +1,85 @@
+name: Corpus
+
+# Builds the corpus's fast subset — accepted implementations, frozen — against
+# this PR's tree (ADR-0036). The members do not change, so a red job here says
+# this change broke a produced application.
+#
+# Separate from checks.yml rather than a .shipit.toml lane: a lane runs
+# `pixi run <task>` inside this repository, and this one has to check out
+# another one. That checkout needs no token — arthur-debert/standout-corpus is
+# public — and this workflow is given no secrets, because it builds and runs
+# untrusted produced code (ADR-0023).
+#
+# The full roster runs on a schedule in the corpus repository itself; this is
+# the subset cheap enough to run per PR.
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  group: corpus-${{ github.event_name }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  subset:
+    runs-on: ubuntu-latest
+    outputs:
+      members: ${{ steps.roster.outputs.members }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          repository: arthur-debert/standout-corpus
+          path: corpus
+      - id: roster
+        working-directory: corpus
+        run: echo "members=$(python3 ci/roster.py --subset)" >> "$GITHUB_OUTPUT"
+
+  member:
+    needs: subset
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        member: ${{ fromJSON(needs.subset.outputs.members) }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          path: standout
+      - uses: actions/checkout@v4
+        with:
+          repository: arthur-debert/standout-corpus
+          path: corpus
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: standout
+      # The disposable copy lives outside the framework checkout: the runner
+      # refuses to evaluate a workspace nested under the source tree the
+      # blindness protocol excludes.
+      - name: Build and check ${{ matrix.member }}
+        working-directory: corpus
+        run: >
+          python3 ci/build_member.py ${{ matrix.member }}
+          --framework "$GITHUB_WORKSPACE/standout"
+          --work "$RUNNER_TEMP/corpus"
+
+  # The merge-blocking verdict under one stable name, the same shape checks.yml
+  # uses: branch protection requires `corpus`, and a matrix job reports as
+  # "Corpus / member (<name>)".
+  corpus:
+    needs: member
+    if: always() && needs.member.result != 'cancelled'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Verdict
+        env:
+          RESULT: ${{ needs.member.result }}
+        run: |
+          echo "corpus subset: $RESULT"
+          test "$RESULT" = "success"
