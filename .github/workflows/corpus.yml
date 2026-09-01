@@ -73,9 +73,12 @@ jobs:
           path: corpus
           persist-credentials: false
       - uses: dtolnay/rust-toolchain@stable
-      - uses: Swatinem/rust-cache@v2
-        with:
-          workspaces: standout
+      # No build cache in this job, deliberately. Reevaluation runs the member
+      # binary, so untrusted code holds write access to ~/.cargo and to
+      # standout/target — the two trees a cache action uploads at job end for
+      # the next run to build against. A cold build is the price of a verdict
+      # that depends only on the two checkouts.
+      #
       # The disposable copy lives outside the framework checkout: the runner
       # refuses to evaluate a workspace nested under the source tree the
       # blindness protocol excludes.
