@@ -23,6 +23,7 @@ use crate::cli::questionnaire::{
     augment_questionnaire_command, render_questions_result, validate_questionnaire_surface,
     QUESTIONNAIRE_ANSWERS_ARG, QUESTIONNAIRE_YES_ARG, QUESTIONS_SUBCOMMAND,
 };
+use crate::cli::ProcessOutcome;
 use crate::topics::display_with_pager;
 use crate::SetupError;
 
@@ -366,6 +367,20 @@ impl App {
         I: IntoIterator<Item = T>,
         T: Into<std::ffi::OsString> + Clone,
     {
+        let outcome = self.run_emitted(cmd, args);
+        if outcome.status != ExitStatus::SUCCESS {
+            std::process::exit(i32::from(outcome.status.code()));
+        }
+        outcome.handled
+    }
+
+    /// Everything `run` does — detect, dispatch, page, write both streams,
+    /// flush warnings — except ending the process.
+    pub fn run_emitted<I, T>(&self, cmd: Command, args: I) -> ProcessOutcome
+    where
+        I: IntoIterator<Item = T>,
+        T: Into<std::ffi::OsString> + Clone,
+    {
         let mut target = TargetProperties::detect();
         target.ambiguous_width = self.ambiguous_width;
         let sources = InputSources::from_process();
@@ -404,12 +419,10 @@ impl App {
         let status = final_write_failure
             .as_ref()
             .map(RunError::exit_status)
-            .or(primary_status);
-        if let Some(status) = status.filter(|status| status.code() != 0) {
-            std::process::exit(i32::from(status.code()));
-        }
+            .or(primary_status)
+            .unwrap_or(ExitStatus::SUCCESS);
 
-        handled
+        ProcessOutcome { handled, status }
     }
 
     pub(crate) fn seed_startup_warnings(&self, warnings: &WarningBuffer) {

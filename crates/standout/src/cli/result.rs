@@ -1,5 +1,13 @@
-use crate::cli::handler::{DispatchResult, RunError, RunErrorKind, RunOutput};
+use crate::cli::handler::{DispatchResult, ExitStatus, RunError, RunErrorKind, RunOutput};
 use crate::OutputMode;
+
+/// What a fully emitted run left behind: whether a registered command handled
+/// the invocation, and the exit status the process should end with.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ProcessOutcome {
+    pub handled: bool,
+    pub status: ExitStatus,
+}
 
 #[derive(Debug)]
 pub struct CompletedRun {

@@ -231,3 +231,228 @@ fn real_process_accepts_broken_text_stdout_but_reports_binary_stdout() {
         String::from_utf8_lossy(&binary_output.stderr)
     );
 }
+
+struct EmittedRun {
+    output: Output,
+    handled: bool,
+    status: u8,
+}
+
+/// Runs the fixture through `run_emitted`; the fixture writes the outcome it
+/// was handed to a file after emission and exits with the reported status.
+fn run_emitted(
+    binary: &PathBuf,
+    args: &[&str],
+    artifact_path: Option<&std::path::Path>,
+    close_stdout: bool,
+) -> EmittedRun {
+    let tempdir = tempfile::tempdir().unwrap();
+    let outcome_path = tempdir.path().join("outcome");
+    let mut command = Command::new(binary);
+    command
+        .args(args)
+        .env("STANDOUT_FIXTURE_EDGE", "emitted")
+        .env("STANDOUT_FIXTURE_OUTCOME_PATH", &outcome_path)
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped());
+    if let Some(path) = artifact_path {
+        command.env("STANDOUT_FIXTURE_ARTIFACT_PATH", path);
+    }
+    let mut child = command.spawn().unwrap();
+    if close_stdout {
+        drop(child.stdout.take());
+    }
+    let output = child.wait_with_output().unwrap();
+    let outcome = std::fs::read_to_string(&outcome_path)
+        .expect("run_emitted returned, so the caller's post-emission write happened");
+    let (handled, status) = outcome
+        .strip_prefix("handled=")
+        .and_then(|rest| rest.split_once(" status="))
+        .unwrap();
+    EmittedRun {
+        output,
+        handled: handled.parse().unwrap(),
+        status: status.parse().unwrap(),
+    }
+}
+
+#[test]
+fn emitted_edge_reports_the_outcome_run_exits_with() {
+    let binary = fixture_binary();
+    let tempdir = tempfile::tempdir().unwrap();
+    let artifact_path = tempdir.path().join("artifact.bin");
+    let unwritable = tempdir.path().join("missing").join("artifact.bin");
+    let output_file = tempdir.path().join("out.txt");
+    let output_file_arg = output_file.to_str().unwrap();
+    let directory_arg = tempdir.path().to_str().unwrap();
+
+    struct Case<'a> {
+        args: &'a [&'a str],
+        artifact_path: Option<&'a std::path::Path>,
+        handled: bool,
+        status: u8,
+        stdout: &'a [u8],
+        stderr_contains: &'a str,
+    }
+
+    let cases = [
+        Case {
+            args: &["ok"],
+            artifact_path: None,
+            handled: true,
+            status: 0,
+            stdout: b"ok\n",
+            stderr_contains: "",
+        },
+        Case {
+            args: &["fail"],
+            artifact_path: None,
+            handled: true,
+            status: 1,
+            stdout: b"",
+            stderr_contains: "fixture handler failed",
+        },
+        Case {
+            args: &["--unknown"],
+            artifact_path: None,
+            handled: true,
+            status: 2,
+            stdout: b"",
+            stderr_contains: "unexpected argument",
+        },
+        Case {
+            args: &["external"],
+            artifact_path: None,
+            handled: true,
+            status: 128,
+            stdout: b"",
+            stderr_contains: "fatal: external fixture failed",
+        },
+        Case {
+            args: &["binary"],
+            artifact_path: None,
+            handled: true,
+            status: 0,
+            stdout: &[0, 1, 2],
+            stderr_contains: "",
+        },
+        Case {
+            args: &["artifact-stdout"],
+            artifact_path: None,
+            handled: true,
+            status: 0,
+            stdout: &[0, 1, 2],
+            stderr_contains: "wrote 3 entries to -",
+        },
+        Case {
+            args: &["artifact"],
+            artifact_path: Some(&unwritable),
+            handled: true,
+            status: 1,
+            stdout: b"",
+            stderr_contains: "Error writing artifact",
+        },
+        Case {
+            args: &["warn-ok"],
+            artifact_path: None,
+            handled: true,
+            status: 0,
+            stdout: b"ok\n",
+            stderr_contains: "fixture warning",
+        },
+        Case {
+            args: &["warn-fail"],
+            artifact_path: None,
+            handled: true,
+            status: 1,
+            stdout: b"",
+            stderr_contains: "fixture warning",
+        },
+        Case {
+            args: &["silent"],
+            artifact_path: None,
+            handled: true,
+            status: 0,
+            stdout: b"",
+            stderr_contains: "",
+        },
+        Case {
+            args: &[],
+            artifact_path: None,
+            handled: false,
+            status: 0,
+            stdout: b"",
+            stderr_contains: "",
+        },
+        Case {
+            args: &["--output-file-path", output_file_arg, "ok"],
+            artifact_path: None,
+            handled: true,
+            status: 0,
+            stdout: b"",
+            stderr_contains: "",
+        },
+        Case {
+            args: &["--output-file-path", directory_arg, "ok"],
+            artifact_path: None,
+            handled: true,
+            status: 1,
+            stdout: b"",
+            stderr_contains: "Error writing output",
+        },
+    ];
+
+    for case in &cases {
+        let run = run_emitted(&binary, case.args, case.artifact_path, false);
+        let stderr = String::from_utf8_lossy(&run.output.stderr);
+        let label = format!("{:?} (artifact path {:?})", case.args, case.artifact_path);
+        assert_eq!(run.handled, case.handled, "{label}: handled");
+        assert_eq!(run.status, case.status, "{label}: reported status");
+        assert_eq!(
+            run.output.status.code(),
+            Some(i32::from(case.status)),
+            "{label}: exit"
+        );
+        assert_eq!(run.output.stdout, case.stdout, "{label}: stdout");
+        if case.stderr_contains.is_empty() {
+            assert!(stderr.is_empty(), "{label}: stderr {stderr:?}");
+        } else {
+            assert!(
+                stderr.contains(case.stderr_contains),
+                "{label}: stderr {stderr:?}"
+            );
+        }
+    }
+    assert_eq!(std::fs::read_to_string(output_file).unwrap(), "ok");
+
+    let artifact_run = run_emitted(&binary, &["artifact"], Some(&artifact_path), false);
+    assert!(artifact_run.handled);
+    assert_eq!(artifact_run.status, 0);
+    assert_eq!(std::fs::read(&artifact_path).unwrap(), [0, 1, 2]);
+    assert_eq!(
+        String::from_utf8_lossy(&artifact_run.output.stdout),
+        format!("wrote 3 entries to {}\n", artifact_path.display())
+    );
+    assert!(artifact_run.output.stderr.is_empty());
+}
+
+#[test]
+fn emitted_edge_reports_closed_consumer_pipes_the_way_run_exits() {
+    let binary = fixture_binary();
+
+    let text = run_emitted(&binary, &["huge"], None, true);
+    assert!(text.handled);
+    assert_eq!(text.status, 0);
+    assert_eq!(text.output.status.code(), Some(0));
+    assert!(text.output.stderr.is_empty());
+
+    let bytes = run_emitted(&binary, &["binary-huge"], None, true);
+    assert!(bytes.handled);
+    assert_eq!(bytes.status, 1);
+    assert_eq!(bytes.output.status.code(), Some(1));
+    assert!(
+        String::from_utf8_lossy(&bytes.output.stderr).contains("Error writing"),
+        "stderr: {}",
+        String::from_utf8_lossy(&bytes.output.stderr)
+    );
+}

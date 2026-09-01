@@ -7,7 +7,7 @@ runtime failure.
 
 ## Status and streams
 
-| Outcome | Stream used by `run()` | Status |
+| Outcome | Stream used by `run()` and `run_emitted()` | Status |
 | --- | --- | --- |
 | Help or version | stdout | `0` |
 | Successful rendered text or binary | stdout | `0` |
@@ -26,6 +26,30 @@ and accepted-input diagnostics, including answer-sheet parse warnings that do
 not reject a questionnaire submission. A final text or binary write failure does
 replace a successful status with `1`, except that `BrokenPipe` while writing
 final rendered command text to stdout is successful early consumer termination.
+
+## Emitting without exiting
+
+`run_emitted` is `run` up to the exit: it detects the destination, dispatches,
+pages help, writes both streams, flushes warnings, and then returns a
+`ProcessOutcome` instead of ending the process. `run` calls it and exits with
+the status it reports, so the two never differ in what reaches stdout, stderr,
+a file, or the pager.
+
+```rust,ignore
+let outcome = app.run_emitted(Cli::command(), std::env::args());
+telemetry.shutdown();
+std::process::exit(outcome.status.code().into());
+```
+
+`ProcessOutcome` has two public fields. `handled` is the `bool` that `run`
+returns: `false` only for a `NoMatch` handoff. `status` is the final
+`ExitStatus` after output errors, the one `run` would have exited with: a final
+write failure has already replaced a successful status, `BrokenPipe` on final
+rendered text has already been accepted as success, and a `NoMatch` handoff
+reports `ExitStatus::SUCCESS` because Standout emitted nothing. Everything has
+been written when the call returns, so a process-lifetime resource — a span
+exporter, an audit log, a buffered writer — can close between the last byte of
+output and the exit.
 
 ## Capturing typed metadata
 
@@ -110,7 +134,7 @@ nonzero status and its text is the verbatim diagnostic payload.
 
 `DispatchResult::NoMatch` retains the parsed `ArgMatches` for partial adoption. It has
 no framework exit status: `exit_status()` returns `None`, `run()` returns
-`false`, and Standout emits nothing. The fallback dispatcher still owns that
+`false`, `run_emitted()` reports `handled: false`, and Standout emits nothing. The fallback dispatcher still owns that
 command and its eventual status.
 
 The reverse direction never hands off. Before parsing, `run` and

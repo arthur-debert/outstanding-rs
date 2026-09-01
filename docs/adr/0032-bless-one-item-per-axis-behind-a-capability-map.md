@@ -93,6 +93,7 @@ Two silent behaviors go with the blessing, because both are the shape this epic 
 | --- | --- |
 | `App::run(cmd, args) -> bool` | **Blessed** run form: detect, dispatch, write both streams, page, exit with the status. |
 | `App::run_with(cmd, args, target, sources) -> CompletedRun` | **Blessed** capture form: destination properties and input sources passed in (ADR-0027), nothing written, nothing detected. `TestHarness::run` is its test-facing wrapper and already calls exactly this. |
+| `App::run_emitted(cmd, args) -> ProcessOutcome` | Keep — `run` without the exit: everything is written and paged, and the caller receives `handled` and the final status to close a process-lifetime resource before ending the process itself. `run` calls it (parity-machine-contract D10, #458). |
 | `App::dispatch(matches, output_mode)` | Keep — the application owns clap parsing and already holds `ArgMatches`. `extract_output_mode` is part of this path, not a separate entry. |
 | `App::run_command(path, matches, handler, template: TemplateRef)` | Keep — the manual-dispatch seam ROB04 repaired: one handler with its hooks and its render, without a dispatch table. It is what partial adoption documents. Its fourth parameter becomes `TemplateRef` for the reason `render_with`'s first does: it takes `&str` today and wraps it in `TemplateRef::Inline`, which is the inline-source argument the template axis deletes, spelled without the type. The one type lets manual dispatch name a registry entry, and keeps inline source reachable where there is no `build()` to validate a name against. |
 | `App::get_matches_from(cmd, argv, &InputSources) -> HelpResult` | Keep, taking today's `get_matches_from_with_sources` signature under the shorter name — the augmented `Command` and help interception for an application that parses for itself, and what feeds `dispatch`. |
@@ -136,6 +137,7 @@ Every capability the census's items expose, and the surviving item on the *same*
 | Stylesheet text the app already holds | theme | `Theme::from_yaml` (with icons), `Theme::from_css` |
 | Declining the framework's style vocabulary | theme | `include_framework_styles(false)` |
 | Running as a process: write, page, exit | entry | `run` |
+| Running as a process, then closing a resource before the exit | entry | `run_emitted`, and `process::exit` on the status it reports |
 | Capturing output with an injected destination and inputs | entry | `run_with`, and `TestHarness` over it |
 | Rendering diagnostics captured for assertions | entry | `TestHarness` (it opens the capture window itself) |
 | The application owns clap parsing | entry | `get_matches_from` then `dispatch`, with `extract_output_mode` |
