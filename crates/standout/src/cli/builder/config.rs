@@ -101,6 +101,12 @@ impl AppBuilder {
         self
     }
 
+    /// Alias for [`output_mode_fallback`](Self::output_mode_fallback): the
+    /// output mode used when `--output` is absent from the command line.
+    pub fn default_output_mode(self, mode: OutputMode) -> Self {
+        self.output_mode_fallback(mode)
+    }
+
     pub fn output_file_flag(mut self, name: Option<&str>) -> Self {
         self.output_file_flag = Some(name.unwrap_or("output-file-path").to_string());
         self
@@ -718,6 +724,20 @@ mod tests {
             arg.get_default_values(),
             ["term"],
             "the help page must advertise the mode the app actually falls back to"
+        );
+    }
+
+    #[test]
+    fn default_output_mode_is_an_alias_for_output_mode_fallback() {
+        let app = AppBuilder::new()
+            .templates(EmbeddedTemplates::new(TEMPLATES, ""))
+            .default_output_mode(OutputMode::Term)
+            .build()
+            .unwrap();
+        assert_eq!(
+            app.extract_output_mode_from_unparsed(&os_args(&["app", "--output=nope"])),
+            OutputMode::Term,
+            "default_output_mode must set the same fallback as output_mode_fallback"
         );
     }
 

@@ -417,6 +417,23 @@ fn export_handler(_m: &ArgMatches, _ctx: &CommandContext) -> HandlerResult<Expor
 }
 ```
 
+#### Artifact builder
+
+`Artifact<T>` is `T`, the report type, plus a byte payload and two opt-in
+destination hints:
+
+| Method | Purpose |
+| --- | --- |
+| `Artifact::new(bytes: impl Into<Vec<u8>>)` | Construct with the payload bytes. An empty vector is legal — a zero-byte artifact writes an empty file (or nothing to stdout). |
+| `.suggest_destination(path: impl Into<PathBuf>)` | Offer a default write path (destination policy step 2). |
+| `.allow_stdout()` | Permit the framework to fall back to stdout (step 3). |
+| `.with_report(report: T)` | Attach the report rendered after the write. |
+
+The report is emitted with exactly one trailing newline appended by the
+framework (via `writeln!`). An absent or empty report emits nothing — no blank
+line — so a zero-byte artifact with no report produces no output on either
+stream.
+
 Who owns what:
 
 | Concern | Owner |
@@ -496,7 +513,7 @@ pub struct CommandContext {
 
 **command_path**: The subcommand chain as a vector, e.g., `["db", "migrate"]`. Useful for logging or conditional logic.
 
-**app_state**: Shared, immutable state configured at app build time via `AppBuilder::app_state()`. Wrapped in `Arc` for cheap cloning. Use for database connections, configuration, API clients.
+**app_state**: Shared, immutable state configured at app build time via `AppBuilder::app_state()`. Held in an `Rc<Extensions>` for cheap cloning; the dispatch pipeline is single-threaded, so app state is not `Send`/`Sync`. Use for database connections, configuration, API clients.
 
 **extensions**: Per-request, mutable state injected by pre-dispatch hooks. Use for user sessions, request IDs, computed values.
 
@@ -616,7 +633,7 @@ The separation exists because:
 ```rust,ignore
 // App state: configured once at build time
 App::builder()
-    .app_state(Database::connect()?)  // Shared via Arc
+    .app_state(Database::connect()?)  // Shared via Rc
     .hooks("users.list", Hooks::new()
         .pre_dispatch(|matches, ctx| {
             // Extensions: computed per-request, can use app_state
@@ -695,7 +712,7 @@ When handlers depend on app_state, inject test fixtures:
 ```rust,ignore
 #[test]
 fn test_handler_with_app_state() {
-    use std::sync::Arc;
+    use std::rc::Rc;
 
     // Create test fixtures
     let mock_db = MockDatabase::with_items(vec![
@@ -708,7 +725,7 @@ fn test_handler_with_app_state() {
 
     let ctx = CommandContext {
         command_path: vec!["list".into()],
-        app_state: Arc::new(app_state),
+        app_state: Rc::new(app_state),
         extensions: Extensions::new(),
     };
 

@@ -231,15 +231,48 @@ Aliases can chain: `a` → `b` → `c` → concrete style. Cycles are detected a
 
 ## Unknown Style Tags
 
-When a template references a style not defined in the theme, `standout-render` handles it gracefully:
+When a template references a style tag not defined in the active theme,
+`standout-render` degrades it to unstyled text instead of failing the render.
+`Term` and `Text` mode treat unknown tags identically; the difference between
+them is only whether *known* tags render as ANSI (`Term`) or as plain text
+(`Text`). What happens to an unknown tag depends on whether its open and close markers
+are balanced:
 
-| Output Mode | Behavior                                                   |
-| ----------- | ---------------------------------------------------------- |
-| `Term`      | Unknown tags get a `?` marker: `[unknown?]text[/unknown?]` |
-| `Text`      | Tags stripped (plain text)                                 |
-| `TermDebug` | Tags preserved as-is                                       |
+- A **balanced pair**, `[unknown]x[/unknown]`, has its markers removed; the
+  inner text `x` is kept as unstyled text.
+- An **unbalanced** tag, `[unknown]` with no matching close, is emitted verbatim
+  as literal text — the brackets survive, so the output contains `[unknown]`.
+  This is why a stray `[compute]` appears verbatim under `--output text`.
 
-The `?` marker helps catch typos during development without crashing production apps.
+`TermDebug` mode keeps every tag, known or unknown, as literal text for
+inspection.
+
+There is no `?` marker: an unknown tag is never rewritten to `[unknown?]` in
+rendered output. Instead, each unresolved tag raises a stderr warning (see
+[Unresolved-tag warning](#unresolved-tag-warning) below), whether it was
+stripped or emitted verbatim.
+
+A tag counts as unknown when it is absent from the *active theme's* resolved
+style map. A tag your app defines in some themes but not the one currently
+selected is unresolved in that theme and degrades the same way; the warning
+does not distinguish a never-defined tag name from one merely missing in the
+active theme.
+
+To emit a literal `[` that must not be read as a tag, escape it as `\[` (and
+`\]` for `]`). See [Literal brackets](templating.md#literal-brackets) in the
+templating topic.
+
+### Unresolved-tag warning
+
+Every unresolved style tag raises one stderr warning naming the offending
+tag(s):
+
+```text
+Unresolved style tag(s) degraded to unstyled text: compute, status
+```
+
+An application whose specification pins its stderr bytes must account for this
+line. An escaped bracket (`\[`) is not a tag and raises no warning.
 
 ### Validation
 

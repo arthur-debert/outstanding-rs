@@ -359,10 +359,13 @@ Add values available in all templates:
 
 ### Static Context
 
+`context` takes a `minijinja::Value`, so string and number literals need
+`.into()`:
+
 ```rust
 App::builder()
-    .context("version", "1.0.0")
-    .context("app_name", "MyApp")
+    .context("version", "1.0.0".into())
+    .context("app_name", "MyApp".into())
 ```
 
 ### Dynamic Context
@@ -372,12 +375,24 @@ App::builder()
     .context_fn("terminal_width", |ctx| {
         Value::from(ctx.terminal_width.unwrap_or(80))
     })
+    .context_fn("doubled_count", |ctx| {
+        let count = ctx.data.get("count").and_then(|v| v.as_i64()).unwrap_or(0);
+        Value::from(count * 2)
+    })
     .context_fn("timestamp", |_ctx| {
         Value::from(chrono::Utc::now().to_rfc3339())
     })
 ```
 
-Dynamic providers receive `RenderContext` with output mode, terminal width, and handler data.
+A provider reads the handler's serialized `Output::Render` payload through
+`ctx.data`, a `&serde_json::Value`. The `doubled_count` provider above reads
+`count` from the payload the handler returned for the command being rendered,
+so a provider can derive a template value from handler data even when the
+template never names that data directly.
+
+Dynamic providers receive a `RenderContext` carrying the output mode
+(`ctx.output_mode`), terminal width (`ctx.terminal_width`), theme (`ctx.theme`),
+and the handler payload (`ctx.data`).
 They also receive `ctx.ambiguous_width()`, the application's explicit
 East Asian Ambiguous character-width policy. Configure it at the rendering
 seam; narrow is the compatibility default and Standout does not infer a locale:
@@ -452,6 +467,9 @@ sets it here:
 App::builder()
     .output_mode_fallback(OutputMode::Term)
 ```
+
+`default_output_mode(mode)` is an alias for this method; the two are
+interchangeable.
 
 Precedence is `--output` first, then the fallback. An explicit `--output` always
 wins, so this sets the default rather than overriding the user. Forcing color

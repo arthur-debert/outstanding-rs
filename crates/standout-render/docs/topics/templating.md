@@ -191,6 +191,27 @@ Style tags and MiniJinja work together seamlessly:
 
 The second example shows dynamic style names—the style applied depends on the value of `task.status`.
 
+### Literal brackets
+
+Pass 2 reads `[` as the start of a style tag. To put a literal `[` in the
+output, escape it as `\[`; escape a literal `]` as `\]`:
+
+```jinja
+Ready \[y/n\]
+Range \[0, 100\]
+```
+
+renders as `Ready [y/n]` and `Range [0, 100]`. The escape works in every output
+mode, and an escaped bracket is never treated as a tag, so it raises no
+[unresolved-tag warning](styling-system.md#unresolved-tag-warning). A `[` that
+does not begin a valid tag name (for example `[0, 100]`) is already left
+literal, so escaping is only needed when the bracketed text would otherwise
+parse as a tag.
+
+This is distinct from MiniJinja's `{{`/`}}` brace escape, which belongs to Pass
+1 (see [Template Engines](template-engines.md)) and does not affect the Pass 2
+bracket syntax.
+
 ---
 
 ## Processing Modes
@@ -210,6 +231,11 @@ Template: `[title]Hello[/title]`
 - **Term**: `\x1b[1;36mHello\x1b[0m` (rendered as cyan bold)
 - **Text**: `Hello`
 - **TermDebug**: `[title]Hello[/title]`
+
+The "strip tags completely" behavior applies to tags the active theme defines.
+An *unknown* tag degrades differently, and an unbalanced unknown tag survives
+verbatim even under `Text` — see [Unknown Style
+Tags](styling-system.md#unknown-style-tags).
 
 ### Setting the Mode
 

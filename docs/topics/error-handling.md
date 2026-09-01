@@ -69,8 +69,10 @@ feeds (ADR-0035).
 Use `ExternalFailure` when *another* operation owns the status and diagnostic
 contract, such as a delegated Git invocation — the application is relaying a
 verdict rather than reaching one, which is the whole difference from
-`AppFailure`. Construction rejects status `0`, and the diagnostic is a verbatim
-stderr payload: Standout adds no `Error:` prefix and no trailing newline.
+`AppFailure`. Construction rejects status `0` and validates nothing else: an
+empty diagnostic is accepted, which is what makes a nonzero exit with no output
+on either stream expressible. The diagnostic is a verbatim stderr payload:
+Standout adds no `Error:` prefix and no trailing newline.
 
 ```rust
 use standout::cli::{ExternalFailure, HandlerResult};
