@@ -49,7 +49,7 @@ pub mod hooks;
 #[macro_use]
 pub mod macros;
 
-pub use builder::{App, AppBuilder};
+pub use builder::{App, AppBuilder, STRICT_STYLE_TAGS_ENV};
 
 pub use group::{CommandConfig, GroupBuilder};
 

@@ -53,6 +53,14 @@ impl WarningBuffer {
         std::mem::take(&mut *self.inner.borrow_mut())
     }
 
+    /// Drop every buffered warning for which `keep` returns false. The
+    /// strict-style-tags gate uses this to remove the now-superseded
+    /// "degraded to unstyled text" warning once it escalates the same tags to
+    /// a hard error, so the failure is reported once rather than twice.
+    pub fn retain(&self, keep: impl Fn(&str) -> bool) {
+        self.inner.borrow_mut().retain(|warning| keep(warning));
+    }
+
     pub fn snapshot(&self) -> Vec<String> {
         self.inner.borrow().clone()
     }

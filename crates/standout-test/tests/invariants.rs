@@ -179,15 +179,12 @@ fn nesting_app() -> App {
         .command_with(
             "say",
             FnHandler::new(|_m, _ctx| {
-                let inner = {
-                    let _window = standout::diagnostics::begin_capture();
-                    embedded_app().run_with(
-                        Command::new("inner").subcommand(Command::new("emit")),
-                        ["inner", "emit"],
-                        standout::TargetProperties::detect(),
-                        standout::InputSources::from_process(),
-                    )
-                };
+                let inner = embedded_app().run_with(
+                    Command::new("inner").subcommand(Command::new("emit")),
+                    ["inner", "emit"],
+                    standout::TargetProperties::detect(),
+                    standout::InputSources::from_process(),
+                );
                 let embedded = match inner.outcome() {
                     DispatchResult::Handled(output) => output.as_str().to_string(),
                     other => panic!("the inner run must succeed, got {:?}", other),
@@ -240,15 +237,12 @@ fn discarding_app() -> App {
         .command_with(
             "say",
             FnHandler::new(|_m, _ctx| {
-                let discarded = {
-                    let _window = standout::diagnostics::begin_capture();
-                    embedded_app().run_with(
-                        Command::new("inner").subcommand(Command::new("emit")),
-                        ["inner", "emit"],
-                        standout::TargetProperties::detect(),
-                        standout::InputSources::from_process(),
-                    )
-                };
+                let discarded = embedded_app().run_with(
+                    Command::new("inner").subcommand(Command::new("emit")),
+                    ["inner", "emit"],
+                    standout::TargetProperties::detect(),
+                    standout::InputSources::from_process(),
+                );
                 assert!(
                     matches!(discarded.outcome(), DispatchResult::Handled(_)),
                     "the inner run must succeed"

@@ -247,9 +247,7 @@ impl TestHarness {
             argv.push(format!("--{}={}", self.output_flag_name, output_mode_flag(mode)).into());
         }
         let target = self.target_properties();
-        let capture_window = standout_render::diagnostics::begin_capture();
         let run = app.run_with(cmd, argv, target, sources);
-        drop(capture_window);
         let warnings = run.warnings().to_vec();
         let output_mode = run.output_mode();
         let outcome = run.into_outcome();
