@@ -1,6 +1,6 @@
-// The archetypes authored after the pilot, driven through the full `run()`
-// orchestration against a produced binary that fails every invocation. Runs in
-// its own test binary because it prepends to the process-wide PATH.
+// The six completion archetypes, driven through the full `run()` orchestration
+// against a produced binary that fails every invocation. Runs in its own test
+// binary because it prepends to the process-wide PATH.
 
 #![cfg(unix)]
 
@@ -12,7 +12,14 @@ use corpus_runner::archetype::Archetype;
 use corpus_runner::report::{CaseOutcome, InvariantStatus};
 use corpus_runner::{run, RunConfig, Timeouts};
 
-const AUTHORED: &[&str] = &["cargolike"];
+const AUTHORED: &[&str] = &[
+    "brewlike",
+    "cargolike",
+    "dockerlike",
+    "gcloudlike",
+    "kubelike",
+    "pnpmlike",
+];
 
 #[test]
 fn authored_archetypes_complete_the_loop_against_a_failing_binary() {
