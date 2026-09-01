@@ -58,6 +58,45 @@ stdout = "IMAGE ID     REPOSITORY TAG  SIZE\na1b2c3d4e5f6 alpine     3.19 7.4MB\
 stderr = ""
 
 [[case]]
+name = "image-ls-no-trunc-is-identical"
+group = "alias-identity"
+stresses = "the management path widens to the same bytes"
+expected = "pass"
+[case.run]
+argv = ["image", "ls", "--no-trunc"]
+timeout_seconds = 10
+[case.expect]
+exit_code = 0
+stdout = "IMAGE ID         REPOSITORY TAG  SIZE\na1b2c3d4e5f60718 alpine     3.19 7.4MB\nb9c8d7e6f5a40312 postgres   16   431MB\ne5f4a3b2c1d09876 redis      7    41MB\n"
+stderr = ""
+
+[[case]]
+name = "image-ls-json-is-identical-to-images"
+group = "alias-identity"
+stresses = "the management path serializes the same image records"
+expected = "pass"
+[case.run]
+argv = ["image", "ls", "--output", "json"]
+timeout_seconds = 10
+[case.expect]
+exit_code = 0
+stdout_json = '[{"id":"a1b2c3d4e5f60718","repository":"alpine","tag":"3.19","size":"7.4MB"},{"id":"b9c8d7e6f5a40312","repository":"postgres","tag":"16","size":"431MB"},{"id":"e5f4a3b2c1d09876","repository":"redis","tag":"7","size":"41MB"}]'
+stderr = ""
+
+[[case]]
+name = "image-ls-quiet-json-is-identical"
+group = "alias-identity"
+stresses = "the management path serializes the same quiet value"
+expected = "pass"
+[case.run]
+argv = ["image", "ls", "-q", "--output", "json"]
+timeout_seconds = 10
+[case.expect]
+exit_code = 0
+stdout_json = '["a1b2c3d4e5f60718","b9c8d7e6f5a40312","e5f4a3b2c1d09876"]'
+stderr = ""
+
+[[case]]
 name = "ps-quiet-filtered"
 group = "alias-identity"
 stresses = "flags parse and apply on the legacy verb"
@@ -299,19 +338,6 @@ exit_code = 0
 stdout_json = '["a1b2c3d4e5f60718","b9c8d7e6f5a40312","e5f4a3b2c1d09876"]'
 stderr = ""
 
-[[case]]
-name = "image-ls-quiet-json-is-identical"
-group = "quiet-contract"
-stresses = "the management path serializes the same quiet value"
-expected = "pass"
-[case.run]
-argv = ["image", "ls", "-q", "--output", "json"]
-timeout_seconds = 10
-[case.expect]
-exit_code = 0
-stdout_json = '["a1b2c3d4e5f60718","b9c8d7e6f5a40312","e5f4a3b2c1d09876"]'
-stderr = ""
-
 # --- truncation is a rendering rule ------------------------------------------
 
 [[case]]
@@ -380,38 +406,12 @@ stdout = "IMAGE ID         REPOSITORY TAG  SIZE\na1b2c3d4e5f60718 alpine     3.1
 stderr = ""
 
 [[case]]
-name = "image-ls-no-trunc-is-identical"
-group = "truncation"
-stresses = "the management path widens to the same bytes"
-expected = "pass"
-[case.run]
-argv = ["image", "ls", "--no-trunc"]
-timeout_seconds = 10
-[case.expect]
-exit_code = 0
-stdout = "IMAGE ID         REPOSITORY TAG  SIZE\na1b2c3d4e5f60718 alpine     3.19 7.4MB\nb9c8d7e6f5a40312 postgres   16   431MB\ne5f4a3b2c1d09876 redis      7    41MB\n"
-stderr = ""
-
-[[case]]
 name = "images-json-serializes-image-records"
 group = "truncation"
 stresses = "the image listing has its own structured schema, with whole ids"
 expected = "pass"
 [case.run]
 argv = ["images", "--output", "json"]
-timeout_seconds = 10
-[case.expect]
-exit_code = 0
-stdout_json = '[{"id":"a1b2c3d4e5f60718","repository":"alpine","tag":"3.19","size":"7.4MB"},{"id":"b9c8d7e6f5a40312","repository":"postgres","tag":"16","size":"431MB"},{"id":"e5f4a3b2c1d09876","repository":"redis","tag":"7","size":"41MB"}]'
-stderr = ""
-
-[[case]]
-name = "image-ls-json-is-identical-to-images"
-group = "truncation"
-stresses = "the management path serializes the same image records"
-expected = "pass"
-[case.run]
-argv = ["image", "ls", "--output", "json"]
 timeout_seconds = 10
 [case.expect]
 exit_code = 0

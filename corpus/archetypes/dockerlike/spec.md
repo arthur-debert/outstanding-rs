@@ -57,10 +57,13 @@ dockerlike
 ```
 
 An alias and its management path are the **same command**: same flags, same
-stdout bytes, same stderr bytes when they fail, same exit codes. Only the
-words the user types differ, and `--help` is the one output where that
-shows: the usage line names the path that was invoked, while the rest of the
-help — the flags it documents above all — is the same at both.
+exit codes, same stderr bytes when they fail, and the same stdout — byte for
+byte wherever this spec fixes the bytes, which is the tables, the quiet
+lists and `inspect`, and the same serialized value in the structured modes,
+whose layout the framework's renderer decides rather than this archetype.
+Only the words the user types differ, and `--help` is the one output where
+that shows: the usage line names the path that was invoked, while the rest
+of the help, the flags it documents above all, is the same at both.
 
 Invoking a group (`dockerlike container`, `dockerlike image`) without a
 subcommand is a usage error: exit 2, guidance on stderr, nothing on stdout.
