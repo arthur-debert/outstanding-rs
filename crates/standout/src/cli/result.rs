@@ -3,6 +3,7 @@ use crate::OutputMode;
 
 /// What a fully emitted run left behind: whether a registered command handled
 /// the invocation, and the exit status the process should end with.
+#[must_use = "exit the process with `status`, or otherwise act on the outcome"]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct ProcessOutcome {
     pub handled: bool,
