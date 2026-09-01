@@ -1,6 +1,7 @@
 // The committed-pilot sanitizer as an external command, plus a secret-shape
-// scan over every committed run artifact in `corpus/pilot/` and
-// `corpus/demo/`.
+// scan over every committed run artifact under the roots in `SCANNED_ROOTS`:
+// the pilot runs and scorecard, the rerun evidence, the completion runs, and
+// the demo.
 
 #![cfg(unix)]
 
@@ -155,20 +156,26 @@ fn is_email_domain(c: char) -> bool {
 // rustc names a closure's type after where it was written — `{closure@main.rs:39:29}` —
 // so that `@` joins a file to a line and column, never a mailbox to a host. Compiler
 // diagnostics land in every run's transcript, and the file name varies per diagnostic,
-// so the scan reads the shape instead of vouching each value.
-fn names_a_source_position(rest: &str) -> bool {
-    let Some(rest) = rest.strip_prefix(':') else {
+// so the scan reads the whole braced form instead of vouching each value. Every part
+// has to be there: the `{closure` opener, a `.rs` file, and `:line:column}`. Anything
+// short of that stays a hit — a rustc form the scan has not learned costs a false
+// positive someone triages, where a loose rule costs a mailbox nobody sees.
+fn is_rustc_closure_type(local: &str, before: &str, domain: &str, after: &str) -> bool {
+    if local != "closure" || !before.ends_with('{') || !domain.ends_with(".rs") {
+        return false;
+    }
+    let Some(after) = after.strip_prefix(':') else {
         return false;
     };
-    let line: String = rest.chars().take_while(|c| c.is_ascii_digit()).collect();
+    let line: String = after.chars().take_while(|c| c.is_ascii_digit()).collect();
     if line.is_empty() {
         return false;
     }
-    let Some(rest) = rest[line.len()..].strip_prefix(':') else {
+    let Some(after) = after[line.len()..].strip_prefix(':') else {
         return false;
     };
-    let column: String = rest.chars().take_while(|c| c.is_ascii_digit()).collect();
-    !column.is_empty() && rest[column.len()..].starts_with('}')
+    let column: String = after.chars().take_while(|c| c.is_ascii_digit()).collect();
+    !column.is_empty() && after[column.len()..].starts_with('}')
 }
 
 fn email_at(text: &str, at: usize) -> Option<String> {
@@ -184,7 +191,12 @@ fn email_at(text: &str, at: usize) -> Option<String> {
         .chars()
         .take_while(|&c| is_email_domain(c))
         .collect();
-    if names_a_source_position(&text[at + 1 + run.len()..]) {
+    if is_rustc_closure_type(
+        &local,
+        &text[..at - local.len()],
+        &run,
+        &text[at + 1 + run.len()..],
+    ) {
         return None;
     }
     let domain = run.trim_end_matches(['.', '-']);
@@ -452,6 +464,9 @@ fn secret_shape_patterns_catch_each_class() {
         "\"hostname\":\"redacted\"",
         "mail carol.smith+x@gmail.com now",
         "mail carol@gmail.com:39:29 now",
+        "mail carol@gmail.com:39:29} now",
+        "expected `closure@main.rs:39:29}` unbraced",
+        "expected `{closure@main.py:39:29}` unrusty",
         "token ghp_abcdefghij",
         "key AKIAABCDEFGHIJKLMNOP end",
         "xoxb-1234-abc",
