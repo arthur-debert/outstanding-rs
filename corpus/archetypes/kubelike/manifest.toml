@@ -4,9 +4,11 @@
 # was never committed, so the interactions below are chosen rather than
 # recovered; `spec.md` says so in its own words and names what it stresses.
 # They are chosen to avoid the axes the parity Specs already assign elsewhere:
-# config *merge* rules to C1/C6/C7, a schema-versioned machine surface to C11
-# brewlike, the reporter/quiet matrix to C10 pnpmlike, expression templating to
-# C9 jjlike.
+# config *merge* rules to C1/C6/C7, a schema-versioned machine surface to C10
+# brewlike, the reporter/quiet matrix to C11 pnpmlike, and user-supplied runtime
+# templates to C9 jjlike. That last one is jjlike's separate `runtime-templates`
+# gap, not the `templates` feature named below: `templates` is standout's own
+# render layer, which ghlike and gitlike also list while stressing other axes.
 
 [archetype]
 name = "kubelike"
@@ -38,18 +40,22 @@ cases = [
     "unknown-kind-is-a-domain-error",
     "api-resources-prints-the-registry",
     "describe-pod-detail-block",
+    "describe-service-detail-block",
     "describe-node-has-its-own-key-set",
+    "describe-absent-resource-is-a-domain-error",
 ]
 
 [[interactions]]
 id = "scope-metadata-vs-flag-validity"
-stresses = ["registry metadata read at run time", "flag acceptance per invocation", "usage-error policy", "scope-driven column set"]
-description = "Whether -n and -A are legal depends on a property of the kind the argument resolved to, so the same flag on the same verb is accepted or refused by data. Frameworks validate arguments against a static command tree; this is the shape where that is not enough."
+stresses = ["registry metadata read at run time", "flag acceptance per invocation", "usage-error policy", "scope-driven column set", "scope judged over a kind list"]
+description = "Whether -n and -A are legal depends on a property of the kind the argument resolved to, so the same flag on the same verb is accepted or refused by data. Frameworks validate arguments against a static command tree; this is the shape where that is not enough. With a comma-separated kind list the property is folded over the whole list before anything renders, so one cluster-scoped member refuses the flag for every member."
 cases = [
     "get-nodes-is-cluster-scoped",
     "namespace-flag-refused-on-cluster-scoped-kind",
     "all-namespaces-refused-on-cluster-scoped-kind",
     "all-namespaces-adds-a-leading-column",
+    "namespace-flag-refused-on-a-mixed-scope-list",
+    "all-namespaces-refused-on-a-mixed-scope-list",
 ]
 
 [[interactions]]
@@ -82,7 +88,7 @@ cases = [
 [[interactions]]
 id = "caller-chosen-columns-vs-layout"
 stresses = ["runtime column selection", "tabular layout over an unplanned column set", "field-vocabulary validation", "stream separation"]
-description = "custom-columns hands the column set and its headers to the caller, so the layout engine pads a set nobody declared at build time and rejection has to name a field vocabulary the code never enumerated in a signature. Expression templating stays out on purpose — that is jjlike's gap, not this archetype's."
+description = "custom-columns hands the column set and its headers to the caller, so the layout engine pads a set nobody declared at build time and rejection has to name a field vocabulary the code never enumerated in a signature. A user-supplied template language stays out on purpose — runtime templates are jjlike's gap, not this archetype's."
 cases = [
     "custom-columns-chooses-columns-and-headers",
     "custom-columns-unknown-field-lists-valid-ones",
@@ -101,9 +107,10 @@ cases = [
 
 [[interactions]]
 id = "heterogeneous-collection-vs-render"
-stresses = ["multi-kind listing in one invocation", "per-kind column sets", "one structured envelope over mixed shapes"]
+stresses = ["multi-kind listing in one invocation", "per-kind column sets", "one structured envelope over mixed shapes", "kinds of different scope in one listing"]
 description = "Every other roster archetype renders a homogeneous collection. Here one invocation renders two column sets in sequence and one JSON list whose elements do not share a shape — the case where a typed render pipeline has to carry a sum, not a vector of one type."
 cases = [
     "multi-kind-get-renders-one-block-per-kind",
+    "mixed-scope-list-renders-each-kind-in-its-own-scope",
     "multi-kind-json-is-one-list-of-mixed-shapes",
 ]

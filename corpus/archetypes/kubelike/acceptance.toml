@@ -97,6 +97,32 @@ stdout = "Name:      web-1\nNamespace: default\nNode:      node-a\nStatus:    Ru
 stderr = ""
 
 [[case]]
+name = "describe-service-detail-block"
+group = "kind-registry"
+stresses = "the registry's third kind has its own describe key set, padded to its own widest key"
+expected = "pass"
+[case.run]
+argv = ["describe", "service", "web"]
+timeout_seconds = 10
+[case.expect]
+exit_code = 0
+stdout = "Name:      web\nNamespace: default\nType:      ClusterIP\nClusterIP: 10.0.0.10\nPort:      80/TCP\nSelector:  app=web\n"
+stderr = ""
+
+[[case]]
+name = "describe-absent-resource-is-a-domain-error"
+group = "kind-registry"
+stresses = "describe's missing-resource error is get's, naming the kind's plural even though the argument was singular"
+expected = "pass"
+[case.run]
+argv = ["describe", "service", "nope"]
+timeout_seconds = 10
+[case.expect]
+exit_code = 1
+stdout = ""
+stderr = "kubelike: services \"nope\" not found in namespace \"default\"\n"
+
+[[case]]
 name = "describe-node-has-its-own-key-set"
 group = "kind-registry"
 stresses = "the same verb over a different kind emits a different key set and repads to it"
@@ -162,6 +188,32 @@ timeout_seconds = 10
 exit_code = 0
 stdout = "NAMESPACE   NAME  READY STATUS  RESTARTS\ndefault     web-1 1/1   Running 0\ndefault     web-2 1/1   Running 2\ndefault     db-0  1/1   Running 0\nkube-system dns-1 1/1   Running 0\n"
 stderr = ""
+
+[[case]]
+name = "namespace-flag-refused-on-a-mixed-scope-list"
+group = "scope-metadata"
+stresses = "one cluster-scoped kind in a comma-separated list refuses -n for the whole invocation, so the namespaced kind's block is not rendered either"
+expected = "pass"
+[case.run]
+argv = ["get", "pods,nodes", "-n", "default"]
+timeout_seconds = 10
+[case.expect]
+exit_code = 2
+stdout = ""
+stderr_contains = ["nodes", "not a namespaced resource"]
+
+[[case]]
+name = "all-namespaces-refused-on-a-mixed-scope-list"
+group = "scope-metadata"
+stresses = "the same whole-invocation refusal for -A: scope validity is judged over the list, not per kind"
+expected = "pass"
+[case.run]
+argv = ["get", "pods,nodes", "-A"]
+timeout_seconds = 10
+[case.expect]
+exit_code = 2
+stdout = ""
+stderr_contains = ["nodes", "not a namespaced resource"]
 
 # --- the ambient namespace and its overrides ---------------------------------
 
@@ -342,12 +394,14 @@ stresses = "an attended color-capable terminal must not tempt styling or prose i
 expected = "pass"
 [case.run]
 argv = ["get", "nodes", "-o", "json"]
+env = { TERM = "xterm-256color" }
 tty = ["stdout"]
 timeout_seconds = 10
 [case.expect]
 exit_code = 0
 stdout_json = '{"items":[{"kind":"Node","name":"node-a","status":"Ready","role":"control-plane","version":"v1.0.0"},{"kind":"Node","name":"node-b","status":"Ready","role":"worker","version":"v1.0.0"}]}'
 stdout_not_contains = ["\u001b["]
+stderr = ""
 
 [[case]]
 name = "custom-columns-chooses-columns-and-headers"
@@ -373,7 +427,7 @@ timeout_seconds = 10
 [case.expect]
 exit_code = 1
 stdout = ""
-stderr_contains = ["bogus", "pods", "restarts"]
+stderr = "kubelike: unknown field \"bogus\" for pods; valid fields: name, namespace, ready, status, restarts, node\n"
 
 # --- selection and the empty set ---------------------------------------------
 
@@ -442,6 +496,19 @@ timeout_seconds = 10
 [case.expect]
 exit_code = 0
 stdout = "NAME  READY STATUS  RESTARTS\nweb-1 1/1   Running 0\nweb-2 1/1   Running 2\ndb-0  1/1   Running 0\n\nNAME TYPE      CLUSTER-IP PORT\nweb  ClusterIP 10.0.0.10  80/TCP\n"
+stderr = ""
+
+[[case]]
+name = "mixed-scope-list-renders-each-kind-in-its-own-scope"
+group = "heterogeneous"
+stresses = "with no namespace flag a mixed-scope list is legal: the namespaced kind lists in the resolved namespace, the cluster-scoped one cluster-wide"
+expected = "pass"
+[case.run]
+argv = ["get", "pods,nodes"]
+timeout_seconds = 10
+[case.expect]
+exit_code = 0
+stdout = "NAME  READY STATUS  RESTARTS\nweb-1 1/1   Running 0\nweb-2 1/1   Running 2\ndb-0  1/1   Running 0\n\nNAME   STATUS ROLE          VERSION\nnode-a Ready  control-plane v1.0.0\nnode-b Ready  worker        v1.0.0\n"
 stderr = ""
 
 [[case]]

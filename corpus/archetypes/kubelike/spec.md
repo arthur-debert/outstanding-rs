@@ -24,8 +24,8 @@ stress and is written to those:
 3. **A format vocabulary wider than a render-mode enum.** `-o` selects among a
    default table, `wide` (same rows, more columns), `name` (pipe-shaped
    identifiers), `json`, and `custom-columns=` (a **caller-chosen column set**,
-   headers and all). Expression templating is deliberately absent: that is
-   `jjlike`'s (C9) axis.
+   headers and all). A user-supplied template *language* is deliberately
+   absent: runtime templates as untrusted input are `jjlike`'s (C9) axis.
 4. **Heterogeneous collections through one render.** `get pods,services`
    renders two column sets in one invocation, and one flat JSON list whose
    elements have different shapes.
@@ -124,6 +124,13 @@ A missing file is not an error — resolution falls through it. `-A` /
 For a cluster-scoped kind, `-n` and `-A` are usage errors (exit 2, stdout
 empty, stderr naming the kind and that it is not namespaced). Plain
 `get nodes` needs neither.
+
+A comma-separated list is judged as one invocation, not kind by kind: if any
+kind in the list is cluster-scoped, `-n` and `-A` are that same usage error —
+exit 2, stdout empty, stderr naming the cluster-scoped kind — and no block is
+rendered, including the namespaced kinds' own. Without those flags a mixed list
+is legal: each kind lists in its own scope, the namespaced ones in the resolved
+namespace, and the blocks render in the order asked.
 
 ## `get` — output formats
 
@@ -230,7 +237,8 @@ web-2 node-b
 db-0  node-a
 ```
 
-The field vocabulary of a kind is exactly the scalar keys of its JSON object:
+The field vocabulary of a kind is the scalar keys of its JSON object other than
+`kind`, which names the shape rather than a value and is not selectable:
 `name`, `namespace`, `ready`, `status`, `restarts`, `node` for pods; `name`,
 `namespace`, `type`, `clusterIP`, `port` for services; `name`, `status`,
 `role`, `version` for nodes. An unknown field is an error (exit 1, empty
@@ -267,7 +275,9 @@ form, and any explanation goes to stderr:
 ## `describe <kind> <name>`
 
 A detail block: `<Key>:` padded to the widest key in the block, then a single
-space, then the value.
+space, then the value. Each kind has its own key set, so the padding is
+recomputed per block. All three kinds in the registry, in registry order —
+pods, services, nodes:
 
 ```text
 Name:      web-1
@@ -279,11 +289,26 @@ Labels:    app=web
 ```
 
 ```text
+Name:      web
+Namespace: default
+Type:      ClusterIP
+ClusterIP: 10.0.0.10
+Port:      80/TCP
+Selector:  app=web
+```
+
+```text
 Name:    node-a
 Status:  Ready
 Role:    control-plane
 Version: v1.0.0
 ```
+
+`describe` resolves its namespace exactly as `get` does — the same flag > env >
+kubeconfig > `default` chain for a namespaced kind, and `-n` a usage error on a
+cluster-scoped one. A name matching nothing is `get`'s domain error unchanged
+(exit 1, stdout empty, the kind's *plural* name in the message):
+`kubelike: services "nope" not found in namespace "default"`.
 
 ## `api-resources`
 
