@@ -35,15 +35,20 @@ stresses = [
     "help rendering per path",
     "usage-error policy for group nodes",
 ]
-description = "The same command is reachable as a top-level verb and as a leaf of a management group. Registration is the only thing that differs, so any divergence in output, flag handling, help, or exit code is the framework leaking its dispatch path into behavior."
+description = "The same command is reachable as a top-level verb and as a leaf of a management group. Registration is the only thing that differs, so any divergence in output, flag handling, help, or exit code is the framework leaking its dispatch path into behavior. Help is the one licensed difference — the usage line names the invoked path — so the two help cases assert the shared flag vocabulary and each path's own usage line."
 cases = [
     "ps-lists-containers",
     "container-ls-is-identical-to-ps",
     "images-lists-images",
     "image-ls-is-identical-to-images",
+    "image-ls-no-trunc-is-identical",
+    "image-ls-json-is-identical-to-images",
+    "image-ls-quiet-json-is-identical",
     "ps-quiet-filtered",
     "container-ls-quiet-filtered-identical",
     "container-inspect-is-identical-to-inspect",
+    "container-ls-filter-error-is-identical",
+    "container-inspect-unknown-ref-is-identical",
     "container-group-without-subcommand",
     "image-group-without-subcommand",
     "root-without-command-is-usage-error",
@@ -70,6 +75,8 @@ cases = [
     "quiet-under-forced-term-is-unstyled",
     "quiet-json-is-an-array-of-ids",
     "quiet-images-lists-bare-ids",
+    "quiet-images-json-is-an-array-of-ids",
+    "image-ls-quiet-json-is-identical",
     "quiet-no-trunc-prints-whole-ids",
     "quiet-no-match-prints-nothing",
 ]
@@ -81,13 +88,16 @@ stresses = [
     "column width computation",
     "structured serialization",
 ]
-description = "Shortened identifiers are a table rule and nothing more: `--no-trunc` widens the column and every row with it, while structured output carries whole identifiers with or without the flag. The failure this catches is a rendering concern reaching the serialized value."
+description = "Shortened identifiers are a table rule and nothing more: `--no-trunc` widens the column and every row with it, while structured output carries whole identifiers with or without the flag. Both listings are covered, since containers and images serialize different record schemas. The failure this catches is a rendering concern reaching the serialized value."
 cases = [
     "ps-lists-containers",
     "no-trunc-widens-the-id-column",
     "quiet-no-trunc-prints-whole-ids",
     "json-carries-whole-ids-without-no-trunc",
     "no-trunc-is-inert-in-structured-output",
+    "images-no-trunc-widens-the-id-column",
+    "images-json-serializes-image-records",
+    "images-no-trunc-is-inert-in-structured-output",
 ]
 
 [[interactions]]
@@ -126,4 +136,5 @@ cases = [
     "container-inspect-is-identical-to-inspect",
     "ambiguous-prefix-names-the-candidates",
     "unknown-ref-is-a-domain-error",
+    "container-inspect-unknown-ref-is-identical",
 ]

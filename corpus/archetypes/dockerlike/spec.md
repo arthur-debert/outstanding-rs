@@ -9,12 +9,14 @@ mutates.
 Three conventions run through the whole tool:
 
 - **`--quiet` decides what the data is**, not how it looks: the listing
-  commands emit bare identifiers, one per line, with no header and no
-  styling, and that stays true under every output mode and on an attended
-  terminal.
+  commands emit identifiers and nothing else. In the human-rendered modes
+  (`auto`, `text`, `term`) that is one bare identifier per line, no header
+  and no styling, on an attended terminal as much as on a pipe; in the
+  structured modes the serialized value is the identifier array itself.
 - **Truncation is a human-rendering rule.** Identifiers display shortened in
-  the human table; `--no-trunc` shows them whole. Structured output always
-  carries the whole identifier, `--no-trunc` or not.
+  the human-rendered output — the table's identifier column and the quiet
+  list alike — and `--no-trunc` shows them whole in both. Structured output
+  always carries the whole identifier, `--no-trunc` or not.
 - **Selection is composable.** `--filter key=value` repeats and the
   conditions are ANDed; a filter that matches nothing is a success with no
   rows, not an error.
@@ -55,7 +57,10 @@ dockerlike
 ```
 
 An alias and its management path are the **same command**: same flags, same
-output bytes, same exit codes. Only the words the user types differ.
+stdout bytes, same stderr bytes when they fail, same exit codes. Only the
+words the user types differ, and `--help` is the one output where that
+shows: the usage line names the path that was invoked, while the rest of the
+help — the flags it documents above all — is the same at both.
 
 Invoking a group (`dockerlike container`, `dockerlike image`) without a
 subcommand is a usage error: exit 2, guidance on stderr, nothing on stdout.
@@ -136,8 +141,15 @@ Under `--quiet` the same invocation prints nothing at all.
 
 A filter naming a key outside `state`, `name`, `image`, or one carrying no
 `=`, is a domain error — the flag parsed, its value was rejected: exit 1,
-empty stdout, and on stderr a message naming the offending value and the
-valid keys.
+empty stdout, and on stderr the offending value as typed, followed by the
+valid keys:
+
+```text
+$ dockerlike ps --filter status=running
+dockerlike: invalid filter: status=running (valid keys: state, name, image)
+$ dockerlike ps --filter running
+dockerlike: invalid filter: running (valid keys: state, name, image)
+```
 
 ## `dockerlike images` / `dockerlike image ls`
 
@@ -148,21 +160,40 @@ b9c8d7e6f5a4 postgres   16   431MB
 e5f4a3b2c1d0 redis      7    41MB
 ```
 
-`--no-trunc` and `-q` behave exactly as they do for containers. `--filter`
-is a container-listing flag only.
+`--no-trunc` and `-q` behave exactly as they do for containers — the whole
+identifiers widen the `IMAGE ID` column, and quiet output is one identifier
+per line:
+
+```text
+$ dockerlike images --no-trunc
+IMAGE ID         REPOSITORY TAG  SIZE
+a1b2c3d4e5f60718 alpine     3.19 7.4MB
+b9c8d7e6f5a40312 postgres   16   431MB
+e5f4a3b2c1d09876 redis      7    41MB
+```
+
+`--filter` is a container-listing flag only.
 
 ## Structured output
 
-The listing commands' structured modes (`--output=json` and friends)
-serialize the container records themselves — an array of objects carrying
-`id`, `name`, `image`, `state`, with the **whole** identifier:
+A listing command's structured modes (`--output=json` and friends) serialize
+the records themselves, with the **whole** identifier. Containers carry `id`,
+`name`, `image`, `state`:
 
 ```json
 [{"id":"3f1a9c2b7d4e0a11","name":"web","image":"alpine:3.19","state":"running"}]
 ```
 
-`--no-trunc` changes nothing there; it is a flag about the human table.
-Under `--quiet` the structured value is the identifier array itself:
+Images carry `id`, `repository`, `tag`, `size` — the same strings the table
+shows, the size included:
+
+```json
+[{"id":"a1b2c3d4e5f60718","repository":"alpine","tag":"3.19","size":"7.4MB"}]
+```
+
+`--no-trunc` changes nothing here: it governs what the human-rendered output
+shows, and the serialized identifier is whole either way. Under `--quiet` the
+structured value is the identifier array itself, for both listings:
 
 ```json
 ["3f1a9c2b7d4e0a11","7b2e5a8f0c13d4f2","3f8d4e6a1b90c7a3","c04b17e9a2f5e8d4"]
@@ -177,7 +208,9 @@ bytes, never styled, never framed with prose.
 
 The value is always a JSON array, one object per reference, in the order the
 references were given, even for a single one. Object fields are `id` (whole),
-`name`, `image`, `state`.
+`name`, `image`, `state`, in that order. Since the bytes are the contract,
+they are fixed: compact JSON — no spaces, no indentation — on a single line
+terminated by one newline.
 
 ```text
 $ dockerlike inspect web
@@ -188,8 +221,9 @@ A reference is a container name or an identifier prefix. A prefix must
 resolve to exactly one container:
 
 - unique prefix (`7b2`) — resolves to `api`;
-- ambiguous prefix (`3f`, shared by `web` and `db`) — exit 1, empty stdout,
-  and a stderr message naming the prefix and every identifier it matched;
+- ambiguous prefix — exit 1, empty stdout, and on stderr the prefix followed
+  by every whole identifier it matched, in listing order:
+  `dockerlike: ambiguous reference: 3f matches 3f1a9c2b7d4e0a11, 3f8d4e6a1b90c7a3`;
 - no match — exit 1, empty stdout, and on stderr
   `dockerlike: no such object: <ref>`.
 
@@ -213,13 +247,15 @@ What it exists to stress, stated so a reader can judge whether it earns its
 place beside the rest of the roster:
 
 - **One handler under two registered paths.** Legacy verbs and management
-  commands share behavior; help, flags, and errors must be the same at both,
-  and group nodes must stay non-commands.
+  commands share behavior: the same flags, the same errors, the same help but
+  for the usage line naming the invoked path — and group nodes stay
+  non-commands.
 - **Quiet as a data-shape choice.** `--quiet` decides the value before the
   render pipeline sees it, so it must hold across templated modes,
   structured modes, forced color, and an attended terminal.
 - **Display truncation against machine output.** Shortened identifiers are a
-  table rule; structured output and `--quiet --no-trunc` carry whole ones.
+  human-rendering rule, in the table and the quiet list alike; structured
+  output and `--quiet --no-trunc` carry whole ones.
 - **A repeatable selection flag against table geometry.** Filters compose by
   AND, recompute column widths over the rendered rows, and reduce to a
   header-only success when nothing matches — while a bad filter *value* is a
