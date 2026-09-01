@@ -87,6 +87,44 @@ fn a_report_without_a_provenance_block_names_its_agent_from_the_transcript() {
     }
 }
 
+/// Agents list their workarounds in whichever markdown form they reach for,
+/// and the count has to be of items rather than of one favoured syntax — the
+/// pilot numbered them, the re-run used bullets, bold lead-ins and letters.
+/// Continuation lines are indented, and indented lines are not items.
+#[test]
+fn listed_items_are_counted_in_every_form_an_agent_has_used() {
+    let temp = tempfile::tempdir().unwrap();
+    let run = temp.path().join("listlike-1");
+    std::fs::create_dir_all(&run).unwrap();
+    let answer = "1. numbered\n\
+                  2) parenthesized\n\
+                  a) lettered\n\
+                  - dashed\n\
+                  * starred\n\
+                  **bold lead-in.** and its sentence\n\
+                  \x20  1. an indented continuation, not an item\n\
+                  plain prose, not an item\n";
+    let report = serde_json::json!({
+        "schema_version": 4,
+        "run_id": "listlike-1",
+        "archetype": {"name": "listlike"},
+        "pins": {"framework_version": "9.0.0"},
+        "session": {"wall_seconds": 1.0, "output_tokens": 2, "transcript": "t.jsonl"},
+        "provenance": {"backend": "claude", "executable_version": "1", "model_observed": "m"},
+        "acceptance": {"built": true, "cases": []},
+        "invariants": [],
+        "questionnaire": {"answers": {"workarounds": answer, "friction": answer}},
+    });
+    std::fs::write(run.join("report.json"), report.to_string()).unwrap();
+
+    let table = scorecard(&[&format!("t={}", temp.path().display())]);
+    let row = table
+        .lines()
+        .find(|line| line.starts_with("| listlike |"))
+        .unwrap_or_else(|| panic!("{table}"));
+    assert!(row.contains("| 6 | 6 |"), "{row}");
+}
+
 /// Two run sets land in one table, grouped by archetype: that side-by-side
 /// is what a scorecard comparison reads.
 #[test]

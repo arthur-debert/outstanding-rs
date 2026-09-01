@@ -14,10 +14,13 @@ published, so a set of pilot reports reproduces the pilot's figures:
 - invariants: applicable identities (every planned identity that is not
   `not-applicable`) that passed, plus the full planned breakdown, so a
   ratio can never improve by shrinking its denominator.
-- workarounds: the numbered items in the exit questionnaire's `workarounds`
-  answer. It counts what the agent listed; whether an item is a workaround
-  or a deliberate application decision is a reading, and readings belong in
-  the scorecard's prose.
+- workarounds: the items the exit questionnaire's `workarounds` answer
+  lists. Agents list in whichever form they like — `1.`, `a)`, `-`, or a
+  bold lead-in — so an item is any line that starts one, and only at the
+  left margin, where an indented continuation cannot be mistaken for a new
+  item. It counts what the agent listed; whether an item is a workaround or
+  a deliberate application decision is a reading, and readings belong in the
+  scorecard's prose beside the committed answer.
 - the agent: schema 4's `provenance` block. A report written before that
   block existed states none, so the same facts are recovered from the run's
   committed transcript by the rule the runner itself uses — the init event
@@ -35,7 +38,7 @@ import json
 import pathlib
 import re
 
-NUMBERED_ITEM = re.compile(r"(?m)^\s*(\d+)\.\s")
+LISTED_ITEM = re.compile(r"(?m)^(?:\d+[.)]\s|[a-z][.)]\s|[-*+]\s|\*\*\S)")
 
 
 def counts(values):
@@ -84,12 +87,12 @@ def invariants(report):
 
 def workarounds(report):
     answer = report["questionnaire"]["answers"].get("workarounds", "")
-    return len(NUMBERED_ITEM.findall(answer))
+    return len(LISTED_ITEM.findall(answer))
 
 
 def frictions(report):
     answer = report["questionnaire"]["answers"].get("friction", "")
-    return len(NUMBERED_ITEM.findall(answer))
+    return len(LISTED_ITEM.findall(answer))
 
 
 def session(report):
