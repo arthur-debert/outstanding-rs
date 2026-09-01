@@ -41,7 +41,8 @@ makes runs reproducible and comparable.
   `scorecard.md`. These runs have no earlier row to compare against, so that
   scorecard is a first data point rather than a comparison.
 - `scorecard.py` — computes a scorecard's objective table from committed
-  reports (`scorecard.py pilot=corpus/pilot/runs rerun=corpus/rerun/runs`).
+  reports (`scorecard.py pilot=corpus/pilot/runs rerun=corpus/rerun/runs
+  completion=corpus/completion/runs`).
   Every scorecard's figures come from this one script under one set of
   counting rules; its own test checks that the pilot's reports still
   reproduce the pilot scorecard's published numbers. Every row also carries
@@ -455,7 +456,7 @@ reconstructs the shape from the survey's capability matrix and states in prose
 which interactions it stresses. A first blind run had to wait for the 9.0 line
 to be published, because a run against the surface that release deletes would
 measure nothing.
-All six have now run against 9.0.0; their reports, transcripts and the
+All six have now run against 9.0.0; their reports, transcripts, and the
 first-run scorecard live under `completion/` (see Layout above).
 
 | Archetype | Survey | Shape |
