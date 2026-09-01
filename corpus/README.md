@@ -35,6 +35,12 @@ makes runs reproducible and comparable.
   (ROB07-WS02), in the same shape: one `runs/<run-id>/` per run and
   `scorecard.md`, which is scorecard v2 — the re-run beside the pilot, with
   the agent delta between them stated.
+- `completion/` — the completion six's **first** blind runs, against the
+  published 9.0 line (ROB07-WS03a/WS03b, split across the two completion
+  workstreams): one `runs/<run-id>/` per run, same demo rules. These runs
+  have no earlier row to compare against, so the directory carries evidence
+  only; the completion scorecard is written once all six archetypes have
+  run.
 - `scorecard.py` — computes a scorecard's objective table from committed
   reports (`scorecard.py pilot=corpus/pilot/runs rerun=corpus/rerun/runs`).
   Both scorecards' figures come from this one script under one set of
@@ -446,8 +452,11 @@ authored spec-first after the pilot
 (`docs/spec/robustness-corpus-completion.md`). Their behavioral sketches were
 lost with the 2026-08-16 session record, so each spec reconstructs the shape
 from the survey's capability matrix and states in prose which interactions it
-stresses. They carry no run evidence until the 9.0 line is published: a first
-blind run against the surface that release deletes would measure nothing.
+stresses. A first blind run had to wait for the 9.0 line to be published,
+because a run against the surface that release deletes would measure nothing.
+`cargolike` and `gcloudlike` have run against 9.0.0; their reports and
+transcripts live under `completion/` (see Layout above), and the remaining four
+carry no run evidence yet.
 
 | Archetype | Survey | Shape |
 | --- | --- | --- |

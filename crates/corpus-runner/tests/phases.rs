@@ -15,6 +15,10 @@ use corpus_runner::{acceptance, questionnaire, session, workspace};
 
 const NO_TIMEOUT: Duration = Duration::from_secs(60);
 
+// Every directory under `corpus/` holding committed run reports. One owner, so
+// a new evidence home is registered for both sweeps below at once.
+const COMMITTED_RUN_DIRS: &[&str] = &["pilot/runs", "rerun/runs", "completion/runs", "demo"];
+
 fn corpus_dir() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("../../corpus")
 }
@@ -616,7 +620,7 @@ fn committed_historical_reports_still_deserialize() {
     use corpus_runner::report::{HistoricalRun, HISTORICAL_SCHEMA_MIN, SCHEMA_VERSION};
 
     let mut reports = Vec::new();
-    for dir in ["pilot/runs", "rerun/runs", "demo"] {
+    for dir in COMMITTED_RUN_DIRS {
         for entry in fs::read_dir(corpus_dir().join(dir)).unwrap() {
             let path = entry.unwrap().path().join("report.json");
             if path.is_file() {
@@ -674,7 +678,7 @@ fn the_historical_path_reads_a_recorded_agent_provenance() {
     use corpus_runner::report::HistoricalRun;
 
     let mut reports: Vec<_> = Vec::new();
-    for dir in ["pilot/runs", "rerun/runs", "demo"] {
+    for dir in COMMITTED_RUN_DIRS {
         for entry in fs::read_dir(corpus_dir().join(dir)).unwrap() {
             let path = entry.unwrap().path().join("report.json");
             if path.is_file() {
