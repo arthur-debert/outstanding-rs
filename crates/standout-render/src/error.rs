@@ -91,7 +91,10 @@ impl From<minijinja::Error> for RenderError {
             | ErrorKind::UnknownFilter
             | ErrorKind::UnknownMethod => RenderError::TemplateError(msg),
             ErrorKind::BadSerialization => RenderError::SerializationError(msg),
-            kind => RenderError::OperationError(format!("{}: {}", kind, msg)),
+            kind => RenderError::OperationError(match err.detail() {
+                Some(_) => format!("{}: {}", kind, msg),
+                None => msg,
+            }),
         }
     }
 }
@@ -333,6 +336,19 @@ mod tests {
             "could not render include: error in \"show\" (in show:1): \
              invalid operation: recursion limit exceeded (in show:1)"
         );
+    }
+
+    #[test]
+    fn test_detail_free_operation_error_reads_kind_once() {
+        let err = render_err("show", &[("show", "{{ range() }}")]);
+        assert_eq!(err.to_string(), "missing argument (in show:1)");
+    }
+
+    #[test]
+    fn test_detail_free_error_without_locus_is_the_bare_kind() {
+        let err: RenderError =
+            minijinja::Error::from(minijinja::ErrorKind::InvalidOperation).into();
+        assert_eq!(err.to_string(), "invalid operation");
     }
 
     #[test]
