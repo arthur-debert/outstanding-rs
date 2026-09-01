@@ -321,6 +321,28 @@ pub(crate) enum HookRegistrationSource {
     CommandConfig,
 }
 
+/// Environment variable that forces [`AppBuilder::strict_style_tags`] on,
+/// letting a dev shell, CI job, or test run opt into the hard failure without a
+/// code change. Read once at [`AppBuilder::build`]; a truthy value wins over the
+/// builder setting, and it can only turn strict mode on, never off.
+pub const STRICT_STYLE_TAGS_ENV: &str = "STANDOUT_STRICT_STYLE_TAGS";
+
+/// Whether the environment value enables strict mode. `1`, `true`, `yes`, and
+/// `on` (any case) enable it; anything else — including an unset variable — does
+/// not. Kept pure so the parsing is testable without touching process state.
+fn strict_style_tags_from_env(value: Option<std::ffi::OsString>) -> bool {
+    let Some(value) = value else {
+        return false;
+    };
+    let Some(value) = value.to_str() else {
+        return false;
+    };
+    matches!(
+        value.trim().to_ascii_lowercase().as_str(),
+        "1" | "true" | "yes" | "on"
+    )
+}
+
 pub struct App {
     pub(crate) registry: TopicRegistry,
     pub(crate) output_flag: Option<String>,
@@ -344,6 +366,7 @@ pub struct App {
     pub(crate) ambiguous_width: crate::AmbiguousWidth,
     pub(crate) version: Option<&'static str>,
     pub(crate) startup_warnings: Vec<String>,
+    pub(crate) strict_style_tags: bool,
 }
 
 impl App {
@@ -387,6 +410,8 @@ pub struct AppBuilder {
     pub(crate) version: Option<&'static str>,
 
     pub(crate) startup_warnings: Vec<String>,
+
+    pub(crate) strict_style_tags: bool,
 }
 
 impl AppBuilder {
@@ -419,6 +444,7 @@ impl AppBuilder {
             ambiguous_width: crate::AmbiguousWidth::Narrow,
             version: None,
             startup_warnings: Vec::new(),
+            strict_style_tags: false,
         }
     }
 
@@ -543,6 +569,8 @@ impl AppBuilder {
             ambiguous_width: self.ambiguous_width,
             version: self.version,
             startup_warnings: self.startup_warnings,
+            strict_style_tags: self.strict_style_tags
+                || strict_style_tags_from_env(std::env::var_os(STRICT_STYLE_TAGS_ENV)),
         };
 
         app.ensure_commands_finalized();
@@ -1375,6 +1403,26 @@ fn help_word_command(has_subcommands: bool) -> Command {
 mod tests {
     use super::*;
     use console::Style;
+
+    #[test]
+    fn strict_style_tags_env_reads_truthy_spellings_and_nothing_else() {
+        for truthy in ["1", "true", "TRUE", "Yes", "on", "  on  "] {
+            assert!(
+                strict_style_tags_from_env(Some(truthy.into())),
+                "{truthy:?} should enable strict mode"
+            );
+        }
+        for falsy in ["0", "false", "no", "off", "", "enabled"] {
+            assert!(
+                !strict_style_tags_from_env(Some(falsy.into())),
+                "{falsy:?} should not enable strict mode"
+            );
+        }
+        assert!(
+            !strict_style_tags_from_env(None),
+            "an unset variable should not enable strict mode"
+        );
+    }
 
     #[test]
     fn framework_template_validation_reports_malformed_markup_separately() {

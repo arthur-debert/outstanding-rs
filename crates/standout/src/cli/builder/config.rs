@@ -148,6 +148,19 @@ impl AppBuilder {
         self.help_word = enabled;
         self
     }
+
+    /// Escalate unresolved style tags from a graceful degradation into a hard
+    /// failure. Off by default: an unresolved tag renders as unstyled text and
+    /// emits a stderr warning, unchanged. When on, a render that leaves any
+    /// style tag unresolved fails the run with a non-zero exit and an error
+    /// that names the offending tags, turning a typo'd or theme-missing tag
+    /// into a deterministic failure for dev, CI, and tests. The
+    /// `STANDOUT_STRICT_STYLE_TAGS` environment variable forces this on
+    /// regardless of the value set here.
+    pub fn strict_style_tags(mut self, enabled: bool) -> Self {
+        self.strict_style_tags = enabled;
+        self
+    }
 }
 
 #[cfg(test)]

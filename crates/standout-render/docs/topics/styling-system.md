@@ -254,6 +254,25 @@ if let Err(error) = validate_template(template, &sample_data, &theme) {
 }
 ```
 
+### Strict mode
+
+The graceful degradation above (unstyled text plus a stderr warning) is the default and stays the default. `AppBuilder::strict_style_tags(true)` opts a whole app into failing instead: after a command renders, if the render left any style tag unresolved, the run ends with a non-zero exit and an error that names the offending tags — no output is emitted. This trades the graceful path for a deterministic failure so a typo'd tag name, or a tag the active theme does not style, is caught every time rather than by chance.
+
+```rust
+let app = App::builder()
+    // ...
+    .strict_style_tags(true)
+    .build()?;
+```
+
+The `STANDOUT_STRICT_STYLE_TAGS` environment variable (`1`, `true`, `yes`, or `on`) forces strict mode on regardless of the builder setting, and can only turn it on, never off — so a dev shell, CI job, or test run can opt in without a code change.
+
+Strict mode keys on unresolved tags only. A tag that _is_ defined in the theme but whose markup is unbalanced (`[header]text` with no close) is malformed markup, not an unresolved tag, and does not trip the gate.
+
+The error names each unresolved tag but does not distinguish a misspelled tag name from a tag the theme simply does not style: resolution is a single lookup against the active theme's styles, so both are "not in the theme," and separating them would need a registry of valid tag names the framework does not keep.
+
+Use it where a wrong tag should stop the line — local development, CI, and tests — and leave it off in production, where the graceful degradation keeps a styling mistake from taking down a running command.
+
 ---
 
 ## Built-in Styles

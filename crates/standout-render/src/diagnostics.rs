@@ -138,6 +138,13 @@ pub fn resolve_tags_with(
     output
 }
 
+/// Prefix of the stderr warning [`resolve_tags_with`] pushes when a render
+/// degrades unresolved tags to unstyled text. Exposed so the strict-mode gate
+/// in the CLI layer can drop this warning once it escalates the same tags to a
+/// hard error, keeping the two layers from reporting the degradation twice.
+pub const UNRESOLVED_DEGRADATION_PREFIX: &str =
+    "Unresolved style tag(s) degraded to unstyled text: ";
+
 fn warn_unresolved_tags(
     unresolved: &[UnknownTagError],
     warnings: Option<&crate::warnings::WarningBuffer>,
@@ -151,10 +158,35 @@ fn warn_unresolved_tags(
 
     if !names.is_empty() {
         warnings.push_once(format!(
-            "Unresolved style tag(s) degraded to unstyled text: {}",
+            "{UNRESOLVED_DEGRADATION_PREFIX}{}",
             names.join(", ")
         ));
     }
+}
+
+/// Unresolved style-tag names recorded so far in the current capture window,
+/// gathered across every pass in it, sorted and deduplicated. Reads the window
+/// in place without draining it, so the batch still publishes to
+/// [`take_captured`] when the window closes. Returns nothing when no window is
+/// open.
+///
+/// This is the strict-mode gate's post-render view: `strict_style_tags` fails a
+/// run whose render left any tag unresolved by naming exactly these tags.
+pub fn unresolved_in_current_window() -> Vec<String> {
+    WINDOWS.with(|windows| {
+        let windows = windows.borrow();
+        let Some(current) = windows.last() else {
+            return Vec::new();
+        };
+        let mut names: Vec<String> = current
+            .iter()
+            .flat_map(TagResolution::unresolved_tag_names)
+            .map(str::to_string)
+            .collect();
+        names.sort_unstable();
+        names.dedup();
+        names
+    })
 }
 
 #[must_use = "the window closes when the guard drops; bind it across the run it bounds"]
@@ -533,6 +565,37 @@ mod tests {
             ),
             ["outer_own"]
         );
+    }
+
+    #[test]
+    fn the_current_window_reader_names_unresolved_tags_without_draining() {
+        let _window = reset();
+        render_unresolvable("beta");
+        render_unresolvable("alpha");
+        render_unresolvable("beta");
+
+        assert_eq!(unresolved_in_current_window(), ["alpha", "beta"]);
+        // Reading is non-destructive: the passes are still drainable.
+        assert_eq!(drain().len(), 3);
+    }
+
+    #[test]
+    fn the_current_window_reader_is_empty_for_a_clean_run() {
+        let _window = reset();
+        resolve_tags(
+            "[ok]done[/ok]",
+            theme_with("ok"),
+            TagTransform::Remove,
+            UnknownTagBehavior::Passthrough,
+        );
+
+        assert!(unresolved_in_current_window().is_empty());
+    }
+
+    #[test]
+    fn the_current_window_reader_is_empty_with_no_window_open() {
+        WINDOWS.with(|windows| windows.borrow_mut().clear());
+        assert!(unresolved_in_current_window().is_empty());
     }
 
     #[test]

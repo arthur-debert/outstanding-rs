@@ -15,8 +15,8 @@ use crate::cli::default_command::ParseFailure;
 use crate::cli::dispatch::{dispatch, extract_command_path, get_deepest_matches, DispatchOutput};
 use crate::cli::group::{ErasedConfigRecipe, GroupBuilder, GroupEntry};
 use crate::cli::handler::{
-    ArtifactDestination, ArtifactReceipt, ArtifactRun, CommandContext, DispatchResult, OutputKind,
-    RunError, RunErrorKind, RunOutput, SuccessKind,
+    ArtifactDestination, ArtifactReceipt, ArtifactRun, CommandContext, DispatchResult, ExitStatus,
+    OutputKind, RunError, RunErrorKind, RunOutput, SuccessKind,
 };
 use crate::cli::hooks::{ArtifactOutput, RenderedOutput, TextOutput};
 use crate::cli::questionnaire::{
@@ -419,7 +419,54 @@ impl App {
         let warnings = WarningBuffer::new();
         self.seed_startup_warnings(&warnings);
         let (outcome, output_mode) = inner(warnings.clone());
-        crate::cli::CompletedRun::from_dispatch(outcome, warnings.take(), output_mode)
+        let mut collected = warnings.take();
+        let outcome = self.enforce_strict_style_tags(outcome, &mut collected);
+        crate::cli::CompletedRun::from_dispatch(outcome, collected, output_mode)
+    }
+
+    /// Apply the `strict_style_tags` gate to a completed run. When strict mode
+    /// is on and the render left any style tag unresolved, a successful outcome
+    /// becomes a [`RunErrorKind::Render`] error naming those tags (a non-zero
+    /// exit); the now-superseded "degraded to unstyled text" warning is dropped
+    /// so the failure is reported once. Off by default and a no-op for a clean
+    /// render, an already-failed outcome, or a no-match handoff, so the graceful
+    /// path is untouched.
+    ///
+    /// Reads the render diagnostics captured for this run — available only
+    /// inside a capture window, which the process `run` and the test harness
+    /// both open around dispatch — so lower-level entry points that render
+    /// without a window simply skip the gate.
+    fn enforce_strict_style_tags(
+        &self,
+        outcome: DispatchResult,
+        warnings: &mut Vec<String>,
+    ) -> DispatchResult {
+        if !self.strict_style_tags || outcome.exit_status() != Some(ExitStatus::SUCCESS) {
+            return outcome;
+        }
+        let unresolved = standout_render::diagnostics::unresolved_in_current_window();
+        if unresolved.is_empty() {
+            return outcome;
+        }
+        warnings.retain(|warning| {
+            !warning.starts_with(standout_render::diagnostics::UNRESOLVED_DEGRADATION_PREFIX)
+        });
+        let (noun, pronoun, object) = if unresolved.len() == 1 {
+            ("style tag", "It is", "it")
+        } else {
+            ("style tags", "They are", "them")
+        };
+        DispatchResult::Error(RunError::new(
+            format!(
+                "strict_style_tags is enabled and the render left {count} {noun} unresolved: \
+                 {tags}. {pronoun} not defined in the active theme (a typo, or a tag the theme \
+                 does not style). Define {object} in the theme, correct the tag name, or disable \
+                 strict_style_tags to degrade to unstyled text instead.",
+                count = unresolved.len(),
+                tags = unresolved.join(", "),
+            ),
+            RunErrorKind::Render,
+        ))
     }
 
     pub fn run_with<I, T>(
