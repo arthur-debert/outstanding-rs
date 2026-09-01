@@ -147,10 +147,10 @@ Each reporter renders those steps differently:
   ```
 
 - **`default`** — the dynamic reporter: each step is a carriage return (`\r`), the step
-  text, then the ANSI erase-to-end-of-line sequence `ESC [ K`, with no line feed between
-  steps; one line feed follows the last step. For the two packages above, stderr is
-  exactly `\r1/2 alpha 1.0.0ESC[K\r2/2 beta 2.3.1ESC[K\n`. With no steps to report it
-  writes nothing at all.
+  text, then the ANSI erase-to-end-of-line sequence `ESC[K` (the three bytes `1B 5B 4B`),
+  with no line feed between steps; one line feed follows the last step. For the two
+  packages above, stderr is exactly `\r1/2 alpha 1.0.0ESC[K\r2/2 beta 2.3.1ESC[K\n`. With
+  no steps to report it writes nothing at all.
 
 - **`ndjson`** — one single-line JSON object per step, and, after the last step of a
   successful `install`, a terminal `done` entry:
