@@ -113,6 +113,21 @@ fn artifact_command() -> Command {
     Command::new("app").subcommand(Command::new("export"))
 }
 
+// A fixed, non-terminal target so the direct `run_with` tests stay deterministic
+// across environments — `TargetProperties::detect()` probes process/TTY state.
+fn fixed_target() -> standout::TargetProperties {
+    standout::TargetProperties {
+        width: Some(80),
+        stdout_is_terminal: false,
+        stderr_is_terminal: false,
+        stdout_color_capability: false,
+        stderr_color_capability: false,
+        color_scheme: standout::ColorMode::Dark,
+        icon_mode: standout::IconMode::Classic,
+        ambiguous_width: standout::AmbiguousWidth::Narrow,
+    }
+}
+
 #[test]
 fn strict_on_fails_and_names_a_balanced_unresolved_tag() {
     let result = run(true, "balanced-unknown");
@@ -285,7 +300,7 @@ fn strict_failure_leaves_no_artifact_file_behind() {
             "--output-file-path",
             output_file.to_str().unwrap(),
         ],
-        standout::TargetProperties::detect(),
+        fixed_target(),
         standout::InputSources::from_process(),
     );
 
@@ -316,7 +331,7 @@ fn strict_gate_fires_through_a_direct_run_with_call() {
     let result = app(true).run_with(
         command(),
         ["app", "balanced-unknown"],
-        standout::TargetProperties::detect(),
+        fixed_target(),
         standout::InputSources::from_process(),
     );
 
