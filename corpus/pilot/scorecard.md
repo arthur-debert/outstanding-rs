@@ -118,10 +118,13 @@ evidence, but their frequency is not an exhaustive measure of framework risk.
 
 ## Validity follow-up (#365)
 
-**The known-edge families are now exercisable. They are not yet independently
-detected.** A live blind run did not complete, so this follow-up does **not**
-upgrade the verdict above and does **not** distinguish “fixed by ROB02” from
-“not exercised.”
+**The known-edge families are exercisable, and one live blind run has now
+exercised all three.** The run below is evidence about the method, not about
+the framework: it ran against 8.1.1 with a documentation snapshot taken from
+the 9.0 development tree, and it is excluded from the v1/v2 comparison. It
+does **not** upgrade the ROB03 verdict above — that verdict is the pilot's
+own record and stands as written — and it still does **not** distinguish
+“fixed by ROB02” from “not exercised” for the ROB03 runs.
 
 ### What landed (spec-first)
 
@@ -140,40 +143,148 @@ pilot did not independently rediscover):
 Historical ROB03-WS04 evidence under `runs/{formlike,ghlike,gitlike,systemdlike}-*`
 is untouched.
 
-### Live isolated run: blocked
+### Live isolated run: complete
 
-The default Claude Code agent (`crates/corpus-runner/src/session.rs`) was invoked
-from an external `--runs-dir` (`/tmp/standout-corpus-runs-365`) so the workspace
-was not nested in the checkout. Isolation provisioned and the isolation probe
-passed. Two sessions were attempted:
+`validity-1788219768` ran the default Claude Code agent against standout 8.1.1
+from an external `--runs-dir`, and the isolation probe passed. The session
+authenticated through the run-credential broker (ADR-0023's ROB07-WS01
+amendment): 83 connections admitted, each resolved from the OS socket tables to
+the agent process itself holding a close-on-exec descriptor, none denied, and
+the credential never inside the agent's process tree. It ran 93 turns over
+1013s, exited 0, and the produced app built. Evidence:
+[report](runs/validity-1788219768/report.json) and
+[transcript](runs/validity-1788219768/transcript.jsonl).
 
-1. `validity-1787169136` — `claude` was not on the isolated `PATH` (the
-   host install is a user-local symlink whose target sits under a denied
-   home root). Session exit 127, `sh: claude: command not found`, wall 0s.
-2. `validity-1787169225` — `PATH` was widened to the symlink target directory
-   so Seatbelt could read the Mach-O. Claude started (`apiKeySource: none`)
-   and stopped immediately: `Not logged in · Please run /login`
-   (`authentication_failed`, wall 0.6s, 0 tokens). The runner's
-   no-credential-exception policy (disposable agent HOME, Keychain denied,
-   `ANTHROPIC_API_KEY` not on the allowlist) is what made login impossible.
+Two earlier attempts are not committed, for the reason #365's two were not:
+they were harness failures rather than implementations. `validity-1788218657`
+had no shell — every Bash call failed with `EPERM: operation not permitted,
+mkdir` because the agent backend keeps its shell snapshots under `/tmp` and the
+agent phase's write policy admits only the workspace and the disposable home —
+so the agent wrote code it could never compile. The runner now points that
+scratch (`CLAUDE_CODE_TMPDIR`) at the disposable home.
 
-No implementation session occurred. The scaffold `cargo build` succeeded
-because the empty app crate compiles; every acceptance case then failed
-against that empty binary. **Those 0/22 reports are not validity evidence**
-and are not committed — committing them would read as “the agent built the
-wrong app” rather than “the agent never ran.”
+| Family | Cases | Outcome |
+| --- | --- | --- |
+| Missing / mistyped template name | 4 | 4 pass |
+| Registration / construction order | 2 | 2 pass |
+| Incomplete app theme × framework help | 16 | 16 fail, every one on a single unsatisfiable assertion (#450) |
 
-A scripted agent was not substituted: it cannot answer the validity question.
-Re-run when the default Claude session can authenticate under the isolation
-policy:
+ROB01 invariant matrix: 40 pass, 40 not applicable, 0 fail.
+
+**The themed-help failures are the suite's, not the produced app's and not the
+framework's.** All 16 fail on `stdout does not contain "Usage"`: the cases
+assert clap's casing, and standout renders the header as `USAGE`
+(`crates/standout/src/cli/help/template.txt`, in 8.1.1 and on `main`). Each
+failing case's recorded detail answers what the family actually asks — no
+unresolved `[tag?]` marker on any help page, clap's facts present, ANSI in
+exactly the color-on cases. The agent named the hazard itself in its exit
+answers ([L505](runs/validity-1788219768/transcript.jsonl#L505)). Corrected
+suite plus re-run: #450.
+
+#### Missing / mistyped template names: exercised, and one output mode is silent
+
+The spec names this family, so the agent guarded the requested name from its
+first `main.rs`. It then went past the spec and
+[stripped its own guard out](runs/validity-1788219768/transcript.jsonl#L358) to
+see what the framework does alone. Text mode fails loudly but doubles its
+message — `template not found: template not found: tried to include
+non-existing template "nosuch" (in show:1)`
+([L361](runs/validity-1788219768/transcript.jsonl#L361)) — while the same
+command in a structured mode
+[exits 0 and prints `{"name": "nosuch"}`](runs/validity-1788219768/transcript.jsonl#L387),
+because structured modes bypass the template. That is the silent-template
+family reappearing through a mode switch rather than through application code.
+The agent [restored its guard](runs/validity-1788219768/transcript.jsonl#L394)
+and kept the name check in the handler for exactly that reason.
+
+#### Registration and construction order: the order held, `build()` did not gate
+
+`early` (registered before templates load) and `late` (after) rendered
+identical bytes on the [first clean build](runs/validity-1788219768/transcript.jsonl#L250)
+and in the [final matrix](runs/validity-1788219768/transcript.jsonl#L460); the
+agent took the order from the docs and no order-dependent failure appeared.
+What it did find, with a throwaway probe binary, is that 8.1.1's `build()` is
+not a gate: `App::builder()` returns `App`, so
+[an unbuilt builder can be run](runs/validity-1788219768/transcript.jsonl#L419),
+and it [rendered `ok` and exited 0](runs/validity-1788219768/transcript.jsonl#L422)
+where the spec expects a loud failure.
+
+#### Incomplete theme × framework help: the theme held, the default did not
+
+With `app.css` defining only `.ok`, every help page resolved every help tag:
+the agent's own [marker sweep](runs/validity-1788219768/transcript.jsonl#L340)
+across root and leaf help in text and term came back
+[empty](runs/validity-1788219768/transcript.jsonl#L341), and the committed case
+details agree. The interaction the run did surface is that 8.1.1 does not
+intercept help by default: `help --output text` was
+[a clap usage error, exit 2](runs/validity-1788219768/transcript.jsonl#L259),
+`--help` printed [clap's own page](runs/validity-1788219768/transcript.jsonl#L267),
+and only after [`.help_handling(true)`](runs/validity-1788219768/transcript.jsonl#L280)
+did the themed page appear
+([L283](runs/validity-1788219768/transcript.jsonl#L283)). The spec asks for the
+default to be left alone; the agent chose the observable requirement and
+disclosed the deviation.
+
+The run also caught the archetype contradicting the framework's documented
+design. `nest inner leaf help`
+[exits 2 with clap's `unexpected argument 'help'`](runs/validity-1788219768/transcript.jsonl#L300)
+while `help nest inner leaf` from the root works, because standout installs the
+help word at the root only and says so. The spec asks for it at the leaf, the
+suite's leaf cases use the root spelling, and the agent
+[rewrote its own check](runs/validity-1788219768/transcript.jsonl#L326) to the
+spelling that passes without reporting the conflict — which is what an
+archetype whose spec and suite disagree teaches. Reconciliation: #454.
+
+### Findings filed from this run
+
+The run is against 8.1.1, so each observation was checked against `main` before
+it became an issue. Two are live framework defects, two are the corpus's own,
+and the rest are 8.1.1-to-9.0 drift that `main` has already closed — the
+unbuilt builder now cannot run (ADR-0021), help interception is on by default,
+and `--output term` forces ANSI through a pipe.
+
+| Finding | Where it lives | Issue |
+| --- | --- | --- |
+| A missing template reports `template not found: template not found: …` | framework, reproduced on `main` | [#452](https://github.com/arthur-debert/standout/issues/452) |
+| A nested leaf's help usage line names the leaf, not the path | framework, reproduced on `main` | [#453](https://github.com/arthur-debert/standout/issues/453) |
+| `validity`'s themed-help cases assert a header standout never renders | corpus suite | [#450](https://github.com/arthur-debert/standout/issues/450) |
+| `validity`'s spec asks for the help word at a leaf; standout installs it at the root | corpus spec | [#454](https://github.com/arthur-debert/standout/issues/454) |
+| A run pinned to a published version snapshots the checkout's docs | corpus runner | [#451](https://github.com/arthur-debert/standout/issues/451) |
+
+### What this run measures, and what it does not
+
+Blindness held, and the run records it. The session made no web search or fetch
+(its own usage block reports zero of each), read nothing under the framework
+registry, and the agent volunteered its three grey areas in the exit answers
+([L505](runs/validity-1788219768/transcript.jsonl#L505)): compiler diagnostics
+that quoted one line of standout's source in a trait-bound note, API probing by
+compilation, and general Jinja and clap knowledge.
+
+Those answers are committed evidence only because the agent wrote the sheet
+through a tool call the transcript captured. The report's questionnaire fields
+are empty: the `confidence` answer carried its reasoning on the lines below the
+word, and the collector discarded every other answer along with it. The
+collector now keeps the answers that parsed and still reports the sheet as
+uncollected.
+
+The documentation snapshot came from the 9.0 development tree while the
+scaffold pinned 8.1.1 (#451). Most of what this run reports as friction is that
+drift — `template_name` against `template`, `command_with`'s signature,
+`AppFailure`, `into_registry`, help interception's default — so the run is not
+a documentation-quality measurement of either version, and its friction count
+is not comparable with the pilot's.
+
+Re-run with:
 
 ```bash
-cargo run -p corpus-runner -- run validity --runs-dir /tmp/standout-corpus-runs-365
+cargo run -p corpus-runner -- run validity --broker \
+  --framework-version 8.1.1 --runs-dir /tmp/standout-corpus-runs-validity
 ```
 
-then `corpus/pilot/sanitize-run.py <run-dir> corpus/pilot/runs/<run-id>/` and
-replace this subsection with the sanitized report's outcomes, anchored to
-transcript moments.
+then `corpus/pilot/sanitize-run.py <run-dir> corpus/pilot/runs/<run-id>/
+--account <host account name>` and `pixi run lint --fix` (the committed report
+is checked like any other JSON in the tree), and replace this subsection with
+the sanitized report's outcomes, anchored to transcript moments.
 
 This scorecard is linked from the [ROB05 planning spec](../../docs/spec/implemented/robustness-blessed-surface.md), the ROB05 planning
 artifact. No ROB05 tracker issue existed when ROB03-WS04 completed, so the repository link

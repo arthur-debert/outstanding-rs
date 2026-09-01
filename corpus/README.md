@@ -106,7 +106,11 @@ Recorded here as a decision and minted as
    unreadable or the run refuses to start. The default Claude session is
    additionally hardened: `--setting-sources ''` keeps host settings and
    plugins from loading and `--strict-mcp-config` keeps MCP
-   servers/connectors from attaching. An agent backend that requires a host
+   servers/connectors from attaching. It also gets `CLAUDE_CODE_TMPDIR`
+   pointed at its disposable home, because that backend keeps its shell
+   snapshots and tool sockets under `/tmp` by default: without it the write
+   policy denies that directory and the session loses its shell, writing
+   code it can never build. An agent backend that requires a host
    HOME, environment token, or Keychain item fails closed rather than
    exposing that credential to agent-invoked build scripts.
 

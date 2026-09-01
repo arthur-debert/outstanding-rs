@@ -68,6 +68,53 @@ fn sanitizer_prefers_specific_paths_without_rewriting_bare_usernames() {
     assert!(!transcript.contains("12345678-ABCD-1234-ABCD-123456789ABC"));
 }
 
+// A session with a shell prints file owners, so the account name has to be
+// scrubbable — but only when the operator names it, or the fixture words
+// above would go with it.
+#[test]
+fn a_named_account_is_replaced_everywhere_it_appears_as_a_word() {
+    let temp = tempfile::tempdir().unwrap();
+    let temp_root = fs::canonicalize(temp.path()).unwrap();
+    let run = temp_root.join("run");
+    let dest = temp_root.join("sanitized");
+    fs::create_dir_all(run.join("workspace")).unwrap();
+
+    fs::write(
+        run.join("report.json"),
+        "{\"owner\":\"drwxr-xr-x 4 hostperson wheel\",\"word\":\"hostpersonal\"}\n",
+    )
+    .unwrap();
+    fs::write(
+        run.join("transcript.jsonl"),
+        "{\"type\":\"user\",\"text\":\"total 8 hostperson wheel\"}\n",
+    )
+    .unwrap();
+
+    let script =
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../corpus/pilot/sanitize-run.py");
+    let output = Command::new("python3")
+        .arg(script)
+        .arg(&run)
+        .arg(&dest)
+        .args(["--account", "hostperson"])
+        .env("HOME", &temp_root)
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "sanitizer failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    let report = fs::read_to_string(dest.join("report.json")).unwrap();
+    assert!(report.contains("4 [user] wheel"), "{report}");
+    // A longer word that merely starts with the account name is not the
+    // account.
+    assert!(report.contains("\"hostpersonal\""), "{report}");
+    let transcript = fs::read_to_string(dest.join("transcript.jsonl")).unwrap();
+    assert!(transcript.contains("total 8 [user] wheel"), "{transcript}");
+}
+
 #[test]
 fn committed_pilot_transcripts_use_the_specific_workspace_placeholder() {
     let runs = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../corpus/pilot/runs");
