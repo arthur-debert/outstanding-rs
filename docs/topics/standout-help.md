@@ -514,7 +514,7 @@ Each argument and option entry has:
 {%- endfor %}
 ```
 
-Style tags like `[header]...[/header]` are resolved against the theme. Unknown tags pass through or show a `?` indicator depending on the output mode.
+Style tags like `[header]...[/header]` are resolved against the theme. A tag the resolved theme does not define degrades to unstyled text and raises a stderr warning; it is never shown with a `?` marker.
 
 ## Output Modes
 

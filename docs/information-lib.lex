@@ -673,17 +673,19 @@ THEME: Rendering
 
 	When a tag references a style not in the theme, behavior depends on mode:
 
-	Term mode: Unknown tags get a ? marker appended:
+	Term mode: unknown tags degrade to unstyled text, markers removed, with a stderr warning:
 		Template: [unknown]hello[/unknown]
-		Output:   [unknown?]hello[/unknown?]
+		Output:   hello
+		Stderr:   Unresolved style tag(s) degraded to unstyled text: unknown
 	:: text ::
 
-	Text mode: Unknown tags are stripped like any other tag.
+	Text mode: a balanced unknown pair is stripped like any other tag; an
+	unbalanced open tag with no closing partner is emitted verbatim.
 
-	TermDebug mode: Tags preserved as-is (no ? added).
+	TermDebug mode: tags preserved as-is, known and unknown alike.
 
-	The ? marker helps catch typos during development. In production,
-	validate_template() can catch these at startup or in CI.
+	There is no ? marker in any mode. validate_template() catches unresolved
+	tags at startup or in CI.
 
 
 27. How do I validate templates?
@@ -1158,7 +1160,8 @@ THEME: Output Modes
 	  - Verifying style tag placement without terminal interference
 	  - Automated testing of template output
 
-	Unlike Term mode, unknown tags don't get the ? marker in TermDebug.
+	No mode adds a ? marker; TermDebug keeps every tag literal for inspection
+	and does not check whether a tag is defined.
 
 
 49. How does --output-file work?
@@ -1612,7 +1615,8 @@ THEME: Partial Adoption
 	:: rust ::
 
 	No embedded files, no themes (uses empty theme), no hooks.
-	Style tags without a theme will show the ? marker but still render.
+	Style tags with no matching theme entry render as unstyled text and
+	raise a stderr warning; no ? marker is added.
 
 
 65. How do I use Standout dispatch inside existing clap dispatch?

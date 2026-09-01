@@ -236,7 +236,7 @@ fn test_list_handler() {
 
     let ctx = CommandContext {
         command_path: vec!["list".into()],
-        app_state: Arc::new(app_state),
+        app_state: Rc::new(app_state),
         extensions: Extensions::new(),
     };
 

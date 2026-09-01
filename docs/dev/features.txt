@@ -159,7 +159,7 @@ Command Context:
   - CommandContext: runtime environment for handlers
   - Extensions: type-safe state injection container
   - get_required::<T>(): retrieve typed extensions
-  - app_state: immutable app-lifetime state (Arc-wrapped)
+  - app_state: immutable app-lifetime state (Rc-wrapped; single-threaded)
   - extensions: mutable request-scoped state
 
 Command Dispatch:

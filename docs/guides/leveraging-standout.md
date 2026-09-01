@@ -72,8 +72,9 @@ pipeline in detail.
 - **I — Use the right render diagnostic.** `--output term-debug` shows where
   style tags were placed, but it preserves known and unknown tags alike and
   does not validate that the tags exist. Use `validate_template` in development
-  or tests to detect missing style definitions. Terminal mode's `?` marker is a
-  visible warning, not a substitute for validation.
+  or tests to detect missing style definitions. At render time an unresolved
+  tag degrades to unstyled text and raises a stderr warning rather than showing
+  a `?` marker — a useful signal, but no substitute for validation.
 - **G — Do not imply integrated per-command CSV projection.** Normal app
   dispatch automatically flattens serializable data for CSV. The direct
   `render_auto_with_spec` API can render CSV with a `FlatDataSpec`, but arbitrary

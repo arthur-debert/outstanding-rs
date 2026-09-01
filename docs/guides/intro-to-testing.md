@@ -364,7 +364,9 @@ assert_descriptions_aligned(&page);                      // every section's colu
 
 `assert_every_tag_resolved` reads structured data — `TestResult::tag_resolutions()`,
 what each style-tag pass could not resolve — so it holds in every output mode
-and names the tag. The `[tag?]` marker only appears in `Term`, so the two
+and names the tag. `assert_no_unresolved_tag_markers` scans the rendered page
+for a `[tag?]`-shaped marker — a guard against a regression that would
+reintroduce the retired marker into output, which should never appear. The two
 assertions catch the same defect from different directions and both are worth
 running. Each *text* assertion also has an `*_in_page` form taking the rendered
 page directly (`assert_styling_preserves_layout_in_pages` takes the two it
