@@ -1,4 +1,5 @@
 use crate::artifact::{Artifact, ArtifactRun};
+use crate::diagnostic::{Diagnostic, Severity};
 use crate::hooks::HookPhase;
 use crate::verify::ExpectedArg;
 use clap::ArgMatches;
@@ -272,6 +273,68 @@ pub enum RunErrorKind {
     External,
     App,
 }
+impl RunErrorKind {
+    // The variant in kebab-case, a tuple payload appended: the `kind` a
+    // diagnostic document carries.
+    pub const fn name(self) -> &'static str {
+        match self {
+            RunErrorKind::ClapUsage => "clap-usage",
+            RunErrorKind::DefaultCommand => "default-command",
+            RunErrorKind::Handler => "handler",
+            RunErrorKind::Hook(HookPhase::PreDispatch) => "hook-pre-dispatch",
+            RunErrorKind::Hook(HookPhase::PostDispatch) => "hook-post-dispatch",
+            RunErrorKind::Hook(HookPhase::PostOutput) => "hook-post-output",
+            RunErrorKind::Render => "render",
+            RunErrorKind::FinalWrite(OutputKind::Text) => "final-write-text",
+            RunErrorKind::FinalWrite(OutputKind::Binary) => "final-write-binary",
+            RunErrorKind::FinalWrite(OutputKind::Artifact) => "final-write-artifact",
+            RunErrorKind::External => "external",
+            RunErrorKind::App => "app",
+        }
+    }
+    const ALL: [RunErrorKind; 12] = [
+        RunErrorKind::ClapUsage,
+        RunErrorKind::DefaultCommand,
+        RunErrorKind::Handler,
+        RunErrorKind::Hook(HookPhase::PreDispatch),
+        RunErrorKind::Hook(HookPhase::PostDispatch),
+        RunErrorKind::Hook(HookPhase::PostOutput),
+        RunErrorKind::Render,
+        RunErrorKind::FinalWrite(OutputKind::Text),
+        RunErrorKind::FinalWrite(OutputKind::Binary),
+        RunErrorKind::FinalWrite(OutputKind::Artifact),
+        RunErrorKind::External,
+        RunErrorKind::App,
+    ];
+}
+impl fmt::Display for RunErrorKind {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(self.name())
+    }
+}
+#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
+#[error("{0:?} is not a run error kind")]
+pub struct UnknownRunErrorKind(pub String);
+impl std::str::FromStr for RunErrorKind {
+    type Err = UnknownRunErrorKind;
+    fn from_str(name: &str) -> Result<Self, Self::Err> {
+        Self::ALL
+            .into_iter()
+            .find(|kind| kind.name() == name)
+            .ok_or_else(|| UnknownRunErrorKind(name.to_owned()))
+    }
+}
+impl Serialize for RunErrorKind {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        serializer.serialize_str(self.name())
+    }
+}
+impl<'de> serde::Deserialize<'de> for RunErrorKind {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        let name = <String as serde::Deserialize>::deserialize(deserializer)?;
+        name.parse().map_err(serde::de::Error::custom)
+    }
+}
 #[derive(Debug, Clone)]
 pub struct RunOutput {
     text: String,
@@ -364,6 +427,7 @@ pub struct RunError {
     kind: RunErrorKind,
     status: ExitStatus,
     source: Option<Arc<dyn std::error::Error + Send + Sync + 'static>>,
+    diagnostic: Option<Box<Diagnostic>>,
 }
 impl RunError {
     pub fn new(message: impl Into<String>, kind: RunErrorKind) -> Self {
@@ -384,6 +448,7 @@ impl RunError {
             kind,
             status,
             source: None,
+            diagnostic: None,
         }
     }
     pub fn with_source<E>(mut self, source: E) -> Self
@@ -392,6 +457,40 @@ impl RunError {
     {
         self.source = Some(Arc::new(source));
         self
+    }
+    /// Carry the structured form of this failure, so `diagnostic()` reports
+    /// the error's own `summary`, `detail` and `range` instead of deriving a
+    /// summary from the prose message.
+    pub fn with_diagnostic(mut self, diagnostic: Diagnostic) -> Self {
+        self.diagnostic = Some(Box::new(diagnostic));
+        self
+    }
+    /// The document this failure becomes under a structured output mode.
+    ///
+    /// The carried diagnostic wins when there is one. An `App` or `External`
+    /// failure keeps its verbatim bytes as `detail`, with the first line as
+    /// `summary`. Any other error splits its prose: one `Error: ` or `error: `
+    /// framing stripped, the first line is `summary` and the rest `detail`.
+    /// `kind` and `severity` always describe the failure as the framework
+    /// classified it.
+    pub fn diagnostic(&self) -> Diagnostic {
+        let mut diagnostic = match (&self.diagnostic, self.kind) {
+            (Some(diagnostic), _) => (**diagnostic).clone(),
+            (None, RunErrorKind::External | RunErrorKind::App) => {
+                Diagnostic::error(first_line(&self.message)).detail(self.message.clone())
+            }
+            (None, _) => {
+                let prose = ["Error: ", "error: "]
+                    .iter()
+                    .find_map(|framing| self.message.strip_prefix(framing))
+                    .unwrap_or(&self.message);
+                let (summary, detail) = prose.split_once('\n').unwrap_or((prose, ""));
+                Diagnostic::error(summary.trim_end()).detail(detail.trim())
+            }
+        };
+        diagnostic.kind = self.kind;
+        diagnostic.severity = Severity::Error;
+        diagnostic
     }
     pub fn as_str(&self) -> &str {
         &self.message
@@ -441,6 +540,7 @@ impl From<ExternalFailure> for RunError {
             kind: RunErrorKind::External,
             status: failure.status,
             source: failure.source,
+            diagnostic: None,
         }
     }
 }
@@ -451,8 +551,12 @@ impl From<AppFailure> for RunError {
             kind: RunErrorKind::App,
             status: failure.status,
             source: failure.source,
+            diagnostic: None,
         }
     }
+}
+fn first_line(text: &str) -> &str {
+    text.lines().next().unwrap_or("").trim_end()
 }
 impl From<String> for RunError {
     fn from(message: String) -> Self {
@@ -1154,5 +1258,84 @@ mod tests {
             Output::Render(n) => assert_eq!(n, 3),
             _ => panic!("Expected Output::Render"),
         }
+    }
+
+    #[test]
+    fn run_error_kinds_round_trip_through_their_kebab_names() {
+        for kind in RunErrorKind::ALL {
+            let json = serde_json::to_string(&kind).unwrap();
+            assert_eq!(json, format!("{:?}", kind.name()));
+            assert_eq!(serde_json::from_str::<RunErrorKind>(&json).unwrap(), kind);
+            assert_eq!(kind.name().parse::<RunErrorKind>().unwrap(), kind);
+        }
+        assert_eq!(
+            RunErrorKind::Hook(HookPhase::PreDispatch).name(),
+            "hook-pre-dispatch"
+        );
+        assert_eq!(
+            RunErrorKind::FinalWrite(OutputKind::Binary).name(),
+            "final-write-binary"
+        );
+        assert_eq!(
+            "bogus".parse::<RunErrorKind>().unwrap_err(),
+            UnknownRunErrorKind("bogus".into())
+        );
+    }
+    #[test]
+    fn a_carried_diagnostic_wins_and_takes_the_framework_kind() {
+        let carried = Diagnostic::error("line 2 does not parse")
+            .detail("expected `resource <name> <state>`")
+            .range("main.tfl", 2, 1);
+        let error = RunError::new("Error: line 2 does not parse", RunErrorKind::Handler)
+            .with_diagnostic(carried.clone());
+        let diagnostic = error.diagnostic();
+        assert_eq!(diagnostic.kind, RunErrorKind::Handler);
+        assert_eq!(diagnostic.severity, Severity::Error);
+        assert_eq!(diagnostic.summary, carried.summary);
+        assert_eq!(diagnostic.detail, carried.detail);
+        assert_eq!(diagnostic.range, carried.range);
+        let mut hook_carried = Diagnostic::warning("soft");
+        hook_carried.kind = RunErrorKind::ClapUsage;
+        let hook = RunError::new("Error: soft", RunErrorKind::Hook(HookPhase::PostDispatch))
+            .with_diagnostic(hook_carried);
+        let hook = hook.diagnostic();
+        assert_eq!(hook.kind, RunErrorKind::Hook(HookPhase::PostDispatch));
+        assert_eq!(hook.severity, Severity::Error);
+    }
+    #[test]
+    fn a_prose_error_splits_into_summary_and_detail_without_its_framing() {
+        let clap = RunError::new(
+            "error: unexpected argument '--bogus' found\n\nUsage: app [OPTIONS]\n\nFor more information, try '--help'.\n",
+            RunErrorKind::ClapUsage,
+        )
+        .diagnostic();
+        assert_eq!(clap.kind, RunErrorKind::ClapUsage);
+        assert_eq!(clap.summary, "unexpected argument '--bogus' found");
+        assert_eq!(
+            clap.detail,
+            "Usage: app [OPTIONS]\n\nFor more information, try '--help'."
+        );
+        assert_eq!(clap.range, None);
+        let framed =
+            RunError::new("Error: could not read config", RunErrorKind::Render).diagnostic();
+        assert_eq!(framed.summary, "could not read config");
+        assert_eq!(framed.detail, "");
+        let bare = RunError::new("plain", RunErrorKind::FinalWrite(OutputKind::Text)).diagnostic();
+        assert_eq!(bare.summary, "plain");
+        assert_eq!(bare.kind, RunErrorKind::FinalWrite(OutputKind::Text));
+    }
+    #[test]
+    fn owner_declared_failures_keep_their_bytes_as_detail() {
+        let app = RunError::from(
+            AppFailure::new(3, "ghlike: not found: demo/gamma\nsee --help\n").unwrap(),
+        )
+        .diagnostic();
+        assert_eq!(app.kind, RunErrorKind::App);
+        assert_eq!(app.summary, "ghlike: not found: demo/gamma");
+        assert_eq!(app.detail, "ghlike: not found: demo/gamma\nsee --help\n");
+        let external = RunError::from(ExternalFailure::new(128, "").unwrap()).diagnostic();
+        assert_eq!(external.kind, RunErrorKind::External);
+        assert_eq!(external.summary, "");
+        assert_eq!(external.detail, "");
     }
 }

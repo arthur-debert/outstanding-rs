@@ -1959,6 +1959,7 @@ dependencies = [
 name = "standout-test"
 version = "9.0.0"
 dependencies = [
+ "anyhow",
  "clap",
  "console",
  "insta",

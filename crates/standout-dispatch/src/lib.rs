@@ -12,11 +12,13 @@
 //! pre-dispatch hooks for things like a resolved user session.
 
 pub mod artifact;
+mod diagnostic;
 mod dispatch;
 mod handler;
 mod hooks;
 pub mod verify;
 pub use artifact::{Artifact, ArtifactDestination, ArtifactReceipt, ArtifactRun};
+pub use diagnostic::{Diagnostic, DiagnosticPosition, DiagnosticRange, Severity};
 pub use dispatch::{
     extract_command_path, get_deepest_matches, has_subcommand, insert_default_command,
     path_to_string, string_to_path,
@@ -25,6 +27,7 @@ pub use handler::{
     AppFailure, CommandContext, DispatchResult, ExitStatus, Extensions, ExternalFailure, FnHandler,
     Handler, HandlerResult, IntoHandlerResult, InvalidAppStatus, InvalidExternalStatus, Output,
     OutputKind, RunError, RunErrorKind, RunOutput, SimpleFnHandler, SuccessKind,
+    UnknownRunErrorKind,
 };
 pub use hooks::{
     ArtifactOutput, HookError, HookPhase, Hooks, PostDispatchFn, PostOutputFn, PreDispatchFn,

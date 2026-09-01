@@ -23,6 +23,7 @@ libc = "0.2"
 
 [dev-dependencies]
 standout-fixtures = { path = "../standout-fixtures" }
+anyhow = "1"
 # The round-trip property tests build commands from generated values, which
 # needs clap's owned-string builder API.
 clap = { version = "4", features = ["derive", "help", "string"] }

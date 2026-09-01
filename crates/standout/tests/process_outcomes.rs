@@ -203,6 +203,109 @@ fn real_process_status_and_stream_matrix() {
 }
 
 #[test]
+fn real_process_structured_failures_are_stdout_documents() {
+    use standout::cli::{parse_diagnostic, HookPhase, RunErrorKind};
+    use standout::OutputMode;
+
+    let binary = fixture_binary();
+    let cases: [(&[&str], RunErrorKind, i32, &str); 6] = [
+        (
+            &["--output", "json", "--unknown"],
+            RunErrorKind::ClapUsage,
+            2,
+            "unexpected argument '--unknown' found",
+        ),
+        (
+            &["--unknown", "--output", "json"],
+            RunErrorKind::ClapUsage,
+            2,
+            "unexpected argument '--unknown' found",
+        ),
+        (
+            &["fail", "--output", "json"],
+            RunErrorKind::Handler,
+            1,
+            "fixture handler failed",
+        ),
+        (
+            &["hook-fail", "--output", "json"],
+            RunErrorKind::Hook(HookPhase::PreDispatch),
+            1,
+            "fixture hook failed",
+        ),
+        (
+            &["render-fail", "--output", "json"],
+            RunErrorKind::Render,
+            1,
+            "key must be a string",
+        ),
+        (
+            &["ranged", "--output", "json"],
+            RunErrorKind::Handler,
+            1,
+            "config line 2 does not parse",
+        ),
+    ];
+    for (args, kind, code, summary) in cases {
+        let output = run(&binary, args);
+        assert_eq!(output.status.code(), Some(code), "{args:?}");
+        assert!(output.stderr.is_empty(), "{args:?}: {:?}", output.stderr);
+        let stdout = String::from_utf8(output.stdout).unwrap();
+        let diagnostic = parse_diagnostic(OutputMode::Json, &stdout)
+            .unwrap_or_else(|e| panic!("{args:?}: {e}:\n{stdout}"));
+        assert_eq!(diagnostic.kind, kind, "{args:?}");
+        assert!(diagnostic.summary.contains(summary), "{args:?}: {stdout}");
+    }
+
+    let ranged = run(&binary, &["ranged", "--output", "yaml"]);
+    let ranged =
+        parse_diagnostic(OutputMode::Yaml, &String::from_utf8(ranged.stdout).unwrap()).unwrap();
+    assert_eq!(ranged.detail, "expected `resource <name> <state>`");
+    assert_eq!(ranged.range.unwrap().start.line, 2);
+
+    let csv = run(&binary, &["fail", "--output", "csv"]);
+    assert_eq!(csv.status.code(), Some(1));
+    assert!(csv.stderr.is_empty());
+    assert_eq!(
+        String::from_utf8(csv.stdout).unwrap(),
+        "type,schema_version,severity,kind,summary,detail,range_filename,range_line,range_column\n\
+         diagnostic,1,error,handler,fixture handler failed,,,,\n"
+    );
+
+    let warning_failure = run(&binary, &["warn-fail", "--output", "json"]);
+    assert_eq!(warning_failure.status.code(), Some(1));
+    let stdout = String::from_utf8(warning_failure.stdout).unwrap();
+    assert!(
+        parse_diagnostic(OutputMode::Json, &stdout).is_ok(),
+        "{stdout}"
+    );
+    let stderr = String::from_utf8_lossy(&warning_failure.stderr);
+    assert!(stderr.contains("fixture warning"), "{stderr}");
+    assert!(!stderr.contains("fixture handler failed"), "{stderr}");
+
+    let external = run(&binary, &["external", "--output", "json"]);
+    assert_eq!(external.status.code(), Some(128));
+    assert_eq!(external.stderr, b"fatal: external fixture failed");
+    let external = parse_diagnostic(
+        OutputMode::Json,
+        &String::from_utf8(external.stdout).unwrap(),
+    )
+    .unwrap();
+    assert_eq!(external.kind, RunErrorKind::External);
+    assert_eq!(external.detail, "fatal: external fixture failed");
+
+    let malformed = run(&binary, &["--unknown", "--output", "jsn"]);
+    assert_eq!(malformed.status.code(), Some(2));
+    assert!(malformed.stdout.is_empty());
+    assert!(String::from_utf8_lossy(&malformed.stderr).starts_with("error:"));
+
+    let help = run(&binary, &["--help", "--output", "term-debug"]);
+    assert_eq!(help.status.code(), Some(0));
+    assert!(String::from_utf8_lossy(&help.stdout).contains("[header]USAGE[/header]"));
+    assert!(help.stderr.is_empty());
+}
+
+#[test]
 fn real_process_accepts_broken_text_stdout_but_reports_binary_stdout() {
     let binary = fixture_binary();
     let mut text_child = Command::new(&binary)

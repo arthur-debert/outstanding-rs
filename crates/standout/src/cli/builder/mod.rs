@@ -949,9 +949,7 @@ impl App {
         warnings: Option<standout_render::warnings::WarningBuffer>,
     ) -> HelpDisplay {
         let request = Self::help_request(cmd, args);
-        // A typed `--output` does not reach the help flags; the app's own
-        // fallback does.
-        let format = human_help_format(self.output_mode_fallback);
+        let format = human_help_format(self.extract_output_mode_from_unparsed(args));
         let target = self.help_target_properties(target);
         let config = HelpConfig {
             command_groups: self.help_command_groups.clone(),

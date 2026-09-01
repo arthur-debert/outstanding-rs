@@ -78,8 +78,8 @@ fn stdout_and_stderr_carry_different_content() {
         "the report must not ride the stdout byte stream"
     );
     assert_eq!(
-        result.stdout(),
-        "",
+        result.stdout().as_bytes(),
+        stdout_payload,
         "the artifact owns stdout, so nothing textual joins its bytes there"
     );
 }
