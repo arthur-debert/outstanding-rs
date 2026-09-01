@@ -20,6 +20,11 @@ pub struct RenderContext<'a> {
 
     pub theme: &'a Theme,
 
+    /// The serialized data for the request being rendered. A [`ContextProvider`]
+    /// reads it to derive a template value from data the template does not name
+    /// directly. For an ordinary command this is the handler's serialized render
+    /// output; help rendering, an artifact's report, and direct render calls each
+    /// supply their own request-specific shape instead.
     pub data: &'a serde_json::Value,
 
     pub extras: HashMap<String, String>,

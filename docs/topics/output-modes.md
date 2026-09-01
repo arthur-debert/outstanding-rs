@@ -64,7 +64,19 @@ myapp list --output=xml         # XML serialization
 myapp list --output=csv         # CSV serialization
 ```
 
-The flag is global—it applies to all subcommands.
+The flag is global—it applies to all subcommands. `--output` accepts a single
+occurrence: passing it twice on one command line is a clap usage error
+(`ArgumentConflict`), so an application cannot inject its own default by
+appending a second `--output` to the arguments. To change the default output
+mode, set it on the builder with
+[`output_mode_fallback(mode)`](./app-configuration.md#output-mode-fallback)
+rather than rewriting the command line.
+
+The global property is not special to `--output`. Any flag an application
+declares with clap's `.global(true)` is readable from the deepest `ArgMatches`,
+which is the one a `#[flag]` handler parameter reads. A root-declared global
+`--quiet`, for example, is visible as `#[flag] quiet: bool` in a handler for a
+nested command such as `config set`.
 
 ## Term vs Text
 
@@ -120,9 +132,13 @@ Use cases:
 - Verifying style tag placement
 - Automated testing of template output
 
-Unlike Term mode, unknown tags don't get the `?` marker in TermDebug.
-TermDebug shows tag placement; it does not check whether a tag has a matching
-style definition. Use `validate_template` when validation is required.
+TermDebug keeps every tag as literal text and shows tag placement; it does not
+check whether a tag has a matching style definition. No mode rewrites an
+unknown tag to a `[unknown?]` marker — in `Term` and `Text` an unresolved tag
+degrades to unstyled text and is recorded as a warning; run through `App::run`
+that warning is written to stderr (see [Unknown Style
+Tags](../crates/render/topics/styling-system.md#unknown-style-tags)).
+Use `validate_template` when validation is required.
 
 ## Structured Modes
 

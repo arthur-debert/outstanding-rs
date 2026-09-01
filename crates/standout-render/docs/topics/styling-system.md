@@ -231,15 +231,58 @@ Aliases can chain: `a` → `b` → `c` → concrete style. Cycles are detected a
 
 ## Unknown Style Tags
 
-When a template references a style not defined in the theme, `standout-render` handles it gracefully:
+When a template references a style tag not defined in the active theme,
+`standout-render` degrades it to unstyled text instead of failing the render.
+`Term` and `Text` mode treat unknown tags identically; the difference between
+them is only whether *known* tags render as ANSI (`Term`) or as plain text
+(`Text`). What happens to an unknown tag depends on whether its open and close markers
+are balanced:
 
-| Output Mode | Behavior                                                   |
-| ----------- | ---------------------------------------------------------- |
-| `Term`      | Unknown tags get a `?` marker: `[unknown?]text[/unknown?]` |
-| `Text`      | Tags stripped (plain text)                                 |
-| `TermDebug` | Tags preserved as-is                                       |
+- A **balanced pair**, `[unknown]x[/unknown]`, has its markers removed; the
+  inner text `x` is kept as unstyled text.
+- An **unbalanced** tag, `[unknown]` with no matching close, is emitted verbatim
+  as literal text — the brackets survive, so the output contains `[unknown]`.
+  This is why a stray `[compute]` appears verbatim under `--output text`.
 
-The `?` marker helps catch typos during development without crashing production apps.
+`TermDebug` mode keeps every tag, known or unknown, as literal text for
+inspection.
+
+There is no `?` marker: an unknown tag is never rewritten to `[unknown?]` in
+rendered output. Instead, each unresolved tag is recorded as a warning (see
+[Unresolved-tag warning](#unresolved-tag-warning) below), whether it was
+stripped or emitted verbatim.
+
+A tag counts as unknown when it is absent from the *active theme's* resolved
+style map. A tag your app defines in some themes but not the one currently
+selected is unresolved in that theme and degrades the same way; the warning
+does not distinguish a never-defined tag name from one merely missing in the
+active theme.
+
+To emit a literal `[` that must not be read as a tag, escape it as `\[` (and
+`\]` for `]`). See [Literal brackets](templating.md#literal-brackets) in the
+templating topic.
+
+### Unresolved-tag warning
+
+Each render pass records the tags it left unresolved as one warning line, naming
+them all (sorted and de-duplicated):
+
+```text
+Unresolved style tag(s) degraded to unstyled text: compute, status
+```
+
+Where that warning goes depends on the entry point that drove the render:
+
+- `App::run` writes it to stderr, after the command's own output.
+- `App::run_with` and `App::dispatch` collect it into the returned
+  `CompletedRun` and write nothing; the caller reads it with `.warnings()` and
+  decides. `TestHarness` reads it this way.
+- `App::render_with` and the standalone `standout-render` render APIs render
+  with warnings disabled, so an unresolved tag degrades to unstyled text without
+  recording or emitting anything.
+
+An application whose specification pins its stderr bytes must account for the
+`App::run` line. An escaped bracket (`\[`) is not a tag and raises no warning.
 
 ### Validation
 
@@ -267,7 +310,7 @@ let app = App::builder()
 
 The `STANDOUT_STRICT_STYLE_TAGS` environment variable (`1`, `true`, `yes`, or `on`) forces strict mode on regardless of the builder setting, and can only turn it on, never off — so a dev shell, CI job, or test run can opt in without a code change.
 
-Strict mode keys on unresolved tags only. A tag that _is_ defined in the theme but whose markup is unbalanced (`[header]text` with no close) is malformed markup, not an unresolved tag, and does not trip the gate.
+Strict mode keys on unresolved tags only. A tag that *is* defined in the theme but whose markup is unbalanced (`[header]text` with no close) is malformed markup, not an unresolved tag, and does not trip the gate.
 
 The error names each unresolved tag but does not distinguish a misspelled tag name from a tag the theme simply does not style: resolution is a single lookup against the active theme's styles, so both are "not in the theme," and separating them would need a registry of valid tag names the framework does not keep.
 

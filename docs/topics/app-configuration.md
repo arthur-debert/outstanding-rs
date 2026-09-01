@@ -359,25 +359,51 @@ Add values available in all templates:
 
 ### Static Context
 
+`context` takes a `minijinja::Value`, so string and number literals need
+`.into()`:
+
 ```rust
 App::builder()
-    .context("version", "1.0.0")
-    .context("app_name", "MyApp")
+    .context("version", "1.0.0".into())
+    .context("app_name", "MyApp".into())
 ```
 
 ### Dynamic Context
 
 ```rust
+use minijinja::Value;
+use standout::context::RenderContext;
+
 App::builder()
-    .context_fn("terminal_width", |ctx| {
+    .context_fn("terminal_width", |ctx: &RenderContext| {
         Value::from(ctx.terminal_width.unwrap_or(80))
     })
-    .context_fn("timestamp", |_ctx| {
+    .context_fn("doubled_count", |ctx: &RenderContext| {
+        let count = ctx.data.get("count").and_then(|v| v.as_i64()).unwrap_or(0);
+        Value::from(count * 2)
+    })
+    .context_fn("timestamp", |_ctx: &RenderContext| {
         Value::from(chrono::Utc::now().to_rfc3339())
     })
 ```
 
-Dynamic providers receive `RenderContext` with output mode, terminal width, and handler data.
+The parameter type annotation is required: `context_fn` is generic over the
+`ContextProvider` trait, so the compiler cannot infer it from the closure alone.
+`test_context_fn_uses_handler_data` in `standout`'s builder tests exercises the
+`doubled_count` shape against the live API.
+
+A provider reads the serialized data for the request being rendered through
+`ctx.data`, a `&serde_json::Value`. For an ordinary command that is the handler's
+`Output::Render` payload — the `doubled_count` provider above reads `count` from
+it — so a provider can derive a template value from handler data even when the
+template never names that data directly. The same registry also runs while
+rendering help, an artifact's report, or a direct render call, and each of those
+supplies its own request-specific shape rather than a handler payload, so a
+provider that assumes particular fields should treat them as optional.
+
+Dynamic providers receive a `RenderContext` carrying the output mode
+(`ctx.output_mode`), terminal width (`ctx.terminal_width`), theme (`ctx.theme`),
+and the handler payload (`ctx.data`).
 They also receive `ctx.ambiguous_width()`, the application's explicit
 East Asian Ambiguous character-width policy. Configure it at the rendering
 seam; narrow is the compatibility default and Standout does not infer a locale:

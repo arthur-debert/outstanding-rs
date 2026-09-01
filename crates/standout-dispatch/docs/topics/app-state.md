@@ -223,6 +223,8 @@ Extension missing: type myapp::Database not found in context
 App state makes handlers easily testable by allowing dependency injection:
 
 ```rust
+use std::rc::Rc;
+
 #[test]
 fn test_list_handler() {
     // Create test fixtures
@@ -236,7 +238,7 @@ fn test_list_handler() {
 
     let ctx = CommandContext {
         command_path: vec!["list".into()],
-        app_state: Arc::new(app_state),
+        app_state: Rc::new(app_state),
         extensions: Extensions::new(),
     };
 
