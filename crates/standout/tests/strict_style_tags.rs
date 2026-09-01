@@ -6,7 +6,7 @@
 use clap::Command;
 use serde_json::json;
 use standout::cli::handler::{DispatchResult, ExitStatus, RunErrorKind};
-use standout::cli::{App, FnHandler, Output};
+use standout::cli::{App, Artifact, FnHandler, Output};
 use standout::{embed_styles, EmbeddedTemplates};
 use standout_test::TestHarness;
 
@@ -54,6 +54,63 @@ fn run(strict: bool, subcommand: &str) -> standout_test::TestResult {
     TestHarness::new()
         .text_output()
         .run(&app(strict), command(), ["app", subcommand])
+}
+
+// Framework help renders through the app theme, so a style tag the theme does
+// not define — here `bogus`, carried in the root command's `about` text —
+// leaves the help page with an unresolved tag. Help is rendered on a path
+// (`intercept_display_help` / `intercept_help_word`) that returns before
+// command dispatch, so it exercises the run-completion strict sweep rather than
+// the per-command pre-write gate.
+fn help_app(strict: bool) -> App {
+    App::builder()
+        .templates(EmbeddedTemplates::new(TEMPLATES, ""))
+        .styles(embed_styles!("tests/fixtures/styles"))
+        .default_theme("default")
+        .help_word(true)
+        .strict_style_tags(strict)
+        .command_with(
+            "clean",
+            FnHandler::new(|_m, _ctx| Ok(Output::Render(json!({"msg": "hi"})))),
+            |cfg| cfg.template_name("clean"),
+        )
+        .unwrap()
+        .build()
+        .unwrap()
+}
+
+fn help_command() -> Command {
+    Command::new("app")
+        .about("[bogus]a summary the theme cannot style[/bogus]")
+        .subcommand(Command::new("clean"))
+}
+
+const STRICT_ARTIFACT_TEMPLATE: &str = "[bogus]exported {{ report.entries }} entries[/bogus]";
+
+fn strict_artifact_app() -> App {
+    App::builder()
+        .templates(EmbeddedTemplates::new(
+            &[("export", STRICT_ARTIFACT_TEMPLATE)],
+            "",
+        ))
+        .output_file_flag(Some("output-file-path"))
+        .strict_style_tags(true)
+        .command_with(
+            "export",
+            FnHandler::new(|_m, _ctx| {
+                Ok(Output::Artifact(
+                    Artifact::new(b"id,title\n1,x\n".to_vec()).with_report(json!({"entries": 1})),
+                ))
+            }),
+            |cfg| cfg,
+        )
+        .unwrap()
+        .build()
+        .unwrap()
+}
+
+fn artifact_command() -> Command {
+    Command::new("app").subcommand(Command::new("export"))
 }
 
 #[test]
@@ -155,6 +212,98 @@ fn strict_failure_leaves_a_preexisting_output_file_untouched() {
         std::fs::read_to_string(&output_file).unwrap(),
         "original contents",
         "a strict failure must not overwrite the requested output file"
+    );
+}
+
+#[test]
+fn strict_on_fails_on_an_unresolved_tag_in_the_help_page() {
+    // `--help` renders framework help and returns before command dispatch. The
+    // run-completion sweep must still catch the unresolved tag and emit nothing.
+    let result =
+        TestHarness::new()
+            .text_output()
+            .run(&help_app(true), help_command(), ["app", "--help"]);
+    result.assert_exit_status(ExitStatus::FAILURE);
+    result.assert_error_kind(RunErrorKind::Render);
+    result.assert_stdout_eq("");
+    assert!(
+        result.error().unwrap().contains("bogus"),
+        "error should name the unresolved help tag: {:?}",
+        result.error()
+    );
+}
+
+#[test]
+fn strict_on_fails_on_an_unresolved_tag_in_the_help_word_page() {
+    // The `help` word takes a different interception path than `--help`; strict
+    // mode must catch an unresolved tag on both.
+    let result =
+        TestHarness::new()
+            .text_output()
+            .run(&help_app(true), help_command(), ["app", "help"]);
+    result.assert_exit_status(ExitStatus::FAILURE);
+    result.assert_error_kind(RunErrorKind::Render);
+    result.assert_stdout_eq("");
+    assert!(
+        result.error().unwrap().contains("bogus"),
+        "error should name the unresolved help tag: {:?}",
+        result.error()
+    );
+}
+
+#[test]
+fn strict_off_still_renders_the_help_page() {
+    // With strict off, the same unresolved help tag degrades gracefully and the
+    // help page is still produced — the sweep only fires when strict is on.
+    let result =
+        TestHarness::new()
+            .text_output()
+            .run(&help_app(false), help_command(), ["app", "--help"]);
+    result.assert_success();
+    assert!(
+        result.stdout().contains("summary"),
+        "the help page should still render its about text: {:?}",
+        result.stdout()
+    );
+}
+
+#[test]
+fn strict_failure_leaves_no_artifact_file_behind() {
+    // The artifact path renders its report and writes bytes inside
+    // `complete_artifact`; the gate runs after the report render and before the
+    // byte write, so a strict failure must leave a pre-existing artifact file
+    // untouched.
+    let tempdir = tempfile::tempdir().unwrap();
+    let output_file = tempdir.path().join("export.csv");
+    std::fs::write(&output_file, "original artifact contents").unwrap();
+
+    let result = strict_artifact_app().run_with(
+        artifact_command(),
+        [
+            "app",
+            "export",
+            "--output-file-path",
+            output_file.to_str().unwrap(),
+        ],
+        standout::TargetProperties::detect(),
+        standout::InputSources::from_process(),
+    );
+
+    match result.outcome() {
+        DispatchResult::Error(error) => {
+            assert_eq!(error.kind(), RunErrorKind::Render);
+            assert!(
+                error.as_str().contains("bogus"),
+                "error should name the tag: {}",
+                error.as_str()
+            );
+        }
+        other => panic!("expected a strict Render error, got {other:?}"),
+    }
+    assert_eq!(
+        std::fs::read_to_string(&output_file).unwrap(),
+        "original artifact contents",
+        "a strict failure must not overwrite the artifact file"
     );
 }
 

@@ -15,8 +15,8 @@ use crate::cli::default_command::ParseFailure;
 use crate::cli::dispatch::{dispatch, extract_command_path, get_deepest_matches, DispatchOutput};
 use crate::cli::group::{ErasedConfigRecipe, GroupBuilder, GroupEntry};
 use crate::cli::handler::{
-    ArtifactDestination, ArtifactReceipt, ArtifactRun, CommandContext, DispatchResult, OutputKind,
-    RunError, RunErrorKind, RunOutput, SuccessKind,
+    ArtifactDestination, ArtifactReceipt, ArtifactRun, CommandContext, DispatchResult, ExitStatus,
+    OutputKind, RunError, RunErrorKind, RunOutput, SuccessKind,
 };
 use crate::cli::hooks::{ArtifactOutput, RenderedOutput, TextOutput};
 use crate::cli::questionnaire::{
@@ -425,6 +425,16 @@ impl App {
     /// gate, which reads the window, enforces uniformly regardless of which
     /// entry point rendered. A fresh window per run also isolates the gate from
     /// any window a caller left open around us.
+    ///
+    /// Command and artifact output is gated at its pre-commit site (in
+    /// [`App::dispatch_with_target`] and [`App::complete_artifact`]) so a strict
+    /// failure writes no file. But some successful rendered outcomes — framework
+    /// help from `intercept_display_help` / `intercept_help_word`, the
+    /// questionnaire answer sheet — return early from `dispatch_from_with_target`
+    /// without reaching those sites. They emit only later, in [`App::run`], so a
+    /// success-guarded sweep here escalates them before emission. Command and
+    /// artifact outcomes have already become errors upstream, so the guard leaves
+    /// them untouched and the run is never gated twice.
     fn collect_run_warnings(
         &self,
         inner: impl FnOnce(WarningBuffer) -> (DispatchResult, OutputMode),
@@ -432,7 +442,12 @@ impl App {
         let warnings = WarningBuffer::new();
         self.seed_startup_warnings(&warnings);
         let _capture = standout_render::diagnostics::begin_capture();
-        let (outcome, output_mode) = inner(warnings.clone());
+        let (mut outcome, output_mode) = inner(warnings.clone());
+        if outcome.exit_status() == Some(ExitStatus::SUCCESS) {
+            if let Some(error) = self.strict_style_tags_error(&warnings) {
+                outcome = DispatchResult::Error(error);
+            }
+        }
         crate::cli::CompletedRun::from_dispatch(outcome, warnings.take(), output_mode)
     }
 
