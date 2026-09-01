@@ -358,3 +358,21 @@ invisible on a happy-path product spec.
 | Archetype | Survey | Shape |
 | --- | --- | --- |
 | `validity` | validity | missing/mistyped template name, registration order, incomplete theme × framework help |
+
+### The completion roster
+
+The survey's remaining in-capability archetypes, authored spec-first after the
+pilot (`docs/spec/robustness-corpus-completion.md`). Their behavioral sketches
+were lost with the 2026-08-16 session record, so each is reconstructed from the
+survey's capability matrix and states in its spec which interactions it is
+built to stress. They carry no run evidence until the 9.0 line is published: a
+first blind run against the surface that release deletes would measure nothing.
+
+| Archetype | Survey | Shape |
+| --- | --- | --- |
+| `cargolike` | C6 | layered config: per-type merge across every discovered file, key↔env mapping, framework settings on the same ladder |
+
+`crates/corpus-runner/tests/hermetic_authored_roster_loop.rs` drives each of
+them through the full loop against a produced binary that builds and then fails
+every invocation, so a suite that cannot execute is a red test rather than a
+wasted blind run.
