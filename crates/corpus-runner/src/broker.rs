@@ -1,5 +1,5 @@
 //! The run-credential broker: the agent phase's one credential exception
-//! (ADR-0023's ROB07-WS01 amendment).
+//! (see ADR-0023).
 //!
 //! A blind run needs an authenticated agent and a sandbox that keeps the
 //! credential away from everything the agent spawns — build scripts, tests,
