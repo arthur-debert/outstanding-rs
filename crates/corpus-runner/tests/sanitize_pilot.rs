@@ -1,6 +1,7 @@
 // The committed-pilot sanitizer as an external command, plus a secret-shape
-// scan over every committed run artifact in `corpus/pilot/` and
-// `corpus/demo/`.
+// scan over every committed run artifact under the roots in `SCANNED_ROOTS`:
+// the pilot runs and scorecard, the rerun evidence, the completion runs, and
+// the demo.
 
 #![cfg(unix)]
 
@@ -152,6 +153,27 @@ fn is_email_domain(c: char) -> bool {
     c.is_ascii_alphanumeric() || matches!(c, '.' | '-')
 }
 
+// rustc names a closure's type after where it was written — `{closure@main.rs:39:29}` —
+// so that `@` joins a file to a line and column, never a mailbox to a host. Demanding
+// every part of the form fails toward a false positive, never toward a missed mailbox.
+fn is_rustc_closure_type(local: &str, before: &str, domain: &str, after: &str) -> bool {
+    if local != "closure" || !before.ends_with('{') || !domain.ends_with(".rs") {
+        return false;
+    }
+    let Some(after) = after.strip_prefix(':') else {
+        return false;
+    };
+    let line: String = after.chars().take_while(|c| c.is_ascii_digit()).collect();
+    if line.is_empty() {
+        return false;
+    }
+    let Some(after) = after[line.len()..].strip_prefix(':') else {
+        return false;
+    };
+    let column: String = after.chars().take_while(|c| c.is_ascii_digit()).collect();
+    !column.is_empty() && after[column.len()..].starts_with('}')
+}
+
 fn email_at(text: &str, at: usize) -> Option<String> {
     let local: String = text[..at]
         .chars()
@@ -161,11 +183,19 @@ fn email_at(text: &str, at: usize) -> Option<String> {
         .into_iter()
         .rev()
         .collect();
-    let domain: String = text[at + 1..]
+    let run: String = text[at + 1..]
         .chars()
         .take_while(|&c| is_email_domain(c))
         .collect();
-    let domain = domain.trim_end_matches(['.', '-']);
+    if is_rustc_closure_type(
+        &local,
+        &text[..at - local.len()],
+        &run,
+        &text[at + 1 + run.len()..],
+    ) {
+        return None;
+    }
+    let domain = run.trim_end_matches(['.', '-']);
     if local.is_empty() {
         return None;
     }
@@ -429,6 +459,10 @@ fn secret_shape_patterns_catch_each_class() {
         "host Build-Agent.LOCAL answering",
         "\"hostname\":\"redacted\"",
         "mail carol.smith+x@gmail.com now",
+        "mail carol@gmail.com:39:29 now",
+        "mail carol@gmail.com:39:29} now",
+        "expected `closure@main.rs:39:29}` unbraced",
+        "expected `{closure@main.py:39:29}` unrusty",
         "token ghp_abcdefghij",
         "key AKIAABCDEFGHIJKLMNOP end",
         "xoxb-1234-abc",
@@ -449,6 +483,8 @@ fn secret_shape_patterns_catch_each_class() {
         "an eyJ fragment without a second segment",
         "python threading.local() in the agent's code",
         "notes on astronomy and localhost resolution",
+        "expected `{closure@main.rs:39:29}` to return `Value`",
+        "expected `{closure@lib.rs:7:5}` to be `Fn`",
     ] {
         assert!(
             secret_shaped_hits(benign).is_empty(),

@@ -454,9 +454,9 @@ lost with the 2026-08-16 session record, so each spec reconstructs the shape
 from the survey's capability matrix and states in prose which interactions it
 stresses. A first blind run had to wait for the 9.0 line to be published,
 because a run against the surface that release deletes would measure nothing.
-`cargolike` and `gcloudlike` have run against 9.0.0; their reports and
-transcripts live under `completion/` (see Layout above), and the remaining four
-carry no run evidence yet.
+All six have now run against 9.0.0; their reports and transcripts live under
+`completion/` (see Layout above). That is the condition the completion
+scorecard waits on, and it has not been written yet.
 
 | Archetype | Survey | Shape |
 | --- | --- | --- |

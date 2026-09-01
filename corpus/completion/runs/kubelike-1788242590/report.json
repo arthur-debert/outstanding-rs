@@ -1,0 +1,1745 @@
+{
+  "schema_version": 4,
+  "run_id": "kubelike-1788242590",
+  "archetype": {
+    "name": "kubelike",
+    "spec_sha256": "052eaf1533a61ef0e7e3645217da219c8c1a3174e8688da23e3b181f988ff888"
+  },
+  "pins": {
+    "framework_version": "9.0.0",
+    "docs_commit": "1642d4e8ee6f2c43a565e612f6f54f570089c90a",
+    "docs_sha256": "db5571795e5a2345888bbcb7a9d825b20945376c93929973d98b599f9a41197e",
+    "acceptance_sha256": "e47dee85b13d01c2fe63db3e1f480e692e5142ff954e58b85aa73f51178a33a2",
+    "questionnaire_fingerprint": "sha256:64291870245510dad73ca960fd4024db9b9c161113a3dcc9c7e57a30973663fc"
+  },
+  "evaluation": {
+    "origin": "full-run",
+    "isolation": {
+      "backend": "macos-seatbelt",
+      "filesystem": "allow-default; reads denied under listed user/source roots, writes denied outside the phase workspace",
+      "network": "denied"
+    },
+    "binary_sha256": "bfb07bfe7d25b081b909bf02781d6c13c43090490c6ada8a932b27d8e3ae6e4a"
+  },
+  "blindness": {
+    "policy": "workspace contains spec + published docs + crates.io pins only; agent, build, and produced-binary descendants use disposable homes and a kernel filesystem sandbox that excludes the source checkout and host user-data roots; consulted sources are self-reported in the exit questionnaire",
+    "env_allowlist": [
+      "PATH",
+      "HOME",
+      "SHELL",
+      "TERM",
+      "LANG",
+      "LC_ALL",
+      "TMPDIR",
+      "CARGO_HOME",
+      "RUSTUP_HOME",
+      "CLAUDE_CODE_TMPDIR",
+      "ANTHROPIC_BASE_URL",
+      "ANTHROPIC_AUTH_TOKEN"
+    ],
+    "framework_source_excluded": true,
+    "isolation": {
+      "backend": "macos-seatbelt",
+      "filesystem": "allow-default; reads denied under listed user/source roots, writes denied outside the phase workspace",
+      "network": "allowed-by-policy"
+    },
+    "credential_exceptions": [
+      "agent phase only: a host-side loopback broker on 127.0.0.1:54639 forwarded the session's API requests to https://api.anthropic.com with the host Claude subscription credential (read from macOS Keychain item \"Claude Code-credentials\") injected on the host side; the agent's environment carried ANTHROPIC_BASE_URL and a placeholder token only, so the credential never entered the agent's process tree",
+      "broker admitted 72 connection(s), each resolved from the OS socket tables to the agent process itself holding a close-on-exec descriptor, and denied 0 connection(s) it could not attribute that way"
+    ],
+    "agent_reported_docs": "Read in full:\n- docs/index.md\n- docs/guides/intro-to-standout.md\n- docs/topics/error-handling.md\n- docs/topics/execution-outcomes.md\n- docs/topics/output-modes.md\n- docs/topics/dispatch-attributes.md\n- docs/topics/app-configuration.md\n- docs/crates/dispatch/topics/handler-contract.md\n- docs/crates/render/topics/templating.md\n- docs/crates/render/guides/intro-to-tabular.md\n\nI also grepped the whole of docs/ for \"warning\" while looking for a supported\nway to put prose on stderr alongside a successful exit, which surfaced lines in\ndocs/topics/testing.md, docs/topics/stability.md, docs/topics/list-view.md and\ndocs/guides/derived-questionnaires.md. I did not otherwise read those files, nor\nany of the input/, pipe/, seeker, topics-system, styling-system, passthrough,\npartial-adoption, execution-model, app-state, template-engines,\nfile-system-resources, or upgrading-from-* pages.",
+    "agent_reported_external_sources": "No web search, no standout source code, no standout repository, and no prior\nknowledge of standout internals — I had none to draw on. What I did use beyond\ndocs/:\n\n- General Rust, clap 4 derive, serde and serde_json knowledge. I added\n  `serde_json = { version = \"1\", features = [\"preserve_order\"] }` to Cargo.toml\n  (the `preserve_order` feature is what makes `-o json` emit the field order\n  SPEC.md shows instead of alphabetical).\n- rustc/cargo error messages, which is how I confirmed API shapes the docs name\n  but do not fully spell out.\n- Empirical probing of the framework: before writing the app I built a\n  throwaway `spike/` crate in this workspace against the same pinned standout\n  9.0.0, ran it, and inspected the resulting stdout/stderr/exit codes with xxd\n  to learn how `Output::Render` + template, `Output::Artifact`, and\n  `ExternalFailure` actually behave at the process edge. That is black-box\n  observation of the binary's behavior, not reading standout's source. The\n  spike directory has been deleted.\n- General knowledge of kubectl's semantics, used only to pick defaults where\n  SPEC.md is silent (listed as assumptions in answer 1). Nothing in the spec's\n  stated behavior rests on it."
+  },
+  "session": {
+    "agent_cmd": "claude --dangerously-skip-permissions --setting-sources '' --strict-mcp-config -p \"Read INSTRUCTIONS.md in the current directory and carry it out completely.\" --output-format stream-json --verbose",
+    "wall_seconds": 951.615737,
+    "exit_code": 0,
+    "timed_out": false,
+    "turns": 78,
+    "input_tokens": 138,
+    "output_tokens": 73008,
+    "transcript": "transcript.jsonl"
+  },
+  "provenance": {
+    "backend": "claude",
+    "executable_version": "2.1.252",
+    "model_requested": null,
+    "model_observed": "claude-opus-5[1m]",
+    "prompt": "Read INSTRUCTIONS.md in the current directory and carry it out completely.",
+    "settings": [
+      "--dangerously-skip-permissions",
+      "--setting-sources",
+      "",
+      "--strict-mcp-config",
+      "--output-format",
+      "stream-json",
+      "--verbose"
+    ]
+  },
+  "acceptance": {
+    "built": true,
+    "build_detail": null,
+    "cases": [
+      {
+        "name": "get-pods-default-namespace",
+        "group": "kind-registry",
+        "stresses": "the verb resolves a kind named as an argument and renders its column set",
+        "expected": "pass",
+        "outcome": "pass"
+      },
+      {
+        "name": "short-alias-is-the-same-command",
+        "group": "kind-registry",
+        "stresses": "a kind's short alias resolves to the same handler and the same bytes as its plural name",
+        "expected": "pass",
+        "outcome": "pass"
+      },
+      {
+        "name": "get-named-resource",
+        "group": "kind-registry",
+        "stresses": "a name positional after the kind argument narrows the listing to one row",
+        "expected": "pass",
+        "outcome": "pass"
+      },
+      {
+        "name": "named-resource-absent-is-a-domain-error",
+        "group": "kind-registry",
+        "stresses": "an absent name exits 1 with stdout untouched and the namespace in the message",
+        "expected": "pass",
+        "outcome": "pass"
+      },
+      {
+        "name": "unknown-kind-is-a-domain-error",
+        "group": "kind-registry",
+        "stresses": "a kind outside the registry is a runtime lookup failure (exit 1), not a usage error",
+        "expected": "pass",
+        "outcome": "pass"
+      },
+      {
+        "name": "api-resources-prints-the-registry",
+        "group": "kind-registry",
+        "stresses": "the registry that drives dispatch is itself printable data",
+        "expected": "pass",
+        "outcome": "pass"
+      },
+      {
+        "name": "describe-pod-detail-block",
+        "group": "kind-registry",
+        "stresses": "a second verb over the same registry renders a key-padded detail block",
+        "expected": "pass",
+        "outcome": "pass"
+      },
+      {
+        "name": "describe-service-detail-block",
+        "group": "kind-registry",
+        "stresses": "the service kind has its own describe key set, padded to its own widest key",
+        "expected": "pass",
+        "outcome": "pass"
+      },
+      {
+        "name": "describe-absent-resource-is-a-domain-error",
+        "group": "kind-registry",
+        "stresses": "describe's missing-resource error is get's, naming the kind's plural even though the argument was singular",
+        "expected": "pass",
+        "outcome": "pass"
+      },
+      {
+        "name": "describe-node-has-its-own-key-set",
+        "group": "kind-registry",
+        "stresses": "the same verb over a different kind emits a different key set and repads to it",
+        "expected": "pass",
+        "outcome": "pass"
+      },
+      {
+        "name": "get-nodes-is-cluster-scoped",
+        "group": "scope-metadata",
+        "stresses": "a cluster-scoped kind lists without any namespace being resolved",
+        "expected": "pass",
+        "outcome": "pass"
+      },
+      {
+        "name": "namespace-flag-refused-on-cluster-scoped-kind",
+        "group": "scope-metadata",
+        "stresses": "-n is a usage error when the kind argument resolves to a cluster-scoped kind",
+        "expected": "pass",
+        "outcome": "pass"
+      },
+      {
+        "name": "all-namespaces-refused-on-cluster-scoped-kind",
+        "group": "scope-metadata",
+        "stresses": "the same refusal for -A: flag validity comes from data, not from the command tree",
+        "expected": "pass",
+        "outcome": "pass"
+      },
+      {
+        "name": "all-namespaces-adds-a-leading-column",
+        "group": "scope-metadata",
+        "stresses": "-A widens the scope and the column set, and widths are computed over the wider rows",
+        "expected": "pass",
+        "outcome": "pass"
+      },
+      {
+        "name": "namespace-flag-refused-on-describe-of-a-cluster-scoped-kind",
+        "group": "scope-metadata",
+        "stresses": "the scope rule is the verb's, not get's: -n on a cluster-scoped kind is the same usage error under describe, naming the kind's plural though the argument was singular",
+        "expected": "pass",
+        "outcome": "pass"
+      },
+      {
+        "name": "namespace-flag-refused-on-a-mixed-scope-list",
+        "group": "scope-metadata",
+        "stresses": "one cluster-scoped kind in a comma-separated list refuses -n for the whole invocation, so the namespaced kind's block is not rendered either",
+        "expected": "pass",
+        "outcome": "pass"
+      },
+      {
+        "name": "all-namespaces-refused-on-a-mixed-scope-list",
+        "group": "scope-metadata",
+        "stresses": "the same whole-invocation refusal for -A: scope validity is judged over the list, not per kind",
+        "expected": "pass",
+        "outcome": "pass"
+      },
+      {
+        "name": "namespace-flag-selects",
+        "group": "namespace-resolution",
+        "stresses": "-n selects the scope with nothing else in play",
+        "expected": "pass",
+        "outcome": "pass"
+      },
+      {
+        "name": "flag-beats-env-namespace",
+        "group": "namespace-resolution",
+        "stresses": "the per-invocation flag outranks the ambient environment variable",
+        "expected": "pass",
+        "outcome": "pass"
+      },
+      {
+        "name": "kubeconfig-namespace-is-the-ambient-default",
+        "group": "namespace-resolution",
+        "stresses": "with no flag and no variable, the kubeconfig's recorded namespace is the scope",
+        "expected": "pass",
+        "outcome": "pass"
+      },
+      {
+        "name": "env-namespace-beats-kubeconfig",
+        "group": "namespace-resolution",
+        "stresses": "the variable outranks the file: the whole chain is flag > env > file > built-in",
+        "expected": "pass",
+        "outcome": "pass"
+      },
+      {
+        "name": "kubeconfig-env-path-redirects-the-file",
+        "group": "namespace-resolution",
+        "stresses": "KUBECONFIG names which file the ambient default is read from",
+        "expected": "pass",
+        "outcome": "pass"
+      },
+      {
+        "name": "current-context-reads-the-kubeconfig",
+        "group": "namespace-resolution",
+        "stresses": "the config subcommand reports the recorded context",
+        "expected": "pass",
+        "outcome": "pass"
+      },
+      {
+        "name": "current-context-without-a-kubeconfig",
+        "group": "namespace-resolution",
+        "stresses": "a missing file is a fall-through for the namespace but a domain error for the context",
+        "expected": "pass",
+        "outcome": "pass"
+      },
+      {
+        "name": "describe-namespace-flag-selects",
+        "group": "namespace-resolution",
+        "stresses": "-n reaches a non-default namespace under describe too, so the detail block cannot come from a hard-coded default",
+        "expected": "pass",
+        "outcome": "pass"
+      },
+      {
+        "name": "describe-env-namespace-beats-kubeconfig",
+        "group": "namespace-resolution",
+        "stresses": "describe walks the whole ambient chain, not just the flag: the variable outranks the file here exactly as it does for get",
+        "expected": "pass",
+        "outcome": "pass"
+      },
+      {
+        "name": "wide-adds-a-column-to-the-same-rows",
+        "group": "output-formats",
+        "stresses": "a human-side format variant: same rows, wider column set, widths repadded",
+        "expected": "pass",
+        "outcome": "pass"
+      },
+      {
+        "name": "name-format-is-pipe-shaped",
+        "group": "output-formats",
+        "stresses": "the identifier-only format: singular kind, no header, nothing framing it",
+        "expected": "pass",
+        "outcome": "pass"
+      },
+      {
+        "name": "app-format-flag-composes-with-the-global-output-flag",
+        "group": "output-formats",
+        "stresses": "-o and --output are different flags on one command line; the render mode does not disturb -o name bytes",
+        "expected": "pass",
+        "outcome": "pass"
+      },
+      {
+        "name": "json-list-is-typed-and-complete",
+        "group": "output-formats",
+        "stresses": "every field ships regardless of the table format, with restarts a number and labels an object",
+        "expected": "pass",
+        "outcome": "pass"
+      },
+      {
+        "name": "json-named-get-is-a-bare-object",
+        "group": "output-formats",
+        "stresses": "naming one resource changes the JSON envelope, not the object",
+        "expected": "pass",
+        "outcome": "pass"
+      },
+      {
+        "name": "json-is-pure-on-an-attended-terminal",
+        "group": "output-formats",
+        "stresses": "an attended color-capable terminal must not tempt styling or prose into the machine stream",
+        "expected": "pass",
+        "outcome": "pass"
+      },
+      {
+        "name": "custom-columns-chooses-columns-and-headers",
+        "group": "output-formats",
+        "stresses": "the caller picks the column set and its headers at run time; the layout rule is unchanged",
+        "expected": "pass",
+        "outcome": "pass"
+      },
+      {
+        "name": "custom-columns-unknown-field-lists-valid-ones",
+        "group": "output-formats",
+        "stresses": "a caller-chosen column set is validated against the kind's field vocabulary, stdout stays empty",
+        "expected": "pass",
+        "outcome": "pass"
+      },
+      {
+        "name": "custom-columns-rejects-the-kind-field",
+        "group": "output-formats",
+        "stresses": "`kind` is a scalar key of the JSON object but not a selectable field, so the vocabulary is a decision rather than a reflection of the shape",
+        "expected": "pass",
+        "outcome": "pass"
+      },
+      {
+        "name": "selector-filters-and-recomputes-widths",
+        "group": "selection-and-empty",
+        "stresses": "label selection changes both which rows render and the geometry computed over them",
+        "expected": "pass",
+        "outcome": "pass"
+      },
+      {
+        "name": "empty-result-is-not-an-error",
+        "group": "selection-and-empty",
+        "stresses": "a listing that matched nothing exits 0 with the explanation on stderr, not stdout",
+        "expected": "pass",
+        "outcome": "pass"
+      },
+      {
+        "name": "empty-result-in-json-is-an-empty-list",
+        "group": "selection-and-empty",
+        "stresses": "the same empty set under a machine format is a container on stdout and silence on stderr",
+        "expected": "pass",
+        "outcome": "pass"
+      },
+      {
+        "name": "empty-result-across-all-namespaces",
+        "group": "selection-and-empty",
+        "stresses": "the empty-set message names the scope it searched, and -A has no namespace to name",
+        "expected": "pass",
+        "outcome": "pass"
+      },
+      {
+        "name": "multi-kind-get-renders-one-block-per-kind",
+        "group": "heterogeneous",
+        "stresses": "two column sets in one invocation, in the order asked, separated by a blank line",
+        "expected": "pass",
+        "outcome": "pass"
+      },
+      {
+        "name": "mixed-scope-list-renders-each-kind-in-its-own-scope",
+        "group": "heterogeneous",
+        "stresses": "with no namespace flag a mixed-scope list is legal: the namespaced kind lists in the resolved namespace, the cluster-scoped one cluster-wide",
+        "expected": "pass",
+        "outcome": "pass"
+      },
+      {
+        "name": "multi-kind-json-is-one-list-of-mixed-shapes",
+        "group": "heterogeneous",
+        "stresses": "the machine form of a heterogeneous collection is one list whose elements differ in shape",
+        "expected": "pass",
+        "outcome": "pass"
+      }
+    ]
+  },
+  "invariants": [
+    {
+      "command": "get pods",
+      "mode": "text",
+      "color": "off",
+      "theme": "application",
+      "check": "exits 0",
+      "status": "pass",
+      "detail": null
+    },
+    {
+      "command": "get pods",
+      "mode": "text",
+      "color": "off",
+      "theme": "application",
+      "check": "no unresolved tag markers",
+      "status": "pass",
+      "detail": null
+    },
+    {
+      "command": "get pods",
+      "mode": "text",
+      "color": "off",
+      "theme": "application",
+      "check": "stdout parses as JSON",
+      "status": "not-applicable",
+      "detail": "check does not apply to text mode"
+    },
+    {
+      "command": "get pods",
+      "mode": "text",
+      "color": "off",
+      "theme": "application",
+      "check": "styling preserves text layout",
+      "status": "not-applicable",
+      "detail": "check does not apply to text mode"
+    },
+    {
+      "command": "get pods",
+      "mode": "text",
+      "color": "off",
+      "theme": "application",
+      "check": "opaque output preserves text bytes",
+      "status": "not-applicable",
+      "detail": "rendered command uses render invariants"
+    },
+    {
+      "command": "get pods",
+      "mode": "term",
+      "color": "off",
+      "theme": "application",
+      "check": "exits 0",
+      "status": "pass",
+      "detail": null
+    },
+    {
+      "command": "get pods",
+      "mode": "term",
+      "color": "off",
+      "theme": "application",
+      "check": "no unresolved tag markers",
+      "status": "pass",
+      "detail": null
+    },
+    {
+      "command": "get pods",
+      "mode": "term",
+      "color": "off",
+      "theme": "application",
+      "check": "stdout parses as JSON",
+      "status": "not-applicable",
+      "detail": "check does not apply to term mode"
+    },
+    {
+      "command": "get pods",
+      "mode": "term",
+      "color": "off",
+      "theme": "application",
+      "check": "styling preserves text layout",
+      "status": "pass",
+      "detail": null
+    },
+    {
+      "command": "get pods",
+      "mode": "term",
+      "color": "off",
+      "theme": "application",
+      "check": "opaque output preserves text bytes",
+      "status": "not-applicable",
+      "detail": "rendered command uses render invariants"
+    },
+    {
+      "command": "get pods",
+      "mode": "json",
+      "color": "off",
+      "theme": "application",
+      "check": "exits 0",
+      "status": "pass",
+      "detail": null
+    },
+    {
+      "command": "get pods",
+      "mode": "json",
+      "color": "off",
+      "theme": "application",
+      "check": "no unresolved tag markers",
+      "status": "not-applicable",
+      "detail": "check does not apply to json mode"
+    },
+    {
+      "command": "get pods",
+      "mode": "json",
+      "color": "off",
+      "theme": "application",
+      "check": "stdout parses as JSON",
+      "status": "fail",
+      "detail": "expected value at line 1 column 1"
+    },
+    {
+      "command": "get pods",
+      "mode": "json",
+      "color": "off",
+      "theme": "application",
+      "check": "styling preserves text layout",
+      "status": "not-applicable",
+      "detail": "check does not apply to json mode"
+    },
+    {
+      "command": "get pods",
+      "mode": "json",
+      "color": "off",
+      "theme": "application",
+      "check": "opaque output preserves text bytes",
+      "status": "not-applicable",
+      "detail": "rendered command uses render invariants"
+    },
+    {
+      "command": "get pods",
+      "mode": "text",
+      "color": "on",
+      "theme": "application",
+      "check": "exits 0",
+      "status": "pass",
+      "detail": null
+    },
+    {
+      "command": "get pods",
+      "mode": "text",
+      "color": "on",
+      "theme": "application",
+      "check": "no unresolved tag markers",
+      "status": "pass",
+      "detail": null
+    },
+    {
+      "command": "get pods",
+      "mode": "text",
+      "color": "on",
+      "theme": "application",
+      "check": "stdout parses as JSON",
+      "status": "not-applicable",
+      "detail": "check does not apply to text mode"
+    },
+    {
+      "command": "get pods",
+      "mode": "text",
+      "color": "on",
+      "theme": "application",
+      "check": "styling preserves text layout",
+      "status": "not-applicable",
+      "detail": "check does not apply to text mode"
+    },
+    {
+      "command": "get pods",
+      "mode": "text",
+      "color": "on",
+      "theme": "application",
+      "check": "opaque output preserves text bytes",
+      "status": "not-applicable",
+      "detail": "rendered command uses render invariants"
+    },
+    {
+      "command": "get pods",
+      "mode": "term",
+      "color": "on",
+      "theme": "application",
+      "check": "exits 0",
+      "status": "pass",
+      "detail": null
+    },
+    {
+      "command": "get pods",
+      "mode": "term",
+      "color": "on",
+      "theme": "application",
+      "check": "no unresolved tag markers",
+      "status": "pass",
+      "detail": null
+    },
+    {
+      "command": "get pods",
+      "mode": "term",
+      "color": "on",
+      "theme": "application",
+      "check": "stdout parses as JSON",
+      "status": "not-applicable",
+      "detail": "check does not apply to term mode"
+    },
+    {
+      "command": "get pods",
+      "mode": "term",
+      "color": "on",
+      "theme": "application",
+      "check": "styling preserves text layout",
+      "status": "pass",
+      "detail": null
+    },
+    {
+      "command": "get pods",
+      "mode": "term",
+      "color": "on",
+      "theme": "application",
+      "check": "opaque output preserves text bytes",
+      "status": "not-applicable",
+      "detail": "rendered command uses render invariants"
+    },
+    {
+      "command": "get pods",
+      "mode": "json",
+      "color": "on",
+      "theme": "application",
+      "check": "exits 0",
+      "status": "pass",
+      "detail": null
+    },
+    {
+      "command": "get pods",
+      "mode": "json",
+      "color": "on",
+      "theme": "application",
+      "check": "no unresolved tag markers",
+      "status": "not-applicable",
+      "detail": "check does not apply to json mode"
+    },
+    {
+      "command": "get pods",
+      "mode": "json",
+      "color": "on",
+      "theme": "application",
+      "check": "stdout parses as JSON",
+      "status": "fail",
+      "detail": "expected value at line 1 column 1"
+    },
+    {
+      "command": "get pods",
+      "mode": "json",
+      "color": "on",
+      "theme": "application",
+      "check": "styling preserves text layout",
+      "status": "not-applicable",
+      "detail": "check does not apply to json mode"
+    },
+    {
+      "command": "get pods",
+      "mode": "json",
+      "color": "on",
+      "theme": "application",
+      "check": "opaque output preserves text bytes",
+      "status": "not-applicable",
+      "detail": "rendered command uses render invariants"
+    },
+    {
+      "command": "get nodes",
+      "mode": "text",
+      "color": "off",
+      "theme": "application",
+      "check": "exits 0",
+      "status": "pass",
+      "detail": null
+    },
+    {
+      "command": "get nodes",
+      "mode": "text",
+      "color": "off",
+      "theme": "application",
+      "check": "no unresolved tag markers",
+      "status": "pass",
+      "detail": null
+    },
+    {
+      "command": "get nodes",
+      "mode": "text",
+      "color": "off",
+      "theme": "application",
+      "check": "stdout parses as JSON",
+      "status": "not-applicable",
+      "detail": "check does not apply to text mode"
+    },
+    {
+      "command": "get nodes",
+      "mode": "text",
+      "color": "off",
+      "theme": "application",
+      "check": "styling preserves text layout",
+      "status": "not-applicable",
+      "detail": "check does not apply to text mode"
+    },
+    {
+      "command": "get nodes",
+      "mode": "text",
+      "color": "off",
+      "theme": "application",
+      "check": "opaque output preserves text bytes",
+      "status": "not-applicable",
+      "detail": "rendered command uses render invariants"
+    },
+    {
+      "command": "get nodes",
+      "mode": "term",
+      "color": "off",
+      "theme": "application",
+      "check": "exits 0",
+      "status": "pass",
+      "detail": null
+    },
+    {
+      "command": "get nodes",
+      "mode": "term",
+      "color": "off",
+      "theme": "application",
+      "check": "no unresolved tag markers",
+      "status": "pass",
+      "detail": null
+    },
+    {
+      "command": "get nodes",
+      "mode": "term",
+      "color": "off",
+      "theme": "application",
+      "check": "stdout parses as JSON",
+      "status": "not-applicable",
+      "detail": "check does not apply to term mode"
+    },
+    {
+      "command": "get nodes",
+      "mode": "term",
+      "color": "off",
+      "theme": "application",
+      "check": "styling preserves text layout",
+      "status": "pass",
+      "detail": null
+    },
+    {
+      "command": "get nodes",
+      "mode": "term",
+      "color": "off",
+      "theme": "application",
+      "check": "opaque output preserves text bytes",
+      "status": "not-applicable",
+      "detail": "rendered command uses render invariants"
+    },
+    {
+      "command": "get nodes",
+      "mode": "json",
+      "color": "off",
+      "theme": "application",
+      "check": "exits 0",
+      "status": "pass",
+      "detail": null
+    },
+    {
+      "command": "get nodes",
+      "mode": "json",
+      "color": "off",
+      "theme": "application",
+      "check": "no unresolved tag markers",
+      "status": "not-applicable",
+      "detail": "check does not apply to json mode"
+    },
+    {
+      "command": "get nodes",
+      "mode": "json",
+      "color": "off",
+      "theme": "application",
+      "check": "stdout parses as JSON",
+      "status": "fail",
+      "detail": "expected value at line 1 column 1"
+    },
+    {
+      "command": "get nodes",
+      "mode": "json",
+      "color": "off",
+      "theme": "application",
+      "check": "styling preserves text layout",
+      "status": "not-applicable",
+      "detail": "check does not apply to json mode"
+    },
+    {
+      "command": "get nodes",
+      "mode": "json",
+      "color": "off",
+      "theme": "application",
+      "check": "opaque output preserves text bytes",
+      "status": "not-applicable",
+      "detail": "rendered command uses render invariants"
+    },
+    {
+      "command": "get nodes",
+      "mode": "text",
+      "color": "on",
+      "theme": "application",
+      "check": "exits 0",
+      "status": "pass",
+      "detail": null
+    },
+    {
+      "command": "get nodes",
+      "mode": "text",
+      "color": "on",
+      "theme": "application",
+      "check": "no unresolved tag markers",
+      "status": "pass",
+      "detail": null
+    },
+    {
+      "command": "get nodes",
+      "mode": "text",
+      "color": "on",
+      "theme": "application",
+      "check": "stdout parses as JSON",
+      "status": "not-applicable",
+      "detail": "check does not apply to text mode"
+    },
+    {
+      "command": "get nodes",
+      "mode": "text",
+      "color": "on",
+      "theme": "application",
+      "check": "styling preserves text layout",
+      "status": "not-applicable",
+      "detail": "check does not apply to text mode"
+    },
+    {
+      "command": "get nodes",
+      "mode": "text",
+      "color": "on",
+      "theme": "application",
+      "check": "opaque output preserves text bytes",
+      "status": "not-applicable",
+      "detail": "rendered command uses render invariants"
+    },
+    {
+      "command": "get nodes",
+      "mode": "term",
+      "color": "on",
+      "theme": "application",
+      "check": "exits 0",
+      "status": "pass",
+      "detail": null
+    },
+    {
+      "command": "get nodes",
+      "mode": "term",
+      "color": "on",
+      "theme": "application",
+      "check": "no unresolved tag markers",
+      "status": "pass",
+      "detail": null
+    },
+    {
+      "command": "get nodes",
+      "mode": "term",
+      "color": "on",
+      "theme": "application",
+      "check": "stdout parses as JSON",
+      "status": "not-applicable",
+      "detail": "check does not apply to term mode"
+    },
+    {
+      "command": "get nodes",
+      "mode": "term",
+      "color": "on",
+      "theme": "application",
+      "check": "styling preserves text layout",
+      "status": "pass",
+      "detail": null
+    },
+    {
+      "command": "get nodes",
+      "mode": "term",
+      "color": "on",
+      "theme": "application",
+      "check": "opaque output preserves text bytes",
+      "status": "not-applicable",
+      "detail": "rendered command uses render invariants"
+    },
+    {
+      "command": "get nodes",
+      "mode": "json",
+      "color": "on",
+      "theme": "application",
+      "check": "exits 0",
+      "status": "pass",
+      "detail": null
+    },
+    {
+      "command": "get nodes",
+      "mode": "json",
+      "color": "on",
+      "theme": "application",
+      "check": "no unresolved tag markers",
+      "status": "not-applicable",
+      "detail": "check does not apply to json mode"
+    },
+    {
+      "command": "get nodes",
+      "mode": "json",
+      "color": "on",
+      "theme": "application",
+      "check": "stdout parses as JSON",
+      "status": "fail",
+      "detail": "expected value at line 1 column 1"
+    },
+    {
+      "command": "get nodes",
+      "mode": "json",
+      "color": "on",
+      "theme": "application",
+      "check": "styling preserves text layout",
+      "status": "not-applicable",
+      "detail": "check does not apply to json mode"
+    },
+    {
+      "command": "get nodes",
+      "mode": "json",
+      "color": "on",
+      "theme": "application",
+      "check": "opaque output preserves text bytes",
+      "status": "not-applicable",
+      "detail": "rendered command uses render invariants"
+    },
+    {
+      "command": "describe pod web-1",
+      "mode": "text",
+      "color": "off",
+      "theme": "application",
+      "check": "exits 0",
+      "status": "pass",
+      "detail": null
+    },
+    {
+      "command": "describe pod web-1",
+      "mode": "text",
+      "color": "off",
+      "theme": "application",
+      "check": "no unresolved tag markers",
+      "status": "pass",
+      "detail": null
+    },
+    {
+      "command": "describe pod web-1",
+      "mode": "text",
+      "color": "off",
+      "theme": "application",
+      "check": "stdout parses as JSON",
+      "status": "not-applicable",
+      "detail": "check does not apply to text mode"
+    },
+    {
+      "command": "describe pod web-1",
+      "mode": "text",
+      "color": "off",
+      "theme": "application",
+      "check": "styling preserves text layout",
+      "status": "not-applicable",
+      "detail": "check does not apply to text mode"
+    },
+    {
+      "command": "describe pod web-1",
+      "mode": "text",
+      "color": "off",
+      "theme": "application",
+      "check": "opaque output preserves text bytes",
+      "status": "not-applicable",
+      "detail": "rendered command uses render invariants"
+    },
+    {
+      "command": "describe pod web-1",
+      "mode": "term",
+      "color": "off",
+      "theme": "application",
+      "check": "exits 0",
+      "status": "pass",
+      "detail": null
+    },
+    {
+      "command": "describe pod web-1",
+      "mode": "term",
+      "color": "off",
+      "theme": "application",
+      "check": "no unresolved tag markers",
+      "status": "pass",
+      "detail": null
+    },
+    {
+      "command": "describe pod web-1",
+      "mode": "term",
+      "color": "off",
+      "theme": "application",
+      "check": "stdout parses as JSON",
+      "status": "not-applicable",
+      "detail": "check does not apply to term mode"
+    },
+    {
+      "command": "describe pod web-1",
+      "mode": "term",
+      "color": "off",
+      "theme": "application",
+      "check": "styling preserves text layout",
+      "status": "pass",
+      "detail": null
+    },
+    {
+      "command": "describe pod web-1",
+      "mode": "term",
+      "color": "off",
+      "theme": "application",
+      "check": "opaque output preserves text bytes",
+      "status": "not-applicable",
+      "detail": "rendered command uses render invariants"
+    },
+    {
+      "command": "describe pod web-1",
+      "mode": "json",
+      "color": "off",
+      "theme": "application",
+      "check": "exits 0",
+      "status": "pass",
+      "detail": null
+    },
+    {
+      "command": "describe pod web-1",
+      "mode": "json",
+      "color": "off",
+      "theme": "application",
+      "check": "no unresolved tag markers",
+      "status": "not-applicable",
+      "detail": "check does not apply to json mode"
+    },
+    {
+      "command": "describe pod web-1",
+      "mode": "json",
+      "color": "off",
+      "theme": "application",
+      "check": "stdout parses as JSON",
+      "status": "fail",
+      "detail": "expected value at line 1 column 1"
+    },
+    {
+      "command": "describe pod web-1",
+      "mode": "json",
+      "color": "off",
+      "theme": "application",
+      "check": "styling preserves text layout",
+      "status": "not-applicable",
+      "detail": "check does not apply to json mode"
+    },
+    {
+      "command": "describe pod web-1",
+      "mode": "json",
+      "color": "off",
+      "theme": "application",
+      "check": "opaque output preserves text bytes",
+      "status": "not-applicable",
+      "detail": "rendered command uses render invariants"
+    },
+    {
+      "command": "describe pod web-1",
+      "mode": "text",
+      "color": "on",
+      "theme": "application",
+      "check": "exits 0",
+      "status": "pass",
+      "detail": null
+    },
+    {
+      "command": "describe pod web-1",
+      "mode": "text",
+      "color": "on",
+      "theme": "application",
+      "check": "no unresolved tag markers",
+      "status": "pass",
+      "detail": null
+    },
+    {
+      "command": "describe pod web-1",
+      "mode": "text",
+      "color": "on",
+      "theme": "application",
+      "check": "stdout parses as JSON",
+      "status": "not-applicable",
+      "detail": "check does not apply to text mode"
+    },
+    {
+      "command": "describe pod web-1",
+      "mode": "text",
+      "color": "on",
+      "theme": "application",
+      "check": "styling preserves text layout",
+      "status": "not-applicable",
+      "detail": "check does not apply to text mode"
+    },
+    {
+      "command": "describe pod web-1",
+      "mode": "text",
+      "color": "on",
+      "theme": "application",
+      "check": "opaque output preserves text bytes",
+      "status": "not-applicable",
+      "detail": "rendered command uses render invariants"
+    },
+    {
+      "command": "describe pod web-1",
+      "mode": "term",
+      "color": "on",
+      "theme": "application",
+      "check": "exits 0",
+      "status": "pass",
+      "detail": null
+    },
+    {
+      "command": "describe pod web-1",
+      "mode": "term",
+      "color": "on",
+      "theme": "application",
+      "check": "no unresolved tag markers",
+      "status": "pass",
+      "detail": null
+    },
+    {
+      "command": "describe pod web-1",
+      "mode": "term",
+      "color": "on",
+      "theme": "application",
+      "check": "stdout parses as JSON",
+      "status": "not-applicable",
+      "detail": "check does not apply to term mode"
+    },
+    {
+      "command": "describe pod web-1",
+      "mode": "term",
+      "color": "on",
+      "theme": "application",
+      "check": "styling preserves text layout",
+      "status": "pass",
+      "detail": null
+    },
+    {
+      "command": "describe pod web-1",
+      "mode": "term",
+      "color": "on",
+      "theme": "application",
+      "check": "opaque output preserves text bytes",
+      "status": "not-applicable",
+      "detail": "rendered command uses render invariants"
+    },
+    {
+      "command": "describe pod web-1",
+      "mode": "json",
+      "color": "on",
+      "theme": "application",
+      "check": "exits 0",
+      "status": "pass",
+      "detail": null
+    },
+    {
+      "command": "describe pod web-1",
+      "mode": "json",
+      "color": "on",
+      "theme": "application",
+      "check": "no unresolved tag markers",
+      "status": "not-applicable",
+      "detail": "check does not apply to json mode"
+    },
+    {
+      "command": "describe pod web-1",
+      "mode": "json",
+      "color": "on",
+      "theme": "application",
+      "check": "stdout parses as JSON",
+      "status": "fail",
+      "detail": "expected value at line 1 column 1"
+    },
+    {
+      "command": "describe pod web-1",
+      "mode": "json",
+      "color": "on",
+      "theme": "application",
+      "check": "styling preserves text layout",
+      "status": "not-applicable",
+      "detail": "check does not apply to json mode"
+    },
+    {
+      "command": "describe pod web-1",
+      "mode": "json",
+      "color": "on",
+      "theme": "application",
+      "check": "opaque output preserves text bytes",
+      "status": "not-applicable",
+      "detail": "rendered command uses render invariants"
+    },
+    {
+      "command": "api-resources",
+      "mode": "text",
+      "color": "off",
+      "theme": "application",
+      "check": "exits 0",
+      "status": "pass",
+      "detail": null
+    },
+    {
+      "command": "api-resources",
+      "mode": "text",
+      "color": "off",
+      "theme": "application",
+      "check": "no unresolved tag markers",
+      "status": "pass",
+      "detail": null
+    },
+    {
+      "command": "api-resources",
+      "mode": "text",
+      "color": "off",
+      "theme": "application",
+      "check": "stdout parses as JSON",
+      "status": "not-applicable",
+      "detail": "check does not apply to text mode"
+    },
+    {
+      "command": "api-resources",
+      "mode": "text",
+      "color": "off",
+      "theme": "application",
+      "check": "styling preserves text layout",
+      "status": "not-applicable",
+      "detail": "check does not apply to text mode"
+    },
+    {
+      "command": "api-resources",
+      "mode": "text",
+      "color": "off",
+      "theme": "application",
+      "check": "opaque output preserves text bytes",
+      "status": "not-applicable",
+      "detail": "rendered command uses render invariants"
+    },
+    {
+      "command": "api-resources",
+      "mode": "term",
+      "color": "off",
+      "theme": "application",
+      "check": "exits 0",
+      "status": "pass",
+      "detail": null
+    },
+    {
+      "command": "api-resources",
+      "mode": "term",
+      "color": "off",
+      "theme": "application",
+      "check": "no unresolved tag markers",
+      "status": "pass",
+      "detail": null
+    },
+    {
+      "command": "api-resources",
+      "mode": "term",
+      "color": "off",
+      "theme": "application",
+      "check": "stdout parses as JSON",
+      "status": "not-applicable",
+      "detail": "check does not apply to term mode"
+    },
+    {
+      "command": "api-resources",
+      "mode": "term",
+      "color": "off",
+      "theme": "application",
+      "check": "styling preserves text layout",
+      "status": "pass",
+      "detail": null
+    },
+    {
+      "command": "api-resources",
+      "mode": "term",
+      "color": "off",
+      "theme": "application",
+      "check": "opaque output preserves text bytes",
+      "status": "not-applicable",
+      "detail": "rendered command uses render invariants"
+    },
+    {
+      "command": "api-resources",
+      "mode": "json",
+      "color": "off",
+      "theme": "application",
+      "check": "exits 0",
+      "status": "pass",
+      "detail": null
+    },
+    {
+      "command": "api-resources",
+      "mode": "json",
+      "color": "off",
+      "theme": "application",
+      "check": "no unresolved tag markers",
+      "status": "not-applicable",
+      "detail": "check does not apply to json mode"
+    },
+    {
+      "command": "api-resources",
+      "mode": "json",
+      "color": "off",
+      "theme": "application",
+      "check": "stdout parses as JSON",
+      "status": "fail",
+      "detail": "expected value at line 1 column 1"
+    },
+    {
+      "command": "api-resources",
+      "mode": "json",
+      "color": "off",
+      "theme": "application",
+      "check": "styling preserves text layout",
+      "status": "not-applicable",
+      "detail": "check does not apply to json mode"
+    },
+    {
+      "command": "api-resources",
+      "mode": "json",
+      "color": "off",
+      "theme": "application",
+      "check": "opaque output preserves text bytes",
+      "status": "not-applicable",
+      "detail": "rendered command uses render invariants"
+    },
+    {
+      "command": "api-resources",
+      "mode": "text",
+      "color": "on",
+      "theme": "application",
+      "check": "exits 0",
+      "status": "pass",
+      "detail": null
+    },
+    {
+      "command": "api-resources",
+      "mode": "text",
+      "color": "on",
+      "theme": "application",
+      "check": "no unresolved tag markers",
+      "status": "pass",
+      "detail": null
+    },
+    {
+      "command": "api-resources",
+      "mode": "text",
+      "color": "on",
+      "theme": "application",
+      "check": "stdout parses as JSON",
+      "status": "not-applicable",
+      "detail": "check does not apply to text mode"
+    },
+    {
+      "command": "api-resources",
+      "mode": "text",
+      "color": "on",
+      "theme": "application",
+      "check": "styling preserves text layout",
+      "status": "not-applicable",
+      "detail": "check does not apply to text mode"
+    },
+    {
+      "command": "api-resources",
+      "mode": "text",
+      "color": "on",
+      "theme": "application",
+      "check": "opaque output preserves text bytes",
+      "status": "not-applicable",
+      "detail": "rendered command uses render invariants"
+    },
+    {
+      "command": "api-resources",
+      "mode": "term",
+      "color": "on",
+      "theme": "application",
+      "check": "exits 0",
+      "status": "pass",
+      "detail": null
+    },
+    {
+      "command": "api-resources",
+      "mode": "term",
+      "color": "on",
+      "theme": "application",
+      "check": "no unresolved tag markers",
+      "status": "pass",
+      "detail": null
+    },
+    {
+      "command": "api-resources",
+      "mode": "term",
+      "color": "on",
+      "theme": "application",
+      "check": "stdout parses as JSON",
+      "status": "not-applicable",
+      "detail": "check does not apply to term mode"
+    },
+    {
+      "command": "api-resources",
+      "mode": "term",
+      "color": "on",
+      "theme": "application",
+      "check": "styling preserves text layout",
+      "status": "pass",
+      "detail": null
+    },
+    {
+      "command": "api-resources",
+      "mode": "term",
+      "color": "on",
+      "theme": "application",
+      "check": "opaque output preserves text bytes",
+      "status": "not-applicable",
+      "detail": "rendered command uses render invariants"
+    },
+    {
+      "command": "api-resources",
+      "mode": "json",
+      "color": "on",
+      "theme": "application",
+      "check": "exits 0",
+      "status": "pass",
+      "detail": null
+    },
+    {
+      "command": "api-resources",
+      "mode": "json",
+      "color": "on",
+      "theme": "application",
+      "check": "no unresolved tag markers",
+      "status": "not-applicable",
+      "detail": "check does not apply to json mode"
+    },
+    {
+      "command": "api-resources",
+      "mode": "json",
+      "color": "on",
+      "theme": "application",
+      "check": "stdout parses as JSON",
+      "status": "fail",
+      "detail": "expected value at line 1 column 1"
+    },
+    {
+      "command": "api-resources",
+      "mode": "json",
+      "color": "on",
+      "theme": "application",
+      "check": "styling preserves text layout",
+      "status": "not-applicable",
+      "detail": "check does not apply to json mode"
+    },
+    {
+      "command": "api-resources",
+      "mode": "json",
+      "color": "on",
+      "theme": "application",
+      "check": "opaque output preserves text bytes",
+      "status": "not-applicable",
+      "detail": "rendered command uses render invariants"
+    },
+    {
+      "command": "get pods -o name",
+      "mode": "text",
+      "color": "off",
+      "theme": "application",
+      "check": "exits 0",
+      "status": "pass",
+      "detail": null
+    },
+    {
+      "command": "get pods -o name",
+      "mode": "text",
+      "color": "off",
+      "theme": "application",
+      "check": "no unresolved tag markers",
+      "status": "not-applicable",
+      "detail": "opaque-byte command uses byte-identity checks"
+    },
+    {
+      "command": "get pods -o name",
+      "mode": "text",
+      "color": "off",
+      "theme": "application",
+      "check": "stdout parses as JSON",
+      "status": "not-applicable",
+      "detail": "opaque-byte command is not structured JSON"
+    },
+    {
+      "command": "get pods -o name",
+      "mode": "text",
+      "color": "off",
+      "theme": "application",
+      "check": "styling preserves text layout",
+      "status": "not-applicable",
+      "detail": "opaque-byte command uses byte-identity checks"
+    },
+    {
+      "command": "get pods -o name",
+      "mode": "text",
+      "color": "off",
+      "theme": "application",
+      "check": "opaque output preserves text bytes",
+      "status": "not-applicable",
+      "detail": "opaque-byte command uses byte-identity checks"
+    },
+    {
+      "command": "get pods -o name",
+      "mode": "term",
+      "color": "off",
+      "theme": "application",
+      "check": "exits 0",
+      "status": "pass",
+      "detail": null
+    },
+    {
+      "command": "get pods -o name",
+      "mode": "term",
+      "color": "off",
+      "theme": "application",
+      "check": "no unresolved tag markers",
+      "status": "not-applicable",
+      "detail": "opaque-byte command uses byte-identity checks"
+    },
+    {
+      "command": "get pods -o name",
+      "mode": "term",
+      "color": "off",
+      "theme": "application",
+      "check": "stdout parses as JSON",
+      "status": "not-applicable",
+      "detail": "opaque-byte command is not structured JSON"
+    },
+    {
+      "command": "get pods -o name",
+      "mode": "term",
+      "color": "off",
+      "theme": "application",
+      "check": "styling preserves text layout",
+      "status": "not-applicable",
+      "detail": "opaque-byte command uses byte-identity checks"
+    },
+    {
+      "command": "get pods -o name",
+      "mode": "term",
+      "color": "off",
+      "theme": "application",
+      "check": "opaque output preserves text bytes",
+      "status": "pass",
+      "detail": null
+    },
+    {
+      "command": "get pods -o name",
+      "mode": "json",
+      "color": "off",
+      "theme": "application",
+      "check": "exits 0",
+      "status": "pass",
+      "detail": null
+    },
+    {
+      "command": "get pods -o name",
+      "mode": "json",
+      "color": "off",
+      "theme": "application",
+      "check": "no unresolved tag markers",
+      "status": "not-applicable",
+      "detail": "opaque-byte command uses byte-identity checks"
+    },
+    {
+      "command": "get pods -o name",
+      "mode": "json",
+      "color": "off",
+      "theme": "application",
+      "check": "stdout parses as JSON",
+      "status": "not-applicable",
+      "detail": "opaque-byte command is not structured JSON"
+    },
+    {
+      "command": "get pods -o name",
+      "mode": "json",
+      "color": "off",
+      "theme": "application",
+      "check": "styling preserves text layout",
+      "status": "not-applicable",
+      "detail": "opaque-byte command uses byte-identity checks"
+    },
+    {
+      "command": "get pods -o name",
+      "mode": "json",
+      "color": "off",
+      "theme": "application",
+      "check": "opaque output preserves text bytes",
+      "status": "pass",
+      "detail": null
+    },
+    {
+      "command": "get pods -o name",
+      "mode": "text",
+      "color": "on",
+      "theme": "application",
+      "check": "exits 0",
+      "status": "pass",
+      "detail": null
+    },
+    {
+      "command": "get pods -o name",
+      "mode": "text",
+      "color": "on",
+      "theme": "application",
+      "check": "no unresolved tag markers",
+      "status": "not-applicable",
+      "detail": "opaque-byte command uses byte-identity checks"
+    },
+    {
+      "command": "get pods -o name",
+      "mode": "text",
+      "color": "on",
+      "theme": "application",
+      "check": "stdout parses as JSON",
+      "status": "not-applicable",
+      "detail": "opaque-byte command is not structured JSON"
+    },
+    {
+      "command": "get pods -o name",
+      "mode": "text",
+      "color": "on",
+      "theme": "application",
+      "check": "styling preserves text layout",
+      "status": "not-applicable",
+      "detail": "opaque-byte command uses byte-identity checks"
+    },
+    {
+      "command": "get pods -o name",
+      "mode": "text",
+      "color": "on",
+      "theme": "application",
+      "check": "opaque output preserves text bytes",
+      "status": "not-applicable",
+      "detail": "opaque-byte command uses byte-identity checks"
+    },
+    {
+      "command": "get pods -o name",
+      "mode": "term",
+      "color": "on",
+      "theme": "application",
+      "check": "exits 0",
+      "status": "pass",
+      "detail": null
+    },
+    {
+      "command": "get pods -o name",
+      "mode": "term",
+      "color": "on",
+      "theme": "application",
+      "check": "no unresolved tag markers",
+      "status": "not-applicable",
+      "detail": "opaque-byte command uses byte-identity checks"
+    },
+    {
+      "command": "get pods -o name",
+      "mode": "term",
+      "color": "on",
+      "theme": "application",
+      "check": "stdout parses as JSON",
+      "status": "not-applicable",
+      "detail": "opaque-byte command is not structured JSON"
+    },
+    {
+      "command": "get pods -o name",
+      "mode": "term",
+      "color": "on",
+      "theme": "application",
+      "check": "styling preserves text layout",
+      "status": "not-applicable",
+      "detail": "opaque-byte command uses byte-identity checks"
+    },
+    {
+      "command": "get pods -o name",
+      "mode": "term",
+      "color": "on",
+      "theme": "application",
+      "check": "opaque output preserves text bytes",
+      "status": "pass",
+      "detail": null
+    },
+    {
+      "command": "get pods -o name",
+      "mode": "json",
+      "color": "on",
+      "theme": "application",
+      "check": "exits 0",
+      "status": "pass",
+      "detail": null
+    },
+    {
+      "command": "get pods -o name",
+      "mode": "json",
+      "color": "on",
+      "theme": "application",
+      "check": "no unresolved tag markers",
+      "status": "not-applicable",
+      "detail": "opaque-byte command uses byte-identity checks"
+    },
+    {
+      "command": "get pods -o name",
+      "mode": "json",
+      "color": "on",
+      "theme": "application",
+      "check": "stdout parses as JSON",
+      "status": "not-applicable",
+      "detail": "opaque-byte command is not structured JSON"
+    },
+    {
+      "command": "get pods -o name",
+      "mode": "json",
+      "color": "on",
+      "theme": "application",
+      "check": "styling preserves text layout",
+      "status": "not-applicable",
+      "detail": "opaque-byte command uses byte-identity checks"
+    },
+    {
+      "command": "get pods -o name",
+      "mode": "json",
+      "color": "on",
+      "theme": "application",
+      "check": "opaque output preserves text bytes",
+      "status": "pass",
+      "detail": null
+    }
+  ],
+  "questionnaire": {
+    "collected": false,
+    "diagnostics": [
+      "[confidence]: a string answer must be a single line"
+    ],
+    "answers": {
+      "docs.gaps": "Nothing I found was *wrong*. Three things were missing:\n\n(a) The style-tag/data interaction in answer 4(a). docs/crates/render/topics/\ntemplating.md states the pipeline as \"Template + Data → [Pass 1: MiniJinja] →\nText with style tags → [Pass 2: BBParser] → Final output\" and documents the\ntrailing-newline contract to the byte, but says nothing about interpolated data\ncontaining `[...]`. In practice `[b]bb[/b]` in data was consumed as a tag and a\nframework warning was written to stderr, in both `--output=auto` and\n`--output=term`.\n\n(b) `Output::Artifact`'s interaction with `--output`. docs/crates/dispatch/\ntopics/handler-contract.md says \"Structured modes serialize the same envelope\",\nwhich describes the *report*, and leaves open whether the artifact bytes are\nalso reshaped. Observed: the bytes reach stdout verbatim under `--output json`\nand `--output term` alike, which is what the whole design here rests on. Worth\nstating, since it is the only seam that gives an application byte-exact stdout.\n\n(c) `allow_stdout()` appears only as prose in the destination-policy list\n(\"stdout, if the application opted in with `allow_stdout()`\"), never in a code\nsample; the one `Output::Artifact` example uses `suggest_destination(...)`. The\nstdout-plus-report shape — which is exactly the \"bytes to stdout, report to\nstderr\" row of docs/topics/execution-outcomes.md — has no worked example.",
+      "friction": "(a) The BBCode pass mangles data that happens to contain brackets, and\ncomplains on stderr. With `Output::Render` and a `{{ text }}` template, a view\nstring containing `[x]` and `[b]bb[/b]` came back as:\n\n    stdout: o=Some(\"name\") json={\"items\":[{\"a\":1}]} [x] bb\n    stderr:\n     Standout :: Warnings\n    \tUnresolved style tag(s) degraded to unstyled text: b, x\n\nThat is fatal for a spec whose contract is \"pure JSON on stdout ... never\nprefaced with prose\" and whose stderr is asserted. docs/crates/render/topics/\ntemplating.md documents the two-pass pipeline and the trailing-newline contract\ncarefully, but never says what pass 2 does to *data* that looks like a tag, so\nI only found this by probing. It is why every command in the finished app\nreturns `Output::Artifact` instead of `Output::Render`.\n\n(b) Ordinary handler errors cannot carry the spec's stderr line. docs/topics/\nerror-handling.md: \"Standout formats the message as `Error: {error}` — the\nerror's own `Display` text after that fixed prefix ... and exits with status\n`1`.\" SPEC.md wants exactly `kubelike: pods \"nope\" not found in namespace\n\"default\"` and, for the cluster-scoped case, exit 2. `Error: ` in front of it\nand no way to select status 2 left `ExternalFailure` as the only documented\nroute to both.\n\n(c) There is no documented way for a *successful* handler to write to stderr.\ndocs/topics/error-handling.md says \"Do not print or call `process::exit` from\nhandlers\", and the framework warning collector described in docs/topics/\nexecution-outcomes.md is framework-owned with no application-facing emit API\nthat I could find by grepping. SPEC.md's empty result needs exit 0, empty\nstdout, and one prose line on stderr.\n\n(d) `#[handler]` parameter ids versus clap derive field ids. docs/topics/\ndispatch-attributes.md warns about this (\"Underscores become hyphens ... the\ntwo disagree unless one of them says so\"), and it did bite: `all_namespaces`\nneeded `#[arg(id = \"all-namespaces\", ...)]` on the clap side to meet the\nhandler's `all-namespaces`. Documented, but easy to miss.",
+      "sources.docs": "Read in full:\n- docs/index.md\n- docs/guides/intro-to-standout.md\n- docs/topics/error-handling.md\n- docs/topics/execution-outcomes.md\n- docs/topics/output-modes.md\n- docs/topics/dispatch-attributes.md\n- docs/topics/app-configuration.md\n- docs/crates/dispatch/topics/handler-contract.md\n- docs/crates/render/topics/templating.md\n- docs/crates/render/guides/intro-to-tabular.md\n\nI also grepped the whole of docs/ for \"warning\" while looking for a supported\nway to put prose on stderr alongside a successful exit, which surfaced lines in\ndocs/topics/testing.md, docs/topics/stability.md, docs/topics/list-view.md and\ndocs/guides/derived-questionnaires.md. I did not otherwise read those files, nor\nany of the input/, pipe/, seeker, topics-system, styling-system, passthrough,\npartial-adoption, execution-model, app-state, template-engines,\nfile-system-resources, or upgrading-from-* pages.",
+      "sources.external": "No web search, no standout source code, no standout repository, and no prior\nknowledge of standout internals — I had none to draw on. What I did use beyond\ndocs/:\n\n- General Rust, clap 4 derive, serde and serde_json knowledge. I added\n  `serde_json = { version = \"1\", features = [\"preserve_order\"] }` to Cargo.toml\n  (the `preserve_order` feature is what makes `-o json` emit the field order\n  SPEC.md shows instead of alphabetical).\n- rustc/cargo error messages, which is how I confirmed API shapes the docs name\n  but do not fully spell out.\n- Empirical probing of the framework: before writing the app I built a\n  throwaway `spike/` crate in this workspace against the same pinned standout\n  9.0.0, ran it, and inspected the resulting stdout/stderr/exit codes with xxd\n  to learn how `Output::Render` + template, `Output::Artifact`, and\n  `ExternalFailure` actually behave at the process edge. That is black-box\n  observation of the binary's behavior, not reading standout's source. The\n  spike directory has been deleted.\n- General knowledge of kubectl's semantics, used only to pick defaults where\n  SPEC.md is silent (listed as assumptions in answer 1). Nothing in the spec's\n  stated behavior rests on it.",
+      "summary": "`kubelike` is implemented and complete in `app/`. `cargo build` succeeds with no\nwarnings from the crate, `cargo test` passes 22 unit tests, and I verified every\nexample in SPEC.md by running the built binary and byte-comparing (xxd) the\ntables, the describe blocks, the JSON, and the trailing newlines.\n\nLayout: `src/cluster.rs` (frozen state + kind registry), `src/config.rs`\n(kubeconfig reading, the flag > env > kubeconfig > `default` chain),\n`src/render.rs` (the one table layout rule and the describe key padding),\n`src/core.rs` (all behavior, CLI-free and environment-free — it takes an\nalready-resolved namespace plus a \"did `-n` put it there\" bool),\n`src/handlers.rs` (`#[handler]` adapters), `src/tests.rs`, `src/main.rs` (clap\n`Cli`, a `#[derive(Subcommand, Dispatch)]` tree with `#[dispatch(nested)]` for\n`config current-context`, and `App::builder()`).\n\nThe command surface, the format vocabulary (`-o` default/`wide`/`name`/`json`/\n`custom-columns=`), `-l`, `-A`, the comma-separated kind list judged as one\ninvocation, the empty-set rules, `api-resources`, `config current-context`, and\nthe 0/1/2 exit codes all behave as specified. `-o` and `--output` coexist;\n`get pods -o name --output text|term` emits identical bytes.\n\nOne structural decision drove the rest: every command hands standout its exact\nstdout bytes as `Output::Artifact(Artifact::new(bytes).allow_stdout())` rather\nthan `Output::Render` + template. See the friction and workaround answers.\n\nAssumptions I had to make where SPEC.md is silent, all flagged rather than\nhidden: (a) a not-found name on a cluster-scoped kind drops the namespace clause\n(`kubelike: nodes \"nope\" not found`), since a node is in no namespace;\n(b) `-o json` is compact single-line, matching how the spec's samples are\nwritten; (c) an unrecognized `-o` value is a domain error (exit 1,\n`kubelike: unknown output format \"yaml\"`) because exit 2 is enumerated for an\nunknown *flag*, not an unknown flag *value*; (d) in a mixed kind list, blocks\nthat match nothing are dropped and the empty-set rule applies only when every\nblock is empty; (e) an empty `KUBECONFIG`/`KUBELIKE_NAMESPACE` reads as unset.",
+      "workarounds": "(a) `ExternalFailure` for ordinary domain errors. docs/topics/error-handling.md\nsays \"Use `ExternalFailure` only when another operation owns the status and\ndiagnostic contract, such as a delegated Git invocation.\" No external operation\nis involved here; I use it because it is the only documented seam that yields a\nverbatim stderr payload with no `Error: ` prefix and an application-chosen\nstatus, which SPEC.md's error table and 1-vs-2 exit codes both require.\n`src/handlers.rs::to_failure`.\n\n(b) Every command returns `Output::Artifact(...).allow_stdout()` carrying\npre-rendered bytes, so the template/BBCode pass never touches command output.\nThe registered templates in `src/main.rs` (`{{ report.note }}`) exist only to\nsatisfy build-time convention-template resolution and to render the empty-set\nnote; no command's stdout goes through them. This is a deliberate opt-out of\nthe framework's rendering layer, taken because SPEC.md specifies bytes.\n\n(c) The empty-set stderr line rides the artifact *report* channel. Consequence\nworth knowing: `get pods -n empty --output json` puts the framework's\n`{\"report\": ..., \"receipt\": ...}` envelope on stderr instead of the prose line.\nstdout is still empty and the exit is still 0. SPEC.md constrains `-o`, not\nthis combination of `-o` default with `--output json`, so I left it.\n\n(d) `serde_json`'s `preserve_order` feature is load-bearing for `-o json` field\norder, not a convenience. Without it `json!` sorts keys alphabetically and the\noutput stops matching SPEC.md's samples."
+    }
+  }
+}
