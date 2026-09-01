@@ -1,0 +1,864 @@
+{
+  "schema_version": 4,
+  "run_id": "pnpmlike-1788246042",
+  "archetype": {
+    "name": "pnpmlike",
+    "spec_sha256": "690b61d9bc08a2e3222107b95ffdeda676eb5092cdce31f42fb7ea843a0553f0"
+  },
+  "pins": {
+    "framework_version": "9.0.0",
+    "docs_commit": "1642d4e8ee6f2c43a565e612f6f54f570089c90a",
+    "docs_sha256": "db5571795e5a2345888bbcb7a9d825b20945376c93929973d98b599f9a41197e",
+    "acceptance_sha256": "3e0ba3b8f78866afc79b82103368db7aa8d8b59d6e557853bb87815b66a9831e",
+    "questionnaire_fingerprint": "sha256:64291870245510dad73ca960fd4024db9b9c161113a3dcc9c7e57a30973663fc"
+  },
+  "evaluation": {
+    "origin": "full-run",
+    "isolation": {
+      "backend": "macos-seatbelt",
+      "filesystem": "allow-default; reads denied under listed user/source roots, writes denied outside the phase workspace",
+      "network": "denied"
+    },
+    "binary_sha256": "07e43e4263dcb037c52c3f314087a23af942b26cfe490e799c64ed1944a0c4ae"
+  },
+  "blindness": {
+    "policy": "workspace contains spec + published docs + crates.io pins only; agent, build, and produced-binary descendants use disposable homes and a kernel filesystem sandbox that excludes the source checkout and host user-data roots; consulted sources are self-reported in the exit questionnaire",
+    "env_allowlist": [
+      "PATH",
+      "HOME",
+      "SHELL",
+      "TERM",
+      "LANG",
+      "LC_ALL",
+      "TMPDIR",
+      "CARGO_HOME",
+      "RUSTUP_HOME",
+      "CLAUDE_CODE_TMPDIR",
+      "ANTHROPIC_BASE_URL",
+      "ANTHROPIC_AUTH_TOKEN"
+    ],
+    "framework_source_excluded": true,
+    "isolation": {
+      "backend": "macos-seatbelt",
+      "filesystem": "allow-default; reads denied under listed user/source roots, writes denied outside the phase workspace",
+      "network": "allowed-by-policy"
+    },
+    "credential_exceptions": [
+      "agent phase only: a host-side loopback broker on 127.0.0.1:64959 forwarded the session's API requests to https://api.anthropic.com with the host Claude subscription credential (read from macOS Keychain item \"Claude Code-credentials\") injected on the host side; the agent's environment carried ANTHROPIC_BASE_URL and a placeholder token only, so the credential never entered the agent's process tree",
+      "broker admitted 66 connection(s), each resolved from the OS socket tables to the agent process itself holding a close-on-exec descriptor, and denied 0 connection(s) it could not attribute that way"
+    ],
+    "agent_reported_docs": "docs/index.md\ndocs/topics/index.md\ndocs/topics/output-modes.md\ndocs/topics/passthrough.md\ndocs/topics/app-configuration.md\ndocs/topics/error-handling.md\ndocs/topics/execution-outcomes.md\ndocs/topics/dispatch-attributes.md\ndocs/crates/dispatch/topics/handler-contract.md\ndocs/crates/dispatch/topics/execution-model.md\ndocs/crates/render/topics/templating.md\ndocs/guides/minimal-single-crate.md\n\nI also grepped the whole of docs/ for `reporter`, `progress`, `Reporter`, `loglevel`,\n`log_level`, `quiet`, `verbose` and `TextOutput` to establish that the framework\noffers no progress-reporter or log-level facility, and read the hit list rather than\nthe surrounding files.",
+    "agent_reported_external_sources": "No web search, and I did not open the standout source or repository.\n\nOne thing beyond docs/, stated exactly: I probed the `standout_dispatch::TextOutput`\nAPI through deliberate compiler errors, because docs/ names the type\n(`RenderedOutput`'s \"enum of `Text(TextOutput)`\", execution-model.md) but never\ndescribes it, and the one code example that constructs it does not compile. I wrote\n`TextOutput { zzz_probe: 1 }` and rustc answered `= note: available fields are:\n`formatted`, `raw``. That is a rustc diagnostic about my own build, not the framework\nsource — the note cites a path into `standout-dispatch-9.0.0/src/hooks.rs` but I did\nnot open that file, or any other file in the dependency tree.\n\nOtherwise: general Rust knowledge, and the public documentation I already carry for\nclap 4 (derive, `global`, `last`, `ValueSource`), serde/serde_json, MiniJinja's\n`loop.last`, and `std` (`IsTerminal`, `process::Command`, `ExitStatusExt`)."
+  },
+  "session": {
+    "agent_cmd": "claude --dangerously-skip-permissions --setting-sources '' --strict-mcp-config -p \"Read INSTRUCTIONS.md in the current directory and carry it out completely.\" --output-format stream-json --verbose",
+    "wall_seconds": 1032.717088125,
+    "exit_code": 0,
+    "timed_out": false,
+    "turns": 71,
+    "input_tokens": 128,
+    "output_tokens": 81865,
+    "transcript": "transcript.jsonl"
+  },
+  "provenance": {
+    "backend": "claude",
+    "executable_version": "2.1.252",
+    "model_requested": null,
+    "model_observed": "claude-opus-5[1m]",
+    "prompt": "Read INSTRUCTIONS.md in the current directory and carry it out completely.",
+    "settings": [
+      "--dangerously-skip-permissions",
+      "--setting-sources",
+      "",
+      "--strict-mcp-config",
+      "--output-format",
+      "stream-json",
+      "--verbose"
+    ]
+  },
+  "acceptance": {
+    "built": true,
+    "build_detail": null,
+    "cases": [
+      {
+        "name": "list-exact",
+        "group": "data-output",
+        "stresses": "declared packages render in manifest order with nothing on the log or progress channel",
+        "expected": "pass",
+        "outcome": "pass"
+      },
+      {
+        "name": "list-json",
+        "group": "data-output",
+        "stresses": "the same rows as one structured document, with the reporter still silent",
+        "expected": "pass",
+        "outcome": "pass"
+      },
+      {
+        "name": "absent-manifest-is-an-empty-workspace",
+        "group": "data-output",
+        "stresses": "a missing manifest is emptiness, not a failure: exit 0, no rows, no diagnostics",
+        "expected": "pass",
+        "outcome": "pass"
+      },
+      {
+        "name": "malformed-manifest-names-file-and-line",
+        "group": "data-output",
+        "stresses": "a directive-less line fails the run and locates itself; stdout stays empty for scripts",
+        "expected": "pass",
+        "outcome": "pass"
+      },
+      {
+        "name": "manifest-flag-selects-the-file",
+        "group": "data-output",
+        "stresses": "--manifest names the input: the file it points at is read and the default pnpmlike.pkg is not",
+        "expected": "pass",
+        "outcome": "pass"
+      },
+      {
+        "name": "auto-reporter-appends-when-stderr-is-piped",
+        "group": "reporter-selection",
+        "stresses": "unattended stderr resolves auto to append-only: plain LF-terminated steps, summary on stdout",
+        "expected": "pass",
+        "outcome": "pass"
+      },
+      {
+        "name": "auto-reporter-redraws-on-attended-stderr",
+        "group": "reporter-selection",
+        "stresses": "attended stderr resolves auto to the dynamic reporter (CR plus erase-to-end-of-line per step)",
+        "expected": "pass",
+        "outcome": "pass"
+      },
+      {
+        "name": "auto-reporter-follows-stderr-not-stdout",
+        "group": "reporter-selection",
+        "stresses": "the reporter degrades on its own stream: attended stdout with piped stderr still appends",
+        "expected": "pass",
+        "outcome": "pass"
+      },
+      {
+        "name": "explicit-append-only-beats-attendance",
+        "group": "reporter-selection",
+        "stresses": "an explicit reporter outranks detection: no ANSI and no redraw on an attended stderr",
+        "expected": "pass",
+        "outcome": "pass"
+      },
+      {
+        "name": "explicit-default-reporter-redraws-into-a-pipe",
+        "group": "reporter-selection",
+        "stresses": "the same override in the other direction: the dynamic reporter runs unattended when asked",
+        "expected": "pass",
+        "outcome": "pass"
+      },
+      {
+        "name": "silent-reporter-emits-no-progress",
+        "group": "reporter-selection",
+        "stresses": "silencing progress leaves the data output untouched",
+        "expected": "pass",
+        "outcome": "pass"
+      },
+      {
+        "name": "bad-reporter-value-is-a-usage-error",
+        "group": "reporter-selection",
+        "stresses": "an out-of-range reporter is a usage error: exit 2, stderr only",
+        "expected": "pass",
+        "outcome": "pass"
+      },
+      {
+        "name": "machine-mode-selects-the-ndjson-reporter",
+        "group": "machine-output",
+        "stresses": "a machine output mode moves progress to machine events without touching the stdout document",
+        "expected": "pass",
+        "outcome": "pass"
+      },
+      {
+        "name": "explicit-reporter-beats-the-machine-default",
+        "group": "machine-output",
+        "stresses": "silencing the reporter under a machine mode leaves stderr empty and stdout complete",
+        "expected": "pass",
+        "outcome": "pass"
+      },
+      {
+        "name": "dynamic-reporter-never-reaches-machine-stdout",
+        "group": "machine-output",
+        "stresses": "redraws and ANSI on an attended stderr while stdout remains exactly one JSON document",
+        "expected": "pass",
+        "outcome": "pass"
+      },
+      {
+        "name": "warning-precedes-progress",
+        "group": "quiet-matrix",
+        "stresses": "the log channel is flushed before the first step, so the two stderr channels never interleave",
+        "expected": "pass",
+        "outcome": "pass"
+      },
+      {
+        "name": "quiet-silences-the-log-channel-only",
+        "group": "quiet-matrix",
+        "stresses": "-q drops the warning and keeps every progress step",
+        "expected": "pass",
+        "outcome": "pass"
+      },
+      {
+        "name": "silent-reporter-keeps-the-warning",
+        "group": "quiet-matrix",
+        "stresses": "the mirror image: progress gone, warning kept",
+        "expected": "pass",
+        "outcome": "pass"
+      },
+      {
+        "name": "silent-flag-silences-both-channels",
+        "group": "quiet-matrix",
+        "stresses": "--silent is the both-channels switch and still prints the data output",
+        "expected": "pass",
+        "outcome": "pass"
+      },
+      {
+        "name": "verbose-adds-the-info-note",
+        "group": "quiet-matrix",
+        "stresses": "the info level opens a channel above warnings without disturbing stdout",
+        "expected": "pass",
+        "outcome": "pass"
+      },
+      {
+        "name": "loglevel-flag-outranks-quiet",
+        "group": "quiet-matrix",
+        "stresses": "an explicit level beats the -q shorthand",
+        "expected": "pass",
+        "outcome": "pass"
+      },
+      {
+        "name": "loglevel-flag-outranks-a-later-quiet",
+        "group": "quiet-matrix",
+        "stresses": "the same precedence with the two flags swapped, which last-option-wins cannot satisfy",
+        "expected": "pass",
+        "outcome": "pass"
+      },
+      {
+        "name": "run-passes-child-bytes-through",
+        "group": "script-passthrough",
+        "stresses": "the script owns stdout: its bytes arrive unframed and unstyled",
+        "expected": "pass",
+        "outcome": "pass"
+      },
+      {
+        "name": "run-passes-child-stderr-through",
+        "group": "script-passthrough",
+        "stresses": "the script owns both streams: what it writes to stderr arrives unframed, uncaptured and unmixed with its stdout",
+        "expected": "pass",
+        "outcome": "pass"
+      },
+      {
+        "name": "run-passthrough-is-unwrapped-under-json",
+        "group": "script-passthrough",
+        "stresses": "a machine output mode has nothing to serialize for a passthrough command and must not wrap, capture or restyle either child stream",
+        "expected": "pass",
+        "outcome": "pass"
+      },
+      {
+        "name": "run-propagates-the-child-exit-status",
+        "group": "script-passthrough",
+        "stresses": "a failing script's status survives the framework's own exit-code mapping",
+        "expected": "pass",
+        "outcome": "pass"
+      },
+      {
+        "name": "run-forwards-arguments-after-the-double-dash",
+        "group": "script-passthrough",
+        "stresses": "argv splits at -- : flags before it are pnpmlike's, words after it are the script's positionals",
+        "expected": "pass",
+        "outcome": "pass"
+      },
+      {
+        "name": "run-step-precedes-the-child",
+        "group": "script-passthrough",
+        "stresses": "progress and the child's bytes share one terminal, and the step is flushed first: the interleaved capture puts the step ahead of the child",
+        "expected": "pass",
+        "outcome": "pass"
+      },
+      {
+        "name": "run-step-precedes-the-child-on-separate-streams",
+        "group": "script-passthrough",
+        "stresses": "the same step and the same child bytes with the streams apart, so neither stream carries the other's content",
+        "expected": "pass",
+        "outcome": "pass"
+      },
+      {
+        "name": "run-reads-the-selected-manifest",
+        "group": "script-passthrough",
+        "stresses": "--manifest reaches the passthrough command too, and the info note names the path as it was given",
+        "expected": "pass",
+        "outcome": "pass"
+      },
+      {
+        "name": "unknown-script-exits-3",
+        "group": "script-passthrough",
+        "stresses": "an undeclared script is its own exit code, separate from the usage and manifest errors; a propagated child status is free to coincide with it",
+        "expected": "pass",
+        "outcome": "pass"
+      },
+      {
+        "name": "run-without-a-manifest-is-an-unknown-script",
+        "group": "script-passthrough",
+        "stresses": "the empty workspace has no scripts, and asking for one is exit 3 rather than a manifest error",
+        "expected": "pass",
+        "outcome": "pass"
+      }
+    ]
+  },
+  "invariants": [
+    {
+      "command": "list",
+      "mode": "text",
+      "color": "off",
+      "theme": "application",
+      "check": "exits 0",
+      "status": "pass",
+      "detail": null
+    },
+    {
+      "command": "list",
+      "mode": "text",
+      "color": "off",
+      "theme": "application",
+      "check": "no unresolved tag markers",
+      "status": "pass",
+      "detail": null
+    },
+    {
+      "command": "list",
+      "mode": "text",
+      "color": "off",
+      "theme": "application",
+      "check": "stdout parses as JSON",
+      "status": "not-applicable",
+      "detail": "check does not apply to text mode"
+    },
+    {
+      "command": "list",
+      "mode": "text",
+      "color": "off",
+      "theme": "application",
+      "check": "styling preserves text layout",
+      "status": "not-applicable",
+      "detail": "check does not apply to text mode"
+    },
+    {
+      "command": "list",
+      "mode": "text",
+      "color": "off",
+      "theme": "application",
+      "check": "opaque output preserves text bytes",
+      "status": "not-applicable",
+      "detail": "rendered command uses render invariants"
+    },
+    {
+      "command": "list",
+      "mode": "term",
+      "color": "off",
+      "theme": "application",
+      "check": "exits 0",
+      "status": "pass",
+      "detail": null
+    },
+    {
+      "command": "list",
+      "mode": "term",
+      "color": "off",
+      "theme": "application",
+      "check": "no unresolved tag markers",
+      "status": "pass",
+      "detail": null
+    },
+    {
+      "command": "list",
+      "mode": "term",
+      "color": "off",
+      "theme": "application",
+      "check": "stdout parses as JSON",
+      "status": "not-applicable",
+      "detail": "check does not apply to term mode"
+    },
+    {
+      "command": "list",
+      "mode": "term",
+      "color": "off",
+      "theme": "application",
+      "check": "styling preserves text layout",
+      "status": "pass",
+      "detail": null
+    },
+    {
+      "command": "list",
+      "mode": "term",
+      "color": "off",
+      "theme": "application",
+      "check": "opaque output preserves text bytes",
+      "status": "not-applicable",
+      "detail": "rendered command uses render invariants"
+    },
+    {
+      "command": "list",
+      "mode": "json",
+      "color": "off",
+      "theme": "application",
+      "check": "exits 0",
+      "status": "pass",
+      "detail": null
+    },
+    {
+      "command": "list",
+      "mode": "json",
+      "color": "off",
+      "theme": "application",
+      "check": "no unresolved tag markers",
+      "status": "not-applicable",
+      "detail": "check does not apply to json mode"
+    },
+    {
+      "command": "list",
+      "mode": "json",
+      "color": "off",
+      "theme": "application",
+      "check": "stdout parses as JSON",
+      "status": "pass",
+      "detail": null
+    },
+    {
+      "command": "list",
+      "mode": "json",
+      "color": "off",
+      "theme": "application",
+      "check": "styling preserves text layout",
+      "status": "not-applicable",
+      "detail": "check does not apply to json mode"
+    },
+    {
+      "command": "list",
+      "mode": "json",
+      "color": "off",
+      "theme": "application",
+      "check": "opaque output preserves text bytes",
+      "status": "not-applicable",
+      "detail": "rendered command uses render invariants"
+    },
+    {
+      "command": "list",
+      "mode": "text",
+      "color": "on",
+      "theme": "application",
+      "check": "exits 0",
+      "status": "pass",
+      "detail": null
+    },
+    {
+      "command": "list",
+      "mode": "text",
+      "color": "on",
+      "theme": "application",
+      "check": "no unresolved tag markers",
+      "status": "pass",
+      "detail": null
+    },
+    {
+      "command": "list",
+      "mode": "text",
+      "color": "on",
+      "theme": "application",
+      "check": "stdout parses as JSON",
+      "status": "not-applicable",
+      "detail": "check does not apply to text mode"
+    },
+    {
+      "command": "list",
+      "mode": "text",
+      "color": "on",
+      "theme": "application",
+      "check": "styling preserves text layout",
+      "status": "not-applicable",
+      "detail": "check does not apply to text mode"
+    },
+    {
+      "command": "list",
+      "mode": "text",
+      "color": "on",
+      "theme": "application",
+      "check": "opaque output preserves text bytes",
+      "status": "not-applicable",
+      "detail": "rendered command uses render invariants"
+    },
+    {
+      "command": "list",
+      "mode": "term",
+      "color": "on",
+      "theme": "application",
+      "check": "exits 0",
+      "status": "pass",
+      "detail": null
+    },
+    {
+      "command": "list",
+      "mode": "term",
+      "color": "on",
+      "theme": "application",
+      "check": "no unresolved tag markers",
+      "status": "pass",
+      "detail": null
+    },
+    {
+      "command": "list",
+      "mode": "term",
+      "color": "on",
+      "theme": "application",
+      "check": "stdout parses as JSON",
+      "status": "not-applicable",
+      "detail": "check does not apply to term mode"
+    },
+    {
+      "command": "list",
+      "mode": "term",
+      "color": "on",
+      "theme": "application",
+      "check": "styling preserves text layout",
+      "status": "pass",
+      "detail": null
+    },
+    {
+      "command": "list",
+      "mode": "term",
+      "color": "on",
+      "theme": "application",
+      "check": "opaque output preserves text bytes",
+      "status": "not-applicable",
+      "detail": "rendered command uses render invariants"
+    },
+    {
+      "command": "list",
+      "mode": "json",
+      "color": "on",
+      "theme": "application",
+      "check": "exits 0",
+      "status": "pass",
+      "detail": null
+    },
+    {
+      "command": "list",
+      "mode": "json",
+      "color": "on",
+      "theme": "application",
+      "check": "no unresolved tag markers",
+      "status": "not-applicable",
+      "detail": "check does not apply to json mode"
+    },
+    {
+      "command": "list",
+      "mode": "json",
+      "color": "on",
+      "theme": "application",
+      "check": "stdout parses as JSON",
+      "status": "pass",
+      "detail": null
+    },
+    {
+      "command": "list",
+      "mode": "json",
+      "color": "on",
+      "theme": "application",
+      "check": "styling preserves text layout",
+      "status": "not-applicable",
+      "detail": "check does not apply to json mode"
+    },
+    {
+      "command": "list",
+      "mode": "json",
+      "color": "on",
+      "theme": "application",
+      "check": "opaque output preserves text bytes",
+      "status": "not-applicable",
+      "detail": "rendered command uses render invariants"
+    },
+    {
+      "command": "install",
+      "mode": "text",
+      "color": "off",
+      "theme": "application",
+      "check": "exits 0",
+      "status": "pass",
+      "detail": null
+    },
+    {
+      "command": "install",
+      "mode": "text",
+      "color": "off",
+      "theme": "application",
+      "check": "no unresolved tag markers",
+      "status": "pass",
+      "detail": null
+    },
+    {
+      "command": "install",
+      "mode": "text",
+      "color": "off",
+      "theme": "application",
+      "check": "stdout parses as JSON",
+      "status": "not-applicable",
+      "detail": "check does not apply to text mode"
+    },
+    {
+      "command": "install",
+      "mode": "text",
+      "color": "off",
+      "theme": "application",
+      "check": "styling preserves text layout",
+      "status": "not-applicable",
+      "detail": "check does not apply to text mode"
+    },
+    {
+      "command": "install",
+      "mode": "text",
+      "color": "off",
+      "theme": "application",
+      "check": "opaque output preserves text bytes",
+      "status": "not-applicable",
+      "detail": "rendered command uses render invariants"
+    },
+    {
+      "command": "install",
+      "mode": "term",
+      "color": "off",
+      "theme": "application",
+      "check": "exits 0",
+      "status": "pass",
+      "detail": null
+    },
+    {
+      "command": "install",
+      "mode": "term",
+      "color": "off",
+      "theme": "application",
+      "check": "no unresolved tag markers",
+      "status": "pass",
+      "detail": null
+    },
+    {
+      "command": "install",
+      "mode": "term",
+      "color": "off",
+      "theme": "application",
+      "check": "stdout parses as JSON",
+      "status": "not-applicable",
+      "detail": "check does not apply to term mode"
+    },
+    {
+      "command": "install",
+      "mode": "term",
+      "color": "off",
+      "theme": "application",
+      "check": "styling preserves text layout",
+      "status": "pass",
+      "detail": null
+    },
+    {
+      "command": "install",
+      "mode": "term",
+      "color": "off",
+      "theme": "application",
+      "check": "opaque output preserves text bytes",
+      "status": "not-applicable",
+      "detail": "rendered command uses render invariants"
+    },
+    {
+      "command": "install",
+      "mode": "json",
+      "color": "off",
+      "theme": "application",
+      "check": "exits 0",
+      "status": "pass",
+      "detail": null
+    },
+    {
+      "command": "install",
+      "mode": "json",
+      "color": "off",
+      "theme": "application",
+      "check": "no unresolved tag markers",
+      "status": "not-applicable",
+      "detail": "check does not apply to json mode"
+    },
+    {
+      "command": "install",
+      "mode": "json",
+      "color": "off",
+      "theme": "application",
+      "check": "stdout parses as JSON",
+      "status": "pass",
+      "detail": null
+    },
+    {
+      "command": "install",
+      "mode": "json",
+      "color": "off",
+      "theme": "application",
+      "check": "styling preserves text layout",
+      "status": "not-applicable",
+      "detail": "check does not apply to json mode"
+    },
+    {
+      "command": "install",
+      "mode": "json",
+      "color": "off",
+      "theme": "application",
+      "check": "opaque output preserves text bytes",
+      "status": "not-applicable",
+      "detail": "rendered command uses render invariants"
+    },
+    {
+      "command": "install",
+      "mode": "text",
+      "color": "on",
+      "theme": "application",
+      "check": "exits 0",
+      "status": "pass",
+      "detail": null
+    },
+    {
+      "command": "install",
+      "mode": "text",
+      "color": "on",
+      "theme": "application",
+      "check": "no unresolved tag markers",
+      "status": "pass",
+      "detail": null
+    },
+    {
+      "command": "install",
+      "mode": "text",
+      "color": "on",
+      "theme": "application",
+      "check": "stdout parses as JSON",
+      "status": "not-applicable",
+      "detail": "check does not apply to text mode"
+    },
+    {
+      "command": "install",
+      "mode": "text",
+      "color": "on",
+      "theme": "application",
+      "check": "styling preserves text layout",
+      "status": "not-applicable",
+      "detail": "check does not apply to text mode"
+    },
+    {
+      "command": "install",
+      "mode": "text",
+      "color": "on",
+      "theme": "application",
+      "check": "opaque output preserves text bytes",
+      "status": "not-applicable",
+      "detail": "rendered command uses render invariants"
+    },
+    {
+      "command": "install",
+      "mode": "term",
+      "color": "on",
+      "theme": "application",
+      "check": "exits 0",
+      "status": "pass",
+      "detail": null
+    },
+    {
+      "command": "install",
+      "mode": "term",
+      "color": "on",
+      "theme": "application",
+      "check": "no unresolved tag markers",
+      "status": "pass",
+      "detail": null
+    },
+    {
+      "command": "install",
+      "mode": "term",
+      "color": "on",
+      "theme": "application",
+      "check": "stdout parses as JSON",
+      "status": "not-applicable",
+      "detail": "check does not apply to term mode"
+    },
+    {
+      "command": "install",
+      "mode": "term",
+      "color": "on",
+      "theme": "application",
+      "check": "styling preserves text layout",
+      "status": "pass",
+      "detail": null
+    },
+    {
+      "command": "install",
+      "mode": "term",
+      "color": "on",
+      "theme": "application",
+      "check": "opaque output preserves text bytes",
+      "status": "not-applicable",
+      "detail": "rendered command uses render invariants"
+    },
+    {
+      "command": "install",
+      "mode": "json",
+      "color": "on",
+      "theme": "application",
+      "check": "exits 0",
+      "status": "pass",
+      "detail": null
+    },
+    {
+      "command": "install",
+      "mode": "json",
+      "color": "on",
+      "theme": "application",
+      "check": "no unresolved tag markers",
+      "status": "not-applicable",
+      "detail": "check does not apply to json mode"
+    },
+    {
+      "command": "install",
+      "mode": "json",
+      "color": "on",
+      "theme": "application",
+      "check": "stdout parses as JSON",
+      "status": "pass",
+      "detail": null
+    },
+    {
+      "command": "install",
+      "mode": "json",
+      "color": "on",
+      "theme": "application",
+      "check": "styling preserves text layout",
+      "status": "not-applicable",
+      "detail": "check does not apply to json mode"
+    },
+    {
+      "command": "install",
+      "mode": "json",
+      "color": "on",
+      "theme": "application",
+      "check": "opaque output preserves text bytes",
+      "status": "not-applicable",
+      "detail": "rendered command uses render invariants"
+    }
+  ],
+  "questionnaire": {
+    "collected": true,
+    "diagnostics": [],
+    "answers": {
+      "confidence": "high",
+      "docs.gaps": "(a) JSON key order. templating.md, \"Structured Output\": \"| `Json` | `serde_json::to_string_pretty(data)` |\".\nIf that were literally the handler struct, key order would be declaration order.\n`InstallView` is declared `{ installed, count }`, and `pnpmlike install --output json`\nproduced:\n\n    {\"count\":2,\"installed\":[{\"name\":\"alpha\",\"version\":\"1.0.0\"},...]}\n\nKeys alphabetized, so the data goes through a sorted map on the way. Nothing in docs/\nmentions that, and it matters to any spec that pins the bytes of its machine document.\n\n(b) The post-output example is wrong — quoted under question 4(a).\n\n(c) `TextOutput` and `ArtifactOutput` are named in execution-model.md and nowhere\ndescribed. `TextOutput` turns out to have public `formatted` and `raw` fields; which\none the final write uses, and what `raw` is for, is not written down anywhere I could\nfind.\n\n(d) Returning `RenderedOutput::Silent` from a post-output hook is undocumented.\nexecution-model.md says a post-output hook \"Can transform the final string\" and lists\n`Silent` only as an input variant. Returning it does suppress the write entirely — I\nverified `pnpmlike list` in an empty workspace emits zero bytes on stdout — but that\nis behaviour I had to discover, and it is the only way to get \"prints nothing at all\"\npast \"`App::run` writes a handled command's text with `writeln!`\" (templating.md,\n\"The Trailing-Newline Contract\").\n\n(e) app-configuration.md shows `.hooks(\"db.migrate\", Hooks::new()...)` without saying\nwhether it returns `Self` or `Result<Self, _>`, in a snippet where the neighbouring\n`.command_with(...)?` does carry a `?`. It returns `Self`.",
+      "friction": "(a) The post-output hook example does not compile. execution-model.md line 174:\n\n    Ok(RenderedOutput::Text(format!(\"{}\\n-- Generated by MyApp\", s)))\n\n    error[E0277]: the trait bound `TextOutput: From<std::string::String>` is not satisfied\n    error[E0599]: the method `to_string` exists for reference `&TextOutput`, but its\n      trait bounds were not satisfied\n      doesn't satisfy `TextOutput: ToString` or `TextOutput: std::fmt::Display`\n\n`RenderedOutput::Text` carries a `TextOutput { formatted, raw }`, and nothing in\ndocs/ says so. This cost the compiler-probe described in question 3.\n\n(b) The reporter has to know the output mode, and a handler is not allowed to.\noutput-modes.md, \"Keep Output Mode Out of Handlers\": \"Output mode is a rendering\nconcern and is deliberately absent from `CommandContext`.\" That is the right rule for\n*stdout*, but SPEC.md's reporter table has a row keyed on it — \"the output mode is a\nmachine mode (`json`, `yaml`, `xml`, `csv`) → `ndjson`\" — and the reporter is a\n*stderr* concern. There is no seam for \"a non-rendering subsystem needs to know what\nstdout is carrying\", so I scan argv for `--output` at startup.\n\n(c) Neither stderr channel exists in the framework. `grep -rn\n\"reporter\\|progress\\|loglevel\\|quiet\\|verbose\" docs/` returns only clap-flag examples\nand two notes saying the *test harness* cannot simulate progress bars\n(\"If your CLI drives progress bars, raw-mode TUIs, ... the harness can't simulate\nthat\"). Both channels are hand-rolled onto stderr from inside the handlers, which\nsits awkwardly against error-handling.md's \"Do not print or call `process::exit` from\nhandlers\" — a rule written about stdout, with no stated carve-out for a second stderr\nchannel.\n\n(d) The one registration shape that *is* sanctioned for writing your own bytes costs\ntoo much. passthrough.md: \"No structured output modes ... a passthrough handler never\nproduces an `Output` value, so those modes have nothing to act on.\" `run` is exactly\nits use case (\"run this external process and let it own the terminal\"), but SPEC.md\nalso wants `run`'s exit status propagated verbatim, and the documented seam for that\n(`ExternalFailure`) is described only through `HandlerResult`. I used a normal handler\nreturning `Output::Silent` instead, which gives both.",
+      "sources.docs": "docs/index.md\ndocs/topics/index.md\ndocs/topics/output-modes.md\ndocs/topics/passthrough.md\ndocs/topics/app-configuration.md\ndocs/topics/error-handling.md\ndocs/topics/execution-outcomes.md\ndocs/topics/dispatch-attributes.md\ndocs/crates/dispatch/topics/handler-contract.md\ndocs/crates/dispatch/topics/execution-model.md\ndocs/crates/render/topics/templating.md\ndocs/guides/minimal-single-crate.md\n\nI also grepped the whole of docs/ for `reporter`, `progress`, `Reporter`, `loglevel`,\n`log_level`, `quiet`, `verbose` and `TextOutput` to establish that the framework\noffers no progress-reporter or log-level facility, and read the hit list rather than\nthe surrounding files.",
+      "sources.external": "No web search, and I did not open the standout source or repository.\n\nOne thing beyond docs/, stated exactly: I probed the `standout_dispatch::TextOutput`\nAPI through deliberate compiler errors, because docs/ names the type\n(`RenderedOutput`'s \"enum of `Text(TextOutput)`\", execution-model.md) but never\ndescribes it, and the one code example that constructs it does not compile. I wrote\n`TextOutput { zzz_probe: 1 }` and rustc answered `= note: available fields are:\n`formatted`, `raw``. That is a rustc diagnostic about my own build, not the framework\nsource — the note cites a path into `standout-dispatch-9.0.0/src/hooks.rs` but I did\nnot open that file, or any other file in the dependency tree.\n\nOtherwise: general Rust knowledge, and the public documentation I already carry for\nclap 4 (derive, `global`, `last`, `ValueSource`), serde/serde_json, MiniJinja's\n`loop.last`, and `std` (`IsTerminal`, `process::Command`, `ExitStatusExt`).",
+      "summary": "`pnpmlike`, complete and building clean, in `app/`. `cargo build` succeeds with no\nwarnings from my code; `cargo test` runs 24 unit tests and 25 black-box integration\ntests (`app/tests/cli.rs`, which spawns the real binary in a per-test sandbox\ndirectory and asserts exact stdout bytes, exact stderr bytes and exit status), all\npassing.\n\nLayout: `manifest.rs` is the CLI-free core (line-oriented parsing, located errors,\nmissing file = empty workspace). `channels.rs` owns the two stderr channels — the\nfour reporter forms and the three log levels. `session.rs` resolves one invocation\n(which manifest, which reporter, which level), with `auto`'s resolution table taking\nstderr attendance as a parameter so it is testable without a terminal. `cli.rs` is\nthe clap surface (all pnpmlike flags global, so `run --manifest x` reads like\n`list --manifest x`). `handlers.rs` are the Standout adapters; `views.rs` the\nserializable view data; `hooks.rs` a post-output hook that shapes the stdout\ndocument. Commands are registered with `#[derive(Dispatch)]`; `run` is\n`#[dispatch(pure, silent)]` so it has no template and nothing renders over the\nchild's bytes.\n\nVerified against the spec's five stressed interactions: reporter resolution keys off\nstderr, not stdout; a machine output mode keeps stdout to exactly one document and\nswitches `auto` to `ndjson`; `-q`, `--reporter silent` and `--silent` reach the two\nchannels independently; a child's stdout, stderr and exit status pass through\nunaltered in every output mode; and the four no-answer paths stay distinct (absent\nmanifest 0, malformed manifest 1, bad flag value 2, unknown script 3).\n\nThree residual uncertainties, all narrow. (a) The spec says the `ndjson` `done` entry\ncomes \"after the last step of a successful `install`\"; an empty workspace has no last\nstep. I emit `{\"event\":\"done\",\"installed\":0}` anyway, reading `done` as terminal for\nevery successful install — the \"writes nothing at all\" carve-out is stated only for\nthe `default` reporter. (b) No pty is available in this sandbox (`openpty: Operation\nnot permitted`), so the \"stderr is an attended terminal → `default`\" row is covered by\nunit test rather than end to end; only the `std::io::stderr().is_terminal()` call\nitself is unexercised. (c) The summary is always \"packages\" — the spec gives\n`2 packages installed.` and `0 packages installed.` and no singular form.",
+      "workarounds": "(a) `session.rs`, `Invocation::from_argv` — an argv scan for `--output` / `--output=`,\nstopping at the first bare `--` and skipping the values of value-taking flags. It\nexists only to answer \"is stdout carrying a machine document\", for the reporter's\n`auto` row. See friction (b). It is handed to handlers as app state rather than\nrecomputed, so there is one place to delete when a seam exists.\n\n(b) `hooks.rs`, `shape_document` — a post-output hook doing three things the render\npass will not: turning an empty render into `RenderedOutput::Silent` (so an empty\nworkspace's `list` prints zero bytes instead of `writeln!`'s newline), collapsing the\npretty-printed JSON onto one line, and re-emitting the top-level keys in the order\nSPEC.md spells them. It guards on \"parses as a JSON object\", so text, YAML, XML and\nCSV renderings pass through untouched. Undoing the framework's own serialization\nformatting from a hook is a workaround, not a design.\n\n(c) `handlers.rs` — `ExternalFailure` carries the manifest error (status 1) and the\nunknown script (status 3), not only the genuinely external child status.\nerror-handling.md says \"Use `ExternalFailure` only when another operation owns the\nstatus and diagnostic contract\", so this is off-label: an ordinary handler error would\ngive the right status for the manifest case but would re-frame the message as\n`Error: {error}`, and there is no seam at all for exit 3. `ExternalFailure` is the only\none that yields both an exact status and a verbatim stderr spelling, which is what the\nspec pins.\n\n(d) `handlers.rs` — the failing-script `ExternalFailure` carries an empty diagnostic.\nSPEC.md leaves what pnpmlike says about a failing script unspecified, and an empty\npayload is the smallest thing that can be appended after the child's own stderr.\n\n(e) `channels.rs` writes both stderr channels directly with `write_all`, from inside\nhandlers. See friction (c)."
+    }
+  }
+}

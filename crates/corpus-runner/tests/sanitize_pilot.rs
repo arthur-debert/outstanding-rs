@@ -152,6 +152,25 @@ fn is_email_domain(c: char) -> bool {
     c.is_ascii_alphanumeric() || matches!(c, '.' | '-')
 }
 
+// rustc names a closure's type after where it was written — `{closure@main.rs:39:29}` —
+// so that `@` joins a file to a line and column, never a mailbox to a host. Compiler
+// diagnostics land in every run's transcript, and the file name varies per diagnostic,
+// so the scan reads the shape instead of vouching each value.
+fn names_a_source_position(rest: &str) -> bool {
+    let Some(rest) = rest.strip_prefix(':') else {
+        return false;
+    };
+    let line: String = rest.chars().take_while(|c| c.is_ascii_digit()).collect();
+    if line.is_empty() {
+        return false;
+    }
+    let Some(rest) = rest[line.len()..].strip_prefix(':') else {
+        return false;
+    };
+    let column: String = rest.chars().take_while(|c| c.is_ascii_digit()).collect();
+    !column.is_empty() && rest[column.len()..].starts_with('}')
+}
+
 fn email_at(text: &str, at: usize) -> Option<String> {
     let local: String = text[..at]
         .chars()
@@ -161,11 +180,14 @@ fn email_at(text: &str, at: usize) -> Option<String> {
         .into_iter()
         .rev()
         .collect();
-    let domain: String = text[at + 1..]
+    let run: String = text[at + 1..]
         .chars()
         .take_while(|&c| is_email_domain(c))
         .collect();
-    let domain = domain.trim_end_matches(['.', '-']);
+    if names_a_source_position(&text[at + 1 + run.len()..]) {
+        return None;
+    }
+    let domain = run.trim_end_matches(['.', '-']);
     if local.is_empty() {
         return None;
     }
@@ -429,6 +451,7 @@ fn secret_shape_patterns_catch_each_class() {
         "host Build-Agent.LOCAL answering",
         "\"hostname\":\"redacted\"",
         "mail carol.smith+x@gmail.com now",
+        "mail carol@gmail.com:39:29 now",
         "token ghp_abcdefghij",
         "key AKIAABCDEFGHIJKLMNOP end",
         "xoxb-1234-abc",
@@ -449,6 +472,8 @@ fn secret_shape_patterns_catch_each_class() {
         "an eyJ fragment without a second segment",
         "python threading.local() in the agent's code",
         "notes on astronomy and localhost resolution",
+        "expected `{closure@main.rs:39:29}` to return `Value`",
+        "expected `{closure@lib.rs:7:5}` to be `Fn`",
     ] {
         assert!(
             secret_shaped_hits(benign).is_empty(),
