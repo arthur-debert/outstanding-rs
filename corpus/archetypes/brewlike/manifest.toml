@@ -1,0 +1,97 @@
+# Feature/interaction manifest for `brewlike`. Format: corpus/README.md.
+#
+# Roster-completion archetype (ROB07-WS03b). The survey's C10 sketch is lost
+# with the 2026-08-16 session record, so the interactions below are
+# reconstructed from the survey's capability matrix and the parity Spec that
+# names this archetype (docs/spec/parity-machine-contract.md, which gates on
+# "brewlike's schema-version tests"); spec.md states the same reconstruction.
+#
+# The survey files C10 among its in-capability archetypes, and all but the
+# schema-version group is in-capability. The status below is
+# partially-past-capability for the same reason gitlike's is: the repository
+# form carries one group specced past the framework on purpose, and the
+# machine-contract Spec cannot gate on tests that are already green.
+
+[archetype]
+name = "brewlike"
+survey = "C10"
+summary = "package-manager query client: nested dependency data, empty results, and a versioned machine contract"
+status = "partially-past-capability"
+
+[features]
+used = [
+    "dispatch.subcommands",
+    "dispatch.handler-macro",
+    "view-helpers.list-view",
+    "tabular.column-formatting",
+    "output-modes.structured-json",
+    "templates",
+    "help.rendering",
+    "error-handling.exit-codes",
+]
+
+[[interactions]]
+id = "nested-data-vs-one-pipeline"
+stresses = ["nested handler data", "template rendering", "structured serialization", "collection fields"]
+description = "One dependency closure, two renderings from one handler: an indented tree for humans and nested node objects in JSON. Flattening in either direction is the bug, and the roster has no other archetype whose data is deeper than a row."
+cases = [
+    "deps-flat-closure-is-deduplicated",
+    "deps-tree-repeats-a-shared-subtree",
+    "deps-json-is-a-flat-name-list",
+    "deps-tree-json-nests-under-its-dependent",
+    "info-json-carries-direct-dependencies",
+]
+
+[[interactions]]
+id = "empty-result-vs-structured-purity"
+stresses = ["empty-collection rendering", "structured output", "exit-code policy"]
+description = "An answer that is legitimately nothing takes two shapes out of one handler — a sentence for humans, an empty list for machines — and neither may leak into the other. The empty branch is also where a framework list template's default text ships by accident, and where a serializer drops the key instead of emitting an empty array."
+cases = [
+    "outdated-filter-with-nothing-to-report",
+    "outdated-empty-json-is-an-empty-list",
+    "deps-leaf-formula-prints-nothing",
+    "info-leaf-formula-names-no-dependencies",
+]
+
+[[interactions]]
+id = "one-catalog-four-data-shapes"
+stresses = ["tabular column formatting", "detail views", "filter recomputation", "row association in machine output"]
+description = "Table, detail record, filtered table and machine records are four views of one catalog. Widths recompute over exactly the rendered rows, a per-record conditional reaches the detail view, and each formula's versions bind to that formula's record rather than to parallel arrays the caller has to zip."
+cases = [
+    "list-human-table",
+    "outdated-human-table",
+    "outdated-filter-keeps-the-named-formula",
+    "outdated-filter-takes-several-names",
+    "info-current-formula",
+    "info-outdated-formula-marks-the-installed-line",
+    "list-json-binds-versions-to-their-formula",
+    "outdated-json-records-both-versions",
+]
+
+[[interactions]]
+id = "error-vocabulary-vs-command-surface"
+stresses = ["exit-code mapping", "stream separation", "usage errors vs domain errors"]
+description = "One domain-error shape across every command (exit 1, stdout untouched, prose on stderr), held apart from the clap-owned usage errors at exit 2 — including the case where a filter argument names something that does not exist, which silently narrowing to an empty result would hide."
+cases = [
+    "info-unknown-formula-is-a-domain-error",
+    "deps-unknown-formula-is-the-same-domain-error",
+    "outdated-unknown-formula-is-a-domain-error",
+    "outdated-unknown-name-among-known-ones-still-fails",
+    "no-subcommand-is-a-usage-error",
+    "unknown-subcommand-is-a-usage-error",
+    "unknown-flag-is-a-usage-error",
+]
+
+[[interactions]]
+id = "schema-version-vs-framework-envelopes"
+stresses = ["structured output as a contract surface", "framework-owned envelopes", "help as data"]
+description = "A consumer must be able to tell a shape change from a data change, and the stamp that says so has to reach the framework's own documents too — the help page as data, not prose. Standout serializes handler data and renders help as prose in every mode, so nothing owns the version: an adopter can only hand-roll a field into their own struct, which versions the app's data and not the framework's envelope. The two prose-help cases are the passing baseline the machine form is measured against — help works, it just cannot be read."
+cases = [
+    "root-help-lists-the-commands",
+    "leaf-help-names-the-command-flag",
+    "list-json-payload-carries-the-schema-version",
+    "machine-help-is-a-versioned-document",
+]
+
+[gaps]
+PAR02 = "The machine contract (docs/spec/parity-machine-contract.md): structured output marked as a contract surface with a schema version addressable from the CLI, and help --output=json as a versioned document. The schema-version cases are the executable shape of that Spec's brewlike gate; PAR02 is done when they turn green. Those two cases pin the version at an envelope key, while the Spec still leaves 'flag or key in the envelope' to the grill: an ADR choosing the flag form amends them."

@@ -277,6 +277,7 @@ baseline does not run, the planned identities remain present as `not-run`.
 | `exit_code` | exact process exit status |
 | `stdout`, `stderr` | exact stream contents, LF-normalized |
 | `stdout_json` | stdout parses as JSON and is *semantically* equal to this JSON string (key order and whitespace irrelevant) |
+| `stdout_json_subset` | stdout parses as JSON and *carries* this JSON: objects may hold keys the expectation omits, while arrays and scalars must match |
 | `stdout_contains`, `stderr_contains` | every listed substring occurs in the stream |
 | `stdout_row_contains` | every value in each group co-occurs on one single stdout line (row association, e.g. a star with *its* constellation and magnitude) |
 | `stdout_json_rows` | stdout parses as JSON and every value in each group co-occurs among the scalars of one single JSON array element (numbers match their decimal literal) |
@@ -288,7 +289,12 @@ empty substring matches any output, so it would silently assert nothing —
 the parser rejects it at load time.
 
 Prefer `stdout` (exact). Use `stdout_json` for machine output, where byte
-layout is an implementation detail but content is not. Use the `contains`
+layout is an implementation detail but content is not. Reach for
+`stdout_json_subset` only when part of a document is deliberately left open —
+a framework-owned envelope whose payload another Spec defines — so the case can
+require the part the archetype specifies without inventing the rest; asserting
+the whole document would pin fields the archetype does not own, and a substring
+would not require them to be fields at all. Use the `contains`
 family only where exactness would pin something the spec deliberately leaves
 to the implementer — e.g. asserting *that* ANSI styling is present
 (the two-byte CSI introducer, `ESC` `[`, written `\u001b[` in TOML) without pinning a theme's exact colors.
