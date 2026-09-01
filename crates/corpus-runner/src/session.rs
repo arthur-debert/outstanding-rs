@@ -178,8 +178,15 @@ pub fn direct_argv(agent_cmd: &str) -> anyhow::Result<Vec<String>> {
                 loop {
                     match chars.next() {
                         Some('"') => break,
+                        // The set a shell unescapes inside double quotes. An
+                        // escaped `$` is a literal `$`, not a backslash and a
+                        // dollar, and refusing it as expansion would refuse
+                        // the one spelling that asks for no expansion.
                         Some('\\') => match chars.next() {
-                            Some(escaped @ ('"' | '\\')) => word.push(escaped),
+                            Some(escaped @ ('"' | '\\' | '$' | '`')) => word.push(escaped),
+                            // A backslash-newline is a line continuation:
+                            // the shell removes both.
+                            Some('\n') => {}
                             Some(other) => {
                                 word.push('\\');
                                 word.push(other);
@@ -320,6 +327,31 @@ mod tests {
             direct_argv(r#"claude -p "does it? *everything*" '~/literal' a\*b"#).unwrap(),
             vec!["claude", "-p", "does it? *everything*", "~/literal", "a*b",]
         );
+    }
+
+    /// The split has to produce the argv `sh -c` would have produced, or a
+    /// brokered run means something different from an unbrokered one.
+    #[test]
+    fn escapes_inside_double_quotes_unescape_the_way_a_shell_does() {
+        // An escaped `$` or backtick is the literal character, not a
+        // backslash and the character.
+        assert_eq!(
+            direct_argv(r#"claude -p "cost is \$5 or \`half\`""#).unwrap(),
+            vec!["claude", "-p", "cost is $5 or `half`"]
+        );
+        // The rest of the unescaped set, and a backslash before anything
+        // else, which a shell leaves as both characters.
+        assert_eq!(
+            direct_argv(r#"claude -p "say \"hi\" \\ then \n""#).unwrap(),
+            vec!["claude", "-p", r#"say "hi" \ then \n"#]
+        );
+        // A backslash-newline is a line continuation: both go.
+        assert_eq!(
+            direct_argv("claude -p \"one\\\ntwo\"").unwrap(),
+            vec!["claude", "-p", "onetwo"]
+        );
+        // Unescaped, those two still ask for expansion and are refused.
+        assert!(direct_argv(r#"claude -p "cost is $5""#).is_err());
     }
 
     #[test]

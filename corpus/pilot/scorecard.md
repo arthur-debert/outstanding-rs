@@ -155,6 +155,14 @@ the credential never inside the agent's process tree. It ran 93 turns over
 [report](runs/validity-1788219768/report.json) and
 [transcript](runs/validity-1788219768/transcript.jsonl).
 
+Read that report's `blindness.env_allowlist` as the baseline it recorded, not
+as the whole agent environment: the run also carried `ANTHROPIC_BASE_URL` and
+`ANTHROPIC_AUTH_TOKEN`, which the broker sets and which
+`blindness.credential_exceptions` describes in the same report. The runner
+recorded the two lists separately at the time, and now builds the allowlist
+from the run configuration so a brokered run names them there too. The
+artifact is left as the run produced it.
+
 Two earlier attempts are not committed, for the reason #365's two were not:
 they were harness failures rather than implementations. `validity-1788218657`
 had no shell — every Bash call failed with `EPERM: operation not permitted,
