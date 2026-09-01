@@ -28,7 +28,7 @@ console = "0.16"
 deunicode = "1.6.2"
 minijinja = { version = "2", features = ["loader"] }
 serde = { version = "1", features = ["derive"] }
-serde_json = "1"
+serde_json = { version = "1", features = ["preserve_order"] }
 # Matches rustfmt's width measurement so generated code can predict its
 # inline-vs-split formatting decisions (see cli_command_attribute).
 unicode-width = "0.2"
