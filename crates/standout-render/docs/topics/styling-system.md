@@ -299,7 +299,7 @@ if let Err(error) = validate_template(template, &sample_data, &theme) {
 
 ### Strict mode
 
-The graceful degradation above — the per-output-mode fallback (the `?` marker in `Term`, stripped tags in `Text`, tags preserved in `TermDebug`) plus a stderr warning — is the default and stays the default. `AppBuilder::strict_style_tags(true)` opts a whole app into failing instead: after a command renders, if the render left any style tag unresolved, the run ends with a non-zero exit and an error that names the offending tags — no output is emitted. This trades the graceful path for a deterministic failure so a typo'd tag name, or a tag the active theme does not style, is caught every time rather than by chance.
+The graceful degradation above — degrading unresolved tags to unstyled text (per-mode details in [Unknown Style Tags](#unknown-style-tags); no mode ever adds a `?` marker) plus a stderr warning — is the default and stays the default. `AppBuilder::strict_style_tags(true)` opts a whole app into failing instead: after a command renders, if the render left any style tag unresolved, the run ends with a non-zero exit and an error that names the offending tags — no output is emitted. This trades the graceful path for a deterministic failure so a typo'd tag name, or a tag the active theme does not style, is caught every time rather than by chance.
 
 ```rust
 let app = App::builder()
