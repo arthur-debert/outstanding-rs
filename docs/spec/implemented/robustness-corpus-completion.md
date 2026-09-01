@@ -176,7 +176,17 @@ member. The grill settles the cargo patch/workspace mechanics and the trigger.
 ## Testing / Verification
 
 The validity run rediscovers all three known-edge families (that is the check). The
-re-run's scorecard v2 is produced by the committed script from committed reports.
+epic met that check for two of them — mistyped template names and registration order,
+in both validity runs. It did not meet it for the third, incomplete app theme ×
+framework help: all 16 `themed-help` cases assert the help header as `Usage` where
+standout renders `USAGE`, so those cases fail on the suite's own assertion before
+they can say anything about the framework
+([#450](https://github.com/arthur-debert/standout/issues/450)). Correcting the
+assertion changes the suite's `acceptance_sha256`, which makes a further blind
+validity run part of the fix rather than a follow-up to it; #450 carries both and
+neither happened here. The epic closes on that reduced contract, stated so a later
+reader is not left inferring it from the scorecard.
+The re-run's scorecard v2 is produced by the committed script from committed reports.
 Every new archetype's suite passes the roster structural test and the runner's own
 integration test (a scripted agent producing a trivially failing binary yields a
 complete report). The corpus repository's build is green on a framework `main` commit

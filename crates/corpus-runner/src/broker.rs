@@ -23,7 +23,9 @@
 //! Where that credential may go is fixed rather than configured: a token
 //! from the host store forwards to [`DEFAULT_UPSTREAM`] and nowhere else
 //! (see [`Origin`]), so no flag, and no 401 retry, can aim it at a
-//! destination somebody chose.
+//! destination somebody chose. The request the caller sends cannot aim it
+//! either: [`vet_request`] admits only an origin-form target, so what the
+//! caller supplies picks the path under that origin and never the origin.
 //!
 //! The caller boundary is enforced per connection, not per session: before
 //! reading a single request byte the broker asks the OS socket tables who
@@ -652,7 +654,13 @@ fn serve(mut stream: TcpStream, state: Arc<State>) {
     let _ = stream.set_read_timeout(Some(state.request_timeout));
     let _ = stream.set_write_timeout(Some(state.request_timeout));
     match read_request(&mut stream) {
-        Ok(request) => forward(&request, &state, &mut stream),
+        Ok(request) => match vet_request(&request) {
+            Ok(()) => forward(&request, &state, &mut stream),
+            Err(denial) => {
+                record_denial(&state, &denial);
+                respond(&mut stream, 403, "corpus_broker_denied", &denial);
+            }
+        },
         Err(detail) => respond(&mut stream, 400, "corpus_broker_bad_request", &detail),
     }
     close(&mut stream);
@@ -817,6 +825,72 @@ fn read_request(stream: &mut TcpStream) -> Result<Request, String> {
         headers,
         body,
     })
+}
+
+/// The request pieces the caller controls, checked before any of them is
+/// written into the upstream transport's configuration.
+///
+/// The target check is the load-bearing one. It is appended to the
+/// configured upstream, so a target that does not start its own path can
+/// move the authority instead of the path: `@host/v1` makes the upstream a
+/// userinfo field, `.host/v1` extends the hostname, `:443@host/v1` does both
+/// — and the credential goes wherever the authority ends up. Requiring a
+/// single leading `/` ends the authority at the upstream's own host before
+/// any caller byte is read, which is the whole of the fixed-origin promise
+/// this module makes.
+///
+/// Method and header names are RFC 7230 tokens and header values carry no
+/// control bytes for the same reason at one remove: a stray carriage return
+/// in either would end curl's own header line and let the caller write the
+/// next one.
+fn vet_request(request: &Request) -> Result<(), String> {
+    if !request.target.starts_with('/') || request.target.starts_with("//") {
+        return Err(format!(
+            "request target {:?} is not origin-form; the broker forwards only a target \
+             beginning with a single `/`, so that the origin the credential reaches stays \
+             the configured one",
+            request.target
+        ));
+    }
+    if let Some(found) = request
+        .target
+        .chars()
+        .find(|c| !c.is_ascii_graphic() || *c == '\\')
+    {
+        return Err(format!(
+            "request target {:?} contains {found:?}, which no URL path, query or fragment \
+             carries unescaped",
+            request.target
+        ));
+    }
+    if !is_token(&request.method) {
+        return Err(format!(
+            "request method {:?} is not a token",
+            request.method
+        ));
+    }
+    for (name, value) in &request.headers {
+        if !is_token(name) {
+            return Err(format!("request header name {name:?} is not a token"));
+        }
+        if let Some(found) = value
+            .chars()
+            .find(|c| !c.is_ascii_graphic() && *c != ' ' && *c != '\t')
+        {
+            return Err(format!(
+                "request header {name:?} carries {found:?}, which would end the header line \
+                 the broker writes for it"
+            ));
+        }
+    }
+    Ok(())
+}
+
+fn is_token(value: &str) -> bool {
+    !value.is_empty()
+        && value
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || "!#$%&'*+-.^_`|~".contains(c))
 }
 
 fn header<'a>(headers: &'a [(String, String)], name: &str) -> Option<&'a str> {
@@ -1287,6 +1361,59 @@ mod tests {
             )),
             "{config}"
         );
+    }
+
+    fn request_with(target: &str) -> Request {
+        Request {
+            method: "POST".to_string(),
+            target: target.to_string(),
+            headers: Vec::new(),
+            body: Vec::new(),
+        }
+    }
+
+    #[test]
+    fn a_request_target_cannot_move_the_origin_the_credential_reaches() {
+        for escape in [
+            "@attacker.example/v1/messages",
+            ":443@attacker.example/v1/messages",
+            ".attacker.example/v1/messages",
+            "//attacker.example/v1/messages",
+            "https://attacker.example/v1/messages",
+            "\\@attacker.example/v1/messages",
+            "/v1/messages\\@attacker.example",
+            "v1/messages",
+            "",
+        ] {
+            let denial = vet_request(&request_with(escape)).unwrap_err();
+            assert!(denial.contains("target"), "{escape:?} denied as {denial:?}");
+        }
+
+        vet_request(&request_with("/v1/messages")).unwrap();
+        vet_request(&request_with("/v1/messages?beta=true#x")).unwrap();
+    }
+
+    #[test]
+    fn a_request_cannot_write_the_transports_next_config_line() {
+        let mut request = request_with("/v1/messages");
+        request.method = "POST\rGET".to_string();
+        assert!(vet_request(&request).unwrap_err().contains("method"));
+
+        let mut request = request_with("/v1/messages");
+        request.headers = vec![(
+            "x-note".to_string(),
+            "a\rauthorization: Bearer b".to_string(),
+        )];
+        let denial = vet_request(&request).unwrap_err();
+        assert!(denial.contains("x-note"), "{denial}");
+
+        let mut request = request_with("/v1/messages");
+        request.headers = vec![("x note".to_string(), "fine".to_string())];
+        assert!(vet_request(&request).unwrap_err().contains("header name"));
+
+        let mut request = request_with("/v1/messages");
+        request.headers = vec![("x-note".to_string(), "a normal\tvalue".to_string())];
+        vet_request(&request).unwrap();
     }
 
     #[test]

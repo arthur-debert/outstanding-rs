@@ -287,6 +287,64 @@ fn a_body_that_arrives_in_two_segments_is_forwarded_whole() {
     assert_eq!(forwarded[0].body, format!("{head}{tail}"));
 }
 
+/// The broker appends the caller's target to its configured upstream, so a
+/// target that starts an authority rather than a path would carry the
+/// credential to whatever host it names: `@host/v1` demotes the configured
+/// upstream to a userinfo field. The listener standing in for that host is
+/// a real one here, so the assertion is that nothing arrived at it, not
+/// that the URL looked wrong.
+#[test]
+fn a_target_that_names_another_host_reaches_neither_host() {
+    let upstream = Upstream::start();
+    let elsewhere = Upstream::start();
+    let broker = Broker::start(brokered(&upstream, Duration::from_secs(30))).unwrap();
+    broker.authorize(std::process::id());
+    let authority = broker.base_url().trim_start_matches("http://").to_string();
+
+    let elsewhere_authority = elsewhere.base_url.trim_start_matches("http://").to_string();
+    for target in [
+        format!("@{elsewhere_authority}/v1/messages"),
+        format!("//{elsewhere_authority}/v1/messages"),
+        format!("http://{elsewhere_authority}/v1/messages"),
+    ] {
+        let mut caller = TcpStream::connect(&authority).unwrap();
+        caller
+            .write_all(
+                format!(
+                    "POST {target} HTTP/1.1\r\nHost: broker\r\n\
+                     Content-Length: 0\r\nConnection: close\r\n\r\n"
+                )
+                .as_bytes(),
+            )
+            .unwrap();
+        let mut response = String::new();
+        let _ = caller.read_to_string(&mut response);
+        assert!(
+            response.starts_with("HTTP/1.1 403"),
+            "{target} was not refused: {response}"
+        );
+        assert!(!response.contains(BROKERED_TOKEN), "{response}");
+    }
+
+    let reached = format!("{:#?}", elsewhere.seen());
+    let arrived = format!("{:#?}", upstream.seen());
+    assert_eq!(
+        elsewhere.seen().len(),
+        0,
+        "the credential reached the host the target named: {reached}"
+    );
+    assert_eq!(upstream.seen().len(), 0, "{arrived}");
+
+    // The same broker still serves the target it exists for, so the refusal
+    // is the shape of the target and not the connection.
+    assert!(ask(TcpStream::connect(&authority).unwrap()).starts_with("HTTP/1.1 200 OK"));
+    let forwarded = upstream.seen();
+    assert_eq!(
+        forwarded[0].header("authorization").as_deref(),
+        Some(format!("Bearer {BROKERED_TOKEN}").as_str())
+    );
+}
+
 fn ask(mut stream: TcpStream) -> String {
     let body = r#"{"from":"a test"}"#;
     stream

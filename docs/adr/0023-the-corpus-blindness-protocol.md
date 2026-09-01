@@ -53,7 +53,11 @@ partially-blind run, and runs remain comparable.
 "no credential exception" gains exactly one exception, and only for the
 agent phase: a broker the runner spawns on the host side, outside every
 sandbox, alive only while the agent session runs. It is a loopback forward
-proxy for the Anthropic API endpoint.
+proxy for the Anthropic API endpoint. The caller chooses the path under
+that endpoint and nothing else: the broker forwards only an origin-form
+request target, because a target that begins its own authority (`@host`,
+`.host`, an absolute URL) would otherwise append one to the configured
+origin and carry the injected credential to whatever host it named.
 
 The broker holds the agent CLI's own credential — the OAuth access token of
 the host's Claude subscription, read from the host credential store (the
