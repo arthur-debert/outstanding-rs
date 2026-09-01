@@ -52,10 +52,11 @@ cases = [
 [[interactions]]
 id = "argv-override-layer-value-grammar"
 stresses = ["repeatable flag parsing", "per-type value text", "usage errors", "layer precedence"]
-description = "`--config` reaches every known key from argv, so one text grammar has to cover integers, booleans, strings and lists, and a key assigned twice has to resolve. It is the same text the environment layer carries, which is why the two layers can disagree about precedence without disagreeing about spelling."
+description = "`--config` reaches every known key from argv, so one text grammar has to cover integers, booleans, strings and lists, and a key assigned twice has to resolve. It carries the text the environment layer carries and takes that layer's per-type rule with it — a list assignment replaces what the files merged rather than extending it — so the two layers disagree about precedence without disagreeing about spelling or about type."
 cases = [
     "config-override-beats-default",
     "config-override-list-replaces",
+    "config-override-list-replaces-merged-list",
     "config-override-repeated-key-last-wins",
     "config-override-sets-boolean-and-string",
     "malformed-config-override-is-usage-error",
@@ -94,8 +95,8 @@ cases = [
 
 [[interactions]]
 id = "config-values-reaching-a-rendered-view"
-stresses = ["resolved config reaching a handler", "template rendering", "flag layer over file layer"]
-description = "The effective config has to arrive at a command, not only at `config get`: the plan view is a projection of it, so a merge bug shows up in a command's bytes. The list-typed flag appends to what the files supplied, which is the one place the flag layer does not simply overwrite."
+stresses = ["resolved config reaching a handler", "template rendering", "flag layer over file layer", "flag layer over override layer"]
+description = "The effective config has to arrive at a command, not only at `config get`: the plan view is a projection of it, so a merge bug shows up in a command's bytes. The list-typed flag appends to what the underlying layers supplied, whichever they are, which is the one place the flag layer does not simply overwrite."
 cases = [
     "config-values-reach-the-build-view",
     "features-flag-appends-to-the-config-list",

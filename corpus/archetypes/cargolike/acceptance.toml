@@ -194,7 +194,7 @@ stdout = "4\n"
 [[case]]
 name = "config-override-list-replaces"
 group = "flag-layer"
-stresses = "a list assigned through --config replaces the list under it rather than extending it"
+stresses = "a list assigned through --config replaces a previous assignment rather than extending it"
 expected = "pass"
 [case.run]
 argv = [
@@ -462,6 +462,22 @@ timeout_seconds = 10
 [case.expect]
 exit_code = 0
 stdout = "7\n"
+
+[[case]]
+name = "config-override-list-replaces-merged-list"
+group = "config-merge"
+stresses = "an argv-assigned list replaces what the files merged, as an environment-assigned one does"
+expected = "fail"
+gap = "PAR01"
+reason = "config-file discovery is specced past current framework capability (docs/spec/parity-config-layering.md)"
+[case.run]
+argv = ["config", "get", "build.features", "--config", "build.features=x,y"]
+timeout_seconds = 10
+[case.run.files]
+".cargolike/config.toml" = "[build]\nfeatures = [\"a\"]\n"
+[case.expect]
+exit_code = 0
+stdout = "[x,y]\n"
 
 [[case]]
 name = "invalid-config-value-exits-101"
