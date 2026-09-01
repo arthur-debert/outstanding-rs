@@ -24,8 +24,9 @@ so a set of pilot reports reproduces the pilot's figures:
 - the agent: schema 4's `provenance` block. A report written before that
   block existed states none, so the same facts are recovered from the run's
   own two sources by the rule the runner uses — the command the report
-  records, split without expansion, and the transcript, whose init event
-  announces the backend version and the session model. A recovered agent is
+  records, split without expansion, and the same bounded head of the
+  transcript, whose init event announces the backend version and the session
+  model. A recovered agent is
   marked `(recovered)`: it is evidence of what answered, not a
   contemporaneous record of what was asked for. A field neither source
   states is reported unstated rather than filled in.
@@ -60,6 +61,11 @@ HASH = re.compile(r"(?:sha256:)?[0-9a-f]{32,}")
 SHELL_STRUCTURE = "|&;<>()\n"
 SHELL_EXPANSION = "$`"
 SHELL_GLOB = "*?[]"
+
+# How far into a transcript the recovery reads, which is how far the runner's
+# own `provenance::head` reads: a session announces itself in its first event,
+# and a committed transcript is megabytes of what it did afterwards.
+TRANSCRIPT_HEAD_BYTES = 256 * 1024
 
 # What each pin makes comparable, and where the report states it.
 COMPARED_PINS = (
@@ -245,26 +251,46 @@ def recorded(agent_cmd: str) -> dict:
     return found
 
 
+def head(transcript: pathlib.Path) -> list[str]:
+    """The transcript's leading records, whole, as far as the runner reads.
+
+    A transcript is a whole agent session's output and the backend announces
+    itself in its first event, so both readers stop once the head budget is
+    spent — and both finish the record that spends it, because a record cut
+    in half announces nothing.
+    """
+    records = []
+    read = 0
+    with transcript.open("rb") as file:
+        for record in file:
+            records.append(record.decode("utf-8", "replace"))
+            read += len(record)
+            if read >= TRANSCRIPT_HEAD_BYTES:
+                break
+    return records
+
+
 def announced(transcript: pathlib.Path) -> dict:
     """What the session's transcript says answered it, by the runner's rule."""
     found = {}
     if not transcript.is_file():
         return found
-    with transcript.open() as lines:
-        for line in lines:
-            try:
-                event = json.loads(line)
-            except json.JSONDecodeError:
-                continue
-            if event.get("type") == "system" and event.get("subtype") == "init":
-                found = {
-                    "executable_version": event.get("claude_code_version"),
-                    "model_observed": event.get("model"),
-                }
-                if found.get("model_observed"):
-                    return found
-            if event.get("type") == "assistant" and not found.get("model_observed"):
-                found["model_observed"] = event.get("message", {}).get("model")
+    for line in head(transcript):
+        try:
+            event = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        if event.get("type") == "system" and event.get("subtype") == "init":
+            found = {
+                "executable_version": event.get("claude_code_version"),
+                "model_observed": event.get("model"),
+            }
+            if found.get("model_observed"):
+                return found
+        elif event.get("type") == "assistant" and not found.get("model_observed"):
+            # Not a stopping point: the runner keeps reading, because an init
+            # event further in still states the version this one does not.
+            found["model_observed"] = event.get("message", {}).get("model")
     return found
 
 

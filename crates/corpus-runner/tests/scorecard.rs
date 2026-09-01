@@ -231,6 +231,50 @@ fn recovery_reads_the_prompt_and_settings_from_the_recorded_command() {
     );
 }
 
+/// Recovery reads the transcript's head, not the session: a committed
+/// transcript is megabytes of what the agent did after it announced itself,
+/// and the runner stops at the same budget. A record that straddles the end
+/// of the budget is still read whole, because half a record announces
+/// nothing.
+#[test]
+fn recovery_reads_the_transcripts_head_rather_than_the_whole_session() {
+    let temp = tempfile::tempdir().unwrap();
+    let run = temp.path().join("headlike-1");
+    std::fs::create_dir_all(&run).unwrap();
+    write_report(
+        temp.path(),
+        "headlike-1",
+        "headlike",
+        json!({"framework_version": "9.0.0"}),
+        json!(null),
+        "claude -p go",
+    );
+    // An init record that alone exceeds the head budget, and a second
+    // announcement far past it that a bounded read must never reach.
+    let init = format!(
+        concat!(
+            r#"{{"type":"system","subtype":"init","model":"claude-opus-5[1m]","#,
+            r#""claude_code_version":"2.1.252","tools":"{}"}}"#
+        ),
+        "x".repeat(300 * 1024)
+    );
+    let beyond =
+        r#"{"type":"system","subtype":"init","model":"never-read","claude_code_version":"0.0.0"}"#;
+    std::fs::write(
+        run.join("t.jsonl"),
+        format!("{init}\n{}\n{beyond}\n", "y".repeat(400 * 1024)),
+    )
+    .unwrap();
+
+    let table = scorecard(&[&format!("t={}", temp.path().display())]);
+    let row = archetype_row(&table, "headlike");
+    assert!(
+        row.contains("claude 2.1.252, claude-opus-5[1m] (recovered)"),
+        "{row}"
+    );
+    assert!(!row.contains("never-read"), "{row}");
+}
+
 /// A run that states no provenance, records no command the script can split,
 /// and has no transcript beside it names no agent — the cell says so instead
 /// of presenting the runner's usual backend as this run's.

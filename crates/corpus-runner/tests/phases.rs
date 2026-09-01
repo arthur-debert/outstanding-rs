@@ -650,6 +650,23 @@ fn committed_historical_reports_still_deserialize() {
     }
 }
 
+/// A provenance block states what it knows. Every field a block omits reads
+/// as unstated rather than refusing the report it belongs to, so one field
+/// missing from otherwise readable evidence costs the run's other facts
+/// nothing.
+#[test]
+fn a_provenance_block_reads_back_without_the_fields_it_does_not_state() {
+    use corpus_runner::report::AgentProvenance;
+
+    let stated_nothing: AgentProvenance = serde_json::from_str("{}").unwrap();
+    assert_eq!(stated_nothing, AgentProvenance::default());
+
+    let backend_only: AgentProvenance = serde_json::from_str(r#"{"backend":"claude"}"#).unwrap();
+    assert_eq!(backend_only.backend.as_deref(), Some("claude"));
+    assert!(backend_only.settings.is_empty(), "{backend_only:?}");
+    assert_eq!(backend_only.prompt, None);
+}
+
 /// A schema-4 report states the agent side; the same typed historical path
 /// reads it back, and an older report simply has none to read.
 #[test]
