@@ -206,7 +206,11 @@ three XML issues #107, #408 and #409 at once. The change is a line in the major'
 CSV accepts one flat record or an array of flat records; any nested value is a
 `RenderError` naming `CsvProjection` as the way to declare columns. The indexed
 `items.0.name` flattening is deleted. This closes #108 by replacing silent flattening
-with a loud error.
+with a loud error. The framework's own documents obey the same rule. The diagnostic
+(D1) carries its own `CsvProjection`: one row whose `range` is the three columns
+`range_filename`, `range_line` and `range_column`, empty when no range is set. The help
+document (D9) has no projection, so `--help --output csv` is this `RenderError`, emitted
+as a diagnostic row of kind `render`.
 
 **D9. Help is a versioned document under json and yaml.** Fields: `schema_version`,
 `name`, `path`, `usage`, `about`, `args` (each with `name`, `short`, `long`,
@@ -255,8 +259,9 @@ todo-example fails on a renamed field.
 `crates/standout-dispatch/src/handler.rs`, `crates/standout-render/src/util.rs`,
 `crates/standout-render/src/projection.rs`, `crates/standout-render/Cargo.toml`,
 `crates/standout/Cargo.toml`, `docs/topics/output-modes.md`. Done when the three
-`-detailed-exitcode` tests in `tflike_diagnostic.rs` pass and a nested value under
-`--output csv` is a render error in the harness.
+`-detailed-exitcode` tests in `tflike_diagnostic.rs` pass, a nested value under
+`--output csv` is a render error in the harness, and a ranged diagnostic under
+`--output csv` is one row with the three range columns.
 
 WS02, WS03 and WS04 start after WS01 merges and can run in parallel.
 

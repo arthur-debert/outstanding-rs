@@ -11,8 +11,9 @@ blind `systemdlike` run lists zero color or pager workarounds in its questionnai
 ## Problem
 
 **Color cannot be chosen separately from format.** `--output` accepts
-`auto|term|text|term-debug|json|yaml|xml|csv`, and `term` versus `text` is the only way
-to say "color" or "no color". There is no `--color` flag and no application variable.
+`auto|term|text|term-debug|json|yaml|xml|csv` today (PAR02 removes `xml` and adds
+`ndjson` before this epic starts), and `term` versus `text` is the only way to say
+"color" or "no color". There is no `--color` flag and no application variable.
 `ColorPolicy { Auto, Always, Never }` exists on `RenderRequest`
 (`crates/standout-render/src/request.rs:66`), but `crates/standout/src/cli/dispatch.rs:94`
 sets it to `Auto` on every production run. Detection is

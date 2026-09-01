@@ -64,7 +64,7 @@ The reserved section holds the framework's own settings:
 
 ```toml
 [term]
-output = "json"        # default output mode when --output is absent
+output = "json"        # default output mode when --output is absent (not for --help or usage errors, D13)
 color = "auto"         # auto | always | never (PAR03 reads it)
 pager = "less -FRX"    # PAR03 reads it; honored from the user layer and env only
 theme = "dark"
@@ -156,7 +156,10 @@ config with every `--config k=v` applied as a `cli_override`, then feeds the res
 `TargetProperties`, then dispatches. Config never changes how argv is parsed. Reason:
 `--config` and `--scope` are argv, so config cannot exist before parsing; any key that
 would need to precede parsing is rejected at `build()` with a `SetupError`. Cost: a
-config-driven default subcommand or alias table is impossible, and stays out of scope.
+config-driven default subcommand or alias table is impossible, and stays out of scope;
+and a pre-parse outcome (`--help`, a usage error) is emitted before config exists, so
+`term.output` never reaches it: those paths take the argv-scanned `--output` (PAR02 D6)
+or the builder's static `output_mode_fallback`.
 
 **D14. One ladder.** Precedence from highest to lowest: flag, then `--config k=v`, then
 `MYAPP__SECTION__KEY` env, then project files nearest-first, then the user file, then

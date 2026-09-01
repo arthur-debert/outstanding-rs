@@ -82,9 +82,9 @@ env = { GCLOUDLIKE_CONFIG_DIR = "conf" }
 [case.expect]
 exit_code = 0
 stderr = "Updated property [core/project].\n"
+files_absent = ["conf/configurations/config_staging"]
 [case.expect.files]
 "conf/configurations/config_default" = "[core]\nproject = alpha\n"
-files_absent = ["conf/configurations/config_staging"]
 
 [[invariants.command]]
 argv = ["build"]
