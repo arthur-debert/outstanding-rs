@@ -222,6 +222,45 @@ fn shutdown_ends_a_request_still_waiting_on_the_upstream() {
     assert_eq!(broker.admitted(), 1);
 }
 
+/// A real session sends bodies far larger than one segment, and the caller's
+/// second segment can arrive after the broker has already read the first. The
+/// broker waits for it: the alternative is a request refused for arriving in
+/// pieces, which is how a long agent session dies mid-run.
+#[test]
+fn a_body_that_arrives_in_two_segments_is_forwarded_whole() {
+    let upstream = Upstream::start();
+    let broker = Broker::start(brokered(&upstream, Duration::from_secs(30))).unwrap();
+    broker.authorize(std::process::id());
+    let authority = broker.base_url().trim_start_matches("http://").to_string();
+
+    let head = r#"{"from":"a test with a body in"#;
+    let tail = r#" two segments"}"#;
+    let mut caller = TcpStream::connect(&authority).unwrap();
+    caller
+        .write_all(
+            format!(
+                "POST /v1/messages HTTP/1.1\r\nHost: broker\r\n\
+                 content-type: application/json\r\nContent-Length: {}\r\n\
+                 Connection: close\r\n\r\n{head}",
+                head.len() + tail.len()
+            )
+            .as_bytes(),
+        )
+        .unwrap();
+    caller.flush().unwrap();
+    // Long enough that the broker has certainly tried to read the rest.
+    std::thread::sleep(Duration::from_millis(250));
+    caller.write_all(tail.as_bytes()).unwrap();
+
+    let mut response = String::new();
+    let _ = caller.read_to_string(&mut response);
+    assert!(response.starts_with("HTTP/1.1 200 OK"), "{response}");
+
+    let forwarded = upstream.seen();
+    assert_eq!(forwarded.len(), 1, "{forwarded:#?}");
+    assert_eq!(forwarded[0].body, format!("{head}{tail}"));
+}
+
 fn ask(mut stream: TcpStream) -> String {
     let body = r#"{"from":"a test"}"#;
     stream

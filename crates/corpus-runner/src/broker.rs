@@ -588,6 +588,12 @@ fn accept_loop(listener: TcpListener, state: Arc<State>) {
     while !state.shutdown.load(Ordering::SeqCst) {
         match listener.accept() {
             Ok((stream, _)) => {
+                // The listener polls, so it is non-blocking — and on macOS an
+                // accepted connection inherits that. Left inherited, every
+                // read that has to wait for the caller's next segment fails
+                // with EWOULDBLOCK instead of waiting, which turns a request
+                // body that arrives in two pieces into a rejected request.
+                let _ = stream.set_nonblocking(false);
                 let state = Arc::clone(&state);
                 serving.push(std::thread::spawn(move || serve(stream, state)));
                 serving.retain(|handle| !handle.is_finished());

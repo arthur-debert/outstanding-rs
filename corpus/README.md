@@ -29,7 +29,17 @@ makes runs reproducible and comparable.
   `runs/<run-id>/` per pilot run (report + sanitized transcript, demo
   rules), and `scorecard.md` — the per-archetype signals, ranked friction
   themes, and validity verdict the blessed-surface (ROB05) ADR round
-  consumes.
+  consumes. `sanitize-run.py` is the sanitizer every committed run goes
+  through, pilot or not.
+- `rerun/` — the same archetypes run again against the 9.0 release
+  (ROB07-WS02), in the same shape: one `runs/<run-id>/` per run and
+  `scorecard.md`, which is scorecard v2 — the re-run beside the pilot, with
+  the agent delta between them stated.
+- `scorecard.py` — computes a scorecard's objective table from committed
+  reports (`scorecard.py pilot=corpus/pilot/runs rerun=corpus/rerun/runs`).
+  Both scorecards' figures come from this one script under one set of
+  counting rules; its own test checks that the pilot's reports still
+  reproduce the pilot scorecard's published numbers.
 
 ## The runner
 
