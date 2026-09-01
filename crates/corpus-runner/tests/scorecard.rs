@@ -112,6 +112,9 @@ fn the_scorecard_splits_a_recorded_command_the_way_the_runner_does() {
         .arg(PROGRAM)
         .args(SPLIT_ALIKE)
         .current_dir(repo())
+        // Importing the script would otherwise leave a `__pycache__` beside
+        // the corpus's committed evidence.
+        .env("PYTHONDONTWRITEBYTECODE", "1")
         .output()
         .unwrap();
     assert!(
