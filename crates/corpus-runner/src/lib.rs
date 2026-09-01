@@ -3,9 +3,11 @@
 
 pub mod acceptance;
 pub mod archetype;
+pub mod broker;
 pub mod cases;
 mod digest;
 pub mod exec;
+pub mod peer;
 pub mod questionnaire;
 pub mod report;
 pub mod sandbox;
@@ -29,6 +31,11 @@ pub struct RunConfig {
     pub runs_dir: PathBuf,
     pub docs_dir: PathBuf,
     pub agent_cmd: String,
+    /// Present when the agent session authenticates through the
+    /// run-credential broker (ADR-0023's amendment). Absent means the run
+    /// grants no credential exception at all, and an agent backend that
+    /// needs one fails closed.
+    pub broker: Option<broker::BrokerConfig>,
     pub framework_version: String,
     pub timeouts: Timeouts,
 }
@@ -107,6 +114,18 @@ pub fn run(config: &RunConfig) -> anyhow::Result<(RunReport, PathBuf)> {
         .map_err(anyhow::Error::msg)
         .context("verifying blind-workspace isolation")?;
 
+    let mut broker = config
+        .broker
+        .as_ref()
+        .map(|broker| broker::Broker::start(broker.clone()))
+        .transpose()?;
+    if let Some(broker) = &broker {
+        eprintln!(
+            "[corpus] run-credential broker listening on {} for the agent phase",
+            broker.base_url()
+        );
+    }
+
     eprintln!(
         "[corpus] running implementation session: {}",
         config.agent_cmd
@@ -116,9 +135,24 @@ pub fn run(config: &RunConfig) -> anyhow::Result<(RunReport, PathBuf)> {
         &workspace.root,
         &workspace.isolation,
         &config.agent_cmd,
+        broker.as_ref(),
         &transcript_path,
         config.timeouts.agent,
     )?;
+    // The exception lasts exactly as long as the agent phase: the build and
+    // check phases that follow never reach a live broker.
+    let credential_exceptions = match &mut broker {
+        Some(broker) => {
+            broker.shutdown();
+            eprintln!(
+                "[corpus] broker admitted {} connection(s), denied {}",
+                broker.admitted(),
+                broker.denied()
+            );
+            broker.credential_exceptions()
+        }
+        None => Vec::new(),
+    };
     eprintln!(
         "[corpus] session finished in {:.0}s (exit {:?})",
         session_report.wall_seconds, session_report.exit_code
@@ -165,13 +199,10 @@ pub fn run(config: &RunConfig) -> anyhow::Result<(RunReport, PathBuf)> {
         },
         blindness: Blindness {
             policy: BLINDNESS_POLICY.to_string(),
-            env_allowlist: workspace::ENV_ALLOWLIST
-                .iter()
-                .map(ToString::to_string)
-                .collect(),
+            env_allowlist: agent_env_allowlist(config.broker.is_some()),
             framework_source_excluded: true,
             isolation: workspace.isolation.agent_capability(),
-            credential_exceptions: Vec::new(),
+            credential_exceptions,
             agent_reported_docs: questionnaire_report.answers.get("sources.docs").cloned(),
             agent_reported_external_sources: questionnaire_report
                 .answers
@@ -188,6 +219,21 @@ pub fn run(config: &RunConfig) -> anyhow::Result<(RunReport, PathBuf)> {
     eprintln!("[corpus] report written to {}", report_path.display());
 
     Ok((report, run_dir))
+}
+
+/// The keys the agent phase's environment actually carries: the blind
+/// baseline, plus the two the broker adds when the session authenticates
+/// through it. Recording the baseline alone would say a brokered run
+/// carried less than it did.
+fn agent_env_allowlist(brokered: bool) -> Vec<String> {
+    let mut keys: Vec<String> = workspace::ENV_ALLOWLIST
+        .iter()
+        .map(ToString::to_string)
+        .collect();
+    if brokered {
+        keys.extend(broker::AGENT_ENV_KEYS.iter().map(ToString::to_string));
+    }
+    keys
 }
 
 const HISTORICAL_BLINDNESS_POLICY: &str =

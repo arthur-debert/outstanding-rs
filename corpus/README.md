@@ -45,6 +45,16 @@ else (the walking-skeleton test uses a scripted agent) and
 `--framework-version` overrides the crates.io pin; see `corpus-runner run
 --help` for the rest.
 
+A session that has to authenticate needs `--broker` (the run-credential
+broker below); it reads the host Claude subscription's credential, so the
+host CLI must be logged in, and the agent command must be spawnable without
+a shell:
+
+```bash
+cargo run -p corpus-runner -- run validity --broker \
+  --runs-dir /tmp/standout-corpus-runs-validity
+```
+
 Run workspaces default to the system temporary directory. `--runs-dir` may
 override it, but the runner refuses a directory beneath the framework
 checkout: a nested workspace would let parent traversal and Git discovery
@@ -96,10 +106,39 @@ Recorded here as a decision and minted as
    unreadable or the run refuses to start. The default Claude session is
    additionally hardened: `--setting-sources ''` keeps host settings and
    plugins from loading and `--strict-mcp-config` keeps MCP
-   servers/connectors from attaching. The runner grants no credential
-   exception: an agent backend that requires a host HOME, environment token,
-   or Keychain item fails closed rather than exposing that credential to
-   agent-invoked build scripts.
+   servers/connectors from attaching. It also gets `CLAUDE_CODE_TMPDIR`
+   pointed at its disposable home, because that backend keeps its shell
+   snapshots and tool sockets under `/tmp` by default: without it the write
+   policy denies that directory and the session loses its shell, writing
+   code it can never build. An agent backend that requires a host
+   HOME, environment token, or Keychain item fails closed rather than
+   exposing that credential to agent-invoked build scripts.
+
+   The one exception, for the agent phase only, is the **run-credential
+   broker** (`--broker`, ADR-0023's ROB07-WS01 amendment): a loopback
+   forward proxy the runner holds on the host side, outside every sandbox,
+   for as long as the agent session runs. It reads the host Claude
+   subscription's OAuth token from the host credential store — the runner
+   is unsandboxed, so the Seatbelt Keychain denial above is untouched — and
+   injects the authorization into each forwarded request. Where that token
+   goes is fixed rather than configured: a credential read from the host
+   store forwards to the Anthropic API and nowhere else, so no flag and no
+   auth-failure retry can aim it at a destination somebody chose; a test
+   double's upstream comes with a credential the test supplied. The agent's
+   environment carries `ANTHROPIC_BASE_URL` and a placeholder token only,
+   so the credential never enters the agent's process tree. Before reading
+   a request byte the broker resolves the connection's owner from the OS
+   socket tables and serves only the agent process itself, holding the
+   connection on a close-on-exec descriptor; a build script's own
+   connection resolves to the build script, and the exec that started it
+   left it no descriptor to reuse. A brokered session is therefore spawned
+   directly rather than through a shell, since the pid the runner spawns
+   has to be the pid that connects. When the agent session ends, the broker
+   closes the connections it is still serving and kills the upstream
+   transports they started, so no request outlives the session holding the
+   credential and an agent that timed out does not leave the runner waiting
+   on an unresponsive API. What the run admitted is written into
+   `blindness.credential_exceptions`.
 3. **Blindness is recorded, not assumed.** The exit questionnaire asks two
    dedicated questions — which provided docs were consulted, and what (if
    anything) beyond them: web search, prior knowledge of standout internals,

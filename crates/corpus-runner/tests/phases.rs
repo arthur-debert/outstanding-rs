@@ -248,6 +248,7 @@ fn sandboxed_children_can_write_dev_null() {
         dir.path(),
         &isolation(dir.path()),
         "echo probe > /dev/null",
+        None,
         &dir.path().join("t.jsonl"),
         NO_TIMEOUT,
     )
@@ -264,6 +265,7 @@ fn session_scrubs_the_environment_and_writes_the_transcript() {
         dir.path(),
         &isolation(dir.path()),
         "env",
+        None,
         &dir.path().join("t.jsonl"),
         NO_TIMEOUT,
     )
@@ -286,6 +288,7 @@ fn overrunning_agent_is_killed_and_recorded_as_timed_out() {
         dir.path(),
         &isolation(dir.path()),
         "sleep 30",
+        None,
         &dir.path().join("t.jsonl"),
         Duration::from_millis(200),
     )
@@ -315,6 +318,7 @@ fn failing_agent_is_recorded_not_fatal() {
         dir.path(),
         &isolation(dir.path()),
         "exit 3",
+        None,
         &dir.path().join("t.jsonl"),
         NO_TIMEOUT,
     )

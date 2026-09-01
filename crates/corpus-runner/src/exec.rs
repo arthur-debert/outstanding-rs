@@ -21,12 +21,26 @@ pub struct Outcome {
 }
 
 pub fn run(command: &mut Command, deadline: Duration, capture: bool) -> Result<Outcome, String> {
+    run_watched(command, deadline, capture, |_| {})
+}
+
+/// `on_spawn` receives the child's pid the moment the child exists and
+/// before any of its output is read. The credential broker needs it that
+/// early: the agent can connect as soon as it runs, and a connection the
+/// broker cannot attribute is denied.
+pub fn run_watched(
+    command: &mut Command,
+    deadline: Duration,
+    capture: bool,
+    on_spawn: impl FnOnce(u32),
+) -> Result<Outcome, String> {
     place_in_own_group(command);
     if capture {
         command.stdout(Stdio::piped()).stderr(Stdio::piped());
     }
 
     let mut child = command.spawn().map_err(|err| format!("spawning: {err}"))?;
+    on_spawn(child.id());
     let stdout_capture = child.stdout.take().map(capped_reader);
     let stderr_capture = child.stderr.take().map(capped_reader);
 

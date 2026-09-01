@@ -1,14 +1,17 @@
 // The implementation session: runs the agent command in the blind workspace,
 // scrubbed, instrumented, and deadlined. The agent is a seam — any shell
 // command works — with a hardened non-interactive Claude Code session as
-// the default.
+// the default. A session brokering a credential gives that seam up: the
+// broker answers one pid, so the runner spawns the agent itself rather than
+// a shell that spawns it.
 
 use std::path::Path;
 use std::process::{Command, Stdio};
 use std::time::{Duration, Instant};
 
-use anyhow::Context;
+use anyhow::{bail, Context};
 
+use crate::broker::Broker;
 use crate::exec;
 use crate::report::SessionReport;
 use crate::workspace;
@@ -29,6 +32,7 @@ pub fn run_agent(
     workspace: &Path,
     isolation: &workspace::Isolation,
     agent_cmd: &str,
+    broker: Option<&Broker>,
     transcript_path: &Path,
     timeout: Duration,
 ) -> anyhow::Result<SessionReport> {
@@ -36,19 +40,41 @@ pub fn run_agent(
         .with_context(|| format!("creating transcript {}", transcript_path.display()))?;
     let stderr_file = transcript_file.try_clone()?;
 
-    let mut command = Command::new("sh");
-    command.arg("-c").arg(agent_cmd).current_dir(workspace);
+    let mut command = match broker {
+        Some(_) => {
+            let argv = direct_argv(agent_cmd)?;
+            let mut command = Command::new(resolve_program(&argv[0])?);
+            command.args(&argv[1..]);
+            command
+        }
+        None => {
+            let mut command = Command::new("sh");
+            command.arg("-c").arg(agent_cmd);
+            command
+        }
+    };
+    command.current_dir(workspace);
     isolation
         .apply_agent(&mut command)
         .map_err(anyhow::Error::msg)?;
+    if let Some(broker) = broker {
+        broker.apply_agent_env(&mut command);
+    }
     command
         .stdin(Stdio::null())
         .stdout(transcript_file)
         .stderr(stderr_file);
 
     let started = Instant::now();
-    let outcome = exec::run(&mut command, timeout, false)
-        .map_err(|err| anyhow::anyhow!("agent command {agent_cmd}: {err}"))?;
+    let outcome = exec::run_watched(&mut command, timeout, false, |pid| {
+        if let Some(broker) = broker {
+            broker.authorize(pid);
+        }
+    })
+    .map_err(|err| anyhow::anyhow!("agent command {agent_cmd}: {err}"))?;
+    if let Some(broker) = broker {
+        broker.revoke();
+    }
     let wall_seconds = started.elapsed().as_secs_f64();
 
     let stats = stream_json_stats(&read_tail(transcript_path, TRANSCRIPT_TAIL_BYTES));
@@ -63,6 +89,139 @@ pub fn run_agent(
         output_tokens: stats.output_tokens,
         transcript: TRANSCRIPT_FILENAME.to_string(),
     })
+}
+
+/// Find the executable an agent command names, so the runner knows exactly
+/// which program it vouched for when it hands the broker a pid. A bare name
+/// is searched for on the runner's own PATH, the way the shell it replaces
+/// would have.
+fn resolve_program(program: &str) -> anyhow::Result<std::path::PathBuf> {
+    let path = std::path::Path::new(program);
+    if path.components().count() > 1 {
+        return Ok(path.to_path_buf());
+    }
+    let search = std::env::var_os("PATH").unwrap_or_default();
+    std::env::split_paths(&search)
+        .map(|dir| dir.join(program))
+        .find(|candidate| is_executable(candidate))
+        .with_context(|| format!("no executable {program:?} on PATH"))
+}
+
+fn is_executable(path: &Path) -> bool {
+    use std::os::unix::fs::PermissionsExt;
+    std::fs::metadata(path)
+        .map(|meta| meta.is_file() && meta.permissions().mode() & 0o111 != 0)
+        .unwrap_or(false)
+}
+
+// Whatever a shell would do with these, the runner cannot: it spawns one
+// program and hands that pid to the broker.
+const SHELL_STRUCTURE: &[char] = &['|', '&', ';', '<', '>', '(', ')', '\n'];
+
+// A shell would expand these against the filesystem. Unquoted, they would
+// reach the agent as literals here and mean something different from the
+// same command run without a broker, so the difference is refused rather
+// than passed through. Quoted or escaped, they are ordinary characters to a
+// shell too, and survive the split untouched.
+const SHELL_GLOB: &[char] = &['*', '?', '[', ']'];
+
+/// Split an agent command into the program and arguments to spawn, honoring
+/// quotes and backslash escapes but performing no expansion. A command that
+/// would need a shell to mean what it says is refused rather than run
+/// unbrokered: the process the runner spawns has to be the process that
+/// connects to the broker.
+pub fn direct_argv(agent_cmd: &str) -> anyhow::Result<Vec<String>> {
+    let mut argv: Vec<String> = Vec::new();
+    let mut word = String::new();
+    let mut started = false;
+    let mut chars = agent_cmd.chars().peekable();
+
+    while let Some(ch) = chars.next() {
+        match ch {
+            _ if SHELL_STRUCTURE.contains(&ch) => bail!(
+                "agent command {agent_cmd:?} needs a shell to interpret {ch:?}, but a \
+                 brokered session must be spawned directly so the broker can attribute \
+                 its connections"
+            ),
+            '$' | '`' => bail!(
+                "agent command {agent_cmd:?} asks for shell expansion ({ch:?}), which a \
+                 brokered session does not perform"
+            ),
+            _ if SHELL_GLOB.contains(&ch) => bail!(
+                "agent command {agent_cmd:?} has an unquoted {ch:?}, which a shell would \
+                 expand against the filesystem and a brokered session would pass through \
+                 literally; quote it to mean it literally"
+            ),
+            '~' if !started => bail!(
+                "agent command {agent_cmd:?} starts a word with an unquoted '~', which a \
+                 shell would expand to a home directory and a brokered session would not; \
+                 write the path out"
+            ),
+            _ if ch.is_whitespace() => {
+                if started {
+                    argv.push(std::mem::take(&mut word));
+                    started = false;
+                }
+            }
+            '\'' => {
+                started = true;
+                loop {
+                    match chars.next() {
+                        Some('\'') => break,
+                        Some(quoted) => word.push(quoted),
+                        None => bail!("agent command {agent_cmd:?} has an unclosed quote"),
+                    }
+                }
+            }
+            '"' => {
+                started = true;
+                loop {
+                    match chars.next() {
+                        Some('"') => break,
+                        // The set a shell unescapes inside double quotes. An
+                        // escaped `$` is a literal `$`, not a backslash and a
+                        // dollar, and refusing it as expansion would refuse
+                        // the one spelling that asks for no expansion.
+                        Some('\\') => match chars.next() {
+                            Some(escaped @ ('"' | '\\' | '$' | '`')) => word.push(escaped),
+                            // A backslash-newline is a line continuation:
+                            // the shell removes both.
+                            Some('\n') => {}
+                            Some(other) => {
+                                word.push('\\');
+                                word.push(other);
+                            }
+                            None => bail!("agent command {agent_cmd:?} has an unclosed quote"),
+                        },
+                        Some(expansion @ ('$' | '`')) => bail!(
+                            "agent command {agent_cmd:?} asks for shell expansion \
+                             ({expansion:?}), which a brokered session does not perform"
+                        ),
+                        Some(quoted) => word.push(quoted),
+                        None => bail!("agent command {agent_cmd:?} has an unclosed quote"),
+                    }
+                }
+            }
+            '\\' => {
+                started = true;
+                match chars.next() {
+                    Some(escaped) => word.push(escaped),
+                    None => bail!("agent command {agent_cmd:?} ends in a dangling escape"),
+                }
+            }
+            _ => {
+                started = true;
+                word.push(ch);
+            }
+        }
+    }
+    if started {
+        argv.push(word);
+    }
+    if argv.is_empty() {
+        bail!("agent command is empty");
+    }
+    Ok(argv)
 }
 
 #[derive(Debug, Default, PartialEq, Eq)]
@@ -118,6 +277,97 @@ mod tests {
 
     const RESULT_LINE: &str =
         r#"{"type":"result","num_turns":7,"usage":{"input_tokens":123,"output_tokens":45}}"#;
+
+    #[test]
+    fn the_default_session_splits_into_one_program_and_its_arguments() {
+        let argv = direct_argv(&default_agent_cmd()).unwrap();
+        assert_eq!(argv[0], "claude");
+        assert!(
+            argv.contains(&"--strict-mcp-config".to_string()),
+            "{argv:?}"
+        );
+        // `--setting-sources ''` is an argument, and it is empty.
+        let sources = argv
+            .iter()
+            .position(|arg| arg == "--setting-sources")
+            .unwrap();
+        assert_eq!(argv[sources + 1], "");
+        let prompt = argv.iter().position(|arg| arg == "-p").unwrap();
+        assert_eq!(
+            argv[prompt + 1],
+            "Read INSTRUCTIONS.md in the current directory and carry it out completely."
+        );
+    }
+
+    #[test]
+    fn a_command_that_needs_a_shell_is_refused_rather_than_run_unattributed() {
+        for unbrokerable in [
+            "claude -p prompt > transcript",
+            "printf x | claude",
+            "claude; rm -rf .",
+            "claude -p \"$PROMPT\"",
+            "claude -p `cat prompt`",
+            "claude -p 'unclosed",
+            "claude --prompt-file prompts/*.md",
+            "claude --prompt-file prompt?.md",
+            "claude --prompt-file prompt[12].md",
+            "claude --prompt-file ~/prompts/one.md",
+            "",
+        ] {
+            assert!(
+                direct_argv(unbrokerable).is_err(),
+                "{unbrokerable:?} should not be spawnable without a shell"
+            );
+        }
+    }
+
+    #[test]
+    fn quoted_expansion_characters_are_ordinary_text() {
+        assert_eq!(
+            direct_argv(r#"claude -p "does it? *everything*" '~/literal' a\*b"#).unwrap(),
+            vec!["claude", "-p", "does it? *everything*", "~/literal", "a*b",]
+        );
+    }
+
+    /// The split has to produce the argv `sh -c` would have produced, or a
+    /// brokered run means something different from an unbrokered one.
+    #[test]
+    fn escapes_inside_double_quotes_unescape_the_way_a_shell_does() {
+        // An escaped `$` or backtick is the literal character, not a
+        // backslash and the character.
+        assert_eq!(
+            direct_argv(r#"claude -p "cost is \$5 or \`half\`""#).unwrap(),
+            vec!["claude", "-p", "cost is $5 or `half`"]
+        );
+        // The rest of the unescaped set, and a backslash before anything
+        // else, which a shell leaves as both characters.
+        assert_eq!(
+            direct_argv(r#"claude -p "say \"hi\" \\ then \n""#).unwrap(),
+            vec!["claude", "-p", r#"say "hi" \ then \n"#]
+        );
+        // A backslash-newline is a line continuation: both go.
+        assert_eq!(
+            direct_argv("claude -p \"one\\\ntwo\"").unwrap(),
+            vec!["claude", "-p", "onetwo"]
+        );
+        // Unescaped, those two still ask for expansion and are refused.
+        assert!(direct_argv(r#"claude -p "cost is $5""#).is_err());
+    }
+
+    #[test]
+    fn quoting_and_escapes_survive_the_split() {
+        assert_eq!(
+            direct_argv(r#"/bin/agent --say "hello  world" --path a\ b '{"k": "v"}'"#).unwrap(),
+            vec![
+                "/bin/agent",
+                "--say",
+                "hello  world",
+                "--path",
+                "a b",
+                r#"{"k": "v"}"#,
+            ]
+        );
+    }
 
     #[test]
     fn transcript_ingestion_is_bounded_to_the_tail() {

@@ -16,6 +16,8 @@ use crate::sandbox::{self, Policy};
 
 const PUBLISHED_DOCS: &[&str] = &["index.md", "intro.md", "guides", "topics", "crates"];
 
+// The keys an untrusted phase's environment carries. CLAUDE_CODE_TMPDIR is
+// set for the agent phase alone (see [`Isolation::apply_agent`]).
 pub const ENV_ALLOWLIST: &[&str] = &[
     "PATH",
     "HOME",
@@ -26,6 +28,7 @@ pub const ENV_ALLOWLIST: &[&str] = &[
     "TMPDIR",
     "CARGO_HOME",
     "RUSTUP_HOME",
+    "CLAUDE_CODE_TMPDIR",
 ];
 
 fn apply_phase_env(command: &mut Command, home: &Path) {
@@ -111,6 +114,13 @@ impl Isolation {
 
     pub fn apply_agent(&self, command: &mut Command) -> Result<(), String> {
         apply_phase_env(command, &self.agent_home);
+        // The default backend keeps a per-uid scratch directory (shell
+        // snapshots, tool sockets) under /tmp rather than under TMPDIR. The
+        // write policy denies it, and a session that cannot create it loses
+        // its shell — it can write code but never build or run it. Point
+        // that scratch into the disposable home: a different backend
+        // invocation, not a wider policy.
+        command.env("CLAUDE_CODE_TMPDIR", self.agent_home.join("tmp"));
         sandbox::apply(
             command,
             &self.policy(&self.workspace_root, &self.agent_home, true),

@@ -3,7 +3,7 @@
 
 use std::path::Path;
 
-use standout_input::questionnaire::{Questionnaire, ScalarField, ScalarKind};
+use standout_input::questionnaire::{Questionnaire, ScalarField, ScalarKind, ValidationDiagnostic};
 
 use crate::report::QuestionnaireReport;
 
@@ -113,13 +113,89 @@ pub fn collect(workspace: &Path) -> QuestionnaireReport {
                 })
                 .collect(),
         },
-        Err(diagnostics) => QuestionnaireReport {
-            collected: false,
-            diagnostics: warnings
-                .into_iter()
-                .chain(diagnostics.iter().map(ToString::to_string))
-                .collect(),
-            answers: Default::default(),
-        },
+        // One field the agent answered in an unexpected shape is a
+        // diagnostic about that field, not a reason to forget the rest: the
+        // two sources answers are how ADR-0023 records blindness, and a run
+        // whose self-report is discarded cannot say how blind it was. The
+        // field that failed is dropped rather than published, so nothing
+        // reading a single answer sees a value the questionnaire rejected,
+        // and the report says `collected: false` either way.
+        Err(diagnostics) => {
+            let rejected: Vec<&str> = diagnostics
+                .iter()
+                .filter_map(|diagnostic| match diagnostic {
+                    ValidationDiagnostic::Field { id, .. } => Some(id.as_str()),
+                    ValidationDiagnostic::Form { .. } => None,
+                })
+                .collect();
+            QuestionnaireReport {
+                collected: false,
+                diagnostics: warnings
+                    .into_iter()
+                    .chain(diagnostics.iter().map(ToString::to_string))
+                    .collect(),
+                answers: FIELD_IDS
+                    .iter()
+                    .filter(|id| !rejected.contains(*id))
+                    .filter_map(|id| {
+                        raw.get(id)
+                            .map(str::trim)
+                            .filter(|text| !text.is_empty())
+                            .map(|text| (id.to_string(), text.to_string()))
+                    })
+                    .collect(),
+            }
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn sheet(confidence: &str) -> String {
+        let mut text = definition().render_answer_sheet();
+        for (id, answer) in [
+            ("summary", "Built the thing."),
+            ("sources.docs", "docs/index.md"),
+            ("sources.external", "none"),
+            ("confidence", confidence),
+        ] {
+            text = text.replace(&format!("<id:{id}>\n"), &format!("<id:{id}>\n{answer}\n"));
+        }
+        text
+    }
+
+    #[test]
+    fn a_field_that_does_not_decode_keeps_the_answers_that_did() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join(SHEET_FILENAME), sheet("high")).unwrap();
+        let collected = collect(dir.path());
+        assert!(collected.collected, "{:?}", collected.diagnostics);
+        assert_eq!(collected.answers.get("sources.external").unwrap(), "none");
+
+        // The same sheet, with reasoning trailing the choice answer.
+        std::fs::write(
+            dir.path().join(SHEET_FILENAME),
+            sheet("high\n\nEvery assertion passes."),
+        )
+        .unwrap();
+        let collected = collect(dir.path());
+        assert!(!collected.collected);
+        assert!(
+            collected
+                .diagnostics
+                .iter()
+                .any(|d| d.contains("confidence")),
+            "{:?}",
+            collected.diagnostics
+        );
+        assert_eq!(
+            collected.answers.get("sources.docs").unwrap(),
+            "docs/index.md"
+        );
+        assert_eq!(collected.answers.get("sources.external").unwrap(), "none");
+        // The value the questionnaire rejected is a diagnostic, not an answer.
+        assert_eq!(collected.answers.get("confidence"), None, "{collected:?}");
     }
 }

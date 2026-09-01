@@ -9,6 +9,10 @@ repository = "https://github.com/arthur-debert/standout"
 # workspace bump so `env!("CARGO_PKG_VERSION")` doubles as the default
 # framework pin for blind workspaces.
 publish = false
+# `src/bin/broker_probe.rs` is the credential broker's test fixture, not a
+# second entry point: name the runner so `cargo run -p corpus-runner` keeps
+# meaning what the docs say it means.
+default-run = "corpus-runner"
 
 [dependencies]
 anyhow = "1"
