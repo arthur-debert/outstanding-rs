@@ -3,7 +3,7 @@
 
 use std::path::Path;
 
-use standout_input::questionnaire::{Questionnaire, ScalarField, ScalarKind};
+use standout_input::questionnaire::{Questionnaire, ScalarField, ScalarKind, ValidationDiagnostic};
 
 use crate::report::QuestionnaireReport;
 
@@ -117,24 +117,35 @@ pub fn collect(workspace: &Path) -> QuestionnaireReport {
         // diagnostic about that field, not a reason to forget the rest: the
         // two sources answers are how ADR-0023 records blindness, and a run
         // whose self-report is discarded cannot say how blind it was. The
-        // report still says `collected: false`, so a reader knows the sheet
-        // did not decode cleanly.
-        Err(diagnostics) => QuestionnaireReport {
-            collected: false,
-            diagnostics: warnings
-                .into_iter()
-                .chain(diagnostics.iter().map(ToString::to_string))
-                .collect(),
-            answers: FIELD_IDS
+        // field that failed is dropped rather than published, so nothing
+        // reading a single answer sees a value the questionnaire rejected,
+        // and the report says `collected: false` either way.
+        Err(diagnostics) => {
+            let rejected: Vec<&str> = diagnostics
                 .iter()
-                .filter_map(|id| {
-                    raw.get(id)
-                        .map(str::trim)
-                        .filter(|text| !text.is_empty())
-                        .map(|text| (id.to_string(), text.to_string()))
+                .filter_map(|diagnostic| match diagnostic {
+                    ValidationDiagnostic::Field { id, .. } => Some(id.as_str()),
+                    ValidationDiagnostic::Form { .. } => None,
                 })
-                .collect(),
-        },
+                .collect();
+            QuestionnaireReport {
+                collected: false,
+                diagnostics: warnings
+                    .into_iter()
+                    .chain(diagnostics.iter().map(ToString::to_string))
+                    .collect(),
+                answers: FIELD_IDS
+                    .iter()
+                    .filter(|id| !rejected.contains(*id))
+                    .filter_map(|id| {
+                        raw.get(id)
+                            .map(str::trim)
+                            .filter(|text| !text.is_empty())
+                            .map(|text| (id.to_string(), text.to_string()))
+                    })
+                    .collect(),
+            }
+        }
     }
 }
 
@@ -184,5 +195,7 @@ mod tests {
             "docs/index.md"
         );
         assert_eq!(collected.answers.get("sources.external").unwrap(), "none");
+        // The value the questionnaire rejected is a diagnostic, not an answer.
+        assert_eq!(collected.answers.get("confidence"), None, "{collected:?}");
     }
 }

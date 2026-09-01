@@ -46,12 +46,11 @@ enum Commands {
         /// broker: the host Claude subscription credential stays on the
         /// host, and the session reaches the API only through a proxy that
         /// answers the agent process alone (ADR-0023's amendment). The
-        /// agent command must then be spawnable without a shell.
+        /// agent command must then be spawnable without a shell. The
+        /// destination is not configurable — a host credential forwards to
+        /// the Anthropic API and nowhere else.
         #[arg(long)]
         broker: bool,
-        /// Where the broker forwards to. Only a test double belongs here.
-        #[arg(long, default_value = corpus_runner::broker::DEFAULT_UPSTREAM)]
-        broker_upstream: String,
         /// Exact crates.io framework version the blind scaffold pins.
         #[arg(long, default_value = env!("CARGO_PKG_VERSION"))]
         framework_version: String,
@@ -108,7 +107,6 @@ fn main() -> ExitCode {
             docs_dir,
             agent_cmd,
             broker,
-            broker_upstream,
             framework_version,
             agent_timeout,
             build_timeout,
@@ -122,9 +120,7 @@ fn main() -> ExitCode {
                             "[corpus] brokering the credential from {}",
                             credential.source()
                         );
-                        let mut config = BrokerConfig::for_host(credential);
-                        config.upstream = broker_upstream;
-                        Some(config)
+                        Some(BrokerConfig::for_host(credential))
                     }
                     Err(err) => {
                         eprintln!("[corpus] runner error: {err:#}");

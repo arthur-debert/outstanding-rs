@@ -118,6 +118,13 @@ fn is_executable(path: &Path) -> bool {
 // program and hands that pid to the broker.
 const SHELL_STRUCTURE: &[char] = &['|', '&', ';', '<', '>', '(', ')', '\n'];
 
+// A shell would expand these against the filesystem. Unquoted, they would
+// reach the agent as literals here and mean something different from the
+// same command run without a broker, so the difference is refused rather
+// than passed through. Quoted or escaped, they are ordinary characters to a
+// shell too, and survive the split untouched.
+const SHELL_GLOB: &[char] = &['*', '?', '[', ']'];
+
 /// Split an agent command into the program and arguments to spawn, honoring
 /// quotes and backslash escapes but performing no expansion. A command that
 /// would need a shell to mean what it says is refused rather than run
@@ -139,6 +146,16 @@ pub fn direct_argv(agent_cmd: &str) -> anyhow::Result<Vec<String>> {
             '$' | '`' => bail!(
                 "agent command {agent_cmd:?} asks for shell expansion ({ch:?}), which a \
                  brokered session does not perform"
+            ),
+            _ if SHELL_GLOB.contains(&ch) => bail!(
+                "agent command {agent_cmd:?} has an unquoted {ch:?}, which a shell would \
+                 expand against the filesystem and a brokered session would pass through \
+                 literally; quote it to mean it literally"
+            ),
+            '~' if !started => bail!(
+                "agent command {agent_cmd:?} starts a word with an unquoted '~', which a \
+                 shell would expand to a home directory and a brokered session would not; \
+                 write the path out"
             ),
             _ if ch.is_whitespace() => {
                 if started {
@@ -284,6 +301,10 @@ mod tests {
             "claude -p \"$PROMPT\"",
             "claude -p `cat prompt`",
             "claude -p 'unclosed",
+            "claude --prompt-file prompts/*.md",
+            "claude --prompt-file prompt?.md",
+            "claude --prompt-file prompt[12].md",
+            "claude --prompt-file ~/prompts/one.md",
             "",
         ] {
             assert!(
@@ -291,6 +312,14 @@ mod tests {
                 "{unbrokerable:?} should not be spawnable without a shell"
             );
         }
+    }
+
+    #[test]
+    fn quoted_expansion_characters_are_ordinary_text() {
+        assert_eq!(
+            direct_argv(r#"claude -p "does it? *everything*" '~/literal' a\*b"#).unwrap(),
+            vec!["claude", "-p", "does it? *everything*", "~/literal", "a*b",]
+        );
     }
 
     #[test]

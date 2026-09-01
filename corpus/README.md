@@ -120,7 +120,11 @@ Recorded here as a decision and minted as
    for as long as the agent session runs. It reads the host Claude
    subscription's OAuth token from the host credential store — the runner
    is unsandboxed, so the Seatbelt Keychain denial above is untouched — and
-   injects the authorization into each forwarded request. The agent's
+   injects the authorization into each forwarded request. Where that token
+   goes is fixed rather than configured: a credential read from the host
+   store forwards to the Anthropic API and nowhere else, so no flag and no
+   auth-failure retry can aim it at a destination somebody chose; a test
+   double's upstream comes with a credential the test supplied. The agent's
    environment carries `ANTHROPIC_BASE_URL` and a placeholder token only,
    so the credential never enters the agent's process tree. Before reading
    a request byte the broker resolves the connection's owner from the OS
@@ -129,7 +133,11 @@ Recorded here as a decision and minted as
    connection resolves to the build script, and the exec that started it
    left it no descriptor to reuse. A brokered session is therefore spawned
    directly rather than through a shell, since the pid the runner spawns
-   has to be the pid that connects. What the run admitted is written into
+   has to be the pid that connects. When the agent session ends, the broker
+   closes the connections it is still serving and kills the upstream
+   transports they started, so no request outlives the session holding the
+   credential and an agent that timed out does not leave the runner waiting
+   on an unresponsive API. What the run admitted is written into
    `blindness.credential_exceptions`.
 3. **Blindness is recorded, not assumed.** The exit questionnaire asks two
    dedicated questions — which provided docs were consulted, and what (if

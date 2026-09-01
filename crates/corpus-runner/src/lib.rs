@@ -199,10 +199,7 @@ pub fn run(config: &RunConfig) -> anyhow::Result<(RunReport, PathBuf)> {
         },
         blindness: Blindness {
             policy: BLINDNESS_POLICY.to_string(),
-            env_allowlist: workspace::ENV_ALLOWLIST
-                .iter()
-                .map(ToString::to_string)
-                .collect(),
+            env_allowlist: agent_env_allowlist(config.broker.is_some()),
             framework_source_excluded: true,
             isolation: workspace.isolation.agent_capability(),
             credential_exceptions,
@@ -222,6 +219,21 @@ pub fn run(config: &RunConfig) -> anyhow::Result<(RunReport, PathBuf)> {
     eprintln!("[corpus] report written to {}", report_path.display());
 
     Ok((report, run_dir))
+}
+
+/// The keys the agent phase's environment actually carries: the blind
+/// baseline, plus the two the broker adds when the session authenticates
+/// through it. Recording the baseline alone would say a brokered run
+/// carried less than it did.
+fn agent_env_allowlist(brokered: bool) -> Vec<String> {
+    let mut keys: Vec<String> = workspace::ENV_ALLOWLIST
+        .iter()
+        .map(ToString::to_string)
+        .collect();
+    if brokered {
+        keys.extend(broker::AGENT_ENV_KEYS.iter().map(ToString::to_string));
+    }
+    keys
 }
 
 const HISTORICAL_BLINDNESS_POLICY: &str =

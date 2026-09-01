@@ -17,7 +17,7 @@ use std::os::fd::FromRawFd;
 use std::path::Path;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use corpus_runner::broker::{Broker, BrokerConfig, Credential, PLACEHOLDER_TOKEN};
 use corpus_runner::{run, RunConfig, Timeouts};
@@ -45,11 +45,7 @@ fn a_build_script_spawned_by_the_agent_cannot_use_the_brokered_credential() {
         runs_dir: scratch.path().join("runs"),
         docs_dir: repo.join("docs"),
         agent_cmd: agent.display().to_string(),
-        broker: Some(BrokerConfig {
-            credential: Credential::new(BROKERED_TOKEN.to_string(), "a test double".to_string()),
-            upstream: upstream.base_url.clone(),
-            request_timeout: Duration::from_secs(30),
-        }),
+        broker: Some(brokered(&upstream, Duration::from_secs(30))),
         framework_version: "8.1.1".to_string(),
         timeouts: Timeouts {
             agent: Duration::from_secs(120),
@@ -116,6 +112,17 @@ fn a_build_script_spawned_by_the_agent_cannot_use_the_brokered_credential() {
     );
 
     // And the run says what it admitted.
+    // Including which environment keys the brokered session actually carried.
+    assert!(
+        report
+            .blindness
+            .env_allowlist
+            .iter()
+            .any(|key| key == "ANTHROPIC_BASE_URL"),
+        "{:?}",
+        report.blindness.env_allowlist
+    );
+
     let admitted = report.blindness.credential_exceptions.join("\n");
     assert!(admitted.contains("host-side loopback broker"), "{admitted}");
     assert!(admitted.contains("a test double"), "{admitted}");
@@ -130,15 +137,21 @@ fn a_build_script_spawned_by_the_agent_cannot_use_the_brokered_credential() {
     );
 }
 
+/// The broker configuration every test here uses: a credential the test made
+/// up, which is the only kind allowed to name an upstream of its own.
+fn brokered(upstream: &Upstream, request_timeout: Duration) -> BrokerConfig {
+    BrokerConfig::for_test_upstream(
+        Credential::new(BROKERED_TOKEN.to_string(), "a test double".to_string()),
+        upstream.base_url.clone(),
+    )
+    .unwrap()
+    .with_request_timeout(request_timeout)
+}
+
 #[test]
 fn an_inheritable_descriptor_is_refused_even_from_the_authorized_process() {
     let upstream = Upstream::start();
-    let broker = Broker::start(BrokerConfig {
-        credential: Credential::new(BROKERED_TOKEN.to_string(), "a test double".to_string()),
-        upstream: upstream.base_url.clone(),
-        request_timeout: Duration::from_secs(30),
-    })
-    .unwrap();
+    let broker = Broker::start(brokered(&upstream, Duration::from_secs(30))).unwrap();
     broker.authorize(std::process::id());
     let authority = broker.base_url().trim_start_matches("http://").to_string();
 
@@ -161,6 +174,52 @@ fn an_inheritable_descriptor_is_refused_even_from_the_authorized_process() {
     assert_eq!(broker.admitted(), 1);
     let denials = broker.denials().join("\n");
     assert!(denials.contains("survives exec"), "{denials}");
+}
+
+#[test]
+fn shutdown_ends_a_request_still_waiting_on_the_upstream() {
+    let upstream = Upstream::hanging();
+    // A request timeout far longer than the test would tolerate: what bounds
+    // the shutdown has to be the shutdown, not the timeout expiring.
+    let mut broker = Broker::start(brokered(&upstream, Duration::from_secs(600))).unwrap();
+    broker.authorize(std::process::id());
+    let authority = broker.base_url().trim_start_matches("http://").to_string();
+
+    let mut caller = TcpStream::connect(&authority).unwrap();
+    let asking = std::thread::spawn(move || {
+        let body = r#"{"from":"a test"}"#;
+        caller
+            .write_all(
+                format!(
+                    "POST /v1/messages HTTP/1.1\r\nHost: broker\r\n\
+                     content-type: application/json\r\nContent-Length: {}\r\n\
+                     Connection: close\r\n\r\n{body}",
+                    body.len()
+                )
+                .as_bytes(),
+            )
+            .unwrap();
+        let mut response = String::new();
+        let _ = caller.read_to_string(&mut response);
+        response
+    });
+
+    // The request is genuinely in flight: it was admitted, forwarded, and
+    // the upstream is sitting on it.
+    upstream.await_request();
+
+    let started = Instant::now();
+    broker.shutdown();
+    let took = started.elapsed();
+    assert!(
+        took < Duration::from_secs(30),
+        "shutdown waited {took:?} on the upstream instead of ending the request"
+    );
+
+    // And the caller is not left holding an open connection either.
+    let response = asking.join().unwrap();
+    assert!(!response.contains("200 OK"), "{response}");
+    assert_eq!(broker.admitted(), 1);
 }
 
 fn ask(mut stream: TcpStream) -> String {
@@ -231,6 +290,16 @@ impl Seen {
 
 impl Upstream {
     fn start() -> Self {
+        Self::bind(true)
+    }
+
+    /// The same double, except it never answers: what a request blocked on an
+    /// unresponsive API looks like from the broker's side.
+    fn hanging() -> Self {
+        Self::bind(false)
+    }
+
+    fn bind(respond: bool) -> Self {
         let listener = TcpListener::bind("127.0.0.1:0").unwrap();
         let base_url = format!("http://127.0.0.1:{}", listener.local_addr().unwrap().port());
         listener.set_nonblocking(true).unwrap();
@@ -244,7 +313,8 @@ impl Upstream {
                 match listener.accept() {
                     Ok((stream, _)) => {
                         let served = Arc::clone(&served);
-                        std::thread::spawn(move || answer(stream, served));
+                        let stopped = Arc::clone(&stopped);
+                        std::thread::spawn(move || answer(stream, served, respond, stopped));
                     }
                     Err(err) if err.kind() == std::io::ErrorKind::WouldBlock => {
                         std::thread::sleep(Duration::from_millis(5))
@@ -263,6 +333,16 @@ impl Upstream {
     fn seen(&self) -> std::sync::MutexGuard<'_, Vec<Seen>> {
         self.seen.lock().unwrap()
     }
+
+    /// Block until the upstream has read a whole request, so a test acts on
+    /// a request that is genuinely in flight rather than on a race.
+    fn await_request(&self) {
+        let deadline = Instant::now() + Duration::from_secs(30);
+        while self.seen().is_empty() {
+            assert!(Instant::now() < deadline, "no request reached the upstream");
+            std::thread::sleep(Duration::from_millis(10));
+        }
+    }
 }
 
 impl Drop for Upstream {
@@ -271,7 +351,12 @@ impl Drop for Upstream {
     }
 }
 
-fn answer(mut stream: TcpStream, seen: Arc<Mutex<Vec<Seen>>>) {
+fn answer(
+    mut stream: TcpStream,
+    seen: Arc<Mutex<Vec<Seen>>>,
+    respond: bool,
+    stopped: Arc<AtomicBool>,
+) {
     let mut raw = Vec::new();
     let mut chunk = [0u8; 4096];
     loop {
@@ -311,6 +396,13 @@ fn answer(mut stream: TcpStream, seen: Arc<Mutex<Vec<Seen>>>) {
         headers,
         body: body.to_string(),
     });
+
+    if !respond {
+        while !stopped.load(Ordering::SeqCst) {
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        return;
+    }
 
     let payload = r#"{"type":"message","content":[{"type":"text","text":"ok"}]}"#;
     let _ = stream.write_all(
