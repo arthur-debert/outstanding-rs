@@ -182,7 +182,7 @@ fn load_all(
     Ok(())
 }
 
-fn registry_error(error: RegistryError) -> RenderError {
+pub(crate) fn registry_error(error: RegistryError) -> RenderError {
     match error {
         RegistryError::NotFound { name } => RenderError::TemplateNotFound(name),
         other => RenderError::OperationError(other.to_string()),
