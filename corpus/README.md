@@ -54,6 +54,23 @@ makes runs reproducible and comparable.
   provenance, so the script recovers it from the run's own two sources — the
   recorded command and the transcript — and marks the cell `(recovered)`.
 
+## Where accepted implementations go
+
+An implementation that passes its acceptance suite is committed to
+[arthur-debert/standout-corpus](https://github.com/arthur-debert/standout-corpus),
+never here (ADR-0036; the roster's structural test forbids implementation files
+under `archetypes/`). That repository holds them frozen, redirects their
+standout dependencies onto a checked-out framework tree, and runs their suites:
+the full roster on a schedule, and a fast subset on every PR here through
+`.github/workflows/corpus.yml`. A red build there is a finding about the
+framework by default — the members do not change.
+
+The suite a member is checked against is the archetype's `acceptance.toml` in
+*this* repository, replayed by `corpus-runner reevaluate` against the binary
+built from the frozen sources. Editing a suite here therefore changes what the
+corpus asserts, which is the intent: the implementation is frozen, the suite is
+not.
+
 ## The runner
 
 The runner is `crates/corpus-runner`. One command runs the full loop:

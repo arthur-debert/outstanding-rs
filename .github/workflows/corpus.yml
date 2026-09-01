@@ -1,0 +1,107 @@
+name: Corpus
+
+# Builds the corpus's fast subset — accepted implementations, frozen — against
+# this PR's tree (ADR-0036). The members do not change, so a red job here says
+# this change broke a produced application.
+#
+# Separate from checks.yml rather than a .shipit.toml lane: a lane runs
+# `pixi run <task>` inside this repository, and this one has to check out
+# another one. That checkout needs no token — arthur-debert/standout-corpus is
+# public — and this workflow is given no secrets, because it builds and runs
+# untrusted produced code (ADR-0023). Every checkout therefore sets
+# `persist-credentials: false`: checkout's default leaves the run's
+# GITHUB_TOKEN in the working copy's git config, where a member's build script
+# or binary could read it back out.
+#
+# The full roster runs on a schedule in the corpus repository itself; this is
+# the subset cheap enough to run per PR.
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  group: corpus-${{ github.event_name }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  subset:
+    runs-on: ubuntu-latest
+    outputs:
+      members: ${{ steps.roster.outputs.members }}
+      # The matrix jobs check the corpus out again; pinning them to the commit
+      # the roster was read from keeps a push to the corpus mid-run from
+      # pairing this roster with different member sources.
+      corpus_sha: ${{ steps.roster.outputs.corpus_sha }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          repository: arthur-debert/standout-corpus
+          path: corpus
+          persist-credentials: false
+      - id: roster
+        working-directory: corpus
+        run: |
+          MEMBERS=$(python3 ci/roster.py --subset)
+          CORPUS_SHA=$(git rev-parse HEAD)
+          {
+            echo "members=$MEMBERS"
+            echo "corpus_sha=$CORPUS_SHA"
+          } >> "$GITHUB_OUTPUT"
+
+  member:
+    needs: subset
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        member: ${{ fromJSON(needs.subset.outputs.members) }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          path: standout
+          persist-credentials: false
+      - uses: actions/checkout@v4
+        with:
+          repository: arthur-debert/standout-corpus
+          ref: ${{ needs.subset.outputs.corpus_sha }}
+          path: corpus
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@stable
+      # No build cache in this job, deliberately. Reevaluation runs the member
+      # binary, so untrusted code holds write access to ~/.cargo and to
+      # standout/target — the two trees a cache action uploads at job end for
+      # the next run to build against. A cold build is the price of a verdict
+      # that depends only on the two checkouts.
+      #
+      # The disposable copy lives outside the framework checkout: the runner
+      # refuses to evaluate a workspace nested under the source tree the
+      # blindness protocol excludes.
+      - name: Build and check ${{ matrix.member }}
+        working-directory: corpus
+        env:
+          MEMBER: ${{ matrix.member }}
+        run: >
+          python3 ci/build_member.py "$MEMBER"
+          --framework "$GITHUB_WORKSPACE/standout"
+          --work "$RUNNER_TEMP/corpus"
+
+  # The merge-blocking verdict under one stable name, the same shape checks.yml
+  # uses: branch protection requires `corpus`, and a matrix job reports as
+  # "Corpus / member (<name>)".
+  corpus:
+    needs: member
+    if: always() && needs.member.result != 'cancelled'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Verdict
+        env:
+          RESULT: ${{ needs.member.result }}
+        run: |
+          echo "corpus subset: $RESULT"
+          test "$RESULT" = "success"
