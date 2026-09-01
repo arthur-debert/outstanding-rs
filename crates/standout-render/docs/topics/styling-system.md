@@ -310,7 +310,7 @@ let app = App::builder()
 
 The `STANDOUT_STRICT_STYLE_TAGS` environment variable (`1`, `true`, `yes`, or `on`) forces strict mode on regardless of the builder setting, and can only turn it on, never off — so a dev shell, CI job, or test run can opt in without a code change.
 
-Strict mode keys on unresolved tags only. A tag that _is_ defined in the theme but whose markup is unbalanced (`[header]text` with no close) is malformed markup, not an unresolved tag, and does not trip the gate.
+Strict mode keys on unresolved tags only. A tag that *is* defined in the theme but whose markup is unbalanced (`[header]text` with no close) is malformed markup, not an unresolved tag, and does not trip the gate.
 
 The error names each unresolved tag but does not distinguish a misspelled tag name from a tag the theme simply does not style: resolution is a single lookup against the active theme's styles, so both are "not in the theme," and separating them would need a registry of valid tag names the framework does not keep.
 
