@@ -72,11 +72,18 @@ exists only if `configurations/config_<name>` does.
 The first source that names a set wins:
 
 1. `--configuration <name>`.
-2. `GCLOUDLIKE_ACTIVE_CONFIG`.
+2. `GCLOUDLIKE_ACTIVE_CONFIG`. Set to the empty string, it is treated as unset,
+   as every other variable here is.
 3. The `active_config` file.
 4. `default`.
 
 Naming a set that does not exist is a domain error, whichever source named it.
+
+The two chains stay separate. `--configuration` and `GCLOUDLIKE_ACTIVE_CONFIG`
+name a set and never supply a property value; a `GCLOUDLIKE_<SECTION>_<NAME>`
+variable supplies a property and never names a set. A flag naming a set does
+not outrank a variable supplying a property, and a variable naming a set does
+not outrank a flag supplying one: each decision is made on its own chain.
 
 ## Commands
 
@@ -92,7 +99,7 @@ gcloudlike config configurations activate <name>
 ```
 
 Global flags — `--configuration`, `--project`, `--account`, `--zone`,
-`--format`, `--quiet` — are accepted after the command path.
+`--format`, `--output`, `--quiet` — are accepted after the command path.
 
 ### `compute instances list`
 
@@ -129,8 +136,9 @@ a domain error.
 ### `config set <section>/<name> <value>`
 
 Stores the value in the **active set**, creating the configuration directory
-and the set file when they do not exist. Prints nothing on stdout; the notice
-goes to stderr:
+and the set file when they do not exist. A value already stored for that
+property is replaced; every other property, section and line of the file
+survives the write. Prints nothing on stdout; the notice goes to stderr:
 
 ```text
 Updated property [core/project].
@@ -170,6 +178,10 @@ Creates an empty set. It does not become active. Stdout stays empty; stderr:
 Created [staging].
 ```
 
+A name that already exists is a domain error and nothing is written: the
+existing set file keeps every byte it had. `default` always exists, so
+creating it is always that error.
+
 ### `config configurations activate <name>`
 
 Writes the name into `active_config`. The set must exist. Stdout stays empty;
@@ -190,6 +202,19 @@ selects a machine projection instead:
 JSON output is the same content whether stdout is a pipe or an attended
 terminal: no styling, no prose, no framing may enter it.
 
+## `--output`
+
+Every command also accepts the standard `--output <text|term|json>`. `text` and
+`term` select the human forms above; `term` may style them, and styling changes
+no layout and no text. `--output json` selects the machine projection — the
+same document `--format json` produces for `instances list` and `instances
+describe`, and for the remaining commands whatever JSON carries the content of
+their text form.
+
+`--format` and `--output` claim the same stdout, and when both name a form the
+app's `--format` decides: `--format json --output text` is the JSON
+projection.
+
 ## `--quiet`
 
 Suppresses the stderr notices of `config set`, `configurations create` and
@@ -204,6 +229,7 @@ gcloudlike: unset property: core/project
 gcloudlike: unknown property: core/nope
 gcloudlike: no such instance: nope
 gcloudlike: unknown configuration: nope
+gcloudlike: configuration already exists: prod
 ```
 
 ## Exit codes
@@ -211,5 +237,5 @@ gcloudlike: unknown configuration: nope
 | code | meaning |
 | --- | --- |
 | 0 | success |
-| 1 | domain error (unset or unknown property, unknown instance, unknown configuration) |
+| 1 | domain error (unset or unknown property, unknown instance, unknown configuration, creating a configuration that exists) |
 | 2 | usage error (unknown command, unknown flag, malformed property key) |

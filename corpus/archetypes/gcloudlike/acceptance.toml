@@ -130,6 +130,40 @@ exit_code = 0
 stdout_json = '{"instances":[{"name":"web-1","zone":"us-a1","machine_type":"small","status":"RUNNING"},{"name":"web-2","zone":"us-b2","machine_type":"small","status":"TERMINATED"}]}'
 stdout_not_contains = ["\u001b["]
 
+[[case]]
+name = "output-mode-json-projects-the-machine-form"
+group = "machine-format"
+stresses = "the framework's own --output json reaches the same projection, so the ROB01 matrix has a contract to check"
+expected = "pass"
+[case.run]
+argv = ["compute", "instances", "list", "--project", "alpha-proj", "--output", "json"]
+timeout_seconds = 10
+[case.expect]
+exit_code = 0
+stdout_json = '{"instances":[{"name":"web-1","zone":"us-a1","machine_type":"small","status":"RUNNING"},{"name":"web-2","zone":"us-b2","machine_type":"small","status":"TERMINATED"}]}'
+
+[[case]]
+name = "app-format-decides-against-the-output-mode"
+group = "machine-format"
+stresses = "when both flags name a form, the app-owned one wins the stdout they both claim"
+expected = "pass"
+[case.run]
+argv = [
+    "compute",
+    "instances",
+    "list",
+    "--project",
+    "alpha-proj",
+    "--format",
+    "json",
+    "--output",
+    "text",
+]
+timeout_seconds = 10
+[case.expect]
+exit_code = 0
+stdout_json = '{"instances":[{"name":"web-1","zone":"us-a1","machine_type":"small","status":"RUNNING"},{"name":"web-2","zone":"us-b2","machine_type":"small","status":"TERMINATED"}]}'
+
 # --- property resolution above the store ------------------------------------
 
 [[case]]
@@ -225,6 +259,30 @@ exit_code = 2
 stdout = ""
 
 [[case]]
+name = "get-value-empty-section-is-usage-error"
+group = "property-resolution"
+stresses = "an empty section is malformed, not an unknown property: exit 2, not exit 1"
+expected = "pass"
+[case.run]
+argv = ["config", "get-value", "/project"]
+timeout_seconds = 10
+[case.expect]
+exit_code = 2
+stdout = ""
+
+[[case]]
+name = "get-value-empty-name-is-usage-error"
+group = "property-resolution"
+stresses = "an empty name is malformed too, so a bare `/` check cannot stand in for key validation"
+expected = "pass"
+[case.run]
+argv = ["config", "get-value", "core/"]
+timeout_seconds = 10
+[case.expect]
+exit_code = 2
+stdout = ""
+
+[[case]]
 name = "set-unknown-property-is-domain-error"
 group = "property-resolution"
 stresses = "the write path validates the key before it touches the store"
@@ -240,7 +298,7 @@ stderr = "gcloudlike: unknown property: core/nope\n"
 
 [[case]]
 name = "unknown-subcommand-is-usage-error"
-group = "property-resolution"
+group = "dispatch"
 stresses = "an unknown leaf under a valid group names the offender at exit 2"
 expected = "pass"
 [case.run]
@@ -284,6 +342,42 @@ timeout_seconds = 10
 [case.expect]
 exit_code = 0
 stdout = "beta-proj\n"
+
+[[case]]
+name = "configuration-flag-does-not-supply-a-property"
+group = "config-layering"
+stresses = "the selector flag names a set and nothing more: it does not outrank a variable supplying a property"
+expected = "pass"
+[case.run]
+argv = ["config", "get-value", "core/project", "--configuration", "prod"]
+env = { GCLOUDLIKE_CONFIG_DIR = "conf", GCLOUDLIKE_CORE_PROJECT = "alpha-proj" }
+timeout_seconds = 10
+[case.run.files]
+"conf/active_config" = "default\n"
+"conf/configurations/config_default" = "[core]\nproject = gamma-proj\n"
+"conf/configurations/config_prod" = "[core]\nproject = beta-proj\n"
+[case.expect]
+exit_code = 0
+stdout = "alpha-proj\n"
+stderr = ""
+
+[[case]]
+name = "active-config-env-does-not-supply-a-property"
+group = "config-layering"
+stresses = "the other cross-chain direction: the selector variable does not outrank a flag supplying a property"
+expected = "pass"
+[case.run]
+argv = ["config", "get-value", "core/project", "--project", "alpha-proj"]
+env = { GCLOUDLIKE_CONFIG_DIR = "conf", GCLOUDLIKE_ACTIVE_CONFIG = "prod" }
+timeout_seconds = 10
+[case.run.files]
+"conf/active_config" = "default\n"
+"conf/configurations/config_default" = "[core]\nproject = gamma-proj\n"
+"conf/configurations/config_prod" = "[core]\nproject = beta-proj\n"
+[case.expect]
+exit_code = 0
+stdout = "alpha-proj\n"
+stderr = ""
 
 # --- named configuration sets (specced past current capability; PAR01) -------
 # Standout has no config-file layering feature today; the spec asks for the
@@ -386,6 +480,46 @@ exit_code = 0
 stdout = "NAME ZONE MACHINE_TYPE STATUS\nweb-1 us-a1 small RUNNING\nweb-2 us-b2 small TERMINATED\n"
 
 [[case]]
+name = "empty-active-config-env-is-unset"
+group = "config-layering"
+stresses = "an empty selector variable is unset like every other variable here, so selection falls through to the persisted name"
+expected = "fail"
+gap = "PAR01"
+reason = "named configuration sets are specced past current framework capability (docs/spec/parity-config-layering.md)"
+[case.run]
+argv = ["config", "get-value", "core/project"]
+env = { GCLOUDLIKE_CONFIG_DIR = "conf", GCLOUDLIKE_ACTIVE_CONFIG = "" }
+timeout_seconds = 10
+[case.run.files]
+"conf/active_config" = "prod\n"
+"conf/configurations/config_default" = "[core]\nproject = alpha-proj\n"
+"conf/configurations/config_prod" = "[core]\nproject = beta-proj\n"
+[case.expect]
+exit_code = 0
+stdout = "beta-proj\n"
+stderr = ""
+
+[[case]]
+name = "both-chains-resolve-in-one-invocation"
+group = "config-layering"
+stresses = "the selector flag picks the set while a property variable supplies a value inside it, and both survive the same invocation"
+expected = "fail"
+gap = "PAR01"
+reason = "named configuration sets are specced past current framework capability (docs/spec/parity-config-layering.md)"
+[case.run]
+argv = ["config", "list", "--configuration", "prod"]
+env = { GCLOUDLIKE_CONFIG_DIR = "conf", GCLOUDLIKE_COMPUTE_ZONE = "us-b2" }
+timeout_seconds = 10
+[case.run.files]
+"conf/active_config" = "default\n"
+"conf/configurations/config_default" = "[core]\nproject = alpha-proj\n"
+"conf/configurations/config_prod" = "[core]\nproject = beta-proj\n"
+[case.expect]
+exit_code = 0
+stdout = "[compute]\nzone = us-b2\n[core]\nproject = beta-proj\n"
+stderr = ""
+
+[[case]]
 name = "named-sets-never-merge"
 group = "config-layering"
 stresses = "a set applies whole: a property the active set omits stays unset, and `default` does not back-fill it"
@@ -462,6 +596,43 @@ exit_code = 1
 stdout = ""
 stderr = "gcloudlike: unknown configuration: nope\n"
 
+[[case]]
+name = "home-config-dir-is-the-fallback"
+group = "config-layering"
+stresses = "with no override variable, the store is discovered under $HOME/.config/gcloudlike"
+expected = "fail"
+gap = "PAR01"
+reason = "named configuration sets are specced past current framework capability (docs/spec/parity-config-layering.md)"
+[case.run]
+argv = ["compute", "instances", "list"]
+timeout_seconds = 10
+[case.run.files]
+".config/gcloudlike/active_config" = "prod\n"
+".config/gcloudlike/configurations/config_default" = "[core]\nproject = alpha-proj\n"
+".config/gcloudlike/configurations/config_prod" = "[core]\nproject = beta-proj\n"
+[case.expect]
+exit_code = 0
+stdout = "NAME ZONE MACHINE_TYPE STATUS\ndb-1 us-a1 large RUNNING\n"
+
+[[case]]
+name = "empty-config-dir-override-falls-back-to-home"
+group = "config-layering"
+stresses = "an empty override is not a configuration directory: discovery falls back rather than reading nothing"
+expected = "fail"
+gap = "PAR01"
+reason = "named configuration sets are specced past current framework capability (docs/spec/parity-config-layering.md)"
+[case.run]
+argv = ["config", "get-value", "core/project"]
+env = { GCLOUDLIKE_CONFIG_DIR = "" }
+timeout_seconds = 10
+[case.run.files]
+".config/gcloudlike/active_config" = "prod\n"
+".config/gcloudlike/configurations/config_prod" = "[core]\nproject = beta-proj\n"
+[case.expect]
+exit_code = 0
+stdout = "beta-proj\n"
+stderr = ""
+
 # --- store mutation: notices are stderr, stdout stays a script's to read -----
 
 [[case]]
@@ -533,6 +704,42 @@ stdout = ""
 stderr = "gcloudlike: unknown configuration: nope\n"
 
 [[case]]
+name = "set-under-unknown-configuration-is-domain-error"
+group = "store-mutation"
+stresses = "the write path resolves the active set against the store before it writes, so a selector naming nothing fails"
+expected = "fail"
+gap = "PAR01"
+reason = "named configuration sets are specced past current framework capability (docs/spec/parity-config-layering.md)"
+[case.run]
+argv = ["config", "set", "core/project", "alpha-proj", "--configuration", "nope"]
+env = { GCLOUDLIKE_CONFIG_DIR = "conf" }
+timeout_seconds = 10
+[case.run.files]
+"conf/configurations/config_default" = "[core]\nproject = alpha-proj\n"
+[case.expect]
+exit_code = 1
+stdout = ""
+stderr = "gcloudlike: unknown configuration: nope\n"
+
+[[case]]
+name = "create-existing-configuration-is-domain-error"
+group = "store-mutation"
+stresses = "creation refuses a name the store already holds, so a populated set is never truncated by a create"
+expected = "fail"
+gap = "PAR01"
+reason = "named configuration sets are specced past current framework capability (docs/spec/parity-config-layering.md)"
+[case.run]
+argv = ["config", "configurations", "create", "prod"]
+env = { GCLOUDLIKE_CONFIG_DIR = "conf" }
+timeout_seconds = 10
+[case.run.files]
+"conf/configurations/config_prod" = "[core]\nproject = beta-proj\n"
+[case.expect]
+exit_code = 1
+stdout = ""
+stderr = "gcloudlike: configuration already exists: prod\n"
+
+[[case]]
 name = "quiet-suppresses-the-activation-notice"
 group = "store-mutation"
 stresses = "--quiet silences the notice channel without touching the exit status"
@@ -549,6 +756,52 @@ timeout_seconds = 10
 exit_code = 0
 stdout = ""
 stderr = ""
+
+[[case]]
+name = "quiet-suppresses-the-set-notice"
+group = "store-mutation"
+stresses = "quiet covers the property write, not activation alone"
+expected = "fail"
+gap = "PAR01"
+reason = "named configuration sets are specced past current framework capability (docs/spec/parity-config-layering.md)"
+[case.run]
+argv = ["config", "set", "core/project", "alpha-proj", "--quiet"]
+env = { GCLOUDLIKE_CONFIG_DIR = "conf" }
+timeout_seconds = 10
+[case.expect]
+exit_code = 0
+stdout = ""
+stderr = ""
+
+[[case]]
+name = "quiet-suppresses-the-create-notice"
+group = "store-mutation"
+stresses = "quiet covers creation too, so the channel is silenced by rule rather than per command"
+expected = "fail"
+gap = "PAR01"
+reason = "named configuration sets are specced past current framework capability (docs/spec/parity-config-layering.md)"
+[case.run]
+argv = ["config", "configurations", "create", "staging", "--quiet"]
+env = { GCLOUDLIKE_CONFIG_DIR = "conf" }
+timeout_seconds = 10
+[case.expect]
+exit_code = 0
+stdout = ""
+stderr = ""
+
+[[case]]
+name = "quiet-never-suppresses-an-error"
+group = "store-mutation"
+stresses = "quiet silences notices only: a failing mutation still reports on stderr and still exits 1"
+expected = "pass"
+[case.run]
+argv = ["config", "set", "core/nope", "x", "--quiet"]
+env = { GCLOUDLIKE_CONFIG_DIR = "conf" }
+timeout_seconds = 10
+[case.expect]
+exit_code = 1
+stdout = ""
+stderr = "gcloudlike: unknown property: core/nope\n"
 
 # --- ROB01 invariant matrix --------------------------------------------------
 # Read-only commands the runner sweeps across output modes (text/term/json),

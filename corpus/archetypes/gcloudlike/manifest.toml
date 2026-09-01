@@ -25,6 +25,7 @@ stresses = [
     "layer precedence (flag > env > active set)",
     "mechanical key-to-env-variable mapping",
     "effective-value resolution feeding a view",
+    "configuration-directory discovery ($GCLOUDLIKE_CONFIG_DIR, else $HOME/.config/gcloudlike)",
 ]
 description = "The other config archetypes merge sources; gcloud's rule is that one named set applies whole and the rest contribute nothing — a property the active set omits stays unset even when `default` stores it. A merge-shaped implementation passes the precedence cases and fails this one, which is why the pair is authored together."
 cases = [
@@ -37,6 +38,8 @@ cases = [
     "get-value-from-flag",
     "empty-env-property-is-unset",
     "config-list-renders-effective-properties",
+    "home-config-dir-is-the-fallback",
+    "empty-config-dir-override-falls-back-to-home",
 ]
 
 [[interactions]]
@@ -47,12 +50,16 @@ stresses = [
     "per-invocation --configuration flag",
     "selector environment variable",
 ]
-description = "Two precedence chains run per invocation and must not be conflated: one picks which set is active (flag > env > file > `default`), the other resolves each property within it. Collapsing them into a single ladder is the shape that reads correctly on the happy path and mis-resolves the moment a flag names a set while an environment variable names a property."
+description = "Two precedence chains run per invocation and must not be conflated: one picks which set is active (flag > env > file > `default`), the other resolves each property within it. Collapsing them into a single ladder is the shape that reads correctly on the happy path and mis-resolves the moment a flag names a set while an environment variable names a property. The four selector-only cases cannot catch that collapse on their own — they never put a value source on the other chain — so each cross-chain direction gets a case of its own, and one case runs both chains at once."
 cases = [
     "active-config-file-selects-the-set",
     "active-config-env-selects-the-set",
     "configuration-flag-selects-the-set",
     "configuration-flag-beats-active-config-env",
+    "empty-active-config-env-is-unset",
+    "configuration-flag-does-not-supply-a-property",
+    "active-config-env-does-not-supply-a-property",
+    "both-chains-resolve-in-one-invocation",
     "configurations-list-marks-the-active-set",
     "unknown-configuration-is-domain-error",
 ]
@@ -64,11 +71,13 @@ stresses = [
     "framework output modes and TTY autodetection",
     "typed serialization",
 ]
-description = "The app carries its own machine-format flag on top of the framework's global output handling, so two things claim the same stdout. The projection must survive an attended terminal unchanged: no styling, framing, or prose may enter it."
+description = "The app carries its own machine-format flag on top of the framework's global output handling, so two things claim the same stdout: `--format json` and `--output json` reach the same projection, and when both name a form the app-owned flag decides. The projection must survive an attended terminal unchanged: no styling, framing, or prose may enter it."
 cases = [
     "instances-list-json-format",
     "instances-describe-json-format",
     "instances-list-json-pure-on-attended-terminal",
+    "output-mode-json-projects-the-machine-form",
+    "app-format-decides-against-the-output-mode",
 ]
 
 [[interactions]]
@@ -78,12 +87,17 @@ stresses = [
     "stderr notice channel",
     "--quiet suppression",
 ]
-description = "Every mutating command reports on stderr and leaves stdout empty, so a script can read the store's effect without filtering prose; --quiet silences that channel without touching the exit status. The suite asserts the streams and the status because one invocation cannot observe its own write — the round-trip is beyond the black-box case schema, and the persistence itself is scored through the read cases."
+description = "Every mutating command reports on stderr and leaves stdout empty, so a script can read the store's effect without filtering prose; --quiet silences that channel for all three of them without touching the exit status, and never silences an error. What these cases do not score is the write itself: a case is one invocation, and the read cases fixture their own store rather than replaying one a mutation produced, so nothing here observes a byte reaching disk — an implementation that prints the notices and writes nothing scores an unexpected pass. What one invocation does reach is the store the write path must consult before writing: a selector naming a set that does not exist, and a create onto a name already held. Observing the resulting files, or ordering several invocations in one sandbox, needs a case-schema change in the runner."
 cases = [
     "set-property-writes-the-active-set",
+    "set-under-unknown-configuration-is-domain-error",
     "create-configuration-reports-on-stderr",
+    "create-existing-configuration-is-domain-error",
     "activate-known-configuration-reports-on-stderr",
     "quiet-suppresses-the-activation-notice",
+    "quiet-suppresses-the-set-notice",
+    "quiet-suppresses-the-create-notice",
+    "quiet-never-suppresses-an-error",
 ]
 
 [[interactions]]
@@ -93,15 +107,19 @@ stresses = [
     "exit-code mapping",
     "stream separation at depth",
 ]
-description = "Three failure kinds share one surface and must stay distinguishable: a malformed key is a usage error at exit 2, an unrecognized-but-well-formed key and an unresolvable property are domain errors at exit 1, and every one of them leaves stdout empty."
+description = "Three failure kinds share one surface and must stay distinguishable: a malformed key is a usage error at exit 2 in each of its three shapes — no slash, empty section, empty name, so a presence-of-slash check does not stand in for validation — while an unrecognized-but-well-formed key and an unresolvable property are domain errors at exit 1, and every one of them leaves stdout empty."
 cases = [
     "get-value-malformed-key-is-usage-error",
+    "get-value-empty-section-is-usage-error",
+    "get-value-empty-name-is-usage-error",
     "get-value-unknown-property-is-domain-error",
     "get-value-unset-property",
     "set-unknown-property-is-domain-error",
     "instances-list-unset-project-is-domain-error",
     "instances-describe-unknown-name",
     "instances-describe-outside-effective-project",
+    "activate-unknown-configuration-is-domain-error",
+    "create-existing-configuration-is-domain-error",
     "unknown-subcommand-is-usage-error",
 ]
 
