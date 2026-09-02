@@ -12,7 +12,7 @@ The `AppBuilder` API for configuring your application. Covers embedding template
 
 ### [Output Modes](output-modes.md)
 
-The `--output` flag and `OutputMode` enum. Covers auto/term/text modes for terminal output, structured modes (JSON, YAML, XML, CSV), file output, and how to access the mode in handlers.
+The `--output` flag and `OutputMode` enum. Covers auto/term/text modes for terminal output, structured modes (JSON, YAML, CSV, NDJSON), file output, and why the mode stays out of handlers.
 
 ### [Topics System](topics-system.md)
 

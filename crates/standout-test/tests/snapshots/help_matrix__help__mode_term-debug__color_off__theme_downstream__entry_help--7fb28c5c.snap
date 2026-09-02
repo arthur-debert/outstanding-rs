@@ -2,39 +2,39 @@
 source: crates/standout-test/tests/help_matrix.rs
 expression: result.stdout_plain()
 ---
-Diff a git range.
+[about]Diff a git range.
 
-Names a change the way a human would.
+Names a change the way a human would.[/about]
 
-USAGE
-  lookma [OPTIONS] [RANGE]
-       lookma [OPTIONS] [RANGE] <COMMAND>
+[header]USAGE[/header]
+  [usage]lookma [OPTIONS] [RANGE]
+       lookma [OPTIONS] [RANGE] <COMMAND>[/usage]
 
-COMMANDS
-  review        Review a range hunk by hunk
-  stat          Summarize a range by file
-  export        Write the review to a file
-  help          Print this message or the help of the given subcommand(s)
+[header]COMMANDS[/header]
+  [item]review[/item]        [desc]Review a range hunk by hunk[/desc]
+  [item]stat[/item]          [desc]Summarize a range by file[/desc]
+  [item]export[/item]        [desc]Write the review to a file[/desc]
+  [item]help[/item]          [desc]Print this message or the help of the given subcommand(s)[/desc]
 
-ARGUMENTS
-  RANGE         Git range to diff, e.g. main..HEAD
+[header]ARGUMENTS[/header]
+  [metavar]RANGE[/metavar]         [desc]Git range to diff, e.g. main..HEAD[/desc]
 
-OPTIONS
-  --staged                   Diff the staged changes
-  -v                         Raise the detail level
-  --threshold <RATIO>        Move/rename similarity threshold
-  -c, --color <BOOL>         Enable ANSI color
-                             possible values: true, false
-  -p, --pattern <pattern>    Only diff paths matching this glob
-  --summary <STYLE>          How much of each change to describe
-                             default: brief
-                             possible values: brief, full, none
-  --output <MODE>            Output format
-                             default: auto
-                             possible values: auto, term, text, term-debug, json, yaml, xml, csv
-  --output-file-path <PATH>  Write output to file instead of stdout
-  -h, --help                 Print help (see more with '--help')
+[header]OPTIONS[/header]
+  [item]--staged[/item]                   [desc]Diff the staged changes[/desc]
+  [item]-v[/item]                         [desc]Raise the detail level[/desc]
+  [item]--threshold[/item] [metavar]<RATIO>[/metavar]        [desc]Move/rename similarity threshold[/desc]
+  [item]-c, --color[/item] [metavar]<BOOL>[/metavar]         [desc]Enable ANSI color[/desc]
+                             [values]possible values: true, false[/values]
+  [item]-p, --pattern[/item] [metavar]<pattern>[/metavar]    [desc]Only diff paths matching this glob[/desc]
+  [item]--summary[/item] [metavar]<STYLE>[/metavar]          [desc]How much of each change to describe[/desc]
+                             [default]default: brief[/default]
+                             [values]possible values: brief, full, none[/values]
+  [item]--output[/item] [metavar]<MODE>[/metavar]            [desc]Output format[/desc]
+                             [default]default: auto[/default]
+                             [values]possible values: auto, term, text, term-debug, json, yaml, csv, ndjson[/values]
+  [item]--output-file-path[/item] [metavar]<PATH>[/metavar]  [desc]Write output to file instead of stdout[/desc]
+  [item]-h, --help[/item]                 [desc]Print help (see more with '--help')[/desc]
 
-LEARN MORE
-  naming        Naming
-  ranges        Ranges
+[header]LEARN MORE[/header]
+  [item]naming[/item]        [desc]Naming[/desc]
+  [item]ranges[/item]        [desc]Ranges[/desc]

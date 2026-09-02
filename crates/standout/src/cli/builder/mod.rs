@@ -34,11 +34,14 @@ use std::rc::Rc;
 use super::default_command::ParseFailure;
 use super::dispatch::DispatchFn;
 use super::group::CommandRecipe;
-use super::handler::{CommandContext, Extensions, HandlerResult, Output as HandlerOutput};
+use super::handler::{
+    CommandContext, EntryStream, Extensions, HandlerResult, Output as HandlerOutput, StreamSink,
+};
 use super::help::data::{extract_help_data, extract_help_data_with_topics};
 use super::help::{
-    default_help_theme, human_help_format, named_or_inline_template, render_via_request,
-    CommandGroup, HelpConfig, HelpLength, DEFAULT_HELP_TEMPLATE,
+    default_help_theme, help_is_a_document, human_help_format, named_or_inline_template,
+    render_help_document, render_via_request, CommandGroup, HelpConfig, HelpLength,
+    DEFAULT_HELP_TEMPLATE,
 };
 use super::hooks::{ArtifactOutput, HookError, HookPhase, Hooks, RenderedOutput, TextOutput};
 use super::questionnaire::QuestionnaireCommand;
@@ -321,15 +324,10 @@ pub(crate) enum HookRegistrationSource {
     CommandConfig,
 }
 
-/// Environment variable that forces [`AppBuilder::strict_style_tags`] on,
-/// letting a dev shell, CI job, or test run opt into the hard failure without a
-/// code change. Read once at [`AppBuilder::build`]; a truthy value wins over the
-/// builder setting, and it can only turn strict mode on, never off.
+/// Read once at [`AppBuilder::build`]; a truthy value turns strict mode on and never off.
 pub const STRICT_STYLE_TAGS_ENV: &str = "STANDOUT_STRICT_STYLE_TAGS";
 
-/// Whether the environment value enables strict mode. `1`, `true`, `yes`, and
-/// `on` (any case) enable it; anything else — including an unset variable — does
-/// not. Kept pure so the parsing is testable without touching process state.
+/// `1`, `true`, `yes` and `on` (any case) enable; anything else, including unset, does not.
 fn strict_style_tags_from_env(value: Option<std::ffi::OsString>) -> bool {
     let Some(value) = value else {
         return false;
@@ -881,7 +879,7 @@ impl App {
         target: Option<crate::TargetProperties>,
         warnings: Option<standout_render::warnings::WarningBuffer>,
     ) -> HelpDisplay {
-        let format = human_help_format(self.extract_output_mode(matches));
+        let format = self.extract_output_mode(matches);
         let target = self.help_target_properties(target);
         let config = HelpConfig {
             command_groups: self.help_command_groups.clone(),
@@ -919,6 +917,9 @@ impl App {
         warnings: Option<standout_render::warnings::WarningBuffer>,
         use_pager: bool,
     ) -> HelpDisplay {
+        if help_is_a_document(format) {
+            return self.help_document(cmd, &[], config.length, format);
+        }
         let template = match self.help_template(
             config.template.as_deref(),
             crate::assets::HELP_TEMPLATE_NAME,
@@ -929,16 +930,36 @@ impl App {
         };
         let data = extract_help_data_with_topics(
             cmd,
+            &[],
             &self.registry,
             config.command_groups.as_deref(),
             config.length,
             &target,
-        );
+        )
+        .expect("the root is always at the empty path");
         self.help_display(
             cmd,
-            self.render_help_surface(&data, template, format, target, warnings),
+            self.render_help_surface(&data, template, human_help_format(format), target, warnings),
             use_pager,
         )
+    }
+
+    /// Never paged; `csv` has no help projection and is a render error.
+    fn help_document(
+        &self,
+        cmd: &Command,
+        path: &[&str],
+        length: HelpLength,
+        format: OutputMode,
+    ) -> HelpDisplay {
+        match render_help_document(cmd, path, length, format) {
+            Ok(Some(text)) => HelpDisplay::Rendered { text, paged: false },
+            Ok(None) => HelpDisplay::Clap(cmd.clone().error(
+                clap::error::ErrorKind::InvalidSubcommand,
+                format!("The subcommand '{}' wasn't recognized", path.join(" ")),
+            )),
+            Err(e) => Self::render_failure(cmd, e),
+        }
     }
 
     fn render_help_for_display_help_error(
@@ -949,9 +970,7 @@ impl App {
         warnings: Option<standout_render::warnings::WarningBuffer>,
     ) -> HelpDisplay {
         let request = Self::help_request(cmd, args);
-        // A typed `--output` does not reach the help flags; the app's own
-        // fallback does.
-        let format = human_help_format(self.output_mode_fallback);
+        let format = self.extract_output_mode_from_unparsed(args);
         let target = self.help_target_properties(target);
         let config = HelpConfig {
             command_groups: self.help_command_groups.clone(),
@@ -1031,6 +1050,7 @@ impl App {
         warnings: Option<standout_render::warnings::WarningBuffer>,
     ) -> HelpDisplay {
         let sub_name = keywords[0];
+        let page_format = human_help_format(format);
 
         if sub_name == "topics" {
             let template = match self.help_template(
@@ -1045,30 +1065,33 @@ impl App {
                 topics_list_data(&self.registry, &format!("{} help", cmd.get_name()), &target);
             return self.help_display(
                 cmd,
-                self.render_help_surface(&data, template, format, target, warnings),
+                self.render_help_surface(&data, template, page_format, target, warnings),
                 use_pager,
             );
         }
 
-        if super::app::find_subcommand(cmd, sub_name).is_some() {
-            if let Some(help_cmd) = super::app::find_subcommand_recursive(cmd, keywords) {
-                let template = match self.help_template(
-                    config.template.as_deref(),
-                    crate::assets::HELP_TEMPLATE_NAME,
-                    DEFAULT_HELP_TEMPLATE,
-                ) {
-                    Ok(template) => template,
-                    Err(e) => return Self::render_failure(cmd, e),
-                };
-                let data = extract_help_data(
-                    help_cmd,
-                    config.command_groups.as_deref(),
-                    config.length,
-                    &target,
-                );
+        if super::app::find_subcommand_recursive(cmd, keywords).is_some() {
+            if help_is_a_document(format) {
+                return self.help_document(cmd, keywords, config.length, format);
+            }
+            let template = match self.help_template(
+                config.template.as_deref(),
+                crate::assets::HELP_TEMPLATE_NAME,
+                DEFAULT_HELP_TEMPLATE,
+            ) {
+                Ok(template) => template,
+                Err(e) => return Self::render_failure(cmd, e),
+            };
+            if let Some(data) = extract_help_data(
+                cmd,
+                keywords,
+                config.command_groups.as_deref(),
+                config.length,
+                &target,
+            ) {
                 return self.help_display(
                     cmd,
-                    self.render_help_surface(&data, template, format, target, warnings),
+                    self.render_help_surface(&data, template, page_format, target, warnings),
                     use_pager,
                 );
             }
@@ -1085,7 +1108,13 @@ impl App {
             };
             return self.help_display(
                 cmd,
-                self.render_help_surface(&topic_data(topic), template, format, target, warnings),
+                self.render_help_surface(
+                    &topic_data(topic),
+                    template,
+                    page_format,
+                    target,
+                    warnings,
+                ),
                 use_pager,
             );
         }
@@ -1136,8 +1165,7 @@ impl App {
             return self.output_mode_fallback;
         }
         match matches.try_get_one::<String>("_output_mode") {
-            // The flag carries the fallback as clap's default, so a
-            // `DefaultValue` source means the user never typed `--output`.
+            // A `DefaultValue` source means the user never typed `--output`.
             Ok(Some(value))
                 if matches.value_source("_output_mode") != Some(ValueSource::DefaultValue) =>
             {
@@ -1159,21 +1187,30 @@ impl App {
             .unwrap_or(self.output_mode_fallback)
     }
 
+    /// One handler, hooks and render included; `sink` takes `ctx.stream()` entries under `ndjson`.
     pub fn run_command<F, T>(
         &self,
         path: &str,
         matches: &ArgMatches,
         handler: F,
         template: crate::TemplateRef,
+        sink: StreamSink,
     ) -> Result<RenderedOutput, HookError>
     where
         F: FnOnce(&ArgMatches, &CommandContext) -> HandlerResult<T>,
         T: Serialize,
     {
+        let output_mode = self.extract_output_mode(matches);
+        let stream = if output_mode.is_stream() {
+            EntryStream::writing_to(sink)
+        } else {
+            EntryStream::discarding()
+        };
         let mut ctx = CommandContext::new(
             path.split('.').map(String::from).collect(),
             self.app_state.clone(),
-        );
+        )
+        .with_stream(stream);
         let warnings = WarningBuffer::new();
         self.seed_startup_warnings(&warnings);
         ctx.extensions.insert(InputSources::from_process());
@@ -1185,10 +1222,18 @@ impl App {
             hooks.run_pre_dispatch(matches, &mut ctx)?;
         }
 
-        let result = handler(matches, &ctx);
+        let (output, status) = match handler(matches, &ctx) {
+            Ok(output) => output.split_exit_status(),
+            Err(e) => return Err(HookError::post_output("Handler error").with_source(e)),
+        };
+        let reject_status_without_a_carrier = |is_binary: bool, is_artifact: bool| {
+            super::dispatch::reject_status_without_a_carrier(status, is_binary, is_artifact)
+                .map_err(|e| HookError::post_output("Render error").with_source(e))
+        };
+        reject_status_without_a_carrier(output.is_binary(), output.is_artifact())?;
 
-        let output = match result {
-            Ok(HandlerOutput::Render(data)) => {
+        let output = match output {
+            HandlerOutput::Render(data) => {
                 let mut json_data = serde_json::to_value(&data)
                     .map_err(|e| HookError::post_dispatch("Serialization error").with_source(e))?;
 
@@ -1202,7 +1247,7 @@ impl App {
                     data: json_data,
                     template: template.clone(),
                     theme: self.theme.clone(),
-                    format: self.extract_output_mode(matches),
+                    format: output_mode,
                     color_policy: ColorPolicy::Auto,
                     target,
                     engine: self.template_engine.clone(),
@@ -1219,12 +1264,9 @@ impl App {
                     Err(e) => return Err(HookError::post_output("Render error").with_source(e)),
                 }
             }
-            Err(e) => {
-                return Err(HookError::post_output("Handler error").with_source(e));
-            }
-            Ok(HandlerOutput::Silent) => RenderedOutput::Silent,
-            Ok(HandlerOutput::Binary { data, filename }) => RenderedOutput::Binary(data, filename),
-            Ok(HandlerOutput::Artifact(artifact)) => {
+            HandlerOutput::Silent => RenderedOutput::Silent,
+            HandlerOutput::Binary { data, filename } => RenderedOutput::Binary(data, filename),
+            HandlerOutput::Artifact(artifact) => {
                 let (bytes, suggested_destination, stdout_allowed, report) = artifact.into_parts();
                 let report = match report {
                     Some(report) => {
@@ -1245,18 +1287,25 @@ impl App {
                     report,
                 })
             }
-            Ok(_) => {
+            _ => {
                 return Err(HookError::post_output(
                     "Unsupported handler output variant: this standout version cannot present it",
                 ));
             }
         };
 
-        if let Some(hooks) = hooks {
-            hooks.run_post_output(matches, &ctx, output)
-        } else {
-            Ok(output)
-        }
+        let output = match hooks {
+            Some(hooks) => hooks.run_post_output(matches, &ctx, output)?,
+            None => output,
+        };
+        reject_status_without_a_carrier(output.is_binary(), output.is_artifact())?;
+        super::dispatch::reject_payload_under_stream(
+            output_mode,
+            output.is_binary(),
+            output.is_artifact(),
+        )
+        .map_err(|e| HookError::post_output("Render error").with_source(e))?;
+        Ok(output)
     }
 
     pub fn verify_command(&self, cmd: &Command) -> Result<(), SetupError> {
@@ -1311,8 +1360,8 @@ pub(crate) const OUTPUT_MODE_FLAG_VALUES: [&str; 8] = [
     "term-debug",
     "json",
     "yaml",
-    "xml",
     "csv",
+    "ndjson",
 ];
 
 fn parse_output_mode_flag(value: &str) -> Option<OutputMode> {
@@ -1323,8 +1372,8 @@ fn parse_output_mode_flag(value: &str) -> Option<OutputMode> {
         "term-debug" => Some(OutputMode::TermDebug),
         "json" => Some(OutputMode::Json),
         "yaml" => Some(OutputMode::Yaml),
-        "xml" => Some(OutputMode::Xml),
         "csv" => Some(OutputMode::Csv),
+        "ndjson" => Some(OutputMode::Ndjson),
         _ => None,
     }
 }

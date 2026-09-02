@@ -1,26 +1,25 @@
 # Corpus gap-spec acceptance suites (expected-fail)
 
-Executable definitions-of-done for the parity epics, authored before those epics start.
+Executable definitions-of-done for the parity epics.
 The two gap archetypes (`corpus/archetypes/tflike/`, `corpus/archetypes/jjlike/`)
 describe capability standout does not have; their acceptance suites here are red on
 arrival, deliberately.
 
 The archetypes also sit in the roster proper: each carries the roster's three files
 (`spec.md`, `manifest.toml`, `acceptance.toml`, all `expected = "fail"` cases — see
-`corpus/README.md`) for the WS01 runner. The suites *here* are the byte-precise form
+`corpus/README.md`) for the runner. The suites *here* are the byte-precise form
 of the same criteria — per-line NDJSON parseability, exact byte offsets, state-file
-rewrites — and the form that runs today under plain `pixi run test`.
+rewrites — and the form that runs under plain `pixi run test`.
 
 **Gating note.** These suites gate the parity epics and must be green before those
-epics close:
+epics close; `gaps.toml` records each gate's owning epic and status:
 
-- `tests/tflike_diagnostic.rs` — gates **PAR02** (machine contract,
-  `docs/spec/parity-machine-contract.md`). PAR02 is done when this group turns green.
-- `tests/tflike_progress.rs` — gates **PAR03** (terminal citizenship,
-  `docs/spec/parity-terminal-citizenship.md`). PAR03 is done when this group turns green.
-- `tests/jjlike.rs` — gates the future runtime-templates parity epic, whose code is not
-  yet minted (codes are human-assigned; see the ownership note in
-  `corpus/archetypes/jjlike/spec.md`).
+- `tests/tflike_diagnostic.rs` — machine contract,
+  `docs/spec/implemented/parity-machine-contract.md`.
+- `tests/tflike_progress.rs` — terminal citizenship,
+  `docs/spec/parity-terminal-citizenship.md`.
+- `tests/jjlike.rs` — runtime templates, whose epic code is human-assigned and not
+  yet minted (see the ownership note in `corpus/archetypes/jjlike/spec.md`).
 
 ## Expected-fail semantics
 
@@ -29,8 +28,7 @@ Each assertion runs through `corpus_gap_suites::expect_gap`, which distinguishes
 
 - **No binary produced yet** (the archetype's `CORPUS_*_BIN` env var is unset, or points
   at nothing): the assertion reports **expected-fail** with its gate and reason, and the
-  test passes. This is today's steady state — `pixi run test` runs the suites green,
-  as expected-fail, not as errors.
+  test passes — `pixi run test` runs the suites green, as expected-fail, not as errors.
 - **Binary present, assertion fails**: still **expected-fail** — the gap is open.
 - **Binary present, assertion passes**: the test **fails loudly** ("unexpected pass") so
   a closed gap is promoted — remove the `expect_gap` wrapper and the assertion becomes a
@@ -70,5 +68,21 @@ erode unnoticed.
 CORPUS_TFLIKE_BIN=/path/to/tflike CORPUS_JJLIKE_BIN=/path/to/jjlike cargo nextest run -p corpus-gap-suites
 ```
 
-Every assertion is black-box — argv in, stdout/stderr/exit status out — so the idiom
-changes of ROB05 (blessed surface) cannot invalidate it.
+Every assertion is black-box — argv in, stdout/stderr/exit status out — so an idiom
+change cannot invalidate it.
+
+## The in-repo tflike fixture
+
+`src/bin/tflike.rs` is the tflike binary the suites run against under plain
+`pixi run test`: the workspace's `.cargo/config.toml` sets `CORPUS_TFLIKE_BIN` to
+the fixture cargo builds beside the suites (`target/debug/tflike`), and a value
+already in the environment wins, so pointing the variable at another produced
+binary still works. Under a custom `CARGO_TARGET_DIR` export the variable yourself.
+The harness library links nothing; the fixture is the one target in this package
+built on standout.
+
+The fixture carries only the capability the closed gates cover, so the assertions
+still wrapped keep failing against it: `apply` emits no lifecycle events and reports
+its steps as stderr prose in every mode. A promoted assertion resolves the binary with
+`corpus_gap_suites::required_binary`, which panics — a broken suite — rather than
+skipping when the variable names nothing.

@@ -237,9 +237,7 @@ impl Parse for VariantAttrs {
 }
 
 impl VariantAttrs {
-    /// A variant may carry more than one `#[dispatch(...)]`; every one of them
-    /// speaks for the same variant, so their values fold into one set before
-    /// anything reads or validates them.
+    /// Several `#[dispatch(...)]` on one variant fold into one set before validation.
     fn merge(&mut self, other: VariantAttrs) {
         let VariantAttrs {
             name,
@@ -288,9 +286,8 @@ impl VariantAttrs {
         self.pure |= pure;
     }
 
-    /// The pairs that cannot both hold, checked once the variant's attributes
-    /// are merged: spreading them over two `#[dispatch(...)]` attributes is the
-    /// same request as writing them in one.
+    /// Runs after `merge`, so a conflicting pair split across two attributes is
+    /// still rejected.
     fn validate(&self, span: proc_macro2::Span) -> Result<()> {
         if self.pure && self.handler.is_some() {
             return Err(Error::new(
@@ -323,11 +320,8 @@ impl VariantAttrs {
     }
 }
 
-/// Clap's own conversions, so a variant registers under the name clap's derive
-/// gives its subcommand: `heck` on the unraw'd identifier, exactly as
-/// `clap_derive` does. Approximating the split diverges on digit/acronym runs
-/// (`X2FA` is `x2fa` to clap, `x2-fa` to a hand-rolled splitter) and on raw
-/// identifiers.
+/// `heck` on the unraw'd identifier, exactly as `clap_derive` does; a
+/// hand-rolled splitter diverges on digit/acronym runs (`X2FA`) and raw identifiers.
 fn to_snake_case(ident: &Ident) -> String {
     ident.unraw().to_string().to_snake_case()
 }
@@ -531,30 +525,20 @@ pub fn dispatch_derive_impl(input: DeriveInput) -> Result<TokenStream> {
                             quote! {
                                 |matches, _ctx| {
                                     let result = #handler_path(matches);
-                                    result.map(|output| {
-                                        match output {
-                                            ::standout::cli::handler::Output::Render(mut lv) => {
-                                                 lv.tabular_spec = Some(<#item_type_path as ::standout::tabular::Tabular>::tabular_spec());
-                                                 ::standout::cli::handler::Output::Render(lv)
-                                            }
-                                            o => o
-                                        }
-                                    })
+                                    result.map(|output| output.map_render(|mut lv| {
+                                        lv.tabular_spec = Some(<#item_type_path as ::standout::tabular::Tabular>::tabular_spec());
+                                        lv
+                                    }))
                                 }
                             }
                         } else {
                             quote! {
                                 |matches, ctx| {
                                     let result = #handler_path(matches, ctx);
-                                    result.map(|output| {
-                                        match output {
-                                            ::standout::cli::handler::Output::Render(mut lv) => {
-                                                 lv.tabular_spec = Some(<#item_type_path as ::standout::tabular::Tabular>::tabular_spec());
-                                                 ::standout::cli::handler::Output::Render(lv)
-                                            }
-                                            o => o
-                                        }
-                                    })
+                                    result.map(|output| output.map_render(|mut lv| {
+                                        lv.tabular_spec = Some(<#item_type_path as ::standout::tabular::Tabular>::tabular_spec());
+                                        lv
+                                    }))
                                 }
                             }
                         }
@@ -679,9 +663,8 @@ mod tests {
         assert_eq!(to_snake_case(&ident("Delete")), "delete");
     }
 
-    /// The right-hand sides are what clap's own derive registers; the
-    /// `crates/standout/tests/dispatch_derive.rs` parity test reads them back
-    /// off a `Command` built by `#[derive(Subcommand)]`.
+    /// Right-hand sides are what clap's derive registers;
+    /// `crates/standout/tests/dispatch_derive.rs` checks that parity.
     #[test]
     fn test_to_kebab_case_matches_clap_derive() {
         assert_eq!(to_kebab_case(&ident("Add")), "add");

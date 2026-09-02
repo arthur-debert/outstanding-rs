@@ -78,10 +78,7 @@ pub mod handlers {
         Ok(())
     }
 
-    /// A handler and a parameter whose names are Rust keywords: both reach the
-    /// macros as `r#move` and `r#type`, and the items they generate
-    /// (`move__handler`, the `type` argument id) drop the `r#` the way clap's
-    /// own derive does.
+    /// `r#move` and `r#type` reach the macros raw; the generated names drop the `r#` as clap does.
     #[handler]
     pub fn r#move(#[flag] r#type: bool) -> Result<Output<Units>, anyhow::Error> {
         Ok(Output::Render(Units {

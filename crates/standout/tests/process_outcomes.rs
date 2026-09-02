@@ -92,6 +92,33 @@ fn real_process_routes_artifact_bytes_and_reports_to_separate_channels() {
         format!("wrote 3 entries to {}\n", override_path.display())
     );
 
+    let untouched = tempdir.path().join("untouched.bin");
+    let stream_path = tempdir.path().join("stream.ndjson");
+    let stream_run = run_with_artifact_path(
+        &binary,
+        &[
+            "--output",
+            "ndjson",
+            "--output-file-path",
+            stream_path.to_str().unwrap(),
+            "artifact",
+        ],
+        &untouched,
+    );
+    assert_eq!(stream_run.status.code(), Some(1));
+    assert!(stream_run.stdout.is_empty());
+    assert!(stream_run.stderr.is_empty());
+    assert!(!untouched.exists());
+    let stream = std::fs::read_to_string(&stream_path).unwrap();
+    let diagnostic: serde_json::Value = serde_json::from_str(stream.trim_end()).unwrap();
+    assert_eq!(diagnostic["kind"], "render");
+
+    let binary_stream = run(&binary, &["--output", "ndjson", "binary"]);
+    assert_eq!(binary_stream.status.code(), Some(1));
+    assert!(binary_stream.stderr.is_empty());
+    let diagnostic: serde_json::Value = serde_json::from_slice(&binary_stream.stdout).unwrap();
+    assert_eq!(diagnostic["kind"], "render");
+
     let stdout_run = run_with_artifact_path(&binary, &["artifact-stdout"], &to_file);
     assert_eq!(stdout_run.status.code(), Some(0));
     assert_eq!(stdout_run.stdout, [0, 1, 2]);
@@ -144,6 +171,19 @@ fn real_process_status_and_stream_matrix() {
     assert_eq!(handler.status.code(), Some(1));
     assert!(handler.stdout.is_empty());
     assert!(String::from_utf8_lossy(&handler.stderr).contains("fixture handler failed"));
+
+    let signal = run(&binary, &["signal"]);
+    assert_eq!(signal.status.code(), Some(2));
+    assert_eq!(signal.stdout, b"changes\n");
+    assert!(signal.stderr.is_empty());
+
+    let signal_json = run(&binary, &["signal", "--output", "json"]);
+    assert_eq!(signal_json.status.code(), Some(2));
+    assert_eq!(
+        serde_json::from_slice::<serde_json::Value>(&signal_json.stdout).unwrap(),
+        serde_json::json!({ "message": "changes" })
+    );
+    assert!(signal_json.stderr.is_empty());
 
     let external = run(&binary, &["external"]);
     assert_eq!(external.status.code(), Some(128));
@@ -203,6 +243,109 @@ fn real_process_status_and_stream_matrix() {
 }
 
 #[test]
+fn real_process_structured_failures_are_stdout_documents() {
+    use standout::cli::{parse_diagnostic, DiagnosticKind, HookPhase, RunErrorKind};
+    use standout::OutputMode;
+
+    let binary = fixture_binary();
+    let cases: [(&[&str], RunErrorKind, i32, &str); 6] = [
+        (
+            &["--output", "json", "--unknown"],
+            RunErrorKind::ClapUsage,
+            2,
+            "unexpected argument '--unknown' found",
+        ),
+        (
+            &["--unknown", "--output", "json"],
+            RunErrorKind::ClapUsage,
+            2,
+            "unexpected argument '--unknown' found",
+        ),
+        (
+            &["fail", "--output", "json"],
+            RunErrorKind::Handler,
+            1,
+            "fixture handler failed",
+        ),
+        (
+            &["hook-fail", "--output", "json"],
+            RunErrorKind::Hook(HookPhase::PreDispatch),
+            1,
+            "fixture hook failed",
+        ),
+        (
+            &["render-fail", "--output", "json"],
+            RunErrorKind::Render,
+            1,
+            "key must be a string",
+        ),
+        (
+            &["ranged", "--output", "json"],
+            RunErrorKind::Handler,
+            1,
+            "config line 2 does not parse",
+        ),
+    ];
+    for (args, kind, code, summary) in cases {
+        let output = run(&binary, args);
+        assert_eq!(output.status.code(), Some(code), "{args:?}");
+        assert!(output.stderr.is_empty(), "{args:?}: {:?}", output.stderr);
+        let stdout = String::from_utf8(output.stdout).unwrap();
+        let diagnostic = parse_diagnostic(OutputMode::Json, &stdout)
+            .unwrap_or_else(|e| panic!("{args:?}: {e}:\n{stdout}"));
+        assert_eq!(diagnostic.kind, DiagnosticKind::from(kind), "{args:?}");
+        assert!(diagnostic.summary.contains(summary), "{args:?}: {stdout}");
+    }
+
+    let ranged = run(&binary, &["ranged", "--output", "yaml"]);
+    let ranged =
+        parse_diagnostic(OutputMode::Yaml, &String::from_utf8(ranged.stdout).unwrap()).unwrap();
+    assert_eq!(ranged.detail, "expected `resource <name> <state>`");
+    assert_eq!(ranged.range.unwrap().start.line, 2);
+
+    let csv = run(&binary, &["fail", "--output", "csv"]);
+    assert_eq!(csv.status.code(), Some(1));
+    assert!(csv.stderr.is_empty());
+    assert_eq!(
+        String::from_utf8(csv.stdout).unwrap(),
+        "type,schema_version,severity,kind,summary,detail,range_filename,range_line,range_column\n\
+         diagnostic,1,error,handler,fixture handler failed,,,,\n"
+    );
+
+    let warning_failure = run(&binary, &["warn-fail", "--output", "json"]);
+    assert_eq!(warning_failure.status.code(), Some(1));
+    let stdout = String::from_utf8(warning_failure.stdout).unwrap();
+    assert!(
+        parse_diagnostic(OutputMode::Json, &stdout).is_ok(),
+        "{stdout}"
+    );
+    let stderr = String::from_utf8_lossy(&warning_failure.stderr);
+    assert!(stderr.contains("fixture warning"), "{stderr}");
+    assert!(!stderr.contains("fixture handler failed"), "{stderr}");
+
+    let external = run(&binary, &["external", "--output", "json"]);
+    assert_eq!(external.status.code(), Some(128));
+    assert_eq!(external.stderr, b"fatal: external fixture failed");
+    let external = parse_diagnostic(
+        OutputMode::Json,
+        &String::from_utf8(external.stdout).unwrap(),
+    )
+    .unwrap();
+    assert_eq!(external.kind, DiagnosticKind::External);
+    assert_eq!(external.detail, "fatal: external fixture failed");
+
+    let malformed = run(&binary, &["--unknown", "--output", "jsn"]);
+    assert_eq!(malformed.status.code(), Some(2));
+    assert!(malformed.stdout.is_empty());
+    assert!(String::from_utf8_lossy(&malformed.stderr).starts_with("error:"));
+
+    let help = run(&binary, &["--help", "--output", "term-debug"]);
+    assert_eq!(help.status.code(), Some(0));
+    assert!(String::from_utf8_lossy(&help.stdout).contains("[header]USAGE[/header]"));
+    assert!(help.stderr.is_empty());
+}
+
+#[test]
 fn real_process_accepts_broken_text_stdout_but_reports_binary_stdout() {
     let binary = fixture_binary();
     let mut text_child = Command::new(&binary)
@@ -238,8 +381,7 @@ struct EmittedRun {
     status: u8,
 }
 
-/// Runs the fixture through `run_emitted`; the fixture writes the outcome it
-/// was handed to a file after emission and exits with the reported status.
+/// The fixture writes the outcome it was handed to a file and exits with the reported status.
 fn run_emitted(
     binary: &PathBuf,
     args: &[&str],

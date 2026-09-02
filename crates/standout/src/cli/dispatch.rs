@@ -5,7 +5,9 @@ use std::rc::Rc;
 
 use crate::cli::builder::{SharedTemplateEngine, TemplateAbsence, TemplateRef};
 use crate::cli::handler::Output as HandlerOutput;
-use crate::cli::handler::{AppFailure, CommandContext, ExternalFailure, RunError, RunErrorKind};
+use crate::cli::handler::{
+    AppFailure, CommandContext, Diagnostic, ExitStatus, ExternalFailure, RunError, RunErrorKind,
+};
 use crate::cli::hooks::{ArtifactOutput, HookError, Hooks};
 use crate::context::ContextRegistry;
 use crate::Theme;
@@ -19,13 +21,75 @@ pub enum DispatchOutput {
     Text {
         formatted: String,
         raw: String,
+        status: ExitStatus,
     },
     Binary(Vec<u8>, String),
     Artifact {
         output: ArtifactOutput,
         request: Box<RenderRequest>,
     },
-    Silent,
+    Silent {
+        status: ExitStatus,
+    },
+}
+
+/// A binary or artifact outcome has nowhere to carry a status, so it is a render error.
+pub(crate) fn status_without_a_carrier(status: ExitStatus, output: &str) -> RunError {
+    RunError::new(
+        format!(
+            "exit status {} was declared on {output} output; a declared status rides on \
+             Output::Render and Output::Silent only",
+            status.code()
+        ),
+        RunErrorKind::Render,
+    )
+}
+
+pub(crate) fn reject_status_without_a_carrier(
+    status: Option<ExitStatus>,
+    is_binary: bool,
+    is_artifact: bool,
+) -> Result<(), RunError> {
+    let Some(status) = status else {
+        return Ok(());
+    };
+    let carrier = if is_binary {
+        "binary"
+    } else if is_artifact {
+        "artifact"
+    } else {
+        return Ok(());
+    };
+    Err(status_without_a_carrier(status, carrier))
+}
+
+/// An `ndjson` stream has no room for a payload, so it is a render error.
+pub(crate) fn payload_without_a_stream(output: &str) -> RunError {
+    RunError::new(
+        format!(
+            "{output} output was produced under ndjson; a stream carries Output::Render and \
+             Output::Silent only"
+        ),
+        RunErrorKind::Render,
+    )
+}
+
+pub(crate) fn reject_payload_under_stream(
+    output_mode: crate::OutputMode,
+    is_binary: bool,
+    is_artifact: bool,
+) -> Result<(), RunError> {
+    if !output_mode.is_stream() {
+        return Ok(());
+    }
+    let payload = if is_binary {
+        "binary"
+    } else if is_artifact {
+        "artifact"
+    } else {
+        return Ok(());
+    };
+    Err(payload_without_a_stream(payload))
 }
 
 fn render_time_template(
@@ -160,10 +224,12 @@ pub(crate) fn render_handler_output<T: Serialize>(
     structured_output_projection: Option<&StructuredOutputProjection>,
     target: TargetProperties,
 ) -> Result<DispatchOutput, RunError> {
-    let output = match result {
-        Ok(output) => output,
+    let (output, status) = match result {
+        Ok(output) => output.split_exit_status(),
         Err(error) => return Err(handler_run_error(error)),
     };
+    reject_status_without_a_carrier(status, output.is_binary(), output.is_artifact())?;
+    let status = status.unwrap_or(ExitStatus::SUCCESS);
 
     let command_path = ctx.command_path.join(".");
     let warnings = ctx
@@ -192,9 +258,13 @@ pub(crate) fn render_handler_output<T: Serialize>(
             let json_data = run_post_dispatch_hooks(json_data, matches, ctx, hooks)?;
             let request = request_for(json_data)?;
             let (formatted, raw) = render_via_request(&request)?;
-            Ok(DispatchOutput::Text { formatted, raw })
+            Ok(DispatchOutput::Text {
+                formatted,
+                raw,
+                status,
+            })
         }
-        HandlerOutput::Silent => Ok(DispatchOutput::Silent),
+        HandlerOutput::Silent => Ok(DispatchOutput::Silent { status }),
         HandlerOutput::Binary { data, filename } => Ok(DispatchOutput::Binary(data, filename)),
         HandlerOutput::Artifact(artifact) => {
             let (bytes, suggested_destination, stdout_allowed, report) = artifact.into_parts();
@@ -262,7 +332,17 @@ pub(crate) fn handler_run_error(error: anyhow::Error) -> RunError {
         Err(error) => error,
     };
 
+    let error = match error.downcast::<Diagnostic>() {
+        Ok(diagnostic) => {
+            return RunError::new(frame_diagnostic(&diagnostic), RunErrorKind::Handler)
+                .with_diagnostic(diagnostic.clone())
+                .with_source(diagnostic)
+        }
+        Err(error) => error,
+    };
+
     RunError::new(frame_diagnostic(&error), RunErrorKind::Handler)
+        .with_diagnostic(Diagnostic::error(error.to_string()))
         .with_source(HandlerErrorSource(error.into_boxed_dyn_error()))
 }
 
@@ -281,7 +361,15 @@ pub(crate) fn hook_run_error(mut error: HookError, phase: crate::cli::HookPhase)
     }
 
     error.phase = phase;
-    RunError::new(frame_diagnostic(&error), RunErrorKind::Hook(phase)).with_source(error)
+    let diagnostic = error
+        .source
+        .as_ref()
+        .and_then(|source| source.downcast_ref::<Diagnostic>())
+        .cloned()
+        .unwrap_or_else(|| Diagnostic::error(error.message.clone()));
+    RunError::new(frame_diagnostic(&error), RunErrorKind::Hook(phase))
+        .with_diagnostic(diagnostic)
+        .with_source(error)
 }
 
 pub type DispatchFn = Rc<

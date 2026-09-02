@@ -16,7 +16,6 @@ fn output_mode_strategy() -> impl Strategy<Value = OutputMode> {
         Just(OutputMode::TermDebug),
         Just(OutputMode::Json),
         Just(OutputMode::Yaml),
-        Just(OutputMode::Xml),
         Just(OutputMode::Csv),
     ]
 }
@@ -138,19 +137,7 @@ fn validate_structured_output(output: &str, mode: OutputMode) {
                 output
             );
         }
-        OutputMode::Xml => {
-            assert!(!output.is_empty(), "XML output should not be empty");
-            let mut reader = quick_xml::Reader::from_str(output);
-            loop {
-                match reader.read_event() {
-                    Ok(quick_xml::events::Event::Eof) => break,
-                    Ok(_) => {}
-                    Err(err) => panic!("XML output should parse: {err}\n{output}"),
-                }
-            }
-        }
         OutputMode::Csv => {
-            assert!(!output.is_empty(), "CSV output should not be empty");
             let mut reader = csv::ReaderBuilder::new()
                 .has_headers(false)
                 .flexible(false)

@@ -1,36 +1,21 @@
-//! `jjlike` acceptance suite — runtime-template hardening, one milestone group.
-//!
-//! **Owning epic: not yet minted.** No parity Spec covers user-supplied runtime
-//! templates today (the existing three are PAR01 config layering, PAR02 machine
-//! contract, PAR03 terminal citizenship); epic codes are human-assigned, so this suite
-//! names its owner in prose — the future runtime-templates parity epic — instead of
-//! inventing a code. See `corpus/archetypes/jjlike/spec.md` and
-//! `corpus/gap-suites/README.md`.
-//!
-//! Behavior under test: the typed-function surface (`upper`, `lower`) rendering per
-//! record, and templates as *untrusted input* — an unknown filter or tag must produce a
-//! diagnostic naming the function/tag and byte offset rather than a panic, and a
-//! template exceeding the render budget must terminate promptly rather than hang.
-//! Every assertion is black-box against the binary named by `CORPUS_JJLIKE_BIN` and
-//! runs with expected-fail semantics (`corpus_gap_suites::expect_gap`).
+//! `jjlike` acceptance suite: runtime-template hardening, black-box against the
+//! binary named by `CORPUS_JJLIKE_BIN`. Behavior under test is
+//! `corpus/archetypes/jjlike/spec.md`; the gate and its owner are recorded in
+//! `gaps.toml`.
 
 use std::path::Path;
 use std::time::Duration;
 
 use corpus_gap_suites::{expect_gap, reject_panic, run, Output};
 
-/// Milestone group and owning epic, printed with every outcome.
 const GATE: &str = "jjlike/runtime-templates -> owning parity epic not yet minted";
-/// Env var locating the produced archetype binary.
 const BIN: &str = "CORPUS_JJLIKE_BIN";
 
-/// Two-record NDJSON data fixture the templates render over.
 const DATA: &str = concat!(
     "{\"id\":\"a1\",\"author\":\"amy\",\"message\":\"first\"}\n",
     "{\"id\":\"b2\",\"author\":\"bob\",\"message\":\"second\"}\n",
 );
 
-/// Runs `jjlike log` over `data` with `template` and `extra_args`.
 fn render_over(
     binary: &Path,
     data: &str,
@@ -45,13 +30,10 @@ fn render_over(
     run(binary, &args, dir.path())
 }
 
-/// Runs `jjlike log` over the standard data fixture with `template` and `extra_args`.
 fn render(binary: &Path, template: &str, extra_args: &[&str]) -> Result<Output, String> {
     render_over(binary, DATA, template, extra_args)
 }
 
-/// Reports a mismatch when a success case leaks anything onto stderr — the spec's only
-/// stderr traffic is diagnostics, and success cases have none.
 fn require_clean_stderr(out: &Output) -> Result<(), String> {
     reject_panic(&out.stderr)?;
     if !out.stderr.is_empty() {
@@ -63,12 +45,7 @@ fn require_clean_stderr(out: &Output) -> Result<(), String> {
     Ok(())
 }
 
-/// Extracts the single JSON diagnostic the spec requires on stderr.
-///
-/// Strict per the spec's stderr contract ("diagnostics are single-line JSON objects on
-/// stderr"): *every* stderr line must parse as a JSON object — prose wrapped around a
-/// valid diagnostic is a mismatch, not noise to skip — there must be exactly one line,
-/// and it must carry `"severity":"error"`.
+/// Every stderr line must be a JSON object, there must be exactly one, and it must be an error.
 fn single_diagnostic(out: &Output) -> Result<serde_json::Value, String> {
     reject_panic(&out.stderr)?;
     let mut diagnostics = Vec::new();
@@ -210,9 +187,7 @@ fn expected_fail_unknown_filter_offset_counts_bytes_not_chars() {
         BIN,
         "unknown template functions panic or pass silently",
         |binary| {
-            // `→` is one char but three UTF-8 bytes, so byte and char indexing become
-            // observably different: `frobnicate` sits at char 14 but byte 16, and the
-            // contract fixes `offset` as a byte offset.
+            // `→` is one char but three bytes: `frobnicate` sits at char 14 but byte 16.
             let out = render(binary, "→{{ message | frobnicate }}", &[])?;
             if out.code != Some(1) {
                 return Err(format!(
@@ -281,8 +256,6 @@ fn expected_fail_unknown_tag_degrades_to_inner_text_when_configured() {
                 "{% frob %}X{% endfrob %}",
                 &["--unknown-tags", "inner"],
             )?;
-            // "exit 0, no diagnostic": the configured degrade is a success case, so
-            // stderr carries nothing at all.
             require_clean_stderr(&out)?;
             if out.code != Some(0) {
                 return Err(format!(
@@ -308,18 +281,13 @@ fn expected_fail_render_budget_exceeded_fails_promptly_instead_of_hanging() {
         BIN,
         "rendering has no budget and can hang",
         |binary| {
-            // A hang is caught by the harness spawn timeout, and a binary that ignores
-            // the budget while spraying output is caught by the harness output cap —
-            // both reported as mismatches.
             let out = render(
                 binary,
                 "{% for i in range(1000000000) %}{{ i }}{% endfor %}",
                 &["--render-budget-ms", "500"],
             )?;
-            // "Promptly after the budget elapses": 5s gives the 500ms budget generous,
-            // non-flaky slack for process startup and CI jitter while staying far below
-            // the 30s harness timeout — a renderer that only dies near the timeout
-            // (or ignores the budget entirely) cannot pass.
+            // 5s: slack over the 500ms budget for startup and CI jitter, far below the
+            // harness timeout.
             if out.duration > Duration::from_secs(5) {
                 return Err(format!(
                     "a 500ms budget must terminate rendering promptly, took {:?}",

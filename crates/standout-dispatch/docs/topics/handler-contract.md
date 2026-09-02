@@ -29,14 +29,8 @@ The macro leaves `list` alone and adds three items beside it:
 | `list_Handler` | a unit struct implementing [`Handler`](#the-handler-trait) — **the registrable item** |
 
 The `Result<T, E>` to `Output::Render` wrap happens inside `list_Handler`'s
-`Handler::handle`, which calls `IntoHandlerResult::into_handler_result` on
-whatever `list__handler` returned. It is not applied by `list__handler` itself.
-Only registration of `list_Handler` runs that wrap. `#[derive(Dispatch)]` does
-not reach the trait object at all: it registers the closure
-`handlers::list__handler` through `GroupBuilder::command_with`, so nothing
-calls `Handler::handle` and the annotated return type has to be a
-`HandlerResult` shape already. That is the difference the next two tables
-spell out.
+`Handler::handle` (through `IntoHandlerResult`), never in `list__handler`
+itself. That is the difference the next two tables spell out.
 
 The un-suffixed `handlers::list` is not registrable — it has the wrong
 signature by design, so that a test can call it directly. Which of the other
@@ -288,9 +282,9 @@ fn list_handler(matches: &ArgMatches, ctx: &CommandContext) -> HandlerResult<Ite
 
 ### Owner-declared failures
 
-Two concrete types carry a nonzero status and a stderr payload the framework
-writes verbatim, through the same `HandlerResult` seam. Which one to return
-depends on who reached the verdict:
+`AppFailure` and `ExternalFailure` carry a nonzero status and a stderr payload
+the framework writes verbatim, through the same `HandlerResult` seam
+([Error Handling](../../../topics/error-handling.md#an-application-owned-status-and-diagnostic)):
 
 ```rust,ignore
 // The application's own specification pins the status and the line.
@@ -300,11 +294,9 @@ Err(AppFailure::new(1, "ghlike: repository not found: demo/gamma\n")?.into())
 Err(ExternalFailure::new(128, git_stderr)?.into())
 ```
 
-Both reject status `0` at construction. Standout recognizes only these two
-concrete types, preserves each diagnostic verbatim, and exposes them as
-`RunErrorKind::App` and `RunErrorKind::External`. Ordinary handler errors still
-use status `1`; this is not a general exit-code mapping mechanism. Handlers must
-not print or call `process::exit` themselves.
+A *successful* run declares a status through the output, not through an error:
+`Output::Render(data).with_exit_status(ExitStatus::from(2))`
+([Execution Outcomes](../../../topics/execution-outcomes.md#status-and-streams)).
 
 ---
 
@@ -319,11 +311,17 @@ pub enum Output<T: Serialize> {
     Silent,
     Binary { data: Vec<u8>, filename: String },
     Artifact(Artifact<T>),
+    WithStatus { output: Box<Output<T>>, status: ExitStatus },
 }
 ```
 
 `Output` is `#[non_exhaustive]`: matches on it need a `_` arm so later shapes
-can be added without breaking downstream code.
+can be added without breaking downstream code. `WithStatus` is built by
+`with_exit_status` and wraps a `Render` or `Silent` output together with the
+exit status the handler chose; `split_exit_status()` takes it apart,
+`exit_status()` reads it (`SUCCESS` when none was declared), `map_render(f)`
+reaches the rendered value through it, and the `is_*` predicates answer for the
+wrapped output. Declaring a status on `Binary` or `Artifact` is a render error.
 
 ### Output::Render(T)
 
@@ -512,6 +510,7 @@ pub struct CommandContext {
     pub command_path: Vec<String>,
     pub app_state: Rc<Extensions>,
     pub extensions: Extensions,
+    pub stream: EntryStream,
 }
 ```
 
@@ -520,6 +519,8 @@ pub struct CommandContext {
 **app_state**: Shared, immutable state configured at app build time via `AppBuilder::app_state()`. Held in an `Rc<Extensions>` for cheap cloning; the dispatch pipeline is single-threaded, so app state is not `Send`/`Sync`. Use for database connections, configuration, API clients.
 
 **extensions**: Per-request, mutable state injected by pre-dispatch hooks. Use for user sessions, request IDs, computed values.
+
+**stream** (`ctx.stream()`): The run's entry stream. `emit(&value)` writes the value as one JSON line when the consuming framework resolved a stream output mode and does nothing otherwise; `is_live()` says which. The dispatch layer never writes to it itself.
 
 > For comprehensive coverage of state management, see [App State and Extensions](app-state.md).
 
@@ -730,7 +731,7 @@ fn test_handler_with_app_state() {
     let ctx = CommandContext {
         command_path: vec!["list".into()],
         app_state: Rc::new(app_state),
-        extensions: Extensions::new(),
+        ..Default::default()
     };
 
     let cmd = Command::new("test");

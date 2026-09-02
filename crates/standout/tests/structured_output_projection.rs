@@ -81,16 +81,7 @@ fn command_with_output() -> Command {
             .long("output")
             .value_name("MODE")
             .global(true)
-            .value_parser([
-                "auto",
-                "term",
-                "text",
-                "term-debug",
-                "json",
-                "yaml",
-                "xml",
-                "csv",
-            ])
+            .value_parser(["auto", "term", "text", "term-debug", "json", "yaml", "csv"])
             .default_value("auto"),
     )
 }
@@ -137,6 +128,7 @@ fn run_command_and_dispatch_agree_on_csv_projection() {
             standout::TemplateRef::Inline(
                 ("{{ totals.files }} files / {{ totals.code }} lines").to_string(),
             ),
+            standout::cli::StreamSink::new(Vec::new()),
         )
         .expect("run_command should render csv");
 
@@ -158,24 +150,16 @@ fn csv_projection_preserves_canonical_output_in_other_modes() {
     let json: Value = serde_json::from_str(&direct_dispatch(&app, OutputMode::Json)).unwrap();
     assert_eq!(json, response());
 
-    // response() declares report, totals, skipped in that order — alphabetical
-    // would be report, skipped, totals — so this also proves preserve_order
-    // survives the App-dispatch path, not just direct serde_json::Value use.
+    // The declared order is not alphabetical, so a sort would show.
     let yaml = direct_dispatch(&app, OutputMode::Yaml);
     assert!(yaml.contains("report:"));
     assert!(yaml.contains("paths:"));
     assert!(yaml.find("report:") < yaml.find("totals:"));
     assert!(yaml.find("totals:") < yaml.find("skipped:"));
-
-    let xml = direct_dispatch(&app, OutputMode::Xml);
-    assert!(xml.contains("<report>"));
-    assert!(xml.contains("<skipped>"));
-    assert!(xml.find("<report>") < xml.find("<totals>"));
-    assert!(xml.find("<totals>") < xml.find("<skipped>"));
 }
 
 #[test]
-fn commands_without_a_projection_keep_automatic_csv_flattening() {
+fn commands_without_a_projection_take_flat_records() {
     let app = App::builder()
         .templates(EmbeddedTemplates::new(TEMPLATES, ""))
         .command_with(

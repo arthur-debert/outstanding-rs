@@ -1,7 +1,8 @@
 //! [`OutputMode`] controls how rendering behaves, from terminal colors to
-//! structured serialization (JSON/YAML/XML/CSV, which skip template
-//! rendering entirely). `Auto` is resolved from the request
-//! ([`crate::ColorPolicy::Auto`] plus stdout capability on
+//! structured serialization (JSON/YAML/CSV/NDJSON, which skip template
+//! rendering entirely). `Ndjson` is the one stream mode: stdout is a sequence
+//! of one-line JSON entries rather than a single document. `Auto` is resolved
+//! from the request ([`crate::ColorPolicy::Auto`] plus stdout capability on
 //! [`crate::TargetProperties`]) by callers at the edge — this module never
 //! probes the process itself while applying styles.
 
@@ -23,6 +24,12 @@ fn validate_path(path: &std::path::Path) -> std::io::Result<()> {
         }
     }
     Ok(())
+}
+
+/// Creates the redirect target with the same parent check as `write_output`.
+pub fn open_output_file(path: &std::path::Path) -> std::io::Result<std::fs::File> {
+    validate_path(path)?;
+    std::fs::File::create(path)
 }
 
 pub fn write_output(content: &str, dest: &OutputDestination) -> std::io::Result<()> {
@@ -62,8 +69,8 @@ pub enum OutputMode {
     TermDebug,
     Json,
     Yaml,
-    Xml,
     Csv,
+    Ndjson,
 }
 
 impl OutputMode {
@@ -78,8 +85,13 @@ impl OutputMode {
     pub fn is_structured(&self) -> bool {
         matches!(
             self,
-            OutputMode::Json | OutputMode::Yaml | OutputMode::Xml | OutputMode::Csv
+            OutputMode::Json | OutputMode::Yaml | OutputMode::Csv | OutputMode::Ndjson
         )
+    }
+
+    /// True only for `Ndjson`, the one mode whose stdout is a stream of entries.
+    pub fn is_stream(&self) -> bool {
+        matches!(self, OutputMode::Ndjson)
     }
 }
 
@@ -124,6 +136,25 @@ mod tests {
     #[test]
     fn test_output_mode_json_is_structured() {
         assert!(OutputMode::Json.is_structured());
+    }
+
+    #[test]
+    fn ndjson_is_the_one_structured_stream_mode() {
+        assert!(OutputMode::Ndjson.is_structured());
+        assert!(OutputMode::Ndjson.is_stream());
+        assert!(!OutputMode::Ndjson.should_use_color());
+        assert!(!OutputMode::Ndjson.is_debug());
+        for mode in [
+            OutputMode::Auto,
+            OutputMode::Term,
+            OutputMode::Text,
+            OutputMode::TermDebug,
+            OutputMode::Json,
+            OutputMode::Yaml,
+            OutputMode::Csv,
+        ] {
+            assert!(!mode.is_stream(), "{mode:?}");
+        }
     }
 
     #[test]

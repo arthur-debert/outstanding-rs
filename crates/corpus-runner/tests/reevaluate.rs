@@ -8,8 +8,7 @@ use std::path::PathBuf;
 
 use corpus_runner::{reevaluate, ReevaluationConfig, Timeouts};
 
-// `docs_dir` is the real repo's docs directory, since a tempdir source
-// would sit under the admitted `/private/var` on macOS.
+// `docs_dir` is the real one: a tempdir would sit under the admitted `/private/var` on macOS.
 struct Fixture {
     _scratch: tempfile::TempDir,
     archetypes_dir: PathBuf,
@@ -48,8 +47,7 @@ stdout_contains = ["hello"]
     let workspace_root = scratch.path().join("ws");
     fs::create_dir_all(&workspace_root).unwrap();
 
-    // The evaluation sandbox admits only the workspace and system roots, so
-    // the fake produced binary must live beneath the workspace root.
+    // The evaluation sandbox admits only the workspace and system roots.
     let binary = workspace_root.join("fake");
     fs::write(&binary, "#!/bin/sh\necho hello\n").unwrap();
     fs::set_permissions(&binary, fs::Permissions::from_mode(0o755)).unwrap();

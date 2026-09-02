@@ -21,19 +21,13 @@ use std::path::Path;
 use crate::report::AgentProvenance;
 use crate::session::direct_argv;
 
-// The backend announces itself in the transcript's first event, so the scan
-// never needs more than the head — and a transcript is a whole agent
-// session's output.
+// The backend announces itself in the first event; a whole transcript is megabytes.
 const TRANSCRIPT_HEAD_BYTES: usize = 256 * 1024;
 
-// Records are read whole: the init event carries the host's tool and plugin
-// inventory and can be larger than the head budget on its own, and half of it
-// is not JSON, so a record cut in the middle announces nothing. This caps the
-// single record the budget cannot, for a transcript written without newlines.
+// Records are read whole (the init event alone can exceed the head budget, and half
+// a record is not JSON); this caps the one record the head budget cannot.
 const TRANSCRIPT_RECORD_BYTES: usize = 8 * 1024 * 1024;
 
-/// Describe the session the runner just ran: the parsed command, plus what
-/// the transcript says answered it.
 pub fn describe(agent_cmd: &str, transcript: &Path) -> AgentProvenance {
     let mut provenance = recorded(agent_cmd);
     let announced = announced_in_transcript(&head(transcript));
@@ -42,9 +36,7 @@ pub fn describe(agent_cmd: &str, transcript: &Path) -> AgentProvenance {
     provenance
 }
 
-/// Describe a session from its recorded command alone. A re-evaluation
-/// rebuilds a report around a historical session and has no transcript of its
-/// own, so only the command's own statement survives.
+/// From the recorded command alone: a re-evaluation has no transcript of its own.
 pub fn recorded(agent_cmd: &str) -> AgentProvenance {
     from_argv(direct_argv(agent_cmd).ok().as_deref())
 }
@@ -83,9 +75,7 @@ fn from_argv(argv: Option<&[String]>) -> AgentProvenance {
     }
 }
 
-/// Take the next argument as a flag's value, unless it is the next flag: `-p`
-/// and `--model` both take an optional value, and swallowing the flag that
-/// follows would record a setting as a prompt.
+// `-p` and `--model` take an optional value; the next flag is not it.
 fn take_value<'a>(
     args: &mut std::iter::Peekable<impl Iterator<Item = &'a String>>,
 ) -> Option<String> {
@@ -95,8 +85,7 @@ fn take_value<'a>(
     }
 }
 
-/// The transcript's leading records, whole: reading stops once the head
-/// budget is spent, and the record that spends it is still read to its end.
+// The record that spends the head budget is still read to its end.
 fn head(path: &Path) -> String {
     use std::io::{BufRead, BufReader, Read};
     let Ok(file) = std::fs::File::open(path) else {
@@ -124,10 +113,7 @@ pub struct Announced {
     pub model: Option<String>,
 }
 
-/// What a Claude Code stream-json transcript says about the session that
-/// wrote it: the init event announces the backend's version and the session
-/// model, and an assistant message carries the model that produced it. A
-/// transcript in any other shape announces nothing.
+/// Reads a Claude Code stream-json transcript; any other shape announces nothing.
 pub fn announced_in_transcript(transcript: &str) -> Announced {
     let mut announced = Announced::default();
     for line in transcript.lines() {
@@ -174,8 +160,7 @@ mod tests {
             provenance.prompt.as_deref(),
             Some("Read INSTRUCTIONS.md in the current directory and carry it out completely.")
         );
-        // No `--model`: the run took the backend's default, and only the
-        // transcript can say what that resolved to.
+        // No `--model`: only the transcript can say what the default resolved to.
         assert_eq!(provenance.model_requested, None);
         assert!(
             provenance
@@ -212,8 +197,6 @@ mod tests {
         }
     }
 
-    /// `-p` may stand alone, and the flag after it is a setting rather than
-    /// the prompt.
     #[test]
     fn a_valueless_flag_does_not_swallow_the_next_flag() {
         let provenance = recorded("claude -p --verbose");
@@ -221,8 +204,6 @@ mod tests {
         assert_eq!(provenance.settings, vec!["--verbose".to_string()]);
     }
 
-    /// A command that names no single program leaves every parsed slot empty
-    /// rather than guessing; `session.agent_cmd` keeps the text itself.
     #[test]
     fn a_shell_command_records_nothing_it_cannot_parse() {
         assert_eq!(
@@ -264,7 +245,6 @@ mod tests {
             announced_in_transcript(transcript).model.as_deref(),
             Some("claude-opus-5")
         );
-        // A scripted agent announces nothing, and nothing is invented for it.
         assert_eq!(
             announced_in_transcript("scripted agent output\n"),
             Announced::default()
@@ -304,10 +284,6 @@ mod tests {
         assert_eq!(absent.backend.as_deref(), Some("claude"));
     }
 
-    /// A Claude Code init event carries the host's whole tool and plugin
-    /// inventory, which can be larger than the scanned head by itself. Read
-    /// as a byte prefix it would arrive cut in half, parse as nothing, and
-    /// lose a version and model the transcript states plainly.
     #[test]
     fn an_init_record_larger_than_the_head_budget_still_announces() {
         let dir = tempfile::tempdir().unwrap();
@@ -334,8 +310,6 @@ mod tests {
         );
     }
 
-    /// The block is written from the command and the transcript alone: no
-    /// agent executable is run to fill it in.
     #[test]
     fn describing_a_session_never_executes_the_agent() {
         use std::os::unix::fs::PermissionsExt;

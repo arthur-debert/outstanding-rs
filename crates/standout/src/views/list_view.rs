@@ -1,35 +1,70 @@
-use serde::Serialize;
+use serde::ser::SerializeStruct;
+use serde::{Serialize, Serializer};
 
 use super::{Message, MessageLevel};
+use crate::cli::{ExitStatus, Output};
 use crate::tabular::TabularSpec;
+use crate::ContractSurface;
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone)]
 pub struct ListViewResult<T> {
     pub items: Vec<T>,
-
-    #[serde(skip_serializing_if = "Option::is_none")]
+    pub empty_exit_status: Option<ExitStatus>,
     pub intro: Option<String>,
-
-    #[serde(skip_serializing_if = "Option::is_none")]
     pub ending: Option<String>,
-
-    #[serde(skip_serializing_if = "Vec::is_empty")]
     pub messages: Vec<Message>,
-
-    #[serde(skip_serializing_if = "Option::is_none")]
     pub total_count: Option<usize>,
-
-    #[serde(skip_serializing_if = "Option::is_none")]
     pub filter_summary: Option<String>,
-
-    #[serde(skip_serializing_if = "Option::is_none")]
     pub tabular_spec: Option<TabularSpec>,
+}
+
+impl<T> ContractSurface for ListViewResult<T> {
+    const SCHEMA_VERSION: u32 = 1;
+}
+
+impl<T: Serialize> Serialize for ListViewResult<T> {
+    fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        let present = [
+            self.intro.is_some(),
+            self.ending.is_some(),
+            !self.messages.is_empty(),
+            self.total_count.is_some(),
+            self.filter_summary.is_some(),
+            self.tabular_spec.is_some(),
+        ]
+        .iter()
+        .filter(|set| **set)
+        .count();
+        let mut document = serializer.serialize_struct("ListViewResult", 2 + present)?;
+        document.serialize_field("schema_version", &Self::SCHEMA_VERSION)?;
+        document.serialize_field("items", &self.items)?;
+        if let Some(intro) = &self.intro {
+            document.serialize_field("intro", intro)?;
+        }
+        if let Some(ending) = &self.ending {
+            document.serialize_field("ending", ending)?;
+        }
+        if !self.messages.is_empty() {
+            document.serialize_field("messages", &self.messages)?;
+        }
+        if let Some(total_count) = &self.total_count {
+            document.serialize_field("total_count", total_count)?;
+        }
+        if let Some(filter_summary) = &self.filter_summary {
+            document.serialize_field("filter_summary", filter_summary)?;
+        }
+        if let Some(tabular_spec) = &self.tabular_spec {
+            document.serialize_field("tabular_spec", tabular_spec)?;
+        }
+        document.end()
+    }
 }
 
 impl<T> ListViewResult<T> {
     pub fn new(items: Vec<T>) -> Self {
         Self {
             items,
+            empty_exit_status: None,
             intro: None,
             ending: None,
             messages: Vec::new(),
@@ -48,6 +83,16 @@ impl<T> ListViewResult<T> {
     }
 }
 
+impl<T: Serialize> ListViewResult<T> {
+    /// `Output::Render(self)`, carrying `empty_exit_status` when the list is empty.
+    pub fn into_output(self) -> Output<Self> {
+        match self.empty_exit_status.filter(|_| self.items.is_empty()) {
+            Some(status) => Output::Render(self).with_exit_status(status),
+            None => Output::Render(self),
+        }
+    }
+}
+
 impl<T> Default for ListViewResult<T> {
     fn default() -> Self {
         Self::new(Vec::new())
@@ -57,6 +102,7 @@ impl<T> Default for ListViewResult<T> {
 #[derive(Debug)]
 pub struct ListViewBuilder<T> {
     items: Vec<T>,
+    empty_exit_status: Option<ExitStatus>,
     intro: Option<String>,
     ending: Option<String>,
     messages: Vec<Message>,
@@ -69,6 +115,7 @@ impl<T> ListViewBuilder<T> {
     pub fn new(items: impl IntoIterator<Item = T>) -> Self {
         Self {
             items: items.into_iter().collect(),
+            empty_exit_status: None,
             intro: None,
             ending: None,
             messages: Vec::new(),
@@ -76,6 +123,12 @@ impl<T> ListViewBuilder<T> {
             filter_summary: None,
             tabular_spec: None,
         }
+    }
+
+    /// The list still renders; the status is a signal, not a failure.
+    pub fn empty_exit_status(mut self, status: impl Into<ExitStatus>) -> Self {
+        self.empty_exit_status = Some(status.into());
+        self
     }
 
     pub fn intro(mut self, text: impl Into<String>) -> Self {
@@ -127,6 +180,7 @@ impl<T> ListViewBuilder<T> {
     pub fn build(self) -> ListViewResult<T> {
         ListViewResult {
             items: self.items,
+            empty_exit_status: self.empty_exit_status,
             intro: self.intro,
             ending: self.ending,
             messages: self.messages,
@@ -134,6 +188,13 @@ impl<T> ListViewBuilder<T> {
             filter_summary: self.filter_summary,
             tabular_spec: self.tabular_spec,
         }
+    }
+}
+
+impl<T: Serialize> ListViewBuilder<T> {
+    /// `build().into_output()` in one step.
+    pub fn output(self) -> Output<ListViewResult<T>> {
+        self.build().into_output()
     }
 }
 
@@ -209,7 +270,7 @@ mod tests {
             .build();
 
         let json = serde_json::to_string(&result).unwrap();
-        assert!(json.contains("\"items\":[\"item1\",\"item2\"]"));
+        assert!(json.starts_with("{\"schema_version\":1,\"items\":[\"item1\",\"item2\"]"));
         assert!(json.contains("\"intro\":\"Header\""));
         assert!(json.contains("\"warning\""));
     }
@@ -219,6 +280,7 @@ mod tests {
         let result = list_view(vec![1]).build();
         let json = serde_json::to_string(&result).unwrap();
 
+        assert_eq!(json, "{\"schema_version\":1,\"items\":[1]}");
         assert!(!json.contains("\"intro\""));
         assert!(!json.contains("\"ending\""));
         assert!(!json.contains("\"messages\""));
@@ -231,5 +293,23 @@ mod tests {
     fn test_list_view_default() {
         let result: ListViewResult<String> = ListViewResult::default();
         assert!(result.is_empty());
+    }
+
+    #[test]
+    fn empty_exit_status_applies_to_an_empty_list_only() {
+        let empty = list_view(Vec::<i32>::new()).empty_exit_status(3).output();
+        assert!(empty.is_render());
+        assert_eq!(empty.exit_status(), ExitStatus::from(3));
+
+        let filled = list_view(vec![1]).empty_exit_status(3).output();
+        assert_eq!(filled.exit_status(), ExitStatus::SUCCESS);
+
+        let undeclared = list_view(Vec::<i32>::new()).output();
+        assert_eq!(undeclared.exit_status(), ExitStatus::SUCCESS);
+
+        let json =
+            serde_json::to_string(&list_view(Vec::<i32>::new()).empty_exit_status(3).build())
+                .unwrap();
+        assert!(!json.contains("exit_status"), "{json}");
     }
 }

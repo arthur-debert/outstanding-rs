@@ -422,6 +422,6 @@ ADRs from the grill, authoritative where they sharpen this Spec:
 No ADR: recipe/config dispatch closures collapse to one helper. There is no public
 `GroupBuilder` change and no discarded alternative worth recording.
 
-The parity Specs (`docs/spec/parity-machine-contract.md`,
+The parity Specs (`parity-machine-contract.md`, implemented beside this one;
 `docs/spec/parity-terminal-citizenship.md`, `docs/spec/parity-config-layering.md`) name
 the sockets they expect this epic to leave. Read them with this Spec before the grill.

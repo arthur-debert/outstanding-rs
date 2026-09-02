@@ -9,24 +9,18 @@
 //! resolutions that a text search can't get at; [`assert_page_snapshot!`]
 //! and [`matrix`] pin a rendered page across output-mode/color/theme cells.
 //!
-//! Unset `TargetProperties` fields take fixed defaults rather than calling
-//! `TargetProperties::detect`: `width: None`, `ColorMode::Dark`,
-//! `IconMode::Classic`, `AmbiguousWidth::Narrow`, color capability off, both
-//! streams non-terminal. `$COLUMNS`/`$NERD_FONT`/OS appearance cannot
-//! change an in-process run — there is no in-process TTY simulation; use
-//! [`TestHarness::run_process`] (spawns the real binary) or
-//! [`TestHarness::run_pty`] (Unix, real pseudo-terminal) for TTY-dependent
-//! behavior.
-//!
-//! `run` mutates process-global state (env vars, cwd) and a child process
-//! inherits the ambient environment/cwd at spawn time, so any test binary
-//! that mixes `run` with `run_process`/`run_pty` needs every such test
-//! annotated `#[serial]` (re-exported from `serial_test`) to avoid one
-//! run's overrides leaking into a concurrent spawn.
+//! There is no in-process TTY simulation: [`TestHarness::run_process`]
+//! spawns the real binary and [`TestHarness::run_pty`] (Unix) gives it a
+//! pseudo-terminal. The fixed `TargetProperties` defaults and the
+//! `#[serial]` rule for tests that mutate env or cwd are in
+//! `docs/topics/testing.md`.
 
 use clap::Command;
 use standout::cli::DispatchResult;
-use standout::cli::{App, ArtifactDestination, ArtifactRun, ExitStatus, RunErrorKind, SuccessKind};
+use standout::cli::{
+    App, ArtifactDestination, ArtifactRun, Diagnostic, ExitStatus, RunErrorKind, StreamCapture,
+    StreamSink, SuccessKind,
+};
 use standout::{ColorMode, IconMode, InputSources, TargetProperties};
 use standout_input::env::{MockClipboard, MockStdin};
 use standout_input::PromptResponder;
@@ -45,6 +39,7 @@ mod page;
 mod process;
 #[cfg(unix)]
 pub mod pty;
+mod schema;
 mod snapshot;
 pub use matrix::{matrix, MatrixCell};
 pub use process::ProcessResult;
@@ -247,17 +242,45 @@ impl TestHarness {
             argv.push(format!("--{}={}", self.output_flag_name, output_mode_flag(mode)).into());
         }
         let target = self.target_properties();
-        let run = app.run_with(cmd, argv, target, sources);
+        let captured = StreamCapture::default();
+        let sink = StreamSink::new(captured.clone());
+        let run = app.run_with_sink(cmd, argv, target, sources, sink.clone());
         let warnings = run.warnings().to_vec();
         let output_mode = run.output_mode();
         let outcome = run.into_outcome();
         let tag_resolutions = standout_render::diagnostics::take_captured();
         let theme = app.get_default_theme();
+        let mut stderr = Vec::new();
+        sink.with_writer(|stdout| {
+            standout::cli::emit_run_result(&outcome, output_mode, stdout, &mut stderr)
+                .expect("in-memory streams never fail a final write");
+            standout::cli::emit_warning_entries(&outcome, &warnings, output_mode, stdout)
+                .expect("in-memory streams never fail a final write");
+        });
+        let mut stdout = captured.take();
+        // A process gets one more newline than `stdout()`: the one that terminates rendered text.
+        if !output_mode.is_stream()
+            && matches!(outcome, DispatchResult::Handled(_))
+            && stdout.last() == Some(&b'\n')
+        {
+            stdout.pop();
+        }
+        let mut stderr = String::from_utf8_lossy(&stderr).into_owned();
+        if !standout::cli::carries_warning_entries(&outcome, output_mode) {
+            stderr.push_str(&standout_render::warnings::render_block_for_target(
+                theme,
+                output_mode,
+                target,
+                &warnings,
+            ));
+        }
         TestResult {
-            stdout: render_stdout(&outcome),
-            stderr: render_stderr(&outcome, &warnings, output_mode, target, theme),
+            stdout: String::from_utf8_lossy(&stdout).into_owned(),
+            stdout_bytes: stdout,
+            stderr,
             outcome,
             warnings,
+            output_mode,
             tag_resolutions,
             _tempdir: self.tempdir.take(),
             _restore: restore,
@@ -341,35 +364,6 @@ fn validate_fixture_path(path: &Path) -> PathBuf {
     }
     path.to_path_buf()
 }
-fn render_stdout(outcome: &DispatchResult) -> String {
-    match outcome {
-        DispatchResult::Handled(text) => text.as_str().to_string(),
-        DispatchResult::Artifact(run) if !run.destination().is_stdout() => report_line(run),
-        _ => String::new(),
-    }
-}
-fn render_stderr(
-    outcome: &DispatchResult,
-    warnings: &[String],
-    output_mode: OutputMode,
-    target: TargetProperties,
-    theme: &standout::Theme,
-) -> String {
-    let primary = match outcome {
-        DispatchResult::Error(error) if error.writes_diagnostic_verbatim() => error.to_string(),
-        DispatchResult::Error(error) => format!("{}\n", error),
-        DispatchResult::Artifact(run) if run.destination().is_stdout() => report_line(run),
-        _ => String::new(),
-    };
-    primary
-        + &standout_render::warnings::render_block_for_target(theme, output_mode, target, warnings)
-}
-fn report_line(run: &ArtifactRun) -> String {
-    run.report()
-        .filter(|report| !report.is_empty())
-        .map(|report| format!("{}\n", report))
-        .unwrap_or_default()
-}
 fn output_mode_flag(mode: OutputMode) -> &'static str {
     match mode {
         OutputMode::Auto => "auto",
@@ -378,8 +372,8 @@ fn output_mode_flag(mode: OutputMode) -> &'static str {
         OutputMode::TermDebug => "term-debug",
         OutputMode::Json => "json",
         OutputMode::Yaml => "yaml",
-        OutputMode::Xml => "xml",
         OutputMode::Csv => "csv",
+        OutputMode::Ndjson => "ndjson",
     }
 }
 #[derive(Default)]
@@ -403,8 +397,10 @@ impl Drop for RestoreState {
 pub struct TestResult {
     outcome: DispatchResult,
     stdout: String,
+    stdout_bytes: Vec<u8>,
     stderr: String,
     warnings: Vec<String>,
+    output_mode: OutputMode,
     tag_resolutions: Vec<TagResolution>,
     _tempdir: Option<TempDir>,
     _restore: RestoreState,
@@ -444,8 +440,34 @@ impl TestResult {
     pub fn error_kind(&self) -> Option<RunErrorKind> {
         self.outcome.error_kind()
     }
+    pub fn output_mode(&self) -> OutputMode {
+        self.output_mode
+    }
+    /// `None` when the resolved mode carries no document or stdout is not one.
+    pub fn diagnostic(&self) -> Option<Diagnostic> {
+        standout::cli::parse_diagnostic(self.output_mode, &self.stdout).ok()
+    }
+    /// Keys and value types vs `tests/schemas/<name>`; `STANDOUT_UPDATE_SNAPSHOTS=1` updates it.
+    #[track_caller]
+    pub fn assert_schema_snapshot(&self, name: &str) {
+        schema::assert_schema_snapshot(self.output_mode, &self.stdout, name);
+    }
+    #[track_caller]
+    pub fn expect_diagnostic(&self) -> Diagnostic {
+        match standout::cli::parse_diagnostic(self.output_mode, &self.stdout) {
+            Ok(diagnostic) => diagnostic,
+            Err(error) => panic!(
+                "expected a diagnostic document on stdout in {:?} mode ({error}), got:\n--- stdout ---\n{}\n--------------",
+                self.output_mode, self.stdout
+            ),
+        }
+    }
     pub fn stdout(&self) -> &str {
         &self.stdout
+    }
+    /// Byte for byte; `stdout()` is the lossy text minus the newline that terminates rendered text.
+    pub fn stdout_bytes(&self) -> &[u8] {
+        &self.stdout_bytes
     }
     pub fn stderr(&self) -> &str {
         &self.stderr

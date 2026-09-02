@@ -1,5 +1,5 @@
 //! The run-credential broker: the agent phase's one credential exception
-//! (see ADR-0023).
+//! under the blindness protocol (`docs/adr/0023-the-corpus-blindness-protocol.md`).
 //!
 //! A blind run needs an authenticated agent and a sandbox that keeps the
 //! credential away from everything the agent spawns — build scripts, tests,
@@ -9,23 +9,24 @@
 //! every sandbox, and lends its *use* to one process.
 //!
 //! The broker is a loopback forward proxy alive only while the agent session
-//! runs: [`Broker::shutdown`] closes the connections it is serving and kills
-//! the upstream transports they started, so nothing outlives the session
-//! still holding the credential. It reads the host Claude subscription's
-//! OAuth token from the host credential store, and the agent session's
-//! environment carries only `ANTHROPIC_BASE_URL` pointing here plus a
-//! placeholder token, so the real credential never enters the agent's
-//! process tree. Each forwarded request gets the authorization injected
-//! here, on the host side; the Seatbelt Keychain denial in
-//! [`crate::sandbox`] is unchanged, because nothing inside the sandbox
-//! reads the store.
+//! runs. It reads the host Claude subscription's OAuth token from the host
+//! credential store; the agent session's environment carries only
+//! `ANTHROPIC_BASE_URL` pointing here plus a placeholder token, so the real
+//! credential never enters the agent's process tree. Each forwarded request
+//! gets the authorization injected on the host side, so the Seatbelt
+//! Keychain denial in [`crate::sandbox`] stands.
 //!
-//! Where that credential may go is fixed rather than configured: a token
-//! from the host store forwards to [`DEFAULT_UPSTREAM`] and nowhere else
-//! (see [`Origin`]), so no flag, and no 401 retry, can aim it at a
-//! destination somebody chose. The request the caller sends cannot aim it
-//! either: [`vet_request`] admits only an origin-form target, so what the
-//! caller supplies picks the path under that origin and never the origin.
+//! Where the credential may go is fixed rather than configured: a token from
+//! the host store forwards to [`DEFAULT_UPSTREAM`] and nowhere else (see
+//! [`Origin`]; the [`BrokerConfig`] constructors are what enforce the
+//! pairing), so no flag and no 401 retry can aim it at a destination somebody
+//! chose. The request cannot aim it either: `vet_request` admits only an
+//! origin-form target, so what the caller supplies picks the path under that
+//! origin and never the origin. The transport is curl at an absolute path,
+//! run with `--disable`, an empty environment, `--noproxy` and no
+//! `--location`, configured over stdin, so nothing on the host can redirect
+//! or record the credential and it never appears in an argument vector or a
+//! file.
 //!
 //! The caller boundary is enforced per connection, not per session: before
 //! reading a single request byte the broker asks the OS socket tables who
@@ -37,9 +38,14 @@
 //! on, which is the authorized principal cooperating in its own bypass; no
 //! transport can police that, and this one does not claim to.
 //!
+//! Revoking authorization only stops the *next* connection, so
+//! [`Broker::shutdown`] also closes every admitted connection and kills every
+//! upstream transport: nothing outlives the session still holding the
+//! credential, and a request hung on an unresponsive upstream cannot hold
+//! the runner for its whole timeout.
+//!
 //! Everything admitted is written into the report's
-//! `blindness.credential_exceptions` (see [`Broker::credential_exceptions`]),
-//! so a run that used the broker says so.
+//! `blindness.credential_exceptions`, so a run that used the broker says so.
 
 use std::io::{BufRead, BufReader, Read, Write};
 use std::net::{TcpListener, TcpStream};
@@ -55,9 +61,7 @@ use anyhow::{bail, Context};
 use crate::exec;
 use crate::peer::{self, ClientSocket, Ownership};
 
-/// What the agent session gets instead of a credential. Deliberately not
-/// `sk-ant-` shaped: the committed-evidence scanner treats that prefix as a
-/// secret, and a placeholder is not one.
+// Not `sk-ant-` shaped: the committed-evidence scanner treats that prefix as a secret.
 pub const PLACEHOLDER_TOKEN: &str = "corpus-broker-placeholder-not-a-credential";
 
 pub const DEFAULT_UPSTREAM: &str = "https://api.anthropic.com";
@@ -65,14 +69,10 @@ pub const DEFAULT_UPSTREAM: &str = "https://api.anthropic.com";
 pub const AGENT_BASE_URL_ENV: &str = "ANTHROPIC_BASE_URL";
 pub const AGENT_TOKEN_ENV: &str = "ANTHROPIC_AUTH_TOKEN";
 
-/// What a brokered agent session carries beyond the blind baseline.
-/// [`Broker::apply_agent_env`] sets exactly these, and the report's
-/// `blindness.env_allowlist` names them for a brokered run.
+/// Exactly what [`Broker::apply_agent_env`] sets; the report's `env_allowlist` names them.
 pub const AGENT_ENV_KEYS: &[&str] = &[AGENT_BASE_URL_ENV, AGENT_TOKEN_ENV];
 
-/// Where the upstream transport is looked for. Not a PATH search: the
-/// process that receives the credential has to be the one this module
-/// vouched for, not whatever an earlier PATH entry calls `curl`.
+// Absolute paths, never a PATH search: the credential goes only to a curl this module vouched for.
 const TRANSPORT_CANDIDATES: &[&str] = &["/usr/bin/curl", "/bin/curl"];
 
 #[cfg(target_os = "macos")]
@@ -83,25 +83,16 @@ const REQUEST_BODY_CAP: usize = 64 * 1024 * 1024;
 const DENIAL_LOG_CAP: usize = 32;
 const CLOSE_DRAIN: Duration = Duration::from_millis(250);
 
-/// Where a brokered credential came from, and so what the broker may do
-/// with it. The distinction is the boundary the broker exists to hold: a
-/// token read from the host store is the user's real subscription, and it
-/// may only ever reach the origin it was issued for.
+/// Where a credential came from, which fixes where it may go.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum Origin {
-    /// Read from the host credential store by [`Credential::from_host_store`].
-    /// Reaches [`DEFAULT_UPSTREAM`] and nowhere else, and is the only kind
-    /// the broker re-reads after a 401.
+    /// Reaches [`DEFAULT_UPSTREAM`] only; the only kind re-read after a 401.
     HostStore,
-    /// A value the caller made up — what the tests broker. May target any
-    /// upstream, and is never replaced from the host store, so a test
-    /// configuration cannot turn into a host-credential one.
+    /// May target any upstream; never replaced from the host store.
     Injected,
 }
 
-/// The host credential, kept out of `Debug` output and off every argument
-/// vector: the only place it is written is the broker's forwarding
-/// configuration, on a pipe.
+/// Redacted from `Debug`; written only into the transport's configuration, on a pipe.
 #[derive(Clone)]
 pub struct Credential {
     token: String,
@@ -110,9 +101,7 @@ pub struct Credential {
 }
 
 impl Credential {
-    /// A credential the caller supplies rather than the host store, for
-    /// tests. It carries [`Origin::Injected`], so it can name a test
-    /// upstream and can never be refreshed into a host token.
+    /// Carries [`Origin::Injected`].
     pub fn new(token: String, source: String) -> Self {
         Self {
             token,
@@ -121,9 +110,7 @@ impl Credential {
         }
     }
 
-    /// Read the agent CLI's own OAuth token from the host credential store:
-    /// the macOS Keychain item the CLI writes, else its credentials file.
-    /// The host CLI owns refreshing it; the broker only ever reads.
+    /// The macOS Keychain item the agent CLI writes, else its credentials file; never refreshes.
     pub fn from_host_store() -> anyhow::Result<Self> {
         let mut attempts = Vec::new();
         #[cfg(target_os = "macos")]
@@ -210,23 +197,15 @@ fn parse_credential(json: &str, source: String) -> anyhow::Result<Credential> {
     })
 }
 
-/// What one broker forwards, and where. The fields are private and the
-/// constructors are the only way in, because the pairing is the security
-/// property: [`Origin::HostStore`] pairs with [`DEFAULT_UPSTREAM`] and
-/// nothing else, so no caller can aim the host subscription token at a
-/// destination of its choosing.
+/// The constructors are the only way in; they pair [`Origin::HostStore`] with [`DEFAULT_UPSTREAM`].
 #[derive(Clone, Debug)]
 pub struct BrokerConfig {
     credential: Credential,
-    /// Base URL every forwarded request is rebased onto.
     upstream: String,
-    /// Deadline for one forwarded request, end to end.
     request_timeout: Duration,
 }
 
 impl BrokerConfig {
-    /// The real configuration: the host credential, forwarded to the origin
-    /// it was issued for. There is no parameter for the destination.
     pub fn for_host(credential: Credential) -> Self {
         Self {
             credential,
@@ -235,10 +214,7 @@ impl BrokerConfig {
         }
     }
 
-    /// A test double's configuration: any upstream, but only behind a
-    /// credential the caller made up. A host-store credential is refused
-    /// here, which is what keeps an arbitrary destination from receiving
-    /// the host token.
+    /// Refuses a host-store credential.
     pub fn for_test_upstream(credential: Credential, upstream: String) -> anyhow::Result<Self> {
         if credential.origin() == Origin::HostStore {
             bail!(
@@ -275,41 +251,27 @@ struct State {
     credential_source: String,
     upstream: String,
     request_timeout: Duration,
-    /// The one process the broker answers. `None` until the agent is
-    /// spawned and after it exits: an unauthorized broker serves nobody.
+    /// `None` until the agent is spawned and after it exits; nobody is served meanwhile.
     authorized: Mutex<Option<u32>>,
     authorization_set: Condvar,
     shutdown: AtomicBool,
     admitted: AtomicUsize,
     denied: AtomicUsize,
-    /// Why connections were denied, deduplicated: the reasons are evidence
-    /// for the report, while [`State::denied`] is the count.
     denials: Mutex<Vec<String>>,
-    /// Everything a shutdown has to interrupt. Revoking authorization stops
-    /// the *next* connection; without this, a request already admitted keeps
-    /// using the credential after the agent exits, and one waiting on an
-    /// unresponsive upstream holds the runner for the whole request timeout.
     inflight: Mutex<Inflight>,
     next_inflight: AtomicU64,
 }
 
 #[derive(Default)]
 struct Inflight {
-    /// Cloned handles on the connections being served, so shutdown can close
-    /// them under the threads reading and writing them.
     clients: Vec<(u64, TcpStream)>,
-    /// The upstream transports those threads started. The child stays owned
-    /// here for as long as it runs, so a kill can never land on a pid the
-    /// OS has already handed to somebody else.
+    // Owned here while running, so a kill never lands on a pid the OS has reused.
     transports: Vec<(u64, Arc<Mutex<Option<Child>>>)>,
     closed: bool,
 }
 
 impl State {
-    /// Close every connection being served and kill every upstream transport
-    /// started for one. Registrations are refused afterwards, so a
-    /// connection admitted a moment before the flag went up cannot start a
-    /// transport of its own.
+    /// Refuses registrations afterwards, so a connection admitted just before starts no transport.
     fn close_inflight(&self) {
         let mut inflight = self
             .inflight
@@ -335,7 +297,6 @@ fn kill_transport(transport: &Mutex<Option<Child>>) {
     }
 }
 
-/// One in-flight registration, dropped when the request that made it ends.
 struct Registration<'a> {
     state: &'a State,
     id: u64,
@@ -362,11 +323,7 @@ impl Drop for Registration<'_> {
     }
 }
 
-/// Register a connection so a shutdown can close it. `None` means this
-/// connection is not to be served: either the broker is already shutting
-/// down, or the descriptor could not be cloned and so could not be reached
-/// by a shutdown — both answer the same way, since a credential-bearing
-/// connection the broker cannot end is one it should not start.
+/// `None`: shutting down, or the descriptor could not be cloned, so a shutdown could not end it.
 fn register_client<'a>(state: &'a State, stream: &TcpStream) -> Option<Registration<'a>> {
     let clone = stream.try_clone().ok()?;
     let mut inflight = state
@@ -386,12 +343,9 @@ fn register_client<'a>(state: &'a State, stream: &TcpStream) -> Option<Registrat
     })
 }
 
-/// A running upstream transport, owned by the registry for as long as it
-/// runs so a shutdown can kill it, and reaped through [`Transport::reap`].
 struct Transport<'a> {
     child: Arc<Mutex<Option<Child>>>,
-    // Field order matters: `Transport::drop` reaps while still registered,
-    // and this deregisters afterwards.
+    // Declared after `child`: `Transport::drop` reaps while still registered.
     _registration: Registration<'a>,
 }
 
@@ -418,9 +372,7 @@ fn register_transport<'a>(state: &'a State, child: Child) -> Transport<'a> {
 }
 
 impl Transport<'_> {
-    /// Wait for the transport to exit. Polling rather than blocking is what
-    /// keeps the child reachable to a concurrent shutdown, which is the only
-    /// thing that ends a transport hung on an unresponsive upstream.
+    // Polls rather than blocks, so a concurrent shutdown can still reach the child.
     fn reap(&self) {
         loop {
             let mut slot = self.child.lock().expect("broker transport poisoned");
@@ -445,9 +397,6 @@ impl Drop for Transport<'_> {
 }
 
 impl Broker {
-    /// Bind the broker and start answering. The peer resolver is validated
-    /// against the running kernel first: a broker that cannot attribute
-    /// connections must not exist at all.
     pub fn start(config: BrokerConfig) -> anyhow::Result<Self> {
         peer::self_check().map_err(|detail| {
             anyhow::anyhow!(
@@ -493,14 +442,11 @@ impl Broker {
         self.port
     }
 
-    /// Point one command's session at the broker. The placeholder is what
-    /// the agent and every descendant can read; the credential is not here.
     pub fn apply_agent_env(&self, command: &mut Command) {
         command.env(AGENT_BASE_URL_ENV, self.base_url());
         command.env(AGENT_TOKEN_ENV, PLACEHOLDER_TOKEN);
     }
 
-    /// Name the one process the broker answers, once it exists.
     pub fn authorize(&self, pid: u32) {
         *self
             .state
@@ -526,7 +472,6 @@ impl Broker {
         self.state.denied.load(Ordering::Relaxed)
     }
 
-    /// The distinct reasons connections were refused.
     pub fn denials(&self) -> Vec<String> {
         self.state
             .denials
@@ -535,7 +480,6 @@ impl Broker {
             .clone()
     }
 
-    /// What the run admitted, for the report's `blindness` section.
     pub fn credential_exceptions(&self) -> Vec<String> {
         let denials = self.denials();
         let mut exceptions = vec![
@@ -563,11 +507,7 @@ impl Broker {
         exceptions
     }
 
-    /// Stop answering, end everything already admitted, and join the accept
-    /// loop. Called on drop, and worth calling explicitly the moment the
-    /// agent session ends: revoking authorization alone would only stop the
-    /// next connection, leaving a request in flight free to keep using the
-    /// credential and to hold the runner for its whole timeout.
+    /// Also runs on drop; call it the moment the agent session ends.
     pub fn shutdown(&mut self) {
         self.state.shutdown.store(true, Ordering::SeqCst);
         self.revoke();
@@ -590,14 +530,8 @@ fn accept_loop(listener: TcpListener, state: Arc<State>) {
     while !state.shutdown.load(Ordering::SeqCst) {
         match listener.accept() {
             Ok((stream, _)) => {
-                // The listener polls, so it is non-blocking — and on macOS an
-                // accepted connection inherits that. Left inherited, every
-                // read that has to wait for the caller's next segment fails
-                // with EWOULDBLOCK instead of waiting, which turns a request
-                // body that arrives in two pieces into a rejected request. A
-                // connection that cannot be put back into blocking mode would
-                // serve those requests wrongly, so it is refused with the
-                // reason on the record instead.
+                // On macOS an accepted connection inherits the listener's non-blocking
+                // mode, and a body arriving in two segments would then fail with EWOULDBLOCK.
                 let mut stream = stream;
                 if let Err(err) = stream.set_nonblocking(false) {
                     record_denial(
@@ -646,8 +580,7 @@ fn serve(mut stream: TcpStream, state: Arc<State>) {
             return;
         }
     }
-    // Past admission this connection can carry the credential, so a
-    // shutdown has to be able to reach it.
+    // Past admission the connection can carry the credential, so a shutdown must reach it.
     let Some(_registered) = register_client(&state, &stream) else {
         return;
     };
@@ -666,22 +599,16 @@ fn serve(mut stream: TcpStream, state: Arc<State>) {
     close(&mut stream);
 }
 
-/// Closing on a request the broker never read costs the caller the response
-/// too: the unread bytes turn the close into a reset, and the reset drops
-/// what was already written. So read the caller out before hanging up.
+// Unread request bytes would turn the close into a reset that drops the response already written.
 fn close(stream: &mut TcpStream) {
     let _ = stream.flush();
-    // The FIN goes first: with no content-length, it is what tells the
-    // caller the response body ended.
+    // FIN first: with no content-length, it is what ends the body for the caller.
     let _ = stream.shutdown(std::net::Shutdown::Write);
     let _ = stream.set_read_timeout(Some(CLOSE_DRAIN));
     let mut discarded = [0u8; 8192];
     while matches!(stream.read(&mut discarded), Ok(read) if read > 0) {}
 }
 
-/// Answer "is the other end the agent process, holding this connection on a
-/// descriptor it cannot pass through an exec?" — before any request byte is
-/// read, and for every connection, not once per session.
 fn authorize_caller(stream: &TcpStream, state: &State) -> Result<(), String> {
     let (Ok(local), Ok(remote)) = (stream.local_addr(), stream.peer_addr()) else {
         return Err("connection has no resolvable loopback addresses".to_string());
@@ -714,9 +641,7 @@ fn authorize_caller(stream: &TcpStream, state: &State) -> Result<(), String> {
     }
 }
 
-// The agent cannot connect before it is spawned, but it can connect before
-// the runner records the pid the spawn returned. Waiting in slices keeps a
-// connection that arrives after the session from delaying shutdown.
+// The agent can connect before the runner has recorded the pid its spawn returned.
 fn awaited_authorization(state: &State) -> Option<u32> {
     let mut guard = state
         .authorized
@@ -827,23 +752,9 @@ fn read_request(stream: &mut TcpStream) -> Result<Request, String> {
     })
 }
 
-/// The request pieces the caller controls, checked before any of them is
-/// written into the upstream transport's configuration.
-///
-/// The target check is the load-bearing one. It is appended to the
-/// configured upstream, so a target that does not start its own path can
-/// move the authority instead of the path: `@host/v1` makes the upstream a
-/// userinfo field, `.host/v1` extends the hostname, `:443@host/v1` does both
-/// — and the credential goes wherever the authority ends up. Requiring a
-/// single leading `/` ends the authority at the upstream's own host before
-/// any caller byte is read, which is the whole of the fixed-origin promise
-/// this module makes.
-///
-/// Method and header names are RFC 7230 tokens and header values carry no
-/// control bytes for the same reason at one remove: a stray carriage return
-/// in either would end curl's own header line and let the caller write the
-/// next one.
 fn vet_request(request: &Request) -> Result<(), String> {
+    // The target is appended to the upstream: without a single leading `/`, `@host/v1`
+    // or `.host/v1` moves the authority, and the credential with it.
     if !request.target.starts_with('/') || request.target.starts_with("//") {
         return Err(format!(
             "request target {:?} is not origin-form; the broker forwards only a target \
@@ -863,6 +774,7 @@ fn vet_request(request: &Request) -> Result<(), String> {
             request.target
         ));
     }
+    // A control byte in a method or header would end curl's config line and start the next.
     if !is_token(&request.method) {
         return Err(format!(
             "request method {:?} is not a token",
@@ -900,8 +812,6 @@ fn header<'a>(headers: &'a [(String, String)], name: &str) -> Option<&'a str> {
         .map(|(_, value)| value.as_str())
 }
 
-// Hop-by-hop headers and the ones the forwarder sets itself. The
-// authorization headers go too: replacing them is the broker's whole job.
 const DROPPED_REQUEST_HEADERS: &[&str] = &[
     "authorization",
     "x-api-key",
@@ -929,8 +839,7 @@ const DROPPED_RESPONSE_HEADERS: &[&str] = &[
     "trailer",
 ];
 
-// The subscription credential is an OAuth token, so the API needs the OAuth
-// beta opt-in even when the caller thinks it is talking to a gateway.
+// A subscription OAuth token is accepted only with this beta opt-in.
 const OAUTH_BETA: &str = "oauth-2025-04-20";
 
 fn forward(request: &Request, state: &State, client: &mut TcpStream) {
@@ -940,13 +849,8 @@ fn forward(request: &Request, state: &State, client: &mut TcpStream) {
         .expect("broker credential poisoned")
         .clone();
     let outcome = match forward_once(request, state, &credential, client, Retry::Available) {
-        // Upstream rejected the credential. The host CLI owns refresh, so
-        // re-read the store once in case it rotated the token under us and
-        // send the request again; whatever comes back this time is the
-        // caller's answer. Only a credential that came from the store is
-        // refreshed from it: an injected one belongs to whoever supplied
-        // it, and re-reading would put the host token behind that
-        // configuration's upstream.
+        // Only a host-store credential is re-read: refreshing an injected one would
+        // put the host token behind that configuration's upstream.
         Ok(Forwarded::Unauthorized) => {
             let credential = match credential.origin() {
                 Origin::HostStore => match Credential::from_host_store() {
@@ -975,16 +879,13 @@ fn forward(request: &Request, state: &State, client: &mut TcpStream) {
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum Retry {
-    /// A 401 may still be answered by re-reading the credential store, so
-    /// hold it back instead of writing it to the caller.
     Available,
     Spent,
 }
 
 enum Forwarded {
     Completed,
-    /// Upstream rejected the credential and nothing was written to the
-    /// caller yet.
+    /// Nothing was written to the caller yet.
     Unauthorized,
 }
 
@@ -1047,12 +948,6 @@ fn forward_once(
     })
 }
 
-/// The transport that carries the credential, configured so nothing on the
-/// host can redirect or record it: an absolute program rather than a PATH
-/// lookup, `--disable` first so no `.curlrc` is read, an empty environment
-/// so no proxy or configuration variable is inherited, `--noproxy` so the
-/// request goes to the upstream directly, and no `--location`, so a
-/// response cannot aim the next request somewhere else.
 fn transport_command(state: &State) -> Result<Command, String> {
     let program = TRANSPORT_CANDIDATES
         .iter()
@@ -1081,9 +976,6 @@ fn transport_command(state: &State) -> Result<Command, String> {
     Ok(command)
 }
 
-// Every option, including the credential, travels on curl's stdin: an
-// argument vector is readable from inside the sandbox, and a file would put
-// the token on disk.
 fn curl_config(
     request: &Request,
     state: &State,
@@ -1128,16 +1020,13 @@ fn option(name: &str, value: &str) -> String {
     format!("{name} = \"{escaped}\"\n")
 }
 
-/// The request body, staged where curl can read it. It holds the agent's
-/// own prompt, never the credential, and is removed as the request ends.
+/// Holds the agent's prompt, never the credential; removed as the request ends.
 struct BodyFile {
     path: std::path::PathBuf,
 }
 
 impl BodyFile {
-    /// Created, never opened: a path somebody else got to first is an error
-    /// rather than a write into their file, and the mode keeps the agent's
-    /// prompt unreadable to other users of a shared temporary directory.
+    // `create_new` and 0o600: never writes into a file somebody else placed, nor readable by them.
     fn write(body: &[u8]) -> Result<Self, String> {
         use std::os::unix::fs::OpenOptionsExt;
         static NEXT: AtomicUsize = AtomicUsize::new(0);
@@ -1182,9 +1071,7 @@ impl Drop for BodyFile {
     }
 }
 
-/// Read one response head, skipping the informational ones curl prints
-/// ahead of the real answer. Returns the head and whatever body bytes came
-/// in the same read.
+/// Skips 1xx heads; returns the head plus the body bytes read with it.
 fn read_response_head(stdout: &mut impl Read) -> Result<(String, Vec<u8>), String> {
     let mut pending = Vec::new();
     loop {
@@ -1224,9 +1111,7 @@ fn status_code(head: &str) -> Option<u16> {
     head.lines().next()?.split_whitespace().nth(1)?.parse().ok()
 }
 
-/// The caller gets the upstream's status and headers, minus the framing:
-/// the broker delimits every response by closing the connection, which also
-/// means the next request is a new connection and a fresh attribution.
+// Every response ends by closing the connection, so the next request is a fresh attribution.
 fn rewrite_response_head(head: &str) -> String {
     let mut lines = head.lines();
     let mut rewritten = format!("{}\r\n", lines.next().unwrap_or("HTTP/1.1 200 OK"));
@@ -1452,8 +1337,6 @@ mod tests {
         assert!(err.contains(DEFAULT_UPSTREAM), "{err}");
         assert!(!err.contains("real-token"), "{err}");
 
-        // A credential the caller made up is the only kind a test upstream
-        // gets, and it names one.
         let injected = Credential::new("made-up".to_string(), "a test".to_string());
         assert_eq!(injected.origin(), Origin::Injected);
         let config =

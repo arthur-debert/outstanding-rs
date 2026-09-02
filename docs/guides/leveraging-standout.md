@@ -13,7 +13,7 @@ Classify every finding before deciding whether it needs work:
   owns a command. Violating it weakens the architecture or public behavior.
 - **Applicable capability** — a Standout feature that is valuable only when the
   application's needs call for it. Not using it is not automatically a defect.
-- **Framework gap** — a desirable behavior that Standout does not currently
+- **Framework gap** — a desirable behavior that Standout does not
   integrate. Record the gap instead of hiding a custom workaround in a handler.
 
 The checklist uses **I**, **A**, and **G** for those classes.
@@ -54,9 +54,10 @@ pipeline in detail.
   application never opens the file or words a success it hasn't earned.
 - **I — Keep one data contract across modes.** `auto`, `term`, and `text` render
   the MiniJinja template and transform semantic style tags. `term-debug` keeps
-  the tags visible. Structured `json`, `yaml`, `xml`, and `csv` modes serialize
-  handler data directly and bypass templates, including template-injected
-  context.
+  the tags visible. Structured `json`, `yaml` and `csv` modes serialize
+  handler data directly as the document, `ndjson` writes it inside a
+  `{"type":"result","data":…}` line, and all four bypass templates,
+  including template-injected context.
 - **A — Use MiniJinja and semantic CSS.** Put layout in file-backed MiniJinja
   templates and appearance in CSS classes such as `.title` or `.warning`.
   Define adaptive overrides with `@media (prefers-color-scheme: light)` and
@@ -76,12 +77,11 @@ pipeline in detail.
   tag degrades to unstyled text — never a `?` marker — and, run through
   `App::run`, the tag is named in a stderr warning. A useful signal, but no
   substitute for validation.
-- **G — Do not imply integrated per-command CSV projection.** Normal app
-  dispatch automatically flattens serializable data for CSV. The direct
-  `render_auto_with_spec` API can render CSV with a `FlatDataSpec`, but arbitrary
-  per-command projection through normal `App` dispatch is not currently
-  integrated. Prefer a stable CLI-owned view DTO, or record the missing app
-  configuration seam.
+- **A — Declare CSV columns with a `CsvProjection`.** `csv` takes flat
+  records only; nothing is flattened. A command whose response nests its rows
+  attaches a `CsvProjection` through
+  `CommandConfig::structured_output_projection`
+  ([Output Modes](../topics/output-modes.md#csv-output)).
 
 See [Output Modes](../topics/output-modes.md),
 [Templating](../crates/render/topics/templating.md),

@@ -110,8 +110,7 @@ fn warn_unenforced_network(policy: &Policy) {
     let _ = policy;
 }
 
-// A policy admitting a denied root (or an ancestor of one) is invalid: a
-// broad exception there would reopen the denied subtree.
+// Admitting a denied root or its ancestor would reopen the denied subtree.
 fn validate_denied_boundaries(policy: &Policy) -> Result<(), String> {
     for denied in &policy.deny_read {
         for admitted in policy.read.iter().chain(&policy.write) {
@@ -287,8 +286,7 @@ fn enforce_landlock(policy: &Policy) -> Result<(), String> {
     let abi = ABI::V1;
     let all = AccessFs::from_all(abi);
     let read = AccessFs::from_read(abi);
-    // `/dev/null` needs file-legal rights, not directory rights, or the
-    // kernel rejects the rule with EINVAL.
+    // A file rule with directory rights is rejected with EINVAL.
     let file_only = AccessFs::from_file(abi);
     let dev_null = Path::new("/dev/null");
     let mut ruleset = Ruleset::default()

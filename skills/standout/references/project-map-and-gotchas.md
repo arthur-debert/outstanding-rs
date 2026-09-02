@@ -25,13 +25,14 @@ the owning crate's public types and integration tests before copying it.
 
 Common copied examples can target older APIs. Confirm these current contracts:
 
-- `App::run(...) -> bool`; it does not return `Option<ArgMatches>`. Use `run_to_string` and match `DispatchResult::NoMatch` on `into_outcome()` when fallback needs matches.
+- `App::run(...) -> bool`; it does not return `Option<ArgMatches>`. Use `run_with` and match `DispatchResult::NoMatch` on `into_outcome()` when fallback needs matches.
 - `CommandContext` has `command_path`, `app_state`, and `extensions`; no `output_mode` field.
 - Binary handler output is `Output::Binary { data, filename }`, not a tuple variant.
 - `#[handler]` preserves the typed function and generates `name__handler`; wire the wrapper and unit-test the original.
 - `#[derive(Dispatch)]` maps to `handlers::name`; add `#[dispatch(pure)]` for a `#[handler]`-generated wrapper.
 - `TestHarness` mutations are process-global; every harness test is serial.
-- Structured output bypasses templates, so template fixes cannot change JSON/YAML/XML/CSV.
+- Structured output bypasses templates, so template fixes cannot change JSON/YAML/CSV/NDJSON.
+- Under a structured mode a failure is a diagnostic document on stdout (`docs/topics/execution-outcomes.md`); a test reads it with `result.diagnostic()`, not from `stderr()`.
 - Domain serialization and CLI structured output are separate interfaces. Map
   domain values into CLI-owned view DTOs rather than serializing persistence
   types directly.

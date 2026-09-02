@@ -23,11 +23,7 @@ pub(crate) fn find_subcommand<'a>(cmd: &'a Command, name: &str) -> Option<&'a Co
         .find(|s| s.get_name() == name || s.get_aliases().any(|a| a == name))
 }
 
-/// Validating a registration walks canonical names only, where invoking a
-/// command accepts aliases too: clap resolves an alias before
-/// `ArgMatches::subcommand()` reports the command, so dispatch always looks a
-/// handler up under the canonical name, and a handler registered under an
-/// alias is reachable by nothing.
+/// Canonical names only: clap resolves an alias before reporting, so an alias registration is dead.
 pub(crate) fn find_canonical_subcommand_recursive<'a>(
     cmd: &'a Command,
     keywords: &[&str],

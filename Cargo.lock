@@ -397,8 +397,12 @@ dependencies = [
 name = "corpus-gap-suites"
 version = "9.0.0"
 dependencies = [
+ "anyhow",
+ "clap",
  "libc",
+ "serde",
  "serde_json",
+ "standout",
  "tempfile",
  "toml 0.8.23",
 ]
@@ -1378,16 +1382,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "a1d01941d82fa2ab50be1e79e6714289dd7cde78eba4c074bc5a4374f650dfe0"
 
 [[package]]
-name = "quick-xml"
-version = "0.36.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f7649a7b4df05aed9ea7ec6f628c67c9953a43869b8bc50929569b2999d443fe"
-dependencies = [
- "memchr",
- "serde",
-]
-
-[[package]]
 name = "quote"
 version = "1.0.47"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1821,7 +1815,6 @@ dependencies = [
  "insta",
  "minijinja",
  "proptest",
- "quick-xml",
  "serde",
  "serde_json",
  "serde_yaml",
@@ -1905,7 +1898,10 @@ dependencies = [
  "proc-macro-crate 3.5.0",
  "proc-macro2",
  "quote",
+ "serde",
+ "serde_json",
  "serial_test",
+ "standout-dispatch",
  "standout-input",
  "syn 2.0.119",
  "tempfile",
@@ -1934,7 +1930,6 @@ dependencies = [
  "minijinja",
  "once_cell",
  "proptest",
- "quick-xml",
  "serde",
  "serde_json",
  "serde_yaml",
@@ -1959,6 +1954,7 @@ dependencies = [
 name = "standout-test"
 version = "9.0.0"
 dependencies = [
+ "anyhow",
  "clap",
  "console",
  "insta",
@@ -1966,6 +1962,7 @@ dependencies = [
  "proptest",
  "serde",
  "serde_json",
+ "serde_yaml",
  "serial_test",
  "standout",
  "standout-fixtures",

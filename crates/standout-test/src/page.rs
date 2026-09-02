@@ -4,8 +4,7 @@
 //! continuation lines that belong to it by indentation alone. [`rows`]
 //! recovers that structure so [`clap_parity`](crate::clap_parity) and
 //! [`invariants`](crate::invariants) can check facts about specific
-//! arguments/subcommands instead of grep-ing the whole page. Everything
-//! here is crate-private plumbing for those two modules.
+//! arguments/subcommands instead of grep-ing the whole page.
 
 use clap::{Arg, ArgAction, Command};
 pub(crate) struct Row<'a> {

@@ -1,9 +1,5 @@
-//! `preserve_order` (crates/standout/Cargo.toml) makes JSON, YAML, and XML
-//! emit a handler's declared field order rather than sorting keys
-//! alphabetically — see docs/topics/output-modes.md "Key ordering". The
-//! order comes from serde's field-serialization order, so this asserts it
-//! against a `#[derive(Serialize)]` struct dispatched through `App`, not
-//! just a `json!` literal.
+//! `preserve_order` makes JSON, YAML and CSV emit a handler's declared field order
+//! (docs/topics/output-modes.md, "Key ordering"), asserted on a derived struct through `App`.
 
 use clap::Command;
 use serde::Serialize;
@@ -14,8 +10,7 @@ use standout::{AmbiguousWidth, ColorMode, IconMode, InputSources, OutputMode, Ta
 
 const TEMPLATES: &[(&str, &str)] = &[("info", "unused")];
 
-// Declared out of alphabetical order (alphabetical would be
-// machine_type, name, status, zone) so a sort would be visible.
+// Not alphabetical, so a sort would show.
 #[derive(Serialize)]
 struct Instance {
     name: &'static str,
@@ -47,7 +42,7 @@ fn dispatch(mode: OutputMode) -> String {
     let flag = match mode {
         OutputMode::Json => "--output=json",
         OutputMode::Yaml => "--output=yaml",
-        OutputMode::Xml => "--output=xml",
+        OutputMode::Csv => "--output=csv",
         _ => unreachable!("test only dispatches structured modes"),
     };
     let target = TargetProperties {
@@ -100,7 +95,10 @@ fn yaml_struct_fields_keep_declaration_order() {
 }
 
 #[test]
-fn xml_struct_fields_keep_declaration_order() {
-    let xml = dispatch(OutputMode::Xml);
-    assert_ascending(&xml, &["<name>", "<zone>", "<machine_type>", "<status>"]);
+fn csv_struct_fields_keep_declaration_order() {
+    let csv = dispatch(OutputMode::Csv);
+    assert_eq!(
+        csv,
+        "name,zone,machine_type,status\nweb-1,us-east1-b,n2-standard-2,RUNNING\n"
+    );
 }

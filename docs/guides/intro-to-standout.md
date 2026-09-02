@@ -668,7 +668,7 @@ Now you're leveraging the core rendering design of Standout:
 
 - Rich terminal output with colors, bold, strikethrough
 - Automatic light/dark mode adaptation
-- JSON/YAML/CSV output for scripting and testing
+- JSON/YAML/CSV/NDJSON output for scripting and testing
 - Hot reload of templates and styles during development
 - Directly testable handler adapters
 

@@ -1,5 +1,7 @@
 use crate::artifact::{Artifact, ArtifactRun};
+use crate::diagnostic::{Diagnostic, Severity};
 use crate::hooks::HookPhase;
+use crate::stream::EntryStream;
 use crate::verify::ExpectedArg;
 use clap::ArgMatches;
 use serde::Serialize;
@@ -73,8 +75,7 @@ impl fmt::Debug for Extensions {
     }
 }
 impl Clone for Extensions {
-    // Cloning always yields an empty container: `Box<dyn Any>` isn't `Clone`,
-    // so injected values are dropped rather than copied.
+    // `Box<dyn Any>` isn't `Clone`: a clone starts empty.
     fn clone(&self) -> Self {
         Self::new()
     }
@@ -84,6 +85,7 @@ pub struct CommandContext {
     pub command_path: Vec<String>,
     pub app_state: Rc<Extensions>,
     pub extensions: Extensions,
+    pub stream: EntryStream,
 }
 impl CommandContext {
     pub fn new(command_path: Vec<String>, app_state: Rc<Extensions>) -> Self {
@@ -91,7 +93,16 @@ impl CommandContext {
             command_path,
             app_state,
             extensions: Extensions::new(),
+            stream: EntryStream::discarding(),
         }
+    }
+    pub fn with_stream(mut self, stream: EntryStream) -> Self {
+        self.stream = stream;
+        self
+    }
+    /// Live under `ndjson`, discarding in every other mode.
+    pub fn stream(&self) -> &EntryStream {
+        &self.stream
     }
 }
 impl Default for CommandContext {
@@ -100,6 +111,7 @@ impl Default for CommandContext {
             command_path: Vec::new(),
             app_state: Rc::new(Extensions::new()),
             extensions: Extensions::new(),
+            stream: EntryStream::discarding(),
         }
     }
 }
@@ -108,21 +120,65 @@ impl Default for CommandContext {
 pub enum Output<T: Serialize> {
     Render(T),
     Silent,
-    Binary { data: Vec<u8>, filename: String },
+    Binary {
+        data: Vec<u8>,
+        filename: String,
+    },
     Artifact(Artifact<T>),
+    /// Emitted as `output` alone would be; the process exits with `status`.
+    WithStatus {
+        output: Box<Output<T>>,
+        status: ExitStatus,
+    },
 }
 impl<T: Serialize> Output<T> {
+    /// A signal beside the result, never a failure; a later call replaces the earlier status.
+    pub fn with_exit_status(self, status: ExitStatus) -> Self {
+        let (output, _) = self.split_exit_status();
+        Output::WithStatus {
+            output: Box::new(output),
+            status,
+        }
+    }
+    pub fn split_exit_status(self) -> (Self, Option<ExitStatus>) {
+        match self {
+            Output::WithStatus { output, status } => (output.split_exit_status().0, Some(status)),
+            other => (other, None),
+        }
+    }
+    pub fn exit_status(&self) -> ExitStatus {
+        match self {
+            Output::WithStatus { status, .. } => *status,
+            _ => ExitStatus::SUCCESS,
+        }
+    }
+    pub fn map_render(self, f: impl FnOnce(T) -> T) -> Self {
+        match self {
+            Output::Render(data) => Output::Render(f(data)),
+            Output::WithStatus { output, status } => Output::WithStatus {
+                output: Box::new(output.map_render(f)),
+                status,
+            },
+            other => other,
+        }
+    }
+    fn declared(&self) -> &Self {
+        match self {
+            Output::WithStatus { output, .. } => output.declared(),
+            other => other,
+        }
+    }
     pub fn is_render(&self) -> bool {
-        matches!(self, Output::Render(_))
+        matches!(self.declared(), Output::Render(_))
     }
     pub fn is_silent(&self) -> bool {
-        matches!(self, Output::Silent)
+        matches!(self.declared(), Output::Silent)
     }
     pub fn is_binary(&self) -> bool {
-        matches!(self, Output::Binary { .. })
+        matches!(self.declared(), Output::Binary { .. })
     }
     pub fn is_artifact(&self) -> bool {
-        matches!(self, Output::Artifact(_))
+        matches!(self.declared(), Output::Artifact(_))
     }
 }
 pub type HandlerResult<T> = Result<Output<T>, anyhow::Error>;
@@ -151,6 +207,11 @@ impl ExitStatus {
     pub const USAGE_ERROR: Self = Self(2);
     pub const fn code(self) -> u8 {
         self.0
+    }
+}
+impl From<u8> for ExitStatus {
+    fn from(code: u8) -> Self {
+        Self(code)
     }
 }
 #[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
@@ -276,37 +337,40 @@ pub enum RunErrorKind {
 pub struct RunOutput {
     text: String,
     kind: SuccessKind,
+    status: ExitStatus,
 }
 impl RunOutput {
     pub fn command(text: impl Into<String>) -> Self {
-        Self {
-            text: text.into(),
-            kind: SuccessKind::Command,
-        }
+        Self::new(text, SuccessKind::Command)
     }
     pub fn clap_help(text: impl Into<String>) -> Self {
-        Self {
-            text: text.into(),
-            kind: SuccessKind::ClapHelp,
-        }
+        Self::new(text, SuccessKind::ClapHelp)
     }
     pub fn paged_help(text: impl Into<String>) -> Self {
-        Self {
-            text: text.into(),
-            kind: SuccessKind::PagedHelp,
-        }
+        Self::new(text, SuccessKind::PagedHelp)
     }
     pub fn clap_version(text: impl Into<String>) -> Self {
+        Self::new(text, SuccessKind::ClapVersion)
+    }
+    fn new(text: impl Into<String>, kind: SuccessKind) -> Self {
         Self {
             text: text.into(),
-            kind: SuccessKind::ClapVersion,
+            kind,
+            status: ExitStatus::SUCCESS,
         }
+    }
+    pub fn with_exit_status(mut self, status: ExitStatus) -> Self {
+        self.status = status;
+        self
     }
     pub fn as_str(&self) -> &str {
         &self.text
     }
     pub const fn kind(&self) -> SuccessKind {
         self.kind
+    }
+    pub const fn exit_status(&self) -> ExitStatus {
+        self.status
     }
     pub fn into_string(self) -> String {
         self.text
@@ -364,6 +428,7 @@ pub struct RunError {
     kind: RunErrorKind,
     status: ExitStatus,
     source: Option<Arc<dyn std::error::Error + Send + Sync + 'static>>,
+    diagnostic: Option<Box<Diagnostic>>,
 }
 impl RunError {
     pub fn new(message: impl Into<String>, kind: RunErrorKind) -> Self {
@@ -384,6 +449,7 @@ impl RunError {
             kind,
             status,
             source: None,
+            diagnostic: None,
         }
     }
     pub fn with_source<E>(mut self, source: E) -> Self
@@ -392,6 +458,32 @@ impl RunError {
     {
         self.source = Some(Arc::new(source));
         self
+    }
+    /// Replaces the summary `diagnostic()` would otherwise derive from the prose message.
+    pub fn with_diagnostic(mut self, diagnostic: Diagnostic) -> Self {
+        self.diagnostic = Some(Box::new(diagnostic));
+        self
+    }
+    /// The carried diagnostic wins; otherwise the first prose line (one `Error: ` framing
+    /// stripped) is `summary` and the rest `detail`.
+    pub fn diagnostic(&self) -> Diagnostic {
+        let mut diagnostic = match (&self.diagnostic, self.kind) {
+            (Some(diagnostic), _) => (**diagnostic).clone(),
+            (None, RunErrorKind::External | RunErrorKind::App) => {
+                Diagnostic::error(first_line(&self.message)).detail(self.message.clone())
+            }
+            (None, _) => {
+                let prose = ["Error: ", "error: "]
+                    .iter()
+                    .find_map(|framing| self.message.strip_prefix(framing))
+                    .unwrap_or(&self.message);
+                let (summary, detail) = prose.split_once('\n').unwrap_or((prose, ""));
+                Diagnostic::error(summary.trim_end()).detail(detail.trim())
+            }
+        };
+        diagnostic.kind = self.kind.into();
+        diagnostic.severity = Severity::Error;
+        diagnostic
     }
     pub fn as_str(&self) -> &str {
         &self.message
@@ -405,8 +497,7 @@ impl RunError {
     pub fn into_string(self) -> String {
         self.message
     }
-    // The message is a stderr payload its owner wrote: the shell adapter emits
-    // it as-is, with no `Error: ` framing and no trailing newline.
+    // A stderr payload its owner wrote: no `Error: ` framing, no trailing newline.
     pub const fn writes_diagnostic_verbatim(&self) -> bool {
         matches!(self.kind, RunErrorKind::External | RunErrorKind::App)
     }
@@ -441,6 +532,7 @@ impl From<ExternalFailure> for RunError {
             kind: RunErrorKind::External,
             status: failure.status,
             source: failure.source,
+            diagnostic: None,
         }
     }
 }
@@ -451,8 +543,12 @@ impl From<AppFailure> for RunError {
             kind: RunErrorKind::App,
             status: failure.status,
             source: failure.source,
+            diagnostic: None,
         }
     }
+}
+fn first_line(text: &str) -> &str {
+    text.lines().next().unwrap_or("").trim_end()
 }
 impl From<String> for RunError {
     fn from(message: String) -> Self {
@@ -524,10 +620,10 @@ impl DispatchResult {
     }
     pub fn exit_status(&self) -> Option<ExitStatus> {
         match self {
-            DispatchResult::Handled(_)
-            | DispatchResult::Binary(_, _)
-            | DispatchResult::Artifact(_)
-            | DispatchResult::Silent => Some(ExitStatus::SUCCESS),
+            DispatchResult::Handled(output) => Some(output.exit_status()),
+            DispatchResult::Binary(_, _) | DispatchResult::Artifact(_) | DispatchResult::Silent => {
+                Some(ExitStatus::SUCCESS)
+            }
             DispatchResult::Error(error) => Some(error.exit_status()),
             DispatchResult::NoMatch(_) => None,
         }
@@ -624,6 +720,7 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::diagnostic::DiagnosticKind;
     use serde_json::json;
     #[test]
     fn test_command_context_creation() {
@@ -631,6 +728,7 @@ mod tests {
             command_path: vec!["config".into(), "get".into()],
             app_state: Rc::new(Extensions::new()),
             extensions: Extensions::new(),
+            stream: EntryStream::discarding(),
         };
         assert_eq!(ctx.command_path, vec!["config", "get"]);
     }
@@ -733,6 +831,7 @@ mod tests {
             command_path: vec!["list".into()],
             app_state: app_state.clone(),
             extensions: Extensions::new(),
+            stream: EntryStream::discarding(),
         };
         let db = ctx.app_state.get::<Database>().unwrap();
         assert_eq!(db.url, "postgres://localhost");
@@ -749,6 +848,7 @@ mod tests {
             command_path: vec![],
             app_state: Rc::new(app_state),
             extensions: Extensions::new(),
+            stream: EntryStream::discarding(),
         };
         assert!(ctx.app_state.get_required::<Present>().is_ok());
         #[derive(Debug)]
@@ -900,6 +1000,41 @@ mod tests {
         assert!(!output.is_render());
         assert!(output.is_silent());
         assert!(!output.is_binary());
+    }
+    #[test]
+    fn a_declared_status_rides_beside_the_output_and_the_last_one_wins() {
+        let plain: Output<String> = Output::Render("found nothing".into());
+        assert_eq!(plain.exit_status(), ExitStatus::SUCCESS);
+        assert_eq!(plain.split_exit_status().1, None);
+
+        let signalled = Output::Render(String::from("changes"))
+            .with_exit_status(ExitStatus::from(3))
+            .with_exit_status(ExitStatus::from(2));
+        assert_eq!(signalled.exit_status(), ExitStatus::from(2));
+        assert!(signalled.is_render());
+        assert!(!signalled.is_silent());
+
+        let stamped = signalled.map_render(|text| format!("{text}!"));
+        let (output, status) = stamped.split_exit_status();
+        assert_eq!(status, Some(ExitStatus::from(2)));
+        assert!(matches!(output, Output::Render(ref text) if text == "changes!"));
+
+        let silent: Output<()> = Output::Silent.with_exit_status(ExitStatus::from(4));
+        assert!(silent.is_silent());
+        assert_eq!(silent.split_exit_status().1, Some(ExitStatus::from(4)));
+    }
+    #[test]
+    fn a_handled_run_reports_the_status_its_output_declared() {
+        let handled = DispatchResult::Handled(
+            RunOutput::command("plan").with_exit_status(ExitStatus::from(2)),
+        );
+        assert_eq!(handled.exit_status(), Some(ExitStatus::from(2)));
+        assert_eq!(handled.success_kind(), Some(SuccessKind::Command));
+        assert!(!handled.is_error());
+        assert_eq!(
+            DispatchResult::Handled(RunOutput::command("plan")).exit_status(),
+            Some(ExitStatus::SUCCESS)
+        );
     }
     #[test]
     fn test_output_binary() {
@@ -1154,5 +1289,63 @@ mod tests {
             Output::Render(n) => assert_eq!(n, 3),
             _ => panic!("Expected Output::Render"),
         }
+    }
+
+    #[test]
+    fn a_carried_diagnostic_wins_and_takes_the_framework_kind() {
+        let carried = Diagnostic::error("line 2 does not parse")
+            .detail("expected `resource <name> <state>`")
+            .range("main.tfl", 2, 1);
+        let error = RunError::new("Error: line 2 does not parse", RunErrorKind::Handler)
+            .with_diagnostic(carried.clone());
+        let diagnostic = error.diagnostic();
+        assert_eq!(diagnostic.kind, DiagnosticKind::Handler);
+        assert_eq!(diagnostic.severity, Severity::Error);
+        assert_eq!(diagnostic.summary, carried.summary);
+        assert_eq!(diagnostic.detail, carried.detail);
+        assert_eq!(diagnostic.range, carried.range);
+        let mut hook_carried = Diagnostic::warning("soft");
+        hook_carried.kind = DiagnosticKind::ClapUsage;
+        let hook = RunError::new("Error: soft", RunErrorKind::Hook(HookPhase::PostDispatch))
+            .with_diagnostic(hook_carried);
+        let hook = hook.diagnostic();
+        assert_eq!(hook.kind, DiagnosticKind::HookPostDispatch);
+        assert_eq!(hook.severity, Severity::Error);
+    }
+    #[test]
+    fn a_prose_error_splits_into_summary_and_detail_without_its_framing() {
+        let clap = RunError::new(
+            "error: unexpected argument '--bogus' found\n\nUsage: app [OPTIONS]\n\nFor more information, try '--help'.\n",
+            RunErrorKind::ClapUsage,
+        )
+        .diagnostic();
+        assert_eq!(clap.kind, DiagnosticKind::ClapUsage);
+        assert_eq!(clap.summary, "unexpected argument '--bogus' found");
+        assert_eq!(
+            clap.detail,
+            "Usage: app [OPTIONS]\n\nFor more information, try '--help'."
+        );
+        assert_eq!(clap.range, None);
+        let framed =
+            RunError::new("Error: could not read config", RunErrorKind::Render).diagnostic();
+        assert_eq!(framed.summary, "could not read config");
+        assert_eq!(framed.detail, "");
+        let bare = RunError::new("plain", RunErrorKind::FinalWrite(OutputKind::Text)).diagnostic();
+        assert_eq!(bare.summary, "plain");
+        assert_eq!(bare.kind, DiagnosticKind::FinalWrite);
+    }
+    #[test]
+    fn owner_declared_failures_keep_their_bytes_as_detail() {
+        let app = RunError::from(
+            AppFailure::new(3, "ghlike: not found: demo/gamma\nsee --help\n").unwrap(),
+        )
+        .diagnostic();
+        assert_eq!(app.kind, DiagnosticKind::App);
+        assert_eq!(app.summary, "ghlike: not found: demo/gamma");
+        assert_eq!(app.detail, "ghlike: not found: demo/gamma\nsee --help\n");
+        let external = RunError::from(ExternalFailure::new(128, "").unwrap()).diagnostic();
+        assert_eq!(external.kind, DiagnosticKind::External);
+        assert_eq!(external.summary, "");
+        assert_eq!(external.detail, "");
     }
 }

@@ -65,7 +65,7 @@ What Standout provides:
 - Logic is testable as any Rust code — and full CLI invocations are testable in-process via the [`standout-test`](guides/intro-to-testing.md) harness, without subprocess spawning or stdout parsing
 - Boilerplateless: declaratively link your handlers to command names and templates, Standout handles the rest
 - Autodispatch: save keystrokes with auto dispatch from the known command tree
-- Free [output handling](topics/output-modes.md): rich terminal with graceful degradation, plus structured data (JSON, YAML, CSV)
+- Free [output handling](topics/output-modes.md): rich terminal with graceful degradation, plus structured data (JSON, YAML, CSV, NDJSON)
 - Finely crafted output:
   - File-based [templates](crates/render/topics/templating.md) for content and CSS for styling
   - Rich styling with [adaptive properties](crates/render/topics/styling-system.md) (light/dark modes), inheritance, and full theming
@@ -188,7 +188,7 @@ myapp list --output text    # Plain text, no ANSI codes
 ### Output Modes
 
 - Rich terminal output with colors and styles
-- Automatic JSON, YAML, CSV serialization from the same handler
+- Automatic JSON, YAML, CSV, NDJSON serialization from the same handler
 - Graceful degradation when terminal lacks capabilities
 
 ### Rendering

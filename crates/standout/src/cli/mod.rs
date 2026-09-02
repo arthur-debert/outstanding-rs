@@ -14,27 +14,10 @@
 //! Standout to handle. Unmatched commands come back as
 //! [`DispatchResult::NoMatch`] with the `ArgMatches` for your own dispatch;
 //! [`CompletedRun`] wraps that outcome plus framework warnings.
-//!
-//! ```rust,ignore
-//! use standout::cli::{App, Output};
-//!
-//! App::builder()
-//!     .command("list", |_m, ctx| Ok(Output::Render(load_items()?)),
-//!         "{% for item in items %}{{ item }}\n{% endfor %}")?
-//!     .build()?
-//!     .run(cmd, std::env::args());
-//! ```
-//!
-//! Key types: [`AppBuilder`] (configuration), [`App`] (built application),
-//! [`Handler`] / [`FnHandler`] (command handlers), [`Output`] (what a
-//! handler produces), [`HandlerResult`], [`CompletedRun`] /
-//! [`DispatchResult`], [`ProcessOutcome`], [`Hooks`], [`CommandContext`].
-//!
-//! See also: [`crate::render`] for rendering without CLI integration,
-//! [`handler`], [`hooks`], [`help`].
 
 mod default_command;
 mod dispatch;
+mod emit;
 mod questionnaire;
 mod result;
 
@@ -67,9 +50,17 @@ pub use help::{
 
 pub use handler::{
     AppFailure, Artifact, ArtifactDestination, ArtifactReceipt, ArtifactRun, CommandContext,
-    CommandContextInput, DispatchResult, ExitStatus, ExternalFailure, FnHandler, Handler,
-    HandlerResult, InvalidAppStatus, InvalidExternalStatus, Output, OutputKind, RunError,
-    RunErrorKind, RunOutput, SuccessKind,
+    CommandContextInput, ContractSurface, Diagnostic, DiagnosticKind, DiagnosticPosition,
+    DiagnosticRange, DispatchResult, EntryStream, Envelope, ExitStatus, ExternalFailure, FnHandler,
+    Handler, HandlerResult, InvalidAppStatus, InvalidExternalStatus, Output, OutputKind, RunError,
+    RunErrorKind, RunOutput, Severity, StreamCapture, StreamError, StreamSink, SuccessKind,
+};
+
+pub use help::{HelpArg, HelpDocument, HelpSubcommand};
+
+pub use emit::{
+    carries_diagnostic_document, carries_warning_entries, emit_run_result, emit_warning_entries,
+    parse_diagnostic, render_diagnostic, DiagnosticDocumentError,
 };
 
 pub use hooks::{ArtifactOutput, HookError, HookPhase, Hooks, RenderedOutput};

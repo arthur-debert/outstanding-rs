@@ -5,29 +5,11 @@
 //! the contract (owned [`RenderRequest`] in, bytes out); [`render`] and its
 //! siblings are detect-then-call wrappers around it. [`Renderer`] compiles and
 //! reuses templates for repeated rendering.
-//!
-//! ```rust
-//! use standout_render::{render, Theme};
-//! use console::Style;
-//! use serde::Serialize;
-//!
-//! #[derive(Serialize)]
-//! struct Summary { title: String, total: usize }
-//!
-//! let theme = Theme::new()
-//!     .add("title", Style::new().bold())
-//!     .add("count", Style::new().cyan());
-//!
-//! let output = render(
-//!     "[title]{{ title }}[/title]: [count]{{ total }}[/count]",
-//!     &Summary { title: "Report".into(), total: 3 },
-//!     &theme,
-//! ).unwrap();
-//! ```
 
 pub mod colorspace;
 pub mod context;
 pub mod diagnostics;
+pub mod document;
 mod embedded;
 mod environment;
 mod error;
@@ -54,7 +36,9 @@ pub use style::{
 
 pub use theme::{ColorMode, IconDefinition, IconMode, IconSet, Theme};
 
-pub use output::{write_binary_output, write_output, OutputDestination, OutputMode};
+pub use output::{
+    open_output_file, write_binary_output, write_output, OutputDestination, OutputMode,
+};
 pub use projection::{
     CsvProjection, CsvProjectionBuilder, ProjectionError, StructuredOutputProjection,
 };
@@ -77,10 +61,11 @@ pub use standout_bbparser::{
 };
 
 pub use diagnostics::TagResolution;
+pub use document::{deserialize_document, result_entry, serialize_document};
 
 pub use util::{
-    flatten_json_for_csv, rgb_to_ansi256, rgb_to_truecolor, serialize_to_xml, truncate_to_width,
-    truncate_to_width_with_policy,
+    csv_records, rgb_to_ansi256, rgb_to_truecolor, truncate_to_width,
+    truncate_to_width_with_policy, write_csv,
 };
 
 pub use file_loader::{

@@ -100,8 +100,10 @@ Two exceptions:
 - The `~` concatenation operator formats inside MiniJinja's evaluator, which
   exposes no hook: `{{ "x" ~ flag }}` yields `xTrue`. Write `{{ "x" }}{{ flag }}`
   or `{{ "x" ~ flag | string }}`.
-- Structured output (JSON, YAML, XML, CSV) skips templates entirely and
-  serializes your data directly, so those modes follow their format's own rules.
+- Structured output (JSON, YAML, CSV, NDJSON) skips templates entirely, so
+  those modes follow their format's own rules: JSON, YAML and CSV serialize
+  your data as the document, and NDJSON writes it inside a
+  `{"type":"result","data":…}` line.
 
 If you build a `minijinja::Environment` yourself, use
 `standout_render::template::new_environment()` — or call `register_filters` on
@@ -135,10 +137,6 @@ that ends with none produce identical bytes. To end a page with a blank line,
 the template needs *two* trailing newlines. Every editor that adds a final
 newline on save is therefore invisible here, which is the reason the rule is
 worth stating.
-
-`standout-render/tests/trailing_newline.rs` pins the engine half;
-`final_emission_routes_success_and_diagnostics_to_distinct_streams` in
-`standout/src/cli/builder/execution.rs` pins the process half.
 
 ---
 
@@ -257,12 +255,9 @@ let output = render_with_output(template, &data, &theme, OutputMode::Auto)?;
 
 ### Auto Mode
 
-`OutputMode::Auto` detects the appropriate mode:
-
-- If stdout is a TTY with color support → `Term`
-- If stdout is a pipe or redirect → `Text`
-
-> **For standout framework users:** The framework's `--output` CLI flag automatically sets the output mode. See standout documentation for details.
+`OutputMode::Auto` resolves to `Term` or `Text` from the destination's color
+capability; the rule is in
+[Output Modes](../../../topics/output-modes.md#auto-mode).
 
 ---
 
@@ -415,13 +410,13 @@ When handler data and context variables have the same key, **handler data wins**
 
 ## Structured Output
 
-For machine-readable output (JSON, YAML, CSV), templates are bypassed entirely:
+For machine-readable output (JSON, YAML, CSV, NDJSON), templates are bypassed entirely:
 
 ```rust
 use standout_render::{render_auto, OutputMode};
 
 // Template is used for Term/Text modes
-// Data is serialized directly for Json/Yaml/Csv
+// Data is serialized directly for Json/Yaml/Csv; Ndjson wraps it in a result entry
 let output = render_auto(template, &data, &theme, OutputMode::Json)?;
 ```
 
@@ -432,7 +427,8 @@ let output = render_auto(template, &data, &theme, OutputMode::Json)?;
 | `TermDebug` | Render template, keep style tags |
 | `Json` | `serde_json::to_string_pretty(data)` |
 | `Yaml` | `serde_yaml::to_string(data)` |
-| `Csv` | Flatten and format as CSV |
+| `Csv` | One row per flat record; a nested value is a render error |
+| `Ndjson` | One compact line, `{"type":"result","data":…}` |
 
 This means your serializable data types automatically support structured output without additional code.
 
@@ -445,19 +441,10 @@ Check templates for unknown style tags before deploying:
 ```rust
 use standout_render::validate_template;
 
-let errors = validate_template(template, &sample_data, &theme);
-if !errors.is_empty() {
-    for error in &errors {
-        eprintln!("Unknown style tag: [{}]", error.tag_name);
-    }
-}
+validate_template(template, &sample_data, &theme)?;
 ```
 
-Validation catches:
-
-- Misspelled style names
-- References to undefined styles
-- Mismatched opening/closing tags
+The error lists every unknown or unbalanced tag.
 
 ---
 

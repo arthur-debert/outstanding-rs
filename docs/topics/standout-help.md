@@ -23,7 +23,7 @@ With help handling on, standout:
 2. **Keeps** clap's native `--help`/`-h` flag, on purpose: clap's flag short-circuits argument validation, so `myapp build --help` renders even when required arguments are missing
 3. Intercepts all help requests and renders them through a MiniJinja template with style tags — the `help` word, which clap routes like any other subcommand, and clap's `DisplayHelp` (from `--help`/`-h`, at root and subcommand level)
 
-Every form that is available renders the same help, through the same template and theme — with one exception, which is about the *form*, not the entry point: `--output` reaches the `help` word but not the flags. `myapp help --output text` renders in text mode; `myapp --help --output text` renders in the app's [output-mode fallback](./app-configuration.md#output-mode-fallback) (`Auto` unless the app sets one) and the typed mode is ignored. The reason is where each form is answered: the word is a subcommand, so clap parses its line in full, globals included, while `--help` short-circuits inside clap before the parse completes — so there are no matches to read a mode from when its `DisplayHelp` is rendered.
+Every form that is available renders the same help, through the same template and theme, and `--output` reaches every form alike: `myapp help --output text` and `myapp --help --output text` both render in text mode. The two are answered differently — the word is a subcommand, so clap parses its line in full, globals included, while `--help` short-circuits inside clap before the parse completes — so the flags take their mode from the [argv scan](./execution-outcomes.md#failures-under-a-structured-mode) every pre-parse outcome uses. A value that is not a mode (`--output txt`) is a clap usage error, exit 2, wherever clap reaches it: after the word, or before `--help` on the line. After `--help` it is never reached, so `myapp --help --output txt` renders the page in the fallback mode.
 
 Subcommand-level help (e.g. `myapp build --help`) also works, rendering that subcommand's help through standout.
 
@@ -103,9 +103,9 @@ Unaffected: a `help` deeper in the tree (`myapp db help` is yours, at a path the
 
 ### Why the word is reachable at all
 
-On a flat CLI whose root arguments are required, an injected `help` subcommand used to be advertised in help output and impossible to run: clap validates the root's requirements before routing, so `myapp help` failed with "the following required arguments were not provided" instead of printing help.
+On a flat CLI whose root arguments are required, clap validates those requirements before routing, so an injected `help` subcommand alone would be advertised and impossible to run: `myapp help` would fail with "the following required arguments were not provided".
 
-The fix is a declaration, not a parser of standout's own. Where standout installs the word, it also sets clap's `subcommand_negates_reqs`, which suspends the root's requirements once a command is named — so `myapp help` routes to the word, while `myapp` on its own still reports its missing arguments and `myapp <RANGE>` still parses as data. The word's arguments (`myapp help topics`, `myapp help --page`, `myapp help --output text`) are clap's to parse, like any other subcommand's.
+The answer is a declaration, not a parser of standout's own. Where standout installs the word, it also sets clap's `subcommand_negates_reqs`, which suspends the root's requirements once a command is named — so `myapp help` routes to the word, while `myapp` on its own still reports its missing arguments and `myapp <RANGE>` still parses as data. The word's arguments (`myapp help topics`, `myapp help --page`, `myapp help --output text`) are clap's to parse, like any other subcommand's.
 
 The cost is worth naming: `subcommand_negates_reqs` applies to *your* subcommands too, so a root that declares required arguments stops requiring them once any command is named. That is why standout sets it only where it installs the word, and never on a CLI that did not get one. See [ADR-0018](../adr/0018-let-the-parser-classify-the-command-line.md).
 
@@ -153,7 +153,7 @@ OPTIONS
   -c, --color <BOOL>  Enable ANSI color
   --output            Output format
                       default: auto
-                      possible values: auto, term, text, term-debug, json, yaml, xml, csv
+                      possible values: auto, term, text, term-debug, json, yaml, csv, ndjson
   --output-file-path  Write output to file instead of stdout
 ```
 
@@ -229,7 +229,7 @@ COMMANDS
 OPTIONS
   --output      Output format
                 default: auto
-                possible values: auto, term, text, term-debug, json, yaml, xml, csv
+                possible values: auto, term, text, term-debug, json, yaml, csv, ndjson
   -h, --help    Print help
 ```
 
@@ -432,7 +432,7 @@ The template receives a `HelpData` struct with these fields:
 | Variable | Type | Description |
 | ---------- | ------ | ------------- |
 | `about` | String | The command's `about`, or its `long_about` — see [Short and long help](#short-and-long-help) |
-| `usage` | String | Usage line (without "Usage: " prefix) |
+| `usage` | String | Usage line (without "Usage: " prefix), naming the full command path — `app nest leaf [OPTIONS]` for a nested leaf |
 | `subcommands` | Vec | Command groups (each with `title`, `help`, `items`) |
 | `subcommands_width` | usize | Width of the COMMANDS name column |
 | `arguments` | Vec | Positional groups (each with `title`, `help`, `items`) |
@@ -461,7 +461,7 @@ Two properties of that filter are the point of doing it this way. It measures
 *display* width, so a CJK name counts the terminal columns it really occupies
 and the style tags around it count for nothing — byte length gets both wrong.
 And it never truncates: a name wider than the column keeps its full text and
-its separator, which is the failure the fixed-width column used to produce.
+its separator.
 
 The widths themselves are resolved from the data, as a `Width::Bounded` column
 that is at least 12 columns wide and otherwise as wide as the section's longest
@@ -514,16 +514,53 @@ Each argument and option entry has:
 {%- endfor %}
 ```
 
-Style tags like `[header]...[/header]` are resolved against the theme. A tag the resolved theme does not define degrades to unstyled text and raises a stderr warning; it is never shown with a `?` marker.
+Style tags like `[header]...[/header]` are resolved against the theme; a tag it does not define is handled as [Unknown Style Tags](../crates/render/topics/styling-system.md#unknown-style-tags) says.
 
 ## Output Modes
 
-The `help` word respects the `--output` flag, but only as far as *styling*. Help is always the rendered template; the mode decides what happens to its style tags — applied in `Term`, stripped in `Text`, left visible as `[header]…[/header]` in `TermDebug`:
+The `help` word, `--help` and `-h` all respect the `--output` flag. In the human modes help is the rendered template, and the mode decides what happens to its style tags — applied in `Term`, stripped in `Text`, left visible as `[header]…[/header]` in `TermDebug`:
 
 ```bash
 myapp help --output text
+myapp --help --output text
 ```
 
-`--help` / `-h` do not take the flag with them (see [above](#help-handling)): they render in the app's [output-mode fallback](./app-configuration.md#output-mode-fallback), which is `Auto` — styling for the terminal it finds — unless the app set another one. Spell the mode with the word when you need it.
+Without the flag, every form renders in the app's [output-mode fallback](./app-configuration.md#output-mode-fallback), which is `Auto` — styling for the terminal it finds — unless the app set another one.
 
-The structured modes (`json`, `yaml`, `xml`, `csv`) strip the tags exactly as `Text` does. None of them serializes `HelpData`, so help is themed prose in every mode, not a machine-readable document. If you need help as data, render it yourself: `HelpData` is what a [custom template](#custom-templates) receives, and a template that emits JSON is the seam for it.
+### Help as data
+
+Under `json` and `yaml`, every form answers with the **help document** instead of the page: one versioned document a script can read the way it reads any other `--output json` result.
+
+```bash
+$ myapp deps --help --output json
+{
+  "schema_version": 1,
+  "name": "deps",
+  "path": ["myapp", "deps"],
+  "usage": "myapp deps [OPTIONS] <FORMULA>",
+  "about": "The transitive dependency closure of a formula.",
+  "args": [
+    {"name": "formula", "short": null, "long": null, "value_name": "FORMULA", "required": true,
+     "help": "The formula to resolve.", "default": null, "possible_values": []},
+    {"name": "tree", "short": null, "long": "--tree", "value_name": null, "required": false,
+     "help": "Show the closure as a tree instead of a set.", "default": null, "possible_values": []},
+    {"name": "help", "short": "-h", "long": "--help", "value_name": null, "required": false,
+     "help": "Print help", "default": null, "possible_values": []}
+  ],
+  "subcommands": []
+}
+```
+
+| Field | Meaning |
+| ------- | --------- |
+| `schema_version` | The version of this document's shape, `1` today — see [What Is Contract](./stability.md#the-versioned-document) |
+| `name` | The command's own name |
+| `path` | The words from the root to the command, `["myapp", "deps"]` |
+| `usage` | The usage line, naming the full path |
+| `about` | `about` for `-h`, `long_about` (falling back to `about`) for `--help` and the `help` word |
+| `args` | Every visible argument, positionals first, in display order: `name` is the clap id, `short` and `long` are the tokens as typed (`-t`, `--tree`), `value_name` is the metavar when the argument takes a value, `required`, `help`, `default` and `possible_values` are clap's |
+| `subcommands` | Every visible subcommand's `name` and `about` |
+
+The document lists clap's own `-h`/`--help` and `-V`/`--version` and the framework's `--output` flag, because a script reading it wants every argument the command accepts. It is `standout::cli::HelpDocument` (with `HelpArg` and `HelpSubcommand`), so a test can read it back with serde. `render_help` and `render_help_with_topics` produce the same document for a `HelpConfig` whose `output_mode` is `Json` or `Yaml`.
+
+`csv` has no help projection: `--help --output csv` is a render error, emitted as the diagnostic document of kind `render` that every structured-mode failure produces (see [Error Handling](./error-handling.md)). `ndjson` has no help entry: `--help --output ndjson` renders the page as `auto` does. Topic pages — `help topics` and `help <topic>` — are prose in every mode and stay so.

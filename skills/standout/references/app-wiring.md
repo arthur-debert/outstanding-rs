@@ -53,9 +53,9 @@ if !app.run(Cli::command(), std::env::args()) {
 }
 ```
 
-Use `run_to_string` when code needs rendered output, errors, binary bytes, or the unmatched `ArgMatches`. `CompletedRun` wraps the dispatch outcome plus framework warnings; match `result.into_outcome()` as `DispatchResult::{Handled, Binary, Silent, Error, NoMatch}` and include a wildcard because the enum is non-exhaustive.
+Use `run_with` when code needs rendered output, errors, binary bytes, or the unmatched `ArgMatches`. `CompletedRun` wraps the dispatch outcome plus framework warnings; match `result.into_outcome()` as `DispatchResult::{Handled, Binary, Artifact, Silent, Error, NoMatch}` and include a wildcard because the enum is non-exhaustive.
 
-Embedded resources are compile-time bundles; debug builds re-read the original source path when available. Explicit template names include their extension. Convention-based resolution uses the configured extension (`.j2` by default).
+Embedded resources are compile-time bundles; debug builds re-read the original source path when available. Explicit template names include their extension; the convention name is the command path with `.` as `/`.
 
 Evidence: `crates/todo-example/tdoo/src/app.rs`,
 `crates/standout/src/cli/builder/`, and

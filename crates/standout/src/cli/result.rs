@@ -1,8 +1,6 @@
 use crate::cli::handler::{DispatchResult, ExitStatus, RunError, RunErrorKind, RunOutput};
 use crate::OutputMode;
 
-/// What a fully emitted run left behind: whether a registered command handled
-/// the invocation, and the exit status the process should end with.
 #[must_use = "exit the process with `status`, or otherwise act on the outcome"]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct ProcessOutcome {
@@ -15,6 +13,7 @@ pub struct CompletedRun {
     inner: DispatchResult,
     warnings: Vec<String>,
     output_mode: OutputMode,
+    entries: String,
 }
 
 impl CompletedRun {
@@ -27,11 +26,22 @@ impl CompletedRun {
             inner,
             warnings,
             output_mode,
+            entries: String::new(),
         }
+    }
+
+    pub fn with_entries(mut self, entries: String) -> Self {
+        self.entries = entries;
+        self
     }
 
     pub fn outcome(&self) -> &DispatchResult {
         &self.inner
+    }
+
+    /// The `ctx.stream()` lines `run_with` and `dispatch` capture, newlines included.
+    pub fn entries(&self) -> &str {
+        &self.entries
     }
 
     pub fn into_outcome(self) -> DispatchResult {

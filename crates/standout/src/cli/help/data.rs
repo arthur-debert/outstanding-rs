@@ -104,7 +104,7 @@ fn positional_name(arg: &clap::Arg) -> String {
         .unwrap_or_else(|| arg.get_id().to_string())
 }
 
-fn takes_values(arg: &clap::Arg) -> bool {
+pub(super) fn takes_values(arg: &clap::Arg) -> bool {
     arg.get_num_args()
         .map(|range| range.takes_values())
         .unwrap_or_else(|| arg.get_action().takes_values())
@@ -129,7 +129,7 @@ fn flag_value_name(arg: &clap::Arg) -> Option<String> {
     )
 }
 
-fn default_value(arg: &clap::Arg) -> Option<String> {
+pub(super) fn default_value(arg: &clap::Arg) -> Option<String> {
     if !takes_values(arg) {
         return None;
     }
@@ -147,7 +147,7 @@ fn default_value(arg: &clap::Arg) -> Option<String> {
     )
 }
 
-fn possible_values(arg: &clap::Arg) -> Vec<String> {
+pub(super) fn possible_values(arg: &clap::Arg) -> Vec<String> {
     if !takes_values(arg) {
         return Vec::new();
     }
@@ -209,63 +209,68 @@ fn only_the_help_word(subs: &[&Command]) -> bool {
     matches!(subs, [single] if single.get_name() == "help")
 }
 
-/// Whether `sub` is the `help` word clap adds in `build()` rather than a
-/// destination the application declared. Clap appends it to any command that
-/// has not called `disable_help_subcommand`, and rejects an application
-/// declaring its own `help` alongside it as a duplicate name — so the parent's
-/// setting decides the provenance, whatever build state the caller handed us.
+/// The parent's `disable_help_subcommand` setting decides, whatever build state it is in.
 fn is_clap_generated_help_subcommand(parent: &Command, sub: &Command) -> bool {
     sub.get_name() == "help" && !parent.is_disable_help_subcommand_set()
 }
 
+/// `None` when no command sits at `path` (empty for the root).
 pub(crate) fn extract_help_data(
-    cmd: &Command,
+    root: &Command,
+    path: &[&str],
     command_groups: Option<&[CommandGroup]>,
     length: HelpLength,
     target: &TargetProperties,
-) -> HelpData {
-    extract(cmd, command_groups, length, None, target)
+) -> Option<HelpData> {
+    extract(root, path, command_groups, length, None, target)
 }
 
 pub(crate) fn extract_help_data_with_topics(
-    cmd: &Command,
+    root: &Command,
+    path: &[&str],
     registry: &TopicRegistry,
     command_groups: Option<&[CommandGroup]>,
     length: HelpLength,
     target: &TargetProperties,
-) -> HelpData {
-    extract(cmd, command_groups, length, Some(registry), target)
+) -> Option<HelpData> {
+    extract(root, path, command_groups, length, Some(registry), target)
 }
 
-fn extract(
-    cmd: &Command,
-    command_groups: Option<&[CommandGroup]>,
-    length: HelpLength,
-    registry: Option<&TopicRegistry>,
-    target: &TargetProperties,
-) -> HelpData {
-    // Clap materialises `-h/--help` and `-V/--version` in `build()`, so the
-    // declared command is not the command clap parses and prints.
-    let mut built = cmd.clone();
+/// Only a `build()` from the root gives a subcommand its `-h`/`-V` and its parents' usage names.
+pub(super) fn build_root(root: &Command) -> Command {
+    let mut built = root.clone();
     built.build();
-    let cmd = &built;
+    built
+}
 
-    let name = cmd.get_name().to_string();
+pub(super) fn usage_line(cmd: &Command) -> String {
+    let usage = cmd.clone().render_usage().to_string();
+    usage.strip_prefix("Usage: ").unwrap_or(&usage).to_string()
+}
 
-    let about = match length {
+pub(super) fn about_line(cmd: &Command, length: HelpLength) -> String {
+    match length {
         HelpLength::Long => cmd.get_long_about().or_else(|| cmd.get_about()),
         HelpLength::Short => cmd.get_about(),
     }
     .map(|s| s.to_string())
-    .unwrap_or_default();
+    .unwrap_or_default()
+}
 
-    let usage = cmd
-        .clone()
-        .render_usage()
-        .to_string()
-        .strip_prefix("Usage: ")
-        .unwrap_or(&cmd.clone().render_usage().to_string())
-        .to_string();
+fn extract(
+    root: &Command,
+    path: &[&str],
+    command_groups: Option<&[CommandGroup]>,
+    length: HelpLength,
+    registry: Option<&TopicRegistry>,
+    target: &TargetProperties,
+) -> Option<HelpData> {
+    let built = build_root(root);
+    let cmd = crate::cli::app::find_subcommand_recursive(&built, path)?;
+
+    let name = cmd.get_name().to_string();
+    let about = about_line(cmd, length);
+    let usage = usage_line(cmd);
 
     let topics = registry
         .map(|registry| registry.list_topics())
@@ -356,7 +361,7 @@ fn extract(
         policy,
     );
 
-    HelpData {
+    Some(HelpData {
         name,
         about,
         usage,
@@ -369,7 +374,7 @@ fn extract(
         examples: String::new(),
         learn_more,
         learn_more_width,
-    }
+    })
 }
 
 fn subcommand_row(sub: &Command) -> Subcommand {
@@ -460,7 +465,7 @@ mod tests {
     }
 
     fn extract_short(cmd: &Command) -> HelpData {
-        extract_help_data(cmd, None, HelpLength::Short, &layout_target())
+        extract_help_data(cmd, &[], None, HelpLength::Short, &layout_target()).unwrap()
     }
 
     #[test]
@@ -628,8 +633,12 @@ mod tests {
         let mut wide = layout_target();
         wide.ambiguous_width = crate::AmbiguousWidth::Wide;
 
-        let narrow_width = extract_help_data(&cmd, None, HelpLength::Short, &narrow).options_width;
-        let wide_width = extract_help_data(&cmd, None, HelpLength::Short, &wide).options_width;
+        let narrow_width = extract_help_data(&cmd, &[], None, HelpLength::Short, &narrow)
+            .unwrap()
+            .options_width;
+        let wide_width = extract_help_data(&cmd, &[], None, HelpLength::Short, &wide)
+            .unwrap()
+            .options_width;
         assert!(
             wide_width > narrow_width,
             "wide policy must measure ambiguous names wider: {wide_width} vs {narrow_width}"
@@ -648,9 +657,47 @@ mod tests {
             commands: vec![Some("short".into())],
         }];
 
-        let data = extract_help_data(&cmd, Some(&groups), HelpLength::Short, &layout_target());
+        let data = extract_help_data(
+            &cmd,
+            &[],
+            Some(&groups),
+            HelpLength::Short,
+            &layout_target(),
+        )
+        .unwrap();
         assert_eq!(data.subcommands.len(), 2, "expected a Main and an Other");
         assert_eq!(data.subcommands_width, "a-very-long-command-name".len());
+    }
+
+    #[test]
+    fn test_a_nested_leaf_usage_names_the_path_to_it() {
+        let cmd = Command::new("app").subcommand(
+            Command::new("nest").subcommand(
+                Command::new("inner").subcommand(
+                    Command::new("leaf")
+                        .arg(Arg::new("all").long("all").action(clap::ArgAction::SetTrue)),
+                ),
+            ),
+        );
+
+        let data = extract_help_data(
+            &cmd,
+            &["nest", "inner", "leaf"],
+            None,
+            HelpLength::Short,
+            &layout_target(),
+        )
+        .unwrap();
+        assert_eq!(data.name, "leaf");
+        assert_eq!(data.usage, "app nest inner leaf [OPTIONS]");
+        assert!(extract_help_data(
+            &cmd,
+            &["nest", "twig"],
+            None,
+            HelpLength::Short,
+            &layout_target()
+        )
+        .is_none());
     }
 
     #[test]
@@ -668,7 +715,9 @@ mod tests {
 
         assert_eq!(extract_short(&cmd).about, "Terse");
         assert_eq!(
-            extract_help_data(&cmd, None, HelpLength::Long, &layout_target()).about,
+            extract_help_data(&cmd, &[], None, HelpLength::Long, &layout_target())
+                .unwrap()
+                .about,
             "The full story"
         );
     }
@@ -677,7 +726,9 @@ mod tests {
     fn test_long_length_falls_back_to_about() {
         let cmd = Command::new("root").about("Terse");
         assert_eq!(
-            extract_help_data(&cmd, None, HelpLength::Long, &layout_target()).about,
+            extract_help_data(&cmd, &[], None, HelpLength::Long, &layout_target())
+                .unwrap()
+                .about,
             "Terse"
         );
     }
@@ -829,11 +880,13 @@ mod tests {
 
         let data = extract_help_data_with_topics(
             &cmd,
+            &[],
             &registry,
             None,
             HelpLength::Short,
             &layout_target(),
-        );
+        )
+        .unwrap();
         assert_eq!(
             data.subcommands[0].items[0].name, "help",
             "`help <topic>` is a real destination, so the word stays listed"
@@ -867,11 +920,13 @@ mod tests {
 
         let data = extract_help_data_with_topics(
             &cmd,
+            &[],
             &registry,
             None,
             HelpLength::Short,
             &layout_target(),
-        );
+        )
+        .unwrap();
         assert_eq!(data.learn_more.len(), 2);
         assert_eq!(
             data.learn_more_width,

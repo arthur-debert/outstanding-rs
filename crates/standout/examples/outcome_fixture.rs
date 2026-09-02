@@ -1,12 +1,17 @@
 use clap::Command;
 use serde_json::json;
 use standout::cli::FnHandler;
-use standout::cli::{App, Artifact, ExternalFailure, HandlerResult, HookError, Hooks, Output};
+use standout::cli::{
+    App, Artifact, Diagnostic, ExitStatus, ExternalFailure, HandlerResult, HookError, Hooks, Output,
+};
 use standout::EmbeddedTemplates;
 
 const TEMPLATES: &[(&str, &str)] = &[
     ("external-pre", "{{ message }}"),
+    ("hook-fail", "{{ message }}"),
+    ("render-fail", "{{ message }}"),
     ("ok", "{{ message }}"),
+    ("signal", "{{ message }}"),
     ("warn-ok", "{{ message }}"),
     ("huge", "{{ message }}"),
     ("artifact", ARTIFACT_TEMPLATE),
@@ -20,10 +25,16 @@ const OUTCOME_PATH_ENV: &str = "STANDOUT_FIXTURE_OUTCOME_PATH";
 
 const ARTIFACT_TEMPLATE: &str = "wrote {{ report.entries }} entries to {{ receipt.destination }}";
 
+#[derive(serde::Serialize)]
+struct Unserializable {
+    map: std::collections::HashMap<(u8, u8), u8>,
+}
+
 fn command() -> Command {
     Command::new("outcome-fixture")
         .version("1.2.3")
         .subcommand(Command::new("ok"))
+        .subcommand(Command::new("signal"))
         .subcommand(Command::new("fail"))
         .subcommand(Command::new("silent"))
         .subcommand(Command::new("binary"))
@@ -33,6 +44,9 @@ fn command() -> Command {
         .subcommand(Command::new("warn-fail"))
         .subcommand(Command::new("external"))
         .subcommand(Command::new("external-pre"))
+        .subcommand(Command::new("hook-fail"))
+        .subcommand(Command::new("render-fail"))
+        .subcommand(Command::new("ranged"))
         .subcommand(Command::new("artifact"))
         .subcommand(Command::new("artifact-stdout"))
         .subcommand(Command::new("artifact-no-destination"))
@@ -44,6 +58,15 @@ fn app() -> App {
         .command_with(
             "ok",
             FnHandler::new(|_, _| Ok(Output::Render(json!({ "message": "ok" })))),
+            |cfg| cfg,
+        )
+        .unwrap()
+        .command_with(
+            "signal",
+            FnHandler::new(|_, _| {
+                Ok(Output::Render(json!({ "message": "changes" }))
+                    .with_exit_status(ExitStatus::from(2)))
+            }),
             |cfg| cfg,
         )
         .unwrap()
@@ -171,6 +194,37 @@ fn app() -> App {
                 ))
             }),
         )
+        .command_with(
+            "hook-fail",
+            FnHandler::new(|_, _| Ok(Output::Render(json!({ "message": "unreachable" })))),
+            |cfg| cfg,
+        )
+        .unwrap()
+        .hooks(
+            "hook-fail",
+            Hooks::new().pre_dispatch(|_, _| Err(HookError::pre_dispatch("fixture hook failed"))),
+        )
+        .command_with(
+            "render-fail",
+            FnHandler::new(|_, _| {
+                let mut map = std::collections::HashMap::new();
+                map.insert((1u8, 2u8), 3u8);
+                Ok(Output::Render(Unserializable { map }))
+            }),
+            |cfg| cfg,
+        )
+        .unwrap()
+        .command_with(
+            "ranged",
+            FnHandler::new(|_, _| -> HandlerResult<serde_json::Value> {
+                Err(Diagnostic::error("config line 2 does not parse")
+                    .detail("expected `resource <name> <state>`")
+                    .range("main.tfl", 2, 1)
+                    .into())
+            }),
+            |config| config.structured_only(),
+        )
+        .unwrap()
         .build()
         .unwrap()
 }

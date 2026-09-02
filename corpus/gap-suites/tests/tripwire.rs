@@ -1,35 +1,21 @@
-//! The closed-gap tripwire. Without a produced binary the gap suites
-//! short-circuit as expected-fail, so their green in CI carries no signal by
-//! itself; these tests are what keep that silence honest. The ledger test
-//! pins the tripwire inventory (`gaps.toml`) to the suites' actual
-//! `expect_gap` call sites, so a tripwire cannot be removed, added, or
-//! declared closed without the ledger and the suite agreeing in the same
-//! change — closing an epic without promoting its suite is a red test, as is
-//! promoting without recording the closure. The simulation tests exercise
-//! the loud path itself: a gap assertion that passes against a produced
-//! binary must fail the test run, visibly, in exactly the way a silently
-//! closed gap would.
+//! The closed-gap tripwire: the ledger test pins `gaps.toml` to the suites'
+//! `expect_gap` call sites, and the simulation tests exercise the loud path
+//! itself. `corpus/gap-suites/README.md` explains both.
 
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 
-/// Serializes the simulation tests' environment writes. Under plain
-/// `cargo test` the tests in this binary share one process and may run on
-/// concurrent threads, where an unsynchronized `set_var` races other env
-/// reads. Each simulation test also uses its own variable name, so no test
-/// ever observes — or depends on — another's value.
+// Serializes the simulation tests' `set_var` calls; each also uses its own variable name.
 static ENV_LOCK: Mutex<()> = Mutex::new(());
 
-/// The textual shape of an armed tripwire in a suite source file. This file
-/// calls the wrapper too, so the ledger sweep skips `tripwire.rs` by name.
+// This file calls the wrapper too, so the ledger sweep skips `tripwire.rs` by name.
 const NEEDLE: &str = "expect_gap(";
 
 fn suite_root() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).to_path_buf()
 }
 
-/// Counts `expect_gap(` call sites in one suite source file.
 fn armed_count(source: &str) -> usize {
     source.matches(NEEDLE).count()
 }
@@ -87,8 +73,7 @@ fn gap_ledger_matches_the_armed_suites() {
         }
     }
 
-    // Every suite carrying tripwires is on the ledger: a new gap suite must
-    // register its gate before it can ride the expected-fail machinery.
+    // A new gap suite must register its gate before it can carry tripwires.
     for entry in fs::read_dir(root.join("tests")).unwrap() {
         let path = entry.unwrap().path();
         if path.file_name().is_some_and(|f| f == "tripwire.rs") {
@@ -106,12 +91,8 @@ fn gap_ledger_matches_the_armed_suites() {
     }
 }
 
-/// The simulation the cleanup Spec asks for: point the machinery at a binary
-/// that passes a gap case and show the visible failure. The "gap case" here
-/// is a real black-box assertion (spawn the binary, check its stream) whose
-/// behavior the simulated binary already has — exactly a silently closed
-/// gap — and the expected-fail wrapper must turn that into a loud test
-/// failure, not a quiet pass.
+// A real black-box assertion against a binary that already has the behavior: a
+// silently closed gap, manufactured on purpose.
 #[cfg(unix)]
 #[test]
 fn a_gap_case_that_passes_fails_loudly() {
@@ -158,9 +139,6 @@ fn a_gap_case_that_passes_fails_loudly() {
     );
 }
 
-/// The steady state stays quiet on both sides of the tripwire: no produced
-/// binary short-circuits, and a binary the assertion still rejects is an
-/// open gap — neither may fail the run.
 #[cfg(unix)]
 #[test]
 fn open_gaps_and_missing_binaries_stay_expected_fail() {
@@ -169,8 +147,7 @@ fn open_gaps_and_missing_binaries_stay_expected_fail() {
     let _env = ENV_LOCK
         .lock()
         .unwrap_or_else(|poisoned| poisoned.into_inner());
-    // This name is set nowhere: the unset case needs no remove_var, which
-    // would race the other simulation test's set under `cargo test`.
+    // This name is set nowhere: a remove_var would race the other simulation test.
     corpus_gap_suites::expect_gap(
         "tripwire/simulation",
         "CORPUS_TRIPWIRE_SIM_NEVER_SET_BIN",

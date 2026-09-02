@@ -1,5 +1,4 @@
-// Scaffolding shared by the corpus-runner integration tests. Every caller
-// is `#![cfg(unix)]`-gated, so nothing here needs its own gate.
+// Scaffolding shared by the corpus-runner integration tests; every caller is `#![cfg(unix)]`.
 #![allow(dead_code)]
 
 use std::fs;
@@ -13,8 +12,7 @@ pub fn script(dir: &Path, name: &str, body: &str) -> PathBuf {
     path
 }
 
-// PATH is process-wide state: a caller must run alone in its own
-// integration-test file.
+// Prepends to the process-wide PATH: a caller must run alone in its own test binary.
 pub fn install_fake_cargo(bin_dir: &Path, binary_name: &str, impl_body: &str) {
     fs::create_dir_all(bin_dir).unwrap();
     let impl_path = script(bin_dir, &format!("{binary_name}-impl"), impl_body);
@@ -44,8 +42,7 @@ cp "{impl_path}" "$td/debug/{binary_name}""#,
     );
 }
 
-// The agent sandbox denies reads under the source checkout, so fixtures
-// must be staged here first rather than `cp`'d from the repo at run time.
+// The agent sandbox denies reads under the source checkout.
 pub fn stage_dir(src: &Path, dest: &Path) {
     fs::create_dir_all(dest).unwrap();
     for entry in fs::read_dir(src).unwrap() {
@@ -59,8 +56,7 @@ pub fn stage_dir(src: &Path, dest: &Path) {
     }
 }
 
-// Answers are spliced into an awk program verbatim: keep them free of awk
-// and shell metacharacters (the fixtures' plain sentences are).
+// Answers are spliced into an awk program verbatim: no awk or shell metacharacters.
 pub fn questionnaire_agent(
     dir: &Path,
     name: &str,

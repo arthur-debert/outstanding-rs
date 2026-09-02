@@ -14,8 +14,8 @@ pub enum OutputMode {
     TermDebug,  // Keep style tags as [name]...[/name]
     Json,       // Serialize as JSON (skip template)
     Yaml,       // Serialize as YAML (skip template)
-    Xml,        // Serialize as XML (skip template)
     Csv,        // Serialize as CSV (skip template)
+    Ndjson,     // One JSON object per line: a stream, not a document
 }
 ```
 
@@ -25,7 +25,12 @@ Three categories:
 
 **Debug mode** (TermDebug): Render the template, keep tags as literals for inspection.
 
-**Structured modes** (Json, Yaml, Xml, Csv): Skip the template entirely, serialize handler data directly.
+**Structured modes** (Json, Yaml, Csv, Ndjson): Skip the template entirely,
+serialize handler data directly. `Ndjson` is the one stream mode among them,
+[below](#ndjson-mode).
+
+There is no XML mode. `--output xml` is a clap usage error like any other
+value the flag does not accept, exit `2`.
 
 ## Auto Mode
 
@@ -60,8 +65,8 @@ myapp list --output=text        # Force plain text
 myapp list --output=term-debug  # Show style tags
 myapp list --output=json        # JSON serialization
 myapp list --output=yaml        # YAML serialization
-myapp list --output=xml         # XML serialization
 myapp list --output=csv         # CSV serialization
+myapp list --output=ndjson      # Newline-delimited JSON stream
 ```
 
 The flag is global—it applies to all subcommands. `--output` accepts a single
@@ -112,10 +117,8 @@ writes literally into the rendered text — the framework does not sanitize
 those bytes and does not promise to. A caller that needs them gone strips
 them itself.
 
-`term-debug` (which shows tags as `[name]...[/name]` rather than resolving
-them) is internal: its tag vocabulary and exact spelling may change in any
-release, so don't build automation against its output the way you might
-against `term` or `text`.
+`term-debug` is internal ([What Is Contract](./stability.md)): do not build
+automation against its output.
 
 ## TermDebug Mode
 
@@ -133,12 +136,10 @@ Use cases:
 - Automated testing of template output
 
 TermDebug keeps every tag as literal text and shows tag placement; it does not
-check whether a tag has a matching style definition. No mode rewrites an
-unknown tag to a `[unknown?]` marker — in `Term` and `Text` an unresolved tag
-degrades to unstyled text and is recorded as a warning; run through `App::run`
-that warning is written to stderr (see [Unknown Style
-Tags](../crates/render/topics/styling-system.md#unknown-style-tags)).
-Use `validate_template` when validation is required.
+check whether a tag has a matching style definition. What the other modes do
+with an unknown tag is in [Unknown Style
+Tags](../crates/render/topics/styling-system.md#unknown-style-tags). Use
+`validate_template` when validation is required.
 
 ## Structured Modes
 
@@ -175,10 +176,11 @@ Same handler, same types—different output format. This enables:
 
 ### Key ordering
 
-JSON, YAML, and XML emit object keys in the order the handler declared them, not
-alphabetically. In the example above, a reader sees `items` before `total`
+JSON, YAML, CSV and NDJSON emit object keys in the order the handler declared
+them, not alphabetically. In the example above, a reader sees `items` before `total`
 because the struct lists `items` first. Field order in your `#[derive(Serialize)]`
-struct — or key order in a `json!({ ... })` literal — is the output order.
+struct — or key order in a `json!({ ... })` literal — is the output order, and
+in CSV it is the column order.
 
 This holds because Standout builds serde_json's `Value` with the `preserve_order`
 feature on, so the intermediate map keeps insertion order instead of sorting. The
@@ -192,9 +194,36 @@ order-preserving map type (for example `indexmap::IndexMap`); reach for a raw
 
 ### CSV Output
 
-Normal `App` dispatch flattens the serializable handler data automatically for
-CSV. That is the same handler data used by the other structured modes; handlers
-should not inspect the requested mode or return a CSV-specific shape.
+CSV takes flat records only. A flat record is a map whose values are scalars
+(strings, numbers, booleans, null); the handler data must be one flat record or
+an array of flat records. Each record is a row, the columns are the records'
+keys in first-seen order, and a key a record lacks — or maps to null — is an
+empty cell.
+
+```rust
+#[derive(Serialize)]
+struct Row { name: String, count: usize }
+
+// One row per element:   name,count
+Ok(Output::Render(vec![Row { .. }, Row { .. }]))
+```
+
+Any nested value — an array or object inside a record, or a document that is
+not a record at all — is a render error, exit `1`, whose message names the
+value and points at `CsvProjection`:
+
+```text
+CSV output takes a flat record or an array of flat records, and `items` is an
+array; declare the columns with a CsvProjection
+```
+
+Under `--output csv` that error is the stdout diagnostic document, kind
+`render` ([Execution Outcomes](./execution-outcomes.md#failures-under-a-structured-mode)).
+Nothing is flattened: there are no `items.0.name` columns and no JSON blobs in
+cells. A command whose canonical response nests its rows declares the columns
+with a `CsvProjection`, below. That is the same handler data used by the other
+structured modes; handlers should not inspect the requested mode or return a
+CSV-specific shape.
 
 The standalone rendering API also supports direct `FlatDataSpec` rendering when
 a caller needs explicit columns and headers:
@@ -256,14 +285,97 @@ columns receive both the current row and the root response. Synthetic-row
 callbacks receive the root response and run in registration order. Column
 ordering, headers, and `null_repr` use the existing `FlatDataSpec` behavior.
 
+The row source is a dot path into the response, or `.` for the response
+itself. An array there is one row per element; a single record is one row,
+which is how the framework's own diagnostic document becomes a CSV row: a
+`CsvProjection` over `.` whose optional `range` is three columns,
+`range_filename`, `range_line` and `range_column`, with `null_repr("")` so
+they are empty when no range is set.
+
 The projection applies only to CSV. Text and terminal modes still use the
-template, while JSON, YAML, and XML serialize the canonical response. In the
+template, while JSON and YAML serialize the canonical response. In the
 pipeline, post-dispatch hooks run before projection and post-output hooks run
 after it; `run`, `run_with`, output-file handling, and final emission
 therefore all observe the same projected CSV.
 
 See [Introduction to Tabular](../crates/render/guides/intro-to-tabular.md) for
 tabular specifications and layout.
+
+## NDJSON Mode
+
+`--output ndjson` makes stdout a stream: every line is one JSON object, and the
+run may write several. Nothing else changes — the same handler, the same
+serializable data, the same exit statuses. This is the mode for a command whose
+result accrues while it runs (a plan, an apply, a long listing) and for a
+consumer that wants to react to entries before the process ends.
+
+A stream is exactly line-per-value: each entry is written compact, one line,
+and flushed when it is emitted. There is no buffering, no backpressure and no
+async behind it.
+
+### What a run writes
+
+`Output::Render(data)` becomes one `result` entry where the other structured
+modes write their document:
+
+```text
+{"type":"result","data":{"items":[...],"total":42}}
+```
+
+A failure is one `diagnostic` entry at the point in the stream where the run
+failed, after whatever the handler already emitted, and a warning is a
+`severity: warning` diagnostic entry of kind `framework` after the result or
+the failure; the document itself and what each stream carries are in
+[Execution Outcomes](./execution-outcomes.md#failures-under-a-structured-mode).
+`Output::Silent` writes nothing, so a handler whose entries are its whole
+result leaves only those. Binary and artifact output are render errors under
+`ndjson`, decided before anything is written: a stream of JSON lines has no
+room for a payload.
+
+### Handler-emitted entries
+
+`ctx.stream()` returns the run's `EntryStream`. `emit(&value)` writes the
+value as one line under `ndjson` and does nothing in every other mode:
+
+```rust
+#[derive(Serialize)]
+#[serde(tag = "type", rename_all = "snake_case")]
+enum Entry<'a> {
+    Version { format_version: u32 },
+    ApplyStart { resource: &'a str },
+    ApplyComplete { resource: &'a str },
+}
+
+fn apply(_matches: &ArgMatches, ctx: &CommandContext) -> HandlerResult<Summary> {
+    let stream = ctx.stream();
+    stream.emit(&Entry::Version { format_version: 1 })?;
+    for change in plan()? {
+        stream.emit(&Entry::ApplyStart { resource: &change.name })?;
+        change.apply()?;                       // a failure here is a diagnostic entry
+        stream.emit(&Entry::ApplyComplete { resource: &change.name })?;
+    }
+    Ok(Output::Render(summary))                // one more line: the result entry
+}
+```
+
+```text
+$ myapp apply --output ndjson
+{"type":"version","format_version":1}
+{"type":"apply_start","resource":"web"}
+{"type":"apply_complete","resource":"web"}
+{"type":"result","data":{"applied":1}}
+```
+
+The framework does not inspect an entry: its shape, including whether it
+carries a `type` key, is the application's contract with its consumers.
+`emit` fails with a `StreamError` when the value does not serialize or the
+line cannot be written; propagate it with `?` and the run fails with it.
+
+A handler whose entries *are* its result can skip the `result` line by
+returning `Output::Silent` when the stream is live — `ctx.stream().is_live()`
+is true only under `ndjson` — and `Output::Render` otherwise, so the human
+modes still render their page. That is the one presentation branch a handler
+is meant to take.
 
 ## File Output
 
@@ -279,6 +391,9 @@ Behavior:
 - Text output: written to file, nothing printed to stdout
 - Binary output: written to the requested file instead of stdout
 - Silent output: no-op
+- `ndjson`: the file is the stream. It is opened before the handler runs and
+  receives the handler's entries as they are emitted, then the `result` or
+  `diagnostic` entry, then the warning entries; stdout carries nothing.
 
 After writing to file, stdout output is suppressed to prevent double-printing.
 
@@ -307,6 +422,10 @@ Output mode is a rendering concern and is deliberately absent from
 of whether the caller selected terminal, text, or structured output. If a
 command's behavior genuinely differs, model that as an explicit command or
 argument rather than an implicit presentation-mode branch.
+
+The one mode-aware member of the context is `ctx.stream()`, live only under
+`ndjson`; the single branch a handler takes on it is in
+[Handler-emitted entries](#handler-emitted-entries).
 
 ## Rendering Without CLI
 

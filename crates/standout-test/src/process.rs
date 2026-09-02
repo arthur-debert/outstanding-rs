@@ -1,4 +1,6 @@
 use crate::{output_mode_flag, StdinMode, TestHarness};
+use standout::cli::Diagnostic;
+use standout_render::OutputMode;
 use std::ffi::{OsStr, OsString};
 use std::path::{Path, PathBuf};
 use std::process::{Command, ExitStatus, Stdio};
@@ -192,6 +194,10 @@ impl ProcessResult {
     }
     pub fn tempdir(&self) -> Option<&Path> {
         self._tempdir.as_ref().map(TempDir::path)
+    }
+    /// A process result carries no resolved mode, so the caller names the one it asked for.
+    pub fn diagnostic(&self, output_mode: OutputMode) -> Option<Diagnostic> {
+        standout::cli::parse_diagnostic(output_mode, &self.stdout).ok()
     }
     #[track_caller]
     pub fn assert_success(&self) {

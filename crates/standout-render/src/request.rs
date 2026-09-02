@@ -30,9 +30,7 @@ use crate::AmbiguousWidth;
 
 pub type SharedTemplateEngine = Rc<RefCell<Box<dyn TemplateEngine>>>;
 
-// Color capability and terminal-ness are per stream because stdout and
-// stderr can differ (piped command, TTY warnings). This type is `Copy`;
-// construct it directly in tests, don't call `detect`.
+// Per stream: stdout and stderr can differ (piped command, TTY warnings).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct TargetProperties {
     pub width: Option<usize>,
@@ -159,17 +157,8 @@ fn serialize_structured(
     let output = match format {
         OutputMode::Json => serde_json::to_string_pretty(data)?,
         OutputMode::Yaml => serde_yaml::to_string(data)?,
-        OutputMode::Xml => crate::util::serialize_to_xml(data)?,
-        OutputMode::Csv => {
-            let (headers, rows) = crate::util::flatten_json_for_csv(data);
-            let mut wtr = csv::Writer::from_writer(Vec::new());
-            wtr.write_record(&headers)?;
-            for row in rows {
-                wtr.write_record(&row)?;
-            }
-            let bytes = wtr.into_inner()?;
-            String::from_utf8(bytes)?
-        }
+        OutputMode::Csv => crate::util::write_csv(data)?,
+        OutputMode::Ndjson => crate::document::result_entry(data)?,
         _ => unreachable!("serialize_structured requires a structured OutputMode"),
     };
     Ok(RenderResult::plain(output))

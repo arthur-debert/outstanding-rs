@@ -1,12 +1,6 @@
-//! Style definition types for stylesheet parsing.
-//!
-//! This module defines [`StyleDefinition`], the parsed representation of a single
-//! style entry in a YAML stylesheet. Styles can be:
-//!
-//! - Alias: Reference to another style by name
-//! - Attributes: Direct style with optional light/dark overrides
-//!
-//! # YAML Formats
+//! [`StyleDefinition`] is the parsed form of one YAML stylesheet entry: an
+//! alias to another style by name, or attributes with optional light/dark
+//! overrides.
 //!
 //! ```yaml
 //! # Alias - string value that's a valid style name

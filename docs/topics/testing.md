@@ -54,15 +54,7 @@ Argument parsing is clap's responsibility, and clap has an extensive test suite 
 
 ## What the harness adds
 
-`TestHarness` (in the `standout-test` crate) is the unified in-process runner. It wraps `App::run_with` with fluent setup for every injectable piece of state:
-
-Its `TestResult` also exposes `exit_status()`, `success_kind()`, and
-`error_kind()`, with assertions for typed status and failure origin. `NoMatch`
-returns no framework status because the fallback dispatcher still owns the
-command. For an `AppFailure` or an `ExternalFailure`, `stdout()` is empty,
-`error()` and `stderr()` are the verbatim diagnostic, `error_kind()` is
-`RunErrorKind::App` or `RunErrorKind::External`, and `exit_status()` retains the
-declared value (including values such as `128`).
+`TestHarness` (in the `standout-test` crate) is the unified in-process runner. It wraps `App::run_with_sink` with fluent setup for every injectable piece of state:
 
 - Env vars (real `std::env::set_var`, originals captured and restored on drop)
 - Working directory (real `std::env::set_current_dir`, original restored on drop)
@@ -72,6 +64,15 @@ declared value (including values such as `128`).
 - Interactive prompt responder on those sources, so wizard handlers that call `.prompt_from(ctx.input_sources())` are testable in process — see [Interactive Flows → Testing Wizards](../crates/input/topics/interactive-flows.md#testing-wizards)
 - Forced `OutputMode` (injected as `--output=<mode>` into argv)
 - Framework warnings captured from the run boundary, including accepted answer-sheet parse warnings queued by questionnaire commands
+
+Its `TestResult` exposes `exit_status()`, `success_kind()`, and
+`error_kind()`, with assertions for typed status and failure origin. `NoMatch`
+returns no framework status because the fallback dispatcher still owns the
+command. For an `AppFailure` or an `ExternalFailure`, `error_kind()` is
+`RunErrorKind::App` or `RunErrorKind::External`, `exit_status()` is the declared
+value, and the two streams hold what
+[Execution Outcomes](./execution-outcomes.md#failures-under-a-structured-mode)
+says a process writes.
 
 A `RestoreState` held inside the returned `TestResult` runs on drop — on both normal exit and panic unwind — and tears down every override, so a failing assertion never leaks state into sibling tests. Two nuances worth knowing:
 
@@ -98,9 +99,7 @@ The harness doesn't invent new mechanisms; it wires together seams that Standout
 
 Detection is [`TargetProperties::detect()`](https://docs.rs/standout-render/latest/standout_render/struct.TargetProperties.html#method.detect) at the crate edge. Convenience wrappers and `App::run` call it there, then pass the result into `render_request`. Tests do not call `detect()`; they construct `TargetProperties` or inject facts through `TestHarness` (`terminal_width`, `with_color` / `no_color`, `color_scheme`, `icon_mode`, `ambiguous_width`). Unset facts take fixed defaults — `width: None`, `ColorMode::Dark`, `IconMode::Classic`, `AmbiguousWidth::Narrow` — so `$COLUMNS`, `$NERD_FONT`, and the OS appearance setting cannot change an in-process run.
 
-The detector override APIs are removed: `set_terminal_width_detector`, `set_color_capability_detector`, `set_ambiguous_width_detector`, `set_theme_detector`, `set_icon_detector`, `DetectorGuard`, and the public `detect_*` cluster they served.
-
-There is no TTY detector: one existed, nothing in production ever read it, and it was removed rather than left as a seam that answers only about stdout (`docs/adr/0022-delete-the-in-process-tty-seam.md`). Terminal-dependent behavior is tested against a real process via `TestHarness::run_process`.
+There is no TTY detector ([ADR-0022](../adr/0022-delete-the-in-process-tty-seam.md)): terminal-dependent behavior is tested against a real process via `TestHarness::run_process`.
 
 ### `standout-input` InputSources
 
@@ -119,8 +118,8 @@ let sources = InputSources::from_process().with_stdin(MockStdin::piped("hello"))
 let value = chain.resolve_from(&matches, &sources)?;
 ```
 
-Handlers that need a source-local mock keep using
-`StdinSource::with_reader(MockStdin::piped(...))` as before.
+Handlers that need a source-local mock use
+`StdinSource::with_reader(MockStdin::piped(...))`.
 
 ### Testing invocation-aware default commands
 
@@ -181,9 +180,9 @@ These aren't proxied through a Standout abstraction — they're just real OS pri
 
 ## Concurrency model
 
-Env vars and cwd remain process-global. Parallel tests that mutate them will interfere with each other. Destination facts (width, color, color-scheme, icon mode) are injected on `TargetProperties` and no longer need `#[serial]` for detector reasons.
+Env vars and cwd remain process-global. Parallel tests that mutate them will interfere with each other. Destination facts (width, color, color-scheme, icon mode) are injected on `TargetProperties` and need no `#[serial]`.
 
-Use `#[serial]` from the `serial_test` crate (re-exported as `standout_test::serial`) on every in-process `TestHarness::run` test while those env/cwd overrides exist: `serial_test` only orders annotated tests against each other, so an unannotated `run` can race with one that mutates env or cwd. Input sources and warning capture no longer require `#[serial]`. Within a test binary, serial execution is automatic among annotated tests; across test binaries, cargo runs one test binary at a time by default, so there's no extra coordination needed.
+Use `#[serial]` from the `serial_test` crate (re-exported as `standout_test::serial`) on every in-process `TestHarness::run` test while those env/cwd overrides exist: `serial_test` only orders annotated tests against each other, so an unannotated `run` can race with one that mutates env or cwd. Input sources and warning capture do not require `#[serial]`. Within a test binary, serial execution is automatic among annotated tests; across test binaries, cargo runs one test binary at a time by default, so there's no extra coordination needed.
 
 ## Recipes
 
@@ -317,7 +316,7 @@ Run them together with `cargo test`. Level 1 is by far the largest file; level 3
 
 - **Real PTY.** `isatty()` on the real stdin file descriptor, raw-mode terminals, progress bars that depend on cursor control. Use `expectrl` / `rexpect` with a spawned subprocess.
 - **Signals.** SIGINT / SIGTERM handling needs a real process.
-- **Shelling out from your handler.** If a handler invokes `git`, `rg`, `$EDITOR`, etc., those run as real subprocesses in the test too. A `ProcessRunner` abstraction to address this is in progress (Phase 3 of the test-tooling work); until it lands, structure shell-outs behind a local trait you can swap for a mock in handler tests.
+- **Shelling out from your handler.** If a handler invokes `git`, `rg`, `$EDITOR`, etc., those run as real subprocesses in the test too. Structure shell-outs behind a local trait you can swap for a mock in handler tests.
 - **Build / linker integration.** Testing that the compiled binary has the right embedded resources, dependencies, or `--version` output is fair game for a small `assert_cmd` suite.
 
 The goal is to keep level-3 tests small and intentional — the cases where you really do need a real process — and put everything else at level 1 or 2.

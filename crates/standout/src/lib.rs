@@ -46,7 +46,9 @@ pub use standout_render::{
     SharedTemplateEngine, TargetProperties, TemplateRef,
 };
 
-pub use standout_render::{write_binary_output, write_output, OutputDestination, OutputMode};
+pub use standout_render::{
+    open_output_file, write_binary_output, write_output, OutputDestination, OutputMode,
+};
 pub use standout_render::{AmbiguousWidth, WidthCalculator};
 pub use standout_render::{
     CsvProjection, CsvProjectionBuilder, ProjectionError, StructuredOutputProjection,
@@ -75,6 +77,9 @@ pub use setup::SetupError;
 pub use standout_macros::{embed_styles, embed_templates, handler};
 
 pub use standout_macros::{Tabular, TabularRow};
+
+pub use standout_dispatch::{ContractSurface, Envelope};
+pub use standout_macros::ContractSurface;
 
 pub use standout_seeker as seeker;
 

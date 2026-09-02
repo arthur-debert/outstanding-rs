@@ -18,9 +18,7 @@ fn smoke_archetype_completes_the_loop() {
     let repo = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
     let scratch = tempfile::tempdir().unwrap();
 
-    // The sandbox admits only the workspace, system roots, and PATH
-    // directories, so the agent script and solution are staged here instead
-    // of referenced by an absolute path into the checkout.
+    // The sandbox admits only the workspace, system roots, and PATH directories.
     let tools_dir = scratch.path().join("tools");
     std::fs::create_dir_all(&tools_dir).unwrap();
     std::env::set_var(
