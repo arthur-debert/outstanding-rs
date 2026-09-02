@@ -37,7 +37,7 @@ fn sanitizer_prefers_specific_paths_without_rewriting_bare_usernames() {
     .unwrap();
 
     let script =
-        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../corpus/pilot/sanitize-run.py");
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../corpus/sanitize-run.py");
     let output = Command::new("python3")
         .arg(script)
         .arg(&run)
@@ -88,7 +88,7 @@ fn a_named_account_is_replaced_everywhere_it_appears_as_a_word() {
     .unwrap();
 
     let script =
-        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../corpus/pilot/sanitize-run.py");
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../corpus/sanitize-run.py");
     let output = Command::new("python3")
         .arg(script)
         .arg(&run)
@@ -111,17 +111,30 @@ fn a_named_account_is_replaced_everywhere_it_appears_as_a_word() {
 }
 
 #[test]
-fn committed_pilot_transcripts_use_the_specific_workspace_placeholder() {
-    let runs = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../corpus/pilot/runs");
-    for entry in fs::read_dir(runs).unwrap() {
-        let transcript = entry.unwrap().path().join("transcript.jsonl");
-        let text = fs::read_to_string(&transcript).unwrap();
-        assert!(
-            !text.contains("[run]/workspace"),
-            "{} contains the shadowed workspace placeholder",
-            transcript.display()
-        );
+fn fixture_transcripts_use_the_specific_workspace_placeholder() {
+    let runs = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/pilot/runs");
+    let mut checked = 0;
+    for entry in fs::read_dir(&runs).unwrap() {
+        let run = entry.unwrap().path();
+        for file in fs::read_dir(&run).unwrap() {
+            let file = file.unwrap().path();
+            if file.file_name().unwrap() == "report.json" {
+                continue;
+            }
+            checked += 1;
+            let text = fs::read_to_string(&file).unwrap();
+            assert!(
+                !text.contains("[run]/workspace"),
+                "{} contains the shadowed workspace placeholder",
+                file.display()
+            );
+        }
     }
+    assert!(
+        checked > 0,
+        "no fixture transcript found under {}",
+        runs.display()
+    );
 }
 
 // Exact matched values, so vouching one never silences another; `example.com` is
@@ -134,6 +147,7 @@ const SCANNED_ROOTS: &[&str] = &[
     "corpus/rerun",
     "corpus/completion",
     "corpus/demo",
+    "crates/corpus-runner/tests/fixtures",
 ];
 
 fn is_email_local(c: char) -> bool {
@@ -430,7 +444,7 @@ fn committed_run_artifacts_carry_no_secret_shapes() {
     assert!(
         findings.is_empty(),
         "secret-shaped content in committed artifacts — sanitize the artifact \
-         (corpus/pilot/sanitize-run.py) or, for vouched fixture data, extend \
+         (corpus/sanitize-run.py) or, for vouched fixture data, extend \
          ALLOWED_MATCHES:\n{}",
         findings.join("\n")
     );

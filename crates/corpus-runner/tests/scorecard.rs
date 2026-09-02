@@ -13,6 +13,12 @@ fn repo() -> std::path::PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("../..")
 }
 
+// Synthetic stand-ins for `corpus/pilot/runs`: same acceptance, invariant
+// and questionnaire data as the committed pilot reports, so the figures
+// below still reproduce what the pilot scorecard published, without this
+// test depending on committed run evidence.
+const PILOT_RUNS: &str = "crates/corpus-runner/tests/fixtures/pilot/runs";
+
 fn scorecard(sets: &[&str]) -> String {
     let output = Command::new("python3")
         .arg(repo().join("corpus/scorecard.py"))
@@ -144,7 +150,7 @@ const PILOT_FIGURES: &[(&str, &str, &str, &str)] = &[
 
 #[test]
 fn the_script_reproduces_the_pilot_scorecards_published_figures() {
-    let table = scorecard(&["pilot=corpus/pilot/runs"]);
+    let table = scorecard(&[&format!("pilot={PILOT_RUNS}")]);
     for (archetype, acceptance, invariants, workarounds) in PILOT_FIGURES {
         let row = table
             .lines()
@@ -158,7 +164,7 @@ fn the_script_reproduces_the_pilot_scorecards_published_figures() {
 
 #[test]
 fn a_report_without_a_provenance_block_names_its_agent_from_the_run_record() {
-    let table = scorecard(&["pilot=corpus/pilot/runs"]);
+    let table = scorecard(&[&format!("pilot={PILOT_RUNS}")]);
     for line in table.lines().filter(|line| line.starts_with("| gitlike |")) {
         assert!(
             line.contains("claude 2.1.234, claude-opus-5[1m] (recovered)"),
@@ -170,7 +176,7 @@ fn a_report_without_a_provenance_block_names_its_agent_from_the_run_record() {
 #[test]
 fn recovery_reads_the_prompt_and_settings_from_the_recorded_command() {
     let rows: serde_json::Value =
-        serde_json::from_str(&scorecard(&["pilot=corpus/pilot/runs", "--json"])).unwrap();
+        serde_json::from_str(&scorecard(&[&format!("pilot={PILOT_RUNS}"), "--json"])).unwrap();
     let row = rows
         .as_array()
         .unwrap()
@@ -391,7 +397,10 @@ fn listed_items_are_counted_in_every_form_an_agent_has_used() {
 
 #[test]
 fn runs_from_two_sets_sit_beside_each_other_under_their_archetype() {
-    let table = scorecard(&["pilot=corpus/pilot/runs", "again=corpus/pilot/runs"]);
+    let table = scorecard(&[
+        &format!("pilot={PILOT_RUNS}"),
+        &format!("again={PILOT_RUNS}"),
+    ]);
     let rows: Vec<&str> = table
         .lines()
         .filter(|line| line.starts_with("| gitlike |"))

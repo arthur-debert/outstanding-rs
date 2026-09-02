@@ -1,0 +1,1550 @@
+{
+  "schema_version": 2,
+  "run_id": "ghlike-1787048044",
+  "archetype": {
+    "name": "ghlike",
+    "spec_sha256": "4f09946e0ad1fac4764bcb07f5c34fc3f1c34c75ef2805ee5f25a9d83bff7508"
+  },
+  "pins": {
+    "framework_version": "8.1.1",
+    "docs_commit": "c9d7198c173a986756876994431a3174366bdef6",
+    "docs_sha256": "49489f0d5fb49e8c277ce49efce51e414166338aa7adb7626c4e6328e0b0ae73",
+    "acceptance_sha256": "cca5902652c0333b099b36da372d53a06b22db4e3056152ad9e0e844db9a5c5b",
+    "questionnaire_fingerprint": "sha256:64291870245510dad73ca960fd4024db9b9c161113a3dcc9c7e57a30973663fc"
+  },
+  "evaluation": {
+    "origin": "isolated-re-evaluation",
+    "isolation_backend": "macos-seatbelt",
+    "binary_sha256": "59e5e4e57195a3601b908853a35cd2bcb54e713b0235bedc60290de41398fbe9"
+  },
+  "blindness": {
+    "policy": "historical session was partially blind: its workspace was nested beneath a source checkout and inherited host homes; acceptance and ROB01 matrix results were later regenerated from an external workspace under the recorded evaluation sandbox",
+    "env_allowlist": [
+      "PATH",
+      "HOME",
+      "USER",
+      "SHELL",
+      "TERM",
+      "LANG",
+      "LC_ALL",
+      "TMPDIR",
+      "CARGO_HOME",
+      "RUSTUP_HOME"
+    ],
+    "framework_source_excluded": false,
+    "isolation_backend": "historical-partial",
+    "credential_exceptions": [
+      "historical agent session inherited host HOME, CARGO_HOME, and RUSTUP_HOME"
+    ],
+    "agent_reported_docs": "- docs/index.md\n- docs/intro.md\n- docs/guides/minimal-single-crate.md\n- docs/guides/tldr-intro-to-standout.md\n- docs/guides/intro-to-standout.md (sections 7.2-7.3, the \"finer points\" list, and the troubleshooting appendix)\n- docs/guides/leveraging-standout.md\n- docs/topics/app-configuration.md\n- docs/topics/output-modes.md\n- docs/topics/error-handling.md\n- docs/topics/execution-outcomes.md\n- docs/crates/dispatch/guides/intro-to-dispatch.md\n- docs/crates/dispatch/topics/handler-contract.md\n- docs/crates/render/guides/intro-to-tabular.md\n- docs/crates/render/topics/templating.md\n\nI also grepped the whole docs/ tree for `output_mode`, `no_output_flag`, `ExternalFailure`,\n`Output::Binary`, `pure`, and \"convention\", and read docs/guides/index.md and docs/topics/index.md\nlistings. Beyond the lines those greps printed, I did not read the input/ crate docs, the testing\nguides, styling-system, standout-help, topics-system, template-engines, file-system-resources, or\nthe upgrade guides.",
+    "agent_reported_external_sources": "No web search, and I did not open the standout crates' source or repository.\n\nWhat I did rely on beyond docs/:\n- General Rust, clap 4 derive, serde/serde_json knowledge (I added `serde_json = \"1\"` as a\n  crates.io dependency; the standout pins are untouched).\n- General Jinja2/MiniJinja knowledge that docs/ does not spell out: whitespace control (`{%- ... -%}`),\n  `map(attribute=...)` / `map(\"filtername\")`, the `max` filter, list concatenation with `+`, and\n  `loop.first`. docs/crates/render/topics/templating.md only points at the MiniJinja docs for these.\n- rustc/cargo diagnostics from the standout macros, e.g. `error: missing #[dispatch(handlers = path)]\n  attribute`, which told me an attribute was required that the docs' example omits. One `Debug`-trait\n  diagnostic printed a path into the installed standout-dispatch source as a \"help\" note; I did not\n  open that file or any other framework source.\n- Behavior learned by running my own binary (trailing-newline handling, tabular min-width behavior,\n  template-name resolution for nested groups) rather than from docs."
+  },
+  "session": {
+    "agent_cmd": "claude --dangerously-skip-permissions --setting-sources '' --strict-mcp-config -p \"Read INSTRUCTIONS.md in the current directory and carry it out completely.\" --output-format stream-json --verbose",
+    "wall_seconds": 708.6671315,
+    "exit_code": 0,
+    "timed_out": false,
+    "attempts": 1,
+    "turns": 53,
+    "input_tokens": 106,
+    "output_tokens": 54492,
+    "transcript": "transcript.jsonl"
+  },
+  "acceptance": {
+    "built": true,
+    "build_detail": null,
+    "cases": [
+      {
+        "name": "auth-status-two-levels",
+        "group": "nesting",
+        "stresses": "two-level command dispatch with exact output",
+        "expected": "pass",
+        "outcome": "pass"
+      },
+      {
+        "name": "checks-list-four-levels",
+        "group": "nesting",
+        "stresses": "four-level dispatch (root > pr > checks > list) with a positional at the leaf",
+        "expected": "pass",
+        "outcome": "pass"
+      },
+      {
+        "name": "group-without-subcommand-is-usage-error",
+        "group": "nesting",
+        "stresses": "a group node is not a command: exit 2, guidance on stderr, stdout empty",
+        "expected": "pass",
+        "outcome": "pass"
+      },
+      {
+        "name": "deep-group-without-subcommand",
+        "group": "nesting",
+        "stresses": "the same group discipline two levels down",
+        "expected": "pass",
+        "outcome": "pass"
+      },
+      {
+        "name": "unknown-subcommand-is-usage-error",
+        "group": "nesting",
+        "stresses": "unknown leaf under a valid group names the offender",
+        "expected": "pass",
+        "outcome": "pass"
+      },
+      {
+        "name": "root-help-lists-groups",
+        "group": "nesting",
+        "stresses": "help at the root shows the top-level nouns and exits 0",
+        "expected": "pass",
+        "outcome": "pass"
+      },
+      {
+        "name": "deep-leaf-help",
+        "group": "nesting",
+        "stresses": "help still renders at nesting depth four",
+        "expected": "pass",
+        "outcome": "pass"
+      },
+      {
+        "name": "repo-view-known",
+        "group": "human-output",
+        "stresses": "templated multi-line detail view, plain under pipe",
+        "expected": "pass",
+        "outcome": "pass"
+      },
+      {
+        "name": "repo-view-unknown",
+        "group": "human-output",
+        "stresses": "domain error: stderr prose, empty stdout, exit 1",
+        "expected": "pass",
+        "outcome": "pass"
+      },
+      {
+        "name": "pr-list-human-table",
+        "group": "human-output",
+        "stresses": "padded table with header, exact bytes under pipe",
+        "expected": "pass",
+        "outcome": "pass"
+      },
+      {
+        "name": "pr-view-human",
+        "group": "human-output",
+        "stresses": "detail view of one record",
+        "expected": "pass",
+        "outcome": "pass"
+      },
+      {
+        "name": "pr-view-unknown-number",
+        "group": "human-output",
+        "stresses": "domain error at a deep leaf",
+        "expected": "pass",
+        "outcome": "pass"
+      },
+      {
+        "name": "pr-list-json-two-fields",
+        "group": "json-field-selection",
+        "stresses": "field selection projects exactly the requested keys, typed",
+        "expected": "pass",
+        "outcome": "pass"
+      },
+      {
+        "name": "pr-list-json-single-field",
+        "group": "json-field-selection",
+        "stresses": "a one-field projection is still an array of objects, not bare values",
+        "expected": "pass",
+        "outcome": "pass"
+      },
+      {
+        "name": "pr-view-json-all-fields",
+        "group": "json-field-selection",
+        "stresses": "object projection with typed number/bool fields",
+        "expected": "pass",
+        "outcome": "pass"
+      },
+      {
+        "name": "checks-json-at-depth-four",
+        "group": "json-field-selection",
+        "stresses": "structured output through a deeply nested leaf",
+        "expected": "pass",
+        "outcome": "pass"
+      },
+      {
+        "name": "json-is-pure-on-attended-terminal",
+        "group": "json-field-selection",
+        "stresses": "structured mode vs TTY color autodetection: JSON is never styled or framed",
+        "expected": "pass",
+        "outcome": "pass"
+      },
+      {
+        "name": "unknown-json-field-lists-valid-ones",
+        "group": "json-field-selection",
+        "stresses": "field-selection rejection names the offender and the valid vocabulary, stdout stays empty",
+        "expected": "pass",
+        "outcome": "pass"
+      }
+    ]
+  },
+  "invariants": [
+    {
+      "command": "auth status",
+      "mode": "text",
+      "color": "off",
+      "theme": "application",
+      "check": "exits 0",
+      "status": "pass",
+      "detail": null
+    },
+    {
+      "command": "auth status",
+      "mode": "text",
+      "color": "off",
+      "theme": "application",
+      "check": "no unresolved tag markers",
+      "status": "pass",
+      "detail": null
+    },
+    {
+      "command": "auth status",
+      "mode": "text",
+      "color": "off",
+      "theme": "application",
+      "check": "stdout parses as JSON",
+      "status": "not-applicable",
+      "detail": "check does not apply to text mode"
+    },
+    {
+      "command": "auth status",
+      "mode": "text",
+      "color": "off",
+      "theme": "application",
+      "check": "styling preserves text layout",
+      "status": "not-applicable",
+      "detail": "check does not apply to text mode"
+    },
+    {
+      "command": "auth status",
+      "mode": "text",
+      "color": "off",
+      "theme": "application",
+      "check": "opaque output preserves text bytes",
+      "status": "not-applicable",
+      "detail": "rendered command uses render invariants"
+    },
+    {
+      "command": "auth status",
+      "mode": "term",
+      "color": "off",
+      "theme": "application",
+      "check": "exits 0",
+      "status": "pass",
+      "detail": null
+    },
+    {
+      "command": "auth status",
+      "mode": "term",
+      "color": "off",
+      "theme": "application",
+      "check": "no unresolved tag markers",
+      "status": "pass",
+      "detail": null
+    },
+    {
+      "command": "auth status",
+      "mode": "term",
+      "color": "off",
+      "theme": "application",
+      "check": "stdout parses as JSON",
+      "status": "not-applicable",
+      "detail": "check does not apply to term mode"
+    },
+    {
+      "command": "auth status",
+      "mode": "term",
+      "color": "off",
+      "theme": "application",
+      "check": "styling preserves text layout",
+      "status": "pass",
+      "detail": null
+    },
+    {
+      "command": "auth status",
+      "mode": "term",
+      "color": "off",
+      "theme": "application",
+      "check": "opaque output preserves text bytes",
+      "status": "not-applicable",
+      "detail": "rendered command uses render invariants"
+    },
+    {
+      "command": "auth status",
+      "mode": "json",
+      "color": "off",
+      "theme": "application",
+      "check": "exits 0",
+      "status": "pass",
+      "detail": null
+    },
+    {
+      "command": "auth status",
+      "mode": "json",
+      "color": "off",
+      "theme": "application",
+      "check": "no unresolved tag markers",
+      "status": "not-applicable",
+      "detail": "check does not apply to json mode"
+    },
+    {
+      "command": "auth status",
+      "mode": "json",
+      "color": "off",
+      "theme": "application",
+      "check": "stdout parses as JSON",
+      "status": "pass",
+      "detail": null
+    },
+    {
+      "command": "auth status",
+      "mode": "json",
+      "color": "off",
+      "theme": "application",
+      "check": "styling preserves text layout",
+      "status": "not-applicable",
+      "detail": "check does not apply to json mode"
+    },
+    {
+      "command": "auth status",
+      "mode": "json",
+      "color": "off",
+      "theme": "application",
+      "check": "opaque output preserves text bytes",
+      "status": "not-applicable",
+      "detail": "rendered command uses render invariants"
+    },
+    {
+      "command": "auth status",
+      "mode": "text",
+      "color": "on",
+      "theme": "application",
+      "check": "exits 0",
+      "status": "pass",
+      "detail": null
+    },
+    {
+      "command": "auth status",
+      "mode": "text",
+      "color": "on",
+      "theme": "application",
+      "check": "no unresolved tag markers",
+      "status": "pass",
+      "detail": null
+    },
+    {
+      "command": "auth status",
+      "mode": "text",
+      "color": "on",
+      "theme": "application",
+      "check": "stdout parses as JSON",
+      "status": "not-applicable",
+      "detail": "check does not apply to text mode"
+    },
+    {
+      "command": "auth status",
+      "mode": "text",
+      "color": "on",
+      "theme": "application",
+      "check": "styling preserves text layout",
+      "status": "not-applicable",
+      "detail": "check does not apply to text mode"
+    },
+    {
+      "command": "auth status",
+      "mode": "text",
+      "color": "on",
+      "theme": "application",
+      "check": "opaque output preserves text bytes",
+      "status": "not-applicable",
+      "detail": "rendered command uses render invariants"
+    },
+    {
+      "command": "auth status",
+      "mode": "term",
+      "color": "on",
+      "theme": "application",
+      "check": "exits 0",
+      "status": "pass",
+      "detail": null
+    },
+    {
+      "command": "auth status",
+      "mode": "term",
+      "color": "on",
+      "theme": "application",
+      "check": "no unresolved tag markers",
+      "status": "pass",
+      "detail": null
+    },
+    {
+      "command": "auth status",
+      "mode": "term",
+      "color": "on",
+      "theme": "application",
+      "check": "stdout parses as JSON",
+      "status": "not-applicable",
+      "detail": "check does not apply to term mode"
+    },
+    {
+      "command": "auth status",
+      "mode": "term",
+      "color": "on",
+      "theme": "application",
+      "check": "styling preserves text layout",
+      "status": "pass",
+      "detail": null
+    },
+    {
+      "command": "auth status",
+      "mode": "term",
+      "color": "on",
+      "theme": "application",
+      "check": "opaque output preserves text bytes",
+      "status": "not-applicable",
+      "detail": "rendered command uses render invariants"
+    },
+    {
+      "command": "auth status",
+      "mode": "json",
+      "color": "on",
+      "theme": "application",
+      "check": "exits 0",
+      "status": "pass",
+      "detail": null
+    },
+    {
+      "command": "auth status",
+      "mode": "json",
+      "color": "on",
+      "theme": "application",
+      "check": "no unresolved tag markers",
+      "status": "not-applicable",
+      "detail": "check does not apply to json mode"
+    },
+    {
+      "command": "auth status",
+      "mode": "json",
+      "color": "on",
+      "theme": "application",
+      "check": "stdout parses as JSON",
+      "status": "pass",
+      "detail": null
+    },
+    {
+      "command": "auth status",
+      "mode": "json",
+      "color": "on",
+      "theme": "application",
+      "check": "styling preserves text layout",
+      "status": "not-applicable",
+      "detail": "check does not apply to json mode"
+    },
+    {
+      "command": "auth status",
+      "mode": "json",
+      "color": "on",
+      "theme": "application",
+      "check": "opaque output preserves text bytes",
+      "status": "not-applicable",
+      "detail": "rendered command uses render invariants"
+    },
+    {
+      "command": "repo view demo/alpha",
+      "mode": "text",
+      "color": "off",
+      "theme": "application",
+      "check": "exits 0",
+      "status": "pass",
+      "detail": null
+    },
+    {
+      "command": "repo view demo/alpha",
+      "mode": "text",
+      "color": "off",
+      "theme": "application",
+      "check": "no unresolved tag markers",
+      "status": "pass",
+      "detail": null
+    },
+    {
+      "command": "repo view demo/alpha",
+      "mode": "text",
+      "color": "off",
+      "theme": "application",
+      "check": "stdout parses as JSON",
+      "status": "not-applicable",
+      "detail": "check does not apply to text mode"
+    },
+    {
+      "command": "repo view demo/alpha",
+      "mode": "text",
+      "color": "off",
+      "theme": "application",
+      "check": "styling preserves text layout",
+      "status": "not-applicable",
+      "detail": "check does not apply to text mode"
+    },
+    {
+      "command": "repo view demo/alpha",
+      "mode": "text",
+      "color": "off",
+      "theme": "application",
+      "check": "opaque output preserves text bytes",
+      "status": "not-applicable",
+      "detail": "rendered command uses render invariants"
+    },
+    {
+      "command": "repo view demo/alpha",
+      "mode": "term",
+      "color": "off",
+      "theme": "application",
+      "check": "exits 0",
+      "status": "pass",
+      "detail": null
+    },
+    {
+      "command": "repo view demo/alpha",
+      "mode": "term",
+      "color": "off",
+      "theme": "application",
+      "check": "no unresolved tag markers",
+      "status": "pass",
+      "detail": null
+    },
+    {
+      "command": "repo view demo/alpha",
+      "mode": "term",
+      "color": "off",
+      "theme": "application",
+      "check": "stdout parses as JSON",
+      "status": "not-applicable",
+      "detail": "check does not apply to term mode"
+    },
+    {
+      "command": "repo view demo/alpha",
+      "mode": "term",
+      "color": "off",
+      "theme": "application",
+      "check": "styling preserves text layout",
+      "status": "pass",
+      "detail": null
+    },
+    {
+      "command": "repo view demo/alpha",
+      "mode": "term",
+      "color": "off",
+      "theme": "application",
+      "check": "opaque output preserves text bytes",
+      "status": "not-applicable",
+      "detail": "rendered command uses render invariants"
+    },
+    {
+      "command": "repo view demo/alpha",
+      "mode": "json",
+      "color": "off",
+      "theme": "application",
+      "check": "exits 0",
+      "status": "pass",
+      "detail": null
+    },
+    {
+      "command": "repo view demo/alpha",
+      "mode": "json",
+      "color": "off",
+      "theme": "application",
+      "check": "no unresolved tag markers",
+      "status": "not-applicable",
+      "detail": "check does not apply to json mode"
+    },
+    {
+      "command": "repo view demo/alpha",
+      "mode": "json",
+      "color": "off",
+      "theme": "application",
+      "check": "stdout parses as JSON",
+      "status": "pass",
+      "detail": null
+    },
+    {
+      "command": "repo view demo/alpha",
+      "mode": "json",
+      "color": "off",
+      "theme": "application",
+      "check": "styling preserves text layout",
+      "status": "not-applicable",
+      "detail": "check does not apply to json mode"
+    },
+    {
+      "command": "repo view demo/alpha",
+      "mode": "json",
+      "color": "off",
+      "theme": "application",
+      "check": "opaque output preserves text bytes",
+      "status": "not-applicable",
+      "detail": "rendered command uses render invariants"
+    },
+    {
+      "command": "repo view demo/alpha",
+      "mode": "text",
+      "color": "on",
+      "theme": "application",
+      "check": "exits 0",
+      "status": "pass",
+      "detail": null
+    },
+    {
+      "command": "repo view demo/alpha",
+      "mode": "text",
+      "color": "on",
+      "theme": "application",
+      "check": "no unresolved tag markers",
+      "status": "pass",
+      "detail": null
+    },
+    {
+      "command": "repo view demo/alpha",
+      "mode": "text",
+      "color": "on",
+      "theme": "application",
+      "check": "stdout parses as JSON",
+      "status": "not-applicable",
+      "detail": "check does not apply to text mode"
+    },
+    {
+      "command": "repo view demo/alpha",
+      "mode": "text",
+      "color": "on",
+      "theme": "application",
+      "check": "styling preserves text layout",
+      "status": "not-applicable",
+      "detail": "check does not apply to text mode"
+    },
+    {
+      "command": "repo view demo/alpha",
+      "mode": "text",
+      "color": "on",
+      "theme": "application",
+      "check": "opaque output preserves text bytes",
+      "status": "not-applicable",
+      "detail": "rendered command uses render invariants"
+    },
+    {
+      "command": "repo view demo/alpha",
+      "mode": "term",
+      "color": "on",
+      "theme": "application",
+      "check": "exits 0",
+      "status": "pass",
+      "detail": null
+    },
+    {
+      "command": "repo view demo/alpha",
+      "mode": "term",
+      "color": "on",
+      "theme": "application",
+      "check": "no unresolved tag markers",
+      "status": "pass",
+      "detail": null
+    },
+    {
+      "command": "repo view demo/alpha",
+      "mode": "term",
+      "color": "on",
+      "theme": "application",
+      "check": "stdout parses as JSON",
+      "status": "not-applicable",
+      "detail": "check does not apply to term mode"
+    },
+    {
+      "command": "repo view demo/alpha",
+      "mode": "term",
+      "color": "on",
+      "theme": "application",
+      "check": "styling preserves text layout",
+      "status": "pass",
+      "detail": null
+    },
+    {
+      "command": "repo view demo/alpha",
+      "mode": "term",
+      "color": "on",
+      "theme": "application",
+      "check": "opaque output preserves text bytes",
+      "status": "not-applicable",
+      "detail": "rendered command uses render invariants"
+    },
+    {
+      "command": "repo view demo/alpha",
+      "mode": "json",
+      "color": "on",
+      "theme": "application",
+      "check": "exits 0",
+      "status": "pass",
+      "detail": null
+    },
+    {
+      "command": "repo view demo/alpha",
+      "mode": "json",
+      "color": "on",
+      "theme": "application",
+      "check": "no unresolved tag markers",
+      "status": "not-applicable",
+      "detail": "check does not apply to json mode"
+    },
+    {
+      "command": "repo view demo/alpha",
+      "mode": "json",
+      "color": "on",
+      "theme": "application",
+      "check": "stdout parses as JSON",
+      "status": "pass",
+      "detail": null
+    },
+    {
+      "command": "repo view demo/alpha",
+      "mode": "json",
+      "color": "on",
+      "theme": "application",
+      "check": "styling preserves text layout",
+      "status": "not-applicable",
+      "detail": "check does not apply to json mode"
+    },
+    {
+      "command": "repo view demo/alpha",
+      "mode": "json",
+      "color": "on",
+      "theme": "application",
+      "check": "opaque output preserves text bytes",
+      "status": "not-applicable",
+      "detail": "rendered command uses render invariants"
+    },
+    {
+      "command": "pr list",
+      "mode": "text",
+      "color": "off",
+      "theme": "application",
+      "check": "exits 0",
+      "status": "pass",
+      "detail": null
+    },
+    {
+      "command": "pr list",
+      "mode": "text",
+      "color": "off",
+      "theme": "application",
+      "check": "no unresolved tag markers",
+      "status": "pass",
+      "detail": null
+    },
+    {
+      "command": "pr list",
+      "mode": "text",
+      "color": "off",
+      "theme": "application",
+      "check": "stdout parses as JSON",
+      "status": "not-applicable",
+      "detail": "check does not apply to text mode"
+    },
+    {
+      "command": "pr list",
+      "mode": "text",
+      "color": "off",
+      "theme": "application",
+      "check": "styling preserves text layout",
+      "status": "not-applicable",
+      "detail": "check does not apply to text mode"
+    },
+    {
+      "command": "pr list",
+      "mode": "text",
+      "color": "off",
+      "theme": "application",
+      "check": "opaque output preserves text bytes",
+      "status": "not-applicable",
+      "detail": "rendered command uses render invariants"
+    },
+    {
+      "command": "pr list",
+      "mode": "term",
+      "color": "off",
+      "theme": "application",
+      "check": "exits 0",
+      "status": "pass",
+      "detail": null
+    },
+    {
+      "command": "pr list",
+      "mode": "term",
+      "color": "off",
+      "theme": "application",
+      "check": "no unresolved tag markers",
+      "status": "pass",
+      "detail": null
+    },
+    {
+      "command": "pr list",
+      "mode": "term",
+      "color": "off",
+      "theme": "application",
+      "check": "stdout parses as JSON",
+      "status": "not-applicable",
+      "detail": "check does not apply to term mode"
+    },
+    {
+      "command": "pr list",
+      "mode": "term",
+      "color": "off",
+      "theme": "application",
+      "check": "styling preserves text layout",
+      "status": "pass",
+      "detail": null
+    },
+    {
+      "command": "pr list",
+      "mode": "term",
+      "color": "off",
+      "theme": "application",
+      "check": "opaque output preserves text bytes",
+      "status": "not-applicable",
+      "detail": "rendered command uses render invariants"
+    },
+    {
+      "command": "pr list",
+      "mode": "json",
+      "color": "off",
+      "theme": "application",
+      "check": "exits 0",
+      "status": "pass",
+      "detail": null
+    },
+    {
+      "command": "pr list",
+      "mode": "json",
+      "color": "off",
+      "theme": "application",
+      "check": "no unresolved tag markers",
+      "status": "not-applicable",
+      "detail": "check does not apply to json mode"
+    },
+    {
+      "command": "pr list",
+      "mode": "json",
+      "color": "off",
+      "theme": "application",
+      "check": "stdout parses as JSON",
+      "status": "pass",
+      "detail": null
+    },
+    {
+      "command": "pr list",
+      "mode": "json",
+      "color": "off",
+      "theme": "application",
+      "check": "styling preserves text layout",
+      "status": "not-applicable",
+      "detail": "check does not apply to json mode"
+    },
+    {
+      "command": "pr list",
+      "mode": "json",
+      "color": "off",
+      "theme": "application",
+      "check": "opaque output preserves text bytes",
+      "status": "not-applicable",
+      "detail": "rendered command uses render invariants"
+    },
+    {
+      "command": "pr list",
+      "mode": "text",
+      "color": "on",
+      "theme": "application",
+      "check": "exits 0",
+      "status": "pass",
+      "detail": null
+    },
+    {
+      "command": "pr list",
+      "mode": "text",
+      "color": "on",
+      "theme": "application",
+      "check": "no unresolved tag markers",
+      "status": "pass",
+      "detail": null
+    },
+    {
+      "command": "pr list",
+      "mode": "text",
+      "color": "on",
+      "theme": "application",
+      "check": "stdout parses as JSON",
+      "status": "not-applicable",
+      "detail": "check does not apply to text mode"
+    },
+    {
+      "command": "pr list",
+      "mode": "text",
+      "color": "on",
+      "theme": "application",
+      "check": "styling preserves text layout",
+      "status": "not-applicable",
+      "detail": "check does not apply to text mode"
+    },
+    {
+      "command": "pr list",
+      "mode": "text",
+      "color": "on",
+      "theme": "application",
+      "check": "opaque output preserves text bytes",
+      "status": "not-applicable",
+      "detail": "rendered command uses render invariants"
+    },
+    {
+      "command": "pr list",
+      "mode": "term",
+      "color": "on",
+      "theme": "application",
+      "check": "exits 0",
+      "status": "pass",
+      "detail": null
+    },
+    {
+      "command": "pr list",
+      "mode": "term",
+      "color": "on",
+      "theme": "application",
+      "check": "no unresolved tag markers",
+      "status": "pass",
+      "detail": null
+    },
+    {
+      "command": "pr list",
+      "mode": "term",
+      "color": "on",
+      "theme": "application",
+      "check": "stdout parses as JSON",
+      "status": "not-applicable",
+      "detail": "check does not apply to term mode"
+    },
+    {
+      "command": "pr list",
+      "mode": "term",
+      "color": "on",
+      "theme": "application",
+      "check": "styling preserves text layout",
+      "status": "pass",
+      "detail": null
+    },
+    {
+      "command": "pr list",
+      "mode": "term",
+      "color": "on",
+      "theme": "application",
+      "check": "opaque output preserves text bytes",
+      "status": "not-applicable",
+      "detail": "rendered command uses render invariants"
+    },
+    {
+      "command": "pr list",
+      "mode": "json",
+      "color": "on",
+      "theme": "application",
+      "check": "exits 0",
+      "status": "pass",
+      "detail": null
+    },
+    {
+      "command": "pr list",
+      "mode": "json",
+      "color": "on",
+      "theme": "application",
+      "check": "no unresolved tag markers",
+      "status": "not-applicable",
+      "detail": "check does not apply to json mode"
+    },
+    {
+      "command": "pr list",
+      "mode": "json",
+      "color": "on",
+      "theme": "application",
+      "check": "stdout parses as JSON",
+      "status": "pass",
+      "detail": null
+    },
+    {
+      "command": "pr list",
+      "mode": "json",
+      "color": "on",
+      "theme": "application",
+      "check": "styling preserves text layout",
+      "status": "not-applicable",
+      "detail": "check does not apply to json mode"
+    },
+    {
+      "command": "pr list",
+      "mode": "json",
+      "color": "on",
+      "theme": "application",
+      "check": "opaque output preserves text bytes",
+      "status": "not-applicable",
+      "detail": "rendered command uses render invariants"
+    },
+    {
+      "command": "pr view 2",
+      "mode": "text",
+      "color": "off",
+      "theme": "application",
+      "check": "exits 0",
+      "status": "pass",
+      "detail": null
+    },
+    {
+      "command": "pr view 2",
+      "mode": "text",
+      "color": "off",
+      "theme": "application",
+      "check": "no unresolved tag markers",
+      "status": "pass",
+      "detail": null
+    },
+    {
+      "command": "pr view 2",
+      "mode": "text",
+      "color": "off",
+      "theme": "application",
+      "check": "stdout parses as JSON",
+      "status": "not-applicable",
+      "detail": "check does not apply to text mode"
+    },
+    {
+      "command": "pr view 2",
+      "mode": "text",
+      "color": "off",
+      "theme": "application",
+      "check": "styling preserves text layout",
+      "status": "not-applicable",
+      "detail": "check does not apply to text mode"
+    },
+    {
+      "command": "pr view 2",
+      "mode": "text",
+      "color": "off",
+      "theme": "application",
+      "check": "opaque output preserves text bytes",
+      "status": "not-applicable",
+      "detail": "rendered command uses render invariants"
+    },
+    {
+      "command": "pr view 2",
+      "mode": "term",
+      "color": "off",
+      "theme": "application",
+      "check": "exits 0",
+      "status": "pass",
+      "detail": null
+    },
+    {
+      "command": "pr view 2",
+      "mode": "term",
+      "color": "off",
+      "theme": "application",
+      "check": "no unresolved tag markers",
+      "status": "pass",
+      "detail": null
+    },
+    {
+      "command": "pr view 2",
+      "mode": "term",
+      "color": "off",
+      "theme": "application",
+      "check": "stdout parses as JSON",
+      "status": "not-applicable",
+      "detail": "check does not apply to term mode"
+    },
+    {
+      "command": "pr view 2",
+      "mode": "term",
+      "color": "off",
+      "theme": "application",
+      "check": "styling preserves text layout",
+      "status": "pass",
+      "detail": null
+    },
+    {
+      "command": "pr view 2",
+      "mode": "term",
+      "color": "off",
+      "theme": "application",
+      "check": "opaque output preserves text bytes",
+      "status": "not-applicable",
+      "detail": "rendered command uses render invariants"
+    },
+    {
+      "command": "pr view 2",
+      "mode": "json",
+      "color": "off",
+      "theme": "application",
+      "check": "exits 0",
+      "status": "pass",
+      "detail": null
+    },
+    {
+      "command": "pr view 2",
+      "mode": "json",
+      "color": "off",
+      "theme": "application",
+      "check": "no unresolved tag markers",
+      "status": "not-applicable",
+      "detail": "check does not apply to json mode"
+    },
+    {
+      "command": "pr view 2",
+      "mode": "json",
+      "color": "off",
+      "theme": "application",
+      "check": "stdout parses as JSON",
+      "status": "pass",
+      "detail": null
+    },
+    {
+      "command": "pr view 2",
+      "mode": "json",
+      "color": "off",
+      "theme": "application",
+      "check": "styling preserves text layout",
+      "status": "not-applicable",
+      "detail": "check does not apply to json mode"
+    },
+    {
+      "command": "pr view 2",
+      "mode": "json",
+      "color": "off",
+      "theme": "application",
+      "check": "opaque output preserves text bytes",
+      "status": "not-applicable",
+      "detail": "rendered command uses render invariants"
+    },
+    {
+      "command": "pr view 2",
+      "mode": "text",
+      "color": "on",
+      "theme": "application",
+      "check": "exits 0",
+      "status": "pass",
+      "detail": null
+    },
+    {
+      "command": "pr view 2",
+      "mode": "text",
+      "color": "on",
+      "theme": "application",
+      "check": "no unresolved tag markers",
+      "status": "pass",
+      "detail": null
+    },
+    {
+      "command": "pr view 2",
+      "mode": "text",
+      "color": "on",
+      "theme": "application",
+      "check": "stdout parses as JSON",
+      "status": "not-applicable",
+      "detail": "check does not apply to text mode"
+    },
+    {
+      "command": "pr view 2",
+      "mode": "text",
+      "color": "on",
+      "theme": "application",
+      "check": "styling preserves text layout",
+      "status": "not-applicable",
+      "detail": "check does not apply to text mode"
+    },
+    {
+      "command": "pr view 2",
+      "mode": "text",
+      "color": "on",
+      "theme": "application",
+      "check": "opaque output preserves text bytes",
+      "status": "not-applicable",
+      "detail": "rendered command uses render invariants"
+    },
+    {
+      "command": "pr view 2",
+      "mode": "term",
+      "color": "on",
+      "theme": "application",
+      "check": "exits 0",
+      "status": "pass",
+      "detail": null
+    },
+    {
+      "command": "pr view 2",
+      "mode": "term",
+      "color": "on",
+      "theme": "application",
+      "check": "no unresolved tag markers",
+      "status": "pass",
+      "detail": null
+    },
+    {
+      "command": "pr view 2",
+      "mode": "term",
+      "color": "on",
+      "theme": "application",
+      "check": "stdout parses as JSON",
+      "status": "not-applicable",
+      "detail": "check does not apply to term mode"
+    },
+    {
+      "command": "pr view 2",
+      "mode": "term",
+      "color": "on",
+      "theme": "application",
+      "check": "styling preserves text layout",
+      "status": "pass",
+      "detail": null
+    },
+    {
+      "command": "pr view 2",
+      "mode": "term",
+      "color": "on",
+      "theme": "application",
+      "check": "opaque output preserves text bytes",
+      "status": "not-applicable",
+      "detail": "rendered command uses render invariants"
+    },
+    {
+      "command": "pr view 2",
+      "mode": "json",
+      "color": "on",
+      "theme": "application",
+      "check": "exits 0",
+      "status": "pass",
+      "detail": null
+    },
+    {
+      "command": "pr view 2",
+      "mode": "json",
+      "color": "on",
+      "theme": "application",
+      "check": "no unresolved tag markers",
+      "status": "not-applicable",
+      "detail": "check does not apply to json mode"
+    },
+    {
+      "command": "pr view 2",
+      "mode": "json",
+      "color": "on",
+      "theme": "application",
+      "check": "stdout parses as JSON",
+      "status": "pass",
+      "detail": null
+    },
+    {
+      "command": "pr view 2",
+      "mode": "json",
+      "color": "on",
+      "theme": "application",
+      "check": "styling preserves text layout",
+      "status": "not-applicable",
+      "detail": "check does not apply to json mode"
+    },
+    {
+      "command": "pr view 2",
+      "mode": "json",
+      "color": "on",
+      "theme": "application",
+      "check": "opaque output preserves text bytes",
+      "status": "not-applicable",
+      "detail": "rendered command uses render invariants"
+    },
+    {
+      "command": "pr checks list 1",
+      "mode": "text",
+      "color": "off",
+      "theme": "application",
+      "check": "exits 0",
+      "status": "pass",
+      "detail": null
+    },
+    {
+      "command": "pr checks list 1",
+      "mode": "text",
+      "color": "off",
+      "theme": "application",
+      "check": "no unresolved tag markers",
+      "status": "pass",
+      "detail": null
+    },
+    {
+      "command": "pr checks list 1",
+      "mode": "text",
+      "color": "off",
+      "theme": "application",
+      "check": "stdout parses as JSON",
+      "status": "not-applicable",
+      "detail": "check does not apply to text mode"
+    },
+    {
+      "command": "pr checks list 1",
+      "mode": "text",
+      "color": "off",
+      "theme": "application",
+      "check": "styling preserves text layout",
+      "status": "not-applicable",
+      "detail": "check does not apply to text mode"
+    },
+    {
+      "command": "pr checks list 1",
+      "mode": "text",
+      "color": "off",
+      "theme": "application",
+      "check": "opaque output preserves text bytes",
+      "status": "not-applicable",
+      "detail": "rendered command uses render invariants"
+    },
+    {
+      "command": "pr checks list 1",
+      "mode": "term",
+      "color": "off",
+      "theme": "application",
+      "check": "exits 0",
+      "status": "pass",
+      "detail": null
+    },
+    {
+      "command": "pr checks list 1",
+      "mode": "term",
+      "color": "off",
+      "theme": "application",
+      "check": "no unresolved tag markers",
+      "status": "pass",
+      "detail": null
+    },
+    {
+      "command": "pr checks list 1",
+      "mode": "term",
+      "color": "off",
+      "theme": "application",
+      "check": "stdout parses as JSON",
+      "status": "not-applicable",
+      "detail": "check does not apply to term mode"
+    },
+    {
+      "command": "pr checks list 1",
+      "mode": "term",
+      "color": "off",
+      "theme": "application",
+      "check": "styling preserves text layout",
+      "status": "pass",
+      "detail": null
+    },
+    {
+      "command": "pr checks list 1",
+      "mode": "term",
+      "color": "off",
+      "theme": "application",
+      "check": "opaque output preserves text bytes",
+      "status": "not-applicable",
+      "detail": "rendered command uses render invariants"
+    },
+    {
+      "command": "pr checks list 1",
+      "mode": "json",
+      "color": "off",
+      "theme": "application",
+      "check": "exits 0",
+      "status": "pass",
+      "detail": null
+    },
+    {
+      "command": "pr checks list 1",
+      "mode": "json",
+      "color": "off",
+      "theme": "application",
+      "check": "no unresolved tag markers",
+      "status": "not-applicable",
+      "detail": "check does not apply to json mode"
+    },
+    {
+      "command": "pr checks list 1",
+      "mode": "json",
+      "color": "off",
+      "theme": "application",
+      "check": "stdout parses as JSON",
+      "status": "pass",
+      "detail": null
+    },
+    {
+      "command": "pr checks list 1",
+      "mode": "json",
+      "color": "off",
+      "theme": "application",
+      "check": "styling preserves text layout",
+      "status": "not-applicable",
+      "detail": "check does not apply to json mode"
+    },
+    {
+      "command": "pr checks list 1",
+      "mode": "json",
+      "color": "off",
+      "theme": "application",
+      "check": "opaque output preserves text bytes",
+      "status": "not-applicable",
+      "detail": "rendered command uses render invariants"
+    },
+    {
+      "command": "pr checks list 1",
+      "mode": "text",
+      "color": "on",
+      "theme": "application",
+      "check": "exits 0",
+      "status": "pass",
+      "detail": null
+    },
+    {
+      "command": "pr checks list 1",
+      "mode": "text",
+      "color": "on",
+      "theme": "application",
+      "check": "no unresolved tag markers",
+      "status": "pass",
+      "detail": null
+    },
+    {
+      "command": "pr checks list 1",
+      "mode": "text",
+      "color": "on",
+      "theme": "application",
+      "check": "stdout parses as JSON",
+      "status": "not-applicable",
+      "detail": "check does not apply to text mode"
+    },
+    {
+      "command": "pr checks list 1",
+      "mode": "text",
+      "color": "on",
+      "theme": "application",
+      "check": "styling preserves text layout",
+      "status": "not-applicable",
+      "detail": "check does not apply to text mode"
+    },
+    {
+      "command": "pr checks list 1",
+      "mode": "text",
+      "color": "on",
+      "theme": "application",
+      "check": "opaque output preserves text bytes",
+      "status": "not-applicable",
+      "detail": "rendered command uses render invariants"
+    },
+    {
+      "command": "pr checks list 1",
+      "mode": "term",
+      "color": "on",
+      "theme": "application",
+      "check": "exits 0",
+      "status": "pass",
+      "detail": null
+    },
+    {
+      "command": "pr checks list 1",
+      "mode": "term",
+      "color": "on",
+      "theme": "application",
+      "check": "no unresolved tag markers",
+      "status": "pass",
+      "detail": null
+    },
+    {
+      "command": "pr checks list 1",
+      "mode": "term",
+      "color": "on",
+      "theme": "application",
+      "check": "stdout parses as JSON",
+      "status": "not-applicable",
+      "detail": "check does not apply to term mode"
+    },
+    {
+      "command": "pr checks list 1",
+      "mode": "term",
+      "color": "on",
+      "theme": "application",
+      "check": "styling preserves text layout",
+      "status": "pass",
+      "detail": null
+    },
+    {
+      "command": "pr checks list 1",
+      "mode": "term",
+      "color": "on",
+      "theme": "application",
+      "check": "opaque output preserves text bytes",
+      "status": "not-applicable",
+      "detail": "rendered command uses render invariants"
+    },
+    {
+      "command": "pr checks list 1",
+      "mode": "json",
+      "color": "on",
+      "theme": "application",
+      "check": "exits 0",
+      "status": "pass",
+      "detail": null
+    },
+    {
+      "command": "pr checks list 1",
+      "mode": "json",
+      "color": "on",
+      "theme": "application",
+      "check": "no unresolved tag markers",
+      "status": "not-applicable",
+      "detail": "check does not apply to json mode"
+    },
+    {
+      "command": "pr checks list 1",
+      "mode": "json",
+      "color": "on",
+      "theme": "application",
+      "check": "stdout parses as JSON",
+      "status": "pass",
+      "detail": null
+    },
+    {
+      "command": "pr checks list 1",
+      "mode": "json",
+      "color": "on",
+      "theme": "application",
+      "check": "styling preserves text layout",
+      "status": "not-applicable",
+      "detail": "check does not apply to json mode"
+    },
+    {
+      "command": "pr checks list 1",
+      "mode": "json",
+      "color": "on",
+      "theme": "application",
+      "check": "opaque output preserves text bytes",
+      "status": "not-applicable",
+      "detail": "rendered command uses render invariants"
+    }
+  ],
+  "questionnaire": {
+    "collected": true,
+    "diagnostics": [],
+    "answers": {
+      "confidence": "high",
+      "docs.gaps": "1. Tabular min-width. docs/crates/render/guides/intro-to-tabular.md, Step 4: `{\"min\": 10}` =\n   \"At least 10, grows to fit content\". Since `t.row(...)` formats one row at a time, there is no\n   whole-table measurement; with `{\"min\": 0}` on three columns I got the collapsed layout quoted in\n   my friction answer, not columns sized to the widest cell. The guide never says the growth is\n   per-row, nor how to get a table sized to its data from a template.\n\n2. Trailing newlines are undocumented. docs/topics/execution-outcomes.md covers streams and statuses\n   for the final write but never says the renderer drops the template's last newline and the\n   framework appends one. That is load-bearing for any byte-exact output contract.\n\n3. `#[dispatch(pure)]` is used in three separate examples and defined nowhere in docs/.\n\n4. The nested `#[derive(Dispatch)]` example in docs/topics/app-configuration.md (\"From Dispatch\n   Macro\") does not compile as written: it lacks the `#[dispatch(handlers = ...)]` attribute the\n   macro requires.\n\n5. Template resolution for nested command groups is not documented. docs/topics/app-configuration.md\n   says templates are \"referenced by path without extension: `\"list\"`, `\"db/migrate\"`\" for the\n   builder API, but for `#[dispatch(nested)]` enums nothing states what template name a command path\n   like `pr checks list` resolves to. I guessed `src/templates/pr/checks/list.jinja` and it worked.\n\n6. `.commands(Commands::dispatch_config())?` vs `.commands(Commands::dispatch_config()?)` — the two\n   guides contradict each other (see friction #3).",
+      "friction": "1. `#[dispatch(pure)]` appears on every command variant in docs/index.md,\n   docs/guides/minimal-single-crate.md, and docs/guides/intro-to-standout.md, but nothing in docs/\n   says what it means. I copied it because the examples do.\n\n2. The nested-enum example in docs/topics/app-configuration.md:\n\n       #[derive(Dispatch)]\n       enum Commands {\n           List,\n           Add,\n           #[dispatch(nested)]\n           Db(DbCommands),\n       }\n\n   My equivalent root enum (all variants `#[dispatch(nested)]`) failed to compile:\n\n       error: missing `#[dispatch(handlers = path)]` attribute\n         --> src/commands.rs:15:1\n\n   Adding `#[dispatch(handlers = crate::handlers)]` to an enum with no non-nested variants fixed it.\n\n3. Two docs pages disagree about `dispatch_config()`'s shape:\n   docs/guides/minimal-single-crate.md has `.commands(Commands::dispatch_config())?` while\n   docs/guides/tldr-intro-to-standout.md has `.commands(Commands::dispatch_config()?)`. The first is\n   the one that compiles.\n\n4. Nothing in docs/ describes trailing-newline handling, and the spec's expected output is\n   byte-exact, so I had to probe it: a template file containing `A` produced `A\\n`, `A\\n\\n`\n   produced `A\\n\\n`, and my first `pr list` template produced a spurious blank final line. The\n   effective rule is that the template's own final newline is dropped and the framework appends\n   exactly one, so a loop must emit the newline *before* each row rather than after it.\n\n5. `tabular()` with data-driven widths did not lay out a table. Per\n   docs/crates/render/guides/intro-to-tabular.md, `{\"min\": 10}` means \"At least 10, grows to fit\n   content\", so I tried three `{\"width\": {\"min\": 0}}` columns with `t.row(...)` per row and got:\n\n         STATE                                                       (padded to terminal width)\n         open\n         merged\n\n   i.e. the first two columns collapsed and the last one absorbed the terminal width. I fell back to\n   the `col` filter with widths computed in the template.\n\n6. docs/topics/error-handling.md says ordinary handler errors get \"the normal handler diagnostic\n   framing\" but never shows that framing, so I could not tell from docs whether a bare\n   `ghlike: repository not found: demo/gamma` line on stderr was reachable that way. I used\n   `ExternalFailure`, which docs do specify as verbatim (\"Standout adds no `Error:` prefix and no\n   trailing newline\").",
+      "sources.docs": "- docs/index.md\n- docs/intro.md\n- docs/guides/minimal-single-crate.md\n- docs/guides/tldr-intro-to-standout.md\n- docs/guides/intro-to-standout.md (sections 7.2-7.3, the \"finer points\" list, and the troubleshooting appendix)\n- docs/guides/leveraging-standout.md\n- docs/topics/app-configuration.md\n- docs/topics/output-modes.md\n- docs/topics/error-handling.md\n- docs/topics/execution-outcomes.md\n- docs/crates/dispatch/guides/intro-to-dispatch.md\n- docs/crates/dispatch/topics/handler-contract.md\n- docs/crates/render/guides/intro-to-tabular.md\n- docs/crates/render/topics/templating.md\n\nI also grepped the whole docs/ tree for `output_mode`, `no_output_flag`, `ExternalFailure`,\n`Output::Binary`, `pure`, and \"convention\", and read docs/guides/index.md and docs/topics/index.md\nlistings. Beyond the lines those greps printed, I did not read the input/ crate docs, the testing\nguides, styling-system, standout-help, topics-system, template-engines, file-system-resources, or\nthe upgrade guides.",
+      "sources.external": "No web search, and I did not open the standout crates' source or repository.\n\nWhat I did rely on beyond docs/:\n- General Rust, clap 4 derive, serde/serde_json knowledge (I added `serde_json = \"1\"` as a\n  crates.io dependency; the standout pins are untouched).\n- General Jinja2/MiniJinja knowledge that docs/ does not spell out: whitespace control (`{%- ... -%}`),\n  `map(attribute=...)` / `map(\"filtername\")`, the `max` filter, list concatenation with `+`, and\n  `loop.first`. docs/crates/render/topics/templating.md only points at the MiniJinja docs for these.\n- rustc/cargo diagnostics from the standout macros, e.g. `error: missing #[dispatch(handlers = path)]\n  attribute`, which told me an attribute was required that the docs' example omits. One `Debug`-trait\n  diagnostic printed a path into the installed standout-dispatch source as a \"help\" note; I did not\n  open that file or any other framework source.\n- Behavior learned by running my own binary (trailing-newline handling, tabular min-width behavior,\n  template-name resolution for nested groups) rather than from docs.",
+      "summary": "Built `ghlike`, a single-crate standout 8.1.1 CLI in `app/`, complete and passing every\nbehavior in SPEC.md. Layout: `src/forge.rs` (CLI-free frozen state + lookups), `src/view.rs`\n(serializable view DTOs), `src/json.rs` (`--json` field selection and compact JSON emission),\n`src/commands.rs` (clap derive tree + `#[derive(Dispatch)]`, nested for `auth`/`repo`/`pr` and\n`pr checks`), `src/handlers.rs` (`#[handler]` adapters), `src/templates/**.jinja`, `src/styles/default.css`.\n\nHuman output goes through templates (column widths computed in-template with\n`display_width`/`max` and the `col` filter, so each column but the last is padded to its widest\nrendered cell, header included when shown) and is styled on an attended terminal. `--json <fields>`\nreturns `Output::Binary`, so the bytes on stdout are exactly the compact JSON document (fields in\nthe requested order, `number` a number, `draft` a boolean) with no styling, paging, or prose in any\nterminal. Domain errors (unknown repo, unknown PR, unknown `--json` field) exit 1 with empty stdout\nand the exact stderr line; usage errors (group without subcommand, unknown subcommand or flag) exit\n2 via clap; `--help` exits 0 on stdout at every level.\n\n`cargo build`, `cargo build --release`, and `cargo test` (11 unit tests: core lookups, JSON\nprojection, handler adapters) all succeed. I verified the built binary against every example and\nerror case in SPEC.md with a script that compares exit status, stdout, and stderr byte for byte:\n17/17 cases match, plus checks that all three group-without-subcommand invocations exit 2 with\nempty stdout and guidance on stderr, and that `--help` at all ten levels exits 0 with clean stderr.",
+      "workarounds": "1. `ExternalFailure` for ordinary domain errors. docs/topics/error-handling.md says \"Use\n   `ExternalFailure` only when another operation owns the status and diagnostic contract, such as a\n   delegated Git invocation\", and no external process is involved here. I use it in\n   `handlers::domain_failure` because it is the only documented seam that yields exit 1 with a\n   verbatim stderr payload, which SPEC.md requires. If Standout ever gains a first-class way to\n   declare an application's own exit status and diagnostic text, that is the seam this should move to.\n\n2. `Output::Binary` for `--json`. The `--json <fields>` payload is emitted as bytes rather than\n   `Output::Render`, so it bypasses the template and the BBCode pass entirely. That is what\n   guarantees \"never styled, never framed\" even on a color-capable terminal — a JSON array starts\n   with `[{`, and the BBCode pass marks unknown tags with `?` in terminal mode, so rendering JSON\n   through a template would have risked corrupting it. It also keeps field order and compactness\n   under my control (structured `--output json` would serialize the view DTO instead, alphabetically\n   and pretty-printed). The handler branches on an explicit argument, not on output mode.\n\n3. Column widths are computed inside the templates\n   (`([\"NUMBER\"] + (pull_requests | map(attribute=\"number\") | map(\"string\") | list)) |\n   map(\"display_width\") | max`) and applied with `col(width)`, instead of `tabular()`/`table()`,\n   because of gap #1. Padding still lives in the presentation layer, not in handlers.\n\n4. `#![allow(non_snake_case)]` at the top of `src/handlers.rs` to silence 10 warnings about the\n   `list__handler` / `list__expected_args` functions the `#[handler]` macro generates.\n\n5. `pr view <number>` and `pr checks list <number>` take the number as a `String` and look it up as\n   typed, so `ghlike pr view abc` is `ghlike: no pull request found: abc` (exit 1, a domain error)\n   rather than a clap parse failure (exit 2). SPEC.md reserves exit 2 for group-without-subcommand\n   and unknown subcommands or flags, so this keeps the two classes apart.\n\n6. `ghlike pr checks list <unknown number>` is not specified; I treat it as the same domain error as\n   `pr view` (exit 1, `ghlike: no pull request found: <number>`). PR 3, which exists with no checks,\n   prints nothing and exits 0, and `--json` for it emits `[]`."
+    }
+  }
+}

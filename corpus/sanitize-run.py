@@ -1,10 +1,12 @@
 #!/usr/bin/env python3
-"""Sanitize a corpus run for committing under corpus/pilot/runs/.
+"""Sanitize a corpus run's report and transcript into a destination directory.
 
 Applies the demo-run rules from corpus/README.md (Layout): host paths become
 placeholders, session ids are zeroed, and the host's tool/plugin/connector
 inventory is removed from the transcript's init event. Only report.json and
-transcript.jsonl are kept — never the workspace or case sandboxes.
+transcript.jsonl are kept — never the workspace or case sandboxes. Only
+report.json is ever committed to the repository; the sanitized transcript
+stays under the run's own `--out` directory.
 
 Usage: sanitize-run.py <run-dir> <dest-dir> [--account NAME]
 
@@ -42,7 +44,7 @@ INIT_INVENTORY_KEYS = (
 
 def replacements(run_dir: pathlib.Path) -> list[tuple[str, str]]:
     workspace = str((run_dir / "workspace").resolve())
-    repo = str(pathlib.Path(__file__).resolve().parents[2])
+    repo = str(pathlib.Path(__file__).resolve().parents[1])
     home = str(pathlib.Path.home())
     # Sort by actual needle length so nested paths win regardless of the
     # order in which they were declared. The dash forms cover Claude Code's
