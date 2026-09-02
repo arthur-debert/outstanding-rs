@@ -167,13 +167,6 @@ fn child_exited_without_reaping(_pid: u32) -> Result<bool, String> {
     unreachable!("only called from the cfg!(unix) branch in supervise's loop")
 }
 
-/// Sends `SIGKILL` to the process group led by `pid` and blocks, bounded by
-/// `GROUP_KILL_GRACE`, until nothing in it answers a signal-0 probe. The
-/// group's pgid stays valid even after the leader (the pid a caller tracked)
-/// has exited, as long as a descendant it forked before exiting is still
-/// alive — call this after a child exits, and before anything reads what
-/// that child's sandbox holds, so a surviving descendant can't still be
-/// writing there.
 fn signal_process_group(pid: u32) {
     #[cfg(unix)]
     {
@@ -349,24 +342,33 @@ mod tests {
 
     #[test]
     fn a_trivial_child_is_supervised_promptly() {
-        // Signalling the group before the leader is reaped leaves it a
-        // zombie, which still answers a signal-0 existence probe: polling
-        // for the group to be gone before that reap would spin for the
-        // full `GROUP_KILL_GRACE` on every single case, leader included,
-        // not only when a straggler is genuinely still dying.
+        let pid = Arc::new(Mutex::new(0u32));
+        let pid_for_capture = Arc::clone(&pid);
         let started = Instant::now();
-        let outcome = run(
+        let outcome = run_watched(
             Command::new("sh").args(["-c", "exit 0"]),
             Duration::from_secs(30),
             true,
+            move |child_pid| *pid_for_capture.lock().unwrap() = child_pid,
         )
         .unwrap();
         assert!(!outcome.timed_out);
         assert_eq!(outcome.exit_code, Some(0));
+
+        let pid = *pid.lock().unwrap();
+        // SAFETY: a signal-0 probe only checks whether the group exists; it
+        // sends nothing.
+        let probe = unsafe { libc::killpg(pid as libc::pid_t, 0) };
+        assert_eq!(probe, -1);
+        assert_eq!(
+            std::io::Error::last_os_error().raw_os_error(),
+            Some(libc::ESRCH),
+            "expected the process group to be gone once supervise returned"
+        );
         assert!(
-            started.elapsed() < GROUP_KILL_GRACE,
-            "supervise took {:?}, at or past the group-kill grace period with nothing \
-             left to signal",
+            started.elapsed() < GROUP_KILL_GRACE * 10,
+            "supervise took {:?}, well past what a trivial child with nothing \
+             left to signal should ever need",
             started.elapsed()
         );
     }

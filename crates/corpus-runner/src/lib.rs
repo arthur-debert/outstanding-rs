@@ -393,7 +393,7 @@ fn evaluate_binary(
     match binary {
         Ok(binary) => {
             // Read through the same no-follow, regular-file-only primitive
-            // the sandbox inventory reads case files with (D17): a symlink,
+            // the sandbox inventory reads case files with: a symlink,
             // a non-regular file, or a read error is "evidence unknown",
             // not "evidence absent".
             let app_cargo_toml = cases::read_regular_file_no_follow(

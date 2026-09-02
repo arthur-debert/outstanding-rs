@@ -434,11 +434,6 @@ fn build_sandbox_inventory(root: &Path) -> Result<SandboxInventory, String> {
     Ok(SandboxInventory { entries })
 }
 
-/// Reads a whole regular, non-symlinked file, refusing anything over
-/// `max_bytes`. The one primitive both `build_sandbox_inventory` (per
-/// discovered file) and the D17 evidence check (the produced app's
-/// `Cargo.toml`, read the same way so an unreadable one reads as unknown
-/// rather than merely absent) read a file through.
 pub(crate) fn read_regular_file_no_follow(path: &Path, max_bytes: u64) -> Result<Vec<u8>, String> {
     let metadata = std::fs::symlink_metadata(path).map_err(|err| err.to_string())?;
     if metadata.file_type().is_symlink() {
